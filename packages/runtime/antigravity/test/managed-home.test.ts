@@ -55,17 +55,6 @@ describe("managed Antigravity HOME", () => {
       agent: createExpert(root),
       sessionDir,
       systemPrompt: "host-keyring system",
-      mcpToolCatalog: [
-        {
-          name: "read_expert_context",
-          description: "Read a Context item",
-          inputSchema: {
-            type: "object",
-            properties: { namespace: { type: "string" }, id: { type: "string" } },
-            required: ["namespace", "id"],
-          },
-        },
-      ],
       mcpServerUrl: "http://127.0.0.1/host-keyring/mcp",
       hookRelay: relay(),
       permissionMode: "request-approval",
@@ -101,17 +90,16 @@ describe("managed Antigravity HOME", () => {
       },
     });
     await expect(
-      readFile(join(managed.pluginDir, "agents", managed.agentName, "agent.md"), "utf8"),
+      readFile(join(managed.configDir, "agents", `${managed.agentName}.md`), "utf8"),
     ).resolves.toContain("host-keyring system");
     await expect(readJson(join(managed.configDir, "hooks.json"))).resolves.toHaveProperty(
       managed.hookName,
     );
 
-    const rule = await readFile(join(managed.pluginDir, "rules", "pragma-system.md"), "utf8");
-    expect(rule).toContain(`ServerName=${JSON.stringify(managed.nativeMcpServerName)}`);
-    expect(rule).toContain('"name":"read_expert_context"');
-    expect(rule).toContain('"required":["namespace","id"]');
-    expect(rule).toContain("Do not search configuration files");
+    await expect(stat(join(managed.pluginDir, "rules"))).rejects.toMatchObject({ code: "ENOENT" });
+    await expect(stat(join(managed.pluginDir, "agents", managed.agentName))).rejects.toMatchObject({
+      code: "ENOENT",
+    });
 
     const nativeAgent = join(managed.pluginDir, "agents", "native-created", "agent.md");
     await mkdir(join(managed.pluginDir, "agents", "native-created"), { recursive: true });
@@ -227,7 +215,7 @@ describe("managed Antigravity HOME", () => {
 
     expect(managed.homeDir).toBe(join(sessionDir, "home"));
     expect(managed.appDataDir).toBe(join(managed.homeDir, ".gemini", "antigravity-cli"));
-    expect(managed.configDir).toBe(join(managed.homeDir, ".gemini", "config"));
+    expect(managed.configDir).toBe(join(sessionDir, "managed-customizations", ".agents"));
     expect(managed.skills).toEqual([expect.stringMatching(/^pragma-[0-9a-f]{16}-review-skill$/)]);
     expect(managed.env).toMatchObject({
       HOME: managed.homeDir,
@@ -293,21 +281,18 @@ describe("managed Antigravity HOME", () => {
     });
 
     const agentFile = await readFile(
-      join(managed.pluginDir, "agents", managed.agentName, "agent.md"),
+      join(managed.configDir, "agents", `${managed.agentName}.md`),
       "utf8",
     );
     expect(agentFile).toContain(`name: "${managed.agentName}"`);
     expect(agentFile).toContain(
-      `mainAgent: true\nsubagent: false\nhidden: false\ninheritMcp: true\nmcpServers:\n  - "${managed.mcpServerName}"\ncommandExecutionPolicy: off`,
+      `mainAgent: true\nsubagent: false\nhidden: false\ninheritCustomizations: true\ncommandExecutionPolicy: off`,
     );
     expect(agentFile).not.toContain("skills:");
     expect(agentFile.slice(agentFile.indexOf("---\n", 4) + 4)).toBe(
       `# System Prompt\n\n${systemPrompt}\n`,
     );
-    const systemRule = await readFile(join(managed.pluginDir, "rules", "pragma-system.md"), "utf8");
-    expect(systemRule).toMatch(/^---\ntrigger: always_on\n---/);
-    expect(systemRule).toContain(systemPrompt);
-    expect(systemRule).toContain(`- \`${managed.skills[0]}\``);
+    await expect(stat(join(managed.pluginDir, "rules"))).rejects.toMatchObject({ code: "ENOENT" });
     const hookScript = await readFile(join(sessionDir, "hooks", "pragma-pre-tool-use.mjs"), "utf8");
     expect(hookScript).toContain('const url = "http://127.0.0.1:43128/pre-tool-use";');
     expect(hookScript).toContain('const authorization = "Bearer secret";');
@@ -364,7 +349,7 @@ describe("managed Antigravity HOME", () => {
         allowNonWorkspaceAccess,
       });
       const agentFile = await readFile(
-        join(managed.pluginDir, "agents", managed.agentName, "agent.md"),
+        join(managed.configDir, "agents", `${managed.agentName}.md`),
         "utf8",
       );
       expect(agentFile).toContain(
@@ -450,6 +435,61 @@ describe("managed Antigravity HOME", () => {
     await expect(readFile(join(second.pluginDir, "mcp_config.json"), "utf8")).resolves.toContain(
       "http://127.0.0.1/second",
     );
+  });
+
+  it("retires only owned isolated-home configuration when moving to the extra workspace", async () => {
+    const root = await temporaryRoot();
+    const agent = createExpert(root);
+    const sessionDir = join(root, "session");
+    const identity = createManagedAntigravityIdentity(agent.id, sessionDir);
+    const config = join(sessionDir, "home", ".gemini", "config");
+    const plugin = join(config, "plugins", identity.pluginName);
+    const agentDir = join(plugin, "agents", identity.agentName);
+    const nativeAgent = join(plugin, "agents", "native-created", "agent.md");
+    await Promise.all([
+      mkdir(join(plugin, "rules"), { recursive: true }),
+      mkdir(agentDir, { recursive: true }),
+      mkdir(dirname(nativeAgent), { recursive: true }),
+    ]);
+    await Promise.all([
+      writeFile(join(plugin, "rules", "pragma-system.md"), "old schema rule"),
+      writeFile(join(agentDir, "agent.md"), "old root agent"),
+      writeFile(nativeAgent, "native state"),
+      writeFile(
+        join(config, "hooks.json"),
+        JSON.stringify({ [identity.hookName]: {}, native: { enabled: true } }),
+      ),
+      writeFile(
+        join(config, "plugins.json"),
+        JSON.stringify({
+          entries: [
+            { path: join(config, "plugins"), include_only: [`^${identity.pluginName}$`] },
+            { path: join(config, "plugins"), include_only: ["native"] },
+          ],
+        }),
+      ),
+    ]);
+    const managed = await prepareManagedAntigravityHome({
+      agent,
+      sessionDir,
+      systemPrompt: "new prompt",
+      mcpServerUrl: "http://127.0.0.1/mcp",
+      hookRelay: relay(),
+      permissionMode: "request-approval",
+      processEnvironment: {},
+    });
+    await expect(stat(join(plugin, "rules"))).rejects.toMatchObject({ code: "ENOENT" });
+    await expect(stat(agentDir)).rejects.toMatchObject({ code: "ENOENT" });
+    await expect(readFile(nativeAgent, "utf8")).resolves.toBe("native state");
+    await expect(readJson(join(config, "hooks.json"))).resolves.toEqual({
+      native: { enabled: true },
+    });
+    await expect(readJson(join(config, "plugins.json"))).resolves.toEqual({
+      entries: [{ path: join(config, "plugins"), include_only: ["native"] }],
+    });
+    await expect(
+      readFile(join(managed.configDir, "agents", `${managed.agentName}.md`), "utf8"),
+    ).resolves.toContain("new prompt");
   });
 
   it("creates Windows HOME variables and strips case-insensitive host overrides", () => {

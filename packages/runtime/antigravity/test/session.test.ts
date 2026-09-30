@@ -1,4 +1,4 @@
-import type { ChildProcessWithoutNullStreams } from "node:child_process";
+import { spawn as nodeSpawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { EventEmitter } from "node:events";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -14,9 +14,9 @@ import {
   createAntigravityArgs,
   createAntigravityNativeSession,
   expandAntigravitySkillInvocation,
-  formatAntigravityPrompt,
+  createAntigravityUserMessage,
+  closeAntigravitySession,
   normalizeAntigravityStreamRecord,
-  readAntigravityConversationIdFromLog,
   readAntigravityTranscriptAssistantText,
   startAntigravityTurn,
   type AntigravityNativeEvent,
@@ -133,7 +133,7 @@ describe("Antigravity CLI invocation", () => {
   it("uses only documented headless flags and pins the process workspace", () => {
     expect(
       createAntigravityArgs({
-        prompt: "do work",
+        agentName: "pragma-review",
         workspace: "/workspace/project",
         logPath: "/state/logs/turn.log",
         permissionMode: "request-approval",
@@ -143,10 +143,12 @@ describe("Antigravity CLI invocation", () => {
         customizationWorkspace: "/state/managed-customizations",
       }),
     ).toEqual([
+      "--input-format",
+      "stream-json",
       "--output-format",
       "stream-json",
-      "--print-timeout",
-      "24h",
+      "--agent",
+      "pragma-review",
       "--add-dir",
       "/workspace/project",
       "--add-dir",
@@ -163,14 +165,12 @@ describe("Antigravity CLI invocation", () => {
       "gemini-3.1-pro",
       "--effort",
       "high",
-      "-p",
-      "do work",
     ]);
   });
 
   it("maps permission modes to sandbox and explicit dangerous overrides", () => {
     const common = {
-      prompt: "prompt",
+      agentName: "pragma-review",
       workspace: "/workspace/project",
       logPath: "/tmp/log",
     } as const;
@@ -194,16 +194,13 @@ describe("Antigravity CLI invocation", () => {
   it("rejects non-UUID native conversation identifiers before they reach argv or transcript recovery", () => {
     expect(() =>
       createAntigravityArgs({
-        prompt: "do work",
+        agentName: "pragma-review",
         workspace: "/workspace/project",
         logPath: "/state/logs/turn.log",
         permissionMode: "request-approval",
         sessionId: "../../other-session",
       }),
     ).toThrow(/invalid conversation identifier/i);
-    expect(
-      readAntigravityConversationIdFromLog("conversation=../../other-session"),
-    ).toBeUndefined();
   });
 
   it("rewrites only an explicit leading Pragma Skill invocation", () => {
@@ -252,30 +249,29 @@ describe("Antigravity CLI invocation", () => {
 });
 
 describe("Antigravity startup messages", () => {
-  it("frames every startup message with role, order, and exact character length", () => {
+  it("serializes startup blocks in order in one user event", () => {
     expect(
-      formatAntigravityPrompt(
+      createAntigravityUserMessage(
         [
           { role: "user", content: "always on" },
           { role: "user", content: "承知" },
         ],
         "current request",
       ),
-    ).toBe(
-      [
-        "The following Pragma startup messages precede the current user request. Preserve their order and treat each framed payload according to its declared role and exact character length.",
-        "<<<PRAGMA_STARTUP_MESSAGE index=1/2 role=user characters=9>>>",
-        "always on",
-        "<<<END_PRAGMA_STARTUP_MESSAGE index=1/2>>>",
-        "<<<PRAGMA_STARTUP_MESSAGE index=2/2 role=user characters=2>>>",
-        "承知",
-        "<<<END_PRAGMA_STARTUP_MESSAGE index=2/2>>>",
-        "<<<PRAGMA_CURRENT_REQUEST>>>",
-        "current request",
-        "<<<END_PRAGMA_CURRENT_REQUEST>>>",
-      ].join("\n"),
-    );
-    expect(formatAntigravityPrompt([], "unchanged")).toBe("unchanged");
+    ).toEqual({
+      event: "user",
+      message: {
+        role: "user",
+        content: [
+          { type: "text", text: "always on" },
+          { type: "text", text: "承知" },
+          { type: "text", text: "current request" },
+        ],
+      },
+    });
+    expect(createAntigravityUserMessage([], "unchanged").message.content).toEqual([
+      { type: "text", text: "unchanged" },
+    ]);
   });
 
   it("consumes first-turn startup messages exactly once", () => {
@@ -287,6 +283,510 @@ describe("Antigravity startup messages", () => {
     ]);
     expect(consumeAntigravityStartupMessages(session)).toEqual([]);
     expect(session.messages).toEqual([]);
+  });
+});
+
+describe("Antigravity persistent stream-json", () => {
+  it("accounts for a failed terminal result and differences the next cumulative snapshot", async () => {
+    let turnIndex = 0;
+    const spawn = createPersistentSpawn((_input, child) => {
+      const result =
+        turnIndex++ === 0
+          ? {
+              status: "ERROR",
+              error: "request failed",
+              conversation_id: conversation1,
+              usage: { input_tokens: 10, output_tokens: 3 },
+            }
+          : {
+              response: "next answer",
+              conversation_id: conversation1,
+              usage: { input_tokens: 15, output_tokens: 5 },
+            };
+      child.stdout.write(`${JSON.stringify({ event: "result", result })}\n`);
+    });
+    const session = createSession(spawn);
+    const firstEvents: AntigravityNativeEvent[] = [];
+    await expect(
+      startAntigravityTurn(
+        session,
+        createTurn({ writeNative: (event) => firstEvents.push(event) }),
+      ),
+    ).rejects.toMatchObject({ code: "ANTIGRAVITY_PROCESS_FAILED" });
+    expect(firstEvents.filter((event) => event.kind === "usage")).toEqual([
+      { kind: "usage", usage: expect.objectContaining({ input: 10, output: 3 }) },
+    ]);
+    const nextEvents: AntigravityNativeEvent[] = [];
+    await expect(
+      startAntigravityTurn(session, createTurn({ writeNative: (event) => nextEvents.push(event) })),
+    ).resolves.toMatchObject({ outputText: "next answer" });
+    expect(nextEvents.filter((event) => event.kind === "usage")).toEqual([
+      { kind: "usage", usage: expect.objectContaining({ input: 5, output: 2 }) },
+    ]);
+    expect(spawn).toHaveBeenCalledTimes(1);
+    await closeAntigravitySession(session);
+  });
+
+  it("classifies a generic failed result using only this turn's log tail", async () => {
+    const root = await mkdtemp(join(tmpdir(), "agy-failed-result-log-"));
+    let logPath = "";
+    let turnIndex = 0;
+    const baseSpawn = createPersistentSpawn((_input, child) => {
+      void (async () => {
+        if (turnIndex++ === 0) {
+          await writeFile(
+            logPath,
+            "agent executor error: authentication failed in an earlier turn\n",
+          );
+          child.stdout.write(
+            `${JSON.stringify({
+              event: "result",
+              result: {
+                response: "first",
+                conversation_id: conversation1,
+              },
+            })}\n`,
+          );
+        } else {
+          await writeFile(logPath, "agent executor error: quota exhausted (429)\n", { flag: "a" });
+          child.stdout.write(
+            `${JSON.stringify({
+              event: "result",
+              result: {
+                status: "ERROR",
+                error: "provider request failed",
+                conversation_id: conversation1,
+              },
+            })}\n`,
+          );
+        }
+      })();
+    });
+    const spawn: NonNullable<AntigravityNativeSession["spawn"]> = (...args) => {
+      logPath = args[1][args[1].indexOf("--log-file") + 1]!;
+      return baseSpawn(...args);
+    };
+    const session = createSession(spawn, undefined, { logDir: root });
+    try {
+      await startAntigravityTurn(session, createTurn());
+      await expect(startAntigravityTurn(session, createTurn())).rejects.toMatchObject({
+        code: "ANTIGRAVITY_RATE_LIMITED",
+        retryable: true,
+      });
+      expect(baseSpawn).toHaveBeenCalledTimes(1);
+    } finally {
+      await closeAntigravitySession(session);
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("does not classify earlier or transient log errors as a settled-response failure", async () => {
+    const root = await mkdtemp(join(tmpdir(), "agy-review-log-"));
+    let logPath = "";
+    const baseSpawn = createPersistentSpawn((_input, child, index) => {
+      void (async () => {
+        if (index === 0) {
+          await writeFile(
+            logPath,
+            "agent executor error: authentication failed in an earlier attempt\n",
+          );
+          child.stdout.write(
+            `${JSON.stringify({ event: "result", result: { response: "first", conversation_id: conversation1 } })}\n`,
+          );
+        } else {
+          await writeFile(
+            logPath,
+            "agent executor error: transient error before settled response\n",
+            { flag: "a" },
+          );
+          child.stdout.end(
+            `${JSON.stringify({ event: "step_update", step_update: { step_id: "current", step_type: "agent_response", state: "DONE", content: "current settled answer" } })}\n`,
+          );
+          child.emit("exit", 0, null);
+        }
+      })();
+    });
+    const spawn: NonNullable<AntigravityNativeSession["spawn"]> = (...args) => {
+      logPath = args[1][args[1].indexOf("--log-file") + 1]!;
+      return baseSpawn(...args);
+    };
+    const session = createSession(spawn, undefined, { logDir: root });
+    try {
+      await startAntigravityTurn(session, createTurn());
+      await expect(startAntigravityTurn(session, createTurn())).resolves.toMatchObject({
+        outputText: "current settled answer",
+        runtimeSessionId: conversation1,
+      });
+    } finally {
+      await closeAntigravitySession(session);
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("starts a new process if the previous one exited between turns", async () => {
+    let previous: PersistentChild | undefined;
+    const spawn = createPersistentSpawn((_input, child) => {
+      previous = child;
+      child.stdout.write(
+        `${JSON.stringify({ event: "result", result: { response: "OK", conversation_id: conversation1 } })}\n`,
+      );
+    });
+    const session = createSession(spawn);
+    await startAntigravityTurn(session, createTurn());
+    previous?.emit("exit", 0, null);
+    await expect(startAntigravityTurn(session, createTurn())).resolves.toMatchObject({
+      outputText: "OK",
+    });
+    expect(spawn).toHaveBeenCalledTimes(2);
+    await closeAntigravitySession(session);
+  });
+
+  it("rearms startup after an asynchronous OS spawn failure that could not dispatch", async () => {
+    const session = createSession(
+      (_command, args, options) =>
+        nodeSpawn("/nonexistent/pragma-agy-review-executable", [...args], {
+          ...options,
+          cwd: process.cwd(),
+        }),
+      undefined,
+      { sessionId: conversation1 },
+    );
+    await expect(
+      startAntigravityTurn(
+        session,
+        createTurn({
+          startupMessages: [{ role: "user", content: "post-compaction startup" }],
+        }),
+      ),
+    ).rejects.toMatchObject({ name: "RuntimeTurnNotDispatchedError" });
+    expect(session.messages).toEqual([]);
+    expect(session.connection).toBeUndefined();
+  });
+
+  it("rejects successful fresh output without an owned conversation ID", async () => {
+    const session = createSession(
+      createStreamSpawn([{ event: "result", result: { response: "unowned answer" } }]),
+    );
+    await expect(startAntigravityTurn(session, createTurn())).rejects.toMatchObject({
+      code: "ANTIGRAVITY_PROTOCOL_ERROR",
+    });
+    expect(session.messages.some((message) => message.role === "assistant")).toBe(false);
+  });
+
+  it("bounds waiting when stdout ends while the process stays alive", async () => {
+    let child: PersistentChild | undefined;
+    const session = createSession(
+      createPersistentSpawn((_input, current) => {
+        child = current;
+        current.stdout.end();
+      }),
+    );
+    const outcome = await Promise.race([
+      startAntigravityTurn(session, createTurn()).then(
+        () => "success",
+        (error: unknown) => error,
+      ),
+      new Promise<string>((resolve) => setTimeout(() => resolve("hung"), 1600)),
+    ]);
+    await closeAntigravitySession(session);
+    expect(outcome).toMatchObject({ code: "ANTIGRAVITY_PROTOCOL_ERROR" });
+    expect(child?.kill).toHaveBeenCalledTimes(1);
+  });
+
+  it("bounds stdout draining after process exit even with an inherited open pipe", async () => {
+    const session = createSession(
+      createPersistentSpawn((_input, child) => {
+        child.emit("exit", 0, null);
+      }),
+    );
+    const outcome = await Promise.race([
+      startAntigravityTurn(session, createTurn()).then(
+        () => "success",
+        (error: unknown) => error,
+      ),
+      new Promise<string>((resolve) => setTimeout(() => resolve("hung"), 1600)),
+    ]);
+    await closeAntigravitySession(session);
+    expect(outcome).toMatchObject({ code: "ANTIGRAVITY_PROTOCOL_ERROR" });
+  });
+
+  it("ignores late output from a replaced process without killing its successor", async () => {
+    let old: PersistentChild | undefined;
+    let current: PersistentChild | undefined;
+    const spawn = createPersistentSpawn((_input, child) => {
+      if (old === undefined) {
+        old = child;
+        // A subprocess can retain the old stdout after the agent process exits.
+        child.kill.mockImplementation(() => {
+          child.emit("exit", 0, null);
+          return true;
+        });
+        child.stdout.write(
+          `${JSON.stringify({ event: "result", result: { response: "first", conversation_id: conversation1 } })}\n`,
+        );
+      } else {
+        current = child;
+        old.stdout.write("invalid old output\n");
+        setImmediate(() =>
+          child.stdout.write(
+            `${JSON.stringify({ event: "result", result: { response: "second", conversation_id: conversation1 } })}\n`,
+          ),
+        );
+      }
+    });
+    const session = createSession(spawn);
+    await startAntigravityTurn(session, createTurn());
+    const outcome = await startAntigravityTurn(session, {
+      ...createTurn(),
+      modelSelection: { model: { modelId: "gemini-test" }, thinkingLevel: "high" },
+    } as RuntimeTurnContext<AntigravityNativeEvent>).then(
+      (result) => result.outputText,
+      (error: unknown) => error,
+    );
+    expect(current?.kill).not.toHaveBeenCalled();
+    await closeAntigravitySession(session);
+    old?.stdout.end();
+    expect(outcome).toBe("second");
+  });
+
+  it("does not reject the next request from a delayed previous write callback", async () => {
+    const callbacks: ((error?: Error | null) => void)[] = [];
+    const baseSpawn = createPersistentSpawn((_input, child, index) => {
+      if (index === 1) callbacks[0]?.(new Error("late previous write error"));
+      setImmediate(() =>
+        child.stdout.write(
+          `${JSON.stringify({ event: "result", result: { response: `answer-${index}`, conversation_id: conversation1 } })}\n`,
+        ),
+      );
+    });
+    const spawn: NonNullable<AntigravityNativeSession["spawn"]> = (...args) => {
+      const child = baseSpawn(...args);
+      const write = child.stdin.write.bind(child.stdin);
+      vi.spyOn(child.stdin, "write").mockImplementation((chunk, encoding, callback) => {
+        const done = typeof encoding === "function" ? encoding : callback;
+        if (done !== undefined) callbacks.push(done);
+        return write(chunk);
+      });
+      return child;
+    };
+    const session = createSession(spawn);
+    await startAntigravityTurn(session, createTurn());
+    const outcome = await startAntigravityTurn(session, createTurn()).then(
+      (result) => result.outputText,
+      (error: unknown) => error,
+    );
+    await closeAntigravitySession(session);
+    expect(outcome).toBe("answer-1");
+  });
+
+  it("sends startup once, retains one process and differences cumulative usage", async () => {
+    const inputs: unknown[] = [];
+    const spawn = createPersistentSpawn((input, child, index) => {
+      inputs.push(input);
+      if (index === 0)
+        child.stdout.write(
+          `${JSON.stringify({ event: "init", init: { conversation_id: conversation1 } })}\n`,
+        );
+      child.stdout.write(
+        `${JSON.stringify({
+          event: "result",
+          result: {
+            response: `answer-${index}`,
+            conversation_id: conversation1,
+            usage: { input_tokens: (index + 1) * 10, output_tokens: (index + 1) * 3 },
+          },
+        })}\n`,
+      );
+    });
+    const session = createSession(spawn);
+    const usages: unknown[] = [];
+    for (let index = 0; index < 3; index++) {
+      await startAntigravityTurn(
+        session,
+        createTurn({
+          startupMessages: index === 0 ? [{ role: "user", content: "startup" }] : [],
+          writeNative: (event) => {
+            if (event.kind === "usage") usages.push(event.usage);
+          },
+        }),
+      );
+    }
+    expect(spawn).toHaveBeenCalledTimes(1);
+    expect(inputs).toEqual([
+      createAntigravityUserMessage([{ role: "user", content: "startup" }], "rendered user request"),
+      createAntigravityUserMessage([], "rendered user request"),
+      createAntigravityUserMessage([], "rendered user request"),
+    ]);
+    expect(usages).toEqual(
+      Array.from({ length: 3 }, () => expect.objectContaining({ input: 10, output: 3 })),
+    );
+    await closeAntigravitySession(session);
+    expect(session.connection).toBeUndefined();
+  });
+
+  it("does not attribute a restored conversation's cumulative first result to its new turn", async () => {
+    const spawn = createPersistentSpawn((_input, child) =>
+      child.stdout.write(
+        `${JSON.stringify({
+          event: "result",
+          result: {
+            response: "restored",
+            conversation_id: conversation1,
+            usage: { input_tokens: 1000, output_tokens: 100 },
+          },
+        })}\n`,
+      ),
+    );
+    const session = createSession(spawn, undefined, { sessionId: conversation1 });
+    const events: AntigravityNativeEvent[] = [];
+    const result = await startAntigravityTurn(
+      session,
+      createTurn({ writeNative: (event) => events.push(event) }),
+    );
+    expect(events.filter((event) => event.kind === "usage")).toEqual([]);
+    expect(result.usage).toMatchObject({ measurement: "estimated" });
+    await closeAntigravitySession(session);
+  });
+
+  it("rejects identity changes without silently replacing the conversation", async () => {
+    const spawn = createPersistentSpawn((_input, child) =>
+      child.stdout.write(
+        `${JSON.stringify({
+          event: "result",
+          result: { response: "wrong conversation", conversation_id: conversation2 },
+        })}\n`,
+      ),
+    );
+    const session = createSession(spawn, undefined, { sessionId: conversation1 });
+    await expect(startAntigravityTurn(session, createTurn())).rejects.toMatchObject({
+      code: "ANTIGRAVITY_PROTOCOL_ERROR",
+    });
+    expect(session.sessionId).toBe(conversation1);
+  });
+
+  it("uses attributable step usage on restored turns and does not count repeated snapshots", async () => {
+    const events: AntigravityNativeEvent[] = [];
+    const spawn = createPersistentSpawn((_input, child) => {
+      const step = {
+        event: "step_update",
+        step_update: {
+          step_id: "one-model-call",
+          step_type: "agent_response",
+          state: "DONE",
+          content: "OK",
+          usage: { input_tokens: 7, output_tokens: 2 },
+        },
+      };
+      child.stdout.write(`${JSON.stringify(step)}\n${JSON.stringify(step)}\n`);
+      child.stdout.write(
+        `${JSON.stringify({ event: "result", result: { response: "OK", conversation_id: conversation1, usage: { input_tokens: 1000, output_tokens: 200 } } })}\n`,
+      );
+    });
+    const session = createSession(spawn, undefined, { sessionId: conversation1 });
+    const result = await startAntigravityTurn(
+      session,
+      createTurn({ writeNative: (event) => events.push(event) }),
+    );
+    expect(result.usage).toBeUndefined();
+    expect(events.filter((event) => event.kind === "usage")).toEqual([
+      {
+        kind: "usage",
+        usage: expect.objectContaining({ measurement: "reported", input: 7, output: 2 }),
+      },
+    ]);
+    await closeAntigravitySession(session);
+  });
+
+  it("restarts on effort changes and resumes the same ID without startup replay", async () => {
+    const inputs: unknown[] = [];
+    const spawn = createPersistentSpawn((input, child) => {
+      inputs.push(input);
+      child.stdout.write(
+        `${JSON.stringify({ event: "result", result: { response: "OK", conversation_id: conversation1 } })}\n`,
+      );
+    });
+    const session = createSession(spawn);
+    await startAntigravityTurn(
+      session,
+      createTurn({ startupMessages: [{ role: "user", content: "initial" }] }),
+    );
+    await startAntigravityTurn(session, {
+      ...createTurn(),
+      modelSelection: { model: { modelId: "gemini-test" }, thinkingLevel: "high" },
+    } as RuntimeTurnContext<AntigravityNativeEvent>);
+    expect(spawn).toHaveBeenCalledTimes(2);
+    expect(spawn.mock.calls[1]?.[1]).toEqual(
+      expect.arrayContaining(["--conversation", conversation1, "--effort", "high"]),
+    );
+    expect(inputs[1]).toEqual(createAntigravityUserMessage([], "rendered user request"));
+    await closeAntigravitySession(session);
+  });
+
+  it("labels spawn failure before dispatch and restores the local message history", async () => {
+    const session = createSession(() => {
+      throw new Error("spawn unavailable");
+    });
+    await expect(
+      startAntigravityTurn(
+        session,
+        createTurn({ startupMessages: [{ role: "user", content: "initial" }] }),
+      ),
+    ).rejects.toMatchObject({ name: "RuntimeTurnNotDispatchedError" });
+    expect(session.messages).toEqual([]);
+  });
+
+  it("cancels an active request and keeps its owned identity for the following request", async () => {
+    const abort = new AbortController();
+    const spawn = createPersistentSpawn((_input, child) => {
+      child.stdout.write(
+        `${JSON.stringify({ event: "init", init: { conversation_id: conversation1 } })}\n`,
+      );
+      setImmediate(() => abort.abort());
+    });
+    const session = createSession(spawn);
+    await expect(
+      startAntigravityTurn(session, createTurn({ signal: abort.signal })),
+    ).rejects.toMatchObject({ name: "AbortError" });
+    expect(session.sessionId).toBe(conversation1);
+    expect(session.connection).toBeUndefined();
+  });
+
+  it("deduplicates completed compaction operations across native turns", async () => {
+    const events: AntigravityNativeEvent[] = [];
+    const spawn = createPersistentSpawn((_input, child) => {
+      child.stdout.write(
+        `${JSON.stringify({ event: "step_update", step_update: { step_id: "compact-1", step_type: "compaction", state: "DONE", compaction_info: { operation_id: "same-operation" } } })}\n`,
+      );
+      child.stdout.write(
+        `${JSON.stringify({ event: "result", result: { response: "OK", conversation_id: conversation1 } })}\n`,
+      );
+    });
+    const session = createSession(spawn);
+    for (let index = 0; index < 2; index++)
+      await startAntigravityTurn(
+        session,
+        createTurn({ writeNative: (event) => events.push(event) }),
+      );
+    expect(
+      events.filter(
+        (event) =>
+          event.kind === "progress" && event.stage === RUNTIME_CONTEXT_COMPACTION_STAGES.completed,
+      ),
+    ).toHaveLength(1);
+    await closeAntigravitySession(session);
+  });
+
+  it("does not turn statusless compaction info into completion", () => {
+    const events = normalizeAntigravityStreamRecord({
+      event: "step_update",
+      step_update: {
+        step_type: "compaction",
+        compaction_info: { operation_id: "unknown" },
+      },
+    });
+    expect(events).not.toContainEqual(
+      expect.objectContaining({ stage: RUNTIME_CONTEXT_COMPACTION_STAGES.completed }),
+    );
   });
 });
 
@@ -577,7 +1077,7 @@ describe("Antigravity stream-json process", () => {
     });
     expect(spawn).toHaveBeenCalledWith(
       "/opt/agy",
-      expect.arrayContaining(["-p", expect.stringContaining("mounted context")]),
+      expect.arrayContaining(["--input-format", "stream-json", "--agent", "pragma-review"]),
       expect.objectContaining({ cwd: "/workspace/project", env: { PRIVATE_HOME: "true" } }),
     );
     expect(nativeEvents).toEqual(
@@ -622,8 +1122,8 @@ describe("Antigravity stream-json process", () => {
 
   it("uses the shared token counter only when the CLI omits usage, without double-counting startup input", async () => {
     const spawn = createStreamSpawn([
-      { type: "init", conversation_id: conversation3 },
-      { type: "result", conversation_id: conversation3, result: "Done" },
+      { event: "init", conversation_id: conversation3 },
+      { event: "result", conversation_id: conversation3, result: "Done" },
     ]);
     const countText = vi
       .fn<AntigravityNativeSession["tokenCounter"]["countText"]>()
@@ -648,9 +1148,9 @@ describe("Antigravity stream-json process", () => {
 
   it("recovers a non-empty streamed answer when a terminal result is missing", async () => {
     const spawn = createStreamSpawn([
-      { type: "init", conversation_id: conversation4 },
+      { event: "init", conversation_id: conversation4 },
       {
-        type: "step_update",
+        event: "step_update",
         step_update: {
           step_id: "answer",
           step_type: "model_response",
@@ -676,9 +1176,9 @@ describe("Antigravity stream-json process", () => {
   it("does not treat an ACTIVE response after an earlier DONE response as settled", async () => {
     const session = createSession(
       createStreamSpawn([
-        { type: "init", conversation_id: conversation4 },
+        { event: "init", conversation_id: conversation4 },
         {
-          type: "step_update",
+          event: "step_update",
           step_update: {
             step_index: 0,
             step_type: "agent_response",
@@ -687,7 +1187,7 @@ describe("Antigravity stream-json process", () => {
           },
         },
         {
-          type: "step_update",
+          event: "step_update",
           step_update: {
             step_index: 2,
             step_type: "agent_response",
@@ -758,9 +1258,9 @@ describe("Antigravity stream-json process", () => {
   it("retains an initialized native conversation when the turn later fails", async () => {
     const session = createSession(
       createStreamSpawn([
-        { type: "init", conversation_id: conversation3 },
+        { event: "init", conversation_id: conversation3 },
         {
-          type: "result",
+          event: "result",
           result: {
             conversation_id: conversation3,
             status: "ERROR",
@@ -779,60 +1279,11 @@ describe("Antigravity stream-json process", () => {
     expect(session.sessionId).toBe(conversation3);
   });
 
-  it("accepts the historical plain-text fallback while keeping malformed structured output fatal", async () => {
-    const plainSession = createSession(createRawStreamSpawn("First line\nsecond line\n"));
-    await expect(startAntigravityTurn(plainSession, createTurn())).resolves.toMatchObject({
-      outputText: "First line\nsecond line",
-    });
-
-    const malformedSession = createSession(createRawStreamSpawn('{"type":\n'));
-    await expect(startAntigravityTurn(malformedSession, createTurn())).rejects.toMatchObject({
-      name: "AntigravityRuntimeError",
-      code: "ANTIGRAVITY_PROTOCOL_ERROR",
-    });
-
-    const timedOutSession = createSession(
-      createRawStreamSpawn("Error: timed out waiting for response\n"),
-    );
-    await expect(startAntigravityTurn(timedOutSession, createTurn())).rejects.toMatchObject({
-      name: "AntigravityRuntimeError",
-      code: "ANTIGRAVITY_TIMEOUT",
-      retryable: true,
-    });
-  });
-
-  it("recovers the native session id from agy print-mode logs and reuses it in the next argv", async () => {
-    const root = await mkdtemp(join(tmpdir(), "pragma-agy-log-recovery-"));
-    const homeDir = join(root, "home");
-    const logDir = join(root, "logs");
-    await mkdir(logDir, { recursive: true });
-    try {
-      const session = createSession(
-        createRawStreamSpawn("Plain answer\n", "", async (args) => {
-          const logPath = args[args.indexOf("--log-file") + 1]!;
-          await mkdir(dirname(logPath), { recursive: true });
-          await writeFile(logPath, `Print mode: conversation=${conversation2}, sending message\n`);
-        }),
-        undefined,
-        { homeDir, logDir },
-      );
-
-      await expect(startAntigravityTurn(session, createTurn())).resolves.toMatchObject({
-        outputText: "Plain answer",
-        runtimeSessionId: conversation2,
-      });
-      expect(session.sessionId).toBe(conversation2);
-      expect(
-        createAntigravityArgs({
-          prompt: "next",
-          workspace: "/workspace/project",
-          logPath: join(logDir, "next.log"),
-          permissionMode: "request-approval",
-          sessionId: session.sessionId,
-        }),
-      ).toContain("--conversation");
-    } finally {
-      await rm(root, { recursive: true, force: true });
+  it("rejects plain text and malformed stream-json", async () => {
+    for (const output of ["First line\n", '{"event":\n']) {
+      await expect(
+        startAntigravityTurn(createSession(createRawStreamSpawn(output)), createTurn()),
+      ).rejects.toMatchObject({ code: "ANTIGRAVITY_PROTOCOL_ERROR" });
     }
   });
 
@@ -898,10 +1349,17 @@ describe("Antigravity stream-json process", () => {
         ].join("\n"),
       );
       const fresh = createSession(
-        createRawStreamSpawn("", "", async (args) => {
-          const logPath = args[args.indexOf("--log-file") + 1]!;
-          await writeFile(logPath, `Print mode: conversation=${conversation4}, sending message\n`);
-        }),
+        createRawStreamSpawn(
+          `${JSON.stringify({ event: "init", init: { conversation_id: conversation4 } })}\n`,
+          "",
+          async (args) => {
+            const logPath = args[args.indexOf("--log-file") + 1]!;
+            await writeFile(
+              logPath,
+              `Print mode: conversation=${conversation4}, sending message\n`,
+            );
+          },
+        ),
         undefined,
         { homeDir, logDir },
       );
@@ -945,7 +1403,7 @@ describe("Antigravity stream-json process", () => {
   });
 
   it("fails when the process exits successfully without any recoverable assistant output", async () => {
-    const session = createSession(createStreamSpawn([{ type: "init" }]));
+    const session = createSession(createStreamSpawn([{ event: "init" }]));
 
     await expect(startAntigravityTurn(session, createTurn())).rejects.toMatchObject({
       code: "ANTIGRAVITY_PROTOCOL_ERROR",
@@ -988,7 +1446,8 @@ describe("Antigravity stream-json process", () => {
     await expect(result).rejects.toMatchObject({ name: "AbortError" });
     expect(child.kill).toHaveBeenCalledWith("SIGTERM");
     expect(child.kill).not.toHaveBeenCalledWith("SIGKILL");
-    expect(session.activeProcess).toBeUndefined();
+    expect(session.connection).toBeUndefined();
+    expect(child.kill).toHaveBeenCalledTimes(1);
     expect(session.toolRuntimeState.runId).toBeUndefined();
   });
 });
@@ -997,7 +1456,7 @@ describe("Antigravity record normalization and usage collection", () => {
   it("keeps unknown records observable while recursively removing credentials", () => {
     expect(
       normalizeAntigravityStreamRecord({
-        type: "future_event",
+        event: "future_event",
         authorization: "secret",
         token: "secret",
         visible: "kept",
@@ -1007,7 +1466,7 @@ describe("Antigravity record normalization and usage collection", () => {
       {
         kind: "progress",
         stage: "antigravity.future_event",
-        data: { type: "future_event", visible: "kept", nested: { visible: ["nested"] } },
+        data: { event: "future_event", visible: "kept", nested: { visible: ["nested"] } },
       },
     ]);
   });
@@ -1015,7 +1474,7 @@ describe("Antigravity record normalization and usage collection", () => {
   it("prefers direct output token totals over component output fields", () => {
     expect(
       normalizeAntigravityStreamRecord({
-        type: "result",
+        event: "result",
         result: "done",
         usage: {
           inputTokens: 7,
@@ -1251,16 +1710,6 @@ describe("Antigravity record normalization and usage collection", () => {
         ].join("\n"),
       );
       await expect(readAntigravityTranscriptAssistantText(transcript)).resolves.toBeUndefined();
-      expect(
-        readAntigravityConversationIdFromLog(
-          'conversationID=""\ncreated conversation_id: 11111111-2222-4333-8444-555555555555\n',
-        ),
-      ).toBe("11111111-2222-4333-8444-555555555555");
-      expect(
-        readAntigravityConversationIdFromLog(
-          `Print mode: conversation=${conversation1}, sending message`,
-        ),
-      ).toBe(conversation1);
     } finally {
       await rm(root, { recursive: true, force: true });
     }
@@ -1408,6 +1857,44 @@ function createChunkedRawStreamSpawn(chunks: readonly Buffer[]) {
       child.stdout.end();
       child.stderr.end();
       child.emit("exit", 0, null);
+    });
+    return child as unknown as ChildProcessWithoutNullStreams;
+  });
+}
+
+type PersistentChild = EventEmitter & {
+  stdin: PassThrough;
+  stdout: PassThrough;
+  stderr: PassThrough;
+  kill: ReturnType<typeof vi.fn>;
+};
+function createPersistentSpawn(
+  onInput: (input: unknown, child: PersistentChild, index: number) => void,
+) {
+  return vi.fn<NonNullable<AntigravityNativeSession["spawn"]>>(() => {
+    const child = new EventEmitter() as PersistentChild;
+    child.stdin = new PassThrough();
+    child.stdout = new PassThrough();
+    child.stderr = new PassThrough();
+    let exited = false;
+    child.kill = vi.fn(() => {
+      if (!exited) {
+        exited = true;
+        child.stdout.end();
+        child.stderr.end();
+        child.emit("exit", 0, null);
+      }
+      return true;
+    });
+    let buffer = "";
+    let index = 0;
+    child.stdin.on("data", (chunk: Buffer) => {
+      buffer += chunk.toString();
+      for (let newline = buffer.indexOf("\n"); newline >= 0; newline = buffer.indexOf("\n")) {
+        const input = JSON.parse(buffer.slice(0, newline)) as unknown;
+        buffer = buffer.slice(newline + 1);
+        onInput(input, child, index++);
+      }
     });
     return child as unknown as ChildProcessWithoutNullStreams;
   });

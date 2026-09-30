@@ -1,413 +1,146 @@
 # Antigravity CLI Runtime
 
-本文记录 `@pragma/runtime-antigravity` 的协议基线、适配决策与验证边界。实现目标是让 Antigravity CLI
-成为可替换的本地 Runtime Adapter，同时保持 Core、Desktop Host 与供应商 CLI 的职责边界。
+`@pragma/runtime-antigravity` 是独立 Node-only Runtime Adapter，由 Desktop 或 CLI composition root 装配。
+Runtime id 为 `antigravity`，kind 为 `antigravity-local`，最低支持 **agy 1.2.13**。
 
-## 结论
+## 原生接入与配置边界
 
-- Runtime id 为 `antigravity`，kind 为 `antigravity-local`，最低支持 `agy 1.1.11`。
-- Adapter 只依赖 `@pragma/core`、`@pragma/shared` 与运行时中立依赖，不依赖其他 Runtime。
-- 认证使用双模式：ADC 使用 Session 私有 HOME；交互式 OAuth 使用显式 `host-keyring` 兼容模式。
-- 两种模式都不由 Pragma 向宿主 `~/.gemini` 复制或物化配置；兼容模式由 agy 原生读取宿主 settings、
-  全局 customization，并使用宿主 native conversation 存储，Pragma 自己的配置仍保持 Session 私有。
-- 系统提示词通过 Session plugin 的 always-on rule 注入；startup messages 只在 fresh conversation 的首轮注入。
-- Pragma 工具通过私有 HTTP MCP session 暴露；native tool 权限通过 fail-closed `PreToolUse` Hook
-  回接 Core human interaction。
-- MCP 与 Skill 打包为 Session 私有 plugin，完整保留 Skill 的 scripts、references、resources 等支持文件。
-- 执行使用官方 `stream-json` 协议，并保留纯文本 stdout、transcript 和日志恢复路径。
+System prompt 使用官方 custom Agent；Skills 与 MCP 使用官方 plugin discovery；多轮输入输出使用
+`--input-format stream-json --output-format stream-json`。不生成 always-on system rule，不将全量 MCP
+Schema 写入提示词，不使用 PTY 或 SQLite 包装器。Google 的 ACP 是独立 `agy_acp_server`，本次不接入。
+原生探针及 ACP 调研见 [研究记录](../research/antigravity-acp/README.md)。
 
-## 版本基线
-
-`stream-json`、`init` / `step_update` / `result`、`tool_info`、`subagent_info` 和 usage 是 1.1.8
-引入的协议。1.1.10 修复了 `--model` 与 `--effort` 在 headless `-p` 中被忽略的问题；1.1.11 是当前
-global customization 路径与认证行为的已验证基线，因此 Adapter 拒绝更早版本。开发时使用官方
-macOS x64 `agy 1.1.11` 验证了版本探测、参数面、配置发现、私有 HOME、宿主钥匙串登录、managed
-plugin/rule/Skill 发现和真实 `stream-json` 成功响应。
-
-可执行文件解析顺序为：显式 `executablePath`、`AGY_PATH`、`PATH`、官方用户安装目录，最后回退到
-`agy`/`agy.exe` 交给进程错误处理。Windows 必须指向原生 `.exe`，不接受无法直接 spawn 的 `.cmd`
-shim。版本探测与模型目录刷新都有有界缓存，并按 executable、environment 与 spawn implementation
-隔离。
-
-## 认证模式与 Session 布局
-
-Desktop 使用 `auto` 策略：`AGY_ADC_AUTH=true` 时选择 `isolated-environment`，否则选择
-`host-keyring`。前者适合官方 ADC；后者用于用户已通过交互式 `agy` 完成的 OAuth 登录。agy 1.1.11
-会在 `HOME` 被替换后跳过宿主系统钥匙串，因此 OAuth 模式必须保留真实 `HOME`/`USERPROFILE`。这是
-供应商 CLI 的认证约束，不是网络 fallback。
-
-`isolated-environment` 在 owned Runtime Session 中生成完整私有 HOME：
+每个 Runtime Session 的私有布局为：
 
 ```text
-<runtime-session>/
-├── home/
-│   └── .gemini/
-│       ├── config/
-│       │   ├── hooks.json
-│       │   ├── plugins.json
-│       │   └── plugins/pragma-<session-hash>/
-│       │       ├── plugin.json
-│       │       ├── mcp_config.json
-│       │       ├── agents/pragma-<expert-id>-<session-hash>/agent.md
-│       │       ├── rules/pragma-system.md
-│       │       └── skills/pragma-<session-hash>-<skill>/SKILL.md
-│       └── antigravity-cli/
-│           ├── settings.json
-│           └── ... agy session/cache state
-├── hooks/pragma-pre-tool-use.mjs
-├── logs/turn-<run-id>.log
+runtime/antigravity/
+├── home/                            # isolated-environment 的私有 HOME
+├── managed-customizations/.agents/
+│   ├── agents/<unique-agent-name>.md # Core 完整 system prompt
+│   ├── hooks.json                   # Session 唯一 namespace 的权限 Hook
+│   ├── plugins.json
+│   └── plugins/pragma-<session-hash>/
+│       ├── plugin.json
+│       ├── mcp_config.json          # Session HTTP Gateway
+│       └── skills/<namespaced-name>/ # 完整 Skill bundle
+├── hooks/pragma-pre-tool-use.mjs     # relay URL 和凭据仅存在私有文件
+├── logs/stream-<uuid>.log
 └── tmp/
 ```
 
-`host-keyring` 不写宿主配置，而是在同一个 Runtime Session 中生成官方 workspace customization：
+配置、插件副本和原生运行状态不进入 Expert workspace。`PragmaPaths` 与 Core 管理 Session ownership
+和恢复引用。Session namespace 和 MCP server identity 保持稳定，以便恢复已有 conversation。
+Session 首次访问重建受管配置，只移除该 namespace 的旧 rule 与重复 Agent，不全量扫描其他 Session。
+本次不改变持久化 Schema。
+
+认证有两个显式模式：
+
+- `isolated-environment`：完整私有 HOME，使用官方 `AGY_ADC_AUTH` 或可在私有环境工作的认证。
+- `host-keyring`：保留宿主 HOME，支持交互式 OAuth 登录。`auto` 在启用 ADC 时选择前者，否则选择后者。
+
+host-keyring 模式下 Pragma 不读取、复制或物化宿主 `.gemini` 配置，但 agy 会按原生语义共享宿主
+settings、全局 customization、MCP Schema 缓存及 native conversation 存储。这是明确的兼容边界；恢复
+只读取已拥有的 conversation，不扫描宿主 Session 树。两种模式均使用私有额外 customization workspace。
+relay 凭据不进入 agy 进程环境或子 shell；原生自动更新禁用。
+
+## System prompt、startup 与 Skills
+
+Agent 正文逐字承载 Core system prompt，声明 `mainAgent: true`、`subagent: false`、
+`inheritCustomizations: true`。启动使用注册名称 `--agent <name>`，而非绝对文件路径；init 参数回显
+不等于 Agent 真正加载，真实测试必须验证 system marker。继承宿主 customization 的行为仍受上述认证边界约束。
+
+Startup 生命周期完全使用 Core driver：fresh conversation 首次消费，普通后续请求不重放；恢复
+conversation、CLI 重启或配置切换不视为首次对话。只有经确认的压缩 completed 事件才使 Core 在下一次
+用户请求重注入一次；重复完成事件合并，started、failed、状态不明与历史回放不触发注入。
+输出格式修复重试不重复注入。Core 的重注入预算及诊断继续有效。
+
+每轮只写一个 NDJSON user event。startup 按顺序成为 `message.content` 中的 text blocks，当前请求为
+最后一个 block；不添加角色/字符数文本帧，不把 startup 分拆成额外模型轮次。准备失败不消费 startup；
+确认未 dispatch 的失败使用 `RuntimeTurnNotDispatchedError`，由 Core 保存已消费内容供下次 submission
+重试。已发送或发送结果不确定时不自动重放。Core 的待注入状态在同一 RuntimeSession 内跨 CLI 重启保留；
+本次没有新增跨应用重启的注入状态持久化协议。
+
+实现与回归参考 Qoder、Codex、OpenCode 的 fresh-only 挂载与一次消费，以及 Pi 的压缩时序和失败处理。
+不照搬共享 ACP driver 每次新连接 bootstrap 的策略。
+
+Skills 保留完整目录、引用文件和可执行权限，过滤 `node_modules`。名称按 Session namespace 改写。
+agy 可通过自然语言按需读取 Skill，也支持显式 slash；Adapter 只将当前请求的首个已注册 slash 映射
+为 namespaced 名称，包括 Core 附件路径上下文中的受控 `# My request` 区段。startup 不参与该映射。
+
+## MCP 与权限
+
+Session HTTP Gateway 只注册当前 Expert 的工具白名单；工具别名遵守 agy 64 字符完整名称预算。
+插件的本地 server key 为 `p`，原生身份为 `pragma-<hash>_p`。Gateway 的工具目录用于注册与诊断，
+不再注入 system prompt。agy 原生会将单工具定义缓存为 JSON，并让模型按需读取；这是原生实现行为。
+
+PreToolUse relay 是三种模式共同的权限闸门。headless stream-json 尚无已验证的交互审批控制通道，
+因此保留官方 Hook 入口与 `--dangerously-skip-permissions`，避免原生第二次非交互审批阻塞：
+
+- request-approval：受管 MCP 与安全读取通过；其他受支持操作交由 Host 审批，无 handler 则拒绝。
+- auto-approve：受管 MCP、已知 workspace 文件工具通过；shell、网络和未受管操作不自动通过。
+- full-access：通过合法 workspace identity 校验后允许操作。
+
+额外读取范围仅包含完整受管 Skills 根，以及当前受管 server 的
+`<native-home>/.gemini/antigravity-cli/mcp/<native-server-name>/`。这些路径仅供读取，使用 realpath
+和路径 containment 校验，阻止相邻 server、符号链接越界及写入；不开放整个 `.gemini` 或受管 workspace。
+Hook workspacePaths 可包含 Expert workspace 与私有 customization workspace，但它们不等于模型文件读取授权。
+relay 关闭、请求损坏和审批失败均 fail closed。
+
+用户 workspace 的 `.agents`、`.agent`、`_agents`、`_agent` 可能在 relay 前启动额外 Hook、stdio MCP 或
+插件，因此 Session 准备与每轮请求前均拒绝包含这些根的 workspace。Core 的 AGENTS.md 与显式 Skills
+仍通过受管路径提供。需要原生 workspace customization 的项目使用隔离 workspace。
+
+## 多轮进程、事件与用量
+
+每个 Runtime Session 常驻一个进程：
 
 ```text
-<runtime-session>/
-├── managed-customizations/
-│   └── .agents/
-│       ├── hooks.json
-│       ├── plugins.json
-│       └── plugins/pragma-<session-hash>/
-│           ├── plugin.json
-│           ├── mcp_config.json
-│           ├── agents/pragma-<expert-id>-<session-hash>/agent.md
-│           ├── rules/pragma-system.md
-│           └── skills/pragma-<session-hash>-<skill>/SKILL.md
-├── hooks/pragma-pre-tool-use.mjs
-├── logs/turn-<run-id>.log
-└── tmp/
+agy --input-format stream-json --output-format stream-json
+    --agent <registered-name>
+    --add-dir <expert-workspace> --add-dir <private-customization-workspace>
+    --log-file <session-log> --mode accept-edits
+    [--sandbox] --dangerously-skip-permissions
+    [--conversation <owned-id>] [--model <selector>] [--effort <level>]
 ```
 
-隔离模式强制重定向 `HOME`、`USERPROFILE`、XDG 目录、Windows AppData 与临时目录，并移除宿主的
-`AGY_APP_DATA_DIR`、`ANTIGRAVITY_HOME`、Gemini config override、Google log override、Antigravity
-conversation/project/sidecar 状态及旧的 Pragma Hook secret 变量。
-显式认证环境变量与其他业务环境保持透传。`AGY_CLI_DISABLE_AUTO_UPDATE=true`，避免一个受管 Session
-在执行中改写宿主安装。
+每轮以 `result` 收尾，stdin 保持开放；正文、thought、工具 snapshot 与错误状态按轮清空。
+compaction operation ID 在连接内去重，不将缺少状态的信息推断为 completed。
+模型或 effort 变化时关闭空闲进程，再使用同一 conversation ID 启动。取消和异常停止进程，后续请求按
+已拥有 ID 恢复；identity 不匹配拒绝执行，不静默 fresh。关闭先结束 stdin，再使用 Core 有界 TERM/KILL，
+进程清理后才释放 relay、MCP registration 和 registry lease。异步回调绑定具体连接与请求，旧连接不得修改
+新连接的 identity 或取消后续请求；stdout EOF 和退出后的管道 drain 均有界等待，停止过程由 Supervisor 去重。
 
-`host-keyring` 保留宿主 HOME/XDG/AppData，只移除可能串扰 Session 的 Antigravity sidecar、conversation、
-project、config override 和旧 Pragma secret 变量；临时目录和 Pragma turn 日志仍定向到 Runtime Session。
-agy 会按原生语义读取宿主 settings、全局 customization，并把 native conversation 保存在宿主目录。
-Pragma 只按当前拥有的 conversation ID 定向恢复，不扫描宿主 conversation 树；Mission 删除也不会删除
-agy 拥有的宿主 native conversation。首次 OAuth 登录仍在 Pragma 外运行交互式 `agy`，Adapter 不读取、
-复制或导出钥匙串凭据。模型发现同样保留宿主 HOME 和认证配置，但使用隔离 cwd/tmp 并移除 Session 变量。
+NDJSON 使用 UTF-8 decoder、4 MiB 单行上限和官方 `event` envelope。保留真实增量、snapshot 去重、
+thought、工具 lifecycle、session、compaction 与脱敏的未知事件；移除旧 `type` envelope 和纯文本 stdout
+兼容模式。显式 native failure 始终失败，不从日志推断成功。
 
-## 系统提示词与 startup messages
+成功退出但缺少 result 时，只允许已完成的 assistant step，或已拥有 conversation 的当前轮 transcript
+恢复。读取前记录 inode/size checkpoint；恢复须出现本轮 USER_INPUT 后的 settled model response。
+rotate、truncate、无法 checkpoint 或缺失边界不接受旧答案。不会扫描最近 conversation。每个进程使用独立
+日志文件，每轮记录日志 checkpoint 并清空 stderr tail，错误分类不得读取上一轮的诊断。无已拥有 conversation
+ID 的输出不能作为成功结果。异步 OS spawn 失败在写入 stdin 前识别，以允许 Core 重试 startup。
 
-Antigravity 没有等价的 `--system-prompt` 参数。Adapter 在 Session plugin 的 `agents/` 中保留一个
-受管 custom agent：
+原生 `result.usage` 在常驻进程中是累计值；Adapter 按进程基线求差，只通过一个 native usage 事件提交。
+恢复进程首轮累计基线不确定时，不把历史用量记为本轮；采用可归属的 step usage，否则调用 Core
+RuntimeTokenCounter 并标记 estimated。step snapshot 按 ID 去重，不能与终态差值重复相加；累计值回退
+或缺失时不制造负数和历史计费。startup 在 fallback 输入中只计算一次。
+没有可靠 context-window denominator，不伪造占用率；压缩能力在真实事件证据不足时继续 degraded。
 
-```markdown
----
-name: "pragma-...-<session-hash>"
-description: "..."
-mainAgent: true
-subagent: false
-hidden: false
-inheritMcp: true
-mcpServers:
-  - "pragma<session-hash>"
-commandExecutionPolicy: off
----
+模型目录来自 `agy models`，selector 作为 opaque ID 使用；无假模型目录。图片、文件与目录目前通过
+Core 受控路径上下文提供，图片标记 degraded，不伪造原生媒体上传。
 
-# System Prompt
+## 验证
 
-<Core 组装的完整 system prompt，逐字保留>
-```
-
-agy 1.1.11 的 print mode 在附加 workspace plugin 加载前解析 `--agent`，传 plugin Agent 名称会静默回退
-default Agent，因此 Adapter 不再传这个无效参数。相同的 Core system prompt 由 plugin 的 always-on
-`rules/pragma-system.md` 注入，不摘要或拼接到用户消息；受管 Agent 仍随 plugin 物化供原生 Agent/子 Agent
-发现。`commandExecutionPolicy` 随权限模式映射为 `off` / `sandbox` / `eager`。Skill
-由显式注册的 Session plugin 自动发现；agent frontmatter 不写 `skills:` 路径，因为 agy 1.1.11 的
-agent-relative 路径缺少 `AgentBasePath` 并会失效。Session 重新准备时只替换这个受管 Agent
-entry，不删除 Antigravity 为已恢复 conversation 保存的动态 subagent。
-
-agy 1.1.11 把 Skill 暴露为显式 slash command，而不是模型可自主调用的工具。用户以原始 Pragma Skill
-名（例如 `/review`）开始请求时，Adapter 只重写该命令为 Session 命名空间后的注册名，再交给 agy 原生
-Skill expansion；Core 在图片、文件或目录前置路径上下文时，Adapter 只从受控的 `# My request` 区段识别
-这个首个 slash invocation，避免附件让 namespace 重写失效。普通自然语言请求不会隐式加载全部 Skill 正文。
-Skill expansion 内部发出的只读文件工具仅可读取当前 Session plugin 的 `skills/` 根；普通文件读写仍以
-Expert workspace 做 containment，managed-customizations 的 Hook、registry 和其他文件不开放给模型。
-
-Antigravity print mode 每次只接受一个 prompt 参数，因此 startup messages 使用带角色、顺序与精确字符数
-的边界帧放在当前请求之前。Driver 的 `consumeStartupMessages()` 只消费 fresh conversation 的初始消息
-一次；恢复已有 `conversation_id` 时不重复首轮发送。若 Runtime 后续报告完成 context compaction，Core
-仍可按统一预算规则在下一轮重注入 always-on startup messages。消息历史分别记录 startup message 和当前
-user message，不把边界帧当作权威历史格式。fresh 首轮如果在产生任何 native conversation identity 前失败，
-Core 会保留本次已消费的 startup messages 供下一次 submission 重试；一旦已经观察到 identity，则不重复注入。
-
-## MCP
-
-Adapter 从 Core 的 process-shared `McpToolRegistryPool` 获取连接，再为当前 Expert/Execution 注册独立
-MCP session。Adapter 在 `.agents/plugins/pragma-<session-hash>/` 写入 `plugin.json`、`mcp_config.json`
-和 Skills，并由 `.agents/plugins.json` 显式注册；不再写无效的 workspace 顶层 `mcp_config.json`。plugin
-只声明一个 Session-scoped
-local key 为 `p` 的 remote server，原生身份为 `pragma-<session-hash>_p`：
-
-```json
-{
-  "mcpServers": {
-    "p": {
-      "serverUrl": "http://127.0.0.1:<port>/<private-session-path>"
-    }
-  }
-}
-```
-
-agy 把工具名展开为 `mcp_<plugin-name>_<local-server-key>_<tool-name>`，全名必须匹配
-`^[a-zA-Z0-9_-]{1,64}$`。保留 plugin 的 16 位 Session namespace，但不要在 server key 中重复哈希；
-当前前缀长 30 字符，留给 local tool name 34 字符。Adapter 向 Core Gateway 传入这个名称预算，
-复用 Gateway 的稳定摘要别名及调用映射；普通 Context 工具保留原名，长工具名仍可执行。
-配置 key 与原生身份分开：配置和 Agent frontmatter 使用 `p`，settings 的权限声明及 Hook
-permission override 使用完整原生身份。Hook 只精确接受当前 Session 的完整原生身份；短配置 key
-`p` 不能用于权限匹配，避免与宿主全局 MCP 同名。不同 Session、任意前缀/后缀及全局 MCP 通配不放行。
-
-Gateway registration 同时提供与 `tools/list` 一致的当前工具目录（名称、description、inputSchema）。
-Antigravity 将目录写入 Session 的 always-on rule，明确完整 server 身份与 `call_mcp_tool` 参数形式；
-模型无需通过 shell、curl 或读取 MCP 定义文件探测 Pragma 工具。规则同时要求模型在多步工作前
-给出简短进度说明，正文仍来自真实 stream delta；不把进度说明当成私有 thought。该目录只含当前 Expert 的 allowlist
-投影，使用预算转换后的真实别名，不复制另一套工具注册或执行逻辑。
-
-该不透明 namespace 只暴露当前 Expert allowlist 投影后的工具。私有 HOME 不继承宿主个人 MCP 配置；
-`host-keyring` 会按 agy 原生规则同时加载宿主全局配置，因此属于显式兼容性取舍。
-受管 custom agent 保留 `inheritMcp: true` 并用 `mcpServers` 显式选择上述受管 server；实际 print mode
-通过 plugin 自身的 MCP 配置发现工具。MCP 的验收标准是 agy 真实发现并
-成功完成一次工具调用，而不是文件存在。Antigravity 仍会按其原生语义发现
-workspace 内显式提交的 `.agents`、`.agent`、`_agents` 或 `_agent` customization；这些根可以在 Pragma
-`PreToolUse` relay 之前启动任意 shell Hook、stdio MCP 或第三方 Plugin，不能被名称 namespace 或同一个
-Hook 接管。因此 Runtime 会在 Session 创建和每次 native turn 的 spawn 前 fail closed：只要发现任一根就拒绝
-执行。Core 已加载的 `AGENTS.md`、系统提示词和显式 Expert Skill 仍会通过受管路径提供；需要 Antigravity
-workspace customization 的项目必须使用不含这些根的隔离/overlay workspace，并将必要配置显式物化到 Expert。
-同一 OS 用户在预检后并发改写 workspace 仍属于 Host 无法原子消除的 TOCTOU 风险；对抗该威胁的最终边界是
-Host 提供的隔离 workspace，而不是放宽预检。Agent、Skill、原生 MCP server 与 Hook 名称都带同一个由 Runtime
-Session 目录派生的 16 位哈希 namespace，防止受管配置相互遮蔽。Session 关闭时按独立生命周期释放 MCP
-registration、registry lease 与权限 relay；任一释放失败会聚合上报。
-
-配置是每次 Session prepare 时定向重建的派生产物，不是版本化的权威存储协议；保留同一个
-plugin、Agent 和 native conversation identity，只替换受管 plugin 的 MCP 配置与规则。
-旧会话恢复也重新注册当前 Gateway；不清空宿主配置或 conversation/cache。
-
-## Skills
-
-Core 已解析的每个 local Skill 都复制到受管 plugin 的
-`plugins/pragma-<session-hash>/skills/pragma-<session-hash>-<normalized-name>/`。该根在隔离模式位于私有 HOME，在兼容模式位于 Session
-额外 workspace。复制规则为：
-
-- 复制整个 Skill 目录并解引用已选择的链接，保留 `scripts/`、`references/`、`resources/` 与其他文件；
-- 排除任何 `node_modules` 子树；
-- 强制把 frontmatter `name` 归一为最多 64 字符的小写连字符标识，缺少 `description` 时从 Expert Skill 定义补齐；
-- 多个同名 Skill 使用稳定后缀避免覆盖；
-- 每次 materialize 前替换受管 skills 根，删除已经解绑的旧 Skill。
-- 复制后的目录收紧为 `0700`；普通文件为 `0600`，原本可执行的脚本为 `0700`。
-
-Adapter 不链接或扫描宿主全局 Skills，也不把 Runtime 自己的 builtin Skills 复制进 workspace。
-Antigravity workspace customization 根同样不被加载；它们会触发上述 fail-closed 预检，而不是作为隐式 Skill
-来源。
-
-## 权限与 Hook
-
-Desktop 的三种权限模式映射为：
-
-| Pragma mode      | Hook policy                  | terminal sandbox | workspace 外访问 | CLI flag                                   |
-| ---------------- | ---------------------------- | ---------------- | ---------------- | ------------------------------------------ |
-| request-approval | 只读直通，其他进入 Core 审批 | 开启             | 禁止             | `--sandbox --dangerously-skip-permissions` |
-| auto-approve     | 受管 MCP 与文件 allowlist    | 开启             | 禁止             | `--sandbox --dangerously-skip-permissions` |
-| full-access      | Hook 明确 allow              | 关闭             | 允许             | `--dangerously-skip-permissions`           |
-
-受管 `hooks.json` 以 Session-scoped 名称注册匹配全部 native tools 的 `PreToolUse` command Hook。Hook runner 与本机
-loopback relay 使用每 Session 随机 bearer；URL 和 bearer 只写入权限为 `0600` 的私有脚本，不放入 agy
-进程环境，避免被 Agent 的 shell 子进程读取。Windows command Hook 的 node/script 路径若包含会被
-`cmd.exe` 展开的 `%`、`!` 或换行，prepare 会给出明确错误并 fail closed，而不是生成指向错误目标的命令。
-
-Relay 校验 bearer、请求大小和 `workspacePaths` 身份后执行策略。workspace identity 只接受绝对路径或
-严格 `file://` URI，并只允许 Expert workspace 与当前 Session 的 `managed-customizations` 根；普通文件工具的
-参数 containment 仍以 Expert workspace 为界，只有 agy 原生 Skill expansion 的只读工具可进入当前
-Session plugin 的 `skills/` 根。仅精确匹配受管 Session namespace 的
-Pragma MCP tool 自动允许，包括 Antigravity 当前的 `call_mcp_tool` +
-`ServerName: "pragma<session-hash>"` dispatcher 格式；`ToolName` 还必须是合法的完整工具标识。直接工具名的
-namespace 前缀不作为受管身份依据，避免继承 MCP server 的前缀碰撞或伪造。问题工具映射
-到 Core `user_question`；request-approval 下只读且 workspace 内的工具可直接执行，其他工具进入 Core
-approval；auto-approve 只允许受管 MCP 和显式 allowlist 中的 workspace 文件工具，原生 shell/terminal、
-非受管 MCP、网络/调度/未知工具一律拒绝，要求切换到 request-approval 或 full-access。路径检查覆盖绝对路径、相对 `..` 和现有
-祖先的 realpath，避免 workspace 内 symlink 指向外部后被误判；CLI sandbox 继续作为执行时边界。
-full-access 直接允许。用户修改 tool input 时，只在 Antigravity 的浅层 `overwrite` 能精确复现新对象时
-放行，否则拒绝原调用。所有已知文件工具在审批前和修改后都重新校验最终路径；需要路径却没有可识别字段、
-非法 `file://` 或非 file URI 一律拒绝，不能因参数 schema 漂移而自动放行。relay、schema 或网络异常全部
-fail closed。
-
-agy 1.1.11 在 `PreToolUse` 已返回 `allow` 和精确 MCP permission override 后，仍会执行第二次原生
-non-interactive confirmation 并 soft-deny。Adapter 因此对三个模式都关闭这层无法交互的原生确认，由
-Session 私有、匹配全部工具的 Hook 成为权威权限闸门；request/auto 模式仍保留 CLI sandbox。Hook runner
-无法连接 relay 时固定返回 deny，workspace 中其他 customization 又会在 spawn 前被拒绝，因此该 flag
-不改变三种 Pragma 权限语义。
-
-该 Hook 闭合的是 Antigravity Adapter 的 native tool 路径，不代表项目已经拥有跨 Runtime 的统一
-`LocalPermissionGuard`。
-
-## 启动、流与恢复
-
-进程 cwd 就是 Expert workspace，并用公开的 `--add-dir <workspace>` 把同一路径显式钉为 workspace；
-不使用未公开的 `--app_data_dir`，也不使用不存在的 `--cwd`。主要参数为：
-
-```text
-agy
-  --output-format stream-json
-  --print-timeout 24h
-  --add-dir <workspace>
-  [--add-dir <session-managed-customizations>]
-  --log-file <private-turn-log>
-  --mode accept-edits
-  [permission flags]
-  [--conversation <conversation-id>]
-  [--model <discovered-slug>]
-  [--effort low|medium|high]
-  -p <prompt>
-```
-
-不得传 `--disable-slash-commands`，因为 agy 1.1.11 会同时禁用 Skill expansion，导致 plugin Skill
-只有元数据可见、正文不能激活。`-p` 与值保持相邻并放在最后。取消先发 `SIGTERM`，一秒内不退出再发
-`SIGKILL`，强杀后的等待同样有界。Session close 先等待该 native 关闭流程，再释放 Hook relay、MCP
-registration 与 registry lease，避免仍存活的进程失去控制面。恢复只使用当前 Runtime Session 持久化的
-`conversation_id`，绝不使用机器级“最近一次 conversation”。
-
-NDJSON reader 有 UTF-8 边界处理、4 MiB 单行上限与严格的结构化模式切换。1.1.11 的 wire shape 使用
-顶层 `event` 判别字段，并把 payload 放在同名的 `init`、`step_update` 或 `result` 对象中；Adapter 同时
-读取 1.1.8-era/兼容包装器使用的顶层 `type` shape。事件归一化覆盖：
-
-- `init`：conversation identity、model、tools 与 MCP 状态；
-- `step_update`：1.1.11 的 `agent_response` ACTIVE/DONE `text_delta` assistant 增量，以及兼容的
-  `PLANNER_RESPONSE`/model response、thought 增量、tool lifecycle、`error_message`、
-  subagent progress 与 compaction；
-- `result`：最终文本、conversation identity、usage 或 terminal error；
-- 未知 typed event：经过递归 secret redaction 后保留为 progress，便于前向兼容诊断。
-
-同一 step 的 snapshot 会去重为 delta。成功退出但缺少 terminal event 时，优先尝试私有
-`brain/<conversation-id>/.system_generated/logs/transcript.jsonl` 的 settled `PLANNER_RESPONSE`，其次才接受
-明确已完成的 assistant step、历史纯文本模式输出或受管日志中的最终响应；单独的 ACTIVE delta 不能作为完整
-成功结果。每次恢复 conversation 前，Adapter 会先记录 transcript 的 inode/size checkpoint；退化恢复只能
-读取本次 spawn 后新增的字节，并且其中必须出现本轮 `USER_INPUT` 后才接受 settled model response。文件 rotate、
-truncate、无法 checkpoint 或超过 4 MiB 的尾部里缺少该边界时，transcript fallback 会失败而不会把上一轮答案
-冒充本轮结果。为兼容 1.1.8 以前及第三方包装器观察到的退化行为，首行不是 typed JSON 时会切换为有界纯
-文本 stdout；一旦识别为 typed stream，后续 malformed NDJSON 必须失败，不能静默吞掉协议损坏。
-纯文本模式的 `Error: timed out waiting for response`、日志 `Print mode: timed out` 与最后一个
-`agent executor error` 会提升为 Runtime error，不能以空白或错误文本冒充成功结果。
-
-## 模型与 Usage
-
-模型目录来自账号态 `agy models`，不维护可能过期的假 fallback catalog。1.1.5 起 `--model` 使用稳定的
-user-facing slug；Adapter 把 `agy models` 输出的精确 selector 当作 opaque model id 保存和传递，不从
-显示名称中臆造 provider slug。Parser 同时兼容旧版本或第三方包装器输出的
-`Gemini 3.5 Flash (High)` 人类可读值，以及“machine id + display name + advertised effort”列式格式。
-`--effort` 可独立作用于默认模型；有模型级 advertised effort 时进一步按其约束验证。未登录、空目录或
-命令失败均作为可操作错误返回。
-
-终态 `result.usage` 是当前 turn snapshot，不能与 step usage 相加。Adapter 优先使用 reported input、
-response output、独立的 `thinking_tokens` 和 cache read/write；`thinking_tokens` 计入 Pragma output。
-若同时存在 `total_tokens`，Adapter 用它判断 `input_tokens` 是否已包含 cache read，避免二次计数。
-兼容 shape 中直接 output total 优先于 `thinking_output_tokens` / `response_output_tokens` 两个组成字段，
-避免重复计数。reported usage 只通过 native usage event 进入 Core，不再同时放入 `RuntimeTurnResult`，避免
-Driver 合并同一个 snapshot 两次。无 usage 或全零时只调用 Core 的 `RuntimeTokenCounter` 估算受管输入和输出，并标记为
-`estimated`。Antigravity 当前没有在 print stream 中提供可靠的 context-window denominator，因此不伪造
-occupancy。
-
-## Attachments 与多模态
-
-agy 1.1.11 的公开 CLI 没有原生媒体输入参数，因此 Antigravity 模型目录明确声明
-`inputModalities: ["text"]`，即使底层模型本身可能具备视觉能力也不声称 CLI 已接通图片上传。Core 会把
-图片从 native attachments 中移除，将可观察的本地路径上下文加入当前 query，并记录
-`runtime.image_input_degraded`；文件与目录引用同样通过受控路径文本进入 prompt。Adapter 不读取图片后
-私自 base64 内联，也不使用私有 language-server 协议。未来只有在公开 CLI/SDK 参数和真实媒体 smoke
-同时具备时才能把模型 capability 提升为 `image`。
-
-## 参考资料
-
-可显式运行真实 CLI smoke（默认测试不会依赖开发者登录态）：
+定向测试覆盖原生配置、fresh/restore startup、Core 压缩重注入、常驻多轮、累计 usage、权限路径与取消。
+真实 smoke 验证三种权限模式的 HTTP Gateway、Context 写入/读取、长工具别名、Agent marker、Skills、
+streaming 和 conversation 恢复：
 
 ```bash
 PRAGMA_ANTIGRAVITY_REAL_SMOKE=1 \
-  PRAGMA_ANTIGRAVITY_SMOKE_AUTH_MODE=host-keyring \
-  pnpm --filter @pragma/runtime-antigravity test -- real-smoke.test.ts
+PRAGMA_ANTIGRAVITY_SMOKE_AUTH_MODE=host-keyring \
+PRAGMA_ANTIGRAVITY_SMOKE_MODEL=gemini-3.8-flash-low \
+pnpm --filter @pragma/runtime-antigravity exec vitest run test/real-smoke.test.ts --reporter=verbose
 ```
 
-该 suite 验证首个 delta 与 result settle 之间存在可观察时间差、`view_file` lifecycle、managed
-`list_expert_context` MCP、always-on system marker、plugin Skill、图片路径降级和同一 conversation 的续轮恢复。
-运行前必须已完成对应认证模式的官方 agy 登录；未实际运行该命令和 Desktop 人工验收时，不得仅凭 suite
-存在声明 end-to-end Supported。
-
-- [Antigravity CLI 安装与认证](https://antigravity.google/docs/cli/install)
-- [Antigravity CLI 参数与 settings](https://antigravity.google/docs/cli/reference)
-- [Antigravity CLI permissions](https://antigravity.google/docs/cli/permissions)
-- [Antigravity CLI sandbox](https://antigravity.google/docs/cli/sandbox)
-- [Antigravity Hooks](https://antigravity.google/docs/hooks)
-- [Antigravity MCP](https://antigravity.google/docs/mcp)
-- [Antigravity Skills](https://antigravity.google/docs/skills)
-- [Antigravity custom agents / subagents](https://antigravity.google/docs/subagents)
-- [Gemini CLI migration 与 customization 路径](https://antigravity.google/docs/cli/gcli-migration)
-- [Antigravity CLI changelog](https://github.com/google-antigravity/antigravity-cli/blob/main/CHANGELOG.md)
-
-## Issue #262 的诊断与回归
-
-截图里的 MCP 名称过长已通过真实 CLI 日志复现：原前缀长 54 字符，
-`list_expert_context` 等工具在发现阶段被拒绝，尚未进入 Hook/Gateway。
-同时旧 Hook 将 plugin-qualified server 误判为非受管 server，这是另一个独立缺陷。
-
-中间正文来自真实 `agent_response/text_delta`；原生 CLI 实测会在工具前输出说明文字。
-当前适配器已解析该事件，不保证模型每次调用工具前都生成说明。
-`thinking_tokens` 只表示用量，不能推导出可显示的思考正文；CLI 未发送 thought 时不伪造思考。
-`call_mcp_tool` 是 agy 原生 MCP 调度工具，名称本身正常；适配器从其 `ToolName` 参数提取实际
-操作名用于 tool lifecycle/UI 展示，同时保留含 `ServerName` 的原始输入用于审计。
-反复读配置或尝试 shell 不能作为 MCP 执行证据。
-
-扩展的 `test/real-smoke.test.ts` 并发验证三种权限模式的 mission-board 写入、读回、非 Context
-工具执行，以及释放 lease、重建 Runtime 后恢复；原有正文 streaming、Skill、native tool、
-附件降级断言继续独立保留。组合 smoke 的 native file tool 使用 `view_file` 读取显式测试文件，
-而非要求模型选择特定目录枚举工具；原有 `list_dir` 协议/lifecycle fixture 保留。
-运行：
-
-```bash
-PRAGMA_ANTIGRAVITY_REAL_SMOKE=1 \
-  PRAGMA_ANTIGRAVITY_SMOKE_AUTH_MODE=host-keyring \
-  PRAGMA_ANTIGRAVITY_SMOKE_MODEL=gemini-3.8-flash-low \
-  pnpm --filter @pragma/runtime-antigravity exec vitest run test/real-smoke.test.ts --reporter=verbose
-```
-
-真实复现/验证环境：2026-09-29，Darwin 25.6.0 x86_64，`host-keyring` OAuth。
-首次原生流探测为 `agy 1.1.22`，CLI 随后自行更新为 `1.2.13`；长名字复现与修复验证均为 `1.2.13`。
-ADC 私有 HOME、Windows/Linux 及 Desktop 人工视觉验收本次未验证；配置/权限单测覆盖私有 HOME
-与 Windows 物化，不将其等同真实认证或 UI 验收。
-
-已完成的真实 MCP 回归：三种权限模式各自完成 fresh 写入/读回、非 Context 工具、Runtime 重建后
-恢复；并发复验 3/3 通过（107.40 s）。每个会话实际发起五次预期 MCP 调用，Session 间原生
-server 身份不同，恢复前后身份一致。注入目录后的五个已完成复验 Session 仅出现这些 MCP 调用，
-未出现 `view_file`、shell 或 curl 探测；这证明消除了此探测路径，不承诺不同模型的总耗时。
-
-组合 smoke 独立复验 1/1 通过（52.66 s）：真实正文 delta 早于结果终态，`view_file` 实际读取
-`SMOKE_FILE.txt`，`list_expert_context` 实际执行，Skill 与 system marker、图片路径降级及
-conversation resume 均通过。Core Gateway 的 8 个测试、Antigravity 的定向测试、相关 lint/build
-及全仓 typecheck（19/19）通过。Desktop 人工视觉验收仍未执行。
-
-### CR 与修复结果复核
-
-2026-09-29 对完整 diff、权限边界、流事件及真实恢复证据进行了第二轮审查。
-
-| 发现                                                                             | 修复及复核依据                                                                                           | 状态   |
-| -------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------- | ------ |
-| P1：将短配置 key `p` 也识别为受管身份，会错误豁免同名宿主 MCP                    | Hook 仅匹配当前 Session 的完整原生身份；新增 auto/request 模式同名宿主拒绝用例，先复现失败，再修复通过   | 已修复 |
-| P2：同帧正文 delta 遮住 thought snapshot；delta 后的终态正文 snapshot 会重复输出 | 独立处理 thought；正文/思考 delta 累积到对应 snapshot。新增同帧及终态去重用例，先复现失败，再修复通过    | 已修复 |
-| P2：恢复 smoke 的旧 marker 可由历史对话复述，未强制恢复后的真实读取              | 释放 Session 后修改权威 Context 为模型未知的新 marker；同时断言恢复轮的成功 Gateway read/custom 调用日志 | 已补齐 |
-
-修复后使用 `agy 1.2.13`、`host-keyring`、`gemini-3.8-flash-medium` 再次执行完整真实 suite：
-4/4 通过（201.94 s）。三种权限模式各自验证 fresh/恢复执行及新数据读回（82.06/98.64/102.29 s），
-full-access 额外使用 84 字符的业务工具名，验证 34 字符稳定别名实际调用仍路由到原工具。
-各 Session 的 server 身份不同，重建 Runtime 后保持原身份；组合 streaming/Skill/native file tool/
-MCP/image fallback/resume 测试通过（87.35 s）。
-
-另对修复前 `origin/main`（`724cc142`）真实 CLI smoke 生成的已关闭 Session 执行
-`recoverClosedSession`，保持原 Expert definition、plugin namespace 及 conversation ID，
-重建受管配置后 `list_expert_context` 真实成功。该验证使用原始旧代码输出的 Session，
-没有修改版本号伪造历史数据；不涉及存储 Schema 变更。
-
-最终验证：Antigravity 单测 117/117、Core Gateway 8/8、Desktop Mission 思考/工具显示定向测试
-3/3 通过，Core/Antigravity 的 build、lint、typecheck 和变更文件格式检查通过。
-复核未发现本次审查范围内未处理的阻塞问题。无 thought 文本时仍不能显示私有思考；
-ADC 私有 HOME、Windows/Linux 真实运行及 Desktop 人工视觉验收仍属于未验证范围。
+真实执行记录与未验证边界见研究记录；合成 compaction fixture 不等于真实压缩验收。无 ADC 凭据时不宣称
+ADC end-to-end 通过；Desktop 人工审批和 UI 验收也需独立记录。

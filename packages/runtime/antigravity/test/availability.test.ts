@@ -23,14 +23,14 @@ describe("Antigravity Runtime availability", () => {
   });
 
   it("accepts the current CLI and probes it with updates disabled", async () => {
-    mocks.runRuntimeCommand.mockResolvedValue(commandResult("agy version 1.1.11\n"));
+    mocks.runRuntimeCommand.mockResolvedValue(commandResult("agy version 1.2.13\n"));
     const executablePath = `/opt/agy-${randomUUID()}`;
 
     await expect(
       canUseAntigravityRuntime({ executablePath, env: { TEST_AUTH: "preserved" } }),
     ).resolves.toMatchObject({
       usable: true,
-      details: { executablePath, parsedVersion: "1.1.11" },
+      details: { executablePath, parsedVersion: "1.2.13" },
     });
     expect(mocks.runRuntimeCommand).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -45,16 +45,19 @@ describe("Antigravity Runtime availability", () => {
     );
   });
 
-  it("rejects versions before the stream-json compatibility floor", async () => {
-    mocks.runRuntimeCommand.mockResolvedValue(commandResult("1.1.10\n"));
+  it.each(["1.1.10", "1.1.11", "1.2.12"])(
+    "rejects %s before the native CLI compatibility floor",
+    async (version) => {
+      mocks.runRuntimeCommand.mockResolvedValue(commandResult(`${version}\n`));
 
-    await expect(
-      canUseAntigravityRuntime({ executablePath: `/opt/agy-${randomUUID()}` }),
-    ).resolves.toMatchObject({
-      usable: false,
-      reason: expect.stringContaining(`Upgrade to ${MINIMUM_ANTIGRAVITY_CLI_VERSION}`),
-    });
-  });
+      await expect(
+        canUseAntigravityRuntime({ executablePath: `/opt/agy-${randomUUID()}` }),
+      ).resolves.toMatchObject({
+        usable: false,
+        reason: expect.stringContaining(`Upgrade to ${MINIMUM_ANTIGRAVITY_CLI_VERSION}`),
+      });
+    },
+  );
 
   it("fails closed for malformed versions, non-zero exits, and spawn errors", async () => {
     mocks.runRuntimeCommand.mockResolvedValueOnce(commandResult("nightly\n"));
@@ -63,7 +66,7 @@ describe("Antigravity Runtime availability", () => {
     ).resolves.toMatchObject({ usable: false, reason: expect.stringContaining("unrecognized") });
 
     mocks.runRuntimeCommand.mockResolvedValueOnce({
-      ...commandResult("1.1.11\n"),
+      ...commandResult("1.2.13\n"),
       exitCode: 7,
       stderr: "broken",
     });
@@ -90,13 +93,13 @@ describe("Antigravity Runtime availability", () => {
     const second = canUseAntigravityRuntime({ executablePath });
 
     expect(mocks.runRuntimeCommand).toHaveBeenCalledOnce();
-    resolveProbe?.(commandResult("1.1.11\n"));
+    resolveProbe?.(commandResult("1.2.13\n"));
     await expect(first).resolves.toMatchObject({ usable: true });
     await expect(second).resolves.toMatchObject({ usable: true });
   });
 
   it("parses prefixed semantic versions", () => {
-    expect(parseAntigravityVersion("Antigravity CLI v1.1.11+build.2")).toBe("1.1.11");
+    expect(parseAntigravityVersion("Antigravity CLI v1.2.13+build.2")).toBe("1.2.13");
     expect(parseAntigravityVersion("unknown")).toBeUndefined();
   });
 
@@ -107,7 +110,7 @@ describe("Antigravity Runtime availability", () => {
     expect(failedResult).toMatchObject({ usable: false });
 
     // A subsequent call should attempt a fresh probe because failed results are not cached
-    mocks.runRuntimeCommand.mockResolvedValueOnce(commandResult("1.1.11\n"));
+    mocks.runRuntimeCommand.mockResolvedValueOnce(commandResult("1.2.13\n"));
     const retriedResult = await canUseAntigravityRuntime({ executablePath });
     expect(retriedResult).toMatchObject({ usable: true });
 
@@ -118,7 +121,7 @@ describe("Antigravity Runtime availability", () => {
     expect(mocks.runRuntimeCommand).toHaveBeenCalledTimes(2);
 
     // forceRefresh should force a 3rd call
-    mocks.runRuntimeCommand.mockResolvedValueOnce(commandResult("1.1.11\n"));
+    mocks.runRuntimeCommand.mockResolvedValueOnce(commandResult("1.2.13\n"));
     await canUseAntigravityRuntime({ executablePath, forceRefresh: true });
     expect(mocks.runRuntimeCommand).toHaveBeenCalledTimes(3);
   });

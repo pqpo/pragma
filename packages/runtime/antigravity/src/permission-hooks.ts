@@ -126,7 +126,7 @@ export interface AntigravityHookRelay {
 export async function createAntigravityHookRelay(options: {
   readonly workspace: string;
   readonly allowedWorkspacePaths?: readonly string[] | undefined;
-  readonly managedSkillReadRoots?: readonly string[] | undefined;
+  readonly managedReadRoots?: readonly string[] | undefined;
   readonly nativeMcpServerName: string;
   readonly permissionMode: AntigravityRuntimePermissionMode;
   readonly getHumanInteractionHandler: () => ExpertAgentHumanInteractionHandler | undefined;
@@ -149,7 +149,7 @@ export async function createAntigravityHookRelay(options: {
       authorization,
       workspace: resolve(options.workspace),
       allowedWorkspacePaths: options.allowedWorkspacePaths,
-      managedSkillReadRoots: options.managedSkillReadRoots,
+      managedReadRoots: options.managedReadRoots,
       nativeMcpServerName: options.nativeMcpServerName,
       permissionMode: options.permissionMode,
       getHumanInteractionHandler: options.getHumanInteractionHandler,
@@ -188,7 +188,7 @@ export async function decideAntigravityToolUse(options: {
   readonly input: AgyPreToolUseInput;
   readonly workspace: string;
   readonly allowedWorkspacePaths?: readonly string[] | undefined;
-  readonly managedSkillReadRoots?: readonly string[] | undefined;
+  readonly managedReadRoots?: readonly string[] | undefined;
   readonly nativeMcpServerName: string;
   readonly permissionMode: AntigravityRuntimePermissionMode;
   readonly humanInteractionHandler?: ExpertAgentHumanInteractionHandler | undefined;
@@ -241,7 +241,7 @@ export async function decideAntigravityToolUse(options: {
       toolName,
       args,
       options.workspace,
-      READ_ONLY_TOOLS.has(toolName) ? options.managedSkillReadRoots : undefined,
+      READ_ONLY_TOOLS.has(toolName) ? options.managedReadRoots : undefined,
     );
     return pathError === undefined
       ? { decision: "allow" }
@@ -255,7 +255,7 @@ export async function decideAntigravityToolUse(options: {
       toolName,
       args,
       options.workspace,
-      options.managedSkillReadRoots,
+      options.managedReadRoots,
     );
     return pathError === undefined
       ? { decision: "allow" }
@@ -350,7 +350,7 @@ async function handleHookRequest(options: {
   readonly authorization: string;
   readonly workspace: string;
   readonly allowedWorkspacePaths?: readonly string[] | undefined;
-  readonly managedSkillReadRoots?: readonly string[] | undefined;
+  readonly managedReadRoots?: readonly string[] | undefined;
   readonly nativeMcpServerName: string;
   readonly permissionMode: AntigravityRuntimePermissionMode;
   readonly getHumanInteractionHandler: () => ExpertAgentHumanInteractionHandler | undefined;
@@ -383,7 +383,7 @@ async function handleHookRequest(options: {
       input,
       workspace: options.workspace,
       allowedWorkspacePaths: options.allowedWorkspacePaths,
-      managedSkillReadRoots: options.managedSkillReadRoots,
+      managedReadRoots: options.managedReadRoots,
       nativeMcpServerName: options.nativeMcpServerName,
       permissionMode: options.permissionMode,
       humanInteractionHandler: options.getHumanInteractionHandler(),
@@ -534,7 +534,7 @@ async function validateKnownFileToolPaths(
   additionalReadRoots: readonly string[] = [],
 ): Promise<string | undefined> {
   const schema = FILE_TOOL_PATH_SCHEMAS[toolName];
-  if (schema === undefined) return `${toolName} has no agy 1.1.11 file argument schema`;
+  if (schema === undefined) return `${toolName} has no supported Antigravity file argument schema`;
   const record = asRecord(value);
   if (record === undefined) return `${toolName} did not provide an object argument`;
   const recognizedFields = new Set([

@@ -1,0 +1,1548 @@
+{
+  "date": "2026-09-29",
+  "baseline": "51eb5cf0",
+  "platform": "macOS-26.6.2-x86_64-i386-64bit-Mach-O",
+  "architecture": "x86_64",
+  "cliVersion": "1.2.13",
+  "model": "gemini-3.8-flash-low",
+  "scope": "Synthetic CLI probes; no production permission, HTTP Gateway or existing-session migration acceptance. Official ACP handshake was not established.",
+  "probes": {
+    "cli-agent-prompt-probe": {
+      "args": [
+        "agy",
+        "--add-dir",
+        "<PROBE_ROOT>/cli-workspace",
+        "--agent",
+        "pragma-probe",
+        "--model",
+        "gemini-3.8-flash-low",
+        "--sandbox",
+        "--output-format",
+        "stream-json",
+        "-p",
+        "Without using any tools, reply with the exact marker specified by your custom agent system instructions."
+      ],
+      "exit": 0,
+      "elapsedSeconds": 10.49,
+      "stderr": "",
+      "events": [
+        {
+          "event": "init",
+          "conversation_id": "616888b9-cadd-40c1-b09c-56032c89d3c8",
+          "init": {
+            "model": "gemini-3.8-flash-low",
+            "cwd": "<PROBE_ROOT>/cli-workspace",
+            "agent": "pragma-probe",
+            "tools": [
+              "ask_custom_permission",
+              "ask_permission",
+              "ask_question",
+              "browser_click_element",
+              "browser_drag_pixel_to_pixel",
+              "browser_get_dom",
+              "browser_get_network_request",
+              "browser_input",
+              "browser_list_network_requests",
+              "browser_mouse_down",
+              "browser_mouse_up",
+              "browser_move_mouse",
+              "browser_press_key",
+              "browser_refresh_page",
+              "browser_resize_window",
+              "browser_scroll",
+              "browser_scroll_dom",
+              "browser_select_option",
+              "browser_subagent",
+              "call_mcp_tool",
+              "capture_browser_console_logs",
+              "capture_browser_screenshot",
+              "click_browser_pixel",
+              "command_status",
+              "define_subagent",
+              "delete_knowledge",
+              "execute_browser_javascript",
+              "find_by_name",
+              "finish",
+              "generate_image",
+              "grep_search",
+              "invoke_subagent",
+              "list_browser_pages",
+              "list_dir",
+              "list_permissions",
+              "list_resources",
+              "manage_inbox",
+              "manage_subagents",
+              "manage_task",
+              "multi_replace_file_content",
+              "notebook_edit",
+              "notebook_execution",
+              "open_browser_url",
+              "read_browser_page",
+              "read_resource",
+              "read_url_content",
+              "replace_file_content",
+              "run_command",
+              "schedule",
+              "search_web",
+              "sed_file",
+              "send_command_input",
+              "send_message",
+              "view_file",
+              "wait",
+              "wait_5_seconds",
+              "write_to_file"
+            ],
+            "permission_mode": "request-review"
+          }
+        },
+        {
+          "event": "step_update",
+          "step_update": {
+            "conversation_id": "616888b9-cadd-40c1-b09c-56032c89d3c8",
+            "step_index": 0,
+            "state": "DONE",
+            "step_type": "user_input"
+          }
+        },
+        {
+          "event": "step_update",
+          "step_update": {
+            "conversation_id": "616888b9-cadd-40c1-b09c-56032c89d3c8",
+            "step_index": 1,
+            "state": "ACTIVE",
+            "step_type": "agent_response",
+            "text_delta": "PRAGMA_"
+          }
+        },
+        {
+          "event": "step_update",
+          "step_update": {
+            "conversation_id": "616888b9-cadd-40c1-b09c-56032c89d3c8",
+            "step_index": 1,
+            "state": "DONE",
+            "step_type": "agent_response",
+            "text_delta": "AGENT_PROBE_MARKER\n",
+            "duration_seconds": 2.89233,
+            "usage": {
+              "input_tokens": 5470,
+              "output_tokens": 11,
+              "thinking_tokens": 0,
+              "cache_read_tokens": 0,
+              "total_tokens": 5481
+            }
+          }
+        },
+        {
+          "event": "result",
+          "result": {
+            "conversation_id": "616888b9-cadd-40c1-b09c-56032c89d3c8",
+            "status": "SUCCESS",
+            "response": "PRAGMA_AGENT_PROBE_MARKER\n",
+            "duration_seconds": 2.967889,
+            "num_turns": 1,
+            "usage": {
+              "input_tokens": 5470,
+              "output_tokens": 11,
+              "thinking_tokens": 0,
+              "cache_read_tokens": 0,
+              "total_tokens": 5481
+            }
+          }
+        }
+      ]
+    },
+    "cli-added-directory-agent-probe": [
+      {
+        "args": [
+          "agy",
+          "--add-dir",
+          "<PROBE_ROOT>/cli-workspace",
+          "--agent",
+          "pragma-probe",
+          "--model",
+          "gemini-3.8-flash-low",
+          "--sandbox",
+          "--output-format",
+          "stream-json",
+          "-p",
+          "Without using any tools, reply with the exact marker specified by your custom agent system instructions. If no such marker is configured, reply NO_MARKER."
+        ],
+        "exit": 0,
+        "elapsedSeconds": 10.49,
+        "stderr": "",
+        "events": [
+          {
+            "event": "init",
+            "conversation_id": "4835479e-c0e8-43de-a05c-a2ffce5f0dac",
+            "init": {
+              "model": "gemini-3.8-flash-low",
+              "cwd": "<PROBE_ROOT>/empty-workspace",
+              "agent": "pragma-probe",
+              "tools": [
+                "ask_custom_permission",
+                "ask_permission",
+                "ask_question",
+                "browser_click_element",
+                "browser_drag_pixel_to_pixel",
+                "browser_get_dom",
+                "browser_get_network_request",
+                "browser_input",
+                "browser_list_network_requests",
+                "browser_mouse_down",
+                "browser_mouse_up",
+                "browser_move_mouse",
+                "browser_press_key",
+                "browser_refresh_page",
+                "browser_resize_window",
+                "browser_scroll",
+                "browser_scroll_dom",
+                "browser_select_option",
+                "browser_subagent",
+                "call_mcp_tool",
+                "capture_browser_console_logs",
+                "capture_browser_screenshot",
+                "click_browser_pixel",
+                "command_status",
+                "define_subagent",
+                "delete_knowledge",
+                "execute_browser_javascript",
+                "find_by_name",
+                "finish",
+                "generate_image",
+                "grep_search",
+                "invoke_subagent",
+                "list_browser_pages",
+                "list_dir",
+                "list_permissions",
+                "list_resources",
+                "manage_inbox",
+                "manage_subagents",
+                "manage_task",
+                "multi_replace_file_content",
+                "notebook_edit",
+                "notebook_execution",
+                "open_browser_url",
+                "read_browser_page",
+                "read_resource",
+                "read_url_content",
+                "replace_file_content",
+                "run_command",
+                "schedule",
+                "search_web",
+                "sed_file",
+                "send_command_input",
+                "send_message",
+                "view_file",
+                "wait",
+                "wait_5_seconds",
+                "write_to_file"
+              ],
+              "permission_mode": "request-review"
+            }
+          },
+          {
+            "event": "step_update",
+            "step_update": {
+              "conversation_id": "4835479e-c0e8-43de-a05c-a2ffce5f0dac",
+              "step_index": 0,
+              "state": "DONE",
+              "step_type": "user_input"
+            }
+          },
+          {
+            "event": "step_update",
+            "step_update": {
+              "conversation_id": "4835479e-c0e8-43de-a05c-a2ffce5f0dac",
+              "step_index": 1,
+              "state": "ACTIVE",
+              "step_type": "agent_response",
+              "text_delta": "PRAGMA_"
+            }
+          },
+          {
+            "event": "step_update",
+            "step_update": {
+              "conversation_id": "4835479e-c0e8-43de-a05c-a2ffce5f0dac",
+              "step_index": 1,
+              "state": "ACTIVE",
+              "step_type": "agent_response",
+              "text_delta": "AGENT_PROBE_MARKER"
+            }
+          },
+          {
+            "event": "step_update",
+            "step_update": {
+              "conversation_id": "4835479e-c0e8-43de-a05c-a2ffce5f0dac",
+              "step_index": 1,
+              "state": "DONE",
+              "step_type": "agent_response",
+              "text_delta": "\n",
+              "duration_seconds": 3.484992,
+              "usage": {
+                "input_tokens": 5477,
+                "output_tokens": 11,
+                "thinking_tokens": 0,
+                "cache_read_tokens": 0,
+                "total_tokens": 5488
+              }
+            }
+          },
+          {
+            "event": "result",
+            "result": {
+              "conversation_id": "4835479e-c0e8-43de-a05c-a2ffce5f0dac",
+              "status": "SUCCESS",
+              "response": "PRAGMA_AGENT_PROBE_MARKER\n",
+              "duration_seconds": 3.50785,
+              "num_turns": 1,
+              "usage": {
+                "input_tokens": 5477,
+                "output_tokens": 11,
+                "thinking_tokens": 0,
+                "cache_read_tokens": 0,
+                "total_tokens": 5488
+              }
+            }
+          }
+        ]
+      },
+      {
+        "args": [
+          "agy",
+          "--add-dir",
+          "<PROBE_ROOT>/cli-workspace",
+          "--agent",
+          "<PROBE_ROOT>/cli-workspace/.agents/agents/pragma-probe.md",
+          "--model",
+          "gemini-3.8-flash-low",
+          "--sandbox",
+          "--output-format",
+          "stream-json",
+          "-p",
+          "Without using any tools, reply with the exact marker specified by your custom agent system instructions. If no such marker is configured, reply NO_MARKER."
+        ],
+        "exit": 0,
+        "elapsedSeconds": 11.25,
+        "stderr": "",
+        "events": [
+          {
+            "event": "init",
+            "conversation_id": "a21f0bb4-0eb0-4a9b-b2e9-29301fc6b5c8",
+            "init": {
+              "model": "gemini-3.8-flash-low",
+              "cwd": "<PROBE_ROOT>/empty-workspace",
+              "agent": "<PROBE_ROOT>/cli-workspace/.agents/agents/pragma-probe.md",
+              "tools": [
+                "ask_custom_permission",
+                "ask_permission",
+                "ask_question",
+                "browser_click_element",
+                "browser_drag_pixel_to_pixel",
+                "browser_get_dom",
+                "browser_get_network_request",
+                "browser_input",
+                "browser_list_network_requests",
+                "browser_mouse_down",
+                "browser_mouse_up",
+                "browser_move_mouse",
+                "browser_press_key",
+                "browser_refresh_page",
+                "browser_resize_window",
+                "browser_scroll",
+                "browser_scroll_dom",
+                "browser_select_option",
+                "browser_subagent",
+                "call_mcp_tool",
+                "capture_browser_console_logs",
+                "capture_browser_screenshot",
+                "click_browser_pixel",
+                "command_status",
+                "define_subagent",
+                "delete_knowledge",
+                "execute_browser_javascript",
+                "find_by_name",
+                "finish",
+                "generate_image",
+                "grep_search",
+                "invoke_subagent",
+                "list_browser_pages",
+                "list_dir",
+                "list_permissions",
+                "list_resources",
+                "manage_inbox",
+                "manage_subagents",
+                "manage_task",
+                "multi_replace_file_content",
+                "notebook_edit",
+                "notebook_execution",
+                "open_browser_url",
+                "read_browser_page",
+                "read_resource",
+                "read_url_content",
+                "replace_file_content",
+                "run_command",
+                "schedule",
+                "search_web",
+                "sed_file",
+                "send_command_input",
+                "send_message",
+                "view_file",
+                "wait",
+                "wait_5_seconds",
+                "write_to_file"
+              ],
+              "permission_mode": "request-review"
+            }
+          },
+          {
+            "event": "step_update",
+            "step_update": {
+              "conversation_id": "a21f0bb4-0eb0-4a9b-b2e9-29301fc6b5c8",
+              "step_index": 0,
+              "state": "DONE",
+              "step_type": "user_input"
+            }
+          },
+          {
+            "event": "step_update",
+            "step_update": {
+              "conversation_id": "a21f0bb4-0eb0-4a9b-b2e9-29301fc6b5c8",
+              "step_index": 1,
+              "state": "DONE",
+              "step_type": "agent_response",
+              "text_delta": "NO_MARKER\n",
+              "duration_seconds": 3.911051,
+              "usage": {
+                "input_tokens": 13115,
+                "output_tokens": 4,
+                "thinking_tokens": 0,
+                "cache_read_tokens": 0,
+                "total_tokens": 13119
+              }
+            }
+          },
+          {
+            "event": "result",
+            "result": {
+              "conversation_id": "a21f0bb4-0eb0-4a9b-b2e9-29301fc6b5c8",
+              "status": "SUCCESS",
+              "response": "NO_MARKER\n",
+              "duration_seconds": 3.957501,
+              "num_turns": 1,
+              "usage": {
+                "input_tokens": 13115,
+                "output_tokens": 4,
+                "thinking_tokens": 0,
+                "cache_read_tokens": 0,
+                "total_tokens": 13119
+              }
+            }
+          }
+        ]
+      }
+    ],
+    "cli-stream-startup-probe": {
+      "args": [
+        "agy",
+        "--model",
+        "gemini-3.8-flash-low",
+        "--sandbox",
+        "--input-format",
+        "stream-json",
+        "--output-format",
+        "stream-json"
+      ],
+      "input": [
+        {
+          "event": "user",
+          "message": {
+            "content": [
+              {
+                "type": "text",
+                "text": "Context supplied by the host: the verification code is PRAGMA_STARTUP_NATIVE_20260929."
+              },
+              {
+                "type": "text",
+                "text": "Without using tools, repeat the verification code from the preceding context block and nothing else."
+              }
+            ]
+          }
+        },
+        {
+          "event": "user",
+          "message": {
+            "content": "Without using tools, repeat the verification code from our previous turn and nothing else."
+          }
+        }
+      ],
+      "exit": 0,
+      "elapsedSeconds": 16.15,
+      "stderr": "",
+      "events": [
+        {
+          "event": "init",
+          "conversation_id": "19b354ae-658a-4ee5-ac3c-f1ad9defc523",
+          "init": {
+            "model": "gemini-3.8-flash-low",
+            "cwd": "<PROBE_ROOT>/empty-workspace",
+            "tools": [
+              "ask_custom_permission",
+              "ask_permission",
+              "ask_question",
+              "browser_click_element",
+              "browser_drag_pixel_to_pixel",
+              "browser_get_dom",
+              "browser_get_network_request",
+              "browser_input",
+              "browser_list_network_requests",
+              "browser_mouse_down",
+              "browser_mouse_up",
+              "browser_move_mouse",
+              "browser_press_key",
+              "browser_refresh_page",
+              "browser_resize_window",
+              "browser_scroll",
+              "browser_scroll_dom",
+              "browser_select_option",
+              "browser_subagent",
+              "call_mcp_tool",
+              "capture_browser_console_logs",
+              "capture_browser_screenshot",
+              "click_browser_pixel",
+              "command_status",
+              "define_subagent",
+              "delete_knowledge",
+              "execute_browser_javascript",
+              "find_by_name",
+              "finish",
+              "generate_image",
+              "grep_search",
+              "invoke_subagent",
+              "list_browser_pages",
+              "list_dir",
+              "list_permissions",
+              "list_resources",
+              "manage_inbox",
+              "manage_subagents",
+              "manage_task",
+              "multi_replace_file_content",
+              "notebook_edit",
+              "notebook_execution",
+              "open_browser_url",
+              "read_browser_page",
+              "read_resource",
+              "read_url_content",
+              "replace_file_content",
+              "run_command",
+              "schedule",
+              "search_web",
+              "sed_file",
+              "send_command_input",
+              "send_message",
+              "view_file",
+              "wait",
+              "wait_5_seconds",
+              "write_to_file"
+            ],
+            "permission_mode": "request-review"
+          }
+        },
+        {
+          "event": "step_update",
+          "step_update": {
+            "conversation_id": "19b354ae-658a-4ee5-ac3c-f1ad9defc523",
+            "step_index": 0,
+            "state": "DONE",
+            "step_type": "user_input"
+          }
+        },
+        {
+          "event": "step_update",
+          "step_update": {
+            "conversation_id": "19b354ae-658a-4ee5-ac3c-f1ad9defc523",
+            "step_index": 1,
+            "state": "ACTIVE",
+            "step_type": "agent_response",
+            "text_delta": "PRAGMA_STARTUP_NATIVE_20260929"
+          }
+        },
+        {
+          "event": "step_update",
+          "step_update": {
+            "conversation_id": "19b354ae-658a-4ee5-ac3c-f1ad9defc523",
+            "step_index": 1,
+            "state": "DONE",
+            "step_type": "agent_response",
+            "text_delta": "\n",
+            "duration_seconds": 3.080444,
+            "usage": {
+              "input_tokens": 13100,
+              "output_tokens": 18,
+              "thinking_tokens": 0,
+              "cache_read_tokens": 0,
+              "total_tokens": 13118
+            }
+          }
+        },
+        {
+          "event": "result",
+          "result": {
+            "conversation_id": "19b354ae-658a-4ee5-ac3c-f1ad9defc523",
+            "status": "SUCCESS",
+            "response": "PRAGMA_STARTUP_NATIVE_20260929\n",
+            "duration_seconds": 3.246673,
+            "num_turns": 1,
+            "usage": {
+              "input_tokens": 13100,
+              "output_tokens": 18,
+              "thinking_tokens": 0,
+              "cache_read_tokens": 0,
+              "total_tokens": 13118
+            }
+          }
+        },
+        {
+          "event": "step_update",
+          "step_update": {
+            "conversation_id": "19b354ae-658a-4ee5-ac3c-f1ad9defc523",
+            "step_index": 2,
+            "state": "DONE",
+            "step_type": "user_input"
+          }
+        },
+        {
+          "event": "step_update",
+          "step_update": {
+            "conversation_id": "19b354ae-658a-4ee5-ac3c-f1ad9defc523",
+            "step_index": 3,
+            "state": "ACTIVE",
+            "step_type": "agent_response",
+            "text_delta": "PRAGMA_"
+          }
+        },
+        {
+          "event": "step_update",
+          "step_update": {
+            "conversation_id": "19b354ae-658a-4ee5-ac3c-f1ad9defc523",
+            "step_index": 3,
+            "state": "ACTIVE",
+            "step_type": "agent_response",
+            "text_delta": "STARTUP_NATIVE_20260929"
+          }
+        },
+        {
+          "event": "step_update",
+          "step_update": {
+            "conversation_id": "19b354ae-658a-4ee5-ac3c-f1ad9defc523",
+            "step_index": 3,
+            "state": "DONE",
+            "step_type": "agent_response",
+            "text_delta": "\n",
+            "duration_seconds": 2.660238,
+            "usage": {
+              "input_tokens": 13200,
+              "output_tokens": 18,
+              "thinking_tokens": 0,
+              "cache_read_tokens": 0,
+              "total_tokens": 13218
+            }
+          }
+        },
+        {
+          "event": "result",
+          "result": {
+            "conversation_id": "19b354ae-658a-4ee5-ac3c-f1ad9defc523",
+            "status": "SUCCESS",
+            "response": "PRAGMA_STARTUP_NATIVE_20260929\n",
+            "duration_seconds": 5.996861,
+            "num_turns": 2,
+            "usage": {
+              "input_tokens": 26300,
+              "output_tokens": 36,
+              "thinking_tokens": 0,
+              "cache_read_tokens": 0,
+              "total_tokens": 26336
+            }
+          }
+        }
+      ]
+    },
+    "cli-mcp-schema-probe": {
+      "args": [
+        "agy",
+        "--model",
+        "gemini-3.8-flash-low",
+        "--sandbox",
+        "--dangerously-skip-permissions",
+        "--output-format",
+        "stream-json",
+        "-p",
+        "Call the MCP tool pragma_schema_probe exactly once using its declared inputSchema, then report its result. Do not read any files, search configurations, use shell tools, or invoke other tools."
+      ],
+      "exit": 0,
+      "elapsedSeconds": 22.72,
+      "stderr": "",
+      "events": [
+        {
+          "event": "init",
+          "conversation_id": "d0e58b3a-1964-4057-9862-d9a29a736abf",
+          "init": {
+            "model": "gemini-3.8-flash-low",
+            "cwd": "<PROBE_ROOT>/mcp-workspace",
+            "tools": [
+              "ask_custom_permission",
+              "ask_permission",
+              "ask_question",
+              "browser_click_element",
+              "browser_drag_pixel_to_pixel",
+              "browser_get_dom",
+              "browser_get_network_request",
+              "browser_input",
+              "browser_list_network_requests",
+              "browser_mouse_down",
+              "browser_mouse_up",
+              "browser_move_mouse",
+              "browser_press_key",
+              "browser_refresh_page",
+              "browser_resize_window",
+              "browser_scroll",
+              "browser_scroll_dom",
+              "browser_select_option",
+              "browser_subagent",
+              "call_mcp_tool",
+              "capture_browser_console_logs",
+              "capture_browser_screenshot",
+              "click_browser_pixel",
+              "command_status",
+              "define_subagent",
+              "delete_knowledge",
+              "execute_browser_javascript",
+              "find_by_name",
+              "finish",
+              "generate_image",
+              "grep_search",
+              "invoke_subagent",
+              "list_browser_pages",
+              "list_dir",
+              "list_permissions",
+              "list_resources",
+              "manage_inbox",
+              "manage_subagents",
+              "manage_task",
+              "multi_replace_file_content",
+              "notebook_edit",
+              "notebook_execution",
+              "open_browser_url",
+              "read_browser_page",
+              "read_resource",
+              "read_url_content",
+              "replace_file_content",
+              "run_command",
+              "schedule",
+              "search_web",
+              "sed_file",
+              "send_command_input",
+              "send_message",
+              "view_file",
+              "wait",
+              "wait_5_seconds",
+              "write_to_file"
+            ],
+            "permission_mode": "always-proceed"
+          }
+        },
+        {
+          "event": "step_update",
+          "step_update": {
+            "conversation_id": "d0e58b3a-1964-4057-9862-d9a29a736abf",
+            "step_index": 0,
+            "state": "DONE",
+            "step_type": "user_input"
+          }
+        },
+        {
+          "event": "step_update",
+          "step_update": {
+            "conversation_id": "d0e58b3a-1964-4057-9862-d9a29a736abf",
+            "step_index": 1,
+            "state": "DONE",
+            "step_type": "agent_response",
+            "duration_seconds": 5.560431,
+            "usage": {
+              "input_tokens": 13947,
+              "output_tokens": 672,
+              "thinking_tokens": 612,
+              "cache_read_tokens": 0,
+              "total_tokens": 14619
+            }
+          }
+        },
+        {
+          "event": "step_update",
+          "step_update": {
+            "conversation_id": "d0e58b3a-1964-4057-9862-d9a29a736abf",
+            "step_index": 2,
+            "state": "ACTIVE",
+            "step_type": "tool",
+            "tool_name": "call_mcp_tool",
+            "tool_info": {
+              "name": "call_mcp_tool",
+              "parameters": {
+                "Arguments": {},
+                "ServerName": "pragma-research_p",
+                "ToolName": "pragma_schema_probe"
+              }
+            }
+          }
+        },
+        {
+          "event": "step_update",
+          "step_update": {
+            "conversation_id": "d0e58b3a-1964-4057-9862-d9a29a736abf",
+            "step_index": 2,
+            "state": "ERROR",
+            "step_type": "tool",
+            "tool_name": "call_mcp_tool",
+            "duration_seconds": 0.027114,
+            "tool_info": {
+              "name": "call_mcp_tool",
+              "parameters": {
+                "Arguments": {},
+                "ServerName": "pragma-research_p",
+                "ToolName": "pragma_schema_probe"
+              },
+              "output": "INVALID_SCHEMA_ARGUMENT",
+              "error": {
+                "type": "TOOL_ERROR",
+                "message": "INVALID_SCHEMA_ARGUMENT"
+              }
+            }
+          }
+        },
+        {
+          "event": "step_update",
+          "step_update": {
+            "conversation_id": "d0e58b3a-1964-4057-9862-d9a29a736abf",
+            "step_index": 3,
+            "state": "ACTIVE",
+            "step_type": "agent_response",
+            "text_delta": "The MCP tool `pragma_schema_probe` w"
+          }
+        },
+        {
+          "event": "step_update",
+          "step_update": {
+            "conversation_id": "d0e58b3a-1964-4057-9862-d9a29a736abf",
+            "step_index": 3,
+            "state": "DONE",
+            "step_type": "agent_response",
+            "text_delta": "as invoked on server `pragma-research_p` with arguments `{}`.\n\n### Result\n```\nEncountered error in tool execution: INVALID_SCHEMA_ARGUMENT\n```\n",
+            "duration_seconds": 3.179497,
+            "usage": {
+              "input_tokens": 14709,
+              "output_tokens": 156,
+              "thinking_tokens": 108,
+              "cache_read_tokens": 0,
+              "total_tokens": 14865
+            }
+          }
+        },
+        {
+          "event": "result",
+          "result": {
+            "conversation_id": "d0e58b3a-1964-4057-9862-d9a29a736abf",
+            "status": "SUCCESS",
+            "response": "The MCP tool `pragma_schema_probe` was invoked on server `pragma-research_p` with arguments `{}`.\n\n### Result\n```\nEncountered error in tool execution: INVALID_SCHEMA_ARGUMENT\n```\n",
+            "duration_seconds": 9.259037,
+            "num_turns": 1,
+            "usage": {
+              "input_tokens": 28656,
+              "output_tokens": 828,
+              "thinking_tokens": 720,
+              "cache_read_tokens": 0,
+              "total_tokens": 29484
+            }
+          }
+        }
+      ]
+    },
+    "cli-mcp-native-discovery-probe": {
+      "args": [
+        "agy",
+        "--model",
+        "gemini-3.8-flash-low",
+        "--sandbox",
+        "--dangerously-skip-permissions",
+        "--output-format",
+        "stream-json",
+        "-p",
+        "Call the MCP tool pragma_schema_probe using its declared inputSchema and report its result. You may read the native MCP tool definition if needed. Do not use shell tools or inspect unrelated files."
+      ],
+      "exit": 0,
+      "elapsedSeconds": 18.41,
+      "stderr": "",
+      "events": [
+        {
+          "event": "init",
+          "conversation_id": "61445e70-8371-4f45-a8ff-152aa7efbc5f",
+          "init": {
+            "model": "gemini-3.8-flash-low",
+            "cwd": "<PROBE_ROOT>/mcp-workspace",
+            "tools": [
+              "ask_custom_permission",
+              "ask_permission",
+              "ask_question",
+              "browser_click_element",
+              "browser_drag_pixel_to_pixel",
+              "browser_get_dom",
+              "browser_get_network_request",
+              "browser_input",
+              "browser_list_network_requests",
+              "browser_mouse_down",
+              "browser_mouse_up",
+              "browser_move_mouse",
+              "browser_press_key",
+              "browser_refresh_page",
+              "browser_resize_window",
+              "browser_scroll",
+              "browser_scroll_dom",
+              "browser_select_option",
+              "browser_subagent",
+              "call_mcp_tool",
+              "capture_browser_console_logs",
+              "capture_browser_screenshot",
+              "click_browser_pixel",
+              "command_status",
+              "define_subagent",
+              "delete_knowledge",
+              "execute_browser_javascript",
+              "find_by_name",
+              "finish",
+              "generate_image",
+              "grep_search",
+              "invoke_subagent",
+              "list_browser_pages",
+              "list_dir",
+              "list_permissions",
+              "list_resources",
+              "manage_inbox",
+              "manage_subagents",
+              "manage_task",
+              "multi_replace_file_content",
+              "notebook_edit",
+              "notebook_execution",
+              "open_browser_url",
+              "read_browser_page",
+              "read_resource",
+              "read_url_content",
+              "replace_file_content",
+              "run_command",
+              "schedule",
+              "search_web",
+              "sed_file",
+              "send_command_input",
+              "send_message",
+              "view_file",
+              "wait",
+              "wait_5_seconds",
+              "write_to_file"
+            ],
+            "permission_mode": "always-proceed"
+          }
+        },
+        {
+          "event": "step_update",
+          "step_update": {
+            "conversation_id": "61445e70-8371-4f45-a8ff-152aa7efbc5f",
+            "step_index": 0,
+            "state": "DONE",
+            "step_type": "user_input"
+          }
+        },
+        {
+          "event": "step_update",
+          "step_update": {
+            "conversation_id": "61445e70-8371-4f45-a8ff-152aa7efbc5f",
+            "step_index": 1,
+            "state": "DONE",
+            "step_type": "agent_response",
+            "duration_seconds": 4.229338,
+            "usage": {
+              "input_tokens": 13942,
+              "output_tokens": 271,
+              "thinking_tokens": 199,
+              "cache_read_tokens": 0,
+              "total_tokens": 14213
+            }
+          }
+        },
+        {
+          "event": "step_update",
+          "step_update": {
+            "conversation_id": "61445e70-8371-4f45-a8ff-152aa7efbc5f",
+            "step_index": 2,
+            "state": "ACTIVE",
+            "step_type": "tool",
+            "tool_name": "view_file",
+            "tool_info": {
+              "name": "view_file",
+              "parameters": {
+                "AbsolutePath": "<HOST_HOME>/.gemini/antigravity-cli/mcp/pragma-research_p/pragma_schema_probe.json"
+              }
+            }
+          }
+        },
+        {
+          "event": "step_update",
+          "step_update": {
+            "conversation_id": "61445e70-8371-4f45-a8ff-152aa7efbc5f",
+            "step_index": 2,
+            "state": "DONE",
+            "step_type": "tool",
+            "tool_name": "view_file",
+            "duration_seconds": 0.044772,
+            "tool_info": {
+              "name": "view_file",
+              "parameters": {
+                "AbsolutePath": "<HOST_HOME>/.gemini/antigravity-cli/mcp/pragma-research_p/pragma_schema_probe.json"
+              },
+              "output": "1 lines, 326 bytes"
+            }
+          }
+        },
+        {
+          "event": "step_update",
+          "step_update": {
+            "conversation_id": "61445e70-8371-4f45-a8ff-152aa7efbc5f",
+            "step_index": 3,
+            "state": "DONE",
+            "step_type": "agent_response",
+            "duration_seconds": 3.849284,
+            "usage": {
+              "input_tokens": 14497,
+              "output_tokens": 151,
+              "thinking_tokens": 70,
+              "cache_read_tokens": 0,
+              "total_tokens": 14648
+            }
+          }
+        },
+        {
+          "event": "step_update",
+          "step_update": {
+            "conversation_id": "61445e70-8371-4f45-a8ff-152aa7efbc5f",
+            "step_index": 4,
+            "state": "ACTIVE",
+            "step_type": "tool",
+            "tool_name": "call_mcp_tool",
+            "tool_info": {
+              "name": "call_mcp_tool",
+              "parameters": {
+                "Arguments": {
+                  "sentinel_value": "SCHEMA_FROM_MCP_20260929"
+                },
+                "ServerName": "pragma-research_p",
+                "ToolName": "pragma_schema_probe"
+              }
+            }
+          }
+        },
+        {
+          "event": "step_update",
+          "step_update": {
+            "conversation_id": "61445e70-8371-4f45-a8ff-152aa7efbc5f",
+            "step_index": 4,
+            "state": "DONE",
+            "step_type": "tool",
+            "tool_name": "call_mcp_tool",
+            "duration_seconds": 0.011313,
+            "tool_info": {
+              "name": "call_mcp_tool",
+              "parameters": {
+                "Arguments": {
+                  "sentinel_value": "SCHEMA_FROM_MCP_20260929"
+                },
+                "ServerName": "pragma-research_p",
+                "ToolName": "pragma_schema_probe"
+              },
+              "output": "PRAGMA_MCP_SCHEMA_VERIFIED"
+            }
+          }
+        },
+        {
+          "event": "step_update",
+          "step_update": {
+            "conversation_id": "61445e70-8371-4f45-a8ff-152aa7efbc5f",
+            "step_index": 5,
+            "state": "DONE",
+            "step_type": "agent_response",
+            "text_delta": "The MCP tool `pragma_schema_probe` was called with the required parameter from its schema (`sentinel_value=\"SCHEMA_FROM_MCP_20260929\"`).\n\n### Result\n```\nPRAGMA_MCP_SCHEMA_VERIFIED\n```\n",
+            "duration_seconds": 2.128687,
+            "usage": {
+              "input_tokens": 14734,
+              "output_tokens": 83,
+              "thinking_tokens": 24,
+              "cache_read_tokens": 0,
+              "total_tokens": 14817
+            }
+          }
+        },
+        {
+          "event": "result",
+          "result": {
+            "conversation_id": "61445e70-8371-4f45-a8ff-152aa7efbc5f",
+            "status": "SUCCESS",
+            "response": "The MCP tool `pragma_schema_probe` was called with the required parameter from its schema (`sentinel_value=\"SCHEMA_FROM_MCP_20260929\"`).\n\n### Result\n```\nPRAGMA_MCP_SCHEMA_VERIFIED\n```\n",
+            "duration_seconds": 10.652842,
+            "num_turns": 1,
+            "usage": {
+              "input_tokens": 43173,
+              "output_tokens": 505,
+              "thinking_tokens": 293,
+              "cache_read_tokens": 0,
+              "total_tokens": 43678
+            }
+          }
+        }
+      ]
+    },
+    "cli-native-skill-probe": {
+      "args": [
+        "agy",
+        "--model",
+        "gemini-3.8-flash-low",
+        "--sandbox",
+        "--output-format",
+        "stream-json",
+        "-p",
+        "Perform the Pragma native skill verification task according to the available pragma-research-skill."
+      ],
+      "exit": 0,
+      "elapsedSeconds": 18.65,
+      "stderr": "",
+      "events": [
+        {
+          "event": "init",
+          "conversation_id": "0213c532-409d-4acd-8f11-553ed35a1660",
+          "init": {
+            "model": "gemini-3.8-flash-low",
+            "cwd": "<PROBE_ROOT>/mcp-workspace",
+            "tools": [
+              "ask_custom_permission",
+              "ask_permission",
+              "ask_question",
+              "browser_click_element",
+              "browser_drag_pixel_to_pixel",
+              "browser_get_dom",
+              "browser_get_network_request",
+              "browser_input",
+              "browser_list_network_requests",
+              "browser_mouse_down",
+              "browser_mouse_up",
+              "browser_move_mouse",
+              "browser_press_key",
+              "browser_refresh_page",
+              "browser_resize_window",
+              "browser_scroll",
+              "browser_scroll_dom",
+              "browser_select_option",
+              "browser_subagent",
+              "call_mcp_tool",
+              "capture_browser_console_logs",
+              "capture_browser_screenshot",
+              "click_browser_pixel",
+              "command_status",
+              "define_subagent",
+              "delete_knowledge",
+              "execute_browser_javascript",
+              "find_by_name",
+              "finish",
+              "generate_image",
+              "grep_search",
+              "invoke_subagent",
+              "list_browser_pages",
+              "list_dir",
+              "list_permissions",
+              "list_resources",
+              "manage_inbox",
+              "manage_subagents",
+              "manage_task",
+              "multi_replace_file_content",
+              "notebook_edit",
+              "notebook_execution",
+              "open_browser_url",
+              "read_browser_page",
+              "read_resource",
+              "read_url_content",
+              "replace_file_content",
+              "run_command",
+              "schedule",
+              "search_web",
+              "sed_file",
+              "send_command_input",
+              "send_message",
+              "view_file",
+              "wait",
+              "wait_5_seconds",
+              "write_to_file"
+            ],
+            "permission_mode": "request-review"
+          }
+        },
+        {
+          "event": "step_update",
+          "step_update": {
+            "conversation_id": "0213c532-409d-4acd-8f11-553ed35a1660",
+            "step_index": 0,
+            "state": "DONE",
+            "step_type": "user_input"
+          }
+        },
+        {
+          "event": "step_update",
+          "step_update": {
+            "conversation_id": "0213c532-409d-4acd-8f11-553ed35a1660",
+            "step_index": 1,
+            "state": "DONE",
+            "step_type": "agent_response",
+            "duration_seconds": 3.670867,
+            "usage": {
+              "input_tokens": 13991,
+              "output_tokens": 282,
+              "thinking_tokens": 194,
+              "cache_read_tokens": 0,
+              "total_tokens": 14273
+            }
+          }
+        },
+        {
+          "event": "step_update",
+          "step_update": {
+            "conversation_id": "0213c532-409d-4acd-8f11-553ed35a1660",
+            "step_index": 2,
+            "state": "ACTIVE",
+            "step_type": "tool",
+            "tool_name": "view_file",
+            "tool_info": {
+              "name": "view_file",
+              "parameters": {
+                "AbsolutePath": "<PROBE_ROOT>/mcp-workspace/.agents/plugins/pragma-research/skills/pragma-research-skill/SKILL.md"
+              }
+            }
+          }
+        },
+        {
+          "event": "step_update",
+          "step_update": {
+            "conversation_id": "0213c532-409d-4acd-8f11-553ed35a1660",
+            "step_index": 2,
+            "state": "DONE",
+            "step_type": "tool",
+            "tool_name": "view_file",
+            "duration_seconds": 0.253861,
+            "tool_info": {
+              "name": "view_file",
+              "parameters": {
+                "AbsolutePath": "<PROBE_ROOT>/mcp-workspace/.agents/plugins/pragma-research/skills/pragma-research-skill/SKILL.md"
+              },
+              "output": "6 lines, 226 bytes"
+            }
+          }
+        },
+        {
+          "event": "step_update",
+          "step_update": {
+            "conversation_id": "0213c532-409d-4acd-8f11-553ed35a1660",
+            "step_index": 3,
+            "state": "ACTIVE",
+            "step_type": "agent_response",
+            "text_delta": "PRAGMA_NATIVE_SKILL_VERI"
+          }
+        },
+        {
+          "event": "step_update",
+          "step_update": {
+            "conversation_id": "0213c532-409d-4acd-8f11-553ed35a1660",
+            "step_index": 3,
+            "state": "ACTIVE",
+            "step_type": "agent_response",
+            "text_delta": "FIED"
+          }
+        },
+        {
+          "event": "step_update",
+          "step_update": {
+            "conversation_id": "0213c532-409d-4acd-8f11-553ed35a1660",
+            "step_index": 3,
+            "state": "DONE",
+            "step_type": "agent_response",
+            "text_delta": "\n",
+            "duration_seconds": 4.388532,
+            "usage": {
+              "input_tokens": 14560,
+              "output_tokens": 65,
+              "thinking_tokens": 53,
+              "cache_read_tokens": 0,
+              "total_tokens": 14625
+            }
+          }
+        },
+        {
+          "event": "result",
+          "result": {
+            "conversation_id": "0213c532-409d-4acd-8f11-553ed35a1660",
+            "status": "SUCCESS",
+            "response": "PRAGMA_NATIVE_SKILL_VERIFIED\n",
+            "duration_seconds": 8.252688,
+            "num_turns": 1,
+            "usage": {
+              "input_tokens": 28551,
+              "output_tokens": 347,
+              "thinking_tokens": 247,
+              "cache_read_tokens": 0,
+              "total_tokens": 28898
+            }
+          }
+        }
+      ]
+    }
+  },
+  "mcpRequests": [
+    {
+      "jsonrpc": "2.0",
+      "id": 1,
+      "method": "server/discover",
+      "params": {
+        "_meta": {
+          "io.modelcontextprotocol/clientCapabilities": {
+            "elicitation": {
+              "form": {},
+              "url": {}
+            },
+            "roots": {
+              "listChanged": true
+            }
+          },
+          "io.modelcontextprotocol/clientInfo": {
+            "name": "antigravity-client",
+            "version": "v1.0.0"
+          },
+          "io.modelcontextprotocol/protocolVersion": "2026-07-28"
+        }
+      }
+    },
+    {
+      "jsonrpc": "2.0",
+      "id": 2,
+      "method": "initialize",
+      "params": {
+        "clientInfo": {
+          "name": "antigravity-client",
+          "version": "v1.0.0"
+        },
+        "protocolVersion": "2025-11-25",
+        "capabilities": {
+          "elicitation": {
+            "form": {},
+            "url": {}
+          },
+          "roots": {
+            "listChanged": true
+          }
+        }
+      }
+    },
+    {
+      "jsonrpc": "2.0",
+      "method": "notifications/initialized",
+      "params": {}
+    },
+    {
+      "jsonrpc": "2.0",
+      "id": 3,
+      "method": "tools/list",
+      "params": {}
+    },
+    {
+      "jsonrpc": "2.0",
+      "id": 4,
+      "method": "tools/call",
+      "params": {
+        "_meta": {
+          "antigravity.google/artifacts_dir": "<HOST_HOME>/.gemini/antigravity-cli/brain/d0e58b3a-1964-4057-9862-d9a29a736abf",
+          "antigravity.google/conversation_id": "d0e58b3a-1964-4057-9862-d9a29a736abf",
+          "progressToken": "ebf58e98-f3f2-4913-ad38-6af7ac05ee2d:2"
+        },
+        "name": "pragma_schema_probe",
+        "arguments": {}
+      }
+    },
+    {
+      "jsonrpc": "2.0",
+      "id": 1,
+      "method": "server/discover",
+      "params": {
+        "_meta": {
+          "io.modelcontextprotocol/clientCapabilities": {
+            "elicitation": {
+              "form": {},
+              "url": {}
+            },
+            "roots": {
+              "listChanged": true
+            }
+          },
+          "io.modelcontextprotocol/clientInfo": {
+            "name": "antigravity-client",
+            "version": "v1.0.0"
+          },
+          "io.modelcontextprotocol/protocolVersion": "2026-07-28"
+        }
+      }
+    },
+    {
+      "jsonrpc": "2.0",
+      "id": 2,
+      "method": "initialize",
+      "params": {
+        "clientInfo": {
+          "name": "antigravity-client",
+          "version": "v1.0.0"
+        },
+        "protocolVersion": "2025-11-25",
+        "capabilities": {
+          "elicitation": {
+            "form": {},
+            "url": {}
+          },
+          "roots": {
+            "listChanged": true
+          }
+        }
+      }
+    },
+    {
+      "jsonrpc": "2.0",
+      "method": "notifications/initialized",
+      "params": {}
+    },
+    {
+      "jsonrpc": "2.0",
+      "id": 3,
+      "method": "tools/list",
+      "params": {}
+    },
+    {
+      "jsonrpc": "2.0",
+      "id": 4,
+      "method": "tools/call",
+      "params": {
+        "_meta": {
+          "antigravity.google/artifacts_dir": "<HOST_HOME>/.gemini/antigravity-cli/brain/61445e70-8371-4f45-a8ff-152aa7efbc5f",
+          "antigravity.google/conversation_id": "61445e70-8371-4f45-a8ff-152aa7efbc5f",
+          "progressToken": "a64dde26-8a77-4222-a552-f2aeee9e0fed:4"
+        },
+        "name": "pragma_schema_probe",
+        "arguments": {
+          "sentinel_value": "SCHEMA_FROM_MCP_20260929"
+        }
+      }
+    },
+    {
+      "jsonrpc": "2.0",
+      "id": 1,
+      "method": "server/discover",
+      "params": {
+        "_meta": {
+          "io.modelcontextprotocol/clientCapabilities": {
+            "elicitation": {
+              "form": {},
+              "url": {}
+            },
+            "roots": {
+              "listChanged": true
+            }
+          },
+          "io.modelcontextprotocol/clientInfo": {
+            "name": "antigravity-client",
+            "version": "v1.0.0"
+          },
+          "io.modelcontextprotocol/protocolVersion": "2026-07-28"
+        }
+      }
+    },
+    {
+      "jsonrpc": "2.0",
+      "id": 2,
+      "method": "initialize",
+      "params": {
+        "clientInfo": {
+          "name": "antigravity-client",
+          "version": "v1.0.0"
+        },
+        "protocolVersion": "2025-11-25",
+        "capabilities": {
+          "elicitation": {
+            "form": {},
+            "url": {}
+          },
+          "roots": {
+            "listChanged": true
+          }
+        }
+      }
+    },
+    {
+      "jsonrpc": "2.0",
+      "method": "notifications/initialized",
+      "params": {}
+    },
+    {
+      "jsonrpc": "2.0",
+      "id": 3,
+      "method": "tools/list",
+      "params": {}
+    }
+  ],
+  "nativeSchema": {
+    "name": "pragma_schema_probe",
+    "description": "Return a verification marker. Obtain the exact required sentinel_value from this tool inputSchema enum.",
+    "parameters": {
+      "additionalProperties": false,
+      "properties": {
+        "sentinel_value": {
+          "enum": ["SCHEMA_FROM_MCP_20260929"],
+          "type": "string"
+        }
+      },
+      "required": ["sentinel_value"],
+      "type": "object"
+    }
+  },
+  "acp": {
+    "registryVersion": "1.2.1",
+    "source": "https://dl.google.com/agy-extensions/releases/macos/agy-acp-server-1.2.1-darwin-x86_64.zip",
+    "archiveBytes": 117493869,
+    "archiveSha256": "d09bf99bdea7b82021e1afcff829da35e4aa583d8f0984ef364dc3a7c064e07e",
+    "probe": {
+      "request": {
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "initialize",
+        "params": {
+          "protocolVersion": 1,
+          "clientInfo": {
+            "name": "pragma-research",
+            "version": "1"
+          },
+          "clientCapabilities": {}
+        }
+      },
+      "output": [],
+      "exit": -15,
+      "elapsedSeconds": 120.06,
+      "initializeReceived": false
+    },
+    "earlierAttempt": "An earlier independent 45-second bounded initialize attempt also produced no response. Its result file was overwritten by the longer retry."
+  }
+}

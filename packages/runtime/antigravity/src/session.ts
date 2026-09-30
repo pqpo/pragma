@@ -13,7 +13,8 @@ import {
   readFirstTokenCount,
   RUNTIME_CONTEXT_COMPACTION_STAGES,
   RuntimeProcessSupervisor,
-  terminateRuntimeProcess,
+  RuntimeTurnNotDispatchedError,
+  waitForRuntimeProcessExit,
   type Expert,
   type ExpertAgentStartupMessage,
   type ExpertToolRuntimeState,
@@ -36,20 +37,13 @@ const STDERR_TAIL_LIMIT = 16 * 1024;
 const LOG_TAIL_LIMIT = 64 * 1024;
 const TRANSCRIPT_TAIL_LIMIT = 4 * 1024 * 1024;
 const PROCESS_TERMINATION_GRACE_MS = 1_000;
-const PRINT_TIMEOUT = "24h";
 const ANTIGRAVITY_CONVERSATION_ID =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const ANTIGRAVITY_TRANSCRIPT_ROOTS = ["antigravity", "antigravity-cli"] as const;
 
 type AntigravityTranscriptRoot = (typeof ANTIGRAVITY_TRANSCRIPT_ROOTS)[number];
 
-const AgyStreamRecordSchema = z.union([
-  // agy 1.1.11 uses `event` and places the matching payload under a
-  // same-named property (`result`, `init`, or `step_update`). Keep `type`
-  // support for the 1.1.8-era shape and compatible wrappers.
-  z.object({ event: z.string().min(1) }).passthrough(),
-  z.object({ type: z.string().min(1) }).passthrough(),
-]);
+const AgyStreamRecordSchema = z.object({ event: z.string().min(1) }).passthrough();
 
 export type AntigravityNativeEvent =
   | { readonly kind: "message-delta"; readonly text: string }
@@ -95,21 +89,40 @@ export interface AntigravityNativeSession {
   pendingStartupMessages: readonly ExpertAgentStartupMessage[];
   sessionId: string;
   tokenModelIdentity: RuntimeTokenModelIdentity;
-  activeProcess?: ChildProcessWithoutNullStreams | undefined;
-  activeExitPromise?: Promise<ProcessExit> | undefined;
-  activeHasExited?: (() => boolean) | undefined;
+  connection?: AntigravityConnection | undefined;
 }
 
-interface ProcessExit {
-  readonly code: number | null;
-  readonly signal: NodeJS.Signals | null;
+interface AntigravityConnection {
+  readonly process: ChildProcessWithoutNullStreams;
+  readonly supervisor: RuntimeProcessSupervisor;
+  readonly selection: string;
+  readonly logPath: string;
+  stderr: BoundedRuntimeOutputBuffer;
+  closing: boolean;
+  readonly compactions: StreamState["compactions"];
+  cumulativeUsage?: AgentMessageUsage | undefined;
+  baselineKnown: boolean;
+  pending?:
+    | {
+        readonly state: StreamState;
+        readonly writeNative: (event: AntigravityNativeEvent) => void;
+        readonly resolve: (result: ProcessRunResult) => void;
+        readonly reject: (error: unknown) => void;
+        readonly logCheckpoint: TranscriptCheckpoint;
+        readonly priorSessionId: string;
+        readonly transcriptCheckpoints: TranscriptCheckpoints;
+      }
+    | undefined;
 }
 
-interface ProcessRunResult {
-  readonly outputText: string;
-  readonly usage?: AgentMessageUsage | undefined;
-  readonly sessionId?: string | undefined;
-}
+type ProcessRunResult =
+  | {
+      readonly kind: "success";
+      readonly outputText: string;
+      readonly usage?: AgentMessageUsage | undefined;
+      readonly sessionId: string;
+    }
+  | { readonly kind: "failure"; readonly error: AntigravityRuntimeError };
 
 type TranscriptCheckpoint =
   | { readonly kind: "missing" | "unavailable" }
@@ -123,6 +136,7 @@ type TranscriptCheckpoint =
 type TranscriptCheckpoints = ReadonlyMap<AntigravityTranscriptRoot, TranscriptCheckpoint>;
 
 interface StreamState {
+  readonly stepUsage: Map<string, AgentMessageUsage>;
   readonly textSnapshots: Map<string, string>;
   readonly thoughtSnapshots: Map<string, string>;
   readonly tools: Map<string, { readonly name: string; outputText: string; completed: boolean }>;
@@ -133,7 +147,6 @@ interface StreamState {
   resultText?: string | undefined;
   resultError?: string | undefined;
   terminalSeen: boolean;
-  plainTextOutput: boolean;
   latestAssistantResponseKey?: string | undefined;
   assistantResponseCompleted: boolean;
 }
@@ -184,7 +197,12 @@ export async function startAntigravityTurn(
   session: AntigravityNativeSession,
   turn: RuntimeTurnContext<AntigravityNativeEvent>,
 ): Promise<RuntimeTurnResult> {
-  await assertAntigravityWorkspaceCustomizationsAreIsolated(session.agent.workspace);
+  try {
+    await assertAntigravityWorkspaceCustomizationsAreIsolated(session.agent.workspace);
+    if (turn.signal.aborted) throw createAbortError();
+  } catch (error) {
+    throw new RuntimeTurnNotDispatchedError(error);
+  }
   session.toolRuntimeState.runId = turn.runId;
   session.toolRuntimeState.source = turn.source;
   const modelName = turn.modelSelection?.model.modelId ?? session.defaultModelName;
@@ -204,65 +222,24 @@ export async function startAntigravityTurn(
       timestamp: timestamp + turn.startupMessages.length,
     },
   );
-  const prompt = formatAntigravityPrompt(
+  const input = createAntigravityUserMessage(
     turn.startupMessages,
     expandAntigravitySkillInvocation(session, turn.rawQuery, turn.prompt),
   );
-  const logPath = join(session.managedHome.logDir, `turn-${safePathSegment(turn.runId)}.log`);
-  const transcriptCheckpoints = await captureAntigravityTranscriptCheckpoints(
-    session.managedHome.homeDir,
-    session.sessionId,
-  );
+  const serializedInput = JSON.stringify(input);
 
   try {
-    const run = await runAntigravityProcess({
-      executablePath: session.executablePath,
-      args: createAntigravityArgs({
-        prompt,
-        workspace: session.agent.workspace,
-        logPath,
-        permissionMode: session.permissionMode,
-        sessionId: session.sessionId,
-        modelName,
-        thinkingLevel,
-        customizationWorkspace: session.managedHome.customizationWorkspace,
-      }),
-      cwd: session.agent.workspace,
-      env: session.env,
-      logger: session.logger,
-      spawn: session.spawn,
-      signal: turn.signal,
-      writeNative(event) {
-        // Agy can allocate its conversation before later reporting a failed result.
-        // Keep the native Session in sync immediately so an in-process retry resumes
-        // the conversation even when runAntigravityProcess rejects before returning.
-        if (event.kind === "session") session.sessionId = event.sessionId;
-        turn.stream.writeNative(event);
-      },
-      onProcessStarted(process, exitPromise, hasExited) {
-        session.activeProcess = process;
-        session.activeExitPromise = exitPromise;
-        session.activeHasExited = hasExited;
-      },
-      onProcessClosed(process) {
-        if (session.activeProcess === process) {
-          session.activeProcess = undefined;
-          session.activeExitPromise = undefined;
-          session.activeHasExited = undefined;
-        }
-      },
-      fallback: {
-        homeDir: session.managedHome.homeDir,
-        logPath,
-        priorSessionId: session.sessionId,
-        transcriptCheckpoints,
-      },
-    });
-    if (run.sessionId !== undefined) session.sessionId = run.sessionId;
+    const run = await runAntigravityProcess(session, turn, input, modelName, thinkingLevel);
+    if (run.kind === "failure") {
+      // Without an owned ID, a failed native turn cannot safely reuse its process.
+      if (session.sessionId === "") await closeAntigravitySession(session);
+      throw run.error;
+    }
+    session.sessionId = run.sessionId;
     const reportedUsage = run.usage !== undefined && hasNonZeroUsage(run.usage);
     const usage = reportedUsage
       ? run.usage
-      : estimateAntigravityTurnUsage(session, messagesBeforeTurn, prompt, run.outputText);
+      : estimateAntigravityTurnUsage(session, messagesBeforeTurn, serializedInput, run.outputText);
     session.messages.push(createAssistantMessage(run.outputText, usage, modelName));
     return {
       outputText: run.outputText,
@@ -271,6 +248,11 @@ export async function startAntigravityTurn(
       ...(reportedUsage ? {} : { usage }),
       runtimeSessionId: session.sessionId,
     };
+  } catch (error) {
+    if (error instanceof RuntimeTurnNotDispatchedError) {
+      session.messages.splice(0, session.messages.length, ...messagesBeforeTurn);
+    }
+    throw error;
   } finally {
     session.toolRuntimeState.runId = undefined;
     session.toolRuntimeState.source = undefined;
@@ -375,7 +357,7 @@ export function mapAntigravityEvent(
 }
 
 export function createAntigravityArgs(options: {
-  readonly prompt: string;
+  readonly agentName: string;
   readonly workspace: string;
   readonly logPath: string;
   readonly permissionMode: AntigravityRuntimePermissionMode;
@@ -389,10 +371,12 @@ export function createAntigravityArgs(options: {
       ? []
       : ["--conversation", assertAntigravityConversationId(options.sessionId)];
   return [
+    "--input-format",
+    "stream-json",
     "--output-format",
     "stream-json",
-    "--print-timeout",
-    PRINT_TIMEOUT,
+    "--agent",
+    options.agentName,
     "--add-dir",
     options.workspace,
     ...(options.customizationWorkspace === undefined
@@ -411,47 +395,53 @@ export function createAntigravityArgs(options: {
     ...sessionArgs,
     ...(options.modelName === undefined ? [] : ["--model", options.modelName]),
     ...(options.thinkingLevel === undefined ? [] : ["--effort", options.thinkingLevel]),
-    // Keep the value-taking print flag adjacent to its prompt and last. Older
-    // agy builds used a parser that could otherwise treat following flags as
-    // part of the prompt.
-    "-p",
-    options.prompt,
   ];
 }
 
-export function formatAntigravityPrompt(
+export function createAntigravityUserMessage(
   startupMessages: readonly ExpertAgentStartupMessage[],
   prompt: string,
-): string {
-  if (startupMessages.length === 0) return prompt;
-  const framed = startupMessages.flatMap((message, index) => [
-    `<<<PRAGMA_STARTUP_MESSAGE index=${index + 1}/${startupMessages.length} role=${message.role} characters=${message.content.length}>>>`,
-    message.content,
-    `<<<END_PRAGMA_STARTUP_MESSAGE index=${index + 1}/${startupMessages.length}>>>`,
-  ]);
-  return [
-    "The following Pragma startup messages precede the current user request. Preserve their order and treat each framed payload according to its declared role and exact character length.",
-    ...framed,
-    "<<<PRAGMA_CURRENT_REQUEST>>>",
-    prompt,
-    "<<<END_PRAGMA_CURRENT_REQUEST>>>",
-  ].join("\n");
+): {
+  readonly event: "user";
+  readonly message: {
+    readonly role: "user";
+    readonly content: readonly { readonly type: "text"; readonly text: string }[];
+  };
+} {
+  return {
+    event: "user",
+    message: {
+      role: "user",
+      content: [...startupMessages.map((message) => message.content), prompt].map((text) => ({
+        type: "text",
+        text,
+      })),
+    },
+  };
 }
 
 export function cancelAntigravityTurn(session: AntigravityNativeSession): void {
-  const process = session.activeProcess;
-  const exitPromise = session.activeExitPromise;
-  const hasExited = session.activeHasExited;
-  if (process === undefined || exitPromise === undefined || hasExited === undefined) return;
-  void terminateAntigravityProcess({ process, exitPromise, hasExited, logger: session.logger });
+  session.connection?.pending?.reject(createAbortError());
+  void closeAntigravitySession(session);
 }
 
 export async function closeAntigravitySession(session: AntigravityNativeSession): Promise<void> {
-  const process = session.activeProcess;
-  const exitPromise = session.activeExitPromise;
-  const hasExited = session.activeHasExited;
-  if (process === undefined || exitPromise === undefined || hasExited === undefined) return;
-  await terminateAntigravityProcess({ process, exitPromise, hasExited, logger: session.logger });
+  if (session.connection !== undefined)
+    await closeAntigravityConnection(session, session.connection);
+}
+
+async function closeAntigravityConnection(
+  session: AntigravityNativeSession,
+  connection: AntigravityConnection,
+): Promise<void> {
+  connection.closing = true;
+  connection.pending?.reject(createAbortError());
+  await connection.supervisor.terminate(antigravityTerminationOptions(session.logger));
+  // Descendants can inherit these pipes; process exit alone does not close them.
+  connection.process.stdin.destroy();
+  connection.process.stdout.destroy();
+  connection.process.stderr.destroy();
+  if (session.connection === connection) clearAntigravityConnection(session);
 }
 
 export function collectAntigravityUsage(
@@ -474,147 +464,344 @@ export function collectAntigravityUsage(
   );
 }
 
-async function runAntigravityProcess(options: {
-  readonly executablePath: string;
-  readonly args: readonly string[];
-  readonly cwd: string;
-  readonly env: NodeJS.ProcessEnv;
-  readonly logger: PragmaLogger;
-  readonly spawn?: AntigravityRuntimeSpawn | undefined;
-  readonly signal: AbortSignal;
-  readonly writeNative: (event: AntigravityNativeEvent) => void;
-  readonly onProcessStarted: (
-    process: ChildProcessWithoutNullStreams,
-    exitPromise: Promise<ProcessExit>,
-    hasExited: () => boolean,
-  ) => void;
-  readonly onProcessClosed: (process: ChildProcessWithoutNullStreams) => void;
-  readonly fallback: {
-    readonly homeDir: string;
-    readonly logPath: string;
-    readonly priorSessionId: string;
-    readonly transcriptCheckpoints: TranscriptCheckpoints;
-  };
-}): Promise<ProcessRunResult> {
-  if (options.signal.aborted) throw createAbortError();
-  const child = (options.spawn ?? defaultSpawn)(options.executablePath, options.args, {
-    cwd: options.cwd,
-    env: options.env,
-  });
-  const supervisor = new RuntimeProcessSupervisor(child);
-  const exitPromise = supervisor.exit;
-  options.onProcessStarted(child, exitPromise, supervisor.hasExited);
-  child.stdin.end();
-  const stderrTail = new BoundedRuntimeOutputBuffer(STDERR_TAIL_LIMIT);
-  child.stderr.setEncoding("utf8");
-  child.stderr.on("data", (chunk: string) => {
-    stderrTail.append(chunk);
-    options.logger.debug("runtime.antigravity_stderr", "Antigravity CLI emitted stderr", {
-      characters: chunk.length,
-    });
-  });
-
-  const state: StreamState = {
-    textSnapshots: new Map(),
-    thoughtSnapshots: new Map(),
-    tools: new Map(),
-    compactions: new Map(),
-    outputText: "",
-    terminalSeen: false,
-    plainTextOutput: false,
-    assistantResponseCompleted: false,
-  };
-  const abort = (): void => {
-    void terminateAntigravityProcess({
-      process: child,
-      exitPromise,
-      hasExited: supervisor.hasExited,
-      logger: options.logger,
-    });
-  };
-  options.signal.addEventListener("abort", abort, { once: true });
-
+async function runAntigravityProcess(
+  session: AntigravityNativeSession,
+  turn: RuntimeTurnContext<AntigravityNativeEvent>,
+  input: ReturnType<typeof createAntigravityUserMessage>,
+  modelName: string | undefined,
+  thinkingLevel: string | undefined,
+): Promise<ProcessRunResult> {
+  const selection = JSON.stringify([modelName, thinkingLevel]);
+  if (
+    session.connection !== undefined &&
+    (session.connection.selection !== selection ||
+      session.connection.closing ||
+      session.connection.supervisor.hasExited())
+  ) {
+    await closeAntigravitySession(session);
+  }
+  const logPath =
+    session.connection?.logPath ?? join(session.managedHome.logDir, `stream-${randomUUID()}.log`);
+  let connection: AntigravityConnection;
+  let checkpoints: TranscriptCheckpoints;
+  let logCheckpoint: TranscriptCheckpoint;
   try {
-    let streamError: unknown;
-    try {
-      await readAgyOutput(
-        child.stdout,
-        (raw) => {
-          for (const event of normalizeAntigravityStreamRecord(raw, state)) {
-            options.writeNative(event);
-          }
-        },
-        (text) => {
-          state.plainTextOutput = true;
-          state.outputText += text;
-          options.writeNative({ kind: "message-delta", text });
-        },
-      );
-    } catch (error) {
-      streamError = error;
-      abort();
-    }
-    const exit = await exitPromise;
-    const logTail = await readTail(options.fallback.logPath, LOG_TAIL_LIMIT);
-    if (options.signal.aborted) throw createAbortError();
-    if (streamError !== undefined) throw streamError;
-    if (state.resultError !== undefined) {
-      throw classifyAntigravityError(state.resultError, stderrTail.text(), logTail);
-    }
-    if (exit.code !== 0) {
-      throw classifyAntigravityError(
-        `Antigravity CLI exited with code ${exit.code ?? "null"}${
-          exit.signal === null ? "" : ` and signal ${exit.signal}`
-        }.`,
-        stderrTail.text(),
-        logTail,
-      );
-    }
-    if (!state.terminalSeen) {
-      const degradedError = readDegradedAntigravityError(state.outputText, logTail);
-      if (degradedError !== undefined) {
-        throw classifyAntigravityError(degradedError, stderrTail.text(), logTail);
+    [checkpoints, logCheckpoint] = await Promise.all([
+      captureAntigravityTranscriptCheckpoints(session.managedHome.homeDir, session.sessionId),
+      captureFileCheckpoint(logPath),
+    ]);
+    if (turn.signal.aborted) throw createAbortError();
+    connection =
+      session.connection ??
+      openAntigravityConnection(session, selection, logPath, modelName, thinkingLevel);
+    // Observe a failed OS spawn before stdin can obscure it with EPIPE.
+    if ("pid" in connection.process && connection.process.pid === undefined) {
+      try {
+        await connection.supervisor.exit;
+        throw new Error("Antigravity exited before its process could start.");
+      } catch (error) {
+        await closeAntigravityConnection(session, connection);
+        throw error;
       }
     }
+    if (connection.pending !== undefined)
+      throw new Error("Antigravity already has an active turn.");
+    if (connection.closing || connection.supervisor.hasExited())
+      throw new Error("Antigravity exited before dispatch.");
+  } catch (error) {
+    throw new RuntimeTurnNotDispatchedError(error);
+  }
+  const state = createStreamState();
+  // Deduplicate compaction operations for the whole connection, not just a turn.
+  const turnState = { ...state, compactions: connection.compactions };
+  connection.stderr = new BoundedRuntimeOutputBuffer(STDERR_TAIL_LIMIT);
+  const result = new Promise<ProcessRunResult>((resolve, reject) => {
+    connection.pending = {
+      state: turnState,
+      resolve,
+      reject,
+      logCheckpoint,
+      priorSessionId: session.sessionId,
+      transcriptCheckpoints: checkpoints,
+      writeNative(event) {
+        turn.stream.writeNative(event);
+      },
+    };
+  });
+  const pending = connection.pending!;
+  const abort = (): void => {
+    pending.reject(createAbortError());
+    void closeAntigravityConnection(session, connection);
+  };
+  turn.signal.addEventListener("abort", abort, { once: true });
+  try {
+    // Once write is attempted, failure can be ambiguous. Never automatically replay it.
+    connection.process.stdin.write(`${JSON.stringify(input)}\n`, (error) => {
+      if (error != null && connection.pending === pending) pending.reject(error);
+    });
+    if (turn.signal.aborted) abort();
+    return await result;
+  } catch (error) {
+    await closeAntigravityConnection(session, connection);
+    throw error;
+  } finally {
+    turn.signal.removeEventListener("abort", abort);
+    if (connection.pending === pending) connection.pending = undefined;
+  }
+}
 
-    const recoveredSessionId = state.sessionId ?? readAntigravityConversationIdFromLog(logTail);
-    let outputText = state.resultText ?? state.outputText;
-    if (state.plainTextOutput) outputText = outputText.trimEnd();
-    if (!state.terminalSeen) {
-      const recovered = await recoverAntigravityOutput({
-        homeDir: options.fallback.homeDir,
-        sessionId: recoveredSessionId ?? options.fallback.priorSessionId,
-        logTail,
-        priorSessionId: options.fallback.priorSessionId,
-        transcriptCheckpoints: options.fallback.transcriptCheckpoints,
-      });
-      outputText =
-        recovered ?? (state.plainTextOutput || state.assistantResponseCompleted ? outputText : "");
-      options.logger.warn(
-        "runtime.antigravity_terminal_result_missing",
-        "Antigravity CLI exited without a terminal result event; using degraded recovery",
-        { recovered: outputText !== "", sessionIdAvailable: (recoveredSessionId ?? "") !== "" },
-      );
+function openAntigravityConnection(
+  session: AntigravityNativeSession,
+  selection: string,
+  logPath: string,
+  modelName: string | undefined,
+  thinkingLevel: string | undefined,
+): AntigravityConnection {
+  const child = (session.spawn ?? defaultSpawn)(
+    session.executablePath,
+    createAntigravityArgs({
+      agentName: session.managedHome.agentName,
+      workspace: session.agent.workspace,
+      customizationWorkspace: session.managedHome.customizationWorkspace,
+      logPath,
+      permissionMode: session.permissionMode,
+      sessionId: session.sessionId,
+      modelName,
+      thinkingLevel,
+    }),
+    { cwd: session.agent.workspace, env: session.env },
+  );
+  const supervisor = new RuntimeProcessSupervisor(child);
+  const connection: AntigravityConnection = {
+    process: child,
+    supervisor,
+    selection,
+    logPath,
+    closing: false,
+    stderr: new BoundedRuntimeOutputBuffer(STDERR_TAIL_LIMIT),
+    compactions: new Map(),
+    baselineKnown: session.sessionId === "",
+  };
+  session.connection = connection;
+  child.stdin.on("error", (error) => connection.pending?.reject(error));
+  child.stderr.setEncoding("utf8");
+  child.stderr.on("data", (chunk: string) => connection.stderr.append(chunk));
+  const output = readAgyOutput(child.stdout, (raw) => {
+    if (connection.closing || session.connection !== connection) return;
+    const pending = connection.pending;
+    const state = pending?.state ?? createStreamState();
+    const events = normalizeAntigravityStreamRecord(raw, state);
+    for (const event of events) {
+      if (event.kind === "session") {
+        if (session.sessionId !== "" && session.sessionId !== event.sessionId) {
+          throw new AntigravityRuntimeError(
+            "Antigravity changed the owned conversation identifier.",
+            "ANTIGRAVITY_PROTOCOL_ERROR",
+            false,
+          );
+        }
+        session.sessionId = event.sessionId;
+      }
+      if (event.kind === "message-completed" && state.terminalSeen && session.sessionId === "")
+        throw new AntigravityRuntimeError(
+          "Antigravity returned output without an owned conversation identifier.",
+          "ANTIGRAVITY_PROTOCOL_ERROR",
+          false,
+        );
+      if (event.kind !== "usage") pending?.writeNative(event);
     }
-    if (outputText === "") {
+    if (pending === undefined) return;
+    if (!state.terminalSeen) {
+      if (state.resultError !== undefined) {
+        const stepUsage = sumStepUsage(state.stepUsage);
+        if (stepUsage !== undefined) pending.writeNative({ kind: "usage", usage: stepUsage });
+        pending.reject(classifyAntigravityError(state.resultError, connection.stderr.text(), ""));
+      }
+      return;
+    }
+    // A failed result is still a completed model turn. Settle cumulative usage
+    // before classifying its error so the next turn starts from this baseline.
+    const usage = readTurnUsage(connection, state.usage) ?? sumStepUsage(state.stepUsage);
+    if (usage !== undefined) pending.writeNative({ kind: "usage", usage });
+    const resultError = state.resultError;
+    if (resultError !== undefined) {
+      connection.pending = undefined;
+      void readCurrentTurnLog(logPath, pending.logCheckpoint).then((logTail) => {
+        pending.resolve({
+          kind: "failure",
+          error: classifyAntigravityError(resultError, connection.stderr.text(), logTail),
+        });
+      });
+      return;
+    }
+    if (session.sessionId === "")
       throw new AntigravityRuntimeError(
-        "Antigravity CLI ended without a terminal result or recoverable assistant output.",
+        "Antigravity returned output without an owned conversation identifier.",
         "ANTIGRAVITY_PROTOCOL_ERROR",
         false,
       );
+    const outputText = state.resultText ?? state.outputText;
+    if (state.resultText === undefined && outputText !== "")
+      pending.writeNative({ kind: "message-completed", text: outputText });
+    connection.pending = undefined;
+    if (outputText === "") {
+      pending.reject(
+        new AntigravityRuntimeError(
+          "Antigravity returned an empty result.",
+          "ANTIGRAVITY_PROTOCOL_ERROR",
+          false,
+        ),
+      );
+    } else {
+      pending.resolve({ kind: "success", outputText, usage, sessionId: session.sessionId });
     }
-    if (state.resultText === undefined) {
-      options.writeNative({ kind: "message-completed", text: outputText });
-    }
-    return {
-      outputText,
-      usage: state.usage,
-      sessionId: recoveredSessionId,
-    };
-  } finally {
-    options.signal.removeEventListener("abort", abort);
-    options.onProcessClosed(child);
+  });
+  void output.then(
+    async () => {
+      if (connection.closing || session.connection !== connection) return;
+      if (await waitForRuntimeProcessExit(supervisor.exit, PROCESS_TERMINATION_GRACE_MS)) return;
+      if (connection.closing || session.connection !== connection) return;
+      connection.pending?.reject(
+        new AntigravityRuntimeError(
+          "Antigravity closed stdout while its process remained alive.",
+          "ANTIGRAVITY_PROTOCOL_ERROR",
+          false,
+        ),
+      );
+      await closeAntigravityConnection(session, connection);
+    },
+    (error: unknown) => {
+      if (connection.closing || session.connection !== connection) return;
+      connection.pending?.reject(error);
+      void closeAntigravityConnection(session, connection);
+    },
+  );
+  void supervisor.exit.then(
+    async (exit) => {
+      if (connection.closing) return;
+      const drained = await waitForRuntimeProcessExit(
+        output.then(() => ({ code: 0, signal: null })),
+        PROCESS_TERMINATION_GRACE_MS,
+      );
+      if (connection.closing) return;
+      if (!drained) {
+        connection.pending?.reject(
+          new AntigravityRuntimeError(
+            "Antigravity exited without closing its output stream.",
+            "ANTIGRAVITY_PROTOCOL_ERROR",
+            false,
+          ),
+        );
+        await closeAntigravityConnection(session, connection);
+        return;
+      }
+      const pending = connection.pending;
+      child.stdin.destroy();
+      child.stdout.destroy();
+      child.stderr.destroy();
+      if (session.connection === connection) clearAntigravityConnection(session);
+      if (pending === undefined || pending.state.terminalSeen) return;
+      try {
+        const logTail = await readCurrentTurnLog(logPath, pending.logCheckpoint);
+        if (exit.code !== 0 || pending.state.resultError !== undefined) {
+          throw classifyAntigravityError(
+            pending.state.resultError ?? `Antigravity CLI exited with code ${exit.code}.`,
+            connection.stderr.text(),
+            logTail,
+          );
+        }
+        // Only the owned conversation and this turn's checkpoint can supply recovery.
+        const text =
+          (await recoverAntigravityOutput({
+            homeDir: session.managedHome.homeDir,
+            sessionId: session.sessionId,
+            priorSessionId: pending.priorSessionId,
+            transcriptCheckpoints: pending.transcriptCheckpoints,
+          })) ?? (pending.state.assistantResponseCompleted ? pending.state.outputText : undefined);
+        if (text === undefined || text === "") {
+          const failure = readDegradedAntigravityError(pending.state.outputText, logTail);
+          if (failure !== undefined)
+            throw classifyAntigravityError(failure, connection.stderr.text(), logTail);
+          throw new AntigravityRuntimeError(
+            "Antigravity exited without a terminal result or settled response.",
+            "ANTIGRAVITY_PROTOCOL_ERROR",
+            false,
+          );
+        }
+        session.logger.warn(
+          "runtime.antigravity_terminal_result_missing",
+          "Using settled output from the owned conversation",
+          { recovered: true },
+        );
+        if (session.sessionId === "")
+          throw new AntigravityRuntimeError(
+            "Antigravity returned output without an owned conversation identifier.",
+            "ANTIGRAVITY_PROTOCOL_ERROR",
+            false,
+          );
+        pending.writeNative({ kind: "message-completed", text });
+        pending.resolve({ kind: "success", outputText: text, sessionId: session.sessionId });
+      } catch (error) {
+        pending.reject(error);
+      }
+    },
+    (error: unknown) => {
+      if (connection.closing || session.connection !== connection) return;
+      connection.pending?.reject(error);
+      void closeAntigravityConnection(session, connection);
+    },
+  );
+  return connection;
+}
+
+function readTurnUsage(
+  connection: AntigravityConnection,
+  cumulative: AgentMessageUsage | undefined,
+): AgentMessageUsage | undefined {
+  if (cumulative === undefined) {
+    connection.baselineKnown = false;
+    return undefined;
   }
+  const previous = connection.cumulativeUsage;
+  const known = connection.baselineKnown;
+  connection.cumulativeUsage = cumulative;
+  connection.baselineKnown = true;
+  if (!known) return undefined;
+  if (
+    previous !== undefined &&
+    (cumulative.input < previous.input ||
+      cumulative.output < previous.output ||
+      cumulative.cacheRead < previous.cacheRead ||
+      cumulative.cacheWrite < previous.cacheWrite)
+  )
+    return undefined;
+  return createUsageFromTokenCounts({
+    measurement: "reported",
+    inputTokens: cumulative.input - (previous?.input ?? 0),
+    inputTokensIncludeCacheRead: false,
+    outputTokens: cumulative.output - (previous?.output ?? 0),
+    cacheReadTokens: cumulative.cacheRead - (previous?.cacheRead ?? 0),
+    cacheWriteTokens: cumulative.cacheWrite - (previous?.cacheWrite ?? 0),
+  });
+}
+
+function sumStepUsage(
+  observations: ReadonlyMap<string, AgentMessageUsage>,
+): AgentMessageUsage | undefined {
+  if (observations.size === 0) return undefined;
+  const values = [...observations.values()];
+  return createUsageFromTokenCounts({
+    measurement: "reported",
+    inputTokensIncludeCacheRead: false,
+    inputTokens: values.reduce((sum, usage) => sum + usage.input, 0),
+    outputTokens: values.reduce((sum, usage) => sum + usage.output, 0),
+    cacheReadTokens: values.reduce((sum, usage) => sum + usage.cacheRead, 0),
+    cacheWriteTokens: values.reduce((sum, usage) => sum + usage.cacheWrite, 0),
+  });
+}
+
+function clearAntigravityConnection(session: AntigravityNativeSession): void {
+  session.connection = undefined;
 }
 
 function readDegradedAntigravityError(outputText: string, logTail: string): string | undefined {
@@ -636,7 +823,7 @@ export function normalizeAntigravityStreamRecord(
   state: StreamState = createStreamState(),
 ): readonly AntigravityNativeEvent[] {
   const raw = AgyStreamRecordSchema.parse(input) as Record<string, unknown>;
-  const type = readString(raw["event"] ?? raw["type"])?.toLowerCase() ?? "unknown";
+  const type = readString(raw["event"])?.toLowerCase() ?? "unknown";
   if (type === "init") return normalizeInit(raw, state);
   if (type === "step_update") return normalizeStepUpdate(raw, state);
   if (type === "result") return normalizeResult(raw, state);
@@ -697,6 +884,8 @@ function normalizeStepUpdate(
     events.push({ kind: "session", sessionId });
   }
 
+  const stepUsage = readAntigravityUsage(step);
+  if (stepUsage !== undefined) state.stepUsage.set(key, stepUsage);
   events.push(...normalizeCompaction(raw, step, key, status, state));
   const toolInfo =
     readRecord(step["tool_info"]) ?? readRecord(step["toolInfo"]) ?? readRecord(raw["tool_info"]);
@@ -951,8 +1140,7 @@ function normalizeCompaction(
   const operationId =
     readString(info["operation_id"] ?? info["operationId"] ?? info["id"]) ??
     `agy-compaction:${key}`;
-  const compactionStatus =
-    readString(info["status"] ?? info["state"])?.toLowerCase() ?? status ?? "completed";
+  const compactionStatus = readString(info["status"] ?? info["state"])?.toLowerCase() ?? status;
   const previous = state.compactions.get(operationId);
   const failed = isFailureStatus(compactionStatus);
   const errorMessage = failed
@@ -1132,105 +1320,38 @@ function antigravityTokenModelIdentity(modelId: string | undefined): RuntimeToke
 async function readAgyOutput(
   stdout: NodeJS.ReadableStream,
   onRecord: (record: Record<string, unknown>) => void,
-  onText: (text: string) => void,
 ): Promise<void> {
   const decoder = new StringDecoder("utf8");
   let buffer = "";
-  let mode: "unknown" | "stream-json" | "text" = "unknown";
-  let pendingLeadingWhitespace = "";
-  for await (const chunk of stdout) {
-    buffer += decoder.write(Buffer.isBuffer(chunk) ? chunk : Buffer.from(String(chunk)));
-    if (Buffer.byteLength(buffer) > MAX_NDJSON_LINE_BYTES && !buffer.includes("\n")) {
+  const consume = (line: string): void => {
+    const trimmed = line.trim();
+    if (trimmed === "") return;
+    if (Buffer.byteLength(trimmed) > MAX_NDJSON_LINE_BYTES) {
       throw new AntigravityRuntimeError(
-        `Antigravity CLI emitted an NDJSON line larger than ${MAX_NDJSON_LINE_BYTES} bytes.`,
+        "Antigravity NDJSON frame exceeds the line limit.",
         "ANTIGRAVITY_PROTOCOL_ERROR",
         false,
       );
     }
+    onRecord(parseStructuredAgyLine(trimmed));
+  };
+  for await (const chunk of stdout) {
+    buffer += decoder.write(Buffer.isBuffer(chunk) ? chunk : Buffer.from(String(chunk)));
     let newline = buffer.indexOf("\n");
     while (newline >= 0) {
-      ({ mode, pendingLeadingWhitespace } = parseAgyOutputLine({
-        line: buffer.slice(0, newline),
-        terminated: true,
-        mode,
-        pendingLeadingWhitespace,
-        onRecord,
-        onText,
-      }));
+      consume(buffer.slice(0, newline));
       buffer = buffer.slice(newline + 1);
       newline = buffer.indexOf("\n");
     }
-  }
-  buffer += decoder.end();
-  ({ mode, pendingLeadingWhitespace } = parseAgyOutputLine({
-    line: buffer,
-    terminated: false,
-    mode,
-    pendingLeadingWhitespace,
-    onRecord,
-    onText,
-  }));
-  if (mode === "unknown" && pendingLeadingWhitespace !== "") onText(pendingLeadingWhitespace);
-}
-
-function parseAgyOutputLine(options: {
-  readonly line: string;
-  readonly terminated: boolean;
-  readonly mode: "unknown" | "stream-json" | "text";
-  readonly pendingLeadingWhitespace: string;
-  readonly onRecord: (record: Record<string, unknown>) => void;
-  readonly onText: (text: string) => void;
-}): {
-  readonly mode: "unknown" | "stream-json" | "text";
-  readonly pendingLeadingWhitespace: string;
-} {
-  const { line, terminated, onRecord, onText } = options;
-  const trimmed = line.trim();
-  const lineWithTerminator = `${line}${terminated ? "\n" : ""}`;
-  if (options.mode === "text") {
-    onText(lineWithTerminator);
-    return { mode: "text", pendingLeadingWhitespace: "" };
-  }
-  if (trimmed === "") {
-    return options.mode === "stream-json"
-      ? { mode: "stream-json", pendingLeadingWhitespace: "" }
-      : {
-          mode: "unknown",
-          pendingLeadingWhitespace: options.pendingLeadingWhitespace + lineWithTerminator,
-        };
-  }
-  if (Buffer.byteLength(trimmed) > MAX_NDJSON_LINE_BYTES) {
-    throw new AntigravityRuntimeError(
-      `Antigravity CLI emitted an NDJSON line larger than ${MAX_NDJSON_LINE_BYTES} bytes.`,
-      "ANTIGRAVITY_PROTOCOL_ERROR",
-      false,
-    );
-  }
-  if (options.mode === "stream-json") {
-    onRecord(parseStructuredAgyLine(trimmed));
-    return { mode: "stream-json", pendingLeadingWhitespace: "" };
-  }
-
-  try {
-    const value = JSON.parse(trimmed) as unknown;
-    const parsed = AgyStreamRecordSchema.safeParse(value);
-    if (parsed.success) {
-      onRecord(parsed.data as Record<string, unknown>);
-      return { mode: "stream-json", pendingLeadingWhitespace: "" };
+    if (Buffer.byteLength(buffer) > MAX_NDJSON_LINE_BYTES) {
+      throw new AntigravityRuntimeError(
+        "Antigravity NDJSON frame exceeds the line limit.",
+        "ANTIGRAVITY_PROTOCOL_ERROR",
+        false,
+      );
     }
-    onText(options.pendingLeadingWhitespace + lineWithTerminator);
-    return { mode: "text", pendingLeadingWhitespace: "" };
-  } catch (error) {
-    if (!/^(?:\{|\[)/.test(trimmed)) {
-      onText(options.pendingLeadingWhitespace + lineWithTerminator);
-      return { mode: "text", pendingLeadingWhitespace: "" };
-    }
-    throw new AntigravityRuntimeError(
-      `Antigravity CLI emitted malformed stream-json output: ${errorMessage(error)}`,
-      "ANTIGRAVITY_PROTOCOL_ERROR",
-      false,
-    );
   }
+  consume(buffer + decoder.end());
 }
 
 function parseStructuredAgyLine(line: string): Record<string, unknown> {
@@ -1248,7 +1369,6 @@ function parseStructuredAgyLine(line: string): Record<string, unknown> {
 async function recoverAntigravityOutput(options: {
   readonly homeDir: string;
   readonly sessionId: string;
-  readonly logTail: string;
   readonly priorSessionId: string;
   readonly transcriptCheckpoints: TranscriptCheckpoints;
 }): Promise<string | undefined> {
@@ -1270,8 +1390,7 @@ async function recoverAntigravityOutput(options: {
       if (recovered !== undefined) return recovered;
     }
   }
-  const logMatch = options.logTail.match(/(?:final result|assistant response)[:=]\s*(.+)$/im);
-  return logMatch?.[1]?.trim() || undefined;
+  return undefined;
 }
 
 async function captureAntigravityTranscriptCheckpoints(
@@ -1287,23 +1406,21 @@ async function captureAntigravityTranscriptCheckpoints(
         checkpoints.set(root, { kind: "unavailable" });
         return;
       }
-      try {
-        const metadata = await stat(transcript);
-        checkpoints.set(
-          root,
-          metadata.isFile()
-            ? { kind: "tracked", size: metadata.size, dev: metadata.dev, ino: metadata.ino }
-            : { kind: "unavailable" },
-        );
-      } catch (error) {
-        checkpoints.set(
-          root,
-          isMissingPathError(error) ? { kind: "missing" } : { kind: "unavailable" },
-        );
-      }
+      checkpoints.set(root, await captureFileCheckpoint(transcript));
     }),
   );
   return checkpoints;
+}
+
+async function captureFileCheckpoint(path: string): Promise<TranscriptCheckpoint> {
+  try {
+    const metadata = await stat(path);
+    return metadata.isFile()
+      ? { kind: "tracked", size: metadata.size, dev: metadata.dev, ino: metadata.ino }
+      : { kind: "unavailable" };
+  } catch (error) {
+    return isMissingPathError(error) ? { kind: "missing" } : { kind: "unavailable" };
+  }
 }
 
 export async function readAntigravityTranscriptAssistantText(
@@ -1435,17 +1552,6 @@ function findAssistantText(value: unknown, depth: number): string | undefined {
   return result;
 }
 
-export function readAntigravityConversationIdFromLog(log: string): string | undefined {
-  let result: string | undefined;
-  const pattern =
-    /\bconversation(?:[_ ]?id)?\b\s*(?:=|:)\s*["']?([a-zA-Z0-9][a-zA-Z0-9._-]{0,255})/gi;
-  for (const match of log.matchAll(pattern)) {
-    const candidate = match[1];
-    if (candidate !== undefined && isAntigravityConversationId(candidate)) result = candidate;
-  }
-  return result;
-}
-
 export function isAntigravityConversationId(value: string): boolean {
   return ANTIGRAVITY_CONVERSATION_ID.test(value);
 }
@@ -1521,31 +1627,23 @@ class AntigravityRuntimeError extends Error {
   }
 }
 
-async function terminateAntigravityProcess(options: {
-  readonly process: ChildProcessWithoutNullStreams;
-  readonly exitPromise: Promise<ProcessExit>;
-  readonly hasExited: () => boolean;
-  readonly logger: PragmaLogger;
-}): Promise<void> {
-  await terminateRuntimeProcess({
-    process: options.process,
-    exit: options.exitPromise,
-    hasExited: options.hasExited,
+function antigravityTerminationOptions(logger: PragmaLogger) {
+  return {
     graceMs: PROCESS_TERMINATION_GRACE_MS,
     onForceKill: () => {
-      options.logger.warn(
+      logger.warn(
         "runtime.antigravity_force_kill",
         "Antigravity CLI did not stop after SIGTERM; sending SIGKILL",
       );
     },
     onStuck: () => {
-      options.logger.error(
+      logger.error(
         "runtime.antigravity_process_did_not_exit",
         "Antigravity CLI did not report exit after SIGKILL; continuing bounded Session cleanup",
         new Error("Antigravity CLI remained alive after SIGKILL."),
       );
     },
-  });
+  };
 }
 
 function defaultSpawn(
@@ -1567,13 +1665,13 @@ function createAbortError(): Error {
 
 function createStreamState(): StreamState {
   return {
+    stepUsage: new Map(),
     textSnapshots: new Map(),
     thoughtSnapshots: new Map(),
     tools: new Map(),
     compactions: new Map(),
     outputText: "",
     terminalSeen: false,
-    plainTextOutput: false,
     assistantResponseCompleted: false,
   };
 }
@@ -1585,7 +1683,7 @@ function readSessionId(record: Record<string, unknown>): string | undefined {
       record["session_id"] ??
       record["sessionId"],
   );
-  return candidate !== undefined && isAntigravityConversationId(candidate) ? candidate : undefined;
+  return candidate === undefined ? undefined : assertAntigravityConversationId(candidate);
 }
 
 function readErrorMessage(record: Record<string, unknown>): string | undefined {
@@ -1703,12 +1801,19 @@ function normalizeTokenCount(value: number | undefined): number {
   return value === undefined || !Number.isFinite(value) || value <= 0 ? 0 : Math.trunc(value);
 }
 
-async function readTail(path: string, limit: number): Promise<string> {
-  return await readFileTail(path, limit).catch(() => "");
+async function readTail(
+  path: string,
+  limit: number,
+  checkpoint?: TranscriptCheckpoint,
+): Promise<string> {
+  return await readFileTailWithMetadata(path, limit, checkpoint).then(
+    (tail) => tail.content,
+    () => "",
+  );
 }
 
-async function readFileTail(path: string, limit: number): Promise<string> {
-  return (await readFileTailWithMetadata(path, limit)).content;
+async function readCurrentTurnLog(path: string, checkpoint: TranscriptCheckpoint): Promise<string> {
+  return checkpoint.kind === "unavailable" ? "" : await readTail(path, LOG_TAIL_LIMIT, checkpoint);
 }
 
 interface FileTail {
@@ -1758,10 +1863,6 @@ async function readFileTailWithMetadata(
   } finally {
     await handle.close();
   }
-}
-
-function safePathSegment(value: string): string {
-  return value.replace(/[^a-zA-Z0-9._-]/g, "_").slice(0, 120) || randomUUID();
 }
 
 function safeStage(value: string): string {

@@ -1,3 +1,4 @@
+import { spawn as nodeSpawn } from "node:child_process";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -5,6 +6,7 @@ import { join } from "node:path";
 import {
   ContextSystem,
   InMemoryContextStore,
+  StaticContextStore,
   createLoggerProvider,
   createPragma,
   createStaticRuntimeResolver,
@@ -17,7 +19,7 @@ import {
   type ExecutionOutputItem,
   type ExpertAgentStreamEvent,
 } from "@pragma/shared";
-import { afterAll, describe, expect, it } from "vitest";
+import { afterAll, describe, expect, it, vi } from "vitest";
 
 import { createAntigravityRuntime } from "../src/index.ts";
 import type { AntigravityAuthenticationMode } from "../src/types.ts";
@@ -74,8 +76,14 @@ describe.runIf(runSmoke)("Antigravity real CLI smoke", () => {
           {
             name: probeName,
             description: "Return an independent verification marker.",
-            inputSchema: { type: "object", properties: {} },
-            async call() {
+            inputSchema: {
+              type: "object",
+              properties: { schema_code: { type: "string", enum: ["AGY_SCHEMA_ONLY_8526"] } },
+              required: ["schema_code"],
+              additionalProperties: false,
+            },
+            async call(input) {
+              expect(input).toEqual({ schema_code: "AGY_SCHEMA_ONLY_8526" });
               calls++;
               return { text: "GATEWAY_OK_262" };
             },
@@ -183,11 +191,15 @@ describe.runIf(runSmoke)("Antigravity real CLI smoke", () => {
     await Promise.all([
       mkdir(workspace, { recursive: true }),
       mkdir(pragmaHome, { recursive: true }),
-      mkdir(skillDir, { recursive: true }),
+      mkdir(join(skillDir, "references"), { recursive: true }),
     ]);
     await Promise.all([
       writeFile(join(workspace, "SMOKE_FILE.txt"), "native view_file smoke\n"),
       writeFile(imagePath, "not-a-real-image; path fallback only\n"),
+      writeFile(
+        join(skillDir, "references", "smoke-reference.md"),
+        "Include AGY_SKILL_REFERENCE_7295 in the final answer.\n",
+      ),
       writeFile(
         join(skillDir, "SKILL.md"),
         [
@@ -197,6 +209,7 @@ describe.runIf(runSmoke)("Antigravity real CLI smoke", () => {
           "---",
           "",
           "When this Skill is requested, include the exact marker AGY_SKILL_DISCOVERED_7419 in the final answer.",
+          "Before answering, read references/smoke-reference.md relative to this Skill directory and include its verification marker.",
           "",
         ].join("\n"),
       ),
@@ -208,9 +221,16 @@ describe.runIf(runSmoke)("Antigravity real CLI smoke", () => {
       minimumLevel: "debug",
       host: { kind: "antigravity-real-smoke" },
     });
+    const streamInputs: { readonly mock: { readonly calls: readonly (readonly unknown[])[] } }[] =
+      [];
     const runtime = createAntigravityRuntime({
+      spawn(command, args, options) {
+        const child = nodeSpawn(command, [...args], options);
+        if (args.includes("--input-format")) streamInputs.push(vi.spyOn(child.stdin, "write"));
+        return child;
+      },
       authenticationMode: readAuthenticationMode(),
-      defaultModelName: process.env["PRAGMA_ANTIGRAVITY_SMOKE_MODEL"] ?? "gemini-3.6-flash-low",
+      defaultModelName: process.env["PRAGMA_ANTIGRAVITY_SMOKE_MODEL"] ?? "gemini-3.8-flash-low",
       permissionMode: "auto-approve",
     });
     const expert = await defineExpert({
@@ -224,6 +244,18 @@ describe.runIf(runSmoke)("Antigravity real CLI smoke", () => {
       workspace,
       pragmaHome,
       loggerProvider,
+      contextSystem: new ContextSystem({
+        stores: {
+          policy: new StaticContextStore([
+            {
+              id: "startup.md",
+              content: "Include AGY_STARTUP_CONTEXT_4186 in every final answer.",
+              metadata: { trigger: "always_on" },
+            },
+          ]),
+        },
+        roots: [{ namespace: "policy" }],
+      }),
       skills: {
         skills: [
           {
@@ -251,11 +283,11 @@ describe.runIf(runSmoke)("Antigravity real CLI smoke", () => {
     try {
       const first = await session.prompt(
         [
-          "/pragma-antigravity-smoke",
+          "Use the available Antigravity managed plugin discovery smoke Skill for this task.",
           "Perform every step before answering:",
           "1. Use the native view_file tool to read SMOKE_FILE.txt in the current workspace.",
           "2. Use the managed list_expert_context MCP tool once.",
-          "3. Apply the invoked pragma-antigravity-smoke Skill.",
+          "3. Discover and apply the pragma-antigravity-smoke Skill.",
           "4. Write at least 120 words, include the exact marker required by that Skill, and include the exact image path from the attachment context.",
         ].join("\n"),
         {
@@ -307,7 +339,9 @@ describe.runIf(runSmoke)("Antigravity real CLI smoke", () => {
       expect(firstDeltaAt).toBeTypeOf("number");
       expect(resultSettledAt! - firstDeltaAt!).toBeGreaterThan(100);
       expect(firstResult).toContain("AGY_SKILL_DISCOVERED_7419");
+      expect(firstResult).toContain("AGY_SKILL_REFERENCE_7295");
       expect(firstResult).toContain("AGY_SYSTEM_PROMPT_APPLIED_5931");
+      expect(firstResult).toContain("AGY_STARTUP_CONTEXT_4186");
       expect(firstResult).toContain(imagePath);
       expect(records).toContainEqual(
         expect.objectContaining({ event: "runtime.image_input_degraded" }),
@@ -324,6 +358,24 @@ describe.runIf(runSmoke)("Antigravity real CLI smoke", () => {
         { requestId: "antigravity-real-smoke-resume" },
       );
       await expect(resumed.result).resolves.toMatch(/RESUME_OK[\s\S]*AGY_SKILL_DISCOVERED_7419/i);
+      const third = await session.prompt("Reply THREE_TURNS_OK.");
+      await expect(third.result).resolves.toContain("THREE_TURNS_OK");
+      expect(streamInputs).toHaveLength(1);
+      const inputs = streamInputs[0]!.mock.calls.map(
+        (call) =>
+          JSON.parse(String(call[0])) as {
+            event: string;
+            message: { content: { text: string }[] };
+          },
+      );
+      expect(inputs).toHaveLength(3);
+      expect(
+        inputs[0]!.message.content
+          .slice(0, -1)
+          .map((block) => block.text)
+          .join("\n"),
+      ).toContain("AGY_STARTUP_CONTEXT_4186");
+      expect(inputs.slice(1).map((input) => input.message.content.length)).toEqual([1, 1]);
     } finally {
       await session.close("Antigravity real smoke completed.");
     }

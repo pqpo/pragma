@@ -13,7 +13,11 @@ import type {
   RuntimeFeatureSessionPrepareContext,
   RuntimeSessionReadContext,
 } from "@pragma/core";
-import { RuntimeResourceScope } from "@pragma/core";
+import {
+  RuntimeResourceScope,
+  RuntimeProcessSupervisor,
+  BoundedRuntimeOutputBuffer,
+} from "@pragma/core";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { createAntigravityRuntime } from "../src/adapter.ts";
@@ -105,8 +109,11 @@ describe("Antigravity Runtime adapter lifecycle", () => {
     expect(driver.consumeStartupMessages?.(fresh, readContext)).toEqual([]);
     expect(fresh.env["HOME"]).toBe(join(sessionDir, "home"));
     await expect(
-      readFile(join(fresh.managedHome.pluginDir, "rules", "pragma-system.md"), "utf8"),
-    ).resolves.toContain("# Pragma Runtime System Instructions\n\nsystem prompt\n");
+      readFile(
+        join(fresh.managedHome.configDir, "agents", `${fresh.managedHome.agentName}.md`),
+        "utf8",
+      ),
+    ).resolves.toContain("# System Prompt\n\nsystem prompt\n");
     await expect(
       readFile(join(fresh.managedHome.pluginDir, "mcp_config.json"), "utf8"),
     ).resolves.toContain("http://127.0.0.1:43127/private/mcp");
@@ -120,6 +127,13 @@ describe("Antigravity Runtime adapter lifecycle", () => {
     expect(restored.sessionId).toBe(restoredConversationId);
     expect(restored.pendingStartupMessages).toEqual([]);
     expect(driver.consumeStartupMessages?.(restored, readContext)).toEqual([]);
+    await expect(
+      driver.startTurn(restored, {
+        modelSelection: { model: { providerId: "wrong-provider", modelId: "unused" } },
+      } as Parameters<typeof driver.startTurn>[1]),
+    ).rejects.toMatchObject({ name: "RuntimeTurnNotDispatchedError" });
+    expect(restored.sessionId).toBe(restoredConversationId);
+
     await closePreparedSession(driver, restoredPrepared);
 
     expect(mcpToolRegistryPool.acquire).toHaveBeenCalledTimes(2);
@@ -210,19 +224,27 @@ describe("Antigravity Runtime adapter lifecycle", () => {
     const closeRelay = vi.fn(async () => await originalCloseRelay());
     permissionPreparation.hookRelay.close = closeRelay;
 
-    let exited = false;
-    let resolveExit!: (value: { code: number; signal: null }) => void;
     const child = new EventEmitter() as EventEmitter & {
       stdin: PassThrough;
+      stdout: PassThrough;
+      stderr: PassThrough;
       kill: ReturnType<typeof vi.fn>;
     };
     child.stdin = new PassThrough();
+    child.stdout = new PassThrough();
+    child.stderr = new PassThrough();
     child.kill = vi.fn(() => true);
-    session.activeProcess = child as unknown as ChildProcessWithoutNullStreams;
-    session.activeExitPromise = new Promise((resolve) => {
-      resolveExit = resolve;
-    });
-    session.activeHasExited = () => exited;
+    const process = child as unknown as ChildProcessWithoutNullStreams;
+    session.connection = {
+      process,
+      supervisor: new RuntimeProcessSupervisor(process),
+      selection: "test",
+      logPath: join(sessionDir, "test.log"),
+      closing: false,
+      stderr: new BoundedRuntimeOutputBuffer(1024),
+      compactions: new Map(),
+      baselineKnown: true,
+    };
 
     const closing = closePreparedSession(driver, prepared);
     await new Promise((resolve) => setImmediate(resolve));
@@ -231,8 +253,7 @@ describe("Antigravity Runtime adapter lifecycle", () => {
     expect(release).not.toHaveBeenCalled();
     expect(closeRelay).not.toHaveBeenCalled();
 
-    exited = true;
-    resolveExit({ code: 0, signal: null });
+    child.emit("exit", 0, null);
     await new Promise((resolve) => setImmediate(resolve));
     expect(dispose).toHaveBeenCalledOnce();
     expect(release).not.toHaveBeenCalled();
@@ -270,7 +291,7 @@ describe("Antigravity Runtime adapter lifecycle", () => {
     );
     await expect(
       readFile(
-        join(session.managedHome.pluginDir, "agents", session.managedHome.agentName, "agent.md"),
+        join(session.managedHome.configDir, "agents", `${session.managedHome.agentName}.md`),
         "utf8",
       ),
     ).resolves.toContain("system prompt");
