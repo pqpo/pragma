@@ -3026,6 +3026,9 @@ export function createMissionRunner(options: {
     const promptAttachments = input.attachments ?? [];
     phaseStartedAt = performance.now();
     const requestedMode = input.mode ?? "enqueue";
+    // Runtime delivery can wait while the active turn emits more output. Keep
+    // the submission time so a steer is displayed before those later replies.
+    const promptCreatedAt = new Date().toISOString();
     const turn = await session.prompt(input.content, {
       requestId: input.requestId,
       mode: requestedMode,
@@ -3041,10 +3044,21 @@ export function createMissionRunner(options: {
       id: input.requestId,
       content: input.content,
       ...(promptAttachments.length === 0 ? {} : { attachments: [...promptAttachments] }),
-      createdAt: new Date().toISOString(),
+      createdAt: promptCreatedAt,
     });
     if (userMessage.kind !== "user") {
       throw new Error("Mission user message persistence returned an invalid timeline record.");
+    }
+    if (turn.effectiveMode === "steer") {
+      // A steer belongs to the already-linked active Execution; attaching it
+      // again under another input message conflicts with its timeline identity.
+      invalidateChat(mission.id, missionSurfaceAudience(mission));
+      return {
+        mission: await options.missions.get(mission.id),
+        requestId: input.requestId,
+        requestedMode,
+        effectiveMode: "steer",
+      };
     }
     const startedAt = new Date().toISOString();
     await options.missions.appendExecutionReference({
@@ -3054,15 +3068,6 @@ export function createMissionRunner(options: {
       createdAt: startedAt,
     });
     await notifyExecutionLinked(mission, turn.executionId, input.requestId);
-    if (turn.effectiveMode === "steer") {
-      invalidateChat(mission.id, missionSurfaceAudience(mission));
-      return {
-        mission: await options.missions.get(mission.id),
-        requestId: input.requestId,
-        requestedMode,
-        effectiveMode: "steer",
-      };
-    }
     const hasCurrent = lifecycleService.hasActive(mission.id);
     const queuePaused = (await session.getPromptQueueState()).state === "paused";
     const running =

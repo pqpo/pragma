@@ -5593,99 +5593,116 @@ describe("MissionRunner", { timeout: 30_000 }, () => {
     30_000,
   );
 
-  it("does not present a queued Execution moved to steer as an interruption", async () => {
-    const root = await mkdtemp(join(tmpdir(), "pragma-mission-queued-steer-"));
-    temporaryPaths.push(root);
-    const project = createPragmaProjectStore({ projectsPath: join(root, "projects") });
-    const snapshot = await project.publish({
-      expectedRevision: 0,
-      resources: [runtimeFixture(), expertFixture()],
-    });
-    const missions = createMissionStore({ missionsPath: join(root, "missions") });
-    const mission = await missions.create({
-      workspace: { path: root, basename: "workspace" },
-      goal: "Stream the first answer",
-      project: { id: snapshot.projectId, revision: snapshot.revision },
-      executor: missionExecutorSnapshot(
-        snapshot.resources.find((resource) => resource.kind === "Expert")!,
-      ),
-    });
-    let markFirstTurnStarted!: () => void;
-    let finishFirstTurn!: () => void;
-    const firstTurnStarted = new Promise<void>((resolve) => {
-      markFirstTurnStarted = resolve;
-    });
-    const firstTurnCanFinish = new Promise<void>((resolve) => {
-      finishFirstTurn = resolve;
-    });
-    const steers: string[] = [];
-    const runtime = defineRuntimeTestDriver<never, { id: string }>({
-      descriptor: { id: "fake", kind: "fake", displayName: "Fake" },
-      createSession: () => ({ id: "runtime" }),
-      restoreSession: () => ({ id: "runtime" }),
-      readSession: (session) => ({ runtimeSessionId: session.id }),
-      async startTurn(_session, turn) {
-        if (turn.rawQuery === mission.goal) {
-          markFirstTurnStarted();
-          await firstTurnCanFinish;
-        }
-        return { outputText: `answer:${turn.rawQuery}`, runtimeSessionId: "runtime" };
-      },
-      steerTurn: (_session, request) => {
-        steers.push(request.content);
-      },
-      mapEvent: () => ({ events: [] }),
-      closeSession: () => undefined,
-    });
-    const runner = createMissionRunner({
-      missions,
-      project,
-      capabilityStore: {} as CapabilityStore,
-      capabilityCredentials: {} as CapabilityCredentialStore,
-      capabilitiesPath: join(root, "capabilities"),
-      pragmaHome: join(root, "state"),
-      runtimes: createStaticRuntimeResolver({ runtimes: [runtime], defaultRuntimeId: "fake" }),
-    });
+  it.each(["direct", "queued"] as const)(
+    "preserves steer submission time and avoids interrupted fallback (%s)",
+    async (mode) => {
+      const root = await mkdtemp(join(tmpdir(), "pragma-mission-queued-steer-"));
+      temporaryPaths.push(root);
+      const project = createPragmaProjectStore({ projectsPath: join(root, "projects") });
+      const snapshot = await project.publish({
+        expectedRevision: 0,
+        resources: [runtimeFixture(), expertFixture()],
+      });
+      const missions = createMissionStore({ missionsPath: join(root, "missions") });
+      const mission = await missions.create({
+        workspace: { path: root, basename: "workspace" },
+        goal: "Stream the first answer",
+        project: { id: snapshot.projectId, revision: snapshot.revision },
+        executor: missionExecutorSnapshot(
+          snapshot.resources.find((resource) => resource.kind === "Expert")!,
+        ),
+      });
+      let markFirstTurnStarted!: () => void;
+      let finishFirstTurn!: () => void;
+      const firstTurnStarted = new Promise<void>((resolve) => {
+        markFirstTurnStarted = resolve;
+      });
+      const firstTurnCanFinish = new Promise<void>((resolve) => {
+        finishFirstTurn = resolve;
+      });
+      const steers: string[] = [];
+      let deliveryStartedAt: string | undefined;
+      const runtime = defineRuntimeTestDriver<never, { id: string }>({
+        descriptor: { id: "fake", kind: "fake", displayName: "Fake" },
+        createSession: () => ({ id: "runtime" }),
+        restoreSession: () => ({ id: "runtime" }),
+        readSession: (session) => ({ runtimeSessionId: session.id }),
+        async startTurn(_session, turn) {
+          if (turn.rawQuery === mission.goal) {
+            markFirstTurnStarted();
+            await firstTurnCanFinish;
+          }
+          return { outputText: `answer:${turn.rawQuery}`, runtimeSessionId: "runtime" };
+        },
+        steerTurn: async (_session, request) => {
+          steers.push(request.content);
+          deliveryStartedAt = new Date().toISOString();
+          // Make delivery finish in a later clock tick so recording the message
+          // after runtime acceptance would fail the submission-time assertion.
+          await vi.waitFor(() => expect(new Date().toISOString() > deliveryStartedAt!).toBe(true), {
+            interval: 1,
+          });
+        },
+        mapEvent: () => ({ events: [] }),
+        closeSession: () => undefined,
+      });
+      const runner = createMissionRunner({
+        missions,
+        project,
+        capabilityStore: {} as CapabilityStore,
+        capabilityCredentials: {} as CapabilityCredentialStore,
+        capabilitiesPath: join(root, "capabilities"),
+        pragmaHome: join(root, "state"),
+        runtimes: createStaticRuntimeResolver({ runtimes: [runtime], defaultRuntimeId: "fake" }),
+      });
 
-    await runner.run(mission.id);
-    await firstTurnStarted;
-    const activeExecutionId = (await missions.get(mission.id)).execution!.id;
-    const requestId = "00000000-0000-4000-8000-000000000109";
-    await expect(
-      runner.sendMessage({
-        id: mission.id,
-        content: "Change direction now",
-        requestId,
-      }),
-    ).resolves.toMatchObject({ effectiveMode: "enqueue" });
-
-    await runner.steerQueuedMessage({ id: mission.id, requestId });
-
-    const chat = await readMissionConversationSnapshot(runner, mission.id);
-    expect(chat.execution).toMatchObject({ id: activeExecutionId, status: "running" });
-    expect(steers).toEqual(["Change direction now"]);
-    expect(chat.entries).toContainEqual(
-      expect.objectContaining({
-        id: requestId,
-        kind: "user",
-        delivery: expect.objectContaining({
-          requestedMode: "steer",
-          effectiveMode: "steer",
-          status: "succeeded",
-          activatedAt: expect.any(String),
+      await runner.run(mission.id);
+      await firstTurnStarted;
+      const activeExecutionId = (await missions.get(mission.id)).execution!.id;
+      const requestId = "00000000-0000-4000-8000-000000000109";
+      await expect(
+        runner.sendMessage({
+          id: mission.id,
+          content: "Change direction now",
+          requestId,
+          ...(mode === "direct" ? { mode: "steer" as const } : {}),
         }),
-      }),
-    );
-    expect(chat.entries).not.toContainEqual(
-      expect.objectContaining({ kind: "assistant", content: "Execution interrupted." }),
-    );
+      ).resolves.toMatchObject({ effectiveMode: mode === "direct" ? "steer" : "enqueue" });
 
-    finishFirstTurn();
-    await vi.waitFor(
-      async () => expect((await missions.get(mission.id)).execution?.status).toBe("succeeded"),
-      { timeout: settlementTimeoutMs },
-    );
-  });
+      if (mode === "queued") await runner.steerQueuedMessage({ id: mission.id, requestId });
+
+      const chat = await readMissionConversationSnapshot(runner, mission.id);
+      expect(chat.execution).toMatchObject({ id: activeExecutionId, status: "running" });
+      expect(steers).toEqual(["Change direction now"]);
+      expect(chat.entries).toContainEqual(
+        expect.objectContaining({
+          id: requestId,
+          kind: "user",
+          delivery: expect.objectContaining({
+            requestedMode: "steer",
+            effectiveMode: "steer",
+            status: "succeeded",
+            ...(mode === "queued" ? { activatedAt: expect.any(String) } : {}),
+          }),
+        }),
+      );
+      expect(chat.entries).not.toContainEqual(
+        expect.objectContaining({ kind: "assistant", content: "Execution interrupted." }),
+      );
+      const steerEntry = chat.entries.find((entry) => entry.id === requestId)!;
+      if (mode === "direct") expect(steerEntry.createdAt <= deliveryStartedAt!).toBe(true);
+
+      finishFirstTurn();
+      await vi.waitFor(
+        async () => expect((await missions.get(mission.id)).execution?.status).toBe("succeeded"),
+        { timeout: settlementTimeoutMs },
+      );
+      const settled = await readMissionConversationSnapshot(runner, mission.id);
+      expect(settled.entries.find((entry) => entry.id === requestId)?.createdAt).toBe(
+        steerEntry.createdAt,
+      );
+    },
+  );
 
   it("saves the next model during an active turn while retaining queued models and restoring defaults", async () => {
     const root = await mkdtemp(join(tmpdir(), "pragma-mission-model-switch-"));
