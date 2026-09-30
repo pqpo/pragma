@@ -1174,6 +1174,108 @@ describe("ExpertSession", { timeout: 30_000 }, () => {
     }
   });
 
+  it("preserves active Runtime ownership while terminal release validation is blocked", async () => {
+    let finishTurn!: () => void;
+    const turnGate = new Promise<void>((resolve) => {
+      finishTurn = resolve;
+    });
+    const { app, expert, stats } = await trackedFixture({ turnGate });
+    const session = await app.experts.createSession(expert);
+    const turn = await session.prompt("active");
+    await vi.waitFor(() => expect(stats.executionIds).toContain(turn.executionId));
+    let allowValidation!: () => void;
+    let validationEntered!: () => void;
+    const validationGate = new Promise<void>((resolve) => {
+      allowValidation = resolve;
+    });
+    const entered = new Promise<void>((resolve) => {
+      validationEntered = resolve;
+    });
+    const getState = session.getState.bind(session);
+    const stateSpy = vi.spyOn(session, "getState").mockImplementationOnce(async () => {
+      validationEntered();
+      await validationGate;
+      return await getState();
+    });
+    const releasing = session.releaseAfterTerminal();
+    const releaseOutcome = releasing.catch((error: unknown) => error);
+    let released = false;
+    try {
+      await entered;
+      const context = stats.sessionContexts[0]!.request.executionContext!;
+      await expect(context.assertOwnership!()).resolves.toBeUndefined();
+      allowValidation();
+      await expect(releasing).rejects.toThrow("Wait for the active Expert turn");
+      finishTurn();
+      await expect(turn.result).resolves.toBe("tracked:active");
+      await session.releaseAfterTerminal();
+      released = true;
+    } finally {
+      allowValidation();
+      finishTurn();
+      await releaseOutcome;
+      stateSpy.mockRestore();
+      if (!released) await session.close();
+    }
+  });
+
+  it("automatically releases a cancelled owner after delayed settlement without reopening admission", async () => {
+    let finishTurn!: () => void;
+    const turnGate = new Promise<void>((resolve) => {
+      finishTurn = resolve;
+    });
+    const { app, expert, home, runtime, stats } = await trackedFixture({ turnGate });
+    const session = await app.experts.createSession(expert);
+    const rootContextId = (await session.getState()).rootContextId;
+    const turn = await session.prompt("active");
+    const result = turn.result.catch(() => undefined);
+    await vi.waitFor(() => expect(stats.executionIds).toContain(turn.executionId));
+    const cancelQueue = session.cancelPromptQueue.bind(session);
+    let allowCancellation!: () => void;
+    const cancelGate = new Promise<void>((resolve) => {
+      allowCancellation = resolve;
+    });
+    const cancelSpy = vi.spyOn(session, "cancelPromptQueue").mockImplementationOnce(async () => {
+      await cancelGate;
+      await cancelQueue("Mission controller lease was lost.");
+    });
+    const cancellation = session.cancelPromptQueue();
+    const getState = vi.spyOn(session, "getState");
+    const releasing = session.releaseAfterTerminal({ waitForIdle: true });
+    try {
+      // Observe an automatic retry while cancellation is still outstanding.
+      await vi.waitFor(() => expect(getState.mock.calls.length).toBeGreaterThanOrEqual(2), {
+        timeout: 2_000,
+      });
+      await expect(session.prompt("late")).rejects.toThrow("resources are being released");
+      const successor = createPragma({
+        pragmaHome: home,
+        runtimes: createStaticRuntimeResolver({ runtimes: [runtime], defaultRuntimeId: "fake" }),
+      });
+      await expect(
+        successor.experts.resumeSession(expert, { sessionId: session.sessionId }),
+      ).rejects.toThrow("active in another process");
+      allowCancellation();
+      await cancellation;
+      finishTurn();
+      await releasing;
+      await result;
+      const resumed = await successor.experts.resumeSession(expert, {
+        sessionId: session.sessionId,
+      });
+      expect((await resumed.getState()).rootContextId).toBe(rootContextId);
+      await expect((await resumed.prompt("continue")).result).resolves.toBe("tracked:continue");
+      await resumed.close();
+    } finally {
+      allowCancellation();
+      finishTurn();
+      await cancellation.catch(() => undefined);
+      await releasing.catch(() => undefined);
+      getState.mockRestore();
+      cancelSpy.mockRestore();
+    }
+  });
+
   it("reuses a Team member Context across ExpertSession restart and persists its snapshot", async () => {
     const home = await createTemporaryHome("pragma-team-session-context-");
     const stats = createFakeRuntimeStats();

@@ -13,6 +13,8 @@ export interface ExpertToolExecutionContext {
   readonly executionId: string;
   readonly invocationId: string;
   readonly depth: number;
+  /** Revalidate persisted ownership at a Host-managed side-effect boundary. */
+  readonly assertOwnership?: (() => Promise<void>) | undefined;
   readonly invokeResource?:
     | ((request: {
         readonly target: unknown;

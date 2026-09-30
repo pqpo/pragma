@@ -135,6 +135,9 @@ export function createMissionControlApplication(options: {
   const startOwner = async (missionId: string): Promise<"live" | "acquired"> => {
     const current = options.ownerScope.currentGuard(missionId);
     if (current !== undefined) {
+      // Acquisition of an existing owner restarts a poller stopped by a
+      // permanent fault after the underlying storage/replay path is repaired.
+      await options.ownerScope.acquire(missionId);
       return "live";
     }
 
@@ -239,6 +242,7 @@ export function createMissionControlApplication(options: {
       // live owner, MISSION_LEASE_HELD is treated as successful routing to that
       // owner and the existing poller consumes the same Inbox item.
       if (options.ownerScope.currentGuard(input.missionId) !== undefined) {
+        await options.ownerScope.acquire(input.missionId);
         return { ...appended, owner: "live" };
       }
       void startOwner(input.missionId).catch(async (error: unknown) => {

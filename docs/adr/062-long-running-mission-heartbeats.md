@@ -28,8 +28,12 @@ days. `wait_experts` timeouts end only the current wait and leave pending work r
   without treating elapsed lease duration as a task timeout. Explicit stop/release
   stops retries. A confirmed replacement or a non-retryable renewal error still
   stops the local owner.
-- Ordinary Inbox polling failures report diagnostics and continue with bounded
-  backoff. Only a fencing failure invokes the poller's lease-loss callback.
+- Temporary Inbox storage contention reports diagnostics and continues with
+  bounded backoff. A live owner replays pending semantic-write journals before
+  consuming commands, including after a failed apply. Permanent Inbox/replay
+  failures stop polling and report diagnostics without cancelling healthy Runtime
+  work; explicit acquisition can restart polling after repair. Only a fencing
+  failure invokes the poller's lease-loss callback.
 - Diagnostics distinguish a delayed heartbeat from lost ownership and include
   the underlying renewal or fencing error.
 - Strict steer admission also uses persisted ownership rather than heartbeat
@@ -38,6 +42,19 @@ days. `wait_experts` timeouts end only the current wait and leave pending work r
 - Session release closes prompt admission before asynchronous state validation
   and drains already admitted prompts. A failed release precondition reopens
   admission and allows release to be retried after pending work settles.
+- Controller-loss cleanup requests release with `waitForIdle`: prompt admission
+  stays sealed while the retained cancellation/turn settlement promises finish
+  and across any subsequent validation retries. The Host
+  keeps the same Session and app until this eventual release completes, even if
+  its response deadline elapses.
+- ExpertSession ownership is checked under the aggregate lock at Runtime entry
+  and Host-managed tool boundaries, including after approval. Desktop additionally
+  binds the app to the original Mission controller guard and validates it at these
+  boundaries. A late old owner cannot acquire a successor guard when dispatching
+  a tool. These checks do not retract external requests already dispatched and
+  do not fence Runtime-native operations that bypass Host-managed tools; adapters
+  and external systems need their own cancellation/fencing guarantees for those
+  operations.
 
 This partially supersedes ADR 047's rule that repeated polling failures stop an
 owner. Its durable command receipts, command application deadlines, event
@@ -64,3 +81,9 @@ Context. A separate real-process probe verified 100 two-process claim races and
 expiry takeover with rejection of the original process's writes. The environment
 does not deliver child-process pipe output reliably; the probe used file-backed
 stdout for handshakes without changing production code or the existing test suite.
+Review follow-up tests drive the actual owner/poller lifecycle through a pending
+semantic-write journal without reacquisition, stop permanent polling faults,
+delay cancellation past initial release validation and resume from a separate
+app after automatic release. File-backed tool tests cover same-owner delay,
+Mission takeover and ExpertSession takeover before the heartbeat callback, and
+verify the file-write callback is never invoked by a superseded owner.

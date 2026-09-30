@@ -62,6 +62,7 @@ export async function executeExecutionTool(options: {
 }): Promise<ExpertAgentToolCallResult> {
   const startedAt = Date.now();
   const runId = options.state.runId;
+  await options.executionContext?.assertOwnership?.();
 
   options.logger.info("tool.call_started", "Tool call started", {
     runId,
@@ -102,6 +103,7 @@ export async function executeExecutionTool(options: {
     }
 
     const executeArgs = resolvedArgs.updatedInput ?? options.args;
+    await options.executionContext?.assertOwnership?.();
     const result = await options.tool.call(executeArgs, options.signal, {
       toolCallId: options.toolCallId,
       humanInteraction: options.humanInteractionHandler,

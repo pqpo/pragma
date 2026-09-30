@@ -3,7 +3,7 @@ import { randomUUID } from "node:crypto";
 import { mkdir, open, readFile, readdir, rename, rm, stat, truncate } from "node:fs/promises";
 import { dirname, join } from "node:path";
 
-import { withFileLock } from "@pragma/core";
+import { isRetryableStorageContentionError, withFileLock } from "@pragma/core";
 import {
   createIntegrationError,
   FencingTokenSchema,
@@ -348,6 +348,8 @@ export interface MissionControllerStore {
     readonly guard: MissionControllerGuardSource;
     readonly consumer: MissionCommandConsumer;
     readonly onLeaseLost: (error?: unknown) => Promise<void> | void;
+    readonly recoverSemanticWrite?: ((guard: MissionControllerGuard) => Promise<void>) | undefined;
+    readonly onPollingStopped?: (() => Promise<void> | void) | undefined;
     readonly onPollingError?:
       | ((input: {
           readonly error: unknown;
@@ -1818,6 +1820,10 @@ export function createMissionControllerStore(options: {
         if (stopped) return;
         try {
           const guard = typeof input.guard === "function" ? input.guard() : input.guard;
+          // Replay a pending Host mutation before trying the accepted command
+          // again. A live owner need not relinquish its lease to recover it.
+          await input.recoverSemanticWrite?.(guard);
+          if (stopped) return;
           const command = await this.processNext({ ...input, guard });
           consecutiveFailures = 0;
           delayMs = command === undefined ? Math.min(maxDelayMs, delayMs * 2) : initialDelayMs;
@@ -1836,8 +1842,17 @@ export function createMissionControllerStore(options: {
           } catch {
             // Diagnostics must not replace the original polling failure.
           }
-          // Inbox availability is independent of controller ownership. Keep
-          // the bounded backoff; only a proven fencing conflict stops work.
+          const retryable =
+            isRetryableStorageContentionError(error) ||
+            (error instanceof MissionSemanticWritePendingError &&
+              input.recoverSemanticWrite !== undefined);
+          if (!retryable) {
+            // A permanent Inbox/replay failure requires intervention, not an
+            // endless retry or cancellation of an otherwise healthy Runtime.
+            stopped = true;
+            await input.onPollingStopped?.();
+            return;
+          }
           schedule();
         }
       };

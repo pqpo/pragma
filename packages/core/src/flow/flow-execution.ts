@@ -106,6 +106,7 @@ export class FlowExecutionManager {
     private readonly usageSink?: UsageSink | undefined,
     private readonly hostContextBindings?: HostContextBindings | undefined,
     private readonly resolveHostContextBindings?: HostContextBindingsResolver | undefined,
+    private readonly assertExecutionOwnership?: (() => Promise<void>) | undefined,
   ) {}
 
   async start<TInput>(
@@ -237,6 +238,7 @@ export class FlowExecutionManager {
     recoverHumanInteractionIds: readonly string[] = [],
   ): FlowExecution {
     const controller = new ExecutionController(executionId, this.executions, undefined, {
+      assertOwnership: this.assertExecutionOwnership,
       closeContextsOnCancel: true,
       ...(recoverHumanInteractionIds.length === 0 ? {} : { recoverHumanInteractionIds }),
       automaticHumanInteractionHandler: this.automaticHumanInteractionHandler,

@@ -163,6 +163,7 @@ export class ExecutionController {
       readonly automaticHumanInteractionHandler?:
         ExpertAgentAutomaticHumanInteractionHandler | undefined;
       readonly onHumanInteractionRequested?: (() => Promise<void>) | undefined;
+      readonly assertOwnership?: (() => Promise<void>) | undefined;
     } = {},
   ) {
     this.recoverableInteractions =
@@ -173,6 +174,11 @@ export class ExecutionController {
 
   isCancelled(): boolean {
     return this.cancelled;
+  }
+
+  async assertOwnership(): Promise<void> {
+    if (this.cancelled) throw this.cancellationReason ?? new Error("Execution was cancelled.");
+    await this.options.assertOwnership?.();
   }
 
   getCancellationReason(): Error | undefined {
@@ -1012,6 +1018,7 @@ export type NestedFlowInvocationExecutor = (
 ) => Promise<unknown>;
 
 export async function runExpertInvocation(options: RunExpertInvocationOptions): Promise<unknown> {
+  await options.controller.assertOwnership();
   const execution = await requireExecution(options.store, options.executionId);
   const team = isExpertTeam(options.expert) ? options.expert : options.team;
   const nativeExpert = isExpertTeam(options.expert) ? options.expert.coordinator : options.expert;
@@ -1635,6 +1642,7 @@ function createExecutionContext(
     executionId: options.executionId,
     invocationId: options.invocationId,
     depth,
+    assertOwnership: async () => await options.controller.assertOwnership(),
     invokeResource: async (request: {
       readonly target: unknown;
       readonly input: unknown;

@@ -24,6 +24,7 @@ export interface MissionOwnerScope {
     operation: () => Promise<T>,
   ): Promise<T>;
   currentGuard(missionId: string): MissionControllerGuard | undefined;
+  assertOwnership(missionId: string, guard: MissionControllerGuard): Promise<void>;
   release(missionId: string): Promise<void>;
   /** Explicitly fences the current owner, including a live owner in another process. */
   forceRevoke(missionId: string): Promise<void>;
@@ -264,6 +265,15 @@ export function createMissionOwnerScope(options: {
         return owner.guard;
       }) satisfies MissionControllerGuardSource,
       consumer: input.consumer,
+      ...(options.recoverSemanticWrite === undefined
+        ? {}
+        : {
+            recoverSemanticWrite: async (guard: MissionControllerGuard) =>
+              await options.recoverSemanticWrite!({ missionId: input.missionId, guard }),
+          }),
+      onPollingStopped: () => {
+        if (pollers.get(input.missionId) === poller) pollers.delete(input.missionId);
+      },
       ...(input.initialDelayMs === undefined ? {} : { initialDelayMs: input.initialDelayMs }),
       ...(input.maxDelayMs === undefined ? {} : { maxDelayMs: input.maxDelayMs }),
       ...(input.jitter === undefined ? {} : { jitter: input.jitter }),
@@ -290,6 +300,9 @@ export function createMissionOwnerScope(options: {
   };
 
   const scope: MissionOwnerScope = {
+    async assertOwnership(missionId, guard) {
+      await options.controller.assertWriteGuard({ missionId, guard });
+    },
     bindConsumer(consumer) {
       if (boundConsumer !== undefined && boundConsumer !== consumer) {
         throw createIntegrationError({

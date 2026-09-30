@@ -182,8 +182,13 @@ export interface ExpertSession {
   /**
    * Release transient Runtime and lease resources after a terminal turn while
    * keeping the durable ExpertSession and its RuntimeSessionRef recoverable.
+   * waitForIdle seals admission while waiting for the supplied settlement and
+   * automatically retries active-turn validation until pending work settles.
    */
-  releaseAfterTerminal(): Promise<void>;
+  releaseAfterTerminal(options?: {
+    readonly waitForIdle?: boolean | undefined;
+    readonly settlement?: Promise<unknown> | undefined;
+  }): Promise<void>;
   /**
    * Release transient Runtime and lease resources after a durable human-input
    * checkpoint. The pending interaction and its queued prompt remain
@@ -225,6 +230,7 @@ export interface SessionEventPage {
 }
 
 export interface ExpertSessionManagerDependencies {
+  readonly assertExecutionOwnership?: (() => Promise<void>) | undefined;
   readonly sessions: ExpertSessionStore;
   readonly executions: ExecutionStore;
   readonly runtimes: RuntimeResolver;
@@ -261,7 +267,10 @@ const EXPERT_SESSION_LEASE_FAILURE_DRAIN_MS = 5_000;
 
 /** Release validation failed before teardown started; the owner must be retained. */
 export class ExpertSessionReleaseBlockedError extends Error {
-  constructor(cause: unknown) {
+  constructor(
+    cause: unknown,
+    readonly retryable = false,
+  ) {
     super(readErrorMessage(cause), { cause });
     this.name = "ExpertSessionReleaseBlockedError";
   }
@@ -804,6 +813,7 @@ class ExpertSessionImpl implements ExpertSession {
   private terminalReleasePromise: Promise<void> | undefined;
   private humanCheckpointReleasePromise: Promise<void> | undefined;
   private resourcesReleasing = false;
+  private terminalReleaseRequested = false;
   private readonly promptAdmissions = new Set<Promise<ExpertTurn>>();
   private readonly recoveredHumanInteractionIds: readonly string[];
   private waitingForRecoveredHumanInput: boolean;
@@ -866,7 +876,7 @@ class ExpertSessionImpl implements ExpertSession {
 
   private async promptInternal(content: string, options: PromptOptions): Promise<ExpertTurn> {
     if (this.leaseError !== undefined) throw this.leaseError;
-    if (this.resourcesReleasing) {
+    if (this.resourcesReleasing || this.terminalReleaseRequested) {
       throw new Error(`ExpertSession resources are being released: ${this.sessionId}`);
     }
     if (this.closePromise !== undefined) {
@@ -1199,14 +1209,52 @@ class ExpertSessionImpl implements ExpertSession {
     await this.runtimeSessions.clear();
   }
 
-  releaseAfterTerminal(): Promise<void> {
+  releaseAfterTerminal(
+    options: {
+      readonly waitForIdle?: boolean | undefined;
+      readonly settlement?: Promise<unknown> | undefined;
+    } = {},
+  ): Promise<void> {
+    if (options.waitForIdle) this.terminalReleaseRequested = true;
     if (this.terminalReleasePromise === undefined) {
-      this.terminalReleasePromise = this.releaseAfterTerminalInternal().catch((error: unknown) => {
+      this.terminalReleasePromise = this.releaseTerminalWhenIdle(
+        options.waitForIdle === true,
+        options.settlement,
+      ).catch((error: unknown) => {
         if (!this.resourcesReleasing) this.terminalReleasePromise = undefined;
         throw error;
       });
     }
     return this.terminalReleasePromise;
+  }
+
+  private async releaseTerminalWhenIdle(
+    waitForIdle: boolean,
+    settlement: Promise<unknown> | undefined,
+  ): Promise<void> {
+    // Host deadlines do not imply that cancellation or Runtime settlement ended.
+    // Seal admission immediately, but preserve ownership until those tasks finish.
+    if (settlement !== undefined) await Promise.allSettled([settlement]);
+    while (true) {
+      try {
+        await this.releaseAfterTerminalInternal();
+        return;
+      } catch (error) {
+        if (
+          !waitForIdle ||
+          !(error instanceof ExpertSessionReleaseBlockedError) ||
+          !error.retryable
+        ) {
+          throw error;
+        }
+        // Cancellation can outlive the Host deadline. Keep admission sealed
+        // and retry until the durable turn settles or lease loss is confirmed.
+        await new Promise<void>((resolve) => {
+          const retry = setTimeout(resolve, 500);
+          retry.unref();
+        });
+      }
+    }
   }
 
   private async releaseAfterTerminalInternal(): Promise<void> {
@@ -1219,17 +1267,27 @@ class ExpertSessionImpl implements ExpertSession {
       // Close admission before reading persisted state. A prompt already admitted
       // must finish enqueueing first, so release cannot overlook its pending turn.
       await Promise.allSettled([...this.promptAdmissions]);
+      if (this.leaseError !== undefined) await this.leaseFailureTask;
       const [state, prompts] = await Promise.all([this.getState(), this.getPromptQueue()]);
       if (
-        state.activeExecutionId !== undefined ||
-        prompts.some((prompt) => prompt.status === "queued" || prompt.status === "running")
+        this.leaseError === undefined &&
+        (state.activeExecutionId !== undefined ||
+          prompts.some((prompt) => prompt.status === "queued" || prompt.status === "running"))
       ) {
-        throw new Error("Wait for the active Expert turn before releasing terminal resources.");
+        throw new ExpertSessionReleaseBlockedError(
+          new Error("Wait for the active Expert turn before releasing terminal resources."),
+          true,
+        );
       }
     } catch (error) {
       this.resourcesReleasing = false;
-      throw new ExpertSessionReleaseBlockedError(error);
+      throw error instanceof ExpertSessionReleaseBlockedError
+        ? error
+        : new ExpertSessionReleaseBlockedError(error);
     }
+    // Validation alone must not interrupt an already admitted turn. Seal its
+    // execution boundary only once teardown is committed (or explicitly requested).
+    this.terminalReleaseRequested = true;
     const errors: unknown[] = [];
     this.stopLeaseRenewal();
     try {
@@ -2766,6 +2824,20 @@ class ExpertSessionImpl implements ExpertSession {
           ? { recoverHumanInteractionIds: this.recoveredHumanInteractionIds }
           : {}),
         automaticHumanInteractionHandler: this.dependencies.automaticHumanInteractionHandler,
+        assertOwnership: async () => {
+          if (this.terminalReleaseRequested)
+            throw new Error("ExpertSession resources are being released.");
+          await this.dependencies.assertExecutionOwnership?.();
+          if (this.dependencies.sessions.assertLeaseOwner !== undefined) {
+            await this.dependencies.sessions.assertLeaseOwner(this.sessionId, this.claimId);
+          } else {
+            await this.ownedSessions.transact(this.sessionId, ({ session, prompts }) => ({
+              result: undefined,
+              session,
+              prompts,
+            }));
+          }
+        },
         onHumanInteractionRequested: async () => {
           await this.markExecutionPromptAsHumanCheckpointRecovery(prompt.executionId);
         },
