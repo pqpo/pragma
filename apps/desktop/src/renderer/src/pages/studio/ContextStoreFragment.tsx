@@ -1736,15 +1736,17 @@ export function ContextStoreDetailFragment(props: {
           error={
             deleteBlockedByRevisionDrafts
               ? t("knowledgeBaseRevisionTasksBlocked")
-              : deleteBlockedByReferences
-                ? t("knowledgeBaseStillReferenced")
-                : deleteMissionUnmountFailed
-                  ? t("knowledgeBaseMissionUnmountFailed")
-                  : deleteActiveMission
-                    ? t("knowledgeBaseActiveMission")
-                    : deleteMissionMessagesPending
-                      ? t("knowledgeBaseMissionMessagesPending")
-                      : deleteError?.message
+              : deleteError?.code === "draft_unreadable"
+                ? t("knowledgeBaseRevisionDraftUnreadable")
+                : deleteBlockedByReferences
+                  ? t("knowledgeBaseStillReferenced")
+                  : deleteMissionUnmountFailed
+                    ? t("knowledgeBaseMissionUnmountFailed")
+                    : deleteActiveMission
+                      ? t("knowledgeBaseActiveMission")
+                      : deleteMissionMessagesPending
+                        ? t("knowledgeBaseMissionMessagesPending")
+                        : deleteError?.message
           }
           errorAction={
             deleteBlockedByRevisionDrafts && props.onOpenRevisions !== undefined

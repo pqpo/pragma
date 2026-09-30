@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rename, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -37,9 +37,10 @@ async function fixture(
   directories.push(directory);
   const contextStores = createContextStoreStore({
     storesPath: join(directory, "data", "context-stores"),
+    hasUnmergedRevisionDrafts: async (storeId) => service.hasUnmergedDrafts(storeId),
   });
   const draftsPath = join(directory, "data", "context-store-drafts");
-  const service = createContextStoreRevisionService({
+  const service: ContextStoreRevisionService = createContextStoreRevisionService({
     statePath: join(directory, "state", "context-store-revisions"),
     draftsPath,
     contextStores,
@@ -232,7 +233,9 @@ describe("context store sparse draft revisions", () => {
       metadata: { trigger: "always_on", priority: "normal" },
     });
     const draft = await service.getDraft(job.draftId);
-    await expect(service.submitDraft(draft.id, draft.revision, "Minimal knowledge base.")).resolves.toMatchObject({
+    await expect(
+      service.submitDraft(draft.id, draft.revision, "Minimal knowledge base."),
+    ).resolves.toMatchObject({
       state: "pending_review",
     });
   });
@@ -955,11 +958,88 @@ describe("context store sparse draft revisions", () => {
   });
 
   it("fails closed when a malformed draft prevents checking Store deletion references", async () => {
-    const { draftsPath, service, store } = await fixture();
+    const { contextStores, draftsPath, service, store } = await fixture();
     await mkdir(join(draftsPath, "broken"), { recursive: true });
     await writeFile(join(draftsPath, "broken", "draft.json"), "{invalid");
 
-    await expect(service.hasUnmergedDrafts(store.id)).resolves.toBe(true);
+    await expect(service.hasUnmergedDrafts(store.id)).rejects.toMatchObject({
+      code: "draft_unreadable",
+    });
+    await expect(contextStores.remove(store.id)).rejects.toMatchObject({
+      code: "draft_unreadable",
+    });
+    await expect(contextStores.list()).resolves.toEqual([store]);
+  });
+
+  it("allows deletion after a damaged draft record is repaired and discarded", async () => {
+    const { contextStores, draftsPath, service, store } = await fixture();
+    const draft = await service.createDraft({ storeId: store.id, name: "Repair me" });
+    const recordPath = join(draftsPath, draft.id, "draft.json");
+    const original = await readFile(recordPath, "utf8");
+    await writeFile(recordPath, "{invalid");
+
+    await expect(service.listDrafts({ storeId: store.id })).resolves.toEqual([]);
+    await expect(contextStores.remove(store.id)).rejects.toMatchObject({
+      code: "draft_unreadable",
+    });
+    await writeFile(recordPath, original);
+    await service.discardDraft(draft.id, draft.revision);
+    await contextStores.remove(store.id);
+    await expect(contextStores.list()).resolves.toEqual([]);
+  });
+
+  it.skipIf(process.platform === "win32")(
+    "ignores file and dangling symlinks while preserving linked draft directories",
+    async () => {
+      const { contextStores, draftsPath, service, store } = await fixture();
+      const draft = await service.createDraft({ storeId: store.id, name: "Linked draft" });
+      await rename(join(draftsPath, draft.id), join(draftsPath, "linked-target"));
+      await symlink(join(draftsPath, "linked-target"), join(draftsPath, draft.id));
+      await writeFile(join(draftsPath, ".DS_Store"), "metadata");
+      await symlink(join(draftsPath, ".DS_Store"), join(draftsPath, "file-link"));
+      await symlink(join(draftsPath, "missing"), join(draftsPath, "dangling-link"));
+
+      await expect(service.hasUnmergedDrafts(store.id)).resolves.toBe(true);
+      await expect(contextStores.remove(store.id)).rejects.toMatchObject({
+        code: "revision_drafts_present",
+      });
+      await rm(join(draftsPath, "linked-target"), { recursive: true });
+      await expect(service.listDrafts()).resolves.toEqual([]);
+      await contextStores.remove(store.id);
+      await expect(contextStores.list()).resolves.toEqual([]);
+    },
+  );
+
+  it("allows Store deletion with no drafts on first use", async () => {
+    const { contextStores, service, store } = await fixture();
+
+    await expect(service.listDrafts()).resolves.toEqual([]);
+    await expect(service.hasUnmergedDrafts(store.id)).resolves.toBe(false);
+    await contextStores.remove(store.id);
+    await expect(contextStores.list()).resolves.toEqual([]);
+  });
+
+  it("allows Store deletion after discarding its draft despite auxiliary entries", async () => {
+    const { contextStores, draftsPath, service, store } = await fixture();
+    const draft = await service.createDraft({ storeId: store.id, name: "Discard me" });
+    await mkdir(join(draftsPath, `${draft.id}.lock`));
+    await mkdir(join(draftsPath, `${draft.id}.migration.lock.staging-interrupted`));
+    await mkdir(join(draftsPath, "incomplete-draft"));
+    await writeFile(join(draftsPath, ".DS_Store"), "Finder metadata");
+
+    await expect(service.listDrafts({ storeId: store.id })).resolves.toEqual([
+      expect.objectContaining({ id: draft.id }),
+    ]);
+    await expect(contextStores.remove(store.id)).rejects.toMatchObject({
+      code: "revision_drafts_present",
+    });
+
+    await rm(join(draftsPath, `${draft.id}.lock`), { recursive: true });
+    await service.discardDraft(draft.id, draft.revision);
+    await expect(service.listDrafts({ storeId: store.id })).resolves.toEqual([]);
+    await expect(service.hasUnmergedDrafts(store.id)).resolves.toBe(false);
+    await contextStores.remove(store.id);
+    await expect(contextStores.list()).resolves.toEqual([]);
   });
 
   it("reconciles a terminal Mission claim after its first detach attempt is interrupted", async () => {

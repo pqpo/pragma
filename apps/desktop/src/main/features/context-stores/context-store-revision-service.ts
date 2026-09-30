@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
-import { mkdir, readFile, readdir, rename, rm, writeFile } from "node:fs/promises";
+import { mkdir, readFile, readdir, rename, rm, stat, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 
 import { withFileLock } from "@pragma/core";
@@ -503,7 +503,7 @@ export function createContextStoreRevisionService(options: {
 
   const readAllDrafts = async (): Promise<readonly ContextStoreDraft[]> => {
     const drafts = await Promise.all(
-      (await readNames(draftsPath)).map(async (name) => {
+      (await readNames(draftsPath, true)).map(async (name) => {
         try {
           return await readDraft(name);
         } catch (error) {
@@ -1666,16 +1666,27 @@ export function createContextStoreRevisionService(options: {
     },
 
     async hasUnmergedDrafts(storeId) {
-      for (const name of await readNames(draftsPath)) {
+      for (const name of await readNames(draftsPath, true)) {
         try {
           const draft = await readDraft(name);
           if (draft.storeId === storeId && draft.state !== "merged") return true;
         } catch (error) {
+          // Lock directories and interrupted/discarded drafts have no draft record.
+          // Match the list boundary rather than treating them as unmerged drafts.
+          if (
+            error instanceof ContextStoreRevisionServiceError &&
+            error.code === "draft_not_found"
+          ) {
+            continue;
+          }
           options.warn?.(
             "A knowledge revision draft could not be read while checking whether a Context Store can be deleted.",
             error,
           );
-          return true;
+          throw new ContextStoreStoreError(
+            "draft_unreadable",
+            "A knowledge revision draft could not be read. Repair the draft record before deleting the knowledge base.",
+          );
         }
       }
       return false;
@@ -1920,9 +1931,22 @@ function rebaseOverlay(
   };
 }
 
-async function readNames(path: string): Promise<string[]> {
+async function readNames(path: string, directoriesOnly = false): Promise<string[]> {
   try {
-    return await readdir(path);
+    const entries = await readdir(path, { withFileTypes: true });
+    const names = await Promise.all(
+      entries.map(async (entry) => {
+        if (!directoriesOnly || entry.isDirectory()) return entry.name;
+        if (!entry.isSymbolicLink()) return undefined;
+        try {
+          return (await stat(join(path, entry.name))).isDirectory() ? entry.name : undefined;
+        } catch (error) {
+          if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
+          throw error;
+        }
+      }),
+    );
+    return names.filter((name): name is string => name !== undefined);
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === "ENOENT") return [];
     throw error;

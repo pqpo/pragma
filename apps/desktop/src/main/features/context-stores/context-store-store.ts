@@ -271,6 +271,7 @@ export class ContextStoreStoreError extends Error {
       | "revision_conflict"
       | "expert_referenced"
       | "revision_drafts_present"
+      | "draft_unreadable"
       | "active_mission_referenced"
       | "mission_message_queue_referenced"
       | "mission_referenced"

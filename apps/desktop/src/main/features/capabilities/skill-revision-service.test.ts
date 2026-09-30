@@ -1,5 +1,15 @@
 import { createHash, randomUUID } from "node:crypto";
-import { chmod, mkdir, readFile, realpath, rename, rm, stat, writeFile } from "node:fs/promises";
+import {
+  chmod,
+  mkdir,
+  readFile,
+  realpath,
+  rename,
+  rm,
+  stat,
+  symlink,
+  writeFile,
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 
@@ -27,6 +37,39 @@ afterEach(async () => {
 });
 
 describe("Skill revision service", () => {
+  it("ignores auxiliary files and recordless directories when listing drafts and diagnostics", async () => {
+    const fixture = await createService();
+    const job = await fixture.service.start(request("expert-reflection"));
+    await writeFile(join(fixture.draftsPath, ".DS_Store"), "Finder metadata");
+    await mkdir(join(fixture.draftsPath, `${job.draftId}.lock`));
+    await mkdir(join(fixture.draftsPath, `${job.draftId}.migration.lock.staging-interrupted`));
+    await mkdir(join(fixture.draftsPath, "incomplete-draft"));
+    if (process.platform !== "win32") {
+      await symlink(join(fixture.draftsPath, ".DS_Store"), join(fixture.draftsPath, "file-link"));
+      await symlink(join(fixture.draftsPath, "missing"), join(fixture.draftsPath, "dangling-link"));
+    }
+
+    await expect(fixture.service.listDrafts()).resolves.toEqual([
+      expect.objectContaining({ id: job.draftId }),
+    ]);
+    await expect(fixture.service.listDiagnostics()).resolves.toEqual([]);
+  });
+
+  it("continues reporting malformed draft records while listing healthy drafts", async () => {
+    const fixture = await createService();
+    const job = await fixture.service.start(request("expert-reflection"));
+    const damagedId = randomUUID();
+    await mkdir(join(fixture.draftsPath, damagedId));
+    await writeFile(join(fixture.draftsPath, damagedId, "draft.json"), "{invalid");
+
+    await expect(fixture.service.listDrafts()).resolves.toEqual([
+      expect.objectContaining({ id: job.draftId }),
+    ]);
+    await expect(fixture.service.listDiagnostics()).resolves.toEqual([
+      expect.objectContaining({ kind: "draft", id: damagedId }),
+    ]);
+  });
+
   it("stores the editable tree in the owning Workspace and removes it after submission", async () => {
     const fixture = await createService();
     const job = await fixture.service.start(request("expert-reflection"));

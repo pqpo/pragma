@@ -839,6 +839,8 @@ export const studio = {
     "Some Mission mounts could not be removed, so the knowledge base was not deleted. Some mounts may already have been removed; refresh and retry.",
   knowledgeBaseRevisionTasksBlocked:
     "This knowledge base still has unmerged revision drafts that could change its contents. Finish and merge them, or discard them, from Revision tasks before deleting the knowledge base. Merged revision history does not need to be deleted.",
+  knowledgeBaseRevisionDraftUnreadable:
+    "A revision draft record could not be read, so deletion cannot be checked safely. The knowledge base was not deleted. Retry; if the problem persists, contact support to repair the draft record.",
   knowledgeBaseStillReferenced:
     "This knowledge base is still mounted by one or more Experts. Remove those Expert mounts before deleting it.",
   knowledgeBaseFiles: "Knowledge base files",

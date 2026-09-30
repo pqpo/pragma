@@ -1,5 +1,15 @@
 import { createHash, randomUUID } from "node:crypto";
-import { access, mkdir, readFile, readdir, rename, rm, unlink, writeFile } from "node:fs/promises";
+import {
+  access,
+  mkdir,
+  readFile,
+  readdir,
+  rename,
+  rm,
+  stat,
+  unlink,
+  writeFile,
+} from "node:fs/promises";
 import { dirname, join } from "node:path";
 
 import { withFileLock } from "@pragma/core";
@@ -1130,12 +1140,25 @@ export function createSkillRevisionService(options: {
     await Promise.all([recoverDiscardJournals(), recoverSubmissionCleanupJournals()]);
     let names: string[];
     try {
-      names = await readdir(draftsPath);
+      names = (await readdir(draftsPath, { withFileTypes: true }))
+        .filter((entry) => entry.isDirectory() || entry.isSymbolicLink())
+        .map((entry) => entry.name);
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code === "ENOENT") return [];
       throw error;
     }
-    const settled = await Promise.allSettled(names.map(readDraft));
+    const settled = await Promise.allSettled(
+      names.map(async (name) => {
+        try {
+          if (!(await stat(join(draftsPath, name))).isDirectory()) return undefined;
+          return await readDraft(name);
+        } catch (error) {
+          // Locks, interrupted creations and discarded drafts have no draft record.
+          if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
+          throw error;
+        }
+      }),
+    );
     diagnostics = [
       ...diagnostics.filter((item) => item.kind !== "draft"),
       ...settled.flatMap((result, index) =>
@@ -1144,7 +1167,9 @@ export function createSkillRevisionService(options: {
           : [],
       ),
     ];
-    return settled.flatMap((result) => (result.status === "fulfilled" ? [result.value] : []));
+    return settled.flatMap((result) =>
+      result.status === "fulfilled" && result.value !== undefined ? [result.value] : [],
+    );
   };
 
   const requireOwner = (draft: SkillRevisionDraft, missionId: string | undefined): void => {

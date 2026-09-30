@@ -788,6 +788,8 @@ export const studio = {
     "未能解除所有 Mission 挂载，因此知识库未删除。可能已有部分挂载解除，请刷新后重试。",
   knowledgeBaseRevisionTasksBlocked:
     "此知识库仍有未合并的修订草稿，因此暂时不能删除。草稿仍可能继续修改知识库。请先在修订任务中完成并合并草稿，或丢弃草稿。已合并的历史任务不需要删除。",
+  knowledgeBaseRevisionDraftUnreadable:
+    "修订草稿记录读取失败，暂时无法确认能否安全删除。知识库未删除。请重试；若问题持续，请联系支持人员修复草稿记录。",
   knowledgeBaseStillReferenced: "此知识库仍挂载在一个或多个专家中，请先解除专家挂载后再删除。",
   knowledgeBaseFiles: "知识库文件",
   resizeKnowledgeFileList: "调整文件列表宽度",
