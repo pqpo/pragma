@@ -1,6 +1,32 @@
 import { formatExpertPromptWithAttachments, type ExpertAgentContextItemSeed } from "@pragma/core";
 
-import type { MissionBranchHistory, MissionChatEntry } from "../../../shared/contracts/index.ts";
+import type {
+  MissionBranchHistory,
+  MissionChatEntry,
+  MissionConversationState,
+} from "../../../shared/contracts/index.ts";
+import { orderMissionChatEntries } from "../../../shared/mission-conversation-order.ts";
+
+export function prepareMissionBranchHistory(
+  entries: readonly MissionChatEntry[],
+  state: Pick<MissionConversationState, "deliveries" | "hiddenEntryIds">,
+): MissionChatEntry[] {
+  const deliveries = new Map(state.deliveries.map((item) => [item.entryId, item.delivery]));
+  const hiddenIds = new Set(state.hiddenEntryIds);
+  return orderMissionChatEntries(
+    entries
+      .filter((entry) => !hiddenIds.has(entry.id))
+      .map((entry) => {
+        const delivery = deliveries.get(entry.id);
+        return entry.kind === "user" && delivery !== undefined ? { ...entry, delivery } : entry;
+      })
+      .filter(
+        (entry) =>
+          entry.kind !== "user" ||
+          (entry.delivery?.removed !== true && entry.delivery?.status !== "queued"),
+      ),
+  );
+}
 
 const BRANCH_RECENT_CONTEXT_MAX_BYTES = 3 * 1_024;
 const OMITTED_HISTORY_NOTICE =

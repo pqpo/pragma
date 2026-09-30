@@ -1,3 +1,7 @@
+import {
+  missionChatEntryDisplayTime,
+  orderMissionChatEntries,
+} from "../../../../shared/mission-conversation-order.ts";
 import type {
   MissionChatEntry,
   MissionChatPatch,
@@ -161,29 +165,9 @@ export function groupMissionConversationEntries(
 export function orderMissionConversationEntries(
   entries: readonly MissionConversationEntry[],
 ): MissionConversationEntry[] {
-  const durable = entries.filter((entry) => entry.type === "durable");
-  const activated = durable
-    .filter(
-      (
-        item,
-      ): item is Extract<MissionConversationEntry, { readonly type: "durable" }> & {
-        readonly entry: Extract<MissionChatEntry, { readonly kind: "user" }>;
-      } => item.entry.kind === "user" && item.entry.delivery?.activatedAt !== undefined,
-    )
-    .toSorted((left, right) =>
-      left.entry.delivery!.activatedAt!.localeCompare(right.entry.delivery!.activatedAt!),
-    );
-  const activatedIds = new Set(activated.map((item) => item.entry.id));
-  const ordered: MissionConversationEntry[] = durable.filter(
-    (item) => !activatedIds.has(item.entry.id),
-  );
-  for (const item of activated) {
-    const activatedAt = item.entry.delivery!.activatedAt!;
-    const index = ordered.findIndex(
-      (candidate) => missionConversationEntryDisplayTime(candidate) > activatedAt,
-    );
-    ordered.splice(index < 0 ? ordered.length : index, 0, item);
-  }
+  const ordered: MissionConversationEntry[] = orderMissionChatEntries(
+    entries.flatMap((item) => (item.type === "durable" ? [item.entry] : [])),
+  ).map((entry) => ({ type: "durable", entry }));
   const local = entries
     .filter((entry) => entry.type !== "durable")
     .toSorted((left, right) => left.entry.createdAt.localeCompare(right.entry.createdAt));
@@ -197,8 +181,8 @@ export function orderMissionConversationEntries(
 }
 
 function missionConversationEntryDisplayTime(entry: MissionConversationEntry): string {
-  return entry.type === "durable" && entry.entry.kind === "user"
-    ? (entry.entry.delivery?.activatedAt ?? entry.entry.createdAt)
+  return entry.type === "durable"
+    ? missionChatEntryDisplayTime(entry.entry)
     : entry.entry.createdAt;
 }
 

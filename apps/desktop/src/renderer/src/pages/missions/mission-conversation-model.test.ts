@@ -1362,6 +1362,75 @@ describe("mission conversation model", () => {
     expect(hideQueuedChatEntries([entry], new Set())).toEqual([]);
   });
 
+  it.each(["before-output", "after-output"] as const)(
+    "keeps a direct steer in place through success refresh and reload (%s)",
+    (position) => {
+      const working: Extract<MissionChatEntry, { kind: "assistant" }> = {
+        id: "working",
+        executionId: "00000000-0000-4000-8000-000000000001",
+        kind: "assistant",
+        content: "Working",
+        streaming: true,
+        createdAt: "2026-07-11T00:00:01.000Z",
+      };
+      const final: MissionChatEntry = {
+        ...working,
+        id: "final",
+        content: "Done",
+        streaming: false,
+        createdAt: "2026-07-11T00:00:03.000Z",
+      };
+      const steer: MissionChatEntry = {
+        id: "steer",
+        executionId: working.executionId,
+        kind: "user",
+        content: "可以了，不用测试了",
+        createdAt: "2026-07-11T00:00:02.000Z",
+      };
+      const ids = (snapshot: MissionConversationSnapshot) =>
+        orderMissionConversationEntries(
+          snapshot.entries.map((entry) => ({ type: "durable" as const, entry })),
+        ).map(({ entry }) => entry.id);
+      const current = { ...streamingSnapshot(), entries: [working, steer, final] };
+      expect(ids(current)).toEqual(["working", "steer", "final"]);
+
+      const page = {
+        ...current,
+        revision: 2,
+        entries: position === "before-output" ? [steer, working, final] : [working, final, steer],
+      };
+      const state = {
+        missionId: current.missionId,
+        revision: 2,
+        pendingInteractions: [],
+        hiddenEntryIds: [],
+        deliveries: [
+          {
+            entryId: steer.id,
+            delivery: {
+              requestedMode: "steer" as const,
+              effectiveMode: "steer" as const,
+              status: "succeeded" as const,
+            },
+          },
+        ],
+      };
+      // Match refresh(): hydrate page delivery metadata before reconciling it
+      // with updates already painted by the renderer.
+      const hydratedPage = mergeConversationState(conversationFromPage(page, current), state)!;
+      const refreshed = reconcileMissionChatRefresh(current, hydratedPage, []).snapshot;
+      const reloaded = mergeConversationState(conversationFromPage(page, null), state)!;
+      expect(ids(refreshed)).toEqual(["working", "steer", "final"]);
+      expect(ids(reloaded)).toEqual(ids(refreshed));
+      const staleRefresh = reconcileMissionChatRefresh(
+        { ...current, revision: 3 },
+        hydratedPage,
+        [],
+      ).snapshot;
+      expect(ids(staleRefresh)).toEqual(ids(refreshed));
+    },
+  );
+
   it("moves a confirmed queued steer to its activation position", () => {
     const entries = orderMissionConversationEntries([
       {
