@@ -12,11 +12,18 @@ import {
   prepareMissionBranchHistory,
 } from "./mission-branch-context.ts";
 import { createMissionStore } from "./mission-store.ts";
+import { createNoopLoggerProvider } from "@pragma/core";
+import { createMissionRunner } from "./mission-runner.ts";
+import { createPragmaProjectStore } from "../projects/pragma-project-store.ts";
+import type { CapabilityStore } from "../capabilities/capability-store.ts";
+import type { CapabilityCredentialStore } from "../capabilities/capability-credential-store.ts";
 
 describe("createMissionBranchContext", () => {
   it("retains a standalone direct steer before the selected final reply in a persisted branch", async () => {
     const root = await mkdtemp(join(tmpdir(), "pragma-steer-branch-"));
     try {
+      const project = createPragmaProjectStore({ projectsPath: join(root, "projects") });
+      await project.publish({ expectedRevision: 0, resources: [] });
       const store = createMissionStore({ missionsPath: join(root, "missions") });
       const source = await store.create({
         workspace: { path: root, basename: "workspace" },
@@ -98,6 +105,42 @@ describe("createMissionBranchContext", () => {
         (item) => item.id === "transcript.md",
       )!.content;
       expect(transcript.indexOf("Keep the change small")).toBeLessThan(transcript.indexOf("Done"));
+      expect.soft(inherited?.entries.map((entry) => entry.timelineSequence)).toEqual([1, 1, 2, 2]);
+      const recent = createMissionBranchContext(inherited!).find(
+        (item) => item.id === "RECENT.md",
+      )!.content;
+      expect(recent).toContain("Keep the change small");
+      expect(recent).toContain("Done");
+      expect.soft(recent.indexOf("Keep the change small")).toBeLessThan(recent.indexOf("Done"));
+      // Reopen storage and read the Branch's own page without a source session.
+      const reopened = createMissionStore({ missionsPath: join(root, "missions") });
+      const runner = createMissionRunner({
+        missions: reopened,
+        project,
+        capabilityStore: {} as CapabilityStore,
+        capabilityCredentials: {} as CapabilityCredentialStore,
+        capabilitiesPath: join(root, "capabilities"),
+        pragmaHome: join(root, "state"),
+        runtimes: {
+          getDefaultRuntimeId: async () => "unused",
+          bind: async () => {
+            throw new Error("Branch history must not require a Runtime");
+          },
+          resolve: async () => {
+            throw new Error("Branch history must not require a Runtime");
+          },
+        },
+        loggerProvider: createNoopLoggerProvider(),
+      });
+      const page = await runner.getChatPage({ id: branch.id, limit: 50 });
+      expect
+        .soft(page.entries.map((entry) => entry.id))
+        .toEqual([
+          source.initialMessageId,
+          `branch:${source.id}:${working.id}`,
+          steerId,
+          `branch:${source.id}:${final.id}`,
+        ]);
     } finally {
       await rm(root, { recursive: true, force: true });
     }

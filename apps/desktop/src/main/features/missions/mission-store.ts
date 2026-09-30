@@ -1294,8 +1294,11 @@ export function createMissionStore(options: {
           const attachmentsById = new Map(
             attachments.attachments.map((attachment) => [attachment.id, attachment] as const),
           );
-          const branchTimelineSequences = new Map<number, number>(
-            sourceUsers.map((entry, index) => [entry.timelineSequence!, index + 1] as const),
+          const sourceTimelineSequences = new Set(
+            sourceUsers.map((entry) => entry.timelineSequence!),
+          );
+          const branchUserSequences = new Map(
+            sourceUsers.map((entry, index) => [entry.id, index + 1] as const),
           );
           const userRecords = sourceUsers.map((entry, index) =>
             MissionTimelineRecordSchema.parse({
@@ -1321,9 +1324,29 @@ export function createMissionStore(options: {
               createdAt: entry.createdAt,
             }),
           );
-          const inheritedEntries = historyThroughReply.map((entry) =>
-            inheritedBranchEntry(sourceMissionId, entry, attachmentsById, branchTimelineSequences),
-          );
+          // Execution output can span several conversation inputs after a steer.
+          // Rebuild turn membership from the canonical order instead of copying
+          // the source Execution's timeline sequence back onto its final reply.
+          let branchTimelineSequence = 1;
+          const inheritedEntries = historyThroughReply.map((entry) => {
+            if (entry.kind === "user") {
+              const userSequence = branchUserSequences.get(entry.id);
+              if (userSequence === undefined) {
+                throw new MissionStoreError(
+                  "config_invalid",
+                  "Mission branch history contains an invalid user turn.",
+                );
+              }
+              branchTimelineSequence = userSequence;
+            }
+            return inheritedBranchEntry(
+              sourceMissionId,
+              entry,
+              attachmentsById,
+              branchTimelineSequence,
+              sourceTimelineSequences,
+            );
+          });
           const branchHistory = MissionBranchHistorySchema.parse({
             schemaVersion: "pragma.mission-branch-history/v1",
             source: branchSource,
@@ -1889,13 +1912,13 @@ function inheritedBranchEntry(
   sourceMissionId: string,
   entry: MissionChatEntry,
   attachmentsById: ReadonlyMap<string, ExpertPromptAttachment>,
-  branchTimelineSequences: ReadonlyMap<number, number>,
+  branchTimelineSequence: number,
+  sourceTimelineSequences: ReadonlySet<number>,
 ): MissionChatEntry {
-  const branchTimelineSequence =
-    entry.timelineSequence === undefined
-      ? undefined
-      : branchTimelineSequences.get(entry.timelineSequence);
-  if (entry.timelineSequence !== undefined && branchTimelineSequence === undefined) {
+  if (
+    entry.timelineSequence !== undefined &&
+    !sourceTimelineSequences.has(entry.timelineSequence)
+  ) {
     throw new MissionStoreError(
       "config_invalid",
       `Mission branch history references an unknown Turn: ${entry.timelineSequence}`,
@@ -1903,9 +1926,7 @@ function inheritedBranchEntry(
   }
   const timelineEntry = {
     ...entry,
-    ...(branchTimelineSequence === undefined
-      ? { timelineSequence: undefined }
-      : { timelineSequence: branchTimelineSequence }),
+    timelineSequence: branchTimelineSequence,
   };
   const rewrittenEntry =
     timelineEntry.kind === "user" && timelineEntry.attachments !== undefined
