@@ -123,6 +123,7 @@ jobs:
         run: pnpm test:core
 
       - name: Mission chat regression tests
+        if: inputs.source_run_id == ''
         env:
           PRAGMA_LOG_LEVEL: error
           CI: "true"
