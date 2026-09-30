@@ -748,8 +748,8 @@ export function createSkillRevisionService(options: {
     });
   };
 
-  const readDraft = async (id: string): Promise<SkillRevisionDraft> => {
-    const raw = JSON.parse(await readFile(draftPath(id), "utf8")) as unknown;
+  const readDraft = async (id: string, stored?: string): Promise<SkillRevisionDraft> => {
+    const raw = JSON.parse(stored ?? (await readFile(draftPath(id), "utf8"))) as unknown;
     const current = SkillRevisionDraftSchema.safeParse(raw);
     if (current.success) {
       await finishAdjacentMigration("draft", id, current.data);
@@ -1149,14 +1149,17 @@ export function createSkillRevisionService(options: {
     }
     const settled = await Promise.allSettled(
       names.map(async (name) => {
+        let stored: string;
         try {
           if (!(await stat(join(draftsPath, name))).isDirectory()) return undefined;
-          return await readDraft(name);
+          stored = await readFile(draftPath(name), "utf8");
         } catch (error) {
           // Locks, interrupted creations and discarded drafts have no draft record.
           if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
           throw error;
         }
+        // A persisted record's migration/recovery failures must remain diagnostic.
+        return await readDraft(name, stored);
       }),
     );
     diagnostics = [

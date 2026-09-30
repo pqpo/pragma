@@ -342,30 +342,32 @@ export function createContextStoreRevisionService(options: {
     id: string = randomUUID(),
     creation?: { readonly name: string; readonly description: string },
   ): Promise<ContextStoreDraft> => {
-    const timestamp = new Date().toISOString();
-    const base =
-      creation === undefined
-        ? await options.contextStores.getSnapshot(storeId)
-        : emptyCreationSnapshot(storeId, timestamp);
-    const draft = ContextStoreDraftSchema.parse({
-      schemaVersion: "pragma.context-store-draft/v2",
-      operation: creation === undefined ? "revise" : "create",
-      id,
-      revision: 1,
-      name,
-      storeId,
-      ...(creation === undefined
-        ? {}
-        : { resourceName: creation.name, resourceDescription: creation.description }),
-      baseRevision: base.revision,
-      baseSnapshotHash: base.snapshotHash,
-      state: "editing",
-      overlay,
-      createdAt: timestamp,
-      updatedAt: timestamp,
+    return await options.contextStores.withRevisionLock(storeId, async () => {
+      const timestamp = new Date().toISOString();
+      const base =
+        creation === undefined
+          ? await options.contextStores.getSnapshot(storeId)
+          : emptyCreationSnapshot(storeId, timestamp);
+      const draft = ContextStoreDraftSchema.parse({
+        schemaVersion: "pragma.context-store-draft/v2",
+        operation: creation === undefined ? "revise" : "create",
+        id,
+        revision: 1,
+        name,
+        storeId,
+        ...(creation === undefined
+          ? {}
+          : { resourceName: creation.name, resourceDescription: creation.description }),
+        baseRevision: base.revision,
+        baseSnapshotHash: base.snapshotHash,
+        state: "editing",
+        overlay,
+        createdAt: timestamp,
+        updatedAt: timestamp,
+      });
+      await writeDraft(draft);
+      return draft;
     });
-    await writeDraft(draft);
-    return draft;
   };
 
   const migrateJob = async (raw: unknown): Promise<ContextStoreRevisionJob> => {
@@ -395,37 +397,42 @@ export function createContextStoreRevisionService(options: {
       ) {
         throw error;
       }
-      const base = await options.contextStores.getSnapshot(
-        legacy.request.storeId,
-        legacy.changeSet?.baseRevision,
-      );
-      draft = ContextStoreDraftSchema.parse({
-        schemaVersion: "pragma.context-store-draft/v2",
-        operation: "revise",
-        id: migration.draftId,
-        revision: 1,
-        name: `Migrated revision ${legacy.id.slice(0, 8)}`,
-        storeId: legacy.request.storeId,
-        baseRevision: base.revision,
-        baseSnapshotHash: base.snapshotHash,
-        state:
-          legacy.state === "pending_review"
-            ? "pending_review"
-            : legacy.state === "applying"
-              ? "merging"
-              : legacy.state === "completed"
-                ? "merged"
-                : "editing",
-        overlay: overlayFromV1Job(legacy, base),
-        ...(["pending_review", "applying"].includes(legacy.state) ? { submittedRevision: 1 } : {}),
-        createdAt: legacy.createdAt,
-        updatedAt: legacy.updatedAt,
+      draft = await options.contextStores.withRevisionLock(legacy.request.storeId, async () => {
+        const base = await options.contextStores.getSnapshot(
+          legacy.request.storeId,
+          legacy.changeSet?.baseRevision,
+        );
+        const migratedDraft = ContextStoreDraftSchema.parse({
+          schemaVersion: "pragma.context-store-draft/v2",
+          operation: "revise",
+          id: migration.draftId,
+          revision: 1,
+          name: `Migrated revision ${legacy.id.slice(0, 8)}`,
+          storeId: legacy.request.storeId,
+          baseRevision: base.revision,
+          baseSnapshotHash: base.snapshotHash,
+          state:
+            legacy.state === "pending_review"
+              ? "pending_review"
+              : legacy.state === "applying"
+                ? "merging"
+                : legacy.state === "completed"
+                  ? "merged"
+                  : "editing",
+          overlay: overlayFromV1Job(legacy, base),
+          ...(["pending_review", "applying"].includes(legacy.state)
+            ? { submittedRevision: 1 }
+            : {}),
+          createdAt: legacy.createdAt,
+          updatedAt: legacy.updatedAt,
+        });
+        await writeJsonAtomic(
+          join(options.statePath, "migration-backups", `${legacy.id}.v1.json`),
+          legacy,
+        );
+        await writeDraft(migratedDraft);
+        return migratedDraft;
       });
-      await writeJsonAtomic(
-        join(options.statePath, "migration-backups", `${legacy.id}.v1.json`),
-        legacy,
-      );
-      await writeDraft(draft);
     }
     const v2 = migrateContextStoreRevisionJobV1ToV2(legacy, draft.id);
     const migrated = migrateContextStoreRevisionJobV2ToV3(v2);

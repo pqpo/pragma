@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, readFile, rename, rm, symlink, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rename, rm, stat, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -1017,6 +1017,56 @@ describe("context store sparse draft revisions", () => {
     await expect(service.hasUnmergedDrafts(store.id)).resolves.toBe(false);
     await contextStores.remove(store.id);
     await expect(contextStores.list()).resolves.toEqual([]);
+  });
+
+  it("serializes draft publication with deletion while its record is not yet published", async () => {
+    const { contextStores, directory, draftsPath, service, store } = await fixture();
+    let markEntered!: () => void;
+    let resumePublication!: () => void;
+    const entered = new Promise<void>((resolve) => {
+      markEntered = resolve;
+    });
+    const resume = new Promise<void>((resolve) => {
+      resumePublication = resolve;
+    });
+    const getSnapshot = contextStores.getSnapshot.bind(contextStores);
+    let storeLocked = false;
+    vi.spyOn(contextStores, "getSnapshot").mockImplementationOnce(async (id) => {
+      const snapshot = await getSnapshot(id);
+      storeLocked = await stat(
+        join(directory, "data", "context-stores", ".locks", `${id}.lock`, "owner.json"),
+      ).then(
+        () => true,
+        () => false,
+      );
+      await mkdir(join(draftsPath, "in-flight-draft"), { recursive: true });
+      markEntered();
+      await resume;
+      return snapshot;
+    });
+
+    const creation = service.createDraft({ storeId: store.id, name: "Concurrent publication" });
+    await entered;
+    const deletion = contextStores.remove(store.id).then(
+      () => ({ deleted: true }),
+      (error: unknown) => ({ error }),
+    );
+    resumePublication();
+    const draft = await creation;
+
+    expect(storeLocked).toBe(true);
+    await expect(deletion).resolves.toMatchObject({ error: { code: "revision_drafts_present" } });
+    await expect(contextStores.list()).resolves.toEqual([store]);
+    await expect(service.getDraft(draft.id)).resolves.toMatchObject({ storeId: store.id });
+  });
+
+  it("does not publish an orphaned draft when Store deletion finishes first", async () => {
+    const { contextStores, service, store } = await fixture();
+    await contextStores.remove(store.id);
+    await expect(
+      service.createDraft({ storeId: store.id, name: "Deleted target" }),
+    ).rejects.toMatchObject({ code: "store_not_found" });
+    await expect(service.listDrafts()).resolves.toEqual([]);
   });
 
   it("allows Store deletion after discarding its draft despite auxiliary entries", async () => {

@@ -70,6 +70,36 @@ describe("Skill revision service", () => {
     ]);
   });
 
+  it("reports missing migration backups for persisted drafts instead of hiding their recovery failure", async () => {
+    const fixture = await createService();
+    const job = await fixture.service.start(request("expert-reflection"));
+    const journalPath = join(
+      fixture.statePath,
+      "migration-journals",
+      `draft-${job.draftId}.v4-to-v5.json`,
+    );
+    await mkdir(dirname(journalPath), { recursive: true });
+    await writeFile(
+      journalPath,
+      JSON.stringify({
+        schemaVersion: "pragma.skill-revision-migration/v1",
+        kind: "draft",
+        recordId: job.draftId,
+        recordPath: join(fixture.draftsPath, job.draftId, "draft.json"),
+        backupPath: join(fixture.statePath, "migration-backups", `draft-${job.draftId}.v4.json`),
+        sourceHash: "a".repeat(64),
+        sourceVersion: "pragma.skill-revision-draft/v4",
+        targetVersion: "pragma.skill-revision-draft/v5",
+      }),
+    );
+
+    await expect(fixture.service.listDrafts()).resolves.toEqual([]);
+    await expect(fixture.service.listDiagnostics()).resolves.toEqual([
+      expect.objectContaining({ kind: "draft", id: job.draftId, code: "ENOENT" }),
+    ]);
+    await expect(stat(join(fixture.draftsPath, job.draftId, "draft.json"))).resolves.toBeDefined();
+  });
+
   it("stores the editable tree in the owning Workspace and removes it after submission", async () => {
     const fixture = await createService();
     const job = await fixture.service.start(request("expert-reflection"));
