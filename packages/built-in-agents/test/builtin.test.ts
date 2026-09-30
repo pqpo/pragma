@@ -141,7 +141,15 @@ describe("built-in Pragma Agent DSL", () => {
         },
       },
     });
-    expect(compiled.value.tools?.map((tool) => tool.name)).toHaveLength(40);
+    expect(compiled.value.tools?.map((tool) => tool.name)).toHaveLength(44);
+    expect(compiled.value.tools?.map((tool) => tool.name)).toEqual(
+      expect.arrayContaining([
+        "list_workspaces",
+        "list_home_projects",
+        "get_home_project",
+        "list_knowledge_stores",
+      ]),
+    );
     expect(compiled.value.tools?.map((tool) => tool.name)).toContain("call_store_revision_agent");
     expect(compiled.value.tools?.map((tool) => tool.name)).toContain("call_skill_revision_agent");
     expect(compiled.value.tools?.map((tool) => tool.name)).toContain("list_expert_options");

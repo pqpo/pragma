@@ -15,6 +15,7 @@ import type { MissionExecutorCatalog } from "./mission-executor-catalog.ts";
 import type { MissionStore } from "./mission-store.ts";
 import {
   withContextStoreRevisionLocks,
+  ContextStoreStoreError,
   type ContextStoreStore,
 } from "../context-stores/context-store-store.ts";
 import type { ContextStoreRevisionService } from "../context-stores/context-store-revision-service.ts";
@@ -195,7 +196,22 @@ export function createMissionCreator(options: {
       if (options.contextStores === undefined) {
         throw new Error(`Mission Knowledge Store is unavailable: ${mount.storeId}`);
       }
-      await options.contextStores.resolve(mount.storeId);
+      try {
+        const store = await options.contextStores.get(mount.storeId);
+        if (store.status !== "ready")
+          throw new Error(`Knowledge store is unavailable: ${store.name}`);
+        await options.contextStores.resolve(mount.storeId);
+      } catch (error) {
+        if (error instanceof ContextStoreStoreError) {
+          if (error.code === "store_not_found")
+            throw new Error(`Knowledge store not found: ${mount.storeId}`, { cause: error });
+          if (
+            ["source_unavailable", "config_invalid", "legacy_note_unsupported"].includes(error.code)
+          )
+            throw new Error(`Knowledge store is unavailable: ${mount.storeId}`, { cause: error });
+        }
+        throw error;
+      }
       return;
     }
     if (mount.revisionJobId !== undefined) {

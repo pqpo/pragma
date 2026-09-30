@@ -15,6 +15,29 @@ import {
 import { createPragmaManagementTools } from "../src/pragma-management-tools.ts";
 
 describe("Pragma Host management tools", () => {
+  it.each(["Revision guide", "Missing references", "Permission policies"])(
+    "keeps knowledge unavailability classification independent of the store name %s",
+    async (name) => {
+      const tools = createPragmaManagementTools({
+        project: projectPort(),
+        missions: {
+          ...missionPort(),
+          async submit() {
+            throw new Error(`Knowledge store is unavailable: ${name}`);
+          },
+        },
+      });
+      const result = await tools
+        .find((tool) => tool.name === "create_mission")!
+        .call(
+          { goal: "Work", executorRef: "expert:1h2j3k4m5n6p7q8r", workspaceId: "/workspace" },
+          undefined,
+          { toolCallId: "classify-unavailable" },
+        );
+      expect(result).toMatchObject({ isError: true, details: { code: "unavailable" } });
+    },
+  );
+
   it("defaults effective preview availability for previously stored draft reviews", () => {
     const legacy = { ...compactDraftReview(), effectivePreviewAvailable: undefined };
     expect(PragmaAgentDslDraftReviewSchema.parse(legacy).effectivePreviewAvailable).toBe(true);

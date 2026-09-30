@@ -641,6 +641,47 @@ export const PragmaAgentProjectCommitSchema = z.object({
   changedRefs: z.array(PragmaSemanticResourceRefSchema),
 });
 
+export const PragmaAgentWorkspaceSchema = z.object({
+  workspaceId: z.string().min(1),
+  name: z.string().min(1),
+  sources: z.array(
+    z.enum(["default", "recent", "home_project", "current", "home_favorite", "executor_history"]),
+  ),
+  available: z.boolean(),
+  unavailableReason: z.string().optional(),
+});
+export const PragmaAgentKnowledgeStoreSchema = z.object({
+  storeId: z.string().uuid(),
+  name: z.string().min(1),
+  description: z.string(),
+  status: z.enum(["ready", "needs_attention"]),
+});
+export const PragmaAgentHomeProjectSchema = z.object({
+  projectId: z.string().uuid(),
+  name: z.string().min(1),
+  workspaceId: z.string().min(1),
+  executorRef: z.string().min(1),
+  executorName: z.string().optional(),
+  contextStoreIds: z.array(z.string().uuid()),
+  available: z.boolean(),
+});
+export const PragmaAgentWorkspacePageSchema = PragmaManagementPageSchema(
+  PragmaAgentWorkspaceSchema,
+);
+export const PragmaAgentKnowledgeStorePageSchema = PragmaManagementPageSchema(
+  PragmaAgentKnowledgeStoreSchema,
+);
+export const PragmaAgentHomeProjectPageSchema = PragmaManagementPageSchema(
+  PragmaAgentHomeProjectSchema,
+);
+export type PragmaAgentWorkspace = z.infer<typeof PragmaAgentWorkspaceSchema>;
+export type PragmaAgentKnowledgeStore = z.infer<typeof PragmaAgentKnowledgeStoreSchema>;
+export type PragmaAgentHomeProject = z.infer<typeof PragmaAgentHomeProjectSchema>;
+export const PragmaAgentResourceQuerySchema = PragmaManagementPageInputSchema.extend({
+  query: z.string().trim().min(1).max(200).optional(),
+}).strict();
+export type PragmaAgentResourceQuery = z.infer<typeof PragmaAgentResourceQuerySchema>;
+
 export const PragmaAgentMissionSummarySchema = z.object({
   missionId: z.string().uuid(),
   title: z.string().min(1),
@@ -654,6 +695,7 @@ export const PragmaAgentMissionSchema = PragmaAgentMissionSummarySchema.extend({
   goal: z.string().min(1),
   workspaceId: z.string().min(1),
   executionId: z.string().uuid().optional(),
+  contextStoreIds: z.array(z.string().uuid()).optional(),
 });
 
 export const PragmaAgentMissionWorkItemSchema = z.object({

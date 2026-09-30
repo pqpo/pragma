@@ -67,6 +67,9 @@ describe("Pragma management tools", () => {
     expect(() => createPragmaManagementTools({ automations: definitionOnlyPort() })).toThrow(
       "must be provided together",
     );
+    expect(() => createPragmaManagementTools({ resources: definitionOnlyPort() })).toThrow(
+      "must be provided together",
+    );
   });
 
   it("lists and starts knowledge drafts without approval but requires approval to discard one", async () => {

@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { dirname, join } from "node:path";
+import { dirname, isAbsolute, join } from "node:path";
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 
 import { encodePragmaPathSegment, withFileLock } from "@pragma/core";
@@ -65,6 +65,11 @@ export function createDesktopPragmaAgentMissionPort(options: {
       return toMission(await options.missions.get(id));
     },
     async submit(input) {
+      if (!isAbsolute(input.workspaceId)) {
+        throw new Error(
+          "Invalid workspaceId: provide the absolute path of an accessible, writable directory. Use the current Mission's workspace path, not a label such as default or workspace.",
+        );
+      }
       const path = operationPath(input.operationId);
       return await withFileLock(`${path}.lock`, async () => {
         const storedId = await readOperation(path);
@@ -74,10 +79,15 @@ export function createDesktopPragmaAgentMissionPort(options: {
             stored.execution === undefined ? await options.runner.run(stored.id) : stored,
           );
         }
+        const contextStoreIds = input.contextStoreIds ?? [];
         const mission = await options.creator.create({
           workspace: input.workspaceId,
           missionInput: { kind: "auto", value: input.goal },
           executorRef: input.executorRef,
+          contextMounts: contextStoreIds.map((storeId) => ({
+            kind: "context-store" as const,
+            storeId,
+          })),
         });
         await writeOperation(path, mission.id);
         return toMission(await options.runner.run(mission.id));
@@ -163,6 +173,9 @@ function toMission(mission: Mission): PragmaAgentMission {
     executorRef: mission.executor.ref,
     workspaceId: mission.workspace.path,
     workspaceLabel: mission.workspace.basename,
+    contextStoreIds: mission.contextMounts.flatMap((mount) =>
+      mount.kind === "context-store" ? [mount.storeId] : [],
+    ),
     updatedAt: mission.updatedAt,
     ...(mission.execution === undefined ? {} : { executionId: mission.execution.id }),
   };

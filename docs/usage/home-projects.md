@@ -10,6 +10,18 @@ Home 的「项目 / 收藏」可快速切换常用任务配置。
 - 项目保存后仍可临时调整本次任务的选项；修改任务选项不会改写项目。删除项目只删除快捷配置。
 - 收藏继续支持原有的全局 / 工作区收藏和排序。
 
+## 通过内置 Pragma Agent 选择任务配置
+
+Pragma 可以使用以下只读工具查询 Desktop 保存的配置：
+
+- `list_workspaces`：合并默认工作区、最近使用记录、首页项目绑定、首页工作区收藏、执行者使用记录和当前 Mission 的目录，按真实目录去重并标明可用状态。`workspaceId` 是绝对路径，不是目录名称。
+- `list_home_projects` / `get_home_project`：查询首页项目的名称、执行者、工作区和 `contextStoreIds`。首页项目与 DSL Project 不同。
+- `list_knowledge_stores`：查询托管知识库的名称、描述、`storeId` 和状态。这里的 ID 与 DSL `ContextStore` ref 不同。
+
+列表支持 `query`、`limit` 和 `cursor`。按名称找到项目后，将其 `workspaceId`、`executorRef`、`contextStoreIds` 连同任务 `goal` 传给 `create_mission`；也可以从这些目录中自行选择组合。查询不会改变首页当前选择或项目配置。
+
+`create_mission` 的 `contextStoreIds` 为可选数组，省略或传空数组表示不额外挂载知识库。只能选择 `ready` 的托管知识库；重复、缺失或不可用的选择不会启动新任务。创建时在知识库修订锁内定向复核所选知识库，不扫描无关知识库。所选知识库随 Mission 的 Context mounts 持久化，创建结果和 `get_mission` 返回实际挂载的 ID。启动任务继续使用现有审批流程。
+
 ## 工程边界
 
 Home Project 是 Desktop 的任务预设，独立于 DSL `PragmaProject` 及其 Revision 聚合，不改变资源编译或 Mission 协议。

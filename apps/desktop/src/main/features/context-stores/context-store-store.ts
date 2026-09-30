@@ -164,6 +164,7 @@ type TrashItem = (path: string) => Promise<void>;
 
 export interface ContextStoreStore {
   list(): Promise<ContextStore[]>;
+  get(storeId: string): Promise<ContextStore>;
   /** Includes persisted stores with invalid or unavailable configuration. */
   exists(storeId: string): Promise<boolean>;
   create(input: CreateContextStore): Promise<ContextStore>;
@@ -1207,6 +1208,9 @@ export function createContextStoreStore(options: {
   });
 
   return {
+    async get(storeId) {
+      return await readStore(z.string().uuid().parse(storeId));
+    },
     async withRevisionLock(storeId, operation) {
       return await withRevisionLock(storeId, operation);
     },

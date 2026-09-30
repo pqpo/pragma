@@ -94,6 +94,7 @@ import {
 import { createDesktopKnowledgeRevisionSubmissionPort } from "../features/context-stores/knowledge-revision-capability.ts";
 import { createDesktopPragmaAgentAutomationPort } from "../features/built-in-agents/pragma-agent-automation-adapter.ts";
 import { createDesktopPragmaAgentProjectPort } from "../features/built-in-agents/pragma-agent-project-adapter.ts";
+import { createDesktopPragmaAgentResourceCatalogPort } from "../features/built-in-agents/pragma-agent-resource-adapter.ts";
 import { createDesktopPragmaAgentMissionPort } from "../features/built-in-agents/pragma-agent-task-adapter.ts";
 import { installExpertDefinitionHandlers } from "../features/experts/expert-definition-ipc.ts";
 import { installEvaluationHandlers } from "../features/evaluations/evaluation-ipc.ts";
@@ -1593,6 +1594,7 @@ export async function createDesktopApplicationContainer(
     onStorageTrashed: () => trashMaintenance.schedule("automation-storage-trashed"),
   });
   installAutomationHandlers(automationService);
+  const homeProjects = createHomeProjectStore(join(pragmaPaths.dataRoot(), "home-projects.json"));
   const pragmaAgentMissions = createDesktopPragmaAgentMissionPort({
     missions: missionStore,
     runner: missionRunner,
@@ -1602,6 +1604,15 @@ export async function createDesktopApplicationContainer(
   pragmaManagementPortsRef.current = {
     project: pragmaAgentProject,
     missions: pragmaAgentMissions,
+    resources: createDesktopPragmaAgentResourceCatalogPort({
+      homeProjects,
+      contextStores,
+      executors: missionExecutors,
+      workspaceHistory,
+      workspacePreferences: homeExecutorPreferences,
+      getDefaultWorkspace: async () =>
+        (await desktopSettings.getSnapshot(options.getPreferredSystemLanguages())).defaultWorkspace,
+    }),
     skillRevisions: pragmaManagementSkillRevisions,
     automations: createDesktopPragmaAgentAutomationPort({
       service: automationService,
@@ -1726,7 +1737,7 @@ export async function createDesktopApplicationContainer(
     run: localHost.run,
   };
   installMissionHandlers({
-    homeProjects: createHomeProjectStore(join(pragmaPaths.dataRoot(), "home-projects.json")),
+    homeProjects,
     localHost: desktopLocalHost,
     missions: missionStore,
     creator: missionCreator,
