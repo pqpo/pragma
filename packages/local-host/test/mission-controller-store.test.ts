@@ -36,6 +36,50 @@ afterEach(async () => {
 });
 
 describe("MissionControllerStore", () => {
+  it("wakes immediately and coalesces wakes while a command is in flight", async () => {
+    const store = await createStore();
+    const guard = await store.claim({
+      missionId,
+      claimId: "00000000-0000-4000-8000-000000000099",
+      leaseMs: 10_000,
+    });
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    let active = 0;
+    let maximum = 0;
+    const apply = vi.fn(async () => {
+      maximum = Math.max(maximum, ++active);
+      await gate;
+      active--;
+      return { result: { delivered: true } };
+    });
+    const poller = store.startPolling({
+      missionId,
+      guard,
+      consumer: { apply },
+      initialDelayMs: 10_000,
+      maxDelayMs: 10_000,
+      jitter: () => 0,
+      onLeaseLost: () => undefined,
+    });
+    try {
+      const command = commandInput("send", "00000000-0000-4000-8000-000000000098");
+      await store.appendCommand(command);
+      poller.wake();
+      await vi.waitFor(() => expect(apply).toHaveBeenCalledOnce(), { timeout: 1_000 });
+      for (let index = 0; index < 20; index++) poller.wake();
+      release();
+      await store.waitForTerminalOperation({ missionId, requestId: command.request.requestId });
+      expect(maximum).toBe(1);
+      expect(apply).toHaveBeenCalledOnce();
+    } finally {
+      release();
+      await poller.stop();
+    }
+  });
+
   it.each(["same-owner", "mission-takeover", "session-takeover"] as const)(
     "checks tool ownership before a delayed heartbeat after %s",
     async (scenario) => {
@@ -1209,7 +1253,7 @@ describe("MissionControllerStore", () => {
       await vi.waitFor(
         () =>
           expect(scheduled.filter((delay) => delay > 0 && delay <= 25).slice(0, 3)).toEqual([
-            6, 13, 25,
+            6, 13, 20,
           ]),
         { timeout: 2_000 },
       );

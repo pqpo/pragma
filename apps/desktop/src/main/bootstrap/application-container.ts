@@ -219,6 +219,7 @@ export async function createDesktopApplicationContainer(
   const mcpToolRegistryPool = createMcpToolRegistryPool();
   const storageCapacityGuard = createStorageCapacityGuard({
     paths: pragmaPaths,
+    logger: mainLogger,
     refreshIntervalMs: 0,
     maxSnapshotAgeMs: 30_000,
   });
@@ -1034,6 +1035,7 @@ export async function createDesktopApplicationContainer(
     );
   };
   const missionCreator = createMissionCreator({
+    logger: mainLogger,
     missions: missionStore,
     project: pragmaProjectStore,
     executors: missionExecutors,

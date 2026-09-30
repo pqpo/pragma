@@ -56,6 +56,7 @@ import type {
   HostContextBindingsResolver,
 } from "../context-system/host-context-bindings.ts";
 import { RuntimeSessionPool } from "./runtime-session-pool.ts";
+import { getExecutionLiveBus } from "./execution-live-bus.ts";
 import {
   hasUncertainSteerDelivery,
   hasUnresolvedSteerDelivery,
@@ -134,6 +135,8 @@ export interface ExpertTurn extends MutableExecution {
   readonly effectiveMode: PromptMode;
   readonly fallbackReason?: string | undefined;
   readonly result: Promise<unknown>;
+  /** The Session has durably released this turn's active prompt binding. */
+  readonly settled: Promise<void>;
   readonly usage: Promise<AgentMessageUsage | undefined>;
   /** Checkpoint this turn only when it is durably waiting for human input. */
   readonly checkpointWaitingHuman: () => Promise<void>;
@@ -815,6 +818,15 @@ class ExpertSessionImpl implements ExpertSession {
   private resourcesReleasing = false;
   private terminalReleaseRequested = false;
   private readonly promptAdmissions = new Set<Promise<ExpertTurn>>();
+  private readonly completions = new Map<string, Promise<ExecutionRecord>>();
+  private readonly settlements = new Map<
+    string,
+    {
+      readonly promise: Promise<void>;
+      readonly resolve: () => void;
+      readonly reject: (error: unknown) => void;
+    }
+  >();
   private readonly recoveredHumanInteractionIds: readonly string[];
   private waitingForRecoveredHumanInput: boolean;
   private leaseRenewalTask: Promise<void> | undefined;
@@ -841,8 +853,21 @@ class ExpertSessionImpl implements ExpertSession {
     this.waitingForRecoveredHumanInput = recoveredHumanInteractionIds.length > 0;
     this.ownedSessions = {
       enqueue: (transaction) => this.dependencies.sessions.enqueue(transaction, this.claimId),
-      transact: <T>(sessionId: string, action: ExpertSessionTransactionAction<T>) =>
-        this.dependencies.sessions.transact(sessionId, action, this.claimId),
+      transact: async <T>(sessionId: string, action: ExpertSessionTransactionAction<T>) => {
+        let committed:
+          { session: ExpertSessionRecord; prompts: readonly PromptRequest[] } | undefined;
+        const result = await this.dependencies.sessions.transact(
+          sessionId,
+          async (snapshot) => {
+            const next = await action(snapshot);
+            committed = next;
+            return next;
+          },
+          this.claimId,
+        );
+        if (committed !== undefined) this.notifySettled(committed.session, committed.prompts);
+        return result;
+      },
       appendEvent: (sessionId: string, event: ExpertSessionEventInput) =>
         this.dependencies.sessions.appendEvent(sessionId, event, this.claimId),
     };
@@ -1449,6 +1474,7 @@ class ExpertSessionImpl implements ExpertSession {
       return;
     }
     this.leaseError = error;
+    for (const settlement of this.settlements.values()) settlement.reject(error);
     this.dependencies.loggerProvider
       .createLogger({
         component: "core.expert-session",
@@ -3031,7 +3057,18 @@ class ExpertSessionImpl implements ExpertSession {
     fallbackReason?: string,
   ): ExpertTurn {
     const view = this.createExecutionView(executionId);
-    const completion = waitForTerminalExecution(this.dependencies.executions, executionId);
+    let completion = this.completions.get(executionId);
+    if (completion === undefined) {
+      completion = waitForTerminalExecution(this.dependencies.executions, executionId);
+      this.completions.set(executionId, completion);
+      const pending = completion;
+      const forget = () => {
+        if (this.completions.get(executionId) === pending) this.completions.delete(executionId);
+      };
+      // Coalesce active observers without retaining every historical output in memory.
+      void pending.then(forget, forget);
+    }
+    const settled = this.turnSettlement(executionId);
     const result = completion.then(readExecutionResult);
     const usage = completion.then((execution) => execution.usage);
     // A turn can be used only for its event stream or metadata (for example by listTurns()).
@@ -3046,6 +3083,7 @@ class ExpertSessionImpl implements ExpertSession {
       effectiveMode,
       ...(fallbackReason === undefined ? {} : { fallbackReason }),
       result,
+      settled,
       usage,
       cancel: async (reason?: string) => {
         const state = await this.getState();
@@ -3090,6 +3128,45 @@ class ExpertSessionImpl implements ExpertSession {
   private createExecutionView(executionId: string): StoredExecutionView {
     return new StoredExecutionView(executionId, this.dependencies.executions, this.sessionId);
   }
+
+  private notifySettled(session: ExpertSessionRecord, prompts: readonly PromptRequest[]): void {
+    for (const prompt of prompts) {
+      if (session.activeExecutionId === prompt.executionId) continue;
+      if (
+        isFinal(prompt.status) ||
+        (prompt.purpose === "human_checkpoint_recovery" && prompt.status === "queued")
+      ) {
+        this.settlements.get(prompt.executionId)?.resolve();
+      }
+    }
+  }
+
+  private turnSettlement(executionId: string): Promise<void> {
+    const existing = this.settlements.get(executionId);
+    if (existing !== undefined) return existing.promise;
+    let resolve!: () => void;
+    let reject!: (error: unknown) => void;
+    const promise = new Promise<void>((done, fail) => {
+      resolve = done;
+      reject = fail;
+    });
+    this.settlements.set(executionId, { promise, resolve, reject });
+    const forget = () => {
+      if (this.settlements.get(executionId)?.promise === promise)
+        this.settlements.delete(executionId);
+    };
+    void promise.then(forget, forget);
+    void promise.catch(() => undefined);
+    if (this.leaseError !== undefined) {
+      reject(this.leaseError);
+      return promise;
+    }
+    void Promise.all([this.getState(), this.getPromptQueue()]).then(
+      ([session, prompts]) => this.notifySettled(session, prompts),
+      reject,
+    );
+    return promise;
+  }
 }
 
 function recoveryPrompt(originalPrompt: string): string {
@@ -3126,17 +3203,52 @@ async function waitForTerminalExecution(
   store: ExecutionStore,
   executionId: string,
 ): Promise<ExecutionRecord> {
-  while (true) {
-    const record = await store.get(executionId);
-    if (record === undefined) throw new Error(`Execution not found: ${executionId}`);
-    if (
-      record.status === "succeeded" ||
-      record.status === "failed" ||
-      record.status === "cancelled" ||
-      record.status === "interrupted"
-    )
-      return record;
-    await new Promise<void>((resolve) => setTimeout(resolve, 10));
+  let subscription = getExecutionLiveBus(store).subscribeEvents(executionId);
+  let iterator = subscription[Symbol.asyncIterator]();
+  let next = iterator.next();
+  try {
+    let checkState = true;
+    let nextCheckAt = Date.now();
+    for (;;) {
+      if (checkState || Date.now() >= nextCheckAt) {
+        const record = await store.get(executionId);
+        if (record === undefined) throw new Error(`Execution not found: ${executionId}`);
+        if (isFinal(record.status)) return record;
+        checkState = false;
+        nextCheckAt = Date.now() + 500;
+      }
+      // Subscribe before reading to avoid losing a terminal commit. Intermediate
+      // metadata does not need another aggregate read; cross-process fallback
+      // has a fixed deadline so a busy local stream cannot starve it.
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      const event = await Promise.race([
+        next,
+        new Promise<undefined>((resolve) => {
+          timer = setTimeout(() => resolve(undefined), Math.max(1, nextCheckAt - Date.now()));
+        }),
+      ]);
+      if (timer !== undefined) clearTimeout(timer);
+      if (event === undefined) continue;
+      if (event.done) {
+        // A human checkpoint closes the in-memory stream while the durable
+        // Execution stays waiting. Re-arm before reading so recovery may reuse
+        // the same Execution without being mistaken for a terminal failure.
+        await subscription.close();
+        subscription = getExecutionLiveBus(store).subscribeEvents(executionId);
+        iterator = subscription[Symbol.asyncIterator]();
+        next = iterator.next();
+        const record = await store.get(executionId);
+        if (record === undefined) throw new Error(`Execution not found: ${executionId}`);
+        if (isFinal(record.status)) return record;
+        nextCheckAt = Date.now() + 500;
+        checkState = false;
+        continue;
+      }
+      checkState = /\.(succeeded|failed|cancelled|interrupted)$/.test(event.value.type);
+      next = iterator.next();
+    }
+  } finally {
+    await subscription.close();
   }
 }
 

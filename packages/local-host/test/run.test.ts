@@ -12,6 +12,7 @@ import {
   createControllerRunMissionPort,
   createLocalHostRunApplication,
   createMissionControllerStore,
+  createMissionOwnerScope,
   hashCanonicalRunPayload,
   type LocalHostRunHandle,
   type LocalHostRunRequest,
@@ -36,6 +37,49 @@ const descriptor: ExecutorDescriptor = {
 };
 
 describe("Local Host run application", () => {
+  it("retains a continuing Host owner after the first run without weakening fencing", async () => {
+    const home = await mkdtemp(join(tmpdir(), "pragma-local-run-host-owner-"));
+    const controller = createMissionControllerStore({ missionsPath: join(home, "missions") });
+    const ownerScope = createMissionOwnerScope({ controller });
+    let missionId: string | undefined;
+    try {
+      const executor = fakeExecutorPort();
+      const release = vi.fn(async () => undefined);
+      const application = createLocalHostRunApplication({
+        executors: {
+          ...executor,
+          start: async (input) => ({
+            ...(await executor.start(input)),
+            missionOwnerLifetime: "host",
+            release,
+          }),
+        },
+        mission: createControllerRunMissionPort(controller, { ownerScope }),
+      });
+      const first = await application.start(request());
+      missionId = first.missionId;
+      const guard = ownerScope.currentGuard(missionId)!;
+      await expect(first.outcome).resolves.toMatchObject({ status: "succeeded" });
+      expect(release).toHaveBeenCalledOnce();
+      expect(ownerScope.currentGuard(missionId)).toEqual(guard);
+      await expect(controller.assertWriteGuard({ missionId, guard })).resolves.toBeUndefined();
+      await controller.write({
+        missionId,
+        guard,
+        operation: async ({ appendEvent }) => {
+          await appendEvent("followup.accepted", {});
+        },
+      });
+      await ownerScope.forceRevoke(missionId);
+      await expect(controller.assertWriteGuard({ missionId, guard })).rejects.toMatchObject({
+        code: "MISSION_FENCING_REJECTED",
+      });
+    } finally {
+      if (missionId !== undefined) await ownerScope.stop(missionId);
+      await rm(home, { recursive: true, force: true });
+    }
+  });
+
   it("attaches a Desktop Mission ID and shares the normal run sequence", async () => {
     const home = await mkdtemp(join(tmpdir(), "pragma-local-run-attached-"));
     try {
@@ -57,6 +101,7 @@ describe("Local Host run application", () => {
       expect(started).toBe(1);
 
       const snapshot = await controller.readSnapshot({ missionId });
+      expect(snapshot.snapshot.lease).toBeUndefined();
       expect(snapshot.events.map((event) => event.type)).toEqual([
         "mission.created",
         "mission.binding.pinned",

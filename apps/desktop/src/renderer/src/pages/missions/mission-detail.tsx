@@ -934,7 +934,11 @@ export function MissionDetailFragment(props: {
         followLatestRef.current = true;
         setShowJumpToLatest(false);
       }
-      await refreshLatestChat();
+      void refreshLatestChat()
+        .then(() => {
+          if (result.queueSteer.outcome === "steered") scheduleFollowLatest();
+        })
+        .catch((error: unknown) => setOptionsError(missionError(error)));
       if (result.queueSteer.outcome === "steered") scheduleFollowLatest();
       else
         setDeliveryNotice(

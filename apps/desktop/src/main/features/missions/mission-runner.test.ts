@@ -39,6 +39,8 @@ import {
   createMissionControlApplication,
   createMissionControllerStore,
   createMissionOwnerScope,
+  createControllerRunMissionPort,
+  createLocalHostRunApplication,
 } from "@pragma/local-host";
 import type {
   PragmaExpertResource,
@@ -1150,6 +1152,8 @@ describe("MissionRunner", { timeout: 30_000 }, () => {
         runtimes: createStaticRuntimeResolver({ runtimes: [runtime], defaultRuntimeId: "fake" }),
         assertStorageWriteAllowed: capacityCheck,
       });
+      const queuePatches: MissionChatUpdate[] = [];
+      runner.subscribeChat(({ update }) => queuePatches.push(update));
       const control = createTestMissionControl({
         missionsPath: join(root, "missions"),
         missions,
@@ -1211,6 +1215,23 @@ describe("MissionRunner", { timeout: 30_000 }, () => {
         expect(
           queue.items.filter((item) => item.status === "queued").map((item) => item.requestId),
         ).toEqual(expectedMessages.map((message) => message.requestId));
+        expect(queuePatches).toEqual(
+          expect.arrayContaining([
+            expect.objectContaining({
+              kind: "patch",
+              patches: expect.arrayContaining([
+                expect.objectContaining({
+                  type: "queue.update",
+                  queue: expect.objectContaining({
+                    items: expectedMessages.map((message) =>
+                      expect.objectContaining({ requestId: message.requestId }),
+                    ),
+                  }),
+                }),
+              ]),
+            }),
+          ]),
+        );
         expect((await missions.get(mission.id)).execution?.id).toBe(running.execution?.id);
         releaseFirstTurn();
         await vi.waitFor(
@@ -4966,7 +4987,7 @@ describe("MissionRunner", { timeout: 30_000 }, () => {
     expect(archiveSpy).toHaveBeenCalled();
   });
 
-  it("publishes terminal status only after the durable Mission event projection settles", async () => {
+  it("publishes Core terminal status while Mission event projection is blocked", async () => {
     const root = await mkdtemp(join(tmpdir(), "pragma-mission-terminal-status-first-"));
     temporaryPaths.push(root);
     const project = createPragmaProjectStore({ projectsPath: join(root, "projects") });
@@ -5018,7 +5039,14 @@ describe("MissionRunner", { timeout: 30_000 }, () => {
     await runner.run(mission.id);
     await projectionStart;
     try {
-      expect(notifications).toEqual([]);
+      expect(notifications).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            missionId: mission.id,
+            execution: expect.objectContaining({ status: "succeeded" }),
+          }),
+        ]),
+      );
       await expect(missions.get(mission.id)).resolves.toMatchObject({
         execution: { status: "running" },
       });
@@ -7038,6 +7066,123 @@ describe("MissionRunner", { timeout: 30_000 }, () => {
     expect(runtimeStarts).toBe(1);
     expect(await expertSessions.listPrompts(sessionId)).toHaveLength(1);
     await control.stopOwner(mission.id);
+  });
+
+  it("keeps the Desktop Mission owner and Runtime alive across attached run and two followups", async () => {
+    const root = await mkdtemp(join(tmpdir(), "pragma-mission-attached-owner-"));
+    temporaryPaths.push(root);
+    const pragmaHome = join(root, "state");
+    const project = createPragmaProjectStore({ projectsPath: join(root, "projects") });
+    const resource = expertFixture();
+    const snapshot = await project.publish({
+      expectedRevision: 0,
+      resources: [runtimeFixture(), resource],
+    });
+    const missions = createMissionStore({ missionsPath: join(root, "missions") });
+    const mission = await missions.create({
+      workspace: { path: root, basename: "workspace" },
+      goal: "Only reply OK",
+      project: { id: snapshot.projectId, revision: snapshot.revision },
+      executor: missionExecutorSnapshot(resource),
+    });
+    const controller = createMissionControllerStore({
+      missionsPath: join(root, "missions"),
+      missionPath: missions.storagePath,
+    });
+    const ownerScope = createMissionOwnerScope({ controller });
+    const createSession = vi.fn(() => ({ id: "runtime" }));
+    const startTurn = vi.fn(async () => ({ outputText: "OK", runtimeSessionId: "runtime" }));
+    const runtime = defineRuntimeTestDriver<never, { id: string }>({
+      descriptor: { id: "fake", kind: "fake", displayName: "Fake" },
+      createSession,
+      readSession: (session) => ({ runtimeSessionId: session.id }),
+      startTurn,
+      mapEvent: () => ({ events: [] }),
+    });
+    const runner = createMissionRunner({
+      missions,
+      project,
+      capabilityStore: {} as CapabilityStore,
+      capabilityCredentials: {} as CapabilityCredentialStore,
+      capabilitiesPath: join(root, "capabilities"),
+      pragmaHome,
+      ownerScope,
+      assertStorageWriteAllowed: async () => undefined,
+      runtimes: createStaticRuntimeResolver({ runtimes: [runtime], defaultRuntimeId: "fake" }),
+    });
+    const descriptor = {
+      schemaVersion: "pragma.integration-executor/v1" as const,
+      ref: { kind: "expert" as const, id: resource.metadata.id },
+      name: resource.metadata.name,
+      description: resource.metadata.description,
+      source: "project" as const,
+      project: {
+        projectId: snapshot.projectId,
+        revision: snapshot.revision,
+        fingerprint: "b".repeat(64),
+      },
+      availability: { status: "ready" as const, blockingCodes: [] },
+      workspace: { required: true, allowNonGitDirectory: true },
+      capabilities: { interactive: true, resumable: true, steerable: true, supportsQueue: true },
+    };
+    const application = createLocalHostRunApplication({
+      executors: {
+        resolve: async () => ({ descriptor }),
+        start: async (input) => await runner.startLocalHostRun(input),
+      },
+      mission: createControllerRunMissionPort(controller, { ownerScope }),
+    });
+    try {
+      const first = await application.startAttached({
+        missionId: mission.id,
+        request: {
+          requestId: mission.initialMessageId,
+          command: "expert.run",
+          executor: descriptor.ref,
+          workspace: {
+            schemaVersion: "pragma.integration-workspace/v1",
+            requestedPath: root,
+            canonicalPath: root,
+            displayName: "workspace",
+            identityHash: `sha256:${"a".repeat(64)}`,
+            access: { exists: true, readable: true, writable: true },
+            source: "explicit",
+          },
+          project: { projectId: snapshot.projectId, revision: snapshot.revision },
+          prompt: mission.goal,
+          detach: false,
+        },
+      });
+      await expect(first.outcome).resolves.toMatchObject({ status: "succeeded" });
+      const guard = ownerScope.currentGuard(mission.id)!;
+      expect(guard).toBeDefined();
+      for (let round = 0; round < 2; round++) {
+        await runner.sendMessage({
+          id: mission.id,
+          requestId: `00000000-0000-4000-8000-00000000000${round + 1}`,
+          content: "Only reply OK",
+        });
+        await vi.waitFor(
+          async () => {
+            const current = await missions.get(mission.id);
+            expect(current.execution?.id).not.toBe(first.executionId);
+            expect(current.execution?.status).toBe("succeeded");
+            expect(startTurn).toHaveBeenCalledTimes(round + 2);
+          },
+          { timeout: settlementTimeoutMs },
+        );
+      }
+      expect(createSession).toHaveBeenCalledOnce();
+      await expect(
+        controller.assertWriteGuard({ missionId: mission.id, guard }),
+      ).resolves.toBeUndefined();
+      await ownerScope.forceRevoke(mission.id);
+      await expect(
+        controller.assertWriteGuard({ missionId: mission.id, guard }),
+      ).rejects.toMatchObject({ code: "MISSION_FENCING_REJECTED" });
+    } finally {
+      await ownerScope.stop(mission.id);
+    }
   });
 
   it("keeps the first Local Host askUserQuestion checkpoint non-terminal and resumes it", async () => {

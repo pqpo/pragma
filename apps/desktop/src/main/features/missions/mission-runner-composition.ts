@@ -547,12 +547,14 @@ export function createMissionRunner(options: {
       const mission = await options.missions.get(missionId);
       return mission.execution?.sessionId;
     },
-    supportsSteer: async (sessionId) => {
+    steeringFeatures: async (sessionId) => {
       const resolved = await resolveSessionRuntimeForQueue(sessionId);
-      return resolved === undefined ? false : await runtimeSupportsSteer(resolved.adapter);
+      return {
+        supportsSteer:
+          resolved === undefined ? false : await runtimeSupportsSteer(resolved.adapter),
+        steeringRecovery: resolved?.adapter.features.steering.steeringRecovery,
+      };
     },
-    steeringRecovery: async (sessionId) =>
-      (await resolveSessionRuntimeForQueue(sessionId))?.adapter.features.steering.steeringRecovery,
     resolvePromptMetadata: async (prompt) => ({
       hasAttachments: hasPromptAttachments(
         (await executionStore.getInvocation(prompt.executionId, prompt.executionId))?.input,
@@ -560,6 +562,40 @@ export function createMissionRunner(options: {
     }),
   });
   const workHistory = new ExecutionWorkHistoryReader(executionStore);
+  const publishPromptQueue = async (mission: Mission): Promise<void> => {
+    try {
+      const queue = await promptQueueProjection.list(mission.id);
+      chatService.emitPatches(mission.id, missionSurfaceAudience(mission), [
+        {
+          type: "queue.update",
+          queue: {
+            state: queue.state,
+            pendingCount: queue.pendingCount,
+            supportsSteer: queue.supportsSteer,
+            deliveryUncertain: queue.deliveryUncertain,
+            steeringRecovery: queue.steeringRecovery,
+            pausedAfterRequestId: queue.pausedAfterRequestId,
+            items: queue.items
+              .filter((item) => item.status === "queued")
+              .map((item) => ({
+                requestId: item.requestId,
+                content: item.content,
+                hasAttachments: item.hasAttachments,
+              })),
+          },
+        },
+      ]);
+    } catch (error) {
+      // The prompt mutation has already committed. Projection failure must not
+      // turn a successful admission/steer into a failed Inbox operation.
+      logger.warn("mission.queue_projection_degraded", "Queue control projection needs a refresh", {
+        missionId: mission.id,
+        error,
+        retryable: true,
+      });
+      chatService.invalidate(mission.id, missionSurfaceAudience(mission));
+    }
+  };
   const runtimeResolverForToolPermissionMode = (mode: DesktopToolPermissionMode) =>
     options.runtimesForToolPermissionMode?.(mode) ?? options.runtimes;
   const automaticHumanInteractionHandlerForToolPermissionMode = (mode: DesktopToolPermissionMode) =>
@@ -1337,8 +1373,7 @@ export function createMissionRunner(options: {
             startedAt,
             inputMessageId: nextPrompt.requestId,
             sessionId: session.sessionId,
-            onFinished: async () =>
-              await waitForExpertTurnSettlement(session, nextPrompt.requestId),
+            onFinished: async () => await turn.settled,
           });
         }
         break;
@@ -2231,6 +2266,24 @@ export function createMissionRunner(options: {
       input.sessionId,
       async (terminal) => {
         const mission = input.mission;
+        // Core already committed the terminal fact. A rebuildable Mission
+        // projection must not hold the UI's status notification hostage.
+        if (lifecycleService.active(missionId)?.handle === input.handle) {
+          statusService.publish(missionId, audience, {
+            id: input.handle.executionId,
+            status: terminal.status,
+          });
+          logger.info(
+            "mission.terminal_status_published",
+            "Core terminal status published to Desktop",
+            {
+              missionId,
+              executionId: input.handle.executionId,
+              requestId: input.inputMessageId,
+              status: terminal.status,
+            },
+          );
+        }
         let canonicalProjectionFailure: unknown;
         try {
           await retryMissionEventProjection(async () =>
@@ -2250,15 +2303,6 @@ export function createMissionRunner(options: {
             error,
             { missionId, executionId: input.handle.executionId, retryable: true },
           );
-        }
-        // The Core terminal record is already committed. Publish that canonical
-        // fact even when the secondary Local Host event projection is degraded;
-        // otherwise one failed projection can leave the rail visibly running.
-        if ((await options.missions.get(missionId)).execution?.id === input.handle.executionId) {
-          statusService.publish(missionId, audience, {
-            id: input.handle.executionId,
-            status: terminal.status,
-          });
         }
         if (canonicalProjectionFailure !== undefined) throw canonicalProjectionFailure;
       },
@@ -2483,7 +2527,7 @@ export function createMissionRunner(options: {
             startedAt,
             inputMessageId: prompt.requestId,
             sessionId: session.sessionId,
-            onFinished: async () => await waitForExpertTurnSettlement(session, prompt.requestId),
+            onFinished: async () => await turn.settled,
           });
           statusService.publish(mission.id, missionSurfaceAudience(current), {
             id: turn.executionId,
@@ -2536,6 +2580,7 @@ export function createMissionRunner(options: {
     await (options.assertStorageWriteAllowed?.() ??
       assertStorageWriteAllowed(new PragmaPaths({ pragmaHome: options.pragmaHome })));
     logMissionPhase(logger, id, "storage_capacity_check", capacityCheckStartedAt, acceptedAt);
+    const missionLoadStartedAt = performance.now();
     const mission = await options.missions.get(id);
     assertRunGenerationCurrent(mission.id, runGeneration, "before loading its execution context");
     await options.assertExecutorReady?.(mission.executor.ref);
@@ -2554,8 +2599,17 @@ export function createMissionRunner(options: {
     ) {
       await invalidateContextBindings(mission.id);
     }
+    logMissionPhase(
+      logger,
+      id,
+      "mission_load_and_executor_ready",
+      missionLoadStartedAt,
+      acceptedAt,
+    );
+    const executionContextStartedAt = performance.now();
     const { app, runtimes: baseRuntimes } = await executionContext(mission);
     const runtimes = withMissionRuntimeBinding(baseRuntimes, await readMissionRootContext(mission));
+    logMissionPhase(logger, id, "execution_context", executionContextStartedAt, acceptedAt);
     let phaseStartedAt = performance.now();
     const stableCompilation = await compileMissionExecutorWithStableCapabilities(mission, runtimes);
     const {
@@ -2811,6 +2865,7 @@ export function createMissionRunner(options: {
       });
     }
     logMissionPhase(logger, mission.id, "expert_session_prompt", phaseStartedAt, acceptedAt);
+    await publishPromptQueue(mission);
     const executionStartedAt =
       recoveredTurn === undefined ? startedAt : mission.execution!.startedAt;
     await options.missions.appendExecutionReference({
@@ -2839,7 +2894,7 @@ export function createMissionRunner(options: {
       inputMessageId,
       sessionId: session.sessionId,
       acceptedAt,
-      onFinished: async () => await waitForExpertTurnSettlement(session, turn.requestId),
+      onFinished: async () => await turn.settled,
     });
     return running;
   };
@@ -2862,6 +2917,7 @@ export function createMissionRunner(options: {
     await (options.assertStorageWriteAllowed?.() ??
       assertStorageWriteAllowed(new PragmaPaths({ pragmaHome: options.pragmaHome })));
     logMissionPhase(logger, input.id, "storage_capacity_check", capacityCheckStartedAt, acceptedAt);
+    const missionLoadStartedAt = performance.now();
     let mission = await options.missions.get(input.id);
     await awaitTerminalLifecycleSettlement(mission);
     mission = await options.missions.get(input.id);
@@ -2896,11 +2952,28 @@ export function createMissionRunner(options: {
       throw new Error("Reopen this mission before sending another message.");
     }
     await notifyMissionActivity(mission);
+    logMissionPhase(
+      logger,
+      mission.id,
+      "mission_load_and_executor_ready",
+      missionLoadStartedAt,
+      acceptedAt,
+    );
+    const executionContextStartedAt = performance.now();
     const { app, runtimes: baseRuntimes } = await executionContext(mission);
     const rootContext = await readMissionRootContext(mission);
     const runtimes = withMissionRuntimeBinding(baseRuntimes, rootContext);
+    logMissionPhase(logger, mission.id, "execution_context", executionContextStartedAt, acceptedAt);
+    const compilationIdentityStartedAt = performance.now();
     let desiredCapabilities = await capabilityEnvironmentIdentity(mission);
     let desiredCompilationIdentity = await compilationIdentity(mission, desiredCapabilities);
+    logMissionPhase(
+      logger,
+      mission.id,
+      "compilation_identity",
+      compilationIdentityStartedAt,
+      acceptedAt,
+    );
     let session = sessionService.session(mission.id);
     let compiled: CompiledResource<InvocableResource> | undefined;
     let phaseStartedAt = performance.now();
@@ -3047,6 +3120,7 @@ export function createMissionRunner(options: {
       ...(promptModelSelection === undefined ? {} : { modelSelection: promptModelSelection }),
     });
     logMissionPhase(logger, mission.id, "expert_session_prompt", phaseStartedAt, acceptedAt);
+    await publishPromptQueue(mission);
     // Core owns acceptance and idempotency. Project the user message only
     // after Core accepts it so a rejected strict steer cannot leave an orphan
     // in the Mission timeline. Replaying an accepted Inbox command is safe:
@@ -3103,7 +3177,7 @@ export function createMissionRunner(options: {
         inputMessageId: input.requestId,
         sessionId: session.sessionId,
         acceptedAt,
-        onFinished: async () => await waitForExpertTurnSettlement(session, turn.requestId),
+        onFinished: async () => await turn.settled,
       });
     } else {
       watchQueuedSessionTurn(mission, session, turn, executorMetadata);
@@ -4467,6 +4541,7 @@ export function createMissionRunner(options: {
   }): Promise<Mission> => {
     const { mission, session } = await openMissionSessionForQueueMutation(input.id);
     await session.steerQueuedPrompt(input.requestId);
+    await publishPromptQueue(mission);
     invalidateChat(input.id, missionSurfaceAudience(mission));
     return await options.missions.get(input.id);
   };
@@ -4477,6 +4552,7 @@ export function createMissionRunner(options: {
   }) => {
     const { mission, session } = await openMissionSessionForQueueMutation(input.id);
     const attempt = await session.attemptQueuedPromptSteer(input.requestId);
+    await publishPromptQueue(mission);
     invalidateChat(input.id, missionSurfaceAudience(mission));
     return {
       mission: await options.missions.get(input.id),
@@ -4493,6 +4569,7 @@ export function createMissionRunner(options: {
   }): Promise<Mission> => {
     const { mission, session } = await openMissionSessionForQueueMutation(input.id);
     await session.removeQueuedPrompt(input.requestId, "Removed from queue by user.");
+    await publishPromptQueue(mission);
     invalidateChat(input.id, missionSurfaceAudience(mission));
     return await options.missions.get(input.id);
   };
@@ -4629,7 +4706,7 @@ export function createMissionRunner(options: {
         }
       },
     });
-    return localHostState.handle;
+    return { ...localHostState.handle, missionOwnerLifetime: "host" };
   };
 
   const resolveLocalHostExecutionTarget = async (input: {
@@ -6482,21 +6559,4 @@ function hasPromptAttachments(value: unknown): boolean {
   if (typeof value !== "object" || value === null || Array.isArray(value)) return false;
   const attachments = (value as { readonly attachments?: unknown }).attachments;
   return Array.isArray(attachments) && attachments.length > 0;
-}
-
-async function waitForExpertTurnSettlement(
-  session: ExpertSession,
-  requestId: string,
-): Promise<void> {
-  const deadline = Date.now() + 5_000;
-  while (Date.now() < deadline) {
-    const [state, prompts] = await Promise.all([session.getState(), session.getPromptQueue()]);
-    const prompt = prompts.find((candidate) => candidate.requestId === requestId);
-    const settled =
-      prompt !== undefined &&
-      ["succeeded", "failed", "cancelled"].includes(prompt.status) &&
-      state.activeExecutionId !== prompt.executionId;
-    if (settled) return;
-    await new Promise<void>((resolve) => setTimeout(resolve, 10));
-  }
 }

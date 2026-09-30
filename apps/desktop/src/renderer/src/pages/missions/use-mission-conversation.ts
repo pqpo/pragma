@@ -672,7 +672,11 @@ export function mergeConversationState(
         return delivery === undefined ? entry : { ...entry, delivery };
       }),
     pendingInteractions: state.pendingInteractions,
-    queue: state.queue,
+    queue:
+      current.queueRevision !== undefined && current.queueRevision > state.revision
+        ? current.queue
+        : state.queue,
+    queueRevision: Math.max(current.queueRevision ?? 0, state.revision),
     execution: state.execution,
     controlHealth: state.controlHealth,
     syncIssues: mergeSyncIssues(current.syncIssues, state.syncIssues, "pending_interactions"),

@@ -319,15 +319,18 @@ export function createLocalHostNodeApplication(
   const promptQueueProjection = createExpertSessionPromptQueueProjection({
     sessions: expertSessionStore,
     resolveSessionId: async (missionId) => (await expertSessionStore.get(missionId))?.sessionId,
-    supportsSteer: async (sessionId) => {
+    steeringFeatures: async (sessionId) => {
       const session = await expertSessionStore.get(sessionId);
-      if (session === undefined) return false;
+      if (session === undefined) return { supportsSteer: false };
       const rootContext = session.contexts[session.rootContextId];
-      if (rootContext === undefined) return false;
+      if (rootContext === undefined) return { supportsSteer: false };
       const resolved = await runtimeResolver
         .resolve({ binding: rootContext.runtime, modelSelection: rootContext.modelSelection })
         .catch(() => undefined);
-      return resolved?.adapter.descriptor.capabilities?.supportsSteer === true;
+      return {
+        supportsSteer: resolved?.adapter.descriptor.capabilities?.supportsSteer === true,
+        steeringRecovery: resolved?.adapter.features.steering.steeringRecovery,
+      };
     },
     resolvePromptMetadata: async (prompt) => ({
       hasAttachments: hasPromptAttachments(

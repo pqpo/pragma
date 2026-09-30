@@ -48,6 +48,7 @@ export async function createLocalHostMemoryDataPlane(options: {
     createFileExecutionStore({
       pragmaHome: options.pragmaHome,
       canonicalEventFeed: canonical,
+      canonicalDelivery: "background",
       onCanonicalEventDeliveryError: (error, context) => {
         options.logger.warn(
           "desktop.memory_event_delivery_deferred",

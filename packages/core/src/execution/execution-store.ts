@@ -145,6 +145,8 @@ export interface ExecutionStore {
 }
 
 export interface FileExecutionStore extends ExecutionStore {
+  /** Drain the durable canonical outbox before the Host closes its event feed. */
+  drainCanonicalEvents(): Promise<void>;
   recoverPendingCanonicalEvents(input?: {
     readonly limit?: number | undefined;
   }): Promise<CanonicalEventRecoveryResult>;
@@ -180,6 +182,7 @@ export function createFileExecutionStore(
   options: {
     readonly pragmaHome?: string | undefined;
     readonly canonicalEventFeed?: CanonicalEventFeed | undefined;
+    readonly canonicalDelivery?: "inline" | "background" | undefined;
     readonly onCanonicalEventDeliveryError?:
       | ((
           error: unknown,
@@ -214,6 +217,7 @@ export function createFileExecutionStore(
     string,
     Promise<Awaited<ReturnType<typeof deliverCanonicalHandoffs>>>
   >();
+  const canonicalDeliveryDirty = new Set<string>();
   const deliverCanonicalEvents = (
     executionId: string,
   ): Promise<Awaited<ReturnType<typeof deliverCanonicalHandoffs>>> => {
@@ -221,27 +225,39 @@ export function createFileExecutionStore(
       return Promise.resolve({ recovered: 0 });
     }
     const previous = canonicalDeliveryRequests.get(executionId);
+    if (options.canonicalDelivery === "background" && previous !== undefined) {
+      canonicalDeliveryDirty.add(executionId);
+      return previous;
+    }
     const request = (previous ?? Promise.resolve({ recovered: 0 }))
       .catch(() => ({ recovered: 0 }))
       .then(async () => {
-        if (deletingExecutionIds.has(executionId)) return { recovered: 0 };
-        return await withFileLock(
-          paths.canonicalEventDeliveryLock(executionId),
-          async () => {
-            if (deletingExecutionIds.has(executionId)) return { recovered: 0 };
-            const handoffs = await withExecutionLock(
-              executionId,
-              "prepare-canonical-events",
-              async () => await recoverCanonicalHandoffStateForExecution(paths, executionId),
-            );
-            return await deliverCanonicalHandoffs(handoffs, options.canonicalEventFeed!);
-          },
-          { operation: "execution.canonical-event-delivery" },
-        );
+        let recovered = 0;
+        do {
+          canonicalDeliveryDirty.delete(executionId);
+          if (deletingExecutionIds.has(executionId)) return { recovered };
+          const delivery = await withFileLock(
+            paths.canonicalEventDeliveryLock(executionId),
+            async () => {
+              if (deletingExecutionIds.has(executionId)) return { recovered: 0 };
+              const handoffs = await withExecutionLock(
+                executionId,
+                "prepare-canonical-events",
+                async () => await recoverCanonicalHandoffStateForExecution(paths, executionId),
+              );
+              return await deliverCanonicalHandoffs(handoffs, options.canonicalEventFeed!);
+            },
+            { operation: "execution.canonical-event-delivery" },
+          );
+          recovered += delivery.recovered;
+          if (delivery.deliveryFailure !== undefined) return { ...delivery, recovered };
+        } while (canonicalDeliveryDirty.has(executionId));
+        return { recovered };
       })
       .finally(() => {
         if (canonicalDeliveryRequests.get(executionId) === request) {
           canonicalDeliveryRequests.delete(executionId);
+          canonicalDeliveryDirty.delete(executionId);
         }
       });
     canonicalDeliveryRequests.set(executionId, request);
@@ -249,6 +265,11 @@ export function createFileExecutionStore(
   };
 
   const store: FileExecutionStore = {
+    async drainCanonicalEvents() {
+      while (canonicalDeliveryRequests.size > 0) {
+        await Promise.allSettled([...canonicalDeliveryRequests.values()]);
+      }
+    },
     async recoverPendingCanonicalEvents(input = {}) {
       if (options.canonicalEventFeed === undefined) {
         return { recovered: 0, pending: 0, failed: 0, quarantined: 0 };
@@ -528,22 +549,33 @@ export function createFileExecutionStore(
           events: materialized.requestedEvents,
         };
       });
-      if (options.canonicalEventFeed !== undefined) {
-        try {
-          const delivery = await deliverCanonicalEvents(request.executionId);
-          if (delivery.deliveryFailure !== undefined) {
-            options.onCanonicalEventDeliveryError?.(delivery.deliveryFailure.error, {
+      if (
+        options.canonicalDelivery === "background" &&
+        canonicalDeliveryRequests.has(request.executionId)
+      ) {
+        // One worker and one error observer per Execution, even while the feed
+        // is stalled. Durable handoffs carry the backlog instead of promises.
+        canonicalDeliveryDirty.add(request.executionId);
+      } else if (options.canonicalEventFeed !== undefined) {
+        const deliver = async () => {
+          try {
+            const delivery = await deliverCanonicalEvents(request.executionId);
+            if (delivery.deliveryFailure !== undefined) {
+              options.onCanonicalEventDeliveryError?.(delivery.deliveryFailure.error, {
+                executionId: request.executionId,
+                commitId: delivery.deliveryFailure.handoff.commitId,
+                handoffPath: delivery.deliveryFailure.file,
+              });
+            }
+          } catch (error) {
+            options.onCanonicalEventDeliveryError?.(error, {
               executionId: request.executionId,
-              commitId: delivery.deliveryFailure.handoff.commitId,
-              handoffPath: delivery.deliveryFailure.file,
+              commitId: request.commitId,
             });
           }
-        } catch (error) {
-          options.onCanonicalEventDeliveryError?.(error, {
-            executionId: request.executionId,
-            commitId: request.commitId,
-          });
-        }
+        };
+        if (options.canonicalDelivery === "background") void deliver().catch(() => undefined);
+        else await deliver();
       }
       return result;
     },

@@ -249,6 +249,11 @@ function applyMissionChatPatchesWithChanges(
   const entryIndexById = new Map(entries.map((entry, index) => [entry.id, index] as const));
   const changedEntries = new Map<string, MissionChatEntry>();
   for (const patch of patches) {
+    if (patch.type === "queue.update") {
+      if (snapshot.queueRevision !== undefined && revision < snapshot.queueRevision) continue;
+      snapshot = { ...snapshot, queue: patch.queue, queueRevision: revision };
+      continue;
+    }
     if (patch.type === "context-window.update") {
       if (snapshot.contextWindow === undefined) return null;
       snapshot = {
@@ -473,7 +478,7 @@ export function visiblePatchExecutionIds(
   const updateEntryExecutionIds = new Map<string, string | undefined>();
   if (update.kind !== "patch") return executionIds;
   for (const patch of update.patches) {
-    if (patch.type === "context-window.update") continue;
+    if (patch.type === "context-window.update" || patch.type === "queue.update") continue;
     if (patch.type === "entry.upsert") {
       updateEntryExecutionIds.set(patch.entry.id, patch.entry.executionId);
       if (

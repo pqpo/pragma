@@ -23,7 +23,7 @@ describe("ExpertSession prompt queue projection", () => {
         listEvents: async () => [],
       },
       resolveSessionId: async () => "session",
-      supportsSteer: async () => true,
+      steeringFeatures: async () => ({ supportsSteer: true }),
     });
 
     await expect(projection.list("mission")).resolves.toMatchObject({
@@ -44,7 +44,7 @@ describe("ExpertSession prompt queue projection", () => {
     const projection = createExpertSessionPromptQueueProjection({
       sessions,
       resolveSessionId: async () => "session",
-      supportsSteer: async () => true,
+      steeringFeatures: async () => ({ supportsSteer: true }),
     });
 
     await expect(projection.list("mission")).resolves.toMatchObject({
@@ -81,8 +81,7 @@ describe("ExpertSession prompt queue projection", () => {
       const projection = createExpertSessionPromptQueueProjection({
         sessions,
         resolveSessionId: async () => "session",
-        supportsSteer: async () => true,
-        steeringRecovery: async () => recovery,
+        steeringFeatures: async () => ({ supportsSteer: true, steeringRecovery: recovery }),
       });
       await expect(projection.list("mission")).resolves.toMatchObject({
         state: "paused",

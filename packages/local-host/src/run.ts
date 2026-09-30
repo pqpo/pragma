@@ -75,6 +75,8 @@ export interface LocalHostRunTerminal {
 
 export interface LocalHostRunHandle {
   readonly executionId: string;
+  /** A continuing Host owns the Mission beyond this individual run. */
+  readonly missionOwnerLifetime?: "host" | undefined;
   readonly events?: AsyncIterable<LocalHostRunEvent> | undefined;
   readonly result: Promise<LocalHostRunTerminal>;
   /** Release lower-level Runtime/Session resources after the terminal is durable. */
@@ -496,12 +498,20 @@ export function createLocalHostRunApplication(options: {
     }
     missionStarted = true;
     for (const event of pendingProjectionEvents.splice(0)) projectEvent(event);
-    const releaseRun = async (): Promise<void> =>
+    const releaseRun = async (): Promise<void> => {
+      if (handle.missionOwnerLifetime === "host") {
+        // Desktop keeps the ExpertSession, observers and Inbox alive for
+        // subsequent prompts. Releasing its Mission fence here would strand
+        // those resources with a stale guard immediately after the first run.
+        await handle.release?.();
+        return;
+      }
       await options.mission.releaseAfterLowerLevel({
         missionId: reservation.missionId,
         guard,
         releaseLowerLevel: async () => await handle.release?.(),
       });
+    };
     const outcome = handle.result.then(
       async (terminal) => {
         try {

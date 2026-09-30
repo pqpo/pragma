@@ -511,14 +511,17 @@ async function createManagedRuntimeSession<
   const agent = request.agent;
   const systemSessionId = request.systemSessionId ?? randomUUID();
   const runContext = createExpertAgentRunContext(request.context);
-  const logger = createPragmaLogger(request.loggerProvider ?? agent.loggerProvider, {
-    component: "runtime.adapter",
-    scope: {
-      agentId: agent.id,
-      runtimeId: descriptor.id,
-      systemSessionId,
-    },
-  });
+  const logger = bindRuntimeLogger(() =>
+    createPragmaLogger(request.loggerProvider ?? agent.loggerProvider, {
+      component: "runtime.adapter",
+      scope: {
+        agentId: agent.id,
+        runtimeId: descriptor.id,
+        systemSessionId,
+        ...executionBindings.logScope(),
+      },
+    }),
+  );
   const sessionStartedAt = performance.now();
   logger.info("runtime.session_prepare_started", "Runtime Session preparation started", {
     restoring: request.runtimeSession !== undefined,
@@ -1503,11 +1506,19 @@ class ManagedRuntimeSession<TNativeEvent, TNativeSession> {
         `Cannot steer inactive Runtime submission: ${request.targetRunId}`,
       );
     }
+    const startedAt = performance.now();
+    this.options.logger.info("runtime.steer_dispatched", "Sending steer to the native SDK", {
+      runId: request.targetRunId,
+    });
     await runtimeOperationWithinDeadline(
       Promise.resolve(this.options.driver.steerTurn(this.options.nativeSession, request)),
       RUNTIME_STEER_TIMEOUT_MS,
       `Runtime steer timed out: ${request.targetRunId}`,
     );
+    this.options.logger.info("runtime.steer_acknowledged", "Native SDK accepted the steer", {
+      runId: request.targetRunId,
+      durationMs: elapsedRuntimeMs(startedAt),
+    });
   }
 
   get reconcileSteer():
@@ -2011,6 +2022,21 @@ function omitRuntimeSubmissionExecution<TOutput>(
   return taskSubmission;
 }
 
+// Native sessions survive multiple Executions. Select scope at emission time,
+// otherwise the second prompt is logged under the first Execution forever.
+function bindRuntimeLogger(current: () => PragmaLogger): PragmaLogger {
+  return {
+    child: (input) => bindRuntimeLogger(() => current().child(input)),
+    debug: (event, message, attributes) => current().debug(event, message, attributes),
+    info: (event, message, attributes) => current().info(event, message, attributes),
+    warn: (event, message, attributes) => current().warn(event, message, attributes),
+    error: (event, message, error, attributes) =>
+      current().error(event, message, error, attributes),
+    fatal: (event, message, error, attributes) =>
+      current().fatal(event, message, error, attributes),
+  };
+}
+
 class RuntimeExecutionBindings {
   private readonly bindings = new Map<string, RuntimeExecutionBinding>();
   private activeRunId: string | undefined;
@@ -2051,6 +2077,19 @@ class RuntimeExecutionBindings {
 
   private current(): RuntimeExecutionBinding {
     return this.bindings.get(this.activeRunId ?? "") ?? this.initial ?? {};
+  }
+
+  logScope(): {
+    readonly executionId?: string | undefined;
+    readonly invocationId?: string | undefined;
+    readonly runId?: string | undefined;
+  } {
+    const context = this.current().executionContext;
+    return {
+      executionId: context?.executionId,
+      invocationId: context?.invocationId,
+      runId: this.activeRunId,
+    };
   }
 
   private createHumanInteractionHandler(): ExpertAgentHumanInteractionHandler {

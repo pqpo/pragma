@@ -25,6 +25,8 @@ export interface MissionOwnerScope {
   ): Promise<T>;
   currentGuard(missionId: string): MissionControllerGuard | undefined;
   assertOwnership(missionId: string, guard: MissionControllerGuard): Promise<void>;
+  /** Wake this process's owner after a command is durable; never bypasses the Inbox. */
+  wake(missionId: string): void;
   release(missionId: string): Promise<void>;
   /** Explicitly fences the current owner, including a live owner in another process. */
   forceRevoke(missionId: string): Promise<void>;
@@ -87,7 +89,7 @@ export function createMissionOwnerScope(options: {
       leaseLossNotified: boolean;
     }
   >();
-  const pollers = new Map<string, { stop(): Promise<void> }>();
+  const pollers = new Map<string, { stop(): Promise<void>; wake(): void }>();
   const acquiring = new Map<string, Promise<MissionControllerGuard>>();
   const recoveryTimers = new Map<string, ReturnType<typeof setTimeout>>();
   const operationGuard = new AsyncLocalStorage<{
@@ -238,7 +240,7 @@ export function createMissionOwnerScope(options: {
     readonly initialDelayMs?: number | undefined;
     readonly maxDelayMs?: number | undefined;
     readonly jitter?: (() => number) | undefined;
-  }): Promise<{ stop(): Promise<void> }> => {
+  }): Promise<{ stop(): Promise<void>; wake(): void }> => {
     const existing = pollers.get(input.missionId);
     if (existing !== undefined) return existing;
     const current = active.get(input.missionId);
@@ -300,6 +302,9 @@ export function createMissionOwnerScope(options: {
   };
 
   const scope: MissionOwnerScope = {
+    wake(missionId) {
+      pollers.get(missionId)?.wake();
+    },
     async assertOwnership(missionId, guard) {
       await options.controller.assertWriteGuard({ missionId, guard });
     },
