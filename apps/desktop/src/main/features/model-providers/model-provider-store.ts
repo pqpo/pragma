@@ -11,6 +11,7 @@ import { withFileLock } from "@pragma/core";
 import {
   SecretStoreError,
   readStoredModelProviderConfig,
+  readStoredModelProviderConfigUnderLock,
   ModelProvidersV5Schema,
   type ModelProvidersV5,
   MODEL_PROVIDER_STORAGE_VERSION,
@@ -260,9 +261,14 @@ export function createModelProviderStore(options: {
     await chmod(options.configPath, 0o600).catch(() => undefined);
   };
 
-  const mutate = async <T>(operation: () => Promise<T>, ensureCurrent = true): Promise<T> => {
-    if (ensureCurrent) await readConfig();
-    return await withFileLock(`${options.configPath}.lock`, operation);
+  const mutate = async <T>(
+    operation: (config: StoredModelProviderConfig) => Promise<T>,
+  ): Promise<T> => {
+    await readConfig();
+    return await withFileLock(`${options.configPath}.lock`, async () => {
+      const config = await readStoredModelProviderConfigUnderLock(options.configPath);
+      return await operation(config);
+    });
   };
 
   const requireProvider = async (id: string): Promise<StoredModelProvider> => {
@@ -366,8 +372,7 @@ export function createModelProviderStore(options: {
       if (input.requiresApiKey && input.apiKey === "") {
         throw new ModelProviderStoreError("config_invalid", "Enter an API key for this provider.");
       }
-      return await mutate(async () => {
-        const config = await readConfig();
+      return await mutate(async (config) => {
         const id = randomUUID();
         const provider: StoredModelProvider = {
           id,
@@ -398,8 +403,7 @@ export function createModelProviderStore(options: {
 
     async update(input: UpdateModelProvider): Promise<ModelProvider> {
       validatePreset(input);
-      return await mutate(async () => {
-        const config = await readConfig();
+      return await mutate(async (config) => {
         const existing = config.providers.find((provider) => provider.id === input.id);
         if (!existing) {
           throw new ModelProviderStoreError("provider_not_found", "The provider no longer exists.");
@@ -459,8 +463,7 @@ export function createModelProviderStore(options: {
     },
 
     async remove(id: string): Promise<void> {
-      await mutate(async () => {
-        const config = await readConfig();
+      await mutate(async (config) => {
         if (!config.providers.some((provider) => provider.id === id)) {
           throw new ModelProviderStoreError("provider_not_found", "The provider no longer exists.");
         }
@@ -472,7 +475,7 @@ export function createModelProviderStore(options: {
     },
 
     async reset(): Promise<ResetModelProvidersResult> {
-      return await mutate(async () => {
+      return await withFileLock(`${options.configPath}.lock`, async () => {
         let backupPath: string | undefined;
         const timestamp = new Date().toISOString().replaceAll(":", "-");
         const stateMigrationJournalPath = `${options.configPath}.state-migration.json`;
@@ -495,7 +498,7 @@ export function createModelProviderStore(options: {
           providers: [],
           ...(backupPath === undefined ? {} : { backupPath }),
         };
-      }, false);
+      });
     },
 
     async resolveDiscoveryApiKey(id, connection): Promise<string> {
@@ -511,8 +514,7 @@ export function createModelProviderStore(options: {
     },
 
     async recordVerification(id, expectedRevision, result): Promise<ModelProviderVerification> {
-      return await mutate(async () => {
-        const config = await readConfig();
+      return await mutate(async (config) => {
         const existing = config.providers.find((provider) => provider.id === id);
         if (!existing) {
           throw new ModelProviderStoreError("provider_not_found", "The provider no longer exists.");

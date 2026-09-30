@@ -49,16 +49,7 @@ export type StoredModelProviderConfig = z.infer<typeof StoredModelProviderConfig
 export async function readStoredModelProviderConfig(
   path: string,
 ): Promise<StoredModelProviderConfig> {
-  const read = async (): Promise<unknown> => {
-    try {
-      return JSON.parse(await readFile(path, "utf8")) as unknown;
-    } catch (error) {
-      if (error instanceof Error && "code" in error && error.code === "ENOENT")
-        return { schemaVersion: MODEL_PROVIDER_STORAGE_VERSION, providers: [] };
-      throw error;
-    }
-  };
-  const first = await read();
+  const first = await readModelProviderDocument(path);
   let hasJournal = false;
   try {
     await access(`${path}.state-migration.json`);
@@ -74,66 +65,82 @@ export async function readStoredModelProviderConfig(
     first.schemaVersion === MODEL_PROVIDER_STORAGE_VERSION
   )
     return StoredModelProviderConfigSchema.parse(first);
-  return await withFileLock(`${path}.lock`, async () => {
-    const aggregateRoot = dirname(path),
-      name = basename(path),
-      journalFile = `${path}.state-migration.json`;
-    const resource = { family: "pragma.model-providers", id: name };
-    // Old unfinished v5 -> v6 journals must be replayed with their own target schema.
-    await recoverAtomicStateMigration({
+  return await withFileLock(`${path}.lock`, () => readStoredModelProviderConfigUnderLock(path));
+}
+
+/** Caller must hold `${path}.lock` for the entire read and migration recovery. */
+export async function readStoredModelProviderConfigUnderLock(
+  path: string,
+): Promise<StoredModelProviderConfig> {
+  const aggregateRoot = dirname(path),
+    name = basename(path),
+    journalFile = `${path}.state-migration.json`;
+  const resource = { family: "pragma.model-providers", id: name };
+  // Old unfinished v5 -> v6 journals must be replayed with their own target schema.
+  await recoverAtomicStateMigration({
+    aggregateRoot,
+    journalFile,
+    resource,
+    validateDocuments: (documents) => {
+      const value = documents[name];
+      if (
+        typeof value === "object" &&
+        value !== null &&
+        "schemaVersion" in value &&
+        value.schemaVersion === 6
+      )
+        ModelProvidersV6Schema.parse(value);
+      else StoredModelProviderConfigSchema.parse(value);
+    },
+  });
+  let value = await readModelProviderDocument(path);
+  for (const step of [modelProvidersV5ToV6Step, modelProvidersV6ToV7Step]) {
+    if (
+      typeof value !== "object" ||
+      value === null ||
+      !("schemaVersion" in value) ||
+      value.schemaVersion !== step.fromVersion
+    )
+      continue;
+    const source =
+      step.fromVersion === 5
+        ? ModelProvidersV5Schema.parse(value)
+        : ModelProvidersV6Schema.parse(value);
+    const target =
+      step.fromVersion === 5
+        ? modelProvidersV5ToV6Step.migrate(ModelProvidersV5Schema.parse(source))
+        : modelProvidersV6ToV7Step.migrate(ModelProvidersV6Schema.parse(source));
+    const backupRoot = join(aggregateRoot, "migrations", "backups");
+    await mkdir(backupRoot, { recursive: true, mode: 0o700 });
+    const hash = createHash("sha256").update(JSON.stringify(source)).digest("hex");
+    await copyFile(path, join(backupRoot, `${hash}.model-providers.v${step.fromVersion}.json`));
+    await applyAtomicStateMigration({
       aggregateRoot,
       journalFile,
       resource,
+      fromVersion: step.fromVersion,
+      toVersion: step.toVersion,
+      documents: { [name]: target },
       validateDocuments: (documents) => {
-        const value = documents[name];
-        if (
-          typeof value === "object" &&
-          value !== null &&
-          "schemaVersion" in value &&
-          value.schemaVersion === 6
-        )
-          ModelProvidersV6Schema.parse(value);
-        else StoredModelProviderConfigSchema.parse(value);
+        if (step.toVersion === 6) ModelProvidersV6Schema.parse(documents[name]);
+        else StoredModelProviderConfigSchema.parse(documents[name]);
       },
     });
-    let value = await read();
-    for (const step of [modelProvidersV5ToV6Step, modelProvidersV6ToV7Step]) {
-      if (
-        typeof value !== "object" ||
-        value === null ||
-        !("schemaVersion" in value) ||
-        value.schemaVersion !== step.fromVersion
-      )
-        continue;
-      const source =
-        step.fromVersion === 5
-          ? ModelProvidersV5Schema.parse(value)
-          : ModelProvidersV6Schema.parse(value);
-      const target =
-        step.fromVersion === 5
-          ? modelProvidersV5ToV6Step.migrate(ModelProvidersV5Schema.parse(source))
-          : modelProvidersV6ToV7Step.migrate(ModelProvidersV6Schema.parse(source));
-      const backupRoot = join(aggregateRoot, "migrations", "backups");
-      await mkdir(backupRoot, { recursive: true, mode: 0o700 });
-      const hash = createHash("sha256").update(JSON.stringify(source)).digest("hex");
-      await copyFile(path, join(backupRoot, `${hash}.model-providers.v${step.fromVersion}.json`));
-      await applyAtomicStateMigration({
-        aggregateRoot,
-        journalFile,
-        resource,
-        fromVersion: step.fromVersion,
-        toVersion: step.toVersion,
-        documents: { [name]: target },
-        validateDocuments: (documents) => {
-          if (step.toVersion === 6) ModelProvidersV6Schema.parse(documents[name]);
-          else StoredModelProviderConfigSchema.parse(documents[name]);
-        },
-      });
-      value = target;
-    }
-    return StoredModelProviderConfigSchema.parse(value);
-  });
+    value = target;
+  }
+  return StoredModelProviderConfigSchema.parse(value);
 }
+
+async function readModelProviderDocument(path: string): Promise<unknown> {
+  try {
+    return JSON.parse(await readFile(path, "utf8")) as unknown;
+  } catch (error) {
+    if (error instanceof Error && "code" in error && error.code === "ENOENT")
+      return { schemaVersion: MODEL_PROVIDER_STORAGE_VERSION, providers: [] };
+    throw error;
+  }
+}
+
 export function createModelProviderReader(options: {
   configPath: string;
   secretStore: SecretStore;
