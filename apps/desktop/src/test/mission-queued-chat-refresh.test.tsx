@@ -263,6 +263,7 @@ async function fixture(kind: "codex" | "qoder") {
   };
   return {
     runner,
+    missions,
     mission,
     updates,
     started,
@@ -274,6 +275,83 @@ async function fixture(kind: "codex" | "qoder") {
     finishSecond,
   };
 }
+
+it("bounds latest-page reads and leaves invalidations pending when every read races", async () => {
+  const f = await fixture("codex");
+  await f.runner.run(f.mission.id);
+  await vi.waitFor(() => expect(f.started).toEqual(["First turn"]), { timeout: 10_000 });
+  const read = f.missions.readTimelinePage.bind(f.missions);
+  let readCount = 0;
+  const queuedIds: string[] = [];
+  const clearQueued = async () => {
+    for (const requestId of queuedIds.splice(0))
+      await f.runner.removeQueuedMessage({ id: f.mission.id, requestId });
+  };
+  cleanups.push(clearQueued);
+  const spy = vi.spyOn(f.missions, "readTimelinePage").mockImplementation(async (...args) => {
+    const page = await read(...args);
+    readCount += 1;
+    f.appenders.get("First turn")!(` chunk${readCount}`);
+    const requestId = `00000000-0000-4000-8000-${String(readCount).padStart(12, "0")}`;
+    queuedIds.push(requestId);
+    await f.runner.sendMessage({
+      id: f.mission.id,
+      requestId,
+      content: `Queued ${readCount}`,
+    });
+    return page;
+  });
+  const page = await f.runner.getChatPage({ id: f.mission.id, limit: 100 });
+  expect(readCount).toBe(3);
+  expect(page.revision).toBeLessThan(f.updates.at(-1)!.revision);
+  const reconciled = reconcileMissionChatRefresh(null, conversationFromPage(page, null), f.updates);
+  expect(reconciled.needsRefresh).toBe(true);
+  expect(reconciled.requiredRefreshRevision).toBe(f.updates.at(-1)!.revision);
+  const answer = reconciled.snapshot?.entries.find((entry) => entry.kind === "assistant");
+  expect(answer).toMatchObject({ content: "answer:First turn chunk1 chunk2 chunk3" });
+  spy.mockRestore();
+  const settledPage = await f.runner.getChatPage({ id: f.mission.id, limit: 100 });
+  expect(
+    reconcileMissionChatRefresh(
+      reconciled.snapshot,
+      conversationFromPage(settledPage, null),
+      reconciled.remaining,
+    ).needsRefresh,
+  ).toBe(false);
+  await clearQueued();
+  f.finishes.get("First turn")!();
+  await vi.waitFor(
+    async () => expect((await f.missions.get(f.mission.id)).execution?.status).toBe("succeeded"),
+    { timeout: 10_000 },
+  );
+  await f.runner.stopLocalController(f.mission.id);
+}, 30_000);
+
+it("reads a historical page once even if the live turn changes during the read", async () => {
+  const f = await fixture("codex");
+  await f.runner.run(f.mission.id);
+  await vi.waitFor(() => expect(f.started).toEqual(["First turn"]), { timeout: 10_000 });
+  await f.enqueue();
+  const read = f.missions.readTimelinePage.bind(f.missions);
+  let readCount = 0;
+  vi.spyOn(f.missions, "readTimelinePage").mockImplementation(async (...args) => {
+    const page = await read(...args);
+    if (args[1].beforeSequence !== 100) return page;
+    readCount += 1;
+    if (readCount === 1) {
+      f.finishes.get("First turn")!();
+      await f.secondStarted();
+    }
+    return page;
+  });
+  const beforeCursor = Buffer.from(
+    JSON.stringify({ version: 1, kind: "timeline", beforeSequence: 100 }),
+  ).toString("base64url");
+  const page = await f.runner.getChatPage({ id: f.mission.id, limit: 100, beforeCursor });
+  expect(readCount).toBe(1);
+  expect(page.revision).toBeLessThan(f.updates.at(-1)!.revision);
+  await f.finishSecond();
+}, 30_000);
 
 it.each(["codex", "qoder"] as const)(
   "renders %s queued output when both turns finish during the initial page read",

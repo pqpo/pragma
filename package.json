@@ -37,7 +37,8 @@
     "runtime:features:check": "node ./packages/core/scripts/generate-runtime-feature-checklist.mjs --check",
     "dsl:versions:check": "node ./packages/interpreter/scripts/check-pragma-api-version-literals.mjs",
     "check": "pnpm runtime:features:check && pnpm dsl:versions:check && pnpm lint && pnpm typecheck && pnpm test:core",
-    "clean": "turbo run clean && rm -rf node_modules"
+    "clean": "turbo run clean && rm -rf node_modules",
+    "test:mission-chat": "turbo run build --filter=\"@pragma/desktop^...\" && pnpm --filter @pragma/desktop test:mission-chat"
   },
   "devDependencies": {
     "@eslint/js": "latest",

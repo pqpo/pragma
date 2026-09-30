@@ -62,3 +62,12 @@ ESLint、主进程与 preload 产物检查、样式及格式校验通过。
 和 Qoder SDK 消息源。两套 Runtime 均覆盖“读取期间两轮全部结束”以及“跨轮刷新后继续流式追加”，
 经过 Desktop 消息转发、协议解析、renderer 合并，再断言实际聊天条目的静态渲染内容。
 这些用例不等于启动 Electron 窗口或真实 Codex / Qoder 模型验收。
+
+PR #342 评论指出无界递归读取与 CI 覆盖缺口。最新页现在最多读取三次；仍发生竞态时，
+返回最后一次读取开始时的 revision 和 live entries 副本。读取期间的更新不被该 watermark
+确认，renderer 保留失效通知对应的 required refresh revision，再刷新到稳定页面。
+历史分页只读取一次，不因当前轮切换而重试，也不确认新的实时更新。
+回归覆盖连续失效时的读取上限、流式文本不重复追加、恢复稳定后的刷新以及跨轮历史分页。
+
+`pnpm test:mission-chat` 执行 Adapter / renderer 回归及 Host 排队承接用例；PR CI 和
+Desktop Release 都显式执行此门禁，避免默认 `test:core` 未选中这些测试的缺口。

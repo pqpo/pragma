@@ -122,6 +122,12 @@ jobs:
           CI: "true"
         run: pnpm test:core
 
+      - name: Mission chat regression tests
+        env:
+          PRAGMA_LOG_LEVEL: error
+          CI: "true"
+        run: pnpm test:mission-chat
+
       - name: Knowledge revision regression tests
         if: inputs.source_run_id == ''
         env:
