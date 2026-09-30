@@ -328,9 +328,10 @@ describe("core asset Git synchronization", { timeout: 30_000 }, () => {
     const root = await fixture();
     const local = device(join(root, "local"), "Team docs");
     const hook = join(barePath(root), "hooks", "pre-receive");
+    const escapedDiagnostic = String.raw`{\"password\":\"example-secret\"}`;
     await writeFile(
       hook,
-      `#!/bin/sh\necho 'https://user:${"s".repeat(2_100)}@example.test/repo' >&2\necho 'Branch policy rejected this upload' >&2\nexit 1\n`,
+      `#!/bin/sh\necho 'https://user:${"s".repeat(2_100)}@example.test/repo' >&2\nprintf '%s\\n' '${escapedDiagnostic}' >&2\necho 'Branch policy rejected this upload' >&2\nexit 1\n`,
     );
     await chmod(hook, 0o700);
     const failed = await local.service.configure({
@@ -344,6 +345,7 @@ describe("core asset Git synchronization", { timeout: 30_000 }, () => {
     expect(failed.error).toContain("Branch policy rejected this upload");
     expect(failed.error).toContain("https://[redacted]@example.test/repo");
     expect(failed.error).not.toContain("s".repeat(100));
+    expect(failed.error).not.toContain("example-secret");
     expect(failed.items.some((item) => item.status === "pending")).toBe(true);
     expect(failed.syncedAt).toBeUndefined();
     expect((await local.service.overview()).error).toBe(failed.error);

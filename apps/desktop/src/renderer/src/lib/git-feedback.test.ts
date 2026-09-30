@@ -61,4 +61,35 @@ describe("Git failure feedback", () => {
     expect(gitFailureDetails(message)).not.toContain("example-secret");
     expect(gitFailureDetails(message)).not.toContain("with spaces");
   });
+
+  it.each([
+    String.raw`remote: {\"password\":\"example-secret\"}`,
+    String.raw`remote: {\"access_token\":\"example-secret\"}`,
+    String.raw`remote: {\"client_secret\":\"example-secret\"}`,
+    String.raw`remote: {\"authorization\":\"Bearer example-secret\"}`,
+    String.raw`fatal: https:\/\/user:example-secret@example.test\/repo`,
+    String.raw`remote: {\"password\":\"example-secret with spaces\"}`,
+    String.raw`remote: {\"password\":\"first \\\"quoted\\\" example-secret\"}`,
+    JSON.stringify(JSON.stringify({ password: 'first "quoted" example-secret' })),
+  ])("redacts escaped diagnostics in %s", (message) => {
+    const details = gitFailureDetails(message);
+    expect(details).not.toContain("example-secret");
+    expect(details).not.toContain("with spaces");
+    expect(details).toContain("[redacted]");
+  });
+
+  it.each([0, 1, 2, 3])(
+    "keeps the reason after redacting JSON encoded %i additional times",
+    (layers) => {
+      let diagnostic = JSON.stringify({
+        password: 'first "quoted" example-secret\\',
+        reason: "Signed commits required",
+      });
+      for (let layer = 0; layer < layers; layer += 1) diagnostic = JSON.stringify(diagnostic);
+      const details = gitFailureDetails(`remote: ${diagnostic}`);
+      expect(details).not.toContain("example-secret");
+      expect(details).not.toContain("quoted");
+      expect(details).toContain("Signed commits required");
+    },
+  );
 });

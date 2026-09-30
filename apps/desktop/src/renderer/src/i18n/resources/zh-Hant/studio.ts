@@ -92,7 +92,7 @@ export const studio = {
       missingGit: "未安裝 Git 或應用程式找不到 Git。請安裝 Git 並重新啟動應用程式。",
       hostKey: "SSH 主機驗證失敗。請在終端連線此倉庫，核對主機指紋後重試。",
       repository: "找不到 Git 倉庫，請檢查倉庫位址和存取權限。",
-      pushRejected: "遠端拒絕上傳，請檢查分支保護規則和寫入權限。",
+      pushRejected: "遠端拒絕了此次上傳，請檢查遠端倉庫策略、分支保護或寫入權限，並查看錯誤詳情。",
       metadataReserved:
         ".pragma/metadata/ 是 Git 中繼資料專用目錄，請移走該目錄中的知識庫文件後重試。",
       metadataSize: "單個文件中繼資料 YAML 檔案不能超過 64 KiB。",

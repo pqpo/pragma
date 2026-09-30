@@ -7,14 +7,16 @@ it("shows an actionable reason and expandable redacted diagnostics", () => {
   const html = renderToStaticMarkup(
     <CoreAssetSyncError
       error={
-        "Git push failed: remote: You are not allowed to push code to protected branches. https://user:private@example.test/repo"
+        "Git push failed: remote: You are not allowed to push code to protected branches. https://user:private@example.test/repo " +
+        String.raw`{\"password\":\"example-secret\"}`
       }
     />,
   );
-  expect(html).toContain("Check branch protection and write permissions");
+  expect(html).toContain("Check repository policies, branch protection or write permissions");
   expect(html).toContain("<summary>Error details</summary>");
   expect(html).toContain("Git push failed:");
   expect(html).not.toContain("private");
+  expect(html).not.toContain("example-secret");
 });
 
 it("retains structured error codes when rendering an IPC failure", () => {
