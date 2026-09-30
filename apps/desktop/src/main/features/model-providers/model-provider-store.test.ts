@@ -2,15 +2,17 @@ import { access, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promi
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { createModelProviderStore, ModelProviderStoreError } from "./model-provider-store.ts";
 import { createTestSecretStore } from "../credentials/test-secret-store.ts";
+import * as localHost from "@pragma/local-host";
 import { ModelProvidersV5Schema, modelProvidersV5ToV6Step } from "@pragma/local-host";
 
 const directories: string[] = [];
 
 afterEach(async () => {
+  vi.restoreAllMocks();
   await Promise.all(directories.splice(0).map((directory) => rm(directory, { recursive: true })));
 });
 
@@ -28,6 +30,60 @@ async function createStore() {
 }
 
 describe("model provider store", () => {
+  it("recovers a migration journal appearing after preflight before saving embedding limits", async () => {
+    const { configPath, store } = await createStore();
+    const input = {
+      presetId: "qwen",
+      name: "Qwen / Bailian",
+      protocol: "openai-completions" as const,
+      baseUrl: "https://dashscope.aliyuncs.com/compatible-mode/v1",
+      apiKey: "secret",
+      requiresApiKey: true,
+      models: [
+        {
+          kind: "embedding" as const,
+          id: "qwen3.7-text-embedding-flash",
+          name: "qwen3.7-text-embedding-flash",
+          api: "openai-embeddings" as const,
+          cost: { input: 0 },
+          maxInputTokens: 8192,
+          maxBatchInputs: 32,
+          capabilitiesSource: "manual" as const,
+        },
+      ],
+    };
+    const created = await store.create(input);
+    const document = JSON.parse(await readFile(configPath, "utf8")) as unknown;
+    const read = localHost.readStoredModelProviderConfig;
+    vi.spyOn(localHost, "readStoredModelProviderConfig").mockImplementationOnce(async (path) => {
+      const result = await read(path);
+      // Another writer can leave a prepared journal between preflight and lock acquisition.
+      await writeFile(
+        `${path}.state-migration.json`,
+        JSON.stringify({
+          schemaVersion: "pragma.state-migration/v1",
+          resource: { family: "pragma.model-providers", id: "model-providers.json" },
+          fromVersion: 6,
+          toVersion: 7,
+          documents: { "model-providers.json": document },
+        }),
+      );
+      return result;
+    });
+    const updated = await store.update({
+      ...input,
+      id: created.id,
+      models: [{ ...input.models[0]!, maxInputTokens: 128000 }],
+    });
+    expect(updated.models[0]).toMatchObject({ maxInputTokens: 128000, maxBatchInputs: 32 });
+    expect(updated.revision).toBe(created.revision + 1);
+    expect((await store.list())[0]).toEqual(updated);
+    await expect(access(`${configPath}.state-migration.json`)).rejects.toMatchObject({
+      code: "ENOENT",
+    });
+    await expect(access(`${configPath}.lock`)).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
   it("persists encrypted API keys while exposing only a key-presence flag", async () => {
     const { configPath, store } = await createStore();
 
