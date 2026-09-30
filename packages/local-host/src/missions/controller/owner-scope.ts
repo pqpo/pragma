@@ -1,7 +1,7 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 import { randomUUID } from "node:crypto";
 
-import { FileLockTimeoutError } from "@pragma/core";
+import { isRetryableStorageContentionError } from "@pragma/core";
 import { createIntegrationError } from "@pragma/shared/integration";
 
 import type {
@@ -24,6 +24,7 @@ export interface MissionOwnerScope {
     operation: () => Promise<T>,
   ): Promise<T>;
   currentGuard(missionId: string): MissionControllerGuard | undefined;
+  assertOwnership(missionId: string, guard: MissionControllerGuard): Promise<void>;
   release(missionId: string): Promise<void>;
   /** Explicitly fences the current owner, including a live owner in another process. */
   forceRevoke(missionId: string): Promise<void>;
@@ -47,7 +48,14 @@ export interface MissionOwnerScope {
 export function createMissionOwnerScope(options: {
   readonly controller: MissionControllerStore;
   readonly leaseMs?: number | undefined;
-  readonly onLeaseLost?: ((missionId: string) => Promise<void> | void) | undefined;
+  readonly onLeaseLost?: ((missionId: string, error?: unknown) => Promise<void> | void) | undefined;
+  readonly onLeaseRenewalError?:
+    | ((input: {
+        readonly missionId: string;
+        readonly error: unknown;
+        readonly consecutiveFailures: number;
+      }) => Promise<void> | void)
+    | undefined;
   readonly onPollingError?:
     | ((input: {
         readonly missionId: string;
@@ -74,7 +82,6 @@ export function createMissionOwnerScope(options: {
     string,
     {
       guard: MissionControllerGuard;
-      leaseExpiresAt: number;
       timer?: ReturnType<typeof setTimeout> | undefined;
       stopped: boolean;
       leaseLossNotified: boolean;
@@ -155,11 +162,12 @@ export function createMissionOwnerScope(options: {
   const notifyLeaseLost = async (
     missionId: string,
     current: { leaseLossNotified: boolean },
+    error?: unknown,
   ): Promise<void> => {
     if (current.leaseLossNotified) return;
     current.leaseLossNotified = true;
     try {
-      await options.onLeaseLost?.(missionId);
+      await options.onLeaseLost?.(missionId, error);
     } catch {
       // Lease loss is already fenced locally. A host callback is an
       // observability/cleanup hook and must not escape a background task.
@@ -186,8 +194,9 @@ export function createMissionOwnerScope(options: {
   const renew = async (missionId: string): Promise<void> => {
     const current = active.get(missionId);
     if (current === undefined || current.stopped) return;
+    let failure: unknown;
+    let consecutiveFailures = 0;
     while (active.get(missionId) === current && !current.stopped) {
-      if (Date.now() >= current.leaseExpiresAt) break;
       try {
         const renewed = await options.controller.renew({
           missionId,
@@ -196,22 +205,31 @@ export function createMissionOwnerScope(options: {
         });
         if (active.get(missionId) !== current || current.stopped) return;
         current.guard = { claimId: renewed.claimId, fencingToken: renewed.fencingToken };
-        current.leaseExpiresAt = Date.parse(renewed.expiresAt);
         scheduleRenewal(missionId);
         return;
       } catch (error) {
-        if (!(error instanceof FileLockTimeoutError)) break;
-        const remainingMs = current.leaseExpiresAt - Date.now();
-        if (remainingMs <= 0) break;
+        if (active.get(missionId) !== current || current.stopped) return;
+        if (!isRetryableStorageContentionError(error)) {
+          failure = error;
+          break;
+        }
+        consecutiveFailures += 1;
+        if (consecutiveFailures === 1 || consecutiveFailures % 30 === 0) {
+          try {
+            await options.onLeaseRenewalError?.({ missionId, error, consecutiveFailures });
+          } catch {
+            /* Diagnostics cannot stop renewal. */
+          }
+        }
         await new Promise<void>((resolve) => {
-          const retry = setTimeout(resolve, Math.min(500, remainingMs));
+          const retry = setTimeout(resolve, 500);
           retry.unref();
         });
       }
     }
     if (active.get(missionId) !== current || current.stopped) return;
     await stopWithoutCallback(missionId, true);
-    await notifyLeaseLost(missionId, current);
+    await notifyLeaseLost(missionId, current, failure);
   };
 
   const startPolling = async (input: {
@@ -247,13 +265,22 @@ export function createMissionOwnerScope(options: {
         return owner.guard;
       }) satisfies MissionControllerGuardSource,
       consumer: input.consumer,
+      ...(options.recoverSemanticWrite === undefined
+        ? {}
+        : {
+            recoverSemanticWrite: async (guard: MissionControllerGuard) =>
+              await options.recoverSemanticWrite!({ missionId: input.missionId, guard }),
+          }),
+      onPollingStopped: () => {
+        if (pollers.get(input.missionId) === poller) pollers.delete(input.missionId);
+      },
       ...(input.initialDelayMs === undefined ? {} : { initialDelayMs: input.initialDelayMs }),
       ...(input.maxDelayMs === undefined ? {} : { maxDelayMs: input.maxDelayMs }),
       ...(input.jitter === undefined ? {} : { jitter: input.jitter }),
-      onLeaseLost: async () => {
+      onLeaseLost: async (error) => {
         try {
           await stopWithoutCallback(input.missionId, true);
-          await notifyLeaseLost(input.missionId, current);
+          await notifyLeaseLost(input.missionId, current, error);
         } catch {
           // The controller poller awaits this hook. Keep its fencing-loss
           // callback contained even if an unexpected host-side cleanup path
@@ -273,6 +300,9 @@ export function createMissionOwnerScope(options: {
   };
 
   const scope: MissionOwnerScope = {
+    async assertOwnership(missionId, guard) {
+      await options.controller.assertWriteGuard({ missionId, guard });
+    },
     bindConsumer(consumer) {
       if (boundConsumer !== undefined && boundConsumer !== consumer) {
         throw createIntegrationError({
@@ -325,7 +355,6 @@ export function createMissionOwnerScope(options: {
         }
         const current = {
           guard,
-          leaseExpiresAt: Date.parse(grant.expiresAt),
           stopped: false,
           leaseLossNotified: false,
         };

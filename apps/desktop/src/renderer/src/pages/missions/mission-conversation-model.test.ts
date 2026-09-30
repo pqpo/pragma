@@ -107,6 +107,24 @@ describe("mission conversation model", () => {
     }
   });
 
+  it("sends directly after failure despite a stale thinking reservation or queue projection", () => {
+    const stale = {
+      chat: {
+        ...streamingSnapshot(),
+        entries: [],
+        queue: { state: "running" as const, pendingCount: 0, supportsSteer: false, items: [] },
+      },
+      executionActive: false,
+      executionStatus: "failed",
+      awaitingRequestId: "failed-root",
+      pendingQueuedCount: 0,
+    };
+    expect(shouldQueueMissionSend(stale)).toBe(false);
+    expect(shouldQueueMissionSend({ ...stale, chat: null })).toBe(false);
+    // A new active execution must still reserve subsequent sends.
+    expect(shouldQueueMissionSend({ ...stale, executionActive: true })).toBe(true);
+  });
+
   it("keeps the coordinator stream and removes entries owned by teammates", () => {
     const createdAt = "2026-07-11T00:00:00.000Z";
     const entries: MissionChatEntry[] = [

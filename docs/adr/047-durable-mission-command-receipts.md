@@ -4,6 +4,8 @@
 
 Accepted
 
+租约与轮询故障部分由 [ADR 062](./062-long-running-mission-heartbeats.md) 修订；其余决策继续有效。
+
 ## 背景
 
 Desktop 曾在 IPC mutation 内等待 durable Mission command 的终态，并把固定等待期限称为
@@ -20,8 +22,8 @@ acknowledgement timeout。命令可能已经持久化、被 owner 接收并继�
 - acceptance timeout 与 result timeout 使用不同错误码和恢复动作。前者允许同 ID 精确重试；后者查询原
   operation。
 - Mission owner scope 同时拥有 lease renewal 与 Inbox poller。绑定 consumer 后 acquisition 必须启动
-  poller；连续 poll failure 会报告 degraded、停止不健康 owner，并在 lease 到期且仍有 durable 工作时
-  尝试重新获取。
+  poller；连续 poll failure 会报告 degraded 并继续有界退避。确认 fencing 冲突后才停止旧 owner；
+  仍有 durable 工作时保留重新获取机制。
 - `@pragma/local-host` 的 command dispatcher 是唯一命令路由表。Desktop 与 Core 只提供各自的底层端口，
   不复制 command-kind switch。
 - Core Execution event 是执行状态和结果的权威来源；Desktop 初始和后续 turn 都写入同一 Mission event

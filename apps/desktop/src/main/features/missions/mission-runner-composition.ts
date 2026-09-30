@@ -17,6 +17,7 @@ import {
   createFileExecutionStore,
   createFileExpertSessionStore,
   ExecutionController,
+  ExpertSessionReleaseBlockedError,
   ExecutionWorkHistoryReader,
   ExpertAgentHumanRequestSchema,
   fingerprintExpertExecutionDefinition,
@@ -471,7 +472,10 @@ export function createMissionRunner(options: {
     ((mission: Mission, defaultHost: PragmaAdapterHost) => PragmaAdapterHost) | undefined;
   /** Local Host owner scope used by legacy Desktop-only persistence writes. */
   readonly ownerScope?:
-    | Pick<MissionOwnerScope, "acquire" | "forceRevoke" | "runWithGuard" | "terminalDelete">
+    | Pick<
+        MissionOwnerScope,
+        "acquire" | "forceRevoke" | "runWithGuard" | "terminalDelete" | "assertOwnership"
+      >
     | undefined;
 }): MissionRunner {
   const logger = createPragmaLogger(options.loggerProvider, {
@@ -585,6 +589,14 @@ export function createMissionRunner(options: {
     }
   };
   const createExecutionContext = async (mission: Mission): Promise<MissionExecutionContext> => {
+    let executionGuard: Awaited<ReturnType<MissionOwnerScope["acquire"]>> | undefined;
+    const assertExecutionOwnership =
+      options.ownerScope === undefined
+        ? undefined
+        : async () => {
+            executionGuard ??= await options.ownerScope!.acquire(mission.id);
+            await options.ownerScope!.assertOwnership(mission.id, executionGuard);
+          };
     const systemMission = !isUserFacingMissionOrigin(mission.origin);
     let toolPermissionMode = mission.toolPermissionMode;
     const runtimes: RuntimeResolver = {
@@ -865,6 +877,7 @@ export function createMissionRunner(options: {
     const context = {
       runtimes,
       app: createPragma({
+        assertExecutionOwnership,
         pragmaHome: options.pragmaHome,
         runtimes,
         executionStore,
@@ -5674,20 +5687,44 @@ export function createMissionRunner(options: {
       const current = lifecycleService.active(id);
       const session = sessionService.session(id);
       const executionContext = sessionService.executionContext(id);
+      const pendingSettlement: Promise<unknown>[] = [];
       if (current !== undefined) {
-        await settlementOutcomeWithin(
-          current.handle.cancel("Mission controller lease was lost."),
-          5_000,
-        );
+        const cancelling = current.handle.cancel("Mission controller lease was lost.");
+        pendingSettlement.push(cancelling, current.settlement);
+        await settlementOutcomeWithin(cancelling, 5_000);
         await settlementOutcomeWithin(current.settlement, 30_000);
         lifecycleService.deleteActiveIfCurrent(id, current);
       }
       if (session !== undefined) {
-        await settlementOutcomeWithin(
-          session.cancelPromptQueue("Mission controller lease was lost."),
-          5_000,
-        );
-        const release = await settlementOutcomeWithin(session.releaseAfterTerminal(), 10_000);
+        const cancellingQueue = session.cancelPromptQueue("Mission controller lease was lost.");
+        pendingSettlement.push(cancellingQueue);
+        await settlementOutcomeWithin(cancellingQueue, 5_000);
+        // Keep the owner and its PragmaApp until release settles. A timeout is
+        // not a released lease: opening a new app here would compete with this
+        // process's own ExpertSession and strand subsequent messages.
+        const forgetReleasedOwner = (): void => {
+          if (sessionService.deleteSessionIfCurrent(id, session)) {
+            sessionService.clearCompilation(id);
+            if (executionContext !== undefined) {
+              sessionService.deleteExecutionContextIfCurrent(id, executionContext);
+            }
+          }
+        };
+        const releasing = session
+          .releaseAfterTerminal({
+            waitForIdle: true,
+            settlement: Promise.allSettled(pendingSettlement),
+          })
+          .then(
+            () => forgetReleasedOwner(),
+            (error: unknown) => {
+              // Validation can reject while a turn is still settling. Teardown
+              // has not started in that case, so this Session still owns its lease.
+              if (!(error instanceof ExpertSessionReleaseBlockedError)) forgetReleasedOwner();
+              throw error;
+            },
+          );
+        const release = await settlementOutcomeWithin(releasing, 10_000);
         if (release.status === "rejected") {
           logger.warn(
             "mission.controller_session_release_failed",
@@ -5695,9 +5732,7 @@ export function createMissionRunner(options: {
             { error: release.error, missionId: id, sessionId: session.sessionId },
           );
         }
-        if (sessionService.deleteSessionIfCurrent(id, session)) {
-          sessionService.clearCompilation(id);
-        }
+        return;
       }
       if (executionContext !== undefined) {
         sessionService.deleteExecutionContextIfCurrent(id, executionContext);

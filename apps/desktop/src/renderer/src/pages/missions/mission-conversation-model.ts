@@ -624,9 +624,18 @@ export function shouldClearMissionThinkingPlaceholder(
 export function shouldQueueMissionSend(input: {
   readonly chat: MissionConversationSnapshot | null;
   readonly executionActive: boolean;
+  readonly executionStatus?: string | undefined;
   readonly awaitingRequestId: string | null;
   readonly pendingQueuedCount: number;
 }): boolean {
+  // A failed Execution cannot consume another queued message. Its stale thinking
+  // reservation must not make a retry look like a delivery to a running turn.
+  if (
+    !input.executionActive &&
+    (input.executionStatus ?? input.chat?.execution?.status) === "failed"
+  ) {
+    return false;
+  }
   return (
     input.executionActive ||
     shouldShowMissionThinkingPlaceholder(input.chat, input.awaitingRequestId) ||

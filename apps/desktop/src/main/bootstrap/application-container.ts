@@ -343,12 +343,25 @@ export async function createDesktopApplicationContainer(
         { missionId, consecutiveFailures, error },
       );
     },
-    onLeaseLost: async (missionId) => {
+    onLeaseRenewalError: ({ missionId, error, consecutiveFailures }) => {
+      mainLogger.warn(
+        "mission.controller_lease_renewal_delayed",
+        "Mission heartbeat will retry; the running task has not been cancelled.",
+        {
+          missionId,
+          error,
+          consecutiveFailures,
+          reasonCode: "MISSION_LEASE_RENEWAL_DELAYED",
+          retryable: true,
+        },
+      );
+    },
+    onLeaseLost: async (missionId, error) => {
       await missionRunnerRef.current?.stopLocalController(missionId);
       mainLogger.warn(
         "mission.controller_lease_lost",
         "Mission controller lease was lost; local execution was stopped and subsequent semantic writes are fenced.",
-        { missionId },
+        { missionId, error, reasonCode: "MISSION_CONTROLLER_LEASE_LOST" },
       );
     },
     recoverSemanticWrite: async ({ missionId, guard }) => {

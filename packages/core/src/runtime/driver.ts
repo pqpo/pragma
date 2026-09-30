@@ -1671,6 +1671,7 @@ class ManagedRuntimeSession<TNativeEvent, TNativeSession> {
         ...(contextWindow === undefined ? {} : { contextWindow }),
       });
       const turnResult = await (async () => {
+        await this.options.executionBindings.assertOwnership(runId);
         const requestStartedAt = performance.now();
         this.options.logger.info(
           "runtime.model_request_dispatched",
@@ -2032,6 +2033,12 @@ class RuntimeExecutionBindings {
     this.bindings.set(runId, binding);
   }
 
+  async assertOwnership(runId: string): Promise<void> {
+    const binding = this.bindings.get(runId);
+    if (binding === undefined) throw new Error(`Runtime execution binding is inactive: ${runId}`);
+    await binding.executionContext?.assertOwnership?.();
+  }
+
   activate(runId: string): void {
     this.activeRunId = runId;
     this.initial = undefined;
@@ -2071,6 +2078,9 @@ class RuntimeExecutionBindings {
       },
       get depth() {
         return current().executionContext?.depth ?? initialDepth;
+      },
+      get assertOwnership() {
+        return current().executionContext?.assertOwnership ?? initial.assertOwnership;
       },
       get invokeResource() {
         return current().executionContext?.invokeResource;

@@ -135,6 +135,9 @@ export function createMissionControlApplication(options: {
   const startOwner = async (missionId: string): Promise<"live" | "acquired"> => {
     const current = options.ownerScope.currentGuard(missionId);
     if (current !== undefined) {
+      // Acquisition of an existing owner restarts a poller stopped by a
+      // permanent fault after the underlying storage/replay path is repaired.
+      await options.ownerScope.acquire(missionId);
       return "live";
     }
 
@@ -194,7 +197,10 @@ export function createMissionControlApplication(options: {
       const replayingTerminalCommand =
         existingCommand !== undefined && isTerminalCommandState(existingCommand.state);
 
-      if (strict && !liveLease && !replayingTerminalCommand) {
+      // A delayed heartbeat does not invalidate the current owner. Append
+      // binds strict commands to the persisted fencing token under the lock;
+      // takeover before delivery will reject that token in processNext.
+      if (strict && snapshot.snapshot.lease === undefined && !replayingTerminalCommand) {
         throw createIntegrationError({
           code: "STEER_TARGET_NOT_ACTIVE",
           category: "conflict",
@@ -202,7 +208,11 @@ export function createMissionControlApplication(options: {
           details: { missionId: input.missionId },
         });
       }
-      if (!liveLease && !replayingTerminalCommand)
+      if (
+        !liveLease &&
+        !replayingTerminalCommand &&
+        options.ownerScope.currentGuard(input.missionId) === undefined
+      )
         await options.assertAcquisitionAllowed?.(input.missionId);
 
       const appended = await options.controller.appendCommand({
@@ -232,6 +242,7 @@ export function createMissionControlApplication(options: {
       // live owner, MISSION_LEASE_HELD is treated as successful routing to that
       // owner and the existing poller consumes the same Inbox item.
       if (options.ownerScope.currentGuard(input.missionId) !== undefined) {
+        await options.ownerScope.acquire(input.missionId);
         return { ...appended, owner: "live" };
       }
       void startOwner(input.missionId).catch(async (error: unknown) => {

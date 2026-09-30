@@ -31,6 +31,7 @@ import type {
 import { PragmaPaths } from "./storage/pragma-paths.ts";
 
 export interface CreatePragmaOptions {
+  readonly assertExecutionOwnership?: (() => Promise<void>) | undefined;
   readonly pragmaHome?: string | undefined;
   readonly runtimes: RuntimeResolver;
   readonly executionStore?: ExecutionStore | undefined;
@@ -82,6 +83,7 @@ export function createPragma(options: CreatePragmaOptions): PragmaApp {
   const runtimes = options.runtimes;
   const nestedFlowExecutor: NestedFlowInvocationExecutor = runNestedFlowInvocation;
   const experts = new ExpertSessionManager({
+    assertExecutionOwnership: options.assertExecutionOwnership,
     sessions,
     executions,
     runtimes,
@@ -102,6 +104,7 @@ export function createPragma(options: CreatePragmaOptions): PragmaApp {
     options.usageSink,
     options.hostContextBindings,
     options.resolveHostContextBindings,
+    options.assertExecutionOwnership,
   );
   return {
     experts: {

@@ -89,6 +89,8 @@ export interface ExpertSessionStore {
     ownerClaimId?: string,
   ): Promise<void>;
   claimLease(sessionId: string, claimId: string, leaseMs: number): Promise<boolean>;
+  /** Optional read-only fence check; stores can also validate through owned transact. */
+  assertLeaseOwner?(sessionId: string, claimId: string): Promise<void>;
   releaseLease(sessionId: string, claimId: string): Promise<void>;
   delete(sessionId: string): Promise<void>;
 }
@@ -108,11 +110,20 @@ export function createFileExpertSessionStore(options: {
   const assertLeaseOwner = async (sessionId: string, claimId: string): Promise<void> => {
     const value = await readJson(paths.expertSessionLease(sessionId));
     const lease = value === undefined ? undefined : ExpertSessionLeaseSchema.parse(value);
-    if (lease?.claimId !== claimId || Date.parse(lease.expiresAt) <= Date.now()) {
+    // Expiry makes the lease eligible for takeover; only a different persisted
+    // claim (or release) fences this owner. This check and takeover share the
+    // aggregate lock, so a late heartbeat cannot authorize a superseded writer.
+    if (lease?.claimId !== claimId) {
       throw new Error(`ExpertSession lease is no longer owned: ${sessionId}`);
     }
   };
   return {
+    async assertLeaseOwner(sessionId, claimId) {
+      await withExpertSessionLock(
+        sessionId,
+        async () => await assertLeaseOwner(sessionId, claimId),
+      );
+    },
     async delete(sessionId) {
       await withExpertSessionLock(sessionId, async () => {
         await rm(paths.expertSessionRoot(sessionId), { recursive: true, force: true });

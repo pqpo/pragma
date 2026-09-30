@@ -92,6 +92,10 @@ until `ExpertSession.close()`. Runtime reuse validates the complete context iden
 Agent contexts are fresh and Execution-scoped; FIFO followups reuse that Agent context and persisted
 Runtime snapshot. FlowExecution Runtime Sessions remain execution-scoped.
 Execution and human-interaction bindings are submitted atomically with each Runtime submission.
+Lease expiry permits atomic takeover; it is not a task execution deadline. Delayed heartbeats may
+renew the unchanged owner. Guarded writes check the persisted claim/token under the same lock as
+takeover, and reject a revoked or replaced owner. Transient storage contention and Inbox polling
+failures retry without cancelling long-running work; see [ADR 062](../adr/062-long-running-mission-heartbeats.md).
 
 ExpertSession creation atomically establishes one root Runtime Context. All root prompts in that
 Session reuse it, while a fresh root requires a new ExpertSession. Runtime routing completes before

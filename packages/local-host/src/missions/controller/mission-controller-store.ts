@@ -1,8 +1,9 @@
+import { AsyncLocalStorage } from "node:async_hooks";
 import { randomUUID } from "node:crypto";
 import { mkdir, open, readFile, readdir, rename, rm, stat, truncate } from "node:fs/promises";
 import { dirname, join } from "node:path";
 
-import { withFileLock } from "@pragma/core";
+import { isRetryableStorageContentionError, withFileLock } from "@pragma/core";
 import {
   createIntegrationError,
   FencingTokenSchema,
@@ -346,7 +347,9 @@ export interface MissionControllerStore {
     /** A getter lets a long-lived poller observe a renewed fencing token. */
     readonly guard: MissionControllerGuardSource;
     readonly consumer: MissionCommandConsumer;
-    readonly onLeaseLost: () => Promise<void> | void;
+    readonly onLeaseLost: (error?: unknown) => Promise<void> | void;
+    readonly recoverSemanticWrite?: ((guard: MissionControllerGuard) => Promise<void>) | undefined;
+    readonly onPollingStopped?: (() => Promise<void> | void) | undefined;
     readonly onPollingError?:
       | ((input: {
           readonly error: unknown;
@@ -881,11 +884,13 @@ export function createMissionControllerStore(options: {
     if (
       lease === undefined ||
       lease.claimId !== guard.claimId ||
-      lease.fencingToken !== guard.fencingToken ||
-      Date.parse(lease.expiresAt) <= clock.now().getTime()
+      lease.fencingToken !== guard.fencingToken
     ) {
       throw fencingError();
     }
+    // Expiry permits an atomic takeover, not an automatic task cancellation.
+    // Every guarded write and every takeover uses this same aggregate lock;
+    // the persisted claim/token, rather than timer punctuality, fences writes.
     return lease;
   };
 
@@ -1043,9 +1048,7 @@ export function createMissionControllerStore(options: {
             details: { missionId: input.missionId },
           });
         }
-        const renewingOwnLease =
-          current?.claimId === input.claimId &&
-          Date.parse(current.expiresAt) > clock.now().getTime();
+        const renewingOwnLease = current?.claimId === input.claimId;
         const token = renewingOwnLease ? current.fencingToken : state.nextFencingToken;
         const lease = MissionControllerLeaseSchema.parse({
           schemaVersion: "pragma.local-host-mission-controller-lease/v1",
@@ -1307,18 +1310,6 @@ export function createMissionControllerStore(options: {
           });
         }
         if (strict && state.lease === undefined) {
-          throw createIntegrationError({
-            code: "STEER_TARGET_NOT_ACTIVE",
-            category: "conflict",
-            message: "Strict steer requires an active Mission controller.",
-            details: { missionId: input.missionId },
-          });
-        }
-        if (
-          strict &&
-          state.lease !== undefined &&
-          Date.parse(state.lease.expiresAt) <= clock.now().getTime()
-        ) {
           throw createIntegrationError({
             code: "STEER_TARGET_NOT_ACTIVE",
             category: "conflict",
@@ -1804,26 +1795,44 @@ export function createMissionControllerStore(options: {
         throw new Error("Invalid Mission inbox polling interval.");
       let stopped = false;
       let timer: ReturnType<typeof setTimeout> | undefined;
+      let pollingTask: Promise<void> | undefined;
+      const pollingScope = new AsyncLocalStorage<boolean>();
       let delayMs = initialDelayMs;
       let consecutiveFailures = 0;
       const schedule = (): void => {
         if (stopped) return;
         const jitter = Math.max(-0.25, Math.min(0.25, input.jitter?.() ?? 0));
-        timer = setTimeout(() => void tick(), Math.round(delayMs * (1 + jitter)));
+        timer = setTimeout(
+          () => {
+            const task = pollingScope.run(true, tick);
+            pollingTask = task;
+            void task
+              .finally(() => {
+                if (pollingTask === task) pollingTask = undefined;
+              })
+              .catch(() => undefined);
+          },
+          Math.round(delayMs * (1 + jitter)),
+        );
         timer.unref();
       };
       const tick = async (): Promise<void> => {
         if (stopped) return;
         try {
           const guard = typeof input.guard === "function" ? input.guard() : input.guard;
+          // Replay a pending Host mutation before trying the accepted command
+          // again. A live owner need not relinquish its lease to recover it.
+          await input.recoverSemanticWrite?.(guard);
+          if (stopped) return;
           const command = await this.processNext({ ...input, guard });
           consecutiveFailures = 0;
           delayMs = command === undefined ? Math.min(maxDelayMs, delayMs * 2) : initialDelayMs;
           schedule();
         } catch (error) {
+          if (stopped) return;
           if (isFencingError(error)) {
             stopped = true;
-            await input.onLeaseLost();
+            await input.onLeaseLost(error);
             return;
           }
           consecutiveFailures += 1;
@@ -1833,9 +1842,15 @@ export function createMissionControllerStore(options: {
           } catch {
             // Diagnostics must not replace the original polling failure.
           }
-          if (consecutiveFailures >= 3) {
+          const retryable =
+            isRetryableStorageContentionError(error) ||
+            (error instanceof MissionSemanticWritePendingError &&
+              input.recoverSemanticWrite !== undefined);
+          if (!retryable) {
+            // A permanent Inbox/replay failure requires intervention, not an
+            // endless retry or cancellation of an otherwise healthy Runtime.
             stopped = true;
-            await input.onLeaseLost();
+            await input.onPollingStopped?.();
             return;
           }
           schedule();
@@ -1846,6 +1861,9 @@ export function createMissionControllerStore(options: {
         stop: async () => {
           stopped = true;
           if (timer !== undefined) clearTimeout(timer);
+          // Drain an external stop. A command or fencing callback can stop its
+          // own poller, so that asynchronous scope must not wait on itself.
+          if (pollingScope.getStore() !== true) await pollingTask;
         },
       };
     },

@@ -3,9 +3,22 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { afterEach, describe, expect, it, vi } from "vitest";
+import {
+  FileLockTimeoutError,
+  createPragma,
+  createFileExecutionStore,
+  createFileExpertSessionStore,
+  createStaticRuntimeResolver,
+  defineExpert,
+  executeExecutionTool,
+  createNoopLoggerProvider,
+  type RuntimeNativeSessionContext,
+} from "@pragma/core";
+import { defineRuntimeTestDriver } from "@pragma/core/testing";
 
 import {
   createMissionControllerStore,
+  createMissionOwnerScope,
   MissionAggregateStateSchema,
   MissionCommandTransactionSchema,
   MissionSemanticWritePendingError,
@@ -23,6 +36,123 @@ afterEach(async () => {
 });
 
 describe("MissionControllerStore", () => {
+  it.each(["same-owner", "mission-takeover", "session-takeover"] as const)(
+    "checks tool ownership before a delayed heartbeat after %s",
+    async (scenario) => {
+      const root = await temporaryRoot();
+      const time = mutableClock("2026-09-30T00:00:00.000Z");
+      const controller = createMissionControllerStore({
+        missionsPath: join(root, "missions"),
+        clock: time,
+      });
+      const scope = createMissionOwnerScope({ controller });
+      const guard = await scope.acquire(missionId);
+      const pragmaHome = join(root, "state");
+      const executions = createFileExecutionStore({ pragmaHome });
+      const sessions = createFileExpertSessionStore({ executions, pragmaHome });
+      let allowTool!: () => void;
+      const gate = new Promise<void>((resolve) => {
+        allowTool = resolve;
+      });
+      let turnStarted!: () => void;
+      const started = new Promise<void>((resolve) => {
+        turnStarted = resolve;
+      });
+      const outputPath = join(root, "side-effect.txt");
+      const write = vi.fn(async () => {
+        await writeFile(outputPath, "written");
+        return { text: "written" };
+      });
+      const loggerProvider = createNoopLoggerProvider();
+      const runtime = defineRuntimeTestDriver<never, { context: RuntimeNativeSessionContext }>({
+        descriptor: { id: "fake", kind: "fake", displayName: "Fake" },
+        createSession: (context) => ({ context }),
+        readSession: () => ({ runtimeSessionId: "tool-owner-runtime" }),
+        startTurn: async (native) => {
+          turnStarted();
+          await gate;
+          const result = await executeExecutionTool({
+            agent: native.context.agent,
+            tool: {
+              name: "write",
+              label: "Write",
+              description: "write artifact",
+              inputSchema: {},
+              call: write,
+            },
+            args: {},
+            signal: undefined,
+            toolCallId: "write-1",
+            state: {},
+            logger: loggerProvider.createLogger({ component: "test" }),
+            executionContext: native.context.request.executionContext,
+          });
+          return { outputText: result.text, runtimeSessionId: "tool-owner-runtime" };
+        },
+        mapEvent: () => ({ events: [] }),
+        closeSession: () => undefined,
+      });
+      const app = createPragma({
+        pragmaHome,
+        executionStore: executions,
+        expertSessionStore: sessions,
+        loggerProvider,
+        runtimes: createStaticRuntimeResolver({ runtimes: [runtime], defaultRuntimeId: "fake" }),
+        assertExecutionOwnership: async () => await scope.assertOwnership(missionId, guard),
+      });
+      const expert = await defineExpert({
+        id: "tool-owner",
+        name: "Tool owner",
+        description: "tool owner test",
+        tags: [],
+        scope: "test",
+        workspace: root,
+        loggerProvider,
+      });
+      const session = await app.experts.createSession(expert);
+      const turn = await session.prompt("write after wait");
+      const outcome = turn.result.catch((error: unknown) => String(error));
+      try {
+        await started;
+        time.advance(3 * 24 * 60 * 60 * 1_000);
+        if (scenario === "mission-takeover") {
+          await controller.claim({
+            missionId,
+            claimId: "00000000-0000-4000-8000-000000000099",
+            leaseMs: 30_000,
+          });
+        } else if (scenario === "session-takeover") {
+          const now = Date.now();
+          const clock = vi.spyOn(Date, "now").mockReturnValue(now + 3 * 24 * 60 * 60 * 1_000);
+          try {
+            expect(await sessions.claimLease(session.sessionId, "successor", 30_000)).toBe(true);
+          } finally {
+            clock.mockRestore();
+          }
+        }
+        allowTool();
+        await outcome;
+        if (scenario === "same-owner") {
+          expect(write).toHaveBeenCalledOnce();
+          expect(await readFile(outputPath, "utf8")).toBe("written");
+        } else {
+          expect(write).not.toHaveBeenCalled();
+          await expect(readFile(outputPath)).rejects.toMatchObject({ code: "ENOENT" });
+        }
+      } finally {
+        allowTool();
+        await outcome;
+        await session.close().catch(() => undefined);
+        if (scenario === "session-takeover") {
+          await expect(
+            sessions.assertLeaseOwner!(session.sessionId, "successor"),
+          ).resolves.toBeUndefined();
+          await sessions.releaseLease(session.sessionId, "successor");
+        }
+        await scope.stop(missionId);
+      }
+    },
+  );
   it("fences an expired owner and only advances the decimal token on a new owner", async () => {
     const time = mutableClock("2026-08-24T00:00:00.000Z");
     const store = await createStore(time);
@@ -61,6 +191,39 @@ describe("MissionControllerStore", () => {
     await expect(store.renew({ missionId, guard, leaseMs: 0 })).rejects.toMatchObject({
       code: "INVALID_ARGUMENT",
     });
+  });
+
+  it("renews the unchanged owner after days of timer delay and fences it after takeover", async () => {
+    const time = mutableClock("2026-08-24T00:00:00.000Z");
+    const store = await createStore(time);
+    const guard = await store.claim({
+      missionId,
+      claimId: "00000000-0000-4000-8000-000000000013",
+      leaseMs: 30_000,
+    });
+    time.advance(3 * 24 * 60 * 60 * 1_000);
+    // A resumed task can write before the overdue heartbeat gets its timer slot.
+    await expect(store.assertWriteGuard({ missionId, guard })).resolves.toBeUndefined();
+    const renewed = await store.renew({ missionId, guard, leaseMs: 30_000 });
+    expect(renewed.fencingToken).toBe(guard.fencingToken);
+    expect(Date.parse(renewed.expiresAt)).toBe(time.now().getTime() + 30_000);
+    time.advance(30_001);
+    const sameOwner = await store.claim({ missionId, claimId: guard.claimId, leaseMs: 30_000 });
+    expect(sameOwner.fencingToken).toBe(guard.fencingToken);
+    time.advance(30_001);
+    const takeover = await store.claim({
+      missionId,
+      claimId: "00000000-0000-4000-8000-000000000014",
+      leaseMs: 30_000,
+    });
+    expect(takeover.fencingToken).toBe("2");
+    await expect(store.renew({ missionId, guard, leaseMs: 30_000 })).rejects.toMatchObject({
+      code: "MISSION_FENCING_REJECTED",
+    });
+    await expect(store.assertWriteGuard({ missionId, guard })).rejects.toMatchObject({
+      code: "MISSION_FENCING_REJECTED",
+    });
+    await expect(store.assertWriteGuard({ missionId, guard: takeover })).resolves.toBeUndefined();
   });
 
   it("reserves run requests atomically and rejects a payload conflict", async () => {
@@ -328,16 +491,27 @@ describe("MissionControllerStore", () => {
     ).resolves.toMatchObject({ state: "queued" });
   });
 
-  it("reports repeated polling failures and relinquishes the unhealthy owner", async () => {
+  it("reports repeated polling failures and keeps a healthy owner polling until recovery", async () => {
     const store = await createStore();
+    const guard = await store.claim({
+      missionId,
+      claimId: "00000000-0000-4000-8000-000000000034",
+      leaseMs: 10_000,
+    });
     const onPollingError = vi.fn();
     const onLeaseLost = vi.fn();
+    const command = commandInput("send", "00000000-0000-4000-8000-000000000035");
+    await store.appendCommand(command);
+    let failures = 0;
+    const apply = vi.fn(async () => ({ result: { delivered: true } }));
     const poller = store.startPolling({
       missionId,
       guard: () => {
-        throw new Error("aggregate unavailable");
+        if (failures++ < 6)
+          throw new FileLockTimeoutError("busy", "test.lock", "active", 10, "poll");
+        return guard;
       },
-      consumer: { apply: async () => ({ result: {} }) },
+      consumer: { apply },
       initialDelayMs: 1,
       maxDelayMs: 4,
       jitter: () => 0,
@@ -345,12 +519,16 @@ describe("MissionControllerStore", () => {
       onLeaseLost,
     });
 
-    await vi.waitFor(() => expect(onLeaseLost).toHaveBeenCalledOnce(), {
-      timeout: 200,
-      interval: 5,
-    });
-    expect(onPollingError.mock.calls.map((call) => call[0].consecutiveFailures)).toEqual([1, 2, 3]);
-    await poller.stop();
+    try {
+      await vi.waitFor(() => expect(apply).toHaveBeenCalledOnce(), { timeout: 2_000, interval: 5 });
+      expect(onLeaseLost).not.toHaveBeenCalled();
+      expect(onPollingError.mock.calls.map((call) => call[0].consecutiveFailures)).toEqual([
+        1, 2, 3, 4, 5, 6,
+      ]);
+      await expect(store.assertWriteGuard({ missionId, guard })).resolves.toBeUndefined();
+    } finally {
+      await poller.stop();
+    }
   });
 
   it("commits a semantic-write event after concurrently advanced Inbox poller events", async () => {
@@ -423,6 +601,42 @@ describe("MissionControllerStore", () => {
     expect(lines.map((event) => event.sequence)).toEqual([1, 2, 3]);
   });
 
+  it("lets a command stop its own poller without waiting on itself", async () => {
+    const store = await createStore();
+    const guard = await store.claim({
+      missionId,
+      claimId: "00000000-0000-4000-8000-000000000039",
+      leaseMs: 10_000,
+    });
+    const command = commandInput("send", "00000000-0000-4000-8000-000000000040");
+    await store.appendCommand(command);
+    const poller = store.startPolling({
+      missionId,
+      guard,
+      initialDelayMs: 1,
+      maxDelayMs: 4,
+      consumer: {
+        apply: async () => {
+          await poller.stop();
+          return { result: { stopped: true } };
+        },
+      },
+      onLeaseLost: () => undefined,
+    });
+    try {
+      await vi.waitFor(
+        async () => {
+          await expect(
+            store.getOperation({ missionId, requestId: command.request.requestId }),
+          ).resolves.toMatchObject({ state: "applied", result: { stopped: true } });
+        },
+        { timeout: 2_000 },
+      );
+    } finally {
+      await poller.stop();
+    }
+  });
+
   it("keeps an accepted Inbox command recoverable while a semantic write journal is pending", async () => {
     const root = await temporaryRoot();
     const store = createMissionControllerStore({ missionsPath: join(root, "missions") });
@@ -474,6 +688,128 @@ describe("MissionControllerStore", () => {
     await expect(
       store.getOperation({ missionId, requestId: command.request.requestId }),
     ).resolves.toMatchObject({ state: "applied", result: { delivered: true } });
+  });
+
+  it("recovers a pending semantic write in the live owner poller without reacquiring", async () => {
+    const store = await createStore();
+    const claim = vi.spyOn(store, "claim");
+    const mutations = new Set<string>();
+    const replay = vi.fn(async () => {
+      mutations.add("m1");
+    });
+    const scope = createMissionOwnerScope({
+      controller: store,
+      recoverSemanticWrite: async ({ missionId, guard }) => {
+        await store.recoverSemanticWrite({ missionId, guard, replay });
+      },
+    });
+    const command = commandInput("send", "00000000-0000-4000-8000-000000000035");
+    await store.appendCommand(command);
+    let attempts = 0;
+    scope.bindConsumer({
+      apply: async ({ guard }) => {
+        await store.coordinateSemanticWrite({
+          missionId,
+          guard,
+          operation: { name: "mission.timeline.user-message.append", input: { id: "m1" } },
+          eventType: "mission.timeline.user-message.appended",
+          eventData: {},
+          apply: async () => {
+            mutations.add("m1");
+            if (attempts++ === 0) throw new Error("projection failed after mutation");
+          },
+        });
+        return { result: { delivered: true } };
+      },
+    });
+    const guard = await scope.acquire(missionId);
+    try {
+      await vi.waitFor(
+        async () => {
+          expect(
+            await store.getOperation({ missionId, requestId: command.request.requestId }),
+          ).toMatchObject({ state: "applied", result: { delivered: true } });
+        },
+        { timeout: 5_000, interval: 10 },
+      );
+      expect(replay).toHaveBeenCalledOnce();
+      expect(attempts).toBe(2);
+      expect([...mutations]).toEqual(["m1"]);
+      expect(claim).toHaveBeenCalledOnce();
+      await expect(
+        store.recoverSemanticWrite({ missionId, guard, replay }),
+      ).resolves.toBeUndefined();
+    } finally {
+      await scope.stop(missionId);
+    }
+  });
+
+  it("stops permanent polling failures without declaring ownership lost", async () => {
+    const store = await createStore();
+    const guard = await store.claim({
+      missionId,
+      claimId: "00000000-0000-4000-8000-000000000034",
+      leaseMs: 10_000,
+    });
+    const onLeaseLost = vi.fn();
+    const onPollingStopped = vi.fn();
+    const onPollingError = vi.fn();
+    const poller = store.startPolling({
+      missionId,
+      guard: () => {
+        throw new SyntaxError("corrupt aggregate");
+      },
+      consumer: { apply: async () => ({ result: {} }) },
+      initialDelayMs: 1,
+      maxDelayMs: 4,
+      onLeaseLost,
+      onPollingStopped,
+      onPollingError,
+    });
+    try {
+      await vi.waitFor(() => expect(onPollingStopped).toHaveBeenCalledOnce());
+      expect(onPollingError).toHaveBeenCalledOnce();
+      expect(onLeaseLost).not.toHaveBeenCalled();
+      await expect(store.assertWriteGuard({ missionId, guard })).resolves.toBeUndefined();
+    } finally {
+      await poller.stop();
+    }
+  });
+
+  it("restarts a stopped owner poller after a permanent recovery fault is repaired", async () => {
+    const store = await createStore();
+    let repaired = true;
+    const onPollingError = vi.fn();
+    const claim = vi.spyOn(store, "claim");
+    const scope = createMissionOwnerScope({
+      controller: store,
+      recoverSemanticWrite: async () => {
+        if (!repaired) throw new SyntaxError("corrupt replay input");
+      },
+      onPollingError,
+    });
+    scope.bindConsumer({ apply: async () => ({ result: { delivered: true } }) });
+    const guard = await scope.acquire(missionId);
+    repaired = false;
+    try {
+      await vi.waitFor(() => expect(onPollingError).toHaveBeenCalledOnce(), { timeout: 2_000 });
+      await expect(store.assertWriteGuard({ missionId, guard })).resolves.toBeUndefined();
+      const command = commandInput("send", "00000000-0000-4000-8000-000000000036");
+      await store.appendCommand(command);
+      repaired = true;
+      expect(await scope.acquire(missionId)).toEqual(guard);
+      await vi.waitFor(
+        async () => {
+          expect(
+            await store.getOperation({ missionId, requestId: command.request.requestId }),
+          ).toMatchObject({ state: "applied", result: { delivered: true } });
+        },
+        { timeout: 2_000 },
+      );
+      expect(claim).toHaveBeenCalledOnce();
+    } finally {
+      await scope.stop(missionId);
+    }
   });
 
   it("rejects strict steer without a complete target and never sends on target change", async () => {
@@ -892,6 +1228,11 @@ describe("MissionControllerStore", () => {
       );
       expect(scheduled.slice(beforeCommand)).toContain(6);
       time.advance(10_001);
+      await store.claim({
+        missionId,
+        claimId: "00000000-0000-4000-8000-000000000078",
+        leaseMs: 10_000,
+      });
       await vi.waitFor(() => expect(lost).toHaveBeenCalledOnce(), { timeout: 2_000 });
     } finally {
       await poller.stop();

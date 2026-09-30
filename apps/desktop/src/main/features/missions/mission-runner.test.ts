@@ -17,6 +17,7 @@ import {
   defineExpert,
   defineExpertTeam,
   ExecutionWorkHistoryReader,
+  ExpertSessionManager,
   fingerprintExpertExecutionDefinition,
   getExecutionLiveBus,
   InMemoryContextStore,
@@ -7914,6 +7915,202 @@ describe("MissionRunner", { timeout: 30_000 }, () => {
       ]),
     });
   });
+
+  it.each(["cleanup", "cancellation"] as const)(
+    "retains the failed Session owner during delayed %s until its lease is released",
+    async (delayMode) => {
+      const root = await mkdtemp(join(tmpdir(), "pragma-mission-delayed-release-"));
+      temporaryPaths.push(root);
+      const pragmaHome = join(root, "state");
+      const project = createPragmaProjectStore({ projectsPath: join(root, "projects") });
+      const expertResource = expertFixture();
+      const snapshot = await project.publish({
+        expectedRevision: 0,
+        resources: [runtimeFixture()],
+      });
+      const missions = createMissionStore({ missionsPath: join(root, "missions") });
+      const mission = await missions.create({
+        workspace: { path: root, basename: "workspace" },
+        goal: "Fail the first turn",
+        project: { id: snapshot.projectId, revision: snapshot.revision },
+        executor: missionExecutorSnapshot(expertResource),
+      });
+      let releaseClose!: () => void;
+      let closeEntered!: () => void;
+      const closeGate = new Promise<void>((resolve) => {
+        releaseClose = resolve;
+      });
+      const closing = new Promise<void>((resolve) => {
+        closeEntered = resolve;
+      });
+      let releaseCancellation!: () => void;
+      let finishActiveTurn!: () => void;
+      const cancellationGate = new Promise<void>((resolve) => {
+        releaseCancellation = resolve;
+      });
+      const activeTurnGate = new Promise<void>((resolve) => {
+        finishActiveTurn = resolve;
+      });
+      let capturedSession: ExpertSession | undefined;
+      const createSession = ExpertSessionManager.prototype.createSession;
+      const creationSpy = vi
+        .spyOn(ExpertSessionManager.prototype, "createSession")
+        .mockImplementation(async function (this: ExpertSessionManager, expert, options) {
+          const session = await createSession.call(this, expert, options);
+          capturedSession = session;
+          return session;
+        });
+      const expert = await defineExpert({
+        id: expertResource.metadata.id,
+        name: "Delayed cleanup",
+        description: "A failed session with slow cleanup",
+        tags: [],
+        scope: "test",
+        workspace: root,
+        defaultRuntimeId: "fake",
+        hooks: {
+          beforeSessionDestroy: async () => {
+            closeEntered();
+            await closeGate;
+          },
+        },
+      });
+      let turnCount = 0;
+      let restores = 0;
+      const runtime = defineRuntimeTestDriver<never, { id: string }>({
+        descriptor: { id: "fake", kind: "fake", displayName: "Fake" },
+        createSession: () => ({ id: "delayed-release-runtime" }),
+        restoreSession: () => {
+          restores += 1;
+          return { id: "delayed-release-runtime" };
+        },
+        readSession: (session) => ({ runtimeSessionId: session.id }),
+        startTurn: async (_session, turn) => {
+          turnCount += 1;
+          if (turnCount === 1) throw new Error("Synthetic turn failure");
+          if (delayMode === "cancellation" && turnCount === 2) await activeTurnGate;
+          return {
+            outputText: `continued:${turn.rawQuery}`,
+            runtimeSessionId: "delayed-release-runtime",
+          };
+        },
+        mapEvent: () => ({ events: [] }),
+        closeSession: () => undefined,
+      });
+      const runner = createMissionRunner({
+        missions,
+        project,
+        capabilityStore: {} as CapabilityStore,
+        capabilityCredentials: {} as CapabilityCredentialStore,
+        capabilitiesPath: join(root, "capabilities"),
+        pragmaHome,
+        runtimes: createStaticRuntimeResolver({ runtimes: [runtime], defaultRuntimeId: "fake" }),
+        loggerProvider: createNoopLoggerProvider(),
+        compileSystemExecutor: async () => ({
+          ref: mission.executor.ref,
+          value: expert,
+          fingerprint: "b".repeat(64),
+          projectFingerprint: "c".repeat(64),
+          environmentFingerprint: {
+            environmentId: "desktop",
+            projectFingerprint: "c".repeat(64),
+            value: "d".repeat(64),
+            resources: [],
+            plugins: [],
+          },
+          rootRuntimeId: "fake",
+          dependencies: [],
+        }),
+      });
+      try {
+        await runner.run(mission.id);
+        await vi.waitFor(
+          async () => expect((await missions.get(mission.id)).execution?.status).toBe("failed"),
+          { timeout: settlementTimeoutMs },
+        );
+        const failedSessionId = (await missions.get(mission.id)).execution!.sessionId;
+        const earlyRequestId = "00000000-0000-4000-8000-000000000095";
+        const continuationRequestId = "00000000-0000-4000-8000-000000000096";
+        if (delayMode === "cancellation") {
+          await runner.sendMessage({
+            id: mission.id,
+            content: "Busy before takeover",
+            requestId: "00000000-0000-4000-8000-000000000094",
+          });
+          await vi.waitFor(() => expect(turnCount).toBe(2), { timeout: settlementTimeoutMs });
+          const session = capturedSession!;
+          const abort = session.abortExecution.bind(session);
+          const cancelQueue = session.cancelPromptQueue.bind(session);
+          vi.spyOn(session, "abortExecution").mockImplementation(async (...args) => {
+            await cancellationGate;
+            await abort(...args);
+          });
+          vi.spyOn(session, "cancelPromptQueue").mockImplementation(async (...args) => {
+            await cancellationGate;
+            await cancelQueue(...args);
+          });
+        }
+        const scheduleTimeout = globalThis.setTimeout;
+        let expireReleaseDeadline: (() => void) | undefined;
+        const timeoutSpy = vi
+          .spyOn(globalThis, "setTimeout")
+          .mockImplementation((callback, delay, ...args) => {
+            if (delay === 10_000) expireReleaseDeadline = callback as () => void;
+            if (delayMode === "cancellation" && [5_000, 30_000, 10_000].includes(delay ?? 0)) {
+              queueMicrotask(callback as () => void);
+            }
+            return scheduleTimeout(callback, delay, ...args);
+          });
+        const stopping = runner.stopLocalController(mission.id);
+        if (delayMode === "cleanup") {
+          await closing;
+          // Expire only the Host deadline; keep provider cleanup and file I/O real.
+          await vi.waitFor(() => expect(expireReleaseDeadline).toBeDefined());
+          expireReleaseDeadline!();
+          // Keep the captured timer callable for Vitest polling helpers.
+          timeoutSpy.mockImplementation(scheduleTimeout);
+          await stopping;
+        } else {
+          await stopping;
+          timeoutSpy.mockImplementation(scheduleTimeout);
+        }
+        await expect(
+          runner.sendMessage({ id: mission.id, content: "Too early", requestId: earlyRequestId }),
+        ).rejects.toThrow("resources are being released");
+        expect(turnCount).toBe(delayMode === "cleanup" ? 1 : 2);
+        releaseCancellation();
+        finishActiveTurn();
+        await closing;
+        releaseClose();
+        await vi.waitFor(async () => {
+          await expect(
+            readFile(new PragmaPaths({ pragmaHome }).expertSessionLease(failedSessionId!)),
+          ).rejects.toMatchObject({ code: "ENOENT" });
+        });
+        await runner.sendMessage({
+          id: mission.id,
+          content: "Continue",
+          requestId: continuationRequestId,
+        });
+        await vi.waitFor(
+          async () =>
+            expect((await missions.get(mission.id)).execution).toMatchObject({
+              status: "succeeded",
+              inputMessageId: continuationRequestId,
+              sessionId: failedSessionId,
+            }),
+          { timeout: settlementTimeoutMs },
+        );
+        expect(restores).toBe(1);
+      } finally {
+        releaseCancellation();
+        finishActiveTurn();
+        releaseClose();
+        creationSpy.mockRestore();
+      }
+    },
+    30_000,
+  );
 
   it("recovers a v0.2.25 Mission that still references a closed ExpertSession", async () => {
     const root = await mkdtemp(join(tmpdir(), "pragma-mission-closed-session-recovery-"));

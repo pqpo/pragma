@@ -287,10 +287,12 @@ describe("Mission owner scope", () => {
     }
   });
 
-  it("reports lease loss once when file-lock contention lasts through expiry", async () => {
+  it("keeps renewing after file-lock contention crosses expiry without cancelling the owner", async () => {
     const onLeaseLost = vi.fn(async () => undefined);
+    const onLeaseRenewalError = vi.fn(async () => undefined);
     const poller = { stop: vi.fn(async () => undefined) };
     const now = Date.now();
+    let renewCount = 0;
     const controller = {
       claim: vi.fn(async () => ({
         claimId: "11111111-1111-4111-8111-111111111111",
@@ -300,22 +302,37 @@ describe("Mission owner scope", () => {
         expiresAt: new Date(now + 60).toISOString(),
       })),
       renew: vi.fn(async () => {
-        throw new FileLockTimeoutError("busy", "/tmp/mission.lock", "active", 10, "renew");
+        if (++renewCount === 1)
+          throw new FileLockTimeoutError("busy", "/tmp/mission.lock", "active", 10, "renew");
+        return {
+          claimId: "11111111-1111-4111-8111-111111111111",
+          fencingToken: "1",
+          acquiredAt: new Date(now).toISOString(),
+          renewedAt: new Date().toISOString(),
+          expiresAt: new Date(Date.now() + 60).toISOString(),
+        };
       }),
       startPolling: vi.fn(() => poller),
     } as unknown as MissionControllerStore;
-    const scope = createMissionOwnerScope({ controller, leaseMs: 60, onLeaseLost });
+    const scope = createMissionOwnerScope({
+      controller,
+      leaseMs: 60,
+      onLeaseLost,
+      onLeaseRenewalError,
+    });
     const missionId = "66666666-6666-4666-8666-666666666666";
     scope.bindConsumer({ apply: async () => ({ result: {} }) });
 
     try {
       await scope.acquire(missionId);
-      await vi.waitFor(() => expect(onLeaseLost).toHaveBeenCalledOnce(), {
-        timeout: 500,
+      await vi.waitFor(() => expect(renewCount).toBeGreaterThanOrEqual(2), {
+        timeout: 1_500,
         interval: 10,
       });
-      expect(scope.currentGuard(missionId)).toBeUndefined();
-      expect(poller.stop).toHaveBeenCalledOnce();
+      expect(scope.currentGuard(missionId)).toBeDefined();
+      expect(onLeaseLost).not.toHaveBeenCalled();
+      expect(onLeaseRenewalError).toHaveBeenCalledOnce();
+      expect(poller.stop).not.toHaveBeenCalled();
     } finally {
       await scope.stop(missionId);
     }

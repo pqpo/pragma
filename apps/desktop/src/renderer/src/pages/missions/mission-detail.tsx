@@ -787,6 +787,7 @@ export function MissionDetailFragment(props: {
     const shouldPrepareQueuedMessage = shouldQueueMissionSend({
       chat,
       executionActive,
+      executionStatus,
       awaitingRequestId: awaitingRequestId ?? props.initialThinkingRequestId ?? null,
       pendingQueuedCount: pendingQueuedMessages.length,
     });

@@ -22,7 +22,14 @@ export interface LocalHostMissionControllerComposition {
 export interface LocalHostMissionControllerCompositionOptions {
   readonly missionsPath: string;
   readonly missionPath?: ((missionId: string) => string) | undefined;
-  readonly onLeaseLost?: ((missionId: string) => Promise<void> | void) | undefined;
+  readonly onLeaseLost?: ((missionId: string, error?: unknown) => Promise<void> | void) | undefined;
+  readonly onLeaseRenewalError?:
+    | ((input: {
+        readonly missionId: string;
+        readonly error: unknown;
+        readonly consecutiveFailures: number;
+      }) => Promise<void> | void)
+    | undefined;
   readonly onPollingError?:
     | ((input: {
         readonly missionId: string;
@@ -50,6 +57,7 @@ export function createLocalHostMissionController(
     controller,
     leaseMs: options.leaseMs,
     onLeaseLost: options.onLeaseLost,
+    onLeaseRenewalError: options.onLeaseRenewalError,
     onPollingError: options.onPollingError,
     recoverSemanticWrite: options.recoverSemanticWrite,
   });
