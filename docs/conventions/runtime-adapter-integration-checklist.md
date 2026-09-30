@@ -221,6 +221,9 @@ Agent marker、自然语言 Skill、增量输出和实际 stdin 三轮 startup �
 - [ ] MCP 仅暴露当前 Expert allowlist，server/工具 namespace 按 Session 隔离。
 - [ ] MCP smoke 必须发现并完成一个无副作用工具；只验证配置落盘不算通过。
 - [ ] request-approval、auto-approve、full-access 三种模式分别覆盖 native tool、shell、网络和 MCP。
+- [ ] 原生文件工具必须实际创建、编辑并在恢复后再次修改 workspace 文件，测试直接读取磁盘核对内容；
+      MCP/Context 写入或原生 list/read 成功不能代替。支持 shell 的模式必须实际执行命令并核对输出文件，
+      受限模式验证拒绝行为。自定义 Agent 的 tools、permissionMode 与 commandExecutionPolicy 必须共同验证。
 - [ ] workspace identity 支持供应商真实上报形态；路径 containment 处理 URI、相对路径、大小写和 symlink。
 - [ ] Hook/relay secret 仅保存在 Session 私有文件，异常和 relay 关闭一律 fail closed。
 

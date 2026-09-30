@@ -46,7 +46,16 @@ relay 凭据不进入 agy 进程环境或子 shell；原生自动更新禁用。
 ## System prompt、startup 与 Skills
 
 Agent 正文逐字承载 Core system prompt，声明 `mainAgent: true`、`subagent: false`、
-`inheritCustomizations: true`。启动使用注册名称 `--agent <name>`，而非绝对文件路径；init 参数回显
+`inheritCustomizations: true`、`permissionMode: acceptEdits`，并显式声明经过原生目录核对的文件读取、
+创建、编辑、命令执行、命令状态、MCP 与用户问答工具。CLI 的 `--mode accept-edits` 不能代替 custom Agent
+自身的工具与模式声明；缺少这些字段可能使模型只获得读取能力，MCP 写入成功也不能证明原生文件写入可用。
+`tools` 填写的是 custom Agent component 名称，不能复制 `init.tools` 的完整展示目录：例如
+`command_status`、`send_command_input` 由 `run_command` 带入，MCP 由 customization 继承。
+将这些内部工具名直接写入列表会导致 `unknown component`；该明确配置错误不得被启动期间的临时认证
+日志误分类为未登录。
+非 full-access 的 `commandExecutionPolicy` 使用 `sandbox`，full-access 使用 `eager`；审批模式不再使用
+`off`，让命令调用能够到达 Host Hook。工具可见性与调用授权分别处理，auto-approve 的 shell 拒绝策略仍由
+relay 执行。启动使用注册名称 `--agent <name>`，而非绝对文件路径；init 参数回显
 不等于 Agent 真正加载，真实测试必须验证 system marker。继承宿主 customization 的行为仍受上述认证边界约束。
 
 Startup 生命周期完全使用 Core driver：fresh conversation 首次消费，普通后续请求不重放；恢复
@@ -144,3 +153,71 @@ pnpm --filter @pragma/runtime-antigravity exec vitest run test/real-smoke.test.t
 
 真实执行记录与未验证边界见研究记录；合成 compaction fixture 不等于真实压缩验收。无 ADC 凭据时不宣称
 ADC end-to-end 通过；Desktop 人工审批和 UI 验收也需独立记录。
+
+## 原生写入回归与其他 Runtime 检查
+
+`test/real-smoke.test.ts` 的原生写入场景分别覆盖三种权限模式：使用 `write_to_file` 创建文件、
+`replace_file_content` 编辑文件，并由测试直接读取磁盘核对内容；释放并恢复 Session 后再次编辑。
+request-approval 必须收到并通过 Host 审批，full-access 直接执行；两者还使用 `run_command` 实际创建
+第二个文件。auto-approve 保持不自动批准 shell，权限拒绝由 `permission-hooks.test.ts` 验证。
+
+2026-09-30，Darwin x86_64、agy 1.2.13、host-keyring、gemini-3.8-flash-low：上述真实原生写入场景
+3/3 通过（256.97 s）。磁盘内容与原生工具完成事件均核对，request-approval 收到文件和命令的 Host
+审批，恢复后的文件编辑与 shell 写入通过。单独对照验证：只设置 acceptEdits 而省略 tools 的 custom
+Agent 明确报告缺少 write_to_file/run_command，两个文件均未创建；显式组件配置下两个文件实际创建成功。
+配置还保留此前默认提供的 generate_image、schedule、manage_task 与 send_message，未调用它们产生副作用。
+原有真实回归场景 4/4 通过（159.94 s），覆盖三种模式的 MCP 与新 Runtime 恢复，以及 Skills、
+流式输出、图片路径降级和连续多轮输入。此记录覆盖 Runtime 执行与 Host 审批协议，未执行 Desktop UI 人工验收。
+
+## Assistant 分段与 Mission 实时投影
+
+agy 1.2.13 的 `result.response` 会拼接本轮全部 `agent_response`，包括工具前的说明。Adapter
+必须在工具开始前或下一 assistant step 开始前完成上一段，使用 `stopReason: toolUse`，并保留该段
+thinking；工具后的 delta 创建新消息。终态 completion 与 turn result 只输出尚未完成的最后一段，
+不能把已经保存的前缀再次作为最终答复。最终文本与当前 step 的完整快照相同时，按仅最终段处理，
+即使它重复了前文也不能裁剪。缺失 result 时，优先定向读取当前 turn 的最后一条已完成 transcript
+response，不通过文本拼接或换行前缀猜测分段。
+
+同一 step 同时携带 raw_thought 和正文 delta 时，先发 thought.delta，再发 message.delta，保持与
+持久化内容顺序一致；已经完成的 step 不再向下一段转发迟到的思考快照。工具作为最后一步且没有
+后续正文时仍发出空的终态 completion，阻止 Core 把已保存的说明再次生成 assistant 消息；Mission
+实时投影关闭已有段，终态结果引用最后一段已有文本。
+
+仅依赖 Core 在 tool.started 时保存消息不足以保证实时显示：Mission 实时投影通过
+message.completed 关闭流式消息；缺失边界会把工具后的 delta 写入工具上方的旧消息，并在终态合并
+历史时重复显示。Desktop 投影回归同时检查工具后的流式位置、终态与历史内容及消息 ID 一致性。
+
+2026-09-30 同环境真实 smoke `assistant segments around native tools` 通过（38.83 s），经完整 Core
+链路验证两次原生工具调用与三段文本的顺序、toolUse/toolUse/stop 及最终结果仅含最后一段。
+`agy-1.2.13-assistant-segments.ndjson` 是依据真实 stream-json 形状扩展的两工具合成 fixture，
+另外覆盖聚合 result、仅最终文本 result 和缺失 result；它不替代上述真实执行验收。
+
+CR 补充回归覆盖重复前缀的最终答复、transcript 换行归一化、同事件 thinking/body 顺序和无工具后
+正文的终态。Desktop `src/test/mission-antigravity-chat-stream.test.ts` 注入原生 NDJSON 进程输出，经过真实 Adapter、
+Core 持久化及 Mission 投影，比较实时、历史与合并结果的内容、顺序和消息 ID，不手工伪造消息记录。
+比较包含终态历史排序与 renderer 的实际 patch reducer；无工具后正文时也保持最终答复的位置一致。
+Runtime 内部会话历史继续保留本轮全部 assistant 文本，用于后续轮次的统一 Token 估算；仅对外
+turn result 返回最终段，不能因此漏计工具前的文本。
+
+2026-09-30 CR 后复验（同上述环境）：真实 agy smoke 8/8 通过（448.53 s），覆盖三种权限模式的
+原生文件创建/编辑、允许命令执行的两种模式、MCP 与恢复、三段文本、Skills、图片输入降级及多轮。
+agy 自动测试 148 项、Desktop 消息回归 68 项、队列刷新门禁 56 项及定向 Mission Runner 5 项通过；
+其他五个 Runtime 的相关定向测试 44 项通过。Desktop build 与 main/preload/styles 检查通过。
+上述结果覆盖代码与自动执行链路，未执行 Electron UI 人工验收。
+
+运行这些场景：
+
+```bash
+PRAGMA_ANTIGRAVITY_REAL_SMOKE=1 pnpm --filter @pragma/runtime-antigravity exec vitest run \
+  test/real-smoke.test.ts -t 'workspace files with native tools' --reporter=verbose
+```
+
+2026-09-30 同类配置检查（源码与定向自动测试，不代表其他 Runtime 的真实模型执行验收）：
+
+| Runtime     | 原生文件与 shell 路径                                                                           | 检查结果                                                                   |
+| ----------- | ----------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------- |
+| Codex       | Desktop/CLI 显式选择 `workspace-write`，full-access 使用 `danger-full-access`                   | 未发现工具注册遗漏；直接使用 Adapter 时仍受显式选项及原生配置影响          |
+| Claude Code | ACP worker 使用原生 SDK 工具；Host 将模式映射到 `default` / `acceptEdits` / `bypassPermissions` | 未发现自定义 Agent 空工具列表                                              |
+| Qoder CLI   | SDK 使用原生工具；仅禁用 `AskUserQuestion`，MCP 白名单单独配置                                  | 未发现文件与 shell 工具被整体禁用                                          |
+| Pi          | 原生 coding tools 加上 Session Bash tool，managed tools 单独注入                                | 未发现读写工具注册遗漏；真实本地 Bash 环境测试通过                         |
+| OpenCode    | workspace edit 使用 allow/ask；普通模式显式拒绝 shell，full-access 允许                         | shell 限制是现有凭据隔离边界，详见 [OpenCode Runtime](opencode-runtime.md) |

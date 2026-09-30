@@ -48,7 +48,12 @@ const AgyStreamRecordSchema = z.object({ event: z.string().min(1) }).passthrough
 export type AntigravityNativeEvent =
   | { readonly kind: "message-delta"; readonly text: string }
   | { readonly kind: "thought-delta"; readonly text: string }
-  | { readonly kind: "message-completed"; readonly text: string }
+  | {
+      readonly kind: "message-completed";
+      readonly text: string;
+      readonly final?: boolean;
+      readonly thinking?: string;
+    }
   | {
       readonly kind: "tool-started";
       readonly id: string;
@@ -119,6 +124,7 @@ type ProcessRunResult =
   | {
       readonly kind: "success";
       readonly outputText: string;
+      readonly usageOutputText: string;
       readonly usage?: AgentMessageUsage | undefined;
       readonly sessionId: string;
     }
@@ -138,6 +144,10 @@ type TranscriptCheckpoints = ReadonlyMap<AntigravityTranscriptRoot, TranscriptCh
 interface StreamState {
   readonly stepUsage: Map<string, AgentMessageUsage>;
   readonly textSnapshots: Map<string, string>;
+  readonly completedAssistantKeys: Set<string>;
+  readonly completedAssistantTexts: string[];
+  pendingAssistantKey?: string;
+  pendingThinkingText: string;
   readonly thoughtSnapshots: Map<string, string>;
   readonly tools: Map<string, { readonly name: string; outputText: string; completed: boolean }>;
   readonly compactions: Map<string, "started" | "completed" | "failed">;
@@ -239,8 +249,15 @@ export async function startAntigravityTurn(
     const reportedUsage = run.usage !== undefined && hasNonZeroUsage(run.usage);
     const usage = reportedUsage
       ? run.usage
-      : estimateAntigravityTurnUsage(session, messagesBeforeTurn, serializedInput, run.outputText);
-    session.messages.push(createAssistantMessage(run.outputText, usage, modelName));
+      : estimateAntigravityTurnUsage(
+          session,
+          messagesBeforeTurn,
+          serializedInput,
+          run.usageOutputText,
+        );
+    // Native conversation history retains every segment, even though the turn
+    // result only returns the final one. Keep those tokens in later estimates.
+    session.messages.push(createAssistantMessage(run.usageOutputText, usage, modelName));
     return {
       outputText: run.outputText,
       // Reported usage has already been emitted as a native usage event. Returning
@@ -307,7 +324,24 @@ export function mapAntigravityEvent(
       return { events: [context.events.thoughtDelta(event.text)] };
     case "message-completed":
       return {
-        events: [context.events.messageCompleted(event.text)],
+        events: [
+          context.events.messageCompleted(
+            createAssistantMessage(
+              event.text,
+              createUsageFromTokenCounts({
+                measurement: "unknown",
+                inputTokens: 0,
+                inputTokensIncludeCacheRead: false,
+                outputTokens: 0,
+                cacheReadTokens: 0,
+                cacheWriteTokens: 0,
+              }),
+              undefined,
+              event.final === false ? "toolUse" : "stop",
+              event.thinking,
+            ),
+          ),
+        ],
         completedText: event.text,
       };
     case "tool-started":
@@ -640,9 +674,17 @@ function openAntigravityConnection(
         "ANTIGRAVITY_PROTOCOL_ERROR",
         false,
       );
-    const outputText = state.resultText ?? state.outputText;
+    const outputText =
+      state.resultText ??
+      (state.pendingAssistantKey === undefined
+        ? state.outputText
+        : (state.textSnapshots.get(state.pendingAssistantKey) ?? state.outputText));
     if (state.resultText === undefined && outputText !== "")
-      pending.writeNative({ kind: "message-completed", text: outputText });
+      pending.writeNative({
+        kind: "message-completed",
+        text: outputText,
+        ...(state.pendingThinkingText === "" ? {} : { thinking: state.pendingThinkingText }),
+      });
     connection.pending = undefined;
     if (outputText === "") {
       pending.reject(
@@ -653,7 +695,13 @@ function openAntigravityConnection(
         ),
       );
     } else {
-      pending.resolve({ kind: "success", outputText, usage, sessionId: session.sessionId });
+      pending.resolve({
+        kind: "success",
+        outputText,
+        usageOutputText: completeAssistantText(outputText, state),
+        usage,
+        sessionId: session.sessionId,
+      });
     }
   });
   void output.then(
@@ -711,13 +759,20 @@ function openAntigravityConnection(
           );
         }
         // Only the owned conversation and this turn's checkpoint can supply recovery.
+        const recoveredText = await recoverAntigravityOutput({
+          homeDir: session.managedHome.homeDir,
+          sessionId: session.sessionId,
+          priorSessionId: pending.priorSessionId,
+          transcriptCheckpoints: pending.transcriptCheckpoints,
+        });
         const text =
-          (await recoverAntigravityOutput({
-            homeDir: session.managedHome.homeDir,
-            sessionId: session.sessionId,
-            priorSessionId: pending.priorSessionId,
-            transcriptCheckpoints: pending.transcriptCheckpoints,
-          })) ?? (pending.state.assistantResponseCompleted ? pending.state.outputText : undefined);
+          recoveredText === undefined
+            ? pending.state.assistantResponseCompleted
+              ? pending.state.pendingAssistantKey === undefined
+                ? pending.state.outputText
+                : pending.state.textSnapshots.get(pending.state.pendingAssistantKey)
+              : undefined
+            : recoveredText;
         if (text === undefined || text === "") {
           const failure = readDegradedAntigravityError(pending.state.outputText, logTail);
           if (failure !== undefined)
@@ -739,8 +794,19 @@ function openAntigravityConnection(
             "ANTIGRAVITY_PROTOCOL_ERROR",
             false,
           );
-        pending.writeNative({ kind: "message-completed", text });
-        pending.resolve({ kind: "success", outputText: text, sessionId: session.sessionId });
+        pending.writeNative({
+          kind: "message-completed",
+          text,
+          ...(pending.state.pendingThinkingText === ""
+            ? {}
+            : { thinking: pending.state.pendingThinkingText }),
+        });
+        pending.resolve({
+          kind: "success",
+          outputText: text,
+          usageOutputText: completeAssistantText(text, pending.state),
+          sessionId: session.sessionId,
+        });
       } catch (error) {
         pending.reject(error);
       }
@@ -890,7 +956,11 @@ function normalizeStepUpdate(
   const toolInfo =
     readRecord(step["tool_info"]) ?? readRecord(step["toolInfo"]) ?? readRecord(raw["tool_info"]);
   if (toolInfo !== undefined) {
-    events.push(...normalizeToolStep(step, toolInfo, key, status, state));
+    const toolEvents = normalizeToolStep(step, toolInfo, key, status, state);
+    if (toolEvents.some((event) => event.kind === "tool-started")) {
+      events.push(...completePendingAssistantSegment(state));
+    }
+    events.push(...toolEvents);
   }
   const subagentInfo =
     readRecord(step["subagent_info"]) ??
@@ -925,12 +995,42 @@ function normalizeStepUpdate(
       }),
     });
   }
-  const textDelta = readText(step["text_delta"] ?? step["textDelta"]);
+  if (isAssistantResponseStep && !state.completedAssistantKeys.has(key)) {
+    if (state.pendingAssistantKey !== undefined && state.pendingAssistantKey !== key) {
+      events.push(...completePendingAssistantSegment(state));
+    }
+    state.pendingAssistantKey = key;
+  }
+  const textDelta = state.completedAssistantKeys.has(key)
+    ? undefined
+    : readText(step["text_delta"] ?? step["textDelta"]);
   if (textDelta !== undefined) {
     if (isThoughtStep) {
       state.thoughtSnapshots.set(key, (state.thoughtSnapshots.get(key) ?? "") + textDelta);
+      state.pendingThinkingText += textDelta;
       events.push({ kind: "thought-delta", text: textDelta });
-    } else if (isAssistantResponseStep) {
+    }
+  }
+
+  const thought = readText(
+    step["raw_thought"] ??
+      step["rawThought"] ??
+      step["thought"] ??
+      step["reasoning"] ??
+      (isThoughtStep && textDelta === undefined ? (step["content"] ?? step["text"]) : undefined),
+  );
+  if (thought !== undefined && !state.completedAssistantKeys.has(key)) {
+    const delta = snapshotDelta(state.thoughtSnapshots, key, thought);
+    if (delta !== "") {
+      state.pendingThinkingText += delta;
+      events.push({ kind: "thought-delta", text: delta });
+    }
+  }
+
+  // The durable assistant content places thinking before its body. Preserve
+  // that same order live when agy supplies both in a single step update.
+  if (textDelta !== undefined && !isThoughtStep) {
+    if (isAssistantResponseStep) {
       state.textSnapshots.set(key, (state.textSnapshots.get(key) ?? "") + textDelta);
       state.outputText += textDelta;
       events.push({ kind: "message-delta", text: textDelta });
@@ -943,20 +1043,8 @@ function normalizeStepUpdate(
     }
   }
 
-  const thought = readText(
-    step["raw_thought"] ??
-      step["rawThought"] ??
-      step["thought"] ??
-      step["reasoning"] ??
-      (isThoughtStep && textDelta === undefined ? (step["content"] ?? step["text"]) : undefined),
-  );
-  if (thought !== undefined) {
-    const delta = snapshotDelta(state.thoughtSnapshots, key, thought);
-    if (delta !== "") events.push({ kind: "thought-delta", text: delta });
-  }
-
   const text =
-    textDelta === undefined && isAssistantResponseStep
+    textDelta === undefined && isAssistantResponseStep && !state.completedAssistantKeys.has(key)
       ? readText(
           step["content"] ??
             step["text"] ??
@@ -1019,6 +1107,42 @@ function isAssistantResponseStepType(stepType: string): boolean {
   }
 }
 
+function completePendingAssistantSegment(state: StreamState): AntigravityNativeEvent[] {
+  const key = state.pendingAssistantKey;
+  const thinking = state.pendingThinkingText;
+  if (key === undefined && thinking === "") return [];
+  delete state.pendingAssistantKey;
+  state.pendingThinkingText = "";
+  if (key !== undefined) state.completedAssistantKeys.add(key);
+  const text = key === undefined ? "" : (state.textSnapshots.get(key) ?? "");
+  if (text === "" && thinking === "") return [];
+  if (text !== "") state.completedAssistantTexts.push(text);
+  return [
+    { kind: "message-completed", text, final: false, ...(thinking === "" ? {} : { thinking }) },
+  ];
+}
+
+function remainingAssistantText(text: string, state: StreamState): string {
+  const pending =
+    state.pendingAssistantKey === undefined
+      ? undefined
+      : state.textSnapshots.get(state.pendingAssistantKey);
+  // A final-only result may legitimately repeat the narration's prefix. Its
+  // own streamed step is authoritative evidence that no prefix should be cut.
+  if (pending === text) return text;
+  const prefix = state.completedAssistantTexts.join("");
+  if (prefix === "" || !text.startsWith(prefix)) return text;
+  return text.slice(prefix.length);
+}
+
+function completeAssistantText(finalText: string, state: StreamState): string {
+  const prefix = state.completedAssistantTexts.join("");
+  return state.pendingAssistantKey === undefined &&
+    finalText === state.completedAssistantTexts.at(-1)
+    ? prefix
+    : prefix + finalText;
+}
+
 function normalizeResult(
   raw: Record<string, unknown>,
   state: StreamState,
@@ -1048,11 +1172,27 @@ function normalizeResult(
           payload["content"] ??
           payload["result"]),
   );
-  if (text !== undefined) state.resultText = text;
+  // agy result.response concatenates every assistant step in the turn. The
+  // prior steps already have their own completed messages before tool calls.
+  // Only the remaining final segment belongs to the terminal completion.
+  const finalText = text === undefined ? undefined : remainingAssistantText(text, state);
+  if (text !== undefined)
+    state.resultText =
+      finalText === "" ? (state.completedAssistantTexts.at(-1) ?? text) : finalText;
   return [
     ...(sessionId === undefined ? [] : ([{ kind: "session", sessionId }] as const)),
     ...(usage === undefined ? [] : ([{ kind: "usage", usage }] as const)),
-    ...(text === undefined || failed ? [] : ([{ kind: "message-completed", text }] as const)),
+    // Even a textless terminal completion must close the turn. Otherwise Core
+    // manufactures another assistant message from the already recorded text.
+    ...(finalText === undefined || failed
+      ? []
+      : ([
+          {
+            kind: "message-completed",
+            text: finalText,
+            ...(state.pendingThinkingText === "" ? {} : { thinking: state.pendingThinkingText }),
+          },
+        ] as const)),
   ];
 }
 
@@ -1294,15 +1434,22 @@ function createAssistantMessage(
   text: string,
   usage: AgentMessageUsage,
   modelName: string | undefined,
+  stopReason: "stop" | "toolUse" = "stop",
+  thinking?: string,
 ): AgentAssistantMessage {
   return {
     role: "assistant",
-    content: [{ type: "text", text }],
+    content: [
+      ...(thinking === undefined || thinking === ""
+        ? []
+        : [{ type: "thinking" as const, thinking }]),
+      { type: "text", text },
+    ],
     api: "antigravity-cli",
     provider: "antigravity",
     model: modelName ?? "antigravity",
     usage,
-    stopReason: "stop",
+    stopReason,
     timestamp: Date.now(),
   };
 }
@@ -1385,6 +1532,7 @@ async function recoverAntigravityOutput(options: {
         // A fallback must prove that it saw the current turn's input. This is
         // necessary for both fresh conversations and resumed transcripts.
         requireUserBoundary: true,
+        finalResponseOnly: true,
         ...(checkpoint === undefined ? {} : { checkpoint }),
       });
       if (recovered !== undefined) return recovered;
@@ -1428,6 +1576,7 @@ export async function readAntigravityTranscriptAssistantText(
   options: {
     readonly requireUserBoundary?: boolean | undefined;
     readonly checkpoint?: TranscriptCheckpoint | undefined;
+    readonly finalResponseOnly?: boolean | undefined;
   } = {},
 ): Promise<string | undefined> {
   const tail = await readFileTailWithMetadata(
@@ -1465,7 +1614,11 @@ export async function readAntigravityTranscriptAssistantText(
   if ((options.requireUserBoundary === true || tail.truncated) && !observedUserBoundary) {
     return undefined;
   }
-  return settledResponses.length === 0 ? nestedFallback : settledResponses.join("\n\n");
+  return settledResponses.length === 0
+    ? nestedFallback
+    : options.finalResponseOnly === true
+      ? settledResponses.at(-1)
+      : settledResponses.join("\n\n");
 }
 
 function resolveAntigravityTranscriptPath(
@@ -1572,7 +1725,12 @@ function classifyAntigravityError(
   stderrTail: string,
   logTail: string,
 ): AntigravityRuntimeError {
-  const combined = [primary, stderrTail, logTail].filter(Boolean).join("\n");
+  // A concrete executor configuration failure is authoritative. agy startup
+  // logs can contain transient auth errors before silent keyring login succeeds;
+  // those must not turn an invalid tool component into a request to sign in.
+  const combined = /failed to construct executor|unknown component: tool/i.test(primary)
+    ? primary
+    : [primary, stderrTail, logTail].filter(Boolean).join("\n");
   if (
     /sign in|not logged|authentication (?:required|failed|timed out)|oauth|credentials/i.test(
       combined,
@@ -1667,6 +1825,9 @@ function createStreamState(): StreamState {
   return {
     stepUsage: new Map(),
     textSnapshots: new Map(),
+    completedAssistantKeys: new Set(),
+    completedAssistantTexts: [],
+    pendingThinkingText: "",
     thoughtSnapshots: new Map(),
     tools: new Map(),
     compactions: new Map(),
