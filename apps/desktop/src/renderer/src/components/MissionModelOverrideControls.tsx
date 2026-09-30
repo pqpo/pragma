@@ -160,7 +160,8 @@ export function MissionModelOverrideControls(props: {
         width: menuWidth,
         left: resolvedPlacement.left,
         bottom: window.innerHeight - trigger.top + menuGap,
-      });
+        "--mission-model-menu-available-height": `${Math.max(0, trigger.top - menuGap - viewportPadding)}px`,
+      } as CSSProperties);
     };
     positionMenu();
     window.addEventListener("resize", positionMenu);
