@@ -15,6 +15,7 @@ import {
   AgentLifecycleQuiescenceError,
   createPragmaLogger,
   createFileExecutionStore,
+  withStorageDiagnostics,
   createFileExpertSessionStore,
   ExecutionController,
   ExpertSessionReleaseBlockedError,
@@ -483,7 +484,7 @@ export function createMissionRunner(options: {
     component: "desktop.mission-runner",
   });
   const executionStore =
-    options.executionStore ?? createFileExecutionStore({ pragmaHome: options.pragmaHome });
+    options.executionStore ?? createFileExecutionStore({ pragmaHome: options.pragmaHome, logger });
   const notifyExecutionLinked = async (
     mission: Mission,
     executionId: string,
@@ -528,18 +529,11 @@ export function createMissionRunner(options: {
     }
   };
   const expertSessionStore = createFileExpertSessionStore({
+    logger,
     executions: executionStore,
     pragmaHome: options.pragmaHome,
   });
   const sessionService = new MissionSessionService<MissionExecutionContext, ExecutorMetadata>();
-  const resolveSessionRuntimeForQueue = async (sessionId: string) => {
-    const session = await expertSessionStore.get(sessionId);
-    const rootContext = session?.contexts[session.rootContextId];
-    if (rootContext === undefined) return undefined;
-    return await options.runtimes
-      .resolve({ binding: rootContext.runtime, modelSelection: rootContext.modelSelection })
-      .catch(() => undefined);
-  };
   const promptQueueProjection = createExpertSessionPromptQueueProjection({
     sessions: expertSessionStore,
     resolveSessionId: async (missionId) => {
@@ -548,8 +542,14 @@ export function createMissionRunner(options: {
       const mission = await options.missions.get(missionId);
       return mission.execution?.sessionId;
     },
-    steeringFeatures: async (sessionId) => {
-      const resolved = await resolveSessionRuntimeForQueue(sessionId);
+    steeringFeatures: async (_sessionId, session) => {
+      const rootContext = session.contexts[session.rootContextId];
+      const resolved =
+        rootContext === undefined
+          ? undefined
+          : await options.runtimes
+              .resolve({ binding: rootContext.runtime, modelSelection: rootContext.modelSelection })
+              .catch(() => undefined);
       return {
         supportsSteer:
           resolved === undefined ? false : await runtimeSupportsSteer(resolved.adapter),
@@ -1004,14 +1004,20 @@ export function createMissionRunner(options: {
       { missionId: notification.missionId, requestId: notification.requestId },
     );
   });
-  const chatService = new MissionChatService<LiveMissionChat>(({ error, missionId }) => {
-    logger.error(
-      "mission.chat_listener_failed",
-      `Failed to notify Mission chat listeners for ${missionId}.`,
-      error,
-      { missionId },
-    );
-  });
+  const chatService = new MissionChatService<LiveMissionChat>(
+    ({ error, missionId }) => {
+      logger.error(
+        "mission.chat_listener_failed",
+        `Failed to notify Mission chat listeners for ${missionId}.`,
+        error,
+        { missionId },
+      );
+    },
+    (metrics) => {
+      if (process.env["PRAGMA_STORAGE_DIAGNOSTICS"] === "1")
+        logger.info("mission.read_completed", "Mission display read completed", metrics);
+    },
+  );
   const pendingHumanInteractionsByMission = new Map<
     string,
     {
@@ -1230,9 +1236,30 @@ export function createMissionRunner(options: {
   const withMissionPromptAdmission = async <T>(
     missionId: string,
     operation: () => Promise<T>,
+    requestId?: string,
   ): Promise<T> => {
+    const queuedAt = performance.now();
     const previous = promptAdmissions.get(missionId) ?? Promise.resolve();
-    const result = previous.then(operation);
+    const result = previous.then(() => {
+      logMissionPhase(
+        logger,
+        missionId,
+        "prompt_admission_wait",
+        queuedAt,
+        queuedAt,
+        requestId === undefined ? {} : { requestId },
+      );
+      return withStorageDiagnostics(
+        {
+          family: "mission-admission",
+          ownerId: missionId,
+          operation: "prepare",
+          ...(requestId === undefined ? {} : { requestId }),
+        },
+        operation,
+        logger,
+      );
+    });
     const settled = result.then(
       () => undefined,
       () => undefined,
@@ -1409,16 +1436,20 @@ export function createMissionRunner(options: {
     if (attachNextTurn) await attachNextSessionTurn(id, audience);
   };
 
-  const awaitTerminalLifecycleSettlement = async (mission: Mission): Promise<void> => {
+  const awaitTerminalLifecycleSettlement = async (mission: Mission): Promise<boolean> => {
     if (
       mission.execution === undefined ||
       ["queued", "running", "waiting"].includes(mission.execution.status)
     ) {
-      return;
+      return false;
     }
     const active = lifecycleService.active(mission.id);
-    if (active === undefined || active.handle.executionId !== mission.execution.id) return;
+    if (active === undefined || active.handle.executionId !== mission.execution.id) return false;
+    const startedAt = performance.now();
     const outcome = await settlementOutcomeWithin(active.settlement, 5_000);
+    logMissionPhase(logger, mission.id, "terminal_lifecycle_settlement", startedAt, startedAt, {
+      outcome: outcome.status,
+    });
     if (outcome.status === "timed_out") {
       logger.warn(
         "mission.terminal_cleanup_pending",
@@ -1433,11 +1464,13 @@ export function createMissionRunner(options: {
         { error: outcome.error, missionId: mission.id, executionId: mission.execution.id },
       );
     }
+    return true;
   };
 
   const compileMissionExecutor = async (
     mission: Mission,
     runtimes: RuntimeResolver,
+    revisionReader: Pick<PragmaProjectStore, "getRevision"> = options.project,
   ): Promise<CompiledResource<InvocableResource>> => {
     const knowledgeRevisions =
       options.contextStores === undefined || options.contextStoreRevisions === undefined
@@ -1658,7 +1691,7 @@ export function createMissionRunner(options: {
     );
     let projectSnapshotPromise: ReturnType<typeof options.project.getRevision> | undefined;
     const getProjectSnapshot = () =>
-      (projectSnapshotPromise ??= options.project.getRevision(mission.project.revision));
+      (projectSnapshotPromise ??= revisionReader.getRevision(mission.project.revision));
     const completed = new Map<
       string,
       {
@@ -1783,33 +1816,72 @@ export function createMissionRunner(options: {
     readonly fingerprint: string;
   };
 
+  const createIdentityReadScope = (mission: Mission, diagnosticLogger = logger) => {
+    let revision: ReturnType<PragmaProjectStore["getRevision"]> | undefined;
+    const project: Pick<PragmaProjectStore, "getRevision"> = {
+      getRevision: (revisionNumber) => {
+        if (revisionNumber !== mission.project.revision)
+          return options.project.getRevision(revisionNumber);
+        return (revision ??= (async () => {
+          const startedAt = performance.now();
+          try {
+            return await options.project.getRevision(revisionNumber);
+          } finally {
+            logMissionPhase(
+              diagnosticLogger,
+              mission.id,
+              "identity_revision_read",
+              startedAt,
+              startedAt,
+            );
+          }
+        })());
+      },
+    };
+    return { project, logger: diagnosticLogger };
+  };
+
   const compilationIdentity = async (
     mission: Mission,
     capabilities: readonly ResolvedCapabilityEnvironment[],
-  ): Promise<string> =>
-    createHash("sha256")
+    scope = createIdentityReadScope(mission),
+  ): Promise<string> => {
+    const startedAt = performance.now();
+    const systemExecutorFingerprints = await resolveMissionSystemDependencyFingerprints({
+      mission,
+      project: scope.project,
+      getSystemExecutorFingerprint: options.getSystemExecutorFingerprint,
+      getSystemExecutorResource: options.getSystemExecutorResource,
+    });
+    logMissionPhase(
+      scope.logger,
+      mission.id,
+      "system_dependency_fingerprints",
+      startedAt,
+      startedAt,
+    );
+    return createHash("sha256")
       .update(
         JSON.stringify({
           project: mission.project,
           executor: mission.executor,
           contextMounts: missionContextMountsFingerprint(mission),
-          systemExecutorFingerprints: await resolveMissionSystemDependencyFingerprints({
-            mission,
-            project: options.project,
-            getSystemExecutorFingerprint: options.getSystemExecutorFingerprint,
-            getSystemExecutorResource: options.getSystemExecutorResource,
-          }),
+          systemExecutorFingerprints,
           toolPermissionMode: mission.toolPermissionMode,
           modelOverride: mission.modelOverride ?? null,
           capabilities,
         }),
       )
       .digest("hex");
+  };
 
-  const missionCapabilityIds = async (mission: Mission): Promise<readonly string[]> => {
+  const missionCapabilityIds = async (
+    mission: Mission,
+    scope = createIdentityReadScope(mission),
+  ): Promise<readonly string[]> => {
     let resourcesPromise: Promise<ReadonlyMap<string, PragmaResource>> | undefined;
     const projectResources = async (): Promise<ReadonlyMap<string, PragmaResource>> =>
-      await (resourcesPromise ??= options.project
+      await (resourcesPromise ??= scope.project
         .getRevision(mission.project.revision)
         .then(
           (snapshot) =>
@@ -1855,11 +1927,28 @@ export function createMissionRunner(options: {
 
   const capabilityEnvironmentIdentity = async (
     mission: Mission,
+    scope = createIdentityReadScope(mission),
   ): Promise<ResolvedCapabilityEnvironment[]> => {
     const active = await Promise.all(
-      (await missionCapabilityIds(mission)).map(async (capabilityId) => {
+      (await missionCapabilityIds(mission, scope)).map(async (capabilityId) => {
+        const activeStartedAt = performance.now();
         const capability = await options.capabilityStore.resolveActive(capabilityId);
+        logMissionPhase(
+          scope.logger,
+          mission.id,
+          "capability_active_read",
+          activeStartedAt,
+          activeStartedAt,
+        );
+        const credentialsStartedAt = performance.now();
         const credentials = await options.capabilityCredentials.fingerprint(capability.manifest.id);
+        logMissionPhase(
+          scope.logger,
+          mission.id,
+          "capability_credentials_fingerprint",
+          credentialsStartedAt,
+          credentialsStartedAt,
+        );
         return {
           capabilityId: capability.manifest.id,
           resolvedRevision: capability.manifest.latestRevision,
@@ -1897,20 +1986,21 @@ export function createMissionRunner(options: {
   const compileMissionExecutorWithStableCapabilities = async (
     mission: Mission,
     runtimes: RuntimeResolver,
+    scope = createIdentityReadScope(mission),
   ): Promise<{
     readonly compiled: CompiledResource<InvocableResource>;
     readonly capabilities: ResolvedCapabilityEnvironment[];
     readonly identity: string;
   }> => {
     for (let attempt = 0; attempt < 3; attempt += 1) {
-      const before = await capabilityEnvironmentIdentity(mission);
-      const compiled = await compileMissionExecutor(mission, runtimes);
-      const after = await capabilityEnvironmentIdentity(mission);
+      const before = await capabilityEnvironmentIdentity(mission, scope);
+      const compiled = await compileMissionExecutor(mission, runtimes, scope.project);
+      const after = await capabilityEnvironmentIdentity(mission, scope);
       if (JSON.stringify(before) === JSON.stringify(after)) {
         return {
           compiled,
           capabilities: after,
-          identity: await compilationIdentity(mission, after),
+          identity: await compilationIdentity(mission, after, scope),
         };
       }
     }
@@ -2253,6 +2343,7 @@ export function createMissionRunner(options: {
       releaseCheckpoint = resolve;
     });
     let settlementKind: "terminal" | "checkpointed" = "terminal";
+    let terminalPublishedAt: number | undefined;
     let terminalInvalidationHasUserVisibleOutput = false;
     const settlement = observeMissionExecution(
       options.missions,
@@ -2270,6 +2361,7 @@ export function createMissionRunner(options: {
         // Core already committed the terminal fact. A rebuildable Mission
         // projection must not hold the UI's status notification hostage.
         if (lifecycleService.active(missionId)?.handle === input.handle) {
+          terminalPublishedAt = performance.now();
           statusService.publish(missionId, audience, {
             id: input.handle.executionId,
             status: terminal.status,
@@ -2409,6 +2501,13 @@ export function createMissionRunner(options: {
             { error, missionId, executionId: input.handle.executionId },
           );
         }
+        if (terminalPublishedAt !== undefined)
+          logger.info("mission.observer_settled", "Mission observer cleanup completed", {
+            missionId,
+            executionId: input.handle.executionId,
+            requestId: input.inputMessageId,
+            elapsedMs: performance.now() - terminalPublishedAt,
+          });
       });
     const activeExecution = {
       handle: input.handle,
@@ -2909,6 +3008,9 @@ export function createMissionRunner(options: {
     readonly requestedAt: string;
   }): Promise<MissionMessageApplicationResult> => {
     const acceptedAt = performance.now();
+    const requestLogger = logger.child({
+      scope: { missionId: input.id, requestId: input.requestId },
+    });
     logger.info("mission.message_accepted", "Mission request accepted", {
       missionId: input.id,
       requestId: input.requestId,
@@ -2917,11 +3019,34 @@ export function createMissionRunner(options: {
     const capacityCheckStartedAt = performance.now();
     await (options.assertStorageWriteAllowed?.() ??
       assertStorageWriteAllowed(new PragmaPaths({ pragmaHome: options.pragmaHome })));
-    logMissionPhase(logger, input.id, "storage_capacity_check", capacityCheckStartedAt, acceptedAt);
+    logMissionPhase(
+      requestLogger,
+      input.id,
+      "storage_capacity_check",
+      capacityCheckStartedAt,
+      acceptedAt,
+    );
     const missionLoadStartedAt = performance.now();
+    let phaseReadStartedAt = performance.now();
     let mission = await options.missions.get(input.id);
-    await awaitTerminalLifecycleSettlement(mission);
-    mission = await options.missions.get(input.id);
+    logMissionPhase(
+      requestLogger,
+      input.id,
+      "mission_read_initial",
+      phaseReadStartedAt,
+      acceptedAt,
+    );
+    if (await awaitTerminalLifecycleSettlement(mission)) {
+      phaseReadStartedAt = performance.now();
+      mission = await options.missions.get(input.id);
+      logMissionPhase(
+        logger,
+        input.id,
+        "mission_read_after_settlement",
+        phaseReadStartedAt,
+        acceptedAt,
+      );
+    }
     const contextMountsFingerprint = missionContextMountsFingerprint(mission);
     if (missionContextMountsNeedSuccessor(mission, contextMountsFingerprint)) {
       sessionService.invalidateContextBindings(mission.id);
@@ -2945,16 +3070,32 @@ export function createMissionRunner(options: {
         );
       }
     }
+    const readinessStartedAt = performance.now();
     await options.assertExecutorReady?.(mission.executor.ref);
+    logMissionPhase(
+      requestLogger,
+      mission.id,
+      "executor_readiness",
+      readinessStartedAt,
+      acceptedAt,
+    );
     if (mission.executor.kind === "flow") {
       throw new Error("Flow missions accept input through workflow steps, not chat messages.");
     }
     if (mission.lifecycleStatus !== "active") {
       throw new Error("Reopen this mission before sending another message.");
     }
+    const activityStartedAt = performance.now();
     await notifyMissionActivity(mission);
     logMissionPhase(
-      logger,
+      requestLogger,
+      mission.id,
+      "activity_notification",
+      activityStartedAt,
+      acceptedAt,
+    );
+    logMissionPhase(
+      requestLogger,
       mission.id,
       "mission_load_and_executor_ready",
       missionLoadStartedAt,
@@ -2962,14 +3103,35 @@ export function createMissionRunner(options: {
     );
     const executionContextStartedAt = performance.now();
     const { app, runtimes: baseRuntimes } = await executionContext(mission);
+    const rootContextStartedAt = performance.now();
     const rootContext = await readMissionRootContext(mission);
-    const runtimes = withMissionRuntimeBinding(baseRuntimes, rootContext);
-    logMissionPhase(logger, mission.id, "execution_context", executionContextStartedAt, acceptedAt);
-    const compilationIdentityStartedAt = performance.now();
-    let desiredCapabilities = await capabilityEnvironmentIdentity(mission);
-    let desiredCompilationIdentity = await compilationIdentity(mission, desiredCapabilities);
     logMissionPhase(
-      logger,
+      requestLogger,
+      mission.id,
+      "root_context_read",
+      rootContextStartedAt,
+      acceptedAt,
+    );
+    const bindingStartedAt = performance.now();
+    const runtimes = withMissionRuntimeBinding(baseRuntimes, rootContext);
+    logMissionPhase(requestLogger, mission.id, "runtime_binding", bindingStartedAt, acceptedAt);
+    logMissionPhase(
+      requestLogger,
+      mission.id,
+      "execution_context",
+      executionContextStartedAt,
+      acceptedAt,
+    );
+    const compilationIdentityStartedAt = performance.now();
+    const identityScope = createIdentityReadScope(mission, requestLogger);
+    let desiredCapabilities = await capabilityEnvironmentIdentity(mission, identityScope);
+    let desiredCompilationIdentity = await compilationIdentity(
+      mission,
+      desiredCapabilities,
+      identityScope,
+    );
+    logMissionPhase(
+      requestLogger,
       mission.id,
       "compilation_identity",
       compilationIdentityStartedAt,
@@ -2985,6 +3147,7 @@ export function createMissionRunner(options: {
       const stableCompilation = await compileMissionExecutorWithStableCapabilities(
         mission,
         runtimes,
+        identityScope,
       );
       compiled = stableCompilation.compiled;
       desiredCapabilities = stableCompilation.capabilities;
@@ -2995,9 +3158,16 @@ export function createMissionRunner(options: {
       (mission.execution?.resolvedCapabilities === undefined ||
         JSON.stringify(mission.execution.resolvedCapabilities) !==
           JSON.stringify(desiredCapabilities));
-    logMissionPhase(logger, mission.id, "default_agent_compile", phaseStartedAt, acceptedAt, {
-      cacheHit: compilationCacheHit,
-    });
+    logMissionPhase(
+      requestLogger,
+      mission.id,
+      "default_agent_compile",
+      phaseStartedAt,
+      acceptedAt,
+      {
+        cacheHit: compilationCacheHit,
+      },
+    );
     const modelSelection = toRuntimeModelSelection(mission.modelOverride);
     if (mission.modelOverride !== undefined && compiled !== undefined) {
       phaseStartedAt = performance.now();
@@ -3104,7 +3274,7 @@ export function createMissionRunner(options: {
         });
       }
     }
-    logMissionPhase(logger, mission.id, "expert_session_open", phaseStartedAt, acceptedAt, {
+    logMissionPhase(requestLogger, mission.id, "expert_session_open", phaseStartedAt, acceptedAt, {
       cacheHit: sessionCacheHit,
     });
     sessionService.setSession(mission.id, session);
@@ -3120,7 +3290,7 @@ export function createMissionRunner(options: {
       ...(promptAttachments.length === 0 ? {} : { attachments: promptAttachments }),
       ...(promptModelSelection === undefined ? {} : { modelSelection: promptModelSelection }),
     });
-    logMissionPhase(logger, mission.id, "expert_session_prompt", phaseStartedAt, acceptedAt);
+    logMissionPhase(requestLogger, mission.id, "expert_session_prompt", phaseStartedAt, acceptedAt);
     await publishPromptQueue(mission);
     // Core owns acceptance and idempotency. Project the user message only
     // after Core accepts it so a rejected strict steer cannot leave an orphan
@@ -3199,24 +3369,27 @@ export function createMissionRunner(options: {
     },
   ): Promise<MissionMessageApplicationResult> => {
     const requestedAt = input.requestedAt ?? new Date().toISOString();
-    return await withMissionPromptAdmission(input.id, () =>
-      withMissionController(input.id, async () => {
-        const mission = await options.missions.get(input.id);
-        // Inbox sends can precede Desktop's attached-run preparation. Establish
-        // the persisted initial prompt inside this same admission, without
-        // waiting for a startRun reservation that may be queued behind us.
-        // Branches deliberately start with the user's new message instead.
-        if (
-          input.mode !== "steer" &&
-          mission.lifecycleStatus === "active" &&
-          mission.executor.kind !== "flow" &&
-          mission.execution === undefined &&
-          mission.branch === undefined
-        ) {
-          await runMission(mission.id, lifecycleService.runGeneration(mission.id));
-        }
-        return await applyMissionMessage({ ...input, requestedAt });
-      }),
+    return await withMissionPromptAdmission(
+      input.id,
+      () =>
+        withMissionController(input.id, async () => {
+          const mission = await options.missions.get(input.id);
+          // Inbox sends can precede Desktop's attached-run preparation. Establish
+          // the persisted initial prompt inside this same admission, without
+          // waiting for a startRun reservation that may be queued behind us.
+          // Branches deliberately start with the user's new message instead.
+          if (
+            input.mode !== "steer" &&
+            mission.lifecycleStatus === "active" &&
+            mission.executor.kind !== "flow" &&
+            mission.execution === undefined &&
+            mission.branch === undefined
+          ) {
+            await runMission(mission.id, lifecycleService.runGeneration(mission.id));
+          }
+          return await applyMissionMessage({ ...input, requestedAt });
+        }),
+      input.requestId,
     );
   };
 
@@ -3607,7 +3780,9 @@ export function createMissionRunner(options: {
     if (mission.executor.kind === "flow") return undefined;
     const rootContext = await readMissionRootContext(mission);
     if (rootContext === undefined) return undefined;
-    const { runtimes } = await executionContext(mission);
+    // Display inspection needs routing, not a new execution app or host mounts.
+    // In particular, a read racing owner release must not recreate that cache.
+    const runtimes = runtimeResolverForToolPermissionMode(mission.toolPermissionMode);
     const resolved = await runtimes
       .resolve({
         binding: rootContext.runtime,
@@ -3756,9 +3931,27 @@ export function createMissionRunner(options: {
     return { outcome: "compacted", contextWindow: state };
   };
 
-  const getChatPage = async (
+  const getChatPage = (
     input: MissionChatPageQuery,
     audience: MissionSurfaceAudience = "user",
+  ): Promise<MissionChatPage> =>
+    chatService.read(
+      input.id,
+      audience,
+      "getChatPage",
+      [input.beforeCursor ?? null, input.limit],
+      (assertCurrent) =>
+        withStorageDiagnostics(
+          { family: "mission-display", ownerId: input.id, operation: "history" },
+          () => getChatPageUnmerged(input, audience, assertCurrent),
+          logger,
+        ),
+    );
+
+  const getChatPageUnmerged = async (
+    input: MissionChatPageQuery,
+    audience: MissionSurfaceAudience = "user",
+    assertReadCurrent: () => void = () => undefined,
   ): Promise<MissionChatPage> => {
     for (let attempt = 0; attempt < 3; attempt += 1) {
       const startedAt = performance.now();
@@ -3842,6 +4035,7 @@ export function createMissionRunner(options: {
           };
         },
       );
+      assertReadCurrent();
       const uniqueSyncIssues = [
         ...new Map(syncIssues.map((issue) => [issue.section, issue])).values(),
       ];
@@ -3900,14 +4094,28 @@ export function createMissionRunner(options: {
     throw new Error("Mission chat page read exhausted its attempts.");
   };
 
-  const getConversationState = async (
+  const getConversationState = (
     id: string,
     audience: MissionSurfaceAudience = "user",
+  ): Promise<MissionConversationState> =>
+    chatService.read(id, audience, "getConversationState", null, (assertCurrent) =>
+      withStorageDiagnostics(
+        { family: "mission-display", ownerId: id, operation: "control" },
+        () => getConversationStateUnmerged(id, audience, assertCurrent),
+        logger,
+      ),
+    );
+
+  const getConversationStateUnmerged = async (
+    id: string,
+    audience: MissionSurfaceAudience = "user",
+    assertReadCurrent: () => void = () => undefined,
   ): Promise<MissionConversationState> => {
     const startedAt = performance.now();
     // A read must not borrow a patch revision emitted after it began.
     const stateRevision = chatService.revision(id);
     const latestMission = await options.missions.get(id);
+    assertReadCurrent();
     if (audience === "user" && !isUserFacingMissionOrigin(latestMission.origin)) {
       throw new Error(`Mission ${latestMission.id} is not available on the Mission surface.`);
     }
@@ -3915,6 +4123,7 @@ export function createMissionRunner(options: {
       latestMission.execution === undefined
         ? undefined
         : await executionStore.get(latestMission.execution.id).catch(() => undefined);
+    assertReadCurrent();
     const persistedTerminalStatus =
       persistedExecution !== undefined &&
       isMissionTerminalExecutionStatus(persistedExecution.status)
@@ -3934,6 +4143,7 @@ export function createMissionRunner(options: {
         // Execution events are authoritative. The observer cache can briefly contain the empty
         // seed snapshot after another path has already projected the Mission as waiting.
         pendingInteractions = [...(await listMissionPendingHumanInteractions(latestMission))];
+        assertReadCurrent();
         if (latestMission.execution !== undefined) {
           pendingHumanInteractionsByMission.set(id, {
             executionId: latestMission.execution.id,
@@ -3968,11 +4178,10 @@ export function createMissionRunner(options: {
     const sessionId = session?.sessionId ?? latestMission.execution?.sessionId;
     let sessionRecord: Awaited<ReturnType<typeof expertSessionStore.get>>;
     if (sessionId !== undefined) {
-      [sessionRecord, promptQueue, sessionEvents] = await Promise.all([
-        expertSessionStore.get(sessionId),
-        expertSessionStore.listPrompts(sessionId),
-        expertSessionStore.listEvents(sessionId),
-      ]);
+      const snapshot = await expertSessionStore.readSnapshot(sessionId);
+      sessionRecord = snapshot?.session;
+      promptQueue = snapshot?.prompts ?? [];
+      sessionEvents = snapshot?.events ?? [];
     }
     const pendingPrompts = promptQueue.filter(
       (prompt) =>
@@ -4091,6 +4300,7 @@ export function createMissionRunner(options: {
         finalExecutionState !== undefined &&
         isMissionTerminalExecutionStatus(finalExecutionState.status)
       ) {
+        assertReadCurrent();
         effectiveExecutionStatus =
           finalExecutionState.status === "interrupted" ? "cancelled" : finalExecutionState.status;
         projectedExecutionActive = false;
@@ -4217,11 +4427,24 @@ export function createMissionRunner(options: {
     return result;
   };
 
-  const getContextWindowSnapshot = async (
+  const getContextWindowSnapshot = (
+    id: string,
+    audience: MissionSurfaceAudience = "user",
+  ): Promise<MissionContextWindowSnapshot> =>
+    chatService.read(id, audience, "getContextWindowSnapshot", null, () =>
+      withStorageDiagnostics(
+        { family: "mission-display", ownerId: id, operation: "context" },
+        () => getContextWindowSnapshotUnmerged(id, audience),
+        logger,
+      ),
+    );
+
+  const getContextWindowSnapshotUnmerged = async (
     id: string,
     audience: MissionSurfaceAudience = "user",
   ): Promise<MissionContextWindowSnapshot> => {
     const startedAt = performance.now();
+    const revision = chatService.revision(id);
     const mission = await options.missions.get(id);
     if (audience === "user" && !isUserFacingMissionOrigin(mission.origin)) {
       throw new Error(`Mission ${mission.id} is not available on the Mission surface.`);
@@ -4235,7 +4458,7 @@ export function createMissionRunner(options: {
     }
     const result: MissionContextWindowSnapshot = {
       missionId: id,
-      revision: chatService.revision(id),
+      revision,
       ...(contextWindow === undefined ? {} : { contextWindow }),
       ...(unavailable ? { syncIssues: [missionChatSyncIssue("context_window")] } : {}),
     };
@@ -5217,9 +5440,14 @@ export function createMissionRunner(options: {
     readonly overlayRevision: number;
   }> => {
     const t0 = performance.now();
+    let phaseReadStartedAt = performance.now();
     let mission = await options.missions.get(input.id);
-    await awaitTerminalLifecycleSettlement(mission);
-    mission = await options.missions.get(input.id);
+    logMissionPhase(logger, input.id, "mission_read_initial", phaseReadStartedAt, t0);
+    if (await awaitTerminalLifecycleSettlement(mission)) {
+      phaseReadStartedAt = performance.now();
+      mission = await options.missions.get(input.id);
+      logMissionPhase(logger, input.id, "mission_read_after_settlement", phaseReadStartedAt, t0);
+    }
     const { projection, cacheHit } = await loadWorkProjection(mission);
     const durableEntries = projection.entriesByRecordId.get(input.recordId);
     if (durableEntries === undefined) {
@@ -5786,6 +6014,7 @@ export function createMissionRunner(options: {
       return await forceInterruptMission(id, expectedExecutionId);
     },
     async stopLocalController(id) {
+      chatService.clearReads(id);
       lifecycleService.markLeaseLost(id);
       const current = lifecycleService.active(id);
       const session = sessionService.session(id);
@@ -5882,6 +6111,7 @@ export function createMissionRunner(options: {
         // Mission fence are released. A racing send then reacquires a fresh
         // guard and resumes the same durable Session.
         await releaseOwner();
+        chatService.clearReads(id);
         logger.info(
           "mission.idle_resources_released",
           "Idle Mission transient resources released",

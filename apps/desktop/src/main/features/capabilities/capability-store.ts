@@ -1,5 +1,10 @@
+import {
+  readStorageFile as readFile,
+  writeStorageFile as writeFile,
+  replaceStorageFile as rename,
+} from "@pragma/core";
 import { createHash, randomUUID } from "node:crypto";
-import { lstat, mkdir, readFile, readdir, rename, rm, writeFile } from "node:fs/promises";
+import { lstat, mkdir, readdir, rm } from "node:fs/promises";
 import { extname, join, relative, resolve, sep } from "node:path";
 
 import { unzipSync } from "fflate";

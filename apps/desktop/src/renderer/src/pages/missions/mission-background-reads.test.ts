@@ -1,0 +1,180 @@
+import { expect, it, vi } from "vitest";
+import type {
+  MissionConversationState,
+  MissionContextWindowSnapshot,
+} from "../../../../shared/contracts/index.ts";
+import { createMissionBackgroundReads, createMissionRefresh } from "./mission-background-reads.ts";
+import {
+  applyMissionChatPatches,
+  createMissionConversationBase,
+} from "./mission-conversation-model.ts";
+import { mergeContextWindow } from "./use-mission-conversation.ts";
+
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((done) => {
+    resolve = done;
+  });
+  return { promise, resolve };
+}
+const state: MissionConversationState = {
+  missionId: "mission",
+  revision: 1,
+  pendingInteractions: [],
+  deliveries: [],
+  hiddenEntryIds: [],
+};
+const context: MissionContextWindowSnapshot = { missionId: "mission", revision: 1 };
+
+it("hydrates Context independently after a stale in-flight read while live output is already applied", async () => {
+  const gate = deferred<MissionContextWindowSnapshot>();
+  let snapshot = createMissionConversationBase("mission");
+  const getMissionContextWindow = vi
+    .fn()
+    .mockReturnValueOnce(gate.promise)
+    .mockResolvedValue({
+      missionId: "mission",
+      revision: 1,
+      contextWindow: { supportsInspection: true, supportsCompaction: false, canCompact: false },
+    });
+  const reads = createMissionBackgroundReads({
+    api: { getMissionConversationState: vi.fn().mockResolvedValue(state), getMissionContextWindow },
+    missionId: "mission",
+    onControl: vi.fn(),
+    onContext: (value) => {
+      snapshot = mergeContextWindow(snapshot, value)!;
+    },
+    onControlError: vi.fn(),
+    onContextError: vi.fn(),
+  });
+  const pending = reads.refreshContext();
+  snapshot = applyMissionChatPatches(
+    snapshot,
+    [
+      {
+        type: "context-window.update",
+        usage: {
+          usedTokens: 1,
+          contextWindowTokens: 100,
+          percent: 1,
+          measurement: "reported",
+          observedAt: "2026-10-01T00:00:00.000Z",
+        },
+      },
+      {
+        type: "entry.upsert",
+        entry: {
+          id: "answer",
+          kind: "assistant",
+          content: "ok",
+          streaming: true,
+          createdAt: "2026-10-01T00:00:00.000Z",
+        },
+      },
+    ],
+    1,
+  )!;
+  void reads.refreshContext();
+  expect(snapshot.entries[0]).toMatchObject({ content: "ok" });
+  expect(snapshot.contextWindow).toBeUndefined();
+  gate.resolve({ missionId: "mission", revision: 0 });
+  await pending;
+  await vi.waitFor(() => expect(snapshot.contextWindow?.supportsInspection).toBe(true));
+  expect(getMissionContextWindow).toHaveBeenCalledTimes(2);
+  expect(snapshot.entries[0]).toMatchObject({ content: "ok" });
+  reads.close();
+});
+
+it("applies control before a slow Context, coalesces each burst, and discards late results on close", async () => {
+  const controlGate = deferred<MissionConversationState>();
+  const contextGate = deferred<MissionContextWindowSnapshot>();
+  const getMissionConversationState = vi
+    .fn()
+    .mockReturnValueOnce(controlGate.promise)
+    .mockResolvedValue(state);
+  const getMissionContextWindow = vi.fn().mockReturnValue(contextGate.promise);
+  const onControl = vi.fn();
+  const onContext = vi.fn();
+  const reads = createMissionBackgroundReads({
+    api: { getMissionConversationState, getMissionContextWindow },
+    missionId: "mission",
+    onControl,
+    onContext,
+    onControlError: vi.fn(),
+    onContextError: vi.fn(),
+  });
+  const controlReading = reads.refreshControl();
+  const contextReading = reads.refreshContext();
+  for (let index = 0; index < 10; index++) {
+    void reads.refreshControl();
+    void reads.refreshContext();
+  }
+  expect(getMissionConversationState).toHaveBeenCalledTimes(1);
+  controlGate.resolve(state);
+  await controlReading;
+  await Promise.resolve();
+  expect(onControl).toHaveBeenCalledWith(state);
+  expect(getMissionConversationState).toHaveBeenCalledTimes(2);
+  expect(onContext).not.toHaveBeenCalled();
+  reads.close();
+  contextGate.resolve(context);
+  await contextReading;
+  expect(onContext).not.toHaveBeenCalled();
+  expect(getMissionContextWindow).toHaveBeenCalledTimes(1);
+});
+
+it.each(["control", "context"] as const)(
+  "isolates a %s failure and retries only that reader",
+  async (kind) => {
+    const error = new Error("read unavailable");
+    const getMissionConversationState = vi.fn().mockResolvedValue(state);
+    const getMissionContextWindow = vi.fn().mockResolvedValue(context);
+    const failedRead = kind === "control" ? getMissionConversationState : getMissionContextWindow;
+    const otherRead = kind === "control" ? getMissionContextWindow : getMissionConversationState;
+    failedRead.mockRejectedValueOnce(error);
+    const onContext = vi.fn();
+    const onControl = vi.fn();
+    const onControlError = vi.fn();
+    const onContextError = vi.fn();
+    const reads = createMissionBackgroundReads({
+      api: { getMissionConversationState, getMissionContextWindow },
+      missionId: "mission",
+      onControl,
+      onContext,
+      onControlError,
+      onContextError,
+    });
+    await Promise.all([reads.refreshControl(), reads.refreshContext()]);
+    expect(kind === "control" ? onControlError : onContextError).toHaveBeenCalledWith(error);
+    expect(kind === "control" ? onContext : onControl).toHaveBeenCalledWith(
+      kind === "control" ? context : state,
+    );
+    await (kind === "control" ? reads.refreshControl() : reads.refreshContext());
+    expect(kind === "control" ? onControl : onContext).toHaveBeenCalledWith(
+      kind === "control" ? state : context,
+    );
+    expect(otherRead).toHaveBeenCalledTimes(1);
+  },
+);
+
+it("shares a slow history read and lets action callers await its one dirty follow-up", async () => {
+  const first = deferred<void>();
+  const next = deferred<void>();
+  const read = vi.fn().mockReturnValueOnce(first.promise).mockReturnValueOnce(next.promise);
+  const refresh = createMissionRefresh(read, () => false);
+  const initial = refresh();
+  for (let i = 0; i < 10; i++) expect(refresh()).toBe(initial);
+  expect(read).toHaveBeenCalledTimes(1);
+  let settled = false;
+  void initial.then(() => {
+    settled = true;
+  });
+  first.resolve();
+  await Promise.resolve();
+  expect(read).toHaveBeenCalledTimes(2);
+  expect(settled).toBe(false);
+  next.resolve();
+  await initial;
+  expect(settled).toBe(true);
+  expect(read).toHaveBeenCalledTimes(2);
+});

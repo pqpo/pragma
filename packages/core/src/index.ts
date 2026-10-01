@@ -103,6 +103,7 @@ export * from "./tools/execution-tools.ts";
 export * from "./tools/tool-resolver.ts";
 export * from "./storage/pragma-paths.ts";
 export * from "./storage/file-lock.ts";
+export * from "./storage/storage-diagnostics.ts";
 export * from "./storage/content-addressed-store.ts";
 export * from "./storage/storage-policy.ts";
 export * from "./storage/deletion-transaction.ts";

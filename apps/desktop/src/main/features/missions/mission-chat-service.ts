@@ -14,6 +14,12 @@ export interface MissionLiveChatProjection {
 
 export class MissionChatService<TLiveChat extends MissionLiveChatProjection> {
   readonly #streamId = randomUUID();
+  readonly #reads = new Map<
+    string,
+    { missionId: string; promise: Promise<unknown>; coalesced: number }
+  >();
+  readonly #readEpochs = new Map<string, number>();
+  #nextReadEpoch = 0;
   readonly #listeners = new Set<(notification: MissionChatNotification) => void>();
   readonly #revisions = new Map<string, number>();
   readonly #invalidationRevisions = new Map<string, number>();
@@ -26,7 +32,69 @@ export class MissionChatService<TLiveChat extends MissionLiveChatProjection> {
       readonly error: unknown;
       readonly missionId: string;
     }) => void,
+    private readonly onReadCompleted?:
+      | ((input: {
+          missionId: string;
+          kind: string;
+          audience: MissionSurfaceAudience;
+          coalesced: number;
+          elapsedMs: number;
+        }) => void)
+      | undefined,
   ) {}
+
+  read<T>(
+    missionId: string,
+    audience: MissionSurfaceAudience,
+    kind: string,
+    query: unknown,
+    load: (assertCurrent: () => void) => Promise<T>,
+  ): Promise<T> {
+    const epoch = this.#readEpochs.get(missionId) ?? ++this.#nextReadEpoch;
+    this.#readEpochs.set(missionId, epoch);
+    const key = JSON.stringify([missionId, audience, kind, query, epoch, this.revision(missionId)]);
+    const existing = this.#reads.get(key);
+    if (existing !== undefined) {
+      existing.coalesced++;
+      return existing.promise as Promise<T>;
+    }
+    const startedAt = performance.now();
+    const assertCurrent = () => {
+      if (this.#readEpochs.get(missionId) !== epoch)
+        throw new Error("Mission read was superseded by resource release.");
+    };
+    const promise = Promise.resolve()
+      .then(() => {
+        assertCurrent();
+        return load(assertCurrent);
+      })
+      .then((value) => {
+        assertCurrent();
+        return value;
+      })
+      .finally(() => {
+        const pendingRead = this.#reads.get(key);
+        try {
+          this.onReadCompleted?.({
+            missionId,
+            kind,
+            audience,
+            coalesced: pendingRead?.coalesced ?? 0,
+            elapsedMs: performance.now() - startedAt,
+          });
+        } catch {
+          /* Diagnostics must not affect reads. */
+        }
+        if (pendingRead?.promise === promise) this.#reads.delete(key);
+        if (
+          this.#readEpochs.get(missionId) === epoch &&
+          ![...this.#reads.values()].some((read) => read.missionId === missionId)
+        )
+          this.#readEpochs.delete(missionId);
+      });
+    this.#reads.set(key, { missionId, promise, coalesced: 0 });
+    return promise;
+  }
 
   revision(missionId: string): number {
     return this.#revisions.get(missionId) ?? 0;
@@ -100,7 +168,15 @@ export class MissionChatService<TLiveChat extends MissionLiveChatProjection> {
     return () => this.#listeners.delete(listener);
   }
 
+  clearReads(missionId: string): void {
+    this.#readEpochs.delete(missionId);
+    for (const [key, read] of this.#reads) {
+      if (read.missionId === missionId) this.#reads.delete(key);
+    }
+  }
+
   async clear(missionId: string): Promise<void> {
+    this.clearReads(missionId);
     const live = this.#liveChats.get(missionId);
     if (live !== undefined) await live.close();
     this.#liveChats.delete(missionId);

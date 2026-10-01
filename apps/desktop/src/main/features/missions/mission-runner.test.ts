@@ -2988,6 +2988,7 @@ describe("MissionRunner", { timeout: 30_000 }, () => {
       compactContext,
     });
     const runtimes = createStaticRuntimeResolver({ runtimes: [runtime], defaultRuntimeId: "fake" });
+    const hostContextStores = vi.fn(async () => []);
     const createRunner = () =>
       createMissionRunner({
         missions,
@@ -2997,6 +2998,7 @@ describe("MissionRunner", { timeout: 30_000 }, () => {
         capabilitiesPath: join(root, "capabilities"),
         pragmaHome: join(root, "state"),
         runtimes,
+        hostContextStores,
       });
     const runner = createRunner();
     const chatUpdates: MissionChatUpdate[] = [];
@@ -3071,12 +3073,14 @@ describe("MissionRunner", { timeout: 30_000 }, () => {
       percent: 5,
     });
 
+    hostContextStores.mockClear();
     await expect(createRunner().getContextWindow(mission.id)).resolves.toMatchObject({
       contextWindow: {
         canCompact: true,
         usage: { usedTokens: 10_000, contextWindowTokens: 200_000, percent: 5 },
       },
     });
+    expect(hostContextStores).not.toHaveBeenCalled();
 
     const unavailableRuntimes: RuntimeResolver = {
       getDefaultRuntimeId: async () => "fake",
@@ -4889,10 +4893,20 @@ describe("MissionRunner", { timeout: 30_000 }, () => {
       return await getMission(id);
     });
 
+    let terminalInvalidated = false;
+    const unsubscribe = runner.subscribeChat(({ update }) => {
+      if (update.missionId === mission.id && update.kind === "invalidate")
+        terminalInvalidated = true;
+    });
     const racedSnapshot = readMissionConversationSnapshot(runner, mission.id);
     await finalMissionReadEntered;
     finishTurn();
     try {
+      // Reads before invalidation intentionally share the stalled in-flight page.
+      // Once terminal history invalidates it, a new read must use a new watermark.
+      await vi.waitFor(() => expect(terminalInvalidated).toBe(true), {
+        timeout: settlementTimeoutMs,
+      });
       await vi.waitFor(
         async () => {
           const settled = await readMissionConversationSnapshot(runner, mission.id);
@@ -4911,6 +4925,7 @@ describe("MissionRunner", { timeout: 30_000 }, () => {
       );
     } finally {
       releaseFinalMissionRead();
+      unsubscribe();
     }
 
     await expect(racedSnapshot).resolves.toMatchObject({
@@ -5655,6 +5670,19 @@ describe("MissionRunner", { timeout: 30_000 }, () => {
             },
           });
           expect(startTurn).toHaveBeenCalledOnce();
+          // The fixture deliberately retains an unresolved delivery. Cancel its synthetic
+          // queue only after asserting recovery, so teardown can release the owner.
+          const sessionStore = createFileExpertSessionStore({
+            pragmaHome: join(root, "state"),
+            executions: createFileExecutionStore({ pragmaHome: join(root, "state") }),
+          });
+          await sessionStore.transact(sessionId, ({ session, prompts }) => ({
+            session: { ...session, queuedRequestIds: [] },
+            prompts: prompts.map((prompt) =>
+              prompt.requestId === requestId ? { ...prompt, status: "cancelled" as const } : prompt,
+            ),
+            result: undefined,
+          }));
         }
       } finally {
         finishFirst();

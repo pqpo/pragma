@@ -1,6 +1,13 @@
 import { randomUUID } from "node:crypto";
-import { mkdir, open, readFile, readdir, rename, rm, stat } from "node:fs/promises";
+import { mkdir, open, readdir, rename, rm, stat } from "node:fs/promises";
 import { basename, dirname, join } from "node:path";
+
+import {
+  recordStoragePhase,
+  measureStoragePhase,
+  readStorageFile as readFile,
+  writeStorageHandle,
+} from "./storage-diagnostics.ts";
 
 interface LocalLockWaiter {
   cancelled: boolean;
@@ -99,10 +106,25 @@ export async function withFileLock<TValue>(
 ): Promise<TValue> {
   const timeoutMs = options.timeoutMs ?? 10_000;
   const startedAt = Date.now();
-  const releaseLocalLock = await acquireLocalLock(lockDir, startedAt, timeoutMs, options.operation);
+  const releaseLocalLock = await measureStoragePhase("lock_local_wait", () =>
+    acquireLocalLock(lockDir, startedAt, timeoutMs, options.operation),
+  );
+  const crossStartedAt = performance.now();
+  let acquired = false;
   try {
-    return await withCrossProcessFileLock(lockDir, operation, options, startedAt);
+    return await withCrossProcessFileLock(
+      lockDir,
+      () => {
+        acquired = true;
+        recordStoragePhase("lock_cross_process_wait", performance.now() - crossStartedAt);
+        return operation();
+      },
+      options,
+      startedAt,
+    );
   } finally {
+    if (!acquired)
+      recordStoragePhase("lock_cross_process_wait", performance.now() - crossStartedAt);
     releaseLocalLock();
   }
 }
@@ -214,7 +236,7 @@ async function publishLock(lockDir: string, options: FileLockOptions): Promise<v
     await mkdir(stagingDir, { mode: 0o700 });
     await options.onPhase?.("staging-created");
     ownerFile = await open(stagingOwnerPath, "wx", 0o600);
-    await ownerFile.writeFile(`${JSON.stringify(owner)}\n`, "utf8");
+    await writeStorageHandle(ownerFile, `${JSON.stringify(owner)}\n`);
     await ownerFile.sync();
     await ownerFile.close();
     ownerFile = undefined;
@@ -544,7 +566,7 @@ async function claimReclaimMarker(lockDir: string, staleMs: number): Promise<boo
   let markerFile: Awaited<ReturnType<typeof open>> | undefined;
   try {
     markerFile = await open(markerPath, "wx", 0o600);
-    await markerFile.writeFile(`${JSON.stringify(marker)}\n`, "utf8");
+    await writeStorageHandle(markerFile, `${JSON.stringify(marker)}\n`);
     await markerFile.sync();
     await markerFile.close();
     return true;

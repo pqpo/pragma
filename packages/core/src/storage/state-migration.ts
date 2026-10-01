@@ -1,5 +1,11 @@
+import {
+  readStorageFile as readFile,
+  writeStorageFile as writeFile,
+  replaceStorageFile as rename,
+  parseStorageJson,
+} from "./storage-diagnostics.ts";
 import { randomUUID } from "node:crypto";
-import { mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
+import { mkdir, rm } from "node:fs/promises";
 import { dirname, join, relative, resolve } from "node:path";
 
 import { z } from "zod";
@@ -253,7 +259,7 @@ async function applyJournal(
 
 async function readJsonIfExists(file: string): Promise<unknown | undefined> {
   try {
-    return JSON.parse(await readFile(file, "utf8")) as unknown;
+    return parseStorageJson(await readFile(file, "utf8")) as unknown;
   } catch (error) {
     if (isNotFound(error)) return undefined;
     throw error;

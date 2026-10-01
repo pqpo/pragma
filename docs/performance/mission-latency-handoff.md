@@ -1,8 +1,13 @@
 # Mission 延迟优化交接
 
-更新时间：2026-10-01，已纳入当天 08:46–08:48 的真实三轮复测。阶段一代码：`ef107172`，评论修复与空闲资源治理：`8bf67bd1`，PR [#347](https://github.com/pqpo/pragma/pull/347)。
-本文件整理当前实现与剩余任务，不代表阶段二、三已实现。阶段二调整为接入、读取与持久化热路径，阶段三调整为 Core 终态、下一轮接入和后台投递收敛。
+更新时间：2026-10-01，已纳入当天 08:46–08:48 与阶段二后 12:12–12:13 的真实三轮复测。阶段一代码：`ef107172`，评论修复与空闲资源治理：`8bf67bd1`，PR [#347](https://github.com/pqpo/pragma/pull/347)。
+本文件整理当前实现与剩余任务。阶段二读取与提交热路径收敛已落地，端到端性能目标未达成；阶段三尚未实现。阶段二调整为接入、读取与持久化热路径，阶段三扩展为耐久接入、容量、Core 终态和后台投递收敛。
 两阶段按实测瓶颈交错推进，不要求先完成全部 SQLite 转换，才能缩短收尾等待。
+
+阶段二后复测：暖轮点击发送到首 token 仍为 **7.18/9.78 秒**，总体性能目标未达成。
+当前消息在准备期误移入排队区已修复；这是展示状态修复，不是实际延迟消除。
+第三阶段扩展到 Inbox/controller 接入、executor readiness 和暖路径容量扫描，保留 Usage/收尾屏障优化。
+数据、关联 ID、计时口径和优先级详见 [真实复测报告](mission-latency-phase-two-live-retest.md)。
 
 ## 当前问题与完成范围
 
@@ -84,29 +89,34 @@ Lease 历史：PR #209 的共享 Local Host run 提取引入了单轮释放语�
 
 ## 阶段二：缩短接入、读取与持久化热路径
 
-目标：先减少暖 Session 请求模型之前的 8–14 秒本地开销和重复读取，再让增量提交成本不随历史增长。
-以减少必经工作和读取次数为先，不以替换存储引擎作为完成标准。
+阶段二实施及可重复基准见[阶段二实施报告](mission-latency-phase-two.md)。本次不更换存储引擎、不升级持久
+Schema；Usage/终态 outbox、容量账本和收尾屏障调整继续归阶段三。
 
-### 交付顺序
+### 已落地
 
-1. 补齐点击/IPC → Inbox 落盘 → owner 获取 → admission → message_accepted 的时间线。
-   拆开 mission_load_and_executor_ready 中的 Mission 读取、terminal settlement、executor readiness、activity 通知；
-   拆开 compilation_identity 中的 Capability、Project Revision、Runtime binding 查询。
-   记录每请求的读/写次数、字节数、缓存/并发合并命中、等待原因及历史规模。
-2. 同时补存储分段计时：锁等待、journal/replay、读取/解析、状态计算、写入/原子替换、handoff 创建；
-   区分 Execution、ExpertSession、Mission controller。阶段三同步测量模型完成后的关键路径，避免遗漏尾部瓶颈。
-3. 优先收敛读取与准备：同一读取范围内复用快照，合并相同的进行中请求，合并 renderer 重复刷新；
-   历史、Context Window 和完整状态加载不阻塞 live delta 与控制 patch。
-   不可变 Revision 的解析/编译可复用；Capability active revision、权限、凭据和 Runtime binding 的变化
-   必须有明确失效依据。不得用长期缓存跳过动态安全校验或构造另一份权威状态。
-4. 去掉普通请求的全量事件/commit 历史读取，采用增量查询、稳定 cursor 和必要索引。
-   先比较最小读取/查询改动的收益；如果文件解析、重放或原子提交仍占主要成本，再按测量排序实施 SQLite。
-   Execution event/commit 是当前优先候选，ExpertSession prompt queue 和 Mission controller 的顺序由分段结果决定。
-5. 涉及存储转换时先写 ADR，定稿 owner 粒度、SQLite 事务、连接/worker 生命周期、删除与跨进程锁协调。
-   复用既有 feed/catalog SQLite 经验；不新增 readiness registry、全局升级 coordinator 或统一缓存总线。
-   按事实归属维护表与索引，不在一个事务里耦合所有 Mission，不新增逐文本 delta 提交。
-6. 每个 owner 首次访问前执行必要迁移；业务代码只读当前 Schema。
-   一个 family 的迁移、恢复、性能和业务回归验证完成后，再切换下一 family。
+1. Renderer 发送、Main IPC、耐久 Inbox、owner ready、命令消费、admission 和准备分段日志通过既有
+   request/command/Execution ID 关联。Mission 读取、settlement、readiness、activity 与编译身份分开计时。
+2. `PRAGMA_STORAGE_DIAGNOSTICS=1` 启用 Execution、ExpertSession、Mission controller 和请求汇总的详细
+   存储诊断，记录锁等待、prepare/replay、读取/JSON 解析、写入/替换与 payload 字节；正常运行保留轻量阶段日志。
+   模型结果、drain/flush、Usage、最终消息、终态、Session active 释放与 observer settlement 补充尾部测量。
+3. 请求局部复用不可变 Project Revision，Capability/系统专家依赖遍历与编译共享该读取；active revision、
+   credentials、权限、当前系统 fingerprint 与 Runtime binding 每次接入重验。编译 miss 继续做前后稳定性检查。
+   apply 接入中无实际 settlement 等待时复用首次 Mission 读取，实际等待后重新读取；capacity await 两侧不复用可变 Mission。
+4. Session 控制读取和队列投影使用一次锁/prepare 的 `readSnapshot`。Main 合并相同进行中展示读取，
+   Renderer 独立刷新历史/control/Context，保留 dirty 重读、乱序规则、终态复查和已响应人工确认过滤。
+5. Execution 正常 commit 复用锁内已读取的 events/commits；崩溃重放保持重新读盘。仍然全量读取、解析和
+   重写历史，未声称普通增量提交已与历史规模无关。
+
+### 尚未达成与下一步
+
+暖 Session 接入额外开销 P95 < 250 ms 尚未通过真实 Pi/Desktop 受控 A/B 验收。存储局部基准不能替代
+冷启动、暖 Mission、暖 Session、收尾期间立即发送和 SDK 首 token 的每组至少 20 次实测。
+保留 settlement/activity/Usage 等等待的现有语义，不通过扣除等待宣布达标。
+
+优化后的真实关键路径满足下列任一条件，再进入存储专项定稿：读取、解析、重放或原子写入贡献至少 30%
+且 P95 超过 100 ms；或十倍历史规模使普通增量提交 P95 增长超过两倍。按 family 贡献排序，接近时优先 Execution。
+下一份方案必须同时定稿 owner、事务、索引/cursor、连接生命周期、删除协调、真实 fixture、备份、转换 journal、
+权威切换和恢复。不能仅凭本地小历史基准未触发门槛排除生产规模瓶颈。
 
 ### 迁移要求
 
@@ -120,21 +130,28 @@ JSON 到 SQLite 属于存储转换，必须明确事务中断后的权威选择�
 
 - 当前版本 no-op、历史迁移、每个 journal 中断点、未来版本拒绝、升级后启动/执行均有测试。
 - 跨进程竞争、takeover fencing、重复提交、断尾恢复、人工确认恢复、删除重放均通过。
-- 在多个历史规模下记录锁等待和提交 P50/P95，确认普通增量操作不再全量解析历史。
+- 在多个历史规模下记录锁等待和提交 P50/P95；本次仍全量解析与重写历史，后续增量存储专项再验收规模独立性。
 - 对比每轮接入与刷新读/写次数、总字节数、相同请求合并率；warm cache 命中必须体现为关键路径缩短。
 - 立即发送下一轮与上轮已完成收尾两种情况分别验收，不能通过人为等待掩盖 admission/settlement 成本。
 - 同配置 Pi 冷启动、暖 Mission、暖 Session 三组实测通过；不能仅用 mock 吞吐替代。
 
-## 阶段三：Core 终态、下一轮接入与后台投递收敛
+## 阶段三：耐久接入、容量、Core 终态与后台投递收敛
 
-目标：同时缩短模型请求结束到 Core 终态的 7–11 秒，以及终态后 observer 收尾的 5–8 秒。
+目标：缩短接入到 dispatch、模型请求结束到 Core 终态，以及 terminal 后 observer 收尾。
+阶段二后后三轮的模型结束→terminal commit 仍为 5.16–8.37 秒，terminal commit→observer 为 4.75–6.53 秒。
 用户接入与可恢复执行只等待必要耐久事实，其余工作由明确 owner 的可重放队列完成。
+
+12:12–12:13 的实测要求先补齐接入瓶颈：Inbox durable 等待 1.23–1.36 秒，
+executor readiness 1.17–1.73 秒，暖轮容量扫描 3.01 秒；admission 锁等待接近零。
+先细分 controller 恢复/提交/handoff 与 Bundle/Project/Runtime readiness，结合真实历史诊断再优化。
+从 Renderer 点击到模型 dispatch 全程验收，不能用 accepted 起点隐藏这些等待。
 
 ### 先确定终态之前与之后的阻塞
 
 - 给 Runtime result、事件泵 drain、eventWriter.flush、Usage preview/record、最终消息与 Invocation 提交、
   Context 持久化、Execution 终态提交、Session active 绑定释放分别计时。
-  当前日志只能确认整体本地尾部慢，尚不能分摊 Usage、文件锁和各次提交的责任。
+  12:12 复测已有 Usage 两段合计 1.44/2.56/4.34 秒、event pump drain 1.69/0.96/1.29 秒；
+  flush 嵌套于 pump，不能重复相加。详细存储诊断未启用，仍需分摊文件锁、账本和各次提交。
 - 记录 terminal_status_published、Mission 投影、Memory/Evidence 投递、历史刷新、归档、observer settlement
   的耗时与依赖。Core 终态之前与之后分别优化，不能只继续提前 UI 通知。
 - 下一轮以必要的 ExpertTurn.settled 和 Runtime 复用条件为屏障；
@@ -163,8 +180,9 @@ JSON 到 SQLite 属于存储转换，必须明确事务中断后的权威选择�
 
 ### 容量账本
 
-- 本次首轮 storage_capacity_check 为 1.55 秒，后两轮约 0.01 ms；容量账本应解决首轮/扫描成本，
-  不能解释或承诺消除暖 Session 的 8–14 秒接入开销。先区分容量扫描与接入前约 9.50 秒盲区。
+- 早期样本只见首轮扫描；阶段二后首轮 2.06 秒、第三轮 3.01 秒，第三轮因快照过期（年龄约 36 秒）
+  重新扫描约 1.08 GB。容量账本提前为暖路径优化优先项，不能再假设扫描只发生在冷启动。
+  扫描与 observer 收尾可能重叠，按实际依赖计关键路径，不把两个区间简单相加。
 - 写入闸门使用事务维护的字节增量/预留和可靠快照，避免普通发送重新扫描完整存储树。
 - 清理、删除、迁移、崩溃恢复均调整账本；计数漂移必须能通过显式 reconciliation 修复。
 - 冷启动无快照、软/硬上限、并发写入及失败回滚须有可验证策略，不得仅取消容量检查。

@@ -1,9 +1,21 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 import { randomUUID } from "node:crypto";
-import { mkdir, open, readFile, readdir, rename, rm, stat, truncate } from "node:fs/promises";
+import { mkdir, open, readdir, rm, stat, truncate } from "node:fs/promises";
 import { dirname, join } from "node:path";
 
-import { isRetryableStorageContentionError, withFileLock } from "@pragma/core";
+import {
+  isRetryableStorageContentionError,
+  withFileLock,
+  withStorageDiagnostics,
+  measureStoragePhase,
+  measureStorageComputation,
+  writeStorageHandle,
+  stringifyStorageJson,
+  readStorageFile as readFile,
+  replaceStorageFile as rename,
+  parseStorageJson,
+  type PragmaLogger,
+} from "@pragma/core";
 import {
   createIntegrationError,
   FencingTokenSchema,
@@ -365,6 +377,7 @@ export interface MissionControllerStore {
 }
 
 export function createMissionControllerStore(options: {
+  readonly logger?: PragmaLogger | undefined;
   readonly missionsPath: string;
   readonly missionPath?: ((missionId: string) => string) | undefined;
   readonly clock?: MissionControlClock;
@@ -412,7 +425,11 @@ export function createMissionControllerStore(options: {
   const checkpoint = async (phase: MissionControllerJournalPhase): Promise<void> =>
     await options.onJournalPhase?.(phase);
   const withAggregateLock = async <T>(missionId: string, operation: () => Promise<T>): Promise<T> =>
-    await withFileLock(lockPath(missionId), operation, { operation: "mission-aggregate" });
+    await withStorageDiagnostics(
+      { family: "mission-controller", ownerId: missionId, operation: "aggregate" },
+      () => withFileLock(lockPath(missionId), operation, { operation: "mission-aggregate" }),
+      options.logger,
+    );
 
   const readState = async (missionId: string): Promise<MissionAggregateState> => {
     const raw = await readJsonIfExists(statePath(missionId));
@@ -425,7 +442,7 @@ export function createMissionControllerStore(options: {
         operations: {},
       });
     }
-    return MissionAggregateStateSchema.parse(raw);
+    return measureStorageComputation("state_compute", () => MissionAggregateStateSchema.parse(raw));
   };
 
   const writeState = async (missionId: string, state: MissionAggregateState): Promise<void> => {
@@ -510,7 +527,7 @@ export function createMissionControllerStore(options: {
       return complete
         .slice(0, -1)
         .split("\n")
-        .map((line) => MissionEventSchema.parse(JSON.parse(line) as unknown));
+        .map((line) => MissionEventSchema.parse(parseStorageJson(line) as unknown));
     } catch (error) {
       if (isNodeError(error, "ENOENT")) return [];
       throw error;
@@ -712,7 +729,9 @@ export function createMissionControllerStore(options: {
     await checkpoint("command-outcome.clear");
   };
 
-  const recoverTransactions = async (missionId: string): Promise<void> => {
+  const recoverTransactions = (missionId: string): Promise<void> =>
+    measureStoragePhase("journal_replay", () => recoverTransactionsUnmeasured(missionId));
+  const recoverTransactionsUnmeasured = async (missionId: string): Promise<void> => {
     await recoverCommandInboxMigration(missionId);
     await recoverRetentionTransaction(missionId);
     await recoverCommandAppendTransaction(missionId);
@@ -1484,18 +1503,33 @@ export function createMissionControllerStore(options: {
           }, commandApplyTimeoutMs);
           timer.unref();
         });
+        options.logger?.info("mission.command_consuming", "Mission owner is consuming a command", {
+          missionId: input.missionId,
+          requestId: selected.request.requestId,
+          commandId: selected.commandId,
+        });
         const application = Promise.resolve().then(async () => {
           if (selected.kind === "steer" || selected.kind === "queue.steer")
             await input.consumer.validateStrictTarget?.({
               command: selected,
               guard: input.guard,
             });
-          return await input.consumer.apply({
-            command: selected,
-            guard: input.guard,
-            signal: abort.signal,
-            deadlineAt,
-          });
+          return await withStorageDiagnostics(
+            {
+              family: "mission-command",
+              ownerId: input.missionId,
+              requestId: selected.request.requestId,
+              operation: "consumer.apply",
+            },
+            () =>
+              input.consumer.apply({
+                command: selected,
+                guard: input.guard,
+                signal: abort.signal,
+                deadlineAt,
+              }),
+            options.logger,
+          );
         });
         // Always observe a late consumer failure after the timeout race has
         // fenced its owner; it must never become an unhandled rejection.
@@ -2181,7 +2215,7 @@ function isStatusEventType(type: string): boolean {
 
 async function readJsonIfExists(path: string): Promise<unknown | undefined> {
   try {
-    return JSON.parse(await readFile(path, "utf8")) as unknown;
+    return parseStorageJson(await readFile(path, "utf8")) as unknown;
   } catch (error) {
     if (isNodeError(error, "ENOENT")) return undefined;
     throw error;
@@ -2237,8 +2271,8 @@ async function appendJsonLine(path: string, value: unknown): Promise<void> {
   await mkdir(dirname(path), { recursive: true, mode: 0o700 });
   const handle = await open(path, "a", 0o600);
   try {
-    await handle.writeFile(`${JSON.stringify(value)}\n`, "utf8");
-    await handle.sync();
+    await writeStorageHandle(handle, `${stringifyStorageJson(value)}\n`);
+    await measureStoragePhase("sync", () => handle.sync());
   } finally {
     await handle.close();
   }
@@ -2249,9 +2283,9 @@ async function writeEventsAtomically(path: string, events: readonly MissionEvent
   const temporary = `${path}.${randomUUID()}.tmp`;
   const handle = await open(temporary, "wx", 0o600);
   try {
-    const contents = events.map((event) => JSON.stringify(event)).join("\n");
-    await handle.writeFile(contents.length === 0 ? "" : `${contents}\n`, "utf8");
-    await handle.sync();
+    const contents = events.map((event) => stringifyStorageJson(event)).join("\n");
+    await writeStorageHandle(handle, contents.length === 0 ? "" : `${contents}\n`);
+    await measureStoragePhase("sync", () => handle.sync());
   } finally {
     await handle.close();
   }
@@ -2263,8 +2297,8 @@ async function writeJsonAtomically(path: string, value: unknown): Promise<void> 
   const temporary = `${path}.${randomUUID()}.tmp`;
   const handle = await open(temporary, "wx", 0o600);
   try {
-    await handle.writeFile(`${JSON.stringify(value, null, 2)}\n`, "utf8");
-    await handle.sync();
+    await writeStorageHandle(handle, `${stringifyStorageJson(value, 2)}\n`);
+    await measureStoragePhase("sync", () => handle.sync());
   } finally {
     await handle.close();
   }

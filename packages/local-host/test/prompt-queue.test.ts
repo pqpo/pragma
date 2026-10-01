@@ -18,9 +18,11 @@ describe("ExpertSession prompt queue projection", () => {
     };
     const projection = createExpertSessionPromptQueueProjection({
       sessions: {
-        get: async () => ({ activeExecutionId: undefined }) as ExpertSessionRecord,
-        listPrompts: async () => [queued],
-        listEvents: async () => [],
+        readSnapshot: async () => ({
+          session: { activeExecutionId: undefined } as ExpertSessionRecord,
+          prompts: [queued],
+          events: [],
+        }),
       },
       resolveSessionId: async () => "session",
       steeringFeatures: async () => ({ supportsSteer: true }),
@@ -37,10 +39,12 @@ describe("ExpertSession prompt queue projection", () => {
     const recovery = prompt("recovery", "execution-waiting", "human_checkpoint_recovery");
     const followup = prompt("followup", "execution-followup", "user");
     const sessions = {
-      get: async () => ({ activeExecutionId: undefined }) as ExpertSessionRecord,
-      listPrompts: async () => [recovery, followup],
-      listEvents: async () => [],
-    } as unknown as Pick<ExpertSessionStore, "get" | "listPrompts" | "listEvents">;
+      readSnapshot: async () => ({
+        session: { activeExecutionId: undefined } as ExpertSessionRecord,
+        prompts: [recovery, followup],
+        events: [],
+      }),
+    } as unknown as Pick<ExpertSessionStore, "readSnapshot">;
     const projection = createExpertSessionPromptQueueProjection({
       sessions,
       resolveSessionId: async () => "session",
@@ -74,10 +78,12 @@ describe("ExpertSession prompt queue projection", () => {
         },
       };
       const sessions = {
-        get: async () => ({ activeExecutionId: undefined }) as ExpertSessionRecord,
-        listPrompts: async () => [uncertain, prompt("next", "next", "user")],
-        listEvents: async () => [],
-      } as unknown as Pick<ExpertSessionStore, "get" | "listPrompts" | "listEvents">;
+        readSnapshot: async () => ({
+          session: { activeExecutionId: undefined } as ExpertSessionRecord,
+          prompts: [uncertain, prompt("next", "next", "user")],
+          events: [],
+        }),
+      } as unknown as Pick<ExpertSessionStore, "readSnapshot">;
       const projection = createExpertSessionPromptQueueProjection({
         sessions,
         resolveSessionId: async () => "session",
