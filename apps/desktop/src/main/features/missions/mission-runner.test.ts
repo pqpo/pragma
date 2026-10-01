@@ -1071,6 +1071,21 @@ describe("MissionRunner", { timeout: 30_000 }, () => {
       { timeout: settlementTimeoutMs },
     );
 
+    const internal = await runner.getInternalConversationSnapshot(mission.id);
+    expect(internal.entries).toContainEqual(
+      expect.objectContaining({ kind: "assistant", content: "internal output" }),
+    );
+    expect(internal.execution?.status).toBe("succeeded");
+    await expect(runner.getChatPage({ id: mission.id, limit: 50 })).rejects.toThrow(
+      "not available on the Mission surface",
+    );
+    await expect(runner.getConversationState(mission.id)).rejects.toThrow(
+      "not available on the Mission surface",
+    );
+    await expect(runner.getContextWindow(mission.id)).rejects.toThrow(
+      "not available on the Mission surface",
+    );
+
     expect(chatNotifications).toHaveBeenCalled();
     expect(
       chatNotifications.mock.calls.some(([notification]) => notification.update.kind === "patch"),

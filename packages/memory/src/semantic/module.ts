@@ -63,6 +63,7 @@ export async function createSemanticMemoryModule(
   const now = options.now ?? (() => new Date());
   let extractor = options.extractor;
   const running = new Map<string, AbortController>();
+  const modelRequested = new Set<string>();
   let projectionNotificationAttempts = 0;
   let projectionNotificationRetryAt = 0;
   let projectionNotificationError: unknown;
@@ -131,8 +132,9 @@ export async function createSemanticMemoryModule(
     async runBackgroundOnce() {
       await drainProjectionNotification();
       if (extractor === undefined) return;
-      const job = await store.claimDueJob(now());
-      if (job === undefined) return;
+      const claim = await store.claimDueJob(now());
+      if (claim === undefined) return;
+      const { localRecoveryOnly, ...job } = claim;
       const key = conversationKey(job.conversationRef);
       const controller = new AbortController();
       let shouldDrainProjectionNotification = false;
@@ -143,6 +145,12 @@ export async function createSemanticMemoryModule(
         if (await store.hasAppliedJob(job)) {
           await store.completePreviouslyApplied(job, now());
           return;
+        }
+        if (localRecoveryOnly === true) {
+          phase = "storage";
+          throw Object.assign(new Error("memory_extraction_recovery_result_unavailable"), {
+            retryable: false,
+          });
         }
         const subjectContext = await store.getSubjectContext(job.executionId);
         if (subjectContext === undefined) throw new Error("semantic_subject_context_missing");
@@ -210,6 +218,7 @@ export async function createSemanticMemoryModule(
         if (!(await store.isClaimCurrent(job))) return;
         controller.signal.throwIfAborted();
         phase = "curator_run";
+        modelRequested.add(key);
         const extracted = await extractor.extract(input, { signal: controller.signal });
         controller.signal.throwIfAborted();
         phase = "validation";
@@ -240,11 +249,18 @@ export async function createSemanticMemoryModule(
         await store.fail({
           job,
           ...failure,
+          diagnostic:
+            localRecoveryOnly === true
+              ? { ...failure.diagnostic, retryable: false }
+              : failure.diagnostic,
           now: new Date(failure.diagnostic.failedAt),
           retry: isConfigurationError(error) ? "configuration" : "transient",
         });
       } finally {
-        if (running.get(key) === controller) running.delete(key);
+        if (running.get(key) === controller) {
+          running.delete(key);
+          modelRequested.delete(key);
+        }
       }
       if (shouldDrainProjectionNotification) await drainProjectionNotification();
     },
@@ -255,7 +271,11 @@ export async function createSemanticMemoryModule(
       if (input.state !== "completed") {
         running.get(conversationKey(input.conversationRef))?.abort();
       }
-      await store.touchConversation(input);
+      const key = conversationKey(input.conversationRef);
+      await store.touchConversation({
+        ...input,
+        beforeModelAdmission: running.has(key) && !modelRequested.has(key),
+      });
     },
     async bindExecutionConversation(input) {
       running.get(conversationKey({ type: "pragma.execution", id: input.executionId }))?.abort();

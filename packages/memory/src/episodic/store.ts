@@ -1,4 +1,10 @@
 import {
+  blocksAutomaticExtractionRetry,
+  MAX_EXTRACTION_ATTEMPTS,
+  EXTRACTION_RETRY_DELAY_MS,
+  unconfirmedExtractionFailure,
+} from "../pipeline/extraction-error-code.ts";
+import {
   initializeMemoryIndexOutbox,
   memoryIndexOutbox,
   type MemoryIndexChange,
@@ -111,7 +117,10 @@ export interface EpisodicMemoryStore {
     now?: Date,
   ): Promise<readonly { id: string; revision: number }[]>;
   ingest(envelopes: readonly MemoryEvidenceEnvelope[]): Promise<void>;
-  claimDueJob(now: Date): Promise<EpisodicExtractionJob | undefined>;
+  /** localRecoveryOnly is an in-process admission constraint, never persisted as provider proof. */
+  claimDueJob(
+    now: Date,
+  ): Promise<(EpisodicExtractionJob & { readonly localRecoveryOnly?: true }) | undefined>;
   isClaimCurrent(job: EpisodicExtractionJob): Promise<boolean>;
   bindExecutionConversation(input: {
     readonly executionId: string;
@@ -122,6 +131,8 @@ export interface EpisodicMemoryStore {
     readonly conversationRef: MemorySubjectRef;
     readonly state: "active" | "running" | "completed";
     readonly now: Date;
+    /** Same-process proof that a claimed job has not called its extractor yet. */
+    readonly beforeModelAdmission?: boolean | undefined;
   }): Promise<void>;
   readEvidence(executionId: string): Promise<readonly MemoryEvidenceEnvelope[]>;
   readEvidenceForJob(job: EpisodicExtractionJob): Promise<readonly MemoryEvidenceEnvelope[]>;
@@ -440,19 +451,60 @@ export async function createEpisodicMemoryStore(
           return undefined;
         }
         const current = EpisodicExtractionJobSchema.parse(JSON.parse(row.jobJson));
+        const canSettleLocally =
+          current.status === "running" &&
+          data
+            .prepare(
+              "SELECT 1 FROM episodes WHERE conversation_key = ? AND json_extract(record_json, '$.terminalMessageId') = ?",
+            )
+            .get(conversationKey(current.conversationRef), current.terminalMessageId) !== undefined;
+        const replayBlocked =
+          !canSettleLocally &&
+          blocksAutomaticExtractionRetry(current.lastFailure, current.attempts);
+        const executionUnconfirmed = current.status === "running" && !canSettleLocally;
+        if (replayBlocked || executionUnconfirmed) {
+          const diagnostic =
+            current.lastFailure === undefined || executionUnconfirmed
+              ? unconfirmedExtractionFailure(now)
+              : { ...current.lastFailure, retryable: false };
+          writeJob(
+            EpisodicExtractionJobSchema.parse({
+              ...current,
+              revision: current.revision + 1,
+              status: "needs_attention",
+              leaseUntil: undefined,
+              retryAt: undefined,
+              lastErrorCode: diagnostic.code,
+              lastErrorMessage: diagnostic.message,
+              lastFailure: diagnostic,
+              failureClass: "transient-exhausted",
+              attentionSince: current.attentionSince ?? now.toISOString(),
+              updatedAt: now.toISOString(),
+            }),
+          );
+          insertExtractionFailureAttempt(state, {
+            jobId: current.id,
+            jobRevision: current.revision,
+            attempt: current.attempts,
+            diagnostic,
+          });
+          state.exec("COMMIT;");
+          return undefined;
+        }
+
         const claimed = EpisodicExtractionJobSchema.parse({
           ...current,
           revision: current.revision + 1,
           status: "running",
-          attempts: current.attempts + 1,
-          totalAttempts: current.totalAttempts + 1,
+          attempts: current.attempts + (canSettleLocally ? 0 : 1),
+          totalAttempts: current.totalAttempts + (canSettleLocally ? 0 : 1),
           retryAt: undefined,
           leaseUntil: new Date(now.getTime() + 5 * 60_000).toISOString(),
           updatedAt: now.toISOString(),
         });
         writeJob(claimed);
         state.exec("COMMIT;");
-        return claimed;
+        return canSettleLocally ? { ...claimed, localRecoveryOnly: true as const } : claimed;
       } catch (error) {
         rollback(state);
         throw error;
@@ -479,20 +531,60 @@ export async function createEpisodicMemoryStore(
       try {
         writeConversationActivity(state, input);
         const current = readJobByConversation(state, input.conversationRef);
-        if (current !== undefined && current.status !== "expired") {
+        if (current?.status === "running" && input.state === "completed") {
+          // A repeated completion notification must not invalidate an admitted extraction.
+          state.exec("COMMIT;");
+          return;
+        }
+        if (current?.status === "running" && input.beforeModelAdmission !== true) {
+          const diagnostic = unconfirmedExtractionFailure(input.now);
+          writeJob(
+            EpisodicExtractionJobSchema.parse({
+              ...current,
+              revision: current.revision + 1,
+              status: "needs_attention",
+              retryAt: undefined,
+              leaseUntil: undefined,
+              lastFailure: diagnostic,
+              lastErrorCode: diagnostic.code,
+              lastErrorMessage: diagnostic.message,
+              failureClass: "transient-exhausted",
+              attentionSince: input.now.toISOString(),
+              updatedAt: input.now.toISOString(),
+            }),
+          );
+        } else if (
+          current !== undefined &&
+          current.status !== "expired" &&
+          current.status !== "completed" &&
+          current.status !== "needs_attention" &&
+          !blocksAutomaticExtractionRetry(current.lastFailure, current.attempts)
+        ) {
           const eligibleAt =
             input.state === "completed"
               ? input.now.toISOString()
               : new Date(
                   input.now.getTime() + DEFAULT_MEMORY_STORAGE_POLICY.extractionIdleMs,
                 ).toISOString();
+          const retryAt =
+            current.lastFailure === undefined
+              ? eligibleAt
+              : new Date(
+                  Math.max(
+                    Date.parse(eligibleAt),
+                    Date.parse(current.lastFailure.failedAt) + EXTRACTION_RETRY_DELAY_MS,
+                  ),
+                ).toISOString();
           writeJob(
             EpisodicExtractionJobSchema.parse({
               ...current,
               revision: current.revision + 1,
               status: input.state === "completed" ? "pending" : "waiting_idle",
-              attempts: 0,
-              retryAt: eligibleAt,
+              attempts:
+                current.status === "running" && input.beforeModelAdmission === true
+                  ? 0
+                  : current.attempts,
+              retryAt,
               eligibleAt,
               leaseUntil: undefined,
               completedAt: undefined,
@@ -789,8 +881,11 @@ export async function createEpisodicMemoryStore(
       if (isDeletedExecution(state, input.job.executionId)) return;
       if (!isCurrentRunningJob(state, input.job)) return;
       const attempts = input.job.attempts;
-      const needsAttention = input.retry === "configuration" || attempts >= 3;
-      const delay = attempts <= 1 ? 60_000 : attempts === 2 ? 5 * 60_000 : 15 * 60_000;
+      const needsAttention =
+        input.diagnostic.retryable === false ||
+        input.retry === "configuration" ||
+        attempts >= MAX_EXTRACTION_ATTEMPTS;
+      const delay = EXTRACTION_RETRY_DELAY_MS;
       const failed = EpisodicExtractionJobSchema.parse({
         ...input.job,
         revision: input.job.revision + 1,
@@ -835,7 +930,12 @@ export async function createEpisodicMemoryStore(
       for (const row of rows) {
         const job = parseExtractionJobJson(row.jobJson, EpisodicExtractionJobSchema);
         if (job === undefined) continue;
-        if (reason === "configuration" && job.failureClass !== "configuration") continue;
+        if (
+          reason === "configuration" &&
+          (job.failureClass !== "configuration" ||
+            blocksAutomaticExtractionRetry(job.lastFailure, job.attempts))
+        )
+          continue;
         writeJob(
           EpisodicExtractionJobSchema.parse({
             ...job,

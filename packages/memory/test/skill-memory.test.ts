@@ -21,6 +21,53 @@ afterEach(async () => {
 });
 
 describe("Skill learning revision planning", () => {
+  it("persists the three-retry budget and five-second deadline across restart", async () => {
+    const root = await temporaryRoot();
+    let clock = new Date(now.getTime() + 6 * 60 * 60_000);
+    let store = await createSkillLearningStore({ pragmaHome: root });
+    await store.schedule({
+      rootRef: ref("pragma.expert", "expert-retry"),
+      sourceDigest: "f".repeat(64),
+      now,
+    });
+    for (let attempt = 1; attempt <= 4; attempt += 1) {
+      const job = await store.claimDueJob(clock);
+      expect(job?.attempts).toBe(attempt);
+      await store.fail({
+        job: job!,
+        diagnostic: {
+          schemaVersion: "pragma.memory-extraction-failure/v1",
+          code: "temporary_model_failure",
+          message: "temporary failure",
+          phase: "curator_run",
+          retryable: true,
+          failedAt: clock.toISOString(),
+        },
+        retry: "transient",
+        now: clock,
+      });
+      const [failed] = await store.listJobs();
+      expect(failed).toMatchObject({
+        attempts: attempt,
+        status: attempt < 4 ? "pending" : "needs_attention",
+      });
+      store.close();
+      store = await createSkillLearningStore({ pragmaHome: root });
+      if (attempt < 4) {
+        expect(failed!.retryAt).toBe(new Date(clock.getTime() + 5_000).toISOString());
+        clock = new Date(clock.getTime() + 4_999);
+        expect(await store.claimDueJob(clock)).toBeUndefined();
+        clock = new Date(clock.getTime() + 1);
+      } else {
+        expect(failed!.retryAt).toBeUndefined();
+        clock = new Date(clock.getTime() + 60_000);
+        await store.wakeNeedsAttention(clock, "configuration");
+        expect(await store.claimDueJob(clock)).toBeUndefined();
+      }
+    }
+    store.close();
+  });
+
   it("completes insufficient evidence without invoking the Agent", async () => {
     const plan = vi.fn(async () => ({ action: "skip" as const }));
     const module = await createModule(sources().slice(0, 2), { plan });
@@ -65,7 +112,7 @@ describe("Skill learning revision planning", () => {
     module.close();
   });
 
-  it("retries a plan with an invented source", async () => {
+  it("retries an invented source plan within the bounded budget", async () => {
     const sourceRevisions = sources();
     const module = await createModule(sourceRevisions, {
       plan: async () => ({
@@ -86,7 +133,11 @@ describe("Skill learning revision planning", () => {
     });
     await schedule(module, sourceRevisions);
     await module.runBackgroundOnce?.();
-    expect((await module.store.listJobs())[0]).toMatchObject({ status: "pending" });
+    expect((await module.store.listJobs())[0]).toMatchObject({
+      status: "pending",
+      attempts: 1,
+      lastFailure: { phase: "validation" },
+    });
     module.close();
   });
 
@@ -117,6 +168,12 @@ describe("Skill learning revision planning", () => {
       lastErrorCode: "memory_revision_pending",
     });
     await module.store.wakeNeedsAttention(now, "configuration");
+    const [attention] = await module.store.listJobs();
+    expect(attention).toMatchObject({
+      status: "needs_attention",
+      lastFailure: { retryable: false },
+    });
+    await module.store.retryJob({ id: attention!.id, expectedRevision: attention!.revision, now });
     expect((await module.store.listJobs())[0]).toMatchObject({ status: "pending" });
     module.close();
   });
@@ -138,7 +195,11 @@ describe("Skill learning revision planning", () => {
     await schedule(module, sourceRevisions);
     await module.runBackgroundOnce?.();
     expect(submit).not.toHaveBeenCalled();
-    expect((await module.store.listJobs())[0]).toMatchObject({ status: "pending" });
+    expect((await module.store.listJobs())[0]).toMatchObject({
+      status: "pending",
+      attempts: 1,
+      lastFailure: { phase: "validation" },
+    });
     module.close();
   });
 
@@ -179,7 +240,11 @@ describe("Skill learning revision planning", () => {
     await schedule(module, sourceRevisions);
     await module.runBackgroundOnce?.();
     expect(submit).not.toHaveBeenCalled();
-    expect((await module.store.listJobs())[0]).toMatchObject({ status: "pending" });
+    expect((await module.store.listJobs())[0]).toMatchObject({
+      status: "pending",
+      attempts: 1,
+      lastFailure: { phase: "validation" },
+    });
     module.close();
   });
 

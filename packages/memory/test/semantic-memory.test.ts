@@ -40,6 +40,264 @@ afterEach(async () => {
 });
 
 describe("Semantic Memory", () => {
+  it("preserves retry counts while active conversation defers extraction", async () => {
+    let clock = new Date("2026-08-04T00:00:00.000Z");
+    const extractor = fakeExtractor();
+    extractor.extract.mockRejectedValueOnce(new Error("temporary failure"));
+    const module = await createSemanticMemoryModule({
+      pragmaHome: await temporaryRoot(),
+      extractor,
+      now: () => clock,
+    });
+    await module.registerExecutionSubjects({
+      executionId: "review-boundary",
+      subjectRefs: [ref("pragma.user", "local-user")],
+    });
+    await module.consume(executionEvidence("review-boundary", "Use concise Chinese answers."));
+    await module.runBackgroundOnce?.();
+    const [job] = await module.store.listExtractionJobs();
+    await module.setConversationState({
+      conversationRef: job!.conversationRef,
+      state: "active",
+      now: clock,
+    });
+    clock = new Date(clock.getTime() + 5_000);
+    await module.runBackgroundOnce?.();
+    expect(extractor.extract).toHaveBeenCalledTimes(1);
+    expect((await module.store.listExtractionJobs())[0]?.attempts).toBe(1);
+    await module.setConversationState({
+      conversationRef: job!.conversationRef,
+      state: "completed",
+      now: clock,
+    });
+    await module.runBackgroundOnce?.();
+    expect(extractor.extract).toHaveBeenCalledTimes(2);
+    expect((await module.store.listExtractionJobs())[0]).toMatchObject({
+      status: "completed",
+      attempts: 2,
+    });
+    module.close();
+  });
+
+  it.each([false, true])(
+    "settles durable results without replay even if recovery evidence disappears: %s",
+    async (resultLost) => {
+      const root = await temporaryRoot();
+      const clock = new Date("2026-08-04T00:00:00.000Z");
+      const extractor = fakeExtractor();
+      const module = await createSemanticMemoryModule({
+        pragmaHome: root,
+        extractor,
+        now: () => clock,
+      });
+      await module.registerExecutionSubjects({
+        executionId: "review-boundary",
+        subjectRefs: [ref("pragma.user", "local-user")],
+      });
+      await module.consume(executionEvidence("review-boundary", "Use concise Chinese answers."));
+      await module.runBackgroundOnce?.();
+      // Crash before the state transaction would leave source Evidence available.
+      await module.consume(executionEvidence("review-boundary", "Use concise Chinese answers."));
+      const database = new DatabaseSync(
+        join(
+          new PragmaPaths({ pragmaHome: root }).memoryModuleStateRoot("pragma.memory.semantic"),
+          "jobs.sqlite",
+        ),
+      );
+      const row = database.prepare("SELECT id, job_json AS jobJson FROM jobs LIMIT 1").get() as {
+        id: string;
+        jobJson: string;
+      };
+      const job = JSON.parse(row.jobJson) as Record<string, unknown>;
+      job.status = "running";
+      job.attempts = 4;
+      job.totalAttempts = 4;
+      job.leaseUntil = "2026-08-03T00:00:00.000Z";
+      delete job.completion;
+      delete job.completedAt;
+      database
+        .prepare("UPDATE jobs SET status = 'running', lease_until = ?, job_json = ? WHERE id = ?")
+        .run(job.leaseUntil as string, JSON.stringify(job), row.id);
+      database.close();
+      if (resultLost) vi.spyOn(module.store, "hasAppliedJob").mockResolvedValueOnce(false);
+      await module.runBackgroundOnce?.();
+      expect(extractor.extract).toHaveBeenCalledTimes(1);
+      expect((await module.store.listExtractionJobs())[0]).toMatchObject({
+        status: resultLost ? "needs_attention" : "completed",
+        attempts: 4,
+        totalAttempts: 4,
+      });
+      module.close();
+    },
+  );
+
+  it("keeps admitted work and completed rejection stable across repeated completion notifications", async () => {
+    const clock = new Date("2026-08-04T00:00:00.000Z");
+    const extractor = fakeExtractor();
+    const original =
+      extractor.extract.getMockImplementation()! as SemanticMemoryExtractor["extract"];
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    extractor.extract.mockImplementationOnce(async (input) => {
+      await gate;
+      return { ...(await original(input)), output: { retain: false, reason: "no-stable-fact" } };
+    });
+    const module = await createSemanticMemoryModule({
+      pragmaHome: await temporaryRoot(),
+      extractor,
+      now: () => clock,
+    });
+    await module.registerExecutionSubjects({
+      executionId: "completion-repeat",
+      subjectRefs: [ref("pragma.user", "local-user")],
+    });
+    await module.consume(executionEvidence("completion-repeat", "Use concise Chinese answers."));
+    const running = module.runBackgroundOnce?.();
+    await vi.waitFor(() => expect(extractor.extract).toHaveBeenCalledOnce());
+    const [job] = await module.store.listExtractionJobs();
+    await module.setConversationState({
+      conversationRef: job!.conversationRef,
+      state: "completed",
+      now: clock,
+    });
+    expect((await module.store.listExtractionJobs())[0]!.status).toBe("running");
+    release();
+    await running;
+    await module.setConversationState({
+      conversationRef: job!.conversationRef,
+      state: "completed",
+      now: clock,
+    });
+    await module.runBackgroundOnce?.();
+    expect(extractor.extract).toHaveBeenCalledOnce();
+    expect((await module.store.listExtractionJobs())[0]).toMatchObject({
+      status: "completed",
+      completion: "rejected",
+    });
+    module.close();
+  });
+
+  it("allows a legacy retryable failure within the persisted retry budget", async () => {
+    const clock = new Date("2026-08-04T00:00:00.000Z");
+    const extractor = fakeExtractor();
+    const module = await createSemanticMemoryModule({
+      pragmaHome: await temporaryRoot(),
+      extractor,
+      now: () => clock,
+    });
+    await module.registerExecutionSubjects({
+      executionId: "legacy-paid",
+      subjectRefs: [ref("pragma.user", "local-user")],
+    });
+    await module.consume(executionEvidence("legacy-paid", "Use concise Chinese answers."));
+    const job = await module.store.claimDueJob(clock);
+    await module.store.fail({
+      job: job!,
+      diagnostic: {
+        ...failureDiagnostic("legacy_result_read_failed"),
+        phase: "curator_run",
+        retryable: true,
+      },
+      retry: "transient",
+      now: clock,
+    });
+    clock.setUTCDate(clock.getUTCDate() + 1);
+    await module.runBackgroundOnce?.();
+    expect(extractor.extract).toHaveBeenCalledTimes(1);
+    expect((await module.store.listExtractionJobs())[0]).toMatchObject({
+      status: "completed",
+    });
+    module.close();
+  });
+
+  it("limits retries to three at five-second intervals across activity and restart", async () => {
+    const root = await temporaryRoot();
+    let clock = new Date("2026-08-04T00:00:00.000Z");
+    const extractor = fakeExtractor();
+    extractor.extract.mockRejectedValue(
+      Object.assign(new Error("result read failed"), { retryable: true }),
+    );
+    let module = await createSemanticMemoryModule({
+      pragmaHome: root,
+      extractor,
+      now: () => clock,
+    });
+    await module.registerExecutionSubjects({
+      executionId: "paid-result",
+      subjectRefs: [ref("pragma.user", "local-user")],
+    });
+    await module.consume(executionEvidence("paid-result", "Use concise Chinese answers."));
+    await module.runBackgroundOnce?.();
+    let [job] = await module.store.listExtractionJobs();
+    expect(job).toMatchObject({ status: "pending", attempts: 1 });
+    for (let attempts = 1; attempts <= 3; attempts += 1) {
+      expect(job!.retryAt).toBe(new Date(clock.getTime() + 5_000).toISOString());
+      module.close();
+      module = await createSemanticMemoryModule({ pragmaHome: root, extractor, now: () => clock });
+      await module.setConversationState({
+        conversationRef: job!.conversationRef,
+        state: "completed",
+        now: clock,
+      });
+      clock = new Date(clock.getTime() + 4_999);
+      await module.runBackgroundOnce?.();
+      expect(extractor.extract).toHaveBeenCalledTimes(attempts);
+      clock = new Date(clock.getTime() + 1);
+      await module.runBackgroundOnce?.();
+      expect(extractor.extract).toHaveBeenCalledTimes(attempts + 1);
+      [job] = await module.store.listExtractionJobs();
+    }
+    expect(job).toMatchObject({ status: "needs_attention", attempts: 4 });
+    expect(job!.retryAt).toBeUndefined();
+    module.close();
+    clock = new Date(clock.getTime() + 60_000);
+    module = await createSemanticMemoryModule({ pragmaHome: root, extractor, now: () => clock });
+    await module.setConversationState({
+      conversationRef: job!.conversationRef,
+      state: "completed",
+      now: clock,
+    });
+    await module.runBackgroundOnce?.();
+    await module.store.wakeNeedsAttention(clock);
+    await module.runBackgroundOnce?.();
+    expect(extractor.extract).toHaveBeenCalledTimes(4);
+    [job] = await module.store.listExtractionJobs();
+    await module.store.retryJob({ id: job!.id, expectedRevision: job!.revision, now: clock });
+    await module.runBackgroundOnce?.();
+    expect(extractor.extract).toHaveBeenCalledTimes(5);
+    module.close();
+  });
+
+  it("does not replay an expired execution with an unknown billing outcome", async () => {
+    const root = await temporaryRoot();
+    let clock = new Date("2026-08-04T00:00:00.000Z");
+    const extractor = fakeExtractor();
+    let module = await createSemanticMemoryModule({
+      pragmaHome: root,
+      extractor,
+      now: () => clock,
+    });
+    await module.registerExecutionSubjects({
+      executionId: "paid-result",
+      subjectRefs: [ref("pragma.user", "local-user")],
+    });
+    await module.consume(executionEvidence("paid-result", "Use concise Chinese answers."));
+    expect(await module.store.claimDueJob(clock)).toBeDefined();
+    module.close();
+    clock = new Date("2026-08-04T00:06:00.000Z");
+    module = await createSemanticMemoryModule({ pragmaHome: root, extractor, now: () => clock });
+    await module.runBackgroundOnce?.();
+    expect(extractor.extract).not.toHaveBeenCalled();
+    expect((await module.store.listExtractionJobs())[0]).toMatchObject({
+      status: "needs_attention",
+      lastErrorCode: "memory_extraction_execution_unconfirmed",
+      lastFailure: { retryable: false },
+    });
+    module.close();
+  });
+
   it("extracts evidence-traceable facts into the layered Context without Episodic Memory", async () => {
     const extractor = fakeExtractor();
     const module = await createSemanticMemoryModule({

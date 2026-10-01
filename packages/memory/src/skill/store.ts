@@ -1,3 +1,9 @@
+import {
+  blocksAutomaticExtractionRetry,
+  MAX_EXTRACTION_ATTEMPTS,
+  EXTRACTION_RETRY_DELAY_MS,
+  unconfirmedExtractionFailure,
+} from "../pipeline/extraction-error-code.ts";
 import { createHash } from "node:crypto";
 import { mkdir } from "node:fs/promises";
 import { join } from "node:path";
@@ -184,6 +190,30 @@ export async function createSkillLearningStore(
         .get(timestamp, timestamp) as { job_json: string } | undefined;
       if (row === undefined) return undefined;
       const current = parse(row.job_json);
+      const replayBlocked = blocksAutomaticExtractionRetry(current.lastFailure, current.attempts);
+      const executionUnconfirmed = current.status === "running";
+      if (replayBlocked || executionUnconfirmed) {
+        const diagnostic =
+          current.lastFailure === undefined || executionUnconfirmed
+            ? unconfirmedExtractionFailure(now)
+            : { ...current.lastFailure, retryable: false };
+        write(
+          SkillLearningJobSchema.parse({
+            ...current,
+            revision: current.revision + 1,
+            status: "needs_attention",
+            leaseUntil: undefined,
+            retryAt: undefined,
+            lastErrorCode: diagnostic.code,
+            lastErrorMessage: diagnostic.message,
+            lastFailure: diagnostic,
+            failureClass: "transient-exhausted",
+            updatedAt: now.toISOString(),
+          }),
+        );
+        return undefined;
+      }
+
       const claimed = SkillLearningJobSchema.parse({
         ...current,
         revision: current.revision + 1,
@@ -217,14 +247,17 @@ export async function createSkillLearningStore(
     async fail(input) {
       const current = read(input.job.id);
       if (current?.revision !== input.job.revision || current.status !== "running") return;
-      const attention = input.retry !== "transient" || input.job.attempts >= 3;
+      const attention =
+        input.diagnostic.retryable === false ||
+        input.retry !== "transient" ||
+        input.job.attempts >= MAX_EXTRACTION_ATTEMPTS;
       const failed = SkillLearningJobSchema.parse({
         ...input.job,
         revision: input.job.revision + 1,
         status: attention ? "needs_attention" : "pending",
         retryAt: attention
           ? undefined
-          : new Date(input.now.getTime() + 2 ** input.job.attempts * 1_000).toISOString(),
+          : new Date(input.now.getTime() + EXTRACTION_RETRY_DELAY_MS).toISOString(),
         leaseUntil: undefined,
         lastErrorCode: input.diagnostic.code,
         lastErrorMessage: input.diagnostic.message,
@@ -302,7 +335,12 @@ export async function createSkillLearningStore(
         .all() as { job_json: string }[];
       for (const row of rows) {
         const job = parse(row.job_json);
-        if (reason === "manual" || job.failureClass === "configuration") write(reset(job, now));
+        if (
+          reason === "manual" ||
+          (job.failureClass === "configuration" &&
+            !blocksAutomaticExtractionRetry(job.lastFailure, job.attempts))
+        )
+          write(reset(job, now));
       }
     },
     async listJobs() {

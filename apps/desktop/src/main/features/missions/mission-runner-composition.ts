@@ -171,12 +171,13 @@ import {
   hasMissionDeletionIntent,
   persistMissionDeletionIntent,
 } from "./mission-deletion-intent.ts";
-import type {
-  MissionCommandOutcomeNotification,
-  MissionMessageApplicationResult,
-  MissionRunner,
-  MissionSurfaceAudience,
-  MissionWorkConversationStreamNotification,
+import {
+  readMissionConversationSnapshot,
+  type MissionCommandOutcomeNotification,
+  type MissionMessageApplicationResult,
+  type MissionRunner,
+  type MissionSurfaceAudience,
+  type MissionWorkConversationStreamNotification,
 } from "./mission-runner-contracts.ts";
 import {
   createMissionExecutorAvatarIdResolver,
@@ -3755,12 +3756,15 @@ export function createMissionRunner(options: {
     return { outcome: "compacted", contextWindow: state };
   };
 
-  const getChatPage = async (input: MissionChatPageQuery): Promise<MissionChatPage> => {
+  const getChatPage = async (
+    input: MissionChatPageQuery,
+    audience: MissionSurfaceAudience = "user",
+  ): Promise<MissionChatPage> => {
     for (let attempt = 0; attempt < 3; attempt += 1) {
       const startedAt = performance.now();
       const mission = await options.missions.get(input.id);
       const missionReadAt = performance.now();
-      if (!isUserFacingMissionOrigin(mission.origin)) {
+      if (audience === "user" && !isUserFacingMissionOrigin(mission.origin)) {
         throw new Error(`Mission ${mission.id} is not available on the Mission surface.`);
       }
       const executorMetadataPromise = getExecutorMetadataOrFallback(mission, "historical");
@@ -3883,7 +3887,7 @@ export function createMissionRunner(options: {
         },
         ...(uniqueSyncIssues.length === 0 ? {} : { syncIssues: uniqueSyncIssues }),
       };
-      logger.info("mission.chat_page_read", "Mission chat page read completed.", {
+      logger.debug("mission.chat_page_read", "Mission chat page read completed.", {
         missionId: mission.id,
         entryCount: result.entries.length,
         branchHistoryLoaded: inheritedHistoryPromise !== undefined,
@@ -3896,12 +3900,15 @@ export function createMissionRunner(options: {
     throw new Error("Mission chat page read exhausted its attempts.");
   };
 
-  const getConversationState = async (id: string): Promise<MissionConversationState> => {
+  const getConversationState = async (
+    id: string,
+    audience: MissionSurfaceAudience = "user",
+  ): Promise<MissionConversationState> => {
     const startedAt = performance.now();
     // A read must not borrow a patch revision emitted after it began.
     const stateRevision = chatService.revision(id);
     const latestMission = await options.missions.get(id);
-    if (!isUserFacingMissionOrigin(latestMission.origin)) {
+    if (audience === "user" && !isUserFacingMissionOrigin(latestMission.origin)) {
       throw new Error(`Mission ${latestMission.id} is not available on the Mission surface.`);
     }
     const persistedExecution =
@@ -4201,7 +4208,7 @@ export function createMissionRunner(options: {
             },
           }),
     };
-    logger.info("mission.conversation_state_read", "Mission conversation state read completed.", {
+    logger.debug("mission.conversation_state_read", "Mission conversation state read completed.", {
       missionId: id,
       pendingInteractionCount: result.pendingInteractions.length,
       queueItemCount: result.queue?.items.length ?? 0,
@@ -4210,10 +4217,13 @@ export function createMissionRunner(options: {
     return result;
   };
 
-  const getContextWindowSnapshot = async (id: string): Promise<MissionContextWindowSnapshot> => {
+  const getContextWindowSnapshot = async (
+    id: string,
+    audience: MissionSurfaceAudience = "user",
+  ): Promise<MissionContextWindowSnapshot> => {
     const startedAt = performance.now();
     const mission = await options.missions.get(id);
-    if (!isUserFacingMissionOrigin(mission.origin)) {
+    if (audience === "user" && !isUserFacingMissionOrigin(mission.origin)) {
       throw new Error(`Mission ${mission.id} is not available on the Mission surface.`);
     }
     let contextWindow: MissionContextWindowState | undefined;
@@ -4229,7 +4239,7 @@ export function createMissionRunner(options: {
       ...(contextWindow === undefined ? {} : { contextWindow }),
       ...(unavailable ? { syncIssues: [missionChatSyncIssue("context_window")] } : {}),
     };
-    logger.info("mission.context_window_read", "Mission context window read completed.", {
+    logger.debug("mission.context_window_read", "Mission context window read completed.", {
       missionId: id,
       available: result.contextWindow !== undefined,
       elapsedMs: Math.round((performance.now() - startedAt) * 100) / 100,
@@ -5654,6 +5664,20 @@ export function createMissionRunner(options: {
     },
     async getChatPage(input) {
       return await getChatPage(input);
+    },
+    async getInternalConversationSnapshot(id) {
+      const mission = await options.missions.get(id);
+      if (mission.origin.type !== "system-memory") {
+        throw new Error("Internal Memory transcript access requires a system-memory Mission.");
+      }
+      return await readMissionConversationSnapshot(
+        {
+          getChatPage: (input) => getChatPage(input, "internal"),
+          getConversationState: (missionId) => getConversationState(missionId, "internal"),
+          getContextWindow: (missionId) => getContextWindowSnapshot(missionId, "internal"),
+        },
+        id,
+      );
     },
     async getConversationState(id) {
       return await getConversationState(id);

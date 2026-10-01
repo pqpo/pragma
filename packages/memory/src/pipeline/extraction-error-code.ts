@@ -67,7 +67,7 @@ export function extractionFailureDiagnostic(
         ? {}
         : { durationMs: Math.max(0, input.now.getTime() - startedAt.getTime()) }
       : { durationMs }),
-    ...(typeof metadata.retryable !== "boolean" ? {} : { retryable: metadata.retryable }),
+    ...(typeof metadata.retryable === "boolean" ? { retryable: metadata.retryable } : {}),
     ...(runtimeId === undefined
       ? {}
       : {
@@ -172,4 +172,26 @@ function sanitizeDiagnosticText(value: string, maxLength: number): string {
     .join("")
     .trim();
   return sanitized.length <= maxLength ? sanitized : `${sanitized.slice(0, maxLength - 1)}…`;
+}
+
+/** Three retries after the initial attempt; persisted job counters survive restart. */
+export const MAX_EXTRACTION_ATTEMPTS = 4;
+export const EXTRACTION_RETRY_DELAY_MS = 5_000;
+export function blocksAutomaticExtractionRetry(
+  failure: MemoryExtractionFailureDiagnostic | undefined,
+  attempts = 0,
+): boolean {
+  return attempts >= MAX_EXTRACTION_ATTEMPTS || failure?.retryable === false;
+}
+
+export function unconfirmedExtractionFailure(now: Date): MemoryExtractionFailureDiagnostic {
+  return {
+    schemaVersion: "pragma.memory-extraction-failure/v1",
+    code: "memory_extraction_execution_unconfirmed",
+    message:
+      "Previous extraction may have invoked a paid model. Automatic replay was stopped; inspect the result before retrying manually.",
+    phase: "curator_run",
+    failedAt: now.toISOString(),
+    retryable: false,
+  };
 }

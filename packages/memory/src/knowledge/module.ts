@@ -111,6 +111,7 @@ export async function createKnowledgeMemoryModule(options: {
       running.set(job.id, controller);
       const startedAt = now();
       let phase: MemoryExtractionFailurePhase = "source_read";
+      let modelRequested = false;
       try {
         const available = await options.sourceReader.listEligibleSources({
           rootRef: job.rootRef,
@@ -156,6 +157,7 @@ export async function createKnowledgeMemoryModule(options: {
             ...expertSources.map(sourceDigestKey).toSorted(),
           );
           phase = "revision_plan";
+          modelRequested = true;
           const plan = await planner.plan({
             rootRef: job.rootRef,
             expertRef,
@@ -186,6 +188,10 @@ export async function createKnowledgeMemoryModule(options: {
         await store.fail({
           job,
           ...failure,
+          diagnostic:
+            modelRequested && isConfigurationError(error)
+              ? { ...failure.diagnostic, retryable: false }
+              : failure.diagnostic,
           retry: isConfigurationError(error) ? "configuration" : "transient",
           now: new Date(failure.diagnostic.failedAt),
         });

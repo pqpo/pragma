@@ -78,7 +78,7 @@ export interface RuntimeEnvironmentService extends RuntimeResolver {
 export function createRuntimeEnvironmentService(options: {
   readonly store: RuntimeEnvironmentStore;
   readonly factories: readonly RuntimeEnvironmentAdapterFactory[];
-  readonly logger?: Pick<PragmaLogger, "info" | "warn"> | undefined;
+  readonly logger?: Pick<PragmaLogger, "info" | "debug" | "warn"> | undefined;
   readonly getToolPermissionMode?:
     (() => DesktopToolPermissionMode | Promise<DesktopToolPermissionMode>) | undefined;
   readonly getMaterializationCacheKey?: (() => string | Promise<string>) | undefined;
@@ -177,7 +177,7 @@ export function createRuntimeEnvironmentService(options: {
     }
     const adapter = await adapterPromise;
     if (cacheHit) {
-      options.logger?.info(
+      options.logger?.debug(
         "runtime.environment_adapter_cache_hit",
         "Reused a Runtime Environment adapter",
         {
@@ -214,7 +214,7 @@ export function createRuntimeEnvironmentService(options: {
     }
     const discoveryStartedAt = performance.now();
     const models = await resolved.adapter.listModels();
-    options.logger?.info(
+    options.logger?.debug(
       "runtime.model_catalog_validation",
       "Runtime model selection catalog validation completed",
       {

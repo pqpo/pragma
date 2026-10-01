@@ -199,7 +199,7 @@ describe("RuntimeEnvironmentService", () => {
     const service = createRuntimeEnvironmentService({
       store,
       factories: [retryingFactory],
-      logger: { info: vi.fn(), warn },
+      logger: { info: vi.fn(), debug: vi.fn(), warn },
     });
 
     await expect(service.bind()).rejects.toThrow("transient adapter failure");
@@ -398,7 +398,7 @@ describe("built-in Runtime process environments", () => {
             [
               "#!/bin/sh",
               '[ "$MOCK_ENV_TEST" = "true" ] || exit 42',
-              'printf "1.1.11\\n"',
+              name === "agy" ? 'printf "1.2.13\\n"' : 'printf "1.1.11\\n"',
               "",
             ].join("\n"),
             { mode: 0o755 },

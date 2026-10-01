@@ -56,6 +56,7 @@ export async function createEpisodicMemoryModule(
   const now = options.now ?? (() => new Date());
   let extractor = options.extractor;
   const running = new Map<string, AbortController>();
+  const modelRequested = new Set<string>();
 
   return {
     descriptor: {
@@ -107,14 +108,31 @@ export async function createEpisodicMemoryModule(
     },
     async runBackgroundOnce() {
       if (extractor === undefined) return;
-      const job = await store.claimDueJob(now());
-      if (job === undefined) return;
+      const claim = await store.claimDueJob(now());
+      if (claim === undefined) return;
+      const { localRecoveryOnly, ...job } = claim;
       const key = conversationKey(job.conversationRef);
       const controller = new AbortController();
       running.set(key, controller);
       const startedAt = now();
       let phase: MemoryExtractionFailurePhase = "source_read";
       try {
+        if (localRecoveryOnly === true) {
+          phase = "storage";
+          const retained = await store.getByConversation(job.conversationRef);
+          if (retained?.terminalMessageId !== job.terminalMessageId) {
+            throw Object.assign(new Error("memory_extraction_recovery_result_unavailable"), {
+              retryable: false,
+            });
+          }
+          await store.completeRetained({
+            job,
+            record: retained,
+            evidence: await store.readEvidenceForJob(job),
+            now: now(),
+          });
+          return;
+        }
         const capturedEvidence = await store.readEvidenceForJob(job);
         const allowToolAssisted =
           (await options.extractionSettings?.get())?.allowToolAssisted.episodic ?? false;
@@ -160,6 +178,7 @@ export async function createEpisodicMemoryModule(
         if (!(await store.isClaimCurrent(job))) return;
         controller.signal.throwIfAborted();
         phase = "curator_run";
+        modelRequested.add(key);
         const extracted = await extractor.extract(input, { signal: controller.signal });
         controller.signal.throwIfAborted();
         phase = "validation";
@@ -217,11 +236,18 @@ export async function createEpisodicMemoryModule(
         await store.fail({
           job,
           ...failure,
+          diagnostic:
+            localRecoveryOnly === true
+              ? { ...failure.diagnostic, retryable: false }
+              : failure.diagnostic,
           now: new Date(failure.diagnostic.failedAt),
           retry: isConfigurationError(error) ? "configuration" : "transient",
         });
       } finally {
-        if (running.get(key) === controller) running.delete(key);
+        if (running.get(key) === controller) {
+          running.delete(key);
+          modelRequested.delete(key);
+        }
       }
     },
     async setExtractor(next) {
@@ -231,7 +257,11 @@ export async function createEpisodicMemoryModule(
       if (input.state !== "completed") {
         running.get(conversationKey(input.conversationRef))?.abort();
       }
-      await store.touchConversation(input);
+      const key = conversationKey(input.conversationRef);
+      await store.touchConversation({
+        ...input,
+        beforeModelAdmission: running.has(key) && !modelRequested.has(key),
+      });
     },
     async bindExecutionConversation(input) {
       running.get(conversationKey({ type: "pragma.execution", id: input.executionId }))?.abort();

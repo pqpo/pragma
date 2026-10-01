@@ -120,6 +120,8 @@ export interface MissionRunner {
   steerQueuedMessage(input: { readonly id: string; readonly requestId: string }): Promise<Mission>;
   removeQueuedMessage(input: { readonly id: string; readonly requestId: string }): Promise<Mission>;
   getChatPage(input: MissionChatPageQuery): Promise<MissionChatPage>;
+  /** Main-process only: system task transcripts, never exposed through Mission IPC. */
+  getInternalConversationSnapshot(id: string): Promise<MissionConversationSnapshot>;
   getConversationState(id: string): Promise<MissionConversationState>;
   getContextWindow(id: string): Promise<MissionContextWindowSnapshot>;
   getTerminalRuntimeFailure(id: string): Promise<
