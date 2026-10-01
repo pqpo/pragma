@@ -27,70 +27,98 @@ describe("Local Host UsageSink", () => {
     await expect(sink.list()).resolves.toEqual([observation]);
   });
 
-  it("stages a Core observation before advancing custody and recovers a failed ledger write after restart", async () => {
-    const root = await mkdtemp(join(tmpdir(), "pragma-source-usage-"));
-    roots.push(root);
-    const path = join(root, "usage", "observations.json");
-    const deliveryPath = join(root, "delivery.sqlite");
-    const feed = await createFileCanonicalEventFeed({ pragmaHome: root });
-    const observation = {
-      ...fixtureObservation(),
-      executionId: "00000000-0000-4000-8000-000000000111",
-      invocationId: "00000000-0000-4000-8000-000000000111",
-    };
-    const timestamp = observation.occurredAt;
-    await feed.append([
-      {
-        schemaVersion: "pragma.canonical-event/v1",
-        eventId: "usage-observed",
-        topic: "pragma.execution.event.committed",
-        schemaRef: "pragma.execution-event/v5",
-        sourceRef: {
-          type: "pragma.execution-event",
-          id: "usage-observed",
-          ownerRef: { type: "pragma.execution", id: observation.executionId },
-          cursor: "1",
-        },
-        relatedRefs: [],
-        correlationId: observation.executionId,
-        occurredAt: timestamp,
-        payload: {
-          schemaVersion: "pragma.execution-event/v5",
+  it.each([false, true])(
+    "recovers custodied Usage after a failed ledger write with intake unavailable=%s",
+    async (unavailable) => {
+      const root = await mkdtemp(join(tmpdir(), "pragma-source-usage-"));
+      roots.push(root);
+      const path = join(root, "usage", "observations.json");
+      const deliveryPath = join(root, "delivery.sqlite");
+      const feed = await createFileCanonicalEventFeed({ pragmaHome: root });
+      const observation = {
+        ...fixtureObservation(),
+        executionId: "00000000-0000-4000-8000-000000000111",
+        invocationId: "00000000-0000-4000-8000-000000000111",
+      };
+      const timestamp = observation.occurredAt;
+      await feed.append([
+        {
+          schemaVersion: "pragma.canonical-event/v1",
           eventId: "usage-observed",
-          cursor: { executionId: observation.executionId, sequence: 1 },
-          executionId: observation.executionId,
-          invocationId: observation.invocationId,
-          type: "runtime.usage.observed",
-          data: { schemaVersion: "pragma.runtime-usage-observed/v1", observation },
+          topic: "pragma.execution.event.committed",
+          schemaRef: "pragma.execution-event/v5",
+          sourceRef: {
+            type: "pragma.execution-event",
+            id: "usage-observed",
+            ownerRef: { type: "pragma.execution", id: observation.executionId },
+            cursor: "1",
+          },
+          relatedRefs: [],
+          correlationId: observation.executionId,
           occurredAt: timestamp,
+          payload: {
+            schemaVersion: "pragma.execution-event/v5",
+            eventId: "usage-observed",
+            cursor: { executionId: observation.executionId, sequence: 1 },
+            executionId: observation.executionId,
+            invocationId: observation.invocationId,
+            type: "runtime.usage.observed",
+            data: { schemaVersion: "pragma.runtime-usage-observed/v1", observation },
+            occurredAt: timestamp,
+          },
         },
-      },
-    ]);
-    await mkdir(join(root, "usage"));
-    await writeFile(path, "invalid-json");
-    const error = vi.fn();
-    const sink = createLocalHostUsageSink({ path, deliveryPath, feed, onError: error });
-    sink.record(observation);
-    await vi.waitFor(() => expect(error).toHaveBeenCalled());
-    await sink.close();
-    const receipt = new DatabaseSync(deliveryPath);
-    expect(
-      receipt.prepare("SELECT value FROM usage_delivery_metadata WHERE key='cursor'").get(),
-    ).toMatchObject({ value: "1" });
-    expect(
-      receipt.prepare("SELECT COUNT(*) AS count FROM usage_delivery_pending").get(),
-    ).toMatchObject({ count: 1 });
-    receipt.close();
-    await rm(path);
-    const restored = createLocalHostUsageSink({ path, deliveryPath, feed });
-    try {
-      await expect(restored.list()).resolves.toEqual([observation]);
-      await expect(restored.list()).resolves.toEqual([observation]);
-    } finally {
-      await restored.close();
-      await feed.close();
-    }
-  });
+      ]);
+      await mkdir(join(root, "usage"));
+      await writeFile(path, "invalid-json");
+      const error = vi.fn();
+      const sink = createLocalHostUsageSink({ path, deliveryPath, feed, onError: error });
+      sink.record(observation);
+      await vi.waitFor(() => expect(error).toHaveBeenCalled());
+      await sink.close();
+      const receipt = new DatabaseSync(deliveryPath);
+      expect(
+        receipt.prepare("SELECT value FROM usage_delivery_metadata WHERE key='cursor'").get(),
+      ).toMatchObject({ value: "1" });
+      expect(
+        receipt.prepare("SELECT COUNT(*) AS count FROM usage_delivery_pending").get(),
+      ).toMatchObject({ count: 1 });
+      receipt.close();
+      await rm(path);
+      const receiveError = vi.fn();
+      let sourceUnavailable = unavailable;
+      const read = vi.fn(async (...args: Parameters<typeof feed.read>) => {
+        if (sourceUnavailable) throw new Error("source unavailable");
+        return await feed.read(...args);
+      });
+      const restored = createLocalHostUsageSink({
+        path,
+        deliveryPath,
+        feed: { ...feed, read },
+        onError: receiveError,
+      });
+      try {
+        await expect(restored.drain()).resolves.toBeUndefined();
+        await expect(restored.list()).resolves.toEqual([observation]);
+        await expect(restored.list()).resolves.toEqual([observation]);
+        expect(restored.safeThrough()).toBe(1);
+        expect(restored.inspect().pending).toBe(0);
+        if (unavailable) {
+          expect(receiveError).toHaveBeenCalled();
+          expect(restored.inspect()).toMatchObject({
+            state: "degraded",
+            errorCode: "USAGE_DELIVERY_RECEIVE_FAILED",
+          });
+          sourceUnavailable = false;
+          await restored.drain();
+          expect(restored.inspect()).toMatchObject({ state: "healthy", pending: 0 });
+          await expect(restored.list()).resolves.toEqual([observation]);
+        }
+      } finally {
+        await restored.close();
+        await feed.close();
+      }
+    },
+  );
   it("serializes concurrent drains and waits for them before closing custody", async () => {
     const root = await mkdtemp(join(tmpdir(), "pragma-usage-drain-"));
     roots.push(root);

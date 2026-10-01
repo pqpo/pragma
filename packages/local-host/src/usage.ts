@@ -163,6 +163,28 @@ function createSourceUsageSink(
     const db = await open();
     const deadline = Date.now() + 5000;
     while (!stopping && Date.now() < deadline) {
+      // Flush observations already under receipt custody before requiring the
+      // source. A failed intake must not prevent a repaired ledger from draining.
+      const rows = db.prepare("SELECT id,payload FROM usage_delivery_pending LIMIT 64").all() as {
+        id: string;
+        payload: string;
+      }[];
+      let failed = false;
+      for (const row of rows) {
+        if (stopping || Date.now() >= deadline) return;
+        try {
+          await sink.record(
+            RuntimeUsageObservedSchema.shape.observation.parse(JSON.parse(row.payload)),
+          );
+          db.prepare("DELETE FROM usage_delivery_pending WHERE id=?").run(row.id);
+        } catch (error) {
+          failed = true;
+          lastError = "USAGE_DELIVERY_RETRY_PENDING";
+          options.onError?.(error);
+        }
+      }
+      if (stopping || Date.now() >= deadline) return;
+      if (rows.length === 64 && !failed) continue;
       const after = Number(
         (
           db.prepare("SELECT value FROM usage_delivery_metadata WHERE key='cursor'").get() as {
@@ -170,7 +192,14 @@ function createSourceUsageSink(
           }
         ).value,
       );
-      const page = await options.feed.read({ after: { sequence: after }, limit: 64 });
+      let page: Awaited<ReturnType<CanonicalEventFeed["read"]>>;
+      try {
+        page = await options.feed.read({ after: { sequence: after }, limit: 64 });
+      } catch (error) {
+        lastError = "USAGE_DELIVERY_RECEIVE_FAILED";
+        options.onError?.(error);
+        return;
+      }
       db.exec("BEGIN IMMEDIATE");
       try {
         const received = Number(
@@ -241,27 +270,10 @@ function createSourceUsageSink(
         db.exec("ROLLBACK");
         throw error;
       }
-      const rows = db.prepare("SELECT id,payload FROM usage_delivery_pending LIMIT 64").all() as {
-        id: string;
-        payload: string;
-      }[];
-      let failed = false;
-      for (const row of rows) {
-        if (stopping || Date.now() >= deadline) return;
-        try {
-          await sink.record(
-            RuntimeUsageObservedSchema.shape.observation.parse(JSON.parse(row.payload)),
-          );
-          db.prepare("DELETE FROM usage_delivery_pending WHERE id=?").run(row.id);
-        } catch (error) {
-          failed = true;
-          lastError = "USAGE_DELIVERY_RETRY_PENDING";
-          options.onError?.(error);
-        }
-      }
+      // A ledger failure does not prevent taking custody of this source page.
       if (failed) return;
       lastError = undefined;
-      if (page.items.length === 0 && rows.length === 0) return;
+      if (page.items.length === 0) return;
     }
   };
   const runFlush = (): Promise<void> => {

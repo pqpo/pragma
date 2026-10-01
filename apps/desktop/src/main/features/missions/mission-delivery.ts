@@ -334,9 +334,7 @@ export async function createMissionDelivery(input: {
       clearInterval(heartbeat);
     }
   };
-  const tick = async () => {
-    await ingest();
-    lastError = undefined;
+  const dispatchPending = () => {
     while (active.size < 2 && !stopped) {
       const claimed = transaction(() => {
         const row = db
@@ -378,13 +376,30 @@ export async function createMissionDelivery(input: {
         });
     }
   };
+  const tick = async () => {
+    // Receipt custody is independent of source availability. Start recovered
+    // tasks before intake and also dispatch facts received in this tick.
+    dispatchPending();
+    try {
+      await ingest();
+      lastError = undefined;
+    } catch (error) {
+      lastError = "MISSION_DELIVERY_RECEIVE_FAILED";
+      input.logger.warn("mission.delivery_degraded", "Mission delivery intake needs recovery", {
+        moduleId: "pragma.mission-delivery",
+        errorCode: lastError,
+        error,
+      });
+    }
+    dispatchPending();
+  };
   const wake = () => {
     if (stopped || running !== undefined) return;
     if (timer !== undefined) clearTimeout(timer);
     running = tick()
       .catch((error: unknown) => {
-        lastError = "MISSION_DELIVERY_RECEIVE_FAILED";
-        input.logger.warn("mission.delivery_degraded", "Mission delivery intake needs recovery", {
+        lastError = "MISSION_DELIVERY_CLAIM_FAILED";
+        input.logger.warn("mission.delivery_degraded", "Mission delivery claim needs recovery", {
           moduleId: "pragma.mission-delivery",
           errorCode: lastError,
           error,

@@ -148,24 +148,49 @@ describe("Mission durable delivery", { timeout: 15000 }, () => {
     expect(order.indexOf("history")).toBeLessThan(order.indexOf("archive"));
     expect(target.delivery.inspect()).toMatchObject({ state: "degraded", pending: 1 });
   });
-  it("replays staged work after restart without rereading acknowledged source events", async () => {
-    const target = await fixture(async () => {
-      throw new Error("offline");
-    });
-    target.delivery.register(target.mission, executionId, target.mission.initialMessageId);
-    await publish(target.feed, "terminal");
-    target.delivery.start();
-    await vi.waitFor(() => expect(target.delivery.inspect().state).toBe("degraded"));
-    await target.delivery.close();
-    const terminal = vi.fn(async () => undefined);
-    const restored = await createMissionDelivery({ ...target, terminal });
-    resources[resources.length - 1]!.delivery = restored;
-    restored.retry(target.mission.id);
-    restored.start();
-    await vi.waitFor(() => expect(restored.inspect().pending).toBe(0), { timeout: 7000 });
-    expect(terminal).toHaveBeenCalledTimes(5);
-    expect(restored.safeThrough()).toBe(1);
-  });
+  it.each([false, true])(
+    "replays staged work after restart with intake unavailable=%s",
+    async (unavailable) => {
+      const target = await fixture(async () => {
+        throw new Error("offline");
+      });
+      target.delivery.register(target.mission, executionId, target.mission.initialMessageId);
+      await publish(target.feed, "terminal");
+      target.delivery.start();
+      await vi.waitFor(() => expect(target.delivery.inspect().state).toBe("degraded"));
+      await target.delivery.close();
+      const terminal = vi.fn(async () => undefined);
+      let sourceUnavailable = unavailable;
+      const read = vi.fn(async (...args: Parameters<CanonicalEventFeed["read"]>) => {
+        if (sourceUnavailable) throw new Error("source unavailable");
+        return await target.feed.read(...args);
+      });
+      const restored = await createMissionDelivery({
+        ...target,
+        feed: { ...target.feed, read },
+        terminal,
+      });
+      resources[resources.length - 1]!.delivery = restored;
+      restored.retry(target.mission.id);
+      restored.start();
+      await vi.waitFor(() => expect(restored.inspect().pending).toBe(0), { timeout: 7000 });
+      expect(terminal).toHaveBeenCalledTimes(5);
+      expect(restored.safeThrough()).toBe(1);
+      expect(read).toHaveBeenCalled();
+      if (unavailable) {
+        expect(restored.inspect()).toMatchObject({
+          state: "degraded",
+          errorCode: "MISSION_DELIVERY_RECEIVE_FAILED",
+          pending: 0,
+        });
+        sourceUnavailable = false;
+        restored.wake();
+        await vi.waitFor(() => expect(restored.inspect().state).toBe("healthy"));
+        expect(restored.safeThrough()).toBe(1);
+        expect(terminal).toHaveBeenCalledTimes(5);
+      }
+    },
+  );
   it("does not write metadata or reset retry backoff when reading an existing association", async () => {
     const target = await fixture();
     target.delivery.register(target.mission, executionId, target.mission.initialMessageId);
