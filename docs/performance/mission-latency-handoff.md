@@ -83,7 +83,8 @@ final_result 是 Main observer 收尾完成，不是 renderer 成功状态绘制
 1. Mission owner 与 ExpertSession owner 是不同边界；Desktop 保留前者，不得靠关闭 guard 检查解决后续轮次报错。
 2. Lease 过期允许接管，不等于自动取消任务。旧 owner 被释放、撤销或接管后必须拒绝写入与后续 Host 工具入口。
 3. CLI 仍在底层资源释放后释放 Mission owner。长任务心跳、sleep 后续租、锁竞争重试继续遵守 ADR 062。
-4. 原生流结束不等于 Core 终态；子任务、工具、Usage 和人工确认仍由执行层裁决。
+4. 原生流结束不等于 Core 终态；子任务、工具和人工确认仍由执行层裁决。Usage 统计不是完成条件，
+   其处理失败不得改变回答成功状态，也不得阻塞 Session 释放或下一轮发送。
 5. 人工确认 checkpoint 可关闭内存流并保留 waiting Execution；恢复不得被误判为失败或重复执行副作用。
 6. prompt/steer 必须经过耐久 Inbox、Session 接入与 fencing；减少 I/O 不能绕过权限和 idempotency。
 7. canonical 删除屏障、删除 journal 和 ownership catalog 事务必须与新的投递/存储机制一起验证。
@@ -116,7 +117,8 @@ Schema；当时将 Usage/终态 outbox、容量账本和收尾屏障调整划入
 
 暖 Session 接入额外开销 P95 < 250 ms 尚未通过真实 Pi/Desktop 受控 A/B 验收。存储局部基准不能替代
 冷启动、暖 Mission、暖 Session、收尾期间立即发送和 SDK 首 token 的每组至少 20 次实测。
-保留 settlement/activity/Usage 等等待的现有语义，不通过扣除等待宣布达标。
+阶段二当时保留 settlement/activity/Usage 等等待；阶段四必须重新审查其必要性，不能以既有 await
+作为保留依据。验收报告仍包含真实等待，不通过扣除等待宣布达标。
 
 优化后的真实关键路径满足下列任一条件，再进入存储专项定稿：读取、解析、重放或原子写入贡献至少 30%
 且 P95 超过 100 ms；或十倍历史规模使普通增量提交 P95 增长超过两倍。按 family 贡献排序，接近时优先 Execution。
@@ -263,10 +265,11 @@ Core 终态之前仍有 6.76–8.58 秒暖轮本地尾部等待；继续只后�
 | 当前目标权限、active revision、凭据、Runtime binding、owner fencing | 正确执行必需               | 保留，限定当前目标及依赖闭包，避免无关资源全量检查    |
 | prompt 耐久接受、幂等、执行源事实、恢复边界                         | 防重复执行/丢失必需        | 保留事实，重构低效事务；不能用内存成功替代落盘        |
 | 工具/子任务/人工确认/取消裁决、Runtime 安全复用                     | 正确结束必需               | 等待实际工作；与存储等待分别计时                      |
-| 最终输出、必要 Usage 事实、Invocation/Execution 终态                | 终态必需                   | 收敛事务与重复读取，避免每个事实重写完整历史          |
+| 最终输出、恢复所需 Runtime 引用、Invocation/Execution 终态          | 终态必需                   | 收敛事务与重复读取，避免每个事实重写完整历史          |
 | 全局容量扫描、应用配额精确账本                                      | 当前发送/页面展示不需要    | 从主流程删除；闲时低频提示，手动清理                  |
 | 无关 Runtime/Bundle/Project 全量探测                                | 当前目标通常不需要         | 定向检查；配置版本驱动失效，不每轮枚举和重探测        |
-| Usage 统计报表、Memory 提炼、归档、产品投影                         | 最小源事实后可恢复执行     | 有界耐久后台消费；故障报告 degraded，不占用下一轮屏障 |
+| Usage 预览、聚合、账本、成本和报表                                  | 不是执行完成条件           | 不新增独立前置提交；后台处理，失败只影响统计模块      |
+| Memory 提炼、归档、产品投影                                         | 最小源事实后可恢复执行     | 有界耐久后台消费；故障报告 degraded，不占用下一轮屏障 |
 | 聊天全历史、Context 明细、统计面板水合                              | 首屏/首 token 只需局部数据 | 索引分页与按需加载；控制状态先展示，详情独立刷新      |
 | 已接近零耗时的暖编译、Session open、Runtime acquire                 | 功能重要，当前优化收益很小 | 保留现有复用，本阶段不继续投入                        |
 
@@ -275,6 +278,96 @@ Core 终态之前仍有 6.76–8.58 秒暖轮本地尾部等待；继续只后�
 对每个候选工作写清：不做会破坏哪个当前承诺、谁拥有事实、数据是否已变、是否可按需/后台处理、成本是否随总历史增长。
 不能说明当前操作为何需要的前置等待应移除，而不是为它继续建设通用基础设施。
 
+### 2026-10-01 代码审查补充：实际阻塞与可失败工作
+
+本节为阶段四方案审查，不表示已经实施。代码依据为 PR #350 所在分支的实现；耗时来自上文
+17:45–17:47 的五轮样本，早于随后 CR 和 steer 丢失修复，不能视为最新构建的耗时或 P95。
+区间存在包含关系，不能相加；未测量的路径只确认结构问题，不推算节省时间。
+
+| 环节                      | 已观察耗时   | 是否必须阻塞及优化方向                                      |
+| ------------------------- | ------------ | ----------------------------------------------------------- |
+| 暖轮点击 → Main 接收      | 0.92–4.14 秒 | 耐久 Inbox、幂等和 ownership 保留；拆分落盘、消费和准备等待 |
+| Main 接收 → 模型发出      | 3.87–5.58 秒 | 当前目标权限、绑定和输入准备保留；无关探测和重复读取退出    |
+| Runtime 可用性检查        | 1.11–1.69 秒 | 当前绑定定向检查；不依赖全量 Runtime 健康展示               |
+| 模型请求                  | 0.70–1.15 秒 | 必须等待；单列供应商/SDK 耗时                               |
+| 最后一批 Runtime 事件提交 | 0.91–1.34 秒 | 必要恢复事实保留；展示与诊断不统一充当完成屏障              |
+| Usage record/commit       | 1.12–1.36 秒 | 不作为回答完成条件，不新增独立前置提交                      |
+| 最终消息提交              | 0.50–0.68 秒 | 可靠保存必需，合并必要状态变更                              |
+| 模型完成 → Core 终态      | 6.76–8.58 秒 | 首要优化区间；现有分段尚未解释全部等待                      |
+| Core 终态 → Session 释放  | 0.15–0.21 秒 | 安全复用所需，不是数秒延迟主因                              |
+| 终态通知 → observer 收尾  | 1.76–3.20 秒 | 产品投影后台执行，不加入下一轮屏障                          |
+
+#### 1. 已确认：Usage 仍在 Core 收尾等待链上
+
+`packages/core/src/execution/expert-runner.ts` 的 `submitRuntimeTurn` 先等待事件 drain 和
+`usagePreview`，再等待 `settleRuntimeTurnUsage`，之后才返回结果。settlement 单独读取
+Invocation、提交用量及 `runtime.usage.observed`，并等待 Host sink 与预览清除。
+Host sink 错误虽被捕获，等待仍存在；前面的 Usage 存储提交失败会传播到执行失败路径。
+Desktop 已后台化外部统计投递，并未消除 Core 的独立 Usage 提交。
+
+阶段四调整：
+
+- 预览合并为最新值，不在结束时等待整条预览 Promise 队列。
+- 原始 Runtime 用量能附带到已有必要消息、checkpoint 或终态提交中时顺带保存，
+  不为统计增加独立前置事务。按 run/observation ID 后台聚合及去重，不重复累计。
+- 聚合、账本、成本计算、报表和预览清除不参与回答成功裁决，不阻塞下一轮。
+  失败仅使统计模块 degraded、数据暂缺或等待重试，不能使 Mission 执行失败。
+- 当前阶段三的耐久 observation 是既有承诺，调整事件来源或持久化边界时须同步更新消费者、
+  恢复与删除测试；不能简单丢弃源事实或无约束地启动 Promise。后台入账应能从已保存的原始事实恢复。
+- 下一轮输入的 Context 容量判断与历史成本统计分开。前者可能影响模型调用；
+  后者不能成为发送门禁。不要为了展示 token 数等待整份账本。
+
+#### 2. 已确认：发送入口与全量 Runtime 健康展示耦合
+
+`apps/desktop/src/main/bootstrap/application-container.ts` 的 `assertBundleExecutorReady`
+调用完整 `getRuntimeAvailability`。`runtime-availability.ts` 即使探测缓存命中，也调用
+`runtimes.list()`；`runtime-environment-service.ts` 的 `list()` 枚举所有 head 并尝试物化
+所有有效 Runtime。探测缓存失效时还调用 `canUse` 与 `listModels`。
+
+发送 Pi 消息不应等待未使用的 Runtime。拆开当前目标/依赖闭包的执行校验与工作室健康列表；
+暖 Session 重验必要权限、当前绑定和配置变化，全量健康及模型发现按需刷新。
+已有 1.11–1.69 秒只证明整个检查阶段耗时，不能全部归因于原生探测。
+
+#### 3. 已确认：单个 Execution 访问会枚举全局 handoff 目录
+
+`packages/core/src/execution/execution-store.ts` 的 `prepareExecutionUnmeasured` 在配置
+canonical feed 时检查隔离记录并恢复 handoff；`listCanonicalHandoffFilesForExecution`
+先枚举全局 handoff 目录，再按 Execution 前缀过滤，隔离目录也有同类路径。
+正常读取和提交因此受其他 owner 积压影响；具体耗时尚未测量。
+
+这是与容量扫描同类的职责错误，优先改为 owner 定向定位。全局发现归后台消费/恢复，
+正常访问仅检查当前 owner 的恢复状态。保留崩溃恢复与隔离拒绝，不能用跳过 journal、
+永久缓存或忽略损坏文件替代正确定位。存储布局变化同步定义转换与旧数据恢复方式。
+
+#### 4. 已确认：必要事实被拆成多次全量事务
+
+`execution-store.ts` 的 `commit` 读取全部 commit records、Invocation、Agent、Context 和
+events；`applyTransaction` 重写完整状态文件与事件历史。handoff 还携带完整事务状态。
+Usage、Context snapshot、最终消息、Invocation 成功、Execution 终态分别触发提交，放大成本。
+
+必须保留可靠输出、恢复引用和状态裁决，不必保留每项事实独立提交的顺序。
+先合并合法的必要提交，缩小恢复与状态校验读取，再实现只写新增事件及受影响记录的存储。
+不能只更换数据库后继续序列化/重写整个 aggregate。Context 引用关系和跨 owner 恢复需要明确
+事务协议，不因减少重复 snapshot 写入而牺牲重启后的 Runtime 恢复。
+
+#### 5. 已确认：流式显示仍可能被耐久事件消费连带阻塞
+
+`expert-runner.ts` 在同一个 Runtime 事件消费循环中发布 live output 并追加耐久事件。
+`execution-commit.ts` 在工具/人工事件边界或缓冲达到 64 条时返回需等待的 flush，
+消费循环暂停会拖住后续文本。文本 delta 不落盘不等于文本消费永远独立于磁盘。
+
+分开实时显示、必要执行事实和诊断记录。工具副作用、人工确认及恢复边界逐项说明屏障目的；
+普通进度、诊断元数据不因属于 Runtime 事件就一律要求即时耐久。队列有界，保留排序、取消
+和安全边界测试；不能把磁盘压力变成无限制内存积压。最终输出仍须可靠保存。
+
+#### 6. 重构候选：可失败的 Memory 通知仍被发送等待
+
+`mission-runner-composition.ts` 的 `notifyMissionActivity` 捕获错误后继续执行，但仍 await
+通知；Desktop 实现等待 `setMemoryConversationState` 并唤醒 pipeline。
+需要拆出立即生效的最小活跃状态与持久化/后台唤醒。若通知保护旧 generation 或阻止旧 Memory
+写入，保留最小 cancellation/fencing 屏障，不等待整个 Memory 收尾，也不直接丢弃保护。
+此项尚需核对依赖与耗时，不能把捕获错误视为可以直接 fire-and-forget 的充分证据。
+
 ### 优先级与实施顺序
 
 **P0：先排除错误的主流程依赖。** 审计启动、Mission/Studio 页面读取、发送接入和收尾的 await 链。
@@ -282,6 +375,8 @@ Core 终态之前仍有 6.76–8.58 秒暖轮本地尾部等待；继续只后�
 全局锁与无关 owner 串行化。逐项分类为删除、定向、闲时或必须保留，并记录调用点和依据。
 容量门禁已撤销，不再重建。异步文件 I/O 仍可能竞争 libuv 线程池、磁盘或产生大量 JSON/Schema CPU 工作；
 独立 worker 也不能消除磁盘争用。后台工作必须限频、有界、可暂停，不在每次页面访问时重启。
+首批明确处理 Usage 完成依赖、全量 Runtime readiness 和全局 handoff 发现；Memory 通知先核对
+最小安全屏障。禁止把本节再次变成泛泛的诊断任务，具体候选和源码依据见上节。
 
 **P1：Core 终态事务与 Execution 存储，最高收益的重构重点。**
 
@@ -290,7 +385,8 @@ Core 终态之前仍有 6.76–8.58 秒暖轮本地尾部等待；继续只后�
    诊断服务于重构，不以缺少二十轮用户手工记录为理由无限延后。
 2. 绘制成功/失败/取消/checkpoint/子任务的提交依赖。当前 final message、Invocation 成功、Execution 终态
    分属多次提交；重审这一边界，允许在根 turn 已满足完成条件时合并必要源事实与状态变更。
-   Usage 观察的耐久事实仍保留，外部统计账本不加入完成事务。通用 Invocation 不能提前宣告整个 Execution 完成。
+   原始 Usage 可附带到已有必要事实中，取消为统计新增的独立前置提交；聚合与外部账本后台执行，
+   统计失败不改变成功状态。通用 Invocation 不能提前宣告整个 Execution 完成。
 3. 根本替换“每次小提交读取全部 commits/events/Invocation/Agent/Context，再写完整状态及 journal/handoff”的成本模型。
    现有 `execution-store.ts` 的锁内复用只少读一次，没有解决提交成本随累计历史增长。
    50 ms batching、更多缓存或更大的超时都不能作为最终修复；目标是按新增事件及受影响记录执行增量事务。
@@ -340,8 +436,19 @@ Schema 变化同步提交历史 Schema、静态相邻迁移及 journal 迁移；
 
 ### 交付与验收
 
-按“必要性审计及定向准备 → 终态提交重构 → Execution 增量存储及迁移”分别交付可运行结果，
-每步同步检查页面与后台 I/O；不能等全仓改写完成后才验证用户收益。具体事务/表结构由诊断与 ADR 定稿。
+按三批交付可运行结果：
+
+1. 去掉非必要等待：Usage 全链路脱离完成条件、Runtime 定向校验、全局 handoff 扫描退出正常
+   读取、Memory 通知拆分。保留各自最小正确性屏障。
+2. 收敛完成屏障：合并必要最终输出与状态提交、减少 Context 重复保存，验证最后输出后立即
+   发送；后台历史不得长期占用前台准备所需的锁。不能撤销 semantic write 串行化来换取速度，
+   应缩短锁内工作、减少投影 journal 体积，并在后台领取之间给前台写入机会。
+3. 实现 Execution 增量存储：定稿 SQLite、迁移和恢复机制；Session/controller 是否迁移取决于
+   剩余耗时，不为统一技术栈同时迁移所有存储。
+
+每批同步检查页面与后台 I/O；不能等全仓改写完成后才验证用户收益。具体事务/表结构由诊断与 ADR 定稿。
+容量检查已退出主流程；暖编译、Session open、Runtime acquire 接近零；Session 释放约两百毫秒。
+这些不作为本阶段主要投入。最高收益来自取消错误依赖和消除重复全量事务，而非继续仅后台化终态之后的工作。
 
 - 同构建、硬件、模型/thinking、历史、日志等级、并发及正常后台能力下，对比新建/暖 Mission/暖 Session，
   每组至少二十轮报告 P50/P95；可自动化采集，不再要求用户反复手工发送。
@@ -355,6 +462,10 @@ Schema 变化同步提交历史 Schema、静态相邻迁移及 journal 迁移；
   普通增量提交不得继续随全部历史线性放大；Mission/Studio 首屏不退化，自动容量统计不进入交互调用链。
 - 验证跨进程重复提交/竞争、takeover fencing、崩溃重放、终态已提交但 Session 未释放、
   工具/子任务/人工确认、取消、Usage 幂等投递和删除重放；SQLite 转换补齐真实历史迁移集。
+- 注入 Usage preview、聚合、账本及消费者失败，验证回答仍成功、Session 正常释放、下一轮
+  不等待统计重试；源事实可恢复后不重复入账，统计未知不能展示为零。
+- 在无关 Runtime 慢探测/不可用、其他 owner 大量 handoff 积压、后台历史写入竞争及工具事件
+  密集场景下验证当前目标发送和文本消费；不能仅以正常小数据下测试通过判定隔离有效。
 - 未达到收益或出现页面退化时，根据证据缩小/撤回不合理实现，不再用更多 adapter、缓存层或增加超时补救错误职责。
 
 ## 阶段一收益：能推导什么，不能推导什么
