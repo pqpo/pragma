@@ -27,6 +27,7 @@ export class RuntimeSessionPool {
   private readonly pending = new Map<string, PendingRuntimeSession>();
   private readonly freshContexts = new Set<string>();
   private readonly retiredCleanup = new Map<RuntimeAgentSession, Promise<void>>();
+  private readonly failedCleanup = new Set<RuntimeAgentSession>();
   private readonly failedRetirements = new Set<RuntimeAgentSession>();
   private readonly retiring = new Map<RuntimeAgentSession, Promise<void>>();
   private sealed = false;
@@ -117,13 +118,9 @@ export class RuntimeSessionPool {
       async () => await (session.stopForDeletion?.() ?? session.close()),
     );
     if (session.stopForDeletion !== undefined) {
-      const cleanup = closing.then(async () => await session.close());
-      this.retiredCleanup.set(session, cleanup);
-      void cleanup.then(
-        () => {
-          if (this.retiredCleanup.get(session) === cleanup) this.retiredCleanup.delete(session);
-        },
-        () => undefined,
+      this.trackRetiredCleanup(
+        session,
+        closing.then(async () => await session.close()),
       );
     }
     this.retiring.set(session, closing);
@@ -167,7 +164,29 @@ export class RuntimeSessionPool {
     return this.closePromise;
   }
 
+  private trackRetiredCleanup(session: RuntimeAgentSession, cleanup: Promise<void>): void {
+    this.retiredCleanup.set(session, cleanup);
+    void cleanup.then(
+      () => {
+        if (this.retiredCleanup.get(session) === cleanup) {
+          this.retiredCleanup.delete(session);
+          this.failedCleanup.delete(session);
+        }
+      },
+      () => {
+        if (this.retiredCleanup.get(session) === cleanup) this.failedCleanup.add(session);
+      },
+    );
+  }
+
   async finishDeletion(): Promise<void> {
+    for (const session of this.failedCleanup) {
+      this.failedCleanup.delete(session);
+      this.trackRetiredCleanup(
+        session,
+        Promise.resolve().then(async () => await session.close()),
+      );
+    }
     await Promise.all([this.close(), ...this.retiredCleanup.values()]);
   }
 

@@ -86,7 +86,7 @@ export function createMissionDeletionService(options: {
   let started = false;
   let timer: ReturnType<typeof setTimeout> | undefined;
   let running: Promise<void> | undefined;
-  const settlements = new Map<string, Promise<void>>();
+  const settlements = new Map<string, () => Promise<void>>();
   const pending = new Map<string, Promise<void>>();
   const errors = new Map<string, string>();
   const read = async (id: string) => await readMissionDeletionRecord(options.paths, id);
@@ -149,7 +149,7 @@ export function createMissionDeletionService(options: {
         const abort = new AbortController();
         const operation = Promise.resolve().then(async () => {
           await options.ports[step](fresh, abort.signal);
-          if (step === "settlement") await settlements.get(fresh.missionId);
+          if (step === "settlement") await settlements.get(fresh.missionId)?.();
         });
         pending.set(key, operation);
         void operation.then(
@@ -388,9 +388,8 @@ export function createMissionDeletionService(options: {
   };
   return {
     read,
-    trackSettlement(id: string, promise: Promise<void>) {
-      settlements.set(id, promise);
-      void promise.catch(() => undefined);
+    trackSettlement(id: string, cleanup: () => Promise<void>) {
+      settlements.set(id, cleanup);
     },
     commit,
     async updateOwners(

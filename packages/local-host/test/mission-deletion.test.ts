@@ -246,6 +246,23 @@ describe("Mission post-commit deletion", () => {
     expect((await target.service.read("mission"))?.phase).toBe("completed");
     for (const port of Object.values(target.ports)) expect(port).not.toHaveBeenCalled();
   });
+  it("reruns Runtime settlement cleanup after a recoverable failure", async () => {
+    const target = await fixture();
+    const cleanup = vi
+      .fn(async () => {})
+      .mockRejectedValueOnce(new Error("Runtime cleanup failed"));
+    target.service.trackSettlement("mission", cleanup);
+    await target.service.commit("mission");
+    await target.service.runOnce();
+    const record = (await target.service.read("mission"))!;
+    expect(record.steps.settlement.done).toBe(false);
+    expect(cleanup).toHaveBeenCalledOnce();
+    record.steps.settlement.nextAt = 0;
+    await writeFile(target.paths.missionDeletion("mission"), JSON.stringify(record));
+    await target.service.runOnce();
+    expect(cleanup).toHaveBeenCalledTimes(2);
+    expect((await target.service.read("mission"))?.phase).toBe("completed");
+  });
   it("rejects a future record and leaves it available for diagnosis", async () => {
     const target = await fixture();
     const path = target.paths.missionDeletion("mission");

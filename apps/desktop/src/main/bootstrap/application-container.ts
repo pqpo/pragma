@@ -1,3 +1,4 @@
+import { createMissionAttentionRetirement } from "./mission-attention-retirement.ts";
 import {
   createMissionDeletionService,
   readMissionDeletionRecord,
@@ -993,7 +994,9 @@ export async function createDesktopApplicationContainer(
   } = { current: undefined };
   const localHostUsageRef: { current: LocalHostUsageSink | undefined } = { current: undefined };
   let missionDeliveryInitializationError: string | undefined;
-  const retiringAttention = new Map<string, Promise<void>>();
+  const retiringAttention = createMissionAttentionRetirement(
+    async (missionId) => await memoryPlane.stopMissionAttention(missionId),
+  );
   const missionDeletion = createMissionDeletionService({
     paths: pragmaPaths,
     logger: mainLogger,
@@ -1071,9 +1074,8 @@ export async function createDesktopApplicationContainer(
             mission: MissionSchema.parse(record.payload.mission),
             executionIds: record.executionIds,
           }),
-          retiringAttention.get(record.missionId),
+          retiringAttention.finish(record.missionId),
         ]);
-        retiringAttention.delete(record.missionId);
       },
     },
   });
@@ -1291,9 +1293,7 @@ export async function createDesktopApplicationContainer(
     deletionService: missionDeletion,
     prepareOwnerDeletion: async ({ mission, executionIds }) => {
       missionDeliveryRef.current?.fenceMission(mission.id, executionIds);
-      const stopping = memoryPlane.stopMissionAttention(mission.id);
-      retiringAttention.set(mission.id, stopping);
-      void stopping.catch(() => undefined);
+      void retiringAttention.stop(mission.id).catch(() => undefined);
     },
     onExecutionLinked: async ({ mission, executionId, requestId }) => {
       await executionEventProjector.link({ mission, executionId, requestId });

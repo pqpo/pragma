@@ -682,6 +682,8 @@ async function createManagedRuntimeSession<
       }
       return nativeStop;
     };
+    let beforeDestroyCompleted = false;
+    let afterDestroyCompleted = false;
     lifecycle = createQueuedAgentLifecycle<ExpertAgentRunContext | undefined>(runContext, {
       abort: async (signal) => {
         if (nativeSession !== undefined && lifecycle?.currentSignal !== undefined) {
@@ -695,13 +697,19 @@ async function createManagedRuntimeSession<
         const sessionInfo = readSessionInfo();
         const cleanupErrors: unknown[] = [];
 
-        await dispatchExpertAgentHook(agent.hooks, "beforeSessionDestroy", {
-          agent,
-          session: sessionInfo,
-          logger,
-        }).catch((error: unknown) => {
-          cleanupErrors.push(error);
-        });
+        if (!beforeDestroyCompleted) {
+          await dispatchExpertAgentHook(agent.hooks, "beforeSessionDestroy", {
+            agent,
+            session: sessionInfo,
+            logger,
+          })
+            .then(() => {
+              beforeDestroyCompleted = true;
+            })
+            .catch((error: unknown) => {
+              cleanupErrors.push(error);
+            });
+        }
         const sessionToClose = nativeSession;
         const closeSession = driver.closeSession;
         if (sessionToClose !== undefined && closeSession !== undefined) {
@@ -741,13 +749,19 @@ async function createManagedRuntimeSession<
           );
           cleanupErrors.push(error);
         }
-        await dispatchExpertAgentHook(agent.hooks, "afterSessionDestroy", {
-          agent,
-          session: sessionInfo,
-          logger,
-        }).catch((error: unknown) => {
-          cleanupErrors.push(error);
-        });
+        if (!afterDestroyCompleted) {
+          await dispatchExpertAgentHook(agent.hooks, "afterSessionDestroy", {
+            agent,
+            session: sessionInfo,
+            logger,
+          })
+            .then(() => {
+              afterDestroyCompleted = true;
+            })
+            .catch((error: unknown) => {
+              cleanupErrors.push(error);
+            });
+        }
 
         throwIfRuntimeCleanupFailed(cleanupErrors);
       },

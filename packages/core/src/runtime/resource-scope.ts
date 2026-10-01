@@ -29,7 +29,8 @@ export interface RuntimeResourceRegistrar {
 /**
  * Owns resources acquired while a Runtime Session or turn is being prepared.
  *
- * Resources are released exactly once in reverse acquisition order. Core keeps
+ * Successful releases run once in reverse acquisition order; failed releases
+ * can retry while registration remains closed. Core keeps
  * ownership of the scope, so partial initialization failures use the same
  * cleanup path as normal Session shutdown.
  */
@@ -38,6 +39,7 @@ export class RuntimeResourceScope implements RuntimeResourceRegistrar {
   private sealed = false;
   private transferred = false;
   private disposal: Promise<void> | undefined;
+  private disposalFailed = false;
 
   constructor(readonly label: string) {
     if (label.trim() === "") {
@@ -129,14 +131,21 @@ export class RuntimeResourceScope implements RuntimeResourceRegistrar {
   }
 
   dispose(): Promise<void> {
-    this.disposal ??= this.disposeEntries();
+    if (this.disposal === undefined || this.disposalFailed) {
+      this.disposalFailed = false;
+      const disposal = this.disposeEntries();
+      this.disposal = disposal;
+      void disposal.catch(() => {
+        if (this.disposal === disposal) this.disposalFailed = true;
+      });
+    }
     return this.disposal;
   }
 
   private async disposeEntries(): Promise<void> {
     const errors: unknown[] = [];
     for (const entry of [...this.entries].reverse()) {
-      if (entry.state !== "active") continue;
+      if (entry.state === "disposed") continue;
       try {
         await entry.dispose();
         entry.state = "disposed";

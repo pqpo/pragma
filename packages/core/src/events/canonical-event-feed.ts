@@ -80,7 +80,8 @@ export async function createFileCanonicalEventFeed(
     workerData: options,
     ...(workerUrl.pathname.endsWith(".ts")
       ? {
-          execArgv: [...process.execArgv, "--import", "tsx"],
+          // Resolve workspace source without selecting third-party declaration exports.
+          execArgv: [...process.execArgv, "--import", "tsx", "--conditions=pragma-source"],
         }
       : {}),
   });

@@ -88,6 +88,24 @@ PRAGMA_MISSION_DELETE_BENCHMARK=1 pnpm --filter @pragma/desktop exec vitest run 
 的长期资源压力测试，也没有正常执行吞吐量的 main 对照基线。后台每秒仍读取活动删除任务；
 完成任务已移出活动目录，未完成任务很多时仍有与任务数成正比的轮询成本。
 
+## PR 评论复核
+
+读取 PR #351 的所有普通评论、审查记录及行内评论，确认四项修复建议均有依据：
+
+- TS canonical worker 不能依赖预先存在的 workspace dist。Shared 新增 pragma-source 源码导出，
+  TS worker 显式选择该条件并通过 scoped tsx 加载源码；不向 Zod 等第三方启用 types 条件。
+  隔离 fixture 没有 Shared/Core dist，并在父进程移除继承条件后验证 worker 独立启动。
+- Attention 的失败停止 Promise 不再永久保留；后处理重新调用停止函数，仍对进行中的停止去重。
+- Runtime pool 对已确认 native stop、完整 close 失败的 Session 保留可重试清理身份；后处理的
+  Host settlement 同步改为回调，避免继续重放旧 rejected Promise。底层 lifecycle 允许重新执行
+  失败 cleanup，resource scope 仅重试失败 disposer，已成功的 destroy hook 不再重复调用。
+  回归覆盖失败后实际再次 close、
+  并发重试去重，以及持久 worker 的第二次 settlement 成功。
+- 所有 observer settlement 登记都在完成或失败后释放引用，且检查 Promise 身份，避免旧完成
+  清除新登记的 active settlement；覆盖 idle Mission、失败和替换三种情况。
+
+评论提出的进一步将前台 Mission 生命周期下沉 Local Host 属于后续架构建议，本次维持已授权方案。
+
 ## 真实 Runtime 与质量检查
 
 真实 Codex app-server（gpt-6.1-sol）验证：仅暂停测试创建的子进程，Native stop 无法确认时返回

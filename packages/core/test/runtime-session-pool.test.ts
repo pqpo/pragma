@@ -1,6 +1,7 @@
 import type { RuntimeAgentSession } from "../src/index.ts";
 import { describe, expect, it, vi } from "vitest";
 
+import { createQueuedAgentLifecycle } from "../src/runtime/agent-lifecycle.ts";
 import { RuntimeSessionPool } from "../src/execution/runtime-session-pool.ts";
 
 const identity = {
@@ -37,6 +38,41 @@ describe("RuntimeSessionPool", () => {
     finish();
     await pool.finishDeletion();
   });
+  it("retries retired cleanup after native stop succeeded and close failed", async () => {
+    const pool = new RuntimeSessionPool();
+    const session = { ...createRuntimeSession(), stopForDeletion: vi.fn(async () => {}) };
+    const close = vi.mocked(session.close).mockRejectedValueOnce(new Error("cleanup failed"));
+    await pool.acquire(identity, async () => session);
+    pool.invalidate(session);
+    await expect(pool.finishDeletion()).rejects.toThrow("cleanup failed");
+    expect(close).toHaveBeenCalledOnce();
+    await Promise.all([pool.finishDeletion(), pool.finishDeletion()]);
+    expect(close).toHaveBeenCalledTimes(2);
+    expect(session.stopForDeletion).toHaveBeenCalledOnce();
+    await pool.finishDeletion();
+    expect(close).toHaveBeenCalledTimes(2);
+  });
+
+  it("retries the managed lifecycle cleanup instead of replaying its rejection", async () => {
+    const cleanup = vi.fn(async () => {}).mockRejectedValueOnce(new Error("hook unavailable"));
+    const lifecycle = createQueuedAgentLifecycle(undefined, { cleanup });
+    const pool = new RuntimeSessionPool();
+    const session = {
+      ...createRuntimeSession(),
+      stopForDeletion: vi.fn(async () => lifecycle.seal()),
+      close: vi.fn(async () => await lifecycle.close()),
+    };
+    await pool.acquire(identity, async () => session);
+    pool.invalidate(session);
+    await expect(pool.finishDeletion()).rejects.toThrow("hook unavailable");
+    await pool.finishDeletion();
+    expect(cleanup).toHaveBeenCalledTimes(2);
+    expect(session.close).toHaveBeenCalledTimes(2);
+    expect(session.stopForDeletion).toHaveBeenCalledOnce();
+    await pool.finishDeletion();
+    expect(cleanup).toHaveBeenCalledTimes(2);
+  });
+
   it("deduplicates concurrent creation for one context", async () => {
     const pool = new RuntimeSessionPool();
     const session = createRuntimeSession();

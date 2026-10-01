@@ -1,3 +1,4 @@
+import { trackMissionDeletionSettlement } from "./mission-deletion-settlement.ts";
 import { createMissionDeletionService, type MissionDeletionService } from "@pragma/local-host";
 import { fenceOwnerDeletion } from "@pragma/core";
 import { missionContextMountsFingerprint } from "./mission-context-mounts.ts";
@@ -3813,23 +3814,15 @@ export function createMissionRunner(options: {
       );
       const priorSettlement = pendingDeletionSettlements.get(id);
       const combined = Promise.all([priorSettlement, settlement]).then(() => undefined);
-      pendingDeletionSettlements.set(id, combined);
-      void combined.finally(() => pendingDeletionSettlements.delete(id)).catch(() => undefined);
+      trackMissionDeletionSettlement(pendingDeletionSettlements, id, combined);
     }
-    let finish!: () => void;
-    const finished = new Promise<void>((resolve, reject) => {
-      finish = () => {
-        void (
-          session?.finishDeletion() ??
-          active?.handle.finishDeletion?.() ??
-          Promise.resolve()
-        ).then(resolve, reject);
-      };
+    const observers = pendingDeletionSettlements.get(id);
+    deletionService.trackSettlement(id, async () => {
+      await Promise.all([
+        observers,
+        session?.finishDeletion() ?? active?.handle.finishDeletion?.() ?? Promise.resolve(),
+      ]);
     });
-    deletionService.trackSettlement(
-      id,
-      Promise.all([pendingDeletionSettlements.get(id), finished]).then(() => undefined),
-    );
     const lockStartedAt = performance.now();
     const deleteOwnedStorage = async (canonicalHandoffFiles: readonly string[]): Promise<void> => {
       logger.info("mission.delete_phase", "Mission deletion locks acquired.", {
@@ -3920,7 +3913,6 @@ export function createMissionRunner(options: {
       }
       if (options.missions.storagePath === undefined) await options.missions.remove(id);
       else options.missions.forget?.(id);
-      finish();
       sessionService.deleteExecutionContext(id);
       lifecycleService.clearControlIssue(id);
       deletionService.wake();
@@ -6383,8 +6375,7 @@ export function createMissionRunner(options: {
             .filter(([, stream]) => stream.missionId === id)
             .map(async ([subscriptionId]) => await closeWorkConversationStream(subscriptionId)),
         ]).then(() => undefined);
-        pendingDeletionSettlements.set(id, closingObservers);
-        void closingObservers.catch(() => undefined);
+        trackMissionDeletionSettlement(pendingDeletionSettlements, id, closingObservers);
         await withMissionController(
           id,
           async () =>
