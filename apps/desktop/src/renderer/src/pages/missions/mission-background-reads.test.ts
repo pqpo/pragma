@@ -8,7 +8,7 @@ import {
   applyMissionChatPatches,
   createMissionConversationBase,
 } from "./mission-conversation-model.ts";
-import { mergeContextWindow } from "./use-mission-conversation.ts";
+import { mergeContextWindow, mergeConversationState } from "./use-mission-conversation.ts";
 
 function deferred<T>() {
   let resolve!: (value: T) => void;
@@ -211,4 +211,64 @@ it("lets all control callers await the dirty follow-up without waiting for Conte
   expect(settled).toBe(true);
   reads.close();
   contextGate.resolve(context);
+});
+
+it("settles a control refresh during continuous text output without rereading control", async () => {
+  const gate = deferred<MissionConversationState>();
+  let snapshot = mergeConversationState(createMissionConversationBase("mission"), {
+    ...state,
+    revision: 0,
+  })!;
+  snapshot = applyMissionChatPatches(
+    snapshot,
+    [
+      {
+        type: "entry.upsert",
+        entry: {
+          id: "answer",
+          kind: "assistant",
+          content: "",
+          streaming: true,
+          createdAt: "2026-10-01T00:00:00.000Z",
+        },
+      },
+    ],
+    1,
+  )!;
+  const read = vi
+    .fn()
+    .mockReturnValueOnce(gate.promise)
+    .mockResolvedValue({ ...state, revision: 20 });
+  const reads = createMissionBackgroundReads({
+    api: {
+      getMissionConversationState: read,
+      getMissionContextWindow: vi.fn().mockResolvedValue(context),
+    },
+    missionId: "mission",
+    onControl: (value) => {
+      if (value.revision < Math.max(snapshot.stateRevision ?? 0, snapshot.controlRevision ?? 0)) {
+        void reads.refreshControl();
+        return;
+      }
+      snapshot = mergeConversationState(snapshot, value)!;
+    },
+    onContext: vi.fn(),
+    onControlError: vi.fn(),
+    onContextError: vi.fn(),
+  });
+  const pending = reads.refreshControl();
+  for (let revision = 2; revision <= 20; revision++) {
+    snapshot = applyMissionChatPatches(
+      snapshot,
+      [{ type: "entry.append", entryId: "answer", field: "content", delta: "x" }],
+      revision,
+    )!;
+  }
+  gate.resolve(state);
+  await pending;
+  expect(read).toHaveBeenCalledTimes(1);
+  expect(snapshot.stateRevision).toBe(1);
+  expect(snapshot.revision).toBe(20);
+  expect(snapshot.entries[0]).toMatchObject({ content: "x".repeat(19), streaming: true });
+  reads.close();
 });

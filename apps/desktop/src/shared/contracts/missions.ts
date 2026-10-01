@@ -827,7 +827,7 @@ export const MissionConversationSnapshotSchema = z.object({
   missionId: MissionIdSchema,
   revision: z.number().int().nonnegative(),
   stateRevision: z.number().int().nonnegative().optional(),
-  // Control responses cannot predate an already consumed live update.
+  // Control responses cannot predate an already consumed control-affecting update.
   controlRevision: z.number().int().nonnegative().optional(),
   queueRevision: z.number().int().nonnegative().optional(),
   contextRevision: z.number().int().nonnegative().optional(),

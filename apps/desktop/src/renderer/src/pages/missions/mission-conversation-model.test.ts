@@ -778,7 +778,126 @@ describe("mission conversation model", () => {
     expect(patched.snapshot.entries[0]).toMatchObject({ content: "hello!" });
   });
 
-  it.each(["patch", "invalidate"] as const)(
+  it.each([false, true])(
+    "keeps control readable during token batches with deferred content=%s",
+    (deferContentEntries) => {
+      const current = { ...streamingSnapshot("hello", 10), stateRevision: 7, controlRevision: 7 };
+      const updated = applyMissionChatUpdateBatch(
+        current,
+        [
+          {
+            missionId: current.missionId,
+            streamId: chatStreamId,
+            revision: 11,
+            kind: "patch",
+            patches: [{ type: "entry.append", entryId: "answer", field: "content", delta: "!" }],
+          },
+        ],
+        { deferContentEntries },
+      ).snapshot;
+      expect(updated.controlRevision).toBe(7);
+      const state = mergeConversationState(updated, {
+        missionId: current.missionId,
+        revision: 10,
+        pendingInteractions: [],
+        deliveries: [],
+        hiddenEntryIds: [],
+      });
+      expect(state?.stateRevision).toBe(10);
+      expect(state?.revision).toBe(11);
+    },
+  );
+
+  it("uses the last actual control change instead of later streaming and Context revisions in a mixed batch", () => {
+    const current = { ...streamingSnapshot("hello", 10), stateRevision: 7, controlRevision: 7 };
+    const updated = applyMissionChatUpdateBatch(current, [
+      {
+        missionId: current.missionId,
+        streamId: chatStreamId,
+        revision: 11,
+        kind: "patch",
+        patches: [
+          {
+            type: "queue.update",
+            queue: { state: "idle", pendingCount: 0, supportsSteer: false, items: [] },
+          },
+        ],
+      },
+      { missionId: current.missionId, streamId: chatStreamId, revision: 12, kind: "invalidate" },
+      {
+        missionId: current.missionId,
+        streamId: chatStreamId,
+        revision: 13,
+        kind: "patch",
+        patches: [
+          {
+            type: "entry.upsert",
+            entry: {
+              ...current.entries[0]!,
+              kind: "assistant",
+              content: "hello!",
+              streaming: true,
+            },
+          },
+        ],
+      },
+      {
+        missionId: current.missionId,
+        streamId: chatStreamId,
+        revision: 14,
+        kind: "patch",
+        patches: [
+          {
+            type: "context-window.update",
+            usage: {
+              usedTokens: 1,
+              contextWindowTokens: 100,
+              percent: 1,
+              measurement: "reported",
+              observedAt: "2026-10-01T00:00:00.000Z",
+            },
+          },
+        ],
+      },
+      {
+        missionId: current.missionId,
+        streamId: chatStreamId,
+        revision: 15,
+        kind: "patch",
+        patches: [
+          {
+            type: "entry.streaming",
+            entryId: "answer",
+            streaming: false,
+          },
+        ],
+      },
+    ]).snapshot;
+    expect(updated).toMatchObject({
+      revision: 15,
+      controlRevision: 12,
+      contextRevision: 14,
+    });
+    const fresh = mergeConversationState(updated, {
+      missionId: current.missionId,
+      revision: 12,
+      pendingInteractions: [],
+      deliveries: [],
+      hiddenEntryIds: [],
+    });
+    expect(fresh?.stateRevision).toBe(12);
+    expect(
+      mergeConversationState(updated, {
+        missionId: current.missionId,
+        revision: 11,
+        pendingInteractions: [],
+        deliveries: [],
+        hiddenEntryIds: [],
+      }),
+    ).toBe(updated);
+  });
+
+  it.each(["queue", "delivery", "invalidate"] as const)(
     "fences delayed control after a consumed live %s without fencing initial history hydration",
     (kind) => {
       const current = streamingSnapshot("hello", 10);
@@ -801,10 +920,25 @@ describe("mission conversation model", () => {
                 kind: "patch" as const,
                 patches: [
                   {
-                    type: "entry.append" as const,
-                    entryId: "answer",
-                    field: "content" as const,
-                    delta: "!",
+                    ...(kind === "queue"
+                      ? {
+                          type: "queue.update" as const,
+                          queue: {
+                            state: "idle" as const,
+                            pendingCount: 0,
+                            supportsSteer: false,
+                            items: [],
+                          },
+                        }
+                      : {
+                          type: "entry.upsert" as const,
+                          entry: {
+                            id: "prompt",
+                            kind: "user" as const,
+                            content: "next",
+                            createdAt: "2026-10-01T00:00:00.000Z",
+                          },
+                        }),
                   },
                 ],
               }),

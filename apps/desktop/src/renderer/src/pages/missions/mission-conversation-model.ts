@@ -234,13 +234,16 @@ function applyMissionChatPatchesWithChanges(
   revision: number,
   options: MissionChatUpdateBatchOptions = {},
   contextRevision = revision,
+  controlRevision = patches.some(isMissionControlPatch)
+    ? revision
+    : (snapshot.controlRevision ?? 0),
 ): MissionChatPatchApplyResult | null {
   if (patches.length === 0) {
     return {
       snapshot: {
         ...snapshot,
         revision,
-        controlRevision: Math.max(snapshot.controlRevision ?? 0, revision),
+        controlRevision: Math.max(snapshot.controlRevision ?? 0, controlRevision),
       },
       changedEntries: new Map(),
     };
@@ -263,7 +266,7 @@ function applyMissionChatPatchesWithChanges(
       snapshot: {
         ...snapshot,
         revision,
-        controlRevision: Math.max(snapshot.controlRevision ?? 0, revision),
+        controlRevision: Math.max(snapshot.controlRevision ?? 0, controlRevision),
       },
       changedEntries,
     };
@@ -367,10 +370,17 @@ function applyMissionChatPatchesWithChanges(
       ...snapshot,
       revision,
       entries,
-      controlRevision: Math.max(snapshot.controlRevision ?? 0, revision),
+      controlRevision: Math.max(snapshot.controlRevision ?? 0, controlRevision),
     },
     changedEntries,
   };
+}
+
+/** Execution and pending-interaction transitions arrive as invalidations. */
+function isMissionControlPatch(patch: MissionChatPatch): boolean {
+  return (
+    patch.type === "queue.update" || (patch.type === "entry.upsert" && patch.entry.kind === "user")
+  );
 }
 
 function isMissionContentAppendPatch(patch: MissionChatPatch): patch is Extract<
@@ -456,7 +466,7 @@ export function applyMissionChatUpdateBatch(
           : {
               ...base,
               revision: consumedRevision,
-              controlRevision: Math.max(base.controlRevision ?? 0, consumedRevision),
+              controlRevision: Math.max(base.controlRevision ?? 0, requiredRefreshRevision ?? 0),
             },
       remaining,
       needsRefresh: requiredRefreshRevision !== undefined || remaining.length > 0,
@@ -471,12 +481,19 @@ export function applyMissionChatUpdateBatch(
   const contextRevision = contiguous.findLast((update) =>
     update.patches.some((patch) => patch.type === "context-window.update"),
   )?.revision;
+  // Use the actual control-changing update, never a later token in the same batch.
+  const controlRevision = Math.max(
+    base.controlRevision ?? 0,
+    requiredRefreshRevision ?? 0,
+    contiguous.findLast((update) => update.patches.some(isMissionControlPatch))?.revision ?? 0,
+  );
   const applied = applyMissionChatPatchesWithChanges(
     base,
     patches,
     consumedRevision,
     options,
     contextRevision,
+    controlRevision,
   );
   if (applied === null) {
     return {

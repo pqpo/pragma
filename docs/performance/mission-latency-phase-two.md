@@ -188,10 +188,10 @@ SQLite 默认门槛：真实关键路径中读取/解析/重放/原子写入占�
 ## PR #349 评论核对
 
 确认并修复三项问题：idle 释放不再撤销正常耐久展示读取；control 响应以独立 `controlRevision`
-拒绝早于已消费 live 更新的结果；control/context reader 复用包含 dirty 后续读取的 Promise，
+拒绝早于已消费控制变化的结果；control/context reader 复用包含 dirty 后续读取的 Promise，
 操作刷新等待 history + control，Context 仍独立。返回值在屏障完成后读取当前聚合快照。
 
-新增回归覆盖 idle 释放与初始导航交错、live patch/invalidate 后旧 control 不覆盖或隐藏条目、
+新增回归覆盖 idle 释放与初始导航交错、queue/delivery patch 或 invalidate 后旧 control 不覆盖或隐藏条目、
 初始历史不阻止 control 水合，以及多个 control 调用者等待同一后续读取。旧的 queue 回归允许
 revision 1 控制响应在 revision 2 live 更新后水合，此断言按审查要求改为保留当前快照，并用 revision 2
 响应验证成功水合；同 revision queue patch 优先、关闭/删除撤销展示读取规则保留。
@@ -204,3 +204,15 @@ owner/Runtime 生命周期集成 1 项（同文件其余 77 项未在本次定�
 最后补充的刷新导航保护与 stale control 重读再次通过 ESLint 和上述 188 项回归。
 
 Desktop 构建通过，styles、main workspace 打包与 preload Bridge 自包含检查通过。
+
+### 控制水位范围修正
+
+后续评论指出纯 token 推进 `controlRevision` 会造成 control reader 持续 dirty 重读，操作刷新也随之等待。
+新增回归在修复前实际复现了额外读取（预期一次，实际两次）；修复后持续 19 次文本更新期间，
+原 control 读取可直接应用并结束刷新。控制水位现仅由 control 响应、invalidate、queue 更新和用户条目
+upsert 推进，纯内容/streaming/Context 用量不推进。混合 batch 使用最后一个控制变化的真实 revision，
+仍保留队列和人工确认/Execution 失效后的旧读取保护。Main 各 section 独立 revision 属于后续协议设计，
+此次未增加持久化字段或改动 Main 事件协议。
+
+控制水位范围修正验证：193 项展示/读取回归、`pnpm check` 和 Desktop 构建通过，
+styles、main workspace 打包与 preload Bridge 检查通过。端到端首 token 性能目标仍未完成验收。

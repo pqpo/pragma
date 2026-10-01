@@ -55,8 +55,12 @@ Renderer 的历史、控制和 Context 分别保留一个进行中读取与一�
 每类读取共享覆盖 dirty 后续读取的 Promise。操作后的 `refreshLatestChat()` 等待历史和控制均完成，
 再返回当前聚合快照；Context 保持独立，不阻塞恢复、取消或队列操作。
 失败后的成功读取清除所属 section 的降级标记。Mission 切换或卸载关闭读取器并拒绝旧回调。
-控制读取的 `stateRevision` 表示已水合的控制状态；`controlRevision` 记录控制响应和已消费 live 更新的水位。
-旧控制响应不得覆盖新 live 状态，也不得隐藏新条目；被拒绝时将该 reader 标记为 dirty，合并一次后续读取。
+控制读取的 `stateRevision` 表示已水合的控制状态；`controlRevision` 只记录控制响应、已消费的 invalidate、
+queue 更新及用户条目 upsert（投递状态变化）的水位。Execution 与人工确认变化沿用 invalidate。
+纯文本/工具输出、assistant/thinking/tool upsert、streaming 状态和 Context 用量不推进控制水位，
+避免 token 持续输出反复作废控制读取，拖住操作刷新。批量应用使用最后一个实际控制变化的 revision，
+不能借用同批较晚的文本 revision。旧控制响应不得覆盖较新的控制事实，也不得隐藏新用户条目；
+被拒绝时将该 reader 标记为 dirty，合并一次后续读取。
 历史页加载不单独推进此控制水位，首次控制水合仍可独立完成。
 
 live delta、status 和 queue patch 保持直接应用。没有缓存时以 revision 0 的空基底接收从 revision 1 开始的
