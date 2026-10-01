@@ -673,7 +673,7 @@ export function mergeConversationState(
       }),
     pendingInteractions: state.pendingInteractions,
     queue:
-      current.queueRevision !== undefined && current.queueRevision > state.revision
+      current.queueRevision !== undefined && current.queueRevision >= state.revision
         ? current.queue
         : state.queue,
     queueRevision: Math.max(current.queueRevision ?? 0, state.revision),

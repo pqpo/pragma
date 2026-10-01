@@ -75,6 +75,16 @@ describe("mission conversation model", () => {
     expect(updated?.entries).toEqual(snapshot.entries);
     expect(updated?.queueRevision).toBe(2);
     expect(isMissionConversationCacheReady(updated)).toBe(false);
+    const equalRevision = mergeConversationState(updated, {
+      missionId: snapshot.missionId,
+      revision: 2,
+      pendingInteractions: [],
+      queue: { state: "idle", pendingCount: 0, supportsSteer: false, items: [] },
+      deliveries: [],
+      hiddenEntryIds: [],
+    });
+    expect(equalRevision?.queue).toEqual(queue);
+    expect(equalRevision?.stateRevision).toBe(2);
     const hydrated = mergeConversationState(updated, {
       missionId: snapshot.missionId,
       revision: 1,

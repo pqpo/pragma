@@ -350,6 +350,8 @@ export interface MissionControllerStore {
     readonly onLeaseLost: (error?: unknown) => Promise<void> | void;
     readonly recoverSemanticWrite?: ((guard: MissionControllerGuard) => Promise<void>) | undefined;
     readonly onPollingStopped?: (() => Promise<void> | void) | undefined;
+    readonly onEmpty?: (() => Promise<void> | void) | undefined;
+    readonly onPoll?: (() => void) | undefined;
     readonly onPollingError?:
       | ((input: {
           readonly error: unknown;
@@ -1826,6 +1828,7 @@ export function createMissionControllerStore(options: {
       };
       const tick = async (): Promise<void> => {
         if (stopped) return;
+        input.onPoll?.();
         try {
           const guard = typeof input.guard === "function" ? input.guard() : input.guard;
           // Replay a pending Host mutation before trying the accepted command
@@ -1835,6 +1838,7 @@ export function createMissionControllerStore(options: {
           const command = await this.processNext({ ...input, guard });
           consecutiveFailures = 0;
           delayMs = command === undefined ? Math.min(maxDelayMs, delayMs * 2) : initialDelayMs;
+          if (command === undefined) await input.onEmpty?.();
         } catch (error) {
           if (stopped) return;
           if (isFencingError(error)) {

@@ -47,6 +47,10 @@ Desktop product metadata ─────────────┴──▶ Des
   ExpertSession、Runtime 与收尾投影继续由 Desktop 持有。共享 Local Host run 不得释放这个 owner，
   否则收尾写入和后续 prompt 会使用失效 guard。CLI 默认仍在单次 run 完成并释放底层资源后释放 owner。
   Host 生命周期不改变 fencing：撤销或接管后，旧 guard 的写入仍必须被拒绝。
+- Host 不无限保留空闲资源：Desktop 默认五分钟空闲 TTL，并在 Inbox poller 的空闲检查中验证
+  没有活跃、排队、人工等待或生命周期操作。用 `releaseAfterTerminal` 释放瞬态 Session/Runtime，
+  再释放 owner 和 poller；耐久 Session 可恢复，新发送与释放共享接入串行边界。
+  释放期间新到达的 Inbox 命令由一次定向恢复检查接续。见 [ADR 063](../adr/063-idle-mission-resource-release.md)。
 - Renderer 在请求已提交、Execution 投影尚未到达时保留本地等待标记；这段时间发送的后续消息立即
   展示为待排队消息。`command.applied` 只证明命令已应用，不能单独释放等待标记；会话输出、终态
   或命令拒绝负责结束等待。已有 pending 和 paused queue 状态也参与排队展示判定。

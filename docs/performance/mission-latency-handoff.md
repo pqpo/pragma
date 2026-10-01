@@ -11,6 +11,9 @@
 
 阶段一完成：
 
+- PR 评论复核追加：投递 worker 最后 dirty 检查与退出在同一同步段完成；相同 revision 的完整状态不能覆盖队列 patch，完整状态水位在读取开始时捕获。
+- Desktop 默认五分钟空闲 TTL；保留活跃/排队/人工等待，空闲检查最多每分钟一次。按接入串行边界释放瞬态 Session/Runtime 后再释放 owner/poller；释放期间 Inbox 命令定向恢复。资源计数和累计平均 poll rate 进入诊断，见 ADR 063。
+
 - Desktop attached run 使用 Host 级 Mission owner，首轮结束保留 Session、Runtime 和 guard；CLI 单轮运行仍释放 owner。
 - Inbox 落盘后立即唤醒本进程 owner，重复唤醒合并且同一 Mission 不并发消费；跨进程轮询最大间隔为 500 ms。
 - operation waiter 先订阅状态通知再读耐久状态，跨进程用轮询兜底。
@@ -104,6 +107,9 @@ JSON 到 SQLite 属于存储转换，必须明确事务中断后的权威选择�
 | UI 队列控制与聊天历史                                       | 控制先发布，历史独立刷新                            |
 
 不要再增加一层通用调度器、通用缓存总线或额外状态镜像。每个屏障应写清保护的事实与 owner；没有必要事实的重复等待应删除。
+
+空闲释放已经补入阶段一，不再作为阶段三未实现任务。阶段三继续测量最近活跃 Mission 的成本，
+必要时制定 warm cache 数量上限和 active/idle 轮询策略；不能回退到每轮释放 owner。
 
 ## 阶段一收益：能推导什么，不能推导什么
 

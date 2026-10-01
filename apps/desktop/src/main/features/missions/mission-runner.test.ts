@@ -7090,11 +7090,28 @@ describe("MissionRunner", { timeout: 30_000 }, () => {
       missionPath: missions.storagePath,
     });
     const ownerScope = createMissionOwnerScope({ controller });
+    let allowClose!: () => void;
+    const closeGate = new Promise<void>((resolve) => {
+      allowClose = resolve;
+    });
+    const closeSession = vi.fn(async () => {
+      await closeGate;
+    });
+    const restoreSession = vi.fn(() => ({ id: "runtime" }));
     const createSession = vi.fn(() => ({ id: "runtime" }));
-    const startTurn = vi.fn(async () => ({ outputText: "OK", runtimeSessionId: "runtime" }));
+    let allowFirstTurn!: () => void;
+    const firstTurnGate = new Promise<void>((resolve) => {
+      allowFirstTurn = resolve;
+    });
+    const startTurn = vi.fn(async () => {
+      if (startTurn.mock.calls.length === 1) await firstTurnGate;
+      return { outputText: "OK", runtimeSessionId: "runtime" };
+    });
     const runtime = defineRuntimeTestDriver<never, { id: string }>({
       descriptor: { id: "fake", kind: "fake", displayName: "Fake" },
       createSession,
+      restoreSession,
+      closeSession,
       readSession: (session) => ({ runtimeSessionId: session.id }),
       startTurn,
       mapEvent: () => ({ events: [] }),
@@ -7153,6 +7170,13 @@ describe("MissionRunner", { timeout: 30_000 }, () => {
           detach: false,
         },
       });
+      await vi.waitFor(() => expect(startTurn).toHaveBeenCalledOnce(), {
+        timeout: settlementTimeoutMs,
+      });
+      const releaseWhileActive = vi.fn(async () => await ownerScope.release(mission.id));
+      expect(await runner.releaseIdleSession(mission.id, 1, releaseWhileActive)).toBe(false);
+      expect(releaseWhileActive).not.toHaveBeenCalled();
+      allowFirstTurn();
       await expect(first.outcome).resolves.toMatchObject({ status: "succeeded" });
       const guard = ownerScope.currentGuard(mission.id)!;
       expect(guard).toBeDefined();
@@ -7176,11 +7200,55 @@ describe("MissionRunner", { timeout: 30_000 }, () => {
       await expect(
         controller.assertWriteGuard({ missionId: mission.id, guard }),
       ).resolves.toBeUndefined();
+      const sessionId = (await missions.get(mission.id)).execution!.sessionId;
+      const releaseOwner = vi.fn(async () => await ownerScope.release(mission.id));
+      expect(await runner.releaseIdleSession(mission.id, 300_000, releaseOwner)).toBe(false);
+      expect(releaseOwner).not.toHaveBeenCalled();
+      // Wait for the terminal observer to release its binding, then hold the
+      // native close while a new send races with idle eviction.
+      const evict = async (): Promise<boolean> =>
+        await runner.releaseIdleSession(mission.id, 1, releaseOwner);
+      const eviction = (async () => {
+        for (let attempt = 0; attempt < 100; attempt++) {
+          if (await evict()) return true;
+          await new Promise<void>((resolve) => setTimeout(resolve, 20));
+        }
+        throw new Error("Mission never became idle");
+      })();
+      await vi.waitFor(() => expect(closeSession).toHaveBeenCalledOnce(), {
+        timeout: settlementTimeoutMs,
+      });
+      const next = runner.sendMessage({
+        id: mission.id,
+        requestId: "00000000-0000-4000-8000-000000000009",
+        content: "Only reply OK",
+      });
+      await Promise.resolve();
+      expect(startTurn).toHaveBeenCalledTimes(3);
+      allowClose();
+      expect(await eviction).toBe(true);
+      await next;
+      await vi.waitFor(
+        async () => {
+          expect((await missions.get(mission.id)).execution?.status).toBe("succeeded");
+          expect(startTurn).toHaveBeenCalledTimes(4);
+        },
+        { timeout: settlementTimeoutMs },
+      );
+      expect((await missions.get(mission.id)).execution!.sessionId).toBe(sessionId);
+      expect(createSession).toHaveBeenCalledOnce();
+      expect(restoreSession).toHaveBeenCalledOnce();
+      expect(releaseOwner).toHaveBeenCalledOnce();
+      await expect(
+        controller.assertWriteGuard({ missionId: mission.id, guard }),
+      ).rejects.toMatchObject({ code: "MISSION_FENCING_REJECTED" });
       await ownerScope.forceRevoke(mission.id);
       await expect(
         controller.assertWriteGuard({ missionId: mission.id, guard }),
       ).rejects.toMatchObject({ code: "MISSION_FENCING_REJECTED" });
     } finally {
+      allowFirstTurn();
+      allowClose();
       await ownerScope.stop(mission.id);
     }
   });
@@ -7317,6 +7385,10 @@ describe("MissionRunner", { timeout: 30_000 }, () => {
       id: handle.executionId,
       status: "waiting",
     });
+
+    const releaseWhileWaiting = vi.fn(async () => undefined);
+    expect(await runner.releaseIdleSession(mission.id, 1, releaseWhileWaiting)).toBe(false);
+    expect(releaseWhileWaiting).not.toHaveBeenCalled();
 
     const interaction = (await runner.listHumanInteractions(mission.id))[0];
     expect(interaction).toBeDefined();

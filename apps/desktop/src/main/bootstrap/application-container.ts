@@ -337,6 +337,28 @@ export async function createDesktopApplicationContainer(
   // Desktop supplies only Electron-facing stop/replay hooks.
   const missionLifecycle = createLocalHostMissionController({
     missionsPath,
+    onIdleError: (missionId, error) => {
+      mainLogger.warn(
+        "mission.idle_release_failed",
+        "Idle Mission resources could not be safely released; ownership is retained",
+        {
+          missionId,
+          error,
+          errorCode: "MISSION_IDLE_RELEASE_FAILED",
+          retryable: true,
+        },
+      );
+    },
+    onIdle: async ({ missionId, idleTimeoutMs, releaseOwner }): Promise<void> => {
+      const runner = missionRunnerRef.current;
+      if (runner === undefined) return;
+      const released = await runner.releaseIdleSession(missionId, idleTimeoutMs, releaseOwner);
+      mainLogger.info("mission.owner_resources", "Mission owner resource diagnostics", {
+        released,
+        ...missionLifecycle.ownerScope.diagnostics(),
+        ...runner.getResourceDiagnostics(),
+      });
+    },
     ...(missionStore.storagePath === undefined ? {} : { missionPath: missionStore.storagePath }),
     onPollingError: ({ missionId, error, consecutiveFailures }) => {
       mainLogger.warn(

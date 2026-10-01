@@ -3898,6 +3898,8 @@ export function createMissionRunner(options: {
 
   const getConversationState = async (id: string): Promise<MissionConversationState> => {
     const startedAt = performance.now();
+    // A read must not borrow a patch revision emitted after it began.
+    const stateRevision = chatService.revision(id);
     const latestMission = await options.missions.get(id);
     if (!isUserFacingMissionOrigin(latestMission.origin)) {
       throw new Error(`Mission ${latestMission.id} is not available on the Mission surface.`);
@@ -4155,7 +4157,7 @@ export function createMissionRunner(options: {
                 };
     const result: MissionConversationState = {
       missionId: id,
-      revision: chatService.revision(id),
+      revision: stateRevision,
       pendingInteractions,
       controlHealth,
       queue: {
@@ -5604,12 +5606,13 @@ export function createMissionRunner(options: {
     assertLocalHostRunAllowed,
     createLocalHostMissionControlAdapter,
     async updateOptions(input) {
-      return await withMissionController(input.id, async () => await updateMissionOptions(input));
+      return await withMissionPromptAdmission(input.id, () =>
+        withMissionController(input.id, async () => await updateMissionOptions(input)),
+      );
     },
     async updateContextMounts(input) {
-      return await withMissionController(
-        input.id,
-        async () => await updateMissionContextMounts(input),
+      return await withMissionPromptAdmission(input.id, () =>
+        withMissionController(input.id, async () => await updateMissionContextMounts(input)),
       );
     },
     async assertContextMountChangeAllowed(id) {
@@ -5635,19 +5638,19 @@ export function createMissionRunner(options: {
       return await sendMissionMessage(input);
     },
     async steerQueuedMessage(input) {
-      return await withMissionController(
-        input.id,
-        async () => await steerQueuedMissionMessage(input),
+      return await withMissionPromptAdmission(input.id, () =>
+        withMissionController(input.id, async () => await steerQueuedMissionMessage(input)),
       );
     },
     async removeQueuedMessage(input) {
-      return await withMissionController(
-        input.id,
-        async () => await removeQueuedMissionMessage(input),
+      return await withMissionPromptAdmission(input.id, () =>
+        withMissionController(input.id, async () => await removeQueuedMissionMessage(input)),
       );
     },
     async resumeQueue(id) {
-      return await withMissionController(id, async () => await resumeMissionQueue(id));
+      return await withMissionPromptAdmission(id, () =>
+        withMissionController(id, async () => await resumeMissionQueue(id)),
+      );
     },
     async getChatPage(input) {
       return await getChatPage(input);
@@ -5729,9 +5732,8 @@ export function createMissionRunner(options: {
       return completedUsage === undefined ? undefined : { usage: completedUsage };
     },
     async compactContext(id) {
-      return await lifecycleService.startCompaction(
-        id,
-        async () => await compactMissionContext(id),
+      return await lifecycleService.startCompaction(id, () =>
+        withMissionPromptAdmission(id, async () => await compactMissionContext(id)),
       );
     },
     async getRuntimeBinding(id, missionSnapshot) {
@@ -5814,6 +5816,59 @@ export function createMissionRunner(options: {
       if (executionContext !== undefined) {
         sessionService.deleteExecutionContextIfCurrent(id, executionContext);
       }
+    },
+    getResourceDiagnostics() {
+      return { warmSessionCount: [...sessionService.sessionEntries()].length };
+    },
+    async releaseIdleSession(id, idleTimeoutMs, releaseOwner) {
+      return await withMissionPromptAdmission(id, async () => {
+        if (lifecycleService.isBusy(id) || sessionService.contextBindingChangeInProgress(id))
+          return false;
+        const session = sessionService.session(id);
+        const executionContext = sessionService.executionContext(id);
+        if (session !== undefined) {
+          const [state, prompts] = await Promise.all([
+            session.getState(),
+            session.getPromptQueue(),
+          ]);
+          if (
+            state.activeExecutionId !== undefined ||
+            prompts.some((prompt) => prompt.status === "queued" || prompt.status === "running") ||
+            Date.now() - Date.parse(state.updatedAt) < idleTimeoutMs
+          )
+            return false;
+          // Release transient resources, preserving the durable Session and
+          // RuntimeSessionRef for the next prompt. Never close/cancel an idle
+          // Session as though the user had ended the conversation.
+          await session.releaseAfterTerminal();
+          if (!sessionService.deleteSessionIfCurrent(id, session)) return false;
+          sessionService.clearCompilation(id);
+        } else {
+          const mission = await options.missions.get(id);
+          const execution =
+            mission.execution === undefined
+              ? undefined
+              : await executionStore.get(mission.execution.id);
+          if (execution !== undefined && !isMissionTerminalExecutionStatus(execution.status))
+            return false;
+        }
+        if (executionContext !== undefined)
+          sessionService.deleteExecutionContextIfCurrent(id, executionContext);
+        // Keep admission reserved until both lower-level resources and the
+        // Mission fence are released. A racing send then reacquires a fresh
+        // guard and resumes the same durable Session.
+        await releaseOwner();
+        logger.info(
+          "mission.idle_resources_released",
+          "Idle Mission transient resources released",
+          {
+            missionId: id,
+            idleTimeoutMs,
+            warmSessionCount: [...sessionService.sessionEntries()].length,
+          },
+        );
+        return true;
+      });
     },
     async getCanonicalStrictTarget(id) {
       const mission = await options.missions.get(id);

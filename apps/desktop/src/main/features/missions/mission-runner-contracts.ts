@@ -156,6 +156,12 @@ export interface MissionRunner {
   interrupt(id: string, expectedExecutionId?: string): Promise<Mission>;
   forceInterrupt(id: string, expectedExecutionId?: string): Promise<Mission>;
   stopLocalController(id: string): Promise<void>;
+  releaseIdleSession(
+    id: string,
+    idleTimeoutMs: number,
+    releaseOwner: () => Promise<void>,
+  ): Promise<boolean>;
+  getResourceDiagnostics(): { warmSessionCount: number };
   getCanonicalStrictTarget(
     id: string,
   ): Promise<{ readonly executionId: string; readonly turnId: string } | undefined>;

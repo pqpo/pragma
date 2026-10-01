@@ -47,6 +47,10 @@ import {
   applyAtomicStateMigration,
   recoverAtomicStateMigration,
 } from "../storage/state-migration.ts";
+import {
+  CanonicalDeliveryWorkers,
+  type CanonicalDeliveryResult,
+} from "./canonical-delivery-workers.ts";
 import { getExecutionLiveBus } from "./execution-live-bus.ts";
 import { sameRuntimeContextOrigin } from "./runtime-context-record.ts";
 import {
@@ -213,62 +217,32 @@ export function createFileExecutionStore(
       { operation: `execution.${operation}` },
     );
   };
-  const canonicalDeliveryRequests = new Map<
-    string,
-    Promise<Awaited<ReturnType<typeof deliverCanonicalHandoffs>>>
-  >();
-  const canonicalDeliveryDirty = new Set<string>();
-  const deliverCanonicalEvents = (
-    executionId: string,
-  ): Promise<Awaited<ReturnType<typeof deliverCanonicalHandoffs>>> => {
-    if (options.canonicalEventFeed === undefined || deletingExecutionIds.has(executionId)) {
+  const canonicalDeliveryRequests = new CanonicalDeliveryWorkers(async (executionId) => {
+    if (options.canonicalEventFeed === undefined || deletingExecutionIds.has(executionId))
+      return { recovered: 0 };
+    return await withFileLock(
+      paths.canonicalEventDeliveryLock(executionId),
+      async () => {
+        if (deletingExecutionIds.has(executionId)) return { recovered: 0 };
+        const handoffs = await withExecutionLock(
+          executionId,
+          "prepare-canonical-events",
+          async () => await recoverCanonicalHandoffStateForExecution(paths, executionId),
+        );
+        return await deliverCanonicalHandoffs(handoffs, options.canonicalEventFeed!);
+      },
+      { operation: "execution.canonical-event-delivery" },
+    );
+  });
+  const deliverCanonicalEvents = (executionId: string): Promise<CanonicalDeliveryResult> => {
+    if (options.canonicalEventFeed === undefined || deletingExecutionIds.has(executionId))
       return Promise.resolve({ recovered: 0 });
-    }
-    const previous = canonicalDeliveryRequests.get(executionId);
-    if (options.canonicalDelivery === "background" && previous !== undefined) {
-      canonicalDeliveryDirty.add(executionId);
-      return previous;
-    }
-    const request = (previous ?? Promise.resolve({ recovered: 0 }))
-      .catch(() => ({ recovered: 0 }))
-      .then(async () => {
-        let recovered = 0;
-        do {
-          canonicalDeliveryDirty.delete(executionId);
-          if (deletingExecutionIds.has(executionId)) return { recovered };
-          const delivery = await withFileLock(
-            paths.canonicalEventDeliveryLock(executionId),
-            async () => {
-              if (deletingExecutionIds.has(executionId)) return { recovered: 0 };
-              const handoffs = await withExecutionLock(
-                executionId,
-                "prepare-canonical-events",
-                async () => await recoverCanonicalHandoffStateForExecution(paths, executionId),
-              );
-              return await deliverCanonicalHandoffs(handoffs, options.canonicalEventFeed!);
-            },
-            { operation: "execution.canonical-event-delivery" },
-          );
-          recovered += delivery.recovered;
-          if (delivery.deliveryFailure !== undefined) return { ...delivery, recovered };
-        } while (canonicalDeliveryDirty.has(executionId));
-        return { recovered };
-      })
-      .finally(() => {
-        if (canonicalDeliveryRequests.get(executionId) === request) {
-          canonicalDeliveryRequests.delete(executionId);
-          canonicalDeliveryDirty.delete(executionId);
-        }
-      });
-    canonicalDeliveryRequests.set(executionId, request);
-    return request;
+    return canonicalDeliveryRequests.request(executionId);
   };
 
   const store: FileExecutionStore = {
     async drainCanonicalEvents() {
-      while (canonicalDeliveryRequests.size > 0) {
-        await Promise.allSettled([...canonicalDeliveryRequests.values()]);
-      }
+      await canonicalDeliveryRequests.drain();
     },
     async recoverPendingCanonicalEvents(input = {}) {
       if (options.canonicalEventFeed === undefined) {
@@ -339,7 +313,7 @@ export function createFileExecutionStore(
       try {
         await Promise.all(
           ids.map(async (id) => {
-            await canonicalDeliveryRequests.get(id)?.catch(() => undefined);
+            await canonicalDeliveryRequests.wait(id)?.catch(() => undefined);
           }),
         );
         const runWithExecutionLocks = async (index: number): Promise<TValue> => {
@@ -353,7 +327,7 @@ export function createFileExecutionStore(
           }
           await Promise.all(
             ids.map(async (id) => {
-              await canonicalDeliveryRequests.get(id)?.catch(() => undefined);
+              await canonicalDeliveryRequests.wait(id)?.catch(() => undefined);
             }),
           );
           const handoffFiles = (
@@ -549,14 +523,15 @@ export function createFileExecutionStore(
           events: materialized.requestedEvents,
         };
       });
+      // Background requests merge into the live worker without allocating
+      // another error observer; durable handoffs carry the pending work.
       if (
-        options.canonicalDelivery === "background" &&
-        canonicalDeliveryRequests.has(request.executionId)
+        options.canonicalEventFeed !== undefined &&
+        !(
+          options.canonicalDelivery === "background" &&
+          canonicalDeliveryRequests.markDirty(request.executionId)
+        )
       ) {
-        // One worker and one error observer per Execution, even while the feed
-        // is stalled. Durable handoffs carry the backlog instead of promises.
-        canonicalDeliveryDirty.add(request.executionId);
-      } else if (options.canonicalEventFeed !== undefined) {
         const deliver = async () => {
           try {
             const delivery = await deliverCanonicalEvents(request.executionId);
