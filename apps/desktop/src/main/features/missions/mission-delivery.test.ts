@@ -1,4 +1,4 @@
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, rm, mkdir, rename } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { DatabaseSync } from "node:sqlite";
@@ -12,6 +12,7 @@ import {
 import { PRAGMA_DSL_WRITE_API_VERSION } from "@pragma/interpreter/ast";
 import { missionExecutorSnapshot } from "../../../shared/contracts/index.ts";
 import { createMissionStore } from "./mission-store.ts";
+import { createMissionDeliveryRecovery } from "./mission-delivery-recovery.ts";
 import { createMissionDelivery, type MissionDeliveryStep } from "./mission-delivery.ts";
 
 const resources: {
@@ -493,5 +494,93 @@ describe("Mission durable delivery", { timeout: 15000 }, () => {
     expect(() =>
       target.delivery.register(target.mission, executionId, target.mission.initialMessageId),
     ).toThrow("DELETED");
+  });
+});
+
+describe("Mission delivery initialization recovery", () => {
+  it("retries a real database open failure after background start and preserves custody", async () => {
+    const target = await fixture();
+    await publish(target.feed, "usage");
+    target.delivery.start();
+    await vi.waitFor(() => expect(target.delivery.safeThrough()).toBe(1));
+    await target.delivery.close();
+    await rename(target.path, `${target.path}.saved`);
+    await mkdir(target.path);
+    const delivery: { current: Awaited<ReturnType<typeof createMissionDelivery>> | undefined } = {
+      current: undefined,
+    };
+    const create = vi.fn(async () => await createMissionDelivery(target));
+    const onUnavailable = vi.fn();
+    const onRecovered = vi.fn();
+    const recovery = createMissionDeliveryRecovery({
+      delivery,
+      create,
+      onUnavailable,
+      onRecovered,
+    });
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    try {
+      await recovery.initialize();
+      expect(onUnavailable).toHaveBeenCalledOnce();
+      expect(delivery.current?.safeThrough() ?? 0).toBe(0);
+      await vi.advanceTimersByTimeAsync(60_000);
+      expect(create).toHaveBeenCalledOnce();
+      recovery.start();
+      await recovery.initialize();
+      expect(create).toHaveBeenCalledTimes(2);
+      await rm(target.path, { recursive: true });
+      await rename(`${target.path}.saved`, target.path);
+      await vi.advanceTimersByTimeAsync(1_999);
+      expect(create).toHaveBeenCalledTimes(2);
+      await vi.advanceTimersByTimeAsync(1);
+      await recovery.initialize();
+      expect(create).toHaveBeenCalledTimes(3);
+      expect(onRecovered).toHaveBeenCalledOnce();
+      expect(delivery.current!.safeThrough()).toBe(1);
+      resources[resources.length - 1]!.delivery = delivery.current!;
+      delivery.current!.register(target.mission, executionId, target.mission.initialMessageId);
+      await vi.waitFor(() => expect(target.usage).toHaveBeenCalledOnce());
+      await recovery.close();
+      await vi.advanceTimersByTimeAsync(120_000);
+      expect(create).toHaveBeenCalledTimes(3);
+    } finally {
+      await recovery.close();
+      vi.useRealTimers();
+    }
+  });
+
+  it("closes a database opened during shutdown without starting or publishing it", async () => {
+    const target = await fixture();
+    await target.delivery.close();
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    let opened: Awaited<ReturnType<typeof createMissionDelivery>> | undefined;
+    const create = vi.fn(async () => {
+      await gate;
+      opened = await createMissionDelivery(target);
+      return opened;
+    });
+    const delivery: { current: Awaited<ReturnType<typeof createMissionDelivery>> | undefined } = {
+      current: undefined,
+    };
+    const onRecovered = vi.fn();
+    const recovery = createMissionDeliveryRecovery({
+      delivery,
+      create,
+      onUnavailable: vi.fn(),
+      onRecovered,
+    });
+    const first = recovery.initialize();
+    const second = recovery.initialize();
+    recovery.start();
+    const closing = recovery.close();
+    release();
+    await Promise.all([first, second, closing]);
+    expect(create).toHaveBeenCalledOnce();
+    expect(delivery.current).toBeUndefined();
+    expect(onRecovered).not.toHaveBeenCalled();
+    expect(() => opened!.inspect()).toThrow();
   });
 });

@@ -1,4 +1,5 @@
 import { createLocalHostUsageSink, type LocalHostUsageSink } from "@pragma/local-host";
+import { createMissionDeliveryRecovery } from "../features/missions/mission-delivery-recovery.ts";
 import { createMissionDelivery } from "../features/missions/mission-delivery.ts";
 import { persistMissionExecutionProjection } from "../features/missions/mission-runner-composition.ts";
 import { migrateLegacyRevisionProfile } from "../features/experts/legacy-revision-profile-migration.ts";
@@ -1621,116 +1622,128 @@ export async function createDesktopApplicationContainer(
       await project.dispose();
     }
   };
-  try {
-    missionDeliveryRef.current = await createMissionDelivery({
-      path: pragmaPaths.missionDelivery(),
-      feed: memoryPlane.canonical,
-      logger: mainLogger,
-      onDegraded: (missionId) => missionRunner.markDeliveryDegraded?.(missionId),
-      onRecovered: (missionId) => missionRunner.markDeliveryRecovered?.(missionId),
-      usage: async (mission, observation) => await persistMissionUsageBatch(mission, [observation]),
-      beforeDelete: async (mission, executionIds) => {
-        // Runtime work has stopped; Execution locks are still available for reads.
-        // Settle accounting before fencing writes and removing source facts.
-        const localUsage = createLocalHostUsageSink({
-          path: join(pragmaPaths.dataRoot(), "usage", "observations.json"),
-        });
-        const observations: RuntimeUsageObservation[] = [];
-        for (const executionId of executionIds) {
-          for (const event of await memoryPlane.executionStore.readEvents(executionId)) {
-            if (event.type !== "runtime.usage.observed") continue;
-            observations.push(RuntimeUsageObservedSchema.parse(event.data).observation);
+  const missionDeliveryRecovery = createMissionDeliveryRecovery({
+    delivery: missionDeliveryRef,
+    create: async () =>
+      await createMissionDelivery({
+        path: pragmaPaths.missionDelivery(),
+        feed: memoryPlane.canonical,
+        logger: mainLogger,
+        onDegraded: (missionId) => missionRunner.markDeliveryDegraded?.(missionId),
+        onRecovered: (missionId) => missionRunner.markDeliveryRecovered?.(missionId),
+        usage: async (mission, observation) =>
+          await persistMissionUsageBatch(mission, [observation]),
+        beforeDelete: async (mission, executionIds) => {
+          // Runtime work has stopped; Execution locks are still available for reads.
+          // Settle accounting before fencing writes and removing source facts.
+          const localUsage = createLocalHostUsageSink({
+            path: join(pragmaPaths.dataRoot(), "usage", "observations.json"),
+          });
+          const observations: RuntimeUsageObservation[] = [];
+          for (const executionId of executionIds) {
+            for (const event of await memoryPlane.executionStore.readEvents(executionId)) {
+              if (event.type !== "runtime.usage.observed") continue;
+              observations.push(RuntimeUsageObservedSchema.parse(event.data).observation);
+            }
           }
-        }
-        await persistMissionUsageBatch(mission, observations);
-        for (const observation of observations) await localUsage.record(observation);
-      },
-      terminal: async (registered, executionId, requestId, status, step) => {
-        const guard = await ownerScope.acquire(registered.id);
-        await ownerScope.runWithGuard(registered.id, guard, async () => {
-          const mission = await missionStore.get(registered.id);
-          const execution = await memoryPlane.executionStore.get(executionId);
-          if (execution === undefined) throw new Error("MISSION_DELIVERY_EXECUTION_UNAVAILABLE");
-          const failure =
-            typeof execution.error === "object" &&
-            execution.error !== null &&
-            "message" in execution.error &&
-            typeof execution.error.message === "string"
-              ? execution.error.message
-              : String(execution.error ?? "Execution failed");
-          if (step === "terminal") {
-            await executionEventProjector.terminal({
-              mission,
-              executionId,
-              status,
-              result:
-                execution.output?.type === "inline" ? execution.output.value : execution.output,
-              error: status === "failed" ? new Error(failure) : execution.error,
-              guard,
-            });
-          } else if (step === "metadata") {
-            await guardedMissionStore.updateExecution(
-              mission.id,
-              {
-                id: executionId,
-                inputMessageId: requestId,
-                ...(mission.execution?.id === executionId &&
-                mission.execution.sessionId !== undefined
-                  ? { sessionId: mission.execution.sessionId }
-                  : {}),
+          await persistMissionUsageBatch(mission, observations);
+          for (const observation of observations) await localUsage.record(observation);
+        },
+        terminal: async (registered, executionId, requestId, status, step) => {
+          const guard = await ownerScope.acquire(registered.id);
+          await ownerScope.runWithGuard(registered.id, guard, async () => {
+            const mission = await missionStore.get(registered.id);
+            const execution = await memoryPlane.executionStore.get(executionId);
+            if (execution === undefined) throw new Error("MISSION_DELIVERY_EXECUTION_UNAVAILABLE");
+            const failure =
+              typeof execution.error === "object" &&
+              execution.error !== null &&
+              "message" in execution.error &&
+              typeof execution.error.message === "string"
+                ? execution.error.message
+                : String(execution.error ?? "Execution failed");
+            if (step === "terminal") {
+              await executionEventProjector.terminal({
+                mission,
+                executionId,
                 status,
-                startedAt: execution.createdAt,
-                finishedAt: execution.updatedAt,
-                ...(status === "failed" ? { error: failure } : {}),
-              },
-              { executionId, statuses: ["queued", "running", "waiting"] },
-            );
-          } else if (step === "memory") {
-            const detached = await missionRunner.coordinateMemoryTerminal!(mission.id, async () => {
-              const current = await missionStore.get(mission.id);
-              if (
-                isUserFacingMissionOrigin(current.origin) &&
-                current.execution?.id === executionId
-              ) {
-                const cleanup = memoryPlane.stopMissionAttention(current.id);
-                void cleanup.catch(() => undefined);
-                await memoryPlane.setMemoryConversationState({
-                  missionId: current.id,
-                  state: current.lifecycleStatus === "completed" ? "completed" : "active",
-                });
-                return { cleanup };
-              }
-              return undefined;
-            });
-            await detached?.cleanup;
-          } else if (step === "history") {
-            const projection = await persistMissionExecutionProjection(
-              guardedMissionStore,
-              memoryPlane.executionStore,
-              mission.id,
-              executionId,
-              status === "cancelled",
-            );
-            if (projection.status !== "current") throw new Error("MISSION_CHAT_PROJECTION_PARTIAL");
-            missionRunner.notifyProjectionChanged?.(mission.id);
-          } else {
-            await memoryPlane.executionStore.archive(executionId);
-          }
-        });
-      },
-    });
-  } catch (error) {
-    missionDeliveryInitializationError = "MISSION_DELIVERY_UNAVAILABLE";
-    mainLogger.warn(
-      "mission.delivery_degraded",
-      "Mission delivery is unavailable; direct projection remains enabled",
-      {
-        moduleId: "pragma.mission-delivery",
-        errorCode: missionDeliveryInitializationError,
-        error,
-      },
-    );
-  }
+                result:
+                  execution.output?.type === "inline" ? execution.output.value : execution.output,
+                error: status === "failed" ? new Error(failure) : execution.error,
+                guard,
+              });
+            } else if (step === "metadata") {
+              await guardedMissionStore.updateExecution(
+                mission.id,
+                {
+                  id: executionId,
+                  inputMessageId: requestId,
+                  ...(mission.execution?.id === executionId &&
+                  mission.execution.sessionId !== undefined
+                    ? { sessionId: mission.execution.sessionId }
+                    : {}),
+                  status,
+                  startedAt: execution.createdAt,
+                  finishedAt: execution.updatedAt,
+                  ...(status === "failed" ? { error: failure } : {}),
+                },
+                { executionId, statuses: ["queued", "running", "waiting"] },
+              );
+            } else if (step === "memory") {
+              const detached = await missionRunner.coordinateMemoryTerminal!(
+                mission.id,
+                async () => {
+                  const current = await missionStore.get(mission.id);
+                  if (
+                    isUserFacingMissionOrigin(current.origin) &&
+                    current.execution?.id === executionId
+                  ) {
+                    const cleanup = memoryPlane.stopMissionAttention(current.id);
+                    void cleanup.catch(() => undefined);
+                    await memoryPlane.setMemoryConversationState({
+                      missionId: current.id,
+                      state: current.lifecycleStatus === "completed" ? "completed" : "active",
+                    });
+                    return { cleanup };
+                  }
+                  return undefined;
+                },
+              );
+              await detached?.cleanup;
+            } else if (step === "history") {
+              const projection = await persistMissionExecutionProjection(
+                guardedMissionStore,
+                memoryPlane.executionStore,
+                mission.id,
+                executionId,
+                status === "cancelled",
+              );
+              if (projection.status !== "current")
+                throw new Error("MISSION_CHAT_PROJECTION_PARTIAL");
+              missionRunner.notifyProjectionChanged?.(mission.id);
+            } else {
+              await memoryPlane.executionStore.archive(executionId);
+            }
+          });
+        },
+      }),
+    onRecovered: () => {
+      missionDeliveryInitializationError = undefined;
+    },
+    onUnavailable: (error) => {
+      missionDeliveryInitializationError = "MISSION_DELIVERY_UNAVAILABLE";
+      mainLogger.warn(
+        "mission.delivery_degraded",
+        "Mission delivery is unavailable; direct projection remains enabled",
+        {
+          moduleId: "pragma.mission-delivery",
+          errorCode: missionDeliveryInitializationError,
+          error,
+        },
+      );
+    },
+  });
+  await missionDeliveryRecovery.initialize();
   localHostUsageRef.current = createLocalHostUsageSink({
     path: join(pragmaPaths.dataRoot(), "usage", "observations.json"),
     feed: memoryPlane.canonical,
@@ -2129,7 +2142,7 @@ export async function createDesktopApplicationContainer(
           { error },
         );
       });
-      missionDeliveryRef.current?.start();
+      missionDeliveryRecovery.start();
       localHostUsageRef.current?.start();
       void automationService.start().catch((error: unknown) => {
         mainLogger.warn(
@@ -2195,10 +2208,12 @@ export async function createDesktopApplicationContainer(
       unsubscribeUsageUpdates();
       unsubscribeTokenCounter();
       automationService.stop();
+      const deliveryClosing = missionDeliveryRecovery.close();
+      void deliveryClosing.catch(() => undefined);
       void (async () => {
         const errors: unknown[] = [];
         for (const operation of [
-          async () => await missionDeliveryRef.current?.close(),
+          async () => await deliveryClosing,
           async () => {
             try {
               await localHostUsageRef.current?.drain();

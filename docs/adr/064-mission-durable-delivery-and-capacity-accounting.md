@@ -93,3 +93,36 @@ and journal-aware Trash retention remain available. CLI does not create another 
 Previously created capacity database files are left untouched and are no longer opened by this
 implementation. They do not contain delivery custody and must not be confused with the retained
 Mission and Usage delivery databases.
+
+## Temporary Desktop placement and Local Host ownership
+
+The worker's current Desktop location is an implementation boundary for this delivery, not the
+long-term Mission ownership model. Local Host remains the authority for Mission admission, owner
+leases, fencing and deletion. Desktop only composes the delivery callbacks with its existing product
+stores and UI; the worker must not independently decide execution or Mission lifecycle transitions.
+
+The follow-up extraction must move the durable receipt schema, intake, claims, retries, association,
+watermarks and deletion coordination into `packages/local-host/src/missions/`. Desktop and CLI will
+inject Host-specific Usage, Memory, history and archive ports; the application callbacks and renderer
+notifications stay in their respective composition roots. The shared worker must not depend on
+Electron or Desktop contracts: its Mission/Execution identities and callback payloads need Local Host
+contracts. Preserve the existing database namespace and version, or provide a journaled migration;
+do not create a second authority or a parallel CLI worker with different custody rules. Acceptance
+must cover Desktop and CLI, late association, cross-process claims, source failures, deletion and
+restart against the same durable database. This extraction is a separate structural change from
+phase-four latency work, so this PR does not claim Desktop/CLI delivery ownership is already unified.
+
+## Initialization recovery and retention
+
+A failed Mission delivery initialization keeps direct projection enabled and reports
+`MISSION_DELIVERY_UNAVAILABLE`. After the window has been created, the consumer retries initialization
+with exponential backoff bounded at one minute, with only one attempt in flight. Successful recovery
+clears the initialization diagnostic and starts delivery from its persisted receipt cursor. Shutdown
+cancels the retry timer and closes a database opened by an already-running attempt without publishing
+or starting it.
+
+An unavailable consumer is not equivalent to a consumer which has acknowledged all events. Until its
+receipt cursor can be read, retention conservatively uses zero; retries make transient failure
+recoverable within the running process. Persistent corruption or a future version remains degraded
+and preserves source history for intervention. Dropping this consumer from the retention minimum
+would discard unacknowledged custody and is not an acceptable recovery shortcut.
