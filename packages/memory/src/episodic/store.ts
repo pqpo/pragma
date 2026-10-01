@@ -531,6 +531,10 @@ export async function createEpisodicMemoryStore(
       try {
         writeConversationActivity(state, input);
         const current = readJobByConversation(state, input.conversationRef);
+        // The running count includes this claim's reservation. Refund only that reservation,
+        // before checking exhaustion, so an unadmitted fourth claim can still be cancelled.
+        const refundClaim = current?.status === "running" && input.beforeModelAdmission === true;
+        const attempts = Math.max(0, (current?.attempts ?? 0) - (refundClaim ? 1 : 0));
         if (current?.status === "running" && input.state === "completed") {
           // A repeated completion notification must not invalidate an admitted extraction.
           state.exec("COMMIT;");
@@ -558,7 +562,7 @@ export async function createEpisodicMemoryStore(
           current.status !== "expired" &&
           current.status !== "completed" &&
           current.status !== "needs_attention" &&
-          !blocksAutomaticExtractionRetry(current.lastFailure, current.attempts)
+          !blocksAutomaticExtractionRetry(current.lastFailure, attempts)
         ) {
           const eligibleAt =
             input.state === "completed"
@@ -580,10 +584,8 @@ export async function createEpisodicMemoryStore(
               ...current,
               revision: current.revision + 1,
               status: input.state === "completed" ? "pending" : "waiting_idle",
-              attempts:
-                current.status === "running" && input.beforeModelAdmission === true
-                  ? 0
-                  : current.attempts,
+              attempts,
+              totalAttempts: Math.max(0, current.totalAttempts - (refundClaim ? 1 : 0)),
               retryAt,
               eligibleAt,
               leaseUntil: undefined,

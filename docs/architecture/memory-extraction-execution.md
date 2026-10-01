@@ -34,8 +34,12 @@ Conversation completion notifications preserve in-flight work and completed/reje
 Active conversation notifications still defer failed pending work until the normal idle deadline,
 while preserving its attempts. Completion can release that idle wait but cannot bypass the five-second
 failure backoff. Activity that cancels an admitted extraction parks its existing claim. Same-process cancellation
-before extractor admission may safely reschedule local preflight; this proof is never persisted or
-assumed during restart recovery.
+before extractor admission withdraws only the current claim reservation from `attempts` and
+`totalAttempts`, preserving all earlier model admissions. Exhaustion is checked against the refunded
+count, so an unadmitted fourth claim can return to waiting without exhausting the budget. This proof
+is tracked by the current process using the claim’s controller, excluded from local-only durable
+result recovery, and removed at model admission or completion. It is never persisted or assumed
+during restart recovery.
 
 Curator archives the original transcript before deleting a successful temporary Mission. Failed
 reads, missing output, archive failures and uncertain executions retain their Mission for

@@ -63,7 +63,7 @@ export async function createSemanticMemoryModule(
   const now = options.now ?? (() => new Date());
   let extractor = options.extractor;
   const running = new Map<string, AbortController>();
-  const modelRequested = new Set<string>();
+  const unadmittedClaims = new Set<AbortController>();
   let projectionNotificationAttempts = 0;
   let projectionNotificationRetryAt = 0;
   let projectionNotificationError: unknown;
@@ -139,6 +139,7 @@ export async function createSemanticMemoryModule(
       const controller = new AbortController();
       let shouldDrainProjectionNotification = false;
       running.set(key, controller);
+      if (localRecoveryOnly !== true) unadmittedClaims.add(controller);
       const startedAt = now();
       let phase: MemoryExtractionFailurePhase = "source_read";
       try {
@@ -218,7 +219,7 @@ export async function createSemanticMemoryModule(
         if (!(await store.isClaimCurrent(job))) return;
         controller.signal.throwIfAborted();
         phase = "curator_run";
-        modelRequested.add(key);
+        unadmittedClaims.delete(controller);
         const extracted = await extractor.extract(input, { signal: controller.signal });
         controller.signal.throwIfAborted();
         phase = "validation";
@@ -257,10 +258,8 @@ export async function createSemanticMemoryModule(
           retry: isConfigurationError(error) ? "configuration" : "transient",
         });
       } finally {
-        if (running.get(key) === controller) {
-          running.delete(key);
-          modelRequested.delete(key);
-        }
+        unadmittedClaims.delete(controller);
+        if (running.get(key) === controller) running.delete(key);
       }
       if (shouldDrainProjectionNotification) await drainProjectionNotification();
     },
@@ -272,9 +271,10 @@ export async function createSemanticMemoryModule(
         running.get(conversationKey(input.conversationRef))?.abort();
       }
       const key = conversationKey(input.conversationRef);
+      const controller = running.get(key);
       await store.touchConversation({
         ...input,
-        beforeModelAdmission: running.has(key) && !modelRequested.has(key),
+        beforeModelAdmission: controller !== undefined && unadmittedClaims.has(controller),
       });
     },
     async bindExecutionConversation(input) {

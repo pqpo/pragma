@@ -56,7 +56,7 @@ export async function createEpisodicMemoryModule(
   const now = options.now ?? (() => new Date());
   let extractor = options.extractor;
   const running = new Map<string, AbortController>();
-  const modelRequested = new Set<string>();
+  const unadmittedClaims = new Set<AbortController>();
 
   return {
     descriptor: {
@@ -114,6 +114,7 @@ export async function createEpisodicMemoryModule(
       const key = conversationKey(job.conversationRef);
       const controller = new AbortController();
       running.set(key, controller);
+      if (localRecoveryOnly !== true) unadmittedClaims.add(controller);
       const startedAt = now();
       let phase: MemoryExtractionFailurePhase = "source_read";
       try {
@@ -178,7 +179,7 @@ export async function createEpisodicMemoryModule(
         if (!(await store.isClaimCurrent(job))) return;
         controller.signal.throwIfAborted();
         phase = "curator_run";
-        modelRequested.add(key);
+        unadmittedClaims.delete(controller);
         const extracted = await extractor.extract(input, { signal: controller.signal });
         controller.signal.throwIfAborted();
         phase = "validation";
@@ -244,10 +245,8 @@ export async function createEpisodicMemoryModule(
           retry: isConfigurationError(error) ? "configuration" : "transient",
         });
       } finally {
-        if (running.get(key) === controller) {
-          running.delete(key);
-          modelRequested.delete(key);
-        }
+        unadmittedClaims.delete(controller);
+        if (running.get(key) === controller) running.delete(key);
       }
     },
     async setExtractor(next) {
@@ -258,9 +257,10 @@ export async function createEpisodicMemoryModule(
         running.get(conversationKey(input.conversationRef))?.abort();
       }
       const key = conversationKey(input.conversationRef);
+      const controller = running.get(key);
       await store.touchConversation({
         ...input,
-        beforeModelAdmission: running.has(key) && !modelRequested.has(key),
+        beforeModelAdmission: controller !== undefined && unadmittedClaims.has(controller),
       });
     },
     async bindExecutionConversation(input) {
