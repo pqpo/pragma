@@ -347,6 +347,81 @@ describe("Mission durable delivery", { timeout: 15000 }, () => {
       });
     },
   );
+  it("isolates an invalid payload without an owner and retains a later valid terminal", async () => {
+    const target = await fixture();
+    target.delivery.register(target.mission, executionId, target.mission.initialMessageId);
+    await publish(target.feed, "terminal");
+    const page = await target.feed.read({ after: { sequence: 0 }, limit: 64 });
+    const item = page.items[0]!;
+    if (item.kind !== "event") throw new Error("missing event");
+    const damaged = {
+      ...item.event,
+      eventId: "missing-owner",
+      correlationId: undefined,
+      sourceRef: { type: "pragma.execution-event", id: "missing-owner" },
+      payload: {},
+    };
+    // Commit damage before the next valid terminal in source order.
+    await target.delivery.close();
+    const feed = {
+      ...target.feed,
+      read: async (input: Parameters<CanonicalEventFeed["read"]>[0]) =>
+        input.after?.sequence === 0
+          ? {
+              items: [
+                { kind: "event" as const, cursor: { sequence: 1 }, event: damaged },
+                { ...item, cursor: { sequence: 2 } },
+              ],
+              nextCursor: { sequence: 2 },
+            }
+          : { items: [], nextCursor: { sequence: 2 } },
+    };
+    const restored = await createMissionDelivery({ ...target, feed });
+    resources[resources.length - 1]!.delivery = restored;
+    restored.start();
+    await vi.waitFor(() => expect(target.terminal).toHaveBeenCalledTimes(5), { timeout: 7000 });
+    expect(restored.safeThrough()).toBe(2);
+    expect(restored.inspect()).toMatchObject({
+      state: "degraded",
+      pending: 1,
+      errorCode: "MISSION_DELIVERY_INVALID_TASK",
+    });
+  });
+  it("excludes unassociated work from the indexed claim candidates", async () => {
+    const target = await fixture();
+    const db = new DatabaseSync(target.path);
+    try {
+      const insert = db.prepare(
+        "INSERT INTO delivery_tasks(id,execution_id,mission_id,sequence,payload) VALUES (?,?,?,?,?)",
+      );
+      db.exec("BEGIN");
+      for (let index = 0; index < 1000; index++)
+        insert.run(
+          `unlinked-${index}`,
+          `execution-${index}`,
+          `unlinked:execution-${index}`,
+          index,
+          JSON.stringify({ kind: "terminal", status: "succeeded" }),
+        );
+      db.exec("COMMIT");
+      const candidates = db
+        .prepare(
+          "SELECT id FROM delivery_tasks INDEXED BY delivery_linked_pending WHERE mission_id NOT GLOB 'unlinked:*' AND state='pending' AND next_at<=?",
+        )
+        .all(Date.now());
+      expect(candidates).toEqual([]);
+      target.delivery.register(target.mission, "execution-0", target.mission.initialMessageId);
+      expect(
+        db
+          .prepare(
+            "SELECT id FROM delivery_tasks INDEXED BY delivery_linked_pending WHERE mission_id NOT GLOB 'unlinked:*' AND state='pending' AND next_at<=?",
+          )
+          .all(Date.now()),
+      ).toEqual([{ id: "unlinked-0" }]);
+    } finally {
+      db.close();
+    }
+  });
   it("rejects a future delivery protocol before changing database contents", async () => {
     const target = await fixture();
     await target.delivery.close();

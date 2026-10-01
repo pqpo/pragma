@@ -10,11 +10,11 @@
 同一查询 100 次平均约 8.64 ms，索引范围查询约 0.023 ms。这是局部查询证据，不是页面恢复结果。
 文件锁的创建、写入、移动与删除均经过全局计量，读取路径也因此承担新增写入与查询成本。
 
-Desktop 与 Local Host 已撤下增量容量账本接入，保留原有按需容量门禁；移除新增的 Desktop 启动容量校准。
+第一次止损撤下 Desktop 与 Local Host 的增量容量账本接入，当时仍保留按需容量门禁；同时移除新增启动容量校准。
 随后按用户要求彻底回滚容量计量：恢复全部生产文件系统 import，删除 adapter、账本实现、
 Runtime 钩子及相关测试/基准脚本。已有容量数据库不删除、不再读取；Mission/Usage 投递数据库继续保留。
 索引修复实验不作为保留实现。同步容量扫描/清理门禁随后也已从 Mission、Local Host、Project 与插件写入入口移除。
-后台统计仅在启动至少五分钟、系统空闲至少五分钟且无保留 Mission Session 时进行，每六小时最多一次。
+后台统计仅在启动至少五分钟、系统空闲至少五分钟、无保留 Mission Session 且无执行/准备/压缩/删除中的 Mission 时进行，每六小时最多一次。
 一分钟活动检查只读取 OS/内存状态，不访问存储。扫描在独立 worker 内按目录项限速，用户恢复操作或退出时取消，
 单次最多十分钟。超限只记录手动清理建议，不阻止发送；CLI 不启动容量轮询，手动设置清理仍保留。
 回滚后的文件锁、原有容量检查与存储诊断 33 项测试，以及 controller/Usage/lifetime 48 项测试通过。
@@ -42,7 +42,7 @@ Execution、ExpertSession 与 controller 的 JSON 存储引擎仍保留；替换
   Mission 删除先从所属 Execution 事实补齐账本，再设置 tombstone、等待该 owner 已运行投递和清除产品任务。
 - admissionReady 等待 Session turn 释放和旧 observer 解绑。成功/失败的历史补全后台处理；取消仍保留必要可见输出快照。
   Human checkpoint 保留 waiting 语义；Memory 先解绑旧 generation，再在接入锁外等待取消完成。
-- Health 页面展示 Host 投递模块、pending 和稳定错误码。打开 owner 可唤醒待重试任务；配置修复后的消费无需重跑原模型请求。
+- Health 页面展示 Host 投递模块、pending 和稳定错误码。普通 owner 读取不重置退避；消费者按重试计划自动恢复，显式 retry 可立即唤醒，配置修复后无需重跑原模型请求。
   完全非法的任务保留等待诊断，不自动丢弃。关闭等待最多五秒，剩余源事实与 claim 在重启后恢复。
 
 ## 已撤回方案的历史容量基准
@@ -82,3 +82,36 @@ Local Host controller/Usage/lifetime 专项 48 项通过。
 冷创建、暖 Mission、暖 Session、收尾期间立即发送及排队转下一轮的修改前后每组 20 次样本。
 必须同时核对 model dispatch、Core terminal、Session release、first UI token received/painted 和最终投递完成。
 本次没有启动用户的真实 Desktop/模型会话，因此不声称暖 Session 接入 P95 小于 250 ms 或首 token 达标。
+
+## CR 复核与补充修复（2026-10-01）
+
+已提交的第三阶段修复包括：Mission 读取不重复写投递关联或重置退避；Usage drain 与后台消费串行，
+关闭等待同一个进行中操作；暂时初始化失败可以重试；损坏 Feed 信封隔离后不阻断其他来源；
+删除覆盖 owner 图中的未关联 Execution；旧订阅结束只清理自身；闲时容量检查也排除 Flow/准备/压缩/删除；
+投递数据库不可用时报告 degraded 并保留原有直接投影，关闭失败不跳过剩余资源清理。
+
+提交后继续复核另修复三处：
+
+- 未关联任务仍会进入每次领取查询的候选扫描。新增仅覆盖已关联任务的部分索引，并在领取查询中显式使用；
+  接收 custody 和晚到关联行为保留。真实 SQLite 回归验证一千条未关联任务不进入该候选集，关联后自动进入。
+- 可解析信封中的损坏 payload 缺少 owner/correlation 时，原逻辑抛错卡住整页。改用稳定诊断身份保留隔离任务，
+  与同页后续合法任务及水位原子提交；不猜测其业务 owner。
+- 旧 Memory generation 回放失败可能污染新一轮诊断。仅当前 binding 报告观察者失败，
+  回归同时覆盖旧回放成功与失败时的新订阅保留及诊断隔离。
+
+本轮相关 Desktop 回归 37 项、Local Host Usage/Memory 生命周期 8 项通过；
+Local Host 与 Desktop Main/Renderer 类型检查、变更文件 ESLint/Prettier 检查通过。
+这些是正确性及查询范围验证，不代表第四阶段已实施，也不证明真实首 token 或页面耗时达标。
+
+### Steer 用户消息丢失修复（2026-10-01）
+
+实测发现同一 Mission 的历史后台写入与用户消息写入并发占用 semantic write journal。
+原实现只在 prepare/complete 时持有 aggregate lock，Host mutation 期间释放锁，导致其他写入
+把正常进行中的事务当成遗留事务，或者在 prepare 时以 STORAGE_CORRUPTED 拒绝。
+Core 已接收的消息因此可能缺失 Mission timeline，而 Inbox 错误记录为 rejected。
+
+修复将 semantic write 的 prepare、Host mutation、complete 以及 recovery 放在同一个
+Mission 级跨进程文件锁内；aggregate lock 继续短时持有，Inbox 和 Runtime 事件无需等待
+Host mutation。Core 接收后，用户消息写入失败转为可恢复的 pending 错误，保留 Inbox applying
+并通过同一 requestId 重试，不重复投递模型。回归验证覆盖并发写入、禁止重放正在进行的事务、
+Inbox 事件在 Host mutation 期间推进，以及 steer 接收后 timeline 写入失败的恢复。

@@ -58,7 +58,7 @@ import {
   LEGACY_EXECUTION_OUTPUT_NAMESPACE,
   LegacyExecutionOutputContextStore,
 } from "@pragma/context-filesystem";
-import { createMissionBoard } from "@pragma/local-host";
+import { createMissionBoard, MissionSemanticWritePendingError } from "@pragma/local-host";
 import type {
   InvocableResource,
   CompiledResource,
@@ -3323,12 +3323,18 @@ export function createMissionRunner(options: {
     // after Core accepts it so a rejected strict steer cannot leave an orphan
     // in the Mission timeline. Replaying an accepted Inbox command is safe:
     // both session.prompt and appendUserMessage are keyed by requestId.
-    const userMessage = await options.missions.appendUserMessage(mission.id, {
-      id: input.requestId,
-      content: input.content,
-      ...(promptAttachments.length === 0 ? {} : { attachments: [...promptAttachments] }),
-      createdAt: input.requestedAt,
-    });
+    const userMessage = await options.missions
+      .appendUserMessage(mission.id, {
+        id: input.requestId,
+        content: input.content,
+        ...(promptAttachments.length === 0 ? {} : { attachments: [...promptAttachments] }),
+        createdAt: input.requestedAt,
+      })
+      .catch((error: unknown) => {
+        // Core has accepted this request. Keep the Inbox applying so replay can
+        // repair its timeline without falsely rejecting an already delivered steer.
+        throw new MissionSemanticWritePendingError({ cause: error });
+      });
     if (userMessage.kind !== "user") {
       throw new Error("Mission user message persistence returned an invalid timeline record.");
     }

@@ -70,6 +70,8 @@ export async function createMissionDelivery(input: {
       next_at INTEGER NOT NULL DEFAULT 0, state TEXT NOT NULL DEFAULT 'pending', error_code TEXT,
       claim TEXT, expires_at INTEGER NOT NULL DEFAULT 0);
     CREATE INDEX IF NOT EXISTS delivery_pending ON delivery_tasks(state,next_at,sequence);
+    CREATE INDEX IF NOT EXISTS delivery_linked_pending ON delivery_tasks(state,next_at,sequence)
+      WHERE mission_id NOT GLOB 'unlinked:*';
     CREATE INDEX IF NOT EXISTS delivery_owner ON delivery_tasks(mission_id,sequence);
     INSERT OR IGNORE INTO delivery_metadata VALUES ('version','pragma.mission-delivery/v1');
     INSERT OR IGNORE INTO delivery_metadata VALUES ('cursor','0');`);
@@ -140,8 +142,10 @@ export async function createMissionDelivery(input: {
         if (item.event.topic !== "pragma.execution.event.committed") continue;
         const parsedEvent = ExecutionEventSchema.safeParse(item.event.payload);
         if (!parsedEvent.success) {
-          const executionId = item.event.sourceRef.ownerRef?.id ?? item.event.correlationId;
-          if (executionId === undefined) throw new Error("MISSION_DELIVERY_INVALID_ENVELOPE");
+          const executionId =
+            item.event.sourceRef.ownerRef?.id ??
+            item.event.correlationId ??
+            `unreadable:${item.event.eventId}`;
           if (
             db.prepare("SELECT 1 FROM deleted_executions WHERE execution_id=?").get(executionId) !==
             undefined
@@ -337,7 +341,8 @@ export async function createMissionDelivery(input: {
       const claimed = transaction(() => {
         const row = db
           .prepare(
-            `SELECT t.* FROM delivery_tasks t WHERE t.state='pending' AND t.next_at<=? AND t.expires_at<=?
+            `SELECT t.* FROM delivery_tasks t INDEXED BY delivery_linked_pending
+          WHERE t.mission_id NOT GLOB 'unlinked:*' AND t.state='pending' AND t.next_at<=? AND t.expires_at<=?
           AND NOT EXISTS(SELECT 1 FROM delivery_tasks older WHERE older.mission_id=t.mission_id AND older.sequence<t.sequence AND older.step=t.step AND json_extract(older.payload,'$.kind')=json_extract(t.payload,'$.kind'))
           AND NOT EXISTS(SELECT 1 FROM delivery_tasks busy WHERE busy.mission_id=t.mission_id AND busy.expires_at>?)
           AND NOT (json_extract(t.payload,'$.kind')='terminal' AND t.step=4 AND EXISTS(SELECT 1 FROM delivery_tasks h WHERE h.execution_id=t.execution_id AND h.step=3 AND json_extract(h.payload,'$.kind')='terminal'))

@@ -591,7 +591,9 @@ export function createLocalHostMemoryContextService(options: {
         await onEvent(binding, event);
       for await (const event of subscription) await onEvent(binding, event);
     })()
-      .catch(() => reportUnavailable("attention_event_observer_unavailable"))
+      .catch(() => {
+        if (alive(binding)) reportUnavailable("attention_event_observer_unavailable");
+      })
       .finally(async () => {
         await subscription.close();
         if (watches.get(id)?.subscription === subscription) watches.delete(id);

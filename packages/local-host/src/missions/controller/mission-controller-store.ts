@@ -416,6 +416,8 @@ export function createMissionControllerStore(options: {
     join(missionDirectory(missionId), ".retention-transaction.json");
   const lockPath = (missionId: string) =>
     join(options.missionsPath, ".locks", `${missionId}.aggregate.lock`);
+  const semanticWriteLockPath = (missionId: string) =>
+    join(options.missionsPath, ".locks", `${missionId}.semantic-write.lock`);
   const registryPath = join(options.missionsPath, ".local-host", "run-request-registry.json");
   const registryLock = join(options.missionsPath, ".locks", "run-request-registry.lock");
   const watchBarrierCache = new Map<string, WatchBarrierCacheEntry>();
@@ -1175,27 +1177,45 @@ export function createMissionControllerStore(options: {
       });
     },
     async coordinateSemanticWrite(input) {
-      const transaction = await prepareSemanticWrite(input);
-      try {
-        const result = await input.apply();
-        await checkpoint("semantic-write.mutation-commit");
-        await completeSemanticWrite({
-          missionId: input.missionId,
-          guard: input.guard,
-          transaction,
-        });
-        return result;
-      } catch (error) {
-        throw new MissionSemanticWritePendingError({ cause: error });
-      }
+      // The journal spans the Host mutation, so serialize its whole lifetime.
+      // The aggregate lock remains short-lived for Inbox and runtime events.
+      return await withFileLock(
+        semanticWriteLockPath(input.missionId),
+        async () => {
+          const transaction = await prepareSemanticWrite(input);
+          try {
+            const result = await input.apply();
+            await checkpoint("semantic-write.mutation-commit");
+            await completeSemanticWrite({
+              missionId: input.missionId,
+              guard: input.guard,
+              transaction,
+            });
+            return result;
+          } catch (error) {
+            throw new MissionSemanticWritePendingError({ cause: error });
+          }
+        },
+        { operation: "mission-semantic-write" },
+      );
     },
     async recoverSemanticWrite(input) {
-      const transaction = await readSemanticWriteForRecovery(input);
-      if (transaction === undefined) return undefined;
-      await input.replay(transaction.operation);
-      await checkpoint("semantic-write.mutation-commit");
-      await completeSemanticWrite({ missionId: input.missionId, guard: input.guard, transaction });
-      return transaction.operation;
+      return await withFileLock(
+        semanticWriteLockPath(input.missionId),
+        async () => {
+          const transaction = await readSemanticWriteForRecovery(input);
+          if (transaction === undefined) return undefined;
+          await input.replay(transaction.operation);
+          await checkpoint("semantic-write.mutation-commit");
+          await completeSemanticWrite({
+            missionId: input.missionId,
+            guard: input.guard,
+            transaction,
+          });
+          return transaction.operation;
+        },
+        { operation: "mission-semantic-write-recovery" },
+      );
     },
     async reserveRunRequest(input) {
       return await withFileLock(

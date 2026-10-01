@@ -207,7 +207,12 @@ function createTestMissionControl(input: {
     missionsPath: input.missionsPath,
     missionPath: input.missions.storagePath,
   });
-  const ownerScope = createMissionOwnerScope({ controller });
+  const ownerScope = createMissionOwnerScope({
+    controller,
+    // Match Desktop's replay-capable owner; raw MissionStore fixtures have
+    // no controller semantic journal to replay.
+    recoverSemanticWrite: async () => undefined,
+  });
   const adapter = input.runner.createLocalHostMissionControlAdapter();
   const control = createMissionControlApplication({
     controller,
@@ -5757,7 +5762,7 @@ describe("MissionRunner", { timeout: 30_000 }, () => {
     30_000,
   );
 
-  it.each(["direct", "queued", "inbox"] as const)(
+  it.each(["direct", "queued", "inbox", "inbox-retry"] as const)(
     "preserves steer submission time and avoids interrupted fallback (%s)",
     async (mode) => {
       const root = await mkdtemp(join(tmpdir(), "pragma-mission-queued-steer-"));
@@ -5844,13 +5849,24 @@ describe("MissionRunner", { timeout: 30_000 }, () => {
       const activeExecutionId = (await missions.get(mission.id)).execution!.id;
       const requestId = "00000000-0000-4000-8000-000000000109";
       const control =
-        mode === "inbox"
+        mode === "inbox" || mode === "inbox-retry"
           ? createTestMissionControl({
               missionsPath: join(root, "missions"),
               missions,
               runner,
             })
           : undefined;
+      if (mode === "inbox-retry") {
+        const appendUserMessage = missions.appendUserMessage.bind(missions);
+        let failOnce = true;
+        vi.spyOn(missions, "appendUserMessage").mockImplementation(async (id, message) => {
+          if (message.id === requestId && failOnce) {
+            failOnce = false;
+            throw new Error("Timeline temporarily unavailable after Core acceptance");
+          }
+          return await appendUserMessage(id, message);
+        });
+      }
       if (control !== undefined) await control.startOwner(mission.id);
       let releaseAdmission = () => {};
       let blocker: Promise<unknown> | undefined;
@@ -5877,7 +5893,7 @@ describe("MissionRunner", { timeout: 30_000 }, () => {
       }
       try {
         let send: Promise<unknown>;
-        if (mode === "inbox") {
+        if (mode === "inbox" || mode === "inbox-retry") {
           submittedAt = new Date().toISOString();
           const submission = await control!.submit({
             missionId: mission.id,
@@ -5916,7 +5932,8 @@ describe("MissionRunner", { timeout: 30_000 }, () => {
         }
         releaseAdmission();
         await blocker;
-        if (mode === "inbox") await expect(send).resolves.toMatchObject({ state: "applied" });
+        if (mode === "inbox" || mode === "inbox-retry")
+          await expect(send).resolves.toMatchObject({ state: "applied" });
         else
           await expect(send).resolves.toMatchObject({
             effectiveMode: mode === "direct" ? "steer" : "enqueue",
@@ -5945,7 +5962,8 @@ describe("MissionRunner", { timeout: 30_000 }, () => {
         if (mode !== "queued") {
           expect(steerEntry.createdAt <= deliveryStartedAt!).toBe(true);
           expect(steerEntry.createdAt < waitingReplyCreatedAt!).toBe(true);
-          if (mode === "inbox") expect(steerEntry.createdAt).toBe(submittedAt);
+          if (mode === "inbox" || mode === "inbox-retry")
+            expect(steerEntry.createdAt).toBe(submittedAt);
           const ordered = orderMissionChatEntries(chat.entries);
           expect(ordered.findIndex((entry) => entry.id === requestId)).toBeLessThan(
             ordered.findIndex(
