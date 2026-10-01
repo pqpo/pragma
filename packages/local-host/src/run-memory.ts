@@ -15,6 +15,7 @@ import { createNativeOsKeychain } from "./secrets/native-os-keychain.ts";
 export function createLocalHostRunMemory(options: {
   pragmaHome: string;
   loggerProvider?: PragmaLoggerProvider;
+  beforeFeedClose?: () => Promise<void>;
 }) {
   let feed: Promise<CanonicalEventFeed> | undefined;
   const getFeed = () => (feed ??= createFileCanonicalEventFeed(options));
@@ -80,6 +81,7 @@ export function createLocalHostRunMemory(options: {
       code: "memory_delivery_unavailable",
     });
   return {
+    canonical,
     executionStore,
     async bindings(input: { missionId: string; goal: string; projectId?: string }) {
       return serialize(async () => {
@@ -154,6 +156,12 @@ export function createLocalHostRunMemory(options: {
           degraded();
         } finally {
           memory = undefined;
+          try {
+            await executionStore.drainCanonicalEvents();
+            await options.beforeFeedClose?.();
+          } catch {
+            degraded();
+          }
           try {
             await canonical.close();
           } catch {

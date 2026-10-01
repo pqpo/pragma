@@ -84,6 +84,21 @@ describe("CLI Memory lifetime", () => {
     await memory.close();
     expect(fixtures.planes[1]?.closed).toBe(true);
   });
+  it("closes Usage only after the final concurrent owner releases", async () => {
+    const beforeFeedClose = vi.fn(async () => undefined);
+    const memory = createLocalHostRunMemory({
+      pragmaHome: "/unused-memory-lifetime-fixture",
+      beforeFeedClose,
+    });
+    await memory.bindings({ missionId: "first", goal: "first" });
+    await memory.bindings({ missionId: "second", goal: "second" });
+    await memory.complete("first");
+    await memory.close();
+    expect(beforeFeedClose).not.toHaveBeenCalled();
+    await memory.complete("second");
+    await memory.close();
+    expect(beforeFeedClose).toHaveBeenCalledOnce();
+  });
   it("isolates optional Memory initialization and delivery failures from execution", async () => {
     const memory = createLocalHostRunMemory({ pragmaHome: "/unused-memory-lifetime-fixture" });
     fixtures.policyFailure = true;

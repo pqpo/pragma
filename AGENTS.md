@@ -285,8 +285,9 @@ Interpreter `compilerVersion`、manifest、lock、IPC、Bridge 和 Runtime capab
   原子替换和可重放恢复；失败时保留原数据并提供可操作诊断。除非共享全局状态无法安全初始化，单个
   owner 或 Revision 升级失败不得阻断无关项目、对象、能力或应用启动。
 - Desktop 必须先完成必要存储根初始化和 IPC 装配并创建窗口，再启动 Automation、Usage reconciliation、
-  Runtime/Bundle warm-up 等后台工作。启动路径不得执行全量 storage maintenance；容量检查在写入闸门
-  中按需执行。不要为此引入通用 readiness registry 或全局升级 coordinator。
+  Runtime/Bundle warm-up 等后台工作。启动路径不得执行全量 storage maintenance；容量统计仅在闲时低频
+  后台执行，不得阻塞页面读取、Mission 创建/发送或其他正常写入。容量超限只提示用户手动清理，不设
+  全局写入门禁。不要为此引入通用 readiness registry 或全局升级 coordinator。
 - 升级测试必须使用由真实历史代码写出的 fixture，不得用当前对象只改版本号伪造。Pull Request 至少
   覆盖历史 fixture、当前版本 no-op、相邻和链式升级、崩溃恢复、未来版本拒绝以及升级后的启动/执行；
   缺少任一适用场景时不得合入。

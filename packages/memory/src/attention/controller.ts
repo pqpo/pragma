@@ -574,8 +574,8 @@ export function createMemoryAttentionController(options: {
       for (const key of pending.keys()) if (key.startsWith(prefix)) pending.delete(key);
       const active = [...running].filter(([key]) => key.startsWith(prefix));
       for (const [, value] of active) value.abort.abort();
-      await Promise.all(active.map(([, value]) => value.promise));
       for (const key of lastEvaluated.keys()) if (key.startsWith(prefix)) lastEvaluated.delete(key);
+      await Promise.all(active.map(([, value]) => value.promise));
     },
     observe(raw, scope) {
       if (stopped) return;

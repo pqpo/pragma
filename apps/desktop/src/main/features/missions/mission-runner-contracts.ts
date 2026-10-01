@@ -70,6 +70,10 @@ export interface MissionCommandOutcomeNotification {
 }
 
 export interface MissionRunner {
+  notifyProjectionChanged?(missionId: string): void;
+  markDeliveryDegraded?(missionId: string): void;
+  markDeliveryRecovered?(missionId: string): void;
+  coordinateMemoryTerminal?<T>(missionId: string, operation: () => Promise<T>): Promise<T>;
   reconcileUsage(): Promise<void>;
   invalidateEstimatedContextWindows(): Promise<void>;
   refreshMemoryContextBindings(): Promise<void>;
@@ -163,7 +167,7 @@ export interface MissionRunner {
     idleTimeoutMs: number,
     releaseOwner: () => Promise<void>,
   ): Promise<boolean>;
-  getResourceDiagnostics(): { warmSessionCount: number };
+  getResourceDiagnostics(): { warmSessionCount: number; busyMissionCount: number };
   getCanonicalStrictTarget(
     id: string,
   ): Promise<{ readonly executionId: string; readonly turnId: string } | undefined>;

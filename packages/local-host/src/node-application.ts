@@ -1,3 +1,4 @@
+import { PragmaPaths } from "@pragma/core";
 import { readdir, stat } from "node:fs/promises";
 import { join } from "node:path";
 
@@ -314,7 +315,14 @@ export function createLocalHostNodeApplication(
     watch: missionWatch,
     ownerScope,
   } = missionLifecycle;
-  const runMemory = createLocalHostRunMemory({ pragmaHome: options.pragmaHome, loggerProvider });
+  const runMemory = createLocalHostRunMemory({
+    pragmaHome: options.pragmaHome,
+    loggerProvider,
+    beforeFeedClose: async () => {
+      await usageSink.drain();
+      await usageSink.close();
+    },
+  });
   const executionStore = runMemory.executionStore;
   const expertSessionStore = createFileExpertSessionStore({
     pragmaHome: options.pragmaHome,
@@ -342,6 +350,14 @@ export function createLocalHostNodeApplication(
   });
   const usageSink = createLocalHostUsageSink({
     path: join(options.pragmaHome, "data", "usage", "observations.json"),
+    feed: runMemory.canonical,
+    deliveryPath: new PragmaPaths(options).localHostUsageDelivery(),
+    onError: (error) =>
+      missionLogger.warn("usage.delivery_degraded", "Usage delivery needs recovery", {
+        moduleId: "pragma.local-host-usage",
+        errorCode: "USAGE_DELIVERY_RETRY_PENDING",
+        error,
+      }),
   });
   const resolveExecutor = async (input: Parameters<typeof projectCatalog.resolve>[0]) =>
     (await resolveBuiltInExecutor({ ref: input.ref, workspace: input.workspace })) ??

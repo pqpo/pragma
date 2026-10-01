@@ -594,7 +594,7 @@ export function createLocalHostMemoryContextService(options: {
       .catch(() => reportUnavailable("attention_event_observer_unavailable"))
       .finally(async () => {
         await subscription.close();
-        watches.delete(id);
+        if (watches.get(id)?.subscription === subscription) watches.delete(id);
       });
     watches.set(id, { missionId: binding.missionId, subscription, done });
   };
@@ -762,9 +762,12 @@ export function createLocalHostMemoryContextService(options: {
       });
     },
     async stopMission(missionId: string) {
+      // Detach this generation before awaiting old work: a new round can install
+      // the same Mission/Context IDs while cancellation is still settling.
       missions.delete(missionId);
-      await controller.cancelMission(missionId);
-      await Promise.allSettled([...(operations.get(missionId) ?? [])]);
+      const pending = [...(operations.get(missionId) ?? [])];
+      const detached = [...watches].filter(([, value]) => value.missionId === missionId);
+      for (const [id] of detached) watches.delete(id);
       for (const key of observedTools)
         if (key.startsWith(`${missionId}:`)) observedTools.delete(key);
       for (const [id, tracked] of contexts)
@@ -772,13 +775,15 @@ export function createLocalHostMemoryContextService(options: {
           contexts.delete(id);
           tasks.delete(id);
         }
-      for (const [id, value] of watches) {
-        if (value.missionId === missionId) {
+      const cancelling = controller.cancelMission(missionId);
+      await Promise.all([
+        cancelling,
+        Promise.allSettled(pending),
+        ...detached.map(async ([, value]) => {
           await value.subscription.close();
           await value.done;
-          watches.delete(id);
-        }
-      }
+        }),
+      ]);
     },
     async stop() {
       closed = true;

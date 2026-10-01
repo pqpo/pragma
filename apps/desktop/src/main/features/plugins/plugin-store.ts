@@ -5,7 +5,6 @@ import { dirname, extname, isAbsolute, join, relative, resolve } from "node:path
 import {
   ExpertAgentPluginManifestSchema,
   PragmaPaths,
-  assertStorageWriteAllowed,
   createExpertAgentPluginPackageFingerprint,
   encodePragmaPathSegment,
   resolveExpertAgentPluginConfig,
@@ -222,7 +221,6 @@ export function createPluginStore(options: {
     },
     inspectZip: inspectPluginZip,
     async importZip(input) {
-      await assertStorageWriteAllowed(options.paths);
       const inspection = await inspectPluginZip(input.sourcePath);
       if (inspection.contentHash !== input.expectedHash) {
         throw new PluginStoreError(

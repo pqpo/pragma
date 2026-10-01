@@ -1484,7 +1484,7 @@ describe("ExpertSession", { timeout: 30_000 }, () => {
     const observations: RuntimeUsageObservation[] = [];
     const previews: RuntimeUsageObservation[] = [];
     const clearedPreviews: string[] = [];
-    const { app, expert } = await trackedFixture(
+    const { home, app, expert } = await trackedFixture(
       { usage: perTurnUsage },
       {
         preview: (observation) => {
@@ -1502,6 +1502,17 @@ describe("ExpertSession", { timeout: 30_000 }, () => {
     const turn = await session.prompt("observe", { requestId: "usage-observation" });
     await turn.result;
 
+    const facts = await turn.getState();
+    // Read through the actual turn view: source facts survive a Host sink failure.
+    const events = await createFileExecutionStore({ pragmaHome: home }).readEvents(
+      turn.executionId,
+    );
+    expect(events.filter((event) => event.type === "runtime.usage.observed")).toEqual([
+      expect.objectContaining({
+        data: { schemaVersion: "pragma.runtime-usage-observed/v1", observation: observations[0] },
+      }),
+    ]);
+    expect(facts.usage).toEqual(perTurnUsage);
     expect(observations).toHaveLength(1);
     expect(previews.length).toBeGreaterThanOrEqual(2);
     expect(previews[0]?.usage.measurement).toBe("estimated");

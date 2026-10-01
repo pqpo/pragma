@@ -425,7 +425,16 @@ export function installMissionHandlers(options: {
   ipcMain.handle("missions:create", (_event, input: unknown) =>
     runDesktopMutation(async () => {
       const parsed = CreateMissionSchema.parse(input);
+      const missionId = randomUUID();
+      const requestId = parsed.requestId ?? randomUUID();
+      const acceptedAt = performance.now();
+      options.logger?.info("mission.ipc_create_received", "Mission creation IPC entered", {
+        missionId,
+        requestId,
+      });
       const mission = await options.creator.create({
+        id: missionId,
+        requestId,
         workspace: parsed.workspace,
         missionInput: parsed.input,
         ...(parsed.input.kind === "prompt" && parsed.input.attachments.length > 0
@@ -446,6 +455,11 @@ export function installMissionHandlers(options: {
         options.homeExecutors.recordUsage(parsed.executor.ref, parsed.workspace),
       ]);
       await publishMission(mission);
+      options.logger?.info("mission.create_completed", "Mission creation returned to renderer", {
+        missionId,
+        requestId,
+        elapsedMs: performance.now() - acceptedAt,
+      });
       return mission;
     }),
   );

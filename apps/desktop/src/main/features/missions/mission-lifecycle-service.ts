@@ -28,6 +28,15 @@ export class MissionLifecycleService<TRun, TCompaction, TActive> {
     );
   }
 
+  busyMissionCount(): number {
+    return new Set([
+      ...this.#active.keys(),
+      ...this.#runs.keys(),
+      ...this.#compactions.keys(),
+      ...this.#deletions.keys(),
+    ]).size;
+  }
+
   setActive(missionId: string, active: TActive): void {
     this.#active.set(missionId, active);
   }

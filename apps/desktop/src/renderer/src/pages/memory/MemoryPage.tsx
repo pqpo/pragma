@@ -1268,6 +1268,29 @@ export function MemoryHealth(props: { readonly health?: DesktopMemoryPlaneStatus
                     </tr>
                   );
                 })}
+                {(props.health.hostDelivery ?? []).map((delivery) => (
+                  <tr key={delivery.moduleId}>
+                    <th scope="row">
+                      <strong>{delivery.moduleId}</strong>
+                      {delivery.errorCode === undefined ? null : (
+                        <MemoryTechnicalDetails
+                          code={delivery.errorCode}
+                          module={delivery.moduleId}
+                        />
+                      )}
+                    </th>
+                    <td>
+                      <span className={`memory-health-status is-${delivery.state}`}>
+                        {t(`moduleStatuses.${delivery.state}`)}
+                      </span>
+                    </td>
+                    <td>{delivery.pending}</td>
+                    <td>—</td>
+                    <td>—</td>
+                    <td>—</td>
+                    <td>—</td>
+                  </tr>
+                ))}
               </tbody>
             </table>
           </div>

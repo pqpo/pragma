@@ -53,7 +53,15 @@ export const UpdateDesktopAssetMemoryPolicySchema = z.object({
   policy: MemoryAssetPolicyOverrideSchema,
 });
 
+export const HostDeliveryDiagnosticSchema = z.object({
+  moduleId: z.string().min(1),
+  state: z.enum(["healthy", "degraded"]),
+  pending: z.number().int().nonnegative(),
+  errorCode: z.string().min(1).optional(),
+});
+
 export const DesktopMemoryPlaneStatusSchema = z.object({
+  hostDelivery: z.array(HostDeliveryDiagnosticSchema).optional(),
   state: z.enum(["running", "stopped", "degraded"]),
   feed: z.object({
     lastSequence: z.number().int().nonnegative(),

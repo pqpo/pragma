@@ -44,7 +44,7 @@ import type {
   RuntimeSubmitHandle,
   RuntimeSteerRequest,
 } from "../runtime/runtime-adapter.ts";
-import { mergeUsage, type UsageSink } from "../runtime/usage.ts";
+import { mergeUsage, RuntimeUsageObservedSchema, type UsageSink } from "../runtime/usage.ts";
 import { isRuntimeFeatureEnabled } from "../runtime/features.ts";
 import { openRuntimeSession } from "../runtime/session-factory.ts";
 import {
@@ -2094,6 +2094,9 @@ async function submitRuntimeTurn(options: {
     }),
   );
   let usagePreview = Promise.resolve();
+  let usageSettlement: Promise<void> | undefined;
+  const settleUsage = (usage: AgentMessageUsage | undefined): Promise<void> =>
+    (usageSettlement ??= settleRuntimeTurnUsage(options, usage));
   const drain = (async () => {
     for await (const event of handle.events) {
       const output = projectRuntimeOutput({
@@ -2164,9 +2167,7 @@ async function submitRuntimeTurn(options: {
     const output = result.result.output;
     const finalMessage =
       completedRootAssistant ?? rootMessageAccumulator.complete(output, result.result.usage);
-    await timed("usage_record_and_commit", () =>
-      settleRuntimeTurnUsage(options, result.result.usage),
-    );
+    await timed("usage_record_and_commit", () => settleUsage(result.result.usage));
     return {
       runId: options.runId,
       output,
@@ -2176,7 +2177,7 @@ async function submitRuntimeTurn(options: {
   } catch (error) {
     const usage = await handle.usage?.catch(() => undefined);
     await usagePreview;
-    await timed("usage_record_and_commit", () => settleRuntimeTurnUsage(options, usage));
+    await timed("usage_record_and_commit", () => settleUsage(usage));
     throw (
       options.options.controller.getHumanInteractionCheckpoint(options.options.invocationId) ??
       error
@@ -2213,6 +2214,8 @@ async function settleRuntimeTurnUsage(
     options.options.invocationId,
   );
   const invocationUsage = mergeUsage(current?.usage, usage);
+  if (current === undefined) throw new Error("Cannot settle usage for a missing Invocation.");
+  const observation = createRuntimeUsageObservation(options, usage, options.runId);
   if (current !== undefined && invocationUsage !== undefined) {
     await options.options.store.commit({
       commitId: `invocation-usage:${options.options.invocationId}:${options.runId}`,
@@ -2223,13 +2226,23 @@ async function settleRuntimeTurnUsage(
           patch: { usage: invocationUsage },
         },
       ],
+      events: [
+        {
+          eventId: `runtime-usage:${observationId}`,
+          invocationId: options.options.invocationId,
+          type: "runtime.usage.observed",
+          occurredAt: observation.occurredAt,
+          data: RuntimeUsageObservedSchema.parse({
+            schemaVersion: "pragma.runtime-usage-observed/v1",
+            observation,
+          }),
+        },
+      ],
     });
   }
   if (options.options.usageSink === undefined) return;
   try {
-    await options.options.usageSink.record(
-      createRuntimeUsageObservation(options, usage, options.runId),
-    );
+    await options.options.usageSink.record(observation);
   } catch (error) {
     createUsageSinkLogger(options).warn(
       "usage.sink_write_failed",

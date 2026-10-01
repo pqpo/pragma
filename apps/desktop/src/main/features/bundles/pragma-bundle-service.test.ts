@@ -2828,7 +2828,6 @@ async function createFixture(
     projectsPath: paths.projectsRoot(),
     objectsPath: paths.contentObjectsRoot(),
     projectViewsPath: paths.projectViewsCacheRoot(),
-    storagePaths: paths,
   });
   const published = await project.publish({
     expectedRevision: 0,

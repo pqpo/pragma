@@ -314,14 +314,14 @@ describe("MissionCreator", () => {
       resources: [],
       artifacts: new Map([["updated-experts.txt", "revision 2"]]),
     });
-    let capacityChecks = 0;
+    let readinessChecks = 0;
     const creator = createMissionCreator({
       missions,
       project,
       executors: catalog(),
       getDefaultToolPermissionMode: () => "request-approval",
-      assertStorageWriteAllowed: () => {
-        capacityChecks += 1;
+      assertExecutorReady: () => {
+        readinessChecks += 1;
       },
     });
     const firstTurn = (await missions.readTimelinePage(source.id, { limit: 10 })).turns[0]!;
@@ -349,7 +349,7 @@ describe("MissionCreator", () => {
       ],
     });
 
-    expect(capacityChecks).toBe(1);
+    expect(readinessChecks).toBe(1);
     expect(branch.project.revision).toBe(2);
     expect(branch.execution).toBeUndefined();
   });
