@@ -9,6 +9,7 @@ import type {
 import {
   applyMissionChatPatches,
   applyMissionChatUpdateBatch,
+  createMissionConversationBase,
   hideInterruptedExecutionFallbackEntries,
   hideQueuedChatEntries,
   includedPendingFirstTokenExecutionIds,
@@ -18,6 +19,7 @@ import {
   missionTurnFinalReplyIds,
   orderMissionConversationEntries,
   prependChatPage,
+  preparingMissionRequestId,
   readyPendingQueuedRequestIds,
   reconcileMissionChatRefresh,
   startMissionContextOperation,
@@ -38,6 +40,127 @@ import {
 const chatStreamId = "00000000-0000-4000-8000-000000000099";
 
 describe("mission conversation model", () => {
+  it("keeps newer live Context usage when an older Context read completes", () => {
+    const base: MissionConversationSnapshot = {
+      ...createMissionConversationBase("mission"),
+      contextRevision: 1,
+      contextWindow: { supportsInspection: true, supportsCompaction: true, canCompact: true },
+    };
+    const updated = applyMissionChatPatches(
+      base,
+      [
+        {
+          type: "context-window.update",
+          usage: {
+            usedTokens: 90,
+            contextWindowTokens: 100,
+            percent: 90,
+            measurement: "reported",
+            observedAt: "2026-10-01T00:00:00.000Z",
+          },
+        },
+      ],
+      3,
+    );
+    expect(
+      mergeContextWindow(updated, {
+        missionId: "mission",
+        revision: 2,
+        contextWindow: {
+          supportsInspection: true,
+          supportsCompaction: true,
+          canCompact: true,
+          usage: {
+            usedTokens: 20,
+            contextWindowTokens: 100,
+            percent: 20,
+            measurement: "reported",
+            observedAt: "2026-10-01T00:00:00.000Z",
+          },
+        },
+      })?.contextWindow?.usage?.usedTokens,
+    ).toBe(90);
+  });
+
+  it("applies live output before the first Context snapshot is available", () => {
+    const entry: MissionChatEntry = {
+      id: "answer",
+      kind: "assistant",
+      content: "ok",
+      streaming: true,
+      createdAt: "2026-10-01T00:00:00.000Z",
+    };
+    const updated = applyMissionChatPatches(
+      createMissionConversationBase("mission"),
+      [
+        {
+          type: "context-window.update",
+          usage: {
+            usedTokens: 90,
+            contextWindowTokens: 100,
+            percent: 90,
+            measurement: "reported",
+            observedAt: "2026-10-01T00:00:00.000Z",
+          },
+        },
+        { type: "entry.upsert", entry },
+      ],
+      1,
+    );
+    expect(updated?.entries).toEqual([entry]);
+    expect(updated?.contextWindow).toBeUndefined();
+    expect(updated?.contextRevision).toBe(1);
+  });
+
+  it("keeps the Context watermark at its patch revision when batching later text", () => {
+    const usage = {
+      usedTokens: 90,
+      contextWindowTokens: 100,
+      percent: 90,
+      measurement: "reported" as const,
+      observedAt: "2026-10-01T00:00:00.000Z",
+    };
+    const base: MissionConversationSnapshot = {
+      ...createMissionConversationBase("mission"),
+      contextWindow: { supportsInspection: true, supportsCompaction: false, canCompact: false },
+      entries: [
+        {
+          id: "answer",
+          kind: "assistant",
+          content: "o",
+          streaming: true,
+          createdAt: usage.observedAt,
+        },
+      ],
+    };
+    const result = applyMissionChatUpdateBatch(base, [
+      {
+        missionId: "mission",
+        streamId: chatStreamId,
+        revision: 1,
+        kind: "patch",
+        patches: [{ type: "context-window.update", usage }],
+      },
+      {
+        missionId: "mission",
+        streamId: chatStreamId,
+        revision: 2,
+        kind: "patch",
+        patches: [{ type: "entry.append", entryId: "answer", field: "content", delta: "k" }],
+      },
+    ]);
+    expect(result.snapshot).toMatchObject({ revision: 2, contextRevision: 1 });
+    const newer = mergeContextWindow(result.snapshot, {
+      missionId: "mission",
+      revision: 3,
+      contextWindow: { ...base.contextWindow!, usage: { ...usage, usedTokens: 95 } },
+    });
+    expect(
+      applyMissionChatPatches(newer!, [{ type: "context-window.update", usage }], 2)?.contextWindow
+        ?.usage?.usedTokens,
+    ).toBe(95);
+  });
+
   const streamingSnapshot = (content = "hel", revision = 1): MissionConversationSnapshot => ({
     missionId: "00000000-0000-4000-8000-000000000000",
     revision,
@@ -85,9 +208,17 @@ describe("mission conversation model", () => {
     });
     expect(equalRevision?.queue).toEqual(queue);
     expect(equalRevision?.stateRevision).toBe(2);
-    const hydrated = mergeConversationState(updated, {
+    const stale = mergeConversationState(updated, {
       missionId: snapshot.missionId,
       revision: 1,
+      pendingInteractions: [],
+      deliveries: [],
+      hiddenEntryIds: [],
+    });
+    expect(stale).toBe(updated);
+    const hydrated = mergeConversationState(updated, {
+      missionId: snapshot.missionId,
+      revision: 2,
       pendingInteractions: [],
       execution: {
         id: "00000000-0000-4000-8000-000000000001",
@@ -98,7 +229,7 @@ describe("mission conversation model", () => {
       hiddenEntryIds: [],
     });
     expect(hydrated?.queue).toEqual(queue);
-    expect(hydrated?.stateRevision).toBe(1);
+    expect(hydrated?.stateRevision).toBe(2);
     expect(hydrated?.execution?.status).toBe("running");
     expect(isMissionConversationCacheReady(hydrated)).toBe(true);
     const fresh = mergeConversationState(hydrated, {
@@ -646,6 +777,202 @@ describe("mission conversation model", () => {
     ]);
     expect(patched.snapshot.entries[0]).toMatchObject({ content: "hello!" });
   });
+
+  it.each([false, true])(
+    "keeps control readable during token batches with deferred content=%s",
+    (deferContentEntries) => {
+      const current = { ...streamingSnapshot("hello", 10), stateRevision: 7, controlRevision: 7 };
+      const updated = applyMissionChatUpdateBatch(
+        current,
+        [
+          {
+            missionId: current.missionId,
+            streamId: chatStreamId,
+            revision: 11,
+            kind: "patch",
+            patches: [{ type: "entry.append", entryId: "answer", field: "content", delta: "!" }],
+          },
+        ],
+        { deferContentEntries },
+      ).snapshot;
+      expect(updated.controlRevision).toBe(7);
+      const state = mergeConversationState(updated, {
+        missionId: current.missionId,
+        revision: 10,
+        pendingInteractions: [],
+        deliveries: [],
+        hiddenEntryIds: [],
+      });
+      expect(state?.stateRevision).toBe(10);
+      expect(state?.revision).toBe(11);
+    },
+  );
+
+  it("uses the last actual control change instead of later streaming and Context revisions in a mixed batch", () => {
+    const current = { ...streamingSnapshot("hello", 10), stateRevision: 7, controlRevision: 7 };
+    const updated = applyMissionChatUpdateBatch(current, [
+      {
+        missionId: current.missionId,
+        streamId: chatStreamId,
+        revision: 11,
+        kind: "patch",
+        patches: [
+          {
+            type: "queue.update",
+            queue: { state: "idle", pendingCount: 0, supportsSteer: false, items: [] },
+          },
+        ],
+      },
+      { missionId: current.missionId, streamId: chatStreamId, revision: 12, kind: "invalidate" },
+      {
+        missionId: current.missionId,
+        streamId: chatStreamId,
+        revision: 13,
+        kind: "patch",
+        patches: [
+          {
+            type: "entry.upsert",
+            entry: {
+              ...current.entries[0]!,
+              kind: "assistant",
+              content: "hello!",
+              streaming: true,
+            },
+          },
+        ],
+      },
+      {
+        missionId: current.missionId,
+        streamId: chatStreamId,
+        revision: 14,
+        kind: "patch",
+        patches: [
+          {
+            type: "context-window.update",
+            usage: {
+              usedTokens: 1,
+              contextWindowTokens: 100,
+              percent: 1,
+              measurement: "reported",
+              observedAt: "2026-10-01T00:00:00.000Z",
+            },
+          },
+        ],
+      },
+      {
+        missionId: current.missionId,
+        streamId: chatStreamId,
+        revision: 15,
+        kind: "patch",
+        patches: [
+          {
+            type: "entry.streaming",
+            entryId: "answer",
+            streaming: false,
+          },
+        ],
+      },
+    ]).snapshot;
+    expect(updated).toMatchObject({
+      revision: 15,
+      controlRevision: 12,
+      contextRevision: 14,
+    });
+    const fresh = mergeConversationState(updated, {
+      missionId: current.missionId,
+      revision: 12,
+      pendingInteractions: [],
+      deliveries: [],
+      hiddenEntryIds: [],
+    });
+    expect(fresh?.stateRevision).toBe(12);
+    expect(
+      mergeConversationState(updated, {
+        missionId: current.missionId,
+        revision: 11,
+        pendingInteractions: [],
+        deliveries: [],
+        hiddenEntryIds: [],
+      }),
+    ).toBe(updated);
+  });
+
+  it.each(["queue", "delivery", "invalidate"] as const)(
+    "fences delayed control after a consumed live %s without fencing initial history hydration",
+    (kind) => {
+      const current = streamingSnapshot("hello", 10);
+      const initial = mergeConversationState(current, {
+        missionId: current.missionId,
+        revision: 9,
+        pendingInteractions: [],
+        deliveries: [],
+        hiddenEntryIds: [],
+      })!;
+      expect(initial.stateRevision).toBe(9);
+      const updated = applyMissionChatUpdateBatch(initial, [
+        {
+          missionId: current.missionId,
+          streamId: chatStreamId,
+          revision: 11,
+          ...(kind === "invalidate"
+            ? { kind: "invalidate" as const }
+            : {
+                kind: "patch" as const,
+                patches: [
+                  {
+                    ...(kind === "queue"
+                      ? {
+                          type: "queue.update" as const,
+                          queue: {
+                            state: "idle" as const,
+                            pendingCount: 0,
+                            supportsSteer: false,
+                            items: [],
+                          },
+                        }
+                      : {
+                          type: "entry.upsert" as const,
+                          entry: {
+                            id: "prompt",
+                            kind: "user" as const,
+                            content: "next",
+                            createdAt: "2026-10-01T00:00:00.000Z",
+                          },
+                        }),
+                  },
+                ],
+              }),
+        },
+      ]).snapshot;
+      const stale = mergeConversationState(updated, {
+        missionId: current.missionId,
+        revision: 10,
+        pendingInteractions: [],
+        deliveries: [],
+        hiddenEntryIds: ["answer"],
+        execution: {
+          id: "00000000-0000-4000-8000-000000000001",
+          status: "running",
+          interruptible: true,
+        },
+      });
+      expect(stale).toBe(updated);
+      const fresh = mergeConversationState(updated, {
+        missionId: current.missionId,
+        revision: 11,
+        pendingInteractions: [],
+        deliveries: [],
+        hiddenEntryIds: [],
+        execution: {
+          id: "00000000-0000-4000-8000-000000000001",
+          status: "succeeded",
+          interruptible: false,
+        },
+      });
+      expect(fresh?.execution?.status).toBe("succeeded");
+      expect(fresh?.revision).toBe(11);
+    },
+  );
 
   it("rejects stale conversation state and context responses independently", () => {
     const current = streamingSnapshot("hello", 10);
@@ -1455,6 +1782,42 @@ describe("mission conversation model", () => {
     };
 
     expect(hideQueuedChatEntries([entry], new Set())).toEqual([]);
+    const chat: MissionConversationSnapshot = {
+      ...createMissionConversationBase("mission"),
+      entries: [entry],
+      queue: { state: "running", pendingCount: 1, supportsSteer: true, items: [] },
+    };
+    const preparing = preparingMissionRequestId(chat, entry.id);
+    expect(preparing).toBe(entry.id);
+    expect(hideQueuedChatEntries([entry], new Set([entry.id]), preparing)).toEqual([entry]);
+    expect(preparingMissionRequestId(chat, null)).toBeNull();
+    expect(
+      preparingMissionRequestId({ ...chat, queue: { ...chat.queue!, state: "paused" } }, entry.id),
+    ).toBeNull();
+    expect(
+      preparingMissionRequestId(
+        { ...chat, queue: { ...chat.queue!, deliveryUncertain: true } },
+        entry.id,
+      ),
+    ).toBeNull();
+    expect(
+      preparingMissionRequestId(
+        {
+          ...chat,
+          entries: [
+            entry,
+            {
+              id: "answer",
+              kind: "assistant",
+              content: "ok",
+              streaming: false,
+              createdAt: entry.createdAt,
+            },
+          ],
+        },
+        entry.id,
+      ),
+    ).toBeNull();
   });
 
   it.each(["before-output", "after-output"] as const)(
@@ -1588,7 +1951,7 @@ describe("mission conversation model", () => {
     expect(isMissionConversationCacheReady(withState)).toBe(true);
   });
 
-  it("refetches conversation state when a concurrent chat page is newer", async () => {
+  it("loads history without coupling its watermark to control state", async () => {
     const missionId = streamingSnapshot().missionId;
     const conversationState = (revision: number) => ({
       missionId,
@@ -1613,8 +1976,8 @@ describe("mission conversation model", () => {
 
     const projection = await loadMissionConversationProjection(api, missionId);
 
-    expect(projection.state?.revision).toBe(2);
-    expect(getMissionConversationState).toHaveBeenCalledTimes(2);
+    expect(projection.page.revision).toBe(2);
+    expect(getMissionConversationState).not.toHaveBeenCalled();
   });
 
   it("keeps a readable chat page when conversation control state is unavailable", async () => {
@@ -1627,7 +1990,6 @@ describe("mission conversation model", () => {
 
     await expect(loadMissionConversationProjection(api, missionId)).resolves.toEqual({
       page,
-      stateUnavailable: true,
     });
   });
 
@@ -1673,4 +2035,25 @@ describe("mission conversation model", () => {
       },
     ]);
   });
+});
+
+it("accepts a fresh Mission's contiguous queue patch before history and leaves a revision gap unacknowledged", () => {
+  const base = createMissionConversationBase("00000000-0000-4000-8000-000000000000");
+  const queue = {
+    state: "running" as const,
+    pendingCount: 1,
+    supportsSteer: true,
+    items: [{ requestId: "queued", content: "next", hasAttachments: false }],
+  };
+  const patch: MissionChatUpdate = {
+    missionId: base.missionId,
+    streamId: "00000000-0000-4000-8000-000000000001",
+    revision: 1,
+    kind: "patch",
+    patches: [{ type: "queue.update", queue }],
+  };
+  expect(applyMissionChatUpdateBatch(base, [patch]).snapshot.queue).toEqual(queue);
+  const gap = applyMissionChatUpdateBatch(base, [{ ...patch, revision: 3 }]);
+  expect(gap.snapshot.revision).toBe(0);
+  expect(gap.needsRefresh).toBe(true);
 });

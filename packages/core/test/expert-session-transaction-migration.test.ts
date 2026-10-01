@@ -28,6 +28,51 @@ afterEach(async () => {
 });
 
 describe("ExpertSession transaction migration", () => {
+  it("reads a coherent snapshot after a concurrent Session transaction and validates all documents", async () => {
+    const home = await mkdtemp(join(tmpdir(), "pragma-session-snapshot-"));
+    temporaryRoots.push(home);
+    const paths = new PragmaPaths({ pragmaHome: home });
+    const sessionId = "queue-marker-session";
+    await mkdir(paths.expertSessionRoot(sessionId), { recursive: true });
+    await writeFile(
+      paths.expertSessionTransaction(sessionId),
+      JSON.stringify(await readFixture("expert-session-transaction-v9-queue-marker-4ddb0eba.json")),
+    );
+    const sessions = createFileExpertSessionStore({
+      pragmaHome: home,
+      executions: createFileExecutionStore({ pragmaHome: home }),
+    });
+    expect((await sessions.readSnapshot(sessionId))?.prompts).toHaveLength(1);
+    let enter!: () => void;
+    let release!: () => void;
+    const entered = new Promise<void>((resolve) => {
+      enter = resolve;
+    });
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const writing = sessions.transact(sessionId, async ({ session, prompts }) => {
+      enter();
+      await gate;
+      return {
+        result: undefined,
+        session: { ...session, queuedRequestIds: [] },
+        prompts: prompts.map((prompt) => ({ ...prompt, status: "failed" as const })),
+      };
+    });
+    await entered;
+    const reading = sessions.readSnapshot(sessionId);
+    release();
+    await writing;
+    await expect(reading).resolves.toMatchObject({
+      session: { queuedRequestIds: [] },
+      prompts: [{ status: "failed" }],
+    });
+    await writeFile(paths.expertSessionEvents(sessionId), '[{"invalid":true}]');
+    await expect(sessions.readSnapshot(sessionId)).rejects.toThrow();
+    await expect(sessions.readSnapshot("missing")).resolves.toBeUndefined();
+  });
+
   it("classifies only detached human-wait checkpoint prompts as internal recovery", () => {
     const prompt = {
       requestId: "checkpoint-prompt",
@@ -220,9 +265,10 @@ describe("ExpertSession transaction migration", () => {
     const executions = createFileExecutionStore({ pragmaHome: home });
     const sessions = createFileExpertSessionStore({ executions, pragmaHome: home });
 
-    await expect(sessions.get("queue-marker-session")).resolves.toMatchObject({
-      sessionId: "queue-marker-session",
-      activeExecutionId: "active-execution",
+    await expect(sessions.readSnapshot("queue-marker-session")).resolves.toMatchObject({
+      session: { sessionId: "queue-marker-session", activeExecutionId: "active-execution" },
+      prompts: [{ requestId: "queued-request" }],
+      events: expect.any(Array),
     });
     await expect(sessions.listPrompts("queue-marker-session")).resolves.toMatchObject([
       {

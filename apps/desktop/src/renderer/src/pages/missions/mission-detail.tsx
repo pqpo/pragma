@@ -48,9 +48,9 @@ import {
   isMissionCoordinatorChatEntry,
   hideInterruptedExecutionFallbackEntries,
   hideQueuedChatEntries,
-  reconcileMissionChatRefresh,
   missionTurnFinalReplyIds,
   orderMissionConversationEntries,
+  preparingMissionRequestId,
   readyPendingQueuedRequestIds,
   shouldClearMissionThinkingPlaceholder,
   shouldQueueMissionSend,
@@ -78,9 +78,6 @@ import {
 import { useMissionOptions } from "./use-mission-options.ts";
 import { useMissionContextOperations } from "./use-mission-context-operations.ts";
 import {
-  conversationFromPage,
-  loadMissionConversationProjection,
-  mergeConversationState,
   useMissionConversation,
   type MissionConversationPrefetch,
 } from "./use-mission-conversation.ts";
@@ -328,6 +325,7 @@ export function MissionDetailFragment(props: {
     update: updateChat,
     loadEarlier: loadEarlierChat,
     observeFirstTokenPaint,
+    refreshLatestChat,
   } = useMissionConversation({
     missionId: props.mission.id,
     navigationId: props.navigationId,
@@ -783,6 +781,15 @@ export function MissionDetailFragment(props: {
       now: () => new Date().toISOString(),
     });
     const requestId = optimistic.id;
+    desktopApi()?.reportRendererLog({
+      level: "info",
+      event: "mission.send_requested",
+      monotonicAtMs: performance.now(),
+      timeOriginMs: performance.timeOrigin,
+      message: "Renderer requested a Mission send",
+      missionId: props.mission.id,
+      requestId,
+    });
     recordSubmission(optimistic, retry?.retryMode === "new-request" ? retry.id : undefined);
     const shouldPrepareQueuedMessage = shouldQueueMissionSend({
       chat,
@@ -904,22 +911,6 @@ export function MissionDetailFragment(props: {
     }
   };
 
-  const refreshLatestChat = async (): Promise<MissionConversationSnapshot | undefined> => {
-    const api = desktopApi();
-    if (api === undefined) return undefined;
-    const { page, state } = await loadMissionConversationProjection(api, props.mission.id);
-    let result: MissionConversationSnapshot | undefined;
-    updateChat((current) => {
-      const pageSnapshot = conversationFromPage(page, current);
-      const snapshot =
-        state === undefined ? pageSnapshot : mergeConversationState(pageSnapshot, state);
-      const next = reconcileMissionChatRefresh(current, snapshot ?? pageSnapshot, []).snapshot;
-      result = next ?? undefined;
-      return next;
-    });
-    return result;
-  };
-
   const steerQueuedMessage = async (queueItemRequestId: string): Promise<void> => {
     const api = desktopApi();
     if (api === undefined || !beginQueuedMessageAction(queueItemRequestId, "steer")) return;
@@ -1009,9 +1000,17 @@ export function MissionDetailFragment(props: {
     () => new Set(chat?.queue?.items.map((item) => item.requestId) ?? []),
     [chat?.queue?.items],
   );
+  const preparingRequestId = preparingMissionRequestId(
+    chat,
+    awaitingRequestId ?? props.initialThinkingRequestId ?? null,
+  );
   const queuedMessages = useMemo(
-    () => mergeMissionQueuedMessages(chat?.queue?.items ?? [], pendingQueuedMessages),
-    [chat?.queue?.items, pendingQueuedMessages],
+    () =>
+      mergeMissionQueuedMessages(
+        (chat?.queue?.items ?? []).filter((item) => item.requestId !== preparingRequestId),
+        pendingQueuedMessages,
+      ),
+    [chat?.queue?.items, pendingQueuedMessages, preparingRequestId],
   );
   const visibleQueuedMessages = queuedMessages;
   const queueDeliveryUncertain =
@@ -1024,9 +1023,9 @@ export function MissionDetailFragment(props: {
   const unfilteredDisplayEntries = useMemo(
     () =>
       hideInterruptedExecutionFallbackEntries(
-        hideQueuedChatEntries(chat?.entries ?? [], visibleQueuedRequestIds),
+        hideQueuedChatEntries(chat?.entries ?? [], visibleQueuedRequestIds, preparingRequestId),
       ),
-    [chat?.entries, visibleQueuedRequestIds],
+    [chat?.entries, visibleQueuedRequestIds, preparingRequestId],
   );
   const displayEntries = useMemo(
     () =>

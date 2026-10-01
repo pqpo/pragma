@@ -2951,6 +2951,11 @@ class ExpertSessionImpl implements ExpertSession {
       controller.finish();
       return status;
     }
+    const terminalStartedAt = performance.now();
+    const phaseLogger = this.dependencies.loggerProvider.createLogger({
+      component: "core.expert-session",
+      scope: { expertSessionId: this.sessionId, executionId: prompt.executionId },
+    });
     const usage = controller.getUsage();
     const executionPatch = {
       status,
@@ -2990,6 +2995,11 @@ class ExpertSessionImpl implements ExpertSession {
         ],
       });
     }
+    phaseLogger.info("execution.terminal_committed", "Expert turn terminal fact committed", {
+      requestId: prompt.requestId,
+      elapsedMs: performance.now() - terminalStartedAt,
+    });
+    const releaseStartedAt = performance.now();
     await this.ownedSessions.transact(this.sessionId, ({ session: current, prompts }) => ({
       result: undefined,
       session: {
@@ -3005,6 +3015,11 @@ class ExpertSessionImpl implements ExpertSession {
           : candidate,
       ),
     }));
+    phaseLogger.info(
+      "session.active_binding_released",
+      "Expert turn active binding durably released",
+      { requestId: prompt.requestId, elapsedMs: performance.now() - releaseStartedAt },
+    );
     if (this.controller === controller) {
       this.controller = undefined;
     }

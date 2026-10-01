@@ -354,10 +354,11 @@ it("reads a historical page once even if the live turn changes during the read",
 }, 30_000);
 
 it.each(["codex", "qoder"] as const)(
-  "renders %s queued output when both turns finish during the initial page read",
+  "resynchronizes %s queued output when owner release supersedes the initial page read",
   async (kind) => {
     const f = await fixture(kind);
     const read = f.pausePage();
+    const superseded = expect(read.page).rejects.toThrow("superseded by resource release");
     await read.entered;
     await f.runner.run(f.mission.id);
     await vi.waitFor(() => expect(f.started).toEqual(["First turn"]), { timeout: 10_000 });
@@ -366,7 +367,10 @@ it.each(["codex", "qoder"] as const)(
     await f.secondStarted();
     await f.finishSecond();
     read.release();
-    const page = await read.page;
+    await superseded;
+    // This fixture releases its owner after both turns. A read from before
+    // that release cannot reinstall state; a fresh read hydrates the stream.
+    const page = await f.runner.getChatPage({ id: f.mission.id, limit: 100 });
     const reconciled = reconcileMissionChatRefresh(
       null,
       conversationFromPage(page, null),

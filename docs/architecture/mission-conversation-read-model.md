@@ -1,6 +1,6 @@
 # Mission conversation read model
 
-阶段一完成范围、阶段二/三交接与性能复测要求见[Mission 延迟优化交接](../performance/mission-latency-handoff.md)。
+阶段一/二完成范围、剩余交接与性能复测要求见[Mission 延迟优化交接](../performance/mission-latency-handoff.md)。
 
 Mission 会话读取遵循“事实、投影、展示”三层边界，读取路径不得承担修复任务。
 
@@ -35,6 +35,38 @@ Desktop product metadata ─────────────┴──▶ Des
    UI 展示，禁止把有损归档伪装成完整历史。
 7. Renderer 按权威条目顺序合并，且只挂载可视区域附近的会话块。
 
+## 阶段二读取与刷新
+
+Main 的展示读取按 Mission、audience、读取种类、分页参数和读取开始时的 chat revision 合并尚未完成的 Promise。
+成功和失败均立即注销；新的失效通知推进水位，后续读取不会消费旧水位的 Promise。用户与内部 audience
+相互隔离，mutation、权限裁决和 owner 操作不经过这个入口。控制器关闭或删除清除登记并撤销旧读取代次；
+idle 仅释放瞬态资源，保留正在进行的耐久展示读取，避免导航读取无后续失效通知时停留在空白或降级状态。
+晚到结果不得安装 pending interaction 等状态。该机制不缓存已完成的可变结果，也不承诺跨 owner 原子读取。
+
+控制状态从 `ExpertSessionStore.readSnapshot(sessionId)` 获取 Session、prompts 和 events：一次 aggregate lock、
+一次 prepare，然后依次读取并按当前 Schema 校验三个文件。根 Context、队列和 delivery 从同一快照取得。
+Execution 终态仍在异步读取之后复查，已响应的人工确认仍在发布前过滤，不能因快照复用而复活。
+Session 快照不代表 Execution、ExpertSession 与 Mission 的跨 owner 原子快照。既有单项读取接口继续保留。
+Local Host 的队列投影同样使用一次 Session 快照，steering capability 从该快照中的 Session binding 解析。
+
+Renderer 的历史、控制和 Context 分别保留一个进行中读取与一个 dirty 标记；读取期间的重复触发最多保留
+一次后续读取。三类结果各自完成后立即应用、各自降级，不再等 control/Context 共同完成，也不在历史绘制后
+无条件重读两者。首次进入各读一次；控制操作、对应失效通知和 revision gap 按需刷新。
+每类读取共享覆盖 dirty 后续读取的 Promise。操作后的 `refreshLatestChat()` 等待历史和控制均完成，
+再返回当前聚合快照；Context 保持独立，不阻塞恢复、取消或队列操作。
+失败后的成功读取清除所属 section 的降级标记。Mission 切换或卸载关闭读取器并拒绝旧回调。
+控制读取的 `stateRevision` 表示已水合的控制状态；`controlRevision` 只记录控制响应、已消费的 invalidate、
+queue 更新及用户条目 upsert（投递状态变化）的水位。Execution 与人工确认变化沿用 invalidate。
+纯文本/工具输出、assistant/thinking/tool upsert、streaming 状态和 Context 用量不推进控制水位，
+避免 token 持续输出反复作废控制读取，拖住操作刷新。批量应用使用最后一个实际控制变化的 revision，
+不能借用同批较晚的文本 revision。旧控制响应不得覆盖较新的控制事实，也不得隐藏新用户条目；
+被拒绝时将该 reader 标记为 dirty，合并一次后续读取。
+历史页加载不单独推进此控制水位，首次控制水合仍可独立完成。
+
+live delta、status 和 queue patch 保持直接应用。没有缓存时以 revision 0 的空基底接收从 revision 1 开始的
+连续 patch；遇到缺失的前序 revision 则请求权威重同步，不跳过 gap。历史页不推进 live 水位，
+queue patch 在同 revision 下优先于完整控制状态的规则保持不变。
+
 ## 消息接入与首 token 前的排队
 
 - Mission controller lease 保证跨进程归属；同一 Host 内，初始运行与后续消息必须共用按 Mission
@@ -54,6 +86,15 @@ Desktop product metadata ─────────────┴──▶ Des
 - Renderer 在请求已提交、Execution 投影尚未到达时保留本地等待标记；这段时间发送的后续消息立即
   展示为待排队消息。`command.applied` 只证明命令已应用，不能单独释放等待标记；会话输出、终态
   或命令拒绝负责结束等待。已有 pending 和 paused queue 状态也参与排队展示判定。
+- foreground request 的本地等待标记也覆盖 Core 已接受但尚未启动的 queued 窗口。
+  独立控制刷新不得把这条当前消息移入排队区；持久聊天条目保留原位置，后续发送仍显示排队。
+  initial request 与 awaiting request 使用同一规则；paused 和 delivery uncertain 的权威状态优先。
+  该规则只决定展示，不改变 Core 状态、水位、调度和权限；没有本地 reservation 的读取按权威队列展示。
+- `context-window.update` 推进独立 Context 水位；批量处理时使用该 patch 本身的 revision，
+  不借用之后文本更新的 revision。旧 Context 读取和较旧用量 patch 均不得覆盖新用量。
+  首次 Context 尚未水合时，用量 patch 不构造 inspection/compaction 能力；已可应用的聊天 patch 继续展示，
+  独立 Context reader 合并一次后续读取。Context 单独失败时显示降级提示，恢复后独立清除。
+  Context 展示检查不创建执行 App 或加载 Host 挂载，避免只读查询重新安装已释放的执行上下文。
 - Inbox 落盘后唤醒本进程 owner。连续唤醒合并到当前 poll 完成之后，不并发消费同一 Mission；
   跨进程无通知时使用 500 ms 上限轮询。operation waiter 先注册通知再读耐久状态，避免提交丢唤醒。
 - `queue.update` 只更新排队控制投影，不读取聊天历史、不生成未读提醒、不覆盖已流式展示的文本。
@@ -78,6 +119,10 @@ canonical feed 投递完成；删除继续遵循 canonical deletion barrier，Ho
 上述改动尚未替换 Execution、ExpertSession 和 Mission controller 的 JSON/journal 持久化引擎。
 每 owner SQLite 引擎、版本化惰性迁移、索引分页、Usage/terminal projection outbox，以及容量账本
 仍属于后续持久化改造，不能把当前批量提交当成这些工作已经完成。
+
+正常 Execution commit 把同一 aggregate lock 内已读取的 events/commits 传入事务应用，避免应用阶段再次读取。
+崩溃重放仍从磁盘读取。expectedVersion、幂等冲突、sequence、journal/handoff 顺序、删除屏障和耐久后发布
+保持原语义；events/commits 仍全量重写，尚未获得与历史规模无关的增量提交。
 
 ## 删除的后台修复
 

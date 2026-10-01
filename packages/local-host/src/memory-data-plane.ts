@@ -46,6 +46,7 @@ export async function createLocalHostMemoryDataPlane(options: {
   const executionStore =
     options.executionStore ??
     createFileExecutionStore({
+      logger: options.logger,
       pragmaHome: options.pragmaHome,
       canonicalEventFeed: canonical,
       canonicalDelivery: "background",

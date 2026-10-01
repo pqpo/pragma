@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
+import { mkdir, rm } from "node:fs/promises";
 import { dirname, join } from "node:path";
 
 import {
@@ -14,6 +14,18 @@ import {
   type PromptRequest,
 } from "@pragma/shared";
 import { z } from "zod";
+
+import {
+  readStorageFile as readFile,
+  writeStorageFile as writeFile,
+  replaceStorageFile as rename,
+  parseStorageJson,
+  stringifyStorageJson,
+  measureStoragePhase,
+  measureStorageComputation,
+  withStorageDiagnostics,
+} from "../storage/storage-diagnostics.ts";
+import type { PragmaLogger } from "../logging/logger.ts";
 
 import { withFileLock } from "../storage/file-lock.ts";
 import {
@@ -65,10 +77,17 @@ export interface ExpertSessionEventInput {
   readonly occurredAt?: string | undefined;
 }
 
+export interface ExpertSessionSnapshot {
+  readonly session: ExpertSessionRecord;
+  readonly prompts: readonly PromptRequest[];
+  readonly events: readonly ExpertSessionEvent[];
+}
+
 export interface ExpertSessionStore {
   create(record: ExpertSessionRecord): Promise<void>;
   enqueue(transaction: EnqueuePromptTransaction, ownerClaimId?: string): Promise<string>;
   get(sessionId: string): Promise<ExpertSessionRecord | undefined>;
+  readSnapshot(sessionId: string): Promise<ExpertSessionSnapshot | undefined>;
   recoverClosed(input: {
     readonly sessionId: string;
     readonly expectedUpdatedAt: string;
@@ -97,16 +116,23 @@ export interface ExpertSessionStore {
 
 export function createFileExpertSessionStore(options: {
   readonly executions: ExecutionStore;
+  readonly logger?: PragmaLogger | undefined;
   readonly pragmaHome?: string;
 }): ExpertSessionStore {
   const paths = new PragmaPaths(options);
   const withExpertSessionLock = async <T>(
     sessionId: string,
     action: () => Promise<T>,
+    operation = "aggregate",
   ): Promise<T> =>
-    await withFileLock(paths.expertSessionLock(sessionId), action, {
-      operation: "expert-session.aggregate",
-    });
+    await withStorageDiagnostics(
+      { family: "expert-session", ownerId: sessionId, operation },
+      () =>
+        withFileLock(paths.expertSessionLock(sessionId), action, {
+          operation: `expert-session.${operation}`,
+        }),
+      options.logger,
+    );
   const assertLeaseOwner = async (sessionId: string, claimId: string): Promise<void> => {
     const value = await readJson(paths.expertSessionLease(sessionId));
     const lease = value === undefined ? undefined : ExpertSessionLeaseSchema.parse(value);
@@ -258,7 +284,9 @@ export function createFileExpertSessionStore(options: {
             rootInvocation: transaction.rootInvocation,
           });
           if (ownerClaimId !== undefined) await assertLeaseOwner(sessionId, ownerClaimId);
-          await writeJson(paths.expertSessionTransaction(sessionId), journal);
+          await measureStoragePhase("journal_write", () =>
+            writeJson(paths.expertSessionTransaction(sessionId), journal),
+          );
           await applyTransaction(paths, options.executions, sessionId, journal);
           return transaction.execution.executionId;
         }
@@ -305,20 +333,46 @@ export function createFileExpertSessionStore(options: {
           rootInvocation: transaction.rootInvocation,
         });
         if (ownerClaimId !== undefined) await assertLeaseOwner(sessionId, ownerClaimId);
-        await writeJson(paths.expertSessionTransaction(sessionId), journal);
+        await measureStoragePhase("journal_write", () =>
+          writeJson(paths.expertSessionTransaction(sessionId), journal),
+        );
         await applyTransaction(paths, options.executions, sessionId, journal);
         return transaction.execution.executionId;
       });
     },
     async get(sessionId) {
-      return await withExpertSessionLock(sessionId, async () => {
-        await prepareExpertSession(paths, options.executions, sessionId);
-        const value = await readJson(paths.expertSessionState(sessionId));
-        if (value === undefined) return undefined;
-        const parsed = ExpertSessionRecordSchema.safeParse(value);
-        if (!parsed.success) throw unsupported(sessionId, parsed.error);
-        return parsed.data;
-      });
+      return await withExpertSessionLock(
+        sessionId,
+        async () => {
+          await prepareExpertSession(paths, options.executions, sessionId);
+          const value = await readJson(paths.expertSessionState(sessionId));
+          if (value === undefined) return undefined;
+          const parsed = ExpertSessionRecordSchema.safeParse(value);
+          if (!parsed.success) throw unsupported(sessionId, parsed.error);
+          return parsed.data;
+        },
+        "get",
+      );
+    },
+    async readSnapshot(sessionId) {
+      return await withExpertSessionLock(
+        sessionId,
+        async () => {
+          await prepareExpertSession(paths, options.executions, sessionId);
+          const value = await readJson(paths.expertSessionState(sessionId));
+          if (value === undefined) return undefined;
+          const parsed = ExpertSessionRecordSchema.safeParse(value);
+          if (!parsed.success) throw unsupported(sessionId, parsed.error);
+          const prompts = PromptRequestSchema.array().parse(
+            (await readJson(paths.expertSessionPrompts(sessionId))) ?? [],
+          );
+          const events = ExpertSessionEventSchema.array().parse(
+            (await readJson(paths.expertSessionEvents(sessionId))) ?? [],
+          );
+          return { session: parsed.data, prompts, events };
+        },
+        "read-snapshot",
+      );
     },
     async recoverClosed(input) {
       return await withExpertSessionLock(input.sessionId, async () => {
@@ -393,7 +447,9 @@ export function createFileExpertSessionStore(options: {
             },
           ]),
         });
-        await writeJson(paths.expertSessionTransaction(input.sessionId), journal);
+        await measureStoragePhase("journal_write", () =>
+          writeJson(paths.expertSessionTransaction(input.sessionId), journal),
+        );
         await applyTransaction(paths, options.executions, input.sessionId, journal);
         await writeJson(paths.expertSessionLease(input.sessionId), {
           claimId: input.claimId,
@@ -429,26 +485,36 @@ export function createFileExpertSessionStore(options: {
             deriveSessionEvents(session.data, prompts, next.session, next.prompts),
           ),
         });
-        await writeJson(paths.expertSessionTransaction(sessionId), journal);
+        await measureStoragePhase("journal_write", () =>
+          writeJson(paths.expertSessionTransaction(sessionId), journal),
+        );
         await applyTransaction(paths, options.executions, sessionId, journal);
         return next.result;
       });
     },
     async listPrompts(sessionId) {
-      return await withExpertSessionLock(sessionId, async () => {
-        await prepareExpertSession(paths, options.executions, sessionId);
-        return PromptRequestSchema.array().parse(
-          (await readJson(paths.expertSessionPrompts(sessionId))) ?? [],
-        );
-      });
+      return await withExpertSessionLock(
+        sessionId,
+        async () => {
+          await prepareExpertSession(paths, options.executions, sessionId);
+          return PromptRequestSchema.array().parse(
+            (await readJson(paths.expertSessionPrompts(sessionId))) ?? [],
+          );
+        },
+        "list-prompts",
+      );
     },
     async listEvents(sessionId) {
-      return await withExpertSessionLock(sessionId, async () => {
-        await prepareExpertSession(paths, options.executions, sessionId);
-        return ExpertSessionEventSchema.array().parse(
-          (await readJson(paths.expertSessionEvents(sessionId))) ?? [],
-        );
-      });
+      return await withExpertSessionLock(
+        sessionId,
+        async () => {
+          await prepareExpertSession(paths, options.executions, sessionId);
+          return ExpertSessionEventSchema.array().parse(
+            (await readJson(paths.expertSessionEvents(sessionId))) ?? [],
+          );
+        },
+        "list-events",
+      );
     },
     async appendEvent(sessionId, event, ownerClaimId) {
       await withExpertSessionLock(sessionId, async () => {
@@ -477,7 +543,9 @@ export function createFileExpertSessionStore(options: {
           ]),
         });
         if (ownerClaimId !== undefined) await assertLeaseOwner(sessionId, ownerClaimId);
-        await writeJson(paths.expertSessionTransaction(sessionId), journal);
+        await measureStoragePhase("journal_write", () =>
+          writeJson(paths.expertSessionTransaction(sessionId), journal),
+        );
         await applyTransaction(paths, options.executions, sessionId, journal);
       });
     },
@@ -623,6 +691,16 @@ function materializeSessionEvents(
   existing: readonly ExpertSessionEvent[],
   inputs: readonly NewSessionEvent[],
 ): readonly ExpertSessionEvent[] {
+  return measureStorageComputation("state_compute", () =>
+    materializeSessionEventsUnmeasured(sessionId, existing, inputs),
+  );
+}
+
+function materializeSessionEventsUnmeasured(
+  sessionId: string,
+  existing: readonly ExpertSessionEvent[],
+  inputs: readonly NewSessionEvent[],
+): readonly ExpertSessionEvent[] {
   if (inputs.length === 0) return existing;
   const byId = new Set(existing.map((event) => event.eventId));
   const appended = inputs
@@ -679,6 +757,16 @@ async function recoverTransaction(
 }
 
 async function prepareExpertSession(
+  paths: PragmaPaths,
+  executions: ExecutionStore,
+  sessionId: string,
+): Promise<void> {
+  await measureStoragePhase("prepare_recovery_migration", () =>
+    prepareExpertSessionUnmeasured(paths, executions, sessionId),
+  );
+}
+
+async function prepareExpertSessionUnmeasured(
   paths: PragmaPaths,
   executions: ExecutionStore,
   sessionId: string,
@@ -776,7 +864,7 @@ async function requireJson(file: string, sessionId: string): Promise<unknown> {
 
 async function readJson(file: string): Promise<unknown | undefined> {
   try {
-    return JSON.parse(await readFile(file, "utf8")) as unknown;
+    return parseStorageJson(await readFile(file, "utf8")) as unknown;
   } catch (error) {
     if (isNotFound(error)) return undefined;
     throw error;
@@ -787,7 +875,7 @@ async function writeJson(file: string, value: unknown): Promise<void> {
   await mkdir(dirname(file), { recursive: true });
   const temporary = join(dirname(file), `.${randomUUID()}.tmp`);
   try {
-    await writeFile(temporary, `${JSON.stringify(value, null, 2)}\n`, "utf8");
+    await writeFile(temporary, `${stringifyStorageJson(value, 2)}\n`, "utf8");
     await renameWithRetry(temporary, file);
   } finally {
     await rm(temporary, { force: true });

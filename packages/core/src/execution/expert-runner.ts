@@ -2066,6 +2066,22 @@ async function submitRuntimeTurn(options: {
   const rootMessageAccumulator = accumulatorFor(options.runId);
   let completedRootAssistant: AgentMessage | undefined;
   const liveBus = getExecutionLiveBus(options.options.store);
+  const turnLogger = createPragmaLogger(options.options.loggerProvider, {
+    component: "core.execution.runtime-turn",
+    scope: { executionId: options.options.executionId, invocationId: options.options.invocationId },
+  });
+  const timed = async <T>(phase: string, operation: () => Promise<T>): Promise<T> => {
+    const startedAt = performance.now();
+    try {
+      return await operation();
+    } finally {
+      turnLogger.info("execution.turn_phase", "Runtime turn phase completed", {
+        phase,
+        runId: options.runId,
+        elapsedMs: performance.now() - startedAt,
+      });
+    }
+  };
   const eventWriter = createExecutionEventWriter(
     options.options.store,
     options.options.executionId,
@@ -2132,12 +2148,15 @@ async function submitRuntimeTurn(options: {
         });
       }
     }
-    await eventWriter.flush();
+    await timed("event_writer_flush", () => eventWriter.flush());
   })();
   try {
     const result = await handle.result;
-    await drain;
-    await usagePreview;
+    turnLogger.info("execution.runtime_result_observed", "Runtime result observed", {
+      runId: options.runId,
+    });
+    await timed("event_pump_drain", () => drain);
+    await timed("usage_preview_drain", () => usagePreview);
     const checkpoint = options.options.controller.getHumanInteractionCheckpoint(
       options.options.invocationId,
     );
@@ -2145,7 +2164,9 @@ async function submitRuntimeTurn(options: {
     const output = result.result.output;
     const finalMessage =
       completedRootAssistant ?? rootMessageAccumulator.complete(output, result.result.usage);
-    await settleRuntimeTurnUsage(options, result.result.usage);
+    await timed("usage_record_and_commit", () =>
+      settleRuntimeTurnUsage(options, result.result.usage),
+    );
     return {
       runId: options.runId,
       output,
@@ -2155,7 +2176,7 @@ async function submitRuntimeTurn(options: {
   } catch (error) {
     const usage = await handle.usage?.catch(() => undefined);
     await usagePreview;
-    await settleRuntimeTurnUsage(options, usage);
+    await timed("usage_record_and_commit", () => settleRuntimeTurnUsage(options, usage));
     throw (
       options.options.controller.getHumanInteractionCheckpoint(options.options.invocationId) ??
       error
@@ -2163,7 +2184,7 @@ async function submitRuntimeTurn(options: {
   } finally {
     await drain.catch(() => undefined);
     try {
-      await eventWriter.flush();
+      await timed("event_writer_flush", () => eventWriter.flush());
     } finally {
       options.options.controller.unregisterRuntimeSubmission(
         options.options.invocationId,
@@ -2454,6 +2475,7 @@ async function appendInvocationFinalMessage(
           ],
         })
       : message;
+  const startedAt = performance.now();
   await commitExecutionEvent(options.store, {
     executionId: options.executionId,
     invocationId: options.invocationId,
@@ -2469,6 +2491,13 @@ async function appendInvocationFinalMessage(
       },
     },
     eventId: `invocation-final-message:${runId}`,
+  });
+  createPragmaLogger(options.loggerProvider, {
+    component: "core.execution",
+    scope: { executionId: options.executionId, invocationId: options.invocationId },
+  }).info("execution.final_message_committed", "Final message committed", {
+    runId,
+    elapsedMs: performance.now() - startedAt,
   });
 }
 

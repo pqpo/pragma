@@ -77,9 +77,12 @@ export function createPragma(options: CreatePragmaOptions): PragmaApp {
   const pragmaHome = new PragmaPaths(
     options.pragmaHome === undefined ? {} : { pragmaHome: options.pragmaHome },
   ).root;
-  const executions = options.executionStore ?? createFileExecutionStore({ pragmaHome });
+  const storageLogger = loggerProvider.createLogger({ component: "core.storage" });
+  const executions =
+    options.executionStore ?? createFileExecutionStore({ pragmaHome, logger: storageLogger });
   const sessions =
-    options.expertSessionStore ?? createFileExpertSessionStore({ executions, pragmaHome });
+    options.expertSessionStore ??
+    createFileExpertSessionStore({ executions, pragmaHome, logger: storageLogger });
   const runtimes = options.runtimes;
   const nestedFlowExecutor: NestedFlowInvocationExecutor = runNestedFlowInvocation;
   const experts = new ExpertSessionManager({

@@ -1,3 +1,4 @@
+import { withStorageDiagnostics, type PragmaLogger } from "@pragma/core";
 import { randomUUID } from "node:crypto";
 
 import {
@@ -105,6 +106,7 @@ export interface MissionControlApplication {
  * therefore remains outside the aggregate lock held by MissionControllerStore.
  */
 export function createMissionControlApplication(options: {
+  readonly logger?: PragmaLogger | undefined;
   readonly controller: MissionControllerStore;
   readonly ownerScope: MissionOwnerScope;
   readonly consumer: MissionCommandConsumer;
@@ -132,7 +134,7 @@ export function createMissionControlApplication(options: {
   const now = options.now ?? (() => new Date());
   options.ownerScope.bindConsumer(options.consumer);
 
-  const startOwner = async (missionId: string): Promise<"live" | "acquired"> => {
+  const startOwnerUnmeasured = async (missionId: string): Promise<"live" | "acquired"> => {
     const current = options.ownerScope.currentGuard(missionId);
     if (current !== undefined) {
       // Acquisition of an existing owner restarts a poller stopped by a
@@ -154,6 +156,21 @@ export function createMissionControlApplication(options: {
     return "acquired";
   };
 
+  const startOwner = async (
+    missionId: string,
+    requestId?: string,
+  ): Promise<"live" | "acquired"> => {
+    const startedAt = performance.now();
+    const result = await startOwnerUnmeasured(missionId);
+    options.logger?.info("mission.owner_ready", "Mission owner is ready", {
+      missionId,
+      ...(requestId === undefined ? {} : { requestId }),
+      outcome: result,
+      elapsedMs: performance.now() - startedAt,
+    });
+    return result;
+  };
+
   return {
     startOwner,
     stopOwner: async (missionId) => await options.ownerScope.stop(missionId),
@@ -161,100 +178,139 @@ export function createMissionControlApplication(options: {
     completeOperation: async (input) => await options.controller.completeOperation(input),
     ...(options.waitExecution === undefined ? {} : { waitExecution: options.waitExecution }),
     async submit(input) {
-      await options.assertMission?.(input.missionId);
-      const createdAt = input.createdAt ?? now().toISOString();
-      const strict = input.kind === "steer" || input.kind === "queue.steer";
-      // Resolve a moving target only for a new request. A retry must be
-      // compared with the durable command's original target; otherwise a
-      // completed steer/interrupt becomes impossible to replay after its
-      // execution has naturally disappeared from the live projection.
-      const existingCommand = await options.controller.getCommand({
-        missionId: input.missionId,
-        requestId: input.requestId,
-      });
-      const target =
-        existingCommand === undefined
-          ? await resolveTarget(options, input, strict)
-          : retryTarget(input, existingCommand);
-      // An interrupt without an optimistic execution is allowed to capture
-      // the execution that is current at append time, but that moving value
-      // is not part of the caller's semantic request.  Keeping it out of the
-      // hash makes a retry idempotent after the interrupted execution has
-      // become terminal.
-      const canonicalTarget =
-        input.kind === "interrupt" && input.expectedExecutionId === undefined
-          ? input.target
-          : target;
-      const canonical: CanonicalMissionCommandPayloadInput = {
-        missionId: input.missionId,
-        kind: input.kind,
-        ...(canonicalTarget === undefined ? {} : { target: canonicalTarget }),
-        payload: input.payload,
-      };
-      const payloadHash = hashMissionCommandPayload(canonical);
-      const snapshot = await options.controller.readSnapshot({ missionId: input.missionId });
-      const liveLease = hasLiveLease(snapshot.snapshot.lease, now());
-      const replayingTerminalCommand =
-        existingCommand !== undefined && isTerminalCommandState(existingCommand.state);
-
-      // A delayed heartbeat does not invalidate the current owner. Append
-      // binds strict commands to the persisted fencing token under the lock;
-      // takeover before delivery will reject that token in processNext.
-      if (strict && snapshot.snapshot.lease === undefined && !replayingTerminalCommand) {
-        throw createIntegrationError({
-          code: "STEER_TARGET_NOT_ACTIVE",
-          category: "conflict",
-          message: "Strict Mission steer requires a live Mission owner.",
-          details: { missionId: input.missionId },
-        });
-      }
-      if (
-        !liveLease &&
-        !replayingTerminalCommand &&
-        options.ownerScope.currentGuard(input.missionId) === undefined
-      )
-        await options.assertAcquisitionAllowed?.(input.missionId);
-
-      const appended = await options.controller.appendCommand({
-        request: {
-          schemaVersion: "pragma.integration-request/v1",
+      return await withStorageDiagnostics(
+        {
+          family: "mission-control",
+          ownerId: input.missionId,
           requestId: input.requestId,
-          payloadHash,
-          requestedAt: createdAt,
-          client: input.client ?? options.client ?? defaultClient(),
+          operation: "submit",
         },
-        missionId: input.missionId,
-        kind: input.kind,
-        ...(target === undefined ? {} : { target }),
-        payload: input.payload,
-        ...(input.expiresAt === undefined ? {} : { expiresAt: input.expiresAt }),
-        ...(input.createdAt === undefined ? {} : { createdAt: input.createdAt }),
-      });
+        async () => {
+          const enteredAt = performance.now();
+          options.logger?.info(
+            "mission.control_request_entered",
+            "Mission control request entered",
+            {
+              missionId: input.missionId,
+              requestId: input.requestId,
+              kind: input.kind,
+            },
+          );
+          await options.assertMission?.(input.missionId);
+          const createdAt = input.createdAt ?? now().toISOString();
+          const strict = input.kind === "steer" || input.kind === "queue.steer";
+          // Resolve a moving target only for a new request. A retry must be
+          // compared with the durable command's original target; otherwise a
+          // completed steer/interrupt becomes impossible to replay after its
+          // execution has naturally disappeared from the live projection.
+          const existingCommand = await options.controller.getCommand({
+            missionId: input.missionId,
+            requestId: input.requestId,
+          });
+          const target =
+            existingCommand === undefined
+              ? await resolveTarget(options, input, strict)
+              : retryTarget(input, existingCommand);
+          // An interrupt without an optimistic execution is allowed to capture
+          // the execution that is current at append time, but that moving value
+          // is not part of the caller's semantic request.  Keeping it out of the
+          // hash makes a retry idempotent after the interrupted execution has
+          // become terminal.
+          const canonicalTarget =
+            input.kind === "interrupt" && input.expectedExecutionId === undefined
+              ? input.target
+              : target;
+          const canonical: CanonicalMissionCommandPayloadInput = {
+            missionId: input.missionId,
+            kind: input.kind,
+            ...(canonicalTarget === undefined ? {} : { target: canonicalTarget }),
+            payload: input.payload,
+          };
+          const payloadHash = hashMissionCommandPayload(canonical);
+          const snapshot = await options.controller.readSnapshot({ missionId: input.missionId });
+          const liveLease = hasLiveLease(snapshot.snapshot.lease, now());
+          const replayingTerminalCommand =
+            existingCommand !== undefined && isTerminalCommandState(existingCommand.state);
 
-      // A retry of an already terminal command is satisfied by the durable
-      // projection.  Do not reacquire a Mission lease merely to replay an
-      // operation whose side effect has already been recorded.
-      if (isTerminalOperation(appended.operation.state)) {
-        return { ...appended, owner: "live" };
-      }
+          // A delayed heartbeat does not invalidate the current owner. Append
+          // binds strict commands to the persisted fencing token under the lock;
+          // takeover before delivery will reject that token in processNext.
+          if (strict && snapshot.snapshot.lease === undefined && !replayingTerminalCommand) {
+            throw createIntegrationError({
+              code: "STEER_TARGET_NOT_ACTIVE",
+              category: "conflict",
+              message: "Strict Mission steer requires a live Mission owner.",
+              details: { missionId: input.missionId },
+            });
+          }
+          if (
+            !liveLease &&
+            !replayingTerminalCommand &&
+            options.ownerScope.currentGuard(input.missionId) === undefined
+          )
+            await options.assertAcquisitionAllowed?.(input.missionId);
 
-      // A command is durable before owner acquisition. If the process races a
-      // live owner, MISSION_LEASE_HELD is treated as successful routing to that
-      // owner and the existing poller consumes the same Inbox item.
-      if (options.ownerScope.currentGuard(input.missionId) !== undefined) {
-        await options.ownerScope.acquire(input.missionId);
-        options.ownerScope.wake(input.missionId);
-        return { ...appended, owner: "live" };
-      }
-      void startOwner(input.missionId).catch(async (error: unknown) => {
-        try {
-          await options.onOwnerStartError?.({ missionId: input.missionId, error });
-        } catch {
-          // The command is already durable. Diagnostics must not create an
-          // unhandled rejection or change its idempotent retry semantics.
-        }
-      });
-      return { ...appended, owner: "scheduled" };
+          const appendStartedAt = performance.now();
+          const appended = await withStorageDiagnostics(
+            {
+              family: "mission-inbox",
+              ownerId: input.missionId,
+              requestId: input.requestId,
+              operation: "append",
+            },
+            () =>
+              options.controller.appendCommand({
+                request: {
+                  schemaVersion: "pragma.integration-request/v1",
+                  requestId: input.requestId,
+                  payloadHash,
+                  requestedAt: createdAt,
+                  client: input.client ?? options.client ?? defaultClient(),
+                },
+                missionId: input.missionId,
+                kind: input.kind,
+                ...(target === undefined ? {} : { target }),
+                payload: input.payload,
+                ...(input.expiresAt === undefined ? {} : { expiresAt: input.expiresAt }),
+                ...(input.createdAt === undefined ? {} : { createdAt: input.createdAt }),
+              }),
+            options.logger,
+          );
+          options.logger?.info("mission.inbox_durable", "Mission command is durably accepted", {
+            missionId: input.missionId,
+            requestId: input.requestId,
+            commandId: appended.command.commandId,
+            appendMs: performance.now() - appendStartedAt,
+            elapsedMs: performance.now() - enteredAt,
+          });
+
+          // A retry of an already terminal command is satisfied by the durable
+          // projection.  Do not reacquire a Mission lease merely to replay an
+          // operation whose side effect has already been recorded.
+          if (isTerminalOperation(appended.operation.state)) {
+            return { ...appended, owner: "live" };
+          }
+
+          // A command is durable before owner acquisition. If the process races a
+          // live owner, MISSION_LEASE_HELD is treated as successful routing to that
+          // owner and the existing poller consumes the same Inbox item.
+          if (options.ownerScope.currentGuard(input.missionId) !== undefined) {
+            await options.ownerScope.acquire(input.missionId);
+            options.ownerScope.wake(input.missionId);
+            return { ...appended, owner: "live" };
+          }
+          void startOwner(input.missionId, input.requestId).catch(async (error: unknown) => {
+            try {
+              await options.onOwnerStartError?.({ missionId: input.missionId, error });
+            } catch {
+              // The command is already durable. Diagnostics must not create an
+              // unhandled rejection or change its idempotent retry semantics.
+            }
+          });
+          return { ...appended, owner: "scheduled" };
+        },
+        options.logger,
+      );
     },
     async waitForAcceptance(input) {
       return await options.controller.waitForAcceptanceOperation(input);

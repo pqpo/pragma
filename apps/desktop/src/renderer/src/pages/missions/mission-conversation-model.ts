@@ -14,6 +14,11 @@ import type {
   PendingMissionQueuedMessage,
 } from "./mission-command-delivery.ts";
 
+/** Zero acknowledges no live updates; only contiguous patches can apply before the first page. */
+export function createMissionConversationBase(missionId: string): MissionConversationSnapshot {
+  return { missionId, revision: 0, entries: [], page: {}, pendingInteractions: [] };
+}
+
 export interface LocalMissionContextOperation {
   readonly id: string;
   readonly createdAt: string;
@@ -37,12 +42,23 @@ export type MissionConversationBlock =
 export function hideQueuedChatEntries(
   entries: readonly MissionChatEntry[],
   queuedRequestIds: ReadonlySet<string>,
+  preparingRequestId: string | null = null,
 ): MissionChatEntry[] {
   return entries.filter(
     (entry) =>
       entry.kind !== "user" ||
+      entry.id === preparingRequestId ||
       (!queuedRequestIds.has(entry.id) && entry.delivery?.status !== "queued"),
   );
+}
+
+/** A reserved foreground send remains in the conversation while Core prepares its turn. */
+export function preparingMissionRequestId(
+  chat: MissionConversationSnapshot | null,
+  requestId: string | null,
+): string | null {
+  if (chat?.queue?.state === "paused" || chat?.queue?.deliveryUncertain === true) return null;
+  return shouldShowMissionThinkingPlaceholder(chat, requestId) ? requestId : null;
 }
 
 export function readyPendingQueuedRequestIds(
@@ -217,10 +233,18 @@ function applyMissionChatPatchesWithChanges(
   patches: readonly MissionChatPatch[],
   revision: number,
   options: MissionChatUpdateBatchOptions = {},
+  contextRevision = revision,
+  controlRevision = patches.some(isMissionControlPatch)
+    ? revision
+    : (snapshot.controlRevision ?? 0),
 ): MissionChatPatchApplyResult | null {
   if (patches.length === 0) {
     return {
-      snapshot: revision === snapshot.revision ? snapshot : { ...snapshot, revision },
+      snapshot: {
+        ...snapshot,
+        revision,
+        controlRevision: Math.max(snapshot.controlRevision ?? 0, controlRevision),
+      },
       changedEntries: new Map(),
     };
   }
@@ -239,7 +263,11 @@ function applyMissionChatPatchesWithChanges(
       });
     }
     return {
-      snapshot: { ...snapshot, revision },
+      snapshot: {
+        ...snapshot,
+        revision,
+        controlRevision: Math.max(snapshot.controlRevision ?? 0, controlRevision),
+      },
       changedEntries,
     };
   }
@@ -255,10 +283,16 @@ function applyMissionChatPatchesWithChanges(
       continue;
     }
     if (patch.type === "context-window.update") {
-      if (snapshot.contextWindow === undefined) return null;
+      if (snapshot.contextRevision !== undefined && contextRevision < snapshot.contextRevision)
+        continue;
       snapshot = {
         ...snapshot,
-        contextWindow: { ...snapshot.contextWindow, usage: patch.usage },
+        contextRevision,
+        // Usage alone cannot manufacture inspection/compaction capabilities.
+        // Keep chat patches flowing and let the independent reader hydrate them.
+        ...(snapshot.contextWindow === undefined
+          ? {}
+          : { contextWindow: { ...snapshot.contextWindow, usage: patch.usage } }),
       };
       continue;
     }
@@ -331,7 +365,22 @@ function applyMissionChatPatchesWithChanges(
     };
     changedEntries.set(patch.entryId, entries[index]!);
   }
-  return { snapshot: { ...snapshot, revision, entries }, changedEntries };
+  return {
+    snapshot: {
+      ...snapshot,
+      revision,
+      entries,
+      controlRevision: Math.max(snapshot.controlRevision ?? 0, controlRevision),
+    },
+    changedEntries,
+  };
+}
+
+/** Execution and pending-interaction transitions arrive as invalidations. */
+function isMissionControlPatch(patch: MissionChatPatch): boolean {
+  return (
+    patch.type === "queue.update" || (patch.type === "entry.upsert" && patch.entry.kind === "user")
+  );
 }
 
 function isMissionContentAppendPatch(patch: MissionChatPatch): patch is Extract<
@@ -411,7 +460,14 @@ export function applyMissionChatUpdateBatch(
 
   if (contiguous.length === 0) {
     return {
-      snapshot: consumedRevision === base.revision ? base : { ...base, revision: consumedRevision },
+      snapshot:
+        consumedRevision === base.revision
+          ? base
+          : {
+              ...base,
+              revision: consumedRevision,
+              controlRevision: Math.max(base.controlRevision ?? 0, requiredRefreshRevision ?? 0),
+            },
       remaining,
       needsRefresh: requiredRefreshRevision !== undefined || remaining.length > 0,
       requiresRender: false,
@@ -422,7 +478,23 @@ export function applyMissionChatUpdateBatch(
   }
 
   const patches = compactMissionChatPatches(contiguous.flatMap((update) => update.patches));
-  const applied = applyMissionChatPatchesWithChanges(base, patches, consumedRevision, options);
+  const contextRevision = contiguous.findLast((update) =>
+    update.patches.some((patch) => patch.type === "context-window.update"),
+  )?.revision;
+  // Use the actual control-changing update, never a later token in the same batch.
+  const controlRevision = Math.max(
+    base.controlRevision ?? 0,
+    requiredRefreshRevision ?? 0,
+    contiguous.findLast((update) => update.patches.some(isMissionControlPatch))?.revision ?? 0,
+  );
+  const applied = applyMissionChatPatchesWithChanges(
+    base,
+    patches,
+    consumedRevision,
+    options,
+    contextRevision,
+    controlRevision,
+  );
   if (applied === null) {
     return {
       snapshot: base,
@@ -689,6 +761,7 @@ export function mergeLatestChatPage(
   delete latestPageWithoutCursor.nextBeforeCursor;
   return {
     ...latest,
+    controlRevision: Math.max(current.controlRevision ?? 0, latest.controlRevision ?? 0),
     entries: uniqueChatEntries([
       ...retainedOlder,
       ...retainedUnavailableHistory,

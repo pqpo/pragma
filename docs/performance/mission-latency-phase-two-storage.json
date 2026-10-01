@@ -1,0 +1,135 @@
+{
+  "baselineCommit": "bad15b562b954df50020c2effdb3a52cf18fb8b0",
+  "date": "2026-10-01",
+  "hardware": {
+    "model": "MacBookPro16,1",
+    "cpu": "Intel Core i7-9750H 2.60 GHz",
+    "memoryGiB": 16
+  },
+  "runOrder": ["after", "before"],
+  "limitations": [
+    "local-storage-only",
+    "host background load not controlled",
+    "diagnostic probes separate from timing"
+  ],
+  "before": {
+    "kind": "local-storage-only",
+    "node": "v24.18.0",
+    "results": [
+      {
+        "io": [],
+        "historySize": 100,
+        "samples": 20,
+        "commitP50Ms": 30.2960750000002,
+        "commitP95Ms": 32.17443899999989,
+        "readP50Ms": 23.28296500000033,
+        "readP95Ms": 23.88443200000006
+      },
+      {
+        "io": [],
+        "historySize": 1000,
+        "samples": 20,
+        "commitP50Ms": 35.185921000000235,
+        "commitP95Ms": 39.932866000000104,
+        "readP50Ms": 25.316147999999885,
+        "readP95Ms": 34.08352300000024
+      }
+    ],
+    "sessionResults": [
+      {
+        "io": [],
+        "historySize": 100,
+        "samples": 20,
+        "snapshotP50Ms": 66.88345599999957,
+        "snapshotP95Ms": 67.94046500000059
+      },
+      {
+        "io": [],
+        "historySize": 1000,
+        "samples": 20,
+        "snapshotP50Ms": 71.96052299999974,
+        "snapshotP95Ms": 75.14841799999977
+      }
+    ]
+  },
+  "after": {
+    "kind": "local-storage-only",
+    "node": "v24.18.0",
+    "results": [
+      {
+        "io": [
+          {
+            "family": "execution",
+            "operation": "commit",
+            "reads": 13,
+            "writes": 8,
+            "readBytes": 39292,
+            "writtenBytes": 40457,
+            "parsedEntries": 154
+          }
+        ],
+        "historySize": 100,
+        "samples": 20,
+        "commitP50Ms": 31.356549000000086,
+        "commitP95Ms": 34.08627999999999,
+        "readP50Ms": 23.745591000000104,
+        "readP95Ms": 26.67391600000019
+      },
+      {
+        "io": [
+          {
+            "family": "execution",
+            "operation": "commit",
+            "reads": 13,
+            "writes": 8,
+            "readBytes": 281420,
+            "writtenBytes": 282587,
+            "parsedEntries": 1054
+          }
+        ],
+        "historySize": 1000,
+        "samples": 20,
+        "commitP50Ms": 36.152888000000075,
+        "commitP95Ms": 40.024005000000216,
+        "readP50Ms": 27.36934900000051,
+        "readP95Ms": 29.811359000000266
+      }
+    ],
+    "sessionResults": [
+      {
+        "io": [
+          {
+            "family": "expert-session",
+            "operation": "read-snapshot",
+            "reads": 9,
+            "writes": 1,
+            "readBytes": 72199,
+            "writtenBytes": 187,
+            "parsedEntries": 202
+          }
+        ],
+        "historySize": 100,
+        "samples": 20,
+        "snapshotP50Ms": 25.46362599999975,
+        "snapshotP95Ms": 27.063441999999668
+      },
+      {
+        "io": [
+          {
+            "family": "expert-session",
+            "operation": "read-snapshot",
+            "reads": 9,
+            "writes": 1,
+            "readBytes": 698600,
+            "writtenBytes": 187,
+            "parsedEntries": 2002
+          }
+        ],
+        "historySize": 1000,
+        "samples": 20,
+        "snapshotP50Ms": 31.603219999999965,
+        "snapshotP95Ms": 35.97736400000031
+      }
+    ]
+  }
+}

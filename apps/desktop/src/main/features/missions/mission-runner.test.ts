@@ -2988,6 +2988,7 @@ describe("MissionRunner", { timeout: 30_000 }, () => {
       compactContext,
     });
     const runtimes = createStaticRuntimeResolver({ runtimes: [runtime], defaultRuntimeId: "fake" });
+    const hostContextStores = vi.fn(async () => []);
     const createRunner = () =>
       createMissionRunner({
         missions,
@@ -2997,6 +2998,7 @@ describe("MissionRunner", { timeout: 30_000 }, () => {
         capabilitiesPath: join(root, "capabilities"),
         pragmaHome: join(root, "state"),
         runtimes,
+        hostContextStores,
       });
     const runner = createRunner();
     const chatUpdates: MissionChatUpdate[] = [];
@@ -3071,12 +3073,14 @@ describe("MissionRunner", { timeout: 30_000 }, () => {
       percent: 5,
     });
 
+    hostContextStores.mockClear();
     await expect(createRunner().getContextWindow(mission.id)).resolves.toMatchObject({
       contextWindow: {
         canCompact: true,
         usage: { usedTokens: 10_000, contextWindowTokens: 200_000, percent: 5 },
       },
     });
+    expect(hostContextStores).not.toHaveBeenCalled();
 
     const unavailableRuntimes: RuntimeResolver = {
       getDefaultRuntimeId: async () => "fake",
@@ -4889,10 +4893,20 @@ describe("MissionRunner", { timeout: 30_000 }, () => {
       return await getMission(id);
     });
 
+    let terminalInvalidated = false;
+    const unsubscribe = runner.subscribeChat(({ update }) => {
+      if (update.missionId === mission.id && update.kind === "invalidate")
+        terminalInvalidated = true;
+    });
     const racedSnapshot = readMissionConversationSnapshot(runner, mission.id);
     await finalMissionReadEntered;
     finishTurn();
     try {
+      // Reads before invalidation intentionally share the stalled in-flight page.
+      // Once terminal history invalidates it, a new read must use a new watermark.
+      await vi.waitFor(() => expect(terminalInvalidated).toBe(true), {
+        timeout: settlementTimeoutMs,
+      });
       await vi.waitFor(
         async () => {
           const settled = await readMissionConversationSnapshot(runner, mission.id);
@@ -4911,6 +4925,7 @@ describe("MissionRunner", { timeout: 30_000 }, () => {
       );
     } finally {
       releaseFinalMissionRead();
+      unsubscribe();
     }
 
     await expect(racedSnapshot).resolves.toMatchObject({
@@ -5655,6 +5670,19 @@ describe("MissionRunner", { timeout: 30_000 }, () => {
             },
           });
           expect(startTurn).toHaveBeenCalledOnce();
+          // The fixture deliberately retains an unresolved delivery. Cancel its synthetic
+          // queue only after asserting recovery, so teardown can release the owner.
+          const sessionStore = createFileExpertSessionStore({
+            pragmaHome: join(root, "state"),
+            executions: createFileExecutionStore({ pragmaHome: join(root, "state") }),
+          });
+          await sessionStore.transact(sessionId, ({ session, prompts }) => ({
+            session: { ...session, queuedRequestIds: [] },
+            prompts: prompts.map((prompt) =>
+              prompt.requestId === requestId ? { ...prompt, status: "cancelled" as const } : prompt,
+            ),
+            result: undefined,
+          }));
         }
       } finally {
         finishFirst();
@@ -7219,6 +7247,30 @@ describe("MissionRunner", { timeout: 30_000 }, () => {
       const releaseOwner = vi.fn(async () => await ownerScope.release(mission.id));
       expect(await runner.releaseIdleSession(mission.id, 300_000, releaseOwner)).toBe(false);
       expect(releaseOwner).not.toHaveBeenCalled();
+      // An initial navigation can still be reading durable history when the idle owner is released.
+      let releasePage!: () => void;
+      const pageGate = new Promise<void>((resolve) => {
+        releasePage = resolve;
+      });
+      let pageEntered!: () => void;
+      const entered = new Promise<void>((resolve) => {
+        pageEntered = resolve;
+      });
+      const readTimelinePage = missions.readTimelinePage.bind(missions);
+      const pageSpy = vi
+        .spyOn(missions, "readTimelinePage")
+        .mockImplementationOnce(async (...args) => {
+          const page = await readTimelinePage(...args);
+          pageEntered();
+          await pageGate;
+          return page;
+        });
+      const pendingPage = runner.getChatPage({ id: mission.id, limit: 50 });
+      const pageResult = pendingPage.then(
+        (page) => ({ page }),
+        (error: unknown) => ({ error }),
+      );
+      await entered;
       // Wait for the terminal observer to release its binding, then hold the
       // native close while a new send races with idle eviction.
       const evict = async (): Promise<boolean> =>
@@ -7242,6 +7294,9 @@ describe("MissionRunner", { timeout: 30_000 }, () => {
       expect(startTurn).toHaveBeenCalledTimes(3);
       allowClose();
       expect(await eviction).toBe(true);
+      releasePage();
+      expect(await pageResult).toMatchObject({ page: { missionId: mission.id } });
+      pageSpy.mockRestore();
       await next;
       await vi.waitFor(
         async () => {

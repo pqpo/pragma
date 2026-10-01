@@ -1,5 +1,6 @@
+import { readStorageFile as readFile } from "@pragma/core";
 import { createHash, randomUUID } from "node:crypto";
-import { readFile, rm } from "node:fs/promises";
+import { rm } from "node:fs/promises";
 
 import { encodePragmaPathSegment, withFileLock } from "@pragma/core";
 import {

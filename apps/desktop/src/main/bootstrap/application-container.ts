@@ -336,6 +336,7 @@ export async function createDesktopApplicationContainer(
   // Local Host owns aggregate lease persistence and the query/watch lifecycle;
   // Desktop supplies only Electron-facing stop/replay hooks.
   const missionLifecycle = createLocalHostMissionController({
+    logger: mainLogger,
     missionsPath,
     onIdleError: (missionId, error) => {
       mainLogger.warn(
@@ -1680,6 +1681,7 @@ export async function createDesktopApplicationContainer(
     activity: missionActivity,
   });
   const localHost = createLocalHostNodeApplication({
+    logger: mainLogger,
     pragmaHome: pragmaPaths.root,
     runtimes,
     client: {
@@ -1774,6 +1776,7 @@ export async function createDesktopApplicationContainer(
     run: localHost.run,
   };
   installMissionHandlers({
+    logger: mainLogger,
     homeProjects,
     localHost: desktopLocalHost,
     missions: missionStore,

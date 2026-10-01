@@ -45,6 +45,14 @@ export function startDesktopApplication(): void {
       stack: record.data.stack,
       missionId: record.data.missionId,
       executionId: record.data.executionId,
+      requestId: record.data.requestId,
+      navigationId: record.data.navigationId,
+      entryCount: record.data.entryCount,
+      characterCount: record.data.characterCount,
+      cacheHit: record.data.cacheHit,
+      longTaskMs: record.data.longTaskMs,
+      monotonicAtMs: record.data.monotonicAtMs,
+      timeOriginMs: record.data.timeOriginMs,
       elapsedMs: record.data.elapsedMs,
     };
     if (record.data.level === "info") {

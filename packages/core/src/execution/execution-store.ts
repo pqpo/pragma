@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
-import { mkdir, readFile, readdir, rename, rm, stat, writeFile } from "node:fs/promises";
+import { mkdir, readdir, rm, stat } from "node:fs/promises";
 import { basename, dirname, join } from "node:path";
 import { gzip, gunzip } from "node:zlib";
 import { promisify } from "node:util";
@@ -23,6 +23,18 @@ import {
   type RuntimeContextRecord,
 } from "@pragma/shared";
 import { z } from "zod";
+
+import {
+  readStorageFile as readFile,
+  writeStorageFile as writeFile,
+  replaceStorageFile as rename,
+  parseStorageJson,
+  stringifyStorageJson,
+  measureStoragePhase,
+  withStorageDiagnostics,
+  recordStoragePhase,
+} from "../storage/storage-diagnostics.ts";
+import type { PragmaLogger } from "../logging/logger.ts";
 
 import { withFileLock } from "../storage/file-lock.ts";
 import type { CanonicalEventFeed } from "../events/canonical-event-feed.ts";
@@ -184,6 +196,7 @@ type ExecutionCommitRecord = z.infer<typeof ExecutionCommitRecordSchema>;
 
 export function createFileExecutionStore(
   options: {
+    readonly logger?: PragmaLogger | undefined;
     readonly pragmaHome?: string | undefined;
     readonly canonicalEventFeed?: CanonicalEventFeed | undefined;
     readonly canonicalDelivery?: "inline" | "background" | undefined;
@@ -206,15 +219,20 @@ export function createFileExecutionStore(
     operation: string,
     action: () => Promise<TValue>,
   ): Promise<TValue> => {
-    return await withFileLock(
-      paths.executionLock(executionId),
-      async () => {
-        if (deletingExecutionIds.has(executionId) && operation !== "deletion-barrier") {
-          throw new Error(`Execution deletion is in progress: ${executionId}`);
-        }
-        return await action();
-      },
-      { operation: `execution.${operation}` },
+    return await withStorageDiagnostics(
+      { family: "execution", ownerId: executionId, operation },
+      () =>
+        withFileLock(
+          paths.executionLock(executionId),
+          async () => {
+            if (deletingExecutionIds.has(executionId) && operation !== "deletion-barrier") {
+              throw new Error(`Execution deletion is in progress: ${executionId}`);
+            }
+            return await action();
+          },
+          { operation: `execution.${operation}` },
+        ),
+      options.logger,
     );
   };
   const canonicalDeliveryRequests = new CanonicalDeliveryWorkers(async (executionId) => {
@@ -438,6 +456,7 @@ export function createFileExecutionStore(
         const currentInvocations = await readInvocations(paths, request.executionId);
         const currentAgents = await readAgents(paths, request.executionId);
         const currentContexts = await readContexts(paths, request.executionId);
+        const computeStartedAt = performance.now();
         assertFinalStatusTransitions(
           current,
           currentInvocations,
@@ -463,7 +482,9 @@ export function createFileExecutionStore(
           now,
         );
         assertAgentContextBindings(nextAgents, nextContexts, nextInvocations);
+        recordStoragePhase("state_compute", performance.now() - computeStartedAt);
         const existingEvents = await readExecutionEvents(paths, request.executionId);
+        const materializeStartedAt = performance.now();
         const materialized = materializeEvents(
           request.executionId,
           existingEvents,
@@ -493,6 +514,7 @@ export function createFileExecutionStore(
           events: materialized.newEvents,
           eventIds: materialized.requestedEvents.map((event) => event.eventId),
         });
+        recordStoragePhase("state_compute", performance.now() - materializeStartedAt);
         if (options.canonicalEventFeed !== undefined && materialized.newEvents.length > 0) {
           const handoff = CanonicalEventHandoffSchema.parse({
             schemaVersion: "pragma.canonical-event-handoff/v1",
@@ -506,11 +528,19 @@ export function createFileExecutionStore(
             ),
           });
           const handoffPath = paths.canonicalEventHandoff(request.executionId, request.commitId);
-          await writeJsonAtomic(handoffPath, handoff);
-          await applyTransaction(paths, request.executionId, journal);
+          await measureStoragePhase("handoff_write", () => writeJsonAtomic(handoffPath, handoff));
+          await applyTransaction(paths, request.executionId, journal, {
+            events: existingEvents,
+            commits,
+          });
         } else {
-          await writeJsonAtomic(paths.executionTransaction(request.executionId), journal);
-          await applyTransaction(paths, request.executionId, journal);
+          await measureStoragePhase("journal_write", () =>
+            writeJsonAtomic(paths.executionTransaction(request.executionId), journal),
+          );
+          await applyTransaction(paths, request.executionId, journal, {
+            events: existingEvents,
+            commits,
+          });
         }
         for (const event of materialized.newEvents) {
           getExecutionLiveBus(store).publishEvent(request.executionId, event);
@@ -1004,6 +1034,16 @@ async function prepareExecution(
   executionId: string,
   canonicalEventFeed?: CanonicalEventFeed,
 ): Promise<void> {
+  await measureStoragePhase("prepare_recovery_migration", () =>
+    prepareExecutionUnmeasured(paths, executionId, canonicalEventFeed),
+  );
+}
+
+async function prepareExecutionUnmeasured(
+  paths: PragmaPaths,
+  executionId: string,
+  canonicalEventFeed?: CanonicalEventFeed,
+): Promise<void> {
   try {
     await recoverAtomicStateMigration({
       aggregateRoot: paths.executionRoot(executionId),
@@ -1226,7 +1266,7 @@ async function publishCanonicalHandoff(
 }
 
 async function readCanonicalHandoff(file: string): Promise<CanonicalEventHandoff> {
-  return CanonicalEventHandoffSchema.parse(JSON.parse(await readFile(file, "utf8")));
+  return CanonicalEventHandoffSchema.parse(parseStorageJson(await readFile(file, "utf8")));
 }
 
 async function listCanonicalHandoffFiles(paths: PragmaPaths): Promise<string[]> {
@@ -1326,10 +1366,14 @@ async function applyTransaction(
   paths: PragmaPaths,
   executionId: string,
   journal: ExecutionCommitJournal,
+  lockedHistory?: {
+    readonly events: readonly ExecutionEvent[];
+    readonly commits: readonly z.infer<typeof ExecutionCommitRecordSchema>[];
+  },
 ): Promise<void> {
-  const existingEvents = await readExecutionEvents(paths, executionId);
+  const existingEvents = lockedHistory?.events ?? (await readExecutionEvents(paths, executionId));
   const mergedEvents = mergeEvents(existingEvents, journal.events);
-  const commits = await readCommitRecords(paths, executionId);
+  const commits = lockedHistory?.commits ?? (await readCommitRecords(paths, executionId));
   const existingCommit = commits.find((commit) => commit.commitId === journal.commitId);
   if (existingCommit !== undefined && existingCommit.signature !== journal.signature) {
     throw new Error(`Execution commit idempotency conflict: ${journal.commitId}`);
@@ -1477,7 +1521,7 @@ async function readArchivedExecutionEvents(
       .toString("utf8")
       .split("\n")
       .filter((line) => line.trim() !== "")
-      .map((line) => parseExecutionEvent(JSON.parse(line) as unknown));
+      .map((line) => parseExecutionEvent(parseStorageJson(line) as unknown));
   } catch (error) {
     if (isNotFound(error)) return [];
     throw error;
@@ -1499,7 +1543,7 @@ function parseExecutionEvent(value: unknown): ExecutionEvent {
 
 async function readJsonIfExists(file: string): Promise<unknown | undefined> {
   try {
-    return JSON.parse(await readFile(file, "utf8")) as unknown;
+    return parseStorageJson(await readFile(file, "utf8")) as unknown;
   } catch (error) {
     if (isNotFound(error)) return undefined;
     throw error;
@@ -1507,12 +1551,12 @@ async function readJsonIfExists(file: string): Promise<unknown | undefined> {
 }
 
 async function writeJsonAtomic(file: string, value: unknown): Promise<void> {
-  await writeTextAtomic(file, `${JSON.stringify(value, null, 2)}\n`);
+  await writeTextAtomic(file, `${stringifyStorageJson(value, 2)}\n`);
 }
 
 async function writeJsonLinesAtomic(file: string, values: readonly unknown[]): Promise<void> {
   const content =
-    values.length === 0 ? "" : `${values.map((value) => JSON.stringify(value)).join("\n")}\n`;
+    values.length === 0 ? "" : `${values.map((value) => stringifyStorageJson(value)).join("\n")}\n`;
   await writeTextAtomic(file, content);
 }
 
@@ -1538,7 +1582,7 @@ async function readJsonLines<T>(file: string, schema: { parse(value: unknown): T
   return content
     .split(/\r?\n/u)
     .filter((line) => line.length > 0)
-    .map((line) => schema.parse(JSON.parse(line) as unknown));
+    .map((line) => schema.parse(parseStorageJson(line) as unknown));
 }
 
 function filterAfter<T extends { readonly cursor: ExecutionCursor }>(

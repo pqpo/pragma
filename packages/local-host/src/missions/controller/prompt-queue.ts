@@ -1,6 +1,6 @@
 import { hasUncertainSteerDelivery } from "@pragma/core";
 import type { ExpertSessionStore } from "@pragma/core";
-import type { PromptRequest } from "@pragma/shared";
+import type { PromptRequest, ExpertSessionRecord } from "@pragma/shared";
 
 export interface PromptQueueProjectionItem {
   readonly position: number;
@@ -36,10 +36,13 @@ export interface PromptQueueProjectionPort {
  * cannot be confused at the application boundary.
  */
 export function createExpertSessionPromptQueueProjection(options: {
-  readonly sessions: Pick<ExpertSessionStore, "get" | "listPrompts" | "listEvents">;
+  readonly sessions: Pick<ExpertSessionStore, "readSnapshot">;
   readonly resolveSessionId: (missionId: string) => Promise<string | undefined>;
   readonly steeringFeatures?:
-    | ((sessionId: string) => Promise<{
+    | ((
+        sessionId: string,
+        session: ExpertSessionRecord,
+      ) => Promise<{
         readonly supportsSteer: boolean;
         readonly steeringRecovery?: "receipt" | "terminal" | undefined;
       }>)
@@ -51,12 +54,9 @@ export function createExpertSessionPromptQueueProjection(options: {
     async list(missionId) {
       const sessionId = await options.resolveSessionId(missionId);
       if (sessionId === undefined) return idleQueue(missionId);
-      const session = await options.sessions.get(sessionId);
-      if (session === undefined) return idleQueue(missionId, sessionId);
-      const [prompts, events] = await Promise.all([
-        options.sessions.listPrompts(sessionId),
-        options.sessions.listEvents(sessionId),
-      ]);
+      const snapshot = await options.sessions.readSnapshot(sessionId);
+      if (snapshot === undefined) return idleQueue(missionId, sessionId);
+      const { session, prompts, events } = snapshot;
       const pending = prompts.filter(
         (prompt) =>
           prompt.purpose === "user" &&
@@ -83,7 +83,10 @@ export function createExpertSessionPromptQueueProjection(options: {
         (paused && isRecord(lastControl?.data) && typeof lastControl.data.requestId === "string"
           ? lastControl.data.requestId
           : undefined);
-      const { supportsSteer, steeringRecovery } = (await options.steeringFeatures?.(sessionId)) ?? {
+      const { supportsSteer, steeringRecovery } = (await options.steeringFeatures?.(
+        sessionId,
+        session,
+      )) ?? {
         supportsSteer: false,
         steeringRecovery: undefined,
       };

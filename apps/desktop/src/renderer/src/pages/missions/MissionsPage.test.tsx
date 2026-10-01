@@ -940,6 +940,48 @@ describe("MissionsPage", () => {
 });
 
 describe("MissionDetailFragment", () => {
+  it.each(["queued", "running"] as const)(
+    "keeps the foreground send preparing while Core reports %s, with subsequent sends queued",
+    (status) => {
+      const mission = missionFixture("expert");
+      const requestId = "00000000-0000-4000-8000-000000000012";
+      const chat: MissionConversationSnapshot = {
+        missionId: mission.id,
+        revision: 1,
+        entries: [
+          {
+            id: requestId,
+            kind: "user",
+            content: "Foreground request",
+            createdAt: "2026-07-11T00:00:00.000Z",
+            delivery: { requestedMode: "enqueue", effectiveMode: "enqueue", status },
+          },
+        ],
+        page: {},
+        pendingInteractions: [],
+        queue: {
+          state: "running",
+          pendingCount: 2,
+          supportsSteer: true,
+          items: [
+            { requestId, content: "Foreground request", hasAttachments: false },
+            { requestId: "next", content: "Subsequent request", hasAttachments: false },
+          ],
+        },
+      };
+      const html = renderToStaticMarkup(
+        <MissionDetailFragment
+          mission={mission}
+          initialThinkingRequestId={requestId}
+          chatCache={new Map([[mission.id, chat]])}
+        />,
+      );
+      expect(html).toContain("Subsequent request");
+      expect(html.match(/class="mission-prompt-queue-item"/g)).toHaveLength(1);
+      expect(html).toContain("Preparing");
+    },
+  );
+
   it("does not expose recovery controls when Mission detail is already terminal", () => {
     const mission = {
       ...missionFixture("expert"),

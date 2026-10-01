@@ -17,6 +17,19 @@ import {
 } from "../src/index.ts";
 import { appendExecutionEvent, putExecutionInvocation } from "./execution-store-test-helpers.ts";
 
+const fileReads = vi.hoisted(() => new Map<string, number>());
+vi.mock("node:fs/promises", async (importOriginal) => {
+  const original = await importOriginal<typeof import("node:fs/promises")>();
+  return {
+    ...original,
+    readFile: async (...args: Parameters<typeof original.readFile>) => {
+      const path = String(args[0]);
+      fileReads.set(path, (fileReads.get(path) ?? 0) + 1);
+      return await original.readFile(...args);
+    },
+  };
+});
+
 const temporaryHomes: string[] = [];
 
 afterEach(async () => {
@@ -28,6 +41,27 @@ afterEach(async () => {
 });
 
 describe("Execution canonical event log", { timeout: 30_000 }, () => {
+  it("reads event and commit history once on a normal commit and retains duplicate conflict checks", async () => {
+    const { store, home } = await fixture();
+    const paths = new PragmaPaths({ pragmaHome: home });
+    fileReads.clear();
+    const request = {
+      commitId: "once",
+      executionId: "execution",
+      events: [
+        { eventId: "event-once", invocationId: "root", type: "invocation.started", data: {} },
+      ],
+    };
+    const first = await store.commit(request);
+    expect(fileReads.get(paths.executionEvents("execution"))).toBe(1);
+    expect(fileReads.get(paths.executionCommits("execution"))).toBe(1);
+    const duplicate = await store.commit(request);
+    expect(duplicate.events).toEqual(first.events);
+    await expect(
+      store.commit({ ...request, events: [{ ...request.events[0]!, data: { changed: true } }] }),
+    ).rejects.toThrow("idempotency conflict");
+  });
+
   it("uses one Execution sequence and projects durable message history", async () => {
     const { store } = await fixture();
     await appendExecutionEvent(store, "execution", "root", "invocation.started", {});

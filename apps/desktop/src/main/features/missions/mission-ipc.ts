@@ -1,3 +1,4 @@
+import type { PragmaLogger } from "@pragma/core";
 import type { HomeProjectStore } from "./home-project-store.ts";
 import { prepareMissionBranchHistory } from "./mission-branch-context.ts";
 import {
@@ -113,6 +114,7 @@ interface WorkConversationStreamOwner {
 }
 
 export function installMissionHandlers(options: {
+  readonly logger?: PragmaLogger | undefined;
   readonly missions: MissionStore;
   readonly localHost: DesktopLocalHostApplication;
   readonly creator: MissionCreator;
@@ -584,6 +586,11 @@ export function installMissionHandlers(options: {
   ipcMain.handle("missions:message:send", (_event, input: unknown) =>
     runDesktopMutation(async () => {
       const parsed = SendMissionMessageSchema.parse(input);
+      options.logger?.info("mission.ipc_message_received", "Mission send IPC entered", {
+        missionId: parsed.id,
+        requestId: parsed.requestId,
+        receivedAtMs: performance.now(),
+      });
       await assertManagedMission(parsed.id);
       const kind = parsed.mode === "steer" ? ("steer" as const) : ("send" as const);
       submittedAttachmentDrafts.set(

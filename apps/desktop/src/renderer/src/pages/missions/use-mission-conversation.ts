@@ -11,6 +11,7 @@ import type {
 } from "../../../../shared/contracts/index.ts";
 import {
   applyMissionChatUpdateBatch,
+  createMissionConversationBase,
   includedPendingFirstTokenExecutionIds,
   materializeMissionChatSnapshot,
   MissionFirstTokenUpdateBuffer,
@@ -22,6 +23,7 @@ import {
   missionEntryOutputChanged,
   missionRefreshOutputCandidates,
 } from "./mission-stream-idle-store.ts";
+import { createMissionBackgroundReads, createMissionRefresh } from "./mission-background-reads.ts";
 import { MissionLiveEntryStore } from "./mission-live-entry-store.ts";
 import {
   enqueueMissionChatUpdate,
@@ -56,6 +58,10 @@ export function useMissionConversation(input: {
   const outputVisibleRef = useRef(input.isOutputVisible);
   outputVisibleRef.current = input.isOutputVisible;
   const chatRef = useRef<MissionConversationSnapshot | null>(null);
+  const backgroundReadsRef = useRef<ReturnType<typeof createMissionBackgroundReads> | null>(null);
+  const historyRefreshRef = useRef<(() => Promise<MissionConversationSnapshot | undefined>) | null>(
+    null,
+  );
   const receivedFirstTokensRef = useRef(new Set<string>());
   const paintedFirstTokensRef = useRef(new Set<string>());
   const pendingFirstTokenPaintsRef = useRef(new Map<string, { readonly receivedAt: number }>());
@@ -145,7 +151,9 @@ export function useMissionConversation(input: {
             for (const entry of list.getEntries()) longTaskMs += entry.duration;
           });
     longTaskObserver?.observe({ type: "longtask", buffered: true });
-    update(cached);
+    update(
+      cached ?? (input.api === undefined ? null : createMissionConversationBase(input.missionId)),
+    );
     setInitialLoading(cached === null);
     setHistoryError(null);
     setSyncError(null);
@@ -156,10 +164,10 @@ export function useMissionConversation(input: {
       return;
     }
     let cancelled = false;
-    let refreshing = false;
-    let refreshQueued = false;
     let prefetchedConversation = input.prefetchedConversation;
-    let stateRequestGeneration = 0;
+    let latestControl: MissionConversationState | undefined;
+    let controlUnavailable = false;
+    let latestContext: MissionContextWindowSnapshot | undefined;
     let frame: number | undefined;
     let hiddenTimer: ReturnType<typeof setTimeout> | undefined;
     let lastPerformanceLogAt = 0;
@@ -186,6 +194,8 @@ export function useMissionConversation(input: {
         api.reportRendererLog({
           level: "info",
           event: "mission.first_ui_token_received",
+          monotonicAtMs: performance.now(),
+          timeOriginMs: performance.timeOrigin,
           message: "Renderer received the first UI-visible Mission token",
           missionId: input.missionId,
           executionId,
@@ -226,12 +236,7 @@ export function useMissionConversation(input: {
       return drained;
     };
 
-    const refresh = async (): Promise<void> => {
-      if (refreshing) {
-        refreshQueued = true;
-        return;
-      }
-      refreshing = true;
+    const refreshOnce = async (): Promise<void> => {
       try {
         const prefetched = await prefetchedConversation;
         const { page, state, stateUnavailable } =
@@ -293,18 +298,32 @@ export function useMissionConversation(input: {
               ...drained.snapshot.entries.filter((entry) => pendingEntryIds.has(entry.id)),
             ].map((entry) => [entry.id, entry]),
           );
-          commitStream(drained.snapshot, committedEntries, true);
+          const withControl =
+            latestControl === undefined
+              ? drained.snapshot
+              : (mergeConversationState(drained.snapshot, latestControl) ?? drained.snapshot);
+          const withContext =
+            latestContext === undefined
+              ? withControl
+              : (mergeContextWindow(withControl, latestContext) ?? withControl);
+          commitStream(
+            controlUnavailable ? markConversationStateUnavailable(withContext) : withContext,
+            committedEntries,
+            true,
+          );
           resetFirstTokenUpdates(drained.snapshot, pending);
           setSyncError(
-            drained.snapshot.syncIssues === undefined ? null : input.syncUnavailableMessage,
+            controlUnavailable || withContext.syncIssues !== undefined
+              ? input.syncUnavailableMessage
+              : null,
           );
-          if (drained.needsRefresh) refreshQueued = true;
+          if (drained.needsRefresh) void refresh();
           if (stateUnavailable) {
             // The page is useful on its own, but pending questions and controls
             // are safety-relevant. Retry that independent read without throwing
             // away or re-fetching the message history.
             setTimeout(() => {
-              if (!cancelled) void refreshConversationState(api);
+              if (!cancelled) void refreshControl();
             }, 500);
           }
           const pageReceivedAt = performance.now();
@@ -341,7 +360,6 @@ export function useMissionConversation(input: {
                 cacheHit,
                 longTaskMs: Math.round(longTaskMs * 100) / 100,
               });
-              void refreshConversationState(api);
             });
           });
         }
@@ -349,39 +367,76 @@ export function useMissionConversation(input: {
         if (!cancelled) setSyncError(input.formatError(error));
       } finally {
         if (!cancelled) setInitialLoading(false);
-        refreshing = false;
-        if (refreshQueued && !cancelled) {
-          refreshQueued = false;
-          void refresh();
-        }
       }
     };
 
-    const refreshConversationState = async (desktopApi: PragmaDesktopAPI): Promise<void> => {
-      const requestGeneration = ++stateRequestGeneration;
-      const startedAt = performance.now();
-      const [stateResult, contextResult] = await Promise.allSettled([
-        desktopApi.getMissionConversationState(input.missionId),
-        desktopApi.getMissionContextWindow(input.missionId),
-      ]);
-      if (cancelled || requestGeneration !== stateRequestGeneration) return;
-      if (stateResult.status === "fulfilled") {
-        update((current) => mergeConversationState(current, stateResult.value));
-      } else {
-        setSyncError(input.formatError(stateResult.reason));
-      }
-      if (contextResult.status === "fulfilled") {
-        update((current) => mergeContextWindow(current, contextResult.value));
-      }
-      desktopApi.reportRendererLog({
-        level: "info",
-        event: "mission.conversation_state_ready",
-        message: "Mission conversation background state resolved",
-        missionId: input.missionId,
-        navigationId,
-        elapsedMs: Math.round((performance.now() - startedAt) * 100) / 100,
-      });
+    const refresh = createMissionRefresh(refreshOnce, () => cancelled);
+    const refreshLatestHistory = async (): Promise<MissionConversationSnapshot | undefined> => {
+      await refresh();
+      return cancelled || chatRef.current === null
+        ? undefined
+        : materializeMissionChatSnapshot(chatRef.current, (entryId) => liveEntryStore.get(entryId));
     };
+    historyRefreshRef.current = refreshLatestHistory;
+
+    const backgroundReads = createMissionBackgroundReads({
+      api,
+      missionId: input.missionId,
+      onControl: (value) => {
+        controlUnavailable = false;
+        latestControl = value;
+        update((current) => {
+          const next = mergeConversationState(current, value);
+          if (
+            current !== null &&
+            value.revision < Math.max(current.stateRevision ?? 0, current.controlRevision ?? 0)
+          )
+            void refreshControl();
+          setSyncError(next?.syncIssues === undefined ? null : input.syncUnavailableMessage);
+          return next;
+        });
+      },
+      onContext: (value) => {
+        latestContext = value;
+        update((current) => {
+          const next = mergeContextWindow(current, value);
+          setSyncError(
+            controlUnavailable || next?.syncIssues !== undefined
+              ? input.syncUnavailableMessage
+              : null,
+          );
+          return next;
+        });
+      },
+      onControlError: (error) => {
+        controlUnavailable = true;
+        setSyncError(input.formatError(error));
+        update((current) => (current === null ? null : markConversationStateUnavailable(current)));
+      },
+      onContextError: () => {
+        setSyncError(input.syncUnavailableMessage);
+        update((current) =>
+          current === null
+            ? null
+            : {
+                ...current,
+                syncIssues: mergeSyncIssues(
+                  current.syncIssues,
+                  [
+                    {
+                      code: "execution_state_unavailable",
+                      section: "context_window",
+                      retryable: true,
+                    },
+                  ],
+                  "context_window",
+                ),
+              },
+        );
+      },
+    });
+    backgroundReadsRef.current = backgroundReads;
+    const { refreshControl, refreshContext } = backgroundReads;
 
     const flush = (): void => {
       frame = undefined;
@@ -390,8 +445,15 @@ export function useMissionConversation(input: {
       if (cancelled || chatRef.current === null || pending.length === 0) return;
       flushCount += 1;
       const startedAt = performance.now();
+      const previousContextRevision = chatRef.current.contextRevision;
       const drained = drainPending(chatRef.current);
       commitStream(drained.snapshot, drained.changedEntries, drained.requiresRender);
+      if (
+        drained.snapshot.contextWindow === undefined &&
+        drained.snapshot.contextRevision !== previousContextRevision
+      )
+        void refreshContext();
+      if (drained.changedEntries.size > 0) setInitialLoading(false);
       const finishedAt = performance.now();
       if (finishedAt - lastPerformanceLogAt >= 5_000) {
         lastPerformanceLogAt = finishedAt;
@@ -410,7 +472,11 @@ export function useMissionConversation(input: {
           elapsedMs: Math.round((finishedAt - startedAt) * 100) / 100,
         });
       }
-      if (drained.needsRefresh) void refresh();
+      if (drained.needsRefresh) {
+        void refresh();
+        void refreshControl();
+        void refreshContext();
+      }
     };
 
     const scheduleFlush = (): void => {
@@ -424,6 +490,11 @@ export function useMissionConversation(input: {
 
     const unsubscribe = api.subscribeMissionChat(input.missionId, (updateValue) => {
       rawUpdateCount += 1;
+      if (updateValue.kind === "invalidate") {
+        void refreshControl();
+        void refreshContext();
+      }
+
       const enqueued = enqueueMissionChatUpdate(pending, pendingBytes, updateValue);
       if (enqueued.overflowed) {
         overflowCount += 1;
@@ -460,8 +531,13 @@ export function useMissionConversation(input: {
     };
     document.addEventListener("visibilitychange", flushWhenVisible);
     void refresh();
+    void refreshControl();
+    void refreshContext();
     return () => {
       cancelled = true;
+      if (historyRefreshRef.current === refreshLatestHistory) historyRefreshRef.current = null;
+      backgroundReads.close();
+      if (backgroundReadsRef.current === backgroundReads) backgroundReadsRef.current = null;
       if (frame !== undefined) cancelAnimationFrame(frame);
       if (hiddenTimer !== undefined) clearTimeout(hiddenTimer);
       pendingFirstTokenPaintsRef.current.clear();
@@ -520,6 +596,8 @@ export function useMissionConversation(input: {
           input.api?.reportRendererLog({
             level: "info",
             event: "mission.first_ui_token_painted",
+            monotonicAtMs: performance.now(),
+            timeOriginMs: performance.timeOrigin,
             message: "Renderer painted the first UI-visible Mission token",
             missionId: input.missionId,
             executionId,
@@ -572,6 +650,24 @@ export function useMissionConversation(input: {
     update: updateLatest,
     loadEarlier,
     observeFirstTokenPaint,
+    refreshLatestChat: async () => {
+      const reads = backgroundReadsRef.current;
+      const history = historyRefreshRef.current;
+      if (reads === null || history === null) return undefined;
+      const control = reads.refreshControl();
+      void reads.refreshContext();
+      await Promise.all([history(), control]);
+      if (backgroundReadsRef.current !== reads || historyRefreshRef.current !== history)
+        return undefined;
+      const snapshot = chatRef.current;
+      return snapshot === null || snapshot.missionId !== input.missionId
+        ? undefined
+        : materializeMissionChatSnapshot(snapshot, (entryId) => liveEntryStore.get(entryId));
+    },
+    refreshControls: () => {
+      void backgroundReadsRef.current?.refreshControl();
+      void backgroundReadsRef.current?.refreshContext();
+    },
   };
 }
 
@@ -585,23 +681,8 @@ export async function loadMissionConversationProjection(
   api: PragmaDesktopAPI,
   missionId: string,
 ): Promise<MissionConversationPrefetch> {
-  // Message history is the primary payload. A pending/control-state failure
-  // must not discard a page that was already read successfully.
-  const initialStateRead = api
-    .getMissionConversationState(missionId)
-    .then((state) => ({ state }) as const)
-    .catch(() => ({ state: undefined }) as const);
   const page = await api.getMissionChatPage({ id: missionId, limit: MISSION_CHAT_PAGE_SIZE });
-  const { state: initialState } = await initialStateRead;
-  if (initialState !== undefined) {
-    const state =
-      initialState.revision >= page.revision
-        ? initialState
-        : await api.getMissionConversationState(missionId).catch(() => undefined);
-    if (state === undefined) return { page, stateUnavailable: true };
-    return state.revision < page.revision ? { page, stateUnavailable: true } : { page, state };
-  }
-  return { page, stateUnavailable: true };
+  return { page };
 }
 
 export function markConversationStateUnavailable(
@@ -656,7 +737,8 @@ export function mergeConversationState(
   state: MissionConversationState,
 ): MissionConversationSnapshot | null {
   if (current === null || current.missionId !== state.missionId) return current;
-  if (current.stateRevision !== undefined && state.revision < current.stateRevision) return current;
+  if (state.revision < Math.max(current.stateRevision ?? 0, current.controlRevision ?? 0))
+    return current;
   const deliveries = new Map(
     state.deliveries.map((item) => [item.entryId, item.delivery] as const),
   );
@@ -664,6 +746,7 @@ export function mergeConversationState(
   return {
     ...current,
     stateRevision: state.revision,
+    controlRevision: state.revision,
     entries: current.entries
       .filter((entry) => !hidden.has(entry.id))
       .map((entry) => {

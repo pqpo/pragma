@@ -5,6 +5,7 @@ import {
   createFileExpertSessionStore,
   type RuntimeAdapter,
   type RuntimeResolver,
+  type PragmaLogger,
 } from "@pragma/core";
 import { createLocalHostRunMemory } from "./run-memory.ts";
 import {
@@ -62,6 +63,7 @@ import type { MissionWatchPort } from "./missions/controller/watch.ts";
  * Project-catalog and Core-store decision belongs here instead of in an app.
  */
 export interface LocalHostNodeApplicationOptions {
+  readonly logger?: PragmaLogger | undefined;
   readonly pragmaHome: string;
   /** Concrete adapters are supplied by CLI; Desktop may inject its resolver. */
   readonly runtimes: readonly RuntimeAdapter[] | RuntimeResolver;
@@ -196,6 +198,7 @@ function composeInjectedMissionControl(
     return undefined;
   }
   return createMissionControlApplication({
+    logger: options.logger,
     controller: lifecycle.controller,
     ownerScope: lifecycle.ownerScope,
     consumer: adapter.consumer,
@@ -290,6 +293,7 @@ export function createLocalHostNodeApplication(
     loggerProvider,
   });
   const missionLifecycle = createLocalHostMissionController({
+    logger: missionLogger,
     missionsPath: join(options.pragmaHome, "data", "missions"),
     onPollingError: ({ missionId, error, consecutiveFailures }) =>
       missionLogger.warn(
@@ -319,9 +323,7 @@ export function createLocalHostNodeApplication(
   const promptQueueProjection = createExpertSessionPromptQueueProjection({
     sessions: expertSessionStore,
     resolveSessionId: async (missionId) => (await expertSessionStore.get(missionId))?.sessionId,
-    steeringFeatures: async (sessionId) => {
-      const session = await expertSessionStore.get(sessionId);
-      if (session === undefined) return { supportsSteer: false };
+    steeringFeatures: async (_sessionId, session) => {
       const rootContext = session.contexts[session.rootContextId];
       if (rootContext === undefined) return { supportsSteer: false };
       const resolved = await runtimeResolver
@@ -455,6 +457,7 @@ export function createLocalHostNodeApplication(
     },
   });
   const missionControl = createMissionControlApplication({
+    logger: missionLogger,
     controller: missionController,
     ownerScope,
     consumer: coreControl.consumer,

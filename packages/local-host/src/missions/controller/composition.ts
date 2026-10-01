@@ -1,3 +1,4 @@
+import type { PragmaLogger } from "@pragma/core";
 import type { MissionControllerGuard, MissionControllerStore } from "./mission-controller-store.ts";
 import { createMissionControllerStore } from "./mission-controller-store.ts";
 import { createMissionOwnerScope, type MissionOwnerScope } from "./owner-scope.ts";
@@ -20,6 +21,7 @@ export interface LocalHostMissionControllerComposition {
 }
 
 export interface LocalHostMissionControllerCompositionOptions {
+  readonly logger?: PragmaLogger | undefined;
   readonly idleTimeoutMs?: number | undefined;
   readonly onIdle?: Parameters<typeof createMissionOwnerScope>[0]["onIdle"];
   readonly onIdleError?: Parameters<typeof createMissionOwnerScope>[0]["onIdleError"];
@@ -53,6 +55,7 @@ export function createLocalHostMissionController(
   options: LocalHostMissionControllerCompositionOptions,
 ): LocalHostMissionControllerComposition {
   const controller = createMissionControllerStore({
+    logger: options.logger,
     missionsPath: options.missionsPath,
     ...(options.missionPath === undefined ? {} : { missionPath: options.missionPath }),
   });
