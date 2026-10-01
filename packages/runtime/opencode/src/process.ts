@@ -196,6 +196,7 @@ async function stopChild(child: OpenCodeChild): Promise<void> {
     child.stderr.destroy();
     return;
   }
+  const exited = new Promise<void>((resolve) => child.once("exit", () => resolve()));
   if (process.platform !== "win32" && child.pid !== undefined) {
     try {
       process.kill(-child.pid, "SIGTERM");
@@ -205,11 +206,13 @@ async function stopChild(child: OpenCodeChild): Promise<void> {
   } else if (child.exitCode === null) {
     child.kill("SIGTERM");
   }
-  await Promise.race([
-    new Promise<void>((resolve) => child.once("close", () => resolve())),
-    new Promise<void>((resolve) => setTimeout(resolve, 2_000)),
-  ]);
-  if (process.platform !== "win32" && child.pid !== undefined) {
+  await Promise.race([exited, new Promise<void>((resolve) => setTimeout(resolve, 2_000))]);
+  if (
+    child.exitCode === null &&
+    child.signalCode === null &&
+    process.platform !== "win32" &&
+    child.pid !== undefined
+  ) {
     try {
       process.kill(-child.pid, "SIGKILL");
     } catch {
@@ -218,6 +221,7 @@ async function stopChild(child: OpenCodeChild): Promise<void> {
   } else if (child.exitCode === null) {
     child.kill("SIGKILL");
   }
+  if (child.exitCode === null && child.signalCode === null) await exited;
   child.stdout.destroy();
   child.stderr.destroy();
 }

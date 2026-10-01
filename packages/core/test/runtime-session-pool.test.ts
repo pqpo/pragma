@@ -10,6 +10,33 @@ const identity = {
 };
 
 describe("RuntimeSessionPool", () => {
+  it("confirms native stop of a racing opening without waiting for full cleanup", async () => {
+    const pool = new RuntimeSessionPool();
+    const session = { ...createRuntimeSession(), stopForDeletion: vi.fn(async () => {}) };
+    let finish!: () => void;
+    vi.mocked(session.close).mockImplementation(
+      async () =>
+        await new Promise<void>((resolve) => {
+          finish = resolve;
+        }),
+    );
+    let opened!: (session: RuntimeAgentSession) => void;
+    const opening = pool.acquire(
+      identity,
+      async () =>
+        await new Promise<RuntimeAgentSession>((resolve) => {
+          opened = resolve;
+        }),
+    );
+    const rejected = expect(opening).rejects.toMatchObject({ code: "RUNTIME_POOL_OPENING_SEALED" });
+    const stopping = pool.closeForDeletion();
+    opened(session);
+    await stopping;
+    await rejected;
+    expect(session.stopForDeletion).toHaveBeenCalledOnce();
+    finish();
+    await pool.finishDeletion();
+  });
   it("deduplicates concurrent creation for one context", async () => {
     const pool = new RuntimeSessionPool();
     const session = createRuntimeSession();
@@ -132,6 +159,34 @@ describe("RuntimeSessionPool", () => {
     expect(create).toHaveBeenNthCalledWith(2, { fresh: true });
     await pool.close();
     expect(replacement.close).toHaveBeenCalledOnce();
+  });
+  it("deletion waits for an invalidated native Session that ordinary close can leave behind", async () => {
+    const pool = new RuntimeSessionPool();
+    const session = createRuntimeSession();
+    let release!: () => void;
+    const closed = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    vi.mocked(session.close).mockImplementation(async () => await closed);
+    await pool.acquire(identity, async () => session);
+    pool.invalidate(session);
+    const stopped = vi.fn();
+    const deletion = pool.closeForDeletion().then(stopped);
+    await pool.close();
+    expect(stopped).not.toHaveBeenCalled();
+    release();
+    await deletion;
+    expect(stopped).toHaveBeenCalledOnce();
+  });
+
+  it("keeps a native close failure retryable for deletion", async () => {
+    const pool = new RuntimeSessionPool();
+    const session = createRuntimeSession();
+    vi.mocked(session.close).mockRejectedValueOnce(new Error("native process still running"));
+    await pool.acquire(identity, async () => session);
+    await expect(pool.closeForDeletion()).rejects.toThrow("native process still running");
+    await expect(pool.closeForDeletion()).resolves.toBeUndefined();
+    expect(session.close).toHaveBeenCalledTimes(2);
   });
 });
 

@@ -3,6 +3,7 @@ import { mkdir, readFile, rename, writeFile, copyFile } from "node:fs/promises";
 import { basename, dirname, join } from "node:path";
 import {
   PragmaPaths,
+  isOwnerDeletionFenced,
   withFileLock,
   applyAtomicStateMigration,
   recoverAtomicStateMigration,
@@ -176,14 +177,15 @@ export function createFileMemoryAttentionStateStore(options: {
     return state;
   };
   const read = (missionId: string, contextId: string) =>
-    withFileLock(`${paths.memoryAttentionState(missionId, contextId)}.lock`, () =>
-      readUnlocked(missionId, contextId),
+    withFileLock(paths.executionLock(missionId), async () =>
+      isOwnerDeletionFenced(paths, missionId) ? undefined : readUnlocked(missionId, contextId),
     );
   return {
     read,
     async update(missionId, contextId, updater) {
       const path = paths.memoryAttentionState(missionId, contextId);
-      return await withFileLock(`${path}.lock`, async () => {
+      return await withFileLock(paths.executionLock(missionId), async () => {
+        if (isOwnerDeletionFenced(paths, missionId)) return undefined;
         const current = await readUnlocked(missionId, contextId);
         const next = updater(current);
         if (next === undefined) return current;

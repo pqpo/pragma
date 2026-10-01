@@ -1,3 +1,4 @@
+import { isOwnerDeletionFenced } from "../storage/owner-deletion.ts";
 import { createHash, randomUUID } from "node:crypto";
 import { mkdir, readdir, rm, stat } from "node:fs/promises";
 import { basename, dirname, join } from "node:path";
@@ -170,6 +171,7 @@ export interface FileExecutionStore extends ExecutionStore {
   withCanonicalEventDeletion<TValue>(
     executionIds: readonly string[],
     action: (handoffFiles: readonly string[]) => Promise<TValue>,
+    expertSessionIds?: readonly string[],
   ): Promise<TValue>;
 }
 
@@ -225,6 +227,12 @@ export function createFileExecutionStore(
         withFileLock(
           paths.executionLock(executionId),
           async () => {
+            if (
+              ["commit", "create", "archive"].includes(operation) &&
+              isOwnerDeletionFenced(paths, executionId)
+            ) {
+              throw new Error(`Execution deletion is fenced: ${executionId}`);
+            }
             if (deletingExecutionIds.has(executionId) && operation !== "deletion-barrier") {
               throw new Error(`Execution deletion is in progress: ${executionId}`);
             }
@@ -241,7 +249,8 @@ export function createFileExecutionStore(
     return await withFileLock(
       paths.canonicalEventDeliveryLock(executionId),
       async () => {
-        if (deletingExecutionIds.has(executionId)) return { recovered: 0 };
+        if (deletingExecutionIds.has(executionId) || isOwnerDeletionFenced(paths, executionId))
+          return { recovered: 0 };
         const handoffs = await withExecutionLock(
           executionId,
           "prepare-canonical-events",
@@ -325,52 +334,59 @@ export function createFileExecutionStore(
     async withCanonicalEventDeletion<TValue>(
       executionIds: readonly string[],
       action: (handoffFiles: readonly string[]) => Promise<TValue>,
+      expertSessionIds: readonly string[] = [],
     ): Promise<TValue> {
-      const ids = [...new Set(executionIds)].toSorted();
-      for (const executionId of ids) deletingExecutionIds.add(executionId);
-      try {
-        await Promise.all(
-          ids.map(async (id) => {
-            await canonicalDeliveryRequests.wait(id)?.catch(() => undefined);
-          }),
-        );
-        const runWithExecutionLocks = async (index: number): Promise<TValue> => {
-          const executionId = ids[index];
-          if (executionId !== undefined) {
-            return await withFileLock(
-              paths.executionLock(executionId),
-              async () => await runWithExecutionLocks(index + 1),
-              { operation: "execution.deletion-barrier" },
-            );
-          }
-          await Promise.all(
-            ids.map(async (id) => {
-              await canonicalDeliveryRequests.wait(id)?.catch(() => undefined);
-            }),
-          );
-          const handoffFiles = (
+      // Batch barriers serialize with each other. Ordinary reads/writes still use
+      // their per-Execution locks, so publication can run concurrently without
+      // two overlapping batches taking opposite subsets and deadlocking.
+      return await withFileLock(
+        paths.executionDeletionBarrierLock(),
+        async () => {
+          const ids = [...new Set(executionIds)].toSorted();
+          for (const id of ids) deletingExecutionIds.add(id);
+          const drain = async () =>
             await Promise.all(
-              ids.map(async (id) => [
-                ...(await listCanonicalHandoffFilesForExecution(paths, id)),
-                ...(await listQuarantinedCanonicalHandoffFilesForExecution(paths, id)),
-              ]),
-            )
-          ).flat();
-          return await action(handoffFiles);
-        };
-        const runWithDeliveryLocks = async (index: number): Promise<TValue> => {
-          const executionId = ids[index];
-          if (executionId === undefined) return await runWithExecutionLocks(0);
-          return await withFileLock(
-            paths.canonicalEventDeliveryLock(executionId),
-            async () => await runWithDeliveryLocks(index + 1),
-            { operation: "execution.canonical-event-deletion" },
-          );
-        };
-        return await runWithDeliveryLocks(0);
-      } finally {
-        for (const executionId of ids) deletingExecutionIds.delete(executionId);
-      }
+              ids.map(
+                async (id) => await canonicalDeliveryRequests.wait(id)?.catch(() => undefined),
+              ),
+            );
+          try {
+            await drain();
+            return await withDeletionLocks(
+              [...new Set(expertSessionIds)].toSorted().map((id) => paths.expertSessionLock(id)),
+              "session.deletion-barrier",
+              async () =>
+                await withDeletionLocks(
+                  ids.map((id) => paths.canonicalEventDeliveryLock(id)),
+                  "execution.canonical-event-deletion",
+                  async () =>
+                    await withDeletionLocks(
+                      ids.map((id) => paths.executionLock(id)),
+                      "execution.deletion-barrier",
+                      async () => {
+                        await drain();
+                        const files = (
+                          await Promise.all(
+                            ids.map(async (id) => [
+                              ...(await listCanonicalHandoffFilesForExecution(paths, id)),
+                              ...(await listQuarantinedCanonicalHandoffFilesForExecution(
+                                paths,
+                                id,
+                              )),
+                            ]),
+                          )
+                        ).flat();
+                        return await action(files);
+                      },
+                    ),
+                ),
+            );
+          } finally {
+            for (const id of ids) deletingExecutionIds.delete(id);
+          }
+        },
+        { operation: "execution.deletion-batch" },
+      );
     },
     async delete(executionId) {
       await withExecutionLock(executionId, "delete", async () => {
@@ -732,6 +748,47 @@ export function createFileExecutionStore(
   };
 
   return store;
+}
+
+/** Reads an owned trash snapshot with the existing migration/parser boundary. */
+export async function readDeletedExecutionUsageSource(
+  paths: PragmaPaths,
+  deletionId: string,
+  executionId: string,
+): Promise<
+  | {
+      readonly events: readonly ExecutionEvent[];
+      readonly invocations: readonly Invocation[];
+    }
+  | undefined
+> {
+  class TrashPaths extends PragmaPaths {
+    override executionRoot(id: string): string {
+      return join(paths.trashRoot(), deletionId, "executions", encodePragmaPathSegment(id));
+    }
+    override executionArchive(id: string): string {
+      return join(
+        paths.trashRoot(),
+        deletionId,
+        "execution-archives",
+        `${encodePragmaPathSegment(id)}.jsonl.gz`,
+      );
+    }
+  }
+  const source = new TrashPaths({ pragmaHome: paths.root });
+  return await withFileLock(
+    paths.storageGcLock(),
+    async () => {
+      if ((await readJsonIfExists(source.executionState(executionId))) === undefined)
+        return undefined;
+      await prepareExecution(source, executionId);
+      return {
+        events: await readExecutionEvents(source, executionId),
+        invocations: await readInvocations(source, executionId),
+      };
+    },
+    { operation: "mission-deletion.usage-source" },
+  );
 }
 
 function applyAgentChanges(
@@ -1690,4 +1747,39 @@ function isRetryableRename(error: unknown): boolean {
     "code" in error &&
     (error.code === "EPERM" || error.code === "EACCES")
   );
+}
+
+/** Requires the batch coordinator. Every acquired lock is held until action exits. */
+async function withDeletionLocks<T>(
+  locks: readonly string[],
+  operation: string,
+  action: () => Promise<T>,
+): Promise<T> {
+  let release!: () => void;
+  const gate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const holders: Promise<void>[] = [];
+  const ready = locks.map(
+    (path) =>
+      new Promise<void>((resolve, reject) => {
+        const holder = withFileLock(
+          path,
+          async () => {
+            resolve();
+            await gate;
+          },
+          { operation },
+        );
+        holders.push(holder);
+        void holder.catch(reject);
+      }),
+  );
+  try {
+    await Promise.all(ready);
+    return await action();
+  } finally {
+    release();
+    await Promise.allSettled(holders);
+  }
 }

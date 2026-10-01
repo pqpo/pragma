@@ -111,3 +111,5 @@ export * from "./storage/storage-maintenance.ts";
 export * from "./storage/storage-catalog.ts";
 export * from "./storage/state-migration.ts";
 export * from "./storage/migrations/bundle-installations/index.ts";
+
+export * from "./storage/owner-deletion.ts";

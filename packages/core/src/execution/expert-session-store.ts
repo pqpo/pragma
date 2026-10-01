@@ -1,3 +1,4 @@
+import { isOwnerDeletionFenced } from "../storage/owner-deletion.ts";
 import { randomUUID } from "node:crypto";
 import { mkdir, rm } from "node:fs/promises";
 import { dirname, join } from "node:path";
@@ -124,15 +125,25 @@ export function createFileExpertSessionStore(options: {
     sessionId: string,
     action: () => Promise<T>,
     operation = "aggregate",
-  ): Promise<T> =>
-    await withStorageDiagnostics(
+  ): Promise<T> => {
+    if (isOwnerDeletionFenced(paths, sessionId)) throw new Error("EXPERT_SESSION_OWNER_DELETED");
+    return await withStorageDiagnostics(
       { family: "expert-session", ownerId: sessionId, operation },
       () =>
-        withFileLock(paths.expertSessionLock(sessionId), action, {
-          operation: `expert-session.${operation}`,
-        }),
+        withFileLock(
+          paths.expertSessionLock(sessionId),
+          async () => {
+            if (isOwnerDeletionFenced(paths, sessionId))
+              throw new Error("EXPERT_SESSION_OWNER_DELETED");
+            return await action();
+          },
+          {
+            operation: `expert-session.${operation}`,
+          },
+        ),
       options.logger,
     );
+  };
   const assertLeaseOwner = async (sessionId: string, claimId: string): Promise<void> => {
     const value = await readJson(paths.expertSessionLease(sessionId));
     const lease = value === undefined ? undefined : ExpertSessionLeaseSchema.parse(value);

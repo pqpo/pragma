@@ -241,6 +241,7 @@ export interface RuntimeAgentSession {
   readonly steer: (request: RuntimeSteerRequest) => Promise<void>;
   readonly reconcileSteer?:
     ((request: RuntimeSteerRequest) => Promise<RuntimeSteerDelivery>) | undefined;
+  readonly stopForDeletion?: (() => Promise<void>) | undefined;
   readonly close: () => Promise<void>;
 }
 

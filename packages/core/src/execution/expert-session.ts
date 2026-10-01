@@ -198,6 +198,10 @@ export interface ExpertSession {
    * recoverable in the persisted ExpertSession.
    */
   releaseAfterHumanCheckpoint(): Promise<void>;
+  /** Stop native work without rewriting historical Execution state. */
+  freezeForDeletion(): void;
+  stopForDeletion(reason?: string): Promise<void>;
+  finishDeletion(): Promise<void>;
   close(reason?: string): Promise<void>;
   refreshRuntimeSessions(): Promise<void>;
   getState(): Promise<ExpertSessionRecord>;
@@ -812,6 +816,8 @@ class ExpertSessionImpl implements ExpertSession {
     string,
     { readonly content: string; readonly delivery: Promise<ExpertTurn> }
   >();
+  private stopPromise: Promise<void> | undefined;
+  private deletionFrozen = false;
   private closePromise: Promise<void> | undefined;
   private terminalReleasePromise: Promise<void> | undefined;
   private humanCheckpointReleasePromise: Promise<void> | undefined;
@@ -904,7 +910,7 @@ class ExpertSessionImpl implements ExpertSession {
     if (this.resourcesReleasing || this.terminalReleaseRequested) {
       throw new Error(`ExpertSession resources are being released: ${this.sessionId}`);
     }
-    if (this.closePromise !== undefined) {
+    if (this.closePromise !== undefined || this.stopPromise !== undefined || this.deletionFrozen) {
       throw new Error(`ExpertSession is closing or closed: ${this.sessionId}`);
     }
     if (content.trim() === "") throw new Error("Prompt content must not be empty.");
@@ -1180,7 +1186,7 @@ class ExpertSessionImpl implements ExpertSession {
   }
 
   private async releaseAfterHumanCheckpointInternal(): Promise<void> {
-    if (this.closePromise !== undefined) {
+    if (this.closePromise !== undefined || this.stopPromise !== undefined || this.deletionFrozen) {
       throw new Error(`ExpertSession is closing or closed: ${this.sessionId}`);
     }
     if (this.resourcesReleasing) throw new Error("ExpertSession resources are being released.");
@@ -1283,7 +1289,7 @@ class ExpertSessionImpl implements ExpertSession {
   }
 
   private async releaseAfterTerminalInternal(): Promise<void> {
-    if (this.closePromise !== undefined) {
+    if (this.closePromise !== undefined || this.stopPromise !== undefined || this.deletionFrozen) {
       throw new Error(`ExpertSession is closing or closed: ${this.sessionId}`);
     }
     if (this.resourcesReleasing) throw new Error("ExpertSession resources are being released.");
@@ -1337,6 +1343,43 @@ class ExpertSessionImpl implements ExpertSession {
     throwCollectedErrors(errors, "ExpertSession terminal resource release failed.");
   }
 
+  async finishDeletion(): Promise<void> {
+    await this.runtimeSessions.finishDeletion();
+  }
+
+  freezeForDeletion(): void {
+    this.deletionFrozen = true;
+    this.paused = true;
+    this.stopLeaseRenewal();
+    this.runtimeSessions.seal();
+  }
+
+  stopForDeletion(reason?: string): Promise<void> {
+    this.freezeForDeletion();
+    if (this.stopPromise === undefined) {
+      this.processingGeneration += 1;
+      this.processing = undefined;
+      const controller = this.controller;
+      this.stopPromise = (async () => {
+        const results = await Promise.allSettled([
+          controller?.cancel(reason),
+          this.runtimeSessions.closeForDeletion(),
+          this.leaseRenewalTask,
+        ]);
+        const errors = results.flatMap((result) =>
+          result.status === "rejected" ? [result.reason as unknown] : [],
+        );
+        throwCollectedErrors(errors, "ExpertSession native stop was not confirmed.");
+        this.controller = undefined;
+      })();
+      // A rejected close is retryable; a pending close stays shared after a Host timeout.
+      void this.stopPromise.catch(() => {
+        this.stopPromise = undefined;
+      });
+    }
+    return this.stopPromise;
+  }
+
   close(reason?: string): Promise<void> {
     if (this.closePromise === undefined) {
       this.paused = true;
@@ -1349,6 +1392,7 @@ class ExpertSessionImpl implements ExpertSession {
 
   private async closeInternal(reason?: string): Promise<void> {
     const errors: unknown[] = [];
+    let stopAttempted = false;
     try {
       const pending = (await this.getPromptQueue()).filter(
         (prompt) => prompt.status === "queued" || prompt.status === "running",
@@ -1367,10 +1411,8 @@ class ExpertSessionImpl implements ExpertSession {
             : prompt,
         ),
       }));
-      await this.controller?.cancel(reason);
-      this.controller = undefined;
-      this.processingGeneration += 1;
-      this.processing = undefined;
+      stopAttempted = true;
+      await this.stopForDeletion(reason);
       for (const prompt of pending) {
         await this.cancelPersistedExecution(
           prompt.executionId,
@@ -1385,7 +1427,7 @@ class ExpertSessionImpl implements ExpertSession {
       errors.push(error);
     }
     try {
-      await this.runtimeSessions.close();
+      if (!stopAttempted) await this.runtimeSessions.close();
     } catch (error) {
       errors.push(error);
     }
@@ -1666,7 +1708,7 @@ class ExpertSessionImpl implements ExpertSession {
 
   async compactRootContext(): Promise<RuntimeContextWindowUsage | undefined> {
     if (this.leaseError !== undefined) throw this.leaseError;
-    if (this.closePromise !== undefined) {
+    if (this.closePromise !== undefined || this.stopPromise !== undefined || this.deletionFrozen) {
       throw new Error(`ExpertSession is closing or closed: ${this.sessionId}`);
     }
     const [state, prompts] = await Promise.all([this.getState(), this.getPromptQueue()]);
@@ -2115,7 +2157,7 @@ class ExpertSessionImpl implements ExpertSession {
 
   async steerQueuedPrompt(requestId: string): Promise<ExpertTurn> {
     if (this.leaseError !== undefined) throw this.leaseError;
-    if (this.closePromise !== undefined) {
+    if (this.closePromise !== undefined || this.stopPromise !== undefined || this.deletionFrozen) {
       throw new Error(`ExpertSession is closing or closed: ${this.sessionId}`);
     }
     if (this.queueSteersInFlight.has(requestId)) {
@@ -3100,6 +3142,7 @@ class ExpertSessionImpl implements ExpertSession {
       result,
       settled,
       usage,
+      stopForDeletion: async (reason?: string) => await this.stopForDeletion(reason),
       cancel: async (reason?: string) => {
         const state = await this.getState();
         if (state.activeExecutionId !== executionId || this.controller === undefined) {

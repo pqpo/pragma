@@ -187,6 +187,9 @@ type DslDraftCommitJournal = z.infer<typeof DslDraftCommitJournalSchema>;
 export function createDesktopPragmaAgentProjectPort(options: {
   readonly project: PragmaProjectStore;
   readonly stateRoot: string;
+  readonly withMissionMutation?:
+    (<T>(id: string, action: () => Promise<T>) => Promise<T>) | undefined;
+  readonly assertMissionWritable?: ((id: string) => Promise<void>) | undefined;
   readonly draftsRoot?: string | undefined;
   readonly draftsTrashRoot?: string | undefined;
   readonly capabilities: CapabilityStore;
@@ -390,6 +393,14 @@ export function createDesktopPragmaAgentProjectPort(options: {
     );
   };
 
+  const withMissionMutation = async <T>(id: string, action: () => Promise<T>): Promise<T> => {
+    const guarded = async () => {
+      await options.assertMissionWritable?.(id);
+      return await action();
+    };
+    return await (options.withMissionMutation?.(id, guarded) ?? guarded());
+  };
+
   const publishCandidate = async (
     candidate: CandidateRecord,
   ): Promise<PragmaAgentProjectCommit> => {
@@ -397,10 +408,14 @@ export function createDesktopPragmaAgentProjectPort(options: {
       baseRevision: candidate.changeSet.projectRevision,
       upserts: candidate.resources,
     };
-    const published =
+    const publish = async () =>
       candidate.dslDraftId === undefined
         ? await options.project.apply(change)
         : await options.project.applyTransactional(change, candidate.changeSet.changeSetId);
+    const published =
+      candidate.dslDraftMissionId === undefined
+        ? await publish()
+        : await withMissionMutation(candidate.dslDraftMissionId, publish);
     return PragmaAgentProjectCommitSchema.parse({
       projectId: published.projectId,
       projectRevision: published.revision,
@@ -414,7 +429,13 @@ export function createDesktopPragmaAgentProjectPort(options: {
     );
 
   const writeDslDraft = async (draft: StoredDslDraft): Promise<void> =>
-    await writeJson(dslDraftRecordPath(draft.draftId), StoredDslDraftSchema.parse(draft));
+    await (draft.state === "discarded" || draft.state === "committed"
+      ? writeJson(dslDraftRecordPath(draft.draftId), StoredDslDraftSchema.parse(draft))
+      : withMissionMutation(
+          draft.missionId,
+          async () =>
+            await writeJson(dslDraftRecordPath(draft.draftId), StoredDslDraftSchema.parse(draft)),
+        ));
 
   const moveDslDraftPathToTrash = async (source: string, trash: string): Promise<void> => {
     await mkdir(dirname(trash), { recursive: true, mode: 0o700 });
@@ -559,9 +580,17 @@ export function createDesktopPragmaAgentProjectPort(options: {
         try {
           result = await publishCandidate(candidate);
         } catch (error) {
-          if ((error as { readonly code?: string }).code === "revision_conflict") {
+          const deletionBlocked =
+            error instanceof Error &&
+            (error.message === "MISSION_DELETION_PENDING" ||
+              ("code" in error && error.code === "MISSION_DELETION_PENDING"));
+          if (
+            deletionBlocked ||
+            (error as { readonly code?: string }).code === "revision_conflict"
+          ) {
             await rm(dslDraftCommitJournalPath(draftId), { force: true });
           }
+          if (deletionBlocked && publicationMode === "recover") return undefined;
           throw error;
         }
       }
@@ -642,7 +671,15 @@ export function createDesktopPragmaAgentProjectPort(options: {
 
   const readDslDraftLocked = async (draftId: string): Promise<StoredDslDraft> => {
     await replayDslDraftCommit(draftId);
-    await recoverDslDraftRestart(draftId);
+    const owner = await readDslDraftRecord(draftId);
+    let deletionBlocked = false;
+    try {
+      await options.assertMissionWritable?.(owner.missionId);
+    } catch (error) {
+      if (!(error instanceof Error && error.message === "MISSION_DELETION_PENDING")) throw error;
+      deletionBlocked = true;
+    }
+    if (!deletionBlocked) await recoverDslDraftRestart(draftId);
     await recoverDslDraftDiscard(draftId);
     const draft = await readDslDraftRecord(draftId);
     if (draft.state === "editing") {
@@ -657,10 +694,15 @@ export function createDesktopPragmaAgentProjectPort(options: {
       async () => await readDslDraftLocked(draftId),
     );
 
-  const requireDslDraftOwner = (draft: StoredDslDraft, missionId: string | undefined): void => {
+  const requireDslDraftOwner = async (
+    draft: StoredDslDraft,
+    missionId: string | undefined,
+    deleting = false,
+  ): Promise<void> => {
     if (missionId === undefined || draft.missionId !== missionId) {
       throw new Error("DSL draft is owned by another Mission.");
     }
+    if (!deleting) await options.assertMissionWritable?.(missionId);
   };
 
   const toPublicDslDraft = (draft: StoredDslDraft): PragmaAgentDslDraft => {
@@ -871,6 +913,7 @@ export function createDesktopPragmaAgentProjectPort(options: {
     const snapshot = await options.project.get();
     const draftId = input.draftId ?? randomUUID();
     return await withFileLock(dslDraftMutationLockPath(draftId), async () => {
+      await options.assertMissionWritable?.(input.missionId);
       const worktreePath = dslDraftWorktreePath({ draftId, workspacePath });
       const usedIds = new Set(snapshot.resources.map((resource) => resource.metadata.id));
       const usedRefs = new Set<string>();
@@ -1275,7 +1318,7 @@ export function createDesktopPragmaAgentProjectPort(options: {
     },
     async inspectDslDraft(input) {
       const draft = await readDslDraft(input.draftId);
-      requireDslDraftOwner(draft, input.missionId);
+      await requireDslDraftOwner(draft, input.missionId);
       if (draft.state === "committed" || draft.state === "discarded") {
         throw new Error(`DSL draft is already ${draft.state}.`);
       }
@@ -1283,7 +1326,7 @@ export function createDesktopPragmaAgentProjectPort(options: {
     },
     async readDslDraftReview(input) {
       const draft = await readDslDraft(input.draftId);
-      requireDslDraftOwner(draft, input.missionId);
+      await requireDslDraftOwner(draft, input.missionId);
       if (draft.state === "committed" || draft.state === "discarded") {
         throw new Error(`DSL draft is already ${draft.state}.`);
       }
@@ -1298,7 +1341,7 @@ export function createDesktopPragmaAgentProjectPort(options: {
     async prepareDslDraft(input) {
       return await withFileLock(dslDraftMutationLockPath(input.draftId), async () => {
         const draft = await readDslDraftLocked(input.draftId);
-        requireDslDraftOwner(draft, input.missionId);
+        await requireDslDraftOwner(draft, input.missionId);
         if (draft.state !== "editing") throw new Error("DSL draft is not editable.");
         const frozenWorktree = await detachDslDraftWorktree(draft);
         let finalized = false;
@@ -1449,7 +1492,7 @@ export function createDesktopPragmaAgentProjectPort(options: {
           });
         }
         const current = await readDslDraftLocked(input.draftId);
-        requireDslDraftOwner(current, input.missionId);
+        await requireDslDraftOwner(current, input.missionId);
         const canRestartPrepared =
           current.state === "prepared" && (await divergentPreparedDslDraftRefs(current)).length > 0;
         if (current.state !== "conflicted" && !canRestartPrepared) {
@@ -1484,7 +1527,7 @@ export function createDesktopPragmaAgentProjectPort(options: {
     async discardDslDraft(input) {
       await withFileLock(dslDraftMutationLockPath(input.draftId), async () => {
         const draft = await readDslDraftLocked(input.draftId);
-        requireDslDraftOwner(draft, input.missionId);
+        await requireDslDraftOwner(draft, input.missionId, true);
         if (draft.state === "discarded") return;
         if (draft.state === "committed")
           throw new Error("A committed DSL draft cannot be discarded.");
@@ -1904,7 +1947,7 @@ export function createDesktopPragmaAgentProjectPort(options: {
         if (candidate.dslDraftMissionId !== missionId) {
           throw new Error("DSL draft is owned by another Mission.");
         }
-        requireDslDraftOwner(await readDslDraftRecord(candidate.dslDraftId), missionId);
+        await requireDslDraftOwner(await readDslDraftRecord(candidate.dslDraftId), missionId);
       }
       return candidate.changeSet;
     },
@@ -1928,7 +1971,7 @@ export function createDesktopPragmaAgentProjectPort(options: {
             throw new Error("DSL draft is owned by another Mission.");
           }
           const ownedDraft = await readDslDraftRecord(candidate.dslDraftId!);
-          requireDslDraftOwner(ownedDraft, input.missionId);
+          await requireDslDraftOwner(ownedDraft, input.missionId);
           const recovered = await replayDslDraftCommit(candidate.dslDraftId!);
           if (recovered !== undefined) {
             if (

@@ -1,3 +1,5 @@
+import { stat } from "node:fs/promises";
+import { isOwnerDeletionFenced } from "../storage/owner-deletion.ts";
 import {
   runtimeSessionRecordMigrationChain,
   type RuntimeSessionRecord,
@@ -26,6 +28,8 @@ export async function createRuntimeSessionRecord(options: {
   readonly runtime: RuntimeAdapterDescriptor;
   readonly workspace: string;
 }): Promise<RuntimeSessionRecord> {
+  if (isOwnerDeletionFenced(options.paths, options.owner.ownerId))
+    throw new Error("RUNTIME_OWNER_DELETED");
   const now = new Date().toISOString();
   const record: RuntimeSessionRecord = {
     schemaVersion: "pragma.runtime-session/v3",
@@ -43,6 +47,9 @@ export async function createRuntimeSessionRecord(options: {
   };
   const database = await openRuntimeSessionCatalog(options.paths);
   try {
+    database.exec("BEGIN IMMEDIATE");
+    if (isOwnerDeletionFenced(options.paths, options.owner.ownerId))
+      throw new Error("RUNTIME_OWNER_DELETED");
     database
       .prepare(
         `INSERT INTO runtime_sessions(system_session_id, owner_id, owner_type, record_json, updated_at)
@@ -55,6 +62,7 @@ export async function createRuntimeSessionRecord(options: {
         JSON.stringify(record),
         record.updatedAt,
       );
+    database.exec("COMMIT");
   } catch (error) {
     if (!isConstraint(error)) throw error;
     const existing = database
@@ -188,6 +196,7 @@ async function writeRuntimeSessionRecord(
 ): Promise<void> {
   const database = await openRuntimeSessionCatalog(paths);
   try {
+    if (isOwnerDeletionFenced(paths, record.owner.ownerId)) return;
     const result = database
       .prepare(
         `UPDATE runtime_sessions SET record_json = ?, updated_at = ?
@@ -222,4 +231,39 @@ function isConstraint(error: unknown): boolean {
     (error.message.includes("UNIQUE constraint failed") ||
       error.message.includes("PRIMARY KEY constraint failed"))
   );
+}
+
+/** Targeted owner lookup; no Runtime Session directory enumeration. */
+export async function readRuntimeSessionsForOwners(
+  paths: PragmaPaths,
+  ids: readonly string[],
+): Promise<readonly RuntimeSessionRecord[]> {
+  if (ids.length === 0) return [];
+  try {
+    await stat(runtimeSessionCatalogPath(paths));
+  } catch (error) {
+    if (typeof error === "object" && error !== null && "code" in error && error.code === "ENOENT")
+      return [];
+    throw error;
+  }
+  const database = await openRuntimeSessionCatalog(paths);
+  try {
+    const rows = database
+      .prepare(
+        "SELECT owner_id AS ownerId, system_session_id AS systemSessionId, record_json AS recordJson FROM runtime_sessions WHERE owner_id IN (SELECT value FROM json_each(?))",
+      )
+      .all(JSON.stringify([...new Set(ids)])) as unknown as readonly {
+      ownerId: string;
+      systemSessionId: string;
+      recordJson: string;
+    }[];
+    return rows.map((row) => {
+      const record = runtimeSessionRecordMigrationChain.upgrade(JSON.parse(row.recordJson)).value;
+      assertEqual(record.owner.ownerId, row.ownerId, "Catalog owner id");
+      assertEqual(record.systemSessionId, row.systemSessionId, "Catalog system Session id");
+      return record;
+    });
+  } finally {
+    database.close();
+  }
 }

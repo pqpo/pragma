@@ -622,6 +622,24 @@ export class ExecutionController {
     }
   }
 
+  async finishDeletion(): Promise<void> {
+    await this.runtimeSessions.finishDeletion();
+  }
+
+  async stopForDeletion(reason?: string): Promise<void> {
+    this.runtimeSessions.seal();
+    const results = await Promise.allSettled([
+      this.cancel(reason),
+      this.runtimeSessions.closeForDeletion(),
+    ]);
+    const errors = results.flatMap((result) =>
+      result.status === "rejected" ? [result.reason as unknown] : [],
+    );
+    if (errors.length === 1) throw errors[0];
+    if (errors.length > 0)
+      throw new AggregateError(errors, "Execution native stop was not confirmed.");
+  }
+
   cancel(reason?: string): Promise<void> {
     this.cancellationPromise ??= this.cancelInternal(reason);
     return this.cancellationPromise;

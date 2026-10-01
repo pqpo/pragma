@@ -23,6 +23,7 @@ export interface AgentLifecycle<TContext = unknown> {
   readonly enqueue: <TResult>(
     work: (context: AgentRunExecutionContext) => Promise<TResult>,
   ) => AgentLifecycleTask<TResult>;
+  readonly seal: () => void;
   readonly close: () => Promise<void>;
 }
 
@@ -75,7 +76,17 @@ export function createQueuedAgentLifecycle<TContext = unknown>(
     }
   };
 
+  const seal = () => {
+    if (sessionState !== "active") return;
+    sessionState = "closing";
+    sessionAbortController.abort(new Error("Agent session was aborted."));
+    for (const controller of pendingRunControllers) {
+      if (!controller.signal.aborted) controller.abort(sessionAbortController.signal.reason);
+    }
+    abortCurrentRun(sessionAbortController.signal.reason);
+  };
   return {
+    seal,
     get sessionState() {
       return sessionState;
     },

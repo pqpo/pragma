@@ -4,6 +4,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
   cancelQoderTurn,
+  closeQoderSession,
   consumeQoderStartupMessages,
   startQoderTurn,
   steerQoderTurn,
@@ -173,6 +174,20 @@ describe("Qoder startup messages", () => {
     expect(interrupt).toHaveBeenCalledOnce();
   });
 
+  it("retries a failed native close even after cancellation detached the Query", async () => {
+    const session = createSession();
+    const close = vi
+      .fn<() => Promise<void>>()
+      .mockRejectedValueOnce(new Error("native stop failed"))
+      .mockResolvedValue(undefined);
+    session.activeQuery = { interrupt: vi.fn(async () => {}), close } as unknown as NonNullable<
+      QoderNativeSession["activeQuery"]
+    >;
+    await expect(closeQoderSession(session)).rejects.toThrow("native stop failed");
+    expect(session.activeQuery).toBeUndefined();
+    await expect(closeQoderSession(session)).resolves.toBeUndefined();
+    expect(close).toHaveBeenCalledTimes(2);
+  });
   it("does not wait forever when Qoder ignores interrupt and close", async () => {
     vi.useFakeTimers();
     try {

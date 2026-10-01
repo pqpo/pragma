@@ -83,6 +83,7 @@ export interface MissionContextStoreReference {
 }
 
 export interface MissionStore {
+  withDeletionBarrier?<T>(id: string, action: () => Promise<T>): Promise<T>;
   readonly storagePath?: ((id: string) => string) | undefined;
   readonly forget?: ((id: string) => void) | undefined;
   list(): Promise<MissionSummary[]>;
@@ -270,6 +271,7 @@ const MissionPathMigrationTransactionSchema = z
 
 export function createMissionStore(options: {
   readonly missionsPath: string;
+  readonly isDeletionFenced?: ((id: string) => Promise<boolean>) | undefined;
   readonly getRevisionSource?:
     ((jobId: string) => Promise<ContextStoreRevisionRequest["source"]>) | undefined;
   readonly onReadIssue?: ((issue: MissionStoreReadIssue) => void) | undefined;
@@ -354,6 +356,15 @@ export function createMissionStore(options: {
     await withFileLock(
       lockPath(id),
       async () => {
+        if (
+          !operationName.endsWith(".read") &&
+          !operationName.endsWith(".read-page") &&
+          operationName !== "mission.remove" &&
+          operationName !== "mission.cleanup-claim" &&
+          (await options.isDeletionFenced?.(id))
+        ) {
+          throw new Error("MISSION_DELETION_PENDING");
+        }
         await migrateLegacyMissionPath(id);
         return await operation();
       },
@@ -1084,6 +1095,9 @@ export function createMissionStore(options: {
         }
       });
     },
+    async withDeletionBarrier(id, action) {
+      return await withFileLock(lockPath(id), action, { operation: "mission.deletion-barrier" });
+    },
     async writeExecutionProjection(id, executionId, entries, sourceUpdatedAt) {
       const parsedId = MissionIdSchema.parse(id);
       await withMissionLock(parsedId, "mission.execution-projection.write", async () => {
@@ -1399,6 +1413,7 @@ export function createMissionStore(options: {
     },
     async create(input) {
       const id = MissionIdSchema.parse(input.id ?? randomUUID());
+      if (await options.isDeletionFenced?.(id)) throw new Error("MISSION_DELETION_PENDING");
       const initialMessageId = randomUUID();
       const timestamp = new Date().toISOString();
       const goal = input.goal.trim();
@@ -1457,7 +1472,11 @@ export function createMissionStore(options: {
           },
         );
         await mkdir(options.missionsPath, { recursive: true, mode: 0o700 });
-        await rename(temporaryPath, targetPath);
+        await withMissionLock(
+          id,
+          "mission.create",
+          async () => await rename(temporaryPath, targetPath),
+        );
         markMissionMutation();
       } catch (error) {
         await rm(temporaryPath, { recursive: true, force: true });

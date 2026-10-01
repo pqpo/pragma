@@ -1,3 +1,4 @@
+import { isOwnerDeletionFenced } from "../storage/owner-deletion.ts";
 import { mkdir, rename, rm, stat } from "node:fs/promises";
 import { dirname } from "node:path";
 import { backup, DatabaseSync } from "node:sqlite";
@@ -79,7 +80,7 @@ export async function createFileCanonicalEventFeed(
     workerData: options,
     ...(workerUrl.pathname.endsWith(".ts")
       ? {
-          execArgv: [...process.execArgv, "--import", "tsx", "--conditions=types"],
+          execArgv: [...process.execArgv, "--import", "tsx"],
         }
       : {}),
   });
@@ -209,6 +210,11 @@ export async function createSynchronousFileCanonicalEventFeed(
       try {
         let lastSequence = readLastSequence(database);
         for (const event of parsed) {
+          if (
+            event.correlationId !== undefined &&
+            isOwnerDeletionFenced(paths, event.correlationId)
+          )
+            continue;
           if (receipt.get(event.eventId) !== undefined) continue;
           const alreadyStored = existing.get(event.eventId) as
             { readonly sequence: number } | undefined;

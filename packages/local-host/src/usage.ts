@@ -20,6 +20,7 @@ interface UsageLedger {
 }
 
 export interface LocalHostUsageSink extends UsageSink {
+  readonly reconcile: (observations: readonly RuntimeUsageObservation[]) => Promise<void>;
   readonly list: () => Promise<readonly RuntimeUsageObservation[]>;
   readonly drain: () => Promise<void>;
   readonly close: () => Promise<void>;
@@ -74,24 +75,28 @@ export function createLocalHostUsageSink(options: {
     drain: async () => undefined,
     close: async () => undefined,
     async record(observation) {
+      await sink.reconcile([observation]);
+    },
+    async reconcile(observations) {
+      if (observations.length === 0) return;
       await withFileLock(
         lockPath,
         async () => {
           const ledger = await readLedger();
-          const existing = ledger.observations[observation.observationId];
-          if (existing !== undefined) {
-            if (observationSignature(existing) !== observationSignature(observation)) {
-              throw new Error(`Conflicting usage observation: ${observation.observationId}.`);
+          const merged = { ...ledger.observations };
+          let changed = false;
+          for (const observation of observations) {
+            const existing = merged[observation.observationId];
+            if (existing !== undefined) {
+              if (observationSignature(existing) !== observationSignature(observation))
+                throw new Error(`Conflicting usage observation: ${observation.observationId}.`);
+            } else {
+              merged[observation.observationId] = observation;
+              changed = true;
             }
-            return;
           }
-          await writeLedger({
-            schemaVersion: USAGE_SCHEMA_VERSION,
-            observations: {
-              ...ledger.observations,
-              [observation.observationId]: observation,
-            },
-          });
+          if (changed)
+            await writeLedger({ schemaVersion: USAGE_SCHEMA_VERSION, observations: merged });
         },
         { operation: "local-host-usage" },
       );
@@ -340,6 +345,7 @@ function createSourceUsageSink(
             ).value,
           );
     },
+    reconcile: async (observations) => await sink.reconcile(observations),
     record() {
       if (closing !== undefined) return;
       stopping = false;
