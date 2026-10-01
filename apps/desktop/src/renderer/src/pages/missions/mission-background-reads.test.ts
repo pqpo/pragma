@@ -178,3 +178,37 @@ it("shares a slow history read and lets action callers await its one dirty follo
   expect(settled).toBe(true);
   expect(read).toHaveBeenCalledTimes(2);
 });
+
+it("lets all control callers await the dirty follow-up without waiting for Context", async () => {
+  const first = deferred<MissionConversationState>();
+  const next = deferred<MissionConversationState>();
+  const contextGate = deferred<MissionContextWindowSnapshot>();
+  const onControl = vi.fn();
+  const read = vi.fn().mockReturnValueOnce(first.promise).mockReturnValueOnce(next.promise);
+  const reads = createMissionBackgroundReads({
+    api: { getMissionConversationState: read, getMissionContextWindow: () => contextGate.promise },
+    missionId: "mission",
+    onControl,
+    onContext: vi.fn(),
+    onControlError: vi.fn(),
+    onContextError: vi.fn(),
+  });
+  void reads.refreshContext();
+  const initial = reads.refreshControl();
+  const action = reads.refreshControl();
+  expect(action).toBe(initial);
+  let settled = false;
+  void action.then(() => {
+    settled = true;
+  });
+  first.resolve(state);
+  await vi.waitFor(() => expect(read).toHaveBeenCalledTimes(2));
+  expect(settled).toBe(false);
+  const fresh = { ...state, revision: 2 };
+  next.resolve(fresh);
+  await action;
+  expect(onControl).toHaveBeenLastCalledWith(fresh);
+  expect(settled).toBe(true);
+  reads.close();
+  contextGate.resolve(context);
+});

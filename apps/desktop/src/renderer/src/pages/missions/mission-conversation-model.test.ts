@@ -208,9 +208,17 @@ describe("mission conversation model", () => {
     });
     expect(equalRevision?.queue).toEqual(queue);
     expect(equalRevision?.stateRevision).toBe(2);
-    const hydrated = mergeConversationState(updated, {
+    const stale = mergeConversationState(updated, {
       missionId: snapshot.missionId,
       revision: 1,
+      pendingInteractions: [],
+      deliveries: [],
+      hiddenEntryIds: [],
+    });
+    expect(stale).toBe(updated);
+    const hydrated = mergeConversationState(updated, {
+      missionId: snapshot.missionId,
+      revision: 2,
       pendingInteractions: [],
       execution: {
         id: "00000000-0000-4000-8000-000000000001",
@@ -221,7 +229,7 @@ describe("mission conversation model", () => {
       hiddenEntryIds: [],
     });
     expect(hydrated?.queue).toEqual(queue);
-    expect(hydrated?.stateRevision).toBe(1);
+    expect(hydrated?.stateRevision).toBe(2);
     expect(hydrated?.execution?.status).toBe("running");
     expect(isMissionConversationCacheReady(hydrated)).toBe(true);
     const fresh = mergeConversationState(hydrated, {
@@ -769,6 +777,68 @@ describe("mission conversation model", () => {
     ]);
     expect(patched.snapshot.entries[0]).toMatchObject({ content: "hello!" });
   });
+
+  it.each(["patch", "invalidate"] as const)(
+    "fences delayed control after a consumed live %s without fencing initial history hydration",
+    (kind) => {
+      const current = streamingSnapshot("hello", 10);
+      const initial = mergeConversationState(current, {
+        missionId: current.missionId,
+        revision: 9,
+        pendingInteractions: [],
+        deliveries: [],
+        hiddenEntryIds: [],
+      })!;
+      expect(initial.stateRevision).toBe(9);
+      const updated = applyMissionChatUpdateBatch(initial, [
+        {
+          missionId: current.missionId,
+          streamId: chatStreamId,
+          revision: 11,
+          ...(kind === "invalidate"
+            ? { kind: "invalidate" as const }
+            : {
+                kind: "patch" as const,
+                patches: [
+                  {
+                    type: "entry.append" as const,
+                    entryId: "answer",
+                    field: "content" as const,
+                    delta: "!",
+                  },
+                ],
+              }),
+        },
+      ]).snapshot;
+      const stale = mergeConversationState(updated, {
+        missionId: current.missionId,
+        revision: 10,
+        pendingInteractions: [],
+        deliveries: [],
+        hiddenEntryIds: ["answer"],
+        execution: {
+          id: "00000000-0000-4000-8000-000000000001",
+          status: "running",
+          interruptible: true,
+        },
+      });
+      expect(stale).toBe(updated);
+      const fresh = mergeConversationState(updated, {
+        missionId: current.missionId,
+        revision: 11,
+        pendingInteractions: [],
+        deliveries: [],
+        hiddenEntryIds: [],
+        execution: {
+          id: "00000000-0000-4000-8000-000000000001",
+          status: "succeeded",
+          interruptible: false,
+        },
+      });
+      expect(fresh?.execution?.status).toBe("succeeded");
+      expect(fresh?.revision).toBe(11);
+    },
+  );
 
   it("rejects stale conversation state and context responses independently", () => {
     const current = streamingSnapshot("hello", 10);

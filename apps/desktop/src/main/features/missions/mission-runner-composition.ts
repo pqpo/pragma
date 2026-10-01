@@ -6111,7 +6111,7 @@ export function createMissionRunner(options: {
         // Mission fence are released. A racing send then reacquires a fresh
         // guard and resumes the same durable Session.
         await releaseOwner();
-        chatService.clearReads(id);
+        // Durable display reads remain valid when only transient resources are released.
         logger.info(
           "mission.idle_resources_released",
           "Idle Mission transient resources released",

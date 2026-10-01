@@ -42,29 +42,17 @@ export function createMissionBackgroundReads(input: {
     apply: (value: T) => void,
     fail: (error: unknown) => void,
   ) => {
-    let reading = false;
-    let dirty = false;
-    const refresh = async (): Promise<void> => {
-      if (closed) return;
-      if (reading) {
-        dirty = true;
-        return;
-      }
-      reading = true;
-      try {
-        const value = await load();
-        if (!closed) apply(value);
-      } catch (error) {
-        if (!closed) fail(error);
-      } finally {
-        reading = false;
-        if (dirty && !closed) {
-          dirty = false;
-          void refresh();
+    return createMissionRefresh(
+      async () => {
+        try {
+          const value = await load();
+          if (!closed) apply(value);
+        } catch (error) {
+          if (!closed) fail(error);
         }
-      }
-    };
-    return refresh;
+      },
+      () => closed,
+    );
   };
   return {
     refreshControl: reader(

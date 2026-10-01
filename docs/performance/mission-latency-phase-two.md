@@ -38,7 +38,8 @@ Renderer 各种读取独立刷新，以及正常 Execution commit 不重复读�
   Desktop 控制状态与 Local Host 队列投影使用该接口，根 Context 来自同一 Session。
   保留 Execution 终态复查和已响应人工确认过滤；不宣称三个 owner 的跨 owner 原子快照。
 - Main singleflight 只保留进行中 Promise，key 包含 Mission、audience、读取种类、query、代次与读取开始水位。
-  完成或失败立即移除；失效后的新请求不共享旧水位。释放/删除撤销旧代次，晚到结果不能安装状态。
+  完成或失败立即移除；失效后的新请求不共享旧水位。控制器关闭/删除撤销旧代次，晚到结果不能安装状态；
+  idle 瞬态释放保留耐久展示读取。
 - Renderer 历史、control、Context 各自一个 active request 和 dirty 标记，重复触发只安排一次后续读取。
   独立应用、独立降级；不再在历史绘制后无条件重读 control/Context。新 Mission 的 revision 0 基底可直接
   应用 revision 1 开始的连续 patch；gap 仍请求重同步。保留同 revision queue patch 优先与历史分页水位规则。
@@ -183,3 +184,23 @@ SQLite 默认门槛：真实关键路径中读取/解析/重放/原子写入占�
 或十倍历史使普通增量 commit P95 增长超过两倍。按 family 的关键路径贡献排序，接近时 Execution 优先。
 这份报告没有提前升级 Schema，也没有定稿转换协议。下一份方案须覆盖 owner、事务、索引/cursor、连接生命周期、
 删除协调、真实 fixture、备份、转换 journal、权威切换和崩溃恢复。
+
+## PR #349 评论核对
+
+确认并修复三项问题：idle 释放不再撤销正常耐久展示读取；control 响应以独立 `controlRevision`
+拒绝早于已消费 live 更新的结果；control/context reader 复用包含 dirty 后续读取的 Promise，
+操作刷新等待 history + control，Context 仍独立。返回值在屏障完成后读取当前聚合快照。
+
+新增回归覆盖 idle 释放与初始导航交错、live patch/invalidate 后旧 control 不覆盖或隐藏条目、
+初始历史不阻止 control 水合，以及多个 control 调用者等待同一后续读取。旧的 queue 回归允许
+revision 1 控制响应在 revision 2 live 更新后水合，此断言按审查要求改为保留当前快照，并用 revision 2
+响应验证成功水合；同 revision queue patch 优先、关闭/删除撤销展示读取规则保留。
+
+此修改仍属于 Desktop MissionRunner 热路径收敛，不代表 Desktop/CLI → Local Host kernel 收敛完成，
+也不改变总体性能目标尚未达成的结论。
+
+PR 评论修复验证：展示/读取回归 188 项、Codex/Qoder 排队集成 6 项，以及附带 idle 导航交错的
+owner/Runtime 生命周期集成 1 项（同文件其余 77 项未在本次定向执行）。`pnpm check` 通过；
+最后补充的刷新导航保护与 stale control 重读再次通过 ESLint 和上述 188 项回归。
+
+Desktop 构建通过，styles、main workspace 打包与 preload Bridge 自包含检查通过。

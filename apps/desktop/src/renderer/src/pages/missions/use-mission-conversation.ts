@@ -387,6 +387,11 @@ export function useMissionConversation(input: {
         latestControl = value;
         update((current) => {
           const next = mergeConversationState(current, value);
+          if (
+            current !== null &&
+            value.revision < Math.max(current.stateRevision ?? 0, current.controlRevision ?? 0)
+          )
+            void refreshControl();
           setSyncError(next?.syncIssues === undefined ? null : input.syncUnavailableMessage);
           return next;
         });
@@ -646,9 +651,18 @@ export function useMissionConversation(input: {
     loadEarlier,
     observeFirstTokenPaint,
     refreshLatestChat: async () => {
-      void backgroundReadsRef.current?.refreshControl();
-      void backgroundReadsRef.current?.refreshContext();
-      return await historyRefreshRef.current?.();
+      const reads = backgroundReadsRef.current;
+      const history = historyRefreshRef.current;
+      if (reads === null || history === null) return undefined;
+      const control = reads.refreshControl();
+      void reads.refreshContext();
+      await Promise.all([history(), control]);
+      if (backgroundReadsRef.current !== reads || historyRefreshRef.current !== history)
+        return undefined;
+      const snapshot = chatRef.current;
+      return snapshot === null || snapshot.missionId !== input.missionId
+        ? undefined
+        : materializeMissionChatSnapshot(snapshot, (entryId) => liveEntryStore.get(entryId));
     },
     refreshControls: () => {
       void backgroundReadsRef.current?.refreshControl();
@@ -723,7 +737,8 @@ export function mergeConversationState(
   state: MissionConversationState,
 ): MissionConversationSnapshot | null {
   if (current === null || current.missionId !== state.missionId) return current;
-  if (current.stateRevision !== undefined && state.revision < current.stateRevision) return current;
+  if (state.revision < Math.max(current.stateRevision ?? 0, current.controlRevision ?? 0))
+    return current;
   const deliveries = new Map(
     state.deliveries.map((item) => [item.entryId, item.delivery] as const),
   );
@@ -731,6 +746,7 @@ export function mergeConversationState(
   return {
     ...current,
     stateRevision: state.revision,
+    controlRevision: state.revision,
     entries: current.entries
       .filter((entry) => !hidden.has(entry.id))
       .map((entry) => {

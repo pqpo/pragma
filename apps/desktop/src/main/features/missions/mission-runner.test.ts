@@ -7247,6 +7247,30 @@ describe("MissionRunner", { timeout: 30_000 }, () => {
       const releaseOwner = vi.fn(async () => await ownerScope.release(mission.id));
       expect(await runner.releaseIdleSession(mission.id, 300_000, releaseOwner)).toBe(false);
       expect(releaseOwner).not.toHaveBeenCalled();
+      // An initial navigation can still be reading durable history when the idle owner is released.
+      let releasePage!: () => void;
+      const pageGate = new Promise<void>((resolve) => {
+        releasePage = resolve;
+      });
+      let pageEntered!: () => void;
+      const entered = new Promise<void>((resolve) => {
+        pageEntered = resolve;
+      });
+      const readTimelinePage = missions.readTimelinePage.bind(missions);
+      const pageSpy = vi
+        .spyOn(missions, "readTimelinePage")
+        .mockImplementationOnce(async (...args) => {
+          const page = await readTimelinePage(...args);
+          pageEntered();
+          await pageGate;
+          return page;
+        });
+      const pendingPage = runner.getChatPage({ id: mission.id, limit: 50 });
+      const pageResult = pendingPage.then(
+        (page) => ({ page }),
+        (error: unknown) => ({ error }),
+      );
+      await entered;
       // Wait for the terminal observer to release its binding, then hold the
       // native close while a new send races with idle eviction.
       const evict = async (): Promise<boolean> =>
@@ -7270,6 +7294,9 @@ describe("MissionRunner", { timeout: 30_000 }, () => {
       expect(startTurn).toHaveBeenCalledTimes(3);
       allowClose();
       expect(await eviction).toBe(true);
+      releasePage();
+      expect(await pageResult).toMatchObject({ page: { missionId: mission.id } });
+      pageSpy.mockRestore();
       await next;
       await vi.waitFor(
         async () => {

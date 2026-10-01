@@ -237,7 +237,11 @@ function applyMissionChatPatchesWithChanges(
 ): MissionChatPatchApplyResult | null {
   if (patches.length === 0) {
     return {
-      snapshot: revision === snapshot.revision ? snapshot : { ...snapshot, revision },
+      snapshot: {
+        ...snapshot,
+        revision,
+        controlRevision: Math.max(snapshot.controlRevision ?? 0, revision),
+      },
       changedEntries: new Map(),
     };
   }
@@ -256,7 +260,11 @@ function applyMissionChatPatchesWithChanges(
       });
     }
     return {
-      snapshot: { ...snapshot, revision },
+      snapshot: {
+        ...snapshot,
+        revision,
+        controlRevision: Math.max(snapshot.controlRevision ?? 0, revision),
+      },
       changedEntries,
     };
   }
@@ -354,7 +362,15 @@ function applyMissionChatPatchesWithChanges(
     };
     changedEntries.set(patch.entryId, entries[index]!);
   }
-  return { snapshot: { ...snapshot, revision, entries }, changedEntries };
+  return {
+    snapshot: {
+      ...snapshot,
+      revision,
+      entries,
+      controlRevision: Math.max(snapshot.controlRevision ?? 0, revision),
+    },
+    changedEntries,
+  };
 }
 
 function isMissionContentAppendPatch(patch: MissionChatPatch): patch is Extract<
@@ -434,7 +450,14 @@ export function applyMissionChatUpdateBatch(
 
   if (contiguous.length === 0) {
     return {
-      snapshot: consumedRevision === base.revision ? base : { ...base, revision: consumedRevision },
+      snapshot:
+        consumedRevision === base.revision
+          ? base
+          : {
+              ...base,
+              revision: consumedRevision,
+              controlRevision: Math.max(base.controlRevision ?? 0, consumedRevision),
+            },
       remaining,
       needsRefresh: requiredRefreshRevision !== undefined || remaining.length > 0,
       requiresRender: false,
@@ -721,6 +744,7 @@ export function mergeLatestChatPage(
   delete latestPageWithoutCursor.nextBeforeCursor;
   return {
     ...latest,
+    controlRevision: Math.max(current.controlRevision ?? 0, latest.controlRevision ?? 0),
     entries: uniqueChatEntries([
       ...retainedOlder,
       ...retainedUnavailableHistory,

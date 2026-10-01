@@ -39,7 +39,8 @@ Desktop product metadata ─────────────┴──▶ Des
 
 Main 的展示读取按 Mission、audience、读取种类、分页参数和读取开始时的 chat revision 合并尚未完成的 Promise。
 成功和失败均立即注销；新的失效通知推进水位，后续读取不会消费旧水位的 Promise。用户与内部 audience
-相互隔离，mutation、权限裁决和 owner 操作不经过这个入口。释放或删除清除登记并撤销旧读取代次；
+相互隔离，mutation、权限裁决和 owner 操作不经过这个入口。控制器关闭或删除清除登记并撤销旧读取代次；
+idle 仅释放瞬态资源，保留正在进行的耐久展示读取，避免导航读取无后续失效通知时停留在空白或降级状态。
 晚到结果不得安装 pending interaction 等状态。该机制不缓存已完成的可变结果，也不承诺跨 owner 原子读取。
 
 控制状态从 `ExpertSessionStore.readSnapshot(sessionId)` 获取 Session、prompts 和 events：一次 aggregate lock、
@@ -51,7 +52,12 @@ Local Host 的队列投影同样使用一次 Session 快照，steering capabilit
 Renderer 的历史、控制和 Context 分别保留一个进行中读取与一个 dirty 标记；读取期间的重复触发最多保留
 一次后续读取。三类结果各自完成后立即应用、各自降级，不再等 control/Context 共同完成，也不在历史绘制后
 无条件重读两者。首次进入各读一次；控制操作、对应失效通知和 revision gap 按需刷新。
+每类读取共享覆盖 dirty 后续读取的 Promise。操作后的 `refreshLatestChat()` 等待历史和控制均完成，
+再返回当前聚合快照；Context 保持独立，不阻塞恢复、取消或队列操作。
 失败后的成功读取清除所属 section 的降级标记。Mission 切换或卸载关闭读取器并拒绝旧回调。
+控制读取的 `stateRevision` 表示已水合的控制状态；`controlRevision` 记录控制响应和已消费 live 更新的水位。
+旧控制响应不得覆盖新 live 状态，也不得隐藏新条目；被拒绝时将该 reader 标记为 dirty，合并一次后续读取。
+历史页加载不单独推进此控制水位，首次控制水合仍可独立完成。
 
 live delta、status 和 queue patch 保持直接应用。没有缓存时以 revision 0 的空基底接收从 revision 1 开始的
 连续 patch；遇到缺失的前序 revision 则请求权威重同步，不跳过 gap。历史页不推进 live 水位，
