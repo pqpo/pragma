@@ -416,6 +416,8 @@ export function createMissionControllerStore(options: {
     join(missionDirectory(missionId), ".retention-transaction.json");
   const lockPath = (missionId: string) =>
     join(options.missionsPath, ".locks", `${missionId}.aggregate.lock`);
+  const semanticWriteLockPath = (missionId: string) =>
+    join(options.missionsPath, ".locks", `${missionId}.semantic-write.lock`);
   const registryPath = join(options.missionsPath, ".local-host", "run-request-registry.json");
   const registryLock = join(options.missionsPath, ".locks", "run-request-registry.lock");
   const watchBarrierCache = new Map<string, WatchBarrierCacheEntry>();
@@ -652,37 +654,44 @@ export function createMissionControllerStore(options: {
     await checkpoint("retention.clear");
   };
 
-  const recoverCommandAppendTransaction = async (missionId: string): Promise<void> => {
-    const raw = await readJsonIfExists(commandAppendTransactionPath(missionId));
+  const recoverCommandAppendTransaction = async (
+    missionId: string,
+    prepared?: {
+      readonly transaction: ReturnType<typeof MissionCommandAppendTransactionSchema.parse>;
+      readonly state: MissionAggregateState;
+      readonly commands: readonly MissionCommand[];
+    },
+  ): Promise<MissionAggregateState | undefined> => {
+    const raw =
+      prepared?.transaction ?? (await readJsonIfExists(commandAppendTransactionPath(missionId)));
     if (raw === undefined) return;
     const transaction = MissionCommandAppendTransactionSchema.parse(raw);
     if (transaction.missionId !== missionId)
       throw storageError("Command append transaction mission does not match its owner.");
     const command = parseStoredMissionCommand(transaction.command);
-    const commands = await readCommands(missionId);
+    const commands = prepared?.commands ?? (await readCommands(missionId));
     if (!commands.some((candidate) => candidate.commandId === command.commandId)) {
       await writeCommands(missionId, [...commands, command]);
       await checkpoint("command-append.command");
     }
-    const state = await readState(missionId);
+    let state = prepared?.state ?? (await readState(missionId));
     const existing = state.operations[transaction.operation.requestId];
     if (existing === undefined) {
-      await writeState(
-        missionId,
-        MissionAggregateStateSchema.parse({
-          ...state,
-          operations: {
-            ...state.operations,
-            [transaction.operation.requestId]: transaction.operation,
-          },
-        }),
-      );
+      state = MissionAggregateStateSchema.parse({
+        ...state,
+        operations: {
+          ...state.operations,
+          [transaction.operation.requestId]: transaction.operation,
+        },
+      });
+      await writeState(missionId, state);
       await checkpoint("command-append.operation");
     } else if (existing.commandId !== transaction.operation.commandId) {
       throw storageError("Command append transaction conflicts with its operation.");
     }
     await rm(commandAppendTransactionPath(missionId), { force: true });
     await checkpoint("command-append.clear");
+    return state;
   };
 
   const recoverCommandTransaction = async (missionId: string): Promise<void> => {
@@ -732,11 +741,19 @@ export function createMissionControllerStore(options: {
   const recoverTransactions = (missionId: string): Promise<void> =>
     measureStoragePhase("journal_replay", () => recoverTransactionsUnmeasured(missionId));
   const recoverTransactionsUnmeasured = async (missionId: string): Promise<void> => {
-    await recoverCommandInboxMigration(missionId);
-    await recoverRetentionTransaction(missionId);
-    await recoverCommandAppendTransaction(missionId);
-    await recoverCommandTransaction(missionId);
-    await recoverEventTransaction(missionId);
+    await measureStoragePhase("recoverCommandInboxMigration", () =>
+      recoverCommandInboxMigration(missionId),
+    );
+    await measureStoragePhase("recoverRetentionTransaction", () =>
+      recoverRetentionTransaction(missionId),
+    );
+    await measureStoragePhase("recoverCommandAppendTransaction", () =>
+      recoverCommandAppendTransaction(missionId),
+    );
+    await measureStoragePhase("recoverCommandTransaction", () =>
+      recoverCommandTransaction(missionId),
+    );
+    await measureStoragePhase("recoverEventTransaction", () => recoverEventTransaction(missionId));
   };
 
   const retentionMayNeedCompaction = async (
@@ -762,9 +779,9 @@ export function createMissionControllerStore(options: {
 
   const compactRetentionUnlocked = async (
     missionId: string,
-    options: { readonly force?: boolean } = {},
+    options: { readonly force?: boolean; readonly state?: MissionAggregateState | undefined } = {},
   ): Promise<MissionRetentionReport> => {
-    const state = await readState(missionId);
+    const state = options.state ?? (await readState(missionId));
     if (!options.force && !(await retentionMayNeedCompaction(missionId, state))) {
       return {
         compacted: false,
@@ -1160,27 +1177,45 @@ export function createMissionControllerStore(options: {
       });
     },
     async coordinateSemanticWrite(input) {
-      const transaction = await prepareSemanticWrite(input);
-      try {
-        const result = await input.apply();
-        await checkpoint("semantic-write.mutation-commit");
-        await completeSemanticWrite({
-          missionId: input.missionId,
-          guard: input.guard,
-          transaction,
-        });
-        return result;
-      } catch (error) {
-        throw new MissionSemanticWritePendingError({ cause: error });
-      }
+      // The journal spans the Host mutation, so serialize its whole lifetime.
+      // The aggregate lock remains short-lived for Inbox and runtime events.
+      return await withFileLock(
+        semanticWriteLockPath(input.missionId),
+        async () => {
+          const transaction = await prepareSemanticWrite(input);
+          try {
+            const result = await input.apply();
+            await checkpoint("semantic-write.mutation-commit");
+            await completeSemanticWrite({
+              missionId: input.missionId,
+              guard: input.guard,
+              transaction,
+            });
+            return result;
+          } catch (error) {
+            throw new MissionSemanticWritePendingError({ cause: error });
+          }
+        },
+        { operation: "mission-semantic-write" },
+      );
     },
     async recoverSemanticWrite(input) {
-      const transaction = await readSemanticWriteForRecovery(input);
-      if (transaction === undefined) return undefined;
-      await input.replay(transaction.operation);
-      await checkpoint("semantic-write.mutation-commit");
-      await completeSemanticWrite({ missionId: input.missionId, guard: input.guard, transaction });
-      return transaction.operation;
+      return await withFileLock(
+        semanticWriteLockPath(input.missionId),
+        async () => {
+          const transaction = await readSemanticWriteForRecovery(input);
+          if (transaction === undefined) return undefined;
+          await input.replay(transaction.operation);
+          await checkpoint("semantic-write.mutation-commit");
+          await completeSemanticWrite({
+            missionId: input.missionId,
+            guard: input.guard,
+            transaction,
+          });
+          return transaction.operation;
+        },
+        { operation: "mission-semantic-write-recovery" },
+      );
     },
     async reserveRunRequest(input) {
       return await withFileLock(
@@ -1369,8 +1404,16 @@ export function createMissionControllerStore(options: {
         });
         await writeJsonAtomically(commandAppendTransactionPath(input.missionId), transaction);
         await checkpoint("command-append.prepare");
-        await recoverCommandAppendTransaction(input.missionId);
-        await compactRetentionUnlocked(input.missionId);
+        const committedState = await measureStoragePhase("command_append_commit", async () =>
+          recoverCommandAppendTransaction(input.missionId, {
+            transaction,
+            state,
+            commands: await readCommands(input.missionId),
+          }),
+        );
+        await measureStoragePhase("retention", () =>
+          compactRetentionUnlocked(input.missionId, { state: committedState }),
+        );
         return { command, operation };
       });
     },

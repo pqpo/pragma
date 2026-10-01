@@ -55,6 +55,7 @@ export interface DesktopMemoryContextStoreViewInput {
 export type DesktopMemoryContextStoreViewStatus = "available" | "empty" | "recall_disabled";
 
 export interface DesktopMemoryPlane {
+  readonly canonical: import("@pragma/core").CanonicalEventFeed;
   readonly executionStore: FileExecutionStore;
   readonly policies: MemoryPolicyStore;
   readonly extractorProfiles: MemoryExtractorProfileStore;
@@ -133,6 +134,14 @@ export interface DesktopMemoryPlane {
   deleteExecutionState(executionIds: readonly string[]): Promise<void>;
   maintainStorage(): Promise<void>;
   getStatus(): Promise<{
+    readonly hostDelivery?:
+      | readonly {
+          moduleId: string;
+          state: "healthy" | "degraded";
+          pending: number;
+          errorCode?: string | undefined;
+        }[]
+      | undefined;
     readonly state: "running" | "stopped" | "degraded";
     readonly feed: import("@pragma/core").CanonicalEventFeedDiagnostic & {
       readonly safeThroughSequence: number;
@@ -167,6 +176,15 @@ export async function createDesktopMemoryPlane(options: {
   readonly logger: PragmaLogger;
   readonly pollIntervalMs?: number | undefined;
   readonly onTick?: (() => Promise<void>) | undefined;
+  readonly deliverySafeThrough?: (() => number) | undefined;
+  readonly hostDeliveryDiagnostics?:
+    | (() => readonly {
+        moduleId: string;
+        state: "healthy" | "degraded";
+        pending: number;
+        errorCode?: string | undefined;
+      }[])
+    | undefined;
   readonly secrets?: import("@pragma/local-host").SecretStore | undefined;
   readonly knowledgeLearningSink?: KnowledgeLearningSink | undefined;
   readonly skillLearningSink?: SkillLearningSink | undefined;
@@ -277,7 +295,10 @@ export async function createDesktopMemoryPlane(options: {
         ...registry.list().map((module) => module.descriptor.id),
       ];
       const checkpoints = await Promise.all(consumerIds.map(async (id) => await state.read(id)));
-      safeThroughSequence = Math.min(...checkpoints.map((checkpoint) => checkpoint.sequence));
+      safeThroughSequence = Math.min(
+        ...checkpoints.map((checkpoint) => checkpoint.sequence),
+        options.deliverySafeThrough?.() ?? Number.POSITIVE_INFINITY,
+      );
       const feed = await canonical.maintain({
         safeThrough: { sequence: safeThroughSequence },
         retainAfter: new Date(
@@ -458,6 +479,7 @@ export async function createDesktopMemoryPlane(options: {
   };
 
   return {
+    canonical,
     executionStore,
     policies,
     extractorProfiles,
@@ -620,7 +642,7 @@ export async function createDesktopMemoryPlane(options: {
     },
     async deleteExecutionState(executionIds) {
       await cleanup.cleanup(executionIds);
-      await maintainStorage();
+      // Global retention belongs to the periodic background loop, not owner deletion.
     },
     async maintainStorage() {
       await maintainStorage();
@@ -735,11 +757,14 @@ export async function createDesktopMemoryPlane(options: {
             ? {}
             : { lastErrorCode: retrievalStatus.errorCode }),
         });
+      const hostDelivery = options.hostDeliveryDiagnostics?.() ?? [];
       const currentError = lastError ?? attentionError ?? retrievalError;
       return {
+        hostDelivery,
         state: stopped
           ? "stopped"
           : currentError !== undefined ||
+              hostDelivery.some((item) => item.state === "degraded") ||
               delivery.quarantined > 0 ||
               blockedBytes > 0 ||
               modules.some((module) => module.status !== "healthy")

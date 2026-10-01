@@ -5,7 +5,17 @@ import {
   builtInAgentResource,
   createPragmaManagementTools,
 } from "@pragma/built-in-agents";
-import { copyFile, mkdir, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
+import {
+  copyFile,
+  mkdir,
+  mkdtemp,
+  open,
+  readFile,
+  readdir,
+  rm,
+  stat,
+  writeFile,
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -197,7 +207,12 @@ function createTestMissionControl(input: {
     missionsPath: input.missionsPath,
     missionPath: input.missions.storagePath,
   });
-  const ownerScope = createMissionOwnerScope({ controller });
+  const ownerScope = createMissionOwnerScope({
+    controller,
+    // Match Desktop's replay-capable owner; raw MissionStore fixtures have
+    // no controller semantic journal to replay.
+    recoverSemanticWrite: async () => undefined,
+  });
   const adapter = input.runner.createLocalHostMissionControlAdapter();
   const control = createMissionControlApplication({
     controller,
@@ -1107,6 +1122,17 @@ describe("MissionRunner", { timeout: 30_000 }, () => {
       const root = await mkdtemp(join(tmpdir(), "pragma-mission-startup-queue-"));
       temporaryPaths.push(root);
       const pragmaHome = join(root, "state");
+      const largeData = join(pragmaHome, "data", "over-advisory-limit");
+      if (entry === "direct") {
+        // Sparse storage exceeds the previous 6 GiB quota without allocating that disk space.
+        await mkdir(join(pragmaHome, "data"), { recursive: true });
+        const file = await open(largeData, "w");
+        try {
+          await file.truncate(7 * 1024 ** 3);
+        } finally {
+          await file.close();
+        }
+      }
       const project = createPragmaProjectStore({ projectsPath: join(root, "projects") });
       const snapshot = await project.publish({
         expectedRevision: 0,
@@ -1146,14 +1172,15 @@ describe("MissionRunner", { timeout: 30_000 }, () => {
         },
         mapEvent: () => ({ events: [] }),
       });
-      const capacityCheck = vi
-        .fn(async () => undefined)
-        .mockImplementationOnce(async () => {
-          markAdmissionStarted();
-          await admissionGate;
-        });
+      const startupReadiness = vi.fn(async () => {
+        markAdmissionStarted();
+        await admissionGate;
+      });
+      const readinessCheck = vi
+        .fn(async (): Promise<void> => undefined)
+        .mockImplementationOnce(startupReadiness);
       if (entry === "direct-rejection") {
-        capacityCheck.mockImplementationOnce(async () => {
+        readinessCheck.mockImplementationOnce(async () => {
           throw new Error("One rejected send");
         });
       }
@@ -1165,7 +1192,7 @@ describe("MissionRunner", { timeout: 30_000 }, () => {
         capabilitiesPath: join(root, "capabilities"),
         pragmaHome,
         runtimes: createStaticRuntimeResolver({ runtimes: [runtime], defaultRuntimeId: "fake" }),
-        assertStorageWriteAllowed: capacityCheck,
+        assertExecutorReady: readinessCheck,
       });
       const queuePatches: MissionChatUpdate[] = [];
       runner.subscribeChat(({ update }) => queuePatches.push(update));
@@ -1184,6 +1211,13 @@ describe("MissionRunner", { timeout: 30_000 }, () => {
       // resolving and starting the attached initial run.
       const initialRun = entry === "before-run" ? undefined : runner.run(mission.id);
       await admissionStarted;
+      if (entry === "direct") {
+        // Preparing work is busy even before a warm Session exists.
+        expect(runner.getResourceDiagnostics()).toEqual({
+          warmSessionCount: 0,
+          busyMissionCount: 1,
+        });
+      }
       const initial = initialRun ?? runner.run(mission.id);
       const submissions = messages.map(async (message, index) => {
         if (index === 0 && earlySend !== undefined) return await earlySend;
@@ -1209,7 +1243,7 @@ describe("MissionRunner", { timeout: 30_000 }, () => {
         }
         // Give concurrent file-backed callers time to reach the startup gate.
         await new Promise((resolve) => setTimeout(resolve, 100));
-        expect(capacityCheck).toHaveBeenCalledTimes(1);
+        expect(startupReadiness).toHaveBeenCalledTimes(1);
         expect((await missions.get(mission.id)).execution).toBeUndefined();
         releaseAdmission();
         const running = await initial;
@@ -1272,6 +1306,7 @@ describe("MissionRunner", { timeout: 30_000 }, () => {
           ...expectedMessages.map((message) => message.content),
         ]);
         expect(createSession).toHaveBeenCalledTimes(1);
+        if (entry === "direct") expect((await stat(largeData)).size).toBe(7 * 1024 ** 3);
       } finally {
         releaseAdmission();
         releaseFirstTurn();
@@ -1322,7 +1357,7 @@ describe("MissionRunner", { timeout: 30_000 }, () => {
         runtimes: [runtime],
         defaultRuntimeId: "fake",
       }),
-      assertStorageWriteAllowed: async () => undefined,
+      assertExecutorReady: async () => undefined,
       hostContextStores: [{ namespace: "memory", store: new InMemoryContextStore() }],
       onExecutionLinked,
       onExecutionContextLinked,
@@ -1427,7 +1462,7 @@ describe("MissionRunner", { timeout: 30_000 }, () => {
       runtimes: createStaticRuntimeResolver({ runtimes: [runtime], defaultRuntimeId: "fake" }),
       hostContextStores: async () =>
         memoryEnabled ? [{ namespace: "memory", store: memoryStore }] : [],
-      assertStorageWriteAllowed: async () => undefined,
+      assertExecutorReady: async () => undefined,
     });
 
     await runner.run(mission.id);
@@ -1525,7 +1560,7 @@ describe("MissionRunner", { timeout: 30_000 }, () => {
       runtimes: createStaticRuntimeResolver({ runtimes: [runtime], defaultRuntimeId: "fake" }),
       hostContextStores: async () =>
         memoryEnabled ? [{ namespace: "memory", store: memoryStore }] : [],
-      assertStorageWriteAllowed: async () => undefined,
+      assertExecutorReady: async () => undefined,
     });
 
     await runner.run(mission.id);
@@ -1624,7 +1659,7 @@ describe("MissionRunner", { timeout: 30_000 }, () => {
       capabilitiesPath: join(root, "capabilities"),
       pragmaHome,
       runtimes: createStaticRuntimeResolver({ runtimes: [runtime], defaultRuntimeId: "fake" }),
-      assertStorageWriteAllowed: async () => undefined,
+      assertExecutorReady: async () => undefined,
     });
 
     await runner.run(mission.id);
@@ -1784,7 +1819,7 @@ describe("MissionRunner", { timeout: 30_000 }, () => {
       capabilitiesPath: join(root, "capabilities"),
       pragmaHome,
       runtimes: createStaticRuntimeResolver({ runtimes: [runtime], defaultRuntimeId: "fake" }),
-      assertStorageWriteAllowed: async () => undefined,
+      assertExecutorReady: async () => undefined,
     });
 
     await runner.run(mission.id);
@@ -2008,7 +2043,7 @@ describe("MissionRunner", { timeout: 30_000 }, () => {
         capabilitiesPath: join(root, "capabilities"),
         pragmaHome,
         runtimes,
-        assertStorageWriteAllowed: async () => undefined,
+        assertExecutorReady: async () => undefined,
         compileSystemExecutor: async ({ mission, knowledgeRevisions }) => {
           const expert = await defineExpert({
             id:
@@ -2206,7 +2241,7 @@ describe("MissionRunner", { timeout: 30_000 }, () => {
       capabilitiesPath: join(root, "capabilities"),
       pragmaHome,
       runtimes: createStaticRuntimeResolver({ runtimes: [runtime], defaultRuntimeId: "fake" }),
-      assertStorageWriteAllowed: async () => undefined,
+      assertExecutorReady: async () => undefined,
       compileSystemExecutor: async ({ mission: current, knowledgeRevisions }) => {
         if (knowledgeRevisions === undefined) {
           throw new Error("Knowledge revisions are unavailable.");
@@ -2401,7 +2436,7 @@ describe("MissionRunner", { timeout: 30_000 }, () => {
       capabilitiesPath: join(root, "capabilities"),
       pragmaHome,
       runtimes: createStaticRuntimeResolver({ runtimes: [runtime], defaultRuntimeId: "fake" }),
-      assertStorageWriteAllowed: async () => undefined,
+      assertExecutorReady: async () => undefined,
       compileSystemExecutor: async ({ mission: current, knowledgeRevisions }) => {
         if (knowledgeRevisions === undefined)
           throw new Error("Knowledge revisions are unavailable.");
@@ -2629,6 +2664,10 @@ describe("MissionRunner", { timeout: 30_000 }, () => {
         dependencies: [],
       };
     });
+    let failDeletionPreparation = true;
+    const deletionReads: string[] = [];
+    const fencedExecutions: string[] = [];
+    const deletionStore = createFileExecutionStore({ pragmaHome: join(root, "state") });
     const createRunner = (missionStore = missions) =>
       createMissionRunner({
         missions: missionStore,
@@ -2637,14 +2676,32 @@ describe("MissionRunner", { timeout: 30_000 }, () => {
         capabilityCredentials: {} as CapabilityCredentialStore,
         capabilitiesPath: join(root, "capabilities"),
         pragmaHome: join(root, "state"),
-        executionStore: createFileExecutionStore({ pragmaHome: join(root, "state") }),
+        executionStore: deletionStore,
+        prepareOwnerDeletion: async ({ executionIds }) => {
+          if (failDeletionPreparation) throw new Error("deletion accounting unavailable");
+          for (const executionId of executionIds) {
+            expect(await deletionStore.readEvents(executionId)).not.toHaveLength(0);
+            await deletionStore.listInvocations(executionId);
+            deletionReads.push(executionId);
+          }
+        },
+        onOwnerDeleting: async ({ executionIds }) => {
+          const paths = new PragmaPaths({ pragmaHome: join(root, "state") });
+          for (const executionId of executionIds) {
+            const owner = JSON.parse(
+              await readFile(join(paths.executionLock(executionId), "owner.json"), "utf8"),
+            );
+            expect(owner.operation).toBe("execution.deletion-barrier");
+            fencedExecutions.push(executionId);
+          }
+        },
         runtimes: createStaticRuntimeResolver({
           runtimes: [runtime],
           defaultRuntimeId: "fake",
         }),
         compileSystemExecutor,
         getSystemExecutorFingerprint: () => `definition-${definitionVersion}`,
-        assertStorageWriteAllowed: async () => undefined,
+        assertExecutorReady: async () => undefined,
       });
     let activeMissions = missions;
     let runner = createRunner();
@@ -2693,7 +2750,19 @@ describe("MissionRunner", { timeout: 30_000 }, () => {
         expect.objectContaining({ kind: "assistant", content: "successor-read-ok" }),
       ]),
     });
+    await expect(runner.delete(mission.id)).rejects.toThrow("deletion accounting unavailable");
+    await expect(activeMissions.get(mission.id)).resolves.toMatchObject({ id: mission.id });
+    await expect(deletionStore.get(originalExecutionId)).resolves.toBeDefined();
+    expect(fencedExecutions).toEqual([]);
+    failDeletionPreparation = false;
+    const deletionStartedAt = performance.now();
     await runner.delete(mission.id);
+    const deletionElapsedMs = performance.now() - deletionStartedAt;
+    expect(deletionElapsedMs).toBeLessThan(2_000);
+    expect(deletionReads).toContain(originalExecutionId);
+    expect(deletionReads).toHaveLength(2);
+    expect(fencedExecutions).toEqual(deletionReads);
+    await expect(deletionStore.get(originalExecutionId)).resolves.toBeUndefined();
     await expect(
       readFile(
         join(activeMissions.storagePath!(mission.id), "board", "shared", originalBoardOutput.id),
@@ -2833,7 +2902,7 @@ describe("MissionRunner", { timeout: 30_000 }, () => {
       capabilitiesPath: join(root, "capabilities"),
       pragmaHome: join(root, "state"),
       runtimes: createStaticRuntimeResolver({ runtimes: [runtime], defaultRuntimeId: "fake" }),
-      assertStorageWriteAllowed: async () => undefined,
+      assertExecutorReady: async () => undefined,
     });
 
     await runner.delete(mission.id);
@@ -2907,7 +2976,7 @@ describe("MissionRunner", { timeout: 30_000 }, () => {
       capabilitiesPath: join(root, "capabilities"),
       pragmaHome: join(root, "state"),
       runtimes: createStaticRuntimeResolver({ runtimes: [runtime], defaultRuntimeId: "fake" }),
-      assertStorageWriteAllowed: async () => undefined,
+      assertExecutorReady: async () => undefined,
       onOwnerDeleting: async () => {
         throw new Error("stop before Mission ownership is removed");
       },
@@ -5693,7 +5762,7 @@ describe("MissionRunner", { timeout: 30_000 }, () => {
     30_000,
   );
 
-  it.each(["direct", "queued", "inbox"] as const)(
+  it.each(["direct", "queued", "inbox", "inbox-retry"] as const)(
     "preserves steer submission time and avoids interrupted fallback (%s)",
     async (mode) => {
       const root = await mkdtemp(join(tmpdir(), "pragma-mission-queued-steer-"));
@@ -5763,11 +5832,11 @@ describe("MissionRunner", { timeout: 30_000 }, () => {
         mapEvent: () => ({ events: [] }),
         closeSession: () => undefined,
       });
-      const capacityCheck = vi.fn(async () => undefined);
+      const readinessCheck = vi.fn(async () => undefined);
       const runner = createMissionRunner({
         missions,
         project,
-        assertStorageWriteAllowed: capacityCheck,
+        assertExecutorReady: readinessCheck,
         capabilityStore: {} as CapabilityStore,
         capabilityCredentials: {} as CapabilityCredentialStore,
         capabilitiesPath: join(root, "capabilities"),
@@ -5780,13 +5849,24 @@ describe("MissionRunner", { timeout: 30_000 }, () => {
       const activeExecutionId = (await missions.get(mission.id)).execution!.id;
       const requestId = "00000000-0000-4000-8000-000000000109";
       const control =
-        mode === "inbox"
+        mode === "inbox" || mode === "inbox-retry"
           ? createTestMissionControl({
               missionsPath: join(root, "missions"),
               missions,
               runner,
             })
           : undefined;
+      if (mode === "inbox-retry") {
+        const appendUserMessage = missions.appendUserMessage.bind(missions);
+        let failOnce = true;
+        vi.spyOn(missions, "appendUserMessage").mockImplementation(async (id, message) => {
+          if (message.id === requestId && failOnce) {
+            failOnce = false;
+            throw new Error("Timeline temporarily unavailable after Core acceptance");
+          }
+          return await appendUserMessage(id, message);
+        });
+      }
       if (control !== undefined) await control.startOwner(mission.id);
       let releaseAdmission = () => {};
       let blocker: Promise<unknown> | undefined;
@@ -5800,7 +5880,7 @@ describe("MissionRunner", { timeout: 30_000 }, () => {
         const gate = new Promise<void>((resolve) => {
           releaseAdmission = resolve;
         });
-        capacityCheck.mockImplementationOnce(async () => {
+        readinessCheck.mockImplementationOnce(async () => {
           admissionEntered();
           await gate;
         });
@@ -5813,7 +5893,7 @@ describe("MissionRunner", { timeout: 30_000 }, () => {
       }
       try {
         let send: Promise<unknown>;
-        if (mode === "inbox") {
+        if (mode === "inbox" || mode === "inbox-retry") {
           submittedAt = new Date().toISOString();
           const submission = await control!.submit({
             missionId: mission.id,
@@ -5852,7 +5932,8 @@ describe("MissionRunner", { timeout: 30_000 }, () => {
         }
         releaseAdmission();
         await blocker;
-        if (mode === "inbox") await expect(send).resolves.toMatchObject({ state: "applied" });
+        if (mode === "inbox" || mode === "inbox-retry")
+          await expect(send).resolves.toMatchObject({ state: "applied" });
         else
           await expect(send).resolves.toMatchObject({
             effectiveMode: mode === "direct" ? "steer" : "enqueue",
@@ -5881,7 +5962,8 @@ describe("MissionRunner", { timeout: 30_000 }, () => {
         if (mode !== "queued") {
           expect(steerEntry.createdAt <= deliveryStartedAt!).toBe(true);
           expect(steerEntry.createdAt < waitingReplyCreatedAt!).toBe(true);
-          if (mode === "inbox") expect(steerEntry.createdAt).toBe(submittedAt);
+          if (mode === "inbox" || mode === "inbox-retry")
+            expect(steerEntry.createdAt).toBe(submittedAt);
           const ordered = orderMissionChatEntries(chat.entries);
           expect(ordered.findIndex((entry) => entry.id === requestId)).toBeLessThan(
             ordered.findIndex(
@@ -7167,7 +7249,7 @@ describe("MissionRunner", { timeout: 30_000 }, () => {
       capabilitiesPath: join(root, "capabilities"),
       pragmaHome,
       ownerScope,
-      assertStorageWriteAllowed: async () => undefined,
+      assertExecutorReady: async () => undefined,
       runtimes: createStaticRuntimeResolver({ runtimes: [runtime], defaultRuntimeId: "fake" }),
     });
     const descriptor = {

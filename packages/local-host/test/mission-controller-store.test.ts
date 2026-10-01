@@ -657,6 +657,70 @@ describe("MissionControllerStore", () => {
     }
   });
 
+  it("serializes Host mutations and never replays an in-flight semantic journal", async () => {
+    const root = await temporaryRoot();
+    const store = createMissionControllerStore({ missionsPath: join(root, "missions") });
+    const otherStore = createMissionControllerStore({ missionsPath: join(root, "missions") });
+    const guard = await store.claim({
+      missionId,
+      claimId: "00000000-0000-4000-8000-000000000034",
+      leaseMs: 10_000,
+    });
+    let started!: () => void;
+    let release!: () => void;
+    const entered = new Promise<void>((resolve) => {
+      started = resolve;
+    });
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const writes: string[] = [];
+    const first = store.coordinateSemanticWrite({
+      missionId,
+      guard,
+      operation: { name: "mission.execution-projection.write", input: {} },
+      eventType: "mission.execution-projection.written",
+      eventData: {},
+      apply: async () => {
+        started();
+        await gate;
+        writes.push("history");
+      },
+    });
+    await entered;
+    const replay = vi.fn(async () => undefined);
+    const recovery = otherStore.recoverSemanticWrite({ missionId, guard, replay });
+    const second = otherStore.coordinateSemanticWrite({
+      missionId,
+      guard,
+      operation: { name: "mission.timeline.user-message.append", input: { content: "终止吧" } },
+      eventType: "mission.timeline.user-message.appended",
+      eventData: {},
+      apply: async () => {
+        writes.push("steer");
+      },
+    });
+    // Inbox events must still advance while the Host mutation waits.
+    await store.write({
+      missionId,
+      guard,
+      operation: async ({ appendEvent }) => {
+        await appendEvent("runtime.event", {});
+      },
+    });
+    expect(writes).toEqual([]);
+    expect(replay).not.toHaveBeenCalled();
+    release();
+    await Promise.all([first, second, recovery]);
+    expect(writes).toEqual(["history", "steer"]);
+    expect(replay).not.toHaveBeenCalled();
+    expect((await store.readSnapshot({ missionId })).events.map((event) => event.type)).toEqual([
+      "runtime.event",
+      "mission.execution-projection.written",
+      "mission.timeline.user-message.appended",
+    ]);
+  });
+
   it("commits a semantic-write event after concurrently advanced Inbox poller events", async () => {
     const root = await temporaryRoot();
     const store = createMissionControllerStore({ missionsPath: join(root, "missions") });

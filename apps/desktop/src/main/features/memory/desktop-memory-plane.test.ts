@@ -84,6 +84,20 @@ describe("DesktopMemoryPlane", { timeout: 30_000 }, () => {
     await plane.stop();
   });
 
+  it("cleans only the deleted owner's transient state without global retention maintenance", async () => {
+    const pragmaHome = await temporaryRoot("pragma-desktop-memory-delete-");
+    const plane = await createDesktopMemoryPlane({
+      pragmaHome,
+      logger: createPragmaLogger(undefined, { component: "desktop.memory-test" }),
+    });
+    const maintain = vi.spyOn(plane.canonical, "maintain");
+    await plane.deleteExecutionState(["deleted-execution"]);
+    expect(maintain).not.toHaveBeenCalled();
+    await plane.maintainStorage();
+    expect(maintain).toHaveBeenCalledOnce();
+    await plane.stop();
+  });
+
   it("wakes the outer poll loop immediately after a policy change", async () => {
     const pragmaHome = await temporaryRoot("pragma-desktop-memory-wake-");
     const plane = await createDesktopMemoryPlane({

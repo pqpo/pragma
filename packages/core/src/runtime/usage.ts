@@ -1,21 +1,27 @@
-import type { AgentMessageUsage } from "@pragma/shared";
-import type { RuntimeModelSelection } from "./runtime-adapter.ts";
+import { z } from "zod";
+import {
+  AgentMessageUsageSchema,
+  RuntimeModelSelectionSchema,
+  type AgentMessageUsage,
+} from "@pragma/shared";
 
-export interface RuntimeUsageObservation {
-  readonly observationId: string;
-  readonly occurredAt: string;
-  readonly executionId: string;
-  readonly invocationId: string;
-  readonly contextId: string;
-  readonly runId: string;
-  readonly runtimeId: string;
-  readonly modelSelection?: RuntimeModelSelection | undefined;
-  readonly executor: {
-    readonly id: string;
-    readonly name: string;
-  };
-  readonly usage: AgentMessageUsage;
-}
+export const RuntimeUsageObservationSchema = z.object({
+  observationId: z.string().min(1),
+  occurredAt: z.string().datetime(),
+  executionId: z.string().min(1),
+  invocationId: z.string().min(1),
+  contextId: z.string().min(1),
+  runId: z.string().min(1),
+  runtimeId: z.string().min(1),
+  modelSelection: RuntimeModelSelectionSchema.optional(),
+  executor: z.object({ id: z.string().min(1), name: z.string().min(1) }),
+  usage: AgentMessageUsageSchema,
+});
+export type RuntimeUsageObservation = z.infer<typeof RuntimeUsageObservationSchema>;
+export const RuntimeUsageObservedSchema = z.object({
+  schemaVersion: z.literal("pragma.runtime-usage-observed/v1"),
+  observation: RuntimeUsageObservationSchema,
+});
 
 /**
  * Host-owned accounting boundary. Core emits observations but never persists

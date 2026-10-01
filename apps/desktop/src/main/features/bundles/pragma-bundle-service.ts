@@ -346,7 +346,13 @@ export interface PragmaBundleService {
   recheckInstallation(installationId: string): Promise<PragmaBundleInstallation>;
   resolveInstallation(input: ResolvePragmaBundleInstallation): Promise<PragmaBundleInstallation>;
   discardInstallation(installationId: string): Promise<void>;
-  getReadinessForRef(ref: string): Promise<readonly PragmaBundleDependencyReadiness[]>;
+  getReadinessForRef(
+    ref: string,
+    input?: {
+      readonly snapshot: DesktopProjectSnapshot;
+      readonly runtimes: readonly DesktopRuntimeAvailability[];
+    },
+  ): Promise<readonly PragmaBundleDependencyReadiness[]>;
   isRefPending(ref: string): Promise<boolean>;
 }
 
@@ -739,6 +745,7 @@ export function createPragmaBundleService(options: {
     installation: PragmaBundleInstallation,
     snapshot: DesktopProjectSnapshot,
     checkContextContent = true,
+    runtimes?: readonly DesktopRuntimeAvailability[],
   ): Promise<{
     readonly readiness: PragmaBundleInstallation["readiness"];
     readonly pending: PragmaBundleInstallation["pending"];
@@ -750,7 +757,7 @@ export function createPragmaBundleService(options: {
       capabilities: options.capabilities,
       contextStores: options.contextStores,
       plugins: options.plugins,
-      runtimes: await options.getRuntimes(),
+      runtimes: runtimes ?? (await options.getRuntimes()),
       checkContextContent,
     });
     const secretReadiness = await Promise.all(
@@ -2655,10 +2662,10 @@ export function createPragmaBundleService(options: {
       await discardCreatedInstallation(installation);
     },
 
-    async getReadinessForRef(ref) {
+    async getReadinessForRef(ref, input) {
       const parsed = PragmaInvocableResourceRefSchema.safeParse(ref);
       if (!parsed.success) return [];
-      const snapshot = await options.project.get();
+      const snapshot = input?.snapshot ?? (await options.project.get());
       const root = snapshot.resources.find(
         (resource): resource is PragmaInvocableResource =>
           canonicalPragmaResourceRef(resource) === parsed.data &&
@@ -2678,7 +2685,8 @@ export function createPragmaBundleService(options: {
         const readiness = await Promise.all(
           installations.map(async (installation) => {
             const current = isRecheckableInstallation(installation)
-              ? (await evaluateInstallation(installation, snapshot, false)).readiness
+              ? (await evaluateInstallation(installation, snapshot, false, input?.runtimes))
+                  .readiness
               : mergeReadiness(
                   installation.readiness,
                   installation.pending.map(readinessFromPending),

@@ -34,7 +34,6 @@ import {
   ok,
   moveOwnedStorageToTrash,
   runtimeSessionDeletionSources,
-  assertStorageWriteAllowed,
   encodePragmaPathSegment,
   type ExecutionWorkRecord,
   type FileExecutionStore,
@@ -59,7 +58,7 @@ import {
   LEGACY_EXECUTION_OUTPUT_NAMESPACE,
   LegacyExecutionOutputContextStore,
 } from "@pragma/context-filesystem";
-import { createMissionBoard } from "@pragma/local-host";
+import { createMissionBoard, MissionSemanticWritePendingError } from "@pragma/local-host";
 import type {
   InvocableResource,
   CompiledResource,
@@ -249,6 +248,8 @@ async function collectMissionExecutionIds(
 interface ActiveMissionExecution {
   readonly handle: DesktopExecutionHandle;
   readonly settlement: Promise<void>;
+  readonly admissionReady: Promise<void>;
+  readonly terminalPublished: boolean;
   readonly audience: MissionSurfaceAudience;
   readonly live: LiveMissionChat;
   readonly releaseAfterHumanCheckpoint: () => Promise<void>;
@@ -434,11 +435,22 @@ export function createMissionRunner(options: {
     (() => readonly MissionExecutorPresentationMetadata[]) | undefined;
   readonly getSystemExecutorResource?:
     ((ref: string) => PragmaInvocableResource | undefined) | undefined;
-  readonly assertStorageWriteAllowed?: (() => Promise<void>) | undefined;
   readonly pragmaManagementPorts?:
     (() => Omit<PragmaManagementToolPorts, "knowledgeRevisions">) | undefined;
+  readonly registerExecutionDelivery?:
+    ((mission: Mission, executionId: string, requestId: string) => void) | undefined;
+  readonly deferTerminalProjection?: boolean | undefined;
+  readonly wakeExecutionDelivery?: (() => void) | undefined;
   readonly assertExecutorReady?: ((ref: string) => void | Promise<void>) | undefined;
   readonly onStorageTrashed?: (() => void) | undefined;
+  /** Stop owner consumers and settle accounting before acquiring Execution locks. */
+  readonly prepareOwnerDeletion?:
+    | ((input: {
+        readonly mission: Mission;
+        readonly executionIds: readonly string[];
+      }) => Promise<void>)
+    | undefined;
+  /** Delete transient state while canonical delivery and Execution writes are fenced. */
   readonly onOwnerDeleting?:
     | ((input: {
         readonly mission: Mission;
@@ -490,6 +502,7 @@ export function createMissionRunner(options: {
     executionId: string,
     requestId: string,
   ): Promise<void> => {
+    options.registerExecutionDelivery?.(mission, executionId, requestId);
     try {
       await retryMissionEventProjection(async () =>
         options.onExecutionLinked?.({ mission, executionId, requestId }),
@@ -937,28 +950,22 @@ export function createMissionRunner(options: {
           options.usage === undefined
             ? undefined
             : {
-                preview: async (observation) => {
-                  const currentMission = await options.missions.get(mission.id);
-                  const names = await withOpenPragmaProjectRevision(
-                    options.project,
-                    currentMission.project.revision,
-                    async (project) =>
-                      new Map(
-                        project
-                          .listResources()
-                          .map(
-                            (resource) => [resource.metadata.id, resource.metadata.name] as const,
-                          ),
-                      ),
-                  );
-                  names.set(currentMission.executor.ref, currentMission.executor.name);
+                preview: (observation) => {
+                  // Live accounting is provisional. Durable enrichment runs in the consumer.
                   options.usage!.preview(observation, {
-                    mission: { id: currentMission.id, title: currentMission.title },
-                    invocations: await executionStore.listInvocations(observation.executionId),
-                    names,
+                    mission: { id: mission.id, title: mission.title },
+                    invocations: [],
+                    names: new Map([
+                      [observation.executor.id, observation.executor.name],
+                      [mission.executor.ref, mission.executor.name],
+                    ]),
                   });
                 },
                 record: async (observation) => {
+                  if (options.deferTerminalProjection) {
+                    options.wakeExecutionDelivery?.();
+                    return;
+                  }
                   const currentMission = await options.missions.get(mission.id);
                   const names = await withOpenPragmaProjectRevision(
                     options.project,
@@ -1419,34 +1426,50 @@ export function createMissionRunner(options: {
     audience: MissionSurfaceAudience,
     attachNextTurn = true,
     userVisibleOutput = false,
+    onDetached?: () => void,
   ): Promise<void> => {
     clearHumanInteractionProjection(id, handle.executionId);
     if (lifecycleService.active(id)?.handle !== handle) {
       await expectedLive.close();
+      onDetached?.();
       return;
     }
     lifecycleService.deleteActive(id);
     await chatService.closeLiveIfCurrent(id, expectedLive);
     // A queued turn can install its projection while the old subscriptions close.
-    if (lifecycleService.hasActive(id) || chatService.live(id) !== undefined) return;
+    if (lifecycleService.hasActive(id) || chatService.live(id) !== undefined) {
+      onDetached?.();
+      return;
+    }
     workService.clearLive(id);
     chatService.clearContextWindow(id);
     invalidateChat(id, audience, userVisibleOutput ? { userVisibleOutput: true } : {});
     invalidateWork(id, audience);
+    onDetached?.();
     if (attachNextTurn) await attachNextSessionTurn(id, audience);
   };
 
-  const awaitTerminalLifecycleSettlement = async (mission: Mission): Promise<boolean> => {
+  const awaitTerminalLifecycleSettlement = async (
+    mission: Mission,
+    admissionOnly = false,
+  ): Promise<boolean> => {
+    const active = lifecycleService.active(mission.id);
     if (
       mission.execution === undefined ||
-      ["queued", "running", "waiting"].includes(mission.execution.status)
-    ) {
+      active === undefined ||
+      active.handle.executionId !== mission.execution.id
+    )
       return false;
-    }
-    const active = lifecycleService.active(mission.id);
-    if (active === undefined || active.handle.executionId !== mission.execution.id) return false;
+    if (
+      ["queued", "running", "waiting"].includes(mission.execution.status) &&
+      !(admissionOnly && active.terminalPublished)
+    )
+      return false;
     const startedAt = performance.now();
-    const outcome = await settlementOutcomeWithin(active.settlement, 5_000);
+    const outcome = await settlementOutcomeWithin(
+      admissionOnly ? active.admissionReady : active.settlement,
+      5_000,
+    );
     logMissionPhase(logger, mission.id, "terminal_lifecycle_settlement", startedAt, startedAt, {
       outcome: outcome.status,
     });
@@ -2345,6 +2368,13 @@ export function createMissionRunner(options: {
     let settlementKind: "terminal" | "checkpointed" = "terminal";
     let terminalPublishedAt: number | undefined;
     let terminalInvalidationHasUserVisibleOutput = false;
+    let resolveAdmission = (): void => undefined;
+    let rejectAdmission: (error: unknown) => void = () => undefined;
+    const admissionReady = new Promise<void>((resolve, reject) => {
+      resolveAdmission = resolve;
+      rejectAdmission = reject;
+    });
+    void admissionReady.catch(() => undefined);
     const settlement = observeMissionExecution(
       options.missions,
       missionId,
@@ -2376,6 +2406,10 @@ export function createMissionRunner(options: {
               status: terminal.status,
             },
           );
+        }
+        if (options.deferTerminalProjection) {
+          options.wakeExecutionDelivery?.();
+          return;
         }
         let canonicalProjectionFailure: unknown;
         try {
@@ -2412,7 +2446,7 @@ export function createMissionRunner(options: {
           );
           const projectionState = projectionResult.status;
           terminalInvalidationHasUserVisibleOutput ||= projectionResult.userVisibleOutput;
-          if (projectionState === "current") {
+          if (projectionState === "current" && !options.deferTerminalProjection) {
             try {
               await executionStore.archive(input.handle.executionId);
             } catch (error) {
@@ -2473,6 +2507,7 @@ export function createMissionRunner(options: {
           { error, missionId, executionId: input.handle.executionId, retryable: true },
         );
       },
+      options.deferTerminalProjection,
     )
       .then((kind) => {
         settlementKind = kind;
@@ -2493,8 +2528,10 @@ export function createMissionRunner(options: {
             audience,
             settlementKind !== "checkpointed",
             terminalInvalidationHasUserVisibleOutput,
+            () => resolveAdmission(),
           );
         } catch (error) {
+          rejectAdmission(error);
           logger.warn(
             "mission.execution_cleanup_failed",
             "Mission execution settled, but observer cleanup needs a later retry.",
@@ -2512,6 +2549,10 @@ export function createMissionRunner(options: {
     const activeExecution = {
       handle: input.handle,
       settlement,
+      admissionReady,
+      get terminalPublished() {
+        return terminalPublishedAt !== undefined;
+      },
       audience,
       live,
       releaseAfterHumanCheckpoint: async () => {
@@ -2676,10 +2717,6 @@ export function createMissionRunner(options: {
       missionId: id,
       kind: "initial",
     });
-    const capacityCheckStartedAt = performance.now();
-    await (options.assertStorageWriteAllowed?.() ??
-      assertStorageWriteAllowed(new PragmaPaths({ pragmaHome: options.pragmaHome })));
-    logMissionPhase(logger, id, "storage_capacity_check", capacityCheckStartedAt, acceptedAt);
     const missionLoadStartedAt = performance.now();
     const mission = await options.missions.get(id);
     assertRunGenerationCurrent(mission.id, runGeneration, "before loading its execution context");
@@ -3016,16 +3053,6 @@ export function createMissionRunner(options: {
       requestId: input.requestId,
       kind: "followup",
     });
-    const capacityCheckStartedAt = performance.now();
-    await (options.assertStorageWriteAllowed?.() ??
-      assertStorageWriteAllowed(new PragmaPaths({ pragmaHome: options.pragmaHome })));
-    logMissionPhase(
-      requestLogger,
-      input.id,
-      "storage_capacity_check",
-      capacityCheckStartedAt,
-      acceptedAt,
-    );
     const missionLoadStartedAt = performance.now();
     let phaseReadStartedAt = performance.now();
     let mission = await options.missions.get(input.id);
@@ -3036,7 +3063,7 @@ export function createMissionRunner(options: {
       phaseReadStartedAt,
       acceptedAt,
     );
-    if (await awaitTerminalLifecycleSettlement(mission)) {
+    if (await awaitTerminalLifecycleSettlement(mission, true)) {
       phaseReadStartedAt = performance.now();
       mission = await options.missions.get(input.id);
       logMissionPhase(
@@ -3296,12 +3323,18 @@ export function createMissionRunner(options: {
     // after Core accepts it so a rejected strict steer cannot leave an orphan
     // in the Mission timeline. Replaying an accepted Inbox command is safe:
     // both session.prompt and appendUserMessage are keyed by requestId.
-    const userMessage = await options.missions.appendUserMessage(mission.id, {
-      id: input.requestId,
-      content: input.content,
-      ...(promptAttachments.length === 0 ? {} : { attachments: [...promptAttachments] }),
-      createdAt: input.requestedAt,
-    });
+    const userMessage = await options.missions
+      .appendUserMessage(mission.id, {
+        id: input.requestId,
+        content: input.content,
+        ...(promptAttachments.length === 0 ? {} : { attachments: [...promptAttachments] }),
+        createdAt: input.requestedAt,
+      })
+      .catch((error: unknown) => {
+        // Core has accepted this request. Keep the Inbox applying so replay can
+        // repair its timeline without falsely rejecting an already delivered steer.
+        throw new MissionSemanticWritePendingError({ cause: error });
+      });
     if (userMessage.kind !== "user") {
       throw new Error("Mission user message persistence returned an invalid timeline record.");
     }
@@ -3607,6 +3640,24 @@ export function createMissionRunner(options: {
   };
 
   const deleteMission = async (id: string): Promise<void> => {
+    const deletionStartedAt = performance.now();
+    const measureDeletionPhase = async <T>(phase: string, action: () => Promise<T>): Promise<T> => {
+      const startedAt = performance.now();
+      let succeeded = false;
+      try {
+        const result = await action();
+        succeeded = true;
+        return result;
+      } finally {
+        logger.info("mission.delete_phase", "Mission deletion phase completed.", {
+          missionId: id,
+          phase,
+          succeeded,
+          durationMs: Math.round((performance.now() - startedAt) * 100) / 100,
+          elapsedMs: Math.round((performance.now() - deletionStartedAt) * 100) / 100,
+        });
+      }
+    };
     const mission = await options.missions.get(id);
     const active = lifecycleService.active(id);
     if (active !== undefined) {
@@ -3628,7 +3679,7 @@ export function createMissionRunner(options: {
       }
     }
     try {
-      await reconcileMissionUsage(mission);
+      await measureDeletionPhase("usage_reconciliation", () => reconcileMissionUsage(mission));
     } catch (error) {
       logger.warn(
         "mission.delete_usage_reconciliation_failed",
@@ -3636,11 +3687,15 @@ export function createMissionRunner(options: {
         { error, missionId: mission.id },
       );
     }
-    const executionIds = await collectMissionExecutionIds(options.missions, id);
+    const executionIds = await measureDeletionPhase("execution_inventory", () =>
+      collectMissionExecutionIds(options.missions, id),
+    );
     const sessionId = mission.execution?.sessionId;
     const session = sessionService.session(id);
     if (session !== undefined) {
-      const closed = await settlementOutcomeWithin(session.close("Mission deleted."), 15_000);
+      const closed = await measureDeletionPhase("session_close", () =>
+        settlementOutcomeWithin(session.close("Mission deleted."), 15_000),
+      );
       if (closed.status === "timed_out") {
         logger.warn(
           "mission.delete_session_close_uncertain",
@@ -3702,6 +3757,9 @@ export function createMissionRunner(options: {
         ? [{ draftId: mount.draftId, jobId: mount.revisionJobId }]
         : [],
     );
+    await measureDeletionPhase("owner_preparation", async () => {
+      await options.prepareOwnerDeletion?.({ mission, executionIds: [...executionIds] });
+    });
     const deleteOwnedStorage = async (canonicalHandoffFiles: readonly string[]): Promise<void> => {
       await options.onOwnerDeleting?.({ mission, executionIds: [...executionIds] });
       const paths = new PragmaPaths({ pragmaHome: options.pragmaHome });
@@ -3765,12 +3823,14 @@ export function createMissionRunner(options: {
       lifecycleService.clearControlIssue(id);
       options.onStorageTrashed?.();
     };
-    if (options.executionStore === undefined) await deleteOwnedStorage([]);
-    else
-      await options.executionStore.withCanonicalEventDeletion(
-        [...executionIds],
-        deleteOwnedStorage,
-      );
+    await measureDeletionPhase("owned_storage_transaction", async () => {
+      if (options.executionStore === undefined) await deleteOwnedStorage([]);
+      else
+        await options.executionStore.withCanonicalEventDeletion(
+          [...executionIds],
+          deleteOwnedStorage,
+        );
+    });
   };
 
   const getContextWindowState = async (
@@ -3857,8 +3917,6 @@ export function createMissionRunner(options: {
   };
 
   const compactMissionContext = async (id: string): Promise<MissionContextCompactionResult> => {
-    await (options.assertStorageWriteAllowed?.() ??
-      assertStorageWriteAllowed(new PragmaPaths({ pragmaHome: options.pragmaHome })));
     const mission = await options.missions.get(id);
     if (mission.executor.kind === "flow") {
       throw new Error("Flow missions do not expose a chat context to compact.");
@@ -5827,9 +5885,28 @@ export function createMissionRunner(options: {
 
   return {
     async get(id) {
-      return await options.missions.get(id);
+      const mission = await options.missions.get(id);
+      if (mission.execution !== undefined)
+        options.registerExecutionDelivery?.(
+          mission,
+          mission.execution.id,
+          mission.execution.inputMessageId,
+        );
+      return mission;
     },
     reconcileUsage,
+    coordinateMemoryTerminal: withMissionPromptAdmission,
+    markDeliveryDegraded(id) {
+      chatService.markSyncDegraded(id);
+      invalidateChat(id, "user");
+    },
+    markDeliveryRecovered(id) {
+      if (chatService.markSyncRecovered(id)) invalidateChat(id, "user");
+    },
+    notifyProjectionChanged(id) {
+      invalidateChat(id, "user");
+      invalidateWork(id, "user");
+    },
     async invalidateEstimatedContextWindows() {
       for (const mission of await options.missions.list()) invalidateChat(mission.id, "user");
     },
@@ -6071,7 +6148,10 @@ export function createMissionRunner(options: {
       }
     },
     getResourceDiagnostics() {
-      return { warmSessionCount: [...sessionService.sessionEntries()].length };
+      return {
+        warmSessionCount: [...sessionService.sessionEntries()].length,
+        busyMissionCount: lifecycleService.busyMissionCount(),
+      };
     },
     async releaseIdleSession(id, idleTimeoutMs, releaseOwner) {
       return await withMissionPromptAdmission(id, async () => {
@@ -6464,7 +6544,7 @@ function observeMissionHumanWaitingStatus(input: {
   };
 }
 
-async function persistMissionExecutionProjection(
+export async function persistMissionExecutionProjection(
   missions: MissionStore,
   executionStore: ReturnType<typeof createFileExecutionStore>,
   missionId: string,

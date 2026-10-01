@@ -113,6 +113,14 @@ queue patch 在同 revision 下优先于完整控制状态的规则保持不变�
 Desktop Memory data plane 使用现有 canonical handoff 作为持久 outbox。Execution commit 不等待
 canonical feed 投递完成；删除继续遵循 canonical deletion barrier，Host 关闭 feed 前 drain 本进程投递。
 失败 handoff 保留供原有恢复入口重放。CLI 单次进程的默认 inline 投递语义保持不变。
+Mission 删除先停止 Runtime/observer，再通过 `prepareOwnerDeletion` 停止产品投递、结算 Usage 和
+关闭 Attention；该阶段仍允许读取 Execution，不持有 Execution deletion barrier。Usage 补账按 Mission
+打开一次项目，并按 Execution 读取一次 Invocation，避免按每条 observation 重复构建归因信息。
+随后在 canonical delivery 与 Execution 锁内通过 `onOwnerDeleting` 清理关联 Memory transient state，
+并执行既有带 journal 的文件移动与 Runtime ownership catalog 提交。锁内回调不得重新调用获取同一
+Execution 锁的读取 API，否则会自锁直到默认十秒超时。准备失败保留 Mission 文件与修订 claim，允许重试。
+删除只等待目标 owner 的定向清理；全局 Feed/Module retention 维护继续由周期后台任务执行。
+
 每个 Execution 的后台投递请求合并成一个 worker 与一个错误观察者；新增提交只标记再次投递，
 积压存于耐久 handoff。事件批量提交失败也必须注销 Runtime submission，然后传播错误。
 

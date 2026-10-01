@@ -1,3 +1,7 @@
+import { createLocalHostUsageSink, type LocalHostUsageSink } from "@pragma/local-host";
+import { createMissionDeliveryRecovery } from "../features/missions/mission-delivery-recovery.ts";
+import { createMissionDelivery } from "../features/missions/mission-delivery.ts";
+import { persistMissionExecutionProjection } from "../features/missions/mission-runner-composition.ts";
 import { migrateLegacyRevisionProfile } from "../features/experts/legacy-revision-profile-migration.ts";
 import { createHomeProjectStore } from "../features/missions/home-project-store.ts";
 import {
@@ -13,11 +17,13 @@ import { createHash, randomUUID } from "node:crypto";
 import { mkdir } from "node:fs/promises";
 import { basename, join } from "node:path";
 
-import type { BrowserWindow } from "electron";
+import { powerMonitor, type BrowserWindow } from "electron";
+import { createStorageCapacityInspection } from "../platform/storage/storage-capacity-inspection.ts";
 import {
   createMcpToolRegistryPool,
   createRuntimeTokenCounter,
-  createStorageCapacityGuard,
+  RuntimeUsageObservedSchema,
+  type RuntimeUsageObservation,
   PragmaPaths,
   type PragmaLogger,
   type PragmaLoggerProvider,
@@ -46,6 +52,7 @@ import {
   isUserFacingMissionOrigin,
   MissionExecutorOptionSchema,
   MissionSchema,
+  type Mission,
   MissionSummarySchema,
 } from "../../shared/contracts/index.ts";
 
@@ -217,12 +224,6 @@ export async function createDesktopApplicationContainer(
   }
   const tokenCounter = createRuntimeTokenCounter({ logger: mainLogger });
   const mcpToolRegistryPool = createMcpToolRegistryPool();
-  const storageCapacityGuard = createStorageCapacityGuard({
-    paths: pragmaPaths,
-    logger: mainLogger,
-    refreshIntervalMs: 0,
-    maxSnapshotAgeMs: 30_000,
-  });
   const trashMaintenance = createDesktopTrashMaintenance({
     paths: pragmaPaths,
     logger: mainLogger,
@@ -291,7 +292,6 @@ export async function createDesktopApplicationContainer(
     projectsPath,
     objectsPath: pragmaPaths.contentObjectsRoot(),
     projectViewsPath: pragmaPaths.projectViewsCacheRoot(),
-    storagePaths: pragmaPaths,
     loggerProvider,
     blueprintCache,
     reservedResourceRefs: new Set([
@@ -979,7 +979,34 @@ export async function createDesktopApplicationContainer(
   );
   installCoreAssetSyncHandlers(coordinatedCoreAssetSync);
   installAssetGitHandlers(coordinatedAssetGit);
+  const missionDeliveryRef: {
+    current: Awaited<ReturnType<typeof createMissionDelivery>> | undefined;
+  } = { current: undefined };
+  const localHostUsageRef: { current: LocalHostUsageSink | undefined } = { current: undefined };
+  let missionDeliveryInitializationError: string | undefined;
   const memoryPlane = await createDesktopMemoryPlane({
+    hostDeliveryDiagnostics: () => [
+      ...(missionDeliveryRef.current === undefined
+        ? missionDeliveryInitializationError === undefined
+          ? []
+          : [
+              {
+                moduleId: "pragma.mission-delivery",
+                state: "degraded" as const,
+                pending: 0,
+                errorCode: missionDeliveryInitializationError,
+              },
+            ]
+        : [{ moduleId: "pragma.mission-delivery", ...missionDeliveryRef.current.inspect() }]),
+      ...(localHostUsageRef.current === undefined
+        ? []
+        : [{ moduleId: "pragma.local-host-usage", ...localHostUsageRef.current.inspect() }]),
+    ],
+    deliverySafeThrough: () =>
+      Math.min(
+        missionDeliveryRef.current?.safeThrough() ?? 0,
+        localHostUsageRef.current?.safeThrough() ?? 0,
+      ),
     secrets: secretStore,
     pragmaHome: pragmaPaths.root,
     logger: mainLogger,
@@ -1030,9 +1057,31 @@ export async function createDesktopApplicationContainer(
     ref: string,
     operation: "create_mission" | "run_mission",
   ): Promise<void> => {
-    const dependencies = [...(await bundleService.getReadinessForRef(ref))];
-    const projectSnapshot = await pragmaProjectStore.get();
-    const runtimesAvailable = await getRuntimeAvailability(runtimes);
+    const measure = async <T>(phase: string, read: () => Promise<T>): Promise<T> => {
+      const startedAt = performance.now();
+      try {
+        return await read();
+      } finally {
+        mainLogger.info("mission.readiness_phase", "Executor readiness phase completed", {
+          ref,
+          operation,
+          phase,
+          elapsedMs: performance.now() - startedAt,
+        });
+      }
+    };
+    const [projectSnapshot, runtimesAvailable] = await Promise.all([
+      measure("project_snapshot", () => pragmaProjectStore.get()),
+      measure("runtime_availability", () => getRuntimeAvailability(runtimes)),
+    ]);
+    const dependencies = [
+      ...(await measure("bundle_readiness", () =>
+        bundleService.getReadinessForRef(ref, {
+          snapshot: projectSnapshot,
+          runtimes: runtimesAvailable,
+        }),
+      )),
+    ];
     for (const missing of unavailableCoreAssetRuntimeBindings(
       ref,
       projectSnapshot.resources,
@@ -1066,7 +1115,6 @@ export async function createDesktopApplicationContainer(
     contextStoreRevisions: storeRevisions,
     getDefaultToolPermissionMode: getToolPermissionMode,
     assertExecutorReady: async (ref) => await assertBundleExecutorReady(ref, "create_mission"),
-    assertStorageWriteAllowed: async () => await storageCapacityGuard.assertWriteAllowed(),
   });
   installExpertDefinitionHandlers(expertStore, usageStore);
   installPragmaProjectHandlers(pragmaProjectStore, usageStore, contextStores, capabilityStore);
@@ -1092,6 +1140,12 @@ export async function createDesktopApplicationContainer(
   });
   const memoryCuratorRef: { current?: DesktopMemoryCurator } = {};
   const missionRunner = createMissionRunner({
+    get deferTerminalProjection() {
+      return missionDeliveryRef.current !== undefined;
+    },
+    registerExecutionDelivery: (mission, executionId, requestId) =>
+      missionDeliveryRef.current?.register(mission, executionId, requestId),
+    wakeExecutionDelivery: () => missionDeliveryRef.current?.wake(),
     missions: guardedMissionStore,
     missionStatus,
     project: pragmaProjectStore,
@@ -1129,7 +1183,6 @@ export async function createDesktopApplicationContainer(
       createAutomaticToolPermissionHandler(() => mode),
     adapterHostForMission: (mission, fallback) => evaluationMocks.forMission(mission, fallback),
     ownerScope,
-    assertStorageWriteAllowed: async () => await storageCapacityGuard.assertWriteAllowed(),
     pragmaManagementPorts: () => {
       if (pragmaManagementPortsRef.current === undefined) {
         throw new Error("The Pragma management ports have not been initialized.");
@@ -1137,7 +1190,8 @@ export async function createDesktopApplicationContainer(
       return pragmaManagementPortsRef.current;
     },
     onStorageTrashed: () => trashMaintenance.schedule("mission-storage-trashed"),
-    onOwnerDeleting: async ({ mission, executionIds }) => {
+    prepareOwnerDeletion: async ({ mission, executionIds }) => {
+      await missionDeliveryRef.current?.deleteMission(mission.id, { mission, executionIds });
       await memoryPlane.stopMissionAttention(mission.id);
       let cursor: string | undefined;
       const draftIds: string[] = [];
@@ -1161,6 +1215,8 @@ export async function createDesktopApplicationContainer(
       for (const draftId of draftIds) {
         await pragmaAgentProject.discardDslDraft({ missionId: mission.id, draftId });
       }
+    },
+    onOwnerDeleting: async ({ executionIds }) => {
       await memoryPlane.deleteExecutionState(executionIds);
     },
     onExecutionLinked: async ({ mission, executionId, requestId }) => {
@@ -1534,6 +1590,171 @@ export async function createDesktopApplicationContainer(
       });
     },
   });
+  const persistMissionUsageBatch = async (
+    registered: Mission,
+    observations: readonly RuntimeUsageObservation[],
+  ) => {
+    if (observations.length === 0) return;
+    const mission = await missionStore.get(registered.id);
+    // An unavailable store intentionally ignores foreground writes; custody
+    // consumers must instead retain their task until accounting is writable.
+    usageStore.getMissionUsage(mission.id);
+    const project = await pragmaProjectStore.openRevision(mission.project.revision);
+    try {
+      const names = new Map(
+        project
+          .listResources()
+          .map((resource) => [resource.metadata.id, resource.metadata.name] as const),
+      );
+      names.set(mission.executor.ref, mission.executor.name);
+      for (const executionId of new Set(observations.map((item) => item.executionId))) {
+        const invocations = await memoryPlane.executionStore.listInvocations(executionId);
+        for (const observation of observations) {
+          if (observation.executionId !== executionId) continue;
+          usageStore.record(observation, {
+            mission: { id: mission.id, title: mission.title },
+            invocations,
+            names,
+          });
+        }
+      }
+    } finally {
+      await project.dispose();
+    }
+  };
+  const missionDeliveryRecovery = createMissionDeliveryRecovery({
+    delivery: missionDeliveryRef,
+    create: async () =>
+      await createMissionDelivery({
+        path: pragmaPaths.missionDelivery(),
+        feed: memoryPlane.canonical,
+        logger: mainLogger,
+        onDegraded: (missionId) => missionRunner.markDeliveryDegraded?.(missionId),
+        onRecovered: (missionId) => missionRunner.markDeliveryRecovered?.(missionId),
+        usage: async (mission, observation) =>
+          await persistMissionUsageBatch(mission, [observation]),
+        beforeDelete: async (mission, executionIds) => {
+          // Runtime work has stopped; Execution locks are still available for reads.
+          // Settle accounting before fencing writes and removing source facts.
+          const localUsage = createLocalHostUsageSink({
+            path: join(pragmaPaths.dataRoot(), "usage", "observations.json"),
+          });
+          const observations: RuntimeUsageObservation[] = [];
+          for (const executionId of executionIds) {
+            for (const event of await memoryPlane.executionStore.readEvents(executionId)) {
+              if (event.type !== "runtime.usage.observed") continue;
+              observations.push(RuntimeUsageObservedSchema.parse(event.data).observation);
+            }
+          }
+          await persistMissionUsageBatch(mission, observations);
+          for (const observation of observations) await localUsage.record(observation);
+        },
+        terminal: async (registered, executionId, requestId, status, step) => {
+          const guard = await ownerScope.acquire(registered.id);
+          await ownerScope.runWithGuard(registered.id, guard, async () => {
+            const mission = await missionStore.get(registered.id);
+            const execution = await memoryPlane.executionStore.get(executionId);
+            if (execution === undefined) throw new Error("MISSION_DELIVERY_EXECUTION_UNAVAILABLE");
+            const failure =
+              typeof execution.error === "object" &&
+              execution.error !== null &&
+              "message" in execution.error &&
+              typeof execution.error.message === "string"
+                ? execution.error.message
+                : String(execution.error ?? "Execution failed");
+            if (step === "terminal") {
+              await executionEventProjector.terminal({
+                mission,
+                executionId,
+                status,
+                result:
+                  execution.output?.type === "inline" ? execution.output.value : execution.output,
+                error: status === "failed" ? new Error(failure) : execution.error,
+                guard,
+              });
+            } else if (step === "metadata") {
+              await guardedMissionStore.updateExecution(
+                mission.id,
+                {
+                  id: executionId,
+                  inputMessageId: requestId,
+                  ...(mission.execution?.id === executionId &&
+                  mission.execution.sessionId !== undefined
+                    ? { sessionId: mission.execution.sessionId }
+                    : {}),
+                  status,
+                  startedAt: execution.createdAt,
+                  finishedAt: execution.updatedAt,
+                  ...(status === "failed" ? { error: failure } : {}),
+                },
+                { executionId, statuses: ["queued", "running", "waiting"] },
+              );
+            } else if (step === "memory") {
+              const detached = await missionRunner.coordinateMemoryTerminal!(
+                mission.id,
+                async () => {
+                  const current = await missionStore.get(mission.id);
+                  if (
+                    isUserFacingMissionOrigin(current.origin) &&
+                    current.execution?.id === executionId
+                  ) {
+                    const cleanup = memoryPlane.stopMissionAttention(current.id);
+                    void cleanup.catch(() => undefined);
+                    await memoryPlane.setMemoryConversationState({
+                      missionId: current.id,
+                      state: current.lifecycleStatus === "completed" ? "completed" : "active",
+                    });
+                    return { cleanup };
+                  }
+                  return undefined;
+                },
+              );
+              await detached?.cleanup;
+            } else if (step === "history") {
+              const projection = await persistMissionExecutionProjection(
+                guardedMissionStore,
+                memoryPlane.executionStore,
+                mission.id,
+                executionId,
+                status === "cancelled",
+              );
+              if (projection.status !== "current")
+                throw new Error("MISSION_CHAT_PROJECTION_PARTIAL");
+              missionRunner.notifyProjectionChanged?.(mission.id);
+            } else {
+              await memoryPlane.executionStore.archive(executionId);
+            }
+          });
+        },
+      }),
+    onRecovered: () => {
+      missionDeliveryInitializationError = undefined;
+    },
+    onUnavailable: (error) => {
+      missionDeliveryInitializationError = "MISSION_DELIVERY_UNAVAILABLE";
+      mainLogger.warn(
+        "mission.delivery_degraded",
+        "Mission delivery is unavailable; direct projection remains enabled",
+        {
+          moduleId: "pragma.mission-delivery",
+          errorCode: missionDeliveryInitializationError,
+          error,
+        },
+      );
+    },
+  });
+  await missionDeliveryRecovery.initialize();
+  localHostUsageRef.current = createLocalHostUsageSink({
+    path: join(pragmaPaths.dataRoot(), "usage", "observations.json"),
+    feed: memoryPlane.canonical,
+    deliveryPath: pragmaPaths.localHostUsageDelivery(),
+    onError: (error) =>
+      mainLogger.warn("usage.delivery_degraded", "Local Host usage delivery needs recovery", {
+        moduleId: "pragma.local-host-usage",
+        errorCode: "USAGE_DELIVERY_RETRY_PENDING",
+        error,
+      }),
+  });
   missionRunnerRef.current = missionRunner;
   const localHostMissionControlAdapter = missionRunner.createLocalHostMissionControlAdapter();
   const localHostRunExecutorResolver = createDesktopLocalHostExecutorResolver({
@@ -1854,11 +2075,27 @@ export async function createDesktopApplicationContainer(
           (resource.spec.config as Record<string, unknown>).providerId === providerId,
       ),
   });
+  const storageCapacityInspection = createStorageCapacityInspection({
+    paths: pragmaPaths,
+    logger: mainLogger,
+    isIdle: () => {
+      const resources = missionRunner.getResourceDiagnostics();
+      return (
+        powerMonitor.getSystemIdleTime() >= 300 &&
+        resources.warmSessionCount === 0 &&
+        resources.busyMissionCount === 0
+      );
+    },
+  });
+  const cancelCapacityInspection = () => storageCapacityInspection.cancel();
+  powerMonitor.on("user-did-become-active", cancelCapacityInspection);
+  powerMonitor.on("resume", cancelCapacityInspection);
   let backgroundTasksStarted = false;
   return {
     startBackgroundTasks() {
       if (backgroundTasksStarted) return;
       backgroundTasksStarted = true;
+      storageCapacityInspection.start();
       trashMaintenance.schedule("startup");
       void assetSync.start().catch((error: unknown) => {
         mainLogger.warn(
@@ -1905,13 +2142,8 @@ export async function createDesktopApplicationContainer(
           { error },
         );
       });
-      void missionRunner.reconcileUsage().catch((error: unknown) => {
-        mainLogger.warn(
-          "desktop.usage_reconciliation_failed",
-          "Desktop usage reconciliation could not be completed.",
-          { error },
-        );
-      });
+      missionDeliveryRecovery.start();
+      localHostUsageRef.current?.start();
       void automationService.start().catch((error: unknown) => {
         mainLogger.warn(
           "desktop.automation_start_failed",
@@ -1976,14 +2208,40 @@ export async function createDesktopApplicationContainer(
       unsubscribeUsageUpdates();
       unsubscribeTokenCounter();
       automationService.stop();
-      void memoryPlane.stop().catch((error: unknown) => {
+      const deliveryClosing = missionDeliveryRecovery.close();
+      void deliveryClosing.catch(() => undefined);
+      void (async () => {
+        const errors: unknown[] = [];
+        for (const operation of [
+          async () => await deliveryClosing,
+          async () => {
+            try {
+              await localHostUsageRef.current?.drain();
+            } finally {
+              await localHostUsageRef.current?.close();
+            }
+          },
+          async () => await memoryPlane.stop(),
+          async () => usageStore.close(),
+        ]) {
+          try {
+            await operation();
+          } catch (error) {
+            errors.push(error);
+          }
+        }
+        if (errors.length > 0)
+          throw new AggregateError(errors, "Desktop delivery shutdown failed.");
+      })().catch((error: unknown) => {
         mainLogger.warn(
           "desktop.memory_shutdown_failed",
           "The Memory pipeline could not be stopped cleanly.",
           { error },
         );
       });
-      storageCapacityGuard.close();
+      powerMonitor.removeListener("user-did-become-active", cancelCapacityInspection);
+      powerMonitor.removeListener("resume", cancelCapacityInspection);
+      storageCapacityInspection.close();
       tokenCounter.dispose();
       void mcpToolRegistryPool.close().catch((error: unknown) => {
         mainLogger.warn(
@@ -1992,7 +2250,6 @@ export async function createDesktopApplicationContainer(
           { error },
         );
       });
-      usageStore.close();
     },
   };
 }

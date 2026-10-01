@@ -42,12 +42,7 @@ import {
   type PragmaResource,
 } from "@pragma/interpreter/ast";
 import { z } from "zod";
-import {
-  ContentAddressedStore,
-  type PragmaPaths,
-  assertStorageWriteAllowed,
-  withFileLock,
-} from "@pragma/core";
+import { ContentAddressedStore, withFileLock } from "@pragma/core";
 
 import {
   LocalHostProjectManifestSchema as ProjectManifestSchema,
@@ -206,7 +201,6 @@ export function createPragmaProjectStore(options: {
   readonly projectsPath: string;
   readonly objectsPath?: string | undefined;
   readonly projectViewsPath?: string | undefined;
-  readonly storagePaths?: PragmaPaths | undefined;
   readonly projectId?: string;
   readonly reservedResourceRefs?: ReadonlySet<string> | undefined;
   readonly fixedResources?: readonly PragmaResource[] | undefined;
@@ -329,7 +323,6 @@ export function createPragmaProjectStore(options: {
     const migratedResources = migrateCapabilityBindings(current.resources);
     if (migratedResources === undefined) return current;
     bindingMigration ??= (async () => {
-      if (options.storagePaths !== undefined) await assertStorageWriteAllowed(options.storagePaths);
       const artifacts =
         current.revision === 0
           ? new Map<string, string>()
@@ -488,7 +481,6 @@ export function createPragmaProjectStore(options: {
   ): Promise<PragmaProjectSnapshot> => {
     try {
       await ensureMigrated();
-      if (options.storagePaths !== undefined) await assertStorageWriteAllowed(options.storagePaths);
       const upserts = (input.upserts ?? []).map((resource) =>
         PragmaForwardCompatibleResourceSchema.parse(resource),
       );
@@ -551,7 +543,6 @@ export function createPragmaProjectStore(options: {
     readonly artifacts?: ReadonlyMap<string, string> | undefined;
   }): Promise<PragmaProjectSnapshot> => {
     try {
-      if (options.storagePaths !== undefined) await assertStorageWriteAllowed(options.storagePaths);
       assertNotReserved(input.resources);
       assertFixedResources(input.resources);
       assertDesktopExpertAuthoring(input.resources);

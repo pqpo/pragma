@@ -761,7 +761,17 @@ export function HomePage(props: {
     setSaving(true);
     setError(null);
     try {
+      const requestId = crypto.randomUUID();
+      window.pragmaDesktop.reportRendererLog?.({
+        level: "info",
+        event: "mission.create_requested",
+        message: "Renderer requested Mission creation",
+        requestId,
+        monotonicAtMs: performance.now(),
+        timeOriginMs: performance.timeOrigin,
+      });
       const mission = await window.pragmaDesktop.createMission({
+        requestId,
         workspace: workspace.path,
         contextMounts: [
           ...contextStoreIds.map((storeId) => ({
@@ -781,6 +791,15 @@ export function HomePage(props: {
             : { kind: "prompt", value: goal.trim(), attachments: [...attachments] },
         toolPermissionMode,
         ...(modelOverride === undefined ? {} : { modelOverride }),
+      });
+      window.pragmaDesktop.reportRendererLog?.({
+        level: "info",
+        event: "mission.create_received",
+        message: "Renderer received the created Mission",
+        requestId,
+        missionId: mission.id,
+        monotonicAtMs: performance.now(),
+        timeOriginMs: performance.timeOrigin,
       });
       const clearedFlowInput =
         selectedExecutor.kind === "flow" && selectedExecutor.inputSchema !== undefined

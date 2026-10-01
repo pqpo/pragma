@@ -362,6 +362,7 @@ export function isUserFacingMissionOrigin(origin: z.infer<typeof MissionOriginSc
 }
 
 export const CreateMissionSchema = z.object({
+  requestId: z.string().uuid().optional(),
   workspace: z.string().trim().min(1).max(2_000),
   contextMounts: MissionContextMountsSchema.refine(
     (mounts) =>

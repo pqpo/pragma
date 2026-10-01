@@ -6,7 +6,6 @@ import { withFileLock } from "./file-lock.ts";
 import { PragmaPaths } from "./pragma-paths.ts";
 import { DEFAULT_STORAGE_POLICY, type StoragePolicy } from "./storage-policy.ts";
 import { rebuildStorageCatalog } from "./storage-catalog.ts";
-import type { PragmaLogger } from "../logging/logger.ts";
 
 export interface StorageOverview {
   readonly totalBytes: number;
@@ -61,33 +60,22 @@ export interface TransientStorageMaintenanceResult extends TrashMaintenanceResul
   readonly deletedMigrationBackups: number;
 }
 
-export interface StorageCapacityGuard {
-  assertWriteAllowed(): Promise<void>;
-  refresh(): Promise<StorageOverview>;
-  current(): StorageOverview | undefined;
-  close(): void;
-}
-
-export class StorageCapacityExceededError extends Error {
-  constructor(readonly overview: StorageOverview) {
-    super(
-      `Pragma storage uses ${overview.totalBytes} bytes, above the hard limit of ${overview.hardLimitBytes} bytes. Delete or export persistent owners before creating more data.`,
-    );
-    this.name = "StorageCapacityExceededError";
-  }
-}
-
 export async function inspectStorage(
   paths: PragmaPaths,
   policy: StoragePolicy = DEFAULT_STORAGE_POLICY,
+  options: { readonly entryDelayMs?: number } = {},
 ): Promise<StorageOverview> {
   const seenInodes = new Set<string>();
-  const dataBytes = await directoryBytes(paths.dataRoot(), seenInodes);
-  const stateBytes = await directoryBytes(paths.stateRoot(), seenInodes);
-  const archiveBytes = await directoryBytes(paths.archivesRoot(), seenInodes);
-  const cacheBytes = await directoryBytes(paths.cacheRoot(), seenInodes);
-  const temporaryBytes = await directoryBytes(paths.temporaryRoot(), seenInodes);
-  const trashBytes = await directoryBytes(paths.trashRoot(), seenInodes);
+  const dataBytes = await directoryBytes(paths.dataRoot(), seenInodes, options.entryDelayMs);
+  const stateBytes = await directoryBytes(paths.stateRoot(), seenInodes, options.entryDelayMs);
+  const archiveBytes = await directoryBytes(paths.archivesRoot(), seenInodes, options.entryDelayMs);
+  const cacheBytes = await directoryBytes(paths.cacheRoot(), seenInodes, options.entryDelayMs);
+  const temporaryBytes = await directoryBytes(
+    paths.temporaryRoot(),
+    seenInodes,
+    options.entryDelayMs,
+  );
+  const trashBytes = await directoryBytes(paths.trashRoot(), seenInodes, options.entryDelayMs);
   return {
     totalBytes: dataBytes + stateBytes + archiveBytes + cacheBytes + temporaryBytes + trashBytes,
     dataBytes,
@@ -154,114 +142,6 @@ export async function emptyCompletedTrash(paths: PragmaPaths): Promise<StorageCl
       reclaimedBytes: Math.max(0, beforeBytes - afterBytes),
     };
   });
-}
-
-export async function assertStorageWriteAllowed(
-  paths: PragmaPaths,
-  policy: StoragePolicy = DEFAULT_STORAGE_POLICY,
-): Promise<void> {
-  const overview = await inspectStorage(paths, policy);
-  if (overview.totalBytes < policy.globalHardLimitBytes) return;
-  const maintenance = await runStorageMaintenance({ paths, policy, pressure: true });
-  if (maintenance.after.totalBytes >= policy.globalHardLimitBytes) {
-    throw new StorageCapacityExceededError(maintenance.after);
-  }
-}
-
-export function createStorageCapacityGuard(input: {
-  readonly paths: PragmaPaths;
-  readonly logger?: PragmaLogger | undefined;
-  readonly policy?: StoragePolicy | undefined;
-  readonly initialOverview?: StorageOverview | undefined;
-  readonly refreshIntervalMs?: number | undefined;
-  readonly maxSnapshotAgeMs?: number | undefined;
-  readonly now?: (() => number) | undefined;
-}): StorageCapacityGuard {
-  const policy = input.policy ?? DEFAULT_STORAGE_POLICY;
-  const refreshIntervalMs = input.refreshIntervalMs ?? 30_000;
-  const maxSnapshotAgeMs =
-    input.maxSnapshotAgeMs ??
-    (refreshIntervalMs > 0 ? refreshIntervalMs * 2 : Number.POSITIVE_INFINITY);
-  const now = input.now ?? Date.now;
-  let overview = input.initialOverview;
-  let inspectedAt = overview === undefined ? 0 : now();
-  let refreshing: Promise<StorageOverview> | undefined;
-  let closed = false;
-
-  const refresh = async (): Promise<StorageOverview> => {
-    if (refreshing !== undefined) return await refreshing;
-    const startedAt = performance.now();
-    const operation = inspectStorage(input.paths, policy).then((next) => {
-      overview = next;
-      inspectedAt = now();
-      input.logger?.info("storage.capacity_inspected", "Storage capacity inspection completed", {
-        durationMs: Math.round((performance.now() - startedAt) * 100) / 100,
-        ...next,
-      });
-      return next;
-    });
-    refreshing = operation;
-    try {
-      return await operation;
-    } finally {
-      if (refreshing === operation) refreshing = undefined;
-    }
-  };
-
-  const interval =
-    refreshIntervalMs <= 0
-      ? undefined
-      : setInterval(() => {
-          if (!closed) void refresh().catch(() => undefined);
-        }, refreshIntervalMs);
-  interval?.unref();
-
-  return {
-    async assertWriteAllowed() {
-      let current = overview;
-      const age = now() - inspectedAt;
-      if (
-        current === undefined ||
-        current.totalBytes >= policy.globalSoftLimitBytes ||
-        age >= maxSnapshotAgeMs
-      ) {
-        input.logger?.info(
-          "storage.capacity_refresh_requested",
-          "Write gate requires a storage inspection",
-          {
-            reason:
-              current === undefined
-                ? "missing_snapshot"
-                : current.totalBytes >= policy.globalSoftLimitBytes
-                  ? "soft_limit"
-                  : "expired_snapshot",
-            snapshotAgeMs: current === undefined ? undefined : age,
-            coalesced: refreshing !== undefined,
-          },
-        );
-        current = await refresh();
-      } else if (refreshIntervalMs > 0 && age >= refreshIntervalMs) {
-        void refresh().catch(() => undefined);
-      }
-      if (current.totalBytes < policy.globalHardLimitBytes) return;
-      const maintenance = await runStorageMaintenance({
-        paths: input.paths,
-        policy,
-        pressure: true,
-      });
-      overview = maintenance.after;
-      inspectedAt = now();
-      if (maintenance.after.totalBytes >= policy.globalHardLimitBytes) {
-        throw new StorageCapacityExceededError(maintenance.after);
-      }
-    },
-    refresh,
-    current: () => overview,
-    close() {
-      closed = true;
-      if (interval !== undefined) clearInterval(interval);
-    },
-  };
 }
 
 export async function runStorageMaintenance(input: {
@@ -775,7 +655,11 @@ async function childDirectories(root: string): Promise<string[]> {
   }
 }
 
-async function directoryBytes(root: string, seenInodes?: Set<string>): Promise<number> {
+async function directoryBytes(
+  root: string,
+  seenInodes?: Set<string>,
+  entryDelayMs = 0,
+): Promise<number> {
   let entries;
   try {
     entries = await readdir(root, { withFileTypes: true });
@@ -785,9 +669,10 @@ async function directoryBytes(root: string, seenInodes?: Set<string>): Promise<n
   }
   let bytes = 0;
   for (const entry of entries) {
+    if (entryDelayMs > 0) await new Promise<void>((resolve) => setTimeout(resolve, entryDelayMs));
     const path = join(root, entry.name);
     if (entry.isSymbolicLink()) continue;
-    if (entry.isDirectory()) bytes += await directoryBytes(path, seenInodes);
+    if (entry.isDirectory()) bytes += await directoryBytes(path, seenInodes, entryDelayMs);
     else if (entry.isFile()) {
       let metadata;
       try {

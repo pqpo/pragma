@@ -4,6 +4,64 @@ import { observeMissionExecution } from "./mission-execution-observer.ts";
 import type { MissionStore } from "./mission-store.ts";
 
 describe("Mission execution observer", () => {
+  it("settles successful admission without waiting for deferred product writes", async () => {
+    const updateExecution = vi.fn(async () => {
+      throw new Error("must be delivered in background");
+    });
+    const materialize = vi.fn(async () => {
+      throw new Error("must be delivered in background");
+    });
+    const finished = vi.fn(async () => undefined);
+    const terminal = vi.fn(async () => undefined);
+    await expect(
+      observeMissionExecution(
+        { updateExecution } as unknown as MissionStore,
+        "mission",
+        {
+          executionId: "execution",
+          result: Promise.resolve("OK"),
+          getState: async () => ({ status: "succeeded" }),
+        },
+        "2026-10-01T00:00:00.000Z",
+        "request",
+        finished,
+        undefined,
+        terminal,
+        undefined,
+        materialize,
+        undefined,
+        true,
+      ),
+    ).resolves.toBe("terminal");
+    expect(terminal).toHaveBeenCalledOnce();
+    expect(finished).toHaveBeenCalledOnce();
+    expect(updateExecution).not.toHaveBeenCalled();
+    expect(materialize).not.toHaveBeenCalled();
+  });
+  it("keeps the cancellation snapshot barrier when product writes are deferred", async () => {
+    const updateExecution = vi.fn(async () => undefined);
+    const materialize = vi.fn(async () => undefined);
+    await observeMissionExecution(
+      { updateExecution } as unknown as MissionStore,
+      "mission",
+      {
+        executionId: "execution",
+        result: Promise.reject(new Error("cancelled")),
+        getState: async () => ({ status: "cancelled" }),
+      },
+      "2026-10-01T00:00:00.000Z",
+      "request",
+      async () => undefined,
+      undefined,
+      undefined,
+      undefined,
+      materialize,
+      undefined,
+      true,
+    );
+    expect(updateExecution).toHaveBeenCalledOnce();
+    expect(materialize).toHaveBeenCalledWith(expect.objectContaining({ status: "cancelled" }));
+  });
   it("publishes a terminal Mission state even when its chat projection fails", async () => {
     const updateExecution = vi.fn();
     const onSideEffectError = vi.fn();

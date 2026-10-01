@@ -29,6 +29,7 @@ export function observeMissionExecution(
   checkpoint?: Promise<void> | undefined,
   onMaterialize?: ((input: MissionExecutionTerminalOutcome) => void | Promise<void>) | undefined,
   onSideEffectError?: ((error: unknown) => void) | undefined,
+  deferMaterialization = false,
 ): Promise<"terminal" | "checkpointed"> {
   return (async () => {
     let status: MissionExecutionTerminalOutcome["status"] = "succeeded";
@@ -74,7 +75,8 @@ export function observeMissionExecution(
     } satisfies MissionExecutionTerminalOutcome;
     for (const sideEffect of [
       async () => await onTerminal?.(terminal),
-      async () =>
+      async () => {
+        if (deferMaterialization && status !== "cancelled") return;
         await missions.updateExecution(
           missionId,
           {
@@ -89,9 +91,12 @@ export function observeMissionExecution(
               : {}),
           },
           { executionId: execution.executionId, statuses: ["queued", "running", "waiting"] },
-        ),
+        );
+      },
       onFinished,
-      async () => await onMaterialize?.(terminal),
+      async () => {
+        if (!deferMaterialization || status === "cancelled") await onMaterialize?.(terminal);
+      },
     ]) {
       try {
         await sideEffect();

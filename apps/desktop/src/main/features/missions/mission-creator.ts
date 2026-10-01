@@ -26,6 +26,7 @@ import { validateWorkspace } from "../workspaces/workspace-scope.ts";
 export interface MissionCreator {
   create(input: {
     readonly id?: string | undefined;
+    readonly requestId?: string | undefined;
     readonly workspace: string;
     readonly missionInput:
       | { readonly kind: "prompt"; readonly value: string }
@@ -56,7 +57,6 @@ export function createMissionCreator(options: {
   readonly getDefaultToolPermissionMode: () =>
     DesktopToolPermissionMode | Promise<DesktopToolPermissionMode>;
   readonly assertExecutorReady?: ((ref: string) => void | Promise<void>) | undefined;
-  readonly assertStorageWriteAllowed?: (() => void | Promise<void>) | undefined;
 }): MissionCreator {
   return {
     async create(input) {
@@ -66,6 +66,7 @@ export function createMissionCreator(options: {
         const now = performance.now();
         options.logger?.info("mission.create_phase", "Mission creation phase completed", {
           missionId,
+          requestId: input.requestId,
           executorRef: input.executorRef,
           phase,
           durationMs: Math.round((now - phaseStartedAt) * 100) / 100,
@@ -158,7 +159,6 @@ export function createMissionCreator(options: {
       );
     },
     async createBranch(input) {
-      await options.assertStorageWriteAllowed?.();
       if (input.source.executor.kind === "flow") {
         throw new Error("Flow missions cannot create conversation branches.");
       }

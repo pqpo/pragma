@@ -109,6 +109,14 @@ export class PragmaPaths {
     return join(this.stateRoot(), "storage");
   }
 
+  localHostUsageDelivery(): string {
+    return join(this.stateRoot(), "usage-delivery", "local-host.sqlite");
+  }
+
+  missionDelivery(): string {
+    return join(this.stateRoot(), "mission-delivery", "delivery.sqlite");
+  }
+
   storageCatalog(): string {
     return join(this.storageStateRoot(), "catalog.sqlite");
   }
