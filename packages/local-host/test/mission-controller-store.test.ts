@@ -36,6 +36,132 @@ afterEach(async () => {
 });
 
 describe("MissionControllerStore", () => {
+  it("keeps the owner and Inbox healthy after idle release or its diagnostics fail", async () => {
+    const controller = await createStore();
+    const failure = new Error("native close failed");
+    const onIdleError = vi.fn(() => {
+      throw new Error("diagnostic failed");
+    });
+    const scope = createMissionOwnerScope({
+      controller,
+      idleTimeoutMs: 20,
+      onIdle: async () => {
+        throw failure;
+      },
+      onIdleError,
+    });
+    const apply = vi.fn(async () => ({ result: {} }));
+    scope.bindConsumer({ apply });
+    try {
+      const guard = await scope.acquire(missionId);
+      await vi.waitFor(() => expect(onIdleError).toHaveBeenCalledWith(missionId, failure), {
+        timeout: 2_000,
+      });
+      expect(scope.diagnostics()).toMatchObject({
+        activeMissionOwnerCount: 1,
+        activeInboxPollerCount: 1,
+      });
+      await expect(controller.assertWriteGuard({ missionId, guard })).resolves.toBeUndefined();
+      const command = commandInput("send", "00000000-0000-4000-8000-000000000097");
+      await controller.appendCommand(command);
+      scope.wake(missionId);
+      await controller.waitForTerminalOperation({
+        missionId,
+        requestId: command.request.requestId,
+      });
+      expect(apply).toHaveBeenCalledOnce();
+    } finally {
+      await scope.stop(missionId);
+    }
+  });
+
+  it("retires idle owners and recovers an Inbox command arriving during resource release", async () => {
+    const controller = await createStore();
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const onIdle = vi.fn(async (input: { releaseOwner: () => Promise<void> }) => {
+      await gate;
+      await input.releaseOwner();
+    });
+    const apply = vi.fn(async () => ({ result: {} }));
+    const scope = createMissionOwnerScope({ controller, idleTimeoutMs: 20, onIdle });
+    scope.bindConsumer({ apply });
+    try {
+      const original = await scope.acquire(missionId);
+      await vi.waitFor(() => expect(onIdle).toHaveBeenCalledOnce(), { timeout: 2_000 });
+      const command = commandInput("send", "00000000-0000-4000-8000-000000000098");
+      await controller.appendCommand(command);
+      scope.wake(missionId);
+      release();
+      await controller.waitForTerminalOperation({
+        missionId,
+        requestId: command.request.requestId,
+      });
+      expect(apply).toHaveBeenCalledOnce();
+      await expect(
+        controller.assertWriteGuard({ missionId, guard: original }),
+      ).rejects.toMatchObject({ code: "MISSION_FENCING_REJECTED" });
+      await vi.waitFor(
+        () =>
+          expect(scope.diagnostics()).toMatchObject({
+            activeMissionOwnerCount: 0,
+            activeInboxPollerCount: 0,
+          }),
+        { timeout: 2_000 },
+      );
+      expect(scope.diagnostics().inboxPollCount).toBeGreaterThan(0);
+    } finally {
+      release();
+      await scope.stop(missionId);
+    }
+  });
+
+  it("wakes immediately and coalesces wakes while a command is in flight", async () => {
+    const store = await createStore();
+    const guard = await store.claim({
+      missionId,
+      claimId: "00000000-0000-4000-8000-000000000099",
+      leaseMs: 10_000,
+    });
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    let active = 0;
+    let maximum = 0;
+    const apply = vi.fn(async () => {
+      maximum = Math.max(maximum, ++active);
+      await gate;
+      active--;
+      return { result: { delivered: true } };
+    });
+    const poller = store.startPolling({
+      missionId,
+      guard,
+      consumer: { apply },
+      initialDelayMs: 10_000,
+      maxDelayMs: 10_000,
+      jitter: () => 0,
+      onLeaseLost: () => undefined,
+    });
+    try {
+      const command = commandInput("send", "00000000-0000-4000-8000-000000000098");
+      await store.appendCommand(command);
+      poller.wake();
+      await vi.waitFor(() => expect(apply).toHaveBeenCalledOnce(), { timeout: 1_000 });
+      for (let index = 0; index < 20; index++) poller.wake();
+      release();
+      await store.waitForTerminalOperation({ missionId, requestId: command.request.requestId });
+      expect(maximum).toBe(1);
+      expect(apply).toHaveBeenCalledOnce();
+    } finally {
+      release();
+      await poller.stop();
+    }
+  });
+
   it.each(["same-owner", "mission-takeover", "session-takeover"] as const)(
     "checks tool ownership before a delayed heartbeat after %s",
     async (scenario) => {
@@ -1209,7 +1335,7 @@ describe("MissionControllerStore", () => {
       await vi.waitFor(
         () =>
           expect(scheduled.filter((delay) => delay > 0 && delay <= 25).slice(0, 3)).toEqual([
-            6, 13, 25,
+            6, 13, 20,
           ]),
         { timeout: 2_000 },
       );

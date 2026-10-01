@@ -6,6 +6,7 @@ import { withFileLock } from "./file-lock.ts";
 import { PragmaPaths } from "./pragma-paths.ts";
 import { DEFAULT_STORAGE_POLICY, type StoragePolicy } from "./storage-policy.ts";
 import { rebuildStorageCatalog } from "./storage-catalog.ts";
+import type { PragmaLogger } from "../logging/logger.ts";
 
 export interface StorageOverview {
   readonly totalBytes: number;
@@ -169,6 +170,7 @@ export async function assertStorageWriteAllowed(
 
 export function createStorageCapacityGuard(input: {
   readonly paths: PragmaPaths;
+  readonly logger?: PragmaLogger | undefined;
   readonly policy?: StoragePolicy | undefined;
   readonly initialOverview?: StorageOverview | undefined;
   readonly refreshIntervalMs?: number | undefined;
@@ -188,9 +190,14 @@ export function createStorageCapacityGuard(input: {
 
   const refresh = async (): Promise<StorageOverview> => {
     if (refreshing !== undefined) return await refreshing;
+    const startedAt = performance.now();
     const operation = inspectStorage(input.paths, policy).then((next) => {
       overview = next;
       inspectedAt = now();
+      input.logger?.info("storage.capacity_inspected", "Storage capacity inspection completed", {
+        durationMs: Math.round((performance.now() - startedAt) * 100) / 100,
+        ...next,
+      });
       return next;
     });
     refreshing = operation;
@@ -218,6 +225,20 @@ export function createStorageCapacityGuard(input: {
         current.totalBytes >= policy.globalSoftLimitBytes ||
         age >= maxSnapshotAgeMs
       ) {
+        input.logger?.info(
+          "storage.capacity_refresh_requested",
+          "Write gate requires a storage inspection",
+          {
+            reason:
+              current === undefined
+                ? "missing_snapshot"
+                : current.totalBytes >= policy.globalSoftLimitBytes
+                  ? "soft_limit"
+                  : "expired_snapshot",
+            snapshotAgeMs: current === undefined ? undefined : age,
+            coalesced: refreshing !== undefined,
+          },
+        );
         current = await refresh();
       } else if (refreshIntervalMs > 0 && age >= refreshIntervalMs) {
         void refresh().catch(() => undefined);

@@ -19,6 +19,14 @@ export class MissionLifecycleService<TRun, TCompaction, TActive> {
   hasActive(missionId: string): boolean {
     return this.#active.has(missionId);
   }
+  isBusy(missionId: string): boolean {
+    return (
+      this.#active.has(missionId) ||
+      this.#runs.has(missionId) ||
+      this.#compactions.has(missionId) ||
+      this.#deletions.has(missionId)
+    );
+  }
 
   setActive(missionId: string, active: TActive): void {
     this.#active.set(missionId, active);

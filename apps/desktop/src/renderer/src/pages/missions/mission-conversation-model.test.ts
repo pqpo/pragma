@@ -56,6 +56,64 @@ describe("mission conversation model", () => {
     pendingInteractions: [],
   });
 
+  it("applies queue controls without replacing streamed entries or reading history", () => {
+    const snapshot = streamingSnapshot();
+    const queue = {
+      state: "running" as const,
+      pendingCount: 2,
+      supportsSteer: true,
+      items: [
+        {
+          requestId: "00000000-0000-4000-8000-000000000098",
+          content: "next",
+          hasAttachments: false,
+        },
+      ],
+    };
+    const updated = applyMissionChatPatches(snapshot, [{ type: "queue.update", queue }], 2);
+    expect(updated?.queue).toEqual(queue);
+    expect(updated?.entries).toEqual(snapshot.entries);
+    expect(updated?.queueRevision).toBe(2);
+    expect(isMissionConversationCacheReady(updated)).toBe(false);
+    const equalRevision = mergeConversationState(updated, {
+      missionId: snapshot.missionId,
+      revision: 2,
+      pendingInteractions: [],
+      queue: { state: "idle", pendingCount: 0, supportsSteer: false, items: [] },
+      deliveries: [],
+      hiddenEntryIds: [],
+    });
+    expect(equalRevision?.queue).toEqual(queue);
+    expect(equalRevision?.stateRevision).toBe(2);
+    const hydrated = mergeConversationState(updated, {
+      missionId: snapshot.missionId,
+      revision: 1,
+      pendingInteractions: [],
+      execution: {
+        id: "00000000-0000-4000-8000-000000000001",
+        status: "running",
+        interruptible: true,
+      },
+      deliveries: [],
+      hiddenEntryIds: [],
+    });
+    expect(hydrated?.queue).toEqual(queue);
+    expect(hydrated?.stateRevision).toBe(1);
+    expect(hydrated?.execution?.status).toBe("running");
+    expect(isMissionConversationCacheReady(hydrated)).toBe(true);
+    const fresh = mergeConversationState(hydrated, {
+      missionId: snapshot.missionId,
+      revision: 3,
+      pendingInteractions: [],
+      deliveries: [],
+      hiddenEntryIds: [],
+    });
+    expect(fresh?.queue).toBeUndefined();
+    const delayedPatch = applyMissionChatPatches(fresh!, [{ type: "queue.update", queue }], 2);
+    expect(delayedPatch?.queue).toBeUndefined();
+    expect(delayedPatch?.queueRevision).toBe(3);
+  });
+
   it("queues sends while an accepted root prompt has no Execution projection or first token", () => {
     const waiting = {
       chat: { ...streamingSnapshot(), entries: [] },

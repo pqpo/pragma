@@ -827,6 +827,7 @@ export const MissionConversationSnapshotSchema = z.object({
   missionId: MissionIdSchema,
   revision: z.number().int().nonnegative(),
   stateRevision: z.number().int().nonnegative().optional(),
+  queueRevision: z.number().int().nonnegative().optional(),
   contextRevision: z.number().int().nonnegative().optional(),
   entries: z.array(MissionChatEntrySchema),
   page: MissionChatPageInfoSchema,
@@ -839,6 +840,10 @@ export const MissionConversationSnapshotSchema = z.object({
 });
 
 export const MissionChatPatchSchema = z.discriminatedUnion("type", [
+  z.object({
+    type: z.literal("queue.update"),
+    queue: MissionConversationStateSchema.shape.queue.unwrap(),
+  }),
   z.object({
     type: z.literal("entry.upsert"),
     entry: MissionChatEntrySchema,

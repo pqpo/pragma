@@ -69,6 +69,14 @@ pnpm install --frozen-lockfile
 
 ## 本地打包
 
+每个 `dist:*` 命令都会先清空旧的 `apps/desktop/dist`，打包完成后只保留本次生成的安装包和
+`packaging-audit-*.json`，并删除 electron-builder 的解包暂存目录。连续打不同平台时，上一批安装包会被
+下一次打包清理；本地 `release:desktop` 会先把当前平台安装包复制到 `release-assets/v<version>/`，再清空
+`dist`。可单独运行 `pnpm --filter @pragma/desktop run dist:clean` 清空 `dist`。
+
+`package:dir` 会先清空旧产物，再有意保留本次未封装的应用目录，供本地调试；不再需要时运行
+`pnpm --filter @pragma/desktop run dist:clean`。
+
 ### 未封装目录
 
 构建当前系统的 unpacked 应用：

@@ -20,6 +20,7 @@ import {
   createFileExpertSessionStore,
   FileLockTimeoutError,
   createNoopLoggerProvider,
+  createLoggerProvider,
   createRuntimeSessionRecord,
   createStaticRuntimeResolver,
   ContextSystem,
@@ -49,8 +50,10 @@ import {
   type RuntimeModelSelection,
   type RuntimeUsageObservation,
   type UsageSink,
+  type PragmaLoggerProvider,
 } from "../src/index.ts";
 import { createRuntimeTestFeatures } from "../src/testing/index.ts";
+import { ExecutionController } from "../src/execution/expert-runner.ts";
 
 const temporaryHomes: string[] = [];
 
@@ -609,6 +612,7 @@ async function fixture(delayMs?: number) {
 async function trackedFixture(
   options: Omit<FakeRuntimeOptions, "stats"> = {},
   usageSink?: UsageSink,
+  loggerProvider?: PragmaLoggerProvider,
 ) {
   const home = await createTemporaryHome("pragma-runtime-ownership-");
   const stats = createFakeRuntimeStats();
@@ -620,6 +624,7 @@ async function trackedFixture(
       defaultRuntimeId: runtime.descriptor.id,
     }),
     usageSink,
+    loggerProvider,
   });
   const expert = await defineExpert({
     id: "tracked",
@@ -633,6 +638,67 @@ async function trackedFixture(
 }
 
 describe("ExpertSession", { timeout: 30_000 }, () => {
+  it("unregisters a Runtime submission after batched event persistence fails", async () => {
+    const { home, expert, runtime } = await trackedFixture();
+    const executions = createFileExecutionStore({ pragmaHome: home });
+    const commit = executions.commit.bind(executions);
+    let failBatch = true;
+    executions.commit = async (input) => {
+      if (failBatch && input.commitId.startsWith("runtime-events:")) {
+        failBatch = false;
+        throw new Error("event batch disk failure");
+      }
+      return await commit(input);
+    };
+    const app = createPragma({
+      pragmaHome: home,
+      executionStore: executions,
+      loggerProvider: createNoopLoggerProvider(),
+      runtimes: createStaticRuntimeResolver({ runtimes: [runtime], defaultRuntimeId: "fake" }),
+    });
+    const unregister = vi.spyOn(ExecutionController.prototype, "unregisterRuntimeSubmission");
+    const session = await app.experts.createSession(expert);
+    try {
+      const failed = await session.prompt("one", { requestId: "batch-failure" });
+      await expect(failed.result).rejects.toThrow("event batch disk failure");
+      await failed.settled;
+      expect(unregister).toHaveBeenCalledOnce();
+      const next = await session.prompt("two", { requestId: "after-batch-failure" });
+      await expect(next.result).resolves.toBe("tracked:two");
+      await next.settled;
+      expect(unregister).toHaveBeenCalledTimes(2);
+    } finally {
+      unregister.mockRestore();
+      await session.close();
+    }
+  });
+
+  it("logs the current Execution when a Runtime Session is reused", async () => {
+    const executions: (string | undefined)[] = [];
+    const loggerProvider = createLoggerProvider({
+      handler: {
+        write(record) {
+          if (record.event === "runtime.model_request_dispatched")
+            executions.push(record.scope.executionId);
+        },
+      },
+    });
+    const { app, expert, stats } = await trackedFixture({}, undefined, loggerProvider);
+    const session = await app.experts.createSession(expert);
+    try {
+      const first = await session.prompt("first", { requestId: "first" });
+      await first.result;
+      await first.settled;
+      const second = await session.prompt("second", { requestId: "second" });
+      await second.result;
+      await second.settled;
+      expect(stats.createSessionCalls).toBe(1);
+      expect(executions).toEqual([first.executionId, second.executionId]);
+    } finally {
+      await session.close();
+    }
+  });
+
   it("passes the Expert model selection to Runtime session creation and turns", async () => {
     const home = await createTemporaryHome("pragma-runtime-model-selection-");
     const stats = createFakeRuntimeStats();
@@ -1049,8 +1115,12 @@ describe("ExpertSession", { timeout: 30_000 }, () => {
     const session = await app.experts.createSession(expert);
     const first = await session.prompt("one", { requestId: "one" });
     await expect(first.result).resolves.toBe("tracked:one");
+    await first.settled;
+    expect((await session.getState()).activeExecutionId).not.toBe(first.executionId);
     const second = await session.prompt("two", { requestId: "two" });
     await expect(second.result).resolves.toBe("tracked:two");
+    await second.settled;
+    expect((await session.getState()).activeExecutionId).not.toBe(second.executionId);
 
     expect(stats.createSessionCalls).toBe(1);
     expect(stats.restoreSessionCalls).toBe(0);
@@ -1655,6 +1725,11 @@ describe("ExpertSession", { timeout: 30_000 }, () => {
           });
           releaseTurn();
           await expect(active.result).rejects.toThrow();
+          await expect(active.settled).rejects.toThrow("lease was lost");
+          const historical = (await session.listTurns()).find(
+            (turn) => turn.requestId === "active",
+          )!;
+          await expect(historical.settled).rejects.toThrow("lease was lost");
           await sessions.releaseLease(session.sessionId, "successor");
         } else {
           await vi.waitFor(() => expect(claimLease).toHaveBeenCalledTimes(2));

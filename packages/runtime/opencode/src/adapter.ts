@@ -167,7 +167,27 @@ export function createOpenCodeRuntime(options: OpenCodeRuntimeOptions = {}): Run
         };
       },
       async createSession(ctx): Promise<NativeSession> {
+        const startedAt = performance.now();
+        let phaseStartedAt = startedAt;
+        const logPhase = (phase: string): void => {
+          const now = performance.now();
+          ctx.logger.info(
+            "runtime.opencode_prepare_phase",
+            "OpenCode preparation phase completed",
+            {
+              phase,
+              durationMs: Math.round((now - phaseStartedAt) * 100) / 100,
+              elapsedMs: Math.round((now - startedAt) * 100) / 100,
+              restored:
+                (ctx.persistence.restoredRuntimeSessionId ??
+                  ctx.request.runtimeSession?.id ??
+                  "") !== "",
+            },
+          );
+          phaseStartedAt = now;
+        };
         const detected = await probeOpenCode(executablePath, env);
+        logPhase("version_probe");
         const sessionDir = ctx.paths.runtimeSessionDir("opencode");
         const dataEnvironment = await prepareOpenCodeDataHome(ctx.processEnvironment, sessionDir);
         const sessionConfiguration = await prepareOpenCodeConfiguration({
@@ -176,6 +196,7 @@ export function createOpenCodeRuntime(options: OpenCodeRuntimeOptions = {}): Run
           sessionDir,
           major: detected.major,
         });
+        logPhase("private_data_and_config");
         const process = await startOpenCodeProcess({
           executablePath,
           env: sessionConfiguration.env,
@@ -184,10 +205,12 @@ export function createOpenCodeRuntime(options: OpenCodeRuntimeOptions = {}): Run
           mcpUrl: ctx.features.mcp.registration.url,
           ...detected,
         });
+        logPhase("process_start_and_health");
         const client = connectOpenCode(process, ctx.workspace);
         try {
           const model = ctx.request.modelSelection?.model;
           const models = await client.listModels();
+          logPhase("model_catalog");
           if (
             model !== undefined &&
             models.length > 0 &&
@@ -204,11 +227,13 @@ export function createOpenCodeRuntime(options: OpenCodeRuntimeOptions = {}): Run
             ctx.agentContext.systemPrompt,
             rules,
           );
+          logPhase("native_session_create_or_resume");
           if (detected.major === 2) {
             await client.addMcp(
               `pragma_${id.replace(/[^a-zA-Z0-9_-]/g, "_")}`,
               ctx.features.mcp.registration.url,
             );
+            logPhase("native_mcp_connect");
           }
           return {
             client,

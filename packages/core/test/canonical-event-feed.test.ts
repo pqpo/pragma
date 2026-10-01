@@ -21,6 +21,109 @@ import { CANONICAL_EVENT_FEED_V1_SCHEMA_SQL } from "../src/storage/migrations/ca
 import { appendExecutionEvent } from "./execution-store-test-helpers.ts";
 
 describe("Canonical Event Feed", () => {
+  it("coalesces a blocked background delivery failure and preserves every handoff for recovery", async () => {
+    const home = await mkdtemp(join(tmpdir(), "pragma-canonical-coalesced-"));
+    const durable = await createFileCanonicalEventFeed({ pragmaHome: home });
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const onError = vi.fn();
+    const store = createFileExecutionStore({
+      pragmaHome: home,
+      canonicalDelivery: "background",
+      canonicalEventFeed: {
+        ...durable,
+        async append() {
+          await gate;
+          throw new Error("feed unavailable");
+        },
+      },
+      onCanonicalEventDeliveryError: onError,
+    });
+    await createExecution(store);
+    try {
+      for (let index = 0; index < 6; index++) {
+        await appendExecutionEvent(
+          store,
+          "execution",
+          "root",
+          "invocation.progress",
+          { index },
+          `coalesced-${index}`,
+        );
+      }
+    } finally {
+      release();
+      await store.drainCanonicalEvents();
+    }
+    expect(onError).toHaveBeenCalledOnce();
+    await expect(store.inspectCanonicalEventDelivery()).resolves.toMatchObject({ pending: 6 });
+    const recovery = createFileExecutionStore({ pragmaHome: home, canonicalEventFeed: durable });
+    await expect(recovery.recoverPendingCanonicalEvents()).resolves.toMatchObject({
+      recovered: 6,
+      pending: 0,
+      failed: 0,
+    });
+    await expect(durable.inspect()).resolves.toMatchObject({ eventCount: 6 });
+    await durable.close();
+  });
+
+  it("returns a durable Execution commit while background feed delivery is blocked", async () => {
+    const home = await mkdtemp(join(tmpdir(), "pragma-canonical-background-"));
+    const durable = await createFileCanonicalEventFeed({ pragmaHome: home });
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const feed: CanonicalEventFeed = {
+      ...durable,
+      async append(events) {
+        await gate;
+        await durable.append(events);
+      },
+    };
+    const store = createFileExecutionStore({
+      pragmaHome: home,
+      canonicalEventFeed: feed,
+      canonicalDelivery: "background",
+    });
+    await createExecution(store);
+    try {
+      await appendExecutionEvent(
+        store,
+        "execution",
+        "root",
+        "invocation.progress",
+        {},
+        "background",
+      );
+      await expect(store.get("execution")).resolves.toMatchObject({ version: 1 });
+      await expect(store.inspectCanonicalEventDelivery()).resolves.toEqual({
+        pending: 1,
+        quarantined: 0,
+      });
+      // More commits arriving during a blocked delivery are all included in the
+      // same drain barrier, without waiting for the feed in the producer path.
+      for (let index = 0; index < 12; index++) {
+        await appendExecutionEvent(
+          store,
+          "execution",
+          "root",
+          "invocation.progress",
+          { index },
+          `background-${index}`,
+        );
+      }
+      await expect(store.get("execution")).resolves.toMatchObject({ version: 13 });
+    } finally {
+      release();
+      await store.drainCanonicalEvents();
+    }
+    await expect(durable.inspect()).resolves.toMatchObject({ eventCount: 13 });
+    await durable.close();
+  });
+
   it("preserves worker error diagnostics across the RPC boundary", async () => {
     const home = await mkdtemp(join(tmpdir(), "pragma-canonical-feed-error-"));
     const feed = await createFileCanonicalEventFeed({ pragmaHome: home });

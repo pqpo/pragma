@@ -20,6 +20,9 @@ export interface LocalHostMissionControllerComposition {
 }
 
 export interface LocalHostMissionControllerCompositionOptions {
+  readonly idleTimeoutMs?: number | undefined;
+  readonly onIdle?: Parameters<typeof createMissionOwnerScope>[0]["onIdle"];
+  readonly onIdleError?: Parameters<typeof createMissionOwnerScope>[0]["onIdleError"];
   readonly missionsPath: string;
   readonly missionPath?: ((missionId: string) => string) | undefined;
   readonly onLeaseLost?: ((missionId: string, error?: unknown) => Promise<void> | void) | undefined;
@@ -55,6 +58,9 @@ export function createLocalHostMissionController(
   });
   const ownerScope = createMissionOwnerScope({
     controller,
+    idleTimeoutMs: options.idleTimeoutMs,
+    onIdle: options.onIdle,
+    onIdleError: options.onIdleError,
     leaseMs: options.leaseMs,
     onLeaseLost: options.onLeaseLost,
     onLeaseRenewalError: options.onLeaseRenewalError,

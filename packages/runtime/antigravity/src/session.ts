@@ -505,6 +505,7 @@ async function runAntigravityProcess(
   modelName: string | undefined,
   thinkingLevel: string | undefined,
 ): Promise<ProcessRunResult> {
+  const startedAt = performance.now();
   const selection = JSON.stringify([modelName, thinkingLevel]);
   if (
     session.connection !== undefined &&
@@ -519,6 +520,7 @@ async function runAntigravityProcess(
   let connection: AntigravityConnection;
   let checkpoints: TranscriptCheckpoints;
   let logCheckpoint: TranscriptCheckpoint;
+  const reusedProcess = session.connection !== undefined;
   try {
     [checkpoints, logCheckpoint] = await Promise.all([
       captureAntigravityTranscriptCheckpoints(session.managedHome.homeDir, session.sessionId),
@@ -528,6 +530,16 @@ async function runAntigravityProcess(
     connection =
       session.connection ??
       openAntigravityConnection(session, selection, logPath, modelName, thinkingLevel);
+    session.logger.info(
+      "runtime.antigravity_connection_ready",
+      "Antigravity turn connection prepared",
+      {
+        runId: turn.runId,
+        durationMs: Math.round((performance.now() - startedAt) * 100) / 100,
+        reusedProcess,
+        resumedConversation: session.sessionId !== "",
+      },
+    );
     // Observe a failed OS spawn before stdin can obscure it with EPIPE.
     if ("pid" in connection.process && connection.process.pid === undefined) {
       try {
@@ -570,6 +582,18 @@ async function runAntigravityProcess(
   turn.signal.addEventListener("abort", abort, { once: true });
   try {
     // Once write is attempted, failure can be ambiguous. Never automatically replay it.
+    session.logger.info(
+      "runtime.antigravity_input_dispatched",
+      "Antigravity native turn input dispatch attempted",
+      {
+        runId: turn.runId,
+        elapsedMs: Math.round((performance.now() - startedAt) * 100) / 100,
+        reusedProcess,
+        inputCharacters: JSON.stringify(input).length,
+        modelName,
+        thinkingLevel,
+      },
+    );
     connection.process.stdin.write(`${JSON.stringify(input)}\n`, (error) => {
       if (error != null && connection.pending === pending) pending.reject(error);
     });

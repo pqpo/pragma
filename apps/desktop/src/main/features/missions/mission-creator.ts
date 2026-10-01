@@ -3,6 +3,7 @@ import { basename } from "node:path";
 import { canonicalPragmaResourceRef, type PragmaFlowResource } from "@pragma/interpreter/ast";
 import type { ExpertPromptAttachment } from "@pragma/shared";
 import { z } from "zod";
+import type { PragmaLogger } from "@pragma/core";
 
 import type {
   DesktopToolPermissionMode,
@@ -46,6 +47,7 @@ export interface MissionCreator {
 }
 
 export function createMissionCreator(options: {
+  readonly logger?: PragmaLogger | undefined;
   readonly missions: MissionStore;
   readonly project: PragmaProjectStore;
   readonly executors: MissionExecutorCatalog;
@@ -58,17 +60,33 @@ export function createMissionCreator(options: {
 }): MissionCreator {
   return {
     async create(input) {
+      const startedAt = performance.now();
+      let phaseStartedAt = startedAt;
+      const logPhase = (phase: string, missionId = input.id): void => {
+        const now = performance.now();
+        options.logger?.info("mission.create_phase", "Mission creation phase completed", {
+          missionId,
+          executorRef: input.executorRef,
+          phase,
+          durationMs: Math.round((now - phaseStartedAt) * 100) / 100,
+          elapsedMs: Math.round((now - startedAt) * 100) / 100,
+        });
+        phaseStartedAt = now;
+      };
       const validation = await validateWorkspace(input.workspace);
       if (!validation.ok) {
         throw new Error("The selected workspace must be an accessible, writable directory.");
       }
+      logPhase("workspace_validation");
 
       const project = await options.project.ensurePublished();
+      logPhase("project_published");
       await options.assertExecutorReady?.(input.executorRef);
       const executor = await options.executors.resolve(input.executorRef, project);
       if (executor === undefined) {
         throw new Error(`Mission executor not found: ${input.executorRef}`);
       }
+      logPhase("executor_readiness_and_resolution");
       const missionInput =
         input.missionInput.kind === "auto"
           ? executor.kind === "flow"
@@ -110,12 +128,14 @@ export function createMissionCreator(options: {
         missionInput.kind === "prompt"
           ? missionInput.value
           : summarizeFlowInput(executor.name, flowInput!, validatedFlowInput!.structured);
+      logPhase("input_and_model_validation");
       return await withContextStoreRevisionLocks(
         options.contextStores,
         contextStoreIds,
         async () => {
           await Promise.all(contextMounts.map(resolveContextMount));
-          return await options.missions.create({
+          logPhase("knowledge_mounts");
+          const created = await options.missions.create({
             ...(input.id === undefined ? {} : { id: input.id }),
             workspace: { path: input.workspace, basename: basename(input.workspace) },
             goal,
@@ -132,6 +152,8 @@ export function createMissionCreator(options: {
             toolPermissionMode:
               input.toolPermissionMode ?? (await options.getDefaultToolPermissionMode()),
           });
+          logPhase("mission_persist", created.id);
+          return created;
         },
       );
     },

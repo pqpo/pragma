@@ -474,7 +474,7 @@ export class PragmaProjectService {
         sourceIdentity,
         blueprintCache: this.options.blueprintCache,
         onBlueprintCacheLookup: (observation) => {
-          this.logger.info(
+          this.logger[observation.hit ? "debug" : "info"](
             "interpreter.blueprint_cache_lookup",
             observation.hit
               ? "Pragma project Blueprint cache hit."
@@ -501,7 +501,7 @@ export class PragmaProjectService {
         this.openedProjects.delete(oldest);
       }
     } else {
-      this.logger.info(
+      this.logger.debug(
         "interpreter.project_cache_hit",
         "Reused the open immutable Pragma project.",
         {

@@ -29,7 +29,7 @@ import {
 } from "@pragma/memory";
 import type { MemoryExtractionFailureDiagnostic } from "@pragma/shared";
 
-import { readMissionConversationSnapshot, type MissionRunner } from "../missions/mission-runner.ts";
+import { type MissionRunner } from "../missions/mission-runner.ts";
 import { MissionStoreError, type MissionStore } from "../missions/mission-store.ts";
 import type { PragmaProjectStore } from "../projects/pragma-project-store.ts";
 import { z } from "zod";
@@ -218,9 +218,18 @@ export function createDesktopMemoryCurator(options: {
     async getRunChat(runId) {
       const active = [...activeRuns.values()].find((run) => run.runId === runId);
       if (active !== undefined) {
-        return await readMissionConversationSnapshot(options.runner, active.missionId);
+        return await options.runner.getInternalConversationSnapshot(active.missionId);
       }
-      return (await runArchive.get(runId))?.chat;
+      const archived = await runArchive.get(runId);
+      if (archived === undefined) return undefined;
+      if (archived.status === "succeeded" && archived.chat !== undefined) return archived.chat;
+      // Failed reads can recover later. Prefer the retained execution over an incomplete archive.
+      try {
+        return await options.runner.getInternalConversationSnapshot(archived.missionId);
+      } catch (error) {
+        if (archived.chat === undefined) throw error;
+        return archived.chat;
+      }
     },
     subscribeRunChat(listener) {
       runChatListeners.add(listener);
@@ -253,6 +262,23 @@ export function createDesktopMemoryCurator(options: {
           Date.now() - Date.parse(entry.createdAt) >=
           DEFAULT_MEMORY_STORAGE_POLICY.curatorOrphanGraceMs;
         if (!terminal && !stale) continue;
+        const archived = (
+          await Promise.all(
+            (["episodic", "semantic", "knowledge", "skill"] as const).map((module) =>
+              runArchive.listForJob({ module, jobId: entry.jobId }),
+            ),
+          )
+        )
+          .flat()
+          .find((run) => run.missionId === entry.missionId);
+        // Do not destroy the only durable provider result after a failed read/archive or crash.
+        if (
+          (archived?.chat === undefined || archived.status !== "succeeded") &&
+          Date.now() - Date.parse(entry.createdAt) <
+            DEFAULT_MEMORY_STORAGE_POLICY.jobRecordRetentionMs
+        )
+          continue;
+
         if (await cleanupCuratorMission(options.runner, entry.missionId)) {
           await unregisterCuratorMission(options.pragmaHome, entry.missionId);
           recovered += 1;
@@ -340,6 +366,9 @@ async function runCuratorMission(input: {
   input.activeRuns.set(mission.id, activeRun);
   let failure: MemoryExtractionFailureDiagnostic | undefined;
   let finalStatus: DesktopMemoryExtractionRun["status"] = "failed";
+  let executionRequested = false;
+  let resultReadRequested = false;
+  let resultChat: MissionConversationSnapshot | undefined;
   const interrupt = (): void => {
     void input.options.runner.interrupt(mission.id).catch(() => undefined);
   };
@@ -347,6 +376,8 @@ async function runCuratorMission(input: {
   try {
     await registerCuratorMission(pragmaHome, mission.id, input.jobId);
     input.signal?.throwIfAborted();
+    // Once admitted, provider execution/billing may have happened even if a later read fails.
+    executionRequested = true;
     await input.options.runner.run(mission.id);
     await waitForMission(input.options.missions, mission.id, input.signal);
     const finished = await input.options.missions.get(mission.id);
@@ -356,7 +387,7 @@ async function runCuratorMission(input: {
         runtimeFailure?.message ?? finished.execution?.error ?? "Memory Curator failed.";
       const error = Object.assign(new Error(message), {
         code: runtimeFailure?.code ?? "memory_curator_failed",
-        retryable: runtimeFailure?.retryable ?? true,
+        retryable: finished.execution?.status === "failed" && (runtimeFailure?.retryable ?? true),
         runtimeId: input.runtime.runtimeId,
         providerId: input.runtime.modelSelection?.model.providerId,
         modelId: input.runtime.modelSelection?.model.modelId,
@@ -370,13 +401,15 @@ async function runCuratorMission(input: {
       finalStatus = finished.execution?.status === "cancelled" ? "cancelled" : "failed";
       throw error;
     }
-    const chat = await input.options.runner.getChatPage({ id: mission.id, limit: 50 });
-    const content = chat.entries
-      .filter((entry) => entry.kind === "assistant")
-      .map((entry) => entry.content)
-      .at(-1);
-    if (content === undefined) throw new Error("memory_curator_output_missing");
-    const runtimeOutput = await input.options.runner.getTerminalRuntimeOutputDiagnostic(mission.id);
+    resultReadRequested = true;
+    const { content, runtimeOutput } = await readCuratorResultWithRetry(
+      input.options.runner,
+      mission.id,
+      (snapshot) => {
+        resultChat = snapshot;
+      },
+      input.signal,
+    );
     finalStatus = "succeeded";
     return {
       content,
@@ -389,14 +422,34 @@ async function runCuratorMission(input: {
       ...(runtimeOutput?.usage === undefined ? {} : { usage: runtimeOutput.usage }),
     };
   } catch (error) {
-    failure ??= curatorFailureDiagnostic(error, activeRun, startedAt);
+    let failureError = error;
+    if (executionRequested) {
+      failureError = Object.assign(
+        new Error(error instanceof Error ? error.message : String(error), { cause: error }),
+        {
+          code:
+            typeof (error as { code?: unknown } | null)?.code === "string"
+              ? (error as { code: string }).code
+              : "memory_curator_result_unavailable",
+          // A retryable local read must not authorize replay of a succeeded, billable execution.
+          retryable:
+            resultReadRequested || input.signal?.aborted === true
+              ? false
+              : ((error as { retryable?: boolean } | null)?.retryable ?? false),
+        },
+      );
+    }
+    failure ??= curatorFailureDiagnostic(failureError, activeRun, startedAt);
     if (input.signal?.aborted === true) finalStatus = "cancelled";
-    throw error;
+    throw failureError;
   } finally {
     input.signal?.removeEventListener("abort", interrupt);
-    const [chat] = await Promise.all([
-      readMissionConversationSnapshot(input.options.runner, mission.id).catch(() => undefined),
-    ]);
+    const chat = resultReadRequested
+      ? resultChat
+      : await input.options.runner
+          .getInternalConversationSnapshot(mission.id)
+          .catch(() => undefined);
+    let archived = false;
     await input.runArchive
       .save({
         ...activeRun,
@@ -404,6 +457,9 @@ async function runCuratorMission(input: {
         finishedAt: new Date().toISOString(),
         ...(failure === undefined ? {} : { failure }),
         ...(chat === undefined ? {} : { chat }),
+      })
+      .then(() => {
+        archived = true;
       })
       .catch((error: unknown) => {
         logger.warn(
@@ -413,7 +469,12 @@ async function runCuratorMission(input: {
         );
       });
     input.activeRuns.delete(mission.id);
-    if (await cleanupCuratorMission(input.options.runner, mission.id)) {
+    if (
+      archived &&
+      chat !== undefined &&
+      finalStatus === "succeeded" &&
+      (await cleanupCuratorMission(input.options.runner, mission.id))
+    ) {
       await unregisterCuratorMission(pragmaHome, mission.id).catch((error: unknown) => {
         logger.warn(
           "desktop.memory_curator_registry_cleanup_failed",
@@ -464,6 +525,43 @@ function redactCuratorDiagnosticText(value: string): string {
     .replace(/\bBearer\s+[A-Za-z0-9._~+/-]+=*/giu, "Bearer [REDACTED]")
     .replace(/\b(api[_-]?key|token|secret|password)=([^\s&]+)/giu, "$1=[REDACTED]")
     .replace(/([?&](?:api[_-]?key|token|secret|password)=)[^\s&#]+/giu, "$1[REDACTED]");
+}
+
+/** Retry only reads of the completed execution; never rerun the model for a read failure. */
+async function readCuratorResultWithRetry(
+  runner: MissionRunner,
+  missionId: string,
+  onSnapshot: (snapshot: MissionConversationSnapshot) => void,
+  signal?: AbortSignal,
+) {
+  for (let attempt = 0; ; attempt += 1) {
+    signal?.throwIfAborted();
+    try {
+      const chat = await runner.getInternalConversationSnapshot(missionId);
+      onSnapshot(chat);
+      const content = chat.entries
+        .filter((entry) => entry.kind === "assistant")
+        .map((entry) => entry.content)
+        .at(-1);
+      if (content === undefined) throw new Error("memory_curator_output_missing");
+      const runtimeOutput = await runner.getTerminalRuntimeOutputDiagnostic(missionId);
+      return { content, runtimeOutput };
+    } catch (error) {
+      signal?.throwIfAborted();
+      if (attempt >= 3) throw error;
+      await new Promise<void>((resolve, reject) => {
+        const abort = (): void => {
+          clearTimeout(timer);
+          reject(signal?.reason ?? new DOMException("Aborted", "AbortError"));
+        };
+        const timer = setTimeout(() => {
+          signal?.removeEventListener("abort", abort);
+          resolve();
+        }, 5_000);
+        signal?.addEventListener("abort", abort, { once: true });
+      });
+    }
+  }
 }
 
 async function waitForMission(

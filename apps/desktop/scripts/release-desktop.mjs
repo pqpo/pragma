@@ -273,6 +273,8 @@ async function buildAndStage(platform, version, stageDirectory) {
     await copyFile(sourcePath, targetPath);
     console.log(`Staged ${targetPath}`);
   }
+
+  await runCommand("pnpm", ["run", "dist:clean"], packageDirectory);
 }
 
 async function inspectStage(stageDirectory, version) {

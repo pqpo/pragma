@@ -120,6 +120,8 @@ export interface MissionRunner {
   steerQueuedMessage(input: { readonly id: string; readonly requestId: string }): Promise<Mission>;
   removeQueuedMessage(input: { readonly id: string; readonly requestId: string }): Promise<Mission>;
   getChatPage(input: MissionChatPageQuery): Promise<MissionChatPage>;
+  /** Main-process only: system task transcripts, never exposed through Mission IPC. */
+  getInternalConversationSnapshot(id: string): Promise<MissionConversationSnapshot>;
   getConversationState(id: string): Promise<MissionConversationState>;
   getContextWindow(id: string): Promise<MissionContextWindowSnapshot>;
   getTerminalRuntimeFailure(id: string): Promise<
@@ -156,6 +158,12 @@ export interface MissionRunner {
   interrupt(id: string, expectedExecutionId?: string): Promise<Mission>;
   forceInterrupt(id: string, expectedExecutionId?: string): Promise<Mission>;
   stopLocalController(id: string): Promise<void>;
+  releaseIdleSession(
+    id: string,
+    idleTimeoutMs: number,
+    releaseOwner: () => Promise<void>,
+  ): Promise<boolean>;
+  getResourceDiagnostics(): { warmSessionCount: number };
   getCanonicalStrictTarget(
     id: string,
   ): Promise<{ readonly executionId: string; readonly turnId: string } | undefined>;

@@ -350,6 +350,8 @@ export interface MissionControllerStore {
     readonly onLeaseLost: (error?: unknown) => Promise<void> | void;
     readonly recoverSemanticWrite?: ((guard: MissionControllerGuard) => Promise<void>) | undefined;
     readonly onPollingStopped?: (() => Promise<void> | void) | undefined;
+    readonly onEmpty?: (() => Promise<void> | void) | undefined;
+    readonly onPoll?: (() => void) | undefined;
     readonly onPollingError?:
       | ((input: {
           readonly error: unknown;
@@ -359,7 +361,7 @@ export interface MissionControllerStore {
     readonly initialDelayMs?: number;
     readonly maxDelayMs?: number;
     readonly jitter?: () => number;
-  }): { stop(): Promise<void> };
+  }): { stop(): Promise<void>; wake(): void };
 }
 
 export function createMissionControllerStore(options: {
@@ -404,6 +406,7 @@ export function createMissionControllerStore(options: {
   const registryPath = join(options.missionsPath, ".local-host", "run-request-registry.json");
   const registryLock = join(options.missionsPath, ".locks", "run-request-registry.lock");
   const watchBarrierCache = new Map<string, WatchBarrierCacheEntry>();
+  const operationWaiters = new Map<string, Set<() => void>>();
 
   const now = (): string => clock.now().toISOString();
   const checkpoint = async (phase: MissionControllerJournalPhase): Promise<void> =>
@@ -425,8 +428,10 @@ export function createMissionControllerStore(options: {
     return MissionAggregateStateSchema.parse(raw);
   };
 
-  const writeState = async (missionId: string, state: MissionAggregateState): Promise<void> =>
+  const writeState = async (missionId: string, state: MissionAggregateState): Promise<void> => {
     await writeJsonAtomically(statePath(missionId), MissionAggregateStateSchema.parse(state));
+    for (const notify of operationWaiters.get(missionId) ?? []) notify();
+  };
 
   const recoverCommandInboxMigration = async (missionId: string): Promise<void> => {
     const raw = await readJsonIfExists(commandInboxMigrationPath(missionId));
@@ -1789,35 +1794,41 @@ export function createMissionControllerStore(options: {
       });
     },
     startPolling(input) {
-      const initialDelayMs = input.initialDelayMs ?? 500;
-      const maxDelayMs = input.maxDelayMs ?? 2_000;
+      const initialDelayMs = input.initialDelayMs ?? 100;
+      const maxDelayMs = input.maxDelayMs ?? 500;
       if (initialDelayMs <= 0 || maxDelayMs < initialDelayMs)
         throw new Error("Invalid Mission inbox polling interval.");
       let stopped = false;
       let timer: ReturnType<typeof setTimeout> | undefined;
       let pollingTask: Promise<void> | undefined;
+      let wakeRequested = false;
       const pollingScope = new AsyncLocalStorage<boolean>();
       let delayMs = initialDelayMs;
       let consecutiveFailures = 0;
-      const schedule = (): void => {
+      const schedule = (immediate = false): void => {
         if (stopped) return;
+        if (timer !== undefined) clearTimeout(timer);
         const jitter = Math.max(-0.25, Math.min(0.25, input.jitter?.() ?? 0));
         timer = setTimeout(
           () => {
+            timer = undefined;
             const task = pollingScope.run(true, tick);
             pollingTask = task;
             void task
               .finally(() => {
                 if (pollingTask === task) pollingTask = undefined;
+                schedule(wakeRequested);
+                wakeRequested = false;
               })
               .catch(() => undefined);
           },
-          Math.round(delayMs * (1 + jitter)),
+          immediate ? 0 : Math.min(maxDelayMs, Math.round(delayMs * (1 + jitter))),
         );
         timer.unref();
       };
       const tick = async (): Promise<void> => {
         if (stopped) return;
+        input.onPoll?.();
         try {
           const guard = typeof input.guard === "function" ? input.guard() : input.guard;
           // Replay a pending Host mutation before trying the accepted command
@@ -1827,7 +1838,7 @@ export function createMissionControllerStore(options: {
           const command = await this.processNext({ ...input, guard });
           consecutiveFailures = 0;
           delayMs = command === undefined ? Math.min(maxDelayMs, delayMs * 2) : initialDelayMs;
-          schedule();
+          if (command === undefined) await input.onEmpty?.();
         } catch (error) {
           if (stopped) return;
           if (isFencingError(error)) {
@@ -1853,11 +1864,16 @@ export function createMissionControllerStore(options: {
             await input.onPollingStopped?.();
             return;
           }
-          schedule();
         }
       };
       schedule();
       return {
+        wake: () => {
+          if (stopped) return;
+          delayMs = initialDelayMs;
+          if (pollingTask !== undefined) wakeRequested = true;
+          else schedule(true);
+        },
         stop: async () => {
           stopped = true;
           if (timer !== undefined) clearTimeout(timer);
@@ -1883,19 +1899,41 @@ export function createMissionControllerStore(options: {
     },
   ): Promise<MissionOperationProjection> {
     const timeoutMs = input.timeoutMs ?? 30_000;
-    const pollIntervalMs = input.pollIntervalMs ?? 100;
+    const pollIntervalMs = input.pollIntervalMs ?? 500;
     assertWaitDuration(timeoutMs, "timeoutMs");
     assertWaitDuration(pollIntervalMs, "pollIntervalMs");
     const deadline = Date.now() + timeoutMs;
-    for (;;) {
-      const operation = await withAggregateLock(input.missionId, async () => {
-        await recoverTransactions(input.missionId);
-        return (await readState(input.missionId)).operations[input.requestId];
-      });
-      if (operation !== undefined && satisfied(operation)) return operation;
-      const remaining = deadline - Date.now();
-      if (remaining <= 0) break;
-      await delay(Math.min(pollIntervalMs, remaining));
+    let wake: (() => void) | undefined;
+    const notify = () => wake?.();
+    const waiters = operationWaiters.get(input.missionId) ?? new Set<() => void>();
+    waiters.add(notify);
+    operationWaiters.set(input.missionId, waiters);
+    try {
+      for (;;) {
+        let resolveChanged!: () => void;
+        const changed = new Promise<void>((resolve) => {
+          resolveChanged = resolve;
+        });
+        wake = resolveChanged;
+        const operation = await withAggregateLock(input.missionId, async () => {
+          await recoverTransactions(input.missionId);
+          return (await readState(input.missionId)).operations[input.requestId];
+        });
+        if (operation !== undefined && satisfied(operation)) return operation;
+        const remaining = deadline - Date.now();
+        if (remaining <= 0) break;
+        let timer: ReturnType<typeof setTimeout> | undefined;
+        await Promise.race([
+          changed,
+          new Promise<void>((resolve) => {
+            timer = setTimeout(resolve, Math.min(pollIntervalMs, remaining));
+          }),
+        ]);
+        if (timer !== undefined) clearTimeout(timer);
+      }
+    } finally {
+      waiters.delete(notify);
+      if (waiters.size === 0) operationWaiters.delete(input.missionId);
     }
     throw createIntegrationError({
       code: timeout.code,
@@ -1944,10 +1982,6 @@ function assertWaitDuration(value: number, name: string): void {
 
 function isTerminalOperation(state: MissionOperationProjection["state"]): boolean {
   return state === "applied" || state === "rejected" || state === "expired" || state === "failed";
-}
-
-async function delay(milliseconds: number): Promise<void> {
-  await new Promise<void>((resolve) => setTimeout(resolve, milliseconds));
 }
 
 function idempotencyError(requestId: string): IntegrationError {

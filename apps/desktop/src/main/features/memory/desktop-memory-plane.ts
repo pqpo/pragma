@@ -774,6 +774,7 @@ export async function createDesktopMemoryPlane(options: {
       knowledge.close();
       skill.close();
       semantic.close();
+      await executionStore.drainCanonicalEvents();
       await canonical.close();
     },
   };

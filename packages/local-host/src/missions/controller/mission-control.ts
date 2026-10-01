@@ -243,6 +243,7 @@ export function createMissionControlApplication(options: {
       // owner and the existing poller consumes the same Inbox item.
       if (options.ownerScope.currentGuard(input.missionId) !== undefined) {
         await options.ownerScope.acquire(input.missionId);
+        options.ownerScope.wake(input.missionId);
         return { ...appended, owner: "live" };
       }
       void startOwner(input.missionId).catch(async (error: unknown) => {

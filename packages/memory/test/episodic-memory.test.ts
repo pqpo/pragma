@@ -39,6 +39,365 @@ afterEach(async () => {
 });
 
 describe("Episodic Memory", () => {
+  it("does not refund an unconfirmed fourth claim after restart", async () => {
+    const root = await temporaryRoot();
+    let clock = new Date("2026-08-04T00:00:00.000Z");
+    const extractor = fakeExtractor();
+    extractor.extract.mockRejectedValue(new Error("temporary model failure"));
+    let module = await createEpisodicMemoryModule({
+      pragmaHome: root,
+      extractor,
+      now: () => clock,
+    });
+    await module.consume(executionEvidence("restart-budget"));
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      await module.runBackgroundOnce?.();
+      clock = new Date(clock.getTime() + 5_000);
+    }
+    const claim = await module.store.claimDueJob(clock);
+    expect(claim?.attempts).toBe(4);
+    module.close();
+    module = await createEpisodicMemoryModule({ pragmaHome: root, extractor, now: () => clock });
+    await module.setConversationState({
+      conversationRef: claim!.conversationRef,
+      state: "active",
+      now: clock,
+    });
+    await module.runBackgroundOnce?.();
+    expect(extractor.extract).toHaveBeenCalledTimes(3);
+    expect((await module.store.listExtractionJobs())[0]).toMatchObject({
+      status: "needs_attention",
+      attempts: 4,
+      totalAttempts: 4,
+      lastErrorCode: "memory_extraction_execution_unconfirmed",
+    });
+    module.close();
+  });
+
+  it.each([0, 2, 3])(
+    "refunds only the unadmitted claim after %i model attempts",
+    async (history) => {
+      let clock = new Date("2026-08-04T00:00:00.000Z");
+      const extractor = fakeExtractor();
+      extractor.extract.mockRejectedValue(new Error("temporary model failure"));
+      const module = await createEpisodicMemoryModule({
+        pragmaHome: await temporaryRoot(),
+        extractor,
+        now: () => clock,
+      });
+      await module.consume(executionEvidence("budget-cancel"));
+      for (let attempt = 0; attempt < history; attempt += 1) {
+        await module.runBackgroundOnce?.();
+        clock = new Date(clock.getTime() + 5_000);
+      }
+      const [initial] = await module.store.listExtractionJobs();
+      const readEvidence = module.store.readEvidenceForJob.bind(module.store);
+      for (let cancellation = 0; cancellation < 2; cancellation += 1) {
+        await module.setConversationState({
+          conversationRef: initial!.conversationRef,
+          state: "completed",
+          now: clock,
+        });
+        vi.spyOn(module.store, "readEvidenceForJob").mockImplementationOnce(async (job) => {
+          expect(job.attempts).toBe(history + 1);
+          const evidence = await readEvidence(job);
+          await module.setConversationState({
+            conversationRef: job.conversationRef,
+            state: "active",
+            now: clock,
+          });
+          return evidence;
+        });
+        await module.runBackgroundOnce?.();
+        expect(extractor.extract).toHaveBeenCalledTimes(history);
+        expect((await module.store.listExtractionJobs())[0]).toMatchObject({
+          status: "waiting_idle",
+          attempts: history,
+          totalAttempts: history,
+        });
+      }
+      await module.setConversationState({
+        conversationRef: initial!.conversationRef,
+        state: "completed",
+        now: clock,
+      });
+      for (let attempt = history; attempt < 4; attempt += 1) {
+        await module.runBackgroundOnce?.();
+        const [job] = await module.store.listExtractionJobs();
+        if (attempt < 3) {
+          expect(job!.retryAt).toBe(new Date(clock.getTime() + 5_000).toISOString());
+          clock = new Date(clock.getTime() + 4_999);
+          await module.runBackgroundOnce?.();
+          expect(extractor.extract).toHaveBeenCalledTimes(attempt + 1);
+          clock = new Date(clock.getTime() + 1);
+        }
+      }
+      expect(extractor.extract).toHaveBeenCalledTimes(4);
+      expect((await module.store.listExtractionJobs())[0]).toMatchObject({
+        status: "needs_attention",
+        attempts: 4,
+        totalAttempts: 4,
+      });
+      await module.runBackgroundOnce?.();
+      expect(extractor.extract).toHaveBeenCalledTimes(4);
+      module.close();
+    },
+  );
+
+  it("preserves retry counts while active conversation defers extraction", async () => {
+    let clock = new Date("2026-08-04T00:00:00.000Z");
+    const extractor = fakeExtractor();
+    extractor.extract.mockRejectedValueOnce(new Error("temporary failure"));
+    const module = await createEpisodicMemoryModule({
+      pragmaHome: await temporaryRoot(),
+      extractor,
+      now: () => clock,
+    });
+    await module.consume(executionEvidence("review-boundary"));
+    await module.runBackgroundOnce?.();
+    const [job] = await module.store.listExtractionJobs();
+    await module.setConversationState({
+      conversationRef: job!.conversationRef,
+      state: "active",
+      now: clock,
+    });
+    clock = new Date(clock.getTime() + 5_000);
+    await module.runBackgroundOnce?.();
+    expect(extractor.extract).toHaveBeenCalledTimes(1);
+    expect((await module.store.listExtractionJobs())[0]?.attempts).toBe(1);
+    await module.setConversationState({
+      conversationRef: job!.conversationRef,
+      state: "completed",
+      now: clock,
+    });
+    await module.runBackgroundOnce?.();
+    expect(extractor.extract).toHaveBeenCalledTimes(2);
+    expect((await module.store.listExtractionJobs())[0]).toMatchObject({
+      status: "completed",
+      attempts: 2,
+    });
+    module.close();
+  });
+
+  it.each([
+    ["available", 4],
+    ["missing", 4],
+    ["reactivated", 2],
+    ["reactivated", 4],
+  ] as const)(
+    "keeps durable recovery budget for %s results at %i attempts",
+    async (resultState, attempts) => {
+      const root = await temporaryRoot();
+      const clock = new Date("2026-08-04T00:00:00.000Z");
+      const extractor = fakeExtractor();
+      const module = await createEpisodicMemoryModule({
+        pragmaHome: root,
+        extractor,
+        now: () => clock,
+      });
+      await module.consume(executionEvidence("review-boundary"));
+      await module.runBackgroundOnce?.();
+      // Crash before the state transaction would leave source Evidence available.
+      await module.consume(executionEvidence("review-boundary"));
+      const database = new DatabaseSync(
+        join(
+          new PragmaPaths({ pragmaHome: root }).memoryModuleStateRoot("pragma.memory.episodic"),
+          "jobs.sqlite",
+        ),
+      );
+      const row = database.prepare("SELECT id, job_json AS jobJson FROM jobs LIMIT 1").get() as {
+        id: string;
+        jobJson: string;
+      };
+      const job = JSON.parse(row.jobJson) as Record<string, unknown>;
+      job.status = "running";
+      job.attempts = attempts;
+      job.totalAttempts = attempts;
+      job.leaseUntil = "2026-08-03T00:00:00.000Z";
+      delete job.completion;
+      delete job.completedAt;
+      database
+        .prepare("UPDATE jobs SET status = 'running', lease_until = ?, job_json = ? WHERE id = ?")
+        .run(job.leaseUntil as string, JSON.stringify(job), row.id);
+      database.close();
+      if (resultState === "missing")
+        vi.spyOn(module.store, "getByConversation").mockResolvedValueOnce(undefined);
+      if (resultState === "reactivated") {
+        const readResult = module.store.getByConversation.bind(module.store);
+        vi.spyOn(module.store, "getByConversation").mockImplementationOnce(
+          async (conversationRef) => {
+            const result = await readResult(conversationRef);
+            await module.setConversationState({
+              conversationRef: conversationRef,
+              state: "active",
+              now: clock,
+            });
+            return result;
+          },
+        );
+      }
+      await module.runBackgroundOnce?.();
+      expect(extractor.extract).toHaveBeenCalledTimes(1);
+      expect((await module.store.listExtractionJobs())[0]).toMatchObject({
+        status: resultState === "available" ? "completed" : "needs_attention",
+        attempts,
+        totalAttempts: attempts,
+      });
+      module.close();
+    },
+  );
+
+  it("keeps admitted work and completed rejection stable across repeated completion notifications", async () => {
+    const clock = new Date("2026-08-04T00:00:00.000Z");
+    const extractor = fakeExtractor();
+    const original =
+      extractor.extract.getMockImplementation()! as EpisodicMemoryExtractor["extract"];
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    extractor.extract.mockImplementationOnce(async (input) => {
+      await gate;
+      return { ...(await original(input)), output: { retain: false, reason: "low-value" } };
+    });
+    const module = await createEpisodicMemoryModule({
+      pragmaHome: await temporaryRoot(),
+      extractor,
+      now: () => clock,
+    });
+    await module.consume(executionEvidence("completion-repeat"));
+    const running = module.runBackgroundOnce?.();
+    await vi.waitFor(() => expect(extractor.extract).toHaveBeenCalledOnce());
+    const [job] = await module.store.listExtractionJobs();
+    await module.setConversationState({
+      conversationRef: job!.conversationRef,
+      state: "completed",
+      now: clock,
+    });
+    expect((await module.store.listExtractionJobs())[0]!.status).toBe("running");
+    release();
+    await running;
+    await module.setConversationState({
+      conversationRef: job!.conversationRef,
+      state: "completed",
+      now: clock,
+    });
+    await module.runBackgroundOnce?.();
+    expect(extractor.extract).toHaveBeenCalledOnce();
+    expect((await module.store.listExtractionJobs())[0]).toMatchObject({
+      status: "completed",
+      completion: "rejected",
+    });
+    module.close();
+  });
+
+  it("allows a legacy retryable failure within the persisted retry budget", async () => {
+    const clock = new Date("2026-08-04T00:00:00.000Z");
+    const extractor = fakeExtractor();
+    const module = await createEpisodicMemoryModule({
+      pragmaHome: await temporaryRoot(),
+      extractor,
+      now: () => clock,
+    });
+    await module.consume(executionEvidence("legacy-paid"));
+    const job = await module.store.claimDueJob(clock);
+    await module.store.fail({
+      job: job!,
+      diagnostic: {
+        ...failureDiagnostic("legacy_result_read_failed"),
+        phase: "curator_run",
+        retryable: true,
+      },
+      retry: "transient",
+      now: clock,
+    });
+    clock.setUTCDate(clock.getUTCDate() + 1);
+    await module.runBackgroundOnce?.();
+    expect(extractor.extract).toHaveBeenCalledTimes(1);
+    expect((await module.store.listExtractionJobs())[0]).toMatchObject({
+      status: "completed",
+    });
+    module.close();
+  });
+
+  it("limits retries to three at five-second intervals across activity and restart", async () => {
+    const root = await temporaryRoot();
+    let clock = new Date("2026-08-04T00:00:00.000Z");
+    const extractor = fakeExtractor();
+    extractor.extract.mockRejectedValue(
+      Object.assign(new Error("result read failed"), { retryable: true }),
+    );
+    let module = await createEpisodicMemoryModule({
+      pragmaHome: root,
+      extractor,
+      now: () => clock,
+    });
+    await module.consume(executionEvidence("paid-result"));
+    await module.runBackgroundOnce?.();
+    let [job] = await module.store.listExtractionJobs();
+    expect(job).toMatchObject({ status: "pending", attempts: 1 });
+    for (let attempts = 1; attempts <= 3; attempts += 1) {
+      expect(job!.retryAt).toBe(new Date(clock.getTime() + 5_000).toISOString());
+      module.close();
+      module = await createEpisodicMemoryModule({ pragmaHome: root, extractor, now: () => clock });
+      await module.setConversationState({
+        conversationRef: job!.conversationRef,
+        state: "completed",
+        now: clock,
+      });
+      clock = new Date(clock.getTime() + 4_999);
+      await module.runBackgroundOnce?.();
+      expect(extractor.extract).toHaveBeenCalledTimes(attempts);
+      clock = new Date(clock.getTime() + 1);
+      await module.runBackgroundOnce?.();
+      expect(extractor.extract).toHaveBeenCalledTimes(attempts + 1);
+      [job] = await module.store.listExtractionJobs();
+    }
+    expect(job).toMatchObject({ status: "needs_attention", attempts: 4 });
+    expect(job!.retryAt).toBeUndefined();
+    module.close();
+    clock = new Date(clock.getTime() + 60_000);
+    module = await createEpisodicMemoryModule({ pragmaHome: root, extractor, now: () => clock });
+    await module.setConversationState({
+      conversationRef: job!.conversationRef,
+      state: "completed",
+      now: clock,
+    });
+    await module.runBackgroundOnce?.();
+    await module.store.wakeNeedsAttention(clock);
+    await module.runBackgroundOnce?.();
+    expect(extractor.extract).toHaveBeenCalledTimes(4);
+    [job] = await module.store.listExtractionJobs();
+    await module.store.retryJob({ id: job!.id, expectedRevision: job!.revision, now: clock });
+    await module.runBackgroundOnce?.();
+    expect(extractor.extract).toHaveBeenCalledTimes(5);
+    module.close();
+  });
+
+  it("does not replay an expired execution with an unknown billing outcome", async () => {
+    const root = await temporaryRoot();
+    let clock = new Date("2026-08-04T00:00:00.000Z");
+    const extractor = fakeExtractor();
+    let module = await createEpisodicMemoryModule({
+      pragmaHome: root,
+      extractor,
+      now: () => clock,
+    });
+    await module.consume(executionEvidence("paid-result"));
+    expect(await module.store.claimDueJob(clock)).toBeDefined();
+    module.close();
+    clock = new Date("2026-08-04T00:06:00.000Z");
+    module = await createEpisodicMemoryModule({ pragmaHome: root, extractor, now: () => clock });
+    await module.runBackgroundOnce?.();
+    expect(extractor.extract).not.toHaveBeenCalled();
+    expect((await module.store.listExtractionJobs())[0]).toMatchObject({
+      status: "needs_attention",
+      lastErrorCode: "memory_extraction_execution_unconfirmed",
+      lastFailure: { retryable: false },
+    });
+    module.close();
+  });
+
   it("does not publish lexical content forgotten while vector retrieval was in flight", async () => {
     const module = await createEpisodicMemoryModule({
       pragmaHome: await temporaryRoot(),
@@ -570,8 +929,9 @@ describe("Episodic Memory", () => {
     await running;
     expect(await module.store.list()).toEqual([]);
     expect((await module.store.listExtractionJobs())[0]).toMatchObject({
-      status: "waiting_idle",
-      attempts: 0,
+      status: "needs_attention",
+      attempts: 1,
+      lastFailure: { retryable: false },
     });
     module.close();
   });
@@ -885,6 +1245,8 @@ describe("Episodic Memory", () => {
     await module.runBackgroundOnce?.();
     clock = new Date(clock.getTime() + 5 * 60_000 + 1_000);
     await module.runBackgroundOnce?.();
+    clock = new Date(clock.getTime() + 5_000);
+    await module.runBackgroundOnce?.();
     const diagnostic = await module.store.inspect();
     expect(diagnostic).toMatchObject({
       needsAttention: 1,
@@ -979,7 +1341,7 @@ describe("Episodic Memory", () => {
       [ref("pragma.expert", "expert-a")],
     );
     await conflict.consume(mismatched);
-    for (const advance of [0, 61_000, 5 * 60_000 + 1_000]) {
+    for (const advance of [0, 5_000, 5_000, 5_000]) {
       clock = new Date(clock.getTime() + advance);
       await conflict.runBackgroundOnce?.();
     }

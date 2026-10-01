@@ -40,6 +40,53 @@ afterEach(async () => {
 });
 
 describe("Knowledge learning jobs", () => {
+  it("persists the three-retry budget and five-second deadline across restart", async () => {
+    const root = await temporaryRoot();
+    let clock = new Date(now.getTime() + 6 * 60 * 60_000);
+    let store = await createKnowledgeLearningStore({ pragmaHome: root });
+    await store.schedule({
+      rootRef: ref("pragma.expert", "expert-retry"),
+      sourceDigest: "f".repeat(64),
+      now,
+    });
+    for (let attempt = 1; attempt <= 4; attempt += 1) {
+      const job = await store.claimDueJob(clock);
+      expect(job?.attempts).toBe(attempt);
+      await store.fail({
+        job: job!,
+        diagnostic: {
+          schemaVersion: "pragma.memory-extraction-failure/v1",
+          code: "temporary_model_failure",
+          message: "temporary failure",
+          phase: "curator_run",
+          retryable: true,
+          failedAt: clock.toISOString(),
+        },
+        retry: "transient",
+        now: clock,
+      });
+      const [failed] = await store.listJobs();
+      expect(failed).toMatchObject({
+        attempts: attempt,
+        status: attempt < 4 ? "pending" : "needs_attention",
+      });
+      store.close();
+      store = await createKnowledgeLearningStore({ pragmaHome: root });
+      if (attempt < 4) {
+        expect(failed!.retryAt).toBe(new Date(clock.getTime() + 5_000).toISOString());
+        clock = new Date(clock.getTime() + 4_999);
+        expect(await store.claimDueJob(clock)).toBeUndefined();
+        clock = new Date(clock.getTime() + 1);
+      } else {
+        expect(failed!.retryAt).toBeUndefined();
+        clock = new Date(clock.getTime() + 60_000);
+        await store.wakeNeedsAttention(clock, "configuration");
+        expect(await store.claimDueJob(clock)).toBeUndefined();
+      }
+    }
+    store.close();
+  });
+
   it("upgrades v1 jobs with debounce timestamps and preserves a backup", async () => {
     const root = await temporaryRoot();
     const dataRoot = new PragmaPaths({ pragmaHome: root }).memoryModuleDataRoot(
@@ -268,14 +315,17 @@ describe("Knowledge learning jobs", () => {
     const reclaimed = await store.claimDueJob(now);
     await store.fail({
       job: reclaimed!,
-      diagnostic: failureDiagnostic("memory_extractor_profile_invalid"),
+      diagnostic: {
+        ...failureDiagnostic("memory_extractor_profile_invalid"),
+        phase: "source_read",
+      },
       retry: "configuration",
       now,
     });
     const [attention] = await store.listJobs();
     expect(attention).toMatchObject({
       lastErrorMessage: "memory_extractor_profile_invalid",
-      lastFailure: { code: "memory_extractor_profile_invalid", phase: "storage" },
+      lastFailure: { code: "memory_extractor_profile_invalid", phase: "source_read" },
     });
     expect(await store.listFailureAttempts(attention!.id)).toEqual([
       expect.objectContaining({
@@ -292,7 +342,10 @@ describe("Knowledge learning jobs", () => {
     const rerun = await store.claimDueJob(now);
     await store.fail({
       job: rerun!,
-      diagnostic: failureDiagnostic("memory_extractor_profile_invalid"),
+      diagnostic: {
+        ...failureDiagnostic("memory_extractor_profile_invalid"),
+        phase: "source_read",
+      },
       retry: "configuration",
       now,
     });
@@ -317,16 +370,20 @@ describe("Knowledge learning jobs", () => {
     store.close();
   });
 
-  it("reclaims expired leases and ignores completion from a stale claim", async () => {
+  it("quarantines expired leases until manual retry and ignores completion from a stale claim", async () => {
     const store = await temporaryStore();
     const first = await claimedJob(store);
     const reclaimed = await store.claimDueJob(new Date(due.getTime() + 6 * 60_000));
 
-    expect(reclaimed).toMatchObject({
+    expect(reclaimed).toBeUndefined();
+    const [attention] = await store.listJobs();
+    expect(attention).toMatchObject({
       id: first.id,
-      revision: first.revision + 1,
-      status: "running",
+      status: "needs_attention",
+      lastFailure: { retryable: false },
     });
+    await store.retryJob({ id: attention!.id, expectedRevision: attention!.revision, now });
+    expect(await store.claimDueJob(now)).toMatchObject({ id: first.id, status: "running" });
     expect(await store.isClaimCurrent(first)).toBe(false);
     await expect(store.completeRejected(first, now)).rejects.toMatchObject({
       code: "revision_conflict",
@@ -435,6 +492,12 @@ describe("Knowledge learning jobs", () => {
       lastErrorCode: "memory_revision_pending",
     });
     await module.store.wakeNeedsAttention(now, "configuration");
+    const [attention] = await module.store.listJobs();
+    expect(attention).toMatchObject({
+      status: "needs_attention",
+      lastFailure: { retryable: false },
+    });
+    await module.store.retryJob({ id: attention!.id, expectedRevision: attention!.revision, now });
     expect((await module.store.listJobs())[0]).toMatchObject({ status: "pending" });
     module.close();
   });

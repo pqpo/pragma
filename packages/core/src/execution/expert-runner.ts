@@ -71,7 +71,7 @@ import {
   ExecutionVersionConflictError,
   type ExecutionStore,
 } from "./execution-store.ts";
-import { commitExecutionEvent } from "./execution-commit.ts";
+import { commitExecutionEvent, createExecutionEventWriter } from "./execution-commit.ts";
 import {
   ExpertOrchestrator,
   type DelegationPermit,
@@ -1018,6 +1018,30 @@ export type NestedFlowInvocationExecutor = (
 ) => Promise<unknown>;
 
 export async function runExpertInvocation(options: RunExpertInvocationOptions): Promise<unknown> {
+  const preparationStartedAt = performance.now();
+  let phaseStartedAt = preparationStartedAt;
+  const preparationLogger = createPragmaLogger(options.loggerProvider, {
+    component: "execution.expert-runner",
+    scope: {
+      executionId: options.executionId,
+      invocationId: options.invocationId,
+      contextId: options.context.contextId,
+    },
+  });
+  const logPreparationPhase = (phase: string, attributes: Record<string, unknown> = {}): void => {
+    const now = performance.now();
+    preparationLogger.info(
+      "execution.invocation_prepare_phase",
+      "Expert Invocation preparation phase completed",
+      {
+        phase,
+        durationMs: Math.round((now - phaseStartedAt) * 100) / 100,
+        elapsedMs: Math.round((now - preparationStartedAt) * 100) / 100,
+        ...attributes,
+      },
+    );
+    phaseStartedAt = now;
+  };
   await options.controller.assertOwnership();
   const execution = await requireExecution(options.store, options.executionId);
   const team = isExpertTeam(options.expert) ? options.expert : options.team;
@@ -1030,6 +1054,7 @@ export async function runExpertInvocation(options: RunExpertInvocationOptions): 
     options.resolveHostContextBindings === undefined
       ? options.hostContextBindings
       : await options.resolveHostContextBindings();
+  logPreparationPhase("ownership_and_host_context");
   const invocationOptions: RunExpertInvocationOptions =
     options.resolveHostContextBindings === undefined
       ? options
@@ -1074,6 +1099,7 @@ export async function runExpertInvocation(options: RunExpertInvocationOptions): 
     );
     options.controller.registerOrchestrator(options.context.contextId, orchestrator);
   }
+  logPreparationPhase("expert_and_orchestrator");
 
   const invocation = await requireInvocation(
     options.store,
@@ -1122,6 +1148,7 @@ export async function runExpertInvocation(options: RunExpertInvocationOptions): 
     options.parentInvocationId,
   );
   throwIfAborted(invocationSignal, options.invocationId);
+  logPreparationPhase("invocation_and_user_message_persistence");
 
   const modelSelection = options.modelSelection ?? options.context.modelSelection;
   const resolvedRuntime = await options.runtimes.resolve({
@@ -1137,6 +1164,7 @@ export async function runExpertInvocation(options: RunExpertInvocationOptions): 
     hostContextBindingsFingerprint: hostContextBindingsFingerprint(hostContextBindings),
   } satisfies RuntimeSessionIdentity;
   assertRuntimeIdentity(options, runtimeIdentity);
+  logPreparationPhase("runtime_routing_validation", { runtimeId: runtime.descriptor.id });
 
   const persistRuntimeSnapshot = async (snapshot: RuntimeContextSnapshot): Promise<void> => {
     const next: RuntimeContextRecord = {
@@ -1190,7 +1218,9 @@ export async function runExpertInvocation(options: RunExpertInvocationOptions): 
     contextId: options.context.contextId,
     agentId: nativeExpert.id,
   });
+  let runtimeSessionCreated = false;
   const session = await options.controller.acquireRuntime(runtimeIdentity, async ({ fresh }) => {
+    runtimeSessionCreated = true;
     const opened = await openRuntimeSession(runtime, {
       agent: executableExpert,
       pragmaHome: options.pragmaHome,
@@ -1238,6 +1268,7 @@ export async function runExpertInvocation(options: RunExpertInvocationOptions): 
     }
     return opened;
   });
+  logPreparationPhase("runtime_session_acquire", { cacheHit: !runtimeSessionCreated });
   throwIfAborted(invocationSignal, options.invocationId);
 
   const recoveredMessages =
@@ -1259,6 +1290,7 @@ export async function runExpertInvocation(options: RunExpertInvocationOptions): 
     );
   }
   let invocationUsage = invocation.usage;
+  logPreparationPhase("pending_messages");
   try {
     invocationLoop: while (true) {
       const turn = await submitRuntimeTurn({
@@ -2034,6 +2066,17 @@ async function submitRuntimeTurn(options: {
   const rootMessageAccumulator = accumulatorFor(options.runId);
   let completedRootAssistant: AgentMessage | undefined;
   const liveBus = getExecutionLiveBus(options.options.store);
+  const eventWriter = createExecutionEventWriter(
+    options.options.store,
+    options.options.executionId,
+    options.options.loggerProvider?.createLogger({
+      component: "core.execution.runtime-events",
+      scope: {
+        executionId: options.options.executionId,
+        invocationId: options.options.invocationId,
+      },
+    }),
+  );
   let usagePreview = Promise.resolve();
   const drain = (async () => {
     for await (const event of handle.events) {
@@ -2068,8 +2111,7 @@ async function submitRuntimeTurn(options: {
           completedRootAssistant = message;
           continue;
         }
-        await commitExecutionEvent(options.options.store, {
-          executionId: options.options.executionId,
+        await eventWriter.append({
           invocationId: options.options.invocationId,
           type: "invocation.message.appended",
           data: {
@@ -2082,8 +2124,7 @@ async function submitRuntimeTurn(options: {
         });
       }
       if (!isLiveOnlyRuntimeEvent(event) && event.type !== "message.completed") {
-        await commitExecutionEvent(options.options.store, {
-          executionId: options.options.executionId,
+        await eventWriter.append({
           invocationId: options.options.invocationId,
           type: "runtime.event",
           data: event,
@@ -2091,6 +2132,7 @@ async function submitRuntimeTurn(options: {
         });
       }
     }
+    await eventWriter.flush();
   })();
   try {
     const result = await handle.result;
@@ -2120,10 +2162,14 @@ async function submitRuntimeTurn(options: {
     );
   } finally {
     await drain.catch(() => undefined);
-    options.options.controller.unregisterRuntimeSubmission(
-      options.options.invocationId,
-      handle.runId,
-    );
+    try {
+      await eventWriter.flush();
+    } finally {
+      options.options.controller.unregisterRuntimeSubmission(
+        options.options.invocationId,
+        handle.runId,
+      );
+    }
   }
 }
 

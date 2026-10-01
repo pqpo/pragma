@@ -38,11 +38,11 @@ export interface PromptQueueProjectionPort {
 export function createExpertSessionPromptQueueProjection(options: {
   readonly sessions: Pick<ExpertSessionStore, "get" | "listPrompts" | "listEvents">;
   readonly resolveSessionId: (missionId: string) => Promise<string | undefined>;
-  readonly supportsSteer?: ((sessionId: string) => Promise<boolean> | boolean) | undefined;
-  readonly steeringRecovery?:
-    | ((
-        sessionId: string,
-      ) => Promise<"receipt" | "terminal" | undefined> | "receipt" | "terminal" | undefined)
+  readonly steeringFeatures?:
+    | ((sessionId: string) => Promise<{
+        readonly supportsSteer: boolean;
+        readonly steeringRecovery?: "receipt" | "terminal" | undefined;
+      }>)
     | undefined;
   readonly resolvePromptMetadata?:
     ((prompt: PromptRequest) => Promise<{ readonly hasAttachments: boolean }>) | undefined;
@@ -83,9 +83,10 @@ export function createExpertSessionPromptQueueProjection(options: {
         (paused && isRecord(lastControl?.data) && typeof lastControl.data.requestId === "string"
           ? lastControl.data.requestId
           : undefined);
-      const supportsSteer =
-        options.supportsSteer === undefined ? false : await options.supportsSteer(sessionId);
-      const steeringRecovery = await options.steeringRecovery?.(sessionId);
+      const { supportsSteer, steeringRecovery } = (await options.steeringFeatures?.(sessionId)) ?? {
+        supportsSteer: false,
+        steeringRecovery: undefined,
+      };
       const items = await Promise.all(
         pending.map(async (prompt, index) => {
           const metadata = await options.resolvePromptMetadata?.(prompt);

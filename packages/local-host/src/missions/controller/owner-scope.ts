@@ -12,6 +12,12 @@ import type {
 } from "./mission-controller-store.ts";
 
 export interface MissionOwnerScope {
+  diagnostics(): {
+    activeMissionOwnerCount: number;
+    activeInboxPollerCount: number;
+    inboxPollCount: number;
+    inboxPollRate: number;
+  };
   bindConsumer(consumer: MissionCommandConsumer): void;
   acquire(missionId: string, claimId?: string): Promise<MissionControllerGuard>;
   /**
@@ -25,6 +31,8 @@ export interface MissionOwnerScope {
   ): Promise<T>;
   currentGuard(missionId: string): MissionControllerGuard | undefined;
   assertOwnership(missionId: string, guard: MissionControllerGuard): Promise<void>;
+  /** Wake this process's owner after a command is durable; never bypasses the Inbox. */
+  wake(missionId: string): void;
   release(missionId: string): Promise<void>;
   /** Explicitly fences the current owner, including a live owner in another process. */
   forceRevoke(missionId: string): Promise<void>;
@@ -47,6 +55,16 @@ export interface MissionOwnerScope {
  */
 export function createMissionOwnerScope(options: {
   readonly controller: MissionControllerStore;
+  readonly idleTimeoutMs?: number | undefined;
+  readonly onIdleError?: ((missionId: string, error: unknown) => Promise<void> | void) | undefined;
+  /** Host checks durable execution/queue state and serializes release with admission. */
+  readonly onIdle?:
+    | ((input: {
+        missionId: string;
+        idleTimeoutMs: number;
+        releaseOwner: () => Promise<void>;
+      }) => Promise<void>)
+    | undefined;
   readonly leaseMs?: number | undefined;
   readonly onLeaseLost?: ((missionId: string, error?: unknown) => Promise<void> | void) | undefined;
   readonly onLeaseRenewalError?:
@@ -70,6 +88,11 @@ export function createMissionOwnerScope(options: {
       }) => Promise<void>)
     | undefined;
 }): MissionOwnerScope {
+  const idleTimeoutMs = options.idleTimeoutMs ?? 300_000;
+  if (!Number.isFinite(idleTimeoutMs) || idleTimeoutMs <= 0)
+    throw new Error("Mission idle timeout must be finite and positive.");
+  const observedAt = performance.now();
+  let inboxPollCount = 0;
   const leaseMs = options.leaseMs ?? 30_000;
   if (!Number.isFinite(leaseMs) || leaseMs <= 0) {
     throw createIntegrationError({
@@ -87,7 +110,7 @@ export function createMissionOwnerScope(options: {
       leaseLossNotified: boolean;
     }
   >();
-  const pollers = new Map<string, { stop(): Promise<void> }>();
+  const pollers = new Map<string, { stop(): Promise<void>; wake(): void }>();
   const acquiring = new Map<string, Promise<MissionControllerGuard>>();
   const recoveryTimers = new Map<string, ReturnType<typeof setTimeout>>();
   const operationGuard = new AsyncLocalStorage<{
@@ -238,7 +261,7 @@ export function createMissionOwnerScope(options: {
     readonly initialDelayMs?: number | undefined;
     readonly maxDelayMs?: number | undefined;
     readonly jitter?: (() => number) | undefined;
-  }): Promise<{ stop(): Promise<void> }> => {
+  }): Promise<{ stop(): Promise<void>; wake(): void }> => {
     const existing = pollers.get(input.missionId);
     if (existing !== undefined) return existing;
     const current = active.get(input.missionId);
@@ -250,6 +273,7 @@ export function createMissionOwnerScope(options: {
         details: { missionId: input.missionId },
       });
     }
+    let idleSince = performance.now();
     const poller = options.controller.startPolling({
       missionId: input.missionId,
       guard: (() => {
@@ -265,6 +289,32 @@ export function createMissionOwnerScope(options: {
         return owner.guard;
       }) satisfies MissionControllerGuardSource,
       consumer: input.consumer,
+      onPoll: () => {
+        inboxPollCount += 1;
+      },
+      onEmpty: async () => {
+        if (options.onIdle === undefined || performance.now() - idleSince < idleTimeoutMs) return;
+        idleSince = performance.now() - idleTimeoutMs + Math.min(60_000, idleTimeoutMs);
+        try {
+          await options.onIdle({
+            missionId: input.missionId,
+            idleTimeoutMs,
+            releaseOwner: async () => {
+              if (active.get(input.missionId) !== current) return;
+              await scope.release(input.missionId);
+              // A command may have been durably appended while the Host was
+              // releasing its Session. Recheck once, without retaining a poller.
+              scheduleRecovery(input.missionId, 1);
+            },
+          });
+        } catch (error) {
+          try {
+            await options.onIdleError?.(input.missionId, error);
+          } catch {
+            /* diagnostics cannot stop the poller */
+          }
+        }
+      },
       ...(options.recoverSemanticWrite === undefined
         ? {}
         : {
@@ -300,6 +350,17 @@ export function createMissionOwnerScope(options: {
   };
 
   const scope: MissionOwnerScope = {
+    diagnostics() {
+      return {
+        activeMissionOwnerCount: active.size,
+        activeInboxPollerCount: pollers.size,
+        inboxPollCount,
+        inboxPollRate: inboxPollCount / Math.max(0.001, (performance.now() - observedAt) / 1000),
+      };
+    },
+    wake(missionId) {
+      pollers.get(missionId)?.wake();
+    },
     async assertOwnership(missionId, guard) {
       await options.controller.assertWriteGuard({ missionId, guard });
     },
