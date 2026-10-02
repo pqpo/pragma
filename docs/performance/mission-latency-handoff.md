@@ -6,6 +6,7 @@
 2026-10-02 收尾：已统一 Host 两 worker、隔离 owner 准备、增加可恢复分块转换、移出 Main Usage/receipt SQL、取消健康时 500 ms 消费轮询，并移除 Core File 默认业务 authority。指定范围独立 CR 已完成，Usage 延迟初始化 cutoff 竞态已修正。迁移隔离实测、尚缺的端到端场景及 Team 投影限制见阶段四报告；模型验收尚无有效数据，第四阶段仍未验收完成。
 最新并发复测暴露四 owner 投递下前台集中到一个 worker 的回退。已允许普通 ID-only ack 与前台共享第二 lane，大输出 outbox、迁移、Usage/receipt 批次及超大输入仍隔离；回归、同条件复测与剩余验收状态见阶段四报告。
 收尾最终复测：canonical 唤醒在现有机制中合并 250 ms，四 owner 提交 P95 从此次 255.19 ms 降至 176.37 ms（80 样本），仍高于此前 152.50 ms 基线，未宣称完全无回退。最新 pnpm check、Desktop build 与打包 worker 启动通过，Memory 三套 19 项通过，最终独立 CR 无新阻断。受监督真实模型 pilot 仍在 native Keychain 阶段超时并退出，无有效端到端样本；不能标记阶段四完成。
+PR #352 后续评论发现三个 Runtime 用量结算问题，已修正：先收集供应商精确用量再 fallback；明确未 dispatch 的 attempt 不估算，但保留此前实际 attempt 的用量；无 delta 时按最终正文估算输出。每次 attempt 独立结算并累计一次，流式期间仍不统计。验证与端到端验收限制见阶段四报告。
 两阶段按实测瓶颈交错推进，不要求先完成全部 SQLite 转换，才能缩短收尾等待。
 第三阶段后的真实页面加载发生严重退化；增量容量计量的全局接入已从 Desktop 与 Local Host 撤下，
 并移除新增启动校准。随后彻底回滚全仓 import 替换，删除计量 adapter、账本及相关钩子/测试/基准脚本。

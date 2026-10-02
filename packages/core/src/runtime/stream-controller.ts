@@ -74,7 +74,10 @@ export interface RuntimeStreamController<TNativeEvent> {
   readonly source: RuntimeStreamEvent["source"];
   readonly writer: RuntimeStreamWriter<TNativeEvent>;
   readonly getOutputText: () => string;
-  readonly getUsage: () => AgentMessageUsage | undefined;
+  readonly getUsage: (input?: {
+    readonly estimate?: boolean | undefined;
+    readonly outputText?: string | undefined;
+  }) => AgentMessageUsage | undefined;
   readonly getRuntimeSessionId: () => string | undefined;
   readonly resetCapture: () => void;
   readonly beginUsageCapture: (input: {
@@ -150,11 +153,12 @@ export function createRuntimeStreamController<TNativeEvent>(options: {
   };
 
   // Called only at an attempt boundary. Reported usage never invokes the tokenizer.
-  const captureUsage = (): AgentMessageUsage => {
-    usage ??= createEstimatedUsage({
-      input: tokenCounter.countText(inputText).tokens,
-      output: tokenCounter.countText(`${thoughtText}${outputText}`).tokens,
-    });
+  const captureUsage: RuntimeStreamController<TNativeEvent>["getUsage"] = (input) => {
+    if (usage === undefined && input?.estimate !== false)
+      usage = createEstimatedUsage({
+        input: tokenCounter.countText(inputText).tokens,
+        output: tokenCounter.countText(`${thoughtText}${input?.outputText ?? outputText}`).tokens,
+      });
     return usage;
   };
   const emitTelemetry = (): void => {

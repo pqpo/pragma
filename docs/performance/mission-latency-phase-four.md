@@ -110,3 +110,13 @@ SQLite 控制读取 P95 为单 owner 3.71–5.87 ms、四 owner 88.25 ms；对�
 最终 Desktop production build 已通过 styles、main/preload 自包含与打包 worker 启动验证；最新全仓 `pnpm check` 通过。实际调度代码的最后独立 CR 未发现新的阻断，范围包含 timer 容量、持续提交不延长窗口、关闭末次已接受提交、删除 fence 与旧回调。
 
 重新执行受监督 warm pilot（1 个计划样本，使用上述最终构建）仍在 native Keychain 准备阶段阻塞，120 秒后以 `MISSION_BENCHMARK_KEYCHAIN_TIMEOUT` 退出；已确认监督进程及子进程退出，没有生成有效测量文件。没有绕过 macOS 权限，也没有修改源 Mission。此失败不是模型延迟样本，不能进入 P50/P95。真实模型访问授权、正常后台负载及其余场景验收仍未完成；四 owner 与旧基线差异也仍需进一步核实，阶段四不标记完成。
+
+## PR 评论修复（2026-10-02）
+
+读取 PR #352 全部总评、review 和行内评论后，确认总评提出的三个 Runtime 用量问题成立。原先先生成 fallback 再判断是否收集用量，会阻止 collect-only Runtime 返回精确值；明确未 dispatch 的错误仍生成输入估算；只有最终正文而无 delta 的 Runtime 漏算输出。
+
+结算移至每次 native attempt 结束边界：先读取原生上报，缺少精确值时调用原生 collector，最后才调用统一计数器。collector 收到本次 attempt 的开始时间和原始用量，不传递此前重试的累计值；实际 attempt 仅累计一次。明确未 dispatch 时清空本次 capture，不调用 collector 或计数器，保留此前实际 attempt 的累计值。最终正文作为 fallback 的正文来源，与已捕获 reasoning 一并计数。准备失败的外层 catch 只读取已有用量，不产生估算。
+
+新增五个真实 driver 边界回归，覆盖 collect-only 精确值、首次及重试后未发送、最终正文无 delta、独立收集重试并累计一次；保留原有 10,000 delta 零计数与精确上报零估算断言。Core 五套共 43 项、Host Usage/执行结算 10 项、Pi/Codex/Antigravity 相关回归 93 项通过，最新全仓 `pnpm check` 通过。流式统计没有恢复，未引入计时器、轮询或全历史读取。上述验证属于正确性和调用次数证据，真实端到端性能验收仍未完成。
+
+Runtime Session 身份继续在可选 collector 执行前耐久保存，保留用量收集失败时的恢复边界。最终代码重新运行 Core 43 项、全仓 `pnpm check` 和 Desktop production build 均通过，包含 preload 自包含与打包存储 worker 实际启动验证。

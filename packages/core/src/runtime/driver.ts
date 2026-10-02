@@ -276,6 +276,7 @@ export interface RuntimeTurnResult {
 
 export interface RuntimeUsageContext {
   readonly runId: string;
+  /** Start of the current native attempt, including structured-output retries. */
   readonly startedAt: Date;
   readonly outputText: string;
   readonly usage?: AgentMessageUsage | undefined;
@@ -1412,7 +1413,9 @@ class ManagedRuntimeSession<TNativeEvent, TNativeSession> {
 
         return runResult;
       } catch (error) {
-        observedUsage ??= controller.getUsage();
+        // Preparation and explicitly undispatched turns have no billable
+        // estimate. Attempt boundaries already captured dispatched failures.
+        observedUsage ??= controller.getUsage({ estimate: false });
         settleUsage(observedUsage);
         controller.updateContextWindowUsage(await this.refreshContextWindow(false));
         controller.flushTelemetry();
@@ -1656,9 +1659,7 @@ class ManagedRuntimeSession<TNativeEvent, TNativeSession> {
         : normalizeOutputRetryLimit(submission.outputRetryLimit ?? this.options.outputRetryLimit) +
           1;
     let parseResult: RuntimeOutputParseResult<TOutput> | undefined;
-    let outputText = "";
     let usage: AgentMessageUsage | undefined;
-    const startedAt = new Date();
     // Preparation can fail before the native driver gets a turn. Keep startup
     // delivery state untouched until those prerequisites have succeeded.
     const startupMessages = this.takeStartupMessages();
@@ -1678,6 +1679,7 @@ class ManagedRuntimeSession<TNativeEvent, TNativeSession> {
         prompt,
         startupMessages: attemptStartupMessages.map((message) => message.content),
       });
+      const startedAt = new Date();
       const turnResult = await (async () => {
         await this.options.executionBindings.assertOwnership(runId);
         const requestStartedAt = performance.now();
@@ -1730,21 +1732,37 @@ class ManagedRuntimeSession<TNativeEvent, TNativeSession> {
             // Preserve the exact consumed messages for the next submission.
             this.startupMessagesRetryPending = attemptStartupMessages;
           }
-          usage = mergeUsage(usage, controller.getUsage());
+          if (error instanceof RuntimeTurnNotDispatchedError) controller.resetCapture();
+          else usage = mergeUsage(usage, controller.getUsage());
           controller.updateUsage(usage);
           observeUsage(usage);
           throw error;
         }
       })();
-      outputText = turnResult.outputText ?? controller.getOutputText();
-      usage = mergeUsage(usage, turnResult.usage ?? controller.getUsage());
-      controller.updateUsage(usage);
-      observeUsage(usage);
-
+      const outputText = turnResult.outputText ?? controller.getOutputText();
+      const capturedUsage = controller.getUsage({ estimate: false });
+      let attemptUsage =
+        turnResult.usage?.measurement === "reported"
+          ? turnResult.usage
+          : capturedUsage?.measurement === "reported"
+            ? capturedUsage
+            : (turnResult.usage ?? capturedUsage);
       const runtimeSessionId = turnResult.runtimeSessionId ?? controller.getRuntimeSessionId();
       if (runtimeSessionId !== undefined) {
         await this.options.updateRuntimeSessionId(runtimeSessionId, "runtimeSessionId.changed");
       }
+      if (attemptUsage?.measurement !== "reported" || !hasNonZeroUsage(attemptUsage)) {
+        attemptUsage =
+          (await this.options.driver.collectUsage?.(this.options.nativeSession, {
+            runId,
+            startedAt,
+            outputText,
+            usage: attemptUsage,
+          })) ?? attemptUsage;
+      }
+      usage = mergeUsage(usage, attemptUsage ?? controller.getUsage({ outputText }));
+      controller.updateUsage(usage);
+      observeUsage(usage);
 
       parseResult = parseRuntimeOutput(
         outputText,
@@ -1764,18 +1782,6 @@ class ManagedRuntimeSession<TNativeEvent, TNativeSession> {
     if (parseResult === undefined || !parseResult.ok) {
       throw new Error("Runtime output parsing did not complete.");
     }
-
-    if (!hasNonZeroUsage(usage)) {
-      usage =
-        (await this.options.driver.collectUsage?.(this.options.nativeSession, {
-          runId,
-          startedAt,
-          outputText,
-          usage,
-        })) ?? usage;
-    }
-    observeUsage(usage);
-    controller.updateUsage(usage);
 
     return createRuntimeRunResult(runId, parseResult.value, usage);
   }
