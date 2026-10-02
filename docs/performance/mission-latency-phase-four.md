@@ -142,3 +142,5 @@ PR #352 后续评论提出的两个恢复问题均成立：pending/handoff 名�
 PR #352 最新评论指出 examples 类型检查缺少 Local Host 声明产物前置条件。移开 Local Host 的已有 `dist` 后，三个 Host composition 入口均复现 CI 的 TS2307；已有产物会掩盖此问题。examples 增加 `pretypecheck`，通过 Turbo 定向构建 `@pragma/local-host` 及其传递依赖，再执行原有类型检查。保留 package import 和 Host 的声明出口，构建可复用缓存，不改变 Mission 交互路径。
 
 验证时移开全部 16 个 workspace 的已有 `dist`，设置 `TURBO_FORCE=true` 后运行完整 `pnpm check`，lint、全部类型检查与快速测试均通过；examples 的前置依赖构建和类型检查均实际执行。直接调用包级类型检查也使用同一前置步骤，不依赖其他应用偶然先生成产物。未新增单测，真实模型端到端验收仍未完成，PR 保持 Draft。
+
+追加 CI 回归时发现 queued-chat-refresh fixture 的临时目录清理会报 `ENOTEMPTY`。fixture 现在显式持有并关闭 SQLite store，再使用与现有 Mission 测试一致的有界文件删除重试，不改变业务超时和断言。`pnpm test:mission-chat` 76 项与 `pnpm test:revision` 88 项通过，按脚本选择的其他用例未执行。

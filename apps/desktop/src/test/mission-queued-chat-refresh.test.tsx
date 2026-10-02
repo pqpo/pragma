@@ -11,6 +11,7 @@ import {
   createStaticRuntimeResolver,
 } from "@pragma/core";
 import { PRAGMA_DSL_WRITE_API_VERSION, type PragmaExpertResource } from "@pragma/interpreter/ast";
+import { createSqliteExecutionStore } from "@pragma/local-host";
 import { createCodexRuntime } from "@pragma/runtime-codex";
 import { createQoderCliRuntime } from "@pragma/runtime-qodercli";
 
@@ -59,7 +60,9 @@ function deferred() {
 
 async function fixture(kind: "codex" | "qoder") {
   const root = await mkdtemp(join(tmpdir(), "pragma-queued-refresh-"));
-  cleanups.push(async () => await rm(root, { recursive: true, force: true }));
+  cleanups.push(async () => {
+    await rm(root, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
+  });
   const source = join(root, "empty-runtime-home");
   await mkdir(source);
   const started: string[] = [];
@@ -201,7 +204,10 @@ async function fixture(kind: "codex" | "qoder") {
     project: { id: revision.projectId, revision: revision.revision },
     executor: missionExecutorSnapshot(expert),
   });
+  const executionStore = createSqliteExecutionStore({ pragmaHome: join(root, "state") });
+  cleanups.push(async () => await executionStore.close());
   const runner = createMissionRunner({
+    executionStore,
     missions,
     project,
     capabilityStore: {} as Parameters<typeof createMissionRunner>[0]["capabilityStore"],
