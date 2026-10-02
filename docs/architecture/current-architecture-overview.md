@@ -69,6 +69,12 @@ Execution 的持久状态、Invocation patch 与 Canonical Event 通过幂等提
 
 ## Mission 与本机 Host
 
+当前 Mission controller 与应用协议已经共享，但 Desktop 仍通过 `missionControlAdapter` 和
+`runExecutor` 注入自身的 MissionRunner 执行内核，CLI 使用 Local Host 的默认执行路径。
+统一控制、编译、运行与恢复的后续设计见
+[Mission 统一 Local Host 应用内核分阶段重构方案](local-host-application-kernel-refactor.md)。
+该方案保留四轮首 Token 优化，尚未实施，不能视为两端执行内核已经统一。
+
 `@pragma/local-host/node-application` 组合 Mission controller、owner lease、command inbox、query/watch、
 Project catalog、Mission Board、Core store 与 Usage sink。Desktop 和 CLI 在相同应用协议上注入各自的
 Runtime factory、文件系统、SecretStore、交互界面与 Host policy。
