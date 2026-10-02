@@ -136,3 +136,9 @@ PR #352 后续评论提出的两个恢复问题均成立：pending/handoff 名�
 [整合存储复测](mission-latency-phase-four-storage-merged.json)使用同一 Intel i7-9750H 主机与现有脚本。canonical 开启时，0/50/500/5,000 历史的单 owner 提交 P95 为 6.95/7.13/7.87/6.93 ms（各 20 次），四 owner P95 为 53.27 ms（80 次）。固定增量没有随十倍历史放大；本轮没有观察到此前的存储提交回退。main 的 #351 同时移除了进程租约 metadata 的 fsync，降低文件锁成本；这些数据不能归因于恢复修复，也不是单变量因果比较。SQL 业务事务的耐久要求保留。该基准不包含 renderer、模型和正常 Memory/Automation 负载，仍不能作为完整 Mission 达标证明；缺失 Trash 存在性检查仅作用于后台历史读取，不影响该提交测量。
 
 最终整合代码的全仓 `pnpm check` 与 `pnpm build` 均通过；Desktop main/preload 自包含及打包 worker 实际启动验证通过。缺失 Trash 来源的无副作用回归在最终重建依赖后通过。九个文本冲突已解决，最新 main 为 `e17b71bb`（#351）；PR 继续保持 Draft，完整真实模型端到端验收未补齐。
+
+## examples 干净构建评论（2026-10-02）
+
+PR #352 最新评论指出 examples 类型检查缺少 Local Host 声明产物前置条件。移开 Local Host 的已有 `dist` 后，三个 Host composition 入口均复现 CI 的 TS2307；已有产物会掩盖此问题。examples 增加 `pretypecheck`，通过 Turbo 定向构建 `@pragma/local-host` 及其传递依赖，再执行原有类型检查。保留 package import 和 Host 的声明出口，构建可复用缓存，不改变 Mission 交互路径。
+
+验证时移开全部 16 个 workspace 的已有 `dist`，设置 `TURBO_FORCE=true` 后运行完整 `pnpm check`，lint、全部类型检查与快速测试均通过；examples 的前置依赖构建和类型检查均实际执行。直接调用包级类型检查也使用同一前置步骤，不依赖其他应用偶然先生成产物。未新增单测，真实模型端到端验收仍未完成，PR 保持 Draft。
