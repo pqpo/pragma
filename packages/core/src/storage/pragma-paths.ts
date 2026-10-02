@@ -398,6 +398,41 @@ export class PragmaPaths {
     return join(this.executionsRoot(), encodePragmaPathSegment(executionId));
   }
 
+  executionCanonicalPendingRoot(): string {
+    return join(this.stateRoot(), "event-bus", "sqlite-pending");
+  }
+
+  executionCanonicalIdleRegistration(executionId: string): string {
+    return join(this.executionRoot(executionId), "canonical-idle.json");
+  }
+
+  executionCanonicalPending(executionId: string): string {
+    return join(
+      this.executionCanonicalPendingRoot(),
+      `${encodePragmaPathSegment(executionId)}.json`,
+    );
+  }
+
+  executionStorageInitialization(executionId: string): string {
+    return join(this.executionRoot(executionId), "storage-initialization.json");
+  }
+
+  executionDatabase(executionId: string): string {
+    return join(this.executionRoot(executionId), "execution.sqlite");
+  }
+
+  executionStorageAuthority(executionId: string): string {
+    return join(this.executionRoot(executionId), "storage-authority.json");
+  }
+
+  executionStorageConversion(executionId: string): string {
+    return join(this.executionRoot(executionId), "storage-conversion.json");
+  }
+
+  executionStorageBackup(executionId: string): string {
+    return join(this.executionRoot(executionId), "json-backup");
+  }
+
   executionState(executionId: string): string {
     return join(this.executionRoot(executionId), "execution.json");
   }

@@ -1,10 +1,10 @@
+import { createInMemoryExecutionStore } from "@pragma/core/testing";
 import { mkdir, mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import {
   createNoopLoggerProvider,
-  createFileExecutionStore,
   createFileExpertSessionStore,
   createPragma,
   createStaticRuntimeResolver,
@@ -20,7 +20,7 @@ async function fixture() {
   const codexSource = join(home, "empty-codex-source");
   await mkdir(codexSource);
   const peer = createAppServerFixture();
-  const executions = createFileExecutionStore({ pragmaHome: home });
+  const executions = createInMemoryExecutionStore();
   const sessions = createFileExpertSessionStore({ pragmaHome: home, executions });
   const runtime = createCodexRuntime({
     spawn: peer.spawn,

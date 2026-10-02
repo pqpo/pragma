@@ -1,6 +1,7 @@
+import { watch, type FSWatcher } from "node:fs";
 import { isOwnerDeletionFenced } from "../storage/owner-deletion.ts";
 import { mkdir, rename, rm, stat } from "node:fs/promises";
-import { dirname } from "node:path";
+import { basename, dirname } from "node:path";
 import { backup, DatabaseSync } from "node:sqlite";
 import { Worker } from "node:worker_threads";
 
@@ -10,12 +11,12 @@ import {
   type CanonicalEventEnvelope,
 } from "@pragma/shared";
 
-import { PragmaPaths } from "../storage/pragma-paths.ts";
+import { withFileLock } from "../storage/file-lock.ts";
 import {
   CANONICAL_EVENT_FEED_V2_SCHEMA_SQL,
   migrateCanonicalEventFeedV1ToV2,
 } from "../storage/migrations/canonical-event-feed/index.ts";
-import { withFileLock } from "../storage/file-lock.ts";
+import { PragmaPaths } from "../storage/pragma-paths.ts";
 
 export type CanonicalEventReadItem =
   | {
@@ -61,6 +62,8 @@ export interface CanonicalEventMaintenanceResult {
 }
 
 export interface CanonicalEventFeed {
+  /** A wake hint only; consumers must read their durable cursor. */
+  subscribeChanges?(listener: () => void): () => void;
   append(events: readonly CanonicalEventEnvelope[]): Promise<void>;
   read(input: {
     readonly after?: CanonicalEventCursor | undefined;
@@ -70,6 +73,61 @@ export interface CanonicalEventFeed {
   maintain(input: CanonicalEventMaintenanceInput): Promise<CanonicalEventMaintenanceResult>;
   forgetCorrelation(correlationId: string): Promise<{ readonly deletedEvents: number }>;
   close(): Promise<void>;
+}
+
+function feedNotifications(path: string) {
+  const listeners = new Set<() => void>();
+  let watcher: FSWatcher | undefined;
+  let scheduled = false;
+  let closed = false;
+  const notify = () => {
+    if (closed || scheduled) return;
+    scheduled = true;
+    setImmediate(() => {
+      scheduled = false;
+      if (closed) return;
+      for (const listener of listeners) {
+        try {
+          listener();
+        } catch (error) {
+          process.emitWarning(String(error), { code: "CANONICAL_FEED_LISTENER_FAILED" });
+        }
+      }
+    });
+  };
+  return {
+    notify,
+    subscribe(listener: () => void) {
+      if (closed) throw new Error("Canonical feed notifications are closed.");
+      listeners.add(listener);
+      if (watcher === undefined) {
+        try {
+          watcher = watch(dirname(path), { persistent: false }, (_event, filename) => {
+            if (filename === null || String(filename).startsWith(basename(path))) notify();
+          });
+          watcher.on("error", () => {
+            watcher?.close();
+            watcher = undefined;
+          });
+        } catch {
+          /* The consumer's low-frequency durable cursor recovery remains active. */
+        }
+      }
+      return () => {
+        listeners.delete(listener);
+        if (listeners.size === 0) {
+          watcher?.close();
+          watcher = undefined;
+        }
+      };
+    },
+    close() {
+      closed = true;
+      listeners.clear();
+      watcher?.close();
+      watcher = undefined;
+    },
+  };
 }
 
 export async function createFileCanonicalEventFeed(
@@ -132,6 +190,7 @@ export async function createFileCanonicalEventFeed(
     });
   });
   await ready;
+  const changes = feedNotifications(new PragmaPaths(options).canonicalEventFeed());
 
   const request = async <T>(operation: string, input?: unknown): Promise<T> => {
     if (closed) throw new Error("Canonical event feed is closed.");
@@ -153,7 +212,11 @@ export async function createFileCanonicalEventFeed(
   };
 
   return {
-    append: async (events) => await request<void>("append", events),
+    subscribeChanges: changes.subscribe,
+    append: async (events) => {
+      await request<void>("append", events);
+      if (events.length > 0) changes.notify();
+    },
     read: async (input) => await request<CanonicalEventPage>("read", input),
     inspect: async () => await request<CanonicalEventFeedDiagnostic>("inspect"),
     maintain: async (input) => await request<CanonicalEventMaintenanceResult>("maintain", input),
@@ -166,6 +229,7 @@ export async function createFileCanonicalEventFeed(
           await request<void>("close");
         } finally {
           closed = true;
+          changes.close();
           const error = new Error("Canonical event feed closed before replying.");
           for (const pendingRequest of pending.values()) pendingRequest.reject(error);
           pending.clear();
@@ -189,9 +253,11 @@ export async function createSynchronousFileCanonicalEventFeed(
     initialize(database);
   });
 
+  const changes = feedNotifications(databasePath);
   const inspect = (): CanonicalEventFeedDiagnostic => inspectDatabase(database);
 
   return {
+    subscribeChanges: changes.subscribe,
     async append(events) {
       const parsed = events.map((event) => CanonicalEventEnvelopeSchema.parse(event));
       if (parsed.length === 0) return;
@@ -245,6 +311,7 @@ export async function createSynchronousFileCanonicalEventFeed(
         }
         writeLastSequence(database, lastSequence);
         database.exec("COMMIT;");
+        changes.notify();
       } catch (error) {
         rollback(database);
         throw error;
@@ -412,6 +479,7 @@ export async function createSynchronousFileCanonicalEventFeed(
     },
 
     async close() {
+      changes.close();
       database.close();
     },
   };

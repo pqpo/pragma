@@ -1,172 +1,171 @@
+import { canonicalPragmaResourceRef } from "@pragma/interpreter";
 import { createMissionAttentionRetirement } from "./mission-attention-retirement.ts";
 import {
   createMissionDeletionService,
   readMissionDeletionRecord,
   MissionDeletionSourceExpiredError,
 } from "@pragma/local-host";
-import { readDeletedExecutionUsageSource } from "@pragma/core";
+import { readDeletedExecutionUsageSource } from "@pragma/local-host";
 import type { Invocation } from "@pragma/shared";
 import { createLocalHostUsageSink, type LocalHostUsageSink } from "@pragma/local-host";
-import { createMissionDeliveryRecovery } from "../features/missions/mission-delivery-recovery.ts";
-import { createMissionDelivery } from "../features/missions/mission-delivery.ts";
-import { persistMissionExecutionProjection } from "../features/missions/mission-runner-composition.ts";
-import { migrateLegacyRevisionProfile } from "../features/experts/legacy-revision-profile-migration.ts";
-import { createHomeProjectStore } from "../features/missions/home-project-store.ts";
+import { createHash, randomUUID } from "node:crypto";
+import { mkdir } from "node:fs/promises";
+import { basename, join } from "node:path";
+import { installAssetGitHandlers } from "../features/asset-git/asset-git-ipc.ts";
 import {
   createAssetGitService,
   type AssetGitService,
 } from "../features/asset-git/asset-git-service.ts";
-import { installAssetGitHandlers } from "../features/asset-git/asset-git-ipc.ts";
 import {
   createAssetSyncCoordinator,
   type AssetSyncCoordinator,
 } from "../features/asset-git/asset-sync-coordinator.ts";
-import { createHash, randomUUID } from "node:crypto";
-import { mkdir } from "node:fs/promises";
-import { basename, join } from "node:path";
+import { migrateLegacyRevisionProfile } from "../features/experts/legacy-revision-profile-migration.ts";
+import { createHomeProjectStore } from "../features/missions/home-project-store.ts";
+import { createMissionDeliveryRecovery } from "../features/missions/mission-delivery-recovery.ts";
+import { createMissionDelivery } from "../features/missions/mission-delivery.ts";
+import { persistMissionExecutionProjection } from "../features/missions/mission-runner-composition.ts";
+import { referencedPragmaResourceRefs } from "../features/projects/pragma-resource-references.ts";
 
-import { powerMonitor, type BrowserWindow } from "electron";
-import { createStorageCapacityInspection } from "../platform/storage/storage-capacity-inspection.ts";
+import {
+  BUILT_IN_PRAGMA_REF,
+  builtInAgentFingerprint,
+  compileBuiltInAgent,
+  EVALUATION_JUDGE_EXPERT_REF,
+  pragmaManagementCapabilityResource,
+  SKILL_REVISION_EXPERT_REF,
+  STORE_REVISION_EXPERT_REF,
+  type PragmaManagementToolPorts,
+} from "@pragma/built-in-agents";
 import {
   createMcpToolRegistryPool,
   createRuntimeTokenCounter,
-  RuntimeUsageObservedSchema,
-  type RuntimeUsageObservation,
   PragmaPaths,
+  RuntimeUsageObservedSchema,
   type PragmaLogger,
   type PragmaLoggerProvider,
+  type RuntimeUsageObservation,
 } from "@pragma/core";
-import {
-  BUILT_IN_PRAGMA_REF,
-  EVALUATION_JUDGE_EXPERT_REF,
-  SKILL_REVISION_EXPERT_REF,
-  STORE_REVISION_EXPERT_REF,
-  compileBuiltInAgent,
-  builtInAgentFingerprint,
-  pragmaManagementCapabilityResource,
-  type PragmaManagementToolPorts,
-} from "@pragma/built-in-agents";
-import { MEMORY_CURATOR_REF } from "@pragma/memory";
 import {
   createLocalHostMissionController,
   createMissionActivityReader,
   createNativeOsKeychain,
   createSecretStore,
-  type MissionControllerStore,
   type LocalHostRunExecutorPort,
+  type MissionControllerStore,
 } from "@pragma/local-host";
 import { createLocalHostNodeApplication } from "@pragma/local-host/node-application";
+import { MEMORY_CURATOR_REF } from "@pragma/memory";
+import { powerMonitor, type BrowserWindow } from "electron";
 import {
   isUserFacingMissionOrigin,
   MissionExecutorOptionSchema,
   MissionSchema,
-  type Mission,
   MissionSummarySchema,
+  type Mission,
 } from "../../shared/contracts/index.ts";
+import { createStorageCapacityInspection } from "../platform/storage/storage-capacity-inspection.ts";
 
 import { installAutomationHandlers } from "../features/automations/automation-ipc.ts";
 import { createAutomationService } from "../features/automations/automation-service.ts";
 import { createAutomationStore } from "../features/automations/automation-store.ts";
-import { installPragmaBundleHandlers } from "../features/bundles/pragma-bundle-ipc.ts";
-import { BundleSetupRequiredError } from "../features/bundles/pragma-bundle-errors.ts";
-import { createPragmaBundleService } from "../features/bundles/pragma-bundle-service.ts";
+import { createDesktopPragmaAgentAutomationPort } from "../features/built-in-agents/pragma-agent-automation-adapter.ts";
+import { createDesktopPragmaAgentProjectPort } from "../features/built-in-agents/pragma-agent-project-adapter.ts";
+import { createDesktopPragmaAgentResourceCatalogPort } from "../features/built-in-agents/pragma-agent-resource-adapter.ts";
+import { createDesktopPragmaAgentMissionPort } from "../features/built-in-agents/pragma-agent-task-adapter.ts";
 import { installBundleRegistryHandlers } from "../features/bundle-registry/bundle-registry-ipc.ts";
 import { createDesktopBundleRegistrySourceService } from "../features/bundle-registry/bundle-registry-source-service.ts";
 import { createBundleSourcePublishingService } from "../features/bundle-registry/bundle-source-publishing-service.ts";
+import { BundleSetupRequiredError } from "../features/bundles/pragma-bundle-errors.ts";
+import { installPragmaBundleHandlers } from "../features/bundles/pragma-bundle-ipc.ts";
+import { createPragmaBundleService } from "../features/bundles/pragma-bundle-service.ts";
 import { createCapabilityCredentialStore } from "../features/capabilities/capability-credential-store.ts";
 import { installCapabilityHandlers } from "../features/capabilities/capability-ipc.ts";
 import { createCapabilityRevisionCoordinator } from "../features/capabilities/capability-revision-coordinator.ts";
 import { createCapabilityStore } from "../features/capabilities/capability-store.ts";
-import { createDesktopSkillRevisionSubmissionPort } from "../features/capabilities/skill-revision-capability.ts";
+import { createCapabilityVerifier } from "../features/capabilities/capability-verifier.ts";
 import {
   createDesktopSkillAgents,
   type DesktopSkillAgents,
 } from "../features/capabilities/skill-agents.ts";
+import { createDesktopSkillRevisionSubmissionPort } from "../features/capabilities/skill-revision-capability.ts";
 import {
   createSkillRevisionService,
   type SkillRevisionGenerator,
 } from "../features/capabilities/skill-revision-service.ts";
-import { createCapabilityVerifier } from "../features/capabilities/capability-verifier.ts";
+import { createContextStoreEditorDraftService } from "../features/context-stores/context-store-editor-draft-service.ts";
 import { installContextStoreHandlers } from "../features/context-stores/context-store-ipc.ts";
-import { installCoreAssetSyncHandlers } from "../features/studio-sync/core-asset-sync-ipc.ts";
-import {
-  createCoreAssetSyncService,
-  unavailableCoreAssetRuntimeBindings,
-  type CoreAssetSyncService,
-} from "../features/studio-sync/core-asset-sync-service.ts";
 import {
   createContextStoreRevisionService,
   type ContextStoreRevisionGenerator,
   type ContextStoreRevisionService,
 } from "../features/context-stores/context-store-revision-service.ts";
 import { createContextStoreStore } from "../features/context-stores/context-store-store.ts";
-import { createContextStoreEditorDraftService } from "../features/context-stores/context-store-editor-draft-service.ts";
-import { toContextStoreMissionDeletionError } from "./context-store-mission-deletion-error.ts";
+import { createDesktopKnowledgeRevisionSubmissionPort } from "../features/context-stores/knowledge-revision-capability.ts";
 import {
   createDesktopStoreRevisionAgent,
   type DesktopStoreRevisionAgent,
 } from "../features/context-stores/store-revision-agent.ts";
-import { createDesktopKnowledgeRevisionSubmissionPort } from "../features/context-stores/knowledge-revision-capability.ts";
-import { createDesktopPragmaAgentAutomationPort } from "../features/built-in-agents/pragma-agent-automation-adapter.ts";
-import { createDesktopPragmaAgentProjectPort } from "../features/built-in-agents/pragma-agent-project-adapter.ts";
-import { createDesktopPragmaAgentResourceCatalogPort } from "../features/built-in-agents/pragma-agent-resource-adapter.ts";
-import { createDesktopPragmaAgentMissionPort } from "../features/built-in-agents/pragma-agent-task-adapter.ts";
-import { installExpertDefinitionHandlers } from "../features/experts/expert-definition-ipc.ts";
-import { installEvaluationHandlers } from "../features/evaluations/evaluation-ipc.ts";
 import {
   createEvaluationMockAdapterRegistry,
   createMissionAgentEvaluationExecutor,
 } from "../features/evaluations/evaluation-executor.ts";
+import { installEvaluationHandlers } from "../features/evaluations/evaluation-ipc.ts";
 import { createEvaluationService } from "../features/evaluations/evaluation-service.ts";
 import { createEvaluationStore } from "../features/evaluations/evaluation-store.ts";
+import { installExpertDefinitionHandlers } from "../features/experts/expert-definition-ipc.ts";
 import { createExpertDefinitionStore } from "../features/experts/expert-definition-store.ts";
 import { createDesktopSystemExpertRegistry } from "../features/experts/system-expert-registry.ts";
 import {
   resolveSystemExpertRuntimeDefaults,
   withRuntimeDefaults,
 } from "../features/experts/system-expert-runtime.ts";
-import { createMissionCreator } from "../features/missions/mission-creator.ts";
-import { createHomeExecutorCatalog } from "../features/missions/home-executor-catalog.ts";
-import { createHomeExecutorPreferenceStore } from "../features/missions/home-executor-preference-store.ts";
-import { createMissionExecutorCatalog } from "../features/missions/mission-executor-catalog.ts";
-import { installMissionHandlers } from "../features/missions/mission-ipc.ts";
-import { installMissionContextStoreBrowserHandlers } from "../features/missions/mission-context-store-browser-ipc.ts";
-import { createMissionContextStoreBrowserService } from "../features/missions/mission-context-store-browser.ts";
-import { createDesktopAdapterHost } from "../features/missions/mission-adapter-host.ts";
-import { createMissionRunner } from "../features/missions/mission-runner.ts";
-import { createMissionExecutionEventProjector } from "../features/missions/mission-command-execution-projector.ts";
-import { createMissionStore, MissionStoreError } from "../features/missions/mission-store.ts";
-import { createFencedMissionStore } from "../features/missions/mission-store-fenced-adapter.ts";
-import { MissionStatusService } from "../features/missions/mission-status-service.ts";
-import { createDesktopLocalHostExecutorResolver } from "../features/missions/local-host-mission-adapter.ts";
-import { createMissionReadModel } from "../features/missions/mission-read-model.ts";
 import {
   createDesktopMemoryPlane,
   type DesktopMemoryPlane,
 } from "../features/memory/desktop-memory-plane.ts";
-import { createMemoryLearningRevisions } from "../features/memory/memory-learning-revisions.ts";
-import { createMemoryRevisionLearningPlanners } from "../features/memory/memory-revision-learning-planners.ts";
+import { installExpertMemoryContextStoreBrowserHandlers } from "../features/memory/expert-memory-context-store-browser-ipc.ts";
+import { createExpertMemoryContextStoreBrowserService } from "../features/memory/expert-memory-context-store-browser.ts";
 import {
   createDesktopMemoryCurator,
   type DesktopMemoryCurator,
 } from "../features/memory/memory-curator.ts";
-import { installExpertMemoryContextStoreBrowserHandlers } from "../features/memory/expert-memory-context-store-browser-ipc.ts";
-import { createExpertMemoryContextStoreBrowserService } from "../features/memory/expert-memory-context-store-browser.ts";
+import { createMemoryLearningRevisions } from "../features/memory/memory-learning-revisions.ts";
+import { installMemoryPolicyHandlers } from "../features/memory/memory-policy-ipc.ts";
+import { createMemoryRevisionLearningPlanners } from "../features/memory/memory-revision-learning-planners.ts";
 import { installTeamMemoryContextStoreBrowserHandlers } from "../features/memory/team-memory-context-store-browser-ipc.ts";
 import { createTeamMemoryContextStoreBrowserService } from "../features/memory/team-memory-context-store-browser.ts";
-import { installMemoryPolicyHandlers } from "../features/memory/memory-policy-ipc.ts";
+import { createHomeExecutorCatalog } from "../features/missions/home-executor-catalog.ts";
+import { createHomeExecutorPreferenceStore } from "../features/missions/home-executor-preference-store.ts";
+import { createDesktopLocalHostExecutorResolver } from "../features/missions/local-host-mission-adapter.ts";
+import { createDesktopAdapterHost } from "../features/missions/mission-adapter-host.ts";
+import { createMissionExecutionEventProjector } from "../features/missions/mission-command-execution-projector.ts";
+import { installMissionContextStoreBrowserHandlers } from "../features/missions/mission-context-store-browser-ipc.ts";
+import { createMissionContextStoreBrowserService } from "../features/missions/mission-context-store-browser.ts";
+import { createMissionCreator } from "../features/missions/mission-creator.ts";
+import { createMissionExecutorCatalog } from "../features/missions/mission-executor-catalog.ts";
+import { installMissionHandlers } from "../features/missions/mission-ipc.ts";
+import { createMissionReadModel } from "../features/missions/mission-read-model.ts";
+import { createMissionRunner } from "../features/missions/mission-runner.ts";
+import { MissionStatusService } from "../features/missions/mission-status-service.ts";
+import { createFencedMissionStore } from "../features/missions/mission-store-fenced-adapter.ts";
+import { createMissionStore, MissionStoreError } from "../features/missions/mission-store.ts";
 import { installModelProviderHandlers } from "../features/model-providers/model-provider-ipc.ts";
 import { createModelProviderStore } from "../features/model-providers/model-provider-store.ts";
 import { createPluginCredentialStore } from "../features/plugins/plugin-credential-store.ts";
 import { installPluginHandlers } from "../features/plugins/plugin-ipc.ts";
 import { createPluginStore } from "../features/plugins/plugin-store.ts";
-import { installPragmaProjectHandlers } from "../features/projects/pragma-project-ipc.ts";
 import { createDesktopPragmaBlueprintCacheStore } from "../features/projects/pragma-blueprint-cache-store.ts";
+import { installPragmaProjectHandlers } from "../features/projects/pragma-project-ipc.ts";
 import { createPragmaProjectStore } from "../features/projects/pragma-project-store.ts";
 import { installWorkflowLayoutHandlers } from "../features/projects/workflow-layout-ipc.ts";
 import { createWorkflowLayoutStore } from "../features/projects/workflow-layout-store.ts";
 import { createDesktopRuntimeProcessEnvironment } from "../features/runtimes/desktop-runtime-process-environment.ts";
-import { getRuntimeAvailability } from "../features/runtimes/runtime-availability.ts";
+import {
+  getRuntimeAvailability,
+  getTargetRuntimeAvailability,
+  invalidateTargetRuntimeAvailability,
+} from "../features/runtimes/runtime-availability.ts";
 import {
   createBuiltInRuntimeFactories,
   createRuntimeEnvironmentService,
@@ -175,20 +174,27 @@ import { createRuntimeEnvironmentStore } from "../features/runtimes/runtime-envi
 import { installRuntimeHandlers } from "../features/runtimes/runtime-ipc.ts";
 import { createAutomaticToolPermissionHandler } from "../features/runtimes/tool-permission-policy.ts";
 import { installDesktopSettingsHandlers } from "../features/settings/desktop-settings-ipc.ts";
-import { installDesktopStorageCleanupHandlers } from "../features/settings/desktop-storage-cleanup-ipc.ts";
 import { createDesktopSettingsStore } from "../features/settings/desktop-settings-store.ts";
-import { createWorkspaceHistoryStore } from "../features/workspaces/workspace-history-store.ts";
+import { installDesktopStorageCleanupHandlers } from "../features/settings/desktop-storage-cleanup-ipc.ts";
+import { installCoreAssetSyncHandlers } from "../features/studio-sync/core-asset-sync-ipc.ts";
+import {
+  createCoreAssetSyncService,
+  unavailableCoreAssetRuntimeBindings,
+  type CoreAssetSyncService,
+} from "../features/studio-sync/core-asset-sync-service.ts";
 import { installUsageHandlers } from "../features/usage/usage-ipc.ts";
 import {
   createDesktopUsageStore,
   createUnavailableDesktopUsageStore,
 } from "../features/usage/usage-store.ts";
-import { validateWorkspace } from "../features/workspaces/workspace-scope.ts";
 import { createWorkspaceFilesystemPort } from "../features/workspaces/workspace-filesystem-port.ts";
+import { createWorkspaceHistoryStore } from "../features/workspaces/workspace-history-store.ts";
+import { validateWorkspace } from "../features/workspaces/workspace-scope.ts";
 import type { CredentialEncryption } from "../platform/security/credential-encryption.ts";
 import { createElectronSafeStorageLegacyDecryptor } from "../platform/security/electron-safe-storage-legacy-decryptor.ts";
 import { initializeDesktopStorage } from "../platform/storage/storage-bootstrap.ts";
 import { createDesktopTrashMaintenance } from "../platform/storage/trash-maintenance.ts";
+import { toContextStoreMissionDeletionError } from "./context-store-mission-deletion-error.ts";
 
 export interface DesktopApplicationContainer {
   readonly startBackgroundTasks: () => void;
@@ -435,6 +441,7 @@ export async function createDesktopApplicationContainer(
   });
   const usageStore = await createDesktopUsageStore({
     databasePath: join(pragmaPaths.dataRoot(), "usage", "usage.sqlite"),
+    deferred: true,
   }).catch((error: unknown) => {
     mainLogger.warn(
       "desktop.usage_store_unavailable",
@@ -1029,7 +1036,7 @@ export async function createDesktopApplicationContainer(
         if (localUsage === undefined) throw new Error("Local Host usage sink is unavailable.");
         signal.throwIfAborted();
         await localUsage.reconcile(observations);
-        usageStore.markSubjectDeleted("mission", mission.id);
+        await usageStore.markSubjectDeleted("mission", mission.id);
         if (expired) throw new MissionDeletionSourceExpiredError();
       },
       memory: async (record) => {
@@ -1166,10 +1173,28 @@ export async function createDesktopApplicationContainer(
         });
       }
     };
-    const [projectSnapshot, runtimesAvailable] = await Promise.all([
-      measure("project_snapshot", () => pragmaProjectStore.get()),
-      measure("runtime_availability", () => getRuntimeAvailability(runtimes)),
-    ]);
+    const projectSnapshot = await measure("project_snapshot", () => pragmaProjectStore.get());
+    const byRef = new Map(
+      projectSnapshot.resources.map((resource) => [canonicalPragmaResourceRef(resource), resource]),
+    );
+    const visited = new Set<string>();
+    const pending = [ref];
+    const runtimeIds = new Set<string>();
+    while (pending.length > 0) {
+      const current = pending.pop()!;
+      if (visited.has(current)) continue;
+      visited.add(current);
+      const resource = byRef.get(current) ?? systemExperts.getResource(current);
+      if (resource === undefined) continue;
+      if (resource.kind === "RuntimeProfile") {
+        const config = resource.spec.config as { runtimeId?: string };
+        if (config.runtimeId !== undefined) runtimeIds.add(config.runtimeId);
+      }
+      pending.push(...referencedPragmaResourceRefs([resource]));
+    }
+    const runtimesAvailable = await measure("runtime_availability", () =>
+      getTargetRuntimeAvailability(runtimes, [...runtimeIds]),
+    );
     const dependencies = [
       ...(await measure("bundle_readiness", () =>
         bundleService.getReadinessForRef(ref, {
@@ -1182,6 +1207,7 @@ export async function createDesktopApplicationContainer(
       ref,
       projectSnapshot.resources,
       runtimesAvailable,
+      { validateModels: false },
     )) {
       dependencies.push({
         id: `core-asset-runtime:${missing.ref}`,
@@ -1292,7 +1318,7 @@ export async function createDesktopApplicationContainer(
     onStorageTrashed: () => trashMaintenance.schedule("mission-storage-trashed"),
     deletionService: missionDeletion,
     prepareOwnerDeletion: async ({ mission, executionIds }) => {
-      missionDeliveryRef.current?.fenceMission(mission.id, executionIds);
+      await missionDeliveryRef.current?.fenceMission(mission.id, executionIds);
       void retiringAttention.stop(mission.id).catch(() => undefined);
     },
     onExecutionLinked: async ({ mission, executionId, requestId }) => {
@@ -1320,6 +1346,7 @@ export async function createDesktopApplicationContainer(
         avatarId: expert.avatarId,
       })),
     getSystemExecutorResource: (ref) => systemExperts.getResource(ref),
+    invalidateRuntimeReadiness: () => invalidateTargetRuntimeAvailability(runtimes),
     onExecutionTerminal: async ({ mission, executionId, status, result, error }) => {
       await executionEventProjector.terminal({ mission, executionId, status, result, error });
       if (!isUserFacingMissionOrigin(mission.origin)) return;
@@ -1666,6 +1693,8 @@ export async function createDesktopApplicationContainer(
       });
     },
   });
+  const usageProjectNames = new Map<string, ReadonlyMap<string, string>>();
+  const usageInvocationOwners = new Map<string, Map<string, import("@pragma/shared").Invocation>>();
   const persistMissionUsageBatch = async (
     registered: Mission,
     observations: readonly RuntimeUsageObservation[],
@@ -1674,32 +1703,67 @@ export async function createDesktopApplicationContainer(
     if (observations.length === 0) return;
     const mission =
       deletedInvocations === undefined ? await missionStore.get(registered.id) : registered;
-    // An unavailable store intentionally ignores foreground writes; custody
-    // consumers must instead retain their task until accounting is writable.
-    usageStore.getMissionUsage(mission.id);
-    const project = await pragmaProjectStore.openRevision(mission.project.revision);
-    try {
-      const names = new Map(
-        project
-          .listResources()
-          .map((resource) => [resource.metadata.id, resource.metadata.name] as const),
-      );
-      names.set(mission.executor.ref, mission.executor.name);
-      for (const executionId of new Set(observations.map((item) => item.executionId))) {
-        const invocations =
-          deletedInvocations?.get(executionId) ??
-          (await memoryPlane.executionStore.listInvocations(executionId));
-        for (const observation of observations) {
-          if (observation.executionId !== executionId) continue;
-          usageStore.record(observation, {
-            mission: { id: mission.id, title: mission.title },
-            invocations,
-            names,
-          });
+    // Check accounting availability without running a cumulative SUM.
+    await usageStore.assertAvailable();
+    const projectKey = JSON.stringify(mission.project.revision);
+    let projectNames = usageProjectNames.get(projectKey);
+    if (projectNames === undefined) {
+      const project = await pragmaProjectStore.openRevision(mission.project.revision);
+      try {
+        projectNames = new Map(
+          project
+            .listResources()
+            .map((resource) => [resource.metadata.id, resource.metadata.name] as const),
+        );
+      } finally {
+        await project.dispose();
+      }
+      usageProjectNames.set(projectKey, projectNames);
+      while (usageProjectNames.size > 32)
+        usageProjectNames.delete(usageProjectNames.keys().next().value!);
+    }
+    const names = new Map(projectNames);
+    names.set(mission.executor.ref, mission.executor.name);
+    const deletedOwnerIndexes = new Map<string, Map<string, Invocation>>();
+    for (const observation of observations) {
+      let owners = usageInvocationOwners.get(observation.executionId);
+      const deleted = deletedInvocations?.get(observation.executionId);
+      if (deleted !== undefined) {
+        owners = deletedOwnerIndexes.get(observation.executionId);
+        if (owners === undefined) {
+          owners = new Map(deleted.map((invocation) => [invocation.invocationId, invocation]));
+          deletedOwnerIndexes.set(observation.executionId, owners);
         }
       }
-    } finally {
-      await project.dispose();
+      if (owners === undefined) owners = new Map();
+      usageInvocationOwners.set(observation.executionId, owners);
+      // Invocation ancestry and definition identities are stable. Load only new
+      // members, never the full Invocation tree for each observation.
+      let invocationId: string | undefined = observation.invocationId;
+      const visited = new Set<string>();
+      const ancestry = [];
+      while (invocationId !== undefined && !visited.has(invocationId)) {
+        visited.add(invocationId);
+        let invocation = owners.get(invocationId);
+        if (invocation === undefined) {
+          if (deleted !== undefined) throw new Error("MISSION_USAGE_INVOCATION_UNAVAILABLE");
+          invocation = await memoryPlane.executionStore.getInvocation(
+            observation.executionId,
+            invocationId,
+          );
+          if (invocation === undefined) throw new Error("MISSION_USAGE_INVOCATION_UNAVAILABLE");
+          owners.set(invocationId, invocation);
+        }
+        ancestry.push(invocation);
+        invocationId = invocation.parentInvocationId;
+      }
+      await usageStore.record(observation, {
+        mission: { id: mission.id, title: mission.title },
+        invocations: ancestry,
+        names,
+      });
+      while (usageInvocationOwners.size > 64)
+        usageInvocationOwners.delete(usageInvocationOwners.keys().next().value!);
     }
   };
   const missionDeliveryRecovery = createMissionDeliveryRecovery({
@@ -2159,6 +2223,12 @@ export async function createDesktopApplicationContainer(
     startBackgroundTasks() {
       if (backgroundTasksStarted) return;
       backgroundTasksStarted = true;
+      void usageStore.start().catch((error) =>
+        mainLogger.warn("desktop.usage_store_unavailable", "Usage initialization deferred", {
+          error,
+          errorCode: "desktop_usage_unavailable",
+        }),
+      );
       storageCapacityInspection.start();
       trashMaintenance.schedule("startup");
       void assetSync.start().catch((error: unknown) => {

@@ -1,3 +1,4 @@
+import { createInMemoryExecutionStore } from "@pragma/core/testing";
 import { spawn } from "node:child_process";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -58,6 +59,7 @@ describe("Claude ACP failures through Core", () => {
         },
       });
       const app = createPragma({
+        executionStore: createInMemoryExecutionStore(),
         pragmaHome: root,
         runtimes: createStaticRuntimeResolver({
           runtimes: [runtime],

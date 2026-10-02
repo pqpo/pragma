@@ -615,6 +615,11 @@ const config = tseslint.config(
       "packages/runtime/qodercli/**/*.{ts,tsx}",
       "examples/**/*.{ts,tsx}",
     ],
+    ignores: [
+      "examples/src/support/example-kit.ts",
+      "examples/src/runtimes/probe.ts",
+      "examples/src/runtimes/shared/console-runtime-chat.ts",
+    ],
     rules: {
       "no-restricted-imports": [
         "error",

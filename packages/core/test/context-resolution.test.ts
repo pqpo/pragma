@@ -1,6 +1,4 @@
-import { mkdtemp } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { createInMemoryExecutionStore } from "../src/testing/index.ts";
 
 import {
   RuntimeContextRecordSchema,
@@ -11,7 +9,6 @@ import { describe, expect, it } from "vitest";
 
 import {
   ContextResolutionService,
-  createFileExecutionStore,
   defineContextIdResolver,
   freshContextIdResolver,
   resolveContextId,
@@ -207,8 +204,7 @@ describe("ContextResolutionService", () => {
 });
 
 async function createFixture(options: { readonly closeFirst?: boolean } = {}) {
-  const home = await mkdtemp(join(tmpdir(), "pragma-context-resolution-"));
-  const store = createFileExecutionStore({ pragmaHome: home });
+  const store = createInMemoryExecutionStore();
   const now = new Date().toISOString();
   const later = new Date(Date.now() + 1).toISOString();
   const owner = { type: "flow-execution" as const, ownerId: "execution" };

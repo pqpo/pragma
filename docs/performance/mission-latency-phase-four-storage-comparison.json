@@ -1,0 +1,387 @@
+{
+  "schemaVersion": "pragma.execution-storage-benchmark/v1",
+  "timestamp": "2026-10-01T16:15:01.607Z",
+  "cpu": "Intel(R) Core(TM) i7-9750H CPU @ 2.60GHz",
+  "results": [
+    {
+      "engine": "json",
+      "canonicalDelivery": false,
+      "history": 0,
+      "owners": 1,
+      "samples": 20,
+      "commitLatencyMs": {
+        "p50": 49.250395000000026,
+        "p95": 67.1352159999999
+      },
+      "readLatencyMs": {
+        "p50": 25.726826999999957,
+        "p95": 47.58342399999992
+      },
+      "requestPayloadBytes": 5880,
+      "responsePayloadBytes": 21403,
+      "databaseGrowthBytes": 12154,
+      "note": "Payload bytes are worker boundary serialization, not physical disk I/O. Canonical feed enabled only where indicated; no UI or Memory/Usage consumer in this benchmark."
+    },
+    {
+      "engine": "json",
+      "canonicalDelivery": false,
+      "history": 50,
+      "owners": 1,
+      "samples": 20,
+      "commitLatencyMs": {
+        "p50": 47.94994499999984,
+        "p95": 58.75437699999975
+      },
+      "readLatencyMs": {
+        "p50": 25.238605000000007,
+        "p95": 43.33603499999981
+      },
+      "requestPayloadBytes": 5900,
+      "responsePayloadBytes": 21482,
+      "databaseGrowthBytes": 12203,
+      "note": "Payload bytes are worker boundary serialization, not physical disk I/O. Canonical feed enabled only where indicated; no UI or Memory/Usage consumer in this benchmark."
+    },
+    {
+      "engine": "json",
+      "canonicalDelivery": false,
+      "history": 500,
+      "owners": 1,
+      "samples": 20,
+      "commitLatencyMs": {
+        "p50": 51.92921800000022,
+        "p95": 68.4573960000007
+      },
+      "readLatencyMs": {
+        "p50": 28.48308900000029,
+        "p95": 41.849293000000216
+      },
+      "requestPayloadBytes": 5920,
+      "responsePayloadBytes": 21589,
+      "databaseGrowthBytes": 12270,
+      "note": "Payload bytes are worker boundary serialization, not physical disk I/O. Canonical feed enabled only where indicated; no UI or Memory/Usage consumer in this benchmark."
+    },
+    {
+      "engine": "json",
+      "canonicalDelivery": false,
+      "history": 5000,
+      "owners": 1,
+      "samples": 20,
+      "commitLatencyMs": {
+        "p50": 78.78261300000122,
+        "p95": 95.04390699999931
+      },
+      "readLatencyMs": {
+        "p50": 23.783722000000125,
+        "p95": 24.88614400000006
+      },
+      "requestPayloadBytes": 5940,
+      "responsePayloadBytes": 21690,
+      "databaseGrowthBytes": 12330,
+      "note": "Payload bytes are worker boundary serialization, not physical disk I/O. Canonical feed enabled only where indicated; no UI or Memory/Usage consumer in this benchmark."
+    },
+    {
+      "engine": "json",
+      "canonicalDelivery": false,
+      "history": 5000,
+      "owners": 4,
+      "samples": 80,
+      "commitLatencyMs": {
+        "p50": 239.86271200000192,
+        "p95": 281.97553999999946
+      },
+      "readLatencyMs": {
+        "p50": 62.79446299999836,
+        "p95": 101.64499600000272
+      },
+      "requestPayloadBytes": 23760,
+      "responsePayloadBytes": 86760,
+      "databaseGrowthBytes": 49320,
+      "note": "Payload bytes are worker boundary serialization, not physical disk I/O. Canonical feed enabled only where indicated; no UI or Memory/Usage consumer in this benchmark."
+    },
+    {
+      "engine": "json",
+      "canonicalDelivery": true,
+      "history": 0,
+      "owners": 1,
+      "samples": 20,
+      "commitLatencyMs": {
+        "p50": 74.20283900000504,
+        "p95": 93.46224299999449
+      },
+      "readLatencyMs": {
+        "p50": 40.8797160000031,
+        "p95": 60.37779700000101
+      },
+      "requestPayloadBytes": 5860,
+      "responsePayloadBytes": 21343,
+      "databaseGrowthBytes": 12114,
+      "note": "Payload bytes are worker boundary serialization, not physical disk I/O. Canonical feed enabled only where indicated; no UI or Memory/Usage consumer in this benchmark."
+    },
+    {
+      "engine": "json",
+      "canonicalDelivery": true,
+      "history": 50,
+      "owners": 1,
+      "samples": 20,
+      "commitLatencyMs": {
+        "p50": 61.321507000000565,
+        "p95": 76.72850900000049
+      },
+      "readLatencyMs": {
+        "p50": 31.553257999999914,
+        "p95": 73.15561299999536
+      },
+      "requestPayloadBytes": 5880,
+      "responsePayloadBytes": 21422,
+      "databaseGrowthBytes": 12163,
+      "note": "Payload bytes are worker boundary serialization, not physical disk I/O. Canonical feed enabled only where indicated; no UI or Memory/Usage consumer in this benchmark."
+    },
+    {
+      "engine": "json",
+      "canonicalDelivery": true,
+      "history": 500,
+      "owners": 1,
+      "samples": 20,
+      "commitLatencyMs": {
+        "p50": 55.68545699999959,
+        "p95": 77.75602500000241
+      },
+      "readLatencyMs": {
+        "p50": 24.63672999999835,
+        "p95": 44.886444000003394
+      },
+      "requestPayloadBytes": 5900,
+      "responsePayloadBytes": 21529,
+      "databaseGrowthBytes": 12230,
+      "note": "Payload bytes are worker boundary serialization, not physical disk I/O. Canonical feed enabled only where indicated; no UI or Memory/Usage consumer in this benchmark."
+    },
+    {
+      "engine": "json",
+      "canonicalDelivery": true,
+      "history": 5000,
+      "owners": 1,
+      "samples": 20,
+      "commitLatencyMs": {
+        "p50": 85.47476599999936,
+        "p95": 92.48752700000477
+      },
+      "readLatencyMs": {
+        "p50": 26.76112500000454,
+        "p95": 43.67569899999944
+      },
+      "requestPayloadBytes": 5920,
+      "responsePayloadBytes": 21630,
+      "databaseGrowthBytes": 12290,
+      "note": "Payload bytes are worker boundary serialization, not physical disk I/O. Canonical feed enabled only where indicated; no UI or Memory/Usage consumer in this benchmark."
+    },
+    {
+      "engine": "json",
+      "canonicalDelivery": true,
+      "history": 5000,
+      "owners": 4,
+      "samples": 80,
+      "commitLatencyMs": {
+        "p50": 265.45235500000126,
+        "p95": 348.8756020000001
+      },
+      "readLatencyMs": {
+        "p50": 86.83071900000505,
+        "p95": 163.89104999999108
+      },
+      "requestPayloadBytes": 23680,
+      "responsePayloadBytes": 86520,
+      "databaseGrowthBytes": 49160,
+      "note": "Payload bytes are worker boundary serialization, not physical disk I/O. Canonical feed enabled only where indicated; no UI or Memory/Usage consumer in this benchmark."
+    },
+    {
+      "engine": "sqlite",
+      "canonicalDelivery": false,
+      "history": 0,
+      "owners": 1,
+      "samples": 20,
+      "commitLatencyMs": {
+        "p50": 27.61697100001038,
+        "p95": 31.32455600000685
+      },
+      "readLatencyMs": {
+        "p50": 1.8180089999950724,
+        "p95": 2.279790000000503
+      },
+      "requestPayloadBytes": 5920,
+      "responsePayloadBytes": 16443,
+      "databaseGrowthBytes": 32768,
+      "note": "Payload bytes are worker boundary serialization, not physical disk I/O. Canonical feed enabled only where indicated; no UI or Memory/Usage consumer in this benchmark."
+    },
+    {
+      "engine": "sqlite",
+      "canonicalDelivery": false,
+      "history": 50,
+      "owners": 1,
+      "samples": 20,
+      "commitLatencyMs": {
+        "p50": 25.59713300000294,
+        "p95": 27.427567000006093
+      },
+      "readLatencyMs": {
+        "p50": 1.7355529999913415,
+        "p95": 1.9291970000049332
+      },
+      "requestPayloadBytes": 5940,
+      "responsePayloadBytes": 16522,
+      "databaseGrowthBytes": 32768,
+      "note": "Payload bytes are worker boundary serialization, not physical disk I/O. Canonical feed enabled only where indicated; no UI or Memory/Usage consumer in this benchmark."
+    },
+    {
+      "engine": "sqlite",
+      "canonicalDelivery": false,
+      "history": 500,
+      "owners": 1,
+      "samples": 20,
+      "commitLatencyMs": {
+        "p50": 25.07213800000318,
+        "p95": 26.200463000001037
+      },
+      "readLatencyMs": {
+        "p50": 1.4053770000027725,
+        "p95": 1.778781999993953
+      },
+      "requestPayloadBytes": 5960,
+      "responsePayloadBytes": 16629,
+      "databaseGrowthBytes": 28672,
+      "note": "Payload bytes are worker boundary serialization, not physical disk I/O. Canonical feed enabled only where indicated; no UI or Memory/Usage consumer in this benchmark."
+    },
+    {
+      "engine": "sqlite",
+      "canonicalDelivery": false,
+      "history": 5000,
+      "owners": 1,
+      "samples": 20,
+      "commitLatencyMs": {
+        "p50": 26.527514000001247,
+        "p95": 29.12972300000547
+      },
+      "readLatencyMs": {
+        "p50": 1.6956320000026608,
+        "p95": 2.1151049999898532
+      },
+      "requestPayloadBytes": 5980,
+      "responsePayloadBytes": 16730,
+      "databaseGrowthBytes": 28672,
+      "note": "Payload bytes are worker boundary serialization, not physical disk I/O. Canonical feed enabled only where indicated; no UI or Memory/Usage consumer in this benchmark."
+    },
+    {
+      "engine": "sqlite",
+      "canonicalDelivery": false,
+      "history": 5000,
+      "owners": 4,
+      "samples": 80,
+      "commitLatencyMs": {
+        "p50": 49.987758999996004,
+        "p95": 96.09303199998976
+      },
+      "readLatencyMs": {
+        "p50": 2.541272000002209,
+        "p95": 4.467457999999169
+      },
+      "requestPayloadBytes": 23920,
+      "responsePayloadBytes": 66920,
+      "databaseGrowthBytes": 114688,
+      "note": "Payload bytes are worker boundary serialization, not physical disk I/O. Canonical feed enabled only where indicated; no UI or Memory/Usage consumer in this benchmark."
+    },
+    {
+      "engine": "sqlite",
+      "canonicalDelivery": true,
+      "history": 0,
+      "owners": 1,
+      "samples": 20,
+      "commitLatencyMs": {
+        "p50": 28.999505999992834,
+        "p95": 32.5394110000052
+      },
+      "readLatencyMs": {
+        "p50": 4.1070420000032755,
+        "p95": 5.870731999995769
+      },
+      "requestPayloadBytes": 5900,
+      "responsePayloadBytes": 16383,
+      "databaseGrowthBytes": 32768,
+      "note": "Payload bytes are worker boundary serialization, not physical disk I/O. Canonical feed enabled only where indicated; no UI or Memory/Usage consumer in this benchmark."
+    },
+    {
+      "engine": "sqlite",
+      "canonicalDelivery": true,
+      "history": 50,
+      "owners": 1,
+      "samples": 20,
+      "commitLatencyMs": {
+        "p50": 50.4966609999974,
+        "p95": 53.11077800000203
+      },
+      "readLatencyMs": {
+        "p50": 3.366863999995985,
+        "p95": 3.9086610000085784
+      },
+      "requestPayloadBytes": 5920,
+      "responsePayloadBytes": 16462,
+      "databaseGrowthBytes": 0,
+      "note": "Payload bytes are worker boundary serialization, not physical disk I/O. Canonical feed enabled only where indicated; no UI or Memory/Usage consumer in this benchmark."
+    },
+    {
+      "engine": "sqlite",
+      "canonicalDelivery": true,
+      "history": 500,
+      "owners": 1,
+      "samples": 20,
+      "commitLatencyMs": {
+        "p50": 48.869227000002866,
+        "p95": 52.114111000002595
+      },
+      "readLatencyMs": {
+        "p50": 3.0225400000053924,
+        "p95": 3.713792000009562
+      },
+      "requestPayloadBytes": 5940,
+      "responsePayloadBytes": 16569,
+      "databaseGrowthBytes": 0,
+      "note": "Payload bytes are worker boundary serialization, not physical disk I/O. Canonical feed enabled only where indicated; no UI or Memory/Usage consumer in this benchmark."
+    },
+    {
+      "engine": "sqlite",
+      "canonicalDelivery": true,
+      "history": 5000,
+      "owners": 1,
+      "samples": 20,
+      "commitLatencyMs": {
+        "p50": 48.930145999998786,
+        "p95": 51.59042699998827
+      },
+      "readLatencyMs": {
+        "p50": 3.133356999984244,
+        "p95": 4.294295999978203
+      },
+      "requestPayloadBytes": 5960,
+      "responsePayloadBytes": 16670,
+      "databaseGrowthBytes": 0,
+      "note": "Payload bytes are worker boundary serialization, not physical disk I/O. Canonical feed enabled only where indicated; no UI or Memory/Usage consumer in this benchmark."
+    },
+    {
+      "engine": "sqlite",
+      "canonicalDelivery": true,
+      "history": 5000,
+      "owners": 4,
+      "samples": 80,
+      "commitLatencyMs": {
+        "p50": 95.18548499999451,
+        "p95": 152.5045430000173
+      },
+      "readLatencyMs": {
+        "p50": 9.618671000003815,
+        "p95": 88.24543300000369
+      },
+      "requestPayloadBytes": 23840,
+      "responsePayloadBytes": 66680,
+      "databaseGrowthBytes": 0,
+      "note": "Payload bytes are worker boundary serialization, not physical disk I/O. Canonical feed enabled only where indicated; no UI or Memory/Usage consumer in this benchmark."
+    }
+  ]
+}

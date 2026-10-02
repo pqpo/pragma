@@ -1,20 +1,20 @@
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { createTestExecutionStore } from "./execution-test-host.ts";
 
-import { afterEach, describe, expect, it, vi } from "vitest";
 import {
-  FileLockTimeoutError,
-  createPragma,
-  createFileExecutionStore,
   createFileExpertSessionStore,
+  createNoopLoggerProvider,
+  createPragma,
   createStaticRuntimeResolver,
   defineExpert,
   executeExecutionTool,
-  createNoopLoggerProvider,
+  FileLockTimeoutError,
   type RuntimeNativeSessionContext,
 } from "@pragma/core";
 import { defineRuntimeTestDriver } from "@pragma/core/testing";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
   createMissionControllerStore,
@@ -174,7 +174,7 @@ describe("MissionControllerStore", () => {
       const scope = createMissionOwnerScope({ controller });
       const guard = await scope.acquire(missionId);
       const pragmaHome = join(root, "state");
-      const executions = createFileExecutionStore({ pragmaHome });
+      const executions = createTestExecutionStore({ pragmaHome });
       const sessions = createFileExpertSessionStore({ executions, pragmaHome });
       let allowTool!: () => void;
       const gate = new Promise<void>((resolve) => {

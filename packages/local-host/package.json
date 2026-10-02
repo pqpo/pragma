@@ -37,6 +37,7 @@
     "@pragma/tsconfig": "workspace:*",
     "@types/node": "latest",
     "typescript": "latest",
-    "vitest": "latest"
+    "vitest": "latest",
+    "@modelcontextprotocol/client": "2.1.0"
   }
 }

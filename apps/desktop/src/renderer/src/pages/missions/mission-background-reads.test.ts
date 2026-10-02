@@ -1,7 +1,7 @@
 import { expect, it, vi } from "vitest";
 import type {
-  MissionConversationState,
   MissionContextWindowSnapshot,
+  MissionConversationState,
 } from "../../../../shared/contracts/index.ts";
 import { createMissionBackgroundReads, createMissionRefresh } from "./mission-background-reads.ts";
 import {
@@ -271,4 +271,33 @@ it("settles a control refresh during continuous text output without rereading co
   expect(snapshot.revision).toBe(20);
   expect(snapshot.entries[0]).toMatchObject({ content: "x".repeat(19), streaming: true });
   reads.close();
+});
+
+it("coalesces history invalidations for 500ms without overlapping a slow read", async () => {
+  vi.useFakeTimers();
+  try {
+    const gate = deferred<void>();
+    const read = vi
+      .fn()
+      .mockResolvedValueOnce(undefined)
+      .mockReturnValueOnce(gate.promise)
+      .mockResolvedValue(undefined);
+    const refresh = createMissionRefresh(read, () => false, 500);
+    await refresh();
+    const next = refresh();
+    for (let i = 0; i < 20; i++) expect(refresh()).toBe(next);
+    await vi.advanceTimersByTimeAsync(499);
+    expect(read).toHaveBeenCalledTimes(1);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(read).toHaveBeenCalledTimes(2);
+    const dirty = refresh();
+    await vi.advanceTimersByTimeAsync(2000);
+    expect(read).toHaveBeenCalledTimes(2);
+    gate.resolve();
+    await dirty;
+    expect(read).toHaveBeenCalledTimes(3);
+    await next;
+  } finally {
+    vi.useRealTimers();
+  }
 });

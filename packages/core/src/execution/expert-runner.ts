@@ -18,7 +18,6 @@ import {
   type RuntimeContextSnapshot as SharedRuntimeContextSnapshot,
 } from "@pragma/shared";
 
-import type { Expert } from "../agent/expert-agent.ts";
 import {
   createTeamDelegationTools,
   isAgentDelegationTool,
@@ -26,36 +25,41 @@ import {
   type AgentDelegationDefinition,
   type RuntimeByExpert,
 } from "../agent/agent-launcher.ts";
-import { isExpertTeam, type ExpertDefinition, type ExpertTeam } from "../agent/expert-team.ts";
 import { ContextManager } from "../agent/context-manager.ts";
-import { StaticContextStore } from "../context-system/static-context-store.ts";
+import type { Expert } from "../agent/expert-agent.ts";
+import { isExpertTeam, type ExpertDefinition, type ExpertTeam } from "../agent/expert-team.ts";
 import {
   hostContextBindingsFingerprint,
   withHostContextBindings,
   type HostContextBindings,
   type HostContextBindingsResolver,
 } from "../context-system/host-context-bindings.ts";
-import { freshContextIdResolver } from "./context-id-resolver.ts";
-import { SteerNotDispatchedError } from "./steer-delivery-error.ts";
+import { StaticContextStore } from "../context-system/static-context-store.ts";
 import type { Flow } from "../flow/flow.ts";
-import type {
-  RuntimeAgentSession,
-  RuntimeModelSelection,
-  RuntimeSubmitHandle,
-  RuntimeSteerRequest,
-} from "../runtime/runtime-adapter.ts";
-import { mergeUsage, RuntimeUsageObservedSchema, type UsageSink } from "../runtime/usage.ts";
+import { sameHumanRequest } from "../human-interaction/durable-human-interaction.ts";
+import { createPragmaLogger, type PragmaLoggerProvider } from "../logging/logger.ts";
+import type { RuntimeResolver } from "../runtime-resolver.ts";
 import { isRuntimeFeatureEnabled } from "../runtime/features.ts";
-import { openRuntimeSession } from "../runtime/session-factory.ts";
 import {
+  EXECUTION_CONTEXT_ID_ATTR,
   EXECUTION_CURRENT_EXPERT_ID_ATTR,
   EXECUTION_CURRENT_TEAM_ID_ATTR,
-  EXECUTION_CONTEXT_ID_ATTR,
   EXECUTION_ID_ATTR,
   INVOCATION_ID_ATTR,
 } from "../runtime/run-context.ts";
-import type { RuntimeResolver } from "../runtime-resolver.ts";
-import { createPragmaLogger, type PragmaLoggerProvider } from "../logging/logger.ts";
+import type {
+  RuntimeAgentSession,
+  RuntimeModelSelection,
+  RuntimeSteerRequest,
+  RuntimeSubmitHandle,
+} from "../runtime/runtime-adapter.ts";
+import { openRuntimeSession } from "../runtime/session-factory.ts";
+import {
+  mergeUsage,
+  RuntimeUsageObservedSchema,
+  type RuntimeUsageObservation,
+  type UsageSink,
+} from "../runtime/usage.ts";
 import type {
   ExpertAgentAutomaticHumanInteractionHandler,
   ExpertAgentHumanRequest,
@@ -65,38 +69,40 @@ import {
   ExpertAgentHumanRequestSchema,
   ExpertAgentHumanResponseSchema,
 } from "../tools/managed-tool.ts";
-import { sameHumanRequest } from "../human-interaction/durable-human-interaction.ts";
-import {
-  ExecutionFinalStatusConflictError,
-  ExecutionVersionConflictError,
-  type ExecutionStore,
-} from "./execution-store.ts";
-import { commitExecutionEvent, createExecutionEventWriter } from "./execution-commit.ts";
-import {
-  ExpertOrchestrator,
-  type DelegationPermit,
-  type ExpertInvocationJob,
-} from "./expert-orchestrator.ts";
+import { freshContextIdResolver } from "./context-id-resolver.ts";
+import { ContextOutputService, unwrapInvocationOutput } from "./context-output-service.ts";
 import {
   ContextResolutionService,
   prepareExecutionContextClosure,
   type ContextResolutionScopeReader,
 } from "./context-resolution-service.ts";
-import { getExecutionLiveBus } from "./execution-live-bus.ts";
+import { commitExecutionEvent, createExecutionEventWriter } from "./execution-commit.ts";
+import { getExecutionLiveBus, shareExecutionLiveBus } from "./execution-live-bus.ts";
 import { projectRuntimeOutput } from "./execution-output.ts";
-import { RuntimeMessageAccumulator } from "./runtime-message-accumulator.ts";
-import { requireInvocationContextOrigin } from "./runtime-context-record.ts";
 import {
-  RuntimeSessionPool,
-  type RuntimeSessionCreateOptions,
-  type RuntimeSessionIdentity,
-} from "./runtime-session-pool.ts";
-import { ContextOutputService, unwrapInvocationOutput } from "./context-output-service.ts";
+  ExecutionFinalStatusConflictError,
+  ExecutionVersionConflictError,
+  type ExecutionStore,
+  type NewExecutionEvent,
+} from "./execution-store.ts";
+import {
+  ExpertOrchestrator,
+  type DelegationPermit,
+  type ExpertInvocationJob,
+} from "./expert-orchestrator.ts";
 import { formatExpertPromptWithAttachments } from "./expert-prompt.ts";
 import {
   HumanInteractionCheckpointError,
   isHumanInteractionCheckpointError,
 } from "./human-interaction-checkpoint.ts";
+import { requireInvocationContextOrigin } from "./runtime-context-record.ts";
+import { RuntimeMessageAccumulator } from "./runtime-message-accumulator.ts";
+import {
+  RuntimeSessionPool,
+  type RuntimeSessionCreateOptions,
+  type RuntimeSessionIdentity,
+} from "./runtime-session-pool.ts";
+import { SteerNotDispatchedError } from "./steer-delivery-error.ts";
 
 export {
   HumanInteractionCheckpointError,
@@ -151,6 +157,29 @@ export class ExecutionController {
   private cancellationReason: Error | undefined;
   private cancellationPromise: Promise<void> | undefined;
   private usage: AgentMessageUsage | undefined;
+  private readonly pendingUsageFacts = new Map<
+    string,
+    {
+      observation: RuntimeUsageObservation;
+      sink: UsageSink | undefined;
+      invocationUsage: AgentMessageUsage;
+      onFailure: (error: unknown) => void;
+    }
+  >();
+  private readonly usageFactsByCommit = new Map<
+    string,
+    [
+      string,
+      {
+        observation: RuntimeUsageObservation;
+        sink: UsageSink | undefined;
+        invocationUsage: AgentMessageUsage;
+        onFailure: (error: unknown) => void;
+      },
+    ][]
+  >();
+  private readonly invocationUsage = new Map<string, AgentMessageUsage | undefined>();
+  private readonly usageDeliveries = new Set<Promise<void>>();
   private readonly recoverableInteractions: Promise<StoredHumanInteraction[]>;
 
   constructor(
@@ -166,6 +195,69 @@ export class ExecutionController {
       readonly assertOwnership?: (() => Promise<void>) | undefined;
     } = {},
   ) {
+    const sourceStore = this.store;
+    this.store = {
+      ...sourceStore,
+      commit: async (request) => {
+        const pending = this.usageFactsByCommit.get(request.commitId) ?? [
+          ...this.pendingUsageFacts.entries(),
+        ];
+        if (pending.length === 0) return await sourceStore.commit(request);
+        this.usageFactsByCommit.set(request.commitId, pending);
+        const result = await sourceStore.commit({
+          ...request,
+          invocationPatches: [
+            ...(request.invocationPatches ?? []).map((patch) => {
+              const fact = pending.findLast(
+                ([, value]) => value.observation.invocationId === patch.invocationId,
+              )?.[1];
+              return fact === undefined
+                ? patch
+                : { ...patch, patch: { ...patch.patch, usage: fact.invocationUsage } };
+            }),
+            ...[
+              ...new Map(pending.map(([, fact]) => [fact.observation.invocationId, fact])).values(),
+            ]
+              .filter(
+                (fact) =>
+                  !(request.invocationPatches ?? []).some(
+                    (patch) => patch.invocationId === fact.observation.invocationId,
+                  ),
+              )
+              .map((fact) => ({
+                invocationId: fact.observation.invocationId,
+                patch: { usage: fact.invocationUsage },
+              })),
+          ],
+          events: [
+            ...pending.map(([eventId, { observation }]) => ({
+              eventId,
+              invocationId: observation.invocationId,
+              type: "runtime.usage.observed",
+              occurredAt: observation.occurredAt,
+              data: RuntimeUsageObservedSchema.parse({
+                schemaVersion: "pragma.runtime-usage-observed/v1",
+                observation,
+              }),
+            })),
+            ...(request.events ?? []),
+          ],
+        });
+        for (const [id, fact] of pending) {
+          if (this.pendingUsageFacts.get(id) !== fact) continue;
+          this.pendingUsageFacts.delete(id);
+          if (fact.sink === undefined || this.usageDeliveries.size >= 64) continue;
+          const delivery = Promise.resolve()
+            .then(() => fact.sink!.record(fact.observation))
+            .catch((error) => fact.onFailure(error));
+          this.usageDeliveries.add(delivery);
+          const deliveries = this.usageDeliveries;
+          void delivery.then(() => deliveries.delete(delivery));
+        }
+        return result;
+      },
+    };
+    shareExecutionLiveBus(sourceStore, this.store);
     this.recoverableInteractions =
       options.recoverHumanInteractionIds === undefined
         ? Promise.resolve([])
@@ -187,6 +279,30 @@ export class ExecutionController {
 
   addUsage(usage: AgentMessageUsage | undefined): void {
     this.usage = mergeUsage(this.usage, usage);
+  }
+
+  initializeInvocationUsage(invocation: Invocation): void {
+    if (!this.invocationUsage.has(invocation.invocationId))
+      this.invocationUsage.set(invocation.invocationId, invocation.usage);
+  }
+
+  stageRuntimeUsage(
+    observation: RuntimeUsageObservation,
+    sink: UsageSink | undefined,
+    onFailure: (error: unknown) => void,
+  ): void {
+    this.addUsage(observation.usage);
+    const invocationUsage = mergeUsage(
+      this.invocationUsage.get(observation.invocationId),
+      observation.usage,
+    )!;
+    this.invocationUsage.set(observation.invocationId, invocationUsage);
+    this.pendingUsageFacts.set(`runtime-usage:${observation.observationId}`, {
+      observation,
+      sink,
+      invocationUsage,
+      onFailure,
+    });
   }
 
   getUsage(): AgentMessageUsage | undefined {
@@ -833,6 +949,8 @@ export class ExecutionController {
     this.invocationSignals.clear();
     this.linkedInvocationSignals.clear();
     this.orchestrators.clear();
+    this.usageFactsByCommit.clear();
+    this.invocationUsage.clear();
     getExecutionLiveBus(this.store).complete(this.executionId);
   }
 
@@ -982,6 +1100,10 @@ export interface RunExpertInvocationOptions {
   readonly invocationId: string;
   /** True when this invocation is being replayed after a persisted checkpoint. */
   readonly isRecovery?: boolean | undefined;
+  /** Only the ExpertSession executor may complete its standalone root. */
+  readonly completeRootExecution?: boolean | undefined;
+  readonly sessionReleaseIntent?:
+    { readonly sessionId: string; readonly requestId: string } | undefined;
   readonly parentInvocationId?: string | undefined;
   readonly agentId?: string | undefined;
   readonly expert: ExpertDefinition;
@@ -1036,6 +1158,7 @@ export type NestedFlowInvocationExecutor = (
 ) => Promise<unknown>;
 
 export async function runExpertInvocation(options: RunExpertInvocationOptions): Promise<unknown> {
+  options = { ...options, store: options.controller.store };
   const preparationStartedAt = performance.now();
   let phaseStartedAt = preparationStartedAt;
   const preparationLogger = createPragmaLogger(options.loggerProvider, {
@@ -1134,9 +1257,11 @@ export async function runExpertInvocation(options: RunExpertInvocationOptions): 
     isCoordinator: delegation?.isCoordinator ?? false,
   };
   if (invocation.status === "succeeded") {
+    options.controller.initializeInvocationUsage(invocation);
     options.controller.addUsage(invocation.usage);
     return invocation.output;
   }
+  options.controller.initializeInvocationUsage(invocation);
   options.controller.addUsage(invocation.usage);
   await options.store.commit({
     commitId: `invocation-started:${options.invocationId}:${randomUUID()}`,
@@ -1184,7 +1309,10 @@ export async function runExpertInvocation(options: RunExpertInvocationOptions): 
   assertRuntimeIdentity(options, runtimeIdentity);
   logPreparationPhase("runtime_routing_validation", { runtimeId: runtime.descriptor.id });
 
+  let snapshotSignature = JSON.stringify(options.context.snapshot);
   const persistRuntimeSnapshot = async (snapshot: RuntimeContextSnapshot): Promise<void> => {
+    const nextSignature = JSON.stringify(snapshot);
+    if (snapshotSignature === nextSignature) return;
     const next: RuntimeContextRecord = {
       ...options.context,
       snapshot,
@@ -1211,6 +1339,7 @@ export async function runExpertInvocation(options: RunExpertInvocationOptions): 
             }),
           ]),
     ]);
+    snapshotSignature = nextSignature;
   };
 
   const executionContext = createExecutionContext(
@@ -1468,7 +1597,12 @@ export async function runExpertInvocation(options: RunExpertInvocationOptions): 
         options.context.contextId,
         turn.output,
       );
-      await appendInvocationFinalMessage(options, turn.runId, turn.finalMessage, invocationOutput);
+      const finalMessageEvent = createInvocationFinalMessageEvent(
+        options,
+        turn.runId,
+        turn.finalMessage,
+        invocationOutput,
+      );
       while (true) {
         const checkpoint = options.controller.getHumanInteractionCheckpoint(options.invocationId);
         if (checkpoint !== undefined) throw checkpoint;
@@ -1483,6 +1617,12 @@ export async function runExpertInvocation(options: RunExpertInvocationOptions): 
         if (currentInvocation.pendingExpertMessages.length > 0) {
           const messages = await orchestrator?.readPendingMessages(options.invocationId);
           if (messages !== undefined && messages.length > 0) {
+            await appendInvocationFinalMessage(
+              options,
+              turn.runId,
+              turn.finalMessage,
+              invocationOutput,
+            );
             activeExpertMessages = messages;
             query = formatExpertMessageContinuation(messages);
             continuation += 1;
@@ -1500,6 +1640,23 @@ export async function runExpertInvocation(options: RunExpertInvocationOptions): 
             commitId: `invocation-succeeded:${options.invocationId}`,
             executionId: options.executionId,
             expectedVersion: currentExecution.version,
+            ...(options.completeRootExecution === true
+              ? {
+                  executionPatch: {
+                    status: "succeeded" as const,
+                    state: {
+                      ...currentExecution.state,
+                      ...(options.sessionReleaseIntent === undefined
+                        ? {}
+                        : { expertSessionRelease: options.sessionReleaseIntent }),
+                    },
+                    output: invocationOutput,
+                    ...(options.controller.getUsage() === undefined
+                      ? {}
+                      : { usage: options.controller.getUsage() }),
+                  },
+                }
+              : {}),
             invocationPatches: [
               {
                 invocationId: options.invocationId,
@@ -1519,6 +1676,7 @@ export async function runExpertInvocation(options: RunExpertInvocationOptions): 
                   ],
                 }),
             events: [
+              ...(finalMessageEvent === undefined ? [] : [finalMessageEvent]),
               {
                 invocationId: options.invocationId,
                 type: "invocation.succeeded",
@@ -1527,6 +1685,15 @@ export async function runExpertInvocation(options: RunExpertInvocationOptions): 
                   ...(invocationUsage === undefined ? {} : { usage: invocationUsage }),
                 },
               },
+              ...(options.completeRootExecution === true
+                ? [
+                    {
+                      invocationId: options.invocationId,
+                      type: "execution.succeeded",
+                      data: { output: invocationOutput, usage: options.controller.getUsage() },
+                    },
+                  ]
+                : []),
             ],
           });
           return invocationOutput;
@@ -2111,7 +2278,6 @@ async function submitRuntimeTurn(options: {
       },
     }),
   );
-  let usagePreview = Promise.resolve();
   let usageSettlement: Promise<void> | undefined;
   const settleUsage = (usage: AgentMessageUsage | undefined): Promise<void> =>
     (usageSettlement ??= settleRuntimeTurnUsage(options, usage));
@@ -2123,22 +2289,6 @@ async function submitRuntimeTurn(options: {
         event,
       });
       if (output !== undefined) liveBus.publish(options.options.executionId, output);
-      if (event.type === "usage.updated" && options.options.usageSink?.preview !== undefined) {
-        const observation = createRuntimeUsageObservation(
-          options,
-          event.payload.usage,
-          event.runId,
-        );
-        usagePreview = usagePreview
-          .then(async () => await options.options.usageSink!.preview!(observation))
-          .catch((error: unknown) => {
-            createUsageSinkLogger(options).warn(
-              "usage.sink_preview_failed",
-              "Host usage sink rejected a live preview.",
-              { observationId: observation.observationId, error },
-            );
-          });
-      }
       for (const message of accumulatorFor(event.runId).consume(event)) {
         if (
           event.runId === options.runId &&
@@ -2177,7 +2327,6 @@ async function submitRuntimeTurn(options: {
       runId: options.runId,
     });
     await timed("event_pump_drain", () => drain);
-    await timed("usage_preview_drain", () => usagePreview);
     const checkpoint = options.options.controller.getHumanInteractionCheckpoint(
       options.options.invocationId,
     );
@@ -2185,7 +2334,7 @@ async function submitRuntimeTurn(options: {
     const output = result.result.output;
     const finalMessage =
       completedRootAssistant ?? rootMessageAccumulator.complete(output, result.result.usage);
-    await timed("usage_record_and_commit", () => settleUsage(result.result.usage));
+    await timed("usage_fact_staged", () => settleUsage(result.result.usage));
     return {
       runId: options.runId,
       output,
@@ -2194,8 +2343,7 @@ async function submitRuntimeTurn(options: {
     };
   } catch (error) {
     const usage = await handle.usage?.catch(() => undefined);
-    await usagePreview;
-    await timed("usage_record_and_commit", () => settleUsage(usage));
+    await timed("usage_fact_staged", () => settleUsage(usage));
     throw (
       options.options.controller.getHumanInteractionCheckpoint(options.options.invocationId) ??
       error
@@ -2217,75 +2365,20 @@ async function settleRuntimeTurnUsage(
   options: Parameters<typeof submitRuntimeTurn>[0],
   usage: AgentMessageUsage | undefined,
 ): Promise<void> {
-  const observationId = runtimeUsageObservationId(
-    options.options.executionId,
-    options.options.invocationId,
-    options.runId,
-  );
-  if (usage === undefined) {
-    await clearRuntimeUsagePreview(options, observationId);
-    return;
-  }
-  options.options.controller.addUsage(usage);
-  const current = await options.options.store.getInvocation(
-    options.options.executionId,
-    options.options.invocationId,
-  );
-  const invocationUsage = mergeUsage(current?.usage, usage);
-  if (current === undefined) throw new Error("Cannot settle usage for a missing Invocation.");
-  const observation = createRuntimeUsageObservation(options, usage, options.runId);
-  if (current !== undefined && invocationUsage !== undefined) {
-    await options.options.store.commit({
-      commitId: `invocation-usage:${options.options.invocationId}:${options.runId}`,
-      executionId: options.options.executionId,
-      invocationPatches: [
-        {
-          invocationId: options.options.invocationId,
-          patch: { usage: invocationUsage },
-        },
-      ],
-      events: [
-        {
-          eventId: `runtime-usage:${observationId}`,
-          invocationId: options.options.invocationId,
-          type: "runtime.usage.observed",
-          occurredAt: observation.occurredAt,
-          data: RuntimeUsageObservedSchema.parse({
-            schemaVersion: "pragma.runtime-usage-observed/v1",
-            observation,
-          }),
-        },
-      ],
+  if (usage !== undefined) {
+    const failureLogger = createPragmaLogger(options.options.loggerProvider, {
+      component: "usage-sink",
+      scope: { executionId: options.options.executionId },
     });
-  }
-  if (options.options.usageSink === undefined) return;
-  try {
-    await options.options.usageSink.record(observation);
-  } catch (error) {
-    createUsageSinkLogger(options).warn(
-      "usage.sink_write_failed",
-      "Host usage sink rejected an observation.",
-      {
-        observationId,
-        error,
-      },
-    );
-  } finally {
-    await clearRuntimeUsagePreview(options, observationId);
-  }
-}
-
-async function clearRuntimeUsagePreview(
-  options: Parameters<typeof submitRuntimeTurn>[0],
-  observationId: string,
-): Promise<void> {
-  try {
-    await options.options.usageSink?.clearPreview?.(observationId);
-  } catch (error) {
-    createUsageSinkLogger(options).warn(
-      "usage.sink_preview_clear_failed",
-      "Host usage sink failed to clear a live preview.",
-      { observationId, error },
+    options.options.controller.stageRuntimeUsage(
+      createRuntimeUsageObservation(options, usage, options.runId),
+      options.options.usageSink,
+      (error) =>
+        failureLogger.warn(
+          "usage.sink_write_failed",
+          "Host accounting retained its durable source for retry.",
+          { error, errorCode: "usage_sink_write_failed" },
+        ),
     );
   }
 }
@@ -2325,17 +2418,6 @@ function runtimeUsageObservationId(
   return createHash("sha256")
     .update(JSON.stringify([executionId, invocationId, runId]))
     .digest("hex");
-}
-
-function createUsageSinkLogger(options: Parameters<typeof submitRuntimeTurn>[0]) {
-  return createPragmaLogger(options.options.loggerProvider, {
-    component: "usage-sink",
-    scope: {
-      executionId: options.options.executionId,
-      invocationId: options.options.invocationId,
-      contextId: options.options.context.contextId,
-    },
-  });
 }
 
 function readExpertName(expert: ExpertDefinition, executorId: string): string {
@@ -2478,13 +2560,13 @@ function readExpertDelegationDefinition(expert: Expert): AgentDelegationDefiniti
   return definition;
 }
 
-async function appendInvocationFinalMessage(
+function createInvocationFinalMessageEvent(
   options: RunExpertInvocationOptions,
   runId: string,
   message: AgentMessage | undefined,
   output: InvocationOutput | undefined,
-): Promise<void> {
-  if (message === undefined) return;
+): NewExecutionEvent | undefined {
+  if (message === undefined) return undefined;
   const persisted =
     output?.type === "context" && message.role === "assistant"
       ? AgentMessageSchema.parse({
@@ -2506,22 +2588,31 @@ async function appendInvocationFinalMessage(
           ],
         })
       : message;
-  const startedAt = performance.now();
-  await commitExecutionEvent(options.store, {
-    executionId: options.executionId,
+  return {
     invocationId: options.invocationId,
     type: "invocation.message.appended",
     data: {
       message: persisted,
       runId,
-      source: {
-        kind: "agent",
-        runId,
-        agentId: options.expert.id,
-        path: [],
-      },
+      source: { kind: "agent", runId, agentId: options.expert.id, path: [] },
     },
     eventId: `invocation-final-message:${runId}`,
+  };
+}
+
+async function appendInvocationFinalMessage(
+  options: RunExpertInvocationOptions,
+  runId: string,
+  message: AgentMessage | undefined,
+  output: InvocationOutput | undefined,
+): Promise<void> {
+  const event = createInvocationFinalMessageEvent(options, runId, message, output);
+  if (event === undefined) return;
+  const startedAt = performance.now();
+  await options.store.commit({
+    commitId: `event:${event.eventId}`,
+    executionId: options.executionId,
+    events: [event],
   });
   createPragmaLogger(options.loggerProvider, {
     component: "core.execution",

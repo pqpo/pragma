@@ -1,14 +1,15 @@
+import { createSqliteExecutionStore as createTestExecutionStore } from "@pragma/local-host";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { createFileExecutionStore, getExecutionLiveBus } from "@pragma/core";
+import { getExecutionLiveBus } from "@pragma/core";
 import { ExecutionEventSchema, ExecutionRecordSchema } from "@pragma/shared";
 import { expect, it, vi } from "vitest";
 
 import { observeMissionQueuedTurn } from "./mission-queued-turn-observer.ts";
 
 function fixture() {
-  const store = createFileExecutionStore({
+  const store = createTestExecutionStore({
     pragmaHome: join(tmpdir(), `queued-observer-${crypto.randomUUID()}`),
   });
   const bus = getExecutionLiveBus(store);

@@ -1,4 +1,14 @@
 import type { ExpertDefinition } from "./agent/expert-team.ts";
+import type {
+  HostContextBindings,
+  HostContextBindingsResolver,
+} from "./context-system/host-context-bindings.ts";
+import { type ExecutionStore } from "./execution/execution-store.ts";
+import type { NestedFlowInvocationExecutor } from "./execution/expert-runner.ts";
+import {
+  createFileExpertSessionStore,
+  type ExpertSessionStore,
+} from "./execution/expert-session-store.ts";
 import {
   ExpertSessionManager,
   type CreateExpertSessionOptions,
@@ -7,34 +17,24 @@ import {
   type ResumeExpertSessionOptions,
 } from "./execution/expert-session.ts";
 import {
-  createFileExpertSessionStore,
-  type ExpertSessionStore,
-} from "./execution/expert-session-store.ts";
-import { createFileExecutionStore, type ExecutionStore } from "./execution/execution-store.ts";
-import type { NestedFlowInvocationExecutor } from "./execution/expert-runner.ts";
-import type { Flow, FlowSpec } from "./flow/flow.ts";
-import {
   FlowExecutionManager,
   runNestedFlowInvocation,
   type FlowExecution,
   type FlowExecutionView,
   type StartFlowRequest,
 } from "./flow/flow-execution.ts";
+import type { Flow, FlowSpec } from "./flow/flow.ts";
+import { defaultPragmaLoggerProvider, type PragmaLoggerProvider } from "./logging/logger.ts";
 import type { RuntimeResolver } from "./runtime-resolver.ts";
 import type { UsageSink } from "./runtime/usage.ts";
-import { defaultPragmaLoggerProvider, type PragmaLoggerProvider } from "./logging/logger.ts";
-import type { ExpertAgentAutomaticHumanInteractionHandler } from "./tools/managed-tool.ts";
-import type {
-  HostContextBindings,
-  HostContextBindingsResolver,
-} from "./context-system/host-context-bindings.ts";
 import { PragmaPaths } from "./storage/pragma-paths.ts";
+import type { ExpertAgentAutomaticHumanInteractionHandler } from "./tools/managed-tool.ts";
 
 export interface CreatePragmaOptions {
   readonly assertExecutionOwnership?: (() => Promise<void>) | undefined;
   readonly pragmaHome?: string | undefined;
   readonly runtimes: RuntimeResolver;
-  readonly executionStore?: ExecutionStore | undefined;
+  readonly executionStore: ExecutionStore;
   readonly expertSessionStore?: ExpertSessionStore | undefined;
   readonly loggerProvider?: PragmaLoggerProvider | undefined;
   readonly usageSink?: UsageSink | undefined;
@@ -78,8 +78,7 @@ export function createPragma(options: CreatePragmaOptions): PragmaApp {
     options.pragmaHome === undefined ? {} : { pragmaHome: options.pragmaHome },
   ).root;
   const storageLogger = loggerProvider.createLogger({ component: "core.storage" });
-  const executions =
-    options.executionStore ?? createFileExecutionStore({ pragmaHome, logger: storageLogger });
+  const executions = options.executionStore;
   const sessions =
     options.expertSessionStore ??
     createFileExpertSessionStore({ executions, pragmaHome, logger: storageLogger });

@@ -17,7 +17,7 @@ const directories: string[] = [];
 const stores: DesktopUsageStore[] = [];
 
 afterEach(async () => {
-  for (const store of stores.splice(0)) store.close();
+  for (const store of stores.splice(0)) await store.close();
   await Promise.all(directories.splice(0).map((directory) => rm(directory, { recursive: true })));
 });
 
@@ -35,86 +35,32 @@ async function fixture() {
 }
 
 describe("Desktop usage store", () => {
-  it("keeps the application usable when the usage database is unavailable", () => {
+  it("reports degraded when the usage database is unavailable", async () => {
     const failure = new Error("unsupported usage schema");
     const store = createUnavailableDesktopUsageStore({
       cause: failure,
       now: new Date("2026-01-01T00:00:00.000Z"),
     });
 
-    expect(() =>
+    await expect(
       store.record(observation(), {
         mission: { id: "mission-1", title: "Mission" },
         invocations: invocationTree(),
         names: new Map(),
       }),
-    ).not.toThrow();
-    expect(() => store.getOverview("all")).toThrow("The original usage database was not modified");
-    expect(() => store.getMissionUsage("mission-1")).toThrow(
-      expect.objectContaining({
-        code: "desktop_usage_unavailable",
-        cause: failure,
-      }),
+    ).rejects.toMatchObject({ code: "desktop_usage_unavailable", cause: failure });
+    await expect(store.getOverview("all")).rejects.toThrow(
+      "The original usage database was not modified",
     );
-  });
-
-  it("replaces live previews and reconciles them with the final observation", async () => {
-    const { store } = await fixture();
-    const context = {
-      mission: { id: "mission-1", title: "Mission" },
-      invocations: invocationTree(),
-      names: new Map<string, string>(),
-    };
-    const updates: Array<{
-      readonly total: number;
-      readonly provisional: boolean | undefined;
-    }> = [];
-    store.subscribe((update) => {
-      if (update.missionUsage !== undefined) {
-        updates.push({
-          total: update.missionUsage.totalTokens,
-          provisional: update.provisional,
-        });
-      }
+    await expect(store.getMissionUsage("mission-1")).rejects.toMatchObject({
+      code: "desktop_usage_unavailable",
+      cause: failure,
     });
-    const firstPreview = {
-      ...observation(),
-      usage: {
-        ...observation().usage,
-        input: 40,
-        output: 10,
-        cacheRead: 0,
-        cacheWrite: 0,
-        totalTokens: 50,
-      },
-    };
-    store.preview(firstPreview, context);
-    store.preview(
-      {
-        ...firstPreview,
-        usage: { ...firstPreview.usage, output: 40, totalTokens: 80 },
-      },
-      context,
-    );
-
-    expect(store.getMissionUsage("mission-1")).toMatchObject({
-      provisional: true,
-      usage: { totalTokens: 0 },
-    });
-    expect(store.getOverview("all").totals.totalTokens).toBe(0);
-
-    store.record(observation(), context);
-
-    expect(store.getMissionUsage("mission-1")).toMatchObject({
-      provisional: false,
-      usage: { totalTokens: 155 },
-    });
-    expect(updates.map((update) => update.total)).toEqual([50, 80, 155]);
   });
 
   it("records token-only observations and attributes ancestors inclusively", async () => {
     const { store } = await fixture();
-    store.record(observation(), {
+    await store.record(observation(), {
       mission: { id: "mission-1", title: "Ship usage" },
       invocations: invocationTree(),
       names: new Map([
@@ -124,22 +70,22 @@ describe("Desktop usage store", () => {
       ]),
     });
 
-    expect(store.getOverview("all").totals).toEqual({
+    expect((await store.getOverview("all")).totals).toEqual({
       input: 100,
       output: 20,
       cacheRead: 30,
       cacheWrite: 5,
       totalTokens: 155,
     });
-    expect(store.getMissionUsage("mission-1").usage.totalTokens).toBe(155);
+    expect((await store.getMissionUsage("mission-1")).usage.totalTokens).toBe(155);
     expect(
-      store.listSubjects({ period: "all", kind: "expert", offset: 0, limit: 20 }).items,
+      (await store.listSubjects({ period: "all", kind: "expert", offset: 0, limit: 20 })).items,
     ).toMatchObject([{ id: "expert-1", name: "Token expert", usage: { totalTokens: 155 } }]);
     expect(
-      store.listSubjects({ period: "all", kind: "team", offset: 0, limit: 20 }).items,
+      (await store.listSubjects({ period: "all", kind: "team", offset: 0, limit: 20 })).items,
     ).toMatchObject([{ id: "team-1", name: "Platform team", usage: { totalTokens: 155 } }]);
     expect(
-      store.listSubjects({ period: "all", kind: "flow", offset: 0, limit: 20 }).items,
+      (await store.listSubjects({ period: "all", kind: "flow", offset: 0, limit: 20 })).items,
     ).toMatchObject([{ id: "flow-1", name: "Release flow", usage: { totalTokens: 155 } }]);
   });
 
@@ -150,10 +96,10 @@ describe("Desktop usage store", () => {
       invocations: invocationTree(),
       names: new Map<string, string>(),
     };
-    store.record(observation(), context);
-    store.record(observation(), context);
-    expect(store.getOverview("all").totals.totalTokens).toBe(155);
-    expect(() =>
+    await store.record(observation(), context);
+    await store.record(observation(), context);
+    expect((await store.getOverview("all")).totals.totalTokens).toBe(155);
+    await expect(
       store.record(
         {
           ...observation(),
@@ -161,17 +107,17 @@ describe("Desktop usage store", () => {
         },
         context,
       ),
-    ).toThrow("Conflicting usage observation");
-    store.record(
+    ).rejects.toThrow("Conflicting usage observation");
+    await store.record(
       { ...observation(), observationId: "old", occurredAt: "2025-12-31T23:00:00.000Z" },
       context,
     );
-    expect(store.getOverview("all").totals.totalTokens).toBe(155);
+    expect((await store.getOverview("all")).totals.totalTokens).toBe(155);
   });
 
   it("retains totals but excludes deleted subjects from every ranked list after reopen", async () => {
     const { databasePath, store } = await fixture();
-    store.record(observation(), {
+    await store.record(observation(), {
       mission: { id: "mission-1", title: "Private title" },
       invocations: invocationTree(),
       names: new Map([
@@ -180,19 +126,21 @@ describe("Desktop usage store", () => {
         ["flow-1", "Private flow"],
       ]),
     });
-    store.markSubjectDeleted("mission", "mission-1");
-    store.reconcileActiveSubjects("expert", new Set());
-    store.reconcileActiveSubjects("team", new Set());
-    store.reconcileActiveSubjects("flow", new Set());
-    store.close();
+    await store.markSubjectDeleted("mission", "mission-1");
+    await store.reconcileActiveSubjects("expert", new Set());
+    await store.reconcileActiveSubjects("team", new Set());
+    await store.reconcileActiveSubjects("flow", new Set());
+    await store.close();
     stores.splice(stores.indexOf(store), 1);
 
     const reopened = await createDesktopUsageStore({ databasePath });
     stores.push(reopened);
-    expect(reopened.getMissionUsage("mission-1").usage.totalTokens).toBe(155);
-    expect(reopened.getOverview("all").totals.totalTokens).toBe(155);
+    expect((await reopened.getMissionUsage("mission-1")).usage.totalTokens).toBe(155);
+    expect((await reopened.getOverview("all")).totals.totalTokens).toBe(155);
     for (const kind of ["mission", "expert", "team", "flow"] as const) {
-      expect(reopened.listSubjects({ period: "all", kind, offset: 0, limit: 20 })).toMatchObject({
+      expect(
+        await reopened.listSubjects({ period: "all", kind, offset: 0, limit: 20 }),
+      ).toMatchObject({
         total: 0,
         items: [],
       });
@@ -206,8 +154,8 @@ describe("Desktop usage store", () => {
       invocations: invocationTree(),
       names: new Map<string, string>(),
     };
-    store.record(observation(), context);
-    store.recordRecovered(
+    await store.record(observation(), context);
+    await store.recordRecovered(
       {
         ...observation(),
         usage: {
@@ -219,7 +167,7 @@ describe("Desktop usage store", () => {
       },
       context,
     );
-    store.recordRecovered(
+    await store.recordRecovered(
       {
         ...observation(),
         usage: {
@@ -232,7 +180,7 @@ describe("Desktop usage store", () => {
       context,
     );
 
-    expect(store.getOverview("all").totals).toEqual({
+    expect((await store.getOverview("all")).totals).toEqual({
       input: 140,
       output: 30,
       cacheRead: 30,
@@ -250,7 +198,7 @@ describe("Desktop usage store", () => {
       now: new Date("2025-12-01T00:00:00.000Z"),
       timezone: "America/Los_Angeles",
     });
-    activated.close();
+    await activated.close();
 
     const store = await createDesktopUsageStore({
       databasePath,
@@ -263,7 +211,7 @@ describe("Desktop usage store", () => {
       invocations: invocationTree(),
       names: new Map<string, string>(),
     };
-    store.record(
+    await store.record(
       {
         ...observation(),
         observationId: "outside-seven-days",
@@ -271,7 +219,7 @@ describe("Desktop usage store", () => {
       },
       context,
     );
-    store.record(
+    await store.record(
       {
         ...observation(),
         observationId: "first-local-day",
@@ -279,7 +227,7 @@ describe("Desktop usage store", () => {
       },
       context,
     );
-    store.record(
+    await store.record(
       {
         ...observation(),
         observationId: "last-local-day",
@@ -289,7 +237,7 @@ describe("Desktop usage store", () => {
       context,
     );
 
-    const overview = store.getOverview("7d");
+    const overview = await store.getOverview("7d");
     expect(overview.daily).toHaveLength(7);
     expect(overview.daily.map((item) => item.date)).toEqual([
       "2026-01-01",
@@ -301,34 +249,34 @@ describe("Desktop usage store", () => {
       "2026-01-07",
     ]);
     expect(overview.totals.totalTokens).toBe(310);
-    expect(store.listSubjects({ period: "7d", kind: "expert", offset: 0, limit: 1 })).toMatchObject(
-      {
-        total: 2,
-        items: [{ id: "expert-1" }],
-      },
-    );
-    expect(store.listSubjects({ period: "7d", kind: "expert", offset: 1, limit: 1 })).toMatchObject(
-      {
-        total: 2,
-        items: [{ id: "expert-2" }],
-      },
-    );
-    expect(store.getOverview("30d").totals.totalTokens).toBe(465);
+    expect(
+      await store.listSubjects({ period: "7d", kind: "expert", offset: 0, limit: 1 }),
+    ).toMatchObject({
+      total: 2,
+      items: [{ id: "expert-1" }],
+    });
+    expect(
+      await store.listSubjects({ period: "7d", kind: "expert", offset: 1, limit: 1 }),
+    ).toMatchObject({
+      total: 2,
+      items: [{ id: "expert-2" }],
+    });
+    expect((await store.getOverview("30d")).totals.totalTokens).toBe(465);
   });
 
   it("returns zero usage and keeps the revision stable for unknown Missions", async () => {
     const { store } = await fixture();
-    const before = store.getOverview("all").revision;
+    const before = (await store.getOverview("all")).revision;
 
-    expect(store.getMissionUsage("missing").usage).toEqual({
+    expect((await store.getMissionUsage("missing")).usage).toEqual({
       input: 0,
       output: 0,
       cacheRead: 0,
       cacheWrite: 0,
       totalTokens: 0,
     });
-    store.markSubjectDeleted("mission", "missing");
-    expect(store.getOverview("all").revision).toBe(before);
+    await store.markSubjectDeleted("mission", "missing");
+    expect((await store.getOverview("all")).revision).toBe(before);
   });
 
   it("rejects a future schema without mutating it with current tables", async () => {

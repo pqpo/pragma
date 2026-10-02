@@ -5,17 +5,17 @@ import { fileURLToPath } from "node:url";
 
 import { afterEach, describe, expect, it } from "vitest";
 
-import { createFileExecutionStore } from "../src/execution/execution-store.ts";
 import { createFileExpertSessionStore } from "../src/execution/expert-session-store.ts";
-import { PragmaPaths } from "../src/storage/pragma-paths.ts";
 import { expertSessionTransactionMigrationChain } from "../src/storage/migrations/expert-session-transaction/index.ts";
-import { expertSessionTransactionV9ToV10Step } from "../src/storage/migrations/expert-session-transaction/steps/v9-to-v10.ts";
 import { expertSessionTransactionV10ToV11Step } from "../src/storage/migrations/expert-session-transaction/steps/v10-to-v11.ts";
+import { expertSessionTransactionV9ToV10Step } from "../src/storage/migrations/expert-session-transaction/steps/v9-to-v10.ts";
 import { expertSessionRecordMigrationChain } from "../src/storage/migrations/expert-session/index.ts";
-import { expertSessionV5ToV6Step } from "../src/storage/migrations/expert-session/steps/v5-to-v6.ts";
-import { expertSessionV6ToV7Step } from "../src/storage/migrations/expert-session/steps/v6-to-v7.ts";
 import { migratePromptPurposes } from "../src/storage/migrations/expert-session/steps/prompt-purpose.ts";
 import { migrateQueueSteerDeliveryAttempts } from "../src/storage/migrations/expert-session/steps/queue-steer-delivery.ts";
+import { expertSessionV5ToV6Step } from "../src/storage/migrations/expert-session/steps/v5-to-v6.ts";
+import { expertSessionV6ToV7Step } from "../src/storage/migrations/expert-session/steps/v6-to-v7.ts";
+import { PragmaPaths } from "../src/storage/pragma-paths.ts";
+import { createInMemoryExecutionStore } from "../src/testing/index.ts";
 
 const temporaryRoots: string[] = [];
 
@@ -40,7 +40,7 @@ describe("ExpertSession transaction migration", () => {
     );
     const sessions = createFileExpertSessionStore({
       pragmaHome: home,
-      executions: createFileExecutionStore({ pragmaHome: home }),
+      executions: createInMemoryExecutionStore(),
     });
     expect((await sessions.readSnapshot(sessionId))?.prompts).toHaveLength(1);
     let enter!: () => void;
@@ -232,7 +232,7 @@ describe("ExpertSession transaction migration", () => {
       `${JSON.stringify(await readFixture("expert-session-transaction-v8.json"))}\n`,
       "utf8",
     );
-    const executions = createFileExecutionStore({ pragmaHome: home });
+    const executions = createInMemoryExecutionStore();
     const sessions = createFileExpertSessionStore({ executions, pragmaHome: home });
 
     await expect(sessions.get("historical-session")).resolves.toMatchObject({
@@ -262,7 +262,7 @@ describe("ExpertSession transaction migration", () => {
       )}\n`,
       "utf8",
     );
-    const executions = createFileExecutionStore({ pragmaHome: home });
+    const executions = createInMemoryExecutionStore();
     const sessions = createFileExpertSessionStore({ executions, pragmaHome: home });
 
     await expect(sessions.readSnapshot("queue-marker-session")).resolves.toMatchObject({
@@ -318,7 +318,7 @@ describe("ExpertSession transaction migration", () => {
       `${JSON.stringify(fixture.events)}\n`,
       "utf8",
     );
-    const executions = createFileExecutionStore({ pragmaHome: home });
+    const executions = createInMemoryExecutionStore();
     const sessions = createFileExpertSessionStore({ executions, pragmaHome: home });
 
     await expect(sessions.get("queue-marker-session")).resolves.toMatchObject({
@@ -379,7 +379,7 @@ describe("ExpertSession transaction migration", () => {
       })}\n`,
       "utf8",
     );
-    const executions = createFileExecutionStore({ pragmaHome: home });
+    const executions = createInMemoryExecutionStore();
     const sessions = createFileExpertSessionStore({ executions, pragmaHome: home });
 
     await expect(sessions.get(sessionId)).resolves.toMatchObject({

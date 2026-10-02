@@ -1,4 +1,13 @@
 import {
+  assertRuntimeConformance,
+  type RuntimeConformanceObservation,
+} from "../runtime/conformance.ts";
+import {
+  defineRuntimeDriver,
+  type DefineRuntimeDriverOptions,
+  type RuntimeDriver,
+} from "../runtime/driver.ts";
+import {
   RUNTIME_FEATURE_CATALOG,
   defineRuntimeFeatures,
   runtimeFeature,
@@ -7,16 +16,7 @@ import {
   type RuntimeFeatureName,
   type RuntimeFeatureSet,
 } from "../runtime/features.ts";
-import {
-  assertRuntimeConformance,
-  type RuntimeConformanceObservation,
-} from "../runtime/conformance.ts";
 import type { RuntimeAdapter } from "../runtime/runtime-adapter.ts";
-import {
-  defineRuntimeDriver,
-  type DefineRuntimeDriverOptions,
-  type RuntimeDriver,
-} from "../runtime/driver.ts";
 
 export { openRuntimeSession } from "../runtime/session-factory.ts";
 
@@ -121,3 +121,5 @@ export function defineRuntimeTestDriver<TNativeEvent, TNativeSession>(
     options,
   );
 }
+
+export * from "./in-memory-execution-store.ts";

@@ -1,9 +1,10 @@
 import { basename } from "node:path";
+import { createSqliteExecutionStore } from "./execution/sqlite-execution-store.ts";
 
 import type {
+  ExecutionStore,
   ExpertSession,
   ExpertSessionStore,
-  ExecutionStore,
   Flow,
   FlowExecution,
   FlowSpec,
@@ -16,7 +17,6 @@ import type {
 } from "@pragma/core";
 import {
   createFileExpertSessionStore,
-  createFileExecutionStore,
   createPragma,
   runtimeSupportsSteer,
   SteerNotDispatchedError,
@@ -24,8 +24,8 @@ import {
 } from "@pragma/core";
 import {
   HumanInteractionResponseSchema,
-  JsonValueSchema,
   isTerminalExecutionStatus,
+  JsonValueSchema,
   type WorkspaceSelection,
 } from "@pragma/shared";
 import {
@@ -39,29 +39,29 @@ import {
 } from "@pragma/shared/integration";
 
 import {
-  createPinnedBindingRecoveryError,
-  type MissionPinnedBinding,
-} from "./missions/controller/pinned-binding.ts";
-import type {
-  MissionCommandConsumer,
-  MissionControllerGuard,
-} from "./missions/controller/mission-controller-store.ts";
-import {
-  readPendingInteraction,
   mapExecutionEvent,
+  readPendingInteraction,
   toCoreResponse,
   type LocalHostCoreDefinition,
   type LocalHostCoreExecutorDefinition,
   type LocalHostCoreRunComposition,
 } from "./core-run.ts";
 import { createLocalHostMissionEventProjector } from "./mission-event-projector.ts";
-import { createRunRedactor, type RunRedactor } from "./redaction.ts";
-import type { LocalHostRunMissionPort, LocalHostRunTerminal } from "./run.ts";
+import { dispatchMissionCommand } from "./missions/command-dispatcher.ts";
 import type {
   MissionControlExecutionOutcome,
   MissionControlTargetResolution,
 } from "./missions/controller/mission-control.ts";
-import { dispatchMissionCommand } from "./missions/command-dispatcher.ts";
+import type {
+  MissionCommandConsumer,
+  MissionControllerGuard,
+} from "./missions/controller/mission-controller-store.ts";
+import {
+  createPinnedBindingRecoveryError,
+  type MissionPinnedBinding,
+} from "./missions/controller/pinned-binding.ts";
+import { createRunRedactor, type RunRedactor } from "./redaction.ts";
+import type { LocalHostRunMissionPort, LocalHostRunTerminal } from "./run.ts";
 
 export interface LocalHostCoreMissionControlAdapter {
   readonly consumer: MissionCommandConsumer;
@@ -137,7 +137,7 @@ export function createLocalHostCoreMissionControlAdapter(options: {
   readonly hasPendingMissionCommands?: ((missionId: string) => Promise<boolean>) | undefined;
 }): LocalHostCoreMissionControlAdapter {
   const executions =
-    options.executions ?? createFileExecutionStore({ pragmaHome: options.pragmaHome });
+    options.executions ?? createSqliteExecutionStore({ pragmaHome: options.pragmaHome });
   const sessions =
     options.sessions ??
     createFileExpertSessionStore({

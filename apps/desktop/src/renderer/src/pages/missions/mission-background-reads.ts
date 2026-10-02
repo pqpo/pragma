@@ -5,7 +5,12 @@ import type {
 } from "../../../../shared/contracts/index.ts";
 
 /** One read per kind; all callers await the dirty follow-up as well. */
-export function createMissionRefresh(readOnce: () => Promise<void>, isClosed: () => boolean) {
+export function createMissionRefresh(
+  readOnce: () => Promise<void>,
+  isClosed: () => boolean,
+  minimumIntervalMs = 0,
+) {
+  let lastStartedAt = Number.NEGATIVE_INFINITY;
   let active: Promise<void> | undefined;
   let dirty = false;
   return function refresh(): Promise<void> {
@@ -17,6 +22,12 @@ export function createMissionRefresh(readOnce: () => Promise<void>, isClosed: ()
     const pending = (async () => {
       do {
         dirty = false;
+        const remaining = minimumIntervalMs - (performance.now() - lastStartedAt);
+        if (remaining > 0) await new Promise<void>((resolve) => setTimeout(resolve, remaining));
+        if (isClosed()) return;
+        // Calls during the delay belong to this read, not an unnecessary follow-up.
+        dirty = false;
+        lastStartedAt = performance.now();
         await readOnce();
       } while (dirty && !isClosed());
     })().finally(() => {

@@ -1,32 +1,32 @@
-import { readExecutionRunScope, type FileExecutionStore, type PragmaLogger } from "@pragma/core";
+import { readExecutionRunScope, type DurableExecutionStore, type PragmaLogger } from "@pragma/core";
 import {
   createFederatedMemoryContextStore,
-  MemoryRecallScopeSchema,
-  type MemoryPolicyStore,
-  type MemoryRecallScope,
-  type EpisodicMemoryExtractor,
-  type KnowledgeLearningPlanner,
-  type KnowledgeMemoryModule,
-  type KnowledgeLearningSink,
-  type SkillLearningSink,
-  type SkillLearningTargetReader,
-  type SkillLearningPlanner,
-  type SkillMemoryModule,
-  type MemoryExtractorProfileStore,
-  type MemoryExtractionSettingsStore,
-  type SemanticMemoryExtractor,
-  type SemanticMemoryStore,
-  type EpisodicMemoryStore,
-  type MemoryActivityStore,
   DEFAULT_MEMORY_STORAGE_POLICY,
   EXECUTION_EVIDENCE_ADAPTER_ID,
+  MemoryRecallScopeSchema,
+  type EpisodicMemoryExtractor,
+  type EpisodicMemoryStore,
+  type KnowledgeLearningPlanner,
+  type KnowledgeLearningSink,
+  type KnowledgeMemoryModule,
+  type MemoryActivityStore,
+  type MemoryExtractionSettingsStore,
+  type MemoryExtractorProfileStore,
+  type MemoryPolicyStore,
+  type MemoryRecallScope,
+  type SemanticMemoryExtractor,
+  type SemanticMemoryStore,
+  type SkillLearningPlanner,
+  type SkillLearningSink,
+  type SkillLearningTargetReader,
+  type SkillMemoryModule,
 } from "@pragma/memory";
 
 import {
+  createLocalHostMemoryContextService,
   createLocalHostMemoryDataPlane,
   createLocalHostMemorySubjectIdentityStore,
   resolveMemoryRecallScope,
-  createLocalHostMemoryContextService,
 } from "@pragma/local-host";
 import { createMemoryCleanupJournal } from "./memory-cleanup-journal.ts";
 
@@ -56,7 +56,7 @@ export type DesktopMemoryContextStoreViewStatus = "available" | "empty" | "recal
 
 export interface DesktopMemoryPlane {
   readonly canonical: import("@pragma/core").CanonicalEventFeed;
-  readonly executionStore: FileExecutionStore;
+  readonly executionStore: DurableExecutionStore;
   readonly policies: MemoryPolicyStore;
   readonly extractorProfiles: MemoryExtractorProfileStore;
   readonly extractionSettings: MemoryExtractionSettingsStore;
@@ -799,8 +799,12 @@ export async function createDesktopMemoryPlane(options: {
       knowledge.close();
       skill.close();
       semantic.close();
-      await executionStore.drainCanonicalEvents();
-      await canonical.close();
+      try {
+        if (executionStore.close !== undefined) await executionStore.close();
+        else await executionStore.drainCanonicalEvents();
+      } finally {
+        await canonical.close();
+      }
     },
   };
 }

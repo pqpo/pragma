@@ -1,12 +1,12 @@
 import { mkdtemp, readdir, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { createInMemoryExecutionStore } from "../src/testing/index.ts";
 
 import { afterEach, describe, expect, it } from "vitest";
 
 import { defineExpert } from "../src/agent/expert-agent.ts";
 import { DelegationSemaphore, ExpertOrchestrator } from "../src/execution/expert-orchestrator.ts";
-import { createFileExecutionStore } from "../src/execution/execution-store.ts";
 import { HumanInteractionCheckpointError } from "../src/execution/human-interaction-checkpoint.ts";
 
 const temporaryRoots: string[] = [];
@@ -65,7 +65,7 @@ describe("ExpertOrchestrator recovery", { timeout: 30_000 }, () => {
   it("keeps a Team member human checkpoint recoverable instead of failing the Agent task", async () => {
     const home = await temporaryRoot("pragma-member-human-checkpoint-");
     const executionId = "member-human-checkpoint";
-    const store = createFileExecutionStore({ pragmaHome: home });
+    const store = createInMemoryExecutionStore();
     await store.create(executionRecord(executionId), {
       ...invocationRecord(),
       agentId: "agent",
@@ -167,8 +167,8 @@ describe("ExpertOrchestrator recovery", { timeout: 30_000 }, () => {
     queued.release();
   });
   it("retains accepted messages until the delivered batch is acknowledged", async () => {
-    const home = await temporaryRoot("pragma-message-handoff-");
-    const store = createFileExecutionStore({ pragmaHome: home });
+    await temporaryRoot("pragma-message-handoff-");
+    const store = createInMemoryExecutionStore();
     const messages = [
       expertMessage("00000000-0000-4000-8000-000000000001", "first"),
       expertMessage("00000000-0000-4000-8000-000000000002", "second"),
@@ -199,8 +199,8 @@ describe("ExpertOrchestrator recovery", { timeout: 30_000 }, () => {
   });
 
   it("applies bounded backpressure to durable Agent message continuations", async () => {
-    const home = await temporaryRoot("pragma-message-backpressure-");
-    const store = createFileExecutionStore({ pragmaHome: home });
+    await temporaryRoot("pragma-message-backpressure-");
+    const store = createInMemoryExecutionStore();
     const executionId = "message-backpressure";
     await store.create(executionRecord(executionId), {
       ...invocationRecord(),
@@ -250,7 +250,7 @@ describe("ExpertOrchestrator recovery", { timeout: 30_000 }, () => {
 
   it("rebinds a recovered active Invocation even after its original activation was committed", async () => {
     const home = await temporaryRoot("pragma-agent-reactivation-");
-    const store = createFileExecutionStore({ pragmaHome: home });
+    const store = createInMemoryExecutionStore();
     await store.create(executionRecord("recovery-execution"), {
       ...invocationRecord(),
       agentId: "agent",
@@ -313,8 +313,8 @@ describe("ExpertOrchestrator recovery", { timeout: 30_000 }, () => {
   });
 
   it("reports already_terminal when an interrupt loses the completion race", async () => {
-    const home = await temporaryRoot("pragma-interrupt-race-");
-    const store = createFileExecutionStore({ pragmaHome: home });
+    await temporaryRoot("pragma-interrupt-race-");
+    const store = createInMemoryExecutionStore();
     await store.create(executionRecord("interrupt-race"), {
       ...invocationRecord(),
       status: "running",
@@ -367,7 +367,7 @@ describe("ExpertOrchestrator recovery", { timeout: 30_000 }, () => {
 
   it("reports the committed Agent disposition for concurrent historical continuations", async () => {
     const home = await temporaryRoot("pragma-concurrent-materialization-");
-    const store = createFileExecutionStore({ pragmaHome: home });
+    const store = createInMemoryExecutionStore();
     await store.create(executionRecord("continuation-execution"), {
       ...invocationRecord(),
       status: "running",
@@ -470,7 +470,7 @@ async function temporaryRoot(prefix: string): Promise<string> {
 }
 
 function createOrchestrator(
-  store: ReturnType<typeof createFileExecutionStore>,
+  store: ReturnType<typeof createInMemoryExecutionStore>,
   executionId: string,
   execute: ConstructorParameters<typeof ExpertOrchestrator>[0]["execute"] = async () => undefined,
 ): ExpertOrchestrator {

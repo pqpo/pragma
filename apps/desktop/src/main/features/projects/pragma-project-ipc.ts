@@ -1,39 +1,39 @@
-import { ipcMain } from "electron";
-import { isDeepStrictEqual } from "node:util";
 import { generatePragmaResourceId } from "@pragma/core";
 import { runPragmaEvaluation } from "@pragma/interpreter";
-import { parsePragmaReference } from "@pragma/interpreter/ast";
 import {
   PragmaExpertTeamResourceSchema,
   canonicalPragmaResourceRef,
+  parsePragmaReference,
 } from "@pragma/interpreter/ast";
+import { ipcMain } from "electron";
+import { isDeepStrictEqual } from "node:util";
 
 import {
   DeletePragmaResourceSchema,
+  DesktopPragmaContextStoreBindingSchema,
+  DesktopPragmaSkillBindingSchema,
+  EnsurePragmaContextStoreBindingSchema,
+  EnsurePragmaSkillBindingSchema,
   PragmaProjectChangesSchema,
   PublishPragmaProjectSchema,
   RunPragmaEvaluationSchema,
-  UpsertPragmaResourceSchema,
   UpsertPragmaExpertTeamSchema,
-  DesktopPragmaContextStoreBindingSchema,
-  EnsurePragmaContextStoreBindingSchema,
-  DesktopPragmaSkillBindingSchema,
-  EnsurePragmaSkillBindingSchema,
+  UpsertPragmaResourceSchema,
   ValidatePragmaResourceSchema,
   ValidatePragmaYamlSchema,
 } from "../../../shared/contracts/index.ts";
-import type { PragmaProjectStore } from "./pragma-project-store.ts";
-import type { DesktopUsageStore } from "../usage/usage-store.ts";
-import { runDesktopMutation } from "../../platform/ipc/desktop-mutation-result.ts";
-import type { ContextStoreStore } from "../context-stores/context-store-store.ts";
-import type { CapabilityStore } from "../capabilities/capability-store.ts";
 import {
-  classifyDesktopContextResource,
-  bindExistingDesktopContextResource,
-  resolveDesktopContextResource,
   bindExistingDesktopCapabilityResource,
+  bindExistingDesktopContextResource,
+  classifyDesktopContextResource,
   resolveDesktopCapabilityResource,
+  resolveDesktopContextResource,
 } from "../../platform/bindings/desktop-bound-resource-policy.ts";
+import { runDesktopMutation } from "../../platform/ipc/desktop-mutation-result.ts";
+import type { CapabilityStore } from "../capabilities/capability-store.ts";
+import type { ContextStoreStore } from "../context-stores/context-store-store.ts";
+import type { DesktopUsageStore } from "../usage/usage-store.ts";
+import type { PragmaProjectStore } from "./pragma-project-store.ts";
 
 export function installPragmaProjectHandlers(
   store: PragmaProjectStore,
@@ -177,7 +177,7 @@ export function installPragmaProjectHandlers(
     runDesktopMutation(async () => {
       const changes = PragmaProjectChangesSchema.parse(input);
       const snapshot = await store.apply(changes);
-      changes.removals.forEach((ref) => markDeletedUsageSubject(usage, ref));
+      for (const ref of changes.removals) await markDeletedUsageSubject(usage, ref);
       return snapshot;
     }),
   );
@@ -185,7 +185,7 @@ export function installPragmaProjectHandlers(
     runDesktopMutation(async () => {
       const request = DeletePragmaResourceSchema.parse(input);
       const snapshot = await store.remove(request);
-      markDeletedUsageSubject(usage, request.ref);
+      await markDeletedUsageSubject(usage, request.ref);
       return snapshot;
     }),
   );
@@ -221,9 +221,9 @@ export function installPragmaProjectHandlers(
   );
 }
 
-function markDeletedUsageSubject(usage: DesktopUsageStore, ref: string): void {
+async function markDeletedUsageSubject(usage: DesktopUsageStore, ref: string): Promise<void> {
   const { kind, id } = parsePragmaReference(ref);
   if (kind === "expert" || kind === "team" || kind === "flow") {
-    usage.markSubjectDeleted(kind, id);
+    await usage.markSubjectDeleted(kind, id);
   }
 }

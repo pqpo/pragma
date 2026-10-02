@@ -1,3 +1,4 @@
+import { createSqliteExecutionStore } from "@pragma/local-host";
 import "dotenv/config";
 
 import {
@@ -46,6 +47,7 @@ export function createExampleModelsConfig(env: NodeJS.ProcessEnv): IExpertAgentM
 export function createExampleApp(pragmaHome?: string) {
   const runtime = createExamplePiRuntime(process.env);
   return createPragma({
+    executionStore: createSqliteExecutionStore({ pragmaHome: pragmaHome }),
     ...(pragmaHome === undefined ? {} : { pragmaHome }),
     runtimes: createStaticRuntimeResolver({
       runtimes: [runtime],

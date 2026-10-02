@@ -1,3 +1,4 @@
+import { createInMemoryExecutionStore } from "@pragma/core/testing";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { createServer, request as httpRequest } from "node:http";
 import { tmpdir } from "node:os";
@@ -6,7 +7,6 @@ import { OpenCode } from "@opencode/client";
 import {
   createPragma,
   createRuntimeTokenCounter,
-  createFileExecutionStore,
   createStaticRuntimeResolver,
   defineExpert,
   SteerNotDispatchedError,
@@ -33,7 +33,9 @@ describe.runIf(executablePath !== undefined)("OpenCode 2.x real steering", () =>
         permissionMode: "full-access",
         tokenCounter,
       });
+      const executions = createInMemoryExecutionStore();
       const app = createPragma({
+        executionStore: executions,
         pragmaHome: join(f.root, "pragma"),
         runtimes: createStaticRuntimeResolver({
           runtimes: [runtime],
@@ -83,13 +85,7 @@ describe.runIf(executablePath !== undefined)("OpenCode 2.x real steering", () =>
           await session.prompt("NEXT_MARKER")
         ).result;
         expect(f.requests.length - count).toBe(1);
-        expect(
-          (
-            await createFileExecutionStore({ pragmaHome: join(f.root, "pragma") }).get(
-              queued.executionId,
-            )
-          )?.status,
-        ).toBe("cancelled");
+        expect((await executions.get(queued.executionId))?.status).toBe("cancelled");
       } finally {
         f.release();
         await session.close();

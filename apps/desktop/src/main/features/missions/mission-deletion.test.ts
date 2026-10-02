@@ -6,17 +6,19 @@ import { join } from "node:path";
 import { randomUUID } from "node:crypto";
 import { afterEach, describe, it, expect, vi } from "vitest";
 import {
-  readDeletedExecutionUsageSource,
   createRuntimeSessionRecord,
   updateRuntimeSessionRecord,
-  createFileExecutionStore,
   createStaticRuntimeResolver,
   createNoopLoggerProvider,
   PragmaPaths,
   type RuntimeAdapter,
 } from "@pragma/core";
 import { defineRuntimeTestDriver } from "@pragma/core/testing";
-import { createMissionDeletionService } from "@pragma/local-host";
+import {
+  createMissionDeletionService,
+  createSqliteExecutionStore,
+  readDeletedExecutionUsageSource,
+} from "@pragma/local-host";
 import {
   PRAGMA_DSL_WRITE_API_VERSION,
   type PragmaExpertResource,
@@ -30,8 +32,10 @@ import { createMissionRunner } from "./mission-runner.ts";
 import type { CapabilityStore } from "../capabilities/capability-store.ts";
 import type { CapabilityCredentialStore } from "../capabilities/capability-credential-store.ts";
 const roots: string[] = [];
+const stores: ReturnType<typeof createSqliteExecutionStore>[] = [];
 afterEach(async () => {
   vi.restoreAllMocks();
+  for (const store of stores.splice(0)) await store.close();
   await Promise.all(
     roots
       .splice(0)
@@ -93,7 +97,8 @@ async function fixture(
       mapEvent: () => ({ events: [] }),
       closeSession,
     });
-  const executions = createFileExecutionStore({ pragmaHome: paths.root });
+  const executions = createSqliteExecutionStore({ pragmaHome: paths.root });
+  stores.push(executions);
   const runner = createMissionRunner({
     missions,
     project,
@@ -207,6 +212,7 @@ describe("Mission deletion integration", () => {
       executionId,
     );
     expect(source?.invocations.length).toBeGreaterThan(0);
+    expect(source?.events.some((event) => event.type === "runtime.usage.observed")).toBe(true);
     await expect(access(target.missions.storagePath!(target.mission.id))).rejects.toMatchObject({
       code: "ENOENT",
     });

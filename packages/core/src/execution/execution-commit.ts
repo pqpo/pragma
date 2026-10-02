@@ -2,8 +2,8 @@ import { randomUUID } from "node:crypto";
 
 import type { ExecutionEvent } from "@pragma/shared";
 
-import type { ExecutionStore, NewExecutionEvent } from "./execution-store.ts";
 import type { PragmaLogger } from "../logging/logger.ts";
+import type { ExecutionStore, NewExecutionEvent } from "./execution-store.ts";
 
 export async function commitExecutionEvent(
   store: ExecutionStore,
@@ -38,7 +38,10 @@ export function createExecutionEventWriter(
   logger?: PragmaLogger,
 ) {
   let pending: NewExecutionEvent[] = [];
+  let pendingBytes = 0;
   let writing: Promise<void> | undefined;
+  let writingCount = 0;
+  let writingBytes = 0;
   let failure: unknown;
   let timer: ReturnType<typeof setTimeout> | undefined;
   const flush = async (): Promise<void> => {
@@ -51,6 +54,9 @@ export function createExecutionEventWriter(
     timer = undefined;
     const events = pending;
     pending = [];
+    writingBytes = pendingBytes;
+    writingCount = events.length;
+    pendingBytes = 0;
     if (events.length === 0) return;
     const startedAt = performance.now();
     const operation = store
@@ -78,27 +84,24 @@ export function createExecutionEventWriter(
       failure ??= error;
       throw error;
     } finally {
-      if (writing === operation) writing = undefined;
+      if (writing === operation) {
+        writing = undefined;
+        writingCount = 0;
+        writingBytes = 0;
+      }
     }
   };
   return {
     append(event: NewExecutionEvent): Promise<void> | undefined {
       if (failure !== undefined) throw failure;
       pending.push({ ...event, occurredAt: event.occurredAt ?? new Date().toISOString() });
-      // Bound outstanding batches as well as the current buffer. At a control
-      // boundary or capacity limit the producer waits; text deltas never enter it.
-      const runtimeType =
-        event.type === "runtime.event" &&
-        typeof event.data === "object" &&
-        event.data !== null &&
-        "type" in event.data
-          ? event.data.type
-          : undefined;
+      pendingBytes += Buffer.byteLength(JSON.stringify(event));
+      // Human/checkpoint facts retain their barrier. Tool notifications describe
+      // effects; authorization is enforced before the tool executes elsewhere.
       if (
-        pending.length >= 64 ||
-        event.type.startsWith("human.") ||
-        (typeof runtimeType === "string" &&
-          (runtimeType.startsWith("human.") || runtimeType.startsWith("tool.")))
+        pending.length + writingCount >= 256 ||
+        pendingBytes + writingBytes >= 1024 * 1024 ||
+        event.type.startsWith("human.")
       )
         return flush();
       if (timer === undefined) {

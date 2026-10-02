@@ -122,6 +122,7 @@ export function createFencedMissionStore(
           String(operation.input.id),
           String(operation.input.executionId),
           operation.input.entries as Parameters<MissionStore["writeExecutionProjection"]>[2],
+          operation.input.sourceUpdatedAt as string | undefined,
         );
         return;
       default:
@@ -251,12 +252,12 @@ export function createFencedMissionStore(
     // Owner deletion has its own transaction and is coordinated by the
     // composition root after lower-level state has been handled.
     remove: store.remove,
-    writeExecutionProjection: async (id, executionId, entries) =>
+    writeExecutionProjection: async (id, executionId, entries, sourceUpdatedAt) =>
       await write(
         id,
         "mission.execution-projection.written",
-        named("mission.execution-projection.write", { id, executionId, entries }),
-        async () => await store.writeExecutionProjection(id, executionId, entries),
+        named("mission.execution-projection.write", { id, executionId, entries, sourceUpdatedAt }),
+        async () => await store.writeExecutionProjection(id, executionId, entries, sourceUpdatedAt),
       ),
   };
 }

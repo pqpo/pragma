@@ -3,13 +3,9 @@ import { mkdtemp, rm, mkdir, writeFile, rename } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { describe, it, expect } from "vitest";
-import {
-  PragmaPaths,
-  fenceOwnerDeletion,
-  isOwnerDeletionFenced,
-  createFileExecutionStore,
-  withFileLock,
-} from "../src/index.ts";
+import { PragmaPaths, fenceOwnerDeletion, isOwnerDeletionFenced, withFileLock } from "@pragma/core";
+
+import { createSqliteExecutionStore } from "../src/index.ts";
 
 describe("Owner deletion fence", () => {
   it("takes Session locks before delivery locks used by an admitted Session writer", async () => {
@@ -29,11 +25,8 @@ describe("Owner deletion fence", () => {
       await withFileLock(paths.canonicalEventDeliveryLock("execution"), async () => {});
     });
     await ready;
-    const deletion = createFileExecutionStore({ pragmaHome: home }).withCanonicalEventDeletion(
-      ["execution"],
-      async () => {},
-      ["session"],
-    );
+    const store = createSqliteExecutionStore({ pragmaHome: home });
+    const deletion = store.withCanonicalEventDeletion(["execution"], async () => {}, ["session"]);
     await new Promise((resolve) => setTimeout(resolve, 50));
     proceed();
     let timeout: ReturnType<typeof setTimeout> | undefined;
@@ -46,6 +39,7 @@ describe("Owner deletion fence", () => {
       ]);
     } finally {
       if (timeout !== undefined) clearTimeout(timeout);
+      await store.close();
       await rm(home, { recursive: true, force: true });
     }
   });
@@ -64,14 +58,16 @@ describe("Owner deletion fence", () => {
         [
           "--import",
           "tsx",
-          "--input-type=module",
           "-e",
           `
-        import { createFileExecutionStore, PragmaPaths, isOwnerDeletionFenced } from ${JSON.stringify(source)};
+        import { createSqliteExecutionStore } from ${JSON.stringify(source)};
+        import { PragmaPaths, isOwnerDeletionFenced } from "@pragma/core";
         const paths = new PragmaPaths({ pragmaHome: process.argv[1] });
         if (!isOwnerDeletionFenced(paths, "execution")) throw new Error("Fence missing across processes");
-        try { await createFileExecutionStore({ pragmaHome: paths.root }).commit({ executionId: "execution", commitId: "late", events: [] }); throw new Error("Late write accepted"); }
+        const store = createSqliteExecutionStore({ pragmaHome: paths.root });
+        try { await store.commit({ executionId: "execution", commitId: "late", events: [] }); throw new Error("Late write accepted"); }
         catch (error) { if (!error.message.includes("deletion is fenced")) throw error; }
+        finally { await store.close(); }
         process.stdout.write("fenced");
       `,
           home,

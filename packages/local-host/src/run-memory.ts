@@ -1,15 +1,15 @@
 import {
   createFileCanonicalEventFeed,
-  createFileExecutionStore,
   createPragmaLogger,
   PragmaPaths,
   type CanonicalEventFeed,
   type PragmaLoggerProvider,
 } from "@pragma/core";
-import { createLocalHostMemoryDataPlane } from "./memory-data-plane.ts";
+import { createSqliteExecutionStore } from "./execution/sqlite-execution-store.ts";
 import { createLocalHostMemoryContextService } from "./memory-context.ts";
-import { createSecretStore } from "./secrets/secret-store.ts";
+import { createLocalHostMemoryDataPlane } from "./memory-data-plane.ts";
 import { createNativeOsKeychain } from "./secrets/native-os-keychain.ts";
+import { createSecretStore } from "./secrets/secret-store.ts";
 
 /** CLI process lifetime only: no daemon, settings writer, or model extraction worker. */
 export function createLocalHostRunMemory(options: {
@@ -33,7 +33,7 @@ export function createLocalHostRunMemory(options: {
     },
   };
   const logger = createPragmaLogger(options.loggerProvider, { component: "local-host.memory" });
-  const executionStore = createFileExecutionStore({ ...options, canonicalEventFeed: canonical });
+  const executionStore = createSqliteExecutionStore({ ...options, canonicalEventFeed: canonical });
   const paths = new PragmaPaths(options);
   const owners = new Set<string>();
   let memory:
@@ -157,7 +157,11 @@ export function createLocalHostRunMemory(options: {
         } finally {
           memory = undefined;
           try {
-            await executionStore.drainCanonicalEvents();
+            await executionStore.close();
+          } catch {
+            degraded();
+          }
+          try {
             await options.beforeFeedClose?.();
           } catch {
             degraded();

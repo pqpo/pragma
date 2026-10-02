@@ -106,6 +106,30 @@ describe("Mission activity read model", () => {
   });
 });
 
+it("keeps a timed-out underlying control read in its slot until it actually settles", async () => {
+  let release!: (value: never) => void;
+  const gate = new Promise<never>((resolve) => {
+    release = resolve;
+  });
+  const readSnapshot = vi.fn(() => gate);
+  const reader = createMissionActivityReader({
+    controller: { readSnapshot },
+    executions: { get: async () => undefined },
+    canonicalReadTimeoutMs: 5,
+  });
+  await reader.read(input());
+  await reader.read(input());
+  expect(readSnapshot).toHaveBeenCalledTimes(1);
+  const waiting = reader.read(input());
+  release({
+    snapshot: { eventSequence: 2 },
+    cursor: "cursor",
+    events: [event(1, "run.started", { executionId }), event(2, "run.succeeded", { executionId })],
+  } as never);
+  expect(await waiting).toMatchObject({ status: "succeeded", source: "mission-events" });
+  expect(readSnapshot).toHaveBeenCalledTimes(1);
+});
+
 function input() {
   return {
     missionId,

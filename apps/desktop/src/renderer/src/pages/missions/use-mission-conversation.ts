@@ -9,6 +9,7 @@ import type {
   MissionConversationState,
   PragmaDesktopAPI,
 } from "../../../../shared/contracts/index.ts";
+import { createMissionBackgroundReads, createMissionRefresh } from "./mission-background-reads.ts";
 import {
   applyMissionChatUpdateBatch,
   createMissionConversationBase,
@@ -18,13 +19,12 @@ import {
   prependChatPage,
   reconcileMissionChatRefresh,
 } from "./mission-conversation-model.ts";
+import { MissionLiveEntryStore } from "./mission-live-entry-store.ts";
 import {
-  MissionStreamIdleStore,
   missionEntryOutputChanged,
   missionRefreshOutputCandidates,
+  MissionStreamIdleStore,
 } from "./mission-stream-idle-store.ts";
-import { createMissionBackgroundReads, createMissionRefresh } from "./mission-background-reads.ts";
-import { MissionLiveEntryStore } from "./mission-live-entry-store.ts";
 import {
   enqueueMissionChatUpdate,
   estimateMissionChatUpdatesBytes,
@@ -370,7 +370,7 @@ export function useMissionConversation(input: {
       }
     };
 
-    const refresh = createMissionRefresh(refreshOnce, () => cancelled);
+    const refresh = createMissionRefresh(refreshOnce, () => cancelled, 500);
     const refreshLatestHistory = async (): Promise<MissionConversationSnapshot | undefined> => {
       await refresh();
       return cancelled || chatRef.current === null
@@ -474,8 +474,6 @@ export function useMissionConversation(input: {
       }
       if (drained.needsRefresh) {
         void refresh();
-        void refreshControl();
-        void refreshContext();
       }
     };
 
@@ -492,7 +490,6 @@ export function useMissionConversation(input: {
       rawUpdateCount += 1;
       if (updateValue.kind === "invalidate") {
         void refreshControl();
-        void refreshContext();
       }
 
       const enqueued = enqueueMissionChatUpdate(pending, pendingBytes, updateValue);
@@ -572,8 +569,42 @@ export function useMissionConversation(input: {
   ]);
 
   const observeFirstTokenPaint = useCallback(
-    (executionId: string | undefined, element: HTMLElement | null): void => {
+    (
+      executionId: string | undefined,
+      element: HTMLElement | null,
+      contentType: "text" | "reasoning" = "text",
+    ): void => {
       if (executionId === undefined || element === null) return;
+      const contentKey = `${executionId}:${contentType}`;
+      if (
+        receivedFirstTokensRef.current.has(executionId) &&
+        !paintedFirstTokensRef.current.has(contentKey) &&
+        !firstTokenPaintFramesRef.current.has(contentKey) &&
+        document.visibilityState !== "hidden"
+      ) {
+        const contentFrames: number[] = [];
+        contentFrames.push(
+          requestAnimationFrame(() => {
+            contentFrames.push(
+              requestAnimationFrame(() => {
+                firstTokenPaintFramesRef.current.delete(contentKey);
+                if (!element.isConnected || document.visibilityState === "hidden") return;
+                paintedFirstTokensRef.current.add(contentKey);
+                input.api?.reportRendererLog({
+                  level: "info",
+                  event: `mission.first_ui_${contentType}_painted`,
+                  message: `Renderer painted the first Mission ${contentType} output`,
+                  missionId: input.missionId,
+                  executionId,
+                  monotonicAtMs: performance.now(),
+                  timeOriginMs: performance.timeOrigin,
+                });
+              }),
+            );
+          }),
+        );
+        firstTokenPaintFramesRef.current.set(contentKey, contentFrames);
+      }
       const pendingPaint = pendingFirstTokenPaintsRef.current.get(executionId);
       if (
         pendingPaint === undefined ||
@@ -712,6 +743,7 @@ export function conversationFromPage(
       revision: page.revision,
       entries: page.entries,
       page: page.page,
+      sourceVerification: page.sourceVerification,
       pendingInteractions: [],
       ...(page.syncIssues === undefined ? {} : { syncIssues: page.syncIssues }),
     };
@@ -728,6 +760,7 @@ export function conversationFromPage(
         : entry;
     }),
     page: page.page,
+    sourceVerification: page.sourceVerification,
     syncIssues: mergeSyncIssues(current.syncIssues, page.syncIssues, "history"),
   };
 }

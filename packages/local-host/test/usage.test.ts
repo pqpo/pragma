@@ -43,6 +43,7 @@ describe("Local Host UsageSink", () => {
     await sink.record(observation);
 
     await expect(sink.list()).resolves.toEqual([observation]);
+    await sink.close();
   });
 
   it.each([false, true])(
@@ -90,8 +91,9 @@ describe("Local Host UsageSink", () => {
       await writeFile(path, "invalid-json");
       const error = vi.fn();
       const sink = createLocalHostUsageSink({ path, deliveryPath, feed, onError: error });
-      sink.record(observation);
-      await vi.waitFor(() => expect(error).toHaveBeenCalled());
+      await sink.record(observation);
+      await sink.drain();
+      expect(error).toHaveBeenCalled();
       await sink.close();
       const receipt = new DatabaseSync(deliveryPath);
       expect(

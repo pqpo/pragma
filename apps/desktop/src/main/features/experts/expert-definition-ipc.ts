@@ -1,8 +1,6 @@
-import { ipcMain } from "electron";
 import { parsePragmaReference } from "@pragma/interpreter/ast";
+import { ipcMain } from "electron";
 
-import type { ExpertDefinitionStore } from "./expert-definition-store.ts";
-import type { DesktopUsageStore } from "../usage/usage-store.ts";
 import {
   CreateExpertDefinitionSchema,
   DeleteExpertDefinitionSchema,
@@ -12,6 +10,8 @@ import {
   UpdateExpertDefinitionSchema,
 } from "../../../shared/contracts/index.ts";
 import { runDesktopMutation } from "../../platform/ipc/desktop-mutation-result.ts";
+import type { DesktopUsageStore } from "../usage/usage-store.ts";
+import type { ExpertDefinitionStore } from "./expert-definition-store.ts";
 
 export function installExpertDefinitionHandlers(
   store: ExpertDefinitionStore,
@@ -46,7 +46,7 @@ export function installExpertDefinitionHandlers(
     runDesktopMutation(async () => {
       const ref = DeleteExpertDefinitionSchema.parse(input).ref;
       await store.remove(ref);
-      usage.markSubjectDeleted("expert", parsePragmaReference(ref).id);
+      await usage.markSubjectDeleted("expert", parsePragmaReference(ref).id);
     }),
   );
 }

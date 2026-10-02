@@ -381,6 +381,8 @@ export const missions = {
   historyTruncated_other:
     "Archived history is incomplete: {{count}} earlier messages were omitted and {{truncatedFields}} oversized fields were shortened.",
   loadingEarlier: "Loading…",
+  chatHistoryVerifying: "Verifying saved history…",
+  chatHistoryVerificationUnavailable: "Saved history could not be verified. See diagnostics.",
   chatSyncUnavailable:
     "Some conversation state is temporarily unavailable. Existing messages are preserved.",
   retryChatSync: "Retry",

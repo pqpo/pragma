@@ -1,7 +1,7 @@
-import { readFileSync } from "node:fs";
-import { fileURLToPath } from "node:url";
-import { join } from "node:path";
 import { build } from "esbuild";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 
 import react from "@vitejs/plugin-react";
 import { defineConfig } from "electron-vite";
@@ -67,6 +67,12 @@ export default defineConfig({
           ),
           "code-service-worker": fileURLToPath(
             new URL("../../packages/core/src/code-service-worker.ts", import.meta.url),
+          ),
+          "sqlite-execution-worker": fileURLToPath(
+            new URL(
+              "../../packages/local-host/src/execution/sqlite-execution-worker.ts",
+              import.meta.url,
+            ),
           ),
           "canonical-event-feed-worker": fileURLToPath(
             new URL(

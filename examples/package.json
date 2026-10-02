@@ -21,6 +21,7 @@
     "example:tool-approval": "tsx src/capabilities/tool-approval.ts",
     "build": "tsc -p tsconfig.build.json",
     "lint": "eslint src plugins test vitest.config.ts",
+    "pretypecheck": "pnpm exec turbo run build --filter=\"@pragma/local-host...\"",
     "typecheck": "tsc --noEmit",
     "test": "vitest run --passWithNoTests",
     "clean": "rm -rf dist"
@@ -37,7 +38,8 @@
     "@pragma/runtime-qodercli": "workspace:*",
     "cac": "^7.0.0",
     "dotenv": "latest",
-    "zod": "latest"
+    "zod": "latest",
+    "@pragma/local-host": "workspace:*"
   },
   "devDependencies": {
     "@pragma/tsconfig": "workspace:*",

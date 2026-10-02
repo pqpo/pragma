@@ -1,0 +1,60 @@
+{
+  "execution": {
+    "schemaVersion": "pragma.execution/v12",
+    "executionId": "current",
+    "version": 1,
+    "kind": "flow",
+    "definition": {
+      "id": "flow",
+      "kind": "flow"
+    },
+    "rootInvocationId": "root",
+    "status": "running",
+    "input": null,
+    "state": {},
+    "lastAppliedSequence": 1,
+    "createdAt": "2026-10-02T00:00:00.000Z",
+    "updatedAt": "2026-10-02T01:17:28.375Z"
+  },
+  "invocations": [
+    {
+      "invocationId": "root",
+      "rootInvocationId": "root",
+      "definition": {
+        "id": "flow",
+        "kind": "flow"
+      },
+      "contextId": "context",
+      "status": "running",
+      "pendingExpertMessages": [],
+      "input": null,
+      "createdAt": "2026-10-02T00:00:00.000Z",
+      "updatedAt": "2026-10-02T00:00:00.000Z"
+    }
+  ],
+  "agents": [],
+  "contexts": [],
+  "commits": [
+    {
+      "commitId": "old",
+      "signature": "6e79ce6022121d827cf8317edd8151593ef7cc83f0f561113c99af6cd6dc5cb4",
+      "eventIds": ["one"],
+      "committedVersion": 1
+    }
+  ],
+  "events": [
+    {
+      "schemaVersion": "pragma.execution-event/v5",
+      "eventId": "one",
+      "cursor": {
+        "executionId": "current",
+        "sequence": 1
+      },
+      "executionId": "current",
+      "invocationId": "root",
+      "type": "progress",
+      "data": 1,
+      "occurredAt": "2026-10-02T01:17:28.375Z"
+    }
+  ]
+}

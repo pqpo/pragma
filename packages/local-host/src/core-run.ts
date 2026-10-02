@@ -1,39 +1,39 @@
 import type {
+  ExecutionEvent,
+  ExecutionStore,
   ExpertDefinition,
   ExpertSession,
   ExpertSessionStore,
-  ExecutionEvent,
-  ExecutionStore,
-  FlowExecution,
+  ExpertTurn,
   Flow,
+  FlowExecution,
   FlowSpec,
   HostContextBindings,
   HostContextBindingsResolver,
+  MutableExecution,
   PragmaApp,
   PragmaLoggerProvider,
   RuntimeResolver,
   UsageSink,
-  ExpertTurn,
-  MutableExecution,
 } from "@pragma/core";
 import {
-  createFileExecutionStore,
+  AsyncPushQueue,
   createFileExpertSessionStore,
   createPragma,
-  AsyncPushQueue,
   isHumanInteractionCheckpointError,
 } from "@pragma/core";
 import {
   HumanInteractionRequestSchema,
   HumanInteractionResponseSchema,
   JsonValueSchema,
-  type WorkspaceSelection,
   type AgentMessageUsage,
   type HumanInteractionRequest,
   type HumanInteractionResponse,
   type JsonValue,
+  type WorkspaceSelection,
 } from "@pragma/shared";
 import {
+  createIntegrationError,
   ExecutorDescriptorSchema,
   HumanInteractionRequestEnvelopeSchema,
   HumanInteractionResponseEnvelopeSchema,
@@ -41,8 +41,9 @@ import {
   type ExecutorReference,
   type HumanInteractionRequestEnvelope,
 } from "@pragma/shared/integration";
-import { createIntegrationError } from "@pragma/shared/integration";
+import { createSqliteExecutionStore } from "./execution/sqlite-execution-store.ts";
 
+import type { LocalHostCoreActiveOwner } from "./core-control-adapter.ts";
 import {
   type LocalHostRunEvent,
   type LocalHostRunExecutorPort,
@@ -51,7 +52,6 @@ import {
   type LocalHostRunTerminal,
   type ResolvedRunExecutor,
 } from "./run.ts";
-import type { LocalHostCoreActiveOwner } from "./core-control-adapter.ts";
 
 export type LocalHostCoreDefinition = ExpertDefinition | FlowSpec<unknown, unknown> | Flow;
 
@@ -70,7 +70,7 @@ export function createLocalHostCoreStores(
     readonly pragmaHome?: string | undefined;
   } = {},
 ): LocalHostCoreStores {
-  const executions = createFileExecutionStore(
+  const executions = createSqliteExecutionStore(
     options.pragmaHome === undefined ? {} : { pragmaHome: options.pragmaHome },
   );
   const sessions = createFileExpertSessionStore(
@@ -122,7 +122,7 @@ export function createCoreRunExecutorPort(
   options: LocalHostCoreRunComposition,
 ): LocalHostCoreRunExecutorPort {
   const executions =
-    options.executions ?? createFileExecutionStore({ pragmaHome: options.pragmaHome });
+    options.executions ?? createSqliteExecutionStore({ pragmaHome: options.pragmaHome });
   const sessions =
     options.sessions ??
     createFileExpertSessionStore({

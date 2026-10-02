@@ -1,12 +1,12 @@
-import {
-  readStorageFile as readFile,
-  writeStorageFile as writeFile,
-  replaceStorageFile as rename,
-  parseStorageJson,
-} from "./storage-diagnostics.ts";
 import { randomUUID } from "node:crypto";
-import { mkdir, rm } from "node:fs/promises";
+import { mkdir, open, rm } from "node:fs/promises";
 import { dirname, join, relative, resolve } from "node:path";
+import {
+  parseStorageJson,
+  readStorageFile as readFile,
+  replaceStorageFile as rename,
+  writeStorageFile as writeFile,
+} from "./storage-diagnostics.ts";
 
 import { z } from "zod";
 
@@ -274,7 +274,19 @@ async function writeJsonAtomic(file: string, value: unknown): Promise<void> {
       encoding: "utf8",
       mode: 0o600,
     });
+    const handle = await open(temporary, "r");
+    try {
+      await handle.sync();
+    } finally {
+      await handle.close();
+    }
     await renameWithRetry(temporary, file);
+    const directory = await open(dirname(file), "r");
+    try {
+      await directory.sync();
+    } finally {
+      await directory.close();
+    }
   } finally {
     await rm(temporary, { force: true });
   }

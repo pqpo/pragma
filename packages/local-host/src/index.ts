@@ -1,24 +1,24 @@
 import { createHash } from "node:crypto";
 import { basename, isAbsolute } from "node:path";
 
+import type { RuntimeResolver } from "@pragma/core";
+import type { HumanInteractionResponse } from "@pragma/shared";
 import {
   createIntegrationError,
   WorkspaceSelectionSchema,
-  type IntegrationCapability,
   type HumanInteractionRequestEnvelope,
+  type IntegrationCapability,
   type WorkspaceSelection,
 } from "@pragma/shared/integration";
-import type { RuntimeResolver } from "@pragma/core";
-import type { HumanInteractionResponse } from "@pragma/shared";
-import type { LocalHostRunApplication } from "./run.ts";
 import type { MissionControlApplication } from "./missions/controller/mission-control.ts";
 import type { MissionWatchPort } from "./missions/controller/watch.ts";
 import type { MissionQueryPort } from "./missions/query.ts";
+import type { LocalHostRunApplication } from "./run.ts";
 
 export {
   CliResultSchema,
-  IntegrationErrorSchema,
   integrationErrorExitCode,
+  IntegrationErrorSchema,
 } from "@pragma/shared/integration";
 export type { IntegrationErrorCode } from "@pragma/shared/integration";
 
@@ -26,38 +26,38 @@ export const LOCAL_HOST_APPLICATION_PROTOCOL = "pragma.local-host/v1" as const;
 export const LOCAL_HOST_SHARED_BOARD_STORE_ID = "mission-board" as const;
 export const LOCAL_HOST_SHARED_BOARD_SCOPE_ID = "mission-board:shared" as const;
 
-export * from "./missions/controller/mission-controller-store.ts";
-export * from "./missions/controller/schemas.ts";
-export * from "./missions/controller/pinned-binding.ts";
-export * from "./missions/controller/pinned-binding-backfill.ts";
-export * from "./missions/controller/owner-scope.ts";
-export * from "./missions/controller/composition.ts";
-export * from "./missions/controller/prompt-queue.ts";
-export * from "./missions/controller/command-payload.ts";
-export * from "./missions/command-dispatcher.ts";
-export * from "./bundle-source.ts";
+export * from "./built-in-executors.ts";
 export * from "./bundle-source-migration.ts";
-export * from "./missions/controller/retention.ts";
-export * from "./missions/controller/watch.ts";
-export * from "./missions/controller/mission-control.ts";
-export * from "./missions/controller/migrations/index.ts";
-export * from "./missions/query.ts";
+export * from "./bundle-source.ts";
+export * from "./core-control-adapter.ts";
+export * from "./core-run.ts";
+export * from "./logger.ts";
+export * from "./mission-board.ts";
+export * from "./mission-event-projector.ts";
 export * from "./missions/activity.ts";
+export * from "./missions/command-dispatcher.ts";
+export * from "./missions/controller/command-payload.ts";
+export * from "./missions/controller/composition.ts";
+export * from "./missions/controller/migrations/index.ts";
+export * from "./missions/controller/mission-control.ts";
+export * from "./missions/controller/mission-controller-store.ts";
+export * from "./missions/controller/owner-scope.ts";
+export * from "./missions/controller/pinned-binding-backfill.ts";
+export * from "./missions/controller/pinned-binding.ts";
+export * from "./missions/controller/prompt-queue.ts";
+export * from "./missions/controller/retention.ts";
+export * from "./missions/controller/schemas.ts";
+export * from "./missions/controller/watch.ts";
+export * from "./missions/query.ts";
+export * from "./project-catalog.ts";
+export * from "./project-revision.ts";
+export * from "./redaction.ts";
 export * from "./run-payload.ts";
 export * from "./run.ts";
-export * from "./mission-event-projector.ts";
-export * from "./core-run.ts";
-export * from "./core-control-adapter.ts";
-export * from "./built-in-executors.ts";
-export * from "./mission-board.ts";
-export * from "./redaction.ts";
 export * from "./runtime-environment.ts";
-export * from "./usage.ts";
-export * from "./logger.ts";
-export * from "./project-revision.ts";
-export * from "./project-catalog.ts";
-export * from "./secrets/index.ts";
 export * from "./runtime-resolver.ts";
+export * from "./secrets/index.ts";
+export * from "./usage.ts";
 /** Composition convenience: this is Core's shared counter, not a Host estimator. */
 export { createRuntimeTokenCounter } from "@pragma/core";
 
@@ -369,15 +369,28 @@ function workspaceError(
   });
 }
 
+export * from "./memory-attention-settings.ts";
+export * from "./memory-context.ts";
 export * from "./memory-data-plane.ts";
 export * from "./memory-recall-scope.ts";
 export * from "./memory-subject-identity.ts";
-export * from "./memory-attention-settings.ts";
-export * from "./memory-context.ts";
 
-export * from "./model-providers/reader.ts";
-export * from "./model-providers/migrations/index.ts";
 export * from "./memory-retrieval-settings.ts";
 export * from "./memory-retrieval.ts";
+export * from "./model-providers/migrations/index.ts";
+export * from "./model-providers/reader.ts";
+
+export { createSqliteExecutionStore } from "./execution/sqlite-execution-store.ts";
+
+export {
+  ExecutionStorageExportSchema,
+  type ExecutionStorageExport,
+} from "./execution/execution-storage-export.ts";
+
+export * from "./host-usage-store.ts";
+
+export * from "./mission-delivery-receipt-store.ts";
 
 export * from "./missions/deletion.ts";
+
+export { readDeletedExecutionUsageSource } from "./execution/deleted-execution-usage.ts";

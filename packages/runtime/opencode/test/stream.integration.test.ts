@@ -1,3 +1,4 @@
+import { createInMemoryExecutionStore } from "@pragma/core/testing";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { createServer } from "node:http";
 import { tmpdir } from "node:os";
@@ -141,6 +142,7 @@ for (const major of [1, 2] as const) {
           },
         });
         const app = createPragma({
+          executionStore: createInMemoryExecutionStore(),
           pragmaHome: join(root, "pragma"),
           runtimes: createStaticRuntimeResolver({
             runtimes: [runtime],

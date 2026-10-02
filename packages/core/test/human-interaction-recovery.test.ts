@@ -1,11 +1,12 @@
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { createInMemoryExecutionStore } from "../src/testing/index.ts";
 
 import { afterEach, describe, expect, it } from "vitest";
 
+import { ExecutionController } from "../src/execution/expert-runner.ts";
 import {
-  createFileExecutionStore,
   createFileExpertSessionStore,
   createPragma,
   createStaticRuntimeResolver,
@@ -18,7 +19,6 @@ import {
   type ExpertAgentHumanResponse,
   type RuntimeNativeSessionContext,
 } from "../src/index.ts";
-import { ExecutionController } from "../src/execution/expert-runner.ts";
 import { createRuntimeTestFeatures } from "../src/testing/index.ts";
 import { appendExecutionEvent } from "./execution-store-test-helpers.ts";
 
@@ -38,7 +38,7 @@ describe("ExpertSession human interaction recovery", { timeout: 30_000 }, () => 
     async (failureStage) => {
       const home = await mkdtemp(join(tmpdir(), "pragma-human-response-retry-"));
       tempDirs.push(home);
-      const executions = createFileExecutionStore({ pragmaHome: home });
+      const executions = createInMemoryExecutionStore();
       const executionId = "execution-response-retry";
       const invocationId = "invocation-response-retry";
       const interactionId = "interaction-response-retry";
@@ -144,7 +144,7 @@ describe("ExpertSession human interaction recovery", { timeout: 30_000 }, () => 
   it("immediately replaces a lease owned by a process that has exited", async () => {
     const home = await mkdtemp(join(tmpdir(), "pragma-stale-session-lease-"));
     tempDirs.push(home);
-    const executions = createFileExecutionStore({ pragmaHome: home });
+    const executions = createInMemoryExecutionStore();
     const sessions = createFileExpertSessionStore({ executions, pragmaHome: home });
     const now = new Date().toISOString();
     await sessions.create({
@@ -254,7 +254,7 @@ describe("ExpertSession human interaction recovery", { timeout: 30_000 }, () => 
   ])("restores an unanswered $name after a process restart", async (scenario) => {
     const home = await mkdtemp(join(tmpdir(), "pragma-human-recovery-"));
     tempDirs.push(home);
-    const executions = createFileExecutionStore({ pragmaHome: home });
+    const executions = createInMemoryExecutionStore();
     const sessions = createFileExpertSessionStore({ executions, pragmaHome: home });
     let runtimeStarts = 0;
     const runtime = createRecoveryRuntime(scenario.regeneratedRequest, () => {

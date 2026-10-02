@@ -1,29 +1,28 @@
-import { orderMissionChatEntries } from "../../../shared/mission-conversation-order.ts";
-import { PRAGMA_DSL_WRITE_API_VERSION } from "@pragma/interpreter/ast";
 import {
-  STORE_REVISION_EXPERT_REF,
   builtInAgentResource,
   createPragmaManagementTools,
+  STORE_REVISION_EXPERT_REF,
 } from "@pragma/built-in-agents";
+import { PRAGMA_DSL_WRITE_API_VERSION } from "@pragma/interpreter/ast";
 import {
   copyFile,
   mkdir,
   mkdtemp,
   open,
-  readFile,
   readdir,
+  readFile,
   rm,
   stat,
   writeFile,
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { orderMissionChatEntries } from "../../../shared/mission-conversation-order.ts";
 
 import {
-  createFileExecutionStore,
   createFileExpertSessionStore,
-  createStaticRuntimeResolver,
   createNoopLoggerProvider,
+  createStaticRuntimeResolver,
   defineExpert,
   defineExpertTeam,
   ExecutionWorkHistoryReader,
@@ -38,26 +37,27 @@ import {
   StoredExecutionView,
   withFileLock,
   type ExpertSession,
-  type RuntimeNativeSessionContext,
   type RuntimeContextWindowUsage,
   type RuntimeModelSelection,
+  type RuntimeNativeSessionContext,
   type RuntimeResolver,
 } from "@pragma/core";
 import { defineRuntimeTestDriver, openRuntimeSession } from "@pragma/core/testing";
-import { createCodexRuntime } from "@pragma/runtime-codex";
-import {
-  createMissionControlApplication,
-  createMissionControllerStore,
-  createMissionOwnerScope,
-  createControllerRunMissionPort,
-  createLocalHostRunApplication,
-} from "@pragma/local-host";
 import type {
   PragmaExpertResource,
   PragmaExpertTeamResource,
   PragmaFlowResource,
   PragmaRuntimeProfileResource,
 } from "@pragma/interpreter/ast";
+import {
+  createControllerRunMissionPort,
+  createLocalHostRunApplication,
+  createMissionControlApplication,
+  createMissionControllerStore,
+  createMissionOwnerScope,
+  createSqliteExecutionStore,
+} from "@pragma/local-host";
+import { createCodexRuntime } from "@pragma/runtime-codex";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { z } from "zod";
 
@@ -70,39 +70,39 @@ import {
 } from "../../../shared/contracts/index.ts";
 import type { CapabilityCredentialStore } from "../capabilities/capability-credential-store.ts";
 import type { CapabilityStore } from "../capabilities/capability-store.ts";
+import { createContextStoreRevisionService } from "../context-stores/context-store-revision-service.ts";
 import {
+  createContextStoreStore,
+  type ContextStoreStore,
+} from "../context-stores/context-store-store.ts";
+import { createPragmaProjectStore } from "../projects/pragma-project-store.ts";
+import type { DesktopUsageStore } from "../usage/usage-store.ts";
+import { createCodexQueuePeer } from "./fixtures/codex-queue-peer.ts";
+import { messageRecordsToChatEntries } from "./mission-chat-history.ts";
+import { persistMissionDeletionIntent } from "./mission-deletion-intent.ts";
+import { writeMissionExecutionProjection } from "./mission-execution-projection.ts";
+import {
+  listPendingHumanInteractions,
+  missionProjectionAddsUserVisibleOutput,
+  resolveMissionSystemDependencyFingerprints,
+} from "./mission-runner-composition.ts";
+import {
+  activeMissionKnowledgeDraftNamespace,
   compactExpertSessionContext,
   createMissionRunner as createMissionRunnerImplementation,
   mergeMissionExecutorMetadata,
   missionKnowledgeNamespace,
   readMissionConversationSnapshot,
-  activeMissionKnowledgeDraftNamespace,
   toDesktopHumanRequest,
   type MissionRunner,
 } from "./mission-runner.ts";
-import {
-  missionProjectionAddsUserVisibleOutput,
-  listPendingHumanInteractions,
-  resolveMissionSystemDependencyFingerprints,
-} from "./mission-runner-composition.ts";
 import { createMissionStore } from "./mission-store.ts";
-import { writeMissionExecutionProjection } from "./mission-execution-projection.ts";
-import { messageRecordsToChatEntries } from "./mission-chat-history.ts";
-import { persistMissionDeletionIntent } from "./mission-deletion-intent.ts";
-import { createPragmaProjectStore } from "../projects/pragma-project-store.ts";
-import {
-  createContextStoreStore,
-  type ContextStoreStore,
-} from "../context-stores/context-store-store.ts";
-import { createContextStoreRevisionService } from "../context-stores/context-store-revision-service.ts";
-import type { DesktopUsageStore } from "../usage/usage-store.ts";
-import { createCodexQueuePeer } from "./fixtures/codex-queue-peer.ts";
 
 const temporaryPaths: string[] = [];
 const settlementTimeoutMs = 10_000;
 
 async function appendExecutionEvent(
-  store: ReturnType<typeof createFileExecutionStore>,
+  store: ReturnType<typeof createSqliteExecutionStore>,
   executionId: string,
   invocationId: string,
   type: string,
@@ -648,7 +648,7 @@ describe("MissionRunner", { timeout: 30_000 }, () => {
       project: { id: snapshot.projectId, revision: snapshot.revision },
       executor: missionExecutorSnapshot(expert),
     });
-    const executions = createFileExecutionStore({ pragmaHome });
+    const executions = createSqliteExecutionStore({ pragmaHome });
     const executionId = "00000000-0000-4000-8000-000000000121";
     const timestamp = new Date("2026-08-24T00:00:00.000Z").getTime();
     const createdAt = new Date(timestamp).toISOString();
@@ -1287,7 +1287,7 @@ describe("MissionRunner", { timeout: 30_000 }, () => {
           async () => {
             const sessions = createFileExpertSessionStore({
               pragmaHome,
-              executions: createFileExecutionStore({ pragmaHome }),
+              executions: createSqliteExecutionStore({ pragmaHome }),
             });
             expect(
               (await sessions.listPrompts(running.execution!.sessionId!)).map(
@@ -1671,7 +1671,7 @@ describe("MissionRunner", { timeout: 30_000 }, () => {
     const sessionId = persistedMission.execution!.sessionId!;
     const queuedRequestId = "00000000-0000-4000-8000-000000000096";
     const expertSessions = createFileExpertSessionStore({
-      executions: createFileExecutionStore({ pragmaHome }),
+      executions: createSqliteExecutionStore({ pragmaHome }),
       pragmaHome,
     });
     await expertSessions.transact(sessionId, ({ session, prompts }) => ({
@@ -2667,7 +2667,7 @@ describe("MissionRunner", { timeout: 30_000 }, () => {
     let failDeletionPreparation = true;
     const deletionReads: string[] = [];
     const fencedExecutions: string[] = [];
-    const deletionStore = createFileExecutionStore({ pragmaHome: join(root, "state") });
+    const deletionStore = createSqliteExecutionStore({ pragmaHome: join(root, "state") });
     const createRunner = (missionStore = missions) =>
       createMissionRunner({
         missions: missionStore,
@@ -2714,7 +2714,7 @@ describe("MissionRunner", { timeout: 30_000 }, () => {
     expect(originalSessionId).toMatch(/^[0-9a-f-]{36}$/);
     if (originalSessionId === undefined) throw new Error("Original Session id is missing.");
     const originalExecutionId = (await missions.get(mission.id)).execution!.id;
-    const originalExecution = await createFileExecutionStore({
+    const originalExecution = await createSqliteExecutionStore({
       pragmaHome: join(root, "state"),
     }).get(originalExecutionId);
     if (originalExecution?.output?.type !== "context") {
@@ -3028,6 +3028,7 @@ describe("MissionRunner", { timeout: 30_000 }, () => {
         observedAt: new Date().toISOString(),
       };
     });
+    let runtimeStarted = false;
     let finishTurn = (): void => undefined;
     const turnCanFinish = new Promise<void>((resolve) => {
       finishTurn = resolve;
@@ -3038,6 +3039,7 @@ describe("MissionRunner", { timeout: 30_000 }, () => {
       restoreSession: () => ({ id: "runtime" }),
       readSession: (session) => ({ runtimeSessionId: session.id }),
       async startTurn(_session, turn) {
+        runtimeStarted = true;
         turn.stream.writeNative({
           usedTokens: 40_000,
           contextWindowTokens: 200_000,
@@ -3077,21 +3079,16 @@ describe("MissionRunner", { timeout: 30_000 }, () => {
     const unsubscribe = runner.subscribeChat(({ update }) => chatUpdates.push(update));
 
     await runner.run(mission.id);
-    await vi.waitFor(
-      () => {
-        expect(
-          chatUpdates.some(
-            (update) =>
-              update.kind === "patch" &&
-              update.patches.some(
-                (patch) =>
-                  patch.type === "context-window.update" && patch.usage.usedTokens === 40_000,
-              ),
+    await vi.waitFor(() => expect(runtimeStarted).toBe(true), { timeout: settlementTimeoutMs });
+    expect(
+      chatUpdates.some(
+        (update) =>
+          update.kind === "patch" &&
+          update.patches.some(
+            (patch) => patch.type === "context-window.update" && patch.usage.usedTokens === 40_000,
           ),
-        ).toBe(true);
-      },
-      { timeout: settlementTimeoutMs },
-    );
+      ),
+    ).toBe(false);
     expect((await missions.get(mission.id)).execution?.status).toBe("running");
     finishTurn();
     await vi.waitFor(
@@ -3131,7 +3128,7 @@ describe("MissionRunner", { timeout: 30_000 }, () => {
 
     const storedMission = await missions.get(mission.id);
     const storedSession = await createFileExpertSessionStore({
-      executions: createFileExecutionStore({ pragmaHome: join(root, "state") }),
+      executions: createSqliteExecutionStore({ pragmaHome: join(root, "state") }),
       pragmaHome: join(root, "state"),
     }).get(storedMission.execution!.sessionId!);
     const storedRootContext = storedSession?.contexts[storedSession.rootContextId];
@@ -3689,7 +3686,7 @@ describe("MissionRunner", { timeout: 30_000 }, () => {
           ...runnerOptions,
           missions: createMissionStore({ missionsPath: join(root, "missions") }),
           project: createPragmaProjectStore({ projectsPath: join(root, "projects") }),
-          executionStore: createFileExecutionStore({ pragmaHome: join(root, "state") }),
+          executionStore: createSqliteExecutionStore({ pragmaHome: join(root, "state") }),
         });
       const summarize = (entries: typeof chat.entries) =>
         entries.map((entry) => ({
@@ -3711,7 +3708,7 @@ describe("MissionRunner", { timeout: 30_000 }, () => {
       // without requiring a background repair job or a rerun of the Mission.
       const completedMission = await missions.get(mission.id);
       const executionId = completedMission.execution!.id;
-      const executionStore = createFileExecutionStore({ pragmaHome: join(root, "state") });
+      const executionStore = createSqliteExecutionStore({ pragmaHome: join(root, "state") });
       const execution = (await executionStore.get(executionId))!;
       expect(execution.output).toEqual({
         type: "inline",
@@ -3733,7 +3730,7 @@ describe("MissionRunner", { timeout: 30_000 }, () => {
         ...runnerOptions,
         missions: canonicalMissions,
         project: createPragmaProjectStore({ projectsPath: join(root, "projects") }),
-        executionStore: createFileExecutionStore({ pragmaHome: join(root, "state") }),
+        executionStore: createSqliteExecutionStore({ pragmaHome: join(root, "state") }),
       });
       const reconstructed = await canonicalRunner.getChatPage({ id: mission.id, limit: 50 });
       expect(summarize(reconstructed.entries)).toEqual(summarize(chat.entries));
@@ -3866,7 +3863,7 @@ describe("MissionRunner", { timeout: 30_000 }, () => {
       const executionId = "20000000-0000-4000-8000-000000000325";
       const createdAt = "2026-09-29T00:00:00.000Z";
       const definition = { id: expert.id, kind: "expert" as const };
-      const executions = createFileExecutionStore({ pragmaHome });
+      const executions = createSqliteExecutionStore({ pragmaHome });
       await executions.create(
         {
           schemaVersion: "pragma.execution/v12",
@@ -3967,7 +3964,7 @@ describe("MissionRunner", { timeout: 30_000 }, () => {
       }
       await executions.archive(executionId);
       const before = await readFile(projectionPath, "utf8");
-      const restartedExecutions = createFileExecutionStore({ pragmaHome });
+      const restartedExecutions = createSqliteExecutionStore({ pragmaHome });
       const reads = vi.spyOn(restartedExecutions, "readEvents");
       const restarted = createMissionRunner({
         missions: createMissionStore({ missionsPath: join(root, "missions") }),
@@ -4019,7 +4016,7 @@ describe("MissionRunner", { timeout: 30_000 }, () => {
       mapEvent: () => ({ events: [] }),
       closeSession: () => undefined,
     });
-    const executionStore = createFileExecutionStore({ pragmaHome });
+    const executionStore = createSqliteExecutionStore({ pragmaHome });
     const runner = createMissionRunner({
       missions,
       project,
@@ -4294,7 +4291,7 @@ describe("MissionRunner", { timeout: 30_000 }, () => {
       mapEvent: () => ({ events: [] }),
       closeSession: () => undefined,
     });
-    const executionStore = createFileExecutionStore({ pragmaHome: join(root, "state") });
+    const executionStore = createSqliteExecutionStore({ pragmaHome: join(root, "state") });
     const runner = createMissionRunner({
       missions,
       project,
@@ -5036,7 +5033,7 @@ describe("MissionRunner", { timeout: 30_000 }, () => {
       }),
       mapEvent: () => ({ events: [] }),
     });
-    const executions = createFileExecutionStore({ pragmaHome });
+    const executions = createSqliteExecutionStore({ pragmaHome });
     const archive = executions.archive.bind(executions);
     const archiveSpy = vi
       .spyOn(executions, "archive")
@@ -5228,7 +5225,7 @@ describe("MissionRunner", { timeout: 30_000 }, () => {
       }
       return await originalUpdateExecution(...args);
     });
-    const executionStore = createFileExecutionStore({ pragmaHome: join(root, "state") });
+    const executionStore = createSqliteExecutionStore({ pragmaHome: join(root, "state") });
     const runner = createMissionRunner({
       missions,
       project,
@@ -5374,7 +5371,7 @@ describe("MissionRunner", { timeout: 30_000 }, () => {
       const firstArchived = new Promise<void>((resolve) => {
         firstArchiveCompleted = resolve;
       });
-      const executions = createFileExecutionStore({ pragmaHome: join(root, "state") });
+      const executions = createSqliteExecutionStore({ pragmaHome: join(root, "state") });
       const archive = executions.archive.bind(executions);
       vi.spyOn(executions, "archive").mockImplementation(async (id) => {
         await archive(id);
@@ -5746,7 +5743,7 @@ describe("MissionRunner", { timeout: 30_000 }, () => {
           // queue only after asserting recovery, so teardown can release the owner.
           const sessionStore = createFileExpertSessionStore({
             pragmaHome: join(root, "state"),
-            executions: createFileExecutionStore({ pragmaHome: join(root, "state") }),
+            executions: createSqliteExecutionStore({ pragmaHome: join(root, "state") }),
           });
           await sessionStore.transact(sessionId, ({ session, prompts }) => ({
             session: { ...session, queuedRequestIds: [] },
@@ -6080,7 +6077,7 @@ describe("MissionRunner", { timeout: 30_000 }, () => {
         });
       }
       const sessionStore = createFileExpertSessionStore({
-        executions: createFileExecutionStore({ pragmaHome: join(root, "state") }),
+        executions: createSqliteExecutionStore({ pragmaHome: join(root, "state") }),
         pragmaHome: join(root, "state"),
       });
       const queuedDefaults = (await sessionStore.listPrompts(firstSession!)).filter((prompt) =>
@@ -6346,7 +6343,7 @@ describe("MissionRunner", { timeout: 30_000 }, () => {
 
     const latestMission = await missions.get(mission.id);
     const executionId = latestMission.execution!.id;
-    const store = createFileExecutionStore({ pragmaHome: join(root, "state") });
+    const store = createSqliteExecutionStore({ pragmaHome: join(root, "state") });
     const childConversationStartedAt = Date.now();
     const emittedAt = new Date(childConversationStartedAt).toISOString();
     await appendExecutionEvent(store, executionId, executionId, "runtime.event", {
@@ -6958,7 +6955,7 @@ describe("MissionRunner", { timeout: 30_000 }, () => {
       defaultRuntimeId: "fake",
       models: { default: { model: { providerId: "test", modelId: "test-model" } } },
     });
-    const executions = createFileExecutionStore({ pragmaHome });
+    const executions = createSqliteExecutionStore({ pragmaHome });
     const expertSessions = createFileExpertSessionStore({ executions, pragmaHome });
     const runtimeBinding = (await runtimes.bind({ runtimeId: "fake" })).binding;
     const sessionId = "10000000-0000-4000-8000-000000000001";
@@ -7412,7 +7409,7 @@ describe("MissionRunner", { timeout: 30_000 }, () => {
     const root = await mkdtemp(join(tmpdir(), "pragma-mission-first-human-checkpoint-"));
     temporaryPaths.push(root);
     const pragmaHome = join(root, "state");
-    const executionStore = createFileExecutionStore({ pragmaHome });
+    const executionStore = createSqliteExecutionStore({ pragmaHome });
     const project = createPragmaProjectStore({ projectsPath: join(root, "projects") });
     const expertResource = expertFixture();
     const snapshot = await project.publish({
@@ -7707,7 +7704,7 @@ describe("MissionRunner", { timeout: 30_000 }, () => {
     );
     const waitingMission = await missions.get(mission.id);
     const waitingPrompts = await createFileExpertSessionStore({
-      executions: createFileExecutionStore({ pragmaHome }),
+      executions: createSqliteExecutionStore({ pragmaHome }),
       pragmaHome,
     }).listPrompts(waitingMission.execution!.sessionId!);
     expect(waitingPrompts).toEqual([
@@ -7840,7 +7837,7 @@ describe("MissionRunner", { timeout: 30_000 }, () => {
       mapEvent: () => ({ events: [] }),
       closeSession: () => undefined,
     });
-    const executionStore = createFileExecutionStore({ pragmaHome });
+    const executionStore = createSqliteExecutionStore({ pragmaHome });
     const originalListEvents = StoredExecutionView.prototype.listEvents;
     let initialSeedFinished = (): void => undefined;
     const initialSeedComplete = new Promise<void>((resolve) => {
@@ -7956,7 +7953,7 @@ describe("MissionRunner", { timeout: 30_000 }, () => {
       { timeout: settlementTimeoutMs },
     );
     const waitingMission = await missions.get(mission.id);
-    const executionStore = createFileExecutionStore({ pragmaHome: join(root, "state") });
+    const executionStore = createSqliteExecutionStore({ pragmaHome: join(root, "state") });
     const execution = (await executionStore.get(waitingMission.execution!.id))!;
     await executionStore.commit({
       commitId: `seed-recovery-claim:${execution.executionId}`,
@@ -8070,7 +8067,7 @@ describe("MissionRunner", { timeout: 30_000 }, () => {
       closeSession: () => undefined,
     });
     const runtimes = createStaticRuntimeResolver({ runtimes: [runtime], defaultRuntimeId: "fake" });
-    const executions = createFileExecutionStore({ pragmaHome });
+    const executions = createSqliteExecutionStore({ pragmaHome });
     const expertSessions = createFileExpertSessionStore({ executions, pragmaHome });
     const sessionId = "10000000-0000-4000-8000-000000000024";
     const executionId = "20000000-0000-4000-8000-000000000024";
@@ -8171,7 +8168,7 @@ describe("MissionRunner", { timeout: 30_000 }, () => {
       closeSession: () => undefined,
     });
     const runtimes = createStaticRuntimeResolver({ runtimes: [runtime], defaultRuntimeId: "fake" });
-    const executions = createFileExecutionStore({ pragmaHome });
+    const executions = createSqliteExecutionStore({ pragmaHome });
     const expertSessions = createFileExpertSessionStore({ executions, pragmaHome });
     const sessionId = "10000000-0000-4000-8000-000000000025";
     const executionId = "20000000-0000-4000-8000-000000000025";
@@ -8537,7 +8534,7 @@ describe("MissionRunner", { timeout: 30_000 }, () => {
     const sessionId = settled.execution!.sessionId!;
     await runner.stopLocalController(mission.id);
 
-    const executions = createFileExecutionStore({ pragmaHome });
+    const executions = createSqliteExecutionStore({ pragmaHome });
     const expertSessions = createFileExpertSessionStore({ executions, pragmaHome });
     await expect(expertSessions.get(sessionId)).resolves.toMatchObject({ status: "open" });
 
@@ -8632,7 +8629,7 @@ describe("MissionRunner", { timeout: 30_000 }, () => {
       runtimes: [runtime],
       defaultRuntimeId: "fake",
     });
-    const executions = createFileExecutionStore({ pragmaHome });
+    const executions = createSqliteExecutionStore({ pragmaHome });
     const expertSessions = createFileExpertSessionStore({ executions, pragmaHome });
     const sessionId = "10000000-0000-4000-8000-000000000026";
     const executionId = "20000000-0000-4000-8000-000000000026";
@@ -8739,7 +8736,7 @@ describe("MissionRunner", { timeout: 30_000 }, () => {
       resources: [runtimeFixture(), expertFixture()],
     });
     const missions = createMissionStore({ missionsPath: join(root, "missions") });
-    const executionStore = createFileExecutionStore({ pragmaHome });
+    const executionStore = createSqliteExecutionStore({ pragmaHome });
     const source = await missions.create({
       workspace: { path: root, basename: "workspace" },
       goal: "Create the source answer",
