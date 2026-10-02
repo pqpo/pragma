@@ -1,0 +1,38 @@
+{
+  "schemaVersion": "pragma.execution-transaction/v10",
+  "commitId": "historical-v10-commit",
+  "signature": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "execution": {
+    "schemaVersion": "pragma.execution/v9",
+    "executionId": "journal-v10-run",
+    "version": 1,
+    "kind": "expert-turn",
+    "definition": { "id": "expert", "kind": "expert" },
+    "rootInvocationId": "root",
+    "status": "succeeded",
+    "input": "hello",
+    "state": {},
+    "output": { "type": "inline", "value": "journal-v10-result" },
+    "lastAppliedSequence": 0,
+    "createdAt": "2026-07-23T08:00:00.000Z",
+    "updatedAt": "2026-07-23T08:00:00.000Z"
+  },
+  "invocations": [
+    {
+      "invocationId": "root",
+      "rootInvocationId": "root",
+      "definition": { "id": "expert", "kind": "expert" },
+      "executorId": "expert",
+      "contextId": "context",
+      "status": "succeeded",
+      "input": "hello",
+      "output": { "type": "inline", "value": "journal-v10-result" },
+      "createdAt": "2026-07-23T08:00:00.000Z",
+      "updatedAt": "2026-07-23T08:00:00.000Z"
+    }
+  ],
+  "agents": [],
+  "contexts": [],
+  "events": [],
+  "eventIds": []
+}

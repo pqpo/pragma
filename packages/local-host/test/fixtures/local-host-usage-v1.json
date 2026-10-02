@@ -1,0 +1,24 @@
+{
+  "schemaVersion": "pragma.local-host-usage/v1",
+  "observations": {
+    "obs-1": {
+      "observationId": "obs-1",
+      "occurredAt": "2026-08-25T00:00:00.000Z",
+      "executionId": "execution-1",
+      "invocationId": "invocation-1",
+      "contextId": "context-1",
+      "runId": "run-1",
+      "runtimeId": "codex-local",
+      "executor": { "id": "expert-1", "name": "Expert" },
+      "usage": {
+        "measurement": "reported",
+        "input": 1,
+        "output": 2,
+        "cacheRead": 0,
+        "cacheWrite": 0,
+        "totalTokens": 3,
+        "cost": { "input": 0, "output": 0, "cacheRead": 0, "cacheWrite": 0, "total": 0 }
+      }
+    }
+  }
+}

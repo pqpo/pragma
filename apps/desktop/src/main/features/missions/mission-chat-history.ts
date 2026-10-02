@@ -1,25 +1,23 @@
-import { createHash } from "node:crypto";
-import { isDeepStrictEqual } from "node:util";
 import {
-  createFileExecutionStore,
+  RUNTIME_CONTEXT_COMPACTION_STAGES,
   StoredExecutionView,
   isRuntimeContextCompactionStage,
   readRuntimeContextCompactionProgressData,
-  RUNTIME_CONTEXT_COMPACTION_STAGES,
   type AgentMessageRecord,
+  type DurableExecutionStore,
   type ExecutionView,
   type ExecutionWorkRecord,
 } from "@pragma/core";
 import type { ExpertAgentStreamEvent } from "@pragma/shared";
 import { ExpertAgentStreamEventSchema, InvocationOutputSchema } from "@pragma/shared";
+import { createHash } from "node:crypto";
+import { isDeepStrictEqual } from "node:util";
 import {
   type Mission,
   type MissionChatEntry,
   type MissionChatPageQuery,
   type MissionConversationSnapshot,
 } from "../../../shared/contracts/index.ts";
-import type { MissionStore, MissionTimelineTurn } from "./mission-store.ts";
-import { MISSION_EXECUTION_PROJECTION_ORDERING_VERSION } from "./mission-execution-projection.ts";
 import type { LiveMissionChat } from "./mission-chat-live.ts";
 import {
   MISSION_CHAT_ERROR_MAX_LENGTH,
@@ -33,6 +31,8 @@ import {
   type ExecutorAvatarIdResolver,
   type ExecutorNameResolver,
 } from "./mission-chat-projection-common.ts";
+import { MISSION_EXECUTION_PROJECTION_ORDERING_VERSION } from "./mission-execution-projection.ts";
+import type { MissionStore, MissionTimelineTurn } from "./mission-store.ts";
 
 type MissionChatPageCursor =
   | { readonly version: 1; readonly kind: "timeline"; readonly beforeSequence: number }
@@ -59,12 +59,14 @@ type MissionChatPageCursor =
 export async function readMissionChatHistoryPage(input: {
   readonly missionId: string;
   readonly query: MissionChatPageQuery;
-  readonly executionStore: ReturnType<typeof createFileExecutionStore>;
+  readonly executionStore: DurableExecutionStore;
   readonly missions: MissionStore;
   readonly rootOnly: boolean;
   readonly activeChat?: LiveMissionChat | undefined;
+  readonly onPreparationRequired?: ((turn: MissionTimelineTurn) => void) | undefined;
   readonly loadInheritedEntries?: (() => Promise<readonly MissionChatEntry[]>) | undefined;
 }): Promise<{
+  readonly sourceVerification?: "verified" | "pending" | "unavailable" | undefined;
   readonly entries: readonly MissionChatEntry[];
   readonly syncIssues: readonly MissionChatSyncIssue[];
   readonly oldestSequence?: number | undefined;
@@ -97,6 +99,7 @@ export async function readMissionChatHistoryPage(input: {
 
   let remaining = input.query.limit;
   let collected: MissionChatEntry[] = [];
+  let sourceVerification: "verified" | "pending" | "unavailable" = "verified";
   const syncIssues: MissionChatSyncIssue[] = [];
   let nextBeforeCursor: string | undefined;
   let omittedEntries = 0;
@@ -117,6 +120,7 @@ export async function readMissionChatHistoryPage(input: {
       const page = await readMissionChatTurnPage({
         missionId: input.missionId,
         turn,
+        onPreparationRequired: input.onPreparationRequired,
         limit: remaining,
         executionStore: input.executionStore,
         missions: input.missions,
@@ -130,6 +134,9 @@ export async function readMissionChatHistoryPage(input: {
       });
       collected = [...page.entries, ...collected];
       syncIssues.push(...page.syncIssues);
+      if (page.sourceVerification === "unavailable") sourceVerification = "unavailable";
+      else if (page.sourceVerification === "pending" && sourceVerification === "verified")
+        sourceVerification = "pending";
       omittedEntries += page.truncation?.omittedEntries ?? 0;
       truncatedFields += page.truncation?.truncatedFields ?? 0;
       remaining -= page.entries.length;
@@ -162,6 +169,7 @@ export async function readMissionChatHistoryPage(input: {
   return {
     entries: collected,
     syncIssues,
+    sourceVerification,
     ...(sequences.length === 0 ? {} : { oldestSequence: Math.min(...sequences) }),
     ...(sequences.length === 0 ? {} : { newestSequence: Math.max(...sequences) }),
     ...(nextBeforeCursor === undefined ? {} : { nextBeforeCursor }),
@@ -175,13 +183,15 @@ async function readMissionChatTurnPage(input: {
   readonly missionId: string;
   readonly turn: MissionTimelineTurn;
   readonly limit: number;
-  readonly executionStore: ReturnType<typeof createFileExecutionStore>;
+  readonly executionStore: DurableExecutionStore;
   readonly missions: MissionStore;
   readonly rootOnly: boolean;
   readonly cursor?: Exclude<MissionChatPageCursor, { readonly kind: "timeline" }> | undefined;
   readonly activeChat?: LiveMissionChat | undefined;
   readonly inheritedEntries: readonly MissionChatEntry[];
+  readonly onPreparationRequired?: ((turn: MissionTimelineTurn) => void) | undefined;
 }): Promise<{
+  readonly sourceVerification?: "verified" | "pending" | "unavailable" | undefined;
   readonly entries: readonly MissionChatEntry[];
   readonly syncIssues: readonly MissionChatSyncIssue[];
   readonly nextCursor?: MissionChatPageCursor | undefined;
@@ -214,6 +224,7 @@ async function readMissionChatTurnPage(input: {
       input.cursor.kind === "projection" ||
       input.cursor.kind === "entries")
   ) {
+    const sourceExecutionId = input.turn.executionId;
     const projectionPage = await input.missions.readExecutionProjectionPage(
       input.missionId,
       input.turn.executionId,
@@ -225,15 +236,36 @@ async function readMissionChatTurnPage(input: {
     // decides whether durable history can still be reconstructed; treating a
     // missing projection as a missing Execution makes retries deterministically
     // fail even though all source records remain readable.
-    const executionState = await input.executionStore
-      .get(input.turn.executionId)
-      .catch(() => undefined);
+    let sourceUnavailable = false;
+    const preparation = await (async () => {
+      try {
+        return input.onPreparationRequired !== undefined &&
+          input.executionStore.getPrepared !== undefined
+          ? await input.executionStore.getPrepared(sourceExecutionId)
+          : {
+              state: "ready" as const,
+              execution: await input.executionStore.get(sourceExecutionId),
+            };
+      } catch {
+        // Display a durable projection while keeping source verification separate from execution status.
+        sourceUnavailable = true;
+        return { state: "ready" as const, execution: undefined };
+      }
+    })();
+    const pending = preparation.state === "requires_preparation";
+    if (pending) input.onPreparationRequired?.(input.turn);
+    const executionState = preparation.state === "ready" ? preparation.execution : undefined;
+    if (!pending && executionState === undefined) {
+      sourceUnavailable = true;
+      input.onPreparationRequired?.(input.turn);
+    }
     // A terminal projection is immutable and already bounded for UI reads.
     // Retaining the canonical state file after archival must not force every
     // history page to inflate and decode the complete archived event stream.
     if (
       projectionPage !== undefined &&
-      (executionState === undefined ||
+      (pending ||
+        executionState === undefined ||
         (isMissionTerminalExecutionStatus(executionState.status) &&
           projectionPage.orderingVersion === MISSION_EXECUTION_PROJECTION_ORDERING_VERSION &&
           projectionPage.sourceUpdatedAt !== undefined &&
@@ -285,6 +317,7 @@ async function readMissionChatTurnPage(input: {
       return {
         entries: combined.slice(start, safeEnd),
         syncIssues: [],
+        sourceVerification: sourceUnavailable ? "unavailable" : pending ? "pending" : "verified",
         ...(projectionPage.omittedEntries === 0 && projectionPage.truncatedFields === 0
           ? {}
           : {
@@ -305,8 +338,13 @@ async function readMissionChatTurnPage(input: {
             }),
       };
     }
+    if (pending) return { entries: [userEntry], syncIssues: [], sourceVerification: "pending" };
     if (projection === undefined && executionState === undefined) {
-      return { entries: [userEntry], syncIssues: [missionChatSyncIssue("history")] };
+      return {
+        entries: [userEntry],
+        syncIssues: [missionChatSyncIssue("history")],
+        sourceVerification: "unavailable",
+      };
     }
   }
 
@@ -538,7 +576,7 @@ export function decodeMissionChatPageCursor(
 
 export async function readMissionChatHistory(
   turns: readonly MissionTimelineTurn[],
-  executionStore: ReturnType<typeof createFileExecutionStore>,
+  executionStore: DurableExecutionStore,
   missions: MissionStore,
   missionId: string,
   activeChat?: LiveMissionChat,

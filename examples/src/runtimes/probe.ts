@@ -1,3 +1,4 @@
+import { createSqliteExecutionStore } from "@pragma/local-host";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -315,14 +316,21 @@ async function runSessionProbe(
     },
     ...(paths.models === undefined ? {} : { models: paths.models }),
   });
+  const executionStore = createSqliteExecutionStore({ pragmaHome: paths.pragmaHome });
   const app = createPragma({
+    executionStore,
     pragmaHome: paths.pragmaHome,
     runtimes: createStaticRuntimeResolver({
       runtimes: [runtime],
       defaultRuntimeId: runtime.descriptor.id,
     }),
   });
-  const session = await app.experts.createSession(expert, { runtime: runtime.descriptor.id });
+  const session = await app.experts
+    .createSession(expert, { runtime: runtime.descriptor.id })
+    .catch(async (error) => {
+      await executionStore.close?.();
+      throw error;
+    });
   const operations =
     probe === "full"
       ? (["stream", "native-tool", "mcp", "skills", "attachments", "resume", "steering"] as const)
@@ -581,7 +589,11 @@ async function runSessionProbe(
       }
     }
   } finally {
-    await session.close("Runtime probe completed.");
+    try {
+      await session.close("Runtime probe completed.");
+    } finally {
+      await executionStore.close?.();
+    }
   }
 }
 

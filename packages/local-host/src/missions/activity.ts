@@ -70,10 +70,25 @@ export function createMissionActivityReader(options: {
   >();
   const inFlight = new Map<string, Promise<MissionActivitySnapshot>>();
 
+  // The display budget does not cancel I/O or free its slot. Repeated rail
+  // refreshes share the actual operation until it settles.
+  const storageReads = new Map<string, Promise<unknown>>();
+  const storageRead = <T>(key: string, load: () => Promise<T>): Promise<T> => {
+    const existing = storageReads.get(key);
+    if (existing !== undefined) return existing as Promise<T>;
+    const operation = load().finally(() => {
+      if (storageReads.get(key) === operation) storageReads.delete(key);
+    });
+    storageReads.set(key, operation);
+    return operation;
+  };
+
   const readUncached = async (input: MissionActivityInput): Promise<MissionActivitySnapshot> => {
     let degraded = false;
     const projected = await within(
-      options.controller.readSnapshot({ missionId: input.missionId }),
+      storageRead(`control:${input.missionId}`, () =>
+        options.controller.readSnapshot({ missionId: input.missionId }),
+      ),
       readTimeoutMs,
       `Mission event projection read timed out after ${readTimeoutMs}ms.`,
     )
@@ -93,7 +108,9 @@ export function createMissionActivityReader(options: {
     }
 
     const canonical = await within(
-      options.executions.get(input.execution.id),
+      storageRead(`execution:${input.execution.id}`, () =>
+        options.executions.get(input.execution.id),
+      ),
       readTimeoutMs,
       `Mission canonical Execution read timed out after ${readTimeoutMs}ms.`,
     ).catch((error: unknown) => {

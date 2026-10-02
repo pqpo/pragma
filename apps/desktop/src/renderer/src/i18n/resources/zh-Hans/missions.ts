@@ -363,6 +363,8 @@ export const missions = {
   historyTruncated_other:
     "归档历史不完整：有 {{count}} 条更早消息未保留，{{truncatedFields}} 个超大字段已缩短。",
   loadingEarlier: "加载中…",
+  chatHistoryVerifying: "正在验证已保存的历史…",
+  chatHistoryVerificationUnavailable: "已保存的历史暂时无法验证，请查看诊断。",
   chatSyncUnavailable: "部分对话状态暂时无法读取，现有消息已保留。",
   retryChatSync: "重试",
   resumeToManage: "恢复此执行后进行管理",

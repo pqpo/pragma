@@ -4,7 +4,7 @@ import { createExecutionEventWriter } from "../src/execution/execution-commit.ts
 import type { ExecutionStore } from "../src/execution/execution-store.ts";
 
 describe("Execution event writer", () => {
-  it("flushes on the batching deadline and on tool/human control boundaries", async () => {
+  it("flushes on the batching deadline and human boundaries without waiting for tool notifications", async () => {
     vi.useFakeTimers();
     const commit = vi.fn(async () => ({}));
     const writer = createExecutionEventWriter({ commit } as unknown as ExecutionStore, "execution");
@@ -23,9 +23,9 @@ describe("Execution event writer", () => {
         type: "runtime.event",
         data: { type: "tool.started" },
       });
-      expect(commit).toHaveBeenCalledTimes(2);
+      expect(commit).toHaveBeenCalledOnce();
       await writer.append({ invocationId: "root", type: "human.requested", data: {} });
-      expect(commit).toHaveBeenCalledTimes(3);
+      expect(commit).toHaveBeenCalledTimes(2);
       await writer.flush();
     } finally {
       vi.useRealTimers();
@@ -89,6 +89,39 @@ describe("Execution event writer", () => {
     await Promise.all([first, second]);
     expect(maximum).toBe(1);
     expect(committed).toEqual([1, 2]);
+  });
+
+  it("bounds pending plus in-flight facts and applies byte backpressure", async () => {
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const commit = vi.fn(async () => {
+      await gate;
+      return {};
+    });
+    const writer = createExecutionEventWriter({ commit } as unknown as ExecutionStore, "execution");
+    for (let i = 0; i < 240; i++)
+      writer.append({ invocationId: "root", type: "runtime.event", data: i });
+    const first = writer.flush();
+    for (let i = 0; i < 15; i++)
+      expect(
+        writer.append({ invocationId: "root", type: "runtime.event", data: 240 + i }),
+      ).toBeUndefined();
+    const blocked = writer.append({ invocationId: "root", type: "runtime.event", data: 255 });
+    expect(blocked).toBeInstanceOf(Promise);
+    expect(commit).toHaveBeenCalledTimes(1);
+    release();
+    await Promise.all([first, blocked]);
+    expect(commit).toHaveBeenCalledTimes(2);
+    const bytes = writer.append({
+      invocationId: "root",
+      type: "runtime.event",
+      data: "x".repeat(1024 * 1024),
+    });
+    expect(bytes).toBeInstanceOf(Promise);
+    await bytes;
+    expect(commit).toHaveBeenCalledTimes(3);
   });
 
   it("makes persistence failures fatal at the next append and terminal barrier", async () => {

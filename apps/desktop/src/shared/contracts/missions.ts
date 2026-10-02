@@ -1,7 +1,13 @@
 import {
+  canonicalPragmaResourceRef,
+  PragmaAutomationRefSchema,
+  type PragmaInvocableResource,
+  type PragmaResource,
+} from "@pragma/interpreter/ast";
+import {
+  ExpertPromptAttachmentSchema,
   HumanInteractionRequestSchema,
   HumanInteractionResponseSchema,
-  ExpertPromptAttachmentSchema,
   MissionExecutorRefSchema,
   MissionExecutorSchema,
   PragmaAvatarIdSchema,
@@ -9,21 +15,15 @@ import {
   type MissionExecutor,
 } from "@pragma/shared";
 import { IntegrationErrorSchema, MissionQueueSteerOutcomeSchema } from "@pragma/shared/integration";
-import {
-  canonicalPragmaResourceRef,
-  PragmaAutomationRefSchema,
-  type PragmaInvocableResource,
-  type PragmaResource,
-} from "@pragma/interpreter/ast";
 import { z } from "zod";
 
+import { CapabilityIdSchema } from "./capabilities.ts";
+import { ContextStoreIdSchema } from "./context-stores.ts";
 import {
   MissionIdSchema,
   MissionModelOverrideSchema,
   MissionWorkspaceSchema,
 } from "./mission-base.ts";
-import { ContextStoreIdSchema } from "./context-stores.ts";
-import { CapabilityIdSchema } from "./capabilities.ts";
 import { DesktopRuntimeIdSchema, DesktopRuntimeModelSchema } from "./runtime.ts";
 import { DesktopToolPermissionModeSchema } from "./settings.ts";
 
@@ -771,6 +771,7 @@ const MissionMessageDeliverySchema = z.object({
 });
 
 export const MissionChatPageSchema = z.object({
+  sourceVerification: z.enum(["verified", "pending", "unavailable"]).optional(),
   missionId: MissionIdSchema,
   revision: z.number().int().nonnegative(),
   entries: z.array(MissionChatEntrySchema),
@@ -825,6 +826,7 @@ export const MissionContextWindowSnapshotSchema = z.object({
 
 /** Renderer-side aggregate assembled progressively from the independent read models. */
 export const MissionConversationSnapshotSchema = z.object({
+  sourceVerification: z.enum(["verified", "pending", "unavailable"]).optional(),
   missionId: MissionIdSchema,
   revision: z.number().int().nonnegative(),
   stateRevision: z.number().int().nonnegative().optional(),

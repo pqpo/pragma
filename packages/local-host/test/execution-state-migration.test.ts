@@ -1,3 +1,4 @@
+import { createTestExecutionStore } from "./execution-test-host.ts";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
@@ -5,8 +6,8 @@ import { fileURLToPath } from "node:url";
 
 import { afterEach, describe, expect, it } from "vitest";
 
-import { createFileExecutionStore, ExecutionWorkHistoryReader, PragmaPaths } from "../src/index.ts";
-import { executionCommitJournalMigrationChain } from "../src/storage/migrations/execution-transaction/index.ts";
+import { ExecutionWorkHistoryReader, PragmaPaths } from "@pragma/core";
+import { executionCommitJournalMigrationChain } from "@pragma/core/storage/migrations/execution-transaction/index";
 
 const temporaryRoots: string[] = [];
 const occurredAt = "2026-07-23T08:00:00.000Z";
@@ -25,7 +26,7 @@ describe("Execution state migration", () => {
     const paths = new PragmaPaths({ pragmaHome: home });
     await writeLegacyExecution(paths, "team-run");
 
-    const store = createFileExecutionStore({ pragmaHome: home });
+    const store = createTestExecutionStore({ pragmaHome: home });
     const reader = new ExecutionWorkHistoryReader(store);
     const records = await reader.listRecords({
       executionIds: ["team-run"],
@@ -76,7 +77,7 @@ describe("Execution state migration", () => {
   it("does not rewrite current Execution state on read", async () => {
     const home = await temporaryRoot("pragma-execution-current-");
     const paths = new PragmaPaths({ pragmaHome: home });
-    const store = createFileExecutionStore({ pragmaHome: home });
+    const store = createTestExecutionStore({ pragmaHome: home });
     await store.create(
       {
         schemaVersion: "pragma.execution/v12",
@@ -116,7 +117,7 @@ describe("Execution state migration", () => {
         updatedAt: occurredAt,
       },
     );
-    const before = await readFile(paths.executionState("current"), "utf8");
+    const before = await readFile(paths.executionStorageAuthority("current"), "utf8");
 
     await expect(store.get("current")).resolves.toMatchObject({
       schemaVersion: "pragma.execution/v12",
@@ -125,12 +126,12 @@ describe("Execution state migration", () => {
       },
     });
 
-    expect(await readFile(paths.executionState("current"), "utf8")).toBe(before);
+    expect(await readFile(paths.executionStorageAuthority("current"), "utf8")).toBe(before);
   });
 
   it("rejects a current expert turn whose root Invocation still uses a string prompt", async () => {
     const home = await temporaryRoot("pragma-execution-mixed-prompt-");
-    const store = createFileExecutionStore({ pragmaHome: home });
+    const store = createTestExecutionStore({ pragmaHome: home });
 
     await expect(
       store.create(
@@ -179,7 +180,7 @@ describe("Execution state migration", () => {
     await mkdir(dirname(paths.executionEvents("v9-run")), { recursive: true });
     await writeFile(paths.executionEvents("v9-run"), "", "utf8");
 
-    const store = createFileExecutionStore({ pragmaHome: home });
+    const store = createTestExecutionStore({ pragmaHome: home });
     await expect(store.get("v9-run")).resolves.toMatchObject({
       schemaVersion: "pragma.execution/v12",
     });
@@ -193,7 +194,7 @@ describe("Execution state migration", () => {
     const paths = new PragmaPaths({ pragmaHome: home });
     await writeExecutionFixture(paths, "execution-v9-string-prompt-aa977536-parent.json");
 
-    const store = createFileExecutionStore({ pragmaHome: home });
+    const store = createTestExecutionStore({ pragmaHome: home });
     await expect(store.get("historical-v9-string-prompt")).resolves.toMatchObject({
       schemaVersion: "pragma.execution/v12",
       input: { text: "prompt written by aa977536^", attachments: [] },
@@ -210,7 +211,7 @@ describe("Execution state migration", () => {
     const paths = new PragmaPaths({ pragmaHome: home });
     await writeExecutionFixture(paths, "execution-v10-string-prompt-66c98213.json");
 
-    const store = createFileExecutionStore({ pragmaHome: home });
+    const store = createTestExecutionStore({ pragmaHome: home });
     await expect(store.get("historical-v10-string-prompt")).resolves.toMatchObject({
       schemaVersion: "pragma.execution/v12",
       input: { text: "prompt written by 66c98213", attachments: [] },
@@ -241,7 +242,7 @@ describe("Execution state migration", () => {
       })),
     );
 
-    const store = createFileExecutionStore({ pragmaHome: home });
+    const store = createTestExecutionStore({ pragmaHome: home });
 
     await expect(store.get("v6-run")).resolves.toMatchObject({
       schemaVersion: "pragma.execution/v12",
@@ -319,7 +320,7 @@ describe("Execution state migration", () => {
     ]);
 
     await expect(
-      createFileExecutionStore({ pragmaHome: home }).get("v7-usage"),
+      createTestExecutionStore({ pragmaHome: home }).get("v7-usage"),
     ).resolves.toMatchObject({
       schemaVersion: "pragma.execution/v12",
       usage: {
@@ -331,7 +332,7 @@ describe("Execution state migration", () => {
         totalTokens: 135,
       },
     });
-    const migratedInvocations = await createFileExecutionStore({
+    const migratedInvocations = await createTestExecutionStore({
       pragmaHome: home,
     }).listInvocations("v7-usage");
     expect(migratedInvocations[0]).toMatchObject({
@@ -352,7 +353,7 @@ describe("Execution state migration", () => {
     await writeJson(file, future);
     const before = await readFile(file, "utf8");
 
-    await expect(createFileExecutionStore({ pragmaHome: home }).get("future")).rejects.toThrow(
+    await expect(createTestExecutionStore({ pragmaHome: home }).get("future")).rejects.toThrow(
       "unsupported-state-version",
     );
 
@@ -400,7 +401,7 @@ describe("Execution state migration", () => {
       eventIds: [],
     });
 
-    const store = createFileExecutionStore({ pragmaHome: home });
+    const store = createTestExecutionStore({ pragmaHome: home });
     await expect(store.get("journal-run")).resolves.toMatchObject({
       schemaVersion: "pragma.execution/v12",
       version: 1,
@@ -426,7 +427,7 @@ describe("Execution state migration", () => {
     );
     await writeJson(transactionFile, fixture);
 
-    const store = createFileExecutionStore({ pragmaHome: home });
+    const store = createTestExecutionStore({ pragmaHome: home });
     await expect(store.get("journal-v10-run")).resolves.toMatchObject({
       schemaVersion: "pragma.execution/v12",
       version: 1,

@@ -1,21 +1,21 @@
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { createInMemoryExecutionStore } from "../src/testing/index.ts";
 
 import type { ExecutionRecord, Invocation } from "@pragma/shared";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
-  createFileExecutionStore,
+  ExecutionController,
+  HumanInteractionCheckpointError,
+} from "../src/execution/expert-runner.ts";
+import {
   type ExecutionStore,
   type ExpertAgentHumanRequest,
   type RuntimeAgentSession,
   type RuntimeSubmitHandle,
 } from "../src/index.ts";
-import {
-  ExecutionController,
-  HumanInteractionCheckpointError,
-} from "../src/execution/expert-runner.ts";
 
 const roots: string[] = [];
 
@@ -27,7 +27,7 @@ describe("human interaction checkpoint", () => {
   it("checkpoints only a durably waiting interaction and releases its recovery claim", async () => {
     const home = await mkdtemp(join(tmpdir(), "pragma-human-checkpoint-"));
     roots.push(home);
-    const store = createFileExecutionStore({ pragmaHome: home });
+    const store = createInMemoryExecutionStore();
     const { executionId, invocationId } = await createFixture(store);
     const controller = new ExecutionController(executionId, store);
     const request = {
@@ -56,7 +56,7 @@ describe("human interaction checkpoint", () => {
   it("revalidates and retries when a same-owner renewal bumps the execution version", async () => {
     const home = await mkdtemp(join(tmpdir(), "pragma-human-checkpoint-race-"));
     roots.push(home);
-    const store = createFileExecutionStore({ pragmaHome: home });
+    const store = createInMemoryExecutionStore();
     const { executionId, invocationId } = await createFixture(store);
     const controller = new ExecutionController(executionId, store);
     const pending = controller
@@ -100,7 +100,7 @@ describe("human interaction checkpoint", () => {
   it("stops the active Runtime submission and records a checkpoint fence", async () => {
     const home = await mkdtemp(join(tmpdir(), "pragma-human-checkpoint-runtime-"));
     roots.push(home);
-    const store = createFileExecutionStore({ pragmaHome: home });
+    const store = createInMemoryExecutionStore();
     const { executionId, invocationId } = await createFixture(store);
     const controller = new ExecutionController(executionId, store);
     const cancel = vi.fn(async () => undefined);

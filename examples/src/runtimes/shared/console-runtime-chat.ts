@@ -1,10 +1,11 @@
+import { createSqliteExecutionStore } from "@pragma/local-host";
 import { stdin, stdout } from "node:process";
 import { createInterface, type Interface } from "node:readline/promises";
 
 import {
   ContextSystem,
-  createInMemoryContextStore,
   createConsoleLoggerProvider,
+  createInMemoryContextStore,
   createPragma,
   createStaticRuntimeResolver,
   defineExpert,
@@ -37,6 +38,7 @@ export async function runRuntimeConsoleChat(options: RuntimeConsoleChatOptions):
   let terminalOpen = true;
   let session: ExpertSession | undefined;
   let activeTurn: ExpertTurn | undefined;
+  let executionStore: ReturnType<typeof createSqliteExecutionStore> | undefined;
 
   try {
     const probeRuntime = options.createRuntime();
@@ -78,7 +80,9 @@ export async function runRuntimeConsoleChat(options: RuntimeConsoleChatOptions):
         ? { loggerProvider: createConsoleLoggerProvider() }
         : {}),
     });
+    executionStore = createSqliteExecutionStore();
     const app = createPragma({
+      executionStore,
       runtimes: createStaticRuntimeResolver({
         runtimes: [runtime],
         defaultRuntimeId: runtime.descriptor.id,
@@ -118,7 +122,11 @@ export async function runRuntimeConsoleChat(options: RuntimeConsoleChatOptions):
     process.exitCode = 1;
   } finally {
     if (terminalOpen) terminal.close();
-    await session?.close(`${options.runtimeName} console chat ended.`);
+    try {
+      await session?.close(`${options.runtimeName} console chat ended.`);
+    } finally {
+      await executionStore?.close?.();
+    }
   }
 }
 

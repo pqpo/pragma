@@ -1,25 +1,25 @@
 import { createFileMemoryPolicyStore, MEMORY_CURATOR_REF } from "@pragma/memory";
-import { createLocalHostRunMemory } from "../src/run-memory.ts";
-import { createLocalHostMemoryDataPlane } from "../src/memory-data-plane.ts";
 import { randomUUID } from "node:crypto";
 import { access, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { createSqliteExecutionStore } from "../src/execution/sqlite-execution-store.ts";
+import { createLocalHostMemoryDataPlane } from "../src/memory-data-plane.ts";
+import { createLocalHostRunMemory } from "../src/run-memory.ts";
 
 import {
-  createFileExecutionStore,
+  createExpertAgentRunContext,
+  createFileExpertSessionStore,
   createPragma,
   createPragmaLogger,
-  createExpertAgentRunContext,
-  withExecutionRunScope,
-  EXECUTION_CURRENT_EXPERT_ID_ATTR,
-  createFileExpertSessionStore,
   createStaticRuntimeResolver,
   defineExpert,
   defineExpertTeam,
   defineFlow,
   encodePragmaPathSegment,
+  EXECUTION_CURRENT_EXPERT_ID_ATTR,
   PragmaPaths,
+  withExecutionRunScope,
   type RuntimeAdapter,
 } from "@pragma/core";
 import { defineRuntimeTestDriver } from "@pragma/core/testing";
@@ -46,8 +46,8 @@ import {
   type MissionWatchEvent,
 } from "../src/index.ts";
 
-import { createSecretStore, type OsKeychain } from "../src/secrets/secret-store.ts";
 import { createLocalHostMemoryContextService } from "../src/memory-context.ts";
+import { createSecretStore, type OsKeychain } from "../src/secrets/secret-store.ts";
 
 const tempDirectories: string[] = [];
 
@@ -601,7 +601,7 @@ describe("Core-backed Local Host run composition", { timeout: 10_000 }, () => {
 
 async function createRunFixture(): Promise<{
   readonly home: string;
-  readonly executions: ReturnType<typeof createFileExecutionStore>;
+  readonly executions: ReturnType<typeof createSqliteExecutionStore>;
   readonly sessions: ReturnType<typeof createFileExpertSessionStore>;
   readonly controller: ReturnType<typeof createMissionControllerStore>;
   readonly runtimeState: FixtureRuntimeState;
@@ -617,7 +617,7 @@ async function createRunFixture(): Promise<{
     runtimes: [runtime],
     defaultRuntimeId: "fixture",
   });
-  const executions = createFileExecutionStore({ pragmaHome: home });
+  const executions = createSqliteExecutionStore({ pragmaHome: home });
   const sessions = createFileExpertSessionStore({ executions, pragmaHome: home });
   const controller = createMissionControllerStore({ missionsPath: join(home, "missions") });
   const executors = await createExecutorDefinitions(home);

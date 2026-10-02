@@ -3,14 +3,14 @@ import { randomUUID } from "node:crypto";
 import type {
   AgentInstance,
   AgentMessageUsage,
-  ExpertPromptAttachment,
   ExecutionCursor,
+  ExecutionEnvironmentSnapshot,
+  ExecutionEvent,
   ExecutionRecord,
   ExpertMessageHistory,
+  ExpertPromptAttachment,
   ExpertSessionEvent,
   ExpertSessionRecord,
-  ExecutionEvent,
-  ExecutionEnvironmentSnapshot,
   Invocation,
   PromptMode,
   PromptRequest,
@@ -20,14 +20,18 @@ import {
   ExpertMessageHistorySchema,
   ExpertPromptAttachmentSchema,
   InvocationOutputSchema,
+  isFinalExecutionStatus as isFinal,
 } from "@pragma/shared";
-import { isFinalExecutionStatus as isFinal } from "@pragma/shared";
 
+import { fingerprintExpertExecutionDefinition } from "../agent/expert-definition-descriptor.ts";
 import type { ExpertDefinition } from "../agent/expert-team.ts";
 import { isExpertTeam } from "../agent/expert-team.ts";
-import { fingerprintExpertExecutionDefinition } from "../agent/expert-definition-descriptor.ts";
-import type { RuntimeResolver } from "../runtime-resolver.ts";
+import type {
+  HostContextBindings,
+  HostContextBindingsResolver,
+} from "../context-system/host-context-bindings.ts";
 import type { PragmaLoggerProvider } from "../logging/logger.ts";
+import type { RuntimeResolver } from "../runtime-resolver.ts";
 import type {
   RuntimeContextWindowUsage,
   RuntimeModelSelection,
@@ -35,13 +39,31 @@ import type {
 import { openRuntimeSession } from "../runtime/session-factory.ts";
 import {
   readRuntimeSessionContextWindowUsage,
-  rebindRuntimeSessionExpertId,
   readRuntimeSessionRecord,
+  rebindRuntimeSessionExpertId,
 } from "../runtime/session-record.ts";
 import { mergeUsages, type UsageSink } from "../runtime/usage.ts";
-import { PragmaPaths } from "../storage/pragma-paths.ts";
 import { isRetryableStorageContentionError } from "../storage/file-lock.ts";
+import { PragmaPaths } from "../storage/pragma-paths.ts";
 import type { ExpertAgentAutomaticHumanInteractionHandler } from "../tools/managed-tool.ts";
+import { unwrapInvocationOutput } from "./context-output-service.ts";
+import {
+  closeExecutionContexts,
+  type ContextResolutionScopeSnapshot,
+} from "./context-resolution-service.ts";
+import { getExecutionLiveBus } from "./execution-live-bus.ts";
+import {
+  ExecutionFinalStatusConflictError,
+  ExecutionVersionConflictError,
+  type ExecutionStore,
+} from "./execution-store.ts";
+import {
+  StoredExecutionView,
+  type GetMessageHistoryOptions,
+  type InvocationScope,
+  type MutableExecution,
+} from "./execution-view.ts";
+import { createExpertPromptInput, readExpertPromptInput } from "./expert-prompt.ts";
 import {
   ExecutionController,
   isHumanInteractionCheckpointError,
@@ -49,41 +71,19 @@ import {
   persistHumanInteractionResponse,
   runExpertInvocation,
 } from "./expert-runner.ts";
-import { unwrapInvocationOutput } from "./context-output-service.ts";
-import { createExpertPromptInput, readExpertPromptInput } from "./expert-prompt.ts";
-import type {
-  HostContextBindings,
-  HostContextBindingsResolver,
-} from "../context-system/host-context-bindings.ts";
-import { RuntimeSessionPool } from "./runtime-session-pool.ts";
-import { getExecutionLiveBus } from "./execution-live-bus.ts";
-import {
-  hasUncertainSteerDelivery,
-  hasUnresolvedSteerDelivery,
-  SteerDeliveryUncertainError,
-  SteerNotDispatchedError,
-} from "./steer-delivery-error.ts";
-import {
-  ExecutionFinalStatusConflictError,
-  ExecutionVersionConflictError,
-  type ExecutionStore,
-} from "./execution-store.ts";
-import {
-  closeExecutionContexts,
-  type ContextResolutionScopeSnapshot,
-} from "./context-resolution-service.ts";
 import type {
   ExpertSessionEventInput,
   ExpertSessionStore,
   ExpertSessionTransactionAction,
 } from "./expert-session-store.ts";
 import { createRuntimeContextRecord, mergeRuntimeContextRecord } from "./runtime-context-record.ts";
+import { RuntimeSessionPool } from "./runtime-session-pool.ts";
 import {
-  StoredExecutionView,
-  type GetMessageHistoryOptions,
-  type InvocationScope,
-  type MutableExecution,
-} from "./execution-view.ts";
+  hasUncertainSteerDelivery,
+  hasUnresolvedSteerDelivery,
+  SteerDeliveryUncertainError,
+  SteerNotDispatchedError,
+} from "./steer-delivery-error.ts";
 
 export interface CreateExpertSessionOptions {
   readonly sessionId?: string | undefined;
@@ -576,6 +576,12 @@ export class ExpertSessionManager {
           );
         } else {
           const activeExecutionId = recoveryCandidateId;
+          const recoveredStatus =
+            execution?.status === "succeeded" ||
+            execution?.status === "failed" ||
+            execution?.status === "cancelled"
+              ? execution.status
+              : "interrupted";
           if (execution !== undefined && !isFinal(execution.status)) {
             await interruptRecoveringExecution(this.dependencies.executions, execution.executionId);
           }
@@ -586,14 +592,14 @@ export class ExpertSessionManager {
               session: {
                 ...session,
                 activeExecutionId: undefined,
-                lastStatus: "interrupted",
+                lastStatus: recoveredStatus,
                 updatedAt: new Date().toISOString(),
               },
               prompts: prompts.map((prompt) =>
                 prompt.executionId === activeExecutionId && prompt.status === "running"
                   ? {
                       ...prompt,
-                      status: "interrupted" as const,
+                      status: recoveredStatus,
                       updatedAt: new Date().toISOString(),
                     }
                   : prompt,
@@ -2736,12 +2742,31 @@ class ExpertSessionImpl implements ExpertSession {
     const processing = this.processQueue(generation).finally(() => {
       if (this.processingGeneration !== generation) return;
       this.processing = undefined;
-      if (!this.paused) void this.restartProcessingIfQueued();
+      if (!this.paused)
+        void this.restartProcessingIfQueued().catch((error) => {
+          this.dependencies.loggerProvider
+            .createLogger({
+              component: "core.expert-session",
+              scope: { expertSessionId: this.sessionId },
+            })
+            .warn(
+              "expert_session.queue_restart_failed",
+              "Durable prompt queue retained for recovery",
+              { error, errorCode: "EXPERT_SESSION_QUEUE_RESTART_FAILED" },
+            );
+        });
     });
     this.processing = processing;
   }
 
   private async restartProcessingIfQueued(): Promise<void> {
+    if (
+      this.closePromise !== undefined ||
+      this.terminalReleaseRequested ||
+      this.humanCheckpointReleasePromise !== undefined ||
+      this.leaseError !== undefined
+    )
+      return;
     const prompts = await this.getPromptQueue();
     if (
       !hasUnresolvedSteerDelivery(prompts) &&
@@ -2880,6 +2905,8 @@ class ExpertSessionImpl implements ExpertSession {
           executionId: prompt.executionId,
           invocationId: prompt.executionId,
           isRecovery: this.recoveredExecutionId === prompt.executionId,
+          completeRootExecution: true,
+          sessionReleaseIntent: { sessionId: this.sessionId, requestId: prompt.requestId },
           expert: this.expert,
           prompt:
             this.recoveredExecutionId === prompt.executionId
@@ -2964,13 +2991,6 @@ class ExpertSessionImpl implements ExpertSession {
     };
     const currentExecution = await this.dependencies.executions.get(prompt.executionId);
     if (currentExecution !== undefined && isFinal(currentExecution.status)) {
-      if (usage !== undefined) {
-        await this.dependencies.executions.commit({
-          commitId: `expert-terminal-usage:${prompt.executionId}:${currentExecution.version}`,
-          executionId: prompt.executionId,
-          executionPatch: { usage },
-        });
-      }
       if (
         currentExecution.status === "succeeded" ||
         currentExecution.status === "failed" ||
@@ -2982,7 +3002,13 @@ class ExpertSessionImpl implements ExpertSession {
       await this.dependencies.executions.commit({
         commitId: `expert-turn-${status}:${prompt.executionId}`,
         executionId: prompt.executionId,
-        executionPatch,
+        executionPatch: {
+          ...executionPatch,
+          state: {
+            ...currentExecution?.state,
+            expertSessionRelease: { sessionId: this.sessionId, requestId: prompt.requestId },
+          },
+        },
         events: [
           {
             invocationId: prompt.executionId,
@@ -3006,7 +3032,11 @@ class ExpertSessionImpl implements ExpertSession {
         ...current,
         activeExecutionId:
           current.activeExecutionId === prompt.executionId ? undefined : current.activeExecutionId,
-        lastStatus: status,
+        lastStatus:
+          current.activeExecutionId === prompt.executionId ||
+          current.activeExecutionId === undefined
+            ? status
+            : current.lastStatus,
         updatedAt: new Date().toISOString(),
       },
       prompts: prompts.map((candidate) =>

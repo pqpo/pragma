@@ -22,7 +22,7 @@ export function installUsageHandlers(
   ipcMain.handle("usage:subjects:list", async (_event, input: unknown) => {
     const request = UsageSubjectListRequestSchema.parse(input);
     if (request.kind !== "mission" && getActiveSubjectIds !== undefined) {
-      store.reconcileActiveSubjects(request.kind, await getActiveSubjectIds(request.kind));
+      await store.reconcileActiveSubjects(request.kind, await getActiveSubjectIds(request.kind));
     }
     return store.listSubjects(request);
   });

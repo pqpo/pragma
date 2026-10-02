@@ -1,17 +1,17 @@
 import { inspectAssetReadiness } from "../asset-transfer/asset-transfer-readiness.ts";
+import {
+  createAssetTransferService,
+  NAME_RESOLUTION_ERROR_CODE,
+  type CollectedItems,
+  type CoreAssetSyncNameResolutionIssue,
+} from "../asset-transfer/asset-transfer-service.ts";
 import type { PluginStore } from "../plugins/plugin-store.ts";
 import {
   encodeSyncRepository,
   readSyncRepository,
-  writeSyncRepository,
   SYNC_DIRECTORY,
+  writeSyncRepository,
 } from "./asset-sync-repository.ts";
-import {
-  createAssetTransferService,
-  NAME_RESOLUTION_ERROR_CODE,
-  type CoreAssetSyncNameResolutionIssue,
-  type CollectedItems,
-} from "../asset-transfer/asset-transfer-service.ts";
 
 import { randomUUID } from "node:crypto";
 import { lstat, mkdir, mkdtemp, readFile, rename, rm, writeFile } from "node:fs/promises";
@@ -33,9 +33,9 @@ import {
   CoreAssetSyncConfigurationSchema,
   CoreAssetSyncItemSchema,
   CoreAssetSyncOverviewSchema,
+  type CoreAssetLogicalKind,
   type CoreAssetSyncConfiguration,
   type CoreAssetSyncItem,
-  type CoreAssetLogicalKind,
   type CoreAssetSyncOverview,
   type DesktopRuntimeAvailability,
   type UpdateCoreAssetSyncConfiguration,
@@ -44,9 +44,7 @@ import type { CapabilityStore } from "../capabilities/capability-store.ts";
 
 import type { ContextStoreStore } from "../context-stores/context-store-store.ts";
 
-import type { PragmaProjectStore } from "../projects/pragma-project-store.ts";
-import type { WorkflowLayoutStore } from "../projects/workflow-layout-store.ts";
-import { referencedPragmaResourceRefs } from "../projects/pragma-resource-references.ts";
+import { redactGitDiagnostic } from "../../../shared/git-diagnostics.ts";
 import {
   classifyDesktopCapabilityResource,
   classifyDesktopContextResource,
@@ -54,7 +52,9 @@ import {
   desktopContextResourceId,
 } from "../../platform/bindings/desktop-bound-resource-policy.ts";
 import { assertAssetGitIdentity, runAssetGit } from "../asset-git/asset-git-command.ts";
-import { redactGitDiagnostic } from "../../../shared/git-diagnostics.ts";
+import type { PragmaProjectStore } from "../projects/pragma-project-store.ts";
+import { referencedPragmaResourceRefs } from "../projects/pragma-resource-references.ts";
+import type { WorkflowLayoutStore } from "../projects/workflow-layout-store.ts";
 
 const StateSchema = z
   .object({
@@ -215,7 +215,7 @@ export function createCoreAssetSyncService(options: {
         runtime === undefined ||
         model === undefined ||
         (config.thinkingLevel !== undefined &&
-          !model.thinking?.supportedLevels.some((level) => level.value === config.thinkingLevel))
+          !model?.thinking?.supportedLevels.some((level) => level.value === config.thinkingLevel))
       )
         unavailable.set(item.key, "Choose an available local harness and model in Studio.");
     }
@@ -1046,6 +1046,7 @@ export function unavailableCoreAssetRuntimeBindings(
   rootRef: string,
   resources: readonly PragmaResource[],
   runtimes: readonly DesktopRuntimeAvailability[],
+  options: { validateModels?: boolean } = {},
 ): readonly { ref: string; name: string }[] {
   const byRef = new Map(
     resources.map((resource) => [canonicalPragmaResourceRef(resource), resource] as const),
@@ -1074,9 +1075,10 @@ export function unavailableCoreAssetRuntimeBindings(
       );
       if (
         runtime === undefined ||
-        model === undefined ||
-        (config.thinkingLevel !== undefined &&
-          !model.thinking?.supportedLevels.some((level) => level.value === config.thinkingLevel))
+        (options.validateModels !== false && model === undefined) ||
+        (options.validateModels !== false &&
+          config.thinkingLevel !== undefined &&
+          !model?.thinking?.supportedLevels.some((level) => level.value === config.thinkingLevel))
       )
         unavailable.push({ ref, name: resource.metadata.name });
     }

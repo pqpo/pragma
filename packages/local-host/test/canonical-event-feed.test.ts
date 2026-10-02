@@ -1,3 +1,4 @@
+import { createTestExecutionStore } from "./execution-test-host.ts";
 import { mkdir, mkdtemp, readFile, readdir, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
@@ -11,13 +12,8 @@ import {
 } from "@pragma/shared";
 import { describe, expect, it, vi } from "vitest";
 
-import {
-  createFileCanonicalEventFeed,
-  createFileExecutionStore,
-  PragmaPaths,
-  type CanonicalEventFeed,
-} from "../src/index.ts";
-import { CANONICAL_EVENT_FEED_V1_SCHEMA_SQL } from "../src/storage/migrations/canonical-event-feed/index.ts";
+import { createFileCanonicalEventFeed, PragmaPaths, type CanonicalEventFeed } from "@pragma/core";
+import { CANONICAL_EVENT_FEED_V1_SCHEMA_SQL } from "@pragma/core/storage/migrations/canonical-event-feed/index";
 import { appendExecutionEvent } from "./execution-store-test-helpers.ts";
 
 describe("Canonical Event Feed", () => {
@@ -29,9 +25,8 @@ describe("Canonical Event Feed", () => {
       release = resolve;
     });
     const onError = vi.fn();
-    const store = createFileExecutionStore({
+    const store = createTestExecutionStore({
       pragmaHome: home,
-      canonicalDelivery: "background",
       canonicalEventFeed: {
         ...durable,
         async append() {
@@ -39,7 +34,7 @@ describe("Canonical Event Feed", () => {
           throw new Error("feed unavailable");
         },
       },
-      onCanonicalEventDeliveryError: onError,
+      logger: { warn: onError } as unknown as import("@pragma/core").PragmaLogger,
     });
     await createExecution(store);
     try {
@@ -55,13 +50,13 @@ describe("Canonical Event Feed", () => {
       }
     } finally {
       release();
-      await store.drainCanonicalEvents();
+      await expect(store.drainCanonicalEvents()).rejects.toThrow("feed unavailable");
     }
     expect(onError).toHaveBeenCalledOnce();
-    await expect(store.inspectCanonicalEventDelivery()).resolves.toMatchObject({ pending: 6 });
-    const recovery = createFileExecutionStore({ pragmaHome: home, canonicalEventFeed: durable });
+    await expect(store.inspectCanonicalEventDelivery()).resolves.toMatchObject({ pending: 1 });
+    const recovery = createTestExecutionStore({ pragmaHome: home, canonicalEventFeed: durable });
     await expect(recovery.recoverPendingCanonicalEvents()).resolves.toMatchObject({
-      recovered: 6,
+      recovered: 1,
       pending: 0,
       failed: 0,
     });
@@ -83,10 +78,9 @@ describe("Canonical Event Feed", () => {
         await durable.append(events);
       },
     };
-    const store = createFileExecutionStore({
+    const store = createTestExecutionStore({
       pragmaHome: home,
       canonicalEventFeed: feed,
-      canonicalDelivery: "background",
     });
     await createExecution(store);
     try {
@@ -160,7 +154,7 @@ describe("Canonical Event Feed", () => {
   it("relays committed Execution events with stable idempotency", async () => {
     const home = await mkdtemp(join(tmpdir(), "pragma-canonical-feed-"));
     const feed = await createFileCanonicalEventFeed({ pragmaHome: home });
-    const store = createFileExecutionStore({ pragmaHome: home, canonicalEventFeed: feed });
+    const store = createTestExecutionStore({ pragmaHome: home, canonicalEventFeed: feed });
     await createExecution(store);
 
     await appendExecutionEvent(
@@ -180,6 +174,7 @@ describe("Canonical Event Feed", () => {
       "message-one",
     );
 
+    await store.drainCanonicalEvents();
     const page = await feed.read({ limit: 10 });
     expect(page.items).toHaveLength(1);
     expect(page.items[0]).toMatchObject({
@@ -214,7 +209,7 @@ describe("Canonical Event Feed", () => {
         await durable.append(events);
       },
     };
-    const store = createFileExecutionStore({ pragmaHome: home, canonicalEventFeed: feed });
+    const store = createTestExecutionStore({ pragmaHome: home, canonicalEventFeed: feed });
     await createExecution(store);
 
     const commit = appendExecutionEvent(
@@ -240,6 +235,7 @@ describe("Canonical Event Feed", () => {
     releaseDelivery();
 
     await expect(Promise.all([commit, secondCommit, recovery])).resolves.toBeDefined();
+    await store.drainCanonicalEvents();
     expect(appendCalls).toBe(2);
     await expect(durable.inspect()).resolves.toMatchObject({ lastSequence: 2, eventCount: 2 });
     await expect(store.inspectCanonicalEventDelivery()).resolves.toEqual({
@@ -272,7 +268,7 @@ describe("Canonical Event Feed", () => {
         await durable.append(events);
       },
     };
-    const store = createFileExecutionStore({ pragmaHome: home, canonicalEventFeed: feed });
+    const store = createTestExecutionStore({ pragmaHome: home, canonicalEventFeed: feed });
     await createExecution(store);
 
     const firstCommit = appendExecutionEvent(
@@ -325,11 +321,11 @@ describe("Canonical Event Feed", () => {
         await durable.append(events);
       },
     };
-    const writer = createFileExecutionStore({
+    const writer = createTestExecutionStore({
       pragmaHome: home,
       canonicalEventFeed: delayedFeed,
     });
-    const deleter = createFileExecutionStore({ pragmaHome: home, canonicalEventFeed: durable });
+    const deleter = createTestExecutionStore({ pragmaHome: home, canonicalEventFeed: durable });
     await createExecution(writer);
 
     const commit = appendExecutionEvent(
@@ -367,7 +363,7 @@ describe("Canonical Event Feed", () => {
         await durable.append(events);
       },
     };
-    const store = createFileExecutionStore({ pragmaHome: home, canonicalEventFeed: feed });
+    const store = createTestExecutionStore({ pragmaHome: home, canonicalEventFeed: feed });
     await createExecution(store);
     await expect(
       appendExecutionEvent(
@@ -421,7 +417,7 @@ describe("Canonical Event Feed", () => {
         await durable.append(events);
       },
     };
-    const store = createFileExecutionStore({ pragmaHome: home, canonicalEventFeed: feed });
+    const store = createTestExecutionStore({ pragmaHome: home, canonicalEventFeed: feed });
     await createExecution(store);
     await appendExecutionEvent(
       store,
@@ -444,14 +440,14 @@ describe("Canonical Event Feed", () => {
     failNextRecovery = true;
     await expect(store.recoverPendingCanonicalEvents()).resolves.toEqual({
       recovered: 0,
-      pending: 2,
+      pending: 1,
       failed: 1,
       quarantined: 0,
     });
     await expect(durable.inspect()).resolves.toMatchObject({ lastSequence: 0, eventCount: 0 });
 
     await expect(store.recoverPendingCanonicalEvents()).resolves.toEqual({
-      recovered: 2,
+      recovered: 1,
       pending: 0,
       failed: 0,
       quarantined: 0,
@@ -481,28 +477,37 @@ describe("Canonical Event Feed", () => {
     const otherHome = await mkdtemp(join(tmpdir(), "pragma-canonical-future-handoff-"));
     const otherPaths = new PragmaPaths({ pragmaHome: otherHome });
     const feed = await createFileCanonicalEventFeed({ pragmaHome: otherHome });
-    const store = createFileExecutionStore({ pragmaHome: otherHome, canonicalEventFeed: feed });
+    const store = createTestExecutionStore({ pragmaHome: otherHome, canonicalEventFeed: feed });
     await createExecution(store);
-    const handoffPath = otherPaths.canonicalEventHandoff("execution", "future");
-    await mkdir(dirname(handoffPath), { recursive: true });
-    await writeFile(
-      handoffPath,
-      JSON.stringify({ schemaVersion: "pragma.canonical-event-handoff/v2" }),
+    const legacy = JSON.parse(
+      await readFile(new URL("./fixtures/execution-file-v12.json", import.meta.url), "utf8"),
     );
-    await expect(store.recoverPendingCanonicalEvents()).resolves.toEqual({
-      recovered: 0,
-      pending: 0,
-      failed: 1,
-      quarantined: 1,
-    });
+    await mkdir(otherPaths.executionRoot("current"), { recursive: true });
+    for (const [key, file] of [
+      ["execution", otherPaths.executionState("current")],
+      ["invocations", otherPaths.executionInvocations("current")],
+      ["agents", otherPaths.executionAgents("current")],
+      ["contexts", otherPaths.executionContexts("current")],
+      ["commits", otherPaths.executionCommits("current")],
+    ])
+      await writeFile(file!, JSON.stringify(legacy[key!]));
+    const handoffPath = otherPaths.canonicalEventHandoff("current", "future");
+    await mkdir(dirname(handoffPath), { recursive: true });
+    const bytes = JSON.stringify({ schemaVersion: "pragma.canonical-event-handoff/v2" });
+    await writeFile(handoffPath, bytes);
+    await expect(store.get("current")).rejects.toThrow("unsupported-state-version");
     const quarantined = await readdir(otherPaths.canonicalEventHandoffQuarantineRoot());
     expect(quarantined).toHaveLength(1);
-    await expect(
-      readFile(join(otherPaths.canonicalEventHandoffQuarantineRoot(), quarantined[0]!), "utf8"),
-    ).resolves.toBe(JSON.stringify({ schemaVersion: "pragma.canonical-event-handoff/v2" }));
-    await expect(store.get("execution")).rejects.toThrow(
-      "unsupported-state-version:pragma.canonical-event-handoff-quarantined:execution",
+    expect(
+      await readFile(
+        join(otherPaths.canonicalEventHandoffQuarantineRoot(), quarantined[0]!),
+        "utf8",
+      ),
+    ).toBe(bytes);
+    await expect(store.get("current")).rejects.toThrow(
+      "canonical-event-handoff-quarantined:current",
     );
+    await expect(store.get("execution")).resolves.toMatchObject({ executionId: "execution" });
     await feed.close();
   });
 
@@ -517,9 +522,10 @@ describe("Canonical Event Feed", () => {
         if (interruptAcknowledgement) throw new Error("interrupted after append");
       },
     };
-    const store = createFileExecutionStore({ pragmaHome: home, canonicalEventFeed: feed });
+    const store = createTestExecutionStore({ pragmaHome: home, canonicalEventFeed: feed });
     await createExecution(store);
     await appendExecutionEvent(store, "execution", "root", "invocation.progress", {}, "event-one");
+    await expect(store.drainCanonicalEvents()).rejects.toThrow("interrupted after append");
     await expect(durable.inspect()).resolves.toMatchObject({ lastSequence: 1, eventCount: 1 });
 
     interruptAcknowledgement = false;
@@ -531,7 +537,7 @@ describe("Canonical Event Feed", () => {
   it("prunes only acknowledged payloads and keeps replay receipts", async () => {
     const home = await mkdtemp(join(tmpdir(), "pragma-canonical-retention-"));
     const feed = await createFileCanonicalEventFeed({ pragmaHome: home });
-    const store = createFileExecutionStore({ pragmaHome: home, canonicalEventFeed: feed });
+    const store = createTestExecutionStore({ pragmaHome: home, canonicalEventFeed: feed });
     await createExecution(store);
     await appendExecutionEvent(
       store,
@@ -549,6 +555,7 @@ describe("Canonical Event Feed", () => {
       { value: 2 },
       "two",
     );
+    await store.drainCanonicalEvents();
     const original = await feed.read({ limit: 10 });
     const first = original.items[0];
     expect(first?.kind).toBe("event");
@@ -574,9 +581,10 @@ describe("Canonical Event Feed", () => {
   it("reports payload pinned above the target instead of deleting unacknowledged events", async () => {
     const home = await mkdtemp(join(tmpdir(), "pragma-canonical-pinned-"));
     const feed = await createFileCanonicalEventFeed({ pragmaHome: home });
-    const store = createFileExecutionStore({ pragmaHome: home, canonicalEventFeed: feed });
+    const store = createTestExecutionStore({ pragmaHome: home, canonicalEventFeed: feed });
     await createExecution(store);
     await appendExecutionEvent(store, "execution", "root", "invocation.progress", {}, "pinned");
+    await store.drainCanonicalEvents();
     const result = await feed.maintain({
       safeThrough: { sequence: 0 },
       retainAfter: "9999-01-01T00:00:00.000Z",
@@ -630,7 +638,7 @@ describe("Canonical Event Feed", () => {
   });
 });
 
-async function createExecution(store: ReturnType<typeof createFileExecutionStore>) {
+async function createExecution(store: ReturnType<typeof createTestExecutionStore>) {
   const timestamp = new Date().toISOString();
   const definition = { id: "flow", kind: "flow" as const };
   const execution: ExecutionRecord = {
@@ -662,7 +670,7 @@ async function createExecution(store: ReturnType<typeof createFileExecutionStore
 }
 
 async function waitForExecutionVersion(
-  store: ReturnType<typeof createFileExecutionStore>,
+  store: ReturnType<typeof createTestExecutionStore>,
   version: number,
 ): Promise<void> {
   for (let attempt = 0; attempt < 100; attempt += 1) {

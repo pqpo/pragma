@@ -1,9 +1,9 @@
-import { z } from "zod";
 import {
   AgentMessageUsageSchema,
   RuntimeModelSelectionSchema,
   type AgentMessageUsage,
 } from "@pragma/shared";
+import { z } from "zod";
 
 export const RuntimeUsageObservationSchema = z.object({
   observationId: z.string().min(1),
@@ -28,9 +28,7 @@ export const RuntimeUsageObservedSchema = z.object({
  * the cross-execution usage ledger.
  */
 export interface UsageSink {
-  readonly preview?: ((observation: RuntimeUsageObservation) => Promise<void> | void) | undefined;
   readonly record: (observation: RuntimeUsageObservation) => Promise<void> | void;
-  readonly clearPreview?: ((observationId: string) => Promise<void> | void) | undefined;
 }
 
 export interface RuntimeTokenUsageInput {

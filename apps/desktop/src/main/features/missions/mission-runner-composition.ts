@@ -1,67 +1,61 @@
-import { missionContextMountsFingerprint } from "./mission-context-mounts.ts";
-import { createHash, randomUUID } from "node:crypto";
-import { mkdir } from "node:fs/promises";
-import { basename, join } from "node:path";
 import {
-  STORE_REVISION_EXPERT_REF,
   KnowledgeRevisionToolError,
+  STORE_REVISION_EXPERT_REF,
   type KnowledgeRevisionSubmissionPort,
   type PragmaManagementToolPorts,
 } from "@pragma/built-in-agents";
-import {
-  createPragma,
-  runtimeSupportsSteer,
-  hasUncertainSteerDelivery,
-  AgentLifecycleQuiescenceError,
-  createPragmaLogger,
-  createFileExecutionStore,
-  withStorageDiagnostics,
-  createFileExpertSessionStore,
-  ExecutionController,
-  ExpertSessionReleaseBlockedError,
-  ExecutionWorkHistoryReader,
-  ExpertAgentHumanRequestSchema,
-  fingerprintExpertExecutionDefinition,
-  isRuntimeContextCompactionNotNeededError,
-  isExpertTeam,
-  StoredExecutionView,
-  PragmaPaths,
-  readRuntimeSessionContextWindowUsage,
-  readRuntimeSessionRecord,
-  ReadOnlyContextStore,
-  StaticContextStore,
-  error,
-  ok,
-  moveOwnedStorageToTrash,
-  runtimeSessionDeletionSources,
-  encodePragmaPathSegment,
-  type ExecutionWorkRecord,
-  type FileExecutionStore,
-  type ExpertAgentAutomaticHumanInteractionHandler,
-  type ExpertAgentHumanRequest,
-  type ExpertAgentHumanResponse,
-  type ExpertDefinition,
-  type ExpertAgentContextStoreRegistrationInput,
-  readExecutionRunScope,
-  type HostContextBindingsResolver,
-  type ExpertSession,
-  type ExpertTurn,
-  type MutableExecution,
-  type McpToolRegistryPool,
-  type PragmaLogger,
-  type RuntimeResolver,
-  type RuntimeContextWindowUsage,
-  type RuntimeModelSelection,
-} from "@pragma/core";
 import {
   FileSystemContextStore,
   LEGACY_EXECUTION_OUTPUT_NAMESPACE,
   LegacyExecutionOutputContextStore,
 } from "@pragma/context-filesystem";
-import { createMissionBoard, MissionSemanticWritePendingError } from "@pragma/local-host";
+import {
+  AgentLifecycleQuiescenceError,
+  createFileExpertSessionStore,
+  createPragma,
+  createPragmaLogger,
+  encodePragmaPathSegment,
+  error,
+  ExecutionController,
+  ExecutionWorkHistoryReader,
+  ExpertAgentHumanRequestSchema,
+  ExpertSessionReleaseBlockedError,
+  fingerprintExpertExecutionDefinition,
+  hasUncertainSteerDelivery,
+  isExpertTeam,
+  isRuntimeContextCompactionNotNeededError,
+  moveOwnedStorageToTrash,
+  ok,
+  PragmaPaths,
+  readExecutionRunScope,
+  ReadOnlyContextStore,
+  readRuntimeSessionContextWindowUsage,
+  readRuntimeSessionRecord,
+  runtimeSessionDeletionSources,
+  runtimeSupportsSteer,
+  StaticContextStore,
+  StoredExecutionView,
+  withStorageDiagnostics,
+  type DurableExecutionStore,
+  type ExecutionWorkRecord,
+  type ExpertAgentAutomaticHumanInteractionHandler,
+  type ExpertAgentContextStoreRegistrationInput,
+  type ExpertAgentHumanRequest,
+  type ExpertAgentHumanResponse,
+  type ExpertDefinition,
+  type ExpertSession,
+  type ExpertTurn,
+  type HostContextBindingsResolver,
+  type McpToolRegistryPool,
+  type MutableExecution,
+  type PragmaLogger,
+  type RuntimeContextWindowUsage,
+  type RuntimeModelSelection,
+  type RuntimeResolver,
+} from "@pragma/core";
 import type {
-  InvocableResource,
   CompiledResource,
+  InvocableResource,
   PragmaAdapterHost,
   PragmaInvocableResource,
   PragmaResource,
@@ -72,13 +66,29 @@ import {
   canonicalPragmaResourceRef,
   createPragmaResourceIdentityMigrationIndex,
 } from "@pragma/interpreter";
+import {
+  createExpertSessionPromptQueueProjection,
+  createLocalHostRunHandleState,
+  createMissionBoard,
+  createSqliteExecutionStore,
+  dispatchMissionCommand,
+  hashCanonicalRunPayload,
+  MissionSemanticWritePendingError,
+  type LocalHostRunEvent,
+  type LocalHostRunHandle,
+  type LocalHostRunRequest,
+  type MissionCommandConsumer,
+  type MissionControlTargetResolution,
+  type MissionOwnerScope,
+  type ResolvedRunExecutor,
+} from "@pragma/local-host";
 import type {
+  AgentMessageUsage,
+  ExecutionEnvironmentSnapshot,
+  ExecutionEvent,
+  ExpertPromptAttachment,
   HumanInteractionRequest,
   HumanInteractionResponse,
-  ExpertPromptAttachment,
-  AgentMessageUsage,
-  ExecutionEvent,
-  ExecutionEnvironmentSnapshot,
   RuntimeContextRecord,
 } from "@pragma/shared";
 import {
@@ -90,95 +100,59 @@ import {
   type ExpertSessionEvent,
   type PromptRequest,
 } from "@pragma/shared";
+import { createIntegrationError, type MissionCommand } from "@pragma/shared/integration";
+import { createHash, randomUUID } from "node:crypto";
+import { mkdir } from "node:fs/promises";
+import { basename, join } from "node:path";
+import { isDeepStrictEqual } from "node:util";
 import {
   ContextStoreIdSchema,
   isUserFacingMissionOrigin,
+  type DesktopToolPermissionMode,
+  type GetMissionWorkConversation,
   type Mission,
-  type MissionChatPage,
-  type MissionContextMount,
   type MissionChatEntry,
-  type MissionChatPatch,
+  type MissionChatPage,
   type MissionChatPageQuery,
-  type MissionContextWindowSnapshot,
-  type MissionConversationState,
+  type MissionChatPatch,
   type MissionContextCompactionResult,
+  type MissionContextMount,
+  type MissionContextWindowSnapshot,
   type MissionContextWindowState,
+  type MissionConversationState,
   type MissionHumanInteraction,
   type MissionModelOverride,
   type MissionWorkConversationSnapshot,
   type MissionWorkConversationStreamUpdate,
   type MissionWorkRecord,
   type MissionWorkSnapshot,
-  type GetMissionWorkConversation,
   type OpenMissionWorkConversationStream,
   type OpenMissionWorkConversationStreamResult,
-  type DesktopToolPermissionMode,
-  type UpdateMissionOptions,
   type UpdateMissionContextMounts,
+  type UpdateMissionOptions,
 } from "../../../shared/contracts/index.ts";
-import { referencedPragmaResourceRefs } from "../projects/pragma-resource-references.ts";
 import {
   parseDesktopCapabilityBindingRef,
   parseLegacyDesktopCapabilityBindingRef,
 } from "../../platform/bindings/desktop-binding-ref.ts";
 import type { CapabilityCredentialStore } from "../capabilities/capability-credential-store.ts";
 import type { CapabilityStore } from "../capabilities/capability-store.ts";
+import type { ContextStoreRevisionService } from "../context-stores/context-store-revision-service.ts";
 import {
   withContextStoreRevisionLocks,
   type ContextStoreStore,
 } from "../context-stores/context-store-store.ts";
-import type { ContextStoreRevisionService } from "../context-stores/context-store-revision-service.ts";
 import { DynamicContextStore } from "../context-stores/dynamic-context-store.ts";
 import { createDesktopKnowledgeRevisionSubmissionPort } from "../context-stores/knowledge-revision-capability.ts";
-import {
-  createMissionResumeOptions,
-  shouldCreateSuccessorExpertSession,
-} from "./mission-session-upgrade.ts";
-import type { MissionStore, MissionTimelineTurn } from "./mission-store.ts";
-import { MissionStoreError } from "./mission-store-error.ts";
+import type { PluginStore } from "../plugins/plugin-store.ts";
 import {
   withOpenPragmaProjectRevision,
   type PragmaProjectStore,
 } from "../projects/pragma-project-store.ts";
-import type { PluginStore } from "../plugins/plugin-store.ts";
+import { referencedPragmaResourceRefs } from "../projects/pragma-resource-references.ts";
 import type { DesktopUsageStore } from "../usage/usage-store.ts";
-import { createIntegrationError, type MissionCommand } from "@pragma/shared/integration";
-import {
-  createExpertSessionPromptQueueProjection,
-  createLocalHostRunHandleState,
-  dispatchMissionCommand,
-  hashCanonicalRunPayload,
-  type LocalHostRunEvent,
-  type LocalHostRunHandle,
-  type LocalHostRunRequest,
-  type MissionCommandConsumer,
-  type MissionControlTargetResolution,
-  type MissionOwnerScope,
-  type ResolvedRunExecutor,
-} from "@pragma/local-host";
-import { createMissionBranchContext } from "./mission-branch-context.ts";
-import { observeMissionExecution } from "./mission-execution-observer.ts";
-import { observeMissionQueuedTurn } from "./mission-queued-turn-observer.ts";
 import { createDesktopAdapterHost } from "./mission-adapter-host.ts";
-import { MissionChatService } from "./mission-chat-service.ts";
-import { MissionWorkService } from "./mission-work-service.ts";
-import { MissionLifecycleService } from "./mission-lifecycle-service.ts";
-import { MissionCommandService } from "./mission-command-service.ts";
-import { MissionSessionService } from "./mission-session-service.ts";
-import { MissionStatusService } from "./mission-status-service.ts";
-import { createMissionOutputCoalescer } from "./mission-output-coalescer.ts";
-import {
-  hasMissionDeletionIntent,
-  persistMissionDeletionIntent,
-} from "./mission-deletion-intent.ts";
-import {
-  readMissionConversationSnapshot,
-  type MissionCommandOutcomeNotification,
-  type MissionMessageApplicationResult,
-  type MissionRunner,
-  type MissionSurfaceAudience,
-  type MissionWorkConversationStreamNotification,
-} from "./mission-runner-contracts.ts";
+import { createMissionBranchContext } from "./mission-branch-context.ts";
 import {
   createMissionExecutorAvatarIdResolver,
   createMissionExecutorNameResolver,
@@ -208,6 +182,34 @@ import {
   readString,
   truncate,
 } from "./mission-chat-projection-common.ts";
+import { MissionChatService } from "./mission-chat-service.ts";
+import { MissionCommandService } from "./mission-command-service.ts";
+import { missionContextMountsFingerprint } from "./mission-context-mounts.ts";
+import {
+  hasMissionDeletionIntent,
+  persistMissionDeletionIntent,
+} from "./mission-deletion-intent.ts";
+import { observeMissionExecution } from "./mission-execution-observer.ts";
+import { MissionLifecycleService } from "./mission-lifecycle-service.ts";
+import { createMissionOutputCoalescer } from "./mission-output-coalescer.ts";
+import { observeMissionQueuedTurn } from "./mission-queued-turn-observer.ts";
+import {
+  readMissionConversationSnapshot,
+  type MissionCommandOutcomeNotification,
+  type MissionMessageApplicationResult,
+  type MissionRunner,
+  type MissionSurfaceAudience,
+  type MissionWorkConversationStreamNotification,
+} from "./mission-runner-contracts.ts";
+import { MissionSessionService } from "./mission-session-service.ts";
+import {
+  createMissionResumeOptions,
+  shouldCreateSuccessorExpertSession,
+} from "./mission-session-upgrade.ts";
+import { MissionStatusService } from "./mission-status-service.ts";
+import { MissionStoreError } from "./mission-store-error.ts";
+import type { MissionStore, MissionTimelineTurn } from "./mission-store.ts";
+import { MissionWorkService } from "./mission-work-service.ts";
 
 export { readMissionConversationSnapshot } from "./mission-runner-contracts.ts";
 export type {
@@ -401,7 +403,7 @@ export function createMissionRunner(options: {
   readonly capabilitiesPath: string;
   readonly mcpToolRegistryPool?: McpToolRegistryPool | undefined;
   readonly pragmaHome: string;
-  readonly executionStore?: FileExecutionStore | undefined;
+  readonly executionStore?: DurableExecutionStore | undefined;
   readonly contextStores?: ContextStoreStore | undefined;
   readonly contextStoreRevisions?: ContextStoreRevisionService | undefined;
   readonly knowledgeRevisionMountResources?: (() => readonly PragmaResource[]) | undefined;
@@ -438,7 +440,8 @@ export function createMissionRunner(options: {
   readonly pragmaManagementPorts?:
     (() => Omit<PragmaManagementToolPorts, "knowledgeRevisions">) | undefined;
   readonly registerExecutionDelivery?:
-    ((mission: Mission, executionId: string, requestId: string) => void) | undefined;
+    | ((mission: Mission, executionId: string, requestId: string) => void | Promise<void>)
+    | undefined;
   readonly deferTerminalProjection?: boolean | undefined;
   readonly wakeExecutionDelivery?: (() => void) | undefined;
   readonly assertExecutorReady?: ((ref: string) => void | Promise<void>) | undefined;
@@ -473,6 +476,7 @@ export function createMissionRunner(options: {
     | undefined;
   readonly onMissionActivity?:
     ((input: { readonly mission: Mission }) => Promise<void>) | undefined;
+  readonly invalidateRuntimeReadiness?: (() => void) | undefined;
   readonly onExecutionTerminal?:
     | ((input: {
         readonly mission: Mission;
@@ -496,13 +500,14 @@ export function createMissionRunner(options: {
     component: "desktop.mission-runner",
   });
   const executionStore =
-    options.executionStore ?? createFileExecutionStore({ pragmaHome: options.pragmaHome, logger });
+    options.executionStore ??
+    createSqliteExecutionStore({ pragmaHome: options.pragmaHome, logger });
   const notifyExecutionLinked = async (
     mission: Mission,
     executionId: string,
     requestId: string,
   ): Promise<void> => {
-    options.registerExecutionDelivery?.(mission, executionId, requestId);
+    await options.registerExecutionDelivery?.(mission, executionId, requestId);
     try {
       await retryMissionEventProjection(async () =>
         options.onExecutionLinked?.({ mission, executionId, requestId }),
@@ -950,17 +955,6 @@ export function createMissionRunner(options: {
           options.usage === undefined
             ? undefined
             : {
-                preview: (observation) => {
-                  // Live accounting is provisional. Durable enrichment runs in the consumer.
-                  options.usage!.preview(observation, {
-                    mission: { id: mission.id, title: mission.title },
-                    invocations: [],
-                    names: new Map([
-                      [observation.executor.id, observation.executor.name],
-                      [mission.executor.ref, mission.executor.name],
-                    ]),
-                  });
-                },
                 record: async (observation) => {
                   if (options.deferTerminalProjection) {
                     options.wakeExecutionDelivery?.();
@@ -980,13 +974,12 @@ export function createMissionRunner(options: {
                       ),
                   );
                   names.set(currentMission.executor.ref, currentMission.executor.name);
-                  options.usage!.record(observation, {
+                  await options.usage!.record(observation, {
                     mission: { id: currentMission.id, title: currentMission.title },
                     invocations: await executionStore.listInvocations(observation.executionId),
                     names,
                   });
                 },
-                clearPreview: (observationId) => options.usage!.clearPreview(observationId),
               },
       }),
       setToolPermissionMode: (mode: DesktopToolPermissionMode) => {
@@ -2388,6 +2381,7 @@ export function createMissionRunner(options: {
       input.sessionId,
       async (terminal) => {
         const mission = input.mission;
+        if (terminal.status === "failed") options.invalidateRuntimeReadiness?.();
         // Core already committed the terminal fact. A rebuildable Mission
         // projection must not hold the UI's status notification hostage.
         if (lifecycleService.active(missionId)?.handle === input.handle) {
@@ -3818,7 +3812,7 @@ export function createMissionRunner(options: {
           });
         }
       }
-      options.usage?.markSubjectDeleted("mission", id);
+      await options.usage?.markSubjectDeleted("mission", id);
       sessionService.deleteExecutionContext(id);
       lifecycleService.clearControlIssue(id);
       options.onStorageTrashed?.();
@@ -4006,6 +4000,79 @@ export function createMissionRunner(options: {
         ),
     );
 
+  const historyPreparations = new Map<string, MissionTimelineTurn>();
+  const historyPreparationFailures = new Map<string, { code: string; retryAt: number }>();
+  let preparingHistory = false;
+  const prepareHistory = () => {
+    if (preparingHistory) return;
+    preparingHistory = true;
+    void (async () => {
+      while (historyPreparations.size > 0) {
+        const [key, turn] = historyPreparations.entries().next().value!;
+        const missionId = key.slice(0, key.indexOf("/"));
+        try {
+          const state = await executionStore.get(turn.executionId!);
+          if (state === undefined)
+            throw Object.assign(new Error("Execution history source is missing"), {
+              code: "execution_history_source_missing",
+            });
+          const rebuilt = await readMissionChatHistory(
+            [turn],
+            executionStore,
+            options.missions,
+            missionId,
+            undefined,
+            false,
+          );
+          if (rebuilt.syncIssues.length > 0)
+            throw Object.assign(new Error("Execution history rebuild failed"), {
+              code: "execution_history_rebuild_failed",
+            });
+          await withMissionController(missionId, async () => {
+            const prior = await options.missions.readExecutionProjection(
+              missionId,
+              turn.executionId!,
+            );
+            const entries = rebuilt.entries.filter((entry) => entry.kind !== "user");
+            if (!isDeepStrictEqual(prior, entries))
+              await options.missions.writeExecutionProjection(
+                missionId,
+                turn.executionId!,
+                entries,
+                state.updatedAt,
+              );
+          });
+          historyPreparationFailures.delete(key);
+        } catch (error) {
+          const code = String(
+            (error as { code?: unknown }).code ?? "execution_history_preparation_failed",
+          );
+          historyPreparationFailures.set(key, { code, retryAt: Date.now() + 30_000 });
+          if (historyPreparationFailures.size > 128)
+            historyPreparationFailures.delete(historyPreparationFailures.keys().next().value!);
+          logger.warn("mission.history_preparation_failed", "History source verification failed", {
+            missionId,
+            executionId: turn.executionId,
+            errorCode: code,
+            error,
+          });
+        } finally {
+          historyPreparations.delete(key);
+          invalidateChat(missionId, "user");
+        }
+        await new Promise<void>((resolve) => setImmediate(resolve));
+      }
+    })()
+      .finally(() => {
+        preparingHistory = false;
+      })
+      .catch((error) =>
+        logger.warn("mission.history_preparation_failed", "History preparation stopped", {
+          error,
+          errorCode: "execution_history_preparation_failed",
+        }),
+      );
+  };
   const getChatPageUnmerged = async (
     input: MissionChatPageQuery,
     audience: MissionSurfaceAudience = "user",
@@ -4030,6 +4097,18 @@ export function createMissionRunner(options: {
         executionStore,
         missions: options.missions,
         rootOnly: mission.executor.kind === "team",
+        onPreparationRequired: (turn) => {
+          const key = `${mission.id}/${turn.executionId}`;
+          if (
+            (historyPreparationFailures.get(key)?.retryAt ?? 0) > Date.now() ||
+            historyPreparations.has(key)
+          )
+            return;
+          if (historyPreparations.size < 64) {
+            historyPreparations.set(key, turn);
+            prepareHistory();
+          }
+        },
         ...(capturedLive === undefined ? {} : { activeChat: capturedLive }),
         ...(mission.branch === undefined
           ? {}
@@ -4125,6 +4204,11 @@ export function createMissionRunner(options: {
         missionId: mission.id,
         revision,
         entries: presentedEntries,
+        sourceVerification: [...historyPreparationFailures.keys()].some((key) =>
+          key.startsWith(`${mission.id}/`),
+        )
+          ? "unavailable"
+          : history.sourceVerification,
         page: {
           ...(history.oldestSequence === undefined
             ? {}
@@ -5796,6 +5880,9 @@ export function createMissionRunner(options: {
 
   const reconcileMissionUsage = async (mission: Mission): Promise<void> => {
     if (options.usage === undefined) return;
+    // Deferred Host initialization must load the durable tracking cutoff before
+    // deciding whether historical executions belong to this accounting ledger.
+    await options.usage.assertAvailable();
     const names = await withOpenPragmaProjectRevision(
       options.project,
       mission.project.revision,
@@ -5822,7 +5909,7 @@ export function createMissionRunner(options: {
         const context = await executionStore.getContext(executionId, invocation.contextId);
         if (context === undefined) continue;
         const executorId = invocation.executorId ?? invocation.definition.id;
-        options.usage.recordRecovered(
+        await options.usage.recordRecovered(
           {
             occurredAt: invocation.updatedAt,
             executionId,
@@ -5887,7 +5974,7 @@ export function createMissionRunner(options: {
     async get(id) {
       const mission = await options.missions.get(id);
       if (mission.execution !== undefined)
-        options.registerExecutionDelivery?.(
+        await options.registerExecutionDelivery?.(
           mission,
           mission.execution.id,
           mission.execution.inputMessageId,
@@ -6546,7 +6633,7 @@ function observeMissionHumanWaitingStatus(input: {
 
 export async function persistMissionExecutionProjection(
   missions: MissionStore,
-  executionStore: ReturnType<typeof createFileExecutionStore>,
+  executionStore: DurableExecutionStore,
   missionId: string,
   executionId: string,
   cancelled: boolean,

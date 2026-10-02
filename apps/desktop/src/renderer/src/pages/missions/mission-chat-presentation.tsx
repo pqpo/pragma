@@ -183,7 +183,12 @@ export const MissionChatEntryView = memo(function MissionChatEntryView(props: {
   readonly userLabel?: string | undefined;
   readonly paintExecutionId?: string | undefined;
   readonly onVisibleContent?:
-    ((executionId: string | undefined, element: HTMLElement | null) => void) | undefined;
+    | ((
+        executionId: string | undefined,
+        element: HTMLElement | null,
+        contentType?: "text" | "reasoning",
+      ) => void)
+    | undefined;
   readonly showExecutorLabel?: boolean | undefined;
   readonly showCopy?: boolean | undefined;
   readonly showBranch?: boolean | undefined;
@@ -202,6 +207,7 @@ export const MissionChatEntryView = memo(function MissionChatEntryView(props: {
     props.onVisibleContent?.(
       props.paintExecutionId ?? entry.executionId,
       assistantElementRef.current,
+      "text",
     );
   }, [entry, props.onVisibleContent, props.paintExecutionId]);
 
@@ -431,7 +437,12 @@ export function MissionThinkingEntry(props: {
   readonly entry: Extract<MissionChatEntry, { kind: "thinking" }>;
   readonly paintExecutionId?: string | undefined;
   readonly onVisibleContent?:
-    ((executionId: string | undefined, element: HTMLElement | null) => void) | undefined;
+    | ((
+        executionId: string | undefined,
+        element: HTMLElement | null,
+        contentType?: "text" | "reasoning",
+      ) => void)
+    | undefined;
   readonly showExecutorLabel?: boolean | undefined;
 }) {
   const { t } = useTranslation("missions");
@@ -443,7 +454,11 @@ export function MissionThinkingEntry(props: {
 
   useLayoutEffect(() => {
     if (props.entry.content.length === 0) return;
-    props.onVisibleContent?.(props.paintExecutionId ?? props.entry.executionId, elementRef.current);
+    props.onVisibleContent?.(
+      props.paintExecutionId ?? props.entry.executionId,
+      elementRef.current,
+      "reasoning",
+    );
   }, [props.entry, props.onVisibleContent, props.paintExecutionId]);
 
   return (

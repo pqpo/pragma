@@ -1,7 +1,7 @@
+import { createSqliteExecutionStore } from "@pragma/local-host";
+import { createPragma } from "@pragma/core";
 import {
-  createFileExecutionStore,
   createFileExpertSessionStore,
-  createPragma,
   createStaticRuntimeResolver,
   defineExpert,
   defineRuntimeDriver,
@@ -9,8 +9,8 @@ import {
   PragmaPaths,
   type RuntimeNativeSessionContext,
   withFileLock,
-} from "../../src/index.ts";
-import { createRuntimeTestFeatures } from "../../src/testing/index.ts";
+} from "@pragma/core";
+import { createRuntimeTestFeatures } from "@pragma/core/testing";
 
 interface FixtureSession {
   readonly context: RuntimeNativeSessionContext;
@@ -23,7 +23,7 @@ if (mode !== "seed" || pragmaHome === undefined || sessionId === undefined) {
 }
 
 const strictFallbackCrash = crashPhase === "strict-fallback";
-const executionStore = createFileExecutionStore({ pragmaHome });
+const executionStore = createSqliteExecutionStore({ pragmaHome });
 const sessionStore = createFileExpertSessionStore({ executions: executionStore, pragmaHome });
 if (strictFallbackCrash) {
   const enqueue = sessionStore.enqueue.bind(sessionStore);

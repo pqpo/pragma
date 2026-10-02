@@ -7,19 +7,41 @@ import {
   type ExpertPromptAttachment,
 } from "@pragma/shared";
 
-import type { Expert } from "../agent/expert-agent.ts";
 import type { ExpertAgentContext, ExpertAgentStartupMessage } from "../agent/context-manager.ts";
-import { createPragmaLogger, type PragmaLogger } from "../logging/logger.ts";
-import { dispatchExpertAgentHook } from "../plugins/expert-agent-plugin.ts";
-import type { ExpertAgentProcessEnvironmentPatch } from "../plugins/expert-agent-plugin.ts";
-import { AsyncPushQueue } from "./async-push-queue.ts";
-import { RuntimeSteerDeliverySchema } from "./runtime-adapter.ts";
+import type { Expert } from "../agent/expert-agent.ts";
 import { SteerNotDispatchedError } from "../execution/steer-delivery-error.ts";
+import { createPragmaLogger, type PragmaLogger } from "../logging/logger.ts";
+import type { ExpertAgentProcessEnvironmentPatch } from "../plugins/expert-agent-plugin.ts";
+import { dispatchExpertAgentHook } from "../plugins/expert-agent-plugin.ts";
+import { PragmaPaths } from "../storage/pragma-paths.ts";
+import type {
+  ExpertAgentHumanInteractionHandler,
+  ExpertToolExecutionContext,
+} from "../tools/managed-tool.ts";
 import {
   createQueuedAgentLifecycle,
   type AgentLifecycle,
   type AgentRunExecutionContext,
 } from "./agent-lifecycle.ts";
+import { AsyncPushQueue } from "./async-push-queue.ts";
+import {
+  RUNTIME_CONTEXT_COMPACTION_STAGES,
+  RUNTIME_STARTUP_MESSAGE_STAGES,
+  readRuntimeContextCompactionProgressData,
+} from "./context-compaction.ts";
+import {
+  RUNTIME_FEATURE_CATALOG,
+  deriveRuntimeAdapterCapabilities,
+  isRuntimeFeatureEnabled,
+  snapshotRuntimeFeatures,
+  validateRuntimeFeatures,
+  type RuntimeFeatureName,
+  type RuntimeFeatureSet,
+  type RuntimePreparationNode,
+  type RuntimePreparationOutput,
+  type RuntimePreparationPhase,
+  type RuntimePreparedFeatureSet,
+} from "./features.ts";
 import {
   createInitialRuntimePrompt,
   createRuntimeOutputRetryPrompt,
@@ -30,81 +52,59 @@ import {
   type RuntimeOutputParseResult,
   type RuntimeOutputParser,
 } from "./output.ts";
+import { ensureLoopbackNoProxy } from "./process-environment.ts";
+import { RuntimeResourceScope, type RuntimeResourceRegistrar } from "./resource-scope.ts";
+import { createExpertAgentRunContext, type ExpertAgentRunContext } from "./run-context.ts";
+import type {
+  RuntimeAdapter,
+  RuntimeAdapterDescriptor,
+  RuntimeCanUseResult,
+  RuntimeContextWindowUsage,
+  RuntimeDriverDescriptor,
+  RuntimeDriverSessionRequest,
+  RuntimeModel,
+  RuntimeModelDiscoveryOptions,
+  RuntimeModelSelection,
+  RuntimeOutputSchema,
+  RuntimeRunResult,
+  RuntimeSessionInfo,
+  RuntimeSessionRef,
+  RuntimeSessionRestoreHandler,
+  RuntimeSessionSyncCallback,
+  RuntimeSteerDelivery,
+  RuntimeSteerRequest,
+  RuntimeSubmitHandle,
+  RuntimeSubmitRequest,
+  RuntimeTaskSubmission,
+} from "./runtime-adapter.ts";
+import { RuntimeSteerDeliverySchema } from "./runtime-adapter.ts";
+import { registerRuntimeSessionFactory } from "./session-factory.ts";
 import {
   checkpointRuntimeSession,
   createCallbackRuntimeSessionPersistenceProvider,
   createNoopRuntimeSessionPersistenceProvider,
   ensureRuntimeSessionDir,
+  watchRuntimeSessionCheckpoint,
   type RuntimeCheckpointTrigger,
   type RuntimeSessionPersistenceProvider,
   type RuntimeSessionPersistenceSpec,
-  watchRuntimeSessionCheckpoint,
   type RuntimeSessionWatcher,
 } from "./session-persistence.ts";
-import {
-  createRuntimeStreamController,
-  type RuntimeEventMappingContext,
-  type RuntimeEventMappingResult,
-  type RuntimeStreamWriter,
-} from "./stream-controller.ts";
-import {
-  RUNTIME_CONTEXT_COMPACTION_STAGES,
-  RUNTIME_STARTUP_MESSAGE_STAGES,
-  readRuntimeContextCompactionProgressData,
-} from "./context-compaction.ts";
-import { defaultRuntimeTokenCounter } from "./token-counter.ts";
-import { mergeUsage, hasNonZeroUsage } from "./usage.ts";
-import { createExpertAgentRunContext, type ExpertAgentRunContext } from "./run-context.ts";
-import { PragmaPaths } from "../storage/pragma-paths.ts";
 import {
   createRuntimeSessionRecord,
   restoreRuntimeSessionRecord,
   updateRuntimeSessionRecord,
   type RuntimeSessionRecord,
 } from "./session-record.ts";
-import type {
-  RuntimeAdapter,
-  RuntimeAdapterDescriptor,
-  RuntimeCanUseResult,
-  RuntimeContextWindowUsage,
-  RuntimeDriverSessionRequest,
-  RuntimeOutputSchema,
-  RuntimeModel,
-  RuntimeModelSelection,
-  RuntimeRunResult,
-  RuntimeSessionInfo,
-  RuntimeSessionRef,
-  RuntimeSessionRestoreHandler,
-  RuntimeSessionSyncCallback,
-  RuntimeSubmitHandle,
-  RuntimeSubmitRequest,
-  RuntimeSteerRequest,
-  RuntimeSteerDelivery,
-  RuntimeTaskSubmission,
-  RuntimeDriverDescriptor,
-  RuntimeModelDiscoveryOptions,
-} from "./runtime-adapter.ts";
-import type { RuntimeStreamEvent } from "./stream-events.ts";
-import { registerRuntimeSessionFactory } from "./session-factory.ts";
 import {
-  RUNTIME_FEATURE_CATALOG,
-  deriveRuntimeAdapterCapabilities,
-  isRuntimeFeatureEnabled,
-  snapshotRuntimeFeatures,
-  validateRuntimeFeatures,
-  type RuntimeFeatureName,
-  type RuntimePreparationPhase,
-  type RuntimePreparationNode,
-  type RuntimePreparationOutput,
-  type RuntimePreparedFeatureSet,
-  type RuntimeFeatureSet,
-} from "./features.ts";
-import { RuntimeResourceScope, type RuntimeResourceRegistrar } from "./resource-scope.ts";
-import { ensureLoopbackNoProxy } from "./process-environment.ts";
-import type {
-  ExpertAgentHumanInteractionHandler,
-  ExpertToolExecutionContext,
-} from "../tools/managed-tool.ts";
+  createRuntimeStreamController,
+  type RuntimeEventMappingContext,
+  type RuntimeEventMappingResult,
+  type RuntimeStreamWriter,
+} from "./stream-controller.ts";
+import type { RuntimeStreamEvent } from "./stream-events.ts";
+import { defaultRuntimeTokenCounter } from "./token-counter.ts";
+import { hasNonZeroUsage, mergeUsage } from "./usage.ts";
 
 const RUNTIME_CANCEL_TURN_TIMEOUT_MS = 2_000;
 const RUNTIME_CLOSE_SESSION_TIMEOUT_MS = 3_000;
@@ -1391,7 +1391,7 @@ class ManagedRuntimeSession<TNativeEvent, TNativeSession> {
         observedUsage = runResult.result.usage;
         settleUsage(observedUsage);
         controller.updateContextWindowUsage(await this.refreshContextWindow(false));
-        controller.flushTelemetry(false);
+        controller.flushTelemetry();
 
         controller.writer.write({
           runId,
@@ -1415,7 +1415,7 @@ class ManagedRuntimeSession<TNativeEvent, TNativeSession> {
         observedUsage ??= controller.getUsage();
         settleUsage(observedUsage);
         controller.updateContextWindowUsage(await this.refreshContextWindow(false));
-        controller.flushTelemetry(false);
+        controller.flushTelemetry();
         const wasCancelled = signal.aborted || cancelled;
         const message = error instanceof Error ? error.message : "Runtime run failed.";
         const errorMetadata = readRuntimeErrorMetadata(error);
@@ -1674,12 +1674,9 @@ class ManagedRuntimeSession<TNativeEvent, TNativeSession> {
           ? this.applyStartupMessageBudget(startupMessages, contextWindow, submission, controller)
           : [];
       controller.resetCapture();
-      controller.beginUsagePreview({
+      controller.beginUsageCapture({
         prompt,
         startupMessages: attemptStartupMessages.map((message) => message.content),
-        contextBaselineCalibrated: this.contextWindowCalibrated,
-        ...(usage === undefined ? {} : { accumulatedUsage: usage }),
-        ...(contextWindow === undefined ? {} : { contextWindow }),
       });
       const turnResult = await (async () => {
         await this.options.executionBindings.assertOwnership(runId);
@@ -1740,7 +1737,7 @@ class ManagedRuntimeSession<TNativeEvent, TNativeSession> {
         }
       })();
       outputText = turnResult.outputText ?? controller.getOutputText();
-      usage = mergeUsage(usage, mergeUsage(controller.getUsage(), turnResult.usage));
+      usage = mergeUsage(usage, turnResult.usage ?? controller.getUsage());
       controller.updateUsage(usage);
       observeUsage(usage);
 

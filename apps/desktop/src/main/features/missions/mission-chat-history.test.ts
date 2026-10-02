@@ -1,7 +1,10 @@
+import type { DurableExecutionStore } from "@pragma/core";
+import type { MissionStore } from "./mission-store.ts";
 import { createHash } from "node:crypto";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { GetMissionChatPageSchema } from "../../../shared/contracts/index.ts";
 import {
+  readMissionChatHistoryPage,
   decodeMissionChatPageCursor,
   encodeMissionChatPageCursor,
   orderMissionExecutionEntries,
@@ -9,6 +12,69 @@ import {
 } from "./mission-chat-history.ts";
 
 describe("Mission chat history", () => {
+  it.each(["pending", "unavailable"] as const)(
+    "shows a durable projection while source verification is %s",
+    async (state) => {
+      const timestamp = "2026-10-02T00:00:00.000Z";
+      const projected = {
+        id: "answer",
+        executionId: "execution",
+        invocationId: "root",
+        kind: "assistant" as const,
+        content: "Saved answer",
+        streaming: false,
+        createdAt: timestamp,
+      };
+      const get = vi.fn(async () => {
+        throw new Error("The core read must not run during preparation");
+      });
+      const prepare = vi.fn();
+      const store = {
+        get,
+        getPrepared: vi.fn(async () => {
+          if (state === "unavailable") throw new Error("Unsupported source version");
+          return { state: "requires_preparation" as const };
+        }),
+      } as unknown as DurableExecutionStore;
+      const missions = {
+        readTimelinePage: async () => ({
+          turns: [
+            {
+              sequence: 1,
+              message: { id: "user", content: "Question", createdAt: timestamp },
+              executionId: "execution",
+            },
+          ],
+        }),
+        readExecutionProjectionPage: async () => ({
+          entries: [projected],
+          omittedEntries: 0,
+          truncatedFields: 0,
+        }),
+      } as unknown as MissionStore;
+      const result = await readMissionChatHistoryPage({
+        missionId: "mission",
+        query: { id: "mission", limit: 50 },
+        executionStore: store,
+        missions,
+        rootOnly: false,
+        onPreparationRequired: prepare,
+      });
+      expect(result.sourceVerification).toBe(state);
+      expect(result.entries.map((entry) => entry.id)).toEqual(["user", "answer"]);
+      expect(get).not.toHaveBeenCalled();
+      expect(prepare).toHaveBeenCalledOnce();
+      const privateResult = await readMissionChatHistoryPage({
+        missionId: "mission",
+        query: { id: "mission", limit: 50 },
+        executionStore: store,
+        missions,
+        rootOnly: true,
+        onPreparationRequired: prepare,
+      });
+      expect(privateResult.entries.map((entry) => entry.id)).toEqual(["user"]);
+    },
+  );
   it("repairs a surviving rejected attempt instead of trusting its finalAnswer flag", () => {
     const entries = ensureTerminalExecutionResultEntry(
       [

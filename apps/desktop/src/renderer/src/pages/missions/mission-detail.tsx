@@ -1380,7 +1380,13 @@ export function MissionDetailFragment(props: {
     </div>
   );
   const missionStatusBar = (
-    <div className="mission-detail-status-bar" aria-label={props.mission.title}>
+    <div
+      className="mission-detail-status-bar"
+      aria-label={props.mission.title}
+      data-mission-status={executionStatus}
+      data-mission-id={props.mission.id}
+      data-mission-execution-id={chat?.execution?.id ?? props.mission.execution?.id}
+    >
       <p>
         <span className="mission-ready-dot" aria-hidden="true" />
         {missionStatusLabel(
@@ -1532,6 +1538,19 @@ export function MissionDetailFragment(props: {
                                 ? t("loadingEarlier", { ns: "missions" })
                                 : t("loadEarlier", { ns: "missions" })}
                             </button>
+                          ) : null}
+                          {chat?.sourceVerification === "pending" ||
+                          chat?.sourceVerification === "unavailable" ? (
+                            <div className="mission-history-error" role="status">
+                              <span>
+                                {t(
+                                  chat.sourceVerification === "pending"
+                                    ? "chatHistoryVerifying"
+                                    : "chatHistoryVerificationUnavailable",
+                                  { ns: "missions" },
+                                )}
+                              </span>
+                            </div>
                           ) : null}
                           {chatSyncError === null ? null : (
                             <div className="mission-history-error" role="alert">

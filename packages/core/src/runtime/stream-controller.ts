@@ -3,16 +3,15 @@ import type { AgentMessage, AgentMessageUsage, RuntimeContextWindowUsage } from 
 import type { Expert } from "../agent/expert-agent.ts";
 import type { PragmaLogger } from "../logging/logger.ts";
 import { dispatchExpertAgentHook } from "../plugins/expert-agent-plugin.ts";
-import type { RuntimeSessionInfo } from "./runtime-adapter.ts";
 import type { ExpertAgentRunContext } from "./run-context.ts";
-import { mergeUsage } from "./usage.ts";
-import { defaultRuntimeTokenCounter, type RuntimeTokenCounter } from "./token-counter.ts";
+import type { RuntimeSessionInfo } from "./runtime-adapter.ts";
 import {
   createRuntimeEventEmitter,
   type RuntimeEventEmitter,
   type RuntimeStreamEventInput,
 } from "./runtime-event-emitter.ts";
 import type { RuntimeStreamEvent } from "./stream-events.ts";
+import { defaultRuntimeTokenCounter, type RuntimeTokenCounter } from "./token-counter.ts";
 
 export interface RuntimeStreamWriter<TNativeEvent> {
   readonly writeNative: (event: TNativeEvent) => void;
@@ -78,16 +77,13 @@ export interface RuntimeStreamController<TNativeEvent> {
   readonly getUsage: () => AgentMessageUsage | undefined;
   readonly getRuntimeSessionId: () => string | undefined;
   readonly resetCapture: () => void;
-  readonly beginUsagePreview: (input: {
+  readonly beginUsageCapture: (input: {
     readonly prompt: string;
     readonly startupMessages?: readonly string[] | undefined;
-    readonly contextBaselineCalibrated?: boolean | undefined;
-    readonly accumulatedUsage?: AgentMessageUsage | undefined;
-    readonly contextWindow?: RuntimeContextWindowUsage | undefined;
   }) => void;
   readonly updateContextWindowUsage: (usage: RuntimeContextWindowUsage | undefined) => void;
   readonly updateUsage: (usage: AgentMessageUsage | undefined) => void;
-  readonly flushTelemetry: (provisional: boolean) => void;
+  readonly flushTelemetry: () => void;
   readonly complete: () => Promise<void>;
 }
 
@@ -120,23 +116,14 @@ export function createRuntimeStreamController<TNativeEvent>(options: {
       path: [],
     } satisfies RuntimeStreamEvent["source"]);
   const eventFactory = createRuntimeStreamEventFactory(options.runId, source);
-  const pendingHookCalls: Promise<void>[] = [];
+  const pendingHookCalls = new Set<Promise<void>>();
   let outputText = "";
   let thoughtText = "";
   let usage: AgentMessageUsage | undefined;
-  let accumulatedUsage: AgentMessageUsage | undefined;
-  let estimatedInputTokens = 0;
-  let estimatedContextInputTokens = 0;
-  let contextBaselineCalibrated = false;
-  let contextWindowBase: RuntimeContextWindowUsage | undefined;
+  let inputText = "";
   let contextWindowUsage: RuntimeContextWindowUsage | undefined;
   let runtimeSessionId: string | undefined;
-  let latestUsagePreview: AgentMessageUsage | undefined;
-  let latestContextWindowPreview: RuntimeContextWindowUsage | undefined;
-  let lastUsageSignature = "";
-  let lastContextWindowSignature = "";
-  let telemetryTimer: ReturnType<typeof setTimeout> | undefined;
-  let lastTelemetryAt = 0;
+  let settledUsage: AgentMessageUsage | undefined;
   let telemetryFinalized = false;
   const streamStartedAt = performance.now();
   let firstNativeEventLogged = false;
@@ -147,89 +134,47 @@ export function createRuntimeStreamController<TNativeEvent>(options: {
   const emit = (event: RuntimeStreamEventInput): void => {
     const emitted = emitter.emit(event);
     options.onEvent?.(emitted);
-    pendingHookCalls.push(
-      dispatchExpertAgentHook(options.agent.hooks, "onStreamEvent", {
-        agent: options.agent,
-        session: options.session(),
-        runId: options.runId,
-        event: emitted,
-        context: options.context,
-        logger: options.logger,
-      }),
+    const hook = dispatchExpertAgentHook(options.agent.hooks, "onStreamEvent", {
+      agent: options.agent,
+      session: options.session(),
+      runId: options.runId,
+      event: emitted,
+      context: options.context,
+      logger: options.logger,
+    });
+    pendingHookCalls.add(hook);
+    void hook.then(
+      () => pendingHookCalls.delete(hook),
+      () => pendingHookCalls.delete(hook),
     );
   };
 
-  const emitTelemetry = (provisional: boolean): void => {
-    if (telemetryTimer !== undefined) {
-      clearTimeout(telemetryTimer);
-      telemetryTimer = undefined;
-    }
-    lastTelemetryAt = performance.now();
-    if (!provisional) telemetryFinalized = true;
-    if (latestUsagePreview !== undefined) {
-      const signature = JSON.stringify(latestUsagePreview);
-      if (signature !== lastUsageSignature || !provisional) {
-        lastUsageSignature = signature;
-        emit({
-          runId: options.runId,
-          source,
-          type: "usage.updated",
-          payload: { usage: latestUsagePreview, provisional },
-        });
-      }
-    }
-    if (latestContextWindowPreview !== undefined) {
-      const signature = JSON.stringify(latestContextWindowPreview);
-      if (signature !== lastContextWindowSignature || !provisional) {
-        lastContextWindowSignature = signature;
-        emit({
-          runId: options.runId,
-          source,
-          type: "context-window.updated",
-          payload: { usage: latestContextWindowPreview, provisional },
-        });
-      }
-    }
+  // Called only at an attempt boundary. Reported usage never invokes the tokenizer.
+  const captureUsage = (): AgentMessageUsage => {
+    usage ??= createEstimatedUsage({
+      input: tokenCounter.countText(inputText).tokens,
+      output: tokenCounter.countText(`${thoughtText}${outputText}`).tokens,
+    });
+    return usage;
   };
-
-  const scheduleTelemetry = (): void => {
-    const elapsed = performance.now() - lastTelemetryAt;
-    if (lastTelemetryAt === 0 || elapsed >= 100) {
-      emitTelemetry(true);
-      return;
-    }
-    if (telemetryTimer !== undefined) return;
-    telemetryTimer = setTimeout(() => emitTelemetry(true), Math.max(0, 100 - elapsed));
-  };
-
-  const updateUsagePreview = (): void => {
-    const estimatedOutputTokens = tokenCounter.countText(`${thoughtText}${outputText}`).tokens;
-    const attemptUsage =
-      usage ??
-      createEstimatedUsage({
-        input: estimatedInputTokens,
-        output: estimatedOutputTokens,
+  const emitTelemetry = (): void => {
+    if (telemetryFinalized) return;
+    telemetryFinalized = true;
+    const finalUsage = settledUsage ?? usage;
+    if (finalUsage !== undefined)
+      emit({
+        runId: options.runId,
+        source,
+        type: "usage.updated",
+        payload: { usage: finalUsage, provisional: false },
       });
-    latestUsagePreview = mergeUsage(accumulatedUsage, attemptUsage);
-    const contextSource = contextWindowUsage ?? contextWindowBase;
-    if (contextSource !== undefined) {
-      const usedTokens =
-        contextWindowUsage !== undefined
-          ? contextWindowUsage.usedTokens
-          : !contextBaselineCalibrated || contextSource.usedTokens === null
-            ? null
-            : contextSource.usedTokens + estimatedContextInputTokens + estimatedOutputTokens;
-      latestContextWindowPreview = {
-        usedTokens,
-        contextWindowTokens: contextSource.contextWindowTokens,
-        percent:
-          usedTokens === null ? null : (usedTokens / contextSource.contextWindowTokens) * 100,
-        measurement:
-          contextWindowUsage === undefined ? "estimated" : contextWindowUsage.measurement,
-        observedAt: new Date().toISOString(),
-      };
-    }
-    scheduleTelemetry();
+    if (contextWindowUsage !== undefined)
+      emit({
+        runId: options.runId,
+        source,
+        type: "context-window.updated",
+        payload: { usage: contextWindowUsage, provisional: false },
+      });
   };
 
   const applyMappingResult = (result: RuntimeEventMappingResult): void => {
@@ -272,7 +217,6 @@ export function createRuntimeStreamController<TNativeEvent>(options: {
         thoughtText += event.payload.delta;
       }
     }
-    updateUsagePreview();
   };
 
   return {
@@ -304,10 +248,8 @@ export function createRuntimeStreamController<TNativeEvent>(options: {
         emit(event);
         if (event.type === "message.delta" && "delta" in event.payload) {
           outputText += event.payload.delta;
-          updateUsagePreview();
         } else if (event.type === "thought.delta" && "delta" in event.payload) {
           thoughtText += event.payload.delta;
-          updateUsagePreview();
         } else if (event.type === "message.completed") {
           if ("text" in event.payload && typeof event.payload.text === "string") {
             outputText = event.payload.text;
@@ -320,12 +262,11 @@ export function createRuntimeStreamController<TNativeEvent>(options: {
           ) {
             usage = event.payload.message.usage;
           }
-          updateUsagePreview();
         }
       },
     },
     getOutputText: () => outputText,
-    getUsage: () => usage,
+    getUsage: captureUsage,
     getRuntimeSessionId: () => runtimeSessionId,
     resetCapture() {
       outputText = "";
@@ -334,39 +275,20 @@ export function createRuntimeStreamController<TNativeEvent>(options: {
       contextWindowUsage = undefined;
       runtimeSessionId = undefined;
     },
-    beginUsagePreview(input) {
-      accumulatedUsage = input.accumulatedUsage;
-      const turnInput = [...(input.startupMessages ?? []), input.prompt].join("\n\n");
-      estimatedInputTokens = tokenCounter.countText(turnInput).tokens;
-      estimatedContextInputTokens = estimatedInputTokens;
-      contextBaselineCalibrated =
-        input.contextBaselineCalibrated ??
-        (input.contextWindow?.usedTokens !== null &&
-          input.contextWindow?.usedTokens !== undefined &&
-          input.contextWindow.usedTokens > 0);
-      contextWindowBase = input.contextWindow;
-      contextWindowUsage = undefined;
-      updateUsagePreview();
+    beginUsageCapture(input) {
+      inputText = [...(input.startupMessages ?? []), input.prompt].join("\n\n");
     },
     updateContextWindowUsage(next) {
-      if (next === undefined) return;
-      contextWindowUsage = next;
-      updateUsagePreview();
+      if (next !== undefined) contextWindowUsage = next;
     },
     updateUsage(next) {
-      if (next === undefined) return;
-      latestUsagePreview = next;
-      scheduleTelemetry();
+      if (next !== undefined) settledUsage = next;
     },
-    flushTelemetry(provisional) {
-      emitTelemetry(provisional);
+    flushTelemetry() {
+      emitTelemetry();
     },
     async complete() {
-      if (!telemetryFinalized) emitTelemetry(false);
-      else if (telemetryTimer !== undefined) {
-        clearTimeout(telemetryTimer);
-        telemetryTimer = undefined;
-      }
+      emitTelemetry();
       await Promise.allSettled(pendingHookCalls);
       emitter.complete();
     },

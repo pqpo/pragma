@@ -1,20 +1,20 @@
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
+import { createTestExecutionStore } from "./execution-test-host.ts";
 
 import type { ExecutionRecord, ExpertAgentStreamEvent, Invocation } from "@pragma/shared";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
-  createFileExecutionStore,
   EXECUTION_OUTPUT_HISTORY_MAX_CHARACTERS,
   EXECUTION_OUTPUT_HISTORY_MAX_ITEMS,
-  ExecutionWorkHistoryReader,
   ExecutionFinalStatusConflictError,
+  ExecutionWorkHistoryReader,
   getExecutionLiveBus,
   PragmaPaths,
   StoredExecutionView,
-} from "../src/index.ts";
+} from "@pragma/core";
 import { appendExecutionEvent, putExecutionInvocation } from "./execution-store-test-helpers.ts";
 
 const fileReads = vi.hoisted(() => new Map<string, number>());
@@ -41,7 +41,7 @@ afterEach(async () => {
 });
 
 describe("Execution canonical event log", { timeout: 30_000 }, () => {
-  it("reads event and commit history once on a normal commit and retains duplicate conflict checks", async () => {
+  it("commits without reading legacy history and retains duplicate conflict checks", async () => {
     const { store, home } = await fixture();
     const paths = new PragmaPaths({ pragmaHome: home });
     fileReads.clear();
@@ -53,8 +53,8 @@ describe("Execution canonical event log", { timeout: 30_000 }, () => {
       ],
     };
     const first = await store.commit(request);
-    expect(fileReads.get(paths.executionEvents("execution"))).toBe(1);
-    expect(fileReads.get(paths.executionCommits("execution"))).toBe(1);
+    expect(fileReads.get(paths.executionEvents("execution")) ?? 0).toBe(0);
+    expect(fileReads.get(paths.executionCommits("execution")) ?? 0).toBe(0);
     const duplicate = await store.commit(request);
     expect(duplicate.events).toEqual(first.events);
     await expect(
@@ -528,61 +528,34 @@ describe("Execution canonical event log", { timeout: 30_000 }, () => {
     await expect(store.get("execution")).resolves.toMatchObject({ version: 0 });
   });
 
-  it("recovers an interrupted File Store transaction journal", async () => {
-    const { home, store } = await fixture();
+  it("replays an actual historical transaction after its owner files were written", async () => {
+    const home = await createTemporaryHome("pragma-historical-transaction-");
     const paths = new PragmaPaths({ pragmaHome: home });
-    const execution = (await store.get("execution"))!;
-    const root = (await store.getInvocation("execution", "root"))!;
-    const occurredAt = new Date().toISOString();
-    const event = {
-      schemaVersion: "pragma.execution-event/v5",
-      eventId: "recovered-result",
-      cursor: { executionId: "execution", sequence: 1 },
-      executionId: "execution",
-      invocationId: "root",
-      type: "invocation.succeeded",
-      data: { output: { type: "inline", value: "recovered" } },
-      occurredAt,
-    };
-    await writeFile(
-      paths.executionTransaction("execution"),
-      `${JSON.stringify({
-        schemaVersion: "pragma.execution-transaction/v8",
-        commitId: "recovered-commit",
-        signature: "a".repeat(64),
-        execution: {
-          ...execution,
-          schemaVersion: "pragma.execution/v7",
-          version: 1,
-          status: "succeeded",
-          output: { type: "inline", value: "recovered" },
-          lastAppliedSequence: 1,
-          updatedAt: occurredAt,
-        },
-        invocations: [
-          {
-            ...root,
-            status: "succeeded",
-            output: { type: "inline", value: "recovered" },
-            updatedAt: occurredAt,
-          },
-        ],
-        agents: [],
-        contexts: [],
-        events: [event],
-        eventIds: [event.eventId],
-      })}\n`,
-      "utf8",
-    );
-
-    await expect(store.get("execution")).resolves.toMatchObject({
+    const historical = JSON.parse(
+      await readFile(new URL("./fixtures/execution-handoff-v10.json", import.meta.url), "utf8"),
+    ) as { files: Record<string, string> };
+    let transaction: unknown;
+    for (const [relative, contents] of Object.entries(historical.files)) {
+      if (relative.includes("/handoffs/")) {
+        transaction = (JSON.parse(contents) as { transaction: unknown }).transaction;
+        continue;
+      }
+      const file = join(home, relative);
+      await mkdir(dirname(file), { recursive: true });
+      await writeFile(file, contents);
+    }
+    await writeFile(paths.executionTransaction("historical-handoff"), JSON.stringify(transaction));
+    const store = createTestExecutionStore({ pragmaHome: home });
+    await expect(store.get("historical-handoff")).resolves.toMatchObject({
       status: "succeeded",
-      output: { type: "inline", value: "recovered" },
       lastAppliedSequence: 1,
     });
-    await expect(store.readEvents("execution")).resolves.toMatchObject([
-      { eventId: "recovered-result", cursor: { sequence: 1 } },
+    await expect(store.readEvents("historical-handoff")).resolves.toMatchObject([
+      { eventId: "historic-terminal", cursor: { sequence: 1 } },
     ]);
+    await expect(readFile(paths.executionTransaction("historical-handoff"))).rejects.toMatchObject({
+      code: "ENOENT",
+    });
   });
 
   it("rejects v1 Execution state instead of reading a compatibility format", async () => {
@@ -596,7 +569,7 @@ describe("Execution canonical event log", { timeout: 30_000 }, () => {
       "utf8",
     );
 
-    await expect(createFileExecutionStore({ pragmaHome: home }).get("legacy")).rejects.toThrow(
+    await expect(createTestExecutionStore({ pragmaHome: home }).get("legacy")).rejects.toThrow(
       "unsupported-state-version",
     );
   });
@@ -1151,7 +1124,7 @@ describe("Execution canonical event log", { timeout: 30_000 }, () => {
 
 async function fixture() {
   const home = await createTemporaryHome("pragma-event-log-");
-  const store = createFileExecutionStore({ pragmaHome: home });
+  const store = createTestExecutionStore({ pragmaHome: home });
   const timestamp = new Date().toISOString();
   const definition = { id: "flow", kind: "flow" as const };
   const execution: ExecutionRecord = {

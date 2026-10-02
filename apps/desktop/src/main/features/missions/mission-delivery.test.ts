@@ -1,19 +1,19 @@
-import { mkdtemp, rm, mkdir, rename } from "node:fs/promises";
-import { join } from "node:path";
-import { tmpdir } from "node:os";
-import { DatabaseSync } from "node:sqlite";
-import { afterEach, describe, expect, it, vi } from "vitest";
 import {
+  createEmptyUsage,
   createFileCanonicalEventFeed,
   createNoopLoggerProvider,
-  createEmptyUsage,
   type CanonicalEventFeed,
 } from "@pragma/core";
 import { PRAGMA_DSL_WRITE_API_VERSION } from "@pragma/interpreter/ast";
+import { mkdir, mkdtemp, rename, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { DatabaseSync } from "node:sqlite";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { missionExecutorSnapshot } from "../../../shared/contracts/index.ts";
-import { createMissionStore } from "./mission-store.ts";
 import { createMissionDeliveryRecovery } from "./mission-delivery-recovery.ts";
 import { createMissionDelivery, type MissionDeliveryStep } from "./mission-delivery.ts";
+import { createMissionStore } from "./mission-store.ts";
 
 const resources: {
   root: string;
@@ -132,7 +132,7 @@ describe("Mission durable delivery", { timeout: 15000 }, () => {
     target.delivery.start();
     await vi.waitFor(() => expect(target.delivery.safeThrough()).toBe(1));
     expect(target.usage).not.toHaveBeenCalled();
-    target.delivery.register(target.mission, executionId, target.mission.initialMessageId);
+    await target.delivery.register(target.mission, executionId, target.mission.initialMessageId);
     await vi.waitFor(() => expect(target.usage).toHaveBeenCalledOnce(), { timeout: 5000 });
   });
   it("isolates Memory failure from metadata and history; archive waits for history", async () => {
@@ -141,13 +141,15 @@ describe("Mission durable delivery", { timeout: 15000 }, () => {
       order.push(step);
       if (step === "memory") throw new Error("memory unavailable");
     });
-    target.delivery.register(target.mission, executionId, target.mission.initialMessageId);
+    await target.delivery.register(target.mission, executionId, target.mission.initialMessageId);
     await publish(target.feed, "terminal");
     target.delivery.start();
     await vi.waitFor(() => expect(order).toContain("archive"), { timeout: 7000 });
     expect(order).toContain("metadata");
     expect(order.indexOf("history")).toBeLessThan(order.indexOf("archive"));
-    expect(target.delivery.inspect()).toMatchObject({ state: "degraded", pending: 1 });
+    await vi.waitFor(() =>
+      expect(target.delivery.inspect()).toMatchObject({ state: "degraded", pending: 1 }),
+    );
   });
   it.each([false, true])(
     "replays staged work after restart with intake unavailable=%s",
@@ -155,7 +157,7 @@ describe("Mission durable delivery", { timeout: 15000 }, () => {
       const target = await fixture(async () => {
         throw new Error("offline");
       });
-      target.delivery.register(target.mission, executionId, target.mission.initialMessageId);
+      await target.delivery.register(target.mission, executionId, target.mission.initialMessageId);
       await publish(target.feed, "terminal");
       target.delivery.start();
       await vi.waitFor(() => expect(target.delivery.inspect().state).toBe("degraded"));
@@ -172,18 +174,20 @@ describe("Mission durable delivery", { timeout: 15000 }, () => {
         terminal,
       });
       resources[resources.length - 1]!.delivery = restored;
-      restored.retry(target.mission.id);
+      await restored.retry(target.mission.id);
       restored.start();
       await vi.waitFor(() => expect(restored.inspect().pending).toBe(0), { timeout: 7000 });
       expect(terminal).toHaveBeenCalledTimes(5);
       expect(restored.safeThrough()).toBe(1);
       expect(read).toHaveBeenCalled();
       if (unavailable) {
-        expect(restored.inspect()).toMatchObject({
-          state: "degraded",
-          errorCode: "MISSION_DELIVERY_RECEIVE_FAILED",
-          pending: 0,
-        });
+        await vi.waitFor(() =>
+          expect(restored.inspect()).toMatchObject({
+            state: "degraded",
+            errorCode: "MISSION_DELIVERY_RECEIVE_FAILED",
+            pending: 0,
+          }),
+        );
         sourceUnavailable = false;
         restored.wake();
         await vi.waitFor(() => expect(restored.inspect().state).toBe("healthy"));
@@ -194,7 +198,7 @@ describe("Mission durable delivery", { timeout: 15000 }, () => {
   );
   it("does not write metadata or reset retry backoff when reading an existing association", async () => {
     const target = await fixture();
-    target.delivery.register(target.mission, executionId, target.mission.initialMessageId);
+    await target.delivery.register(target.mission, executionId, target.mission.initialMessageId);
     await publish(target.feed, "usage");
     // Receive without delivering: the fact has no association until this call.
     const db = new DatabaseSync(target.path);
@@ -214,7 +218,7 @@ describe("Mission durable delivery", { timeout: 15000 }, () => {
       const before = db
         .prepare("SELECT next_at,attempts FROM delivery_tasks WHERE id='retry'")
         .get();
-      target.delivery.register(
+      await target.delivery.register(
         { ...target.mission, title: "Updated title" },
         executionId,
         target.mission.initialMessageId,
@@ -232,7 +236,7 @@ describe("Mission durable delivery", { timeout: 15000 }, () => {
   });
   it("quarantines an unreadable envelope and continues delivering unrelated valid facts", async () => {
     const target = await fixture();
-    target.delivery.register(target.mission, executionId, target.mission.initialMessageId);
+    await target.delivery.register(target.mission, executionId, target.mission.initialMessageId);
     await publish(target.feed, "terminal");
     const page = await target.feed.read({ after: { sequence: 0 }, limit: 64 });
     const read = vi.fn(async (input: Parameters<CanonicalEventFeed["read"]>[0]) =>
@@ -257,11 +261,13 @@ describe("Mission durable delivery", { timeout: 15000 }, () => {
     restored.start();
     await vi.waitFor(() => expect(target.terminal).toHaveBeenCalledTimes(5), { timeout: 7000 });
     expect(restored.safeThrough()).toBe(2);
-    expect(restored.inspect()).toMatchObject({
-      state: "degraded",
-      pending: 1,
-      errorCode: "MISSION_DELIVERY_INVALID_ENVELOPE",
-    });
+    await vi.waitFor(() =>
+      expect(restored.inspect()).toMatchObject({
+        state: "degraded",
+        pending: 1,
+        errorCode: "MISSION_DELIVERY_INVALID_ENVELOPE",
+      }),
+    );
   });
   it("deletes and fences Executions whose association was never registered", async () => {
     const target = await fixture();
@@ -273,30 +279,30 @@ describe("Mission durable delivery", { timeout: 15000 }, () => {
       mission: target.mission,
       executionIds: [executionId],
     });
-    expect(target.delivery.inspect().pending).toBe(0);
+    await vi.waitFor(() => expect(target.delivery.inspect().pending).toBe(0));
     await publish(target.feed, "terminal");
     await vi.waitFor(() => expect(target.delivery.safeThrough()).toBe(2));
-    expect(target.delivery.inspect().pending).toBe(0);
+    await vi.waitFor(() => expect(target.delivery.inspect().pending).toBe(0));
     expect(target.usage).not.toHaveBeenCalled();
     expect(target.terminal).not.toHaveBeenCalled();
   });
   it("rejects rebinding an Execution to a different Mission or request", async () => {
     const target = await fixture();
-    target.delivery.register(target.mission, executionId, target.mission.initialMessageId);
-    expect(() =>
+    await target.delivery.register(target.mission, executionId, target.mission.initialMessageId);
+    await expect(
       target.delivery.register(
         { ...target.mission, id: "00000000-0000-4000-8000-000000000222" },
         executionId,
         target.mission.initialMessageId,
       ),
-    ).toThrow("OWNER_CONFLICT");
-    expect(() => target.delivery.register(target.mission, executionId, "another-request")).toThrow(
-      "OWNER_CONFLICT",
-    );
+    ).rejects.toThrow("OWNER_CONFLICT");
+    await expect(
+      target.delivery.register(target.mission, executionId, "another-request"),
+    ).rejects.toThrow("OWNER_CONFLICT");
   });
   it("rejects a stale Feed page after a competing consumer delivered the same source", async () => {
     const target = await fixture();
-    target.delivery.register(target.mission, executionId, target.mission.initialMessageId);
+    await target.delivery.register(target.mission, executionId, target.mission.initialMessageId);
     await publish(target.feed, "usage");
     const stalePage = await target.feed.read({ after: { sequence: 0 }, limit: 64 });
     let release!: () => void;
@@ -329,13 +335,13 @@ describe("Mission durable delivery", { timeout: 15000 }, () => {
     await vi.waitFor(() => expect(other.safeThrough()).toBe(1));
     await other.close();
     expect(target.usage).toHaveBeenCalledOnce();
-    expect(target.delivery.inspect().pending).toBe(0);
+    await vi.waitFor(() => expect(target.delivery.inspect().pending).toBe(0));
   });
   it.each(["future", "wrong-owner"])(
     "retains an invalid Usage task (%s) while valid terminal steps continue",
     async (invalid) => {
       const target = await fixture();
-      target.delivery.register(target.mission, executionId, target.mission.initialMessageId);
+      await target.delivery.register(target.mission, executionId, target.mission.initialMessageId);
       await publish(target.feed, "usage");
       const page = await target.feed.read({ after: { sequence: 0 }, limit: 64 });
       const item = page.items[0]!;
@@ -366,16 +372,18 @@ describe("Mission durable delivery", { timeout: 15000 }, () => {
       target.delivery.start();
       await vi.waitFor(() => expect(target.terminal).toHaveBeenCalledTimes(5), { timeout: 7000 });
       expect(target.delivery.safeThrough()).toBe(3);
-      expect(target.delivery.inspect()).toMatchObject({
-        state: "degraded",
-        errorCode: "MISSION_DELIVERY_INVALID_TASK",
-        pending: 1,
-      });
+      await vi.waitFor(() =>
+        expect(target.delivery.inspect()).toMatchObject({
+          state: "degraded",
+          errorCode: "MISSION_DELIVERY_INVALID_TASK",
+          pending: 1,
+        }),
+      );
     },
   );
   it("isolates an invalid payload without an owner and retains a later valid terminal", async () => {
     const target = await fixture();
-    target.delivery.register(target.mission, executionId, target.mission.initialMessageId);
+    await target.delivery.register(target.mission, executionId, target.mission.initialMessageId);
     await publish(target.feed, "terminal");
     const page = await target.feed.read({ after: { sequence: 0 }, limit: 64 });
     const item = page.items[0]!;
@@ -407,11 +415,13 @@ describe("Mission durable delivery", { timeout: 15000 }, () => {
     restored.start();
     await vi.waitFor(() => expect(target.terminal).toHaveBeenCalledTimes(5), { timeout: 7000 });
     expect(restored.safeThrough()).toBe(2);
-    expect(restored.inspect()).toMatchObject({
-      state: "degraded",
-      pending: 1,
-      errorCode: "MISSION_DELIVERY_INVALID_TASK",
-    });
+    await vi.waitFor(() =>
+      expect(restored.inspect()).toMatchObject({
+        state: "degraded",
+        pending: 1,
+        errorCode: "MISSION_DELIVERY_INVALID_TASK",
+      }),
+    );
   });
   it("excludes unassociated work from the indexed claim candidates", async () => {
     const target = await fixture();
@@ -436,7 +446,11 @@ describe("Mission durable delivery", { timeout: 15000 }, () => {
         )
         .all(Date.now());
       expect(candidates).toEqual([]);
-      target.delivery.register(target.mission, "execution-0", target.mission.initialMessageId);
+      await target.delivery.register(
+        target.mission,
+        "execution-0",
+        target.mission.initialMessageId,
+      );
       expect(
         db
           .prepare(
@@ -468,7 +482,7 @@ describe("Mission durable delivery", { timeout: 15000 }, () => {
       throw new Error("accounting offline");
     });
     const target = await fixture(undefined, beforeDelete);
-    target.delivery.register(target.mission, executionId, target.mission.initialMessageId);
+    await target.delivery.register(target.mission, executionId, target.mission.initialMessageId);
     await expect(target.delivery.deleteMission(target.mission.id)).rejects.toThrow(
       "accounting offline",
     );
@@ -478,22 +492,22 @@ describe("Mission durable delivery", { timeout: 15000 }, () => {
     beforeDelete.mockResolvedValueOnce(undefined);
     await target.delivery.deleteMission(target.mission.id);
     expect(beforeDelete).toHaveBeenLastCalledWith(target.mission, [executionId]);
-    expect(() =>
+    await expect(
       target.delivery.register(target.mission, executionId, target.mission.initialMessageId),
-    ).toThrow("DELETED");
+    ).rejects.toThrow("DELETED");
   });
   it("tombstones pending and future delivery for a deleted owner", async () => {
     const target = await fixture();
-    target.delivery.register(target.mission, executionId, target.mission.initialMessageId);
+    await target.delivery.register(target.mission, executionId, target.mission.initialMessageId);
     await target.delivery.deleteMission(target.mission.id);
     await publish(target.feed, "terminal");
     target.delivery.start();
     await vi.waitFor(() => expect(target.delivery.safeThrough()).toBe(1));
-    expect(target.delivery.inspect().pending).toBe(0);
+    await vi.waitFor(() => expect(target.delivery.inspect().pending).toBe(0));
     expect(target.terminal).not.toHaveBeenCalled();
-    expect(() =>
+    await expect(
       target.delivery.register(target.mission, executionId, target.mission.initialMessageId),
-    ).toThrow("DELETED");
+    ).rejects.toThrow("DELETED");
   });
 });
 
@@ -538,7 +552,11 @@ describe("Mission delivery initialization recovery", () => {
       expect(onRecovered).toHaveBeenCalledOnce();
       expect(delivery.current!.safeThrough()).toBe(1);
       resources[resources.length - 1]!.delivery = delivery.current!;
-      delivery.current!.register(target.mission, executionId, target.mission.initialMessageId);
+      await delivery.current!.register(
+        target.mission,
+        executionId,
+        target.mission.initialMessageId,
+      );
       await vi.waitFor(() => expect(target.usage).toHaveBeenCalledOnce());
       await recovery.close();
       await vi.advanceTimersByTimeAsync(120_000);

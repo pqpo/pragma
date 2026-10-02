@@ -1,0 +1,46 @@
+{
+  "schemaVersion": "pragma.execution-storage-benchmark/v1",
+  "timestamp": "2026-10-01T15:04:19.235Z",
+  "cpu": "Intel(R) Core(TM) i7-9750H CPU @ 2.60GHz",
+  "results": [
+    {
+      "history": 500,
+      "owners": 1,
+      "samples": 20,
+      "commitLatencyMs": {
+        "p50": 26.348592999999937,
+        "p95": 40.81813000000011
+      },
+      "requestPayloadBytes": 5700,
+      "responsePayloadBytes": 15849,
+      "databaseGrowthBytes": 28672,
+      "note": "Payload bytes are worker boundary serialization, not physical disk I/O. No canonical consumer or UI in this benchmark."
+    },
+    {
+      "history": 5000,
+      "owners": 1,
+      "samples": 20,
+      "commitLatencyMs": {
+        "p50": 25.481613999999354,
+        "p95": 28.750997000000098
+      },
+      "requestPayloadBytes": 5720,
+      "responsePayloadBytes": 15950,
+      "databaseGrowthBytes": 28672,
+      "note": "Payload bytes are worker boundary serialization, not physical disk I/O. No canonical consumer or UI in this benchmark."
+    },
+    {
+      "history": 5000,
+      "owners": 4,
+      "samples": 80,
+      "commitLatencyMs": {
+        "p50": 50.268582000000606,
+        "p95": 91.41135199999917
+      },
+      "requestPayloadBytes": 22880,
+      "responsePayloadBytes": 63800,
+      "databaseGrowthBytes": 114688,
+      "note": "Payload bytes are worker boundary serialization, not physical disk I/O. No canonical consumer or UI in this benchmark."
+    }
+  ]
+}

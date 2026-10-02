@@ -1,42 +1,42 @@
-import { join } from "node:path";
-import { createLocalHostMemorySubjectIdentityStore } from "./memory-subject-identity.ts";
 import {
   PragmaPaths,
-  withFileLock,
   createFileCanonicalEventFeed,
-  createFileExecutionStore,
-  type FileExecutionStore,
+  withFileLock,
   type CanonicalEventFeed,
+  type DurableExecutionStore,
   type PragmaLogger,
 } from "@pragma/core";
 import {
   MemoryModuleRegistry,
   createEpisodicMemoryModule,
-  createKnowledgeMemoryModule,
-  createKnowledgeSourceReader,
-  createSkillMemoryModule,
-  createSkillSourceReader,
-  createSemanticMemoryModule,
+  createExecutionEvidenceAdapter,
   createFileMemoryExtractionSettingsStore,
   createFileMemoryExtractorProfileStore,
-  createExecutionEvidenceAdapter,
-  createFileMemoryPolicyStore,
   createFileMemoryPipelineStateStore,
+  createFileMemoryPolicyStore,
+  createKnowledgeMemoryModule,
+  createKnowledgeSourceReader,
+  createMemoryActivityStore,
   createMemoryEvidenceFeed,
   createMemoryEvidencePublisher,
   createMemoryPipelineScheduler,
-  createMemoryActivityStore,
-  type KnowledgeMemoryModule,
+  createSemanticMemoryModule,
+  createSkillMemoryModule,
+  createSkillSourceReader,
   type KnowledgeLearningSink,
+  type KnowledgeMemoryModule,
   type SkillLearningSink,
   type SkillLearningTargetReader,
 } from "@pragma/memory";
+import { join } from "node:path";
+import { createSqliteExecutionStore } from "./execution/sqlite-execution-store.ts";
+import { createLocalHostMemorySubjectIdentityStore } from "./memory-subject-identity.ts";
 
 export async function createLocalHostMemoryDataPlane(options: {
   readonly pragmaHome: string;
   readonly logger: PragmaLogger;
   readonly canonical?: CanonicalEventFeed;
-  readonly executionStore?: FileExecutionStore;
+  readonly executionStore?: DurableExecutionStore;
   readonly knowledgeLearningSink?: KnowledgeLearningSink | undefined;
   readonly skillLearningSink?: SkillLearningSink | undefined;
   readonly skillLearningTargetReader?: SkillLearningTargetReader | undefined;
@@ -45,18 +45,10 @@ export async function createLocalHostMemoryDataPlane(options: {
     options.canonical ?? (await createFileCanonicalEventFeed({ pragmaHome: options.pragmaHome }));
   const executionStore =
     options.executionStore ??
-    createFileExecutionStore({
+    createSqliteExecutionStore({
       logger: options.logger,
       pragmaHome: options.pragmaHome,
       canonicalEventFeed: canonical,
-      canonicalDelivery: "background",
-      onCanonicalEventDeliveryError: (error, context) => {
-        options.logger.warn(
-          "desktop.memory_event_delivery_deferred",
-          "A canonical event handoff was preserved for background recovery.",
-          { ...context, error },
-        );
-      },
     });
   const state = createFileMemoryPipelineStateStore({ pragmaHome: options.pragmaHome });
   const policies = createFileMemoryPolicyStore({ pragmaHome: options.pragmaHome });

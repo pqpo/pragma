@@ -1,22 +1,20 @@
+import { createTestExecutionStore, createPragma } from "./execution-test-host.ts";
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
 import { join } from "node:path";
 
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
-  createFileExecutionStore,
   createFileExpertSessionStore,
-  createPragma,
   createStaticRuntimeResolver,
   defineExpert,
   defineRuntimeDriver,
-  SteerDeliveryUncertainError,
   type RuntimeNativeSessionContext,
-} from "../src/index.ts";
-import { createRuntimeTestFeatures } from "../src/testing/index.ts";
+} from "@pragma/core";
+import { createRuntimeTestFeatures } from "@pragma/core/testing";
 
 const roots: string[] = [];
 
@@ -31,14 +29,13 @@ interface FixtureSession {
   readonly id: string;
 }
 
-describe("queue steer crash recovery", () => {
-  it("pauses an ambiguous queued item instead of risking duplicate delivery", async () => {
-    const pragmaHome = await mkdtemp(join(tmpdir(), "pragma-queue-steer-crash-"));
+describe("strict steer fallback crash recovery", () => {
+  it("replays a durable not-dispatched strict fallback after a crash without native redelivery", async () => {
+    const pragmaHome = await mkdtemp(join(tmpdir(), "pragma-strict-fallback-crash-"));
     roots.push(pragmaHome);
-    const sessionId = "queue-steer-crash-session";
+    const sessionId = "strict-fallback-crash-session";
     const repositoryRoot = join(import.meta.dirname, "..", "..", "..");
     const tsxLoader = await resolveTsxLoader(repositoryRoot);
-    const crashPhase = "release-after-retire";
     const child = spawn(
       process.execPath,
       [
@@ -48,27 +45,46 @@ describe("queue steer crash recovery", () => {
         "seed",
         pragmaHome,
         sessionId,
-        crashPhase,
+        "strict-fallback",
       ],
       { cwd: repositoryRoot, detached: process.platform !== "win32", stdio: "pipe" },
     );
-
+    let releaseActive!: () => void;
+    const activeGate = new Promise<void>((resolve) => {
+      releaseActive = resolve;
+    });
+    let markActiveStarted!: () => void;
+    const activeStarted = new Promise<void>((resolve) => {
+      markActiveStarted = resolve;
+    });
+    let nativeSteers = 0;
     try {
-      await waitForLine(child, "release-ready");
-      child.stdin.end("release\n");
+      await waitForLine(child, "fallback-ready");
+      child.stdin.end("crash\n");
       await waitForExit(child);
       expect(child.signalCode).toBe("SIGKILL");
-
-      const executions = createFileExecutionStore({ pragmaHome });
+      const executions = createTestExecutionStore({ pragmaHome });
       const sessions = createFileExpertSessionStore({ executions, pragmaHome });
       const app = createPragma({
         pragmaHome,
-        runtimes: createStaticRuntimeResolver({
-          runtimes: [createRecoveryRuntime()],
-          defaultRuntimeId: "queue-steer-crash-runtime",
-        }),
         executionStore: executions,
         expertSessionStore: sessions,
+        runtimes: createStaticRuntimeResolver({
+          runtimes: [
+            createRecoveryRuntime({
+              onSteer: () => {
+                nativeSteers += 1;
+              },
+              onTurn: async (query) => {
+                if (query === "after-crash") {
+                  markActiveStarted();
+                  await activeGate;
+                }
+              },
+            }),
+          ],
+          defaultRuntimeId: "queue-steer-crash-runtime",
+        }),
       });
       const expert = await defineExpert({
         id: "queue-steer-crash-expert",
@@ -78,58 +94,67 @@ describe("queue steer crash recovery", () => {
         scope: "test",
         workspace: pragmaHome,
       });
-
       const recovered = await app.experts.resumeSession(expert, { sessionId });
-      await expect(recovered.getPromptQueue()).resolves.toEqual(
-        expect.arrayContaining([
-          expect.objectContaining({
+      try {
+        expect(
+          (await recovered.getPromptQueue()).find((p) => p.requestId === "redirect"),
+        ).toMatchObject({
+          mode: "steer",
+          status: "failed",
+          deliveryAttempt: { state: "not_dispatched" },
+        });
+        const active = await recovered.prompt("after-crash", { requestId: "after-crash" });
+        await recovered.resumePromptQueue();
+        await activeStarted;
+        await vi.waitFor(async () => expect((await active.getState()).status).toBe("running"));
+        await expect(
+          recovered.prompt("different", {
             requestId: "redirect",
-            mode: "enqueue",
-            executionId: expect.any(String),
-            status: "queued",
+            mode: "steer",
+            steerFallback: "enqueue",
           }),
-        ]),
-      );
-      const restored = (await recovered.getPromptQueue()).find(
-        (prompt) => prompt.requestId === "redirect",
-      );
-      expect(restored).not.toHaveProperty("targetExecutionId");
-      expect(restored).toMatchObject({
-        error: "delivery_uncertain",
-        deliveryAttempt: { kind: "queue_steer", state: "uncertain" },
-      });
-      await expect(recovered.getPromptQueueState()).resolves.toMatchObject({
-        state: "paused",
-        pausedAfterRequestId: "redirect",
-      });
-      await expect(recovered.attemptQueuedPromptSteer("redirect")).resolves.toEqual({
-        outcome: "retained",
-        reason: "delivery_uncertain",
-      });
-      expect((await recovered.getState()).activeExecutionId).toBeUndefined();
-      await expect(recovered.resumePromptQueue()).rejects.toBeInstanceOf(
-        SteerDeliveryUncertainError,
-      );
-      await recovered.resumePromptQueue({ recovery: "abandon" });
-      expect(
-        (await recovered.getPromptQueue()).find((prompt) => prompt.requestId === "redirect"),
-      ).toMatchObject({ status: "cancelled", deliveryAttempt: { state: "uncertain" } });
-      const state = await recovered.getState();
-      expect(state.contexts[state.rootContextId]?.snapshot).toBeUndefined();
-      const next = await recovered.prompt("Continue after terminal recovery", {
-        requestId: "next",
-      });
-      await expect(next.result).resolves.toBe("recovery");
-      await recovered.close();
+        ).rejects.toThrow("Prompt idempotency conflict");
+        await expect(
+          recovered.prompt("redirect", { requestId: "redirect", mode: "steer" }),
+        ).rejects.toThrow("Native turn has ended.");
+        const fallback = await recovered.prompt("redirect", {
+          requestId: "redirect",
+          mode: "steer",
+          steerFallback: "enqueue",
+        });
+        expect(fallback).toMatchObject({ requestedMode: "steer", effectiveMode: "enqueue" });
+        expect(nativeSteers).toBe(0);
+        expect(
+          (await recovered.getPromptQueue()).filter((p) => p.requestId === "redirect"),
+        ).toHaveLength(1);
+        const duplicate = await recovered.prompt("redirect", { requestId: "redirect" });
+        expect(duplicate.executionId).toBe(fallback.executionId);
+        expect((await active.getState()).status).toBe("running");
+        releaseActive();
+        await active.result;
+        await expect(fallback.result).resolves.toBe("recovery");
+        const state = await recovered.getState();
+        expect(state.executionIds.filter((id) => id === fallback.executionId)).toHaveLength(1);
+        expect(nativeSteers).toBe(0);
+      } finally {
+        releaseActive();
+        await recovered.close();
+      }
     } finally {
+      releaseActive();
       if (child.exitCode === null && child.signalCode === null) killProcessTree(child, "SIGKILL");
     }
   }, 20_000);
 });
 
-function createRecoveryRuntime() {
+function createRecoveryRuntime(
+  hooks: {
+    readonly onSteer?: () => void;
+    readonly onTurn?: (query: string) => Promise<void>;
+  } = {},
+) {
   return defineRuntimeDriver<never, FixtureSession>({
-    features: createRuntimeTestFeatures({ enabled: ["cancellation", "close"] }),
+    features: createRuntimeTestFeatures({ enabled: ["cancellation", "close", "steering"] }),
     descriptor: {
       id: "queue-steer-crash-runtime",
       kind: "fake",
@@ -144,7 +169,11 @@ function createRecoveryRuntime() {
       id: context.request.runtimeSession!.id,
     }),
     readSession: (session) => ({ runtimeSessionId: session.id }),
-    startTurn: async () => ({ outputText: "recovery", runtimeSessionId: "recovery" }),
+    startTurn: async (_session, turn) => {
+      await hooks.onTurn?.(turn.rawQuery);
+      return { outputText: "recovery", runtimeSessionId: "recovery" };
+    },
+    steerTurn: () => hooks.onSteer?.(),
     mapEvent: () => ({ events: [] }),
     cancelTurn: () => undefined,
     closeSession: () => undefined,

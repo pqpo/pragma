@@ -1,3 +1,4 @@
+import { createInMemoryExecutionStore } from "@pragma/core/testing";
 import { spawn as nodeSpawn } from "node:child_process";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -25,6 +26,7 @@ import { afterAll, describe, expect, it, vi } from "vitest";
 import { createAntigravityRuntime } from "../src/index.ts";
 import type { AntigravityAuthenticationMode } from "../src/types.ts";
 
+const executions = createInMemoryExecutionStore();
 const runSmoke = process.env["PRAGMA_ANTIGRAVITY_REAL_SMOKE"] === "1";
 const roots: string[] = [];
 
@@ -58,6 +60,7 @@ describe.runIf(runSmoke)("Antigravity real CLI smoke", () => {
       loggerProvider,
     });
     const app = createPragma({
+      executionStore: executions,
       pragmaHome,
       loggerProvider,
       runtimes: createStaticRuntimeResolver({
@@ -133,6 +136,7 @@ describe.runIf(runSmoke)("Antigravity real CLI smoke", () => {
         pragmaHome,
       });
       const app = createPragma({
+        executionStore: executions,
         loggerProvider,
         pragmaHome,
         runtimes: createStaticRuntimeResolver({
@@ -272,6 +276,7 @@ describe.runIf(runSmoke)("Antigravity real CLI smoke", () => {
           defaultModelName: process.env["PRAGMA_ANTIGRAVITY_SMOKE_MODEL"] ?? "gemini-3.8-flash-low",
         });
         return createPragma({
+          executionStore: executions,
           pragmaHome,
           loggerProvider,
           runtimes: createStaticRuntimeResolver({
@@ -444,6 +449,7 @@ describe.runIf(runSmoke)("Antigravity real CLI smoke", () => {
       },
     });
     const app = createPragma({
+      executionStore: executions,
       pragmaHome,
       loggerProvider,
       runtimes: createStaticRuntimeResolver({

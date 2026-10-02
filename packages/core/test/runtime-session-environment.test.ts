@@ -5,18 +5,18 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
+  createRuntimeContextWindowUsage,
   defineExpert,
   definePluginEntry,
   defineRuntimeDriver,
-  createRuntimeContextWindowUsage,
   PragmaPaths,
   readRuntimeSessionRecord,
   type ExpertAgentPluginManifest,
   type RuntimeNativeSessionContext,
 } from "../src/index.ts";
-import { createRuntimeTestFeatures } from "../src/testing/index.ts";
-import { openRuntimeSession } from "../src/runtime/session-factory.ts";
 import { ensureLoopbackNoProxy } from "../src/runtime/process-environment.ts";
+import { openRuntimeSession } from "../src/runtime/session-factory.ts";
+import { createRuntimeTestFeatures } from "../src/testing/index.ts";
 
 const roots: string[] = [];
 
@@ -185,7 +185,7 @@ describe("Runtime Session process environment", () => {
 });
 
 describe("Runtime Session context window", () => {
-  it("calibrates the live estimate from the refreshed Runtime baseline before a turn starts", async () => {
+  it("keeps required capacity inspection but publishes only the settled Runtime baseline", async () => {
     const root = await temporaryRoot();
     const inspect = vi.fn(() =>
       createRuntimeContextWindowUsage({
@@ -224,9 +224,10 @@ describe("Runtime Session context window", () => {
     const contextUpdates = events.filter((event) => event.type === "context-window.updated");
     const liveUpdate = contextUpdates.find((event) => event.payload.provisional);
 
-    expect(liveUpdate?.payload.usage).toMatchObject({
-      usedTokens: 40_003,
-      measurement: "estimated",
+    expect(liveUpdate).toBeUndefined();
+    expect(contextUpdates.at(-1)?.payload.usage).toMatchObject({
+      usedTokens: 40_000,
+      measurement: "reported",
     });
     expect(inspect).toHaveBeenCalledTimes(2);
     await session.close();

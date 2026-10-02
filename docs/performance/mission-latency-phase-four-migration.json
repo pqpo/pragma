@@ -1,0 +1,101 @@
+{
+  "schemaVersion": "pragma.execution-migration-benchmark/v1",
+  "timestamp": "2026-10-01T16:35:47.297Z",
+  "cpu": "Intel(R) Core(TM) i7-9750H CPU @ 2.60GHz",
+  "samplesPerSize": 3,
+  "source": "Current JSON format written by FileExecutionStore; one bulk commit, 128-byte progress payload; no gzip archive, pending handoff or historical domain migration. First two zero-event samples include lazy worker initialization.",
+  "results": [
+    {
+      "events": 0,
+      "samples": [
+        {
+          "sourceBytes": 726,
+          "conversionMs": 739.1992960000001,
+          "subsequentReadMs": 1.8895960000002106,
+          "mainLoopMaxIntervalMs": 11.611404999999877
+        },
+        {
+          "sourceBytes": 726,
+          "conversionMs": 737.8954130000002,
+          "subsequentReadMs": 1.831485000000157,
+          "mainLoopMaxIntervalMs": 12.070292000000109
+        },
+        {
+          "sourceBytes": 726,
+          "conversionMs": 324.73099,
+          "subsequentReadMs": 1.526426000000356,
+          "mainLoopMaxIntervalMs": 11.732484999999997
+        }
+      ]
+    },
+    {
+      "events": 500,
+      "samples": [
+        {
+          "sourceBytes": 203070,
+          "conversionMs": 398.3033650000002,
+          "subsequentReadMs": 1.4542069999997693,
+          "mainLoopMaxIntervalMs": 11.939461999999821
+        },
+        {
+          "sourceBytes": 203070,
+          "conversionMs": 360.1673840000003,
+          "subsequentReadMs": 1.3523009999998976,
+          "mainLoopMaxIntervalMs": 11.486791000000267
+        },
+        {
+          "sourceBytes": 203070,
+          "conversionMs": 354.57489699999996,
+          "subsequentReadMs": 1.5103329999997186,
+          "mainLoopMaxIntervalMs": 10.538790999999947
+        }
+      ]
+    },
+    {
+      "events": 5000,
+      "samples": [
+        {
+          "sourceBytes": 2047573,
+          "conversionMs": 484.049712,
+          "subsequentReadMs": 1.3581420000000435,
+          "mainLoopMaxIntervalMs": 12.07534300000043
+        },
+        {
+          "sourceBytes": 2047573,
+          "conversionMs": 492.4741160000003,
+          "subsequentReadMs": 1.351861000000099,
+          "mainLoopMaxIntervalMs": 15.076303999999254
+        },
+        {
+          "sourceBytes": 2047573,
+          "conversionMs": 468.3476209999999,
+          "subsequentReadMs": 1.4735160000000178,
+          "mainLoopMaxIntervalMs": 11.926274000000376
+        }
+      ]
+    },
+    {
+      "events": 50000,
+      "samples": [
+        {
+          "sourceBytes": 20717576,
+          "conversionMs": 1787.32949,
+          "subsequentReadMs": 1.4911670000001322,
+          "mainLoopMaxIntervalMs": 12.06709200000023
+        },
+        {
+          "sourceBytes": 20717576,
+          "conversionMs": 1734.240565,
+          "subsequentReadMs": 1.4056860000000597,
+          "mainLoopMaxIntervalMs": 12.035820999999487
+        },
+        {
+          "sourceBytes": 20717576,
+          "conversionMs": 1692.913681,
+          "subsequentReadMs": 1.5065009999998438,
+          "mainLoopMaxIntervalMs": 12.121227999999974
+        }
+      ]
+    }
+  ]
+}

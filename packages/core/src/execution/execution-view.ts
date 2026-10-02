@@ -104,15 +104,27 @@ export class StoredExecutionView implements ExecutionView {
     if (!Number.isInteger(limit) || limit < 1 || limit > 1_000) {
       throw new Error("Execution event limit must be an integer between 1 and 1000.");
     }
-    const invocations = await this.store.listInvocations(this.executionId);
+    const scope = options.scope ?? { kind: "root" };
     const selected = selectInvocations(
-      invocations,
+      scope.kind === "root" || scope.kind === "invocation"
+        ? []
+        : await this.store.listInvocations(this.executionId),
       (await this.getState()).rootInvocationId,
-      options.scope,
+      scope,
     );
-    const matching = (await this.store.readEvents(this.executionId, options.after)).filter(
-      (event) => selected.has(event.invocationId),
-    );
+    const matching: ExecutionEvent[] = [];
+    let after = options.after;
+    // Read bounded cursor pages, including one extra match to determine whether
+    // another page exists. Sparse scopes never serialize the whole history.
+    while (matching.length <= limit) {
+      const page = await this.store.readEvents(this.executionId, after, limit + 1);
+      for (const event of page) {
+        if (selected.has(event.invocationId)) matching.push(event);
+        if (matching.length > limit) break;
+      }
+      if (matching.length > limit || page.length < limit + 1) break;
+      after = page.at(-1)!.cursor;
+    }
     const items = matching.slice(0, limit);
     return {
       items,

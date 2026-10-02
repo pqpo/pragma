@@ -260,6 +260,9 @@ importers:
 
   examples:
     dependencies:
+      '@pragma/local-host':
+        specifier: workspace:*
+        version: link:../packages/local-host
       '@earendil-works/pi-tui':
         specifier: 0.87.1
         version: 0.87.1
@@ -516,6 +519,9 @@ importers:
         specifier: latest
         version: 4.6.5
     devDependencies:
+      '@modelcontextprotocol/client':
+        specifier: 2.1.0
+        version: 2.1.0
       '@pragma/tsconfig':
         specifier: workspace:*
         version: link:../tsconfig

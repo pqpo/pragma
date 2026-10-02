@@ -37,7 +37,8 @@
     "@pragma/runtime-qodercli": "workspace:*",
     "cac": "^7.0.0",
     "dotenv": "latest",
-    "zod": "latest"
+    "zod": "latest",
+    "@pragma/local-host": "workspace:*"
   },
   "devDependencies": {
     "@pragma/tsconfig": "workspace:*",

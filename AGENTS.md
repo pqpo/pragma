@@ -922,3 +922,11 @@ docs/conventions/coding-conventions.md
 - claim、恢复、删除与迁移修改必须同时验证正常首次使用和异常恢复路径。
 - 知识库修订修改执行 `pnpm test:revision`，独立于快速 `test:core`；PR CI 和 Desktop Release 必须执行该业务回归门禁。
 - 关键 Runtime 业务链路发布前记录真实 Runtime 的入口、目标、实际写入及审核结果，不能以 mock 成功代替。
+
+### Example Host composition
+
+`createPragma()` 要求显式注入 ExecutionStore。`examples/src/support/example-kit.ts`、
+`examples/src/runtimes/probe.ts` 与 `examples/src/runtimes/shared/console-runtime-chat.ts`
+作为本机 Host composition 入口可以依赖 `@pragma/local-host` 并注入 SQLite ExecutionStore。
+其他 example、领域层和 Runtime adapter 不得反向依赖 Host；持久存储集成测试归入 local-host，
+Core 与 Runtime 合约测试使用 `@pragma/core/testing` 的显式内存测试 store。

@@ -1,11 +1,11 @@
 import type {
+  McpToolRegistryPool,
+  PragmaLogger,
   ResolvedRuntime,
   RuntimeAdapter,
   RuntimeModelSelection,
   RuntimeResolver,
-  PragmaLogger,
   RuntimeTokenCounter,
-  McpToolRegistryPool,
 } from "@pragma/core";
 import {
   createAntigravityRuntime,
@@ -17,10 +17,10 @@ import {
   type CodexRuntimeApprovalPolicy,
   type CodexRuntimeSandboxMode,
 } from "@pragma/runtime-codex";
-import { createPiRuntime } from "@pragma/runtime-pi";
 import { createOpenCodeRuntime } from "@pragma/runtime-opencode";
-import { createQoderCliRuntime } from "@pragma/runtime-qodercli";
+import { createPiRuntime } from "@pragma/runtime-pi";
 import type { QoderCliRuntimePermissionMode } from "@pragma/runtime-qodercli";
+import { createQoderCliRuntime } from "@pragma/runtime-qodercli";
 
 import type {
   DesktopToolPermissionMode,
@@ -73,6 +73,7 @@ export interface RuntimeEnvironmentService extends RuntimeResolver {
   list(): Promise<readonly RuntimeEnvironmentInspection[]>;
   forToolPermissionMode(mode: DesktopToolPermissionMode): RuntimeResolver;
   getMaterializationCacheKey(): Promise<string>;
+  invalidateModelValidation?(): void;
 }
 
 export function createRuntimeEnvironmentService(options: {
@@ -204,6 +205,10 @@ export function createRuntimeEnvironmentService(options: {
     };
   };
 
+  let modelCatalogs = new WeakMap<
+    RuntimeAdapter,
+    { expiresAt: number; value: ReturnType<NonNullable<RuntimeAdapter["listModels"]>> }
+  >();
   const validateModelSelection = async (
     resolved: ResolvedRuntime,
     selection: RuntimeModelSelection | undefined,
@@ -213,7 +218,24 @@ export function createRuntimeEnvironmentService(options: {
       throw new Error(`Runtime does not expose a model catalog: ${resolved.binding.runtimeId}.`);
     }
     const discoveryStartedAt = performance.now();
-    const models = await resolved.adapter.listModels();
+    let catalog = modelCatalogs.get(resolved.adapter);
+    if (catalog === undefined || catalog.expiresAt <= Date.now()) {
+      const value = resolved.adapter
+        .listModels()
+        .then((models) => {
+          const entry = modelCatalogs.get(resolved.adapter);
+          if (entry?.value === value) entry.expiresAt = Date.now() + 30_000;
+          return models;
+        })
+        .catch((error: unknown) => {
+          if (modelCatalogs.get(resolved.adapter)?.value === value)
+            modelCatalogs.delete(resolved.adapter);
+          throw error;
+        });
+      catalog = { expiresAt: Infinity, value };
+      modelCatalogs.set(resolved.adapter, catalog);
+    }
+    const models = await catalog.value;
     options.logger?.debug(
       "runtime.model_catalog_validation",
       "Runtime model selection catalog validation completed",
@@ -277,6 +299,9 @@ export function createRuntimeEnvironmentService(options: {
   return {
     ...createResolver(),
     getMaterializationCacheKey,
+    invalidateModelValidation: () => {
+      modelCatalogs = new WeakMap();
+    },
     forToolPermissionMode: (mode) => createResolver(mode),
     list: async () =>
       await Promise.all(

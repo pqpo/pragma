@@ -363,6 +363,8 @@ export const missions = {
   historyTruncated_other:
     "封存歷史不完整：有 {{count}} 則較早訊息未保留，{{truncatedFields}} 個超大欄位已縮短。",
   loadingEarlier: "載入中…",
+  chatHistoryVerifying: "正在驗證已儲存的歷史…",
+  chatHistoryVerificationUnavailable: "已儲存的歷史暫時無法驗證，請查看診斷。",
   chatSyncUnavailable: "部分對話狀態暫時無法讀取，現有訊息已保留。",
   retryChatSync: "重試",
   resumeToManage: "繼續此執行後進行管理",

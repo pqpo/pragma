@@ -142,3 +142,8 @@ export function getExecutionLiveBus(store: ExecutionStore): ExecutionLiveBus {
   buses.set(store, created);
   return created;
 }
+
+/** A transaction decorator must preserve the source store streaming identity. */
+export function shareExecutionLiveBus(source: ExecutionStore, decorated: ExecutionStore): void {
+  buses.set(decorated, getExecutionLiveBus(source));
+}

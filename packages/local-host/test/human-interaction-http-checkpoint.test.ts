@@ -1,3 +1,4 @@
+import { createTestExecutionStore, createPragma } from "./execution-test-host.ts";
 import { access, mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -6,9 +7,7 @@ import { Client, StreamableHTTPClientTransport } from "@modelcontextprotocol/cli
 import { afterEach, describe, expect, it } from "vitest";
 
 import {
-  createFileExecutionStore,
   createFileExpertSessionStore,
-  createPragma,
   createStaticRuntimeResolver,
   defineExpert,
   defineRuntimeDriver,
@@ -16,8 +15,8 @@ import {
   registerExpertToolsMcpSession,
   type ExpertToolsMcpSessionRegistration,
   type RuntimeNativeSessionContext,
-} from "../src/index.ts";
-import { createRuntimeTestFeatures } from "../src/testing/index.ts";
+} from "@pragma/core";
+import { createRuntimeTestFeatures } from "@pragma/core/testing";
 
 const homes: string[] = [];
 
@@ -33,7 +32,7 @@ describe("Human interaction checkpoint across the HTTP MCP boundary", { timeout:
   it("stops the active Runtime after non-TTY checkpoint and resumes the same interaction", async () => {
     const home = await mkdtemp(join(tmpdir(), "pragma-http-human-checkpoint-"));
     homes.push(home);
-    const executionStore = createFileExecutionStore({ pragmaHome: home });
+    const executionStore = createTestExecutionStore({ pragmaHome: home });
     const sessionStore = createFileExpertSessionStore({
       executions: executionStore,
       pragmaHome: home,
@@ -109,7 +108,7 @@ describe("Human interaction checkpoint across the HTTP MCP boundary", { timeout:
     expect(completedEvents.map((event) => event.type)).toContain("invocation.succeeded");
     expect(completedEvents.map((event) => event.type)).toContain("execution.succeeded");
     expect(state.starts).toBe(2);
-    await resumed.releaseAfterTerminal();
+    await resumed.close();
   });
 });
 
@@ -195,7 +194,7 @@ function createHttpMcpRuntime(state: {
 }
 
 async function readHumanRequest(
-  store: ReturnType<typeof createFileExecutionStore>,
+  store: ReturnType<typeof createTestExecutionStore>,
   executionId: string,
 ): Promise<{ readonly interactionId: string }> {
   const event = (await store.readEvents(executionId)).find(
@@ -213,7 +212,7 @@ async function readHumanRequest(
 }
 
 async function waitForExecutionEvent(
-  store: ReturnType<typeof createFileExecutionStore>,
+  store: ReturnType<typeof createTestExecutionStore>,
   executionId: string,
   type: string,
 ): Promise<void> {
