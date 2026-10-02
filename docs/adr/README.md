@@ -30,6 +30,7 @@ ADR 的数字来自项目演进历史，早期曾出现同号记录。链接文�
 - [Mission controller lease 与 command inbox](./043-mission-controller-lease-and-command-inbox.md)
 - [Durable Mission command receipts](./047-durable-mission-command-receipts.md)
 - [Mission durable delivery](./064-mission-durable-delivery-and-capacity-accounting.md)
+- [Mission 删除的停止确认与持久后处理](./065-mission-deletion-stop-and-post-processing.md)
 
 ## DSL、Project 与 Bundle
 

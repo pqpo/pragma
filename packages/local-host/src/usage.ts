@@ -9,6 +9,7 @@ import { canonicalReceiptPage } from "./canonical-receipt-page.ts";
 import { acquireHostStoragePool } from "./host-storage-pool.ts";
 
 export interface LocalHostUsageSink extends UsageSink {
+  reconcile(observations: readonly RuntimeUsageObservation[]): Promise<void>;
   list(): Promise<readonly RuntimeUsageObservation[]>;
   drain(): Promise<void>;
   close(): Promise<void>;
@@ -172,6 +173,9 @@ export function createLocalHostUsageSink(options: {
       if (options.feed === undefined || options.deliveryPath === undefined)
         await ledger("record", observation);
       else start();
+    },
+    async reconcile(observations) {
+      if (observations.length > 0) await ledger("reconcile", observations);
     },
     async list() {
       if (options.feed !== undefined) await this.drain();

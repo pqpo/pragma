@@ -1,0 +1,477 @@
+{
+  "schemaVersion": "pragma.execution-storage-benchmark/v1",
+  "timestamp": "2026-10-02T05:45:59.573Z",
+  "cpu": "Intel(R) Core(TM) i7-9750H CPU @ 2.60GHz",
+  "results": [
+    {
+      "engine": "sqlite",
+      "canonicalDelivery": false,
+      "history": 0,
+      "owners": 1,
+      "samples": 20,
+      "commitLatencyMs": {
+        "p50": 6.287008999999898,
+        "p95": 6.980270000000019
+      },
+      "readLatencyMs": {
+        "p50": 1.6383659999999054,
+        "p95": 1.7650670000000446
+      },
+      "requestPayloadBytes": 5920,
+      "responsePayloadBytes": 16443,
+      "workerMetrics": [
+        {
+          "writes": 0,
+          "lockWaitMs": 0,
+          "maxLockWaitMs": 0,
+          "writeLockHeldMs": 0,
+          "maxWriteLockHeldMs": 0,
+          "requests": 0,
+          "queueWaitMs": 0,
+          "maxQueueWaitMs": 0
+        },
+        {
+          "writes": 20,
+          "lockWaitMs": 0.27595499999983986,
+          "maxLockWaitMs": 0.02039100000001781,
+          "writeLockHeldMs": 20.79643899999951,
+          "maxWriteLockHeldMs": 2.5972629999998844,
+          "requests": 40,
+          "queueWaitMs": 0.4073880000009922,
+          "maxQueueWaitMs": 0.030279999999947904
+        }
+      ],
+      "processDiskIo": {
+        "readBytes": 0,
+        "writeBytes": 2490368,
+        "source": "macOS proc_pid_rusage RUSAGE_INFO_V2",
+        "scope": "Whole benchmark process including storage/canonical worker threads and background delivery; kernel counters may include delayed writes. Excludes seeding. Not per-transaction attribution."
+      },
+      "databaseGrowthBytes": 32768,
+      "note": "Payload bytes are worker boundary serialization, not physical disk I/O. Canonical feed enabled only where indicated; no UI or Memory/Usage consumer in this benchmark."
+    },
+    {
+      "engine": "sqlite",
+      "canonicalDelivery": false,
+      "history": 50,
+      "owners": 1,
+      "samples": 20,
+      "commitLatencyMs": {
+        "p50": 6.249635000000126,
+        "p95": 6.622305999999753
+      },
+      "readLatencyMs": {
+        "p50": 1.6515420000000631,
+        "p95": 1.7717230000002928
+      },
+      "requestPayloadBytes": 5940,
+      "responsePayloadBytes": 16522,
+      "workerMetrics": [
+        {
+          "writes": 0,
+          "lockWaitMs": 0,
+          "maxLockWaitMs": 0,
+          "writeLockHeldMs": 0,
+          "maxWriteLockHeldMs": 0,
+          "requests": 0,
+          "queueWaitMs": 0,
+          "maxQueueWaitMs": 0
+        },
+        {
+          "writes": 20,
+          "lockWaitMs": 0.25054599999884886,
+          "maxLockWaitMs": 0.013804999999592837,
+          "writeLockHeldMs": 17.943691000001763,
+          "maxWriteLockHeldMs": 0.985019000000193,
+          "requests": 40,
+          "queueWaitMs": 0.3039510000012342,
+          "maxQueueWaitMs": 0.010264999999890279
+        }
+      ],
+      "processDiskIo": {
+        "readBytes": 0,
+        "writeBytes": 2498560,
+        "source": "macOS proc_pid_rusage RUSAGE_INFO_V2",
+        "scope": "Whole benchmark process including storage/canonical worker threads and background delivery; kernel counters may include delayed writes. Excludes seeding. Not per-transaction attribution."
+      },
+      "databaseGrowthBytes": 32768,
+      "note": "Payload bytes are worker boundary serialization, not physical disk I/O. Canonical feed enabled only where indicated; no UI or Memory/Usage consumer in this benchmark."
+    },
+    {
+      "engine": "sqlite",
+      "canonicalDelivery": false,
+      "history": 500,
+      "owners": 1,
+      "samples": 20,
+      "commitLatencyMs": {
+        "p50": 6.514451000000008,
+        "p95": 6.836981000000378
+      },
+      "readLatencyMs": {
+        "p50": 1.6692689999999857,
+        "p95": 1.7778819999998632
+      },
+      "requestPayloadBytes": 5960,
+      "responsePayloadBytes": 16629,
+      "workerMetrics": [
+        {
+          "writes": 0,
+          "lockWaitMs": 0,
+          "maxLockWaitMs": 0,
+          "writeLockHeldMs": 0,
+          "maxWriteLockHeldMs": 0,
+          "requests": 0,
+          "queueWaitMs": 0,
+          "maxQueueWaitMs": 0
+        },
+        {
+          "writes": 20,
+          "lockWaitMs": 0.2555549999997311,
+          "maxLockWaitMs": 0.016305999999985943,
+          "writeLockHeldMs": 19.057778000000326,
+          "maxWriteLockHeldMs": 1.1062590000001364,
+          "requests": 40,
+          "queueWaitMs": 0.3346159999991869,
+          "maxQueueWaitMs": 0.013932000000295375
+        }
+      ],
+      "processDiskIo": {
+        "readBytes": 0,
+        "writeBytes": 2506752,
+        "source": "macOS proc_pid_rusage RUSAGE_INFO_V2",
+        "scope": "Whole benchmark process including storage/canonical worker threads and background delivery; kernel counters may include delayed writes. Excludes seeding. Not per-transaction attribution."
+      },
+      "databaseGrowthBytes": 28672,
+      "note": "Payload bytes are worker boundary serialization, not physical disk I/O. Canonical feed enabled only where indicated; no UI or Memory/Usage consumer in this benchmark."
+    },
+    {
+      "engine": "sqlite",
+      "canonicalDelivery": false,
+      "history": 5000,
+      "owners": 1,
+      "samples": 20,
+      "commitLatencyMs": {
+        "p50": 6.28302900000017,
+        "p95": 7.557611000000179
+      },
+      "readLatencyMs": {
+        "p50": 1.642540000000281,
+        "p95": 1.8149619999999231
+      },
+      "requestPayloadBytes": 5980,
+      "responsePayloadBytes": 16730,
+      "workerMetrics": [
+        {
+          "writes": 0,
+          "lockWaitMs": 0,
+          "maxLockWaitMs": 0,
+          "writeLockHeldMs": 0,
+          "maxWriteLockHeldMs": 0,
+          "requests": 0,
+          "queueWaitMs": 0,
+          "maxQueueWaitMs": 0
+        },
+        {
+          "writes": 20,
+          "lockWaitMs": 0.25621499999897424,
+          "maxLockWaitMs": 0.013368999999784137,
+          "writeLockHeldMs": 19.159640999999738,
+          "maxWriteLockHeldMs": 1.3107350000000224,
+          "requests": 40,
+          "queueWaitMs": 0.40003999999998996,
+          "maxQueueWaitMs": 0.030314000000089436
+        }
+      ],
+      "processDiskIo": {
+        "readBytes": 45056,
+        "writeBytes": 2482176,
+        "source": "macOS proc_pid_rusage RUSAGE_INFO_V2",
+        "scope": "Whole benchmark process including storage/canonical worker threads and background delivery; kernel counters may include delayed writes. Excludes seeding. Not per-transaction attribution."
+      },
+      "databaseGrowthBytes": 28672,
+      "note": "Payload bytes are worker boundary serialization, not physical disk I/O. Canonical feed enabled only where indicated; no UI or Memory/Usage consumer in this benchmark."
+    },
+    {
+      "engine": "sqlite",
+      "canonicalDelivery": false,
+      "history": 5000,
+      "owners": 4,
+      "samples": 80,
+      "commitLatencyMs": {
+        "p50": 10.384049999999661,
+        "p95": 14.99408399999993
+      },
+      "readLatencyMs": {
+        "p50": 3.177691999999297,
+        "p95": 4.172491000000264
+      },
+      "requestPayloadBytes": 23920,
+      "responsePayloadBytes": 66920,
+      "workerMetrics": [
+        {
+          "writes": 40,
+          "lockWaitMs": 0.5586999999941327,
+          "maxLockWaitMs": 0.026240999999572523,
+          "writeLockHeldMs": 42.977859999999055,
+          "maxWriteLockHeldMs": 3.574370000000272,
+          "requests": 80,
+          "queueWaitMs": 136.46089599999323,
+          "maxQueueWaitMs": 11.116640999999618
+        },
+        {
+          "writes": 40,
+          "lockWaitMs": 1.3070039999984147,
+          "maxLockWaitMs": 0.186399999999594,
+          "writeLockHeldMs": 37.97292400000606,
+          "maxWriteLockHeldMs": 1.698844000000463,
+          "requests": 80,
+          "queueWaitMs": 127.85031400000389,
+          "maxQueueWaitMs": 7.751853000000665
+        }
+      ],
+      "processDiskIo": {
+        "readBytes": 40960,
+        "writeBytes": 9928704,
+        "source": "macOS proc_pid_rusage RUSAGE_INFO_V2",
+        "scope": "Whole benchmark process including storage/canonical worker threads and background delivery; kernel counters may include delayed writes. Excludes seeding. Not per-transaction attribution."
+      },
+      "databaseGrowthBytes": 114688,
+      "note": "Payload bytes are worker boundary serialization, not physical disk I/O. Canonical feed enabled only where indicated; no UI or Memory/Usage consumer in this benchmark."
+    },
+    {
+      "engine": "sqlite",
+      "canonicalDelivery": true,
+      "history": 0,
+      "owners": 1,
+      "samples": 20,
+      "commitLatencyMs": {
+        "p50": 6.269554000000426,
+        "p95": 6.9534700000003795
+      },
+      "readLatencyMs": {
+        "p50": 1.5499999999992724,
+        "p95": 1.7307939999991504
+      },
+      "requestPayloadBytes": 5900,
+      "responsePayloadBytes": 16383,
+      "workerMetrics": [
+        {
+          "writes": 0,
+          "lockWaitMs": 0,
+          "maxLockWaitMs": 0,
+          "writeLockHeldMs": 0,
+          "maxWriteLockHeldMs": 0,
+          "requests": 0,
+          "queueWaitMs": 0,
+          "maxQueueWaitMs": 0
+        },
+        {
+          "writes": 22,
+          "lockWaitMs": 0.26578600000084407,
+          "maxLockWaitMs": 0.013193000000683242,
+          "writeLockHeldMs": 49.241947000001346,
+          "maxWriteLockHeldMs": 27.467717999999877,
+          "requests": 42,
+          "queueWaitMs": 0.31794299999910436,
+          "maxQueueWaitMs": 0.03425699999934295
+        }
+      ],
+      "processDiskIo": {
+        "readBytes": 0,
+        "writeBytes": 3112960,
+        "source": "macOS proc_pid_rusage RUSAGE_INFO_V2",
+        "scope": "Whole benchmark process including storage/canonical worker threads and background delivery; kernel counters may include delayed writes. Excludes seeding. Not per-transaction attribution."
+      },
+      "databaseGrowthBytes": 61440,
+      "note": "Payload bytes are worker boundary serialization, not physical disk I/O. Canonical feed enabled only where indicated; no UI or Memory/Usage consumer in this benchmark."
+    },
+    {
+      "engine": "sqlite",
+      "canonicalDelivery": true,
+      "history": 50,
+      "owners": 1,
+      "samples": 20,
+      "commitLatencyMs": {
+        "p50": 6.391555000000153,
+        "p95": 7.130160999999134
+      },
+      "readLatencyMs": {
+        "p50": 1.6005320000003849,
+        "p95": 1.722594000000754
+      },
+      "requestPayloadBytes": 5920,
+      "responsePayloadBytes": 16462,
+      "workerMetrics": [
+        {
+          "writes": 0,
+          "lockWaitMs": 0,
+          "maxLockWaitMs": 0,
+          "writeLockHeldMs": 0,
+          "maxWriteLockHeldMs": 0,
+          "requests": 0,
+          "queueWaitMs": 0,
+          "maxQueueWaitMs": 0
+        },
+        {
+          "writes": 22,
+          "lockWaitMs": 0.2642169999962789,
+          "maxLockWaitMs": 0.013546000000133063,
+          "writeLockHeldMs": 41.00019799999791,
+          "maxWriteLockHeldMs": 19.699118000000453,
+          "requests": 42,
+          "queueWaitMs": 0.3842259999983071,
+          "maxQueueWaitMs": 0.038775999999415944
+        }
+      ],
+      "processDiskIo": {
+        "readBytes": 0,
+        "writeBytes": 3239936,
+        "source": "macOS proc_pid_rusage RUSAGE_INFO_V2",
+        "scope": "Whole benchmark process including storage/canonical worker threads and background delivery; kernel counters may include delayed writes. Excludes seeding. Not per-transaction attribution."
+      },
+      "databaseGrowthBytes": 0,
+      "note": "Payload bytes are worker boundary serialization, not physical disk I/O. Canonical feed enabled only where indicated; no UI or Memory/Usage consumer in this benchmark."
+    },
+    {
+      "engine": "sqlite",
+      "canonicalDelivery": true,
+      "history": 500,
+      "owners": 1,
+      "samples": 20,
+      "commitLatencyMs": {
+        "p50": 6.883805999999822,
+        "p95": 7.868994000000384
+      },
+      "readLatencyMs": {
+        "p50": 1.6204180000004271,
+        "p95": 1.8496779999986757
+      },
+      "requestPayloadBytes": 5940,
+      "responsePayloadBytes": 16569,
+      "workerMetrics": [
+        {
+          "writes": 0,
+          "lockWaitMs": 0,
+          "maxLockWaitMs": 0,
+          "writeLockHeldMs": 0,
+          "maxWriteLockHeldMs": 0,
+          "requests": 0,
+          "queueWaitMs": 0,
+          "maxQueueWaitMs": 0
+        },
+        {
+          "writes": 22,
+          "lockWaitMs": 0.2808339999992313,
+          "maxLockWaitMs": 0.015957999999955064,
+          "writeLockHeldMs": 44.01087799999914,
+          "maxWriteLockHeldMs": 22.271529999999984,
+          "requests": 42,
+          "queueWaitMs": 0.40041200000086974,
+          "maxQueueWaitMs": 0.011755999999877531
+        }
+      ],
+      "processDiskIo": {
+        "readBytes": 0,
+        "writeBytes": 3383296,
+        "source": "macOS proc_pid_rusage RUSAGE_INFO_V2",
+        "scope": "Whole benchmark process including storage/canonical worker threads and background delivery; kernel counters may include delayed writes. Excludes seeding. Not per-transaction attribution."
+      },
+      "databaseGrowthBytes": 0,
+      "note": "Payload bytes are worker boundary serialization, not physical disk I/O. Canonical feed enabled only where indicated; no UI or Memory/Usage consumer in this benchmark."
+    },
+    {
+      "engine": "sqlite",
+      "canonicalDelivery": true,
+      "history": 5000,
+      "owners": 1,
+      "samples": 20,
+      "commitLatencyMs": {
+        "p50": 6.4338560000014695,
+        "p95": 6.931416999999783
+      },
+      "readLatencyMs": {
+        "p50": 1.654329000000871,
+        "p95": 1.7492419999998674
+      },
+      "requestPayloadBytes": 5960,
+      "responsePayloadBytes": 16670,
+      "workerMetrics": [
+        {
+          "writes": 0,
+          "lockWaitMs": 0,
+          "maxLockWaitMs": 0,
+          "writeLockHeldMs": 0,
+          "maxWriteLockHeldMs": 0,
+          "requests": 0,
+          "queueWaitMs": 0,
+          "maxQueueWaitMs": 0
+        },
+        {
+          "writes": 22,
+          "lockWaitMs": 0.2752050000053714,
+          "maxLockWaitMs": 0.014821000000665663,
+          "writeLockHeldMs": 47.597945000004984,
+          "maxWriteLockHeldMs": 26.615288999999393,
+          "requests": 42,
+          "queueWaitMs": 0.3893809999972291,
+          "maxQueueWaitMs": 0.013539999999920838
+        }
+      ],
+      "processDiskIo": {
+        "readBytes": 0,
+        "writeBytes": 3411968,
+        "source": "macOS proc_pid_rusage RUSAGE_INFO_V2",
+        "scope": "Whole benchmark process including storage/canonical worker threads and background delivery; kernel counters may include delayed writes. Excludes seeding. Not per-transaction attribution."
+      },
+      "databaseGrowthBytes": 0,
+      "note": "Payload bytes are worker boundary serialization, not physical disk I/O. Canonical feed enabled only where indicated; no UI or Memory/Usage consumer in this benchmark."
+    },
+    {
+      "engine": "sqlite",
+      "canonicalDelivery": true,
+      "history": 5000,
+      "owners": 4,
+      "samples": 80,
+      "commitLatencyMs": {
+        "p50": 13.028572000002896,
+        "p95": 53.27206800000204
+      },
+      "readLatencyMs": {
+        "p50": 3.2526299999990442,
+        "p95": 4.326712999998563
+      },
+      "requestPayloadBytes": 23840,
+      "responsePayloadBytes": 66680,
+      "workerMetrics": [
+        {
+          "writes": 43,
+          "lockWaitMs": 0.6615460000102757,
+          "maxLockWaitMs": 0.14920700000220677,
+          "writeLockHeldMs": 241.37380599997414,
+          "maxWriteLockHeldMs": 45.55683399999907,
+          "requests": 87,
+          "queueWaitMs": 388.6762730000082,
+          "maxQueueWaitMs": 69.7572459999974
+        },
+        {
+          "writes": 62,
+          "lockWaitMs": 2.271323000004486,
+          "maxLockWaitMs": 0.2532359999968321,
+          "writeLockHeldMs": 203.11338899997645,
+          "maxWriteLockHeldMs": 45.005403999999544,
+          "requests": 101,
+          "queueWaitMs": 368.47899699998015,
+          "maxQueueWaitMs": 50.938961999996536
+        }
+      ],
+      "processDiskIo": {
+        "readBytes": 0,
+        "writeBytes": 15183872,
+        "source": "macOS proc_pid_rusage RUSAGE_INFO_V2",
+        "scope": "Whole benchmark process including storage/canonical worker threads and background delivery; kernel counters may include delayed writes. Excludes seeding. Not per-transaction attribution."
+      },
+      "databaseGrowthBytes": 0,
+      "note": "Payload bytes are worker boundary serialization, not physical disk I/O. Canonical feed enabled only where indicated; no UI or Memory/Usage consumer in this benchmark."
+    }
+  ]
+}

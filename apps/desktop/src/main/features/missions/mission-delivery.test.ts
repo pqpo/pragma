@@ -28,13 +28,7 @@ afterEach(async () => {
   }
 });
 const executionId = "00000000-0000-4000-8000-000000000111";
-async function fixture(
-  callback?: (step: MissionDeliveryStep) => Promise<void>,
-  beforeDelete?: (
-    mission: import("../../../shared/contracts/index.ts").Mission,
-    executionIds: readonly string[],
-  ) => Promise<void>,
-) {
+async function fixture(callback?: (step: MissionDeliveryStep) => Promise<void>) {
   const root = await mkdtemp(join(tmpdir(), "pragma-mission-delivery-"));
   const mission = await createMissionStore({ missionsPath: join(root, "missions") }).create({
     workspace: { path: root, basename: "workspace" },
@@ -76,7 +70,6 @@ async function fixture(
     logger,
     usage,
     terminal,
-    ...(beforeDelete === undefined ? {} : { beforeDelete }),
   });
   resources.push({ root, feed, delivery });
   return { root, path, mission, feed, delivery, usage, terminal, logger };
@@ -477,24 +470,14 @@ describe("Mission durable delivery", { timeout: 15000 }, () => {
     ).toMatchObject({ value: "future" });
     check.close();
   });
-  it("does not tombstone an owner until deletion accounting has settled", async () => {
-    const beforeDelete = vi.fn(async (): Promise<void> => {
-      throw new Error("accounting offline");
-    });
-    const target = await fixture(undefined, beforeDelete);
+  it("fences an owner without waiting for accounting", async () => {
+    const target = await fixture();
     await target.delivery.register(target.mission, executionId, target.mission.initialMessageId);
-    await expect(target.delivery.deleteMission(target.mission.id)).rejects.toThrow(
-      "accounting offline",
-    );
-    expect(() =>
-      target.delivery.register(target.mission, executionId, target.mission.initialMessageId),
-    ).not.toThrow();
-    beforeDelete.mockResolvedValueOnce(undefined);
-    await target.delivery.deleteMission(target.mission.id);
-    expect(beforeDelete).toHaveBeenLastCalledWith(target.mission, [executionId]);
+    await target.delivery.fenceMission(target.mission.id, [executionId]);
     await expect(
       target.delivery.register(target.mission, executionId, target.mission.initialMessageId),
     ).rejects.toThrow("DELETED");
+    await target.delivery.deleteMission(target.mission.id);
   });
   it("tombstones pending and future delivery for a deleted owner", async () => {
     const target = await fixture();

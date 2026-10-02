@@ -26,6 +26,10 @@ export class RuntimeSessionPool {
   private readonly sessions = new Map<string, RuntimeSessionEntry>();
   private readonly pending = new Map<string, PendingRuntimeSession>();
   private readonly freshContexts = new Set<string>();
+  private readonly retiredCleanup = new Map<RuntimeAgentSession, Promise<void>>();
+  private readonly failedCleanup = new Set<RuntimeAgentSession>();
+  private readonly failedRetirements = new Set<RuntimeAgentSession>();
+  private readonly retiring = new Map<RuntimeAgentSession, Promise<void>>();
   private sealed = false;
   private closePromise: Promise<void> | undefined;
 
@@ -62,8 +66,11 @@ export class RuntimeSessionPool {
 
       const opening = create({ fresh }).then(async (session) => {
         if (this.sealed) {
-          await session.close();
-          throw new Error("Runtime Session pool closed while opening a session.");
+          this.invalidate(session);
+          await this.retiring.get(session);
+          throw Object.assign(new Error("Runtime Session pool closed while opening a session."), {
+            code: "RUNTIME_POOL_OPENING_SEALED",
+          });
         }
         this.sessions.set(identity.contextId, { identity, session });
         return session;
@@ -107,9 +114,22 @@ export class RuntimeSessionPool {
       this.sessions.delete(contextId);
       this.freshContexts.add(contextId);
     }
-    void Promise.resolve()
-      .then(async () => await session.close())
-      .catch(() => undefined);
+    const closing = Promise.resolve().then(
+      async () => await (session.stopForDeletion?.() ?? session.close()),
+    );
+    if (session.stopForDeletion !== undefined) {
+      this.trackRetiredCleanup(
+        session,
+        closing.then(async () => await session.close()),
+      );
+    }
+    this.retiring.set(session, closing);
+    void closing.then(
+      () => this.retiring.delete(session),
+      () => {
+        this.failedRetirements.add(session);
+      },
+    );
   }
 
   async clear(): Promise<void> {
@@ -135,8 +155,69 @@ export class RuntimeSessionPool {
 
   close(): Promise<void> {
     this.seal();
-    this.closePromise ??= this.closeAll();
+    if (this.closePromise === undefined) {
+      this.closePromise = this.closeAll();
+      void this.closePromise.catch(() => {
+        this.closePromise = undefined;
+      });
+    }
     return this.closePromise;
+  }
+
+  private trackRetiredCleanup(session: RuntimeAgentSession, cleanup: Promise<void>): void {
+    this.retiredCleanup.set(session, cleanup);
+    void cleanup.then(
+      () => {
+        if (this.retiredCleanup.get(session) === cleanup) {
+          this.retiredCleanup.delete(session);
+          this.failedCleanup.delete(session);
+        }
+      },
+      () => {
+        if (this.retiredCleanup.get(session) === cleanup) this.failedCleanup.add(session);
+      },
+    );
+  }
+
+  async finishDeletion(): Promise<void> {
+    for (const session of this.failedCleanup) {
+      this.failedCleanup.delete(session);
+      this.trackRetiredCleanup(
+        session,
+        Promise.resolve().then(async () => await session.close()),
+      );
+    }
+    await Promise.all([this.close(), ...this.retiredCleanup.values()]);
+  }
+
+  async closeForDeletion(): Promise<void> {
+    this.seal();
+    for (const session of this.failedRetirements) {
+      this.failedRetirements.delete(session);
+      this.invalidate(session);
+    }
+    const openingResults = await Promise.allSettled(
+      [...this.pending.values()].map((pending) => pending.opening),
+    );
+    const results = await Promise.allSettled([
+      ...[...this.sessions.values()].map(async ({ session }) => {
+        if (session.stopForDeletion !== undefined) await session.stopForDeletion();
+        else {
+          await session.close();
+          for (const [contextId, entry] of this.sessions)
+            if (entry.session === session) this.sessions.delete(contextId);
+        }
+      }),
+      ...this.retiring.values(),
+    ]);
+    const errors = [...openingResults, ...results].flatMap((result) =>
+      result.status === "rejected" && !isSealedOpening(result.reason)
+        ? [result.reason as unknown]
+        : [],
+    );
+    if (errors.length === 1) throw errors[0];
+    if (errors.length > 0)
+      throw new AggregateError(errors, "Runtime deletion stop was not confirmed.");
   }
 
   seal(): void {
@@ -148,13 +229,19 @@ export class RuntimeSessionPool {
       [...this.pending.values()].map((pending) => pending.opening),
     );
     const sessions = [...this.sessions.values()].map((entry) => entry.session);
-    this.sessions.clear();
     this.freshContexts.clear();
     const closeResults = await Promise.allSettled(
-      sessions.map(async (session) => await session.close()),
+      sessions.map(async (session) => {
+        await session.close();
+        for (const [contextId, entry] of this.sessions) {
+          if (entry.session === session) this.sessions.delete(contextId);
+        }
+      }),
     );
     const errors = [...pendingResults, ...closeResults].flatMap((result) =>
-      result.status === "rejected" ? [result.reason as unknown] : [],
+      result.status === "rejected" && !isSealedOpening(result.reason)
+        ? [result.reason as unknown]
+        : [],
     );
     if (errors.length === 1) throw errors[0];
     if (errors.length > 1) throw new AggregateError(errors, "Runtime Session pool cleanup failed.");
@@ -182,4 +269,8 @@ function hostContextBindingsMatch(
   requested: RuntimeSessionIdentity,
 ): boolean {
   return existing.hostContextBindingsFingerprint === requested.hostContextBindingsFingerprint;
+}
+
+function isSealedOpening(error: unknown): boolean {
+  return error instanceof Error && "code" in error && error.code === "RUNTIME_POOL_OPENING_SEALED";
 }

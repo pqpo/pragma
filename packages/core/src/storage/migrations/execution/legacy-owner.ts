@@ -9,6 +9,7 @@ import {
   InvocationSchema,
   isTerminalExecutionStatus,
   type ExecutionEvent,
+  type Invocation,
 } from "@pragma/shared";
 import { z } from "zod";
 import {
@@ -72,6 +73,40 @@ export async function recoverLegacyExecutionOwner(
       await prepareExecution(paths, executionId, true);
     },
     { operation: "execution.storage-conversion-recovery" },
+  );
+}
+
+/** Upgrades and reads a historical JSON owner already moved to Trash. */
+export async function readLegacyExecutionUsageSource(
+  paths: PragmaPaths,
+  executionId: string,
+): Promise<
+  | { readonly events: readonly ExecutionEvent[]; readonly invocations: readonly Invocation[] }
+  | undefined
+> {
+  // An expired/missing Trash source must not create a new owner lock directory.
+  try {
+    await stat(paths.executionState(executionId));
+  } catch (error) {
+    if (isNotFound(error)) return undefined;
+    throw error;
+  }
+  return await withFileLock(
+    paths.executionLock(executionId),
+    async () => {
+      if ((await readJsonIfExists(paths.executionState(executionId))) === undefined)
+        return undefined;
+      await prepareExecution(paths, executionId, true);
+      return {
+        events: (await readExecutionEvents(paths, executionId)).filter(
+          (event) => event.type === "runtime.usage.observed",
+        ),
+        invocations: InvocationSchema.array().parse(
+          (await readJsonIfExists(paths.executionInvocations(executionId))) ?? [],
+        ),
+      };
+    },
+    { operation: "execution.legacy-trash-usage" },
   );
 }
 

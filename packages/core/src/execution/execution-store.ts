@@ -117,6 +117,7 @@ export interface DurableExecutionStore extends ExecutionStore {
   withCanonicalEventDeletion<TValue>(
     executionIds: readonly string[],
     action: (handoffFiles: readonly string[]) => Promise<TValue>,
+    expertSessionIds?: readonly string[],
   ): Promise<TValue>;
 }
 

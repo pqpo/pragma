@@ -390,3 +390,7 @@ export {
 export * from "./host-usage-store.ts";
 
 export * from "./mission-delivery-receipt-store.ts";
+
+export * from "./missions/deletion.ts";
+
+export { readDeletedExecutionUsageSource } from "./execution/deleted-execution-usage.ts";

@@ -67,6 +67,53 @@ async function temporaryRoot(prefix: string): Promise<string> {
 }
 
 describe("Desktop PragmaAgent DSL project adapter", { timeout: 30_000 }, () => {
+  it("rechecks deletion admission at final DSL publication", async () => {
+    const root = await temporaryRoot("pragma-dsl-deletion-race-");
+    const project = createPragmaProjectStore({ projectsPath: join(root, "projects") });
+    let fenced = false;
+    const adapter = createDesktopPragmaAgentProjectPort({
+      ...adapterOptions(project, join(root, "state")),
+      withMissionMutation: async (_id, action) => {
+        if (fenced) throw new Error("MISSION_DELETION_PENDING");
+        return await action();
+      },
+    });
+    const runtimeRef = (
+      (await adapter.listExpertOptions({ category: "runtime-models", limit: 25 })).items[0] as {
+        runtimeProfileRef: string;
+      }
+    ).runtimeProfileRef;
+    const initial = requirePrepared(
+      await adapter.prepare({
+        expectedProjectRevision: 0,
+        sources: [expert("Original", runtimeRef)],
+      }),
+    );
+    await adapter.commit({ changeSetId: initial.changeSetId, operationId: "initial" });
+    const missionId = "ed1bcbb5-b1e6-4aa5-9357-7853ce745f6b";
+    const draft = await adapter.startDslDraft({
+      missionId,
+      workspacePath: root,
+      targets: [{ mode: "edit", ref: "expert:1xddvess309a6gme" }],
+    });
+    const file = draft.resources[0]!.filePath!;
+    await writeFile(
+      file,
+      (await readFile(file, "utf8")).replace("Write concise text.", "Write clean text."),
+    );
+    const prepared = requirePrepared(
+      await adapter.prepareDslDraft({ missionId, draftId: draft.draftId }),
+    );
+    // Entrance ownership checks still pass; the final publication admission closes.
+    fenced = true;
+    await expect(
+      adapter.commit({ missionId, changeSetId: prepared.changeSetId, operationId: "late" }),
+    ).rejects.toThrow("MISSION_DELETION_PENDING");
+    expect((await project.get()).revision).toBe(1);
+    await expect(
+      adapter.discardDslDraft({ missionId, draftId: draft.draftId }),
+    ).resolves.toBeUndefined();
+  });
   it("edits one prompt fragment through a Mission-owned file draft", async () => {
     const root = await temporaryRoot("pragma-dsl-file-draft-");
     const project = createPragmaProjectStore({ projectsPath: join(root, "projects") });

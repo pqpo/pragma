@@ -842,29 +842,23 @@ export function installMissionHandlers(options: {
       return mission;
     }),
   );
+  const deletions = new Map<string, Promise<void>>();
   ipcMain.handle("missions:delete", (_event, input: unknown) =>
     runDesktopMutation(async () => {
       const missionId = MissionActionSchema.parse(input).id;
-      await assertManagedMission(missionId);
-      const mission = await getManagedMission(missionId);
-      if (
-        mission.execution !== undefined &&
-        ["queued", "running", "waiting"].includes(mission.execution.status)
-      ) {
-        try {
-          await options.runner.forceInterrupt(missionId, mission.execution.id);
-        } catch (error) {
-          const refreshed = await getManagedMission(missionId);
-          if (
-            refreshed.execution !== undefined &&
-            ["queued", "running", "waiting"].includes(refreshed.execution.status)
-          ) {
-            throw error;
-          }
-        }
+      const existing = deletions.get(missionId);
+      if (existing !== undefined) return await existing;
+      const operation = (async () => {
+        await assertManagedMission(missionId);
+        await options.runner.delete(missionId);
+        publishRemoval(missionId);
+      })();
+      deletions.set(missionId, operation);
+      try {
+        await operation;
+      } finally {
+        if (deletions.get(missionId) === operation) deletions.delete(missionId);
       }
-      await options.runner.delete(missionId);
-      publishRemoval(missionId);
     }),
   );
   options.runner.subscribeChat((notification) => {

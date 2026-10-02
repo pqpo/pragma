@@ -68,6 +68,8 @@ export interface ExecutionView {
 }
 
 export interface MutableExecution extends ExecutionView {
+  stopForDeletion(reason?: string): Promise<void>;
+  finishDeletion?(): Promise<void>;
   cancel(reason?: string): Promise<void>;
   respondToHumanInteraction(
     interactionId: string,

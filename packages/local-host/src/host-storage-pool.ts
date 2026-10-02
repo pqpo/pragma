@@ -190,6 +190,7 @@ function client(): WorkerClient {
         operation.startsWith("usage") ||
         [
           "prepare-owner",
+          "deleted-usage-source",
           "outbox",
           "archive",
           "mission-receipt:stagePage",

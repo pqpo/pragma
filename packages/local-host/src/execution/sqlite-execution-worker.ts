@@ -1,3 +1,5 @@
+import { ExecutionStorageAuthoritySchema as authoritySchema } from "./execution-storage-export.ts";
+import { readDeletedExecutionUsageSourceInWorker } from "./deleted-execution-usage.ts";
 import { createHash } from "node:crypto";
 import { performance } from "node:perf_hooks";
 import { executionStorageConversionMigrationChain } from "@pragma/core";
@@ -17,6 +19,7 @@ import { createInterface } from "node:readline";
 import { z } from "zod";
 import {
   PragmaPaths,
+  isOwnerDeletionFenced,
   encodePragmaPathSegment,
   withFileLock,
   recoverLegacyExecutionOwner,
@@ -43,13 +46,6 @@ import {
 
 const port = parentPort!;
 let paths: PragmaPaths;
-const authoritySchema = z
-  .object({
-    schemaVersion: z.literal("pragma.execution-storage/v1"),
-    engine: z.literal("sqlite"),
-    executionId: z.string(),
-  })
-  .strict();
 const journalSchema = {
   parse: (value: unknown) => executionStorageConversionMigrationChain.upgrade(value).value,
 };
@@ -1003,6 +999,12 @@ async function execute(request: Request): Promise<unknown> {
   if (request.operation.startsWith("usage:")) return await executeUsage(request);
   paths = new PragmaPaths({ pragmaHome: request.pragmaHome });
   const id = request.executionId;
+  if (request.operation === "deleted-usage-source")
+    return await readDeletedExecutionUsageSourceInWorker(
+      paths,
+      (request.input as { deletionId: string }).deletionId,
+      id,
+    );
   if (request.operation === "close") {
     for (const key of databases.keys()) close(key);
     return;
@@ -1017,7 +1019,12 @@ async function execute(request: Request): Promise<unknown> {
     !existsSync(paths.executionCanonicalPending(id))
   )
     return false;
-  if (request.operation === "prepare-owner") return await prepare(id);
+  if (["ack", "outbox"].includes(request.operation) && isOwnerDeletionFenced(paths, id))
+    return request.operation === "outbox" ? [] : false;
+  if (request.operation === "prepare-owner") {
+    if (isOwnerDeletionFenced(paths, id)) throw new Error(`Execution deletion is fenced: ${id}`);
+    return await prepare(id);
+  }
   const marker = json(paths.executionStorageAuthority(id));
   if (marker !== undefined) {
     const parsed = authoritySchema.parse(marker);
@@ -1043,6 +1050,11 @@ async function execute(request: Request): Promise<unknown> {
     });
   const prepared = marker !== undefined;
   const action = async () => {
+    if (
+      ["create", "commit", "archive"].includes(request.operation) &&
+      isOwnerDeletionFenced(paths, id)
+    )
+      throw new Error(`Execution deletion is fenced: ${id}`);
     if (!prepared && request.operation !== "create") {
       close(id);
       if (["commit", "ack", "archive"].includes(request.operation))
@@ -1221,6 +1233,7 @@ const background = (request: Request) =>
     "ack",
     "archive",
     "prepare-owner",
+    "deleted-usage-source",
     "mission-receipt:stagePage",
     "mission-receipt:inspect",
   ].includes(request.operation) || request.operation.startsWith("usage");

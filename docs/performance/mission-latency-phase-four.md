@@ -120,3 +120,19 @@ SQLite 控制读取 P95 为单 owner 3.71–5.87 ms、四 owner 88.25 ms；对�
 新增五个真实 driver 边界回归，覆盖 collect-only 精确值、首次及重试后未发送、最终正文无 delta、独立收集重试并累计一次；保留原有 10,000 delta 零计数与精确上报零估算断言。Core 五套共 43 项、Host Usage/执行结算 10 项、Pi/Codex/Antigravity 相关回归 93 项通过，最新全仓 `pnpm check` 通过。流式统计没有恢复，未引入计时器、轮询或全历史读取。上述验证属于正确性和调用次数证据，真实端到端性能验收仍未完成。
 
 Runtime Session 身份继续在可选 collector 执行前耐久保存，保留用量收集失败时的恢复边界。最终代码重新运行 Core 43 项、全仓 `pnpm check` 和 Desktop production build 均通过，包含 preload 自包含与打包存储 worker 实际启动验证。
+
+## 后台恢复评论与主分支整合（2026-10-02）
+
+PR #352 后续评论提出的两个恢复问题均成立：pending/handoff 名称直接解码会让单个非法来源中断整轮恢复；固定处理前 64 个 owner 会让后续正常 owner 饥饿。现在逐文件隔离非法名称，原文件原子移入 quarantine 并报告稳定错误码，不读取或暴露 payload。恢复保持每轮最多 64 个 owner、单任务执行，按 owner 轮转；失败按 500 ms 至 30 秒退避，重试状态最多保留 1,024 个。退避中的失败继续报告 degraded，不伪装成已修复。恢复后移除重试状态，不添加后台 timer 或前台全局扫描。
+
+整合 main 的 PR #351 时保留 Mission 删除 journal、Runtime 停止确认、持久 owner fencing 和后台补偿。SQLite 写入在 owner 锁内检查 fence；删除采用 batch→Session→delivery→Execution 锁顺序。receipt fencing、删除快照读取和补偿入账使用 Host worker。SQLite Trash 只读取原始用量事件及 Invocation，历史 JSON Trash 的读取和升级留在 Core 迁移模块，不恢复 FileExecutionStore 业务 authority。删除后的 Invocation 按执行一次建索引，不对每条 observation 扫描完整数组。
+
+扩展 Memory 集成验证还发现有效历史文件名、owner 缺失时未进入迁移校验的遗漏：恢复现仅对实际发现的历史 handoff 在缺少 SQLite owner 时准备一次，未来版本保留并隔离；普通 pending owner 不额外准备。已有未来版本 degraded 断言保留，未改为接受失败来源。
+
+当前回归：Host SQLite、跨进程 fencing、Usage 补偿及 Mission 删除四套 50 项通过；Desktop 删除/投递/settlement/attention 四套 25 项通过，Memory 状态 11 项与 MissionRunner 删除相关 3 项通过。真实 native 删除测试未启用，仍不替代真实模型和完整端到端验收。
+
+补充回归：后台 lane 隔离 8 项通过，覆盖 Trash 用量读取及 outbox 挂起时暖 owner 终态先提交；MissionRunner successor Session、删除 claim 与人工等待重启恢复补充 5 项通过，Core Runtime 五套 44 项通过。缺失 Trash 来源先检查存在性，再进入迁移 owner 锁，避免读取过期来源创建空 owner 目录；同一真实历史 fixture 回归同时验证这一无副作用边界。
+
+[整合存储复测](mission-latency-phase-four-storage-merged.json)使用同一 Intel i7-9750H 主机与现有脚本。canonical 开启时，0/50/500/5,000 历史的单 owner 提交 P95 为 6.95/7.13/7.87/6.93 ms（各 20 次），四 owner P95 为 53.27 ms（80 次）。固定增量没有随十倍历史放大；本轮没有观察到此前的存储提交回退。main 的 #351 同时移除了进程租约 metadata 的 fsync，降低文件锁成本；这些数据不能归因于恢复修复，也不是单变量因果比较。SQL 业务事务的耐久要求保留。该基准不包含 renderer、模型和正常 Memory/Automation 负载，仍不能作为完整 Mission 达标证明；缺失 Trash 存在性检查仅作用于后台历史读取，不影响该提交测量。
+
+最终整合代码的全仓 `pnpm check` 与 `pnpm build` 均通过；Desktop main/preload 自包含及打包 worker 实际启动验证通过。缺失 Trash 来源的无副作用回归在最终重建依赖后通过。九个文本冲突已解决，最新 main 为 `e17b71bb`（#351）；PR 继续保持 Draft，完整真实模型端到端验收未补齐。

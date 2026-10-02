@@ -34,7 +34,6 @@ export async function createMissionDelivery(input: {
   usage: (mission: Mission, observation: RuntimeUsageObservation) => Promise<void>;
   onDegraded?: (missionId: string) => void;
   onRecovered?: (missionId: string) => void;
-  beforeDelete?: (mission: Mission, executionIds: readonly string[]) => Promise<void>;
   terminal: (
     mission: Mission,
     executionId: string,
@@ -237,6 +236,9 @@ export async function createMissionDelivery(input: {
         errorCode: lastError ?? diagnostic.errorCode,
       };
     },
+    async fenceMission(missionId: string, executionIds: readonly string[]) {
+      await receipts.markDeleted(missionId, executionIds);
+    },
     async deleteMission(
       missionId: string,
       owner?: { readonly mission: Mission; readonly executionIds: readonly string[] },
@@ -245,10 +247,6 @@ export async function createMissionDelivery(input: {
       const executionIds = [
         ...new Set([...links.map((link) => link.execution_id), ...(owner?.executionIds ?? [])]),
       ];
-      const mission =
-        owner?.mission ??
-        (links.length === 0 ? undefined : LinkSchema.parse(JSON.parse(links[0]!.payload)).mission);
-      if (mission !== undefined) await input.beforeDelete?.(mission, executionIds);
       await receipts.markDeleted(missionId, executionIds);
       await running;
       await Promise.all(

@@ -7,6 +7,7 @@
 最新并发复测暴露四 owner 投递下前台集中到一个 worker 的回退。已允许普通 ID-only ack 与前台共享第二 lane，大输出 outbox、迁移、Usage/receipt 批次及超大输入仍隔离；回归、同条件复测与剩余验收状态见阶段四报告。
 收尾最终复测：canonical 唤醒在现有机制中合并 250 ms，四 owner 提交 P95 从此次 255.19 ms 降至 176.37 ms（80 样本），仍高于此前 152.50 ms 基线，未宣称完全无回退。最新 pnpm check、Desktop build 与打包 worker 启动通过，Memory 三套 19 项通过，最终独立 CR 无新阻断。受监督真实模型 pilot 仍在 native Keychain 阶段超时并退出，无有效端到端样本；不能标记阶段四完成。
 PR #352 后续评论发现三个 Runtime 用量结算问题，已修正：先收集供应商精确用量再 fallback；明确未 dispatch 的 attempt 不估算，但保留此前实际 attempt 的用量；无 delta 时按最终正文估算输出。每次 attempt 独立结算并累计一次，流式期间仍不统计。验证与端到端验收限制见阶段四报告。
+PR #352 后续恢复评论：非法文件名隔离与失败 owner 公平恢复已修正；main 的 PR #351 删除优化整合到 SQLite/worker 路径，保留跨进程 fence、Session 锁顺序和后台补偿。历史 JSON Trash 由迁移模块读取，未来 handoff 继续隔离并报告 degraded。整合回归与最终检查记录见阶段四报告；完整性能验收仍未完成。
 两阶段按实测瓶颈交错推进，不要求先完成全部 SQLite 转换，才能缩短收尾等待。
 第三阶段后的真实页面加载发生严重退化；增量容量计量的全局接入已从 Desktop 与 Local Host 撤下，
 并移除新增启动校准。随后彻底回滚全仓 import 替换，删除计量 adapter、账本及相关钩子/测试/基准脚本。

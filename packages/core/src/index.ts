@@ -114,6 +114,11 @@ export * from "./tools/tool-resolver.ts";
 
 export { type DurableExecutionStore } from "./execution/execution-store.ts";
 export { executionTransactionRules } from "./execution/execution-transaction-rules.ts";
-export { recoverLegacyExecutionOwner } from "./storage/migrations/execution/legacy-owner.ts";
+export {
+  recoverLegacyExecutionOwner,
+  readLegacyExecutionUsageSource,
+} from "./storage/migrations/execution/legacy-owner.ts";
 
 export * from "./storage/migrations/execution-storage-conversion/index.ts";
+
+export * from "./storage/owner-deletion.ts";

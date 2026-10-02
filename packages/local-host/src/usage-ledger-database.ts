@@ -156,11 +156,15 @@ export async function executeUsageLedger(path: string, operation: string, input?
       try {
         initialize(db);
         switch (operation) {
-          case "record": {
-            const observation = RuntimeUsageObservedSchema.shape.observation.parse(input);
+          case "record":
+          case "reconcile": {
+            const observations =
+              operation === "record"
+                ? [RuntimeUsageObservedSchema.shape.observation.parse(input)]
+                : RuntimeUsageObservedSchema.shape.observation.array().parse(input);
             db.exec("BEGIN IMMEDIATE");
             try {
-              insert(db, observation);
+              for (const observation of observations) insert(db, observation);
               db.exec("COMMIT");
             } catch (error) {
               db.exec("ROLLBACK");

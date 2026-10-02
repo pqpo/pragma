@@ -1,13 +1,30 @@
-import { mkdtemp, mkdir, readFile, writeFile, rm, copyFile, rename } from "node:fs/promises";
+import {
+  mkdtemp,
+  mkdir,
+  readFile,
+  writeFile,
+  rm,
+  copyFile,
+  rename,
+  readdir,
+} from "node:fs/promises";
+import { randomUUID } from "node:crypto";
 import { tmpdir } from "node:os";
 import { DatabaseSync } from "node:sqlite";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
-import { PragmaPaths, ExecutionVersionConflictError } from "@pragma/core";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import {
+  PragmaPaths,
+  ExecutionVersionConflictError,
+  encodePragmaPathSegment,
+  createPragmaLogger,
+  createNoopLoggerProvider,
+} from "@pragma/core";
 import { type ExecutionRecord, type Invocation, type CanonicalEventEnvelope } from "@pragma/shared";
+import { readDeletedExecutionUsageSource } from "../src/execution/deleted-execution-usage.ts";
 import { createSqliteExecutionStore } from "../src/execution/sqlite-execution-store.ts";
 
 const stores: ReturnType<typeof createSqliteExecutionStore>[] = [];
@@ -389,6 +406,137 @@ describe("Host incremental Execution store", () => {
     await expect(store.get("execution")).rejects.toThrow();
     expect(await store.get("unrelated")).toBeUndefined();
     expect(await readFile(paths.executionStorageAuthority("execution"), "utf8")).toContain("v99");
+  });
+
+  it.each(["pending", "handoff"] as const)(
+    "isolates invalid %s filenames while recovering a normal owner",
+    async (kind) => {
+      let unavailable = true;
+      const delivered = new Map<string, CanonicalEventEnvelope>();
+      const append = async (events: readonly CanonicalEventEnvelope[]) => {
+        if (unavailable) throw new Error("offline");
+        for (const event of events) delivered.set(event.eventId, event);
+      };
+      const { store, paths, home } = await fixture({ append } as NonNullable<
+        Parameters<typeof createSqliteExecutionStore>[0]
+      >["canonicalEventFeed"]);
+      await store.commit({
+        executionId: "execution",
+        commitId: "source",
+        events: [{ eventId: "event", invocationId: "root", type: "progress", data: 1 }],
+      });
+      await expect(store.close()).rejects.toThrow("offline");
+      stores.splice(stores.indexOf(store), 1);
+      const directory =
+        kind === "pending"
+          ? paths.executionCanonicalPendingRoot()
+          : paths.canonicalEventHandoffsRoot();
+      await mkdir(directory, { recursive: true });
+      const invalid = join(directory, "!invalid.json");
+      await writeFile(invalid, "original damaged source");
+      unavailable = false;
+      const logger = createPragmaLogger(createNoopLoggerProvider(), { component: "test" });
+      const warn = vi.spyOn(logger, "warn");
+      const restarted = createSqliteExecutionStore({
+        pragmaHome: home,
+        canonicalEventFeed: { append } as NonNullable<
+          Parameters<typeof createSqliteExecutionStore>[0]
+        >["canonicalEventFeed"],
+        logger,
+      });
+      stores.push(restarted);
+      expect(await restarted.recoverPendingCanonicalEvents()).toMatchObject({
+        recovered: 1,
+        pending: 0,
+        failed: 0,
+        quarantined: 1,
+      });
+      expect(delivered.size).toBe(1);
+      await expect(readFile(invalid)).rejects.toMatchObject({ code: "ENOENT" });
+      const names = await readdir(paths.canonicalEventHandoffQuarantineRoot());
+      expect(
+        await readFile(join(paths.canonicalEventHandoffQuarantineRoot(), names[0]!), "utf8"),
+      ).toBe("original damaged source");
+      expect(warn).toHaveBeenCalledWith(
+        "execution.canonical_source_invalid",
+        expect.any(String),
+        expect.objectContaining({ errorCode: "execution_canonical_source_invalid" }),
+      );
+      expect(await restarted.recoverPendingCanonicalEvents()).toMatchObject({
+        recovered: 0,
+        pending: 0,
+        quarantined: 1,
+      });
+    },
+  );
+
+  it("rotates past a failed recovery batch after restart and backs off failed owners", async () => {
+    const append = vi.fn(async () => {
+      throw new Error("offline");
+    });
+    const { store, paths, home } = await fixture({ append } as NonNullable<
+      Parameters<typeof createSqliteExecutionStore>[0]
+    >["canonicalEventFeed"]);
+    await store.commit({
+      executionId: "execution",
+      commitId: "source",
+      events: [{ eventId: "event", invocationId: "root", type: "progress", data: 1 }],
+    });
+    await expect(store.close()).rejects.toThrow("offline");
+    stores.splice(stores.indexOf(store), 1);
+    const unavailable = Array.from(
+      { length: 64 },
+      (_, index) => `a-${String(index).padStart(2, "0")}`,
+    );
+    for (const id of unavailable)
+      await writeFile(paths.executionCanonicalPending(id), JSON.stringify({ executionId: id }));
+    const delivered = vi.fn(async () => {});
+    const restarted = createSqliteExecutionStore({
+      pragmaHome: home,
+      canonicalEventFeed: { append: delivered } as NonNullable<
+        Parameters<typeof createSqliteExecutionStore>[0]
+      >["canonicalEventFeed"],
+    });
+    stores.push(restarted);
+    expect(await restarted.recoverPendingCanonicalEvents()).toMatchObject({
+      recovered: 0,
+      failed: 64,
+      pending: 65,
+    });
+    expect(delivered).not.toHaveBeenCalled();
+    expect(await restarted.recoverPendingCanonicalEvents()).toMatchObject({
+      recovered: 1,
+      pending: 64,
+      failed: 64,
+    });
+    expect(delivered).toHaveBeenCalledOnce();
+    // Failures are retained for repair; cleanup avoids deliberately failing close.
+    for (const id of unavailable) await rm(paths.executionCanonicalPending(id));
+    expect(await restarted.recoverPendingCanonicalEvents()).toMatchObject({
+      failed: 0,
+      pending: 0,
+    });
+  });
+
+  it("reads writer-produced historical JSON Trash without creating a live owner", async () => {
+    const { home, paths } = await fixture();
+    await historicalOwner(home);
+    const deletionId = randomUUID();
+    const target = join(paths.trashRoot(), deletionId, "executions");
+    await mkdir(target, { recursive: true });
+    await rename(paths.executionRoot("v9-run"), join(target, encodePragmaPathSegment("v9-run")));
+    const source = await readDeletedExecutionUsageSource(paths, deletionId, "v9-run");
+    expect(source?.invocations.length).toBeGreaterThan(0);
+    await expect(readFile(paths.executionState("v9-run"))).rejects.toMatchObject({
+      code: "ENOENT",
+    });
+    const missingDeletionId = randomUUID();
+    expect(
+      await readDeletedExecutionUsageSource(paths, missingDeletionId, "v9-run"),
+    ).toBeUndefined();
+    await expect(readdir(join(paths.trashRoot(), missingDeletionId))).rejects.toMatchObject({
+      code: "ENOENT",
+    });
   });
 
   it("retains canonical source after a slow or failed delivery and retries idempotently", async () => {

@@ -125,6 +125,19 @@ function serializeDesktopMutationError(error: unknown): DesktopMutationErrorData
       diagnostics: [],
     });
   }
+  if (
+    error instanceof Error &&
+    "code" in error &&
+    error.code === "MISSION_DELETE_RUNTIME_STOP_UNCONFIRMED"
+  ) {
+    return DesktopMutationErrorSchema.parse({
+      code: error.code,
+      message: error.message,
+      category: "conflict",
+      retryable: true,
+      diagnostics: [],
+    });
+  }
   if (error instanceof z.ZodError) {
     return DesktopMutationErrorSchema.parse({
       code: "invalid_request",

@@ -72,12 +72,17 @@ export class CodexAppServerClient {
   private readonly pending = new Map<number, PendingRequest>();
   private nextId = 1;
   private closed = false;
+  private readonly exited: Promise<void>;
+  private resolveExit!: () => void;
 
   private constructor(
     process: ChildProcessWithoutNullStreams,
     private readonly options: CodexAppServerClientOptions,
   ) {
     this.process = process;
+    this.exited = new Promise<void>((resolve) => {
+      this.resolveExit = resolve;
+    });
     const lines = createInterface({ input: process.stdout });
 
     lines.on("line", (line) => {
@@ -93,6 +98,7 @@ export class CodexAppServerClient {
       this.rejectAll(error instanceof Error ? error : new Error(String(error)));
     });
     process.on("exit", (code, signal) => {
+      this.resolveExit();
       const detail = signal === null ? `code ${code ?? "unknown"}` : `signal ${signal}`;
       this.rejectAll(new Error(`Codex app-server exited with ${detail}.`));
     });
@@ -229,14 +235,13 @@ export class CodexAppServerClient {
     await this.request("thread/compact/start", { threadId });
   }
 
-  close(): void {
-    if (this.closed) {
-      return;
+  close(): Promise<void> {
+    if (!this.closed) {
+      this.closed = true;
+      this.process.stdin.end();
+      this.process.kill("SIGTERM");
     }
-
-    this.closed = true;
-    this.process.stdin.end();
-    this.process.kill("SIGTERM");
+    return this.exited;
   }
 
   private request(method: string, params: JsonObject): Promise<unknown> {

@@ -25,6 +25,47 @@ afterEach(async () => {
 });
 
 describe("Runtime Session process environment", () => {
+  it("retries a managed close failure without repeating native stop or successful destroy hooks", async () => {
+    const root = await temporaryRoot();
+    const beforeDestroy = vi
+      .fn(async () => {})
+      .mockRejectedValueOnce(new Error("destroy unavailable"));
+    const afterDestroy = vi.fn(async () => {});
+    const nativeClose = vi.fn(async () => {});
+    const runtime = defineRuntimeDriver<never, Record<string, never>>({
+      features: createRuntimeTestFeatures({ enabled: ["close"] }),
+      descriptor: { id: "retry-close", kind: "retry-close", displayName: "Retry Close" },
+      createSession: () => ({}),
+      startTurn: async () => ({ outputText: "" }),
+      mapEvent: () => ({ events: [] }),
+      closeSession: nativeClose,
+    });
+    const agent = await defineExpert({
+      schemaVersion: "pragma.expert/v1",
+      id: "retry-close-expert",
+      name: "Retry",
+      description: "Retry test",
+      tags: ["test"],
+      scope: "test",
+      workspace: root,
+      pragmaHome: root,
+      hooks: { beforeSessionDestroy: beforeDestroy, afterSessionDestroy: afterDestroy },
+    });
+    const session = await openRuntimeSession(runtime, {
+      agent,
+      owner: { type: "expert-session", ownerId: "retry-owner", contextId: "retry-context" },
+      pragmaHome: root,
+      systemSessionId: "retry-session",
+    });
+    await session.stopForDeletion?.();
+    await expect(session.close()).rejects.toThrow();
+    await session.close();
+    await session.close();
+    expect(beforeDestroy).toHaveBeenCalledTimes(2);
+    expect(afterDestroy).toHaveBeenCalledOnce();
+    expect(nativeClose).toHaveBeenCalledOnce();
+  });
+
   it("adds loopback hosts to both proxy bypass variables without dropping existing values", () => {
     const environment = {
       HTTP_PROXY: "http://invalid.proxy.test:8080",

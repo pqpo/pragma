@@ -8,6 +8,14 @@ import {
   CanonicalEventEnvelopeSchema,
 } from "@pragma/shared";
 
+export const ExecutionStorageAuthoritySchema = z
+  .object({
+    schemaVersion: z.literal("pragma.execution-storage/v1"),
+    engine: z.literal("sqlite"),
+    executionId: z.string(),
+  })
+  .strict();
+
 /** Portable owner export, including idempotency receipts and undelivered facts. */
 export const ExecutionStorageExportSchema = z
   .object({

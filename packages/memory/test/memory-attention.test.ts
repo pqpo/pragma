@@ -1,7 +1,7 @@
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { PragmaPaths, defaultRuntimeTokenCounter } from "@pragma/core";
+import { PragmaPaths, defaultRuntimeTokenCounter, fenceOwnerDeletion } from "@pragma/core";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   createFileMemoryAttentionStateStore,
@@ -73,6 +73,17 @@ async function fixture() {
   return { root, store, controller, provider, mutable, search, diagnostic };
 }
 describe("Mission Memory Attention", () => {
+  it("rejects late Attention writes after persistent owner isolation", async () => {
+    const f = await fixture();
+    const paths = new PragmaPaths({ pragmaHome: f.root });
+    await fenceOwnerDeletion(paths, [delta.missionId]);
+    const updater = vi.fn(() => {
+      throw new Error("Late update admitted");
+    });
+    expect(await f.store.update(delta.missionId, delta.contextId, updater)).toBeUndefined();
+    expect(updater).not.toHaveBeenCalled();
+    expect(await f.store.read(delta.missionId, delta.contextId)).toBeUndefined();
+  });
   it.each(["longword ".repeat(10_000), "服务故障恢复🌏".repeat(2_000)])(
     "truncates the highest-ranked large Lens item within byte and token budgets",
     async (summary) => {

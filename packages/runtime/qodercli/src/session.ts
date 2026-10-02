@@ -57,6 +57,32 @@ export type QoderNativeEvent =
   | { readonly kind: "session"; readonly sessionId: string }
   | { readonly kind: "usage"; readonly usage: AgentMessageUsage };
 
+const pendingQueryClosures = new WeakMap<QoderNativeSession, Map<Query, Promise<void>>>();
+const failedQueryClosures = new WeakMap<QoderNativeSession, Set<Query>>();
+function closeOwnedQuery(session: QoderNativeSession, query: Query): Promise<void> {
+  let closing = pendingQueryClosures.get(session);
+  if (closing === undefined) {
+    closing = new Map();
+    pendingQueryClosures.set(session, closing);
+  }
+  const existing = closing.get(query);
+  if (existing !== undefined) return existing;
+  const operation = Promise.resolve().then(async () => await query.close());
+  closing.set(query, operation);
+  void operation.then(
+    () => closing.delete(query),
+    () => {
+      let failed = failedQueryClosures.get(session);
+      if (failed === undefined) {
+        failed = new Set();
+        failedQueryClosures.set(session, failed);
+      }
+      failed.add(query);
+    },
+  );
+  return operation;
+}
+
 export interface QoderNativeSession {
   readonly agent: Expert;
   readonly auth: AuthOptions;
@@ -277,7 +303,7 @@ export async function compactQoderContextWindow(
   } finally {
     session.pendingCompaction = undefined;
     session.activeQuery = undefined;
-    await settleQoderOperation(q.close(), 500);
+    await settleQoderOperation(closeOwnedQuery(session, q), 500);
   }
 }
 
@@ -290,7 +316,7 @@ export async function cancelQoderTurn(session: QoderNativeSession): Promise<void
   }
   const cancellation = (async () => {
     const interrupted = await settleQoderOperation(active.interrupt(), 1_500);
-    if (!interrupted) await settleQoderOperation(active.close(), 500);
+    if (!interrupted) await settleQoderOperation(closeOwnedQuery(session, active), 500);
     if (session.activeQuery === active) session.activeQuery = undefined;
   })();
   session.activeCancellation = { query: active, promise: cancellation };
@@ -324,8 +350,17 @@ export async function steerQoderTurn(
 }
 
 export async function closeQoderSession(session: QoderNativeSession): Promise<void> {
-  await cancelQoderTurn(session);
-  await settleQoderOperation(session.activeQuery?.close() ?? Promise.resolve(), 500);
+  for (const query of failedQueryClosures.get(session) ?? []) {
+    pendingQueryClosures.get(session)?.delete(query);
+    failedQueryClosures.get(session)?.delete(query);
+    void closeOwnedQuery(session, query).catch(() => undefined);
+  }
+  const active = session.activeQuery;
+  if (active !== undefined) void closeOwnedQuery(session, active).catch(() => undefined);
+  await Promise.all([
+    cancelQoderTurn(session),
+    ...(pendingQueryClosures.get(session)?.values() ?? []),
+  ]);
   session.activeQuery = undefined;
 }
 
@@ -527,7 +562,7 @@ async function runQoderQuery(
     if (session.activeQuery === q) session.activeQuery = undefined;
     session.toolRuntimeState.runId = undefined;
     session.toolRuntimeState.source = undefined;
-    await settleQoderOperation(q.close(), 500);
+    await settleQoderOperation(closeOwnedQuery(session, q), 500);
     if (session.externalCommandsCacheDir !== undefined) {
       await cleanupManagedQoderExternalCommands(session.externalCommandsCacheDir).catch((error) => {
         session.logger.warn(

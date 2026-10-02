@@ -2,13 +2,20 @@ import { randomUUID } from "node:crypto";
 import { mkdir, rename, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 
-import { PragmaPaths } from "./pragma-paths.ts";
+import { encodePragmaPathSegment, PragmaPaths } from "./pragma-paths.ts";
 import {
   commitRuntimeSessionCatalogDeletion,
   completeRuntimeSessionCatalogDeletion,
   prepareRuntimeSessionCatalogDeletion,
   withRuntimeSessionCatalogDeletionLock,
 } from "./migrations/runtime-session-catalog/index.ts";
+
+export class StorageDeletionCommittedError extends Error {
+  readonly code = "STORAGE_DELETION_COMMITTED_FINALIZATION_PENDING";
+  constructor(cause: unknown) {
+    super("Storage deletion committed; finalization needs recovery.", { cause });
+  }
+}
 
 export interface StorageDeletionSource {
   readonly label: string;
@@ -24,6 +31,10 @@ export async function moveOwnedStorageToTrash(input: {
   readonly paths: PragmaPaths;
   readonly owner: { readonly type: string; readonly id: string };
   readonly sources: readonly StorageDeletionSource[];
+  readonly deletionId?: string | undefined;
+  readonly onPhase?:
+    ((phase: "file_move" | "catalog_commit", durationMs: number) => void) | undefined;
+  readonly onCommitted?: (() => Promise<void>) | undefined;
   readonly runtimeSessionOwnerIds?: readonly string[] | undefined;
 }): Promise<StorageDeletionResult> {
   if (input.runtimeSessionOwnerIds !== undefined) {
@@ -38,9 +49,13 @@ async function moveOwnedStorageToTrashUnlocked(input: {
   readonly paths: PragmaPaths;
   readonly owner: { readonly type: string; readonly id: string };
   readonly sources: readonly StorageDeletionSource[];
+  readonly deletionId?: string | undefined;
+  readonly onPhase?:
+    ((phase: "file_move" | "catalog_commit", durationMs: number) => void) | undefined;
+  readonly onCommitted?: (() => Promise<void>) | undefined;
   readonly runtimeSessionOwnerIds?: readonly string[] | undefined;
 }): Promise<StorageDeletionResult> {
-  const deletionId = randomUUID();
+  const deletionId = input.deletionId ?? randomUUID();
   const journal = input.paths.deletionJournalRoot();
   const journalPath = join(journal, `${deletionId}.json`);
   const trash = join(input.paths.trashRoot(), deletionId);
@@ -69,28 +84,27 @@ async function moveOwnedStorageToTrashUnlocked(input: {
   }
 
   const moved: string[] = [];
-  for (const source of input.sources) {
-    const target = join(trash, source.label);
-    await mkdir(dirname(target), { recursive: true, mode: 0o700 });
-    try {
-      await rename(source.path, target);
-      moved.push(source.label);
-      await writeJournal(journalPath, {
-        schemaVersion: "pragma.storage-deletion/v1",
-        deletionId,
-        owner: input.owner,
-        status: "moving",
-        sources: input.sources,
-        moved,
-        ...(input.runtimeSessionOwnerIds === undefined
-          ? {}
-          : { runtimeSessionOwnerIds: [...new Set(input.runtimeSessionOwnerIds)] }),
-        startedAt,
-      });
-    } catch (error) {
-      if (!isNotFound(error)) throw error;
-    }
+  const moveStarted = performance.now();
+  // The complete source list is already journaled. Recovery checks source and
+  // target for every entry, including a rename whose progress was not written.
+  // Rewriting that same full list after each rename adds quadratic I/O.
+  for (let offset = 0; offset < input.sources.length; offset += 16) {
+    const results = await Promise.allSettled(
+      input.sources.slice(offset, offset + 16).map(async (source) => {
+        const target = join(trash, source.label);
+        await mkdir(dirname(target), { recursive: true, mode: 0o700 });
+        try {
+          await rename(source.path, target);
+          moved.push(source.label);
+        } catch (error) {
+          if (!isNotFound(error)) throw error;
+        }
+      }),
+    );
+    const failure = results.find((result) => result.status === "rejected");
+    if (failure?.status === "rejected") throw failure.reason;
   }
+  input.onPhase?.("file_move", performance.now() - moveStarted);
   if (input.runtimeSessionOwnerIds !== undefined) {
     await writeJournal(journalPath, {
       schemaVersion: "pragma.storage-deletion/v1",
@@ -102,23 +116,30 @@ async function moveOwnedStorageToTrashUnlocked(input: {
       runtimeSessionOwnerIds: [...new Set(input.runtimeSessionOwnerIds)],
       startedAt,
     });
+    const catalogStarted = performance.now();
     await commitRuntimeSessionCatalogDeletion(input.paths, deletionId);
+    input.onPhase?.("catalog_commit", performance.now() - catalogStarted);
   }
-  await writeJournal(journalPath, {
-    schemaVersion: "pragma.storage-deletion/v1",
-    deletionId,
-    owner: input.owner,
-    status: "trashed",
-    sources: input.sources,
-    moved,
-    ...(input.runtimeSessionOwnerIds === undefined
-      ? {}
-      : { runtimeSessionOwnerIds: [...new Set(input.runtimeSessionOwnerIds)] }),
-    startedAt,
-    completedAt: new Date().toISOString(),
-  });
-  if (input.runtimeSessionOwnerIds !== undefined) {
-    await completeRuntimeSessionCatalogDeletion(input.paths, deletionId);
+  try {
+    await writeJournal(journalPath, {
+      schemaVersion: "pragma.storage-deletion/v1",
+      deletionId,
+      owner: input.owner,
+      status: "trashed",
+      sources: input.sources,
+      moved,
+      ...(input.runtimeSessionOwnerIds === undefined
+        ? {}
+        : { runtimeSessionOwnerIds: [...new Set(input.runtimeSessionOwnerIds)] }),
+      startedAt,
+      completedAt: new Date().toISOString(),
+    });
+    if (input.runtimeSessionOwnerIds !== undefined) {
+      await completeRuntimeSessionCatalogDeletion(input.paths, deletionId);
+    }
+    await input.onCommitted?.();
+  } catch (error) {
+    throw new StorageDeletionCommittedError(error);
   }
   return { deletionId, moved };
 }
@@ -128,7 +149,7 @@ export async function runtimeSessionDeletionSources(
   ownerId: string,
 ): Promise<StorageDeletionSource[]> {
   const ownerRoot = paths.runtimeOwnerRoot(ownerId);
-  return [{ label: "runtime-sessions", path: ownerRoot }];
+  return [{ label: `runtime-sessions/${encodePragmaPathSegment(ownerId)}`, path: ownerRoot }];
 }
 
 async function writeJournal(path: string, value: unknown): Promise<void> {
@@ -146,3 +167,5 @@ function assertLabel(label: string): void {
 function isNotFound(error: unknown): boolean {
   return typeof error === "object" && error !== null && "code" in error && error.code === "ENOENT";
 }
+
+export { recoverRuntimeSessionDeletion } from "./migrations/runtime-session-catalog/index.ts";

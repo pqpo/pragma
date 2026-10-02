@@ -3,7 +3,8 @@ import {
   type ExecutionStorageExport,
 } from "./execution-storage-export.ts";
 import { acquireHostStoragePool } from "../host-storage-pool.ts";
-import { readdir, readFile, rm } from "node:fs/promises";
+import { readdir, readFile, rm, mkdir, rename } from "node:fs/promises";
+import { randomUUID } from "node:crypto";
 import { join } from "node:path";
 import {
   PragmaPaths,
@@ -104,7 +105,7 @@ export function createSqliteExecutionStore(
       })(),
     );
   };
-  const deliver = (id: string): Promise<void> => {
+  const deliver = (id: string, prepareLegacy = false): Promise<void> => {
     const running = deliveries.get(id);
     if (running !== undefined) return running;
     if (options.canonicalEventFeed === undefined) return Promise.resolve();
@@ -113,12 +114,22 @@ export function createSqliteExecutionStore(
       async () => {
         while (!deleting.has(id) && !closing) {
           dirtyDeliveries.delete(id);
-          const events = await call<CanonicalEventEnvelope[] | undefined>(
+          let events = await call<CanonicalEventEnvelope[] | undefined>(
             "outbox",
             id,
             undefined,
             true,
           );
+          if (events === undefined && prepareLegacy) {
+            prepareLegacy = false;
+            await pool.prepare(paths.root, id);
+            events = await call<CanonicalEventEnvelope[] | undefined>(
+              "outbox",
+              id,
+              undefined,
+              true,
+            );
+          }
           if (events === undefined) {
             throw new Error(`EXECUTION_CANONICAL_OWNER_UNAVAILABLE:${id}`);
           }
@@ -198,15 +209,55 @@ export function createSqliteExecutionStore(
     }
   };
   // Background discovery only. Interactive owner operations never invoke this scan.
+  let historicalSources = new Set<string>();
   const pendingIds = async () => {
-    const current = (await directoryNames(paths.executionCanonicalPendingRoot()))
-      .filter((name) => name.endsWith(".json"))
-      .map((name) => decodePragmaPathSegment(name.slice(0, -5)));
-    const historical = (await directoryNames(paths.canonicalEventHandoffsRoot()))
-      .filter((name) => name.endsWith(".json"))
-      .map((name) => decodePragmaPathSegment(name.split(".")[0]!));
-    return [...new Set([...current, ...historical])];
+    const historicalIds = new Set<string>();
+    const ids = new Set<string>();
+    for (const [directory, historical] of [
+      [paths.executionCanonicalPendingRoot(), false],
+      [paths.canonicalEventHandoffsRoot(), true],
+    ] as const) {
+      for (const name of await directoryNames(directory)) {
+        if (!name.endsWith(".json")) continue;
+        try {
+          const id = decodePragmaPathSegment(historical ? name.split(".")[0]! : name.slice(0, -5));
+          ids.add(id);
+          if (historical) historicalIds.add(id);
+        } catch (error) {
+          const root = paths.canonicalEventHandoffQuarantineRoot();
+          try {
+            await mkdir(root, { recursive: true, mode: 0o700 });
+            await rename(join(directory, name), join(root, `${name}.${randomUUID()}.blocked`));
+          } catch (quarantineError) {
+            if ((quarantineError as NodeJS.ErrnoException).code === "ENOENT") continue;
+            options.logger?.warn(
+              "execution.canonical_quarantine_failed",
+              "Invalid source retained for repair.",
+              {
+                error: quarantineError,
+                errorCode: "execution_canonical_quarantine_failed",
+              },
+            );
+          }
+          options.logger?.warn(
+            "execution.canonical_source_invalid",
+            "Invalid canonical owner source isolated.",
+            {
+              error,
+              errorCode: "execution_canonical_source_invalid",
+            },
+          );
+        }
+      }
+    }
+    historicalSources = historicalIds;
+    return [...ids].sort();
   };
+  let recoveryCursor: string | undefined;
+  const recoveryRetries = new Map<string, { attempts: number; nextAt: number }>();
+  let recoveryOperation:
+    | Promise<{ recovered: number; pending: number; failed: number; quarantined: number }>
+    | undefined;
   const quarantinedCount = async () =>
     (await directoryNames(paths.canonicalEventHandoffQuarantineRoot())).length;
   const store: DurableExecutionStore & {
@@ -320,86 +371,140 @@ export function createSqliteExecutionStore(
         for (const file of pendingFiles) await rm(file, { force: true });
       });
     },
-    async withCanonicalEventDeletion(ids, action) {
-      const ordered = [...new Set(ids)].sort();
-      for (const id of ordered) {
-        deleting.add(id);
-        cancelScheduledDelivery(id);
-      }
-      const acquire = async (
-        index: number,
-        executionLocks: boolean,
-      ): Promise<Awaited<ReturnType<typeof action>>> => {
-        const id = ordered[index];
-        if (id !== undefined)
-          return await withFileLock(
-            executionLocks ? paths.executionLock(id) : paths.canonicalEventDeliveryLock(id),
-            () => acquire(index + 1, executionLocks),
-            {
-              operation: executionLocks
-                ? "execution.deletion-barrier"
-                : "execution.canonical-deletion",
-            },
-          );
-        if (!executionLocks) {
-          for (const id of ordered)
-            await workerFor().call("close-owner", id, undefined, false, paths.root);
-          return await acquire(0, true);
-        }
-        const files: string[] = [];
-        for (const id of ordered)
-          if (
-            await readFile(paths.executionCanonicalPending(id)).then(
-              () => true,
-              (error) => {
-                if ((error as NodeJS.ErrnoException).code === "ENOENT") return false;
-                throw error;
-              },
-            )
-          )
-            files.push(paths.executionCanonicalPending(id));
-        for (const directory of [
-          paths.canonicalEventHandoffsRoot(),
-          paths.canonicalEventHandoffQuarantineRoot(),
-        ])
-          for (const name of await directoryNames(directory))
-            if (ordered.some((id) => name.startsWith(`${encodePragmaPathSegment(id)}.`)))
-              files.push(join(directory, name));
-        return await action(files);
-      };
-      try {
-        return await acquire(0, false);
-      } finally {
-        for (const id of ordered) deleting.delete(id);
-      }
+    async withCanonicalEventDeletion(ids, action, expertSessionIds = []) {
+      return await withFileLock(
+        paths.executionDeletionBarrierLock(),
+        async () => {
+          const ordered = [...new Set(ids)].sort();
+          const sessions = [...new Set(expertSessionIds)].sort();
+          for (const id of ordered) {
+            deleting.add(id);
+            cancelScheduledDelivery(id);
+          }
+          const acquire = async (
+            index: number,
+            executionLocks: boolean,
+          ): Promise<Awaited<ReturnType<typeof action>>> => {
+            const id = ordered[index];
+            if (id !== undefined)
+              return await withFileLock(
+                executionLocks ? paths.executionLock(id) : paths.canonicalEventDeliveryLock(id),
+                () => acquire(index + 1, executionLocks),
+                {
+                  operation: executionLocks
+                    ? "execution.deletion-barrier"
+                    : "execution.canonical-deletion",
+                },
+              );
+            if (!executionLocks) {
+              for (const id of ordered)
+                await workerFor().call("close-owner", id, undefined, false, paths.root);
+              return await acquire(0, true);
+            }
+            const files: string[] = [];
+            for (const id of ordered)
+              if (
+                await readFile(paths.executionCanonicalPending(id)).then(
+                  () => true,
+                  (error) => {
+                    if ((error as NodeJS.ErrnoException).code === "ENOENT") return false;
+                    throw error;
+                  },
+                )
+              )
+                files.push(paths.executionCanonicalPending(id));
+            for (const directory of [
+              paths.canonicalEventHandoffsRoot(),
+              paths.canonicalEventHandoffQuarantineRoot(),
+            ])
+              for (const name of await directoryNames(directory))
+                if (ordered.some((id) => name.startsWith(`${encodePragmaPathSegment(id)}.`)))
+                  files.push(join(directory, name));
+            return await action(files);
+          };
+          try {
+            const acquireSession = async (
+              index: number,
+            ): Promise<Awaited<ReturnType<typeof action>>> => {
+              const id = sessions[index];
+              return id === undefined
+                ? await acquire(0, false)
+                : await withFileLock(paths.expertSessionLock(id), () => acquireSession(index + 1), {
+                    operation: "session.deletion-barrier",
+                  });
+            };
+            return await acquireSession(0);
+          } finally {
+            for (const id of ordered) deleting.delete(id);
+          }
+        },
+        { operation: "execution.deletion-batch" },
+      );
     },
     async drainCanonicalEvents() {
       for (const id of scheduledDeliveries.keys()) cancelScheduledDelivery(id);
-      for (const id of await pendingIds()) await deliver(id);
+      for (const id of await pendingIds()) await deliver(id, historicalSources.has(id));
       await Promise.all(deliveries.values());
     },
     async recoverPendingCanonicalEvents(input) {
-      const ids = await pendingIds();
-      let recovered = 0;
-      let failed = 0;
-      for (const id of ids.slice(0, input?.limit ?? 64))
-        try {
-          await deliver(id);
-          recovered++;
-        } catch (error) {
-          failed++;
-          options.logger?.warn(
-            "execution.canonical_recovery_failed",
-            "Owner delivery retained for retry.",
-            { executionId: id, error, errorCode: "execution_canonical_delivery_failed" },
-          );
+      if (recoveryOperation !== undefined) return await recoveryOperation;
+      const operation = (async () => {
+        const ids = await pendingIds();
+        const members = new Set(ids);
+        for (const id of recoveryRetries.keys()) if (!members.has(id)) recoveryRetries.delete(id);
+        const start =
+          recoveryCursor === undefined ? 0 : ids.findIndex((id) => id > recoveryCursor!);
+        const ordered = start < 0 ? ids : [...ids.slice(start), ...ids.slice(0, start)];
+        let recovered = 0;
+        let failed = 0;
+        const requestedLimit = input?.limit ?? 64;
+        const limit = Number.isFinite(requestedLimit)
+          ? Math.max(0, Math.min(64, Math.floor(requestedLimit)))
+          : 64;
+        for (const id of ordered) {
+          if (recovered + failed >= limit) break;
+          if ((recoveryRetries.get(id)?.nextAt ?? 0) > Date.now()) continue;
+          recoveryCursor = id;
+          try {
+            await deliver(id, historicalSources.has(id));
+            recoveryRetries.delete(id);
+            recovered++;
+          } catch (error) {
+            failed++;
+            const attempts = Math.min(7, (recoveryRetries.get(id)?.attempts ?? 0) + 1);
+            recoveryRetries.delete(id);
+            recoveryRetries.set(id, {
+              attempts,
+              nextAt: Date.now() + Math.min(30_000, 500 * 2 ** (attempts - 1)),
+            });
+            while (recoveryRetries.size > 1024)
+              recoveryRetries.delete(recoveryRetries.keys().next().value!);
+            options.logger?.warn(
+              "execution.canonical_recovery_failed",
+              "Owner delivery retained for retry.",
+              {
+                executionId: id,
+                error,
+                errorCode: "execution_canonical_delivery_failed",
+              },
+            );
+          }
         }
-      return {
-        recovered,
-        pending: (await pendingIds()).length,
-        failed,
-        quarantined: await quarantinedCount(),
-      };
+        const pending = await pendingIds();
+        return {
+          recovered,
+          pending: pending.length,
+          // Backoff suppresses attempts, not the degraded state of retained failures.
+          failed: Math.max(failed, pending.filter((id) => recoveryRetries.has(id)).length),
+          quarantined: await quarantinedCount(),
+        };
+      })();
+      recoveryOperation = operation;
+      try {
+        return await operation;
+      } finally {
+        if (recoveryOperation === operation) recoveryOperation = undefined;
+      }
     },
     async inspectCanonicalEventDelivery() {
       return { pending: (await pendingIds()).length, quarantined: await quarantinedCount() };

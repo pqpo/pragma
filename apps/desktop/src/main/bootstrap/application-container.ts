@@ -1,4 +1,12 @@
 import { canonicalPragmaResourceRef } from "@pragma/interpreter";
+import { createMissionAttentionRetirement } from "./mission-attention-retirement.ts";
+import {
+  createMissionDeletionService,
+  readMissionDeletionRecord,
+  MissionDeletionSourceExpiredError,
+} from "@pragma/local-host";
+import { readDeletedExecutionUsageSource } from "@pragma/local-host";
+import type { Invocation } from "@pragma/shared";
 import { createLocalHostUsageSink, type LocalHostUsageSink } from "@pragma/local-host";
 import { createHash, randomUUID } from "node:crypto";
 import { mkdir } from "node:fs/promises";
@@ -321,6 +329,8 @@ export async function createDesktopApplicationContainer(
     legacyDecryptor: legacyCredentialDecryptor,
   });
   const missionStore = createMissionStore({
+    isDeletionFenced: async (id) =>
+      (await readMissionDeletionRecord(pragmaPaths, id)) !== undefined,
     missionsPath,
     getRevisionSource: async (jobId) => (await storeRevisions.get(jobId)).request.source,
     onReadIssue: ({ missionId, error }) =>
@@ -991,8 +1001,94 @@ export async function createDesktopApplicationContainer(
   } = { current: undefined };
   const localHostUsageRef: { current: LocalHostUsageSink | undefined } = { current: undefined };
   let missionDeliveryInitializationError: string | undefined;
+  const retiringAttention = createMissionAttentionRetirement(
+    async (missionId) => await memoryPlane.stopMissionAttention(missionId),
+  );
+  const missionDeletion = createMissionDeletionService({
+    paths: pragmaPaths,
+    logger: mainLogger,
+    ports: {
+      usage: async (record, signal) => {
+        const mission = MissionSchema.parse(record.payload.mission);
+        const observations: RuntimeUsageObservation[] = [];
+        const invocations = new Map<string, readonly Invocation[]>();
+        let expired = false;
+        for (const executionId of record.executionIds) {
+          signal.throwIfAborted();
+          const source = await readDeletedExecutionUsageSource(
+            pragmaPaths,
+            record.deletionId,
+            executionId,
+          );
+          if (source === undefined) {
+            expired = true;
+            continue;
+          }
+          invocations.set(executionId, source.invocations);
+          for (const event of source.events) {
+            if (event.type === "runtime.usage.observed")
+              observations.push(RuntimeUsageObservedSchema.parse(event.data).observation);
+          }
+        }
+        signal.throwIfAborted();
+        await persistMissionUsageBatch(mission, observations, invocations);
+        const localUsage = localHostUsageRef.current;
+        if (localUsage === undefined) throw new Error("Local Host usage sink is unavailable.");
+        signal.throwIfAborted();
+        await localUsage.reconcile(observations);
+        await usageStore.markSubjectDeleted("mission", mission.id);
+        if (expired) throw new MissionDeletionSourceExpiredError();
+      },
+      memory: async (record) => {
+        await memoryPlane.deleteExecutionState(record.executionIds);
+      },
+      drafts: async (record, signal) => {
+        let cursor: string | undefined;
+        do {
+          signal.throwIfAborted();
+          const page = await pragmaAgentProject.listDslDrafts({
+            missionId: record.missionId,
+            limit: 100,
+            ...(cursor === undefined ? {} : { cursor }),
+          });
+          for (const draft of page.items) {
+            if (!["editing", "conflicted", "prepared"].includes(draft.state)) continue;
+            signal.throwIfAborted();
+            await pragmaAgentProject.discardDslDraft({
+              missionId: record.missionId,
+              draftId: draft.draftId,
+            });
+          }
+          cursor = page.nextCursor;
+        } while (cursor !== undefined);
+      },
+      claims: async (record, signal) => {
+        const mission = MissionSchema.parse(record.payload.mission);
+        for (const mount of mission.contextMounts) {
+          if (mount.kind !== "context-store-draft" || mount.revisionJobId === undefined) continue;
+          signal.throwIfAborted();
+          await storeRevisions.releaseMissionClaim({
+            draftId: mount.draftId,
+            jobId: mount.revisionJobId,
+            missionId: record.missionId,
+            reason: "mission_deleted",
+          });
+        }
+      },
+      settlement: async (record) => {
+        await Promise.all([
+          missionDeliveryRef.current?.deleteMission(record.missionId, {
+            mission: MissionSchema.parse(record.payload.mission),
+            executionIds: record.executionIds,
+          }),
+          retiringAttention.finish(record.missionId),
+        ]);
+      },
+    },
+  });
   const memoryPlane = await createDesktopMemoryPlane({
     hostDeliveryDiagnostics: () => [
+      { moduleId: "pragma.mission-deletion", ...missionDeletion.inspect() },
       ...(missionDeliveryRef.current === undefined
         ? missionDeliveryInitializationError === undefined
           ? []
@@ -1158,6 +1254,10 @@ export async function createDesktopApplicationContainer(
   const pragmaAgentProject = createDesktopPragmaAgentProjectPort({
     project: pragmaProjectStore,
     stateRoot: defaultAgentStateRoot,
+    withMissionMutation: async (id, action) => await missionStore.withDeletionBarrier!(id, action),
+    assertMissionWritable: async (id) => {
+      if (await missionDeletion.read(id)) throw new Error("MISSION_DELETION_PENDING");
+    },
     draftsRoot: join(pragmaPaths.dataRoot(), "dsl-resource-drafts"),
     draftsTrashRoot: join(pragmaPaths.trashRoot(), "dsl-resource-drafts"),
     capabilities: capabilityStore,
@@ -1216,34 +1316,10 @@ export async function createDesktopApplicationContainer(
       return pragmaManagementPortsRef.current;
     },
     onStorageTrashed: () => trashMaintenance.schedule("mission-storage-trashed"),
+    deletionService: missionDeletion,
     prepareOwnerDeletion: async ({ mission, executionIds }) => {
-      await missionDeliveryRef.current?.deleteMission(mission.id, { mission, executionIds });
-      await memoryPlane.stopMissionAttention(mission.id);
-      let cursor: string | undefined;
-      const draftIds: string[] = [];
-      do {
-        const page = await pragmaAgentProject.listDslDrafts({
-          missionId: mission.id,
-          limit: 100,
-          ...(cursor === undefined ? {} : { cursor }),
-        });
-        for (const draft of page.items) {
-          if (
-            draft.state !== "editing" &&
-            draft.state !== "conflicted" &&
-            draft.state !== "prepared"
-          )
-            continue;
-          draftIds.push(draft.draftId);
-        }
-        cursor = page.nextCursor;
-      } while (cursor !== undefined);
-      for (const draftId of draftIds) {
-        await pragmaAgentProject.discardDslDraft({ missionId: mission.id, draftId });
-      }
-    },
-    onOwnerDeleting: async ({ executionIds }) => {
-      await memoryPlane.deleteExecutionState(executionIds);
+      await missionDeliveryRef.current?.fenceMission(mission.id, executionIds);
+      void retiringAttention.stop(mission.id).catch(() => undefined);
     },
     onExecutionLinked: async ({ mission, executionId, requestId }) => {
       await executionEventProjector.link({ mission, executionId, requestId });
@@ -1622,9 +1698,11 @@ export async function createDesktopApplicationContainer(
   const persistMissionUsageBatch = async (
     registered: Mission,
     observations: readonly RuntimeUsageObservation[],
+    deletedInvocations?: ReadonlyMap<string, readonly Invocation[]>,
   ) => {
     if (observations.length === 0) return;
-    const mission = await missionStore.get(registered.id);
+    const mission =
+      deletedInvocations === undefined ? await missionStore.get(registered.id) : registered;
     // Check accounting availability without running a cumulative SUM.
     await usageStore.assertAvailable();
     const projectKey = JSON.stringify(mission.project.revision);
@@ -1646,12 +1724,19 @@ export async function createDesktopApplicationContainer(
     }
     const names = new Map(projectNames);
     names.set(mission.executor.ref, mission.executor.name);
+    const deletedOwnerIndexes = new Map<string, Map<string, Invocation>>();
     for (const observation of observations) {
       let owners = usageInvocationOwners.get(observation.executionId);
-      if (owners === undefined) {
-        owners = new Map();
-        usageInvocationOwners.set(observation.executionId, owners);
+      const deleted = deletedInvocations?.get(observation.executionId);
+      if (deleted !== undefined) {
+        owners = deletedOwnerIndexes.get(observation.executionId);
+        if (owners === undefined) {
+          owners = new Map(deleted.map((invocation) => [invocation.invocationId, invocation]));
+          deletedOwnerIndexes.set(observation.executionId, owners);
+        }
       }
+      if (owners === undefined) owners = new Map();
+      usageInvocationOwners.set(observation.executionId, owners);
       // Invocation ancestry and definition identities are stable. Load only new
       // members, never the full Invocation tree for each observation.
       let invocationId: string | undefined = observation.invocationId;
@@ -1661,6 +1746,7 @@ export async function createDesktopApplicationContainer(
         visited.add(invocationId);
         let invocation = owners.get(invocationId);
         if (invocation === undefined) {
+          if (deleted !== undefined) throw new Error("MISSION_USAGE_INVOCATION_UNAVAILABLE");
           invocation = await memoryPlane.executionStore.getInvocation(
             observation.executionId,
             invocationId,
@@ -1691,22 +1777,6 @@ export async function createDesktopApplicationContainer(
         onRecovered: (missionId) => missionRunner.markDeliveryRecovered?.(missionId),
         usage: async (mission, observation) =>
           await persistMissionUsageBatch(mission, [observation]),
-        beforeDelete: async (mission, executionIds) => {
-          // Runtime work has stopped; Execution locks are still available for reads.
-          // Settle accounting before fencing writes and removing source facts.
-          const localUsage = createLocalHostUsageSink({
-            path: join(pragmaPaths.dataRoot(), "usage", "observations.json"),
-          });
-          const observations: RuntimeUsageObservation[] = [];
-          for (const executionId of executionIds) {
-            for (const event of await memoryPlane.executionStore.readEvents(executionId)) {
-              if (event.type !== "runtime.usage.observed") continue;
-              observations.push(RuntimeUsageObservedSchema.parse(event.data).observation);
-            }
-          }
-          await persistMissionUsageBatch(mission, observations);
-          for (const observation of observations) await localUsage.record(observation);
-        },
         terminal: async (registered, executionId, requestId, status, step) => {
           const guard = await ownerScope.acquire(registered.id);
           await ownerScope.runWithGuard(registered.id, guard, async () => {
@@ -2206,6 +2276,7 @@ export async function createDesktopApplicationContainer(
           { error },
         );
       });
+      missionDeletion.start();
       missionDeliveryRecovery.start();
       localHostUsageRef.current?.start();
       void automationService.start().catch((error: unknown) => {
@@ -2267,6 +2338,7 @@ export async function createDesktopApplicationContainer(
       memoryPlane.start();
     },
     dispose: () => {
+      missionDeletion.close();
       assetSync.stop();
       evaluationService.dispose();
       unsubscribeUsageUpdates();

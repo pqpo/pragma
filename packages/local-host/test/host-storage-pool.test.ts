@@ -139,57 +139,69 @@ describe("Shared Host storage lifecycle", () => {
       await rm(home, { recursive: true, force: true });
     }
   });
-  it("does not let queued outbox delivery wait in front of a warm owner's terminal commit", async () => {
-    const home = await mkdtemp(join(tmpdir(), "pragma-background-owner-isolation-"));
-    const pool = acquireHostStoragePool();
-    const store = createSqliteExecutionStore({ pragmaHome: home });
-    const fixture = JSON.parse(
-      await readFile(new URL("./fixtures/execution-file-v12.json", import.meta.url), "utf8"),
-    );
-    const root = fixture.invocations[0];
-    await store.create(
-      { ...fixture.execution, executionId: "warm", version: 0, lastAppliedSequence: 0 },
-      root,
-    );
-    const post = Worker.prototype.postMessage;
-    const blocked = new Set<Worker>();
-    const held: (() => void)[] = [];
-    const intercepted = vi.spyOn(Worker.prototype, "postMessage").mockImplementation(function (
-      this: Worker,
-      request,
-      ...args
-    ) {
-      if (request?.operation === "prepare-owner") blocked.add(this);
-      if (blocked.has(this)) {
-        held.push(() => Reflect.apply(post, this, [request, ...args]));
-        return;
+  it.each(["prepare-owner", "deleted-usage-source"] as const)(
+    "keeps %s and queued outbox work behind a warm owner's terminal commit",
+    async (operation) => {
+      const home = await mkdtemp(join(tmpdir(), "pragma-background-owner-isolation-"));
+      const pool = acquireHostStoragePool();
+      const store = createSqliteExecutionStore({ pragmaHome: home });
+      const fixture = JSON.parse(
+        await readFile(new URL("./fixtures/execution-file-v12.json", import.meta.url), "utf8"),
+      );
+      const root = fixture.invocations[0];
+      await store.create(
+        { ...fixture.execution, executionId: "warm", version: 0, lastAppliedSequence: 0 },
+        root,
+      );
+      const post = Worker.prototype.postMessage;
+      const blocked = new Set<Worker>();
+      const held: (() => void)[] = [];
+      const intercepted = vi.spyOn(Worker.prototype, "postMessage").mockImplementation(function (
+        this: Worker,
+        request,
+        ...args
+      ) {
+        if (request?.operation === operation) blocked.add(this);
+        if (blocked.has(this)) {
+          held.push(() => Reflect.apply(post, this, [request, ...args]));
+          return;
+        }
+        return Reflect.apply(post, this, [request, ...args]);
+      });
+      const preparation =
+        operation === "prepare-owner"
+          ? pool.prepare(home, "old-owner")
+          : pool.clients[1]!.call(
+              operation,
+              "old-owner",
+              { deletionId: "00000000-0000-4000-8000-000000000002" },
+              false,
+              home,
+            );
+      const outbox = pool.execute("outbox", "warm", undefined, false, home);
+      try {
+        expect(await store.get("warm")).toMatchObject({ status: "running" });
+        expect(
+          (
+            await store.commit({
+              executionId: "warm",
+              commitId: "terminal",
+              executionPatch: { status: "succeeded" },
+              invocations: [{ ...root, status: "succeeded" }],
+            })
+          ).execution.status,
+        ).toBe("succeeded");
+        expect(held).toHaveLength(2);
+      } finally {
+        intercepted.mockRestore();
+        held.forEach((release) => release());
+        await Promise.all([preparation, outbox]);
+        await store.close();
+        await pool.close();
+        await rm(home, { recursive: true, force: true });
       }
-      return Reflect.apply(post, this, [request, ...args]);
-    });
-    const preparation = pool.prepare(home, "old-owner");
-    const outbox = pool.execute("outbox", "warm", undefined, false, home);
-    try {
-      expect(await store.get("warm")).toMatchObject({ status: "running" });
-      expect(
-        (
-          await store.commit({
-            executionId: "warm",
-            commitId: "terminal",
-            executionPatch: { status: "succeeded" },
-            invocations: [{ ...root, status: "succeeded" }],
-          })
-        ).execution.status,
-      ).toBe("succeeded");
-      expect(held).toHaveLength(2);
-    } finally {
-      intercepted.mockRestore();
-      held.forEach((release) => release());
-      await Promise.all([preparation, outbox]);
-      await store.close();
-      await pool.close();
-      await rm(home, { recursive: true, force: true });
-    }
-  });
+    },
+  );
   it("keeps an old Usage proxy from closing a newly reopened database after worker failure", async () => {
     const root = await mkdtemp(join(tmpdir(), "pragma-usage-worker-failure-"));
     const input = { databasePath: join(root, "usage.sqlite") };
