@@ -379,3 +379,5 @@ export * from "./model-providers/reader.ts";
 export * from "./model-providers/migrations/index.ts";
 export * from "./memory-retrieval-settings.ts";
 export * from "./memory-retrieval.ts";
+
+export * from "./missions/deletion.ts";

@@ -14,7 +14,12 @@ import { mkdir } from "node:fs/promises";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 
-import { PragmaPaths, withFileLock } from "@pragma/core";
+import {
+  PragmaPaths,
+  withFileLock,
+  isOwnerDeletionFenced,
+  withOwnerDeletionAdmission,
+} from "@pragma/core";
 import {
   MemoryEvidenceEnvelopeSchema,
   MemorySubjectRefSchema,
@@ -277,6 +282,7 @@ export async function createSemanticMemoryStore(
   options: { readonly pragmaHome?: string | undefined } = {},
 ): Promise<SemanticMemoryStore> {
   const paths = new PragmaPaths(options);
+  const isFenced = (id: string): boolean => isOwnerDeletionFenced(paths, id);
   const moduleId = "pragma.memory.semantic";
   const dataRoot = paths.memoryModuleDataRoot(moduleId);
   const stateRoot = paths.memoryModuleStateRoot(moduleId);
@@ -417,7 +423,7 @@ export async function createSemanticMemoryStore(
     }
   };
 
-  return {
+  const store: SemanticMemoryStore = {
     ...memoryIndexOutbox(data, "current_facts"),
     async countIndexableRecords() {
       return (
@@ -465,7 +471,8 @@ export async function createSemanticMemoryStore(
         for (const raw of envelopes) {
           const envelope = MemoryEvidenceEnvelopeSchema.parse(raw);
           if (envelope.correlationId === undefined) continue;
-          if (isDeletedExecution(state, envelope.correlationId)) continue;
+          if (isFenced(envelope.correlationId) || isDeletedExecution(state, envelope.correlationId))
+            continue;
           touched.add(envelope.correlationId);
           insertEvidence.run(
             envelope.messageId,
@@ -531,7 +538,7 @@ export async function createSemanticMemoryStore(
 
     async registerSubjectContext(raw) {
       const context = SemanticExecutionSubjectContextSchema.parse(raw);
-      if (isDeletedExecution(state, context.executionId)) return;
+      if (isFenced(context.executionId) || isDeletedExecution(state, context.executionId)) return;
       state
         .prepare(
           `INSERT INTO subject_contexts(execution_id, context_json) VALUES (?, ?)
@@ -602,6 +609,10 @@ export async function createSemanticMemoryStore(
           return undefined;
         }
         const current = SemanticExtractionJobSchema.parse(JSON.parse(row.jobJson));
+        if (current.sourceExecutionIds.some(isFenced)) {
+          state.exec("COMMIT;");
+          return undefined;
+        }
         const canSettleLocally =
           current.status === "running" &&
           data
@@ -661,10 +672,11 @@ export async function createSemanticMemoryStore(
     },
 
     async isClaimCurrent(job) {
-      return isCurrentRunningJob(state, job);
+      return !job.sourceExecutionIds.some(isFenced) && isCurrentRunningJob(state, job);
     },
 
     async bindExecutionConversation(input) {
+      if (isFenced(input.executionId)) return;
       state.exec("BEGIN IMMEDIATE;");
       try {
         bindExecutionConversationJob(state, writeJob, input, semanticJobId);
@@ -814,7 +826,12 @@ export async function createSemanticMemoryStore(
     },
 
     async completePreviouslyApplied(job, now) {
-      if (isDeletedExecution(state, job.executionId)) return;
+      if (
+        job.sourceExecutionIds.some(isFenced) ||
+        isFenced(job.executionId) ||
+        isDeletedExecution(state, job.executionId)
+      )
+        return;
       state.exec("BEGIN IMMEDIATE;");
       try {
         if (isCurrentRunningJob(state, job)) finishJob(job, "retained", now);
@@ -826,7 +843,12 @@ export async function createSemanticMemoryStore(
     },
 
     async completeRetained(input) {
-      if (isDeletedExecution(state, input.job.executionId)) return [];
+      if (
+        input.job.sourceExecutionIds.some(isFenced) ||
+        isFenced(input.job.executionId) ||
+        isDeletedExecution(state, input.job.executionId)
+      )
+        return [];
       if (!isCurrentRunningJob(state, input.job)) return [];
       const evidenceById = new Map(input.evidence.map((item) => [item.messageId, item]));
       const touched = new Set<string>();
@@ -1000,7 +1022,12 @@ export async function createSemanticMemoryStore(
     },
 
     async completeRejected(job, reason, now) {
-      if (isDeletedExecution(state, job.executionId)) return;
+      if (
+        job.sourceExecutionIds.some(isFenced) ||
+        isFenced(job.executionId) ||
+        isDeletedExecution(state, job.executionId)
+      )
+        return;
       if (!isCurrentRunningJob(state, job)) return;
       state.exec("BEGIN IMMEDIATE;");
       try {
@@ -1015,7 +1042,12 @@ export async function createSemanticMemoryStore(
     },
 
     async fail(input) {
-      if (isDeletedExecution(state, input.job.executionId)) return;
+      if (
+        input.job.sourceExecutionIds.some(isFenced) ||
+        isFenced(input.job.executionId) ||
+        isDeletedExecution(state, input.job.executionId)
+      )
+        return;
       if (!isCurrentRunningJob(state, input.job)) return;
       const needsAttention =
         input.diagnostic.retryable === false ||
@@ -1459,6 +1491,29 @@ export async function createSemanticMemoryStore(
     close() {
       state.close();
       data.close();
+    },
+  };
+  return {
+    ...store,
+    completeRetained: async (input) =>
+      (await withOwnerDeletionAdmission(
+        paths,
+        [...input.job.sourceExecutionIds, input.job.executionId],
+        async () => await store.completeRetained(input),
+      )) ?? [],
+    completeRejected: async (job, reason, now) => {
+      await withOwnerDeletionAdmission(
+        paths,
+        [...job.sourceExecutionIds, job.executionId],
+        async () => await store.completeRejected(job, reason, now),
+      );
+    },
+    fail: async (input) => {
+      await withOwnerDeletionAdmission(
+        paths,
+        [...input.job.sourceExecutionIds, input.job.executionId],
+        async () => await store.fail(input),
+      );
     },
   };
 }

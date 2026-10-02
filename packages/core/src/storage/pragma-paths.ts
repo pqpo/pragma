@@ -250,6 +250,26 @@ export class PragmaPaths {
     );
   }
 
+  missionDeletionRoot(): string {
+    return join(this.storageStateRoot(), "mission-deletions");
+  }
+
+  missionDeletion(id: string): string {
+    return join(this.missionDeletionRoot(), `${encodePragmaPathSegment(id)}.json`);
+  }
+
+  missionDeletionCompleted(id: string): string {
+    return join(this.missionDeletionRoot(), "completed", `${encodePragmaPathSegment(id)}.json`);
+  }
+
+  executionDeletionBarrierLock(): string {
+    return join(this.storageStateRoot(), "execution-deletion-barrier.lock");
+  }
+
+  ownerDeletionMarker(id: string): string {
+    return join(this.storageStateRoot(), "owner-deletions", `${encodePragmaPathSegment(id)}.json`);
+  }
+
   deletionJournalRoot(): string {
     return join(this.storageStateRoot(), "deletion-journal");
   }

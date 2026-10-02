@@ -115,6 +115,12 @@ export class MissionChatService<TLiveChat extends MissionLiveChatProjection> {
     return previous;
   }
 
+  detachLiveIfCurrent(missionId: string, expected: TLiveChat): TLiveChat | undefined {
+    if (this.#liveChats.get(missionId) !== expected) return undefined;
+    this.#liveChats.delete(missionId);
+    return expected;
+  }
+
   async closeLiveIfCurrent(missionId: string, expected: TLiveChat): Promise<void> {
     if (this.#liveChats.get(missionId) !== expected) return;
     await expected.close();

@@ -60,6 +60,7 @@ export async function terminateRuntimeProcess(
   signalRuntimeProcess(options.process, "SIGKILL");
   if (!(await waitForRuntimeProcessExit(options.exit, options.graceMs)) && !options.hasExited()) {
     options.onStuck?.();
+    throw new Error("RUNTIME_PROCESS_STOP_UNCONFIRMED");
   }
 }
 
@@ -71,7 +72,7 @@ export async function waitForRuntimeProcessExit(
   return await Promise.race([
     exit.then(
       () => true,
-      () => true,
+      () => false,
     ),
     new Promise<false>((resolve) => {
       timer = setTimeout(() => resolve(false), timeoutMs);

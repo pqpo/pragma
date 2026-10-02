@@ -1,3 +1,6 @@
+import { trackMissionDeletionSettlement } from "./mission-deletion-settlement.ts";
+import { createMissionDeletionService, type MissionDeletionService } from "@pragma/local-host";
+import { fenceOwnerDeletion } from "@pragma/core";
 import { missionContextMountsFingerprint } from "./mission-context-mounts.ts";
 import { createHash, randomUUID } from "node:crypto";
 import { mkdir } from "node:fs/promises";
@@ -12,10 +15,10 @@ import {
   createPragma,
   runtimeSupportsSteer,
   hasUncertainSteerDelivery,
-  AgentLifecycleQuiescenceError,
   createPragmaLogger,
   createFileExecutionStore,
   withStorageDiagnostics,
+  withFileLock,
   createFileExpertSessionStore,
   ExecutionController,
   ExpertSessionReleaseBlockedError,
@@ -28,6 +31,7 @@ import {
   PragmaPaths,
   readRuntimeSessionContextWindowUsage,
   readRuntimeSessionRecord,
+  readRuntimeSessionsForOwners,
   ReadOnlyContextStore,
   StaticContextStore,
   error,
@@ -93,6 +97,7 @@ import {
 import {
   ContextStoreIdSchema,
   isUserFacingMissionOrigin,
+  MissionSchema,
   type Mission,
   type MissionChatPage,
   type MissionContextMount,
@@ -442,6 +447,7 @@ export function createMissionRunner(options: {
   readonly deferTerminalProjection?: boolean | undefined;
   readonly wakeExecutionDelivery?: (() => void) | undefined;
   readonly assertExecutorReady?: ((ref: string) => void | Promise<void>) | undefined;
+  readonly deletionService?: MissionDeletionService | undefined;
   readonly onStorageTrashed?: (() => void) | undefined;
   /** Stop owner consumers and settle accounting before acquiring Execution locks. */
   readonly prepareOwnerDeletion?:
@@ -3639,6 +3645,49 @@ export function createMissionRunner(options: {
     }
   };
 
+  const pendingDeletionSettlements = new Map<string, Promise<void>>();
+  const deletionService =
+    options.deletionService ??
+    createMissionDeletionService({
+      paths: new PragmaPaths({ pragmaHome: options.pragmaHome }),
+      logger,
+      ports: {
+        usage: async (record) => {
+          options.usage?.markSubjectDeleted("mission", record.missionId);
+        },
+        memory: async (record) => {
+          await options.onOwnerDeleting?.({
+            mission: MissionSchema.parse(record.payload.mission),
+            executionIds: record.executionIds,
+          });
+        },
+        drafts: async (record) => {
+          // Standalone callers have no Desktop DSL drafts; record the completed host step.
+          logger.debug(
+            "mission.deletion_drafts_completed",
+            "Mission has no host DSL draft service.",
+            { missionId: record.missionId },
+          );
+        },
+        claims: async (record) => {
+          const mission = MissionSchema.parse(record.payload.mission);
+          for (const mount of mission.contextMounts) {
+            if (mount.kind === "context-store-draft" && mount.revisionJobId !== undefined) {
+              await options.contextStoreRevisions?.releaseMissionClaim({
+                draftId: mount.draftId,
+                jobId: mount.revisionJobId,
+                missionId: mission.id,
+                reason: "mission_deleted",
+              });
+            }
+          }
+        },
+        settlement: async (record) => {
+          await pendingDeletionSettlements.get(record.missionId);
+        },
+      },
+    });
+
   const deleteMission = async (id: string): Promise<void> => {
     const deletionStartedAt = performance.now();
     const measureDeletionPhase = async <T>(phase: string, action: () => Promise<T>): Promise<T> => {
@@ -3660,133 +3709,157 @@ export function createMissionRunner(options: {
     };
     const mission = await options.missions.get(id);
     const active = lifecycleService.active(id);
-    if (active !== undefined) {
-      const cancellation = await settlementOutcomeWithin(
-        active.handle.cancel("Mission deleted."),
-        4_000,
-      );
-      if (cancellation.status !== "fulfilled") {
-        logger.warn(
-          "mission.delete_execution_cancel_incomplete",
-          `Mission ${mission.id} Execution cancellation was not confirmed before Session shutdown.`,
-          {
-            missionId: mission.id,
-            executionId: active.handle.executionId,
-            outcome: cancellation.status,
-            ...(cancellation.status === "rejected" ? { error: cancellation.error } : {}),
-          },
-        );
-      }
-    }
-    try {
-      await measureDeletionPhase("usage_reconciliation", () => reconcileMissionUsage(mission));
-    } catch (error) {
-      logger.warn(
-        "mission.delete_usage_reconciliation_failed",
-        `Usage reconciliation failed before deleting Mission ${mission.id}; deletion will continue.`,
-        { error, missionId: mission.id },
-      );
-    }
-    const executionIds = await measureDeletionPhase("execution_inventory", () =>
-      collectMissionExecutionIds(options.missions, id),
-    );
-    const sessionId = mission.execution?.sessionId;
     const session = sessionService.session(id);
-    if (session !== undefined) {
-      const closed = await measureDeletionPhase("session_close", () =>
-        settlementOutcomeWithin(session.close("Mission deleted."), 15_000),
-      );
-      if (closed.status === "timed_out") {
-        logger.warn(
-          "mission.delete_session_close_uncertain",
-          `Mission ${mission.id} Session did not stop before forced removal continued.`,
-          {
-            missionId: mission.id,
-            sessionId: session.sessionId,
-            code: "MISSION_INTERRUPT_UNCERTAIN",
-          },
-        );
-      }
-      if (closed.status === "rejected") {
-        if (containsAgentLifecycleQuiescenceError(closed.error)) {
-          logger.warn(
-            "mission.delete_runtime_quiescence_uncertain",
-            `Mission ${mission.id} Runtime work did not quiesce before forced removal continued.`,
-            {
-              error: closed.error,
-              missionId: mission.id,
-              sessionId: session.sessionId,
-              code: "MISSION_INTERRUPT_UNCERTAIN",
-            },
-          );
-        } else
-          logger.warn(
-            "mission.delete_session_close_failed",
-            `Mission ${mission.id} Session reported cleanup failures after stopping.`,
-            { error: closed.error, missionId: mission.id, sessionId: session.sessionId },
-          );
-      }
-      if (sessionService.deleteSessionIfCurrent(id, session)) {
-        sessionService.clearCompilation(id);
-      }
-    }
-    if (active !== undefined) {
-      const settled = await settlementOutcomeWithin(active.settlement, 8_000);
-      if (settled.status === "timed_out") {
-        logger.warn(
-          "mission.delete_execution_observer_uncertain",
-          `Mission ${mission.id} execution observer did not settle before forced removal continued.`,
-          {
-            missionId: mission.id,
-            executionId: active.handle.executionId,
-            code: "MISSION_INTERRUPT_UNCERTAIN",
-          },
-        );
-      }
-      if (settled.status === "rejected") {
-        logger.warn(
-          "mission.delete_execution_observer_failed",
-          `Mission ${mission.id} observer stopped with an error before deletion.`,
-          { error: settled.error, missionId: mission.id, executionId: active.handle.executionId },
-        );
-      }
-      await forgetActive(id, active.handle, active.live, active.audience, false);
-    }
-    const revisionClaims = mission.contextMounts.flatMap((mount) =>
-      mount.kind === "context-store-draft" && mount.revisionJobId !== undefined
-        ? [{ draftId: mount.draftId, jobId: mount.revisionJobId }]
-        : [],
+    session?.freezeForDeletion();
+    const executionIds = new Set(
+      await measureDeletionPhase("execution_inventory", () =>
+        collectMissionExecutionIds(options.missions, id),
+      ),
     );
-    await measureDeletionPhase("owner_preparation", async () => {
-      await options.prepareOwnerDeletion?.({ mission, executionIds: [...executionIds] });
+    if (mission.execution !== undefined) executionIds.add(mission.execution.id);
+    if (session !== undefined)
+      for (const executionId of (await session.getState()).executionIds)
+        executionIds.add(executionId);
+    const sessionId = mission.execution?.sessionId ?? session?.sessionId;
+    const sessionIds = new Set(sessionId === undefined ? [] : [sessionId]);
+    await measureDeletionPhase("session_inventory", async () => {
+      const contexts = await Promise.all(
+        [...executionIds].map(
+          async (executionId) => await executionStore.listContexts(executionId),
+        ),
+      );
+      for (const context of contexts.flat()) {
+        if (context.owner.type === "expert-session") sessionIds.add(context.owner.ownerId);
+      }
     });
+    const prepared = await deletionService.prepare({
+      missionId: id,
+      executionIds: [...executionIds],
+      payload: { mission, sessionIds: [...sessionIds] },
+      ...(options.missions.storagePath === undefined
+        ? {}
+        : { missionPath: options.missions.storagePath(id) }),
+    });
+    await options.prepareOwnerDeletion?.({ mission, executionIds: [...executionIds] });
+    const stop =
+      session === undefined
+        ? (active?.handle.stopForDeletion("Mission deleted.") ?? Promise.resolve())
+        : session.stopForDeletion("Mission deleted.");
+    const stopped = await measureDeletionPhase("runtime_stop", () =>
+      settlementOutcomeWithin(stop, 15_000),
+    );
+    const unconfirmedOwners =
+      stopped.status === "fulfilled"
+        ? (
+            await readRuntimeSessionsForOwners(
+              new PragmaPaths({ pragmaHome: options.pragmaHome }),
+              [...sessionIds, ...executionIds],
+            )
+          ).filter((record) => record.processState !== "stopped")
+        : [];
+    if (stopped.status !== "fulfilled" || unconfirmedOwners.length > 0) {
+      const error = Object.assign(new Error("MISSION_DELETE_RUNTIME_STOP_UNCONFIRMED"), {
+        code: "MISSION_DELETE_RUNTIME_STOP_UNCONFIRMED",
+      });
+      logger.warn(
+        "mission.delete_runtime_stop_unconfirmed",
+        "Mission retained because Runtime stop was not confirmed.",
+        {
+          missionId: id,
+          errorCode: error.message,
+          outcome: stopped.status,
+          unconfirmedSystemSessionIds: unconfirmedOwners.map((record) => record.systemSessionId),
+        },
+      );
+      throw error;
+    }
+    // Only an admitted run can add owners during inventory. Existing Execution
+    // contexts retain the same owner; inspect just newly allocated Executions.
+    if (session !== undefined || active !== undefined) {
+      const lateIds = new Set(await collectMissionExecutionIds(options.missions, id));
+      if (session !== undefined)
+        for (const executionId of (await session.getState()).executionIds) lateIds.add(executionId);
+      const added = [...lateIds].filter((executionId) => !executionIds.has(executionId));
+      for (const executionId of added) executionIds.add(executionId);
+      for (const context of (
+        await Promise.all(
+          added.map(async (executionId) => await executionStore.listContexts(executionId)),
+        )
+      ).flat())
+        if (context.owner.type === "expert-session") sessionIds.add(context.owner.ownerId);
+      if (added.length > 0) {
+        await deletionService.updateOwners(id, [...executionIds], {
+          mission,
+          sessionIds: [...sessionIds],
+        });
+        const outstanding = (
+          await readRuntimeSessionsForOwners(new PragmaPaths({ pragmaHome: options.pragmaHome }), [
+            ...sessionIds,
+            ...executionIds,
+          ])
+        ).filter((record) => record.processState !== "stopped");
+        if (outstanding.length > 0)
+          throw Object.assign(new Error("MISSION_DELETE_RUNTIME_STOP_UNCONFIRMED"), {
+            code: "MISSION_DELETE_RUNTIME_STOP_UNCONFIRMED",
+          });
+      }
+    }
+    if (session !== undefined && sessionService.deleteSessionIfCurrent(id, session))
+      sessionService.clearCompilation(id);
+    if (active !== undefined) {
+      lifecycleService.deleteActive(id);
+      const settlement = active.settlement.then(
+        () => undefined,
+        () => undefined,
+      );
+      const priorSettlement = pendingDeletionSettlements.get(id);
+      const combined = Promise.all([priorSettlement, settlement]).then(() => undefined);
+      trackMissionDeletionSettlement(pendingDeletionSettlements, id, combined);
+    }
+    const observers = pendingDeletionSettlements.get(id);
+    deletionService.trackSettlement(id, async () => {
+      await Promise.all([
+        observers,
+        session?.finishDeletion() ?? active?.handle.finishDeletion?.() ?? Promise.resolve(),
+      ]);
+    });
+    const lockStartedAt = performance.now();
     const deleteOwnedStorage = async (canonicalHandoffFiles: readonly string[]): Promise<void> => {
-      await options.onOwnerDeleting?.({ mission, executionIds: [...executionIds] });
+      logger.info("mission.delete_phase", "Mission deletion locks acquired.", {
+        missionId: id,
+        phase: "lock_wait",
+        durationMs: performance.now() - lockStartedAt,
+      });
       const paths = new PragmaPaths({ pragmaHome: options.pragmaHome });
       const sources = [
         { label: "memory-attention", path: paths.memoryAttentionRoot(mission.id) },
         ...[...executionIds].map((executionId) => ({
-          label: `executions/${executionId}`,
+          label: `executions/${encodePragmaPathSegment(executionId)}`,
           path: paths.executionRoot(executionId),
         })),
         ...[...executionIds].map((executionId) => ({
-          label: `execution-archives/${executionId}.jsonl.gz`,
+          label: `execution-archives/${encodePragmaPathSegment(executionId)}.jsonl.gz`,
           path: paths.executionArchive(executionId),
         })),
         ...[...executionIds].map((executionId) => ({
-          label: `memory-execution-activity/${executionId}`,
+          label: `memory-execution-activity/${encodePragmaPathSegment(executionId)}`,
           path: paths.memoryExecutionActivityRoot(executionId),
         })),
         ...canonicalHandoffFiles.map((path) => ({
           label: `canonical-event-handoffs/${basename(path)}`,
           path,
         })),
-        ...(sessionId === undefined
-          ? []
-          : [
-              { label: `expert-sessions/${sessionId}`, path: paths.expertSessionRoot(sessionId) },
-              ...(await runtimeSessionDeletionSources(paths, sessionId)),
-            ]),
+        ...[...sessionIds].map((ownedSessionId) => ({
+          label: `expert-sessions/${encodePragmaPathSegment(ownedSessionId)}`,
+          path: paths.expertSessionRoot(ownedSessionId),
+        })),
+        ...(
+          await Promise.all(
+            [...sessionIds].map(
+              async (ownedSessionId) => await runtimeSessionDeletionSources(paths, ownedSessionId),
+            ),
+          )
+        ).flat(),
         ...(
           await Promise.all(
             [...executionIds].map(
@@ -3801,35 +3874,73 @@ export function createMissionRunner(options: {
       const uniqueSources = [
         ...new Map(sources.map((source) => [source.path, source] as const)).values(),
       ];
-      await moveOwnedStorageToTrash({
-        paths,
-        owner: { type: "mission", id },
-        sources: uniqueSources,
-        runtimeSessionOwnerIds: [...(sessionId === undefined ? [] : [sessionId]), ...executionIds],
-      });
+      await fenceOwnerDeletion(paths, [id, ...executionIds, ...sessionIds]);
+      try {
+        await moveOwnedStorageToTrash({
+          paths,
+          onCommitted: async () => await deletionService.commit(id),
+          onPhase: (phase, durationMs) =>
+            logger.info("mission.delete_phase", "Mission storage deletion phase completed.", {
+              missionId: id,
+              phase,
+              durationMs,
+            }),
+          deletionId: prepared.deletionId,
+          owner: { type: "mission", id },
+          sources: uniqueSources,
+          runtimeSessionOwnerIds: [...sessionIds, ...executionIds],
+        });
+      } catch (error) {
+        if (
+          !(
+            error instanceof Error &&
+            "code" in error &&
+            error.code === "STORAGE_DELETION_COMMITTED_FINALIZATION_PENDING"
+          ) &&
+          (await deletionService.read(id))?.phase !== "committed"
+        )
+          throw error;
+        logger.warn(
+          "mission.deletion_finalization_degraded",
+          "Mission deletion committed; transaction finalization will recover.",
+          {
+            missionId: id,
+            moduleId: "pragma.mission-deletion",
+            errorCode: "MISSION_DELETE_FINALIZATION_RETRY_PENDING",
+            error,
+          },
+        );
+      }
       if (options.missions.storagePath === undefined) await options.missions.remove(id);
       else options.missions.forget?.(id);
-      if (options.contextStoreRevisions !== undefined) {
-        for (const claim of revisionClaims) {
-          await options.contextStoreRevisions.releaseMissionClaim({
-            ...claim,
-            missionId: mission.id,
-            reason: "mission_deleted",
-          });
-        }
-      }
-      options.usage?.markSubjectDeleted("mission", id);
       sessionService.deleteExecutionContext(id);
       lifecycleService.clearControlIssue(id);
+      deletionService.wake();
+      if (options.deletionService === undefined) {
+        void deletionService
+          .runOnce()
+          .catch((error: unknown) =>
+            logger.warn(
+              "mission.deletion_cleanup_failed",
+              "Deletion committed; cleanup will resume from its record.",
+              { error, missionId: id },
+            ),
+          );
+      }
       options.onStorageTrashed?.();
     };
     await measureDeletionPhase("owned_storage_transaction", async () => {
-      if (options.executionStore === undefined) await deleteOwnedStorage([]);
-      else
-        await options.executionStore.withCanonicalEventDeletion(
-          [...executionIds],
-          deleteOwnedStorage,
+      const action = async () =>
+        await withFileLock(
+          new PragmaPaths({ pragmaHome: options.pragmaHome }).executionLock(id),
+          async () =>
+            await executionStore.withCanonicalEventDeletion([...executionIds], deleteOwnedStorage, [
+              ...sessionIds,
+            ]),
+          { operation: "mission.attention-deletion-barrier" },
         );
+      if (options.missions.withDeletionBarrier === undefined) await action();
+      else await options.missions.withDeletionBarrier(id, action);
     });
   };
 
@@ -6237,23 +6348,34 @@ export function createMissionRunner(options: {
     },
     async delete(id) {
       await lifecycleService.startDeletion(id, async () => {
+        const prior = await deletionService.read(id);
+        if (prior?.phase === "committed" || prior?.phase === "completed") return;
         lifecycleService.setControlIssue(id, {
           state: "deletion_pending",
           reasonCode: "MISSION_DELETION_PENDING",
           observedAt: new Date().toISOString(),
         });
+        const freezeStarted = performance.now();
         await persistMissionDeletionIntent(options.missions.storagePath?.(id), id);
         const inFlight = lifecycleService.run(id);
         lifecycleService.forgetRun(id);
         await options.ownerScope?.forceRevoke(id);
-        if (inFlight !== undefined) await settlesWithin(inFlight, 4_000);
+        logger.info("mission.delete_phase", "Mission admission frozen.", {
+          missionId: id,
+          phase: "freeze",
+          durationMs: performance.now() - freezeStarted,
+        });
+        if (inFlight !== undefined) void inFlight.catch(() => undefined);
         const liveChat = chatService.live(id);
-        if (liveChat !== undefined) await chatService.closeLiveIfCurrent(id, liveChat);
-        await Promise.all(
-          [...workConversationStreams.entries()]
+        const detached =
+          liveChat === undefined ? undefined : chatService.detachLiveIfCurrent(id, liveChat);
+        const closingObservers = Promise.all([
+          detached?.close(),
+          ...[...workConversationStreams.entries()]
             .filter(([, stream]) => stream.missionId === id)
             .map(async ([subscriptionId]) => await closeWorkConversationStream(subscriptionId)),
-        );
+        ]).then(() => undefined);
+        trackMissionDeletionSettlement(pendingDeletionSettlements, id, closingObservers);
         await withMissionController(
           id,
           async () =>
@@ -6734,34 +6856,10 @@ function elapsedMissionMs(startedAt: number): number {
   return Math.round((performance.now() - startedAt) * 100) / 100;
 }
 
-async function settlesWithin(operation: Promise<unknown>, timeoutMs: number): Promise<boolean> {
-  let timer: NodeJS.Timeout | undefined;
-  return await Promise.race([
-    operation.then(
-      () => true,
-      () => true,
-    ),
-    new Promise<false>((resolve) => {
-      timer = setTimeout(() => resolve(false), timeoutMs);
-      timer.unref();
-    }),
-  ]).finally(() => {
-    if (timer !== undefined) clearTimeout(timer);
-  });
-}
-
 type SettlementOutcome =
   | { readonly status: "fulfilled" }
   | { readonly status: "rejected"; readonly error: unknown }
   | { readonly status: "timed_out" };
-
-function containsAgentLifecycleQuiescenceError(error: unknown): boolean {
-  if (error instanceof AgentLifecycleQuiescenceError) return true;
-  return (
-    error instanceof AggregateError &&
-    error.errors.some((nested) => containsAgentLifecycleQuiescenceError(nested))
-  );
-}
 
 async function settlementOutcomeWithin(
   operation: Promise<unknown>,

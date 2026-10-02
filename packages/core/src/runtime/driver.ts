@@ -1,3 +1,4 @@
+import { isOwnerDeletionFenced } from "../storage/owner-deletion.ts";
 import { randomUUID } from "node:crypto";
 
 import {
@@ -647,6 +648,7 @@ async function createManagedRuntimeSession<
     });
 
     const checkpoint = async (trigger: RuntimeCheckpointTrigger): Promise<void> => {
+      if (isOwnerDeletionFenced(pragmaPaths, request.owner.ownerId)) return;
       await checkpointRuntimeSession({
         provider: persistenceProvider,
         spec: persistenceSpec,
@@ -662,6 +664,26 @@ async function createManagedRuntimeSession<
       });
     };
 
+    let nativeStop: Promise<void> | undefined;
+    let nativeStopped = false;
+    const stopNative = (): Promise<void> => {
+      if (nativeStop === undefined) {
+        nativeStop = Promise.resolve().then(async () => {
+          if (nativeSession !== undefined)
+            await driver.closeSession?.(nativeSession, { sessionInfo: readSessionInfo(), logger });
+          nativeStopped = true;
+          sessionRecord = await updateRuntimeSessionRecord(pragmaPaths, sessionRecord, {
+            processState: "stopped",
+          });
+        });
+        void nativeStop.catch(() => {
+          nativeStop = undefined;
+        });
+      }
+      return nativeStop;
+    };
+    let beforeDestroyCompleted = false;
+    let afterDestroyCompleted = false;
     lifecycle = createQueuedAgentLifecycle<ExpertAgentRunContext | undefined>(runContext, {
       abort: async (signal) => {
         if (nativeSession !== undefined && lifecycle?.currentSignal !== undefined) {
@@ -675,22 +697,25 @@ async function createManagedRuntimeSession<
         const sessionInfo = readSessionInfo();
         const cleanupErrors: unknown[] = [];
 
-        await dispatchExpertAgentHook(agent.hooks, "beforeSessionDestroy", {
-          agent,
-          session: sessionInfo,
-          logger,
-        }).catch((error: unknown) => {
-          cleanupErrors.push(error);
-        });
+        if (!beforeDestroyCompleted) {
+          await dispatchExpertAgentHook(agent.hooks, "beforeSessionDestroy", {
+            agent,
+            session: sessionInfo,
+            logger,
+          })
+            .then(() => {
+              beforeDestroyCompleted = true;
+            })
+            .catch((error: unknown) => {
+              cleanupErrors.push(error);
+            });
+        }
         const sessionToClose = nativeSession;
         const closeSession = driver.closeSession;
         if (sessionToClose !== undefined && closeSession !== undefined) {
           await runtimeOperationWithinDeadline(
             Promise.resolve().then(async () => {
-              await closeSession(sessionToClose, {
-                sessionInfo,
-                logger,
-              });
+              await stopNative();
             }),
             RUNTIME_CLOSE_SESSION_TIMEOUT_MS,
             `Runtime session close timed out: ${systemSessionId}`,
@@ -710,7 +735,7 @@ async function createManagedRuntimeSession<
           sessionRecord = await updateRuntimeSessionRecord(pragmaPaths, sessionRecord, {
             runtimeSessionRef:
               finalRuntimeSession.id === "" ? sessionRecord.runtimeSessionRef : finalRuntimeSession,
-            processState: "stopped",
+            processState: nativeStopped ? "stopped" : "failed",
           });
         } catch (error) {
           logger.error(
@@ -724,13 +749,19 @@ async function createManagedRuntimeSession<
           );
           cleanupErrors.push(error);
         }
-        await dispatchExpertAgentHook(agent.hooks, "afterSessionDestroy", {
-          agent,
-          session: sessionInfo,
-          logger,
-        }).catch((error: unknown) => {
-          cleanupErrors.push(error);
-        });
+        if (!afterDestroyCompleted) {
+          await dispatchExpertAgentHook(agent.hooks, "afterSessionDestroy", {
+            agent,
+            session: sessionInfo,
+            logger,
+          })
+            .then(() => {
+              afterDestroyCompleted = true;
+            })
+            .catch((error: unknown) => {
+              cleanupErrors.push(error);
+            });
+        }
 
         throwIfRuntimeCleanupFailed(cleanupErrors);
       },
@@ -780,6 +811,7 @@ async function createManagedRuntimeSession<
       agent,
       driver: driver as RuntimeDriver<TNativeEvent, TNativeSession>,
       nativeSession,
+      stopNative,
       descriptor,
       lifecycle,
       logger,
@@ -1246,6 +1278,7 @@ class ManagedRuntimeSession<TNativeEvent, TNativeSession> {
       readonly agent: Expert;
       readonly driver: RuntimeDriver<TNativeEvent, TNativeSession>;
       readonly nativeSession: TNativeSession;
+      readonly stopNative: () => Promise<void>;
       readonly descriptor: RuntimeAdapterDescriptor;
       readonly lifecycle: AgentLifecycle<ExpertAgentRunContext | undefined>;
       readonly logger: PragmaLogger;
@@ -1528,6 +1561,12 @@ class ManagedRuntimeSession<TNativeEvent, TNativeSession> {
       ? undefined
       : async (request) =>
           RuntimeSteerDeliverySchema.parse(await reconcile(this.options.nativeSession, request));
+  }
+
+  async stopForDeletion(): Promise<void> {
+    this.options.lifecycle.seal();
+    if (this.activeRunId !== undefined) this.options.executionBindings.deactivate(this.activeRunId);
+    await this.options.stopNative();
   }
 
   async close(): Promise<void> {

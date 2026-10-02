@@ -14,7 +14,12 @@ import { mkdir } from "node:fs/promises";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 
-import { PragmaPaths, withFileLock } from "@pragma/core";
+import {
+  PragmaPaths,
+  withFileLock,
+  isOwnerDeletionFenced,
+  withOwnerDeletionAdmission,
+} from "@pragma/core";
 import {
   MemoryEvidenceEnvelopeSchema,
   type MemoryExtractionFailureAttempt,
@@ -228,6 +233,7 @@ export async function createEpisodicMemoryStore(
   options: { readonly pragmaHome?: string | undefined } = {},
 ): Promise<EpisodicMemoryStore> {
   const paths = new PragmaPaths(options);
+  const isFenced = (id: string): boolean => isOwnerDeletionFenced(paths, id);
   const moduleId = "pragma.memory.episodic";
   const dataPath = join(paths.memoryModuleDataRoot(moduleId), "episodes.sqlite");
   const statePath = join(paths.memoryModuleStateRoot(moduleId), "jobs.sqlite");
@@ -298,7 +304,7 @@ export async function createEpisodicMemoryStore(
       );
   };
 
-  return {
+  const store: EpisodicMemoryStore = {
     ...memoryIndexOutbox(data, "episodes"),
     async relatedForRecall(scope, id, limit) {
       const access = recallPredicate("episodes", scope);
@@ -364,7 +370,7 @@ export async function createEpisodicMemoryStore(
           const envelope = MemoryEvidenceEnvelopeSchema.parse(raw);
           const executionId = envelope.correlationId;
           if (executionId === undefined) continue;
-          if (isDeletedExecution(state, executionId)) continue;
+          if (isFenced(executionId) || isDeletedExecution(state, executionId)) continue;
           touched.add(executionId);
           insertEvidence.run(
             envelope.messageId,
@@ -451,6 +457,10 @@ export async function createEpisodicMemoryStore(
           return undefined;
         }
         const current = EpisodicExtractionJobSchema.parse(JSON.parse(row.jobJson));
+        if (current.sourceExecutionIds.some(isFenced)) {
+          state.exec("COMMIT;");
+          return undefined;
+        }
         const canSettleLocally =
           current.status === "running" &&
           data
@@ -512,10 +522,11 @@ export async function createEpisodicMemoryStore(
     },
 
     async isClaimCurrent(job) {
-      return isCurrentRunningJob(state, job);
+      return !job.sourceExecutionIds.some(isFenced) && isCurrentRunningJob(state, job);
     },
 
     async bindExecutionConversation(input) {
+      if (isFenced(input.executionId)) return;
       state.exec("BEGIN IMMEDIATE;");
       try {
         bindExecutionConversationJob(state, writeJob, input, extractionJobId);
@@ -752,7 +763,12 @@ export async function createEpisodicMemoryStore(
     },
 
     async completeRetained(input) {
-      if (isDeletedExecution(state, input.job.executionId)) return;
+      if (
+        input.job.sourceExecutionIds.some(isFenced) ||
+        isFenced(input.job.executionId) ||
+        isDeletedExecution(state, input.job.executionId)
+      )
+        return;
       if (!isCurrentRunningJob(state, input.job)) return;
       const record = EpisodicMemoryRecordSchema.parse(input.record);
       data.exec("BEGIN IMMEDIATE;");
@@ -863,7 +879,12 @@ export async function createEpisodicMemoryStore(
     },
 
     async completeRejected(job, reason, now) {
-      if (isDeletedExecution(state, job.executionId)) return;
+      if (
+        job.sourceExecutionIds.some(isFenced) ||
+        isFenced(job.executionId) ||
+        isDeletedExecution(state, job.executionId)
+      )
+        return;
       if (!isCurrentRunningJob(state, job)) return;
       state.exec("BEGIN IMMEDIATE;");
       try {
@@ -880,7 +901,12 @@ export async function createEpisodicMemoryStore(
     },
 
     async fail(input) {
-      if (isDeletedExecution(state, input.job.executionId)) return;
+      if (
+        input.job.sourceExecutionIds.some(isFenced) ||
+        isFenced(input.job.executionId) ||
+        isDeletedExecution(state, input.job.executionId)
+      )
+        return;
       if (!isCurrentRunningJob(state, input.job)) return;
       const attempts = input.job.attempts;
       const needsAttention =
@@ -1115,6 +1141,29 @@ export async function createEpisodicMemoryStore(
     close() {
       state.close();
       data.close();
+    },
+  };
+  return {
+    ...store,
+    completeRetained: async (input) =>
+      await withOwnerDeletionAdmission(
+        paths,
+        [...input.job.sourceExecutionIds, input.job.executionId],
+        async () => await store.completeRetained(input),
+      ),
+    completeRejected: async (job, reason, now) => {
+      await withOwnerDeletionAdmission(
+        paths,
+        [...job.sourceExecutionIds, job.executionId],
+        async () => await store.completeRejected(job, reason, now),
+      );
+    },
+    fail: async (input) => {
+      await withOwnerDeletionAdmission(
+        paths,
+        [...input.job.sourceExecutionIds, input.job.executionId],
+        async () => await store.fail(input),
+      );
     },
   };
 }

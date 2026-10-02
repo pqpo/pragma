@@ -428,6 +428,8 @@ export class FlowExecutionManager {
     return Object.assign(view, {
       result: waitForResult(this.executions, executionId),
       cancel: async (reason?: string) => await controller.cancel(reason),
+      stopForDeletion: async (reason?: string) => await controller.stopForDeletion(reason),
+      finishDeletion: async () => await controller.finishDeletion(),
       checkpointWaitingHuman: async () => await controller.checkpointWaitingHuman(),
       respondToHumanInteraction: async (
         interactionId: string,

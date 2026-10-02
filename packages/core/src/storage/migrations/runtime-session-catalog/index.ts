@@ -351,13 +351,14 @@ async function cleanupLegacyFiles(
 async function recoverPendingCatalogDeletions(
   paths: PragmaPaths,
   database: DatabaseSync,
+  deletionId?: string,
 ): Promise<void> {
   const pending = database
     .prepare(
       `SELECT deletion_id AS deletionId, owner_ids_json AS ownerIdsJson, status
-       FROM runtime_session_deletions ORDER BY prepared_at, deletion_id`,
+       FROM runtime_session_deletions WHERE (? IS NULL OR deletion_id = ?) ORDER BY prepared_at, deletion_id`,
     )
-    .all() as {
+    .all(deletionId ?? null, deletionId ?? null) as {
     readonly deletionId: string;
     readonly ownerIdsJson: string;
     readonly status: string;
@@ -560,5 +561,36 @@ async function pathExists(path: string): Promise<boolean> {
   } catch (error) {
     if (isNotFound(error)) return false;
     throw error;
+  }
+}
+
+/** Replay one already prepared transaction without scanning owners or initializing a catalog. */
+export async function recoverRuntimeSessionDeletion(
+  paths: PragmaPaths,
+  deletionId: string,
+): Promise<void> {
+  const path = runtimeSessionCatalogPath(paths);
+  // A crash can precede the first catalog preparation on a fresh storage root.
+  // Existing catalogs use targeted recovery without re-importing owners.
+  if (!(await pathExists(path))) await ensureCatalogInitialized(paths);
+  await assertCatalogVersion(path);
+  const database = openWritableCatalog(path);
+  try {
+    await withRuntimeSessionCatalogDeletionLock(paths, async () => {
+      const journalPath = join(paths.deletionJournalRoot(), `${deletionId}.json`);
+      const journal = StorageDeletionJournalSchema.parse(
+        JSON.parse(await readFile(journalPath, "utf8")),
+      );
+      assertDeletionJournal(paths, journal, deletionId, journal.runtimeSessionOwnerIds);
+      if (journal.status === "trashed") return;
+      database
+        .prepare(
+          `INSERT OR IGNORE INTO runtime_session_deletions(deletion_id, owner_ids_json, status, prepared_at) VALUES (?, ?, 'prepared', ?)`,
+        )
+        .run(deletionId, JSON.stringify(journal.runtimeSessionOwnerIds), journal.startedAt);
+      await recoverPendingCatalogDeletions(paths, database, deletionId);
+    });
+  } finally {
+    database.close();
   }
 }

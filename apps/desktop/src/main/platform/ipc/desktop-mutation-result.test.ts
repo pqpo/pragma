@@ -20,6 +20,21 @@ const knowledgeBaseDeleteErrorCases = [
 ] as const;
 
 describe("runDesktopMutation", () => {
+  it("preserves the retryable Runtime deletion stop error", async () => {
+    const result = await runDesktopMutation(async () => {
+      throw Object.assign(new Error("Runtime stop remains unconfirmed."), {
+        code: "MISSION_DELETE_RUNTIME_STOP_UNCONFIRMED",
+      });
+    });
+    expect(result).toMatchObject({
+      ok: false,
+      error: {
+        code: "MISSION_DELETE_RUNTIME_STOP_UNCONFIRMED",
+        category: "conflict",
+        retryable: true,
+      },
+    });
+  });
   it("preserves IntegrationError recovery fields across the IPC boundary", async () => {
     const result = await runDesktopMutation(async () => {
       throw createIntegrationError({

@@ -15,6 +15,24 @@ afterEach(async () => {
 });
 
 describe("Local Host UsageSink", () => {
+  it("backfills observations absent from canonical delivery in one durable batch", async () => {
+    const root = await mkdtemp(join(tmpdir(), "pragma-usage-backfill-"));
+    roots.push(root);
+    const feed = await createFileCanonicalEventFeed({ pragmaHome: root });
+    const sink = createLocalHostUsageSink({
+      path: join(root, "usage.json"),
+      deliveryPath: join(root, "delivery.sqlite"),
+      feed,
+    });
+    try {
+      const observation = fixtureObservation();
+      await sink.reconcile([observation, observation]);
+      await expect(sink.list()).resolves.toEqual([observation]);
+    } finally {
+      await sink.close();
+      await feed.close();
+    }
+  });
   it("persists exact observations once and tolerates replay", async () => {
     const root = await mkdtemp(join(tmpdir(), "pragma-local-usage-"));
     roots.push(root);

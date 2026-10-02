@@ -2,7 +2,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { access, mkdir } from "node:fs/promises";
 import { DatabaseSync } from "node:sqlite";
 
-import { PragmaPaths } from "@pragma/core";
+import { PragmaPaths, isOwnerDeletionFenced, withFileLock } from "@pragma/core";
 import { MemorySubjectRefSchema, type MemorySubjectRef } from "@pragma/shared";
 import { z } from "zod";
 
@@ -108,8 +108,9 @@ export function createMemoryActivityStore(options: {
     return database;
   };
 
-  return {
+  const store: MemoryActivityStore = {
     async registerExecutionContext(input) {
+      if (isOwnerDeletionFenced(paths, input.executionId)) return;
       const context = MemoryExecutionContextSchema.parse({
         schemaVersion: "pragma.memory-execution-context/v1",
         executionId: input.executionId,
@@ -145,6 +146,7 @@ export function createMemoryActivityStore(options: {
     },
 
     async recordCapture(input) {
+      if (isOwnerDeletionFenced(paths, input.executionId)) return;
       const decision = MemoryCaptureDecisionSchema.parse(input);
       const database = await open(decision.executionId);
       try {
@@ -157,6 +159,7 @@ export function createMemoryActivityStore(options: {
     },
 
     async recordRecall(input) {
+      if (isOwnerDeletionFenced(paths, input.executionId)) return;
       const activity = MemoryRecallActivitySchema.parse({
         ...input,
         schemaVersion: "pragma.memory-recall-activity/v1",
@@ -207,6 +210,22 @@ export function createMemoryActivityStore(options: {
         database.close();
       }
     },
+  };
+  const write = async (id: string, action: () => Promise<void>) =>
+    await withFileLock(
+      paths.executionLock(id),
+      async () => {
+        if (!isOwnerDeletionFenced(paths, id)) await action();
+      },
+      { operation: "memory.activity.write" },
+    );
+  return {
+    ...store,
+    registerExecutionContext: async (input) =>
+      await write(input.executionId, () => store.registerExecutionContext(input)),
+    recordCapture: async (input) =>
+      await write(input.executionId, () => store.recordCapture(input)),
+    recordRecall: async (input) => await write(input.executionId, () => store.recordRecall(input)),
   };
 }
 

@@ -2688,10 +2688,9 @@ describe("MissionRunner", { timeout: 30_000 }, () => {
         onOwnerDeleting: async ({ executionIds }) => {
           const paths = new PragmaPaths({ pragmaHome: join(root, "state") });
           for (const executionId of executionIds) {
-            const owner = JSON.parse(
-              await readFile(join(paths.executionLock(executionId), "owner.json"), "utf8"),
-            );
-            expect(owner.operation).toBe("execution.deletion-barrier");
+            expect(
+              JSON.parse(await readFile(paths.ownerDeletionMarker(executionId), "utf8")),
+            ).toMatchObject({ ownerId: executionId });
             fencedExecutions.push(executionId);
           }
         },
@@ -2761,7 +2760,7 @@ describe("MissionRunner", { timeout: 30_000 }, () => {
     expect(deletionElapsedMs).toBeLessThan(2_000);
     expect(deletionReads).toContain(originalExecutionId);
     expect(deletionReads).toHaveLength(2);
-    expect(fencedExecutions).toEqual(deletionReads);
+    await vi.waitFor(() => expect(fencedExecutions).toEqual(deletionReads));
     await expect(deletionStore.get(originalExecutionId)).resolves.toBeUndefined();
     await expect(
       readFile(
@@ -2836,8 +2835,8 @@ describe("MissionRunner", { timeout: 30_000 }, () => {
     await expect(runner.delete(target.id)).resolves.toBeUndefined();
     await expect(readFile(attentionFile)).rejects.toMatchObject({ code: "ENOENT" });
     await expect(missions.get(target.id)).rejects.toThrow();
-    expect(openRevision).toHaveBeenCalledTimes(1);
-    expect(markSubjectDeleted).toHaveBeenCalledWith("mission", target.id);
+    expect(openRevision).not.toHaveBeenCalled();
+    await vi.waitFor(() => expect(markSubjectDeleted).toHaveBeenCalledWith("mission", target.id));
     expect(onStorageTrashed).toHaveBeenCalledOnce();
     expect(await missions.list()).toHaveLength(1);
   });
@@ -2907,13 +2906,17 @@ describe("MissionRunner", { timeout: 30_000 }, () => {
 
     await runner.delete(mission.id);
 
-    expect((await revisions.getDraft(job.draftId)).activeMissionId).toBeUndefined();
-    const released = await revisions.get(job.id);
-    expect(released).toMatchObject({
-      state: "needs_attention",
-      error: { code: "mission_deleted" },
+    await vi.waitFor(async () =>
+      expect((await revisions.getDraft(job.draftId)).activeMissionId).toBeUndefined(),
+    );
+    await vi.waitFor(async () => {
+      const released = await revisions.get(job.id);
+      expect(released).toMatchObject({
+        state: "needs_attention",
+        error: { code: "mission_deleted" },
+      });
+      expect(released.missionId).toBeUndefined();
     });
-    expect(released.missionId).toBeUndefined();
   });
 
   it("does not release a revision claim when Mission deletion aborts before the owner is removed", async () => {
@@ -2977,7 +2980,7 @@ describe("MissionRunner", { timeout: 30_000 }, () => {
       pragmaHome: join(root, "state"),
       runtimes: createStaticRuntimeResolver({ runtimes: [runtime], defaultRuntimeId: "fake" }),
       assertExecutorReady: async () => undefined,
-      onOwnerDeleting: async () => {
+      prepareOwnerDeletion: async () => {
         throw new Error("stop before Mission ownership is removed");
       },
     });

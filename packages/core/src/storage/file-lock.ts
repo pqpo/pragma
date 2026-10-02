@@ -237,7 +237,11 @@ async function publishLock(lockDir: string, options: FileLockOptions): Promise<v
     await options.onPhase?.("staging-created");
     ownerFile = await open(stagingOwnerPath, "wx", 0o600);
     await writeStorageHandle(ownerFile, `${JSON.stringify(owner)}\n`);
-    await ownerFile.sync();
+    // Lock metadata is a process lease, not authoritative state. Closing then
+    // atomically publishing the staging directory makes it visible to peers.
+    // Disk flushes cannot preserve a live lease across an OS crash (all holders
+    // have exited), and serializing hundreds of fsyncs dominates owner deletion.
+    // Business journals retain their own persistence guarantees.
     await ownerFile.close();
     ownerFile = undefined;
     await options.onPhase?.("staged");

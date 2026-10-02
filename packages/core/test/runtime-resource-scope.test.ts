@@ -31,6 +31,24 @@ describe("RuntimeResourceScope", () => {
     ]);
   });
 
+  it("retries only failed disposers and keeps registration closed", async () => {
+    const scope = new RuntimeResourceScope("retry");
+    const succeeded = vi.fn();
+    const failed = vi.fn().mockRejectedValueOnce(new Error("release failed"));
+    scope.adopt("succeeded", {}, succeeded);
+    scope.adopt("failed", {}, failed);
+    await expect(scope.dispose()).rejects.toBeInstanceOf(AggregateError);
+    expect(() => scope.adopt("late", {}, succeeded)).toThrow("is closing");
+    const first = scope.dispose();
+    expect(scope.dispose()).toBe(first);
+    await first;
+    expect(failed).toHaveBeenCalledTimes(2);
+    expect(succeeded).toHaveBeenCalledOnce();
+    expect(scope.receipts().every((entry) => entry.state === "disposed")).toBe(true);
+    await scope.dispose();
+    expect(failed).toHaveBeenCalledTimes(2);
+  });
+
   it("continues cleanup and aggregates disposer failures", async () => {
     const dispose = vi.fn();
     const scope = new RuntimeResourceScope("failures");

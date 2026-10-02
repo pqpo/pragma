@@ -1,10 +1,6 @@
 import { parentPort, workerData } from "node:worker_threads";
 
-import {
-  createSynchronousFileCanonicalEventFeed,
-  type CanonicalEventMaintenanceInput,
-  type CanonicalEventFeed,
-} from "./canonical-event-feed.ts";
+import type { CanonicalEventMaintenanceInput, CanonicalEventFeed } from "./canonical-event-feed.ts";
 import type { CanonicalEventCursor, CanonicalEventEnvelope } from "@pragma/shared";
 
 interface WorkerRequest {
@@ -23,6 +19,14 @@ interface SerializedWorkerError {
 
 const port = parentPort;
 if (port === null) throw new Error("Canonical event feed worker requires a parent port.");
+
+// Explicit scoped registration also transforms source in Node versions where
+// --import tsx does not register its hooks in a Worker thread.
+const sourceLoader = "tsx/esm/api";
+const { createSynchronousFileCanonicalEventFeed }: typeof import("./canonical-event-feed.ts") =
+  import.meta.url.endsWith(".ts")
+    ? await (await import(sourceLoader)).tsImport("./canonical-event-feed.ts", import.meta.url)
+    : await import("./canonical-event-feed.js");
 
 let feed: CanonicalEventFeed;
 let queue = Promise.resolve();
