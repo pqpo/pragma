@@ -81,6 +81,31 @@ describe("Runtime attempt usage settlement", () => {
     expect(countText).toHaveBeenCalledWith(outputText);
   });
 
+  it.each([false, true])(
+    "settles oversized final-only output with reported usage taking priority: %s",
+    async (reported) => {
+      await vi.waitFor(() =>
+        expect(defaultRuntimeTokenCounter.countText("hello world").source).toBe("tokenizer"),
+      );
+      const outputText = "x".repeat(200_001);
+      const session = await createDriverFixture(() => ({
+        outputText,
+        ...(reported ? { usage: reportedUsage(333) } : {}),
+      }));
+      const countText = vi.spyOn(defaultRuntimeTokenCounter, "countText");
+      const handle = session.submit({ query: "hello", execution: {} });
+      await expect(handle.result).resolves.toMatchObject({ result: { output: outputText } });
+      if (reported) {
+        expect(await handle.usage).toEqual(reportedUsage(333));
+        expect(countText).not.toHaveBeenCalled();
+      } else {
+        expect(await handle.usage).toMatchObject({ measurement: "estimated", output: 50_001 });
+        expect(countText).toHaveBeenCalledTimes(2);
+        expect(countText).toHaveBeenCalledWith(outputText);
+      }
+    },
+  );
+
   it("collects each retry independently and sums its precise usage once", async () => {
     const collectUsage = vi
       .fn()

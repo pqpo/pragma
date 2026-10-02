@@ -1,13 +1,187 @@
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import { FileLockTimeoutError } from "@pragma/core";
 
 import {
   createMissionOwnerScope,
+  createMissionControllerStore,
   type MissionControllerStore,
   type MissionCommandConsumer,
 } from "../src/index.ts";
 
 describe("Mission owner scope", () => {
+  const missionId = "88888888-8888-4888-8888-888888888888";
+  const requestId = "99999999-9999-4999-8999-999999999999";
+  const deferred = () => {
+    let resolve!: () => void;
+    const promise = new Promise<void>((done) => {
+      resolve = done;
+    });
+    return { promise, resolve };
+  };
+  const appendCommand = async (controller: MissionControllerStore) => {
+    await controller.appendCommand({
+      missionId,
+      request: {
+        schemaVersion: "pragma.integration-request/v1",
+        requestId,
+        payloadHash: `sha256:${"a".repeat(64)}`,
+        requestedAt: new Date().toISOString(),
+        client: { surface: "cli", version: "test", instanceId: missionId },
+      },
+      kind: "send",
+      payload: { kind: "send", input: { prompt: "Accepted successor", attachments: [] } },
+    });
+  };
+
+  it("keeps renewal and Inbox consumption alive until gated lower-level release completes", async () => {
+    const root = await mkdtemp(join(tmpdir(), "pragma-owner-drain-"));
+    const controller = createMissionControllerStore({ missionsPath: root });
+    const scope = createMissionOwnerScope({ controller, leaseMs: 1_000 });
+    const apply = vi.fn(async () => ({ result: { delivered: true } }));
+    scope.bindConsumer({ apply });
+    const lower = deferred();
+    const entered = deferred();
+    let releasing: Promise<void> | undefined;
+    try {
+      const guard = await scope.acquire(missionId);
+      const originalLease = (await controller.readSnapshot({ missionId })).snapshot.lease!;
+      releasing = scope.releaseAfterLowerLevel(missionId, async () => {
+        entered.resolve();
+        await lower.promise;
+      });
+      await entered.promise;
+      await vi.waitFor(
+        async () => {
+          expect(Date.now()).toBeGreaterThan(Date.parse(originalLease.expiresAt));
+          const lease = (await controller.readSnapshot({ missionId })).snapshot.lease!;
+          expect(lease.renewedAt).not.toBe(originalLease.renewedAt);
+          expect(Date.parse(lease.expiresAt)).toBeGreaterThan(Date.now());
+        },
+        { timeout: 2_500, interval: 20 },
+      );
+      await expect(controller.assertWriteGuard({ missionId, guard })).resolves.toBeUndefined();
+      await appendCommand(controller);
+      scope.wake(missionId);
+      await expect(
+        controller.waitForTerminalOperation({
+          missionId,
+          requestId,
+          timeoutMs: 1_500,
+          pollIntervalMs: 10,
+        }),
+      ).resolves.toMatchObject({ state: "applied" });
+      expect(apply).toHaveBeenCalledOnce();
+      lower.resolve();
+      await releasing;
+      expect(scope.currentGuard(missionId)).toBeUndefined();
+      expect((await controller.readSnapshot({ missionId })).snapshot.lease).toBeUndefined();
+    } finally {
+      lower.resolve();
+      await releasing?.catch(() => undefined);
+      await scope.stop(missionId);
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("checks the retained Mission fence before starting lower-level release", async () => {
+    const root = await mkdtemp(join(tmpdir(), "pragma-owner-drain-fence-"));
+    const controller = createMissionControllerStore({ missionsPath: root });
+    const scope = createMissionOwnerScope({ controller, leaseMs: 1_000 });
+    const releaseLowerLevel = vi.fn(async () => undefined);
+    try {
+      await scope.acquire(missionId);
+      await controller.revoke({ missionId });
+      await expect(
+        scope.releaseAfterLowerLevel(missionId, releaseLowerLevel),
+      ).rejects.toMatchObject({ code: "MISSION_FENCING_REJECTED" });
+      expect(releaseLowerLevel).not.toHaveBeenCalled();
+    } finally {
+      await scope.stop(missionId);
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("preserves the live lease and consumer when lower-level release fails", async () => {
+    const root = await mkdtemp(join(tmpdir(), "pragma-owner-drain-failure-"));
+    const controller = createMissionControllerStore({ missionsPath: root });
+    const scope = createMissionOwnerScope({ controller, leaseMs: 1_000 });
+    const apply = vi.fn(async () => ({ result: {} }));
+    scope.bindConsumer({ apply });
+    try {
+      const guard = await scope.acquire(missionId);
+      await expect(
+        scope.releaseAfterLowerLevel(missionId, async () => {
+          throw new Error("Lower-level owner remains active.");
+        }),
+      ).rejects.toThrow("Lower-level owner remains active.");
+      expect(scope.currentGuard(missionId)).toMatchObject(guard);
+      await expect(controller.assertWriteGuard({ missionId, guard })).resolves.toBeUndefined();
+      await appendCommand(controller);
+      scope.wake(missionId);
+      await expect(
+        controller.waitForTerminalOperation({
+          missionId,
+          requestId,
+          timeoutMs: 1_500,
+          pollIntervalMs: 10,
+        }),
+      ).resolves.toMatchObject({ state: "applied" });
+      expect(apply).toHaveBeenCalledOnce();
+      await scope.release(missionId);
+    } finally {
+      await scope.stop(missionId);
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("does not release a successor owner when predecessor lower-level cleanup finishes late", async () => {
+    const root = await mkdtemp(join(tmpdir(), "pragma-owner-drain-successor-"));
+    const controller = createMissionControllerStore({ missionsPath: root });
+    const scope = createMissionOwnerScope({ controller, leaseMs: 1_000 });
+    const apply = vi.fn(async () => ({ result: {} }));
+    scope.bindConsumer({ apply });
+    const lower = deferred();
+    const entered = deferred();
+    let releasing: Promise<void> | undefined;
+    try {
+      const predecessor = await scope.acquire(missionId);
+      releasing = scope.releaseAfterLowerLevel(missionId, async () => {
+        entered.resolve();
+        await lower.promise;
+      });
+      await entered.promise;
+      await scope.forceRevoke(missionId);
+      const successor = await scope.acquire(missionId);
+      expect(successor.claimId).not.toBe(predecessor.claimId);
+      lower.resolve();
+      await releasing;
+      expect(scope.currentGuard(missionId)).toMatchObject(successor);
+      await expect(
+        controller.assertWriteGuard({ missionId, guard: successor }),
+      ).resolves.toBeUndefined();
+      await appendCommand(controller);
+      scope.wake(missionId);
+      await expect(
+        controller.waitForTerminalOperation({
+          missionId,
+          requestId,
+          timeoutMs: 1_500,
+          pollIntervalMs: 10,
+        }),
+      ).resolves.toMatchObject({ state: "applied" });
+      expect(apply).toHaveBeenCalledOnce();
+      await scope.release(missionId);
+    } finally {
+      lower.resolve();
+      await releasing?.catch(() => undefined);
+      await scope.stop(missionId);
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
   it("starts the bound Inbox consumer as part of owner acquisition", async () => {
     const poller = { stop: vi.fn(async () => undefined) };
     const controller = {

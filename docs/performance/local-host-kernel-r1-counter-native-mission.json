@@ -1,0 +1,1273 @@
+{
+  "serial": true,
+  "performanceAcceptancePassed": false,
+  "attempts": [
+    {
+      "attempt": "native-mission",
+      "rawSha256": "fd8baf6ac44cca2f00ae6d9aef8387a0939fa6183286f34eb70d7277e69fc45e",
+      "raw": {
+        "schemaVersion": "pragma.pr353-native-mission-smoke/v1",
+        "startedAt": "2026-10-02T13:11:02.773Z",
+        "scope": "Actual Local Host run application + Mission command Inbox + SQLite + FileExpertSessionStore + Native Codex. Default CLI run lifetime; no release override. Reopen is graceful resource release plus new composition, not a crash-replay claim. Desktop UI/observer and performance acceptance are not covered.",
+        "node": "v24.18.0",
+        "assertions": [
+          {
+            "id": "native.available",
+            "status": "passed"
+          },
+          {
+            "id": "native.initial.owner-binding-persisted",
+            "status": "passed"
+          },
+          {
+            "id": "send.b68a79d0-db8a-4237-baf4-aef297287bc5.applied",
+            "status": "passed",
+            "details": {
+              "state": "applied"
+            }
+          },
+          {
+            "id": "mission.queue.durable-queued-before-initial-terminal",
+            "status": "passed"
+          },
+          {
+            "id": "steer.fe0d8b13-54bb-403e-8fc9-48fd3752e032.applied",
+            "status": "passed",
+            "details": {
+              "state": "applied"
+            }
+          },
+          {
+            "id": "mission.steer.same-execution",
+            "status": "passed"
+          },
+          {
+            "id": "initial-run.production-finalization",
+            "status": "failed"
+          },
+          {
+            "id": "mission.steer.actual-consumption",
+            "status": "passed"
+          },
+          {
+            "id": "mission.queue.actual-consumption",
+            "status": "passed"
+          },
+          {
+            "id": "native.terminal.identity-persisted",
+            "status": "passed"
+          },
+          {
+            "id": "native.queue.reuses-owner-binding",
+            "status": "passed"
+          },
+          {
+            "id": "host.reopen.starts-without-process-local-owner",
+            "status": "passed"
+          },
+          {
+            "id": "graceful-host-reopen.completed",
+            "status": "failed"
+          }
+        ],
+        "errors": [
+          {
+            "phase": "initial-run-finalization",
+            "name": "ExpertSessionReleaseBlockedError",
+            "message": "Wait for the active Expert turn before releasing terminal resources.",
+            "cause": {
+              "name": "Error",
+              "message": "Wait for the active Expert turn before releasing terminal resources."
+            }
+          },
+          {
+            "phase": "graceful-host-reopen",
+            "name": "Error",
+            "code": "COMMAND_RESULT_TIMEOUT",
+            "message": "Mission command result timed out; the command remains durable."
+          }
+        ],
+        "operations": [
+          {
+            "requestId": "b68a79d0-db8a-4237-baf4-aef297287bc5",
+            "kind": "send",
+            "state": "applied",
+            "result": {
+              "missionId": "b084c240-e3df-4116-a799-53cf65d877f1",
+              "executionId": "b6f252bf-3114-4765-9df0-e4a06aee4a8d",
+              "turnId": "b68a79d0-db8a-4237-baf4-aef297287bc5",
+              "mode": "enqueue",
+              "queueState": "running",
+              "queuePosition": 1
+            },
+            "owner": "live"
+          },
+          {
+            "requestId": "fe0d8b13-54bb-403e-8fc9-48fd3752e032",
+            "kind": "steer",
+            "state": "applied",
+            "result": {
+              "missionId": "b084c240-e3df-4116-a799-53cf65d877f1",
+              "executionId": "531f149f-4fba-46ac-9553-9ae8622c57bd",
+              "turnId": "fe0d8b13-54bb-403e-8fc9-48fd3752e032",
+              "mode": "steer",
+              "queueState": "running"
+            },
+            "owner": "live"
+          }
+        ],
+        "nativeEvents": [
+          {
+            "type": "run.started"
+          },
+          {
+            "type": "progress",
+            "stage": "turn/started"
+          },
+          {
+            "type": "message.delta"
+          },
+          {
+            "type": "message.delta"
+          },
+          {
+            "type": "message.delta"
+          },
+          {
+            "type": "message.delta"
+          },
+          {
+            "type": "message.delta"
+          },
+          {
+            "type": "message.delta"
+          },
+          {
+            "type": "message.delta"
+          },
+          {
+            "type": "message.delta"
+          },
+          {
+            "type": "message.delta"
+          },
+          {
+            "type": "message.delta"
+          },
+          {
+            "type": "message.delta"
+          },
+          {
+            "type": "message.delta"
+          },
+          {
+            "type": "message.delta"
+          },
+          {
+            "type": "message.delta"
+          },
+          {
+            "type": "message.delta"
+          },
+          {
+            "type": "message.delta"
+          },
+          {
+            "type": "message.delta"
+          },
+          {
+            "type": "message.completed"
+          },
+          {
+            "type": "tool.started"
+          },
+          {
+            "type": "message.delta"
+          },
+          {
+            "type": "message.delta"
+          },
+          {
+            "type": "message.delta"
+          },
+          {
+            "type": "message.delta"
+          },
+          {
+            "type": "message.delta"
+          },
+          {
+            "type": "message.delta"
+          },
+          {
+            "type": "message.delta"
+          },
+          {
+            "type": "message.delta"
+          },
+          {
+            "type": "message.delta"
+          },
+          {
+            "type": "message.completed"
+          },
+          {
+            "type": "usage.updated"
+          },
+          {
+            "type": "context-window.updated"
+          },
+          {
+            "type": "run.completed"
+          },
+          {
+            "type": "run.started"
+          },
+          {
+            "type": "progress",
+            "stage": "turn/started"
+          },
+          {
+            "type": "message.delta"
+          },
+          {
+            "type": "message.delta"
+          },
+          {
+            "type": "message.delta"
+          },
+          {
+            "type": "message.delta"
+          },
+          {
+            "type": "message.delta"
+          },
+          {
+            "type": "message.delta"
+          },
+          {
+            "type": "message.delta"
+          },
+          {
+            "type": "message.delta"
+          },
+          {
+            "type": "message.delta"
+          },
+          {
+            "type": "message.delta"
+          },
+          {
+            "type": "message.delta"
+          },
+          {
+            "type": "message.delta"
+          },
+          {
+            "type": "message.delta"
+          },
+          {
+            "type": "message.delta"
+          },
+          {
+            "type": "message.delta"
+          },
+          {
+            "type": "message.delta"
+          },
+          {
+            "type": "message.delta"
+          },
+          {
+            "type": "message.completed"
+          },
+          {
+            "type": "usage.updated"
+          },
+          {
+            "type": "context-window.updated"
+          },
+          {
+            "type": "run.completed"
+          }
+        ],
+        "completeSmokePassed": false,
+        "processExitConfirmed": false,
+        "initialIdentity": {
+          "sessionId": "b084c240-e3df-4116-a799-53cf65d877f1",
+          "contextId": "c1ab6b2b-b91a-44d2-9bc6-a7115a203d26",
+          "systemSessionId": "045a584d-1120-4ac2-8d7c-ef533c1d4bee",
+          "runtimeSession": {
+            "type": "codex-local",
+            "id": "01a0fcbd-5ffd-7fa2-9488-fd99a2d226f1"
+          }
+        },
+        "preReopenIdentity": {
+          "sessionId": "b084c240-e3df-4116-a799-53cf65d877f1",
+          "contextId": "c1ab6b2b-b91a-44d2-9bc6-a7115a203d26",
+          "systemSessionId": "045a584d-1120-4ac2-8d7c-ef533c1d4bee",
+          "runtimeSession": {
+            "type": "codex-local",
+            "id": "01a0fcbd-5ffd-7fa2-9488-fd99a2d226f1"
+          }
+        },
+        "finishedAt": "2026-10-02T13:12:14.750Z",
+        "retainedIsolatedRoot": "[isolated-root retained locally; not a source-user Home]"
+      },
+      "rawMissingReason": null,
+      "supervisor": {
+        "name": "native-mission",
+        "command": [
+          "node",
+          "--import",
+          "tsx",
+          "/tmp/pragma-pr353-native-mission-smoke.mts",
+          "/tmp/pragma-pr353-counter-native-mission.json"
+        ],
+        "elapsedSeconds": 73.34407227206975,
+        "exitCode": 1,
+        "timedOut": false,
+        "log": "/tmp/pragma-pr353-counter-native-mission.log",
+        "logSha256": "ab753c0d9fe0d2f60ebf41385aa658786d8d06e4ceebb954c76a8e2056f96c8d",
+        "serial": true
+      }
+    },
+    {
+      "attempt": "native-mission-diagnostic",
+      "rawSha256": "bd4fa76904a95f7dbd26594c1d25d929a87b10469a121a352cc51e06db1eb807",
+      "raw": {
+        "schemaVersion": "pragma.pr353-native-mission-smoke/v1",
+        "startedAt": "2026-10-02T13:36:11.526Z",
+        "scope": "Actual Local Host run application + Mission command Inbox + SQLite + FileExpertSessionStore + Native Codex. Default CLI run lifetime; no release override. Reopen is graceful resource release plus new composition, not a crash-replay claim. Desktop UI/observer and performance acceptance are not covered.",
+        "node": "v24.18.0",
+        "assertions": [
+          {
+            "id": "native.available",
+            "status": "passed"
+          },
+          {
+            "id": "native.initial.owner-binding-persisted",
+            "status": "passed"
+          },
+          {
+            "id": "send.58821241-c2b9-45e8-8176-05abc4d107cb.applied",
+            "status": "passed",
+            "details": {
+              "state": "applied"
+            }
+          },
+          {
+            "id": "mission.queue.durable-queued-before-initial-terminal",
+            "status": "passed"
+          },
+          {
+            "id": "steer.4a359e86-852d-47df-ab1e-8bb5e994c841.applied",
+            "status": "passed",
+            "details": {
+              "state": "applied"
+            }
+          },
+          {
+            "id": "mission.steer.same-execution",
+            "status": "passed"
+          },
+          {
+            "id": "initial-run.production-finalization",
+            "status": "failed"
+          },
+          {
+            "id": "mission.steer.actual-consumption",
+            "status": "passed"
+          },
+          {
+            "id": "mission.queue.actual-consumption",
+            "status": "passed"
+          },
+          {
+            "id": "native.terminal.identity-persisted",
+            "status": "passed"
+          },
+          {
+            "id": "native.queue.reuses-owner-binding",
+            "status": "passed"
+          },
+          {
+            "id": "host.reopen.starts-without-process-local-owner",
+            "status": "passed"
+          },
+          {
+            "id": "graceful-host-reopen.completed",
+            "status": "failed"
+          }
+        ],
+        "errors": [
+          {
+            "phase": "initial-run-finalization",
+            "name": "ExpertSessionReleaseBlockedError",
+            "message": "Wait for the active Expert turn before releasing terminal resources.",
+            "cause": {
+              "name": "Error",
+              "message": "Wait for the active Expert turn before releasing terminal resources."
+            }
+          },
+          {
+            "phase": "graceful-host-reopen",
+            "name": "Error",
+            "code": "COMMAND_RESULT_TIMEOUT",
+            "message": "Mission command result timed out; the command remains durable."
+          }
+        ],
+        "operations": [
+          {
+            "requestId": "58821241-c2b9-45e8-8176-05abc4d107cb",
+            "kind": "send",
+            "state": "applied",
+            "result": {
+              "missionId": "02512222-0915-420c-bdd6-7a4dec61809c",
+              "executionId": "888ae773-0628-4f24-913b-c8398506f4da",
+              "turnId": "58821241-c2b9-45e8-8176-05abc4d107cb",
+              "mode": "enqueue",
+              "queueState": "running",
+              "queuePosition": 1
+            },
+            "owner": "live"
+          },
+          {
+            "requestId": "4a359e86-852d-47df-ab1e-8bb5e994c841",
+            "kind": "steer",
+            "state": "applied",
+            "result": {
+              "missionId": "02512222-0915-420c-bdd6-7a4dec61809c",
+              "executionId": "efefb274-6003-49cc-a897-fe330c023b2f",
+              "turnId": "4a359e86-852d-47df-ab1e-8bb5e994c841",
+              "mode": "steer",
+              "queueState": "running"
+            },
+            "owner": "live"
+          }
+        ],
+        "nativeEvents": [
+          {
+            "type": "run.started"
+          },
+          {
+            "type": "progress",
+            "stage": "turn/started"
+          },
+          {
+            "type": "message.delta"
+          },
+          {
+            "type": "message.delta"
+          },
+          {
+            "type": "message.delta"
+          },
+          {
+            "type": "message.delta"
+          },
+          {
+            "type": "message.delta"
+          },
+          {
+            "type": "message.delta"
+          },
+          {
+            "type": "message.delta"
+          },
+          {
+            "type": "message.delta"
+          },
+          {
+            "type": "message.delta"
+          },
+          {
+            "type": "message.delta"
+          },
+          {
+            "type": "message.delta"
+          },
+          {
+            "type": "message.delta"
+          },
+          {
+            "type": "message.delta"
+          },
+          {
+            "type": "message.delta"
+          },
+          {
+            "type": "message.delta"
+          },
+          {
+            "type": "message.delta"
+          },
+          {
+            "type": "message.delta"
+          },
+          {
+            "type": "message.completed"
+          },
+          {
+            "type": "tool.started"
+          },
+          {
+            "type": "tool.completed"
+          },
+          {
+            "type": "message.delta"
+          },
+          {
+            "type": "message.delta"
+          },
+          {
+            "type": "message.delta"
+          },
+          {
+            "type": "message.delta"
+          },
+          {
+            "type": "message.delta"
+          },
+          {
+            "type": "message.delta"
+          },
+          {
+            "type": "message.delta"
+          },
+          {
+            "type": "message.delta"
+          },
+          {
+            "type": "message.delta"
+          },
+          {
+            "type": "message.delta"
+          },
+          {
+            "type": "message.delta"
+          },
+          {
+            "type": "message.completed"
+          },
+          {
+            "type": "usage.updated"
+          },
+          {
+            "type": "context-window.updated"
+          },
+          {
+            "type": "run.completed"
+          },
+          {
+            "type": "run.started"
+          },
+          {
+            "type": "progress",
+            "stage": "turn/started"
+          },
+          {
+            "type": "message.delta"
+          },
+          {
+            "type": "message.delta"
+          },
+          {
+            "type": "message.delta"
+          },
+          {
+            "type": "message.delta"
+          },
+          {
+            "type": "message.delta"
+          },
+          {
+            "type": "message.delta"
+          },
+          {
+            "type": "message.delta"
+          },
+          {
+            "type": "message.delta"
+          },
+          {
+            "type": "message.delta"
+          },
+          {
+            "type": "message.delta"
+          },
+          {
+            "type": "message.delta"
+          },
+          {
+            "type": "message.delta"
+          },
+          {
+            "type": "message.delta"
+          },
+          {
+            "type": "message.delta"
+          },
+          {
+            "type": "message.delta"
+          },
+          {
+            "type": "message.delta"
+          },
+          {
+            "type": "message.delta"
+          },
+          {
+            "type": "message.delta"
+          },
+          {
+            "type": "message.delta"
+          },
+          {
+            "type": "message.delta"
+          },
+          {
+            "type": "message.delta"
+          },
+          {
+            "type": "message.completed"
+          },
+          {
+            "type": "usage.updated"
+          },
+          {
+            "type": "context-window.updated"
+          },
+          {
+            "type": "run.completed"
+          }
+        ],
+        "completeSmokePassed": false,
+        "processExitConfirmed": false,
+        "initialIdentity": {
+          "sessionId": "02512222-0915-420c-bdd6-7a4dec61809c",
+          "contextId": "99818914-d58b-4c76-a9a6-ff27b7827fda",
+          "systemSessionId": "3a23a425-8ea1-4cfe-be14-d23de4af541c",
+          "runtimeSession": {
+            "type": "codex-local",
+            "id": "01a0fcd4-6564-7dd0-91cb-d9dfdf6459f5"
+          }
+        },
+        "preReopenIdentity": {
+          "sessionId": "02512222-0915-420c-bdd6-7a4dec61809c",
+          "contextId": "99818914-d58b-4c76-a9a6-ff27b7827fda",
+          "systemSessionId": "3a23a425-8ea1-4cfe-be14-d23de4af541c",
+          "runtimeSession": {
+            "type": "codex-local",
+            "id": "01a0fcd4-6564-7dd0-91cb-d9dfdf6459f5"
+          }
+        },
+        "failedCommandBoundary": {
+          "requestId": "61258191-b57c-407a-b268-a5cb5601bc25",
+          "kind": "send",
+          "owner": "scheduled",
+          "lease": {
+            "schemaVersion": "pragma.local-host-mission-controller-lease/v1",
+            "claimId": "d51e1dc7-e950-4e46-8b1e-1259573021f1",
+            "fencingToken": "1",
+            "acquiredAt": "2026-10-02T13:36:11.600Z",
+            "renewedAt": "2026-10-02T13:36:56.685Z",
+            "expiresAt": "2026-10-02T13:37:26.685Z"
+          },
+          "ownerPresent": false,
+          "operations": [
+            {
+              "requestId": "58821241-c2b9-45e8-8176-05abc4d107cb",
+              "state": "applied"
+            },
+            {
+              "requestId": "4a359e86-852d-47df-ab1e-8bb5e994c841",
+              "state": "applied"
+            },
+            {
+              "requestId": "61258191-b57c-407a-b268-a5cb5601bc25",
+              "state": "queued"
+            }
+          ],
+          "identity": {
+            "sessionId": "02512222-0915-420c-bdd6-7a4dec61809c",
+            "contextId": "99818914-d58b-4c76-a9a6-ff27b7827fda",
+            "systemSessionId": "3a23a425-8ea1-4cfe-be14-d23de4af541c",
+            "runtimeSession": {
+              "type": "codex-local",
+              "id": "01a0fcd4-6564-7dd0-91cb-d9dfdf6459f5"
+            }
+          }
+        },
+        "finishedAt": "2026-10-02T13:37:52.615Z",
+        "retainedIsolatedRoot": "[isolated-root retained locally; not a source-user Home]"
+      },
+      "rawMissingReason": null,
+      "supervisor": {
+        "name": "native-mission-diagnostic",
+        "command": [
+          "node",
+          "--import",
+          "tsx",
+          "/tmp/pragma-pr353-native-mission-smoke.mts",
+          "/tmp/pragma-pr353-counter-native-mission-diagnostic.json"
+        ],
+        "elapsedSeconds": 102.41191607690416,
+        "exitCode": 1,
+        "timedOut": false,
+        "log": "/tmp/pragma-pr353-counter-native-mission-diagnostic.log",
+        "logSha256": "470a905337144a5d55f7400d375c73e860401def14585e07eeb371ead319ea66",
+        "serial": true
+      }
+    },
+    {
+      "attempt": "final-native-mission",
+      "rawSha256": null,
+      "raw": null,
+      "rawMissingReason": "Unexpected fixture cleanup rejection terminated process before raw JSON output; full log SHA retained",
+      "supervisor": {
+        "name": "final-native-mission",
+        "command": [
+          "node",
+          "--import",
+          "tsx",
+          "docs/performance/local-host-kernel-r1-native-mission-probe.mts",
+          "/tmp/pragma-pr353-counter-final-native-mission.json"
+        ],
+        "elapsedSeconds": 45.61912793503143,
+        "exitCode": 1,
+        "timedOut": false,
+        "log": "/tmp/pragma-pr353-counter-final-native-mission.log",
+        "logSha256": "90a8f321a94fd4a2b641ef5d82df0bce2a668fde15ab5192a918f82583ccd8e1",
+        "serial": true
+      }
+    },
+    {
+      "attempt": "final-native-mission-r2",
+      "rawSha256": "c176d4ee5d82c90fc8acb664483444e152e5ead1503801e993c0f23c5fd03711",
+      "raw": {
+        "schemaVersion": "pragma.pr353-native-mission-smoke/v1",
+        "startedAt": "2026-10-02T14:24:47.260Z",
+        "scope": "Actual Local Host run application + Mission command Inbox + SQLite + FileExpertSessionStore + Native Codex. Default CLI run lifetime; no release override. Reopen is graceful resource release plus new composition, not a crash-replay claim. Desktop UI/observer and performance acceptance are not covered.",
+        "node": "v24.18.0",
+        "assertions": [
+          {
+            "id": "native.available",
+            "status": "passed"
+          },
+          {
+            "id": "native.initial.owner-binding-persisted",
+            "status": "passed"
+          },
+          {
+            "id": "send.d49b8a57-7a3b-468b-8175-3c145b12888d.applied",
+            "status": "passed",
+            "details": {
+              "state": "applied"
+            }
+          },
+          {
+            "id": "mission.queue.durable-queued-before-initial-terminal",
+            "status": "passed"
+          },
+          {
+            "id": "steer.cb6ead5c-77a5-40c6-887c-851844b05f44.applied",
+            "status": "passed",
+            "details": {
+              "state": "applied"
+            }
+          },
+          {
+            "id": "mission.steer.same-execution",
+            "status": "passed"
+          },
+          {
+            "id": "initial-run.production-finalization",
+            "status": "passed"
+          },
+          {
+            "id": "mission.steer.actual-consumption",
+            "status": "passed"
+          },
+          {
+            "id": "mission.queue.actual-consumption",
+            "status": "passed"
+          },
+          {
+            "id": "native.terminal.identity-persisted",
+            "status": "passed"
+          },
+          {
+            "id": "native.queue.reuses-owner-binding",
+            "status": "passed"
+          },
+          {
+            "id": "host.reopen.starts-without-process-local-owner",
+            "status": "passed"
+          },
+          {
+            "id": "send.7cb5dba7-04fc-4775-8fab-795a2b4694de.applied",
+            "status": "passed",
+            "details": {
+              "state": "applied"
+            }
+          },
+          {
+            "id": "host.reopen.actual-native-context-recall",
+            "status": "passed"
+          },
+          {
+            "id": "host.reopen.exact-owned-native-identity",
+            "status": "passed"
+          },
+          {
+            "id": "host.reopen.owner-auto-released",
+            "status": "passed"
+          },
+          {
+            "id": "host.reopen.terminal-projected-before-release",
+            "status": "passed"
+          },
+          {
+            "id": "mission.binding.pinned-durable",
+            "status": "passed"
+          }
+        ],
+        "errors": [],
+        "operations": [
+          {
+            "requestId": "d49b8a57-7a3b-468b-8175-3c145b12888d",
+            "kind": "send",
+            "state": "applied",
+            "result": {
+              "missionId": "e612a87e-bc08-4414-a111-966d17fcc4e3",
+              "executionId": "3e492ff5-ce9b-4da2-bbf0-1f4950d4dbc5",
+              "turnId": "d49b8a57-7a3b-468b-8175-3c145b12888d",
+              "mode": "enqueue",
+              "queueState": "running",
+              "queuePosition": 1
+            },
+            "owner": "live"
+          },
+          {
+            "requestId": "cb6ead5c-77a5-40c6-887c-851844b05f44",
+            "kind": "steer",
+            "state": "applied",
+            "result": {
+              "missionId": "e612a87e-bc08-4414-a111-966d17fcc4e3",
+              "executionId": "eca1c018-30be-496f-a520-27b8e5dbd9ff",
+              "turnId": "cb6ead5c-77a5-40c6-887c-851844b05f44",
+              "mode": "steer",
+              "queueState": "running"
+            },
+            "owner": "live"
+          },
+          {
+            "requestId": "7cb5dba7-04fc-4775-8fab-795a2b4694de",
+            "kind": "send",
+            "state": "applied",
+            "result": {
+              "missionId": "e612a87e-bc08-4414-a111-966d17fcc4e3",
+              "executionId": "b14fb1ed-3d83-47de-8e4f-3f31a45ed60e",
+              "turnId": "7cb5dba7-04fc-4775-8fab-795a2b4694de",
+              "mode": "enqueue",
+              "queueState": "running",
+              "queuePosition": 1
+            },
+            "owner": "scheduled"
+          }
+        ],
+        "nativeEvents": [
+          {
+            "type": "run.started"
+          },
+          {
+            "type": "progress",
+            "stage": "turn/started"
+          },
+          {
+            "type": "message.delta"
+          },
+          {
+            "type": "message.delta"
+          },
+          {
+            "type": "message.delta"
+          },
+          {
+            "type": "message.delta"
+          },
+          {
+            "type": "message.delta"
+          },
+          {
+            "type": "message.delta"
+          },
+          {
+            "type": "message.delta"
+          },
+          {
+            "type": "message.delta"
+          },
+          {
+            "type": "message.delta"
+          },
+          {
+            "type": "message.delta"
+          },
+          {
+            "type": "message.delta"
+          },
+          {
+            "type": "message.delta"
+          },
+          {
+            "type": "message.delta"
+          },
+          {
+            "type": "message.delta"
+          },
+          {
+            "type": "message.delta"
+          },
+          {
+            "type": "message.delta"
+          },
+          {
+            "type": "message.delta"
+          },
+          {
+            "type": "message.completed"
+          },
+          {
+            "type": "tool.started"
+          },
+          {
+            "type": "tool.completed"
+          },
+          {
+            "type": "message.delta"
+          },
+          {
+            "type": "message.delta"
+          },
+          {
+            "type": "message.delta"
+          },
+          {
+            "type": "message.delta"
+          },
+          {
+            "type": "message.delta"
+          },
+          {
+            "type": "message.delta"
+          },
+          {
+            "type": "message.delta"
+          },
+          {
+            "type": "message.delta"
+          },
+          {
+            "type": "message.delta"
+          },
+          {
+            "type": "message.delta"
+          },
+          {
+            "type": "message.delta"
+          },
+          {
+            "type": "message.delta"
+          },
+          {
+            "type": "message.completed"
+          },
+          {
+            "type": "usage.updated"
+          },
+          {
+            "type": "context-window.updated"
+          },
+          {
+            "type": "run.completed"
+          },
+          {
+            "type": "run.started"
+          },
+          {
+            "type": "progress",
+            "stage": "turn/started"
+          },
+          {
+            "type": "message.delta"
+          },
+          {
+            "type": "message.delta"
+          },
+          {
+            "type": "message.delta"
+          },
+          {
+            "type": "message.delta"
+          },
+          {
+            "type": "message.delta"
+          },
+          {
+            "type": "message.delta"
+          },
+          {
+            "type": "message.delta"
+          },
+          {
+            "type": "message.delta"
+          },
+          {
+            "type": "message.delta"
+          },
+          {
+            "type": "message.delta"
+          },
+          {
+            "type": "message.delta"
+          },
+          {
+            "type": "message.delta"
+          },
+          {
+            "type": "message.delta"
+          },
+          {
+            "type": "message.delta"
+          },
+          {
+            "type": "message.delta"
+          },
+          {
+            "type": "message.delta"
+          },
+          {
+            "type": "message.delta"
+          },
+          {
+            "type": "message.delta"
+          },
+          {
+            "type": "message.delta"
+          },
+          {
+            "type": "message.delta"
+          },
+          {
+            "type": "message.delta"
+          },
+          {
+            "type": "message.delta"
+          },
+          {
+            "type": "message.delta"
+          },
+          {
+            "type": "message.completed"
+          },
+          {
+            "type": "usage.updated"
+          },
+          {
+            "type": "context-window.updated"
+          },
+          {
+            "type": "run.completed"
+          },
+          {
+            "type": "run.started"
+          },
+          {
+            "type": "progress",
+            "stage": "turn/started"
+          },
+          {
+            "type": "message.delta"
+          },
+          {
+            "type": "message.delta"
+          },
+          {
+            "type": "message.delta"
+          },
+          {
+            "type": "message.delta"
+          },
+          {
+            "type": "message.delta"
+          },
+          {
+            "type": "message.delta"
+          },
+          {
+            "type": "message.delta"
+          },
+          {
+            "type": "message.delta"
+          },
+          {
+            "type": "message.delta"
+          },
+          {
+            "type": "message.delta"
+          },
+          {
+            "type": "message.delta"
+          },
+          {
+            "type": "message.delta"
+          },
+          {
+            "type": "message.delta"
+          },
+          {
+            "type": "message.delta"
+          },
+          {
+            "type": "message.delta"
+          },
+          {
+            "type": "message.delta"
+          },
+          {
+            "type": "message.delta"
+          },
+          {
+            "type": "message.delta"
+          },
+          {
+            "type": "message.delta"
+          },
+          {
+            "type": "message.delta"
+          },
+          {
+            "type": "message.delta"
+          },
+          {
+            "type": "message.delta"
+          },
+          {
+            "type": "message.delta"
+          },
+          {
+            "type": "message.completed"
+          },
+          {
+            "type": "usage.updated"
+          },
+          {
+            "type": "context-window.updated"
+          },
+          {
+            "type": "run.completed"
+          }
+        ],
+        "completeSmokePassed": true,
+        "processExitConfirmed": false,
+        "initialIdentity": {
+          "sessionId": "e612a87e-bc08-4414-a111-966d17fcc4e3",
+          "contextId": "f417739f-636f-43d7-9fee-033edb373f6d",
+          "systemSessionId": "c8e48b79-c701-4619-8e1d-ee513d9170ca",
+          "runtimeSession": {
+            "type": "codex-local",
+            "id": "01a0fd00-e302-7801-a325-aab6c4b7dd39"
+          }
+        },
+        "preReopenIdentity": {
+          "sessionId": "e612a87e-bc08-4414-a111-966d17fcc4e3",
+          "contextId": "f417739f-636f-43d7-9fee-033edb373f6d",
+          "systemSessionId": "c8e48b79-c701-4619-8e1d-ee513d9170ca",
+          "runtimeSession": {
+            "type": "codex-local",
+            "id": "01a0fd00-e302-7801-a325-aab6c4b7dd39"
+          }
+        },
+        "reopenedIdentity": {
+          "sessionId": "e612a87e-bc08-4414-a111-966d17fcc4e3",
+          "contextId": "f417739f-636f-43d7-9fee-033edb373f6d",
+          "systemSessionId": "c8e48b79-c701-4619-8e1d-ee513d9170ca",
+          "runtimeSession": {
+            "type": "codex-local",
+            "id": "01a0fd00-e302-7801-a325-aab6c4b7dd39"
+          }
+        },
+        "missionEventTypes": [
+          "mission.created",
+          "mission.binding.pinned",
+          "run.accepted",
+          "run.started",
+          "execution.started",
+          "invocation.started",
+          "invocation.message.appended",
+          "runtime.event",
+          "runtime.event",
+          "command.accepted",
+          "command.applied",
+          "command.accepted",
+          "command.applied",
+          "invocation.message.appended",
+          "runtime.event",
+          "invocation.message.appended",
+          "runtime.event",
+          "runtime.event",
+          "runtime.usage.observed",
+          "invocation.message.appended",
+          "invocation.succeeded",
+          "execution.succeeded",
+          "run.succeeded",
+          "command.accepted",
+          "command.applied",
+          "execution.started",
+          "invocation.started",
+          "invocation.message.appended",
+          "runtime.event",
+          "runtime.event",
+          "runtime.event",
+          "runtime.usage.observed",
+          "invocation.message.appended",
+          "invocation.succeeded",
+          "execution.succeeded",
+          "run.succeeded",
+          "execution.started",
+          "invocation.started",
+          "invocation.message.appended",
+          "runtime.event",
+          "runtime.event",
+          "runtime.event",
+          "runtime.usage.observed",
+          "invocation.message.appended",
+          "invocation.succeeded",
+          "execution.succeeded",
+          "run.succeeded"
+        ],
+        "observationsCapturedBeforeCleanup": true,
+        "finishedAt": "2026-10-02T14:26:00.770Z"
+      },
+      "rawMissingReason": null,
+      "supervisor": {
+        "name": "final-native-mission-r2",
+        "command": [
+          "node",
+          "--import",
+          "tsx",
+          "docs/performance/local-host-kernel-r1-native-mission-probe.mts",
+          "/tmp/pragma-pr353-counter-final-native-mission-r2.json"
+        ],
+        "elapsedSeconds": 74.81760012591258,
+        "exitCode": 0,
+        "timedOut": false,
+        "log": "/tmp/pragma-pr353-counter-final-native-mission-r2.log",
+        "logSha256": "0d2b1e9c1820ce331bd04f38ee5c700e1f1c54e6211f51cd7eafb6c26b3c9258",
+        "serial": true
+      }
+    }
+  ]
+}

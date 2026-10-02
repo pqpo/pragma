@@ -470,15 +470,20 @@ export function createMissionOwnerScope(options: {
         await releaseLowerLevel();
         return;
       }
+      await options.controller.assertWriteGuard({ missionId, guard: current.guard });
+      // Accepted successors can still need this lease and Inbox while Core
+      // drains actual prompt/steer work. A failed drain preserves the live
+      // owner so the same consumer can recover without a premature takeover.
+      await releaseLowerLevel();
+      if (active.get(missionId) !== current || current.stopped) return;
       current.stopped = true;
       if (current.timer !== undefined) clearTimeout(current.timer);
       await stopPolling(missionId);
+      // Poller shutdown yields; a revoked/reacquired owner must not be released
+      // by the predecessor's late cleanup. Renewal may replace only its guard.
+      if (active.get(missionId) !== current) return;
       try {
-        await options.controller.releaseAfterLowerLevel({
-          missionId,
-          guard: current.guard,
-          releaseLowerLevel,
-        });
+        await options.controller.release({ missionId, guard: current.guard });
       } finally {
         if (active.get(missionId) === current) active.delete(missionId);
       }

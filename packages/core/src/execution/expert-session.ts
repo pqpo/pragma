@@ -190,6 +190,11 @@ export interface ExpertSession {
   /** Release the Session owner after a durable human-input checkpoint. */
   checkpointWaitingHuman(): Promise<void>;
   /**
+   * Wait for admitted processing and delivery without sealing admission.
+   * lease-lost means ownership cleanup finished; Native tasks need not have settled.
+   */
+  waitForPromptProcessing(): Promise<"idle" | "lease-lost">;
+  /**
    * Release transient Runtime and lease resources after a terminal turn while
    * keeping the durable ExpertSession and its RuntimeSessionRef recoverable.
    * waitForIdle seals admission while waiting for the supplied settlement and
@@ -825,6 +830,7 @@ class ExpertSessionImpl implements ExpertSession {
   private readonly ownedSessions: Pick<ExpertSessionStore, "enqueue" | "transact" | "appendEvent">;
   private controller: ExecutionController | undefined;
   private processing: Promise<void> | undefined;
+  private processingRestart: Promise<void> | undefined;
   private processingGeneration = 0;
   private readonly runtimeSessions = new RuntimeSessionPool();
   private readonly queueSteersInFlight = new Set<string>();
@@ -840,6 +846,7 @@ class ExpertSessionImpl implements ExpertSession {
   private resourcesReleasing = false;
   private terminalReleaseRequested = false;
   private readonly promptAdmissions = new Set<Promise<ExpertTurn>>();
+  private readonly promptControlAdmissions = new Set<Promise<unknown>>();
   private readonly completions = new Map<string, Promise<ExecutionRecord>>();
   private readonly settlements = new Map<
     string,
@@ -919,6 +926,57 @@ class ExpertSessionImpl implements ExpertSession {
       return await admission;
     } finally {
       this.promptAdmissions.delete(admission);
+    }
+  }
+
+  async waitForPromptProcessing(): Promise<"idle" | "lease-lost"> {
+    return await this.waitForOwnedPromptWork(() => this.drainPromptProcessing());
+  }
+
+  private async waitForOwnedPromptWork(work: () => Promise<void>): Promise<"idle" | "lease-lost"> {
+    if (this.leaseError !== undefined) {
+      await this.leaseFailureTask;
+      return "lease-lost";
+    }
+    const signal = this.leaseLost.signal;
+    let onLeaseLost!: () => void;
+    const lost = new Promise<void>((resolve) => {
+      onLeaseLost = () => resolve();
+      signal.addEventListener("abort", onLeaseLost, { once: true });
+      if (signal.aborted) onLeaseLost();
+    });
+    try {
+      await Promise.race([work(), lost]);
+    } catch (error) {
+      if (this.leaseError === undefined) throw error;
+    } finally {
+      signal.removeEventListener("abort", onLeaseLost);
+    }
+    if (this.leaseError !== undefined) {
+      await this.leaseFailureTask;
+      return "lease-lost";
+    }
+    return "idle";
+  }
+
+  private async waitForPromptAdmissions(): Promise<void> {
+    await this.waitForOwnedPromptWork(async () => {
+      await Promise.allSettled([...this.promptAdmissions, ...this.promptControlAdmissions]);
+    });
+  }
+
+  private async drainPromptProcessing(): Promise<void> {
+    for (;;) {
+      const admissions = [...this.promptAdmissions, ...this.promptControlAdmissions];
+      const processing = this.processing;
+      const restart = this.processingRestart;
+      if (admissions.length === 0 && processing === undefined && restart === undefined) return;
+      // Delivery failures retain their durable receipts. The Host must reread
+      // that boundary after actual work finishes, rather than await a queued
+      // receipt's turn settlement (which can deliberately remain recoverable).
+      await Promise.allSettled(admissions);
+      await processing;
+      await restart;
     }
   }
 
@@ -1209,7 +1267,7 @@ class ExpertSessionImpl implements ExpertSession {
     if (this.resourcesReleasing) throw new Error("ExpertSession resources are being released.");
     this.resourcesReleasing = true;
     try {
-      await Promise.allSettled([...this.promptAdmissions]);
+      await this.waitForPromptAdmissions();
       if (this.controller !== undefined) {
         throw new Error(
           "Checkpoint the active human interaction before releasing the ExpertSession owner.",
@@ -1314,7 +1372,7 @@ class ExpertSessionImpl implements ExpertSession {
     try {
       // Close admission before reading persisted state. A prompt already admitted
       // must finish enqueueing first, so release cannot overlook its pending turn.
-      await Promise.allSettled([...this.promptAdmissions]);
+      await this.waitForPromptAdmissions();
       if (this.leaseError !== undefined) await this.leaseFailureTask;
       const [state, prompts] = await Promise.all([this.getState(), this.getPromptQueue()]);
       if (
@@ -1852,12 +1910,17 @@ class ExpertSessionImpl implements ExpertSession {
   async resumePromptQueue(
     options: { readonly recovery?: "abandon" | undefined } = {},
   ): Promise<void> {
+    if (this.resourcesReleasing || this.terminalReleaseRequested)
+      throw new Error(`ExpertSession resources are being released: ${this.sessionId}`);
     if (this.queueRecoveryInFlight)
       throw new SteerDeliveryUncertainError("Queue delivery recovery is already in progress.");
     this.queueRecoveryInFlight = true;
+    const admission = this.resumePromptQueueInternal(options);
+    this.promptControlAdmissions.add(admission);
     try {
-      await this.resumePromptQueueInternal(options);
+      await admission;
     } finally {
+      this.promptControlAdmissions.delete(admission);
       this.queueRecoveryInFlight = false;
     }
   }
@@ -2181,6 +2244,21 @@ class ExpertSessionImpl implements ExpertSession {
   async steerQueuedPrompt(
     requestId: string,
     options: { readonly target?: ExpertSteerTarget | undefined } = {},
+  ): Promise<ExpertTurn> {
+    if (this.resourcesReleasing || this.terminalReleaseRequested)
+      throw new Error(`ExpertSession resources are being released: ${this.sessionId}`);
+    const admission = this.steerQueuedPromptInternal(requestId, options);
+    this.promptControlAdmissions.add(admission);
+    try {
+      return await admission;
+    } finally {
+      this.promptControlAdmissions.delete(admission);
+    }
+  }
+
+  private async steerQueuedPromptInternal(
+    requestId: string,
+    options: { readonly target?: ExpertSteerTarget | undefined },
   ): Promise<ExpertTurn> {
     if (this.leaseError !== undefined) throw this.leaseError;
     if (this.closePromise !== undefined || this.stopPromise !== undefined || this.deletionFrozen) {
@@ -2848,19 +2926,25 @@ class ExpertSessionImpl implements ExpertSession {
     const processing = this.processQueue(generation).finally(() => {
       if (this.processingGeneration !== generation) return;
       this.processing = undefined;
-      if (!this.paused)
-        void this.restartProcessingIfQueued().catch((error) => {
-          this.dependencies.loggerProvider
-            .createLogger({
-              component: "core.expert-session",
-              scope: { expertSessionId: this.sessionId },
-            })
-            .warn(
-              "expert_session.queue_restart_failed",
-              "Durable prompt queue retained for recovery",
-              { error, errorCode: "EXPERT_SESSION_QUEUE_RESTART_FAILED" },
-            );
-        });
+      if (!this.paused) {
+        const restart = this.restartProcessingIfQueued()
+          .catch((error) => {
+            this.dependencies.loggerProvider
+              .createLogger({
+                component: "core.expert-session",
+                scope: { expertSessionId: this.sessionId },
+              })
+              .warn(
+                "expert_session.queue_restart_failed",
+                "Durable prompt queue retained for recovery",
+                { error, errorCode: "EXPERT_SESSION_QUEUE_RESTART_FAILED" },
+              );
+          })
+          .finally(() => {
+            if (this.processingRestart === restart) this.processingRestart = undefined;
+          });
+        this.processingRestart = restart;
+      }
     });
     this.processing = processing;
   }

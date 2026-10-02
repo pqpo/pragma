@@ -21,6 +21,8 @@ import {
   PragmaPaths,
   withExecutionRunScope,
   type RuntimeAdapter,
+  type RuntimeNativeSessionContext,
+  type ExpertSession,
 } from "@pragma/core";
 import { defineRuntimeTestDriver } from "@pragma/core/testing";
 import {
@@ -397,6 +399,157 @@ describe("Core-backed Local Host run composition", { timeout: 10_000 }, () => {
     ).rejects.toMatchObject({ code: "ENOENT" });
   });
 
+  it("waits for an accepted successor's durable settlement before releasing the initial run", async () => {
+    const native = createGatedRunRuntime("success");
+    const f = await createControlledRunFixture(native.runtime);
+    const initial = await f.run.start(createRequest(f.home, "expert", "a".repeat(16), "first"));
+    const outcome = initial.outcome;
+    let finalized = false;
+    void outcome.then(
+      () => {
+        finalized = true;
+      },
+      () => {
+        finalized = true;
+      },
+    );
+    const owner = f.executorPort.ownerAccess.controlOwner(initial.missionId)!;
+    if (owner.kind !== "session") throw new Error("Expected an ExpertSession owner");
+    const processingWait = observeProcessingWait(owner.session);
+    try {
+      await waitUntil(async () => native.started.includes("first"));
+      const firstState = await owner.session.getState();
+      expect(firstState.contexts[firstState.rootContextId]?.snapshot?.runtimeSession.id).toMatch(
+        /^native-/,
+      );
+      const queued = await submitQueuedRun(f, initial.missionId, "second");
+      native.first.resolve();
+      await waitUntil(async () => native.started.includes("second"));
+      // Do not release the successor before initial-run finalization reaches
+      // its real Core processing boundary. The old release path rejects the
+      // outcome here, making the regression independent of the event pump's timing.
+      await Promise.race([processingWait.entered, outcome]);
+      expect((await f.executions.get(initial.executionId!))?.status).toBe("succeeded");
+      expect((await owner.session.getState()).activeExecutionId).toBe(queued.executionId);
+      expect(finalized).toBe(false);
+      expect(native.closeCount()).toBe(0);
+      const runningState = await owner.session.getState();
+      expect(runningState.rootContextId).toBe(firstState.rootContextId);
+      expect(runningState.contexts[runningState.rootContextId]?.snapshot?.runtimeSession.id).toBe(
+        firstState.contexts[firstState.rootContextId]?.snapshot?.runtimeSession.id,
+      );
+      await expect(
+        access(new PragmaPaths({ pragmaHome: f.home }).expertSessionLease(initial.missionId)),
+      ).resolves.toBeUndefined();
+      native.second.resolve();
+      await expect(outcome).resolves.toMatchObject({ status: "succeeded", result: "first done" });
+      expect((await f.executions.get(queued.executionId))?.status).toBe("succeeded");
+      expect(native.closeCount()).toBe(1);
+      expect(native.createdCount()).toBe(1);
+      expect((await f.sessions.get(initial.missionId))?.status).toBe("open");
+      expect(
+        (await f.controller.readSnapshot({ missionId: initial.missionId })).snapshot.lease,
+      ).toBeUndefined();
+      await expect(
+        access(new PragmaPaths({ pragmaHome: f.home }).expertSessionLease(initial.missionId)),
+      ).rejects.toMatchObject({ code: "ENOENT" });
+    } finally {
+      processingWait.restore();
+      native.first.resolve();
+      native.second.resolve();
+      const failed = await outcome.then(
+        () => false,
+        () => true,
+      );
+      // A failed assertion can leave accepted work alive after the initial
+      // outcome rejected. Finish Core cleanup before stopping its Host fence.
+      if (failed) {
+        const draining = owner.session.waitForPromptProcessing().catch(() => undefined);
+        await owner.session.close("Regression fixture cleanup").catch(() => undefined);
+        await draining;
+      }
+      await f.ownerScope.stop(initial.missionId);
+      await f.executions.close();
+    }
+  });
+
+  it.each(["failure", "human"] as const)(
+    "preserves the %s successor checkpoint and remaining queue during initial-run release",
+    async (kind) => {
+      const native = createGatedRunRuntime(kind);
+      const f = await createControlledRunFixture(native.runtime);
+      const initial = await f.run.start(createRequest(f.home, "expert", "a".repeat(16), "first"));
+      const outcome = initial.outcome;
+      void outcome.catch(() => undefined);
+      const owner = f.executorPort.ownerAccess.controlOwner(initial.missionId)!;
+      if (owner.kind !== "session") throw new Error("Expected an ExpertSession owner");
+      const processingWait = observeProcessingWait(owner.session);
+      try {
+        await waitUntil(async () => native.started.includes("first"));
+        const second = await submitQueuedRun(f, initial.missionId, "second");
+        const third = await submitQueuedRun(f, initial.missionId, "third");
+        native.first.resolve();
+        await waitUntil(async () => native.started.includes("second"));
+        await Promise.race([processingWait.entered, outcome]);
+        native.second.resolve();
+        if (kind === "human") {
+          await waitUntil(async () =>
+            (await f.executions.readEvents(second.executionId)).some(
+              (event) => event.type === "human.waiting",
+            ),
+          );
+          expect(
+            await f.executions.getInvocation(second.executionId, second.executionId),
+          ).toMatchObject({
+            status: "waiting",
+            waitReason: "human_input",
+          });
+          await owner.session.checkpointWaitingHuman();
+        }
+        await expect(outcome).resolves.toMatchObject({ status: "succeeded", result: "first done" });
+        const state = (await f.sessions.get(initial.missionId))!;
+        expect(state.status).toBe("open");
+        expect(state.activeExecutionId).toBeUndefined();
+        expect(state.lastStatus).toBe(kind === "human" ? "waiting" : "failed");
+        expect(state.contexts[state.rootContextId]?.snapshot?.runtimeSession.id).toMatch(
+          /^native-/,
+        );
+        const prompts = await f.sessions.listPrompts(initial.missionId);
+        expect(prompts.find((prompt) => prompt.executionId === third.executionId)?.status).toBe(
+          "queued",
+        );
+        expect(prompts.find((prompt) => prompt.executionId === second.executionId)).toMatchObject(
+          kind === "human"
+            ? { status: "queued", purpose: "human_checkpoint_recovery" }
+            : { status: "failed" },
+        );
+        expect(native.started).toEqual(["first", "second"]);
+        expect(native.closeCount()).toBe(1);
+        expect(
+          (await f.controller.readSnapshot({ missionId: initial.missionId })).snapshot.lease,
+        ).toBeUndefined();
+        await expect(
+          access(new PragmaPaths({ pragmaHome: f.home }).expertSessionLease(initial.missionId)),
+        ).rejects.toMatchObject({ code: "ENOENT" });
+      } finally {
+        processingWait.restore();
+        native.first.resolve();
+        native.second.resolve();
+        const failed = await outcome.then(
+          () => false,
+          () => true,
+        );
+        if (failed) {
+          const draining = owner.session.waitForPromptProcessing().catch(() => undefined);
+          await owner.session.close("Regression fixture cleanup").catch(() => undefined);
+          await draining;
+        }
+        await f.ownerScope.stop(initial.missionId);
+        await f.executions.close();
+      }
+    },
+  );
+
   it("persists large Expert output in the Mission Board overflow target", async () => {
     const { home, run } = await createRunFixture();
     const large = await run.start(createRequest(home, "expert", "e".repeat(16), "large output"));
@@ -636,7 +789,7 @@ describe("Core-backed Local Host run composition", { timeout: 10_000 }, () => {
   );
 });
 
-async function createRunFixture(): Promise<{
+async function createRunFixture(runtimeOverride?: RuntimeAdapter): Promise<{
   readonly home: string;
   readonly executions: ReturnType<typeof createSqliteExecutionStore>;
   readonly sessions: ReturnType<typeof createFileExpertSessionStore>;
@@ -650,7 +803,7 @@ async function createRunFixture(): Promise<{
   const home = await mkdtemp(join(tmpdir(), "pragma-core-run-"));
   tempDirectories.push(home);
   const runtimeState: FixtureRuntimeState = { closeCount: 0 };
-  const runtime = createFixtureRuntime(runtimeState);
+  const runtime = runtimeOverride ?? createFixtureRuntime(runtimeState);
   const runtimes = createStaticRuntimeResolver({
     runtimes: [runtime],
     defaultRuntimeId: "fixture",
@@ -745,6 +898,124 @@ async function createExecutorDefinitions(
     createExecutorDescriptor({ kind: "flow", id: "c".repeat(16) }, flow),
     createExecutorDescriptor({ kind: "flow", id: "d".repeat(16) }, humanFlow),
   ];
+}
+
+async function createControlledRunFixture(runtime: RuntimeAdapter) {
+  const f = await createRunFixture(runtime);
+  const ownerScope = createMissionOwnerScope({ controller: f.controller });
+  const mission = createControllerRunMissionPort(f.controller, { ownerScope });
+  const adapter = createLocalHostCoreMissionControlAdapter({
+    pragmaHome: f.home,
+    runtimes: f.runtimes,
+    executions: f.executions,
+    sessions: f.sessions,
+    executors: f.executors,
+    ownerAccess: f.executorPort.ownerAccess,
+    mission,
+    resolveMissionBinding: async (missionId) =>
+      findMissionPinnedBinding((await f.controller.readSnapshot({ missionId })).events),
+  });
+  const control = createMissionControlApplication({
+    controller: f.controller,
+    ownerScope,
+    consumer: adapter.consumer,
+    assertAcquisitionAllowed: adapter.assertAcquisitionAllowed,
+    resolveStrictTarget: adapter.resolveStrictTarget,
+    resolveExecutionTarget: adapter.resolveExecutionTarget,
+  });
+  const run = createLocalHostRunApplication({
+    executors: f.executorPort,
+    mission,
+    commandConsumer: adapter.consumer,
+  });
+  return { ...f, ownerScope, control, run };
+}
+
+async function submitQueuedRun(
+  f: Awaited<ReturnType<typeof createControlledRunFixture>>,
+  missionId: string,
+  prompt: string,
+): Promise<{ executionId: string }> {
+  const requestId = randomUUID();
+  await f.control.submit({
+    missionId,
+    requestId,
+    kind: "send",
+    payload: { kind: "send", input: { prompt, attachments: [] } },
+  });
+  const operation = await f.control.waitForTerminal({ missionId, requestId, timeoutMs: 5_000 });
+  expect(operation.state).toBe("applied");
+  expect(operation.result?.executionId).toEqual(expect.any(String));
+  return { executionId: operation.result!.executionId as string };
+}
+
+function observeProcessingWait(session: ExpertSession) {
+  let resolve!: () => void;
+  const entered = new Promise<void>((done) => {
+    resolve = done;
+  });
+  const wait = session.waitForPromptProcessing.bind(session);
+  const observed = vi.spyOn(session, "waitForPromptProcessing").mockImplementation(async () => {
+    resolve();
+    return await wait();
+  });
+  return { entered, restore: () => observed.mockRestore() };
+}
+
+function createGatedRunRuntime(kind: "success" | "failure" | "human") {
+  const gate = () => {
+    let resolve!: () => void;
+    const promise = new Promise<void>((done) => {
+      resolve = done;
+    });
+    return { promise, resolve };
+  };
+  const first = gate();
+  const second = gate();
+  const started: string[] = [];
+  let created = 0;
+  let closed = 0;
+  const runtime = defineRuntimeTestDriver<
+    never,
+    { id: string; context: RuntimeNativeSessionContext }
+  >({
+    descriptor: { id: "fixture", kind: "test", displayName: "Gated Runtime" },
+    createSession: (context) => {
+      created++;
+      return { id: `native-${context.systemSessionId}`, context };
+    },
+    readSession: (native) => ({ runtimeSessionId: native.id }),
+    startTurn: async (native, turn) => {
+      started.push(turn.rawQuery);
+      if (turn.rawQuery === "first") await first.promise;
+      if (turn.rawQuery === "second") {
+        await second.promise;
+        if (kind === "failure") throw new Error("accepted successor failed");
+        if (kind === "human") {
+          await native.context.request.humanInteractionHandler!({
+            kind: "user_question",
+            toolName: "askUserQuestion",
+            toolCallId: "successor-question",
+            questions: [
+              {
+                question: "Continue the successor?",
+                header: "Continue",
+                kind: "single_choice",
+                options: [{ label: "Yes", description: "Continue" }],
+              },
+            ],
+          });
+        }
+      }
+      return { outputText: `${turn.rawQuery} done`, runtimeSessionId: native.id };
+    },
+    mapEvent: () => ({ events: [] }),
+    cancelTurn: () => undefined,
+    closeSession: () => {
+      closed++;
+    },
+  });
+  return { runtime, first, second, started, createdCount: () => created, closeCount: () => closed };
 }
 
 function createExecutorDescriptor(

@@ -34,6 +34,10 @@ type CountTokens = (value: string) => number;
 
 let sharedTokenizerLoad: Promise<CountTokens> | undefined;
 
+// BPE merging can take quadratic time on an unbroken piece, including whitespace.
+// Avoid those pathological pieces; reported Runtime usage bypasses this counter.
+const maxTokenizerRunLength = 4096;
+
 export function createRuntimeTokenCounter(
   options: CreateRuntimeTokenCounterOptions = {},
 ): LazyRuntimeTokenCounter {
@@ -85,6 +89,13 @@ export function createRuntimeTokenCounter(
         };
       }
 
+      if (hasOversizedTokenizationRun(value)) {
+        return {
+          tokens: estimateUnicodeTokens(value),
+          source: "heuristic",
+        };
+      }
+
       try {
         return {
           tokens: normalizeTokenCount(tokenizer(value)),
@@ -112,6 +123,14 @@ export function createRuntimeTokenCounter(
 }
 
 export const defaultRuntimeTokenCounter: RuntimeTokenCounter = createRuntimeTokenCounter();
+
+function hasOversizedTokenizationRun(value: string): boolean {
+  if (value.length <= maxTokenizerRunLength) return false;
+  for (const match of value.matchAll(/\S+|\s+/gu)) {
+    if (match[0].length > maxTokenizerRunLength) return true;
+  }
+  return false;
+}
 
 function estimateUnicodeTokens(value: string): number {
   if (value === "") return 0;

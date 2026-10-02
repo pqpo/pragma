@@ -20,6 +20,8 @@ import {
   AsyncPushQueue,
   createFileExpertSessionStore,
   createPragma,
+  ExpertSessionReleaseBlockedError,
+  hasUncertainSteerDelivery,
   isHumanInteractionCheckpointError,
 } from "@pragma/core";
 import {
@@ -328,15 +330,44 @@ async function startCoreDefinition(options: {
 }
 
 async function releaseExpertSessionOwner(session: ExpertSession): Promise<void> {
-  const [state, prompts] = await Promise.all([session.getState(), session.getPromptQueue()]);
-  const hasRecoverableCheckpoint =
-    state.activeExecutionId === undefined &&
-    (state.lastStatus === "waiting" || prompts.some((prompt) => prompt.status === "queued"));
-  if (hasRecoverableCheckpoint) {
-    await session.releaseAfterHumanCheckpoint();
-    return;
+  let boundaryRechecks = 0;
+  for (;;) {
+    // Core owns the queue drain and in-flight delivery tasks. A running queue
+    // receipt can be steering another turn and need not settle as a turn.
+    if ((await session.waitForPromptProcessing()) === "lease-lost") {
+      // Core has fenced the old owner and completed its bounded cleanup.
+      // Finish that owner's release without treating retained work as idle.
+      await session.releaseAfterTerminal();
+      return;
+    }
+    const [state, prompts] = await Promise.all([session.getState(), session.getPromptQueue()]);
+    const pending = prompts.filter(
+      (prompt) =>
+        prompt.mode === "enqueue" && (prompt.status === "queued" || prompt.status === "running"),
+    );
+    const activeExecutionId = state.activeExecutionId;
+    const checkpointed =
+      activeExecutionId === undefined &&
+      (state.lastStatus === "waiting" ||
+        (state.lastStatus === "failed" && pending.length > 0) ||
+        pending.some((prompt) => prompt.purpose === "human_checkpoint_recovery") ||
+        hasUncertainSteerDelivery(prompts));
+    try {
+      if (checkpointed) await session.releaseAfterHumanCheckpoint();
+      else await session.releaseAfterTerminal();
+      return;
+    } catch (error) {
+      // Admission can change the boundary between the completed drain and
+      // release validation. Rejoin actual Core work before rereading it.
+      if (
+        error instanceof ExpertSessionReleaseBlockedError &&
+        (checkpointed || error.retryable) &&
+        boundaryRechecks++ < 3
+      )
+        continue;
+      throw error;
+    }
   }
-  await session.releaseAfterTerminal();
 }
 
 export interface LocalHostCoreRunHandleState {

@@ -45,4 +45,30 @@ describe("runtime token counter", () => {
     });
     counter.dispose();
   });
+
+  it.each(["x", "。", "上", "😀", " ", "\t", "\n", "\u3000"])(
+    "uses the shared heuristic for an oversized unbroken %s run after warm-up",
+    async (character) => {
+      const text = character.repeat(200_001);
+      const cold = createRuntimeTokenCounter();
+      const expected = cold.countText(text);
+      cold.dispose();
+      const warm = createRuntimeTokenCounter();
+      await expect(warm.load()).resolves.toBe(true);
+      expect(warm.countText(text)).toEqual(expected);
+      expect(warm.countText("hello world")).toEqual({ tokens: 2, source: "tokenizer" });
+      warm.dispose();
+    },
+  );
+
+  it("keeps long ordinary text on the tokenizer and treats Unicode whitespace as a boundary", async () => {
+    const { countTokens } = await import("gpt-tokenizer/encoding/o200k_base");
+    const counter = createRuntimeTokenCounter();
+    await counter.load();
+    const text = "Ordinary text with short words and Unicode whitespace.\u3000".repeat(2500);
+    expect(counter.countText(text)).toEqual({ tokens: countTokens(text), source: "tokenizer" });
+    expect(counter.countText("x".repeat(4096)).source).toBe("tokenizer");
+    expect(counter.countText("x".repeat(4097))).toEqual({ tokens: 1025, source: "heuristic" });
+    counter.dispose();
+  });
 });

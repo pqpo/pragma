@@ -1,0 +1,618 @@
+{
+  "capturedAt": "2026-10-02T14:28:33.590025+00:00",
+  "productionSourceReference": "local-host-kernel-r1-counter-source.json",
+  "serial": true,
+  "performanceAcceptancePassed": false,
+  "r1Complete": false,
+  "groupsOverlap": true,
+  "records": [
+    {
+      "name": "core-run-green-final",
+      "command": [
+        "pnpm",
+        "--filter",
+        "@pragma/local-host",
+        "exec",
+        "vitest",
+        "run",
+        "test/core-run.test.ts"
+      ],
+      "elapsedSeconds": 24.250469346065074,
+      "exitCode": 0,
+      "timedOut": false,
+      "log": "/tmp/pragma-pr353-counter-core-run-green-final.log",
+      "logSha256": "f2a0cab99c25754695b57d9965139b5d17a3c8ada32e1d86a2b8675625fa953b",
+      "serial": true,
+      "vitestSummaries": ["Test Files  1 passed (1)", "Tests  12 passed (12)"],
+      "evidencePhase": "See attempt notes; final source only when name starts final-"
+    },
+    {
+      "name": "core-run-green",
+      "command": [
+        "pnpm",
+        "--filter",
+        "@pragma/local-host",
+        "exec",
+        "vitest",
+        "run",
+        "test/core-run.test.ts"
+      ],
+      "elapsedSeconds": 32.14835385396145,
+      "exitCode": 1,
+      "timedOut": false,
+      "log": "/tmp/pragma-pr353-counter-core-run-green.log",
+      "logSha256": "ea30c208e55f4be9cfaefa418f3c6ab6249199d74d6f37a4725c10533ce58c75",
+      "serial": true,
+      "vitestSummaries": [
+        "Tests 1 ⎯⎯⎯⎯⎯⎯⎯",
+        "Test Files  1 failed (1)",
+        "Tests  1 failed | 11 passed (12)"
+      ],
+      "evidencePhase": "See attempt notes; final source only when name starts final-",
+      "note": "First fixture: 11 passed/1 failed on human fixture timeout. Not a final green result."
+    },
+    {
+      "name": "core-run-red-final",
+      "command": [
+        "pnpm",
+        "--filter",
+        "@pragma/local-host",
+        "exec",
+        "vitest",
+        "run",
+        "test/core-run.test.ts",
+        "-t",
+        "waits for an accepted successor|preserves the .* successor checkpoint"
+      ],
+      "elapsedSeconds": 13.622913655126467,
+      "exitCode": 1,
+      "timedOut": false,
+      "log": "/tmp/pragma-pr353-counter-core-run-red-final.log",
+      "logSha256": "3f61c1a0fdca7946890133d6a2a76f10c14833525a2f930bab01ea89fde1c30b",
+      "serial": true,
+      "vitestSummaries": [
+        "Tests 3 ⎯⎯⎯⎯⎯⎯⎯",
+        "Test Files  1 failed (1)",
+        "Tests  3 failed | 9 skipped (12)"
+      ],
+      "evidencePhase": "See attempt notes; final source only when name starts final-",
+      "note": "Old CoreRun and strengthened gates: 3 release-blocked failures plus 2 failed-fixture teardown errors. Cleanup subsequently corrected."
+    },
+    {
+      "name": "core-run-red",
+      "command": [
+        "pnpm",
+        "--filter",
+        "@pragma/local-host",
+        "exec",
+        "vitest",
+        "run",
+        "test/core-run.test.ts",
+        "-t",
+        "waits for an accepted successor|preserves the .* successor checkpoint"
+      ],
+      "elapsedSeconds": 18.77421612618491,
+      "exitCode": 1,
+      "timedOut": false,
+      "log": "/tmp/pragma-pr353-counter-core-run-red.log",
+      "logSha256": "a7b6cafe9b55d130655a1b3be8a66a58a14dbe1bc0a3a263477efacbbc940587",
+      "serial": true,
+      "vitestSummaries": [
+        "Tests 1 ⎯⎯⎯⎯⎯⎯⎯",
+        "Test Files  1 failed (1)",
+        "Tests  1 failed | 2 passed | 9 skipped (12)"
+      ],
+      "evidencePhase": "See attempt notes; final source only when name starts final-",
+      "note": "First fixture: 2 passed/1 failed; human fixture incorrectly waited for Execution waiting before checkpoint. Not valid proof of a human production bug."
+    },
+    {
+      "name": "final-build",
+      "command": ["pnpm", "build"],
+      "elapsedSeconds": 112.65006173611619,
+      "exitCode": 0,
+      "timedOut": false,
+      "log": "/tmp/pragma-pr353-counter-final-build.log",
+      "logSha256": "4cda420f7e32685f7fc32a1ec3b419c75ec062881c990e072f5b25557b8aec4d",
+      "serial": true,
+      "vitestSummaries": [],
+      "evidencePhase": "See attempt notes; final source only when name starts final-"
+    },
+    {
+      "name": "final-check",
+      "command": ["pnpm", "check"],
+      "elapsedSeconds": 260.1408183861058,
+      "exitCode": 0,
+      "timedOut": false,
+      "log": "/tmp/pragma-pr353-counter-final-check.log",
+      "logSha256": "a925a4c594bec853a4b66b75e4e8ce0822b258032e65562fcaa57355c0f899e9",
+      "serial": true,
+      "vitestSummaries": [
+        "Tests\n@pragma/shared:test:core: ",
+        "Test Files  13 passed (13)",
+        "Tests  64 passed (64)",
+        "Tests test/resource-id.test.ts test/pragma-paths.test.ts test/token-counter.test.ts test/plugin-manifest.test.ts test/context-binding-metadata.test.ts test/process-probe.test.ts test/process-supervisor.test.ts test/runtime-conformance.test.ts test/runtime-probe-evidence.test.ts test/runtime-resource-scope.test.ts test/runtime-preparation-graph.test.ts test/model-catalog-cache.test.ts test/runtime-session-environment.test.ts test/expert-session-close.test.ts",
+        "Test Files  14 passed (14)",
+        "Tests  78 passed (78)",
+        "Tests test/adapter-contract.test.ts",
+        "Tests\n@pragma/interpreter:test:core: ",
+        "Tests test/adapter-contract.test.ts test/models.test.ts",
+        "Tests test/adapter-contract.test.ts test/models.test.ts",
+        "Tests test/adapter-contract.test.ts test/models.test.ts test/session.test.ts test/acp-permissions.test.ts test/acp-errors.test.ts",
+        "Tests test/adapter-contract.test.ts test/models.test.ts",
+        "Test Files  2 passed (2)",
+        "Tests  7 passed (7)",
+        "Test Files  2 passed (2)",
+        "Tests  10 passed (10)",
+        "Test Files  5 passed (5)",
+        "Tests  30 passed (30)",
+        "Test Files  2 passed (2)",
+        "Tests  6 passed (6)",
+        "Test Files  1 passed (1)",
+        "Tests  3 passed (3)",
+        "Test Files  10 passed (10)",
+        "Tests  116 passed (116)",
+        "Test Files  7 passed (7)",
+        "Tests  135 passed (135)",
+        "Test Files  2 passed (2)",
+        "Tests  17 passed (17)",
+        "Tests src/main/bootstrap/application-identity.test.ts src/main/bootstrap/startup-sequence.test.ts",
+        "Test Files  2 passed (2)",
+        "Tests  5 passed (5)"
+      ],
+      "evidencePhase": "See attempt notes; final source only when name starts final-"
+    },
+    {
+      "name": "final-core-build",
+      "command": ["pnpm", "--filter", "@pragma/core", "build"],
+      "elapsedSeconds": 6.81340147391893,
+      "exitCode": 0,
+      "timedOut": false,
+      "log": "/tmp/pragma-pr353-counter-final-core-build.log",
+      "logSha256": "5d98b81248954274f44a680906debb38f4a0179e15f1dccba72cb938159ca03a",
+      "serial": true,
+      "vitestSummaries": [],
+      "evidencePhase": "See attempt notes; final source only when name starts final-"
+    },
+    {
+      "name": "final-mission-chat",
+      "command": ["pnpm", "test:mission-chat"],
+      "elapsedSeconds": 48.98852748610079,
+      "exitCode": 0,
+      "timedOut": false,
+      "log": "/tmp/pragma-pr353-counter-final-mission-chat.log",
+      "logSha256": "430b4d2d3e8693d49b1240dc0ea1e8aecb1694269f120e67a6f78d76949ebf95",
+      "serial": true,
+      "vitestSummaries": [
+        "Test Files  1 passed (1)",
+        "Tests  2 passed | 7 skipped (9)",
+        "Test Files  1 passed (1)",
+        "Tests  3 passed | 9 skipped (12)",
+        "Test Files  3 passed (3)",
+        "Tests  71 passed (71)",
+        "Test Files  1 passed (1)",
+        "Tests  6 passed | 79 skipped (85)"
+      ],
+      "evidencePhase": "See attempt notes; final source only when name starts final-"
+    },
+    {
+      "name": "final-mission-control",
+      "command": ["pnpm", "test:mission-control"],
+      "elapsedSeconds": 89.76763961999677,
+      "exitCode": 0,
+      "timedOut": false,
+      "log": "/tmp/pragma-pr353-counter-final-mission-control.log",
+      "logSha256": "1d9b6875fb438c9989bbf3123ce5f6efeee2b7f7b63abca6c43cd1917fd52040",
+      "serial": true,
+      "vitestSummaries": [
+        "Test Files  13 passed (13)",
+        "Tests  124 passed (124)",
+        "Test Files  1 passed (1)",
+        "Tests  6 passed | 116 skipped (122)",
+        "Test Files  1 passed (1)",
+        "Tests  4 passed | 81 skipped (85)"
+      ],
+      "evidencePhase": "See attempt notes; final source only when name starts final-"
+    },
+    {
+      "name": "final-native-mission-r2",
+      "command": [
+        "node",
+        "--import",
+        "tsx",
+        "docs/performance/local-host-kernel-r1-native-mission-probe.mts",
+        "/tmp/pragma-pr353-counter-final-native-mission-r2.json"
+      ],
+      "elapsedSeconds": 74.81760012591258,
+      "exitCode": 0,
+      "timedOut": false,
+      "log": "/tmp/pragma-pr353-counter-final-native-mission-r2.log",
+      "logSha256": "0d2b1e9c1820ce331bd04f38ee5c700e1f1c54e6211f51cd7eafb6c26b3c9258",
+      "serial": true,
+      "vitestSummaries": [],
+      "evidencePhase": "See attempt notes; final source only when name starts final-",
+      "note": "Final production dist: 18 actual Native Mission assertions passed, normal exit 0. Queue/steer consumption, default CLI finalization, graceful new Host composition, exact owned identity/context recall, actual automatic owner release and terminal projection. Not crash recovery, Desktop UI or performance acceptance."
+    },
+    {
+      "name": "final-native-mission",
+      "command": [
+        "node",
+        "--import",
+        "tsx",
+        "docs/performance/local-host-kernel-r1-native-mission-probe.mts",
+        "/tmp/pragma-pr353-counter-final-native-mission.json"
+      ],
+      "elapsedSeconds": 45.61912793503143,
+      "exitCode": 1,
+      "timedOut": false,
+      "log": "/tmp/pragma-pr353-counter-final-native-mission.log",
+      "logSha256": "90a8f321a94fd4a2b641ef5d82df0bce2a668fde15ab5192a918f82583ccd8e1",
+      "serial": true,
+      "vitestSummaries": [],
+      "evidencePhase": "See attempt notes; final source only when name starts final-",
+      "note": "Probe prematurely closed SQLite before recovered-owner projection/release; unhandled store-closed error, exit 1, no raw JSON. Fixture corrected without weakening assertions or existing timeout."
+    },
+    {
+      "name": "final-release-green-r2",
+      "command": [
+        "pnpm",
+        "--filter",
+        "@pragma/local-host",
+        "exec",
+        "vitest",
+        "run",
+        "test/core-run.test.ts",
+        "test/owner-scope.test.ts",
+        "test/execution-system.test.ts"
+      ],
+      "elapsedSeconds": 121.85656140604988,
+      "exitCode": 0,
+      "timedOut": false,
+      "log": "/tmp/pragma-pr353-counter-final-release-green-r2.log",
+      "logSha256": "0d671a2214a66f6863a384c753f34a5aa99ad92f3afb85d8a5c7d71bd633336c",
+      "serial": true,
+      "vitestSummaries": ["Test Files  3 passed (3)", "Tests  150 passed (150)"],
+      "evidencePhase": "See attempt notes; final source only when name starts final-",
+      "note": "Complete CoreRun/owner-scope/execution-system: 150 passed, zero unhandled. Subsequent fixture-only Expert IDs made canonical; lint/typecheck and CI control gate revalidate them."
+    },
+    {
+      "name": "final-release-green",
+      "command": [
+        "pnpm",
+        "--filter",
+        "@pragma/local-host",
+        "exec",
+        "vitest",
+        "run",
+        "test/core-run.test.ts",
+        "test/owner-scope.test.ts",
+        "test/execution-system.test.ts"
+      ],
+      "elapsedSeconds": 123.52998251887038,
+      "exitCode": 1,
+      "timedOut": false,
+      "log": "/tmp/pragma-pr353-counter-final-release-green.log",
+      "logSha256": "cc31c791de12a9aec255da4dacd1fd5c4de85da8627576b15a74afad82117a3e",
+      "serial": true,
+      "vitestSummaries": [
+        "Tests 1 ⎯⎯⎯⎯⎯⎯⎯",
+        "Test Files  1 failed | 2 passed (3)",
+        "Tests  1 failed | 149 passed (150)"
+      ],
+      "evidencePhase": "See attempt notes; final source only when name starts final-",
+      "note": "149 passed/1 failed: all production assertions passed; uncertain fixture redundantly closed a Session after successful resource release. Cleanup corrected in r2."
+    },
+    {
+      "name": "final-runner",
+      "command": [
+        "pnpm",
+        "--filter",
+        "@pragma/desktop",
+        "exec",
+        "vitest",
+        "run",
+        "src/main/features/missions/mission-runner.test.ts"
+      ],
+      "elapsedSeconds": 131.26241897814907,
+      "exitCode": 0,
+      "timedOut": false,
+      "log": "/tmp/pragma-pr353-counter-final-runner.log",
+      "logSha256": "1faabd98dccadee9c6dc5cb3203aec2fb39a3365ec4e13ac39c19ad4d5cd644f",
+      "serial": true,
+      "vitestSummaries": ["Test Files  1 passed (1)", "Tests  85 passed (85)"],
+      "evidencePhase": "See attempt notes; final source only when name starts final-"
+    },
+    {
+      "name": "final-test-id-lint",
+      "command": ["pnpm", "--filter", "@pragma/local-host", "lint"],
+      "elapsedSeconds": 5.015897792996839,
+      "exitCode": 0,
+      "timedOut": false,
+      "log": "/tmp/pragma-pr353-counter-final-test-id-lint.log",
+      "logSha256": "f4b75017677b7a7d2651199dbceb6a345a0920cbe8ad6c1aae79ad62b6f9caba",
+      "serial": true,
+      "vitestSummaries": [],
+      "evidencePhase": "See attempt notes; final source only when name starts final-"
+    },
+    {
+      "name": "final-test-id-typecheck",
+      "command": ["pnpm", "--filter", "@pragma/local-host", "typecheck"],
+      "elapsedSeconds": 8.789039433002472,
+      "exitCode": 0,
+      "timedOut": false,
+      "log": "/tmp/pragma-pr353-counter-final-test-id-typecheck.log",
+      "logSha256": "1dcfbbde02eb3785aa9bb2bb7cba6c3757ac5875ab1f66b03080075d39fa9e03",
+      "serial": true,
+      "vitestSummaries": [],
+      "evidencePhase": "See attempt notes; final source only when name starts final-"
+    },
+    {
+      "name": "mission-chat",
+      "command": ["pnpm", "test:mission-chat"],
+      "elapsedSeconds": 49.37359549710527,
+      "exitCode": 0,
+      "timedOut": false,
+      "log": "/tmp/pragma-pr353-counter-mission-chat.log",
+      "logSha256": "f2f2eeb09badb1014e609ef27ed9b9e8ab746fa1ed48178a0a5d520adb4859a8",
+      "serial": true,
+      "vitestSummaries": [
+        "Test Files  1 passed (1)",
+        "Tests  2 passed | 7 skipped (9)",
+        "Test Files  1 passed (1)",
+        "Tests  3 passed | 9 skipped (12)",
+        "Test Files  3 passed (3)",
+        "Tests  71 passed (71)",
+        "Test Files  1 passed (1)",
+        "Tests  6 passed | 79 skipped (85)"
+      ],
+      "evidencePhase": "counter-only"
+    },
+    {
+      "name": "mission-control",
+      "command": ["pnpm", "test:mission-control"],
+      "elapsedSeconds": 66.9825500829611,
+      "exitCode": 0,
+      "timedOut": false,
+      "log": "/tmp/pragma-pr353-counter-mission-control.log",
+      "logSha256": "a51d3e4f1e35711b0024e8d104910620a6a321fc4bdbe5ecc37662432ca2783a",
+      "serial": true,
+      "vitestSummaries": [
+        "Test Files  12 passed (12)",
+        "Tests  105 passed (105)",
+        "Test Files  1 passed (1)",
+        "Tests  4 passed | 116 skipped (120)",
+        "Test Files  1 passed (1)",
+        "Tests  4 passed | 81 skipped (85)"
+      ],
+      "evidencePhase": "counter-only"
+    },
+    {
+      "name": "model-pilot",
+      "command": [
+        "node",
+        "apps/desktop/scripts/run-mission-latency-benchmark.mjs",
+        "--source-home",
+        "/Users/linminqiu/.pragma",
+        "--samples",
+        "1",
+        "--groups",
+        "warm",
+        "--model",
+        "deepseek-v4-flash",
+        "--thinking",
+        "medium",
+        "--output",
+        "/tmp/pragma-pr353-counter-model-pilot.json"
+      ],
+      "elapsedSeconds": 120.16572624607943,
+      "exitCode": 1,
+      "timedOut": false,
+      "log": "/tmp/pragma-pr353-counter-model-pilot.log",
+      "logSha256": "e5e33a904090d93b944a7da6d34763477f648fa465586c7257cd9c0f08796d46",
+      "serial": true,
+      "vitestSummaries": [],
+      "evidencePhase": "counter-only"
+    },
+    {
+      "name": "native-mission-diagnostic",
+      "command": [
+        "node",
+        "--import",
+        "tsx",
+        "/tmp/pragma-pr353-native-mission-smoke.mts",
+        "/tmp/pragma-pr353-counter-native-mission-diagnostic.json"
+      ],
+      "elapsedSeconds": 102.41191607690416,
+      "exitCode": 1,
+      "timedOut": false,
+      "log": "/tmp/pragma-pr353-counter-native-mission-diagnostic.log",
+      "logSha256": "470a905337144a5d55f7400d375c73e860401def14585e07eeb371ead319ea66",
+      "serial": true,
+      "vitestSummaries": [],
+      "evidencePhase": "counter-only",
+      "note": "Same old Host dist with added diagnostics: repeat release-blocked; reopen queued with stale live persisted lease and no new process-local guard."
+    },
+    {
+      "name": "native-mission",
+      "command": [
+        "node",
+        "--import",
+        "tsx",
+        "/tmp/pragma-pr353-native-mission-smoke.mts",
+        "/tmp/pragma-pr353-counter-native-mission.json"
+      ],
+      "elapsedSeconds": 73.34407227206975,
+      "exitCode": 1,
+      "timedOut": false,
+      "log": "/tmp/pragma-pr353-counter-native-mission.log",
+      "logSha256": "ab753c0d9fe0d2f60ebf41385aa658786d8d06e4ceebb954c76a8e2056f96c8d",
+      "serial": true,
+      "vitestSummaries": [],
+      "evidencePhase": "counter-only",
+      "note": "Counter phase: actual Mission queue and strict-steer consumed; production finalization and graceful reopen failed."
+    },
+    {
+      "name": "native-resume",
+      "command": ["node", "--import", "tsx", "examples/src/runtimes/probe.ts", "codex", "resume"],
+      "elapsedSeconds": 31.79600357497111,
+      "exitCode": 0,
+      "timedOut": false,
+      "log": "/tmp/pragma-pr353-counter-native-resume.log",
+      "logSha256": "3ad0c0d6ad6bd860b80d62b21e8b317e96cc47766007eec1b332d6699aca6102",
+      "serial": true,
+      "vitestSummaries": [],
+      "evidencePhase": "counter-only"
+    },
+    {
+      "name": "native-steering",
+      "command": ["node", "--import", "tsx", "examples/src/runtimes/probe.ts", "codex", "steering"],
+      "elapsedSeconds": 29.146921126171947,
+      "exitCode": 0,
+      "timedOut": false,
+      "log": "/tmp/pragma-pr353-counter-native-steering.log",
+      "logSha256": "18a7a64016893c7a96c13fdff7155075c5617b98f99f16687c39d6c6d2e92c93",
+      "serial": true,
+      "vitestSummaries": [],
+      "evidencePhase": "counter-only"
+    },
+    {
+      "name": "owner-scope-green",
+      "command": [
+        "pnpm",
+        "--filter",
+        "@pragma/local-host",
+        "exec",
+        "vitest",
+        "run",
+        "test/owner-scope.test.ts"
+      ],
+      "elapsedSeconds": 8.264012238010764,
+      "exitCode": 0,
+      "timedOut": false,
+      "log": "/tmp/pragma-pr353-counter-owner-scope-green.log",
+      "logSha256": "bc7b97481b24c4b835eccd6dde97c1aab7e38bbc1c54b8258408655af32ed208",
+      "serial": true,
+      "vitestSummaries": ["Test Files  1 passed (1)", "Tests  16 passed (16)"],
+      "evidencePhase": "See attempt notes; final source only when name starts final-"
+    },
+    {
+      "name": "owner-scope-red",
+      "command": [
+        "pnpm",
+        "--filter",
+        "@pragma/local-host",
+        "exec",
+        "vitest",
+        "run",
+        "test/owner-scope.test.ts",
+        "-t",
+        "keeps the Mission lease|preserves the live lease|checks the retained Mission fence|late lower-level"
+      ],
+      "elapsedSeconds": 4.375055246986449,
+      "exitCode": 1,
+      "timedOut": false,
+      "log": "/tmp/pragma-pr353-counter-owner-scope-red.log",
+      "logSha256": "f85db24bccdc190ff686ddb0fa75780d1c404e06707aac2a22705c096d556173",
+      "serial": true,
+      "vitestSummaries": [
+        "Tests 2 ⎯⎯⎯⎯⎯⎯⎯",
+        "Test Files  1 failed (1)",
+        "Tests  2 failed | 14 skipped (16)"
+      ],
+      "evidencePhase": "See attempt notes; final source only when name starts final-"
+    },
+    {
+      "name": "release-core-build",
+      "command": ["pnpm", "--filter", "@pragma/core", "build"],
+      "elapsedSeconds": 6.780967555940151,
+      "exitCode": 0,
+      "timedOut": false,
+      "log": "/tmp/pragma-pr353-counter-release-core-build.log",
+      "logSha256": "5d98b81248954274f44a680906debb38f4a0179e15f1dccba72cb938159ca03a",
+      "serial": true,
+      "vitestSummaries": [],
+      "evidencePhase": "See attempt notes; final source only when name starts final-"
+    },
+    {
+      "name": "release-regressions-red",
+      "command": [
+        "pnpm",
+        "--filter",
+        "@pragma/local-host",
+        "exec",
+        "vitest",
+        "run",
+        "test/core-run.test.ts",
+        "test/owner-scope.test.ts",
+        "-t",
+        "waits for an accepted successor|preserves the .* successor checkpoint|keeps renewal and Inbox consumption|preserves the live lease|checks the retained Mission fence|does not release a successor owner"
+      ],
+      "elapsedSeconds": 17.742842555977404,
+      "exitCode": 1,
+      "timedOut": false,
+      "log": "/tmp/pragma-pr353-counter-release-regressions-red.log",
+      "logSha256": "1d2058df56450f6913fb4383eb80e6320af92031763b7605408c8ee50920a1df",
+      "serial": true,
+      "vitestSummaries": [
+        "Tests 7 ⎯⎯⎯⎯⎯⎯⎯",
+        "Test Files  2 failed (2)",
+        "Tests  7 failed | 21 skipped (28)"
+      ],
+      "evidencePhase": "See attempt notes; final source only when name starts final-",
+      "note": "Old CoreRun and owner-scope production source with final tests/Core API: all 7 new regressions fail; no unhandled errors. Source restored byte-for-byte."
+    },
+    {
+      "name": "core-tests",
+      "exitCode": 0,
+      "summary": "Counter phase: token-counter / stream-controller 21 passed",
+      "log": "/tmp/pragma-pr353-counter-core-tests.log",
+      "logSha256": "88dad4a41820877e23584b949dc09aa1688c680568de6cb0bad81df372913029",
+      "evidencePhase": "counter-only",
+      "serial": true
+    },
+    {
+      "name": "memory-red",
+      "exitCode": 1,
+      "summary": "Counter guard without Memory fix: 2 passed, 1 failed, 9 skipped; 1803 > 1500",
+      "log": "/tmp/pragma-pr353-counter-memory-red.log",
+      "logSha256": "475878a42533eba0298c9d7106a6deaaa334d33a62fc59c927a762fbe9ba77e4",
+      "evidencePhase": "counter-only",
+      "serial": true
+    },
+    {
+      "name": "memory-green",
+      "exitCode": 0,
+      "summary": "Counter and Memory fixes: retrieval full file 12 passed",
+      "log": "/tmp/pragma-pr353-counter-memory-green.log",
+      "logSha256": "6c5a9cb440e2428eabcebaa207f9ec6a4ac2d0f1f38e825308cd9d823ee2fe70",
+      "evidencePhase": "counter-only",
+      "serial": true
+    },
+    {
+      "name": "check",
+      "exitCode": 0,
+      "summary": "Counter phase: lint/typecheck and 471 base tests passed",
+      "log": "/tmp/pragma-pr353-counter-check.log",
+      "logSha256": "552622f0f02f3fd3c80d2dc9aa3dff4490beec1f78c3ee36d155b83cf90a41d7",
+      "evidencePhase": "counter-only",
+      "serial": true
+    },
+    {
+      "name": "build",
+      "exitCode": 0,
+      "summary": "Counter phase: all 19 build tasks passed",
+      "log": "/tmp/pragma-pr353-counter-build.log",
+      "logSha256": "643d9ee7b97e2ec8560eeb5a3fd4c554c5832cbef7e84d787eb5ddc25d8f0ab6",
+      "evidencePhase": "counter-only",
+      "serial": true
+    },
+    {
+      "name": "runner",
+      "exitCode": 0,
+      "summary": "Counter phase: unchanged full Desktop Runner 85 passed, 130.59 seconds",
+      "log": "/tmp/pragma-pr353-counter-runner.log",
+      "logSha256": "aa5c8365767e77f6d44e9d9a641dcbb9f1a8fdb7f988bafa523baf4621d18c44",
+      "evidencePhase": "counter-only",
+      "serial": true
+    }
+  ]
+}
