@@ -17,6 +17,7 @@ import {
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { setTimeout as delay } from "node:timers/promises";
 import { orderMissionChatEntries } from "../../../shared/mission-conversation-order.ts";
 
 import {
@@ -76,6 +77,7 @@ import {
   type ContextStoreStore,
 } from "../context-stores/context-store-store.ts";
 import { createPragmaProjectStore } from "../projects/pragma-project-store.ts";
+import { desktopCapabilityBindingRef } from "../../platform/bindings/desktop-binding-ref.ts";
 import type { DesktopUsageStore } from "../usage/usage-store.ts";
 import { createCodexQueuePeer } from "./fixtures/codex-queue-peer.ts";
 import { messageRecordsToChatEntries } from "./mission-chat-history.ts";
@@ -119,6 +121,7 @@ const memoryBindingReopenTimeoutMs = 20_000;
 const trackedRunners = new Set<{
   readonly runner: MissionRunner;
   readonly missionIds: ReadonlySet<string>;
+  readonly ownerScope?: Parameters<typeof createMissionRunnerImplementation>[0]["ownerScope"];
 }>();
 const pendingObserverCompletions = new Set<Promise<void>>();
 const missionRunnerMethods = new Set([
@@ -194,7 +197,7 @@ const createMissionRunner = (
       return value;
     },
   });
-  trackedRunners.add({ runner: trackedRunner, missionIds });
+  trackedRunners.add({ runner: trackedRunner, missionIds, ownerScope: options.ownerScope });
   return trackedRunner;
 };
 
@@ -213,7 +216,7 @@ function createTestMissionControl(input: {
     // no controller semantic journal to replay.
     recoverSemanticWrite: async () => undefined,
   });
-  const adapter = input.runner.createLocalHostMissionControlAdapter();
+  const adapter = input.runner.missionControl;
   const control = createMissionControlApplication({
     controller,
     ownerScope,
@@ -230,6 +233,7 @@ function createTestMissionControl(input: {
       instanceId: "70000000-0000-4000-8000-000000000001",
     },
   });
+  adapter.bindApplication(control);
   return control;
 }
 
@@ -293,8 +297,9 @@ describe("toDesktopHumanRequest", () => {
 });
 
 afterEach(async () => {
-  for (const { runner, missionIds } of trackedRunners) {
+  for (const { runner, missionIds, ownerScope } of trackedRunners) {
     for (const missionId of missionIds) {
+      await ownerScope?.stop(missionId);
       await runner.stopLocalController(missionId);
     }
   }
@@ -3199,7 +3204,7 @@ describe("MissionRunner", { timeout: 30_000 }, () => {
       restoreSession: () => ({ id: "runtime" }),
       readSession: (session) => ({ runtimeSessionId: session.id }),
       async startTurn(_session, turn) {
-        await new Promise<void>((resolve) => setTimeout(resolve, 50));
+        await delay(50, undefined, { signal: turn.signal });
         turn.stream.write({
           runId: turn.runId,
           source: turn.source,
@@ -3220,7 +3225,7 @@ describe("MissionRunner", { timeout: 30_000 }, () => {
             type: "thought.delta",
             payload: { contentType: "text", delta },
           });
-          await new Promise<void>((resolve) => setTimeout(resolve, 5));
+          await delay(5, undefined, { signal: turn.signal });
         }
         turn.stream.write({
           runId: turn.runId,
@@ -3233,6 +3238,7 @@ describe("MissionRunner", { timeout: 30_000 }, () => {
             inputPreview: { path: "README.md" },
           },
         });
+        turn.signal.throwIfAborted();
         await new Promise<void>((_resolve, reject) => {
           turn.signal.addEventListener("abort", () => reject(turn.signal.reason), { once: true });
         });
@@ -7604,7 +7610,8 @@ describe("MissionRunner", { timeout: 30_000 }, () => {
         requestId: "60000000-0000-4000-8000-000000000002",
         response: { answers: { "Which environment?": "production" } },
       }),
-    ).rejects.toThrow(/no longer waiting|not pending/u);
+    ).rejects.toMatchObject({ code: "INTERACTION_NOT_PENDING" });
+    expect(runtimeStarts).toBe(2);
 
     const interruptedMission = await missions.create({
       workspace: { path: root, basename: "workspace" },
@@ -7909,6 +7916,171 @@ describe("MissionRunner", { timeout: 30_000 }, () => {
     unsubscribeChat();
   });
 
+  it("cold-interrupts the original Native Session when current capabilities and credentials are unavailable", async () => {
+    const root = await mkdtemp(join(tmpdir(), "pragma-mission-cold-stop-"));
+    temporaryPaths.push(root);
+    const pragmaHome = join(root, "state");
+    const project = createPragmaProjectStore({ projectsPath: join(root, "projects") });
+    const capabilityId = "nv27faxmxpqnxwqr";
+    const expert = expertFixture();
+    expert.spec.capabilities.push({
+      kind: "tools",
+      ref: `capability:${capabilityId}`,
+      tools: ["prepare_release"],
+    });
+    const snapshot = await project.publish({
+      expectedRevision: 0,
+      resources: [
+        runtimeFixture(),
+        expert,
+        approvalAfterExpertFlowFixture(),
+        {
+          apiVersion: PRAGMA_DSL_WRITE_API_VERSION,
+          kind: "Capability",
+          metadata: { id: capabilityId, name: "Release", description: "Prepare release", tags: [] },
+          spec: {
+            adapter: "pragma.capability.host@v1",
+            binding: desktopCapabilityBindingRef(capabilityId),
+            config: { key: capabilityId },
+          },
+        },
+      ],
+    });
+    const flow = snapshot.resources.find((resource) => resource.kind === "Flow")!;
+    const missions = createMissionStore({ missionsPath: join(root, "missions") });
+    const mission = await missions.create({
+      workspace: { path: root, basename: "workspace" },
+      goal: "Review the release",
+      flowInput: { goal: "Review the release", workspace: root },
+      project: { id: snapshot.projectId, revision: snapshot.revision },
+      executor: missionExecutorSnapshot(flow),
+    });
+    let unavailable = false;
+    const resolveActive = vi.fn(async () => {
+      if (unavailable) throw new Error("MCP capability is unavailable after restart");
+      return {
+        manifest: { id: capabilityId, latestRevision: 1, runtimeKey: "release" },
+        health: { revision: 1, status: "ready" },
+        definition: {
+          kind: "code_service",
+          name: "Release",
+          timeoutMs: 1_000,
+          tool: {
+            name: "prepare_release",
+            description: "Prepare release",
+            inputSchema: { type: "object", properties: {} },
+            outputSchema: { type: "object", properties: {} },
+            source: "return {};",
+          },
+        },
+      };
+    });
+    const fingerprint = vi.fn(async () => {
+      if (unavailable) throw new Error("Credentials are unavailable after restart");
+      return "credentials";
+    });
+    const startTurn = vi.fn(() => ({ outputText: "prepared", runtimeSessionId: "owned-native" }));
+    const restoreSession = vi.fn((context: RuntimeNativeSessionContext) => ({
+      id: context.request.runtimeSession!.id,
+    }));
+    const closeSession = vi.fn(() => undefined);
+    const runtime = defineRuntimeTestDriver<never, { id: string }>({
+      descriptor: { id: "fake", kind: "fake", displayName: "Fake" },
+      createSession: () => ({ id: "owned-native" }),
+      restoreSession,
+      readSession: (session) => ({ runtimeSessionId: session.id }),
+      startTurn,
+      mapEvent: () => ({ events: [] }),
+      closeSession,
+    });
+    const adapterHostForMission = vi.fn<
+      NonNullable<Parameters<typeof createMissionRunner>[0]["adapterHostForMission"]>
+    >((_mission, fallback) => fallback);
+    const runnerOptions: Parameters<typeof createMissionRunner>[0] = {
+      missions,
+      project,
+      capabilityStore: { resolveActive } as unknown as CapabilityStore,
+      capabilityCredentials: { fingerprint } as unknown as CapabilityCredentialStore,
+      capabilitiesPath: join(root, "capabilities"),
+      pragmaHome,
+      runtimes: createStaticRuntimeResolver({ runtimes: [runtime], defaultRuntimeId: "fake" }),
+      adapterHostForMission,
+    };
+    const runner = createMissionRunner(runnerOptions);
+    await runner.run(mission.id);
+    await vi.waitFor(
+      async () => expect((await missions.get(mission.id)).execution?.status).toBe("waiting"),
+      { timeout: settlementTimeoutMs },
+    );
+    expect(resolveActive).toHaveBeenCalled();
+    expect(fingerprint).toHaveBeenCalled();
+    expect(adapterHostForMission).toHaveBeenCalled();
+    const waitingMission = await missions.get(mission.id);
+    const executionId = waitingMission.execution!.id;
+    const executions = createSqliteExecutionStore({ pragmaHome });
+    const context = (await executions.listContexts(executionId))[0]!;
+    expect(context.snapshot?.runtimeSession.id).toBe("owned-native");
+    const execution = (await executions.get(executionId))!;
+    const invocations = await executions.listInvocations(executionId);
+    const cold = createSqliteExecutionStore({ pragmaHome: join(root, "cold-execution") });
+    delete execution.state["__recoveryClaim"];
+    await cold.create(
+      execution,
+      invocations.find((invocation) => invocation.invocationId === execution.rootInvocationId)!,
+    );
+    await cold.commit({
+      commitId: `snapshot-cold-stop:${executionId}`,
+      executionId,
+      invocationPuts: invocations.filter(
+        (invocation) => invocation.invocationId !== execution.rootInvocationId,
+      ),
+      contextPuts: await executions.listContexts(executionId),
+      agentPuts: await executions.listAgents(executionId),
+    });
+    // Keep the crash snapshot independent from the original controller. Stop
+    // that controller and await its real Native cleanup before simulating a
+    // fresh process, so teardown never races deletion of the test storage.
+    await runner.stopLocalController(mission.id);
+    await vi.waitFor(
+      async () => {
+        const contexts = await executions.listContexts(executionId);
+        expect(contexts).toHaveLength(1);
+        expect(contexts[0]?.lifecycle).toBe("closed");
+      },
+      { timeout: settlementTimeoutMs },
+    );
+    await vi.waitFor(() => expect(runner.getResourceDiagnostics().busyMissionCount).toBe(0), {
+      timeout: settlementTimeoutMs,
+    });
+    await missions.updateExecution(mission.id, waitingMission.execution!);
+    unavailable = true;
+    resolveActive.mockClear();
+    fingerprint.mockClear();
+    adapterHostForMission.mockClear();
+    const restarted = createMissionRunner({ ...runnerOptions, executionStore: cold });
+    await expect(restarted.interrupt(mission.id, executionId)).resolves.toMatchObject({
+      execution: { id: executionId, status: "cancelled" },
+    });
+    expect(resolveActive).not.toHaveBeenCalled();
+    expect(fingerprint).not.toHaveBeenCalled();
+    expect(adapterHostForMission).not.toHaveBeenCalled();
+    expect(startTurn).toHaveBeenCalledOnce();
+    expect(restoreSession).toHaveBeenCalledOnce();
+    expect(restoreSession.mock.calls[0]?.[0].request).toMatchObject({
+      systemSessionId: context.snapshot!.systemSessionId,
+      runtimeSession: context.snapshot!.runtimeSession,
+      owner: { type: "flow-execution", ownerId: executionId },
+    });
+    expect(closeSession).toHaveBeenCalled();
+    await expect(cold.get(executionId)).resolves.toMatchObject({ status: "cancelled" });
+    await runner.stopLocalController(mission.id);
+    await restarted.stopLocalController(mission.id);
+    expect(runner.getResourceDiagnostics().busyMissionCount).toBe(0);
+    expect(restarted.getResourceDiagnostics().busyMissionCount).toBe(0);
+    await executions.close();
+    await cold.close();
+  });
+
   it("round-trips a Flow human interaction with globally unique resource IDs", async () => {
     const root = await mkdtemp(join(tmpdir(), "pragma-mission-human-"));
     temporaryPaths.push(root);
@@ -8017,6 +8189,35 @@ describe("MissionRunner", { timeout: 30_000 }, () => {
     ).items;
     expect(events.filter((event) => event.type === "human.requested")).toHaveLength(1);
     expect(events.filter((event) => event.type === "human.responded")).toHaveLength(1);
+    // A recovered Flow's terminal handle must not remain the control target
+    // when the user runs the same Mission again from the conversation UI.
+    await vi.waitFor(
+      () => expect(restartingRunner.getResourceDiagnostics().busyMissionCount).toBe(0),
+      { timeout: settlementTimeoutMs },
+    );
+    await restartingRunner.run(mission.id);
+    await vi.waitFor(
+      async () => {
+        const rerun = await missions.get(mission.id);
+        expect(rerun.execution?.status).toBe("waiting");
+        expect(rerun.execution?.id).not.toBe(waitingMission.execution!.id);
+      },
+      { timeout: settlementTimeoutMs },
+    );
+    const rerunId = (await missions.get(mission.id)).execution!.id;
+    await expect(
+      restartingRunner.missionControl.resolveExecutionTarget({
+        missionId: mission.id,
+        expectedExecutionId: rerunId,
+      }),
+    ).resolves.toBe(rerunId);
+    await expect(restartingRunner.interrupt(mission.id, rerunId)).resolves.toMatchObject({
+      execution: { id: rerunId, status: "cancelled" },
+    });
+    await expect(executionStore.get(waitingMission.execution!.id)).resolves.toMatchObject({
+      status: "succeeded",
+    });
+    await restartingRunner.stopLocalController(mission.id);
   });
 
   it("continues a Mission whose persisted ExpertSession uses a legacy Expert id", async () => {
@@ -8285,7 +8486,7 @@ describe("MissionRunner", { timeout: 30_000 }, () => {
     });
   });
 
-  it.each(["cleanup", "cancellation"] as const)(
+  it.each(["cleanup", "cancellation", "renewal"] as const)(
     "retains the failed Session owner during delayed %s until its lease is released",
     async (delayMode) => {
       const root = await mkdtemp(join(tmpdir(), "pragma-mission-delayed-release-"));
@@ -8400,25 +8601,55 @@ describe("MissionRunner", { timeout: 30_000 }, () => {
         const failedSessionId = (await missions.get(mission.id)).execution!.sessionId;
         const earlyRequestId = "00000000-0000-4000-8000-000000000095";
         const continuationRequestId = "00000000-0000-4000-8000-000000000096";
-        if (delayMode === "cancellation") {
+        let triggerOwnerRenewal: (() => void) | undefined;
+        if (delayMode !== "cleanup") {
+          const originalTimeout = globalThis.setTimeout;
+          const renewalTimerSpy =
+            delayMode === "renewal"
+              ? vi
+                  .spyOn(globalThis, "setTimeout")
+                  .mockImplementation((callback, delay, ...args) => {
+                    if (delay === 15_000 && triggerOwnerRenewal === undefined)
+                      triggerOwnerRenewal = callback as () => void;
+                    return originalTimeout(callback, delay, ...args);
+                  })
+              : undefined;
           await runner.sendMessage({
             id: mission.id,
             content: "Busy before takeover",
             requestId: "00000000-0000-4000-8000-000000000094",
           });
           await vi.waitFor(() => expect(turnCount).toBe(2), { timeout: settlementTimeoutMs });
+          renewalTimerSpy?.mockRestore();
+          if (delayMode === "renewal") {
+            await vi.waitFor(
+              async () =>
+                expect((await missions.get(mission.id)).execution?.status).toBe("succeeded"),
+              { timeout: settlementTimeoutMs },
+            );
+          }
           const session = capturedSession!;
           const abort = session.abortExecution.bind(session);
           const cancelQueue = session.cancelPromptQueue.bind(session);
-          vi.spyOn(session, "abortExecution").mockImplementation(async (...args) => {
-            await cancellationGate;
-            await abort(...args);
-          });
-          vi.spyOn(session, "cancelPromptQueue").mockImplementation(async (...args) => {
-            await cancellationGate;
-            await cancelQueue(...args);
-          });
+          if (delayMode === "cancellation") {
+            vi.spyOn(session, "abortExecution").mockImplementation(async (...args) => {
+              await cancellationGate;
+              await abort(...args);
+            });
+            vi.spyOn(session, "cancelPromptQueue").mockImplementation(async (...args) => {
+              await cancellationGate;
+              await cancelQueue(...args);
+            });
+          }
         }
+        const leaseController = createMissionControllerStore({
+          missionsPath: new PragmaPaths({ pragmaHome }).missionsRoot(),
+          missionPath: missions.storagePath,
+        });
+        const leaseBeforeRenewal =
+          delayMode === "renewal"
+            ? (await leaseController.readSnapshot({ missionId: mission.id })).snapshot.lease
+            : undefined;
         const scheduleTimeout = globalThis.setTimeout;
         let expireReleaseDeadline: (() => void) | undefined;
         const timeoutSpy = vi
@@ -8431,8 +8662,21 @@ describe("MissionRunner", { timeout: 30_000 }, () => {
             return scheduleTimeout(callback, delay, ...args);
           });
         const stopping = runner.stopLocalController(mission.id);
-        if (delayMode === "cleanup") {
+        if (delayMode !== "cancellation") {
           await closing;
+          if (delayMode === "renewal") {
+            expect(triggerOwnerRenewal).toBeDefined();
+            triggerOwnerRenewal!();
+            await vi.waitFor(async () => {
+              const renewed = (await leaseController.readSnapshot({ missionId: mission.id }))
+                .snapshot.lease;
+              expect(renewed).toMatchObject({
+                claimId: leaseBeforeRenewal!.claimId,
+                fencingToken: leaseBeforeRenewal!.fencingToken,
+              });
+              expect(renewed!.renewedAt).not.toBe(leaseBeforeRenewal!.renewedAt);
+            });
+          }
           // Expire only the Host deadline; keep provider cleanup and file I/O real.
           await vi.waitFor(() => expect(expireReleaseDeadline).toBeDefined());
           expireReleaseDeadline!();
@@ -8456,6 +8700,13 @@ describe("MissionRunner", { timeout: 30_000 }, () => {
             readFile(new PragmaPaths({ pragmaHome }).expertSessionLease(failedSessionId!)),
           ).rejects.toMatchObject({ code: "ENOENT" });
         });
+        if (delayMode === "renewal") {
+          await vi.waitFor(async () => {
+            expect(
+              (await leaseController.readSnapshot({ missionId: mission.id })).snapshot.lease,
+            ).toBeUndefined();
+          });
+        }
         await runner.sendMessage({
           id: mission.id,
           content: "Continue",

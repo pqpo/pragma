@@ -344,6 +344,43 @@ describe("Core-backed Local Host run composition", { timeout: 10_000 }, () => {
     expect((await sessions.get(expert.missionId))?.sessionId).toBe(expert.missionId);
   });
 
+  it("first run and later control reuse the same owner without Session recovery or compilation", async () => {
+    const { home, runtimes, executions, sessions, controller, executors, executorPort } =
+      await createRunFixture();
+    const missionId = randomUUID();
+    const handle = await executorPort.start({
+      missionId,
+      request: createRequest(home, "expert", "a".repeat(16), "shared owner"),
+      executor: executors[0]!,
+    });
+    const owner = executorPort.ownerAccess.controlOwner(missionId);
+    expect(owner?.kind).toBe("session");
+    expect(await executorPort.resolveActiveOwner(missionId)).toBe(owner);
+    const resolveExecutor = vi.fn(async () => undefined);
+    const readSession = vi.spyOn(sessions, "get");
+    const adapter = createLocalHostCoreMissionControlAdapter({
+      pragmaHome: home,
+      runtimes,
+      executions,
+      sessions,
+      ownerAccess: executorPort.ownerAccess,
+      executors: resolveExecutor,
+      mission: createControllerRunMissionPort(controller),
+      resolveMissionBinding: async () => undefined,
+    });
+    try {
+      await adapter.recoverMission(missionId);
+      expect(executorPort.ownerAccess.controlOwner(missionId)).toBe(owner);
+      expect(resolveExecutor).not.toHaveBeenCalled();
+      expect(readSession).not.toHaveBeenCalled();
+      await expect(handle.result).resolves.toMatchObject({ status: "succeeded" });
+    } finally {
+      readSession.mockRestore();
+      await handle.release?.();
+    }
+    expect(executorPort.ownerAccess.controlOwner(missionId)).toBeUndefined();
+  });
+
   it("releases terminal Expert runtime resources while retaining durable recovery state", async () => {
     const { home, run, sessions, runtimeState } = await createRunFixture();
     const expert = await run.start(createRequest(home, "expert", "a".repeat(16), "release me"));
@@ -608,6 +645,7 @@ async function createRunFixture(): Promise<{
   readonly runtimes: ReturnType<typeof createStaticRuntimeResolver>;
   readonly executors: readonly LocalHostCoreExecutorDefinition[];
   readonly run: ReturnType<typeof createLocalHostRunApplication>;
+  readonly executorPort: ReturnType<typeof createCoreRunExecutorPort>;
 }> {
   const home = await mkdtemp(join(tmpdir(), "pragma-core-run-"));
   tempDirectories.push(home);
@@ -621,19 +659,30 @@ async function createRunFixture(): Promise<{
   const sessions = createFileExpertSessionStore({ executions, pragmaHome: home });
   const controller = createMissionControllerStore({ missionsPath: join(home, "missions") });
   const executors = await createExecutorDefinitions(home);
+  const executorPort = createCoreRunExecutorPort({
+    pragmaHome: home,
+    runtimes,
+    executions,
+    sessions,
+    createHostContextBindings: async ({ missionId }) =>
+      await createLocalHostMissionBoardBindings({ pragmaHome: home, missionId }),
+    executors,
+  });
   const run = createLocalHostRunApplication({
-    executors: createCoreRunExecutorPort({
-      pragmaHome: home,
-      runtimes,
-      executions,
-      sessions,
-      createHostContextBindings: async ({ missionId }) =>
-        await createLocalHostMissionBoardBindings({ pragmaHome: home, missionId }),
-      executors,
-    }),
+    executors: executorPort,
     mission: createControllerRunMissionPort(controller),
   });
-  return { home, executions, sessions, controller, runtimeState, runtimes, executors, run };
+  return {
+    home,
+    executions,
+    sessions,
+    controller,
+    runtimeState,
+    runtimes,
+    executors,
+    run,
+    executorPort,
+  };
 }
 
 async function createExecutorDefinitions(

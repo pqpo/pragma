@@ -1,0 +1,70 @@
+{
+  "node": "v24.18.0",
+  "serial": true,
+  "results": [
+    {
+      "name": "controller-process",
+      "command": [
+        "pnpm",
+        "--filter",
+        "@pragma/local-host",
+        "exec",
+        "vitest",
+        "run",
+        "test/mission-controller-process.integration.test.ts"
+      ],
+      "startedAt": "2026-10-02T08:06:18.003361+00:00",
+      "seconds": 25.283,
+      "exitCode": 0,
+      "log": "/tmp/pragma-r1-serial-controller-process.log"
+    },
+    {
+      "name": "state-migration",
+      "command": [
+        "pnpm",
+        "--filter",
+        "@pragma/local-host",
+        "exec",
+        "vitest",
+        "run",
+        "test/execution-state-migration.test.ts"
+      ],
+      "startedAt": "2026-10-02T08:06:43.288276+00:00",
+      "seconds": 8.347,
+      "exitCode": 0,
+      "log": "/tmp/pragma-r1-serial-state-migration.log"
+    },
+    {
+      "name": "local-host-lint",
+      "command": ["pnpm", "--filter", "@pragma/local-host", "lint"],
+      "startedAt": "2026-10-02T08:06:51.636296+00:00",
+      "seconds": 5.018,
+      "exitCode": 0,
+      "log": "/tmp/pragma-r1-serial-local-host-lint.log"
+    },
+    {
+      "name": "desktop-lint",
+      "command": ["pnpm", "--filter", "@pragma/desktop", "lint"],
+      "startedAt": "2026-10-02T08:06:56.655099+00:00",
+      "seconds": 13.891,
+      "exitCode": 0,
+      "log": "/tmp/pragma-r1-serial-desktop-lint.log"
+    },
+    {
+      "name": "local-host-typecheck",
+      "command": ["pnpm", "--filter", "@pragma/local-host", "typecheck"],
+      "startedAt": "2026-10-02T08:07:10.547097+00:00",
+      "seconds": 9.31,
+      "exitCode": 0,
+      "log": "/tmp/pragma-r1-serial-local-host-typecheck.log"
+    },
+    {
+      "name": "desktop-node-typecheck",
+      "command": ["pnpm", "--filter", "@pragma/desktop", "typecheck:node"],
+      "startedAt": "2026-10-02T08:07:19.858414+00:00",
+      "seconds": 13.583,
+      "exitCode": 0,
+      "log": "/tmp/pragma-r1-serial-desktop-node-typecheck.log"
+    }
+  ]
+}

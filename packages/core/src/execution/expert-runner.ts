@@ -1,4 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
+import { z } from "zod";
 
 import {
   AgentMessageSchema,
@@ -80,6 +81,7 @@ import { commitExecutionEvent, createExecutionEventWriter } from "./execution-co
 import { getExecutionLiveBus, shareExecutionLiveBus } from "./execution-live-bus.ts";
 import { projectRuntimeOutput } from "./execution-output.ts";
 import {
+  EXECUTION_RECOVERY_CLAIM_STATE_KEY,
   ExecutionFinalStatusConflictError,
   ExecutionVersionConflictError,
   type ExecutionStore,
@@ -193,6 +195,8 @@ export class ExecutionController {
         ExpertAgentAutomaticHumanInteractionHandler | undefined;
       readonly onHumanInteractionRequested?: (() => Promise<void>) | undefined;
       readonly assertOwnership?: (() => Promise<void>) | undefined;
+      readonly assertCancellationOwnership?: (() => Promise<void>) | undefined;
+      readonly recoveryClaimId?: string | undefined;
     } = {},
   ) {
     const sourceStore = this.store;
@@ -813,9 +817,29 @@ export class ExecutionController {
     this.activeRuntimeSubmissions.clear();
     while (true) {
       const record = await this.store.get(this.executionId);
-      if (record === undefined || isTerminalExecutionStatus(record.status)) return;
+      if (record === undefined) return;
+      const recoverInterrupted = this.options.recoveryClaimId !== undefined;
+      if (
+        isTerminalExecutionStatus(record.status) &&
+        !(recoverInterrupted && record.status === "interrupted")
+      )
+        return;
+      if (this.options.recoveryClaimId !== undefined) {
+        // Validate the claim on the same version used by the cancellation CAS.
+        // A takeover after this read changes version and forces a fresh check.
+        const claim = z
+          .object({ claimId: z.string(), expiresAt: z.string().datetime() })
+          .parse(record.state[EXECUTION_RECOVERY_CLAIM_STATE_KEY]);
+        if (
+          claim.claimId !== this.options.recoveryClaimId ||
+          Date.parse(claim.expiresAt) <= Date.now()
+        )
+          throw new Error(`Execution cancellation recovery claim lost: ${this.executionId}.`);
+      }
       const invocations = (await this.store.listInvocations(this.executionId)).filter(
-        (invocation) => !isTerminalExecutionStatus(invocation.status),
+        (invocation) =>
+          !isTerminalExecutionStatus(invocation.status) ||
+          (recoverInterrupted && invocation.status === "interrupted"),
       );
       const invocationPatches = invocations.map((invocation) => ({
         invocationId: invocation.invocationId,
@@ -847,10 +871,12 @@ export class ExecutionController {
                 patch: { activeInvocationId: undefined },
               }));
       try {
+        await (this.options.assertCancellationOwnership ?? this.options.assertOwnership)?.();
         await this.store.commit({
           commitId: randomUUID(),
           executionId: this.executionId,
           expectedVersion: record.version,
+          recoveryClaimId: this.options.recoveryClaimId,
           executionPatch: { status: "cancelled", error: reason },
           invocationPatches,
           contextPatches: closure.contextPatches,

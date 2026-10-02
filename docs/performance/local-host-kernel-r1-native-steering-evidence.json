@@ -1,0 +1,38 @@
+{
+  "schemaVersion": "pragma.runtime-probe-evidence/v1",
+  "runtime": {
+    "id": "codex-local",
+    "kind": "codex-local",
+    "version": "codex-cli 0.159.0"
+  },
+  "probe": {
+    "id": "steering",
+    "version": "v1"
+  },
+  "environment": {
+    "capturedAt": "2026-10-02T08:48:40.766Z",
+    "platform": "darwin",
+    "architecture": "x64",
+    "authenticationMode": "native-cli-profile"
+  },
+  "command": {
+    "executable": "pnpm runtime:probe",
+    "arguments": ["codex", "steering"]
+  },
+  "assertions": [
+    {
+      "id": "steering.failed",
+      "feature": "steering",
+      "stage": "executed",
+      "status": "failed",
+      "message": "Steering probe did not observe an active Runtime turn."
+    }
+  ],
+  "observations": [
+    "{\"phase\":\"availability\",\"result\":{\"usable\":true,\"details\":{\"executablePath\":\"[home]/.local/bin/codex\",\"version\":\"codex-cli 0.159.0\"}}}"
+  ],
+  "redaction": {
+    "version": "sha256-placeholders/v1",
+    "leakScanPassed": true
+  }
+}

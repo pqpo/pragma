@@ -56,6 +56,10 @@ import {
 import { commitExecutionEvent } from "../execution/execution-commit.ts";
 import { InvocationService } from "../execution/invocation-service.ts";
 import {
+  FlowInterruptionUnconfirmedError,
+  stopFlowRuntimeContexts,
+} from "./stop-flow-runtime-contexts.ts";
+import {
   StoredExecutionView,
   type ExecutionView,
   type MutableExecution,
@@ -89,6 +93,12 @@ export interface FlowExecution extends MutableExecution {
 }
 
 export type FlowExecutionView = ExecutionView;
+
+export interface StopFlowRequest {
+  readonly executionId: string;
+  readonly reason?: string | undefined;
+  readonly signal?: AbortSignal | undefined;
+}
 
 export class FlowExecutionManager {
   private readonly active = new Map<
@@ -228,6 +238,142 @@ export class FlowExecutionManager {
       ],
     });
     return this.activate(flow, request.executionId, runtimeId, claimId, pendingHumanInteractionIds);
+  }
+
+  /** Stop a cold execution without activating its graph or submitting a Runtime turn. */
+  async stop(definition: FlowSpec | Flow, request: StopFlowRequest): Promise<void> {
+    const flow = compileFlow(definition);
+    const executionId = request.executionId;
+    const record = await this.executions.get(executionId);
+    if (record === undefined || record.kind !== "flow" || record.definition.id !== flow.id)
+      throw new Error(`FlowExecution not found or definition mismatched: ${executionId}.`);
+    if (isFinal(record.status)) return;
+    const storedGraph = readFlowInternalState(record.state).definitionGraph;
+    if (
+      storedGraph === undefined ||
+      stableStringify(storedGraph) !== stableStringify(createFlowDefinitionGraph(flow))
+    )
+      throw new Error(`Flow definition graph mismatch for Execution ${executionId}.`);
+    request.signal?.throwIfAborted();
+    const active = this.active.get(executionId);
+    if (active !== undefined) {
+      await active.controller.cancel(request.reason);
+      return;
+    }
+    const claimId = randomUUID();
+    const claimSchema = z.object({ claimId: z.string(), expiresAt: z.string().datetime() });
+    const signal =
+      request.signal === undefined
+        ? AbortSignal.timeout(5_000)
+        : AbortSignal.any([request.signal, AbortSignal.timeout(5_000)]);
+    let renewalFailure: unknown;
+    let renewing = Promise.resolve();
+    const assertOwnership = async () => {
+      signal.throwIfAborted();
+      if (renewalFailure !== undefined) throw renewalFailure;
+      await this.assertExecutionOwnership?.();
+      const current = await this.executions.get(executionId);
+      const claim = claimSchema.parse(current?.state[EXECUTION_RECOVERY_CLAIM_STATE_KEY]);
+      if (claim.claimId !== claimId || Date.parse(claim.expiresAt) <= Date.now())
+        throw new Error(`Flow interruption recovery claim lost: ${executionId}.`);
+      signal.throwIfAborted();
+    };
+    const releaseClaim = async () => {
+      try {
+        let released = false;
+        for (let attempt = 0; attempt < 8; attempt++) {
+          const current = await this.executions.get(executionId);
+          if (current === undefined) {
+            released = true;
+            break;
+          }
+          const claim = claimSchema.safeParse(current.state[EXECUTION_RECOVERY_CLAIM_STATE_KEY]);
+          if (!claim.success || claim.data.claimId !== claimId) {
+            released = true;
+            break;
+          }
+          const state = { ...current.state };
+          delete state[EXECUTION_RECOVERY_CLAIM_STATE_KEY];
+          try {
+            await this.executions.commit({
+              commitId: randomUUID(),
+              executionId,
+              expectedVersion: current.version,
+              executionPatch: { state },
+            });
+            released = true;
+            break;
+          } catch (error) {
+            if (!(error instanceof ExecutionVersionConflictError)) throw error;
+          }
+        }
+        if (!released)
+          throw new Error(`Flow interruption claim release CAS exhausted: ${executionId}.`);
+      } catch (error) {
+        // Keep the original stop outcome and the recoverable lease. A release
+        // failure is observable and the claim still expires normally.
+        createPragmaLogger(this.loggerProvider, { component: "flow-execution" }).warn(
+          "flow.stop_claim_release_failed",
+          "Flow interruption claim release failed.",
+          {
+            executionId,
+            code: "FLOW_STOP_CLAIM_RELEASE_FAILED",
+            error: error instanceof Error ? error.message : String(error),
+          },
+        );
+      }
+    };
+    let timer: NodeJS.Timeout | undefined;
+    try {
+      await this.assertExecutionOwnership?.();
+      signal.throwIfAborted();
+      if (!(await this.executions.claimRecovery(executionId, claimId, 30_000)))
+        throw new Error(`FlowExecution recovery is already claimed: ${executionId}.`);
+      timer = setInterval(() => {
+        renewing = renewing
+          .then(async () => {
+            await assertOwnership();
+            if (!(await this.executions.claimRecovery(executionId, claimId, 30_000)))
+              throw new Error(`Flow interruption recovery claim lost: ${executionId}.`);
+          })
+          .catch((error: unknown) => {
+            renewalFailure = error;
+          });
+      }, 1_000);
+      timer.unref();
+      await stopWithinBudget(
+        stopFlowRuntimeContexts({
+          flow,
+          executionId,
+          executions: this.executions,
+          runtimes: this.runtimes,
+          pragmaHome: this.pragmaHome,
+          loggerProvider: this.loggerProvider,
+          assertOwnership,
+        }),
+        signal,
+      );
+      await assertOwnership();
+      await new ExecutionController(executionId, this.executions, undefined, {
+        assertOwnership,
+        recoveryClaimId: claimId,
+        closeContextsOnCancel: true,
+      }).cancel(request.reason ?? "Interrupted by user.");
+    } catch (cause: unknown) {
+      this.loggerProvider
+        ?.createLogger({ component: "flow-execution" })
+        .warn("flow.stop_unconfirmed", "Flow interruption was not confirmed.", {
+          executionId,
+          code: "FLOW_NATIVE_STOP_UNCONFIRMED",
+        });
+      throw new FlowInterruptionUnconfirmedError(executionId, cause);
+    } finally {
+      if (timer !== undefined) clearInterval(timer);
+      await renewing;
+      // Do not strand a recoverable execution behind our lease after a failed
+      // native stop. CAS removes only this exact claim, never a successor's.
+      await releaseClaim();
+    }
   }
 
   private activate(
@@ -1069,6 +1215,21 @@ function compileFlow(definition: FlowSpec | Flow): Flow {
   return definition instanceof Object && "compile" in definition
     ? (definition as FlowSpec).compile()
     : (definition as Flow);
+}
+
+async function stopWithinBudget(operation: Promise<void>, signal: AbortSignal): Promise<void> {
+  void operation.catch(() => undefined);
+  signal.throwIfAborted();
+  let onAbort!: () => void;
+  const aborted = new Promise<never>((_resolve, reject) => {
+    onAbort = () => reject(signal.reason);
+    signal.addEventListener("abort", onAbort, { once: true });
+  });
+  try {
+    await Promise.race([operation, aborted]);
+  } finally {
+    signal.removeEventListener("abort", onAbort);
+  }
 }
 
 async function putStatus(

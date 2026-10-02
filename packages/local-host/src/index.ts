@@ -35,6 +35,7 @@ export * from "./logger.ts";
 export * from "./mission-board.ts";
 export * from "./mission-event-projector.ts";
 export * from "./missions/activity.ts";
+export * from "./missions/execution-owner.ts";
 export * from "./missions/command-dispatcher.ts";
 export * from "./missions/controller/command-payload.ts";
 export * from "./missions/controller/composition.ts";
@@ -394,3 +395,5 @@ export * from "./mission-delivery-receipt-store.ts";
 export * from "./missions/deletion.ts";
 
 export { readDeletedExecutionUsageSource } from "./execution/deleted-execution-usage.ts";
+
+export * from "./mission-command-admission.ts";

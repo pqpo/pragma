@@ -1,0 +1,56 @@
+{
+  "schemaVersion": "pragma.storage-preparation-benchmark/v1",
+  "observedAt": "2026-10-02T08:38:40.481Z",
+  "cpu": "Intel(R) Core(TM) i7-9750H CPU @ 2.60GHz",
+  "source": "Synthetic expansion of the actual v12 file-writer fixture; four prepared Execution owners, no model or renderer. Read samples are four-owner batches; fewer than 20 samples omit percentiles. Not end-to-end Mission acceptance.",
+  "results": [
+    {
+      "history": 500,
+      "preparedOwners": 4,
+      "preparationMs": 491.9068319999999,
+      "foregroundFourOwnerReadDuringPreparation": {
+        "samples": 11,
+        "p50": null,
+        "p95": null,
+        "max": 142.94898999999987
+      },
+      "convertedOwnerRead": {
+        "samples": 20,
+        "p50": 1.724189000000024,
+        "p95": 2.353931999999986
+      }
+    },
+    {
+      "history": 5000,
+      "preparedOwners": 4,
+      "preparationMs": 622.9148170000003,
+      "foregroundFourOwnerReadDuringPreparation": {
+        "samples": 24,
+        "p50": 7.040813000000071,
+        "p95": 84.73822000000018,
+        "max": 158.43507599999975
+      },
+      "convertedOwnerRead": {
+        "samples": 20,
+        "p50": 1.637300999999752,
+        "p95": 1.9043570000003456
+      }
+    },
+    {
+      "history": 50000,
+      "preparedOwners": 4,
+      "preparationMs": 1746.3539069999997,
+      "foregroundFourOwnerReadDuringPreparation": {
+        "samples": 134,
+        "p50": 6.355900999999903,
+        "p95": 45.92230399999971,
+        "max": 139.2791040000002
+      },
+      "convertedOwnerRead": {
+        "samples": 20,
+        "p50": 1.5879910000003292,
+        "p95": 1.7985420000004524
+      }
+    }
+  ]
+}

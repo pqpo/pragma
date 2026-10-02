@@ -1,0 +1,98 @@
+{
+  "host": {
+    "platform": "darwin",
+    "release": "25.6.0",
+    "arch": "x64",
+    "cpu": "Intel(R) Core(TM) i7-9750H CPU @ 2.60GHz",
+    "logicalCpus": 12,
+    "memoryGiB": 16
+  },
+  "generatedAt": "2026-10-02T10:37:39.499Z",
+  "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/150.0.7871.250 Electron/43.7.6 Safari/537.36",
+  "results": [
+    {
+      "mode": "static",
+      "entries": 100,
+      "samples": 40,
+      "streamOperations": 0,
+      "samplesWithStreamProgress": 0,
+      "inputToPaintP50Ms": 33.3,
+      "inputToPaintP95Ms": 35.6,
+      "longTaskCount": 0,
+      "longTaskMs": 0,
+      "outputMutationCount": 0,
+      "renderedStreamCharacters": 0,
+      "heapDeltaMiB": -6.39
+    },
+    {
+      "mode": "streaming",
+      "entries": 100,
+      "samples": 40,
+      "streamOperations": 80,
+      "samplesWithStreamProgress": 40,
+      "inputToPaintP50Ms": 33.3,
+      "inputToPaintP95Ms": 35.8,
+      "longTaskCount": 0,
+      "longTaskMs": 0,
+      "outputMutationCount": 80,
+      "renderedStreamCharacters": 80,
+      "heapDeltaMiB": 2.213
+    },
+    {
+      "mode": "static",
+      "entries": 1000,
+      "samples": 40,
+      "streamOperations": 0,
+      "samplesWithStreamProgress": 0,
+      "inputToPaintP50Ms": 33.4,
+      "inputToPaintP95Ms": 35.6,
+      "longTaskCount": 0,
+      "longTaskMs": 0,
+      "outputMutationCount": 0,
+      "renderedStreamCharacters": 0,
+      "heapDeltaMiB": 1.511
+    },
+    {
+      "mode": "streaming",
+      "entries": 1000,
+      "samples": 40,
+      "streamOperations": 80,
+      "samplesWithStreamProgress": 40,
+      "inputToPaintP50Ms": 33.3,
+      "inputToPaintP95Ms": 35.6,
+      "longTaskCount": 0,
+      "longTaskMs": 0,
+      "outputMutationCount": 80,
+      "renderedStreamCharacters": 80,
+      "heapDeltaMiB": -3.855
+    },
+    {
+      "mode": "static",
+      "entries": 5000,
+      "samples": 40,
+      "streamOperations": 0,
+      "samplesWithStreamProgress": 0,
+      "inputToPaintP50Ms": 33.3,
+      "inputToPaintP95Ms": 35.5,
+      "longTaskCount": 0,
+      "longTaskMs": 0,
+      "outputMutationCount": 0,
+      "renderedStreamCharacters": 0,
+      "heapDeltaMiB": 1.422
+    },
+    {
+      "mode": "streaming",
+      "entries": 5000,
+      "samples": 40,
+      "streamOperations": 80,
+      "samplesWithStreamProgress": 40,
+      "inputToPaintP50Ms": 33.3,
+      "inputToPaintP95Ms": 35.8,
+      "longTaskCount": 0,
+      "longTaskMs": 0,
+      "outputMutationCount": 80,
+      "renderedStreamCharacters": 80,
+      "heapDeltaMiB": 1.989
+    }
+  ]
+}

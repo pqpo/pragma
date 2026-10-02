@@ -1884,7 +1884,7 @@ export async function createDesktopApplicationContainer(
       }),
   });
   missionRunnerRef.current = missionRunner;
-  const localHostMissionControlAdapter = missionRunner.createLocalHostMissionControlAdapter();
+  const localHostMissionControlAdapter = missionRunner.missionControl;
   const localHostRunExecutorResolver = createDesktopLocalHostExecutorResolver({
     executors: missionExecutors,
     project: pragmaProjectStore,

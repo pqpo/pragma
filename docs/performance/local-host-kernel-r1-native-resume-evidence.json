@@ -1,0 +1,46 @@
+{
+  "schemaVersion": "pragma.runtime-probe-evidence/v1",
+  "runtime": {
+    "id": "codex-local",
+    "kind": "codex-local",
+    "version": "codex-cli 0.159.0"
+  },
+  "probe": {
+    "id": "resume",
+    "version": "v1"
+  },
+  "environment": {
+    "capturedAt": "2026-10-02T08:44:57.095Z",
+    "platform": "darwin",
+    "architecture": "x64",
+    "authenticationMode": "native-cli-profile"
+  },
+  "command": {
+    "executable": "pnpm runtime:probe",
+    "arguments": ["codex", "resume"]
+  },
+  "assertions": [
+    {
+      "id": "resume.executed",
+      "feature": "resume",
+      "stage": "executed",
+      "status": "passed",
+      "message": "resume probe completed."
+    },
+    {
+      "id": "resume.executed_after_refresh",
+      "feature": "resume",
+      "stage": "executed",
+      "status": "passed",
+      "message": "Native Session identity resumed after refresh."
+    }
+  ],
+  "observations": [
+    "{\"phase\":\"availability\",\"result\":{\"usable\":true,\"details\":{\"executablePath\":\"[home]/.local/bin/codex\",\"version\":\"codex-cli 0.159.0\"}}}",
+    "{\"operation\":\"resume\",\"output\":\"RESUME_MEMORY_6249\",\"events\":[{\"type\":\"run.started\",\"sequence\":0,\"payload\":{\"task\":\"Remember the exact marker RESUME_MEMORY_6249 and reply with it now.\",\"inputSummary\":\"Remember the exact marker RESUME_MEMORY_6249 and reply with it now.\"}},{\"type\":\"progress\",\"sequence\":1,\"payload\":{\"stage\":\"turn/started\",\"data\":{\"threadId\":\"01a0fbc9-654b-78f2-92bb-cac966489d1e\",\"turn\":{\"id\":\"01a0fbc9-668c-7522-a726-11dd01c5f0e3\",\"items\":[],\"itemsView\":\"notLoaded\",\"status\":\"inProgress\",\"error\":null,\"startedAt\":1790930675,\"completedAt\":null,\"durationMs\":null}}}},{\"type\":\"message.delta\",\"sequence\":2,\"payload\":{\"role\":\"assistant\",\"contentType\":\"text\",\"delta\":\"RES\"}},{\"type\":\"message.delta\",\"sequence\":3,\"payload\":{\"role\":\"assistant\",\"contentType\":\"text\",\"delta\":\"UME\"}},{\"type\":\"message.delta\",\"sequence\":4,\"payload\":{\"role\":\"assistant\",\"contentType\":\"text\",\"delta\":\"_MEMORY\"}},{\"type\":\"message.delta\",\"sequence\":5,\"payload\":{\"role\":\"assistant\",\"contentType\":\"text\",\"delta\":\"_\"}},{\"type\":\"message.delta\",\"sequence\":6,\"payload\":{\"role\":\"assistant\",\"contentType\":\"text\",\"delta\":\"624\"}},{\"type\":\"message.delta\",\"sequence\":7,\"payload\":{\"role\":\"assistant\",\"contentType\":\"text\",\"delta\":\"9\"}},{\"type\":\"message.completed\",\"sequence\":8,\"payload\":{\"role\":\"assistant\",\"contentType\":\"text\",\"text\":\"RESUME_MEMORY_6249\"}},{\"type\":\"usage.updated\",\"sequence\":9,\"payload\":{\"usage\":{\"measurement\":\"reported\",\"input\":2804,\"output\":10,\"cacheRead\":12288,\"cacheWrite\":0,\"totalTokens\":15102,\"cost\":{\"input\":0,\"output\":0,\"cacheRead\":0,\"cacheWrite\":0,\"total\":0}},\"provisional\":false}},{\"type\":\"context-window.updated\",\"sequence\":10,\"payload\":{\"usage\":{\"usedTokens\":15102,\"contextWindowTokens\":258400,\"percent\":5.844427244582043,\"measurement\":\"reported\",\"observedAt\":\"2026-10-02T08:44:45.583Z\"},\"provisional\":false}},{\"type\":\"run.completed\",\"sequence\":11,\"payload\":{\"usage\":{\"measurement\":\"reported\",\"input\":2804,\"output\":10,\"cacheRead\":12288,\"cacheWrite\":0,\"totalTokens\":15102,\"cost\":{\"input\":0,\"output\":0,\"cacheRead\":0,\"cacheWrite\":0,\"total\":0}}}}]}"
+  ],
+  "redaction": {
+    "version": "sha256-placeholders/v1",
+    "leakScanPassed": true
+  }
+}

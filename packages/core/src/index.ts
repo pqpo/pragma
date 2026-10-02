@@ -61,6 +61,7 @@ export * from "./execution/expert-session.ts";
 export * from "./execution/steer-delivery-error.ts";
 export * from "./expert-tools-mcp-server.ts";
 export * from "./flow/flow-execution.ts";
+export { FlowInterruptionUnconfirmedError } from "./flow/stop-flow-runtime-contexts.ts";
 export * from "./flow/flow.ts";
 export * from "./http-service-mcp-server.ts";
 export * from "./human-interaction/durable-human-interaction.ts";

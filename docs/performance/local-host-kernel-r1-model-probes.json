@@ -1,0 +1,99 @@
+{
+  "node": "v24.18.0",
+  "serial": true,
+  "scope": "Isolated private probe workspace/state. Native Core Runtime smoke does not replace Mission Inbox queue/control E2E.",
+  "results": [
+    {
+      "name": "candidate-model",
+      "command": [
+        "node",
+        "apps/desktop/scripts/run-mission-latency-benchmark.mjs",
+        "--source-home",
+        "/Users/linminqiu/.pragma",
+        "--samples",
+        "1",
+        "--groups",
+        "warm",
+        "--model",
+        "deepseek-v4-flash",
+        "--thinking",
+        "medium",
+        "--output",
+        "/tmp/pragma-kernel-r1-candidate-e2e.json"
+      ],
+      "startedAt": "2026-10-02T08:42:26.311409+00:00",
+      "seconds": 120.162,
+      "exitCode": 1,
+      "log": "/tmp/pragma-r1-candidate-model.log",
+      "model": "deepseek-v4-flash",
+      "thinking": "medium",
+      "requestedSamplesPerGroup": 1,
+      "requestedGroups": ["warm"],
+      "validSamples": 0,
+      "errorCodes": ["MISSION_BENCHMARK_KEYCHAIN_TIMEOUT"],
+      "measurement": "No result file; no valid model latency sample. Full cold/new/warm20/scenario acceptance remains unverified."
+    },
+    {
+      "name": "native-resume",
+      "command": ["pnpm", "--filter", "@pragma/examples", "runtime:probe", "codex", "resume"],
+      "startedAt": "2026-10-02T08:44:26.546319+00:00",
+      "seconds": 240.118,
+      "exitCode": "timeout",
+      "log": "/tmp/pragma-r1-native-resume.log",
+      "summary": {
+        "runtime": "codex-local",
+        "probe": "resume",
+        "status": "passed",
+        "evidencePath": "/Users/linminqiu/.pragma/archives/runtime-probes/Y29kZXgtbG9jYWw/2026-10-02/cmVzdW1l-931b60bf-75b1-42b3-b4aa-80391b0eaec6.json",
+        "assertions": [
+          {
+            "id": "resume.executed",
+            "feature": "resume",
+            "stage": "executed",
+            "status": "passed",
+            "message": "resume probe completed."
+          },
+          {
+            "id": "resume.executed_after_refresh",
+            "feature": "resume",
+            "stage": "executed",
+            "status": "passed",
+            "message": "Native Session identity resumed after refresh."
+          }
+        ]
+      },
+      "evidence": "local-host-kernel-r1-native-resume-evidence.json",
+      "completeSmokePassed": false,
+      "processExitConfirmed": false,
+      "timeoutAction": "Terminated only the probe-owned process group after240 seconds."
+    },
+    {
+      "name": "native-steering",
+      "command": ["pnpm", "--filter", "@pragma/examples", "runtime:probe", "codex", "steering"],
+      "startedAt": "2026-10-02T08:48:26.670252+00:00",
+      "seconds": 240.133,
+      "exitCode": "timeout",
+      "log": "/tmp/pragma-r1-native-steering.log",
+      "summary": {
+        "runtime": "codex-local",
+        "probe": "steering",
+        "status": "failed",
+        "evidencePath": "/Users/linminqiu/.pragma/archives/runtime-probes/Y29kZXgtbG9jYWw/2026-10-02/c3RlZXJpbmc-233e5a69-530f-4bed-b689-8a6660649c98.json",
+        "assertions": [
+          {
+            "id": "steering.failed",
+            "feature": "steering",
+            "stage": "executed",
+            "status": "failed",
+            "message": "Steering probe did not observe an active Runtime turn."
+          }
+        ]
+      },
+      "evidence": "local-host-kernel-r1-native-steering-evidence.json",
+      "completeSmokePassed": false,
+      "processExitConfirmed": false,
+      "timeoutAction": "Terminated only the probe-owned process group after240 seconds.",
+      "failureStage": "Existing probe did not observe tool.started/message.delta in its active-turn wait window, before issuing the mode=steer prompt; actual native steer consumption not validated."
+    }
+  ]
+}

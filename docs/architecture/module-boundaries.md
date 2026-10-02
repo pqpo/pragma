@@ -53,8 +53,11 @@ Cross-package imports must use `@pragma/*` names, not relative paths.
 owner lifecycle, query/watch, catalog, Board and Core run wiring). It may not depend on any `apps/*`,
 Electron, React/Next, or `@pragma/runtime-*`. Runtime factories
 or a Host-owned `RuntimeResolver` are injected by `apps/desktop` Main or `apps/cli` composition. A
-richer Host may inject MissionRunner control/run ports; Local Host still owns the Mission control and
-run application assembly.
+richer Host currently supplies narrow compile/first-run dependencies during issue #348 R1. Mission
+commands use the factory-created Local Host Core control adapter and shared MissionExecutionOwner;
+Desktop must not implement another command consumer or strict-target resolver. Compile and full
+run/session/recovery migration remain R2/R3; removal of the remaining Node application overrides
+is scheduled for R4. See [R1 implementation status](local-host-kernel-r1-implementation.md).
 `@pragma/shared`, Core, Interpreter, Evaluation, Built-in Agents, Memory,
 Context Filesystem, Runtime packages, plugins, and examples may not depend on
 `@pragma/local-host` or `@pqpo/pragma`. Desktop preload/renderer/shared code remains browser-safe and

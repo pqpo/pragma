@@ -1,0 +1,16 @@
+{
+  "schemaVersion": "pragma.local-host-kernel-model-baseline-status/v1",
+  "recordedAt": "2026-10-02T07:08:06.856822+00:00",
+  "commit": "8fdbd4526d0f62d0b36891165539ed9ec47dc603",
+  "build": "production",
+  "model": "deepseek-v4-flash",
+  "thinking": "medium",
+  "requestedGroups": ["warm"],
+  "requestedSamplesPerGroup": 1,
+  "validSamples": 0,
+  "exitCode": 1,
+  "status": "blocked",
+  "errorCodes": ["MISSION_BENCHMARK_KEYCHAIN_TIMEOUT"],
+  "credentialPreparationTimeoutMs": 120000,
+  "measurement": "Supervised pilot failed during native Keychain preparation before credentials-ready; no latency result file. No E2E percentile or product acceptance conclusion. Full 20-sample cold/new/warm run not started."
+}

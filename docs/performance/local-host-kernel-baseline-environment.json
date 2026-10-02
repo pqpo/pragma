@@ -1,0 +1,17 @@
+{
+  "schemaVersion": "pragma.local-host-kernel-baseline-environment/v1",
+  "recordedAt": "2026-10-02T07:03:05.884Z",
+  "commit": "8fdbd4526d0f62d0b36891165539ed9ec47dc603",
+  "branch": "main",
+  "node": "v24.18.0",
+  "pnpm": "10.12.1",
+  "electron": "43.7.6",
+  "platform": "darwin",
+  "release": "25.6.0",
+  "arch": "x64",
+  "cpu": "Intel(R) Core(TM) i7-9750H CPU @ 2.60GHz",
+  "logicalCpus": 12,
+  "memoryGiB": 16,
+  "loadAverageAtRecord": [5.259765625, 4.24609375, 3.927734375],
+  "scope": "Unmodified main production source; documentation changes only. Benchmarks run serially on the current interactive host, without stopping user applications. Storage/preparation use isolated temporary owners; stream UI uses synthetic data in offscreen Electron."
+}

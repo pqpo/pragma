@@ -238,7 +238,7 @@ function assertFinalStatusTransition(
     !(
       allowInterruptedResume &&
       current === "interrupted" &&
-      (requested === "queued" || requested === "running")
+      (requested === "queued" || requested === "running" || requested === "cancelled")
     )
   ) {
     throw new ExecutionFinalStatusConflictError(subject, current, requested);

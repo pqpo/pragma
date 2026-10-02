@@ -73,6 +73,12 @@ Execution 的持久状态、Invocation patch 与 Canonical Event 通过幂等提
 Project catalog、Mission Board、Core store 与 Usage sink。Desktop 和 CLI 在相同应用协议上注入各自的
 Runtime factory、文件系统、SecretStore、交互界面与 Host policy。
 
+Issue #348 的 R1 将 Mission command handlers、strict target、queue recovery/rejection 与消息 admission
+统一到 Local Host。Desktop 首轮运行与编译准备暂留窄依赖，通过同一个 `MissionExecutionOwner`
+访问 Session、generation 和 admission；Desktop metadata cache 仍归展示层。运行/编译/恢复的完整
+迁移属于 R2/R3，内部调用与旧 Runner 出口清理属于 R4。R1 性能退出状态见
+[实施与验证报告](local-host-kernel-r1-implementation.md)，不能据此宣称统一执行内核全部完成。
+
 同一 Mission 的 mutation 由持久 `MissionControllerLease` 和单调 fencing token 协调。非 owner 的
 `send`、`steer`、`respond`、`interrupt` 与 queue mutation 写入持久 `MissionCommandInbox`；提交使用
 request ID 保证幂等，接受回执、应用结果与最终执行结果分别观察。`queue.try-steer` 在 same-turn 边界

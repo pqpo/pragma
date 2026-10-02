@@ -2,8 +2,6 @@ import { describe, expect, it, vi } from "vitest";
 
 import { MissionChatService } from "./mission-chat-service.ts";
 import { MissionCommandService } from "./mission-command-service.ts";
-import { MissionLifecycleService } from "./mission-lifecycle-service.ts";
-import { MissionSessionService } from "./mission-session-service.ts";
 import { MissionStatusService } from "./mission-status-service.ts";
 import { MissionWorkService, type MissionWorkProjection } from "./mission-work-service.ts";
 
@@ -36,102 +34,6 @@ describe("Mission service state ownership", () => {
       revision: 1,
     });
     expect(listenerError).not.toHaveBeenCalled();
-  });
-
-  it("coalesces lifecycle work and releases it after settlement", async () => {
-    const service = new MissionLifecycleService<string, string, { readonly id: string }>();
-    let resolveRun!: (value: string) => void;
-    const first = service.startRun(
-      "mission-1",
-      () => new Promise<string>((resolve) => (resolveRun = resolve)),
-    );
-    const duplicate = service.startRun("mission-1", async () => "duplicate");
-
-    expect(duplicate).toBe(first);
-    resolveRun("done");
-    await expect(first).resolves.toBe("done");
-    await Promise.resolve();
-    expect(service.run("mission-1")).toBeUndefined();
-
-    const active = { id: "execution-1" };
-    service.setActive("mission-1", active);
-    expect(service.active("mission-1")).toBe(active);
-    service.deleteActiveIfCurrent("mission-1", { id: "stale" });
-    expect(service.hasActive("mission-1")).toBe(true);
-    service.deleteActiveIfCurrent("mission-1", active);
-    expect(service.hasActive("mission-1")).toBe(false);
-  });
-
-  it("does not let a forgotten run generation replace the current active execution", async () => {
-    const service = new MissionLifecycleService<string, string, { readonly id: string }>();
-    let finishOld!: () => void;
-    const oldRun = service.startRun(
-      "mission-1",
-      (generation) =>
-        new Promise<string>((resolve) => {
-          finishOld = () => {
-            service.setActiveForRun("mission-1", generation, { id: "old" });
-            resolve("old");
-          };
-        }),
-    );
-    service.forgetRun("mission-1");
-    await service.startRun("mission-1", async (generation) => {
-      expect(service.setActiveForRun("mission-1", generation, { id: "new" })).toBe(true);
-      return "new";
-    });
-
-    finishOld();
-    await expect(oldRun).resolves.toBe("old");
-    expect(service.active("mission-1")).toEqual({ id: "new" });
-  });
-
-  it("coalesces repeated deletion retries while the first cleanup is still running", async () => {
-    const service = new MissionLifecycleService<string, string, never>();
-    let finish!: () => void;
-    const cleanup = vi.fn(
-      async () =>
-        await new Promise<void>((resolve) => {
-          finish = resolve;
-        }),
-    );
-
-    const first = service.startDeletion("mission-1", cleanup);
-    const retry = service.startDeletion("mission-1", cleanup);
-    expect(retry).toBe(first);
-    expect(cleanup).toHaveBeenCalledOnce();
-    finish();
-    await expect(first).resolves.toBeUndefined();
-  });
-
-  it("keeps Session identity and invalidation state behind one registry", async () => {
-    const service = new MissionSessionService<{ readonly id: string }>();
-    const context = Promise.resolve({ id: "context-1" });
-    service.setExecutionContext("mission-1", context);
-    service.setCompilationIdentity("mission-1", "compile-1");
-    service.setDefinitionFingerprint("mission-1", "definition-1");
-
-    expect(await service.executionContext("mission-1")).toEqual({ id: "context-1" });
-    service.invalidateContextBindings("mission-1");
-    expect(service.executionContext("mission-1")).toBeUndefined();
-    expect(service.compilationIdentity("mission-1")).toBeUndefined();
-    expect(service.definitionFingerprint("mission-1")).toBeUndefined();
-    expect(service.successorRequired("mission-1")).toBe(true);
-    expect(service.consumeSuccessorRequirement("mission-1")).toBe(true);
-    expect(service.consumeSuccessorRequirement("mission-1")).toBe(false);
-  });
-
-  it("does not let stale cleanup remove a replacement Session", () => {
-    const service = new MissionSessionService<never>();
-    type Session = Parameters<typeof service.setSession>[1];
-    const oldSession = { sessionId: "old" } as Session;
-    const replacement = { sessionId: "new" } as Session;
-    service.setSession("mission-1", oldSession);
-    service.setSession("mission-1", replacement);
-
-    expect(service.deleteSessionIfCurrent("mission-1", oldSession)).toBe(false);
-    expect(service.session("mission-1")).toBe(replacement);
-    expect(service.deleteSessionIfCurrent("mission-1", replacement)).toBe(true);
   });
 
   it("increments chat revisions and contains listener failures", () => {

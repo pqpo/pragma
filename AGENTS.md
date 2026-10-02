@@ -124,6 +124,7 @@ lib
 - `built-in-agents` 是五个内置 Agent（Pragma、Memory Curator、Store Revision、Skill Revision、Evaluation Judge）的跨 Host 产品能力包。所有 Agent 均由静态 DSL 定义；包内拥有 descriptor/compiler、独立宿主端口、提示词、结构化输出解析、修订规则与纯状态机。Host 负责 Runtime 执行、权限、持久化、Mission 和 UI 适配，不要求五个 Agent 使用统一调用接口。
 - `memory` 是 Host 内置 Memory Plane，拥有 Evidence adapter、Module SPI、独立消费状态和联邦只读 Context；只依赖 `core` 与 `shared`，不得反向进入 Core。
 - Mission Board 是 `local-host` 内的 Mission-scoped 通用白板能力；其通用 binding 只依赖 `core` Context 合约，Host composition 才选择文件系统 adapter。
+- Mission command handlers、strict target、queue recovery/rejection 和消息 admission 只允许由 Local Host 实现；Desktop/CLI 使用共用 control factory 和 `MissionExecutionOwner`，不得维护第二套 consumer 或 active owner 副本。Issue #348 R1 暂留的窄 compile/首轮 start 依赖按 R2/R3 迁移，剩余 Runner 薄转发出口按 R4 删除。
 - `context-filesystem` 是显式 Node/Host 文件系统 adapter 出口；Memory 不得依赖它。
 - `runtime-*` 是具体 Runtime Adapter 实现，依赖 `core`、`shared` 和该 runtime 自己的 SDK；不同 runtime 包相互独立。
 - `apps/desktop` 是本机 Agent 桥接入口，主动连接云端，承载本地权限闸门和本机 Agent 调用。

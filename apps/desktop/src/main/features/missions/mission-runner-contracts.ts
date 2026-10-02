@@ -8,8 +8,6 @@ import type {
   LocalHostRunEvent,
   LocalHostRunHandle,
   LocalHostRunRequest,
-  MissionCommandConsumer,
-  MissionControlTargetResolution,
   PromptQueueProjection,
   ResolvedRunExecutor,
 } from "@pragma/local-host";
@@ -92,20 +90,7 @@ export interface MissionRunner {
     readonly missionId: string;
     readonly payloadHash?: string | undefined;
   }): Promise<void>;
-  createLocalHostMissionControlAdapter(options?: {
-    readonly onCommandOutcome?: ((requestId: string) => void | Promise<void>) | undefined;
-  }): {
-    readonly consumer: MissionCommandConsumer;
-    readonly assertAcquisitionAllowed: (missionId: string) => Promise<void>;
-    readonly resolveStrictTarget: (input: {
-      readonly missionId: string;
-      readonly expectedExecutionId?: string | undefined;
-    }) => Promise<MissionControlTargetResolution | undefined>;
-    readonly resolveExecutionTarget: (input: {
-      readonly missionId: string;
-      readonly expectedExecutionId?: string | undefined;
-    }) => Promise<string | undefined>;
-  };
+  readonly missionControl: import("@pragma/local-host").LocalHostCoreMissionControlAdapter;
   updateOptions(input: UpdateMissionOptions): Promise<Mission>;
   updateContextMounts(input: UpdateMissionContextMounts): Promise<Mission>;
   assertContextMountChangeAllowed(id: string): Promise<void>;

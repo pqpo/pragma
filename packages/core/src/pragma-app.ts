@@ -22,6 +22,7 @@ import {
   type FlowExecution,
   type FlowExecutionView,
   type StartFlowRequest,
+  type StopFlowRequest,
 } from "./flow/flow-execution.ts";
 import type { Flow, FlowSpec } from "./flow/flow.ts";
 import { defaultPragmaLoggerProvider, type PragmaLoggerProvider } from "./logging/logger.ts";
@@ -69,6 +70,7 @@ export interface PragmaApp {
       flow: FlowSpec | Flow,
       request: { readonly executionId: string; readonly runtime?: string | undefined },
     ): Promise<FlowExecution>;
+    stop(flow: FlowSpec | Flow, request: StopFlowRequest): Promise<void>;
   };
 }
 
@@ -119,6 +121,7 @@ export function createPragma(options: CreatePragmaOptions): PragmaApp {
       start: async (flow, request) => await flows.start(flow, request),
       open: async (request) => await flows.open(request),
       recover: async (flow, request) => await flows.recover(flow, request),
+      stop: async (flow, request) => await flows.stop(flow, request),
     },
   };
 }

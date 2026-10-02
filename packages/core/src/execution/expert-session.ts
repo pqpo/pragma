@@ -121,12 +121,19 @@ export function isExpertDefinitionMismatchError(
   return error instanceof ExpertDefinitionMismatchError;
 }
 
+export interface ExpertSteerTarget {
+  readonly executionId: string;
+  readonly turnId: string;
+}
+
 export interface PromptOptions {
   readonly requestId?: string | undefined;
   readonly mode?: PromptMode | undefined;
   readonly modelSelection?: RuntimeModelSelection | undefined;
   readonly attachments?: readonly ExpertPromptAttachment[] | undefined;
   readonly steerFallback?: "enqueue" | undefined;
+  /** Compared atomically with the running root prompt before native dispatch. */
+  readonly target?: ExpertSteerTarget | undefined;
 }
 
 export interface ExpertTurn extends MutableExecution {
@@ -215,7 +222,10 @@ export interface ExpertSession {
   getPromptQueue(): Promise<readonly PromptRequest[]>;
   getPromptQueueState(): Promise<PromptQueueState>;
   attemptQueuedPromptSteer(requestId: string): Promise<QueuedPromptSteerAttempt>;
-  steerQueuedPrompt(requestId: string): Promise<ExpertTurn>;
+  steerQueuedPrompt(
+    requestId: string,
+    options?: { readonly target?: ExpertSteerTarget | undefined },
+  ): Promise<ExpertTurn>;
   removeQueuedPrompt(requestId: string, reason?: string): Promise<void>;
   resumePromptQueue(options?: { readonly recovery?: "abandon" | undefined }): Promise<void>;
   cancelPromptQueue(reason?: string): Promise<void>;
@@ -844,6 +854,7 @@ class ExpertSessionImpl implements ExpertSession {
   private leaseRenewalTask: Promise<void> | undefined;
   private leaseFailureTask: Promise<void> | undefined;
   private leaseError: Error | undefined;
+  private readonly leaseLost = new AbortController();
   private leaseExpiresAt: number;
   private leaseRenewalStopped = false;
   private readonly leaseRenewal: ReturnType<typeof setInterval>;
@@ -959,7 +970,7 @@ class ExpertSessionImpl implements ExpertSession {
         return await this.fallbackToEnqueue(content, requestId, options, error);
       }
       try {
-        return await this.steer(content, requestId);
+        return await this.steer(content, requestId, options.target);
       } catch (error) {
         if (options.steerFallback !== "enqueue" || !(error instanceof SteerNotDispatchedError)) {
           throw error;
@@ -1522,6 +1533,7 @@ class ExpertSessionImpl implements ExpertSession {
       return;
     }
     this.leaseError = error;
+    this.leaseLost.abort(error);
     for (const settlement of this.settlements.values()) settlement.reject(error);
     this.dependencies.loggerProvider
       .createLogger({
@@ -2161,7 +2173,10 @@ class ExpertSessionImpl implements ExpertSession {
     }
   }
 
-  async steerQueuedPrompt(requestId: string): Promise<ExpertTurn> {
+  async steerQueuedPrompt(
+    requestId: string,
+    options: { readonly target?: ExpertSteerTarget | undefined } = {},
+  ): Promise<ExpertTurn> {
     if (this.leaseError !== undefined) throw this.leaseError;
     if (this.closePromise !== undefined || this.stopPromise !== undefined || this.deletionFrozen) {
       throw new Error(`ExpertSession is closing or closed: ${this.sessionId}`);
@@ -2176,6 +2191,26 @@ class ExpertSessionImpl implements ExpertSession {
       const prompt = (await this.getPromptQueue()).find(
         (candidate) => candidate.requestId === requestId,
       );
+      if (
+        prompt?.mode === "enqueue" &&
+        prompt.status === "succeeded" &&
+        prompt.deliveryAttempt?.kind === "queue_steer" &&
+        prompt.deliveryAttempt.state === "confirmed"
+      ) {
+        // The native receipt is committed before the source Execution is
+        // cancelled. A same-process retry must finish that durable cleanup
+        // without delivering the prompt to Runtime again.
+        await this.cancelPersistedExecution(
+          prompt.deliveryAttempt.sourceExecutionId ?? prompt.executionId,
+          "Moved from the prompt queue to steer the active turn.",
+        );
+        return this.createTurn(
+          prompt.deliveryAttempt.targetExecutionId,
+          requestId,
+          "enqueue",
+          "steer",
+        );
+      }
       if (prompt?.mode !== "enqueue" || prompt.status !== "queued") {
         throw new Error(`Queued prompt not found: ${requestId}`);
       }
@@ -2213,6 +2248,7 @@ class ExpertSessionImpl implements ExpertSession {
               "Cannot steer without an active ExpertTurn.",
             );
           }
+          assertExpectedSteerTarget(options.target, session, prompts);
           const current = prompts.find((candidate) => candidate.requestId === requestId);
           if (current?.mode !== "enqueue" || current.status !== "queued") {
             throw new Error(`Queued prompt not found: ${requestId}`);
@@ -2586,7 +2622,11 @@ class ExpertSessionImpl implements ExpertSession {
     return context;
   }
 
-  private async steer(content: string, requestId: string): Promise<ExpertTurn> {
+  private async steer(
+    content: string,
+    requestId: string,
+    target?: ExpertSteerTarget,
+  ): Promise<ExpertTurn> {
     const inFlight = this.strictSteersInFlight.get(requestId);
     if (inFlight !== undefined) {
       if (inFlight.content !== content) {
@@ -2594,7 +2634,7 @@ class ExpertSessionImpl implements ExpertSession {
       }
       return await inFlight.delivery;
     }
-    const delivery = this.deliverSteer(content, requestId);
+    const delivery = this.deliverSteer(content, requestId, target);
     this.strictSteersInFlight.set(requestId, { content, delivery });
     try {
       return await delivery;
@@ -2605,7 +2645,25 @@ class ExpertSessionImpl implements ExpertSession {
     }
   }
 
-  private async deliverSteer(content: string, requestId: string): Promise<ExpertTurn> {
+  private async deliverSteer(
+    content: string,
+    requestId: string,
+    target?: ExpertSteerTarget,
+  ): Promise<ExpertTurn> {
+    // A durable native receipt wins over target advancement during projection
+    // replay. Do not wait for a new controller or deliver this request again.
+    if (target !== undefined) {
+      const duplicate = (await this.getPromptQueue()).find(
+        (prompt) => prompt.requestId === requestId,
+      );
+      if (duplicate !== undefined) {
+        if (duplicate.content !== content || duplicate.mode !== "steer")
+          throw new Error(`Prompt idempotency conflict: ${requestId}`);
+        if (duplicate.status === "succeeded" && duplicate.deliveryAttempt?.state === "confirmed") {
+          return this.createTurn(duplicate.executionId, requestId, "steer", "steer");
+        }
+      }
+    }
     const initialState = await this.getState();
     if (
       initialState.activeExecutionId === undefined &&
@@ -2652,6 +2710,7 @@ class ExpertSessionImpl implements ExpertSession {
             prompts,
           };
         }
+        assertExpectedSteerTarget(target, session, prompts);
         if (hasUncertainSteerDelivery(prompts))
           throw new SteerDeliveryUncertainError(
             "Confirm the previous steer delivery before injecting another message.",
@@ -2908,6 +2967,18 @@ class ExpertSessionImpl implements ExpertSession {
       prompt.executionId,
     );
     const promptInput = readExpertPromptInput(rootInvocation?.input);
+    const assertCancellationOwnership = async (): Promise<void> => {
+      await this.dependencies.assertExecutionOwnership?.();
+      if (this.dependencies.sessions.assertLeaseOwner !== undefined) {
+        await this.dependencies.sessions.assertLeaseOwner(this.sessionId, this.claimId);
+      } else {
+        await this.ownedSessions.transact(this.sessionId, ({ session, prompts }) => ({
+          result: undefined,
+          session,
+          prompts,
+        }));
+      }
+    };
     const controller = new ExecutionController(
       prompt.executionId,
       this.dependencies.executions,
@@ -2920,17 +2991,11 @@ class ExpertSessionImpl implements ExpertSession {
         assertOwnership: async () => {
           if (this.terminalReleaseRequested)
             throw new Error("ExpertSession resources are being released.");
-          await this.dependencies.assertExecutionOwnership?.();
-          if (this.dependencies.sessions.assertLeaseOwner !== undefined) {
-            await this.dependencies.sessions.assertLeaseOwner(this.sessionId, this.claimId);
-          } else {
-            await this.ownedSessions.transact(this.sessionId, ({ session, prompts }) => ({
-              result: undefined,
-              session,
-              prompts,
-            }));
-          }
+          await assertCancellationOwnership();
         },
+        // Sealing admission must not block the current owner's teardown.
+        // Host and Session leases still fence every cancellation commit.
+        assertCancellationOwnership,
         onHumanInteractionRequested: async () => {
           await this.markExecutionPromptAsHumanCheckpointRecovery(prompt.executionId);
         },
@@ -3146,7 +3211,11 @@ class ExpertSessionImpl implements ExpertSession {
     const view = this.createExecutionView(executionId);
     let completion = this.completions.get(executionId);
     if (completion === undefined) {
-      completion = waitForTerminalExecution(this.dependencies.executions, executionId);
+      completion = waitForTerminalExecution(
+        this.dependencies.executions,
+        executionId,
+        this.leaseLost.signal,
+      );
       this.completions.set(executionId, completion);
       const pending = completion;
       const forget = () => {
@@ -3290,7 +3359,9 @@ function closeSessionContexts(session: ExpertSessionRecord): ExpertSessionRecord
 async function waitForTerminalExecution(
   store: ExecutionStore,
   executionId: string,
+  signal: AbortSignal,
 ): Promise<ExecutionRecord> {
+  signal.throwIfAborted();
   let subscription = getExecutionLiveBus(store).subscribeEvents(executionId);
   let iterator = subscription[Symbol.asyncIterator]();
   let next = iterator.next();
@@ -3298,8 +3369,10 @@ async function waitForTerminalExecution(
     let checkState = true;
     let nextCheckAt = Date.now();
     for (;;) {
+      signal.throwIfAborted();
       if (checkState || Date.now() >= nextCheckAt) {
-        const record = await store.get(executionId);
+        const record = await observeExecutionWithinLease(() => store.get(executionId), signal);
+        signal.throwIfAborted();
         if (record === undefined) throw new Error(`Execution not found: ${executionId}`);
         if (isFinal(record.status)) return record;
         checkState = false;
@@ -3309,13 +3382,18 @@ async function waitForTerminalExecution(
       // metadata does not need another aggregate read; cross-process fallback
       // has a fixed deadline so a busy local stream cannot starve it.
       let timer: ReturnType<typeof setTimeout> | undefined;
-      const event = await Promise.race([
-        next,
-        new Promise<undefined>((resolve) => {
-          timer = setTimeout(() => resolve(undefined), Math.max(1, nextCheckAt - Date.now()));
-        }),
-      ]);
-      if (timer !== undefined) clearTimeout(timer);
+      const event = await observeExecutionWithinLease(
+        () =>
+          Promise.race([
+            next,
+            new Promise<undefined>((resolve) => {
+              timer = setTimeout(() => resolve(undefined), Math.max(1, nextCheckAt - Date.now()));
+            }),
+          ]),
+        signal,
+      ).finally(() => {
+        if (timer !== undefined) clearTimeout(timer);
+      });
       if (event === undefined) continue;
       if (event.done) {
         // A human checkpoint closes the in-memory stream while the durable
@@ -3325,7 +3403,8 @@ async function waitForTerminalExecution(
         subscription = getExecutionLiveBus(store).subscribeEvents(executionId);
         iterator = subscription[Symbol.asyncIterator]();
         next = iterator.next();
-        const record = await store.get(executionId);
+        const record = await observeExecutionWithinLease(() => store.get(executionId), signal);
+        signal.throwIfAborted();
         if (record === undefined) throw new Error(`Execution not found: ${executionId}`);
         if (isFinal(record.status)) return record;
         nextCheckAt = Date.now() + 500;
@@ -3337,6 +3416,26 @@ async function waitForTerminalExecution(
     }
   } finally {
     await subscription.close();
+  }
+}
+
+async function observeExecutionWithinLease<T>(
+  operation: () => Promise<T>,
+  signal: AbortSignal,
+): Promise<T> {
+  signal.throwIfAborted();
+  const onAbort = () => rejectAborted(signal.reason);
+  let rejectAborted!: (error: unknown) => void;
+  const aborted = new Promise<never>((_resolve, reject) => {
+    rejectAborted = reject;
+  });
+  // Observe even a synchronous failure in operation() after it aborts the lease.
+  void aborted.catch(() => undefined);
+  signal.addEventListener("abort", onAbort, { once: true });
+  try {
+    return await Promise.race([operation(), aborted]);
+  } finally {
+    signal.removeEventListener("abort", onAbort);
   }
 }
 
@@ -3369,4 +3468,24 @@ function throwCollectedErrors(errors: readonly unknown[], message: string): void
   if (errors.length === 0) return;
   if (errors.length === 1) throw errors[0];
   throw new AggregateError(errors, message);
+}
+
+function assertExpectedSteerTarget(
+  target: ExpertSteerTarget | undefined,
+  session: ExpertSessionRecord,
+  prompts: readonly PromptRequest[],
+): void {
+  if (target === undefined) return;
+  const active = prompts.find(
+    (prompt) =>
+      prompt.mode === "enqueue" &&
+      prompt.status === "running" &&
+      prompt.executionId === session.activeExecutionId,
+  );
+  if (session.activeExecutionId !== target.executionId || active?.requestId !== target.turnId) {
+    throw new SteerNotDispatchedError(
+      "target_changed",
+      "ExpertTurn changed before strict steer dispatch.",
+    );
+  }
 }
