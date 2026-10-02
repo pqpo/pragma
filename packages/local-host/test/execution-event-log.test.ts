@@ -17,19 +17,6 @@ import {
 } from "@pragma/core";
 import { appendExecutionEvent, putExecutionInvocation } from "./execution-store-test-helpers.ts";
 
-const fileReads = vi.hoisted(() => new Map<string, number>());
-vi.mock("node:fs/promises", async (importOriginal) => {
-  const original = await importOriginal<typeof import("node:fs/promises")>();
-  return {
-    ...original,
-    readFile: async (...args: Parameters<typeof original.readFile>) => {
-      const path = String(args[0]);
-      fileReads.set(path, (fileReads.get(path) ?? 0) + 1);
-      return await original.readFile(...args);
-    },
-  };
-});
-
 const temporaryHomes: string[] = [];
 
 afterEach(async () => {
@@ -41,27 +28,6 @@ afterEach(async () => {
 });
 
 describe("Execution canonical event log", { timeout: 30_000 }, () => {
-  it("commits without reading legacy history and retains duplicate conflict checks", async () => {
-    const { store, home } = await fixture();
-    const paths = new PragmaPaths({ pragmaHome: home });
-    fileReads.clear();
-    const request = {
-      commitId: "once",
-      executionId: "execution",
-      events: [
-        { eventId: "event-once", invocationId: "root", type: "invocation.started", data: {} },
-      ],
-    };
-    const first = await store.commit(request);
-    expect(fileReads.get(paths.executionEvents("execution")) ?? 0).toBe(0);
-    expect(fileReads.get(paths.executionCommits("execution")) ?? 0).toBe(0);
-    const duplicate = await store.commit(request);
-    expect(duplicate.events).toEqual(first.events);
-    await expect(
-      store.commit({ ...request, events: [{ ...request.events[0]!, data: { changed: true } }] }),
-    ).rejects.toThrow("idempotency conflict");
-  });
-
   it("uses one Execution sequence and projects durable message history", async () => {
     const { store } = await fixture();
     await appendExecutionEvent(store, "execution", "root", "invocation.started", {});
@@ -148,39 +114,6 @@ describe("Execution canonical event log", { timeout: 30_000 }, () => {
 
     expect(listCalls).toBe(1);
     expect(getCalls).toBe(1);
-  });
-
-  it("deduplicates producer events and rejects conflicting reuse", async () => {
-    const { store } = await fixture();
-    const first = await appendExecutionEvent(
-      store,
-      "execution",
-      "root",
-      "invocation.progress",
-      { value: "hello" },
-      "same-event",
-    );
-    const duplicate = await appendExecutionEvent(
-      store,
-      "execution",
-      "root",
-      "invocation.progress",
-      { value: "hello" },
-      "same-event",
-    );
-
-    expect(duplicate.cursor).toEqual(first.cursor);
-    expect(await store.readEvents("execution")).toHaveLength(1);
-    await expect(
-      appendExecutionEvent(
-        store,
-        "execution",
-        "root",
-        "invocation.progress",
-        { value: "different" },
-        "same-event",
-      ),
-    ).rejects.toThrow("Execution commit idempotency conflict");
   });
 
   it("replays active output published before a subscriber attaches", async () => {

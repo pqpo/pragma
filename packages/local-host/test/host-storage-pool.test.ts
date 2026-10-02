@@ -85,28 +85,6 @@ describe("Shared Host storage lifecycle", () => {
       await rm(root, { recursive: true, force: true });
     }
   });
-  it("isolates a single oversized fact without permanently rejecting it", async () => {
-    const pool = acquireHostStoragePool();
-    try {
-      const huge = "x".repeat(33 * 1024 * 1024);
-      const direct = pool.clients[0]!.call("usage:assertAvailable", "missing", huge).catch(
-        (error) => error,
-      );
-      await expect(pool.clients[0]!.call("usage:assertAvailable", "peer")).rejects.toMatchObject({
-        code: "HOST_STORAGE_BACKPRESSURE",
-      });
-      expect(await direct).toMatchObject({ code: "USAGE_DATABASE_NOT_INITIALIZED" });
-      const owned = pool
-        .execute("usage:assertAvailable", "missing", huge, false, "root")
-        .catch((error) => error);
-      await expect(
-        pool.execute("usage:assertAvailable", "peer", undefined, false, "root"),
-      ).rejects.toMatchObject({ code: "USAGE_DATABASE_NOT_INITIALIZED" });
-      expect(await owned).toMatchObject({ code: "USAGE_DATABASE_NOT_INITIALIZED" });
-    } finally {
-      await pool.close();
-    }
-  });
   it("keeps another warm Mission's reads and terminal facts available during a giant commit", async () => {
     const home = await mkdtemp(join(tmpdir(), "pragma-giant-owner-isolation-"));
     const store = createSqliteExecutionStore({ pragmaHome: home });

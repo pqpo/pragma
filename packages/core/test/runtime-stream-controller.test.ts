@@ -10,54 +10,6 @@ import {
 } from "../src/index.ts";
 
 describe("Runtime stream telemetry", () => {
-  it("publishes reported usage only after settlement without estimating live context", async () => {
-    const { controller, queue } = createFixture();
-
-    controller.beginUsageCapture({
-      prompt: "1234",
-      startupMessages: ["1234"],
-    });
-    controller.writer.write({
-      runId: "run-1",
-      source: controller.source,
-      type: "message.delta",
-      payload: { contentType: "text", delta: "12345678" },
-    });
-    controller.writer.writeNative(50_000);
-    controller.flushTelemetry();
-    await controller.complete();
-
-    const events: RuntimeStreamEvent[] = [];
-    for await (const event of queue) events.push(event);
-    const contextUpdates = events.filter((event) => event.type === "context-window.updated");
-    const last = contextUpdates.at(-1);
-
-    expect(last).toBeUndefined();
-    expect(
-      events.findLast((event) => event.type === "usage.updated")?.payload.usage.totalTokens,
-    ).toBe(50_000);
-  });
-
-  it("does not publish a misleading numeric estimate before the Runtime baseline is calibrated", async () => {
-    const { controller, queue } = createFixture();
-    controller.beginUsageCapture({
-      prompt: "1234",
-      startupMessages: ["1234"],
-    });
-    controller.writer.write({
-      runId: "run-1",
-      source: controller.source,
-      type: "message.delta",
-      payload: { contentType: "text", delta: "12345678" },
-    });
-    controller.flushTelemetry();
-    await controller.complete();
-
-    const events: RuntimeStreamEvent[] = [];
-    for await (const event of queue) events.push(event);
-
-    expect(events.filter((event) => event.type === "context-window.updated")).toEqual([]);
-  });
   it("does no tokenization for 10,000 deltas and memoizes terminal fallback", async () => {
     const countText = vi.fn(() => ({ tokens: 5 }));
     const { controller, queue } = createFixture({ countText } as unknown as RuntimeTokenCounter);
@@ -78,18 +30,26 @@ describe("Runtime stream telemetry", () => {
     const events: RuntimeStreamEvent[] = [];
     for await (const event of queue) events.push(event);
     expect(events.filter((event) => event.type === "usage.updated")).toHaveLength(1);
+    expect(events.filter((event) => event.type === "context-window.updated")).toEqual([]);
   });
 
-  it("never tokenizes reported usage", async () => {
+  it("publishes reported usage once without tokenization or live context estimates", async () => {
     const countText = vi.fn(() => {
       throw new Error("unexpected estimate");
     });
-    const { controller } = createFixture({ countText } as unknown as RuntimeTokenCounter);
+    const { controller, queue } = createFixture({ countText } as unknown as RuntimeTokenCounter);
     controller.beginUsageCapture({ prompt: "hello" });
     controller.writer.writeNative(123);
     expect(controller.getUsage()?.totalTokens).toBe(123);
     await controller.complete();
     expect(countText).not.toHaveBeenCalled();
+    const events: RuntimeStreamEvent[] = [];
+    for await (const event of queue) events.push(event);
+    expect(events.filter((event) => event.type === "usage.updated")).toHaveLength(1);
+    expect(events.find((event) => event.type === "usage.updated")?.payload.usage.totalTokens).toBe(
+      123,
+    );
+    expect(events.filter((event) => event.type === "context-window.updated")).toEqual([]);
   });
 });
 
