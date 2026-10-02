@@ -1,0 +1,37 @@
+{
+  "schemaVersion": "pragma.local-host-kernel-r1-pr-review-source/v1",
+  "capturedAt": "2026-10-02T11:22:23.231040+00:00",
+  "reviewedHead": "7506a9d502de72e8fbd67f224b4cd8573d23a948",
+  "scope": "Same executable source inventory as the CR comparison; workflows separately hashed. Docs excluded.",
+  "previousSha256": "228f00277f24f0588abad69e374e713afd3790f3c42973f5b3f11c5a3563b430",
+  "sha256": "73fb3854355518b68aa24fc1bbfb99499d00898d08e466bcbf4a1d7fcdcab0b8",
+  "inventoryReference": "local-host-kernel-r1-cr-source-snapshots.json#candidate.files",
+  "fileCount": 1164,
+  "changedFiles": [
+    {
+      "path": "apps/desktop/src/main/features/missions/mission-runner-composition.ts",
+      "previousSha256": "c3a4f596137d059363bb9ebef31b66dec5a8edbb418808bc47ad745414fdb938",
+      "sha256": "a7c05580dc275e59cac2b20c9f07cf49c6ab39609c8be4f69d49721d75be14ae"
+    },
+    {
+      "path": "apps/desktop/src/main/features/missions/mission-runner.test.ts",
+      "previousSha256": "d62dc9908565cf2c7f6334cbc67d4e76638ebaa523dd47c60d53988cd22d8c25",
+      "sha256": "045283c22b8d3b41cc8a30c5b5f3858ae66a1c4fc8e54985129a89570f209341"
+    },
+    {
+      "path": "package.json",
+      "previousSha256": "e72926d2f56cb3a8570a96a7d11b2a54421c1607472b9a9232c5f06eb7d0771d",
+      "sha256": "b1785563d4d78ba19d87391f5a583da5b676dfa809bcb7bec13892248f602241"
+    }
+  ],
+  "workflows": [
+    {
+      "path": ".github/workflows/ci.yml",
+      "sha256": "b4bb6c9f4bb4c81697f3fbc276e9f635b61c41770f7ac776f8bd7dd86455560e"
+    },
+    {
+      "path": ".github/workflows/desktop-release.yml",
+      "sha256": "7ce359c87fea53837fe42cfb8160e83998f3762f1f1a233d15a00dca01800310"
+    }
+  ]
+}

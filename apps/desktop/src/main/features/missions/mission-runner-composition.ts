@@ -5108,8 +5108,25 @@ export function createMissionRunner(options: {
         missionId: input.missionId,
         requestId: input.requestId,
       });
-      if (operation.state === "rejected")
-        throw operation.error ?? new Error("Mission command was rejected.");
+      if (operation.state !== "applied") {
+        if (operation.error !== undefined) throw operation.error;
+        const failure = {
+          message: `Mission command ${operation.state}.`,
+          details: { missionId: input.missionId, requestId: input.requestId },
+        };
+        throw operation.state === "failed"
+          ? createIntegrationError({
+              ...failure,
+              code: "EXECUTION_FAILED",
+              category: "execution",
+              retryable: false,
+            })
+          : createIntegrationError({
+              ...failure,
+              code: operation.state === "expired" ? "COMMAND_EXPIRED" : "COMMAND_REJECTED",
+              category: "conflict",
+            });
+      }
       return { submitted, operation };
     } catch (error) {
       if (

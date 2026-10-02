@@ -1,0 +1,235 @@
+{
+  "nodeVersion": "v24.18.0",
+  "serial": true,
+  "results": [
+    {
+      "name": "mission-control",
+      "command": ["pnpm", "test:mission-control"],
+      "startedAt": "2026-10-02T11:16:12.731165+00:00",
+      "seconds": 68.224,
+      "exitCode": 0,
+      "log": "/tmp/pragma-pr353-mission-control.log",
+      "logSha256": "431d8dca2aa541850045947c598856c30a8d36c500b52827b6c90d946e92f36e",
+      "summaryLines": [
+        " Tasks:    15 successful, 15 total",
+        " Test Files  12 passed (12)",
+        "      Tests  105 passed (105)",
+        " Test Files  1 passed (1)",
+        "      Tests  4 passed | 116 skipped (120)",
+        " Test Files  1 passed (1)",
+        "      Tests  4 passed | 81 skipped (85)"
+      ],
+      "failureLines": [],
+      "unhandledError": false
+    },
+    {
+      "name": "check",
+      "command": ["pnpm", "check"],
+      "startedAt": "2026-10-02T11:17:20.956403+00:00",
+      "seconds": 82.443,
+      "exitCode": 2,
+      "log": "/tmp/pragma-pr353-check.log",
+      "logSha256": "4d0517dce39ac4501caa0bb873d66f6e9adddba31377704922ce443a61c70935",
+      "summaryLines": [
+        " Tasks:    19 successful, 19 total",
+        "@pragma/examples:typecheck:  Tasks:    9 successful, 9 total",
+        " Tasks:    18 successful, 19 total"
+      ],
+      "failureLines": [
+        "@pragma/desktop:typecheck: src/main/features/missions/mission-runner-composition.ts(5122,13): error TS2322: Type 'false' is not assignable to type 'never'.",
+        "@pragma/desktop:typecheck: src/main/features/missions/mission-runner.test.ts(361,9): error TS2322: Type 'false' is not assignable to type 'never'."
+      ],
+      "unhandledError": false
+    },
+    {
+      "name": "mission-control",
+      "command": ["pnpm", "test:mission-control"],
+      "startedAt": "2026-10-02T11:19:15.411750+00:00",
+      "seconds": 67.112,
+      "exitCode": 0,
+      "log": "/tmp/pragma-pr353-mission-control-final.log",
+      "logSha256": "698ee11352d5f33a6c4202edeeee21df1908215bd33c663c4f9f15af5bd9d989",
+      "summaryLines": [
+        " Tasks:    15 successful, 15 total",
+        " Test Files  12 passed (12)",
+        "      Tests  105 passed (105)",
+        " Test Files  1 passed (1)",
+        "      Tests  4 passed | 116 skipped (120)",
+        " Test Files  1 passed (1)",
+        "      Tests  4 passed | 81 skipped (85)"
+      ],
+      "failureLines": [],
+      "unhandledError": false
+    },
+    {
+      "name": "check",
+      "command": ["pnpm", "check"],
+      "startedAt": "2026-10-02T11:20:22.525206+00:00",
+      "seconds": 87.8,
+      "exitCode": 0,
+      "log": "/tmp/pragma-pr353-check-final.log",
+      "logSha256": "a2b453ac59412ae9e08c54767e0ac51de6657f606df325c70f3688d7e68e6aa4",
+      "summaryLines": [
+        " Tasks:    19 successful, 19 total",
+        "@pragma/examples:typecheck:  Tasks:    9 successful, 9 total",
+        " Tasks:    19 successful, 19 total",
+        "@pragma/shared:test:core:  Test Files  13 passed (13)",
+        "@pragma/shared:test:core:       Tests  64 passed (64)",
+        "@pragma/core:test:core:  Test Files  13 passed (13)",
+        "@pragma/core:test:core:       Tests  66 passed (66)",
+        "@pragma/runtime-qodercli:test:core:  Test Files  2 passed (2)",
+        "@pragma/runtime-qodercli:test:core:       Tests  6 passed (6)",
+        "@pragma/runtime-codex:test:core:  Test Files  2 passed (2)",
+        "@pragma/runtime-codex:test:core:       Tests  7 passed (7)",
+        "@pragma/runtime-pi:test:core:  Test Files  1 passed (1)",
+        "@pragma/runtime-pi:test:core:       Tests  3 passed (3)",
+        "@pragma/runtime-claude-code:test:core:  Test Files  5 passed (5)",
+        "@pragma/memory:test:core:  Test Files  7 passed (7)",
+        "@pragma/memory:test:core:       Tests  132 passed (132)",
+        "@pragma/runtime-antigravity:test:core:  Test Files  2 passed (2)",
+        "@pragma/runtime-antigravity:test:core:       Tests  10 passed (10)",
+        "@pragma/runtime-claude-code:test:core:       Tests  30 passed (30)",
+        "@pragma/interpreter:test:core:  Test Files  10 passed (10)",
+        "@pragma/interpreter:test:core:       Tests  116 passed (116)",
+        "@pragma/local-host:test:core:  Test Files  2 passed (2)",
+        "@pragma/local-host:test:core:       Tests  17 passed (17)",
+        "@pragma/desktop:test:core:  Test Files  2 passed (2)",
+        "@pragma/desktop:test:core:       Tests  5 passed (5)",
+        " Tasks:    11 successful, 11 total"
+      ],
+      "failureLines": [],
+      "unhandledError": false
+    },
+    {
+      "name": "build",
+      "command": ["pnpm", "build"],
+      "startedAt": "2026-10-02T11:21:50.332189+00:00",
+      "seconds": 86.41,
+      "exitCode": 0,
+      "log": "/tmp/pragma-pr353-build-final.log",
+      "logSha256": "b7be142e4e18efcf8593186174fbac1e737bb6653a08ba046491adff65d25302",
+      "summaryLines": [" Tasks:    19 successful, 19 total"],
+      "failureLines": [],
+      "unhandledError": false
+    },
+    {
+      "name": "runner",
+      "command": [
+        "pnpm",
+        "--filter",
+        "@pragma/desktop",
+        "exec",
+        "vitest",
+        "run",
+        "src/main/features/missions/mission-runner.test.ts"
+      ],
+      "startedAt": "2026-10-02T11:23:16.743540+00:00",
+      "seconds": 187.112,
+      "exitCode": 1,
+      "log": "/tmp/pragma-pr353-runner-final.log",
+      "logSha256": "ca70cca0c1d70d31c11fa7761aec8e24deb026d6aeabe7e4d6972453a8dba66c",
+      "summaryLines": [" Test Files  1 failed (1)", "      Tests  1 failed | 84 passed (85)"],
+      "failureLines": [
+        " FAIL  src/main/features/missions/mission-runner.test.ts > MissionRunner > projects oversized replies as Mission Board references without copying full text"
+      ],
+      "unhandledError": false,
+      "diagnosticLines": [
+        "[2026-10-02T11:26:23.355Z] ERROR flow-execution/flow.recovery_claim_renewal_failed - Failed to renew the recovery claim for FlowExecution 966824d5-845b-443f-bd1b-5063e97a1e3f.",
+        "      \"message\": \"Execution not found: 966824d5-845b-443f-bd1b-5063e97a1e3f\","
+      ]
+    }
+  ],
+  "schemaVersion": "pragma.local-host-kernel-r1-pr-review-validation/v1",
+  "completedAt": "2026-10-02T11:26:41.470239+00:00",
+  "reviewedHead": "7506a9d502de72e8fbd67f224b4cd8573d23a948",
+  "comment": "https://github.com/pqpo/pragma/pull/353#issuecomment-5951008582",
+  "sourceSha256": "73fb3854355518b68aa24fc1bbfb99499d00898d08e466bcbf4a1d7fcdcab0b8",
+  "sourceUnchangedAfterFinalValidation": true,
+  "reproductionAttempts": [
+    {
+      "name": "initial-outcome-fixture",
+      "exitCode": 1,
+      "role": "Fixture setup failed: owner scope was already bound to the production consumer; corrected before product reproduction.",
+      "log": "/tmp/pragma-pr353-command-outcomes.log",
+      "logSha256": "245422aa73da0c116d9f54ec2e0e3fbb1a417f962888a4bf561fe863548e7f4e",
+      "summaryLines": [
+        "⎯⎯⎯⎯⎯⎯⎯ Failed Tests 4 ⎯⎯⎯⎯⎯⎯⎯",
+        " FAIL  src/main/features/missions/mission-runner.test.ts > MissionRunner > forwards a durable expired command outcome without reporting false success",
+        " FAIL  src/main/features/missions/mission-runner.test.ts > MissionRunner > forwards a durable failed command outcome without reporting false success",
+        " FAIL  src/main/features/missions/mission-runner.test.ts > MissionRunner > forwards a durable rejected command outcome without reporting false success",
+        " FAIL  src/main/features/missions/mission-runner.test.ts > MissionRunner > forwards a durable applied command outcome without reporting false success",
+        " Test Files  1 failed (1)",
+        "      Tests  4 failed | 81 skipped (85)",
+        "   Duration  5.19s (transform 62%, import 20%, tests 16%, setup 1%)"
+      ]
+    },
+    {
+      "name": "outcomes-fixed-initial",
+      "exitCode": 0,
+      "role": "Real Controller/Inbox applied/rejected/expired/failed boundaries.",
+      "log": "/tmp/pragma-pr353-command-outcomes-fixed.log",
+      "logSha256": "2220d580423514a82f2249bcfe841b05601b995289ac58c9f1823efbd2e9e205",
+      "summaryLines": [
+        " Test Files  1 passed (1)",
+        "      Tests  4 passed | 81 skipped (85)",
+        "   Duration  6.61s (transform 50%, tests 34%, import 16%, setup 1%)"
+      ]
+    },
+    {
+      "name": "outcomes-before-fix",
+      "exitCode": 1,
+      "role": "Restore reviewed production forwarding branch only: expired and failed falsely resolve; applied/rejected pass.",
+      "log": "/tmp/pragma-pr353-command-outcomes-before.log",
+      "logSha256": "e2f89778f322a339a40a7b7781ebcb600fd75e3ddfce8dd88b339ff4a314dd1a",
+      "summaryLines": [
+        "⎯⎯⎯⎯⎯⎯⎯ Failed Tests 2 ⎯⎯⎯⎯⎯⎯⎯",
+        " FAIL  src/main/features/missions/mission-runner.test.ts > MissionRunner > forwards a durable expired command outcome without reporting false success",
+        " FAIL  src/main/features/missions/mission-runner.test.ts > MissionRunner > forwards a durable failed command outcome without reporting false success",
+        " Test Files  1 failed (1)",
+        "      Tests  2 failed | 2 passed | 81 skipped (85)",
+        "   Duration  6.52s (transform 49%, tests 34%, import 16%, setup 1%)"
+      ]
+    },
+    {
+      "name": "oversized-isolated-diagnostic",
+      "exitCode": 0,
+      "role": "Temporary count observer installed for diagnosis and then restored; isolated scene passed. This is not the final unmodified Runner suite.",
+      "log": "/tmp/pragma-pr353-oversized-diagnostic.log",
+      "logSha256": "b40f02335348f999eea9919683501d0a8142faec0acae5ccdfb09ffcba8bc097",
+      "summaryLines": [
+        " Test Files  1 passed (1)",
+        "      Tests  1 passed | 84 skipped (85)",
+        "   Duration  25.20s (tests 83%, transform 13%, import 4%)"
+      ]
+    }
+  ],
+  "tokenizerDiagnostic": {
+    "command": "gpt-tokenizer/o200k countTokens(x.repeat(200001)), independent process",
+    "exitCode": 0,
+    "elapsedSeconds": 19.94484518095851,
+    "stdout": "{\"kind\":\"tokenizer\",\"bytes\":200001,\"tokens\":25001,\"elapsedMs\":19639.241837999998}\n{\"kind\":\"timer\",\"elapsedMs\":19639.862962}\n",
+    "stderr": ""
+  },
+  "temporaryDiagnosticChangesRestored": true,
+  "performanceAcceptancePassed": false,
+  "stageR1Complete": false,
+  "confirmedCommentFindings": [
+    {
+      "id": "PR1",
+      "priority": "P2",
+      "problem": "Desktop forwards expired/failed outcomes as success",
+      "status": "fixed-and-reviewed"
+    },
+    {
+      "id": "PR2",
+      "priority": "P2",
+      "problem": "Mission control regression suite omitted from automated gates",
+      "status": "fixed-and-reviewed"
+    }
+  ],
+  "unresolvedConfirmedCommentFindings": 0,
+  "remainingAcceptance": [
+    "Oversized reply: complete Runner still times out; isolated diagnostic passed; root cause of both historical failure forms remains unproven.",
+    "Real model validSamples=0 after prior Keychain timeout; required performance scenarios and complete Native smoke evidence absent."
+  ]
+}

@@ -2,6 +2,8 @@
 
 状态：本轮 CR 确认的 15 项问题已修复并复核，工程与局部对照已完成；R1 阶段仍未完成验收。
 
+PR #353 后续评论核验与追加修复见[补充报告](local-host-kernel-r1-pr-review-followup.md)；以下验证与性能记录保留原测量时点及源码身份。
+
 审查对象为 `codex/issue-348-r1` 的未提交 R1 实现，以 `origin/main@8fdbd4526d0f62d0b36891165539ed9ec47dc603` 为起点。三位独立 reviewer 分别检查 owner 生命周期、公共控制和性能证据；主 Agent 逐项核对真实调用路径、故障窗口和边界，再授权修复。修复前源码保存于 `/tmp/pragma-r1-pre-cr`；此目录仅是本机辅助快照，最终代码与回归在当前 worktree。
 
 ## 确认的问题与修复

@@ -68,6 +68,12 @@ jobs:
           CI: "true"
         run: pnpm test:mission-chat
 
+      - name: Mission control regression tests
+        env:
+          PRAGMA_LOG_LEVEL: error
+          CI: "true"
+        run: pnpm test:mission-control
+
       - name: Knowledge revision regression tests
         env:
           PRAGMA_LOG_LEVEL: error

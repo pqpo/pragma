@@ -2,6 +2,8 @@
 
 状态：R1 代码实施已交付，阶段验收未通过，未标记第一阶段完成。起点为 fetch 后的 `origin/main@8fdbd4526d0f62d0b36891165539ed9ec47dc603`；独立 worktree 为 `/Users/linminqiu/.codex/worktrees/issue-348-r1/expert-mesh`。本报告只覆盖[技术方案 R1](local-host-application-kernel-refactor.md)。
 
+PR #353 后续评论核验与追加修复见[补充报告](local-host-kernel-r1-pr-review-followup.md)；以下验证与性能记录保留原测量时点及源码身份。
+
 方案与[实施前基线](../performance/local-host-kernel-baseline.md)及其引用数据从原工作区复制。实施未覆盖、撤销或提交原工作区改动。期间原工作区由其他操作提交了仅含方案、概览和基线的 `ceb29c9c516828ba1735de23c4904a609d1e1dc5`，最终原工作区 clean；与起点的差异只有文档。后续交替测量的 main HEAD 因此是 `ceb29c9`，生产源码仍与 `8fdbd45` 等价；本 worktree 保持原起点，测量时的候选修改尚未提交。
 
 ## 范围与持久边界
