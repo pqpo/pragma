@@ -1,5 +1,7 @@
 # Issue #348 R1 实施与验证
 
+新增 PR 评论核验、Native 资源释放修复及最新验收状态见[第二轮补充](local-host-kernel-r1-pr-review-r2.md)。
+
 状态：R1 代码实施已交付，阶段验收未通过，未标记第一阶段完成。起点为 fetch 后的 `origin/main@8fdbd4526d0f62d0b36891165539ed9ec47dc603`；独立 worktree 为 `/Users/linminqiu/.codex/worktrees/issue-348-r1/expert-mesh`。本报告只覆盖[技术方案 R1](local-host-application-kernel-refactor.md)。
 
 PR #353 后续评论核验与追加修复见[补充报告](local-host-kernel-r1-pr-review-followup.md)；以下验证与性能记录保留原测量时点及源码身份。

@@ -1,0 +1,52 @@
+[
+  {
+    "name": "mission-control",
+    "command": ["pnpm", "test:mission-control"],
+    "exitCode": 0,
+    "elapsedSeconds": 68.34638988901861,
+    "logSha256": "0aa4afb2d254b7d9780191cdfd2f38529d08951f881de015bafe617ea652b681"
+  },
+  {
+    "name": "core-boundaries",
+    "command": [
+      "pnpm",
+      "--filter",
+      "@pragma/core",
+      "exec",
+      "vitest",
+      "run",
+      "test/runtime-session-pool.test.ts",
+      "test/execution-system.test.ts"
+    ],
+    "exitCode": 0,
+    "elapsedSeconds": 2.988180685089901,
+    "logSha256": "6bbca5d14f2bf8fe2e83996f0139dae03732c8bce7213de056829708404b8942"
+  },
+  {
+    "name": "host-execution",
+    "command": [
+      "pnpm",
+      "--filter",
+      "@pragma/local-host",
+      "exec",
+      "vitest",
+      "run",
+      "test/execution-system.test.ts"
+    ],
+    "exitCode": 0,
+    "elapsedSeconds": 86.20934012485668,
+    "logSha256": "cfc851cccffd5159fba80ceb74d0b433680118cd156dfe4b62b12b87b6da2259"
+  },
+  {
+    "name": "benchmark-helpers",
+    "command": [
+      "node",
+      "--test",
+      "apps/desktop/scripts/mission-e2e-benchmark-result.test.mjs",
+      "apps/desktop/scripts/mission-e2e-benchmark-scenarios.test.mjs"
+    ],
+    "exitCode": 0,
+    "elapsedSeconds": 1.277556502027437,
+    "logSha256": "77949cbfa5dc8204aaf90ce51d987eff105abb5125bb07998192ecd0f650da28"
+  }
+]

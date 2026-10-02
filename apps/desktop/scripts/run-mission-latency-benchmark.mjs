@@ -7,15 +7,30 @@ const child = spawn(process.execPath, [script, ...process.argv.slice(2)], {
   stdio: ["inherit", "inherit", "inherit", "ipc"],
 });
 let failure;
+let credentialPhase = "initialization";
+const credentialPhases = new Set([
+  "credentials-read",
+  "credentials-read-complete",
+  "credentials-write",
+  "credentials-write-complete",
+  "credentials-ready",
+  "credentials-cleanup",
+]);
 let killTimer;
 let timer = setTimeout(() => stop("MISSION_BENCHMARK_KEYCHAIN_TIMEOUT"), 120_000);
 function stop(code) {
   failure = code;
-  process.stderr.write(`${code}: benchmark process stopped; no valid latency result.\n`);
+  process.stderr.write(
+    `${code}: phase=${credentialPhase}; benchmark process stopped; no valid latency result.\n`,
+  );
   child.kill("SIGTERM");
   killTimer = setTimeout(() => child.kill("SIGKILL"), 1000);
 }
 child.on("message", (message) => {
+  if (credentialPhases.has(message?.phase)) {
+    credentialPhase = message.phase;
+    process.stderr.write(`MISSION_BENCHMARK_CREDENTIAL_PHASE: ${credentialPhase}\n`);
+  }
   if (message?.phase === "credentials-cleanup") {
     clearTimeout(timer);
     timer = setTimeout(() => stop("MISSION_BENCHMARK_KEYCHAIN_CLEANUP_TIMEOUT"), 120_000);

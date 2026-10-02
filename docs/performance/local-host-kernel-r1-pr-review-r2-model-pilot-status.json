@@ -1,0 +1,20 @@
+{
+  "reviewedHead": "6da4af3d8e59c0b3197a89b2d728976192e60c9c",
+  "node": "v24.18.0",
+  "serial": true,
+  "purpose": "Retry real-model warm pilot with credential phase diagnostics; no concurrent build/test/runtime measurement.",
+  "requestedSamples": 1,
+  "groups": ["warm"],
+  "model": "deepseek-v4-flash",
+  "thinking": "medium",
+  "exitCode": 1,
+  "timeoutMs": 120000,
+  "lastCredentialPhase": "credentials-read",
+  "errorCode": "MISSION_BENCHMARK_KEYCHAIN_TIMEOUT",
+  "logSha256": "e5e33a904090d93b944a7da6d34763477f648fa465586c7257cd9c0f08796d46",
+  "validSamples": 0,
+  "raw": null,
+  "performanceAcceptancePassed": false,
+  "credentialReadCompleted": false,
+  "capturedAt": "2026-10-02T11:53:37.000526+00:00"
+}

@@ -1,0 +1,51 @@
+{
+  "capturedAt": "2026-10-02T12:17:06.843587+00:00",
+  "reviewedHead": "6da4af3d8e59c0b3197a89b2d728976192e60c9c",
+  "scope": [
+    "apps/desktop/src",
+    "apps/desktop/scripts",
+    "apps/cli/src",
+    "apps/cli/scripts",
+    "packages/local-host/src",
+    "packages/local-host/scripts",
+    "packages/core/src",
+    "packages/shared/src",
+    "package.json",
+    "pnpm-lock.yaml"
+  ],
+  "inventoryReference": "local-host-kernel-r1-cr-source-snapshots.json#candidate.files",
+  "fileCount": 1164,
+  "previousSha256": "73fb3854355518b68aa24fc1bbfb99499d00898d08e466bcbf4a1d7fcdcab0b8",
+  "sha256": "46a62dbdf4fa71ad904a69b216027f265eb019bd65482c3234d01855c289f271",
+  "changedFiles": [
+    {
+      "path": "apps/desktop/scripts/benchmark-mission-end-to-end.mjs",
+      "sha256": "b72013d8a5c17667eacb2c365f6b6b530626d4670e5880e54d640e34dc52bc10",
+      "previousSha256": "d36b429de11fac860bd86e407d7f2144ee7d176e1e7e748795ec497acfc1fbfa"
+    },
+    {
+      "path": "apps/desktop/scripts/run-mission-latency-benchmark.mjs",
+      "sha256": "077fdd7d6f0594d29bf768be4e5e3077e3eb129abfb9fbdbda0f8e850301582d",
+      "previousSha256": "1880e8a33dbea5824a474e764e3f5cf457eb77605c54df5f9de7567ce8b8661c"
+    },
+    {
+      "path": "packages/core/src/execution/expert-session.ts",
+      "sha256": "cded04a31fd13b964ef0bbb5dd0d6a9fa3c476099bec2f6e8250d072040f55f4",
+      "previousSha256": "bf334901018d6c2a763a95013831fc9b0e68d9ae71049725f064982d9106ca6d"
+    }
+  ],
+  "additionalValidationFiles": [
+    {
+      "path": "packages/core/package.json",
+      "sha256": "74daa306a114a77e10eb89b8d5010b4efb8ce0d128fc16168d29a48db20131bb"
+    },
+    {
+      "path": "packages/core/test/expert-session-close.test.ts",
+      "sha256": "428632b99811d84184c2a7918eaa3905a328608abebee1249724f47955c18cae"
+    },
+    {
+      "path": "examples/src/runtimes/probe.ts",
+      "sha256": "d73c6ba7edb333ba9add8c7c79f9533cf3e6d8314546d6bec7d866f9c62acf71"
+    }
+  ]
+}

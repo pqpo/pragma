@@ -73,13 +73,17 @@ try {
   });
   phase = "credentials";
   if (provider.apiKeySecretRef) {
+    process.send?.({ phase: "credentials-read" });
     const handle = await originalSecrets.get(provider.apiKeySecretRef);
+    process.send?.({ phase: "credentials-read-complete" });
     try {
+      process.send?.({ phase: "credentials-write" });
       provider.apiKeySecretRef = await benchmarkSecrets.put({
         owner: provider.apiKeySecretRef.owner,
         value: handle.bytes(),
       });
       createdKey = true;
+      process.send?.({ phase: "credentials-write-complete" });
     } finally {
       handle.dispose();
     }

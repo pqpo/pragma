@@ -1410,6 +1410,7 @@ class ExpertSessionImpl implements ExpertSession {
   private async closeInternal(reason?: string): Promise<void> {
     const errors: unknown[] = [];
     let stopAttempted = false;
+    let stopConfirmed = false;
     try {
       const pending = (await this.getPromptQueue()).filter(
         (prompt) => prompt.status === "queued" || prompt.status === "running",
@@ -1430,26 +1431,30 @@ class ExpertSessionImpl implements ExpertSession {
       }));
       stopAttempted = true;
       await this.stopForDeletion(reason);
+      stopConfirmed = true;
       for (const prompt of pending) {
         await this.cancelPersistedExecution(
           prompt.executionId,
           reason ?? "Execution cancelled because the Session closed.",
         );
       }
-      const session = await this.getState();
-      for (const executionId of session.executionIds) {
-        await closeExecutionContexts(this.dependencies.executions, executionId);
-      }
     } catch (error) {
       errors.push(error);
     }
     try {
-      if (!stopAttempted) await this.runtimeSessions.close();
+      // Ordinary closure also releases Runtime resources after native stop;
+      // owner deletion performs this cleanup in its separate completion phase.
+      if (stopConfirmed) await this.runtimeSessions.finishDeletion();
+      else if (!stopAttempted) await this.runtimeSessions.close();
     } catch (error) {
       errors.push(error);
     }
     if (errors.length === 0) {
       try {
+        const session = await this.getState();
+        for (const executionId of session.executionIds) {
+          await closeExecutionContexts(this.dependencies.executions, executionId);
+        }
         await this.ownedSessions.transact(this.sessionId, ({ session, prompts }) => ({
           result: undefined,
           session: closeSessionContexts(session),

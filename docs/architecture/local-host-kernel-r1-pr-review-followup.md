@@ -2,6 +2,8 @@
 
 状态：PR 评论确认的两项新增问题属实，已修复并独立复核。R1 阶段仍未完成验收，PR 保持 Draft；R2/R3/R4 未开展。
 
+最新复核与 Native 资源释放修复见[第二轮补充](local-host-kernel-r1-pr-review-r2.md)。以下保留本轮历史时点。
+
 本补充对应[审查评论](https://github.com/pqpo/pragma/pull/353#issuecomment-5951008582)，审查基点为 `7506a9d502de72e8fbd67f224b4cd8573d23a948`。原[CR 报告](local-host-kernel-r1-code-review.md)和局部性能数据保留原时间、原源码身份，本补充不覆盖历史失败记录。
 
 ## 评论 1：终态命令误报成功
@@ -31,7 +33,7 @@
 | `pnpm test:mission-control`                 | 105 + 4 + 4 = 113 通过                                                                       |
 | `pnpm check`                                | 通过；lint/typecheck 与 11 个基础任务、456 项基础测试，10 个有效测试缓存                     |
 | `pnpm build`                                | 通过；19 tasks，18 个有效缓存，Desktop 重新构建；main/preload/styles/storage worker 验证通过 |
-| 完整 Desktop Runner                         | 未通过；⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯； Test Files 1 failed (1)； Tests 1 failed            | 84 passed (85) |
+| 完整 Desktop Runner                         | 未通过；84 通过、1 失败，0 unhandled；原 30 秒 deadline 的 oversized reply 超时              |
 | YAML 门禁结构、源码格式、`git diff --check` | 通过                                                                                         |
 
 本轮源码 digest 为 `73fb3854355518b68aa24fc1bbfb99499d00898d08e466bcbf4a1d7fcdcab0b8`，见[差量源码清单](../performance/local-host-kernel-r1-pr-review-source.json)。清单引用原 CR 的 1,164 文件范围，仅列变更 SHA；workflow 单独校验。验证后源码保持不变；文档不属于该源码范围。原工作区保持 clean，所有修复位于原独立 worktree。
