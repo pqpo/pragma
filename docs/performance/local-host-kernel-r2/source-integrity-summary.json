@@ -1,0 +1,66 @@
+{
+  "scope": "Sorted tracked+untracked production TS/TSX/MJS/JSON under apps/packages, excluding tests/fixtures/scripts; source SHA includes package exports; excludes docs and build output",
+  "retention": "Aggregate SHA256 and before/after equality only; per-file hash inventories removed.",
+  "epochs": {
+    "initial-r2": {
+      "main": {
+        "beforeSha256": "d9c5a7f493826556a8443a07c2f6d28d498a420a1f2aa05ea3382cf1fe11159e",
+        "afterSha256": "d9c5a7f493826556a8443a07c2f6d28d498a420a1f2aa05ea3382cf1fe11159e",
+        "sourceUnchanged": true,
+        "productionFileCount": 1118
+      },
+      "candidate": {
+        "beforeSha256": "b6b01fd31c506493ed8e80529cb2ed8aa667410aa2ce03a39d00f7b33e755fbf",
+        "afterSha256": "b6b01fd31c506493ed8e80529cb2ed8aa667410aa2ce03a39d00f7b33e755fbf",
+        "sourceUnchanged": true,
+        "productionFileCount": 1148
+      }
+    },
+    "final-r2": {
+      "main": {
+        "beforeSha256": "d9c5a7f493826556a8443a07c2f6d28d498a420a1f2aa05ea3382cf1fe11159e",
+        "afterSha256": "d9c5a7f493826556a8443a07c2f6d28d498a420a1f2aa05ea3382cf1fe11159e",
+        "sourceUnchanged": true,
+        "productionFileCount": 1118
+      },
+      "candidate": {
+        "beforeSha256": "1c11b774da7bc047c44d6ee3589fcd104e4a9ab285f9d2cc5f089d02ef193127",
+        "afterSha256": "1c11b774da7bc047c44d6ee3589fcd104e4a9ab285f9d2cc5f089d02ef193127",
+        "sourceUnchanged": true,
+        "productionFileCount": 1148
+      }
+    },
+    "cr": {
+      "main": {
+        "beforeSha256": "d9c5a7f493826556a8443a07c2f6d28d498a420a1f2aa05ea3382cf1fe11159e",
+        "afterSha256": "d9c5a7f493826556a8443a07c2f6d28d498a420a1f2aa05ea3382cf1fe11159e",
+        "sourceUnchanged": true,
+        "productionFileCount": 1118,
+        "checkedBatches": 2
+      },
+      "candidate": {
+        "beforeSha256": "e064f7e657f9736c782d1847ecb7fbb55a8c2cb446d407ffdea3c5735bef052d",
+        "afterSha256": "e064f7e657f9736c782d1847ecb7fbb55a8c2cb446d407ffdea3c5735bef052d",
+        "sourceUnchanged": true,
+        "productionFileCount": 1148,
+        "checkedBatches": 2
+      }
+    },
+    "pr354": {
+      "main": {
+        "beforeSha256": "d9c5a7f493826556a8443a07c2f6d28d498a420a1f2aa05ea3382cf1fe11159e",
+        "afterSha256": "d9c5a7f493826556a8443a07c2f6d28d498a420a1f2aa05ea3382cf1fe11159e",
+        "sourceUnchanged": true,
+        "productionFileCount": 1118,
+        "checkedBatches": 3
+      },
+      "candidate": {
+        "beforeSha256": "4502e1a76d1ed74014c80112a7406c0cd146e0fad9b2f148e131650962ecb55d",
+        "afterSha256": "4502e1a76d1ed74014c80112a7406c0cd146e0fad9b2f148e131650962ecb55d",
+        "sourceUnchanged": true,
+        "productionFileCount": 1149,
+        "checkedBatches": 3
+      }
+    }
+  }
+}

@@ -1,0 +1,44 @@
+{
+  "retention": "Outcome and scope only; Native events, operation traces and pilot logs removed.",
+  "nativeSmoke": {
+    "scope": "Actual Local Host run application + Mission command Inbox + SQLite + FileExpertSessionStore + Native Codex. Default CLI run lifetime; no release override. Reopen is graceful resource release plus new composition, not a crash-replay claim. Desktop UI/observer and performance acceptance are not covered.",
+    "assertions": 18,
+    "passedAssertions": 18,
+    "completeSmokePassed": true,
+    "elapsedSeconds": 72.91816115379333,
+    "exitCode": 0,
+    "processExitConfirmed": true
+  },
+  "providerPilot": {
+    "model": "deepseek-v4-flash",
+    "thinking": "medium",
+    "group": "warm",
+    "requestedSamplesPerCheckout": 1,
+    "scope": "Same provider pilot parameters main/R2; credential-timeout gives zero model samples, no P50/P95",
+    "results": [
+      {
+        "checkout": "main",
+        "validSamples": 0,
+        "elapsedSeconds": 120.12302017211914,
+        "exitCode": 1,
+        "processExitConfirmed": true,
+        "diagnostics": [
+          "MISSION_BENCHMARK_CREDENTIAL_PHASE: credentials-read",
+          "MISSION_BENCHMARK_KEYCHAIN_TIMEOUT: phase=credentials-read; benchmark process stopped; no valid latency result."
+        ]
+      },
+      {
+        "checkout": "candidate",
+        "validSamples": 0,
+        "elapsedSeconds": 120.14723801612854,
+        "exitCode": 1,
+        "processExitConfirmed": true,
+        "diagnostics": [
+          "MISSION_BENCHMARK_CREDENTIAL_PHASE: credentials-read",
+          "MISSION_BENCHMARK_KEYCHAIN_TIMEOUT: phase=credentials-read; benchmark process stopped; no valid latency result."
+        ]
+      }
+    ]
+  },
+  "fullProductAcceptancePassed": false
+}

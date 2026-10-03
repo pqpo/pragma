@@ -58,7 +58,7 @@ Node cold consumer admission 新增两项通过：真实 Node catalog/compiler �
 
 Node warm authority 新专项 4 项通过，连同旧 adapter/retained 2 项、real-boundary 8 项共 14 项。实际 Node compiler + Interpreter 证明 warm 每轮 pinned Revision API 读 1、Capability authority 读 1，额外 DSL compile/readiness probe/Runtime acquire 为 0；变更 authority 额外 compile 1 后拒绝旧 Session，原 Session 可检查；失败 warm turn 清除 readiness 后探测 1 次。
 
-新增真实 Memory canonical worker 回归及原套件4项通过。最终冻结后以Node24.18.0串行复核：check退出0（159.07s）、build退出0（90.65s）、compilation gate 57 Host+13 Desktop=70项、control gate 124 Host+6execution-system+4Desktop=134项、CLI108项，以及pack/release:reports/positive package smoke全部退出0。逐命令耗时、计数及日志摘要见[工程证据](../performance/local-host-kernel-r2/validation.json)。新 gate `pnpm test:mission-compilation` 已加入 CI 与 Desktop release；R1 control、chat、revision gate 保留。
+新增真实 Memory canonical worker 回归及原套件4项通过。最终冻结后以Node24.18.0串行复核：check退出0（159.07s）、build退出0（90.65s）、compilation gate 57 Host+13 Desktop=70项、control gate 124 Host+6execution-system+4Desktop=134项、CLI108项，以及pack/release:reports/positive package smoke全部退出0。逐命令耗时、计数及日志摘要见[性能与验证报告](../performance/local-host-kernel-r2-performance.md)。新 gate `pnpm test:mission-compilation` 已加入 CI 与 Desktop release；R1 control、chat、revision gate 保留。
 
 ## 同条件性能对照
 
@@ -68,7 +68,7 @@ Node warm authority 新专项 4 项通过，连同旧 adapter/retained 2 项、r
 
 正式两组 main → R2 对照，每端每场景20样本：warm P95 为639.54/674.03 → 626.41/597.93 ms；每请求 head/pinned Revision API读为1/1 → 0/1，warm DSL compile=0、active Capability/credential fingerprint各1，miss DSL=2（root+system）。准备包括Inbox/control接入，不代替产品UI指标。
 
-第2组Capability失效P95为657.62 → 823.34 ms，触发>10%且>20ms检查；追加两组每端60样本，main/R2为673.90/664.95及688.17/668.37 ms，均未复现触发。原始触发、Revision read 146.64ms与Session open outlier、所有cache/pin计数保存，未改生产性能算法或延长超时。存储/读取、准备期间前台读取与renderer局部P95未触发回退线；转换总耗时每轮单值只报告波动，不冒充P95。
+第2组Capability失效P95为657.62 → 823.34 ms，触发>10%且>20ms检查；追加两组每端60样本，main/R2为673.90/664.95及688.17/668.37 ms，均未复现触发。触发统计、Revision read 146.64ms与Session open outlier、所有cache/pin计数保存，未改生产性能算法或延长超时。存储/读取、准备期间前台读取与renderer局部P95未触发回退线；转换总耗时每轮单值只报告波动，不冒充P95。
 
 最终移除Desktop无调用方compile转发后，typecheck/lint、build和70项compilation gate再次通过。重新冻结最终源码并重测两组各20样本，warm P95为main/R2 608.19/715.36与727.78/623.09 ms；第5组触发>10%且>20ms，Revision read慢样本150.14ms。追加两组各60暖样本，main/R2为605.28/623.10、624.35/621.74 ms，均未重复触发。全部缓存/pin计数保持；初轮、最后删残留及最终测量的源码摘要分别保存，Node/Core/存储/renderer代码没有改变。
 

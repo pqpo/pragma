@@ -1,6 +1,6 @@
 # Issue #348 R2：PR #354 评论复核与修复
 
-日期：2026-10-03。审查目标 `a355f31649f4832a10d23dda5ae71749b0a8c79f`，基线 `a2741325ab106b3cbc8f472d4feec98b1367ae55`。已读取全部普通评论（2）、行内评论（1）、review（1）与审查线程（1，API 无下一页）；[评论快照](../performance/local-host-kernel-r2/pr-354-followup/comments.json)保存读取时的状态。
+日期：2026-10-03。审查目标 `a355f31649f4832a10d23dda5ae71749b0a8c79f`，基线 `a2741325ab106b3cbc8f472d4feec98b1367ae55`。已读取全部普通评论（2）、行内评论（1）、review（1）与审查线程（1，API 无下一页）；[PR 评论](https://github.com/pqpo/pragma/pull/354#issuecomment-5966269275)提供评论原文；本地完整评论快照已清理，裁决见下表。
 
 ## 裁决
 
@@ -42,7 +42,7 @@ Desktop 另用真实 published Project/CAS、Plugin package bytes/fingerprint、
 - 既有 Desktop cold Native Flow stop：1 项；Interpreter resource adapters：10 项。
 - CLI：108 项；package:pack、release:reports、positive package smoke 均通过。
 
-[逐命令结果与原始日志摘要](../performance/local-host-kernel-r2/pr-354-followup/validation.json)保存退出码、耗时、测试计数和日志 SHA256。此前 R2、CR 性能批次继续保留独立源码摘要。本次两组每端8场景×20样本，以及 system/Capability 各两组每端60样本全部串行；原完整批次两处阈值触发保留，四组追加复测未重复触发。暖缓存每组20/20、DSL=0，失效DSL=2，head/pinned读取0/1。详细准备/compile phase耗时、读取数与证据见 [性能报告](../performance/local-host-kernel-r2-performance.md#pr-354-评论修复后的独立测量批次)。
+[验证摘要](../performance/local-host-kernel-r2/verification-summary.json)保存退出码、耗时、测试计数及通过的远程 CI 链接，完整日志已清理。此前 R2、CR 性能批次继续保留独立源码摘要。本次两组每端8场景×20样本，以及 system/Capability 各两组每端60样本全部串行；原完整批次两处阈值触发保留，四组追加复测未重复触发。暖缓存每组20/20、DSL=0，失效DSL=2，head/pinned读取0/1。详细准备/compile phase耗时、读取数与证据见 [性能报告](../performance/local-host-kernel-r2-performance.md#pr-354-评论修复后的独立测量批次)。
 
 两处已确认 P1 的修复与上述工程门禁通过；R2 仍只标代码实施交付，完整阶段验收未完成。未获得新的真实 provider 样本，不关闭 #348、不宣称 R1/R2 全部完成；原 Native 进程取消、OS 凭据与完整产品性能等缺口继续保留。
 

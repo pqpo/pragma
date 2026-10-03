@@ -2,13 +2,17 @@
 
 日期：2026-10-03。结论：正式局部对照与追加复测完成；初轮 Capability 与最终源码 warm 场景各一次 P95 触发，分别追加两组 60 样本复测均未重复触发。真实 provider pilot 无有效样本，完整产品性能未验收，R2 阶段退出仍未通过。
 
-## 条件与原始证据
+## 证据保留策略
+
+按用户要求，清理逐样本操作/事件、完整命令日志、评论快照、重复的逐文件 SHA 清单和中间审查输出。仅保留本文的各批次结论与触发/复测值，以及同目录 5 份精简 JSON：环境、最新编译统计、各源码批次一致性、工程验证、Native/模型结果。未重新测量或修改性能结论；原始明细不再随 PR 保存，不能仅凭现存摘要重算逐样本分位数。历史与最新批次保持各自源码边界，真实模型有效样本 0、完整产品验收未完成的结论不变。
+
+## 条件与精简证据
 
 基线为最新 origin/main `a2741325ab106b3cbc8f472d4feec98b1367ae55`；R2 为其独立 worktree 上的未提交候选源码。Node 24.18.0、pnpm 10.12.1、Electron 43.7.6，Intel i7-9750H / 12 logical CPUs / 16 GiB / macOS Darwin 25.6.0。使用同一台交互主机，未关闭用户应用；实现、测试、构建均结束后，所有测量串行运行。
 
 两组顺序均为 main → R2；每端每组每编译场景 20 样本，共 320 次正式准备操作。cold 是同一进程内新 Mission 的首次运行，不是 20 次冷进程启动；import 与夹具建立不计入准备耗时。fake Runtime、隔离真实 Project/Mission/Capability/ContextStore/SQLite；真实 Interpreter compile，fixture verifier/credential-generation port。未测模型、正常 Memory/Automation 负载或完整 UI 路径。
 
-[环境](local-host-kernel-r2/environment.json)、[源码摘要](local-host-kernel-r2/source-integrity.json)、[逐命令退出记录](local-host-kernel-r2/measurements.json)、[完整比较](local-host-kernel-r2/comparison-summary.json)保存原始数据和统计。正式测量前后的 production TS/TSX/MJS/JSON 摘要一致；摘要范围明确排除 tests/fixtures/scripts/docs/构建产物。DSL/static fixture 无改动。各 probe 另保存选定路径摘要及自身 checksum。
+[环境](local-host-kernel-r2/environment.json)与[各批次源码一致性摘要](local-host-kernel-r2/source-integrity-summary.json)保留条件和摘要。正式测量前后的 production TS/TSX/MJS/JSON 摘要一致；范围排除 tests/fixtures/scripts/docs/构建产物。DSL/static fixture 未改变，逐文件清单已清理。各历史批次的数值和验证结论见本文相应章节。
 
 ## 编译准备与缓存
 
@@ -52,20 +56,20 @@ P95 单位 ms。完整准备为 awaited run/send 返回，包含 Inbox/control �
 
 第2组 Capability 失效 P95 为 main 657.62 → R2 823.34 ms（+165.73 ms/+25.20%），触发同时 >10% 且 >20 ms 的检查线。R2 sample 19 的 Revision read=146.64 ms、readiness=201.27 ms；sample 0 的 Session open=223.01 ms。main sample 0 Session open=232.10 ms。计数、authority、pin 与缓存断言全部通过，不能仅由这些 outlier 判定原因。
 
-保留原始触发，增加两个 main→R2 交替定向复测，每端每组 60 Capability 变更样本。定向模式是一次 cold seed 后仅测选定场景，固定模型；不与完整8组池化。probe 新增 --scenario 参数后 checksum 改变，每对使用同一脚本；生产源码没有改动。
+保留触发统计，增加两个 main→R2 交替定向复测，每端每组 60 Capability 变更样本。定向模式是一次 cold seed 后仅测选定场景，固定模型；不与完整8组池化。probe 新增 --scenario 参数后 checksum 改变，每对使用同一脚本；生产源码没有改动。
 
 | 复测     | main P95 | R2 P95 | main compile P95 | R2 compile P95 | 回退阈值 |
 | -------- | -------: | -----: | ---------------: | -------------: | -------- |
 | 3，60/端 |   673.90 | 664.95 |            32.07 |          34.63 | 未触发   |
 | 4，60/端 |   688.17 | 668.37 |            32.56 |          33.60 | 未触发   |
 
-[复测统计](local-host-kernel-r2/repeat-summary.json)和[逐命令结果](local-host-kernel-r2/repeat-ledger.json)保留全部样本。两次复测均未复现阈值触发；没有修改生产性能算法、耐久级别或超时预算，不宣称普遍性能收益。
+两次定向复测均未复现阈值触发，汇总值保留上表；没有修改生产性能算法、耐久级别或超时预算，不宣称普遍性能收益。
 
 ## 最终源码删除复核与编译重测
 
-最后删除无调用方的 Desktop `PragmaProjectStore.compile` 方法、类型声明及两个 type import；Interpreter API 保留。Desktop Node typecheck/lint、完整 build（88.25s）与 compilation gate（57+13=70项，42.70s）再次通过，见[删除后工程验证](local-host-kernel-r2/final-cleanup-validation.json)。
+最后删除无调用方的 Desktop `PragmaProjectStore.compile` 方法、类型声明及两个 type import；Interpreter API 保留。Desktop Node typecheck/lint、完整 build（88.25s）与 compilation gate（57+13=70项，42.70s）再次通过；验证记录在此保留结论。
 
-随后冻结最终源码，重跑两组全8场景、每端每组20样本（组5/6）；附加两组每端60个 warm 样本（组7/8）。[最终源码摘要](local-host-kernel-r2/final-source-integrity.json)证明整个重测/暖复测期间源码未变，且相对初轮仅该 Desktop Store 文件改变；Node/Core/存储/renderer代码均不变，先前对应数据继续单列，不伪称它们使用同一完整源码摘要。
+随后冻结最终源码，重跑两组全8场景、每端每组20样本（组5/6）；附加两组每端60个 warm 样本（组7/8）。[最终源码摘要](local-host-kernel-r2/source-integrity-summary.json)记录整个重测/暖复测期间源码一致；此前审查确认相对初轮仅该 Desktop Store 文件改变；Node/Core/存储/renderer代码均不变，先前对应数据继续单列，不伪称它们使用同一完整源码摘要。
 
 | 场景                       | main 组5 | R2 组5 | main 组6 | R2 组6 |
 | -------------------------- | -------: | -----: | -------: | -----: |
@@ -80,18 +84,18 @@ P95 单位 ms。完整准备为 awaited run/send 返回，包含 Inbox/control �
 
 第5组 warm P95 608.19→715.36 ms（+107.16ms/+17.62%）触发检查线；R2 sample2的 pinned Revision read150.14ms、readiness173.21ms，sample0完整准备715.36ms。main sample0完整准备715.20ms。DSL compile仍为0，计数/pin断言通过，原因未由这些样本确证。第6组 warm 为727.78→623.09ms，所有场景均未触发检查线。
 
-追加暖复测为单次 cold seed 后60个 warm，保留完整setup/冷样本但不与全8组池化：
+追加暖复测为单次 cold seed 后60个 warm，setup/冷样本不进入目标 P95，明细已清理但不与全8组池化：
 
 | 暖复测   | main P95 | R2 P95 | 回退阈值 |
 | -------- | -------: | -----: | -------- |
 | 7，60/端 |   605.28 | 623.10 | 未触发   |
 | 8，60/端 |   624.35 | 621.74 | 未触发   |
 
-最终全场景与暖复测的 head/pinned reads=0/1、warm DSL=0、各失效DSL=2及cache hit/miss保持，全部断言通过。60个暖样本跨越30秒TTL后，每请求Runtime health/model catalog读取集合为{0,1}；目标availability重新探测可间接触发model discovery，不能泛称整个发送调用链永远没有model catalog读取。这是原Runtime/Host探测链行为，主线与R2均保留，readiness服务自身不调用全Runtime/model list。两组暖复测未重复触发，保留第5组原始结果；局部波动记录不能变成稳定性能收益或真实产品验收。[最终比较与计数](local-host-kernel-r2/final-comparison-summary.json)、[逐命令记录](local-host-kernel-r2/final-cleanup-ledger.json)、[暖复测](local-host-kernel-r2/warm-repeat-ledger.json)保存原始证据。
+最终全场景与暖复测的 head/pinned reads=0/1、warm DSL=0、各失效DSL=2及cache hit/miss保持，全部断言通过。60个暖样本跨越30秒TTL后，每请求Runtime health/model catalog读取集合为{0,1}；目标availability重新探测可间接触发model discovery，不能泛称整个发送调用链永远没有model catalog读取。这是原Runtime/Host探测链行为，主线与R2均保留，readiness服务自身不调用全Runtime/model list。两组暖复测未重复触发，保留第5组原批次统计；局部波动记录不能变成稳定性能收益或真实产品验收。本节保留最终比较、计数和触发/复测结论，逐样本与命令日志已清理。
 
 ## 存储与准备隔离
 
-SQLite canonical 开启的提交 P95；单 owner 每配置20样本，四 owner 共80样本。canonical 关闭、读取、worker queue/lock/serialization、数据库增长及 processDiskIo 完整结果在 execution-storage-*.json 中。
+SQLite canonical 开启的提交 P95；单 owner 每配置20样本，四 owner 共80样本。canonical 关闭、读取、worker queue/lock/serialization、数据库增长及 processDiskIo 逐样本明细已删除；本文保留提交 P95 结论。
 
 | history / owners | main 组1 | R2 组1 | main 组2 | R2 组2 |
 | ---------------- | -------: | -----: | -------: | -----: |
@@ -111,7 +115,7 @@ SQLite canonical 开启的提交 P95；单 owner 每配置20样本，四 owner �
 | 5000    | 624.00 / 621.58      | 618.73 / 704.68    |
 | 50000   | 1786.29 / 1783.52    | 1759.31 / 1781.18  |
 
-foreground batch P95 与 converted-owner read P95 未触发回退线，没有观察到前台读取随转换历史线性放大。追加转换数据保存于 preparation-repeat-*.json；无模型/UI，不能代替后台正常产品负载。
+foreground batch P95 与 converted-owner read P95 未触发回退线，没有观察到前台读取随转换历史线性放大。追加转换结果保留本文统计，逐样本数据已删除；无模型/UI，不能代替后台正常产品负载。
 
 ## Renderer 局部验证
 
@@ -128,15 +132,15 @@ foreground batch P95 与 converted-owner read P95 未触发回退线，没有观
 
 ## Native 与真实模型
 
-真实 Codex Native Mission：18/18断言，72.92秒，退出0；[原始报告](local-host-kernel-r2/native-mission.json)与[独立退出确认](local-host-kernel-r2/native-mission.supervisor.json)。probe直接装配已解析 Core executor 与共用 run/control，验证 Inbox、SQLite、ExpertSession、queue/steer、暖记忆和正常释放后重开；不覆盖新默认 Node compiler 的 Native资源接线、crash takeover、Team/Flow 或 Desktop UI。默认 Node compiler 的 Expert/Team/Flow 资源环境由真实Interpreter/CAS/SQLite+fake Runtime测试验证。
+真实 Codex Native Mission：18/18断言，72.92秒，退出0；[结果与退出摘要](local-host-kernel-r2/native-model-summary.json)。probe直接装配已解析 Core executor 与共用 run/control，验证 Inbox、SQLite、ExpertSession、queue/steer、暖记忆和正常释放后重开；不覆盖新默认 Node compiler 的 Native资源接线、crash takeover、Team/Flow 或 Desktop UI。默认 Node compiler 的 Expert/Team/Flow 资源环境由真实Interpreter/CAS/SQLite+fake Runtime测试验证。
 
-真实provider：main 与R2使用相同 source-home、warm、samples=1、deepseek-v4-flash、thinking=medium。逐次结果见[model-pilots.json](local-host-kernel-r2/model-pilots.json)。两端均在 native credentials-read 阶段120秒超时、退出1，主进程退出已确认；有效模型样本各0，无P50/P95，不当作provider性能或Secret跨进程通过。
+真实provider：main 与R2使用相同 source-home、warm、samples=1、deepseek-v4-flash、thinking=medium。逐次结果见[Native/模型结果摘要](local-host-kernel-r2/native-model-summary.json)。两端均在 native credentials-read 阶段120秒超时、退出1，主进程退出已确认；有效模型样本各0，无P50/P95，不当作provider性能或Secret跨进程通过。
 
 四项产品指标（暖UI→dispatch<250ms、模型完成→Core terminal<500ms、Core terminal→renderer paint<200ms、enqueue耐久接受→queue可用<200ms）、总首Token、尾部、四Mission并发和正常 Memory/Automation 负载仍没有完整可比较报告。R1/R2均不得因此标记全部验收完成。
 
 ## 重跑
 
-先构建对应 checkout，所有运行串行；性能期间不启动实现/测试/build进程。原始失败pilot（fixture Runtime ID错误、R2外部refs漏传）保留且不进入统计；修复见R2实施报告。
+先构建对应 checkout，所有运行串行；性能期间不启动实现/测试/build进程。早期失败 pilot（fixture Runtime ID错误、R2外部refs漏传）不进入统计，仅保留原因说明；修复见R2实施报告。
 
 ```sh
 pnpm exec tsx docs/performance/local-host-kernel-r2-compilation-probe.mjs --checkout <checkout> --samples 20 --output <output.json>
@@ -163,11 +167,11 @@ CR 修复后的生产摘要为 `e064f7e657f9736c782d1847ecb7fbb55a8c2cb446d407ff
 | system-invalidation        |         618.81 / 644.27 |         602.20 / 672.11 | 36.24/36.32 · 33.75/37.02       |
 | context-mount-invalidation |         635.51 / 689.32 |         689.67 / 691.45 | 29.09/32.24 · 29.70/35.25       |
 
-组2系统失效 602.20→672.11 ms，+69.91 ms/+11.61%，触发 >10% 且 >20ms 阈值，原始结果保留。追加两组60样本结果为669.25→675.88 ms（+0.99%）及689.34→648.48 ms（−5.93%），均未重复触发；编译phase P95分别38.92→41.51与38.49→40.23 ms。未调整生产逻辑或延长超时，不能据此宣称稳定性能收益。
+组2系统失效 602.20→672.11 ms，+69.91 ms/+11.61%，触发 >10% 且 >20ms 阈值，原批次统计保留。追加两组60样本结果为669.25→675.88 ms（+0.99%）及689.34→648.48 ms（−5.93%），均未重复触发；编译phase P95分别38.92→41.51与38.49→40.23 ms。未调整生产逻辑或延长超时，不能据此宣称稳定性能收益。
 
 每组R2暖owner20/20命中、DSL编译0，cold及六类失效均miss且DSL编译2（root+system）；main等同缓存断言通过。R2每请求head/pinned Revision读取0/1，main为1/1；R2暖project open0、失效1（cold {1,2}），main暖0、失效0并经store compile。暖active Capability/credential fingerprint读取1/1，system失效5/4，其余完整计数保存在JSON。Context mount失效仅读取目标store；此probe无Plugin/inline Secret，Plugin读取0，不能证明重Plugin workload性能。新增guard正确性由真实存储/DSL的轮换、删除、编译期间变化与映射交换回归证明，非OS Keychain验收。读取数为API调用，不是物理I/O。全场景暖组health/model读取0；系统复测因TTL/Runtime探测链health/model读取{4,5}，不把readiness自身不调model list扩大为全链零读取。
 
-[全场景摘要](local-host-kernel-r2/cr/comparison-summary.json)、[系统复测摘要](local-host-kernel-r2/cr/repeat-summary.json)、[全场景逐命令退出](local-host-kernel-r2/cr/measure-ledger.json)、[复测逐命令退出](local-host-kernel-r2/cr/system-repeat-ledger.json)、[最终工程门禁](local-host-kernel-r2/cr/validation.json)与同目录逐样本raw JSON保存原始证据。此前真实provider每端0有效样本、OS凭据/完整产品指标和正常Memory/Automation负载缺口继续保留；R1/R2均未标记全部验收完成。
+CR 批次结论、触发值与复测值保留本节，源码一致性见[摘要](local-host-kernel-r2/source-integrity-summary.json)。逐样本 JSON、重复清单与完整日志已删除。此前真实 provider 每端 0 有效样本、OS 凭据/完整产品指标和正常 Memory/Automation 负载缺口继续保留；R1/R2 均未标记全部验收完成。
 
 ## PR #354 评论修复后的独立测量批次
 
@@ -184,7 +188,7 @@ CR 修复后的生产摘要为 `e064f7e657f9736c782d1847ecb7fbb55a8c2cb446d407ff
 | system-invalidation        |             636.94/707.53 |             674.00/652.48 | 35.46/37.02 · 36.34/38.64         |
 | context-mount-invalidation |             670.75/699.78 |             725.57/723.22 | 29.76/35.50 · 30.36/32.85         |
 
-组1 system 636.94→707.53 ms（+11.08%）、组2 Capability 660.49→845.86 ms（+28.07%）触发既有 >10% 且 >20ms 阈值，原始数据保留。追加结果：
+组1 system 636.94→707.53 ms（+11.08%）、组2 Capability 660.49→845.86 ms（+28.07%）触发既有 >10% 且 >20ms 阈值，原批次统计保留。追加结果：
 
 | 场景/复测组               | main/候选 准备 P95 ms |   差异 | main/候选 编译 phase P95 ms |
 | ------------------------- | --------------------: | -----: | --------------------------: |
@@ -195,6 +199,6 @@ CR 修复后的生产摘要为 `e064f7e657f9736c782d1847ecb7fbb55a8c2cb446d407ff
 
 四组均未重复触发准备耗时阈值，未改超时/性能预算；编译 phase 成本仍有波动，不宣称稳定性能收益或完整性能验收通过。
 
-每组暖 owner 20/20 命中、DSL=0；cold 与六类失效均 miss、DSL=2（root+system）。候选每请求 head/pinned Revision=0/1，main=1/1；候选暖 Project open=0、失效=1、cold={1,2}。暖 active Capability/credential fingerprint=1/1，失效=5/4；候选暖 health/model=0，system 复测={4,5}，Capability 复测 health={5,6}/model={4,5}。这是真实 API 调用计数，不是物理 I/O；该夹具 Plugin、ContextStore port 计数为 0，未测 Plugin 重负载或 inline Secret，不能把正确性回归当作相应性能证明。全部计数/P50/P95/逐样本 phase 保存在原始 JSON。
+每组暖 owner 20/20 命中、DSL=0；cold 与六类失效均 miss、DSL=2（root+system）。候选每请求 head/pinned Revision=0/1，main=1/1；候选暖 Project open=0、失效=1、cold={1,2}。暖 active Capability/credential fingerprint=1/1，失效=5/4；候选暖 health/model=0，system 复测={4,5}，Capability 复测 health={5,6}/model={4,5}。这是真实 API 调用计数，不是物理 I/O；该夹具 Plugin、ContextStore port 计数为 0，未测 Plugin 重负载或 inline Secret，不能把正确性回归当作相应性能证明。计数集合、P50/P95 和编译 phase P95 保存在精简统计 JSON，逐样本 phase 已删除。
 
-[完整摘要](local-host-kernel-r2/pr-354-followup/comparison-summary.json)、[复测摘要](local-host-kernel-r2/pr-354-followup/repeat-summary.json)、[工程门禁](local-host-kernel-r2/pr-354-followup/validation.json)、[完整测量命令](local-host-kernel-r2/pr-354-followup/measure-ledger.json)、[system 复测命令](local-host-kernel-r2/pr-354-followup/system-repeat-ledger.json)、[Capability 复测命令](local-host-kernel-r2/pr-354-followup/capability-repeat-ledger.json)及同目录原始 JSON/日志可复核。本轮未取得新真实模型样本；此前每端 0 有效样本及 OS 凭据、产品 UI/terminal、正常 Memory/Automation 负载和并发缺口均继续保留，R1/R2 完整验收仍未通过。
+[最新编译与复测统计](local-host-kernel-r2/compilation-summary.json)保留 P50/P95、编译 phase、缓存和读取计数；[验证摘要](local-host-kernel-r2/verification-summary.json)保留最终本地门禁、测量批次退出确认及通过的远程 CI 链接。逐样本 JSON/日志已删除，不能重算单样本分位数。本轮未取得新真实模型样本；此前每端 0 有效样本及 OS 凭据、产品 UI/terminal、正常 Memory/Automation 负载和并发缺口均继续保留，R1/R2 完整验收仍未通过。

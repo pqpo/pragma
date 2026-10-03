@@ -4,7 +4,7 @@
 
 ## 确认与裁决
 
-本轮确认 8 类问题，全部纳入修复。原始观察、归因更正与验证结果分别保留，不把静态推测当作实际复现。
+本轮确认 8 类问题，全部纳入修复。观察结论、归因更正与验证结果分别记录，不把静态推测当作实际复现。
 
 | ID   | 等级 | 确认的问题与归因                                                                                                                                                                                                                             | 修复及回归                                                                                                                                                                                                                                                                                                                                                                                                                   |
 | ---- | ---- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -19,27 +19,27 @@
 
 CR01/CR05/CR06 位于 `packages/local-host/src/missions/compile-service.ts` 和 Built-in compiler helper；CR02/CR03 位于 Node composition、catalog、Core control adapter、Mission control acquisition 与 Desktop composition；CR04 位于 Interpreter resource registry、Host compile error boundary 与 contribution。未更改 DSL/compiler、持久状态、Mission、Execution、Session 或 journal 版本；未引入 R3 successor 生命周期或 R4 Runner 删除。
 
-资源 Schema、凭据与历史迁移抽取核对未发现其它引入问题。性能报告准确区分 API 调用计数与物理 I/O、局部 fake Runtime 与真实模型、原始触发与复测。完整 cold submit 的 acquisition preflight 仍可能重复 resolve/compile，这是报告已披露的既存缺口；consumer 请求内复用测试不冒充完整 submit 计数。Node successor 与完整产品验收缺口继续保留。
+资源 Schema、凭据与历史迁移抽取核对未发现其它引入问题。性能报告准确区分 API 调用计数与物理 I/O、局部 fake Runtime 与真实模型、触发统计与复测。完整 cold submit 的 acquisition preflight 仍可能重复 resolve/compile，这是报告已披露的既存缺口；consumer 请求内复用测试不冒充完整 submit 计数。Node successor 与完整产品验收缺口继续保留。
 
 ## 验证
 
-修复专项已通过：compile service 18 项、Node/control 五文件 20 项、Node 错误与缓存边界 20 项、Interpreter resource adapter 10 项、资源 resolver 4 项；相关 lint/typecheck 与 Built-in/Interpreter 构建通过。反证中的失败与早期夹具错误保留，修复后验证另记。
+修复专项已通过：compile service 18 项、Node/control 五文件 20 项、Node 错误与缓存边界 20 项、Interpreter resource adapter 10 项、资源 resolver 4 项；相关 lint/typecheck 与 Built-in/Interpreter 构建通过。反证中的失败与早期夹具错误保留文字结论，修复后验证另记。
 
-最终统一工程门禁全部退出 0：`pnpm check`（含 lint/typecheck/边界、核心测试及 Desktop packaging）、`pnpm build` 19 tasks、Mission compilation 91 项（Host 76/Desktop 15）、Mission control 134 项、Desktop cold stop 1 项、Interpreter resource adapter 10 项、CLI 108 项，以及 CLI pack/reports/positive package smoke。最新真实 SQLite 回归确认新 Execution 采用新环境，旧 Execution 环境记录不改写。生产源码 1,148 文件，验证前后 SHA-256 均为 `e064f7e657f9736c782d1847ecb7fbb55a8c2cb446d407ffdea3c5735bef052d`。[逐阶段退出与日志](../performance/local-host-kernel-r2/cr/validation.json)。历史 R2 性能证据属于原源码批次，不声明覆盖本轮修复后的源码。
+最终统一工程门禁全部退出 0：`pnpm check`（含 lint/typecheck/边界、核心测试及 Desktop packaging）、`pnpm build` 19 tasks、Mission compilation 91 项（Host 76/Desktop 15）、Mission control 134 项、Desktop cold stop 1 项、Interpreter resource adapter 10 项、CLI 108 项，以及 CLI pack/reports/positive package smoke。最新真实 SQLite 回归确认新 Execution 采用新环境，旧 Execution 环境记录不改写。生产源码 1,148 文件，验证前后 SHA-256 均为 `e064f7e657f9736c782d1847ecb7fbb55a8c2cb446d407ffdea3c5735bef052d`。验证结论保留本文，完整日志已清理。历史 R2 性能证据属于原源码批次，不声明覆盖本轮修复后的源码。
 
 R1 保持已合并、真实模型/完整产品验收未完成；R2 阶段验收也保持未完成。CR 问题修复不代替真实 OS 凭据、真实模型与完整产品场景验收。
 
 stop 边界说明：Desktop full controller 回归的初版把 Native Runtime 内部 canUse 也改为 false，Core 恢复入口据此拒绝并保持 stop unconfirmed，测试超时。未放宽 Core 安全保护。最终回归仅让执行 readiness/Capability/credential 不可用，Native restore 自身仍可用；Node 对外 canUse spy 不记录 driver 内部 Native availability 检查，零计数不能代表所有 Native 检查为零。
 
-追加审查发现 CR07 后，中断了当时的统一验证：已完成 check、build、compilation 均退出 0，control 阶段由主动终止结束，不能记为业务失败或最终源码通过。前一批源码摘要、阶段日志与中断原因单独保留。补齐 CR07 后重新冻结源码并串行验证。
+追加审查发现 CR07 后，中断了当时的统一验证：已完成 check、build、compilation 均退出 0，control 阶段由主动终止结束，不能记为业务失败或最终源码通过。前一批中断原因保留此处，阶段日志已清理。补齐 CR07 后重新冻结源码并串行验证。
 
 缓存补查说明：Secret/Plugin guard 只保存 ref、binding 与 hash，不保存 Secret 明文；实际解析的贡献进入 guard，空集合不增加读取。两参数及空 guard 的 Execution environment hash 与原实现相同；非空 guard 用于区分新 Execution 的实际凭据/Plugin 环境。已有 Execution 不重写，Session definition protocol 与持久版本不变。用户不可变 Plugin 同 id/version 改包仍被 Core `identity_conflict` 拒绝，不削弱保护；合法 host-managed 包更新、配置/凭据变化与映射交换分别验证。
 
-独立交叉复核确认 CR01–CR08 均已落实，无剩余已确认但未修复的问题。额外复核发现的 Desktop snapshot 第四参数遗漏也已修复并通过最终门禁；临时从根目录直接运行 package 测试导致的配置查找失败如实记录，正确 package 配置的统一门禁才作为通过证据。[编译审查补充](../performance/local-host-kernel-r2/cr/compile-findings-final.json)、[Node 接线补充](../performance/local-host-kernel-r2/cr/node-findings-final.json)、[资源 guard 真实回归](../performance/local-host-kernel-r2/cr/secret-plugin-final-results.json)。
+独立交叉复核确认 CR01–CR08 均已落实，无剩余已确认但未修复的问题。额外复核发现的 Desktop snapshot 第四参数遗漏也已修复并通过最终门禁；临时从根目录直接运行 package 测试导致的配置查找失败如实记录，正确 package 配置的统一门禁才作为通过证据。编译审查补充、Node 接线补充、资源 guard 真实回归。
 
 ## 最终性能复核
 
-与工程门禁同一冻结源码，串行两组main/R2各8场景×20样本完成；缓存/失效/pin计数全部通过，warm DSL=0、miss DSL=2、R2 head/pinned=0/1。组2system失效P95触发602.20→672.11 ms（+11.61%），保留原始结果并追加两组每端60样本，669.25→675.88与689.34→648.48 ms均未重复触发。完整准备与编译phase耗时、API读取集合、缓存计数、逐命令退出及源码摘要见[CR后性能章节](../performance/local-host-kernel-r2-performance.md#cr-后冻结源码对照)。未新增真实模型样本，不将局部复测冒充完整产品验收。
+与工程门禁同一冻结源码，串行两组main/R2各8场景×20样本完成；缓存/失效/pin计数全部通过，warm DSL=0、miss DSL=2、R2 head/pinned=0/1。组2system失效P95触发602.20→672.11 ms（+11.61%），保留原批次统计并追加两组每端60样本，669.25→675.88与689.34→648.48 ms均未重复触发。完整准备与编译phase耗时、API读取集合、缓存计数、逐命令退出及源码摘要见[CR后性能章节](../performance/local-host-kernel-r2-performance.md#cr-后冻结源码对照)。未新增真实模型样本，不将局部复测冒充完整产品验收。
 
 最终结论：CR01–CR08 的确认问题全部修复且复核通过，工程门禁通过；原始性能触发已如实记录并复测。R2代码实施交付，阶段验收保持未完成。
 

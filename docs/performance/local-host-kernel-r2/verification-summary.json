@@ -1,0 +1,156 @@
+{
+  "scope": "Frozen-source local verification for PR comment fixes; later CI fixes affect tests only. Full local logs removed.",
+  "localStages": [
+    {
+      "stage": "check",
+      "command": ["pnpm", "check"],
+      "exitCode": 0,
+      "elapsedSeconds": 265.04979395866394,
+      "node": "v24.18.0",
+      "testSummaries": [
+        "64 passed (64)",
+        "87 passed (87)",
+        "7 passed (7)",
+        "30 passed (30)",
+        "10 passed (10)",
+        "6 passed (6)",
+        "117 passed (117)",
+        "3 passed (3)",
+        "135 passed (135)",
+        "17 passed (17)",
+        "5 passed (5)"
+      ]
+    },
+    {
+      "stage": "build",
+      "command": ["pnpm", "build"],
+      "exitCode": 0,
+      "elapsedSeconds": 107.67298817634583,
+      "node": "v24.18.0",
+      "testSummaries": []
+    },
+    {
+      "stage": "compilation",
+      "command": ["pnpm", "test:mission-compilation"],
+      "exitCode": 0,
+      "elapsedSeconds": 69.92153692245483,
+      "node": "v24.18.0",
+      "testSummaries": ["84 passed (84)", "17 passed (17)"]
+    },
+    {
+      "stage": "control",
+      "command": ["pnpm", "test:mission-control"],
+      "exitCode": 0,
+      "elapsedSeconds": 89.70946907997131,
+      "node": "v24.18.0",
+      "testSummaries": [
+        "124 passed (124)",
+        "6 passed | 116 skipped (122)",
+        "4 passed | 80 skipped (84)"
+      ]
+    },
+    {
+      "stage": "desktop-stop",
+      "command": [
+        "pnpm",
+        "--filter",
+        "@pragma/desktop",
+        "exec",
+        "vitest",
+        "run",
+        "src/main/features/missions/mission-runner.test.ts",
+        "-t",
+        "cold-interrupts the original Native Session through acquisition"
+      ],
+      "exitCode": 0,
+      "elapsedSeconds": 8.223697900772095,
+      "node": "v24.18.0",
+      "testSummaries": ["1 passed | 83 skipped (84)"]
+    },
+    {
+      "stage": "interpreter-resources",
+      "command": [
+        "pnpm",
+        "--filter",
+        "@pragma/interpreter",
+        "exec",
+        "vitest",
+        "run",
+        "test/resource-adapters.test.ts"
+      ],
+      "exitCode": 0,
+      "elapsedSeconds": 3.0452239513397217,
+      "node": "v24.18.0",
+      "testSummaries": ["10 passed (10)"]
+    },
+    {
+      "stage": "cli",
+      "command": ["pnpm", "--filter", "@pqpo/pragma", "exec", "vitest", "run"],
+      "exitCode": 0,
+      "elapsedSeconds": 72.8120698928833,
+      "node": "v24.18.0",
+      "testSummaries": ["108 passed (108)"]
+    },
+    {
+      "stage": "pack",
+      "command": ["pnpm", "--filter", "@pqpo/pragma", "package:pack"],
+      "exitCode": 0,
+      "elapsedSeconds": 8.434902906417847,
+      "node": "v24.18.0",
+      "testSummaries": []
+    },
+    {
+      "stage": "reports",
+      "command": ["pnpm", "--filter", "@pqpo/pragma", "release:reports"],
+      "exitCode": 0,
+      "elapsedSeconds": 1.8215699195861816,
+      "node": "v24.18.0",
+      "testSummaries": []
+    },
+    {
+      "stage": "package-smoke",
+      "command": [
+        "node",
+        "apps/cli/scripts/smoke-package.mjs",
+        "--mode",
+        "positive",
+        "--artifact-dir",
+        "apps/cli/.release/ci-artifact"
+      ],
+      "exitCode": 0,
+      "elapsedSeconds": 19.35592293739319,
+      "node": "v24.18.0",
+      "testSummaries": []
+    }
+  ],
+  "latestCi": {
+    "commit": "2c0910ef6a2f7db67b62d391e81838961b6b2b30",
+    "verify": "https://github.com/pqpo/pragma/actions/runs/37110655280",
+    "cliPackages": "https://github.com/pqpo/pragma/actions/runs/37110655306",
+    "conclusion": "success"
+  },
+  "measurementBatches": [
+    {
+      "batch": "measure",
+      "commands": 4,
+      "allExitCodesZero": true,
+      "elapsedSeconds": [
+        110.64460706710815, 109.17388916015625, 110.38042902946472, 109.07506680488586
+      ]
+    },
+    {
+      "batch": "system-repeat",
+      "commands": 4,
+      "allExitCodesZero": true,
+      "elapsedSeconds": [
+        44.662978172302246, 45.062849044799805, 45.134917974472046, 45.565778970718384
+      ]
+    },
+    {
+      "batch": "capability-repeat",
+      "commands": 4,
+      "allExitCodesZero": true,
+      "elapsedSeconds": [48.6758668422699, 48.306899070739746, 48.77703285217285, 48.42990493774414]
+    }
+  ]
+}

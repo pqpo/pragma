@@ -6,11 +6,7 @@
   "cpu": "Intel(R) Core(TM) i7-9750H CPU @ 2.60GHz",
   "logicalCpus": 12,
   "memoryGiB": 16,
-  "loadAverage": [
-    7.2626953125,
-    8.3427734375,
-    8.5400390625
-  ],
+  "loadAverage": [7.2626953125, 8.3427734375, 8.5400390625],
   "electron": "43.7.6",
   "scope": "Same interactive host; no user applications stopped. Implementation/test/build jobs exited before serial measurements. Cold samples are first Mission runs in one process, not fresh-process startup."
 }
