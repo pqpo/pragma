@@ -30,7 +30,8 @@ const scenarios = [
   "context-mount-invalidation",
 ];
 const scenario = argumentsByName.get("--scenario");
-if (scenario !== undefined && !scenarios.includes(scenario)) throw new Error("Unknown --scenario.");
+if (scenario !== undefined && scenario !== "cold" && !scenarios.includes(scenario))
+  throw new Error("Unknown --scenario.");
 if (!Number.isSafeInteger(samples) || samples < 1) throw new Error("--samples must be positive.");
 const load = (path) => import(pathToFileURL(join(checkout, path)).href);
 const core = await load("packages/core/dist/index.js");
@@ -537,7 +538,7 @@ try {
     return settled;
   };
   let warmMission;
-  const coldSamples = scenario === undefined ? samples : 1;
+  const coldSamples = scenario === undefined || scenario === "cold" ? samples : 1;
   for (let sample = 0; sample < coldSamples; sample++) {
     const mission = await missions.create({
       workspace: { path: join(root, "workspace"), basename: "workspace" },
@@ -549,7 +550,7 @@ try {
     warmMission = await measure("cold", sample, mission, () => runner.run(mission.id));
     if (sample !== coldSamples - 1) await runner.stopLocalController(mission.id);
   }
-  for (const group of scenario === undefined ? scenarios : [scenario]) {
+  for (const group of scenario === undefined ? scenarios : scenario === "cold" ? [] : [scenario]) {
     for (let sample = 0; sample < samples; sample++) {
       if (group !== "warm") {
         const current = await missions.get(warmMission.id);

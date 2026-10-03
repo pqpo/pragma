@@ -20,12 +20,7 @@ const ignored = new Set([
 const files = [];
 async function collect(path) {
   for (const entry of await readdir(path, { withFileTypes: true })) {
-    if (
-      ignored.has(entry.name) ||
-      entry.name.endsWith(".test.ts") ||
-      entry.name.endsWith(".spec.ts")
-    )
-      continue;
+    if (ignored.has(entry.name) || /\.(?:test|spec)\.[cm]?[jt]sx?$/.test(entry.name)) continue;
     const absolute = join(path, entry.name);
     if (entry.isDirectory()) await collect(absolute);
     else if (entry.isFile() && /\.(?:ts|tsx|js|mjs|cjs|json)$/.test(entry.name))

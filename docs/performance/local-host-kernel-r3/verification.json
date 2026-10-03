@@ -1,0 +1,322 @@
+{
+  "date": "2026-10-03",
+  "baseCommit": "921376a446d9da878b8d9fa5c9f1df69ab323272",
+  "codeCommit": "dba3405a94edc22fc6042c7297f0fdcb04025f8a",
+  "node": "24.18.0",
+  "pnpm": "10.12.1",
+  "gates": [
+    {
+      "label": "lifecycle-final-2",
+      "command": [
+        "pnpm",
+        "test:mission-lifecycle"
+      ],
+      "exitCode": 0,
+      "elapsedSeconds": 346.437,
+      "logSha256": "7ea5ebb3bd2db892403c27744aa581fee465db630b00d8963f944dccf473711f",
+      "testSummary": [
+        "Test Files  18 passed (18)",
+        "Tests  151 passed (151)",
+        "Test Files  3 passed (3)",
+        "Tests  91 passed | 2 skipped (93)"
+      ]
+    },
+    {
+      "label": "compilation-final-2",
+      "command": [
+        "pnpm",
+        "test:mission-compilation"
+      ],
+      "exitCode": 0,
+      "elapsedSeconds": 194.853,
+      "logSha256": "456301ae327356fad7c9cdcba25ec6bc196985d73fbe230138437d48867a5142",
+      "testSummary": [
+        "Test Files  11 passed (11)",
+        "Tests  92 passed (92)",
+        "Test Files  4 passed (4)",
+        "Tests  17 passed (17)"
+      ]
+    },
+    {
+      "label": "control-final-3",
+      "command": [
+        "pnpm",
+        "test:mission-control"
+      ],
+      "exitCode": 0,
+      "elapsedSeconds": 93.469,
+      "logSha256": "9461a7cfbeee07cb3fa2b4ab2fedfb40628e310b032cf1e16235e1f422c35461",
+      "testSummary": [
+        "Test Files  13 passed (13)",
+        "Tests  127 passed (127)",
+        "Test Files  1 passed (1)",
+        "Tests  6 passed | 116 skipped (122)",
+        "Test Files  1 passed (1)",
+        "Tests  4 passed | 82 skipped (86)"
+      ]
+    },
+    {
+      "label": "chat-final-2",
+      "command": [
+        "pnpm",
+        "test:mission-chat"
+      ],
+      "exitCode": 0,
+      "elapsedSeconds": 63.046,
+      "logSha256": "324d76eb50c18af1f30704d39d94f868cacfb6f15ec193c8f6e17da6e290d04b",
+      "testSummary": [
+        "Test Files  1 passed (1)",
+        "Tests  2 passed | 7 skipped (9)",
+        "Test Files  1 passed (1)",
+        "Tests  3 passed | 9 skipped (12)",
+        "Test Files  7 passed (7)",
+        "Tests  38 passed (38)",
+        "Test Files  2 passed (2)",
+        "Tests  66 passed (66)",
+        "Test Files  1 passed (1)",
+        "Tests  6 passed | 80 skipped (86)"
+      ]
+    },
+    {
+      "label": "revision-final",
+      "command": [
+        "pnpm",
+        "test:revision"
+      ],
+      "exitCode": 0,
+      "elapsedSeconds": 28.707,
+      "logSha256": "50365e4cbc43f44b4a6c72c8ff62d8534dd1b5e895cc2a9c3b476a430ae125fd",
+      "testSummary": [
+        "Test Files  1 passed (1)",
+        "Tests  13 passed (13)",
+        "Test Files  2 passed (2)",
+        "Tests  69 passed (69)",
+        "Test Files  1 passed (1)",
+        "Tests  6 passed | 80 skipped (86)"
+      ]
+    },
+    {
+      "label": "cli-final-3",
+      "command": [
+        "pnpm",
+        "--filter",
+        "@pqpo/pragma",
+        "exec",
+        "vitest",
+        "run"
+      ],
+      "exitCode": 0,
+      "elapsedSeconds": 74.739,
+      "logSha256": "afcb097f62b1d5a456dffbc7ccc228332eae9ca61757195953e106bed7c767e4",
+      "testSummary": [
+        "Test Files  13 passed (13)",
+        "Tests  108 passed (108)"
+      ]
+    },
+    {
+      "label": "repository-final",
+      "command": [
+        "pnpm",
+        "--filter",
+        "@pragma/local-host",
+        "exec",
+        "vitest",
+        "run",
+        "test/mission-repository",
+        "test/mission-query.test.ts"
+      ],
+      "exitCode": 0,
+      "elapsedSeconds": 20.465,
+      "logSha256": "a52f53f4d689261aef64f485719f4ae6ed291144f0b3f4208ef684ed27250ba0",
+      "testSummary": [
+        "Test Files  8 passed (8)",
+        "Tests  84 passed (84)"
+      ]
+    },
+    {
+      "label": "check-final-3",
+      "command": [
+        "pnpm",
+        "check"
+      ],
+      "exitCode": 0,
+      "elapsedSeconds": 156.468,
+      "logSha256": "1e32fa315b70a211fcd12f5b0eff4a634b6c121307a2742ef79ea3f4fee57712",
+      "testSummary": [
+        "Test Files  13 passed (13)",
+        "Tests  64 passed (64)",
+        "Test Files  15 passed (15)",
+        "Tests  87 passed (87)",
+        "Test Files  2 passed (2)",
+        "Tests  6 passed (6)",
+        "Test Files  2 passed (2)",
+        "Tests  7 passed (7)",
+        "Test Files  1 passed (1)",
+        "Tests  3 passed (3)",
+        "Test Files  2 passed (2)",
+        "Tests  10 passed (10)",
+        "Test Files  7 passed (7)",
+        "Tests  135 passed (135)",
+        "Test Files  5 passed (5)",
+        "Tests  30 passed (30)",
+        "Test Files  10 passed (10)",
+        "Tests  117 passed (117)",
+        "Test Files  2 passed (2)",
+        "Tests  17 passed (17)",
+        "Test Files  2 passed (2)",
+        "Tests  5 passed (5)"
+      ]
+    },
+    {
+      "label": "build-final-2",
+      "command": [
+        "pnpm",
+        "build"
+      ],
+      "exitCode": 0,
+      "elapsedSeconds": 92.113,
+      "logSha256": "e66e8e73ec81c4f1a0ec62f84979d1cdebd0f713989f9d69ba16c9748480748c",
+      "testSummary": []
+    },
+    {
+      "label": "native-delete-final-2",
+      "command": [
+        "env",
+        "PRAGMA_MISSION_DELETE_NATIVE=1",
+        "PRAGMA_MISSION_DELETE_MODEL=gpt-6.1-sol",
+        "pnpm",
+        "--filter",
+        "@pragma/desktop",
+        "exec",
+        "vitest",
+        "run",
+        "src/main/features/missions/mission-deletion.test.ts",
+        "-t",
+        "real suspended Codex"
+      ],
+      "exitCode": 0,
+      "elapsedSeconds": 27.382,
+      "logSha256": "7d9e8f0d63999f1125a391e6d2c0eef2c96edd446c97dcbcdcef0415399fb47d",
+      "testSummary": [
+        "Test Files  1 passed (1)",
+        "Tests  1 passed | 4 skipped (5)"
+      ]
+    },
+    {
+      "label": "pack-final",
+      "command": [
+        "pnpm",
+        "--filter",
+        "@pqpo/pragma",
+        "package:pack"
+      ],
+      "exitCode": 0,
+      "elapsedSeconds": 8.454,
+      "logSha256": "3e9a7f60e5df44d1b3ecbf0aef7299d03a7d6305ac8a7ac3dafc5c2236d8cdbc",
+      "testSummary": []
+    },
+    {
+      "label": "pack-audit-final",
+      "command": [
+        "pnpm",
+        "--filter",
+        "@pqpo/pragma",
+        "audit:pack"
+      ],
+      "exitCode": 0,
+      "elapsedSeconds": 1.775,
+      "logSha256": "305dce41d6660d3537910512fff60860840f7552cfaee0732bc79ef23022df53",
+      "testSummary": []
+    },
+    {
+      "label": "pack-reports-final",
+      "command": [
+        "pnpm",
+        "--filter",
+        "@pqpo/pragma",
+        "release:reports"
+      ],
+      "exitCode": 0,
+      "elapsedSeconds": 1.873,
+      "logSha256": "bea835a87e7a0aef3ee7cf07e5214519da9be294be73d0274cffe1554c6d510b",
+      "testSummary": []
+    },
+    {
+      "label": "pack-smoke-final-2",
+      "command": [
+        "pnpm",
+        "--filter",
+        "@pqpo/pragma",
+        "ci:smoke",
+        "--",
+        "--mode",
+        "positive",
+        "--artifact-dir",
+        ".release/ci-artifact"
+      ],
+      "exitCode": 0,
+      "elapsedSeconds": 21.273,
+      "logSha256": "b2aef176f3023e11f8f27d328d70f0220de466add72606c16b4e6228f9f17141",
+      "testSummary": []
+    }
+  ],
+  "resolvedFailures": [
+    "Node duplicate consumer and per-run store/feed close removed; Core Flow input validation and captured original guard preserved.",
+    "Semantic recovery returns inside original journal/fence; manifest-last partial envelope creation replays.",
+    "Actual idle recovery/stop race drains started tasks; late release checks original identity.",
+    "Authoritative historical UUID path migration rejects live lease under original aggregate lock; full envelope/controller-only list/query/Board ingress preserved.",
+    "R2 authority fixtures now use actual Session schemas; original owner authority and one-request pinned check restored.",
+    "Baseline probe missing Runtime builds, Native delete model selection and pack smoke argument setup corrected before final runs."
+  ],
+  "skips": {
+    "missionLifecycle": "Optional Native Codex delete and five-sample delete benchmark skipped by default; Native delete separately passed; benchmark was not run."
+  },
+  "nativeDelete": {
+    "runtime": "actual Codex SDK suspended child process",
+    "modelSelection": "gpt-6.1-sol",
+    "unconfirmedStopRejectedMs": 15036,
+    "confirmedRetryMs": 1150,
+    "scope": "Process release/data retention only; no real model response success or full-product performance claim."
+  },
+  "crashRecovery": {
+    "targets": [
+      "Expert",
+      "ExpertTeam",
+      "Flow"
+    ],
+    "storage": "real file/SQLite and subprocess SIGKILL",
+    "runtime": "test driver; not native provider SDK",
+    "checks": [
+      "original Context",
+      "systemSessionId",
+      "RuntimeSessionRef",
+      "dispatch marker once"
+    ],
+    "flowOutcome": "safe failed EXECUTION_FAILED, association preserved; no model continuation success claim"
+  },
+  "takeover": {
+    "composition": "actual Desktop factory and Node facade",
+    "formats": [
+      "full envelope",
+      "controller-only"
+    ],
+    "checks": [
+      "original references",
+      "three accepted prompt effects only",
+      "resume adds zero effects",
+      "blocked Memory postprocessing does not block necessary release"
+    ]
+  },
+  "status": "engineering delivered; R3 acceptance not complete",
+  "remainingEvidence": [
+    "Real provider same-condition model performance",
+    "OS credential access",
+    "Electron renderer and normal Memory/Automation background load",
+    "All Expert/Team/Flow native SDK process crash recovery and cross-host takeover"
+  ],
+  "latestMainComparison": {
+    "fetchedAtUtc": "2026-10-03",
+    "originMain": "921376a446d9da878b8d9fa5c9f1df69ab323272",
+    "matchesImplementationBase": true
+  }
+}

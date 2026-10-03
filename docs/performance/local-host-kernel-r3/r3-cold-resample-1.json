@@ -1,0 +1,5989 @@
+{
+  "schemaVersion": "pragma.r2-compilation-probe/v1",
+  "startedAt": "2026-10-03T12:37:08.131Z",
+  "node": "v24.18.0",
+  "cpu": "Intel(R) Core(TM) i7-9750H CPU @ 2.60GHz",
+  "probeSha256": "d3bfb952822669482ea6f438036f7cc42ab297bbc6aef37f0a3873480784339e",
+  "commit": "dba3405a94edc22fc6042c7297f0fdcb04025f8a",
+  "sourceBefore": {
+    "sha256": "18b5258176b3a465d8dea62adf0b78f5dffc4c664103a8b3765efb36d96e7efb",
+    "files": [
+      "apps/desktop/src/main/features/missions/mission-runner-composition.ts",
+      "packages/local-host/src/missions/execution-service.ts",
+      "packages/local-host/src/missions/session-lifecycle.ts",
+      "packages/local-host/src/missions/flow-lifecycle.ts",
+      "packages/local-host/src/missions/repository/mission-store.ts",
+      "packages/local-host/src/missions/mission-execution-observer.ts",
+      "packages/local-host/src/missions/compile-service.ts",
+      "packages/local-host/src/missions/runtime-readiness.ts",
+      "packages/local-host/src/project-catalog.ts",
+      "packages/local-host/src/built-in-executors.ts",
+      "packages/local-host/src/node-mission-compiler.ts",
+      "packages/local-host/src/resources/resolvers.ts",
+      "packages/local-host/src/resources/capability-reader.ts",
+      "packages/local-host/src/resources/context-store-reader.ts",
+      "apps/desktop/src/main/features/projects/pragma-project-store.ts",
+      "apps/desktop/src/main/features/runtimes/runtime-availability.ts",
+      "apps/desktop/src/main/features/runtimes/runtime-environment-service.ts",
+      "packages/interpreter/src/compiler/project-compile.ts",
+      "packages/built-in-agents/src/builtin.ts"
+    ]
+  },
+  "scope": "Desktop Mission composition, isolated real Project/Mission/Capability/ContextStore/SQLite stores, fake Runtime and fixture verification/credential ports. Cold first run, retained-owner send, Capability/credential/system/model/permission/Context mount invalidation. No real model, renderer, Memory/Automation background load or performance acceptance.",
+  "lifecycleScope": "Monotonic fake Runtime dispatch/completion and production logger Core terminal/active-binding release/Mission publication markers. Publication is not renderer display; active-binding release is not native process termination or lease release.",
+  "counterMeaning": "Read counts are API calls, not physical I/O. projectHeadReads wraps ProjectStore.get. dslCompilerCalls wraps the real Interpreter PragmaProjectImpl.compile prototype for both project and built-in executors; storeCompileCalls/openedProjectCompileCalls identify entrypoints and must not be added to dslCompilerCalls. Cache flags and phases come from production logs. Readiness traverses the actual target closure on each side but Runtime health is a fixture port; plugin reads remain zero because this fixture declares no plugin.",
+  "scenario": "cold",
+  "samplesPerScenario": 40,
+  "operations": [
+    {
+      "missionId": "efb0fc96-cea2-49a9-8d66-dc53e545db46",
+      "group": "cold",
+      "sample": 0,
+      "preparationMs": 1049.3985389999998,
+      "lifecycleMarkers": [
+        {
+          "event": "fixture.dispatch",
+          "atMs": 4403.867918
+        },
+        {
+          "event": "fixture.model_completed",
+          "atMs": 4403.875297
+        },
+        {
+          "event": "execution.terminal_committed",
+          "atMs": 4597.852046,
+          "executionId": "f56bd03b-4d09-4ca1-b128-1c1e5a5925be",
+          "requestId": "e2918393-26f9-4d04-9d4e-3b7a53baea1a",
+          "elapsedMs": 1.6426730000002863
+        },
+        {
+          "event": "fixture.mission_status_published",
+          "atMs": 4599.621273,
+          "missionId": "efb0fc96-cea2-49a9-8d66-dc53e545db46",
+          "executionId": "f56bd03b-4d09-4ca1-b128-1c1e5a5925be",
+          "status": "succeeded"
+        },
+        {
+          "event": "mission.terminal_status_published",
+          "atMs": 4599.766448,
+          "executionId": "f56bd03b-4d09-4ca1-b128-1c1e5a5925be",
+          "missionId": "efb0fc96-cea2-49a9-8d66-dc53e545db46",
+          "requestId": "e2918393-26f9-4d04-9d4e-3b7a53baea1a",
+          "status": "succeeded"
+        },
+        {
+          "event": "session.active_binding_released",
+          "atMs": 4611.436194,
+          "executionId": "f56bd03b-4d09-4ca1-b128-1c1e5a5925be",
+          "requestId": "e2918393-26f9-4d04-9d4e-3b7a53baea1a",
+          "elapsedMs": 13.419758000000002
+        }
+      ],
+      "counters": {
+        "projectRevisionReads": 1,
+        "projectHeadReads": 0,
+        "projectOpens": 2,
+        "storeCompileCalls": 0,
+        "openedProjectCompileCalls": 1,
+        "activeCapabilityReads": 4,
+        "credentialFingerprints": 3,
+        "contextStoreReads": 0,
+        "dslCompilerCalls": 2,
+        "readinessRequests": 1,
+        "runtimeHealthProbes": 5,
+        "modelCatalogReads": 5,
+        "pluginReads": 0
+      },
+      "phases": [
+        {
+          "event": "mission.prepare_phase",
+          "missionId": "efb0fc96-cea2-49a9-8d66-dc53e545db46",
+          "phase": "prompt_admission_wait",
+          "durationMs": 0.11,
+          "elapsedMs": 0.11
+        },
+        {
+          "event": "mission.performance",
+          "missionId": "efb0fc96-cea2-49a9-8d66-dc53e545db46",
+          "phase": "identity_revision_read",
+          "elapsedMs": 15.47745900000018
+        },
+        {
+          "event": "mission.prepare_phase",
+          "missionId": "efb0fc96-cea2-49a9-8d66-dc53e545db46",
+          "phase": "mission_load_and_executor_ready",
+          "durationMs": 31.34,
+          "elapsedMs": 31.48
+        },
+        {
+          "event": "mission.prepare_phase",
+          "missionId": "efb0fc96-cea2-49a9-8d66-dc53e545db46",
+          "phase": "execution_context",
+          "durationMs": 9.66,
+          "elapsedMs": 41.34
+        },
+        {
+          "event": "mission.prepare_phase",
+          "missionId": "efb0fc96-cea2-49a9-8d66-dc53e545db46",
+          "phase": "default_agent_compile",
+          "durationMs": 54.88,
+          "elapsedMs": 96.38
+        },
+        {
+          "event": "mission.prepare_phase",
+          "missionId": "efb0fc96-cea2-49a9-8d66-dc53e545db46",
+          "phase": "expert_session_open",
+          "durationMs": 19.74,
+          "elapsedMs": 125.82,
+          "cacheHit": false
+        },
+        {
+          "event": "mission.prepare_phase",
+          "missionId": "efb0fc96-cea2-49a9-8d66-dc53e545db46",
+          "phase": "expert_session_prompt",
+          "durationMs": 852.05,
+          "elapsedMs": 982.35
+        }
+      ],
+      "sourcePin": {
+        "id": "studio",
+        "revision": 1
+      },
+      "compilationEnvironment": {
+        "fingerprint": "14a60927e29fb7cd046655f39eb3cf807cf26008b05405a84d069c8116f11634",
+        "capabilities": [
+          {
+            "capabilityId": "00000000-0000-4000-8000-000000000001",
+            "resolvedRevision": 1,
+            "fingerprint": "2a37d4a11e1513b3cd0516a1a95e22d9f539be3ed1af18a8347b6eaf498efe6b"
+          }
+        ]
+      }
+    },
+    {
+      "missionId": "a98dfb67-0475-4ade-9363-5c5ee4d42848",
+      "group": "cold",
+      "sample": 1,
+      "preparationMs": 248.2515459999995,
+      "lifecycleMarkers": [
+        {
+          "event": "fixture.dispatch",
+          "atMs": 5075.404916
+        },
+        {
+          "event": "fixture.model_completed",
+          "atMs": 5075.407215
+        },
+        {
+          "event": "execution.terminal_committed",
+          "atMs": 5103.9734,
+          "executionId": "9218f158-2cca-4d5d-b6c1-b455ca6d55c8",
+          "requestId": "5f749214-0ab0-43d0-b30d-2937eda0ce63",
+          "elapsedMs": 1.7780529999999999
+        },
+        {
+          "event": "fixture.mission_status_published",
+          "atMs": 5105.681344,
+          "missionId": "a98dfb67-0475-4ade-9363-5c5ee4d42848",
+          "executionId": "9218f158-2cca-4d5d-b6c1-b455ca6d55c8",
+          "status": "succeeded"
+        },
+        {
+          "event": "mission.terminal_status_published",
+          "atMs": 5105.81354,
+          "executionId": "9218f158-2cca-4d5d-b6c1-b455ca6d55c8",
+          "missionId": "a98dfb67-0475-4ade-9363-5c5ee4d42848",
+          "requestId": "5f749214-0ab0-43d0-b30d-2937eda0ce63",
+          "status": "succeeded"
+        },
+        {
+          "event": "session.active_binding_released",
+          "atMs": 5116.819163,
+          "executionId": "9218f158-2cca-4d5d-b6c1-b455ca6d55c8",
+          "requestId": "5f749214-0ab0-43d0-b30d-2937eda0ce63",
+          "elapsedMs": 12.711687999999413
+        }
+      ],
+      "counters": {
+        "projectRevisionReads": 1,
+        "projectHeadReads": 0,
+        "projectOpens": 1,
+        "storeCompileCalls": 0,
+        "openedProjectCompileCalls": 1,
+        "activeCapabilityReads": 4,
+        "credentialFingerprints": 3,
+        "contextStoreReads": 0,
+        "dslCompilerCalls": 2,
+        "readinessRequests": 1,
+        "runtimeHealthProbes": 4,
+        "modelCatalogReads": 4,
+        "pluginReads": 0
+      },
+      "phases": [
+        {
+          "event": "mission.prepare_phase",
+          "missionId": "a98dfb67-0475-4ade-9363-5c5ee4d42848",
+          "phase": "prompt_admission_wait",
+          "durationMs": 0.01,
+          "elapsedMs": 0.01
+        },
+        {
+          "event": "mission.performance",
+          "missionId": "a98dfb67-0475-4ade-9363-5c5ee4d42848",
+          "phase": "identity_revision_read",
+          "elapsedMs": 9.072886999999355
+        },
+        {
+          "event": "mission.prepare_phase",
+          "missionId": "a98dfb67-0475-4ade-9363-5c5ee4d42848",
+          "phase": "mission_load_and_executor_ready",
+          "durationMs": 18.41,
+          "elapsedMs": 18.48
+        },
+        {
+          "event": "mission.prepare_phase",
+          "missionId": "a98dfb67-0475-4ade-9363-5c5ee4d42848",
+          "phase": "execution_context",
+          "durationMs": 7.65,
+          "elapsedMs": 26.24
+        },
+        {
+          "event": "mission.prepare_phase",
+          "missionId": "a98dfb67-0475-4ade-9363-5c5ee4d42848",
+          "phase": "default_agent_compile",
+          "durationMs": 33.68,
+          "elapsedMs": 60.04
+        },
+        {
+          "event": "mission.prepare_phase",
+          "missionId": "a98dfb67-0475-4ade-9363-5c5ee4d42848",
+          "phase": "expert_session_open",
+          "durationMs": 12.41,
+          "elapsedMs": 72.56,
+          "cacheHit": false
+        },
+        {
+          "event": "mission.prepare_phase",
+          "missionId": "a98dfb67-0475-4ade-9363-5c5ee4d42848",
+          "phase": "expert_session_prompt",
+          "durationMs": 118.55,
+          "elapsedMs": 195.01
+        }
+      ],
+      "sourcePin": {
+        "id": "studio",
+        "revision": 1
+      },
+      "compilationEnvironment": {
+        "fingerprint": "14a60927e29fb7cd046655f39eb3cf807cf26008b05405a84d069c8116f11634",
+        "capabilities": [
+          {
+            "capabilityId": "00000000-0000-4000-8000-000000000001",
+            "resolvedRevision": 1,
+            "fingerprint": "2a37d4a11e1513b3cd0516a1a95e22d9f539be3ed1af18a8347b6eaf498efe6b"
+          }
+        ]
+      }
+    },
+    {
+      "missionId": "e262d73d-d20b-4e75-90b9-3df82d64ec58",
+      "group": "cold",
+      "sample": 2,
+      "preparationMs": 247.1025239999999,
+      "lifecycleMarkers": [
+        {
+          "event": "fixture.dispatch",
+          "atMs": 5567.570261
+        },
+        {
+          "event": "fixture.model_completed",
+          "atMs": 5567.572418
+        },
+        {
+          "event": "execution.terminal_committed",
+          "atMs": 5590.409314,
+          "executionId": "ddd67d4f-6c32-44d6-a3a4-ea5394e2c8d2",
+          "requestId": "a7cad053-d870-4162-98a3-ac233dda0a11",
+          "elapsedMs": 1.9796839999999065
+        },
+        {
+          "event": "fixture.mission_status_published",
+          "atMs": 5592.067767,
+          "missionId": "e262d73d-d20b-4e75-90b9-3df82d64ec58",
+          "executionId": "ddd67d4f-6c32-44d6-a3a4-ea5394e2c8d2",
+          "status": "succeeded"
+        },
+        {
+          "event": "mission.terminal_status_published",
+          "atMs": 5592.185419,
+          "executionId": "ddd67d4f-6c32-44d6-a3a4-ea5394e2c8d2",
+          "missionId": "e262d73d-d20b-4e75-90b9-3df82d64ec58",
+          "requestId": "a7cad053-d870-4162-98a3-ac233dda0a11",
+          "status": "succeeded"
+        },
+        {
+          "event": "session.active_binding_released",
+          "atMs": 5601.778196,
+          "executionId": "ddd67d4f-6c32-44d6-a3a4-ea5394e2c8d2",
+          "requestId": "a7cad053-d870-4162-98a3-ac233dda0a11",
+          "elapsedMs": 11.243899999999485
+        }
+      ],
+      "counters": {
+        "projectRevisionReads": 1,
+        "projectHeadReads": 0,
+        "projectOpens": 1,
+        "storeCompileCalls": 0,
+        "openedProjectCompileCalls": 1,
+        "activeCapabilityReads": 4,
+        "credentialFingerprints": 3,
+        "contextStoreReads": 0,
+        "dslCompilerCalls": 2,
+        "readinessRequests": 1,
+        "runtimeHealthProbes": 4,
+        "modelCatalogReads": 4,
+        "pluginReads": 0
+      },
+      "phases": [
+        {
+          "event": "mission.prepare_phase",
+          "missionId": "e262d73d-d20b-4e75-90b9-3df82d64ec58",
+          "phase": "prompt_admission_wait",
+          "durationMs": 0.01,
+          "elapsedMs": 0.01
+        },
+        {
+          "event": "mission.performance",
+          "missionId": "e262d73d-d20b-4e75-90b9-3df82d64ec58",
+          "phase": "identity_revision_read",
+          "elapsedMs": 8.428517000000284
+        },
+        {
+          "event": "mission.prepare_phase",
+          "missionId": "e262d73d-d20b-4e75-90b9-3df82d64ec58",
+          "phase": "mission_load_and_executor_ready",
+          "durationMs": 17.51,
+          "elapsedMs": 17.57
+        },
+        {
+          "event": "mission.prepare_phase",
+          "missionId": "e262d73d-d20b-4e75-90b9-3df82d64ec58",
+          "phase": "execution_context",
+          "durationMs": 7.49,
+          "elapsedMs": 25.15
+        },
+        {
+          "event": "mission.prepare_phase",
+          "missionId": "e262d73d-d20b-4e75-90b9-3df82d64ec58",
+          "phase": "default_agent_compile",
+          "durationMs": 32.64,
+          "elapsedMs": 57.9
+        },
+        {
+          "event": "mission.prepare_phase",
+          "missionId": "e262d73d-d20b-4e75-90b9-3df82d64ec58",
+          "phase": "expert_session_open",
+          "durationMs": 13.06,
+          "elapsedMs": 71.06,
+          "cacheHit": false
+        },
+        {
+          "event": "mission.prepare_phase",
+          "missionId": "e262d73d-d20b-4e75-90b9-3df82d64ec58",
+          "phase": "expert_session_prompt",
+          "durationMs": 119.18,
+          "elapsedMs": 194.12
+        }
+      ],
+      "sourcePin": {
+        "id": "studio",
+        "revision": 1
+      },
+      "compilationEnvironment": {
+        "fingerprint": "14a60927e29fb7cd046655f39eb3cf807cf26008b05405a84d069c8116f11634",
+        "capabilities": [
+          {
+            "capabilityId": "00000000-0000-4000-8000-000000000001",
+            "resolvedRevision": 1,
+            "fingerprint": "2a37d4a11e1513b3cd0516a1a95e22d9f539be3ed1af18a8347b6eaf498efe6b"
+          }
+        ]
+      }
+    },
+    {
+      "missionId": "d0376718-d463-45d4-94f6-699769f22a63",
+      "group": "cold",
+      "sample": 3,
+      "preparationMs": 240.9277059999995,
+      "lifecycleMarkers": [
+        {
+          "event": "fixture.dispatch",
+          "atMs": 6040.705762
+        },
+        {
+          "event": "fixture.model_completed",
+          "atMs": 6040.708084
+        },
+        {
+          "event": "execution.terminal_committed",
+          "atMs": 6061.377152,
+          "executionId": "027a1292-0241-4f3e-9654-7e88e921c29a",
+          "requestId": "28711cf0-11a1-4427-a9ce-95836954f882",
+          "elapsedMs": 2.011478999999781
+        },
+        {
+          "event": "fixture.mission_status_published",
+          "atMs": 6063.098902,
+          "missionId": "d0376718-d463-45d4-94f6-699769f22a63",
+          "executionId": "027a1292-0241-4f3e-9654-7e88e921c29a",
+          "status": "succeeded"
+        },
+        {
+          "event": "mission.terminal_status_published",
+          "atMs": 6063.215153,
+          "executionId": "027a1292-0241-4f3e-9654-7e88e921c29a",
+          "missionId": "d0376718-d463-45d4-94f6-699769f22a63",
+          "requestId": "28711cf0-11a1-4427-a9ce-95836954f882",
+          "status": "succeeded"
+        },
+        {
+          "event": "session.active_binding_released",
+          "atMs": 6073.981449,
+          "executionId": "027a1292-0241-4f3e-9654-7e88e921c29a",
+          "requestId": "28711cf0-11a1-4427-a9ce-95836954f882",
+          "elapsedMs": 12.486982000000353
+        }
+      ],
+      "counters": {
+        "projectRevisionReads": 1,
+        "projectHeadReads": 0,
+        "projectOpens": 1,
+        "storeCompileCalls": 0,
+        "openedProjectCompileCalls": 1,
+        "activeCapabilityReads": 4,
+        "credentialFingerprints": 3,
+        "contextStoreReads": 0,
+        "dslCompilerCalls": 2,
+        "readinessRequests": 1,
+        "runtimeHealthProbes": 4,
+        "modelCatalogReads": 4,
+        "pluginReads": 0
+      },
+      "phases": [
+        {
+          "event": "mission.prepare_phase",
+          "missionId": "d0376718-d463-45d4-94f6-699769f22a63",
+          "phase": "prompt_admission_wait",
+          "durationMs": 0.01,
+          "elapsedMs": 0.01
+        },
+        {
+          "event": "mission.performance",
+          "missionId": "d0376718-d463-45d4-94f6-699769f22a63",
+          "phase": "identity_revision_read",
+          "elapsedMs": 9.005816000000777
+        },
+        {
+          "event": "mission.prepare_phase",
+          "missionId": "d0376718-d463-45d4-94f6-699769f22a63",
+          "phase": "mission_load_and_executor_ready",
+          "durationMs": 20.73,
+          "elapsedMs": 20.79
+        },
+        {
+          "event": "mission.prepare_phase",
+          "missionId": "d0376718-d463-45d4-94f6-699769f22a63",
+          "phase": "execution_context",
+          "durationMs": 6.52,
+          "elapsedMs": 27.42
+        },
+        {
+          "event": "mission.prepare_phase",
+          "missionId": "d0376718-d463-45d4-94f6-699769f22a63",
+          "phase": "default_agent_compile",
+          "durationMs": 33.48,
+          "elapsedMs": 60.98
+        },
+        {
+          "event": "mission.prepare_phase",
+          "missionId": "d0376718-d463-45d4-94f6-699769f22a63",
+          "phase": "expert_session_open",
+          "durationMs": 11.95,
+          "elapsedMs": 73.05,
+          "cacheHit": false
+        },
+        {
+          "event": "mission.prepare_phase",
+          "missionId": "d0376718-d463-45d4-94f6-699769f22a63",
+          "phase": "expert_session_prompt",
+          "durationMs": 106.75,
+          "elapsedMs": 183.19
+        }
+      ],
+      "sourcePin": {
+        "id": "studio",
+        "revision": 1
+      },
+      "compilationEnvironment": {
+        "fingerprint": "14a60927e29fb7cd046655f39eb3cf807cf26008b05405a84d069c8116f11634",
+        "capabilities": [
+          {
+            "capabilityId": "00000000-0000-4000-8000-000000000001",
+            "resolvedRevision": 1,
+            "fingerprint": "2a37d4a11e1513b3cd0516a1a95e22d9f539be3ed1af18a8347b6eaf498efe6b"
+          }
+        ]
+      }
+    },
+    {
+      "missionId": "1c18c792-288c-4ce2-ac78-1a032cc1e9bb",
+      "group": "cold",
+      "sample": 4,
+      "preparationMs": 250.70645400000012,
+      "lifecycleMarkers": [
+        {
+          "event": "fixture.dispatch",
+          "atMs": 6514.367819
+        },
+        {
+          "event": "fixture.model_completed",
+          "atMs": 6514.370012
+        },
+        {
+          "event": "execution.terminal_committed",
+          "atMs": 6536.346594,
+          "executionId": "57d3422f-ad2b-4812-a1b4-f9b2498a9fef",
+          "requestId": "d32b64d0-55e5-4bfb-926a-07156b5c5aa4",
+          "elapsedMs": 2.0207739999996193
+        },
+        {
+          "event": "fixture.mission_status_published",
+          "atMs": 6537.972786,
+          "missionId": "1c18c792-288c-4ce2-ac78-1a032cc1e9bb",
+          "executionId": "57d3422f-ad2b-4812-a1b4-f9b2498a9fef",
+          "status": "succeeded"
+        },
+        {
+          "event": "mission.terminal_status_published",
+          "atMs": 6538.082367,
+          "executionId": "57d3422f-ad2b-4812-a1b4-f9b2498a9fef",
+          "missionId": "1c18c792-288c-4ce2-ac78-1a032cc1e9bb",
+          "requestId": "d32b64d0-55e5-4bfb-926a-07156b5c5aa4",
+          "status": "succeeded"
+        },
+        {
+          "event": "session.active_binding_released",
+          "atMs": 6547.115715,
+          "executionId": "57d3422f-ad2b-4812-a1b4-f9b2498a9fef",
+          "requestId": "d32b64d0-55e5-4bfb-926a-07156b5c5aa4",
+          "elapsedMs": 10.65181500000017
+        }
+      ],
+      "counters": {
+        "projectRevisionReads": 1,
+        "projectHeadReads": 0,
+        "projectOpens": 1,
+        "storeCompileCalls": 0,
+        "openedProjectCompileCalls": 1,
+        "activeCapabilityReads": 4,
+        "credentialFingerprints": 3,
+        "contextStoreReads": 0,
+        "dslCompilerCalls": 2,
+        "readinessRequests": 1,
+        "runtimeHealthProbes": 4,
+        "modelCatalogReads": 4,
+        "pluginReads": 0
+      },
+      "phases": [
+        {
+          "event": "mission.prepare_phase",
+          "missionId": "1c18c792-288c-4ce2-ac78-1a032cc1e9bb",
+          "phase": "prompt_admission_wait",
+          "durationMs": 0.01,
+          "elapsedMs": 0.01
+        },
+        {
+          "event": "mission.performance",
+          "missionId": "1c18c792-288c-4ce2-ac78-1a032cc1e9bb",
+          "phase": "identity_revision_read",
+          "elapsedMs": 7.5307999999995445
+        },
+        {
+          "event": "mission.prepare_phase",
+          "missionId": "1c18c792-288c-4ce2-ac78-1a032cc1e9bb",
+          "phase": "mission_load_and_executor_ready",
+          "durationMs": 15.49,
+          "elapsedMs": 15.54
+        },
+        {
+          "event": "mission.prepare_phase",
+          "missionId": "1c18c792-288c-4ce2-ac78-1a032cc1e9bb",
+          "phase": "execution_context",
+          "durationMs": 7.51,
+          "elapsedMs": 23.17
+        },
+        {
+          "event": "mission.prepare_phase",
+          "missionId": "1c18c792-288c-4ce2-ac78-1a032cc1e9bb",
+          "phase": "default_agent_compile",
+          "durationMs": 33.24,
+          "elapsedMs": 56.5
+        },
+        {
+          "event": "mission.prepare_phase",
+          "missionId": "1c18c792-288c-4ce2-ac78-1a032cc1e9bb",
+          "phase": "expert_session_open",
+          "durationMs": 9.91,
+          "elapsedMs": 66.51,
+          "cacheHit": false
+        },
+        {
+          "event": "mission.prepare_phase",
+          "missionId": "1c18c792-288c-4ce2-ac78-1a032cc1e9bb",
+          "phase": "expert_session_prompt",
+          "durationMs": 120.96,
+          "elapsedMs": 191.8
+        }
+      ],
+      "sourcePin": {
+        "id": "studio",
+        "revision": 1
+      },
+      "compilationEnvironment": {
+        "fingerprint": "14a60927e29fb7cd046655f39eb3cf807cf26008b05405a84d069c8116f11634",
+        "capabilities": [
+          {
+            "capabilityId": "00000000-0000-4000-8000-000000000001",
+            "resolvedRevision": 1,
+            "fingerprint": "2a37d4a11e1513b3cd0516a1a95e22d9f539be3ed1af18a8347b6eaf498efe6b"
+          }
+        ]
+      }
+    },
+    {
+      "missionId": "bb6c960a-143c-4247-aeb6-c3f90a6acb7f",
+      "group": "cold",
+      "sample": 5,
+      "preparationMs": 244.04996000000028,
+      "lifecycleMarkers": [
+        {
+          "event": "fixture.dispatch",
+          "atMs": 6971.995218
+        },
+        {
+          "event": "fixture.model_completed",
+          "atMs": 6971.99735
+        },
+        {
+          "event": "execution.terminal_committed",
+          "atMs": 6994.330258,
+          "executionId": "fc42e455-604a-403e-bfd2-bcc6ff8c7005",
+          "requestId": "77e40a2b-2d37-402c-8a43-25f941951d45",
+          "elapsedMs": 1.8766930000001594
+        },
+        {
+          "event": "fixture.mission_status_published",
+          "atMs": 6995.949741,
+          "missionId": "bb6c960a-143c-4247-aeb6-c3f90a6acb7f",
+          "executionId": "fc42e455-604a-403e-bfd2-bcc6ff8c7005",
+          "status": "succeeded"
+        },
+        {
+          "event": "mission.terminal_status_published",
+          "atMs": 6996.058269,
+          "executionId": "fc42e455-604a-403e-bfd2-bcc6ff8c7005",
+          "missionId": "bb6c960a-143c-4247-aeb6-c3f90a6acb7f",
+          "requestId": "77e40a2b-2d37-402c-8a43-25f941951d45",
+          "status": "succeeded"
+        },
+        {
+          "event": "session.active_binding_released",
+          "atMs": 7004.970011,
+          "executionId": "fc42e455-604a-403e-bfd2-bcc6ff8c7005",
+          "requestId": "77e40a2b-2d37-402c-8a43-25f941951d45",
+          "elapsedMs": 10.521401999999398
+        }
+      ],
+      "counters": {
+        "projectRevisionReads": 1,
+        "projectHeadReads": 0,
+        "projectOpens": 1,
+        "storeCompileCalls": 0,
+        "openedProjectCompileCalls": 1,
+        "activeCapabilityReads": 4,
+        "credentialFingerprints": 3,
+        "contextStoreReads": 0,
+        "dslCompilerCalls": 2,
+        "readinessRequests": 1,
+        "runtimeHealthProbes": 4,
+        "modelCatalogReads": 4,
+        "pluginReads": 0
+      },
+      "phases": [
+        {
+          "event": "mission.prepare_phase",
+          "missionId": "bb6c960a-143c-4247-aeb6-c3f90a6acb7f",
+          "phase": "prompt_admission_wait",
+          "durationMs": 0.01,
+          "elapsedMs": 0.01
+        },
+        {
+          "event": "mission.performance",
+          "missionId": "bb6c960a-143c-4247-aeb6-c3f90a6acb7f",
+          "phase": "identity_revision_read",
+          "elapsedMs": 8.67159300000003
+        },
+        {
+          "event": "mission.prepare_phase",
+          "missionId": "bb6c960a-143c-4247-aeb6-c3f90a6acb7f",
+          "phase": "mission_load_and_executor_ready",
+          "durationMs": 17.93,
+          "elapsedMs": 17.98
+        },
+        {
+          "event": "mission.prepare_phase",
+          "missionId": "bb6c960a-143c-4247-aeb6-c3f90a6acb7f",
+          "phase": "execution_context",
+          "durationMs": 7.19,
+          "elapsedMs": 25.26
+        },
+        {
+          "event": "mission.prepare_phase",
+          "missionId": "bb6c960a-143c-4247-aeb6-c3f90a6acb7f",
+          "phase": "default_agent_compile",
+          "durationMs": 32.43,
+          "elapsedMs": 57.78
+        },
+        {
+          "event": "mission.prepare_phase",
+          "missionId": "bb6c960a-143c-4247-aeb6-c3f90a6acb7f",
+          "phase": "expert_session_open",
+          "durationMs": 12.82,
+          "elapsedMs": 70.7,
+          "cacheHit": false
+        },
+        {
+          "event": "mission.prepare_phase",
+          "missionId": "bb6c960a-143c-4247-aeb6-c3f90a6acb7f",
+          "phase": "expert_session_prompt",
+          "durationMs": 115.37,
+          "elapsedMs": 189.96
+        }
+      ],
+      "sourcePin": {
+        "id": "studio",
+        "revision": 1
+      },
+      "compilationEnvironment": {
+        "fingerprint": "14a60927e29fb7cd046655f39eb3cf807cf26008b05405a84d069c8116f11634",
+        "capabilities": [
+          {
+            "capabilityId": "00000000-0000-4000-8000-000000000001",
+            "resolvedRevision": 1,
+            "fingerprint": "2a37d4a11e1513b3cd0516a1a95e22d9f539be3ed1af18a8347b6eaf498efe6b"
+          }
+        ]
+      }
+    },
+    {
+      "missionId": "2ed44310-d3ce-4505-98f6-2dfa0fb8f5ac",
+      "group": "cold",
+      "sample": 6,
+      "preparationMs": 246.50221299999976,
+      "lifecycleMarkers": [
+        {
+          "event": "fixture.dispatch",
+          "atMs": 7452.026657
+        },
+        {
+          "event": "fixture.model_completed",
+          "atMs": 7452.028825
+        },
+        {
+          "event": "execution.terminal_committed",
+          "atMs": 7473.625552,
+          "executionId": "9169ce04-9a00-4b9a-9d8b-c81ebcf7e34b",
+          "requestId": "3ee1fddd-c47f-4c80-9219-c526c1e247fd",
+          "elapsedMs": 1.9116880000001402
+        },
+        {
+          "event": "fixture.mission_status_published",
+          "atMs": 7475.418321,
+          "missionId": "2ed44310-d3ce-4505-98f6-2dfa0fb8f5ac",
+          "executionId": "9169ce04-9a00-4b9a-9d8b-c81ebcf7e34b",
+          "status": "succeeded"
+        },
+        {
+          "event": "mission.terminal_status_published",
+          "atMs": 7475.534794,
+          "executionId": "9169ce04-9a00-4b9a-9d8b-c81ebcf7e34b",
+          "missionId": "2ed44310-d3ce-4505-98f6-2dfa0fb8f5ac",
+          "requestId": "3ee1fddd-c47f-4c80-9219-c526c1e247fd",
+          "status": "succeeded"
+        },
+        {
+          "event": "session.active_binding_released",
+          "atMs": 7485.548548,
+          "executionId": "9169ce04-9a00-4b9a-9d8b-c81ebcf7e34b",
+          "requestId": "3ee1fddd-c47f-4c80-9219-c526c1e247fd",
+          "elapsedMs": 11.80069100000037
+        }
+      ],
+      "counters": {
+        "projectRevisionReads": 1,
+        "projectHeadReads": 0,
+        "projectOpens": 1,
+        "storeCompileCalls": 0,
+        "openedProjectCompileCalls": 1,
+        "activeCapabilityReads": 4,
+        "credentialFingerprints": 3,
+        "contextStoreReads": 0,
+        "dslCompilerCalls": 2,
+        "readinessRequests": 1,
+        "runtimeHealthProbes": 4,
+        "modelCatalogReads": 4,
+        "pluginReads": 0
+      },
+      "phases": [
+        {
+          "event": "mission.prepare_phase",
+          "missionId": "2ed44310-d3ce-4505-98f6-2dfa0fb8f5ac",
+          "phase": "prompt_admission_wait",
+          "durationMs": 0.01,
+          "elapsedMs": 0.01
+        },
+        {
+          "event": "mission.performance",
+          "missionId": "2ed44310-d3ce-4505-98f6-2dfa0fb8f5ac",
+          "phase": "identity_revision_read",
+          "elapsedMs": 8.319929999999658
+        },
+        {
+          "event": "mission.prepare_phase",
+          "missionId": "2ed44310-d3ce-4505-98f6-2dfa0fb8f5ac",
+          "phase": "mission_load_and_executor_ready",
+          "durationMs": 16.56,
+          "elapsedMs": 16.63
+        },
+        {
+          "event": "mission.prepare_phase",
+          "missionId": "2ed44310-d3ce-4505-98f6-2dfa0fb8f5ac",
+          "phase": "execution_context",
+          "durationMs": 6.22,
+          "elapsedMs": 22.92
+        },
+        {
+          "event": "mission.prepare_phase",
+          "missionId": "2ed44310-d3ce-4505-98f6-2dfa0fb8f5ac",
+          "phase": "default_agent_compile",
+          "durationMs": 32.76,
+          "elapsedMs": 55.76
+        },
+        {
+          "event": "mission.prepare_phase",
+          "missionId": "2ed44310-d3ce-4505-98f6-2dfa0fb8f5ac",
+          "phase": "expert_session_open",
+          "durationMs": 10.4,
+          "elapsedMs": 66.26,
+          "cacheHit": false
+        },
+        {
+          "event": "mission.prepare_phase",
+          "missionId": "2ed44310-d3ce-4505-98f6-2dfa0fb8f5ac",
+          "phase": "expert_session_prompt",
+          "durationMs": 121.14,
+          "elapsedMs": 190.63
+        }
+      ],
+      "sourcePin": {
+        "id": "studio",
+        "revision": 1
+      },
+      "compilationEnvironment": {
+        "fingerprint": "14a60927e29fb7cd046655f39eb3cf807cf26008b05405a84d069c8116f11634",
+        "capabilities": [
+          {
+            "capabilityId": "00000000-0000-4000-8000-000000000001",
+            "resolvedRevision": 1,
+            "fingerprint": "2a37d4a11e1513b3cd0516a1a95e22d9f539be3ed1af18a8347b6eaf498efe6b"
+          }
+        ]
+      }
+    },
+    {
+      "missionId": "4c351d32-9d06-4342-a1fb-5210ab5a48b2",
+      "group": "cold",
+      "sample": 7,
+      "preparationMs": 242.85217899999952,
+      "lifecycleMarkers": [
+        {
+          "event": "fixture.dispatch",
+          "atMs": 7912.426341
+        },
+        {
+          "event": "fixture.model_completed",
+          "atMs": 7912.428612
+        },
+        {
+          "event": "execution.terminal_committed",
+          "atMs": 7933.611406,
+          "executionId": "a8d82662-563a-46ea-a071-66a349b94c3f",
+          "requestId": "a4a40d8f-8087-4d7e-9eb0-4b10b94a2047",
+          "elapsedMs": 1.909005000000434
+        },
+        {
+          "event": "fixture.mission_status_published",
+          "atMs": 7935.230274,
+          "missionId": "4c351d32-9d06-4342-a1fb-5210ab5a48b2",
+          "executionId": "a8d82662-563a-46ea-a071-66a349b94c3f",
+          "status": "succeeded"
+        },
+        {
+          "event": "mission.terminal_status_published",
+          "atMs": 7935.350219,
+          "executionId": "a8d82662-563a-46ea-a071-66a349b94c3f",
+          "missionId": "4c351d32-9d06-4342-a1fb-5210ab5a48b2",
+          "requestId": "a4a40d8f-8087-4d7e-9eb0-4b10b94a2047",
+          "status": "succeeded"
+        },
+        {
+          "event": "session.active_binding_released",
+          "atMs": 7945.441587,
+          "executionId": "a8d82662-563a-46ea-a071-66a349b94c3f",
+          "requestId": "a4a40d8f-8087-4d7e-9eb0-4b10b94a2047",
+          "elapsedMs": 11.70535000000018
+        }
+      ],
+      "counters": {
+        "projectRevisionReads": 1,
+        "projectHeadReads": 0,
+        "projectOpens": 1,
+        "storeCompileCalls": 0,
+        "openedProjectCompileCalls": 1,
+        "activeCapabilityReads": 4,
+        "credentialFingerprints": 3,
+        "contextStoreReads": 0,
+        "dslCompilerCalls": 2,
+        "readinessRequests": 1,
+        "runtimeHealthProbes": 4,
+        "modelCatalogReads": 4,
+        "pluginReads": 0
+      },
+      "phases": [
+        {
+          "event": "mission.prepare_phase",
+          "missionId": "4c351d32-9d06-4342-a1fb-5210ab5a48b2",
+          "phase": "prompt_admission_wait",
+          "durationMs": 0.01,
+          "elapsedMs": 0.01
+        },
+        {
+          "event": "mission.performance",
+          "missionId": "4c351d32-9d06-4342-a1fb-5210ab5a48b2",
+          "phase": "identity_revision_read",
+          "elapsedMs": 7.6299840000001495
+        },
+        {
+          "event": "mission.prepare_phase",
+          "missionId": "4c351d32-9d06-4342-a1fb-5210ab5a48b2",
+          "phase": "mission_load_and_executor_ready",
+          "durationMs": 16.41,
+          "elapsedMs": 16.46
+        },
+        {
+          "event": "mission.prepare_phase",
+          "missionId": "4c351d32-9d06-4342-a1fb-5210ab5a48b2",
+          "phase": "execution_context",
+          "durationMs": 7.17,
+          "elapsedMs": 23.73
+        },
+        {
+          "event": "mission.prepare_phase",
+          "missionId": "4c351d32-9d06-4342-a1fb-5210ab5a48b2",
+          "phase": "default_agent_compile",
+          "durationMs": 30.87,
+          "elapsedMs": 54.69
+        },
+        {
+          "event": "mission.prepare_phase",
+          "missionId": "4c351d32-9d06-4342-a1fb-5210ab5a48b2",
+          "phase": "expert_session_open",
+          "durationMs": 10.91,
+          "elapsedMs": 65.69,
+          "cacheHit": false
+        },
+        {
+          "event": "mission.prepare_phase",
+          "missionId": "4c351d32-9d06-4342-a1fb-5210ab5a48b2",
+          "phase": "expert_session_prompt",
+          "durationMs": 115.99,
+          "elapsedMs": 185.24
+        }
+      ],
+      "sourcePin": {
+        "id": "studio",
+        "revision": 1
+      },
+      "compilationEnvironment": {
+        "fingerprint": "14a60927e29fb7cd046655f39eb3cf807cf26008b05405a84d069c8116f11634",
+        "capabilities": [
+          {
+            "capabilityId": "00000000-0000-4000-8000-000000000001",
+            "resolvedRevision": 1,
+            "fingerprint": "2a37d4a11e1513b3cd0516a1a95e22d9f539be3ed1af18a8347b6eaf498efe6b"
+          }
+        ]
+      }
+    },
+    {
+      "missionId": "9a811482-e079-4f72-b6ff-04481060f98e",
+      "group": "cold",
+      "sample": 8,
+      "preparationMs": 239.02465800000027,
+      "lifecycleMarkers": [
+        {
+          "event": "fixture.dispatch",
+          "atMs": 8360.616471
+        },
+        {
+          "event": "fixture.model_completed",
+          "atMs": 8360.618716
+        },
+        {
+          "event": "execution.terminal_committed",
+          "atMs": 8381.484611,
+          "executionId": "77505198-0904-447a-bca1-60f60d4b6681",
+          "requestId": "919bfd9c-999d-491a-a342-0df9c2011745",
+          "elapsedMs": 1.8203859999994165
+        },
+        {
+          "event": "fixture.mission_status_published",
+          "atMs": 8383.1352,
+          "missionId": "9a811482-e079-4f72-b6ff-04481060f98e",
+          "executionId": "77505198-0904-447a-bca1-60f60d4b6681",
+          "status": "succeeded"
+        },
+        {
+          "event": "mission.terminal_status_published",
+          "atMs": 8383.241668,
+          "executionId": "77505198-0904-447a-bca1-60f60d4b6681",
+          "missionId": "9a811482-e079-4f72-b6ff-04481060f98e",
+          "requestId": "919bfd9c-999d-491a-a342-0df9c2011745",
+          "status": "succeeded"
+        },
+        {
+          "event": "session.active_binding_released",
+          "atMs": 8393.56373,
+          "executionId": "77505198-0904-447a-bca1-60f60d4b6681",
+          "requestId": "919bfd9c-999d-491a-a342-0df9c2011745",
+          "elapsedMs": 11.962892999999895
+        }
+      ],
+      "counters": {
+        "projectRevisionReads": 1,
+        "projectHeadReads": 0,
+        "projectOpens": 1,
+        "storeCompileCalls": 0,
+        "openedProjectCompileCalls": 1,
+        "activeCapabilityReads": 4,
+        "credentialFingerprints": 3,
+        "contextStoreReads": 0,
+        "dslCompilerCalls": 2,
+        "readinessRequests": 1,
+        "runtimeHealthProbes": 4,
+        "modelCatalogReads": 4,
+        "pluginReads": 0
+      },
+      "phases": [
+        {
+          "event": "mission.prepare_phase",
+          "missionId": "9a811482-e079-4f72-b6ff-04481060f98e",
+          "phase": "prompt_admission_wait",
+          "durationMs": 0.01,
+          "elapsedMs": 0.01
+        },
+        {
+          "event": "mission.performance",
+          "missionId": "9a811482-e079-4f72-b6ff-04481060f98e",
+          "phase": "identity_revision_read",
+          "elapsedMs": 9.083705000000009
+        },
+        {
+          "event": "mission.prepare_phase",
+          "missionId": "9a811482-e079-4f72-b6ff-04481060f98e",
+          "phase": "mission_load_and_executor_ready",
+          "durationMs": 17.98,
+          "elapsedMs": 18.03
+        },
+        {
+          "event": "mission.prepare_phase",
+          "missionId": "9a811482-e079-4f72-b6ff-04481060f98e",
+          "phase": "execution_context",
+          "durationMs": 7.05,
+          "elapsedMs": 25.18
+        },
+        {
+          "event": "mission.prepare_phase",
+          "missionId": "9a811482-e079-4f72-b6ff-04481060f98e",
+          "phase": "default_agent_compile",
+          "durationMs": 29.31,
+          "elapsedMs": 54.57
+        },
+        {
+          "event": "mission.prepare_phase",
+          "missionId": "9a811482-e079-4f72-b6ff-04481060f98e",
+          "phase": "expert_session_open",
+          "durationMs": 12.7,
+          "elapsedMs": 67.45,
+          "cacheHit": false
+        },
+        {
+          "event": "mission.prepare_phase",
+          "missionId": "9a811482-e079-4f72-b6ff-04481060f98e",
+          "phase": "expert_session_prompt",
+          "durationMs": 115.02,
+          "elapsedMs": 186.17
+        }
+      ],
+      "sourcePin": {
+        "id": "studio",
+        "revision": 1
+      },
+      "compilationEnvironment": {
+        "fingerprint": "14a60927e29fb7cd046655f39eb3cf807cf26008b05405a84d069c8116f11634",
+        "capabilities": [
+          {
+            "capabilityId": "00000000-0000-4000-8000-000000000001",
+            "resolvedRevision": 1,
+            "fingerprint": "2a37d4a11e1513b3cd0516a1a95e22d9f539be3ed1af18a8347b6eaf498efe6b"
+          }
+        ]
+      }
+    },
+    {
+      "missionId": "5a6f25c6-3ecd-4aeb-ab17-3b62fdbf0b89",
+      "group": "cold",
+      "sample": 9,
+      "preparationMs": 242.67478499999925,
+      "lifecycleMarkers": [
+        {
+          "event": "fixture.dispatch",
+          "atMs": 8818.572553
+        },
+        {
+          "event": "fixture.model_completed",
+          "atMs": 8818.579792
+        },
+        {
+          "event": "execution.terminal_committed",
+          "atMs": 8840.068762,
+          "executionId": "673a0e2f-edca-464b-bbcc-5462db1b22d6",
+          "requestId": "df842271-9299-49d5-b167-a7ff9f3715ed",
+          "elapsedMs": 2.021710000000894
+        },
+        {
+          "event": "fixture.mission_status_published",
+          "atMs": 8841.84062,
+          "missionId": "5a6f25c6-3ecd-4aeb-ab17-3b62fdbf0b89",
+          "executionId": "673a0e2f-edca-464b-bbcc-5462db1b22d6",
+          "status": "succeeded"
+        },
+        {
+          "event": "mission.terminal_status_published",
+          "atMs": 8841.954089,
+          "executionId": "673a0e2f-edca-464b-bbcc-5462db1b22d6",
+          "missionId": "5a6f25c6-3ecd-4aeb-ab17-3b62fdbf0b89",
+          "requestId": "df842271-9299-49d5-b167-a7ff9f3715ed",
+          "status": "succeeded"
+        },
+        {
+          "event": "session.active_binding_released",
+          "atMs": 8851.481927,
+          "executionId": "673a0e2f-edca-464b-bbcc-5462db1b22d6",
+          "requestId": "df842271-9299-49d5-b167-a7ff9f3715ed",
+          "elapsedMs": 11.302920000000086
+        }
+      ],
+      "counters": {
+        "projectRevisionReads": 1,
+        "projectHeadReads": 0,
+        "projectOpens": 1,
+        "storeCompileCalls": 0,
+        "openedProjectCompileCalls": 1,
+        "activeCapabilityReads": 4,
+        "credentialFingerprints": 3,
+        "contextStoreReads": 0,
+        "dslCompilerCalls": 2,
+        "readinessRequests": 1,
+        "runtimeHealthProbes": 4,
+        "modelCatalogReads": 4,
+        "pluginReads": 0
+      },
+      "phases": [
+        {
+          "event": "mission.prepare_phase",
+          "missionId": "5a6f25c6-3ecd-4aeb-ab17-3b62fdbf0b89",
+          "phase": "prompt_admission_wait",
+          "durationMs": 0.01,
+          "elapsedMs": 0.01
+        },
+        {
+          "event": "mission.performance",
+          "missionId": "5a6f25c6-3ecd-4aeb-ab17-3b62fdbf0b89",
+          "phase": "identity_revision_read",
+          "elapsedMs": 8.964121000000887
+        },
+        {
+          "event": "mission.prepare_phase",
+          "missionId": "5a6f25c6-3ecd-4aeb-ab17-3b62fdbf0b89",
+          "phase": "mission_load_and_executor_ready",
+          "durationMs": 18.36,
+          "elapsedMs": 18.41
+        },
+        {
+          "event": "mission.prepare_phase",
+          "missionId": "5a6f25c6-3ecd-4aeb-ab17-3b62fdbf0b89",
+          "phase": "execution_context",
+          "durationMs": 7.25,
+          "elapsedMs": 25.76
+        },
+        {
+          "event": "mission.prepare_phase",
+          "missionId": "5a6f25c6-3ecd-4aeb-ab17-3b62fdbf0b89",
+          "phase": "default_agent_compile",
+          "durationMs": 30.18,
+          "elapsedMs": 56.03
+        },
+        {
+          "event": "mission.prepare_phase",
+          "missionId": "5a6f25c6-3ecd-4aeb-ab17-3b62fdbf0b89",
+          "phase": "expert_session_open",
+          "durationMs": 12.05,
+          "elapsedMs": 68.18,
+          "cacheHit": false
+        },
+        {
+          "event": "mission.prepare_phase",
+          "missionId": "5a6f25c6-3ecd-4aeb-ab17-3b62fdbf0b89",
+          "phase": "expert_session_prompt",
+          "durationMs": 116.89,
+          "elapsedMs": 188.6
+        }
+      ],
+      "sourcePin": {
+        "id": "studio",
+        "revision": 1
+      },
+      "compilationEnvironment": {
+        "fingerprint": "14a60927e29fb7cd046655f39eb3cf807cf26008b05405a84d069c8116f11634",
+        "capabilities": [
+          {
+            "capabilityId": "00000000-0000-4000-8000-000000000001",
+            "resolvedRevision": 1,
+            "fingerprint": "2a37d4a11e1513b3cd0516a1a95e22d9f539be3ed1af18a8347b6eaf498efe6b"
+          }
+        ]
+      }
+    },
+    {
+      "missionId": "f1ffcb96-3a67-4dfd-aab5-0332fe30bf43",
+      "group": "cold",
+      "sample": 10,
+      "preparationMs": 237.7869640000008,
+      "lifecycleMarkers": [
+        {
+          "event": "fixture.dispatch",
+          "atMs": 9286.238343
+        },
+        {
+          "event": "fixture.model_completed",
+          "atMs": 9286.240089
+        },
+        {
+          "event": "execution.terminal_committed",
+          "atMs": 9306.520224,
+          "executionId": "795c11cb-0d2c-4e0a-a878-18a5505cd3a8",
+          "requestId": "60f69072-d210-4933-82cc-6ac9efc87ea0",
+          "elapsedMs": 1.8027240000010352
+        },
+        {
+          "event": "fixture.mission_status_published",
+          "atMs": 9308.163735,
+          "missionId": "f1ffcb96-3a67-4dfd-aab5-0332fe30bf43",
+          "executionId": "795c11cb-0d2c-4e0a-a878-18a5505cd3a8",
+          "status": "succeeded"
+        },
+        {
+          "event": "mission.terminal_status_published",
+          "atMs": 9308.268208,
+          "executionId": "795c11cb-0d2c-4e0a-a878-18a5505cd3a8",
+          "missionId": "f1ffcb96-3a67-4dfd-aab5-0332fe30bf43",
+          "requestId": "60f69072-d210-4933-82cc-6ac9efc87ea0",
+          "status": "succeeded"
+        },
+        {
+          "event": "session.active_binding_released",
+          "atMs": 9317.304948,
+          "executionId": "795c11cb-0d2c-4e0a-a878-18a5505cd3a8",
+          "requestId": "60f69072-d210-4933-82cc-6ac9efc87ea0",
+          "elapsedMs": 10.672717999999804
+        }
+      ],
+      "counters": {
+        "projectRevisionReads": 1,
+        "projectHeadReads": 0,
+        "projectOpens": 1,
+        "storeCompileCalls": 0,
+        "openedProjectCompileCalls": 1,
+        "activeCapabilityReads": 4,
+        "credentialFingerprints": 3,
+        "contextStoreReads": 0,
+        "dslCompilerCalls": 2,
+        "readinessRequests": 1,
+        "runtimeHealthProbes": 4,
+        "modelCatalogReads": 4,
+        "pluginReads": 0
+      },
+      "phases": [
+        {
+          "event": "mission.prepare_phase",
+          "missionId": "f1ffcb96-3a67-4dfd-aab5-0332fe30bf43",
+          "phase": "prompt_admission_wait",
+          "durationMs": 0,
+          "elapsedMs": 0
+        },
+        {
+          "event": "mission.performance",
+          "missionId": "f1ffcb96-3a67-4dfd-aab5-0332fe30bf43",
+          "phase": "identity_revision_read",
+          "elapsedMs": 8.630349999999453
+        },
+        {
+          "event": "mission.prepare_phase",
+          "missionId": "f1ffcb96-3a67-4dfd-aab5-0332fe30bf43",
+          "phase": "mission_load_and_executor_ready",
+          "durationMs": 18.39,
+          "elapsedMs": 18.46
+        },
+        {
+          "event": "mission.prepare_phase",
+          "missionId": "f1ffcb96-3a67-4dfd-aab5-0332fe30bf43",
+          "phase": "execution_context",
+          "durationMs": 6.21,
+          "elapsedMs": 24.77
+        },
+        {
+          "event": "mission.prepare_phase",
+          "missionId": "f1ffcb96-3a67-4dfd-aab5-0332fe30bf43",
+          "phase": "default_agent_compile",
+          "durationMs": 31.3,
+          "elapsedMs": 56.15
+        },
+        {
+          "event": "mission.prepare_phase",
+          "missionId": "f1ffcb96-3a67-4dfd-aab5-0332fe30bf43",
+          "phase": "expert_session_open",
+          "durationMs": 12.39,
+          "elapsedMs": 68.66,
+          "cacheHit": false
+        },
+        {
+          "event": "mission.prepare_phase",
+          "missionId": "f1ffcb96-3a67-4dfd-aab5-0332fe30bf43",
+          "phase": "expert_session_prompt",
+          "durationMs": 109.19,
+          "elapsedMs": 181.06
+        }
+      ],
+      "sourcePin": {
+        "id": "studio",
+        "revision": 1
+      },
+      "compilationEnvironment": {
+        "fingerprint": "14a60927e29fb7cd046655f39eb3cf807cf26008b05405a84d069c8116f11634",
+        "capabilities": [
+          {
+            "capabilityId": "00000000-0000-4000-8000-000000000001",
+            "resolvedRevision": 1,
+            "fingerprint": "2a37d4a11e1513b3cd0516a1a95e22d9f539be3ed1af18a8347b6eaf498efe6b"
+          }
+        ]
+      }
+    },
+    {
+      "missionId": "e1e73529-64ca-4352-9792-51160de597d2",
+      "group": "cold",
+      "sample": 11,
+      "preparationMs": 253.38298199999917,
+      "lifecycleMarkers": [
+        {
+          "event": "fixture.dispatch",
+          "atMs": 9763.114261
+        },
+        {
+          "event": "fixture.model_completed",
+          "atMs": 9763.114953
+        },
+        {
+          "event": "execution.terminal_committed",
+          "atMs": 9785.121325,
+          "executionId": "acd7f893-e4d1-466a-a4c0-b94c0a2b4eec",
+          "requestId": "8d1fca8d-c300-4328-9179-15e7dd1f8e8f",
+          "elapsedMs": 1.9672859999991488
+        },
+        {
+          "event": "fixture.mission_status_published",
+          "atMs": 9786.902423,
+          "missionId": "e1e73529-64ca-4352-9792-51160de597d2",
+          "executionId": "acd7f893-e4d1-466a-a4c0-b94c0a2b4eec",
+          "status": "succeeded"
+        },
+        {
+          "event": "mission.terminal_status_published",
+          "atMs": 9787.02796,
+          "executionId": "acd7f893-e4d1-466a-a4c0-b94c0a2b4eec",
+          "missionId": "e1e73529-64ca-4352-9792-51160de597d2",
+          "requestId": "8d1fca8d-c300-4328-9179-15e7dd1f8e8f",
+          "status": "succeeded"
+        },
+        {
+          "event": "session.active_binding_released",
+          "atMs": 9796.902798,
+          "executionId": "acd7f893-e4d1-466a-a4c0-b94c0a2b4eec",
+          "requestId": "8d1fca8d-c300-4328-9179-15e7dd1f8e8f",
+          "elapsedMs": 11.667002000000139
+        }
+      ],
+      "counters": {
+        "projectRevisionReads": 1,
+        "projectHeadReads": 0,
+        "projectOpens": 1,
+        "storeCompileCalls": 0,
+        "openedProjectCompileCalls": 1,
+        "activeCapabilityReads": 4,
+        "credentialFingerprints": 3,
+        "contextStoreReads": 0,
+        "dslCompilerCalls": 2,
+        "readinessRequests": 1,
+        "runtimeHealthProbes": 4,
+        "modelCatalogReads": 4,
+        "pluginReads": 0
+      },
+      "phases": [
+        {
+          "event": "mission.prepare_phase",
+          "missionId": "e1e73529-64ca-4352-9792-51160de597d2",
+          "phase": "prompt_admission_wait",
+          "durationMs": 0,
+          "elapsedMs": 0
+        },
+        {
+          "event": "mission.performance",
+          "missionId": "e1e73529-64ca-4352-9792-51160de597d2",
+          "phase": "identity_revision_read",
+          "elapsedMs": 7.555021000000124
+        },
+        {
+          "event": "mission.prepare_phase",
+          "missionId": "e1e73529-64ca-4352-9792-51160de597d2",
+          "phase": "mission_load_and_executor_ready",
+          "durationMs": 15.86,
+          "elapsedMs": 15.93
+        },
+        {
+          "event": "mission.prepare_phase",
+          "missionId": "e1e73529-64ca-4352-9792-51160de597d2",
+          "phase": "execution_context",
+          "durationMs": 7.08,
+          "elapsedMs": 23.09
+        },
+        {
+          "event": "mission.prepare_phase",
+          "missionId": "e1e73529-64ca-4352-9792-51160de597d2",
+          "phase": "default_agent_compile",
+          "durationMs": 31.77,
+          "elapsedMs": 54.94
+        },
+        {
+          "event": "mission.prepare_phase",
+          "missionId": "e1e73529-64ca-4352-9792-51160de597d2",
+          "phase": "expert_session_open",
+          "durationMs": 10.69,
+          "elapsedMs": 65.73,
+          "cacheHit": false
+        },
+        {
+          "event": "mission.prepare_phase",
+          "missionId": "e1e73529-64ca-4352-9792-51160de597d2",
+          "phase": "expert_session_prompt",
+          "durationMs": 123.49,
+          "elapsedMs": 192.17
+        }
+      ],
+      "sourcePin": {
+        "id": "studio",
+        "revision": 1
+      },
+      "compilationEnvironment": {
+        "fingerprint": "14a60927e29fb7cd046655f39eb3cf807cf26008b05405a84d069c8116f11634",
+        "capabilities": [
+          {
+            "capabilityId": "00000000-0000-4000-8000-000000000001",
+            "resolvedRevision": 1,
+            "fingerprint": "2a37d4a11e1513b3cd0516a1a95e22d9f539be3ed1af18a8347b6eaf498efe6b"
+          }
+        ]
+      }
+    },
+    {
+      "missionId": "fcdc5c0e-f33e-4954-99f7-84cdd5d9eb60",
+      "group": "cold",
+      "sample": 12,
+      "preparationMs": 249.72339999999895,
+      "lifecycleMarkers": [
+        {
+          "event": "fixture.dispatch",
+          "atMs": 10249.732722
+        },
+        {
+          "event": "fixture.model_completed",
+          "atMs": 10249.733341
+        },
+        {
+          "event": "execution.terminal_committed",
+          "atMs": 10271.01308,
+          "executionId": "8c18cda8-742e-4f23-a99a-d696cf0201bc",
+          "requestId": "13755a3b-50f9-49ea-802f-eefe98d7137a",
+          "elapsedMs": 1.966937000001053
+        },
+        {
+          "event": "fixture.mission_status_published",
+          "atMs": 10272.745611,
+          "missionId": "fcdc5c0e-f33e-4954-99f7-84cdd5d9eb60",
+          "executionId": "8c18cda8-742e-4f23-a99a-d696cf0201bc",
+          "status": "succeeded"
+        },
+        {
+          "event": "mission.terminal_status_published",
+          "atMs": 10272.84447,
+          "executionId": "8c18cda8-742e-4f23-a99a-d696cf0201bc",
+          "missionId": "fcdc5c0e-f33e-4954-99f7-84cdd5d9eb60",
+          "requestId": "13755a3b-50f9-49ea-802f-eefe98d7137a",
+          "status": "succeeded"
+        },
+        {
+          "event": "session.active_binding_released",
+          "atMs": 10282.497089,
+          "executionId": "8c18cda8-742e-4f23-a99a-d696cf0201bc",
+          "requestId": "13755a3b-50f9-49ea-802f-eefe98d7137a",
+          "elapsedMs": 11.364410000000134
+        }
+      ],
+      "counters": {
+        "projectRevisionReads": 1,
+        "projectHeadReads": 0,
+        "projectOpens": 1,
+        "storeCompileCalls": 0,
+        "openedProjectCompileCalls": 1,
+        "activeCapabilityReads": 4,
+        "credentialFingerprints": 3,
+        "contextStoreReads": 0,
+        "dslCompilerCalls": 2,
+        "readinessRequests": 1,
+        "runtimeHealthProbes": 4,
+        "modelCatalogReads": 4,
+        "pluginReads": 0
+      },
+      "phases": [
+        {
+          "event": "mission.prepare_phase",
+          "missionId": "fcdc5c0e-f33e-4954-99f7-84cdd5d9eb60",
+          "phase": "prompt_admission_wait",
+          "durationMs": 0,
+          "elapsedMs": 0
+        },
+        {
+          "event": "mission.performance",
+          "missionId": "fcdc5c0e-f33e-4954-99f7-84cdd5d9eb60",
+          "phase": "identity_revision_read",
+          "elapsedMs": 9.409487999999328
+        },
+        {
+          "event": "mission.prepare_phase",
+          "missionId": "fcdc5c0e-f33e-4954-99f7-84cdd5d9eb60",
+          "phase": "mission_load_and_executor_ready",
+          "durationMs": 18.94,
+          "elapsedMs": 18.99
+        },
+        {
+          "event": "mission.prepare_phase",
+          "missionId": "fcdc5c0e-f33e-4954-99f7-84cdd5d9eb60",
+          "phase": "execution_context",
+          "durationMs": 6.05,
+          "elapsedMs": 25.13
+        },
+        {
+          "event": "mission.prepare_phase",
+          "missionId": "fcdc5c0e-f33e-4954-99f7-84cdd5d9eb60",
+          "phase": "default_agent_compile",
+          "durationMs": 32.53,
+          "elapsedMs": 57.74
+        },
+        {
+          "event": "mission.prepare_phase",
+          "missionId": "fcdc5c0e-f33e-4954-99f7-84cdd5d9eb60",
+          "phase": "expert_session_open",
+          "durationMs": 12,
+          "elapsedMs": 69.83,
+          "cacheHit": false
+        },
+        {
+          "event": "mission.prepare_phase",
+          "missionId": "fcdc5c0e-f33e-4954-99f7-84cdd5d9eb60",
+          "phase": "expert_session_prompt",
+          "durationMs": 109.66,
+          "elapsedMs": 182.61
+        }
+      ],
+      "sourcePin": {
+        "id": "studio",
+        "revision": 1
+      },
+      "compilationEnvironment": {
+        "fingerprint": "14a60927e29fb7cd046655f39eb3cf807cf26008b05405a84d069c8116f11634",
+        "capabilities": [
+          {
+            "capabilityId": "00000000-0000-4000-8000-000000000001",
+            "resolvedRevision": 1,
+            "fingerprint": "2a37d4a11e1513b3cd0516a1a95e22d9f539be3ed1af18a8347b6eaf498efe6b"
+          }
+        ]
+      }
+    },
+    {
+      "missionId": "4cf61d43-44f3-4e23-8b23-878fa45b04bc",
+      "group": "cold",
+      "sample": 13,
+      "preparationMs": 245.86488199999985,
+      "lifecycleMarkers": [
+        {
+          "event": "fixture.dispatch",
+          "atMs": 10711.839927
+        },
+        {
+          "event": "fixture.model_completed",
+          "atMs": 10711.840532
+        },
+        {
+          "event": "execution.terminal_committed",
+          "atMs": 10733.241369,
+          "executionId": "9e0f3e36-30d8-4c78-b748-5fdd83ccd0e8",
+          "requestId": "a1d8f0ca-8a05-4442-9902-8ff81c3961c0",
+          "elapsedMs": 1.9941490000001068
+        },
+        {
+          "event": "fixture.mission_status_published",
+          "atMs": 10734.913854,
+          "missionId": "4cf61d43-44f3-4e23-8b23-878fa45b04bc",
+          "executionId": "9e0f3e36-30d8-4c78-b748-5fdd83ccd0e8",
+          "status": "succeeded"
+        },
+        {
+          "event": "mission.terminal_status_published",
+          "atMs": 10735.022322,
+          "executionId": "9e0f3e36-30d8-4c78-b748-5fdd83ccd0e8",
+          "missionId": "4cf61d43-44f3-4e23-8b23-878fa45b04bc",
+          "requestId": "a1d8f0ca-8a05-4442-9902-8ff81c3961c0",
+          "status": "succeeded"
+        },
+        {
+          "event": "session.active_binding_released",
+          "atMs": 10745.380977,
+          "executionId": "9e0f3e36-30d8-4c78-b748-5fdd83ccd0e8",
+          "requestId": "a1d8f0ca-8a05-4442-9902-8ff81c3961c0",
+          "elapsedMs": 12.036831999999777
+        }
+      ],
+      "counters": {
+        "projectRevisionReads": 1,
+        "projectHeadReads": 0,
+        "projectOpens": 1,
+        "storeCompileCalls": 0,
+        "openedProjectCompileCalls": 1,
+        "activeCapabilityReads": 4,
+        "credentialFingerprints": 3,
+        "contextStoreReads": 0,
+        "dslCompilerCalls": 2,
+        "readinessRequests": 1,
+        "runtimeHealthProbes": 4,
+        "modelCatalogReads": 4,
+        "pluginReads": 0
+      },
+      "phases": [
+        {
+          "event": "mission.prepare_phase",
+          "missionId": "4cf61d43-44f3-4e23-8b23-878fa45b04bc",
+          "phase": "prompt_admission_wait",
+          "durationMs": 0,
+          "elapsedMs": 0
+        },
+        {
+          "event": "mission.performance",
+          "missionId": "4cf61d43-44f3-4e23-8b23-878fa45b04bc",
+          "phase": "identity_revision_read",
+          "elapsedMs": 7.4344659999987925
+        },
+        {
+          "event": "mission.prepare_phase",
+          "missionId": "4cf61d43-44f3-4e23-8b23-878fa45b04bc",
+          "phase": "mission_load_and_executor_ready",
+          "durationMs": 15.68,
+          "elapsedMs": 15.72
+        },
+        {
+          "event": "mission.prepare_phase",
+          "missionId": "4cf61d43-44f3-4e23-8b23-878fa45b04bc",
+          "phase": "execution_context",
+          "durationMs": 7.25,
+          "elapsedMs": 23.11
+        },
+        {
+          "event": "mission.prepare_phase",
+          "missionId": "4cf61d43-44f3-4e23-8b23-878fa45b04bc",
+          "phase": "default_agent_compile",
+          "durationMs": 30.94,
+          "elapsedMs": 54.13
+        },
+        {
+          "event": "mission.prepare_phase",
+          "missionId": "4cf61d43-44f3-4e23-8b23-878fa45b04bc",
+          "phase": "expert_session_open",
+          "durationMs": 9.92,
+          "elapsedMs": 64.13,
+          "cacheHit": false
+        },
+        {
+          "event": "mission.prepare_phase",
+          "missionId": "4cf61d43-44f3-4e23-8b23-878fa45b04bc",
+          "phase": "expert_session_prompt",
+          "durationMs": 118.87,
+          "elapsedMs": 187.08
+        }
+      ],
+      "sourcePin": {
+        "id": "studio",
+        "revision": 1
+      },
+      "compilationEnvironment": {
+        "fingerprint": "14a60927e29fb7cd046655f39eb3cf807cf26008b05405a84d069c8116f11634",
+        "capabilities": [
+          {
+            "capabilityId": "00000000-0000-4000-8000-000000000001",
+            "resolvedRevision": 1,
+            "fingerprint": "2a37d4a11e1513b3cd0516a1a95e22d9f539be3ed1af18a8347b6eaf498efe6b"
+          }
+        ]
+      }
+    },
+    {
+      "missionId": "7bc1207c-c594-4145-9c15-d954bbc47a7a",
+      "group": "cold",
+      "sample": 14,
+      "preparationMs": 239.96528600000056,
+      "lifecycleMarkers": [
+        {
+          "event": "fixture.dispatch",
+          "atMs": 11163.599644
+        },
+        {
+          "event": "fixture.model_completed",
+          "atMs": 11163.60482
+        },
+        {
+          "event": "execution.terminal_committed",
+          "atMs": 11185.237219,
+          "executionId": "ba6dafec-a54b-47ec-b489-c6194a608096",
+          "requestId": "4faf48b3-09bc-4797-b1cd-e35df7ba26e6",
+          "elapsedMs": 1.8528709999991406
+        },
+        {
+          "event": "fixture.mission_status_published",
+          "atMs": 11186.817922,
+          "missionId": "7bc1207c-c594-4145-9c15-d954bbc47a7a",
+          "executionId": "ba6dafec-a54b-47ec-b489-c6194a608096",
+          "status": "succeeded"
+        },
+        {
+          "event": "mission.terminal_status_published",
+          "atMs": 11186.915894,
+          "executionId": "ba6dafec-a54b-47ec-b489-c6194a608096",
+          "missionId": "7bc1207c-c594-4145-9c15-d954bbc47a7a",
+          "requestId": "4faf48b3-09bc-4797-b1cd-e35df7ba26e6",
+          "status": "succeeded"
+        },
+        {
+          "event": "session.active_binding_released",
+          "atMs": 11196.460663,
+          "executionId": "ba6dafec-a54b-47ec-b489-c6194a608096",
+          "requestId": "4faf48b3-09bc-4797-b1cd-e35df7ba26e6",
+          "elapsedMs": 11.120358999998643
+        }
+      ],
+      "counters": {
+        "projectRevisionReads": 1,
+        "projectHeadReads": 0,
+        "projectOpens": 1,
+        "storeCompileCalls": 0,
+        "openedProjectCompileCalls": 1,
+        "activeCapabilityReads": 4,
+        "credentialFingerprints": 3,
+        "contextStoreReads": 0,
+        "dslCompilerCalls": 2,
+        "readinessRequests": 1,
+        "runtimeHealthProbes": 4,
+        "modelCatalogReads": 4,
+        "pluginReads": 0
+      },
+      "phases": [
+        {
+          "event": "mission.prepare_phase",
+          "missionId": "7bc1207c-c594-4145-9c15-d954bbc47a7a",
+          "phase": "prompt_admission_wait",
+          "durationMs": 0,
+          "elapsedMs": 0
+        },
+        {
+          "event": "mission.performance",
+          "missionId": "7bc1207c-c594-4145-9c15-d954bbc47a7a",
+          "phase": "identity_revision_read",
+          "elapsedMs": 8.607170000001133
+        },
+        {
+          "event": "mission.prepare_phase",
+          "missionId": "7bc1207c-c594-4145-9c15-d954bbc47a7a",
+          "phase": "mission_load_and_executor_ready",
+          "durationMs": 18.13,
+          "elapsedMs": 18.19
+        },
+        {
+          "event": "mission.prepare_phase",
+          "missionId": "7bc1207c-c594-4145-9c15-d954bbc47a7a",
+          "phase": "execution_context",
+          "durationMs": 6.97,
+          "elapsedMs": 25.24
+        },
+        {
+          "event": "mission.prepare_phase",
+          "missionId": "7bc1207c-c594-4145-9c15-d954bbc47a7a",
+          "phase": "default_agent_compile",
+          "durationMs": 31.2,
+          "elapsedMs": 56.51
+        },
+        {
+          "event": "mission.prepare_phase",
+          "missionId": "7bc1207c-c594-4145-9c15-d954bbc47a7a",
+          "phase": "expert_session_open",
+          "durationMs": 11.61,
+          "elapsedMs": 68.2,
+          "cacheHit": false
+        },
+        {
+          "event": "mission.prepare_phase",
+          "missionId": "7bc1207c-c594-4145-9c15-d954bbc47a7a",
+          "phase": "expert_session_prompt",
+          "durationMs": 115.29,
+          "elapsedMs": 187.07
+        }
+      ],
+      "sourcePin": {
+        "id": "studio",
+        "revision": 1
+      },
+      "compilationEnvironment": {
+        "fingerprint": "14a60927e29fb7cd046655f39eb3cf807cf26008b05405a84d069c8116f11634",
+        "capabilities": [
+          {
+            "capabilityId": "00000000-0000-4000-8000-000000000001",
+            "resolvedRevision": 1,
+            "fingerprint": "2a37d4a11e1513b3cd0516a1a95e22d9f539be3ed1af18a8347b6eaf498efe6b"
+          }
+        ]
+      }
+    },
+    {
+      "missionId": "d2cbe847-0f6c-4bf1-8c1a-429cf6b6fa98",
+      "group": "cold",
+      "sample": 15,
+      "preparationMs": 238.35437300000012,
+      "lifecycleMarkers": [
+        {
+          "event": "fixture.dispatch",
+          "atMs": 11611.137899
+        },
+        {
+          "event": "fixture.model_completed",
+          "atMs": 11611.138496
+        },
+        {
+          "event": "execution.terminal_committed",
+          "atMs": 11631.079241,
+          "executionId": "0a4ee7af-5d56-4d14-a32a-afff0cdc8799",
+          "requestId": "01dbca9b-b50a-4432-94ae-db968e7e790e",
+          "elapsedMs": 1.8422979999995732
+        },
+        {
+          "event": "fixture.mission_status_published",
+          "atMs": 11632.634563,
+          "missionId": "d2cbe847-0f6c-4bf1-8c1a-429cf6b6fa98",
+          "executionId": "0a4ee7af-5d56-4d14-a32a-afff0cdc8799",
+          "status": "succeeded"
+        },
+        {
+          "event": "mission.terminal_status_published",
+          "atMs": 11632.727135,
+          "executionId": "0a4ee7af-5d56-4d14-a32a-afff0cdc8799",
+          "missionId": "d2cbe847-0f6c-4bf1-8c1a-429cf6b6fa98",
+          "requestId": "01dbca9b-b50a-4432-94ae-db968e7e790e",
+          "status": "succeeded"
+        },
+        {
+          "event": "session.active_binding_released",
+          "atMs": 11642.554952,
+          "executionId": "0a4ee7af-5d56-4d14-a32a-afff0cdc8799",
+          "requestId": "01dbca9b-b50a-4432-94ae-db968e7e790e",
+          "elapsedMs": 11.383354999999938
+        }
+      ],
+      "counters": {
+        "projectRevisionReads": 1,
+        "projectHeadReads": 0,
+        "projectOpens": 1,
+        "storeCompileCalls": 0,
+        "openedProjectCompileCalls": 1,
+        "activeCapabilityReads": 4,
+        "credentialFingerprints": 3,
+        "contextStoreReads": 0,
+        "dslCompilerCalls": 2,
+        "readinessRequests": 1,
+        "runtimeHealthProbes": 4,
+        "modelCatalogReads": 4,
+        "pluginReads": 0
+      },
+      "phases": [
+        {
+          "event": "mission.prepare_phase",
+          "missionId": "d2cbe847-0f6c-4bf1-8c1a-429cf6b6fa98",
+          "phase": "prompt_admission_wait",
+          "durationMs": 0,
+          "elapsedMs": 0
+        },
+        {
+          "event": "mission.performance",
+          "missionId": "d2cbe847-0f6c-4bf1-8c1a-429cf6b6fa98",
+          "phase": "identity_revision_read",
+          "elapsedMs": 8.651915000000372
+        },
+        {
+          "event": "mission.prepare_phase",
+          "missionId": "d2cbe847-0f6c-4bf1-8c1a-429cf6b6fa98",
+          "phase": "mission_load_and_executor_ready",
+          "durationMs": 17.83,
+          "elapsedMs": 17.89
+        },
+        {
+          "event": "mission.prepare_phase",
+          "missionId": "d2cbe847-0f6c-4bf1-8c1a-429cf6b6fa98",
+          "phase": "execution_context",
+          "durationMs": 6.87,
+          "elapsedMs": 24.84
+        },
+        {
+          "event": "mission.prepare_phase",
+          "missionId": "d2cbe847-0f6c-4bf1-8c1a-429cf6b6fa98",
+          "phase": "default_agent_compile",
+          "durationMs": 29.23,
+          "elapsedMs": 54.16
+        },
+        {
+          "event": "mission.prepare_phase",
+          "missionId": "d2cbe847-0f6c-4bf1-8c1a-429cf6b6fa98",
+          "phase": "expert_session_open",
+          "durationMs": 11.48,
+          "elapsedMs": 65.72,
+          "cacheHit": false
+        },
+        {
+          "event": "mission.prepare_phase",
+          "missionId": "d2cbe847-0f6c-4bf1-8c1a-429cf6b6fa98",
+          "phase": "expert_session_prompt",
+          "durationMs": 116.54,
+          "elapsedMs": 185.83
+        }
+      ],
+      "sourcePin": {
+        "id": "studio",
+        "revision": 1
+      },
+      "compilationEnvironment": {
+        "fingerprint": "14a60927e29fb7cd046655f39eb3cf807cf26008b05405a84d069c8116f11634",
+        "capabilities": [
+          {
+            "capabilityId": "00000000-0000-4000-8000-000000000001",
+            "resolvedRevision": 1,
+            "fingerprint": "2a37d4a11e1513b3cd0516a1a95e22d9f539be3ed1af18a8347b6eaf498efe6b"
+          }
+        ]
+      }
+    },
+    {
+      "missionId": "81b76bbc-19b9-461d-a3af-32a9ffb85fc0",
+      "group": "cold",
+      "sample": 16,
+      "preparationMs": 238.0862959999995,
+      "lifecycleMarkers": [
+        {
+          "event": "fixture.dispatch",
+          "atMs": 12055.878353
+        },
+        {
+          "event": "fixture.model_completed",
+          "atMs": 12055.878993
+        },
+        {
+          "event": "execution.terminal_committed",
+          "atMs": 12076.646072,
+          "executionId": "25372670-720c-4e96-8059-c1fad4c6722e",
+          "requestId": "dd33b3ca-d17d-4658-9ef6-e4752051ef79",
+          "elapsedMs": 1.8979839999992691
+        },
+        {
+          "event": "fixture.mission_status_published",
+          "atMs": 12078.281254,
+          "missionId": "81b76bbc-19b9-461d-a3af-32a9ffb85fc0",
+          "executionId": "25372670-720c-4e96-8059-c1fad4c6722e",
+          "status": "succeeded"
+        },
+        {
+          "event": "mission.terminal_status_published",
+          "atMs": 12078.380878,
+          "executionId": "25372670-720c-4e96-8059-c1fad4c6722e",
+          "missionId": "81b76bbc-19b9-461d-a3af-32a9ffb85fc0",
+          "requestId": "dd33b3ca-d17d-4658-9ef6-e4752051ef79",
+          "status": "succeeded"
+        },
+        {
+          "event": "session.active_binding_released",
+          "atMs": 12088.530411,
+          "executionId": "25372670-720c-4e96-8059-c1fad4c6722e",
+          "requestId": "dd33b3ca-d17d-4658-9ef6-e4752051ef79",
+          "elapsedMs": 11.780394999999771
+        }
+      ],
+      "counters": {
+        "projectRevisionReads": 1,
+        "projectHeadReads": 0,
+        "projectOpens": 1,
+        "storeCompileCalls": 0,
+        "openedProjectCompileCalls": 1,
+        "activeCapabilityReads": 4,
+        "credentialFingerprints": 3,
+        "contextStoreReads": 0,
+        "dslCompilerCalls": 2,
+        "readinessRequests": 1,
+        "runtimeHealthProbes": 4,
+        "modelCatalogReads": 4,
+        "pluginReads": 0
+      },
+      "phases": [
+        {
+          "event": "mission.prepare_phase",
+          "missionId": "81b76bbc-19b9-461d-a3af-32a9ffb85fc0",
+          "phase": "prompt_admission_wait",
+          "durationMs": 0,
+          "elapsedMs": 0
+        },
+        {
+          "event": "mission.performance",
+          "missionId": "81b76bbc-19b9-461d-a3af-32a9ffb85fc0",
+          "phase": "identity_revision_read",
+          "elapsedMs": 8.496350999999777
+        },
+        {
+          "event": "mission.prepare_phase",
+          "missionId": "81b76bbc-19b9-461d-a3af-32a9ffb85fc0",
+          "phase": "mission_load_and_executor_ready",
+          "durationMs": 18.02,
+          "elapsedMs": 18.06
+        },
+        {
+          "event": "mission.prepare_phase",
+          "missionId": "81b76bbc-19b9-461d-a3af-32a9ffb85fc0",
+          "phase": "execution_context",
+          "durationMs": 7.02,
+          "elapsedMs": 25.15
+        },
+        {
+          "event": "mission.prepare_phase",
+          "missionId": "81b76bbc-19b9-461d-a3af-32a9ffb85fc0",
+          "phase": "default_agent_compile",
+          "durationMs": 29.92,
+          "elapsedMs": 55.14
+        },
+        {
+          "event": "mission.prepare_phase",
+          "missionId": "81b76bbc-19b9-461d-a3af-32a9ffb85fc0",
+          "phase": "expert_session_open",
+          "durationMs": 11.58,
+          "elapsedMs": 66.84,
+          "cacheHit": false
+        },
+        {
+          "event": "mission.prepare_phase",
+          "missionId": "81b76bbc-19b9-461d-a3af-32a9ffb85fc0",
+          "phase": "expert_session_prompt",
+          "durationMs": 115.09,
+          "elapsedMs": 185.5
+        }
+      ],
+      "sourcePin": {
+        "id": "studio",
+        "revision": 1
+      },
+      "compilationEnvironment": {
+        "fingerprint": "14a60927e29fb7cd046655f39eb3cf807cf26008b05405a84d069c8116f11634",
+        "capabilities": [
+          {
+            "capabilityId": "00000000-0000-4000-8000-000000000001",
+            "resolvedRevision": 1,
+            "fingerprint": "2a37d4a11e1513b3cd0516a1a95e22d9f539be3ed1af18a8347b6eaf498efe6b"
+          }
+        ]
+      }
+    },
+    {
+      "missionId": "a6ca3323-709e-4118-9ff6-6df2977d5ac6",
+      "group": "cold",
+      "sample": 17,
+      "preparationMs": 241.78470799999923,
+      "lifecycleMarkers": [
+        {
+          "event": "fixture.dispatch",
+          "atMs": 12506.794714
+        },
+        {
+          "event": "fixture.model_completed",
+          "atMs": 12506.795407
+        },
+        {
+          "event": "execution.terminal_committed",
+          "atMs": 12526.502488,
+          "executionId": "ba62cf78-5625-490f-9d85-1476d1efdd35",
+          "requestId": "1fbc66fd-c8f1-419c-b653-e809621f36ec",
+          "elapsedMs": 1.8322660000012547
+        },
+        {
+          "event": "fixture.mission_status_published",
+          "atMs": 12527.980154,
+          "missionId": "a6ca3323-709e-4118-9ff6-6df2977d5ac6",
+          "executionId": "ba62cf78-5625-490f-9d85-1476d1efdd35",
+          "status": "succeeded"
+        },
+        {
+          "event": "mission.terminal_status_published",
+          "atMs": 12528.068618,
+          "executionId": "ba62cf78-5625-490f-9d85-1476d1efdd35",
+          "missionId": "a6ca3323-709e-4118-9ff6-6df2977d5ac6",
+          "requestId": "1fbc66fd-c8f1-419c-b653-e809621f36ec",
+          "status": "succeeded"
+        },
+        {
+          "event": "session.active_binding_released",
+          "atMs": 12538.08068,
+          "executionId": "ba62cf78-5625-490f-9d85-1476d1efdd35",
+          "requestId": "1fbc66fd-c8f1-419c-b653-e809621f36ec",
+          "elapsedMs": 11.476355000000694
+        }
+      ],
+      "counters": {
+        "projectRevisionReads": 1,
+        "projectHeadReads": 0,
+        "projectOpens": 1,
+        "storeCompileCalls": 0,
+        "openedProjectCompileCalls": 1,
+        "activeCapabilityReads": 4,
+        "credentialFingerprints": 3,
+        "contextStoreReads": 0,
+        "dslCompilerCalls": 2,
+        "readinessRequests": 1,
+        "runtimeHealthProbes": 4,
+        "modelCatalogReads": 4,
+        "pluginReads": 0
+      },
+      "phases": [
+        {
+          "event": "mission.prepare_phase",
+          "missionId": "a6ca3323-709e-4118-9ff6-6df2977d5ac6",
+          "phase": "prompt_admission_wait",
+          "durationMs": 0,
+          "elapsedMs": 0
+        },
+        {
+          "event": "mission.performance",
+          "missionId": "a6ca3323-709e-4118-9ff6-6df2977d5ac6",
+          "phase": "identity_revision_read",
+          "elapsedMs": 9.374388000000181
+        },
+        {
+          "event": "mission.prepare_phase",
+          "missionId": "a6ca3323-709e-4118-9ff6-6df2977d5ac6",
+          "phase": "mission_load_and_executor_ready",
+          "durationMs": 18.2,
+          "elapsedMs": 18.24
+        },
+        {
+          "event": "mission.prepare_phase",
+          "missionId": "a6ca3323-709e-4118-9ff6-6df2977d5ac6",
+          "phase": "execution_context",
+          "durationMs": 7.6,
+          "elapsedMs": 25.92
+        },
+        {
+          "event": "mission.prepare_phase",
+          "missionId": "a6ca3323-709e-4118-9ff6-6df2977d5ac6",
+          "phase": "default_agent_compile",
+          "durationMs": 30.26,
+          "elapsedMs": 56.27
+        },
+        {
+          "event": "mission.prepare_phase",
+          "missionId": "a6ca3323-709e-4118-9ff6-6df2977d5ac6",
+          "phase": "expert_session_open",
+          "durationMs": 13.51,
+          "elapsedMs": 69.9,
+          "cacheHit": false
+        },
+        {
+          "event": "mission.prepare_phase",
+          "missionId": "a6ca3323-709e-4118-9ff6-6df2977d5ac6",
+          "phase": "expert_session_prompt",
+          "durationMs": 115.79,
+          "elapsedMs": 189.25
+        }
+      ],
+      "sourcePin": {
+        "id": "studio",
+        "revision": 1
+      },
+      "compilationEnvironment": {
+        "fingerprint": "14a60927e29fb7cd046655f39eb3cf807cf26008b05405a84d069c8116f11634",
+        "capabilities": [
+          {
+            "capabilityId": "00000000-0000-4000-8000-000000000001",
+            "resolvedRevision": 1,
+            "fingerprint": "2a37d4a11e1513b3cd0516a1a95e22d9f539be3ed1af18a8347b6eaf498efe6b"
+          }
+        ]
+      }
+    },
+    {
+      "missionId": "0bc2f343-3082-470d-a16c-f6733a5f2878",
+      "group": "cold",
+      "sample": 18,
+      "preparationMs": 238.71594800000094,
+      "lifecycleMarkers": [
+        {
+          "event": "fixture.dispatch",
+          "atMs": 12952.123441
+        },
+        {
+          "event": "fixture.model_completed",
+          "atMs": 12952.124147
+        },
+        {
+          "event": "execution.terminal_committed",
+          "atMs": 12972.220068,
+          "executionId": "ce29716e-86ab-4da0-9c40-df126378b7a5",
+          "requestId": "1c2ae03a-3763-40f6-9da2-ae5c86fe1c2f",
+          "elapsedMs": 1.8869730000005802
+        },
+        {
+          "event": "fixture.mission_status_published",
+          "atMs": 12973.718424,
+          "missionId": "0bc2f343-3082-470d-a16c-f6733a5f2878",
+          "executionId": "ce29716e-86ab-4da0-9c40-df126378b7a5",
+          "status": "succeeded"
+        },
+        {
+          "event": "mission.terminal_status_published",
+          "atMs": 12973.803633,
+          "executionId": "ce29716e-86ab-4da0-9c40-df126378b7a5",
+          "missionId": "0bc2f343-3082-470d-a16c-f6733a5f2878",
+          "requestId": "1c2ae03a-3763-40f6-9da2-ae5c86fe1c2f",
+          "status": "succeeded"
+        },
+        {
+          "event": "session.active_binding_released",
+          "atMs": 12983.430613,
+          "executionId": "ce29716e-86ab-4da0-9c40-df126378b7a5",
+          "requestId": "1c2ae03a-3763-40f6-9da2-ae5c86fe1c2f",
+          "elapsedMs": 11.097734999999375
+        }
+      ],
+      "counters": {
+        "projectRevisionReads": 1,
+        "projectHeadReads": 0,
+        "projectOpens": 1,
+        "storeCompileCalls": 0,
+        "openedProjectCompileCalls": 1,
+        "activeCapabilityReads": 4,
+        "credentialFingerprints": 3,
+        "contextStoreReads": 0,
+        "dslCompilerCalls": 2,
+        "readinessRequests": 1,
+        "runtimeHealthProbes": 4,
+        "modelCatalogReads": 4,
+        "pluginReads": 0
+      },
+      "phases": [
+        {
+          "event": "mission.prepare_phase",
+          "missionId": "0bc2f343-3082-470d-a16c-f6733a5f2878",
+          "phase": "prompt_admission_wait",
+          "durationMs": 0,
+          "elapsedMs": 0
+        },
+        {
+          "event": "mission.performance",
+          "missionId": "0bc2f343-3082-470d-a16c-f6733a5f2878",
+          "phase": "identity_revision_read",
+          "elapsedMs": 9.560083000000304
+        },
+        {
+          "event": "mission.prepare_phase",
+          "missionId": "0bc2f343-3082-470d-a16c-f6733a5f2878",
+          "phase": "mission_load_and_executor_ready",
+          "durationMs": 19.44,
+          "elapsedMs": 19.48
+        },
+        {
+          "event": "mission.prepare_phase",
+          "missionId": "0bc2f343-3082-470d-a16c-f6733a5f2878",
+          "phase": "execution_context",
+          "durationMs": 7.01,
+          "elapsedMs": 26.57
+        },
+        {
+          "event": "mission.prepare_phase",
+          "missionId": "0bc2f343-3082-470d-a16c-f6733a5f2878",
+          "phase": "default_agent_compile",
+          "durationMs": 31.33,
+          "elapsedMs": 57.98
+        },
+        {
+          "event": "mission.prepare_phase",
+          "missionId": "0bc2f343-3082-470d-a16c-f6733a5f2878",
+          "phase": "expert_session_open",
+          "durationMs": 11.6,
+          "elapsedMs": 69.67,
+          "cacheHit": false
+        },
+        {
+          "event": "mission.prepare_phase",
+          "missionId": "0bc2f343-3082-470d-a16c-f6733a5f2878",
+          "phase": "expert_session_prompt",
+          "durationMs": 111.31,
+          "elapsedMs": 184.57
+        }
+      ],
+      "sourcePin": {
+        "id": "studio",
+        "revision": 1
+      },
+      "compilationEnvironment": {
+        "fingerprint": "14a60927e29fb7cd046655f39eb3cf807cf26008b05405a84d069c8116f11634",
+        "capabilities": [
+          {
+            "capabilityId": "00000000-0000-4000-8000-000000000001",
+            "resolvedRevision": 1,
+            "fingerprint": "2a37d4a11e1513b3cd0516a1a95e22d9f539be3ed1af18a8347b6eaf498efe6b"
+          }
+        ]
+      }
+    },
+    {
+      "missionId": "61315644-38b1-421b-aaf1-5e868177c106",
+      "group": "cold",
+      "sample": 19,
+      "preparationMs": 247.45230599999923,
+      "lifecycleMarkers": [
+        {
+          "event": "fixture.dispatch",
+          "atMs": 13411.632868
+        },
+        {
+          "event": "fixture.model_completed",
+          "atMs": 13411.633455
+        },
+        {
+          "event": "execution.terminal_committed",
+          "atMs": 13431.640839,
+          "executionId": "2a2a46cf-c75c-4530-ad28-090339a00e03",
+          "requestId": "b15ec1ed-d0ad-44db-92d1-14989bed0f79",
+          "elapsedMs": 1.8997619999991002
+        },
+        {
+          "event": "fixture.mission_status_published",
+          "atMs": 13433.321921,
+          "missionId": "61315644-38b1-421b-aaf1-5e868177c106",
+          "executionId": "2a2a46cf-c75c-4530-ad28-090339a00e03",
+          "status": "succeeded"
+        },
+        {
+          "event": "mission.terminal_status_published",
+          "atMs": 13433.421432,
+          "executionId": "2a2a46cf-c75c-4530-ad28-090339a00e03",
+          "missionId": "61315644-38b1-421b-aaf1-5e868177c106",
+          "requestId": "b15ec1ed-d0ad-44db-92d1-14989bed0f79",
+          "status": "succeeded"
+        },
+        {
+          "event": "session.active_binding_released",
+          "atMs": 13443.52455,
+          "executionId": "2a2a46cf-c75c-4530-ad28-090339a00e03",
+          "requestId": "b15ec1ed-d0ad-44db-92d1-14989bed0f79",
+          "elapsedMs": 11.772229000000152
+        }
+      ],
+      "counters": {
+        "projectRevisionReads": 1,
+        "projectHeadReads": 0,
+        "projectOpens": 1,
+        "storeCompileCalls": 0,
+        "openedProjectCompileCalls": 1,
+        "activeCapabilityReads": 4,
+        "credentialFingerprints": 3,
+        "contextStoreReads": 0,
+        "dslCompilerCalls": 2,
+        "readinessRequests": 1,
+        "runtimeHealthProbes": 4,
+        "modelCatalogReads": 4,
+        "pluginReads": 0
+      },
+      "phases": [
+        {
+          "event": "mission.prepare_phase",
+          "missionId": "61315644-38b1-421b-aaf1-5e868177c106",
+          "phase": "prompt_admission_wait",
+          "durationMs": 0,
+          "elapsedMs": 0
+        },
+        {
+          "event": "mission.performance",
+          "missionId": "61315644-38b1-421b-aaf1-5e868177c106",
+          "phase": "identity_revision_read",
+          "elapsedMs": 8.239046000000599
+        },
+        {
+          "event": "mission.prepare_phase",
+          "missionId": "61315644-38b1-421b-aaf1-5e868177c106",
+          "phase": "mission_load_and_executor_ready",
+          "durationMs": 17.61,
+          "elapsedMs": 17.65
+        },
+        {
+          "event": "mission.prepare_phase",
+          "missionId": "61315644-38b1-421b-aaf1-5e868177c106",
+          "phase": "execution_context",
+          "durationMs": 7.38,
+          "elapsedMs": 25.12
+        },
+        {
+          "event": "mission.prepare_phase",
+          "missionId": "61315644-38b1-421b-aaf1-5e868177c106",
+          "phase": "default_agent_compile",
+          "durationMs": 32.58,
+          "elapsedMs": 57.79
+        },
+        {
+          "event": "mission.prepare_phase",
+          "missionId": "61315644-38b1-421b-aaf1-5e868177c106",
+          "phase": "expert_session_open",
+          "durationMs": 13.99,
+          "elapsedMs": 71.85,
+          "cacheHit": false
+        },
+        {
+          "event": "mission.prepare_phase",
+          "missionId": "61315644-38b1-421b-aaf1-5e868177c106",
+          "phase": "expert_session_prompt",
+          "durationMs": 117.3,
+          "elapsedMs": 193.16
+        }
+      ],
+      "sourcePin": {
+        "id": "studio",
+        "revision": 1
+      },
+      "compilationEnvironment": {
+        "fingerprint": "14a60927e29fb7cd046655f39eb3cf807cf26008b05405a84d069c8116f11634",
+        "capabilities": [
+          {
+            "capabilityId": "00000000-0000-4000-8000-000000000001",
+            "resolvedRevision": 1,
+            "fingerprint": "2a37d4a11e1513b3cd0516a1a95e22d9f539be3ed1af18a8347b6eaf498efe6b"
+          }
+        ]
+      }
+    },
+    {
+      "missionId": "d7957278-80f5-4cf5-bc7c-a04aabf61bb7",
+      "group": "cold",
+      "sample": 20,
+      "preparationMs": 236.032201,
+      "lifecycleMarkers": [
+        {
+          "event": "fixture.dispatch",
+          "atMs": 13851.953838
+        },
+        {
+          "event": "fixture.model_completed",
+          "atMs": 13851.954426
+        },
+        {
+          "event": "execution.terminal_committed",
+          "atMs": 13872.001345,
+          "executionId": "1f394723-2e9d-4057-b415-bfefef212be2",
+          "requestId": "553f9e95-132c-44f4-8212-62488e5a4715",
+          "elapsedMs": 1.7607140000000072
+        },
+        {
+          "event": "fixture.mission_status_published",
+          "atMs": 13873.562491,
+          "missionId": "d7957278-80f5-4cf5-bc7c-a04aabf61bb7",
+          "executionId": "1f394723-2e9d-4057-b415-bfefef212be2",
+          "status": "succeeded"
+        },
+        {
+          "event": "mission.terminal_status_published",
+          "atMs": 13873.652091,
+          "executionId": "1f394723-2e9d-4057-b415-bfefef212be2",
+          "missionId": "d7957278-80f5-4cf5-bc7c-a04aabf61bb7",
+          "requestId": "553f9e95-132c-44f4-8212-62488e5a4715",
+          "status": "succeeded"
+        },
+        {
+          "event": "session.active_binding_released",
+          "atMs": 13883.611956,
+          "executionId": "1f394723-2e9d-4057-b415-bfefef212be2",
+          "requestId": "553f9e95-132c-44f4-8212-62488e5a4715",
+          "elapsedMs": 11.503477000000203
+        }
+      ],
+      "counters": {
+        "projectRevisionReads": 1,
+        "projectHeadReads": 0,
+        "projectOpens": 1,
+        "storeCompileCalls": 0,
+        "openedProjectCompileCalls": 1,
+        "activeCapabilityReads": 4,
+        "credentialFingerprints": 3,
+        "contextStoreReads": 0,
+        "dslCompilerCalls": 2,
+        "readinessRequests": 1,
+        "runtimeHealthProbes": 4,
+        "modelCatalogReads": 4,
+        "pluginReads": 0
+      },
+      "phases": [
+        {
+          "event": "mission.prepare_phase",
+          "missionId": "d7957278-80f5-4cf5-bc7c-a04aabf61bb7",
+          "phase": "prompt_admission_wait",
+          "durationMs": 0,
+          "elapsedMs": 0
+        },
+        {
+          "event": "mission.performance",
+          "missionId": "d7957278-80f5-4cf5-bc7c-a04aabf61bb7",
+          "phase": "identity_revision_read",
+          "elapsedMs": 8.56191199999921
+        },
+        {
+          "event": "mission.prepare_phase",
+          "missionId": "d7957278-80f5-4cf5-bc7c-a04aabf61bb7",
+          "phase": "mission_load_and_executor_ready",
+          "durationMs": 17.75,
+          "elapsedMs": 17.79
+        },
+        {
+          "event": "mission.prepare_phase",
+          "missionId": "d7957278-80f5-4cf5-bc7c-a04aabf61bb7",
+          "phase": "execution_context",
+          "durationMs": 7.04,
+          "elapsedMs": 24.9
+        },
+        {
+          "event": "mission.prepare_phase",
+          "missionId": "d7957278-80f5-4cf5-bc7c-a04aabf61bb7",
+          "phase": "default_agent_compile",
+          "durationMs": 30.75,
+          "elapsedMs": 55.73
+        },
+        {
+          "event": "mission.prepare_phase",
+          "missionId": "d7957278-80f5-4cf5-bc7c-a04aabf61bb7",
+          "phase": "expert_session_open",
+          "durationMs": 11.67,
+          "elapsedMs": 67.48,
+          "cacheHit": false
+        },
+        {
+          "event": "mission.prepare_phase",
+          "missionId": "d7957278-80f5-4cf5-bc7c-a04aabf61bb7",
+          "phase": "expert_session_prompt",
+          "durationMs": 112.06,
+          "elapsedMs": 183.14
+        }
+      ],
+      "sourcePin": {
+        "id": "studio",
+        "revision": 1
+      },
+      "compilationEnvironment": {
+        "fingerprint": "14a60927e29fb7cd046655f39eb3cf807cf26008b05405a84d069c8116f11634",
+        "capabilities": [
+          {
+            "capabilityId": "00000000-0000-4000-8000-000000000001",
+            "resolvedRevision": 1,
+            "fingerprint": "2a37d4a11e1513b3cd0516a1a95e22d9f539be3ed1af18a8347b6eaf498efe6b"
+          }
+        ]
+      }
+    },
+    {
+      "missionId": "4e49099e-27a3-43e1-9872-f6e42621c831",
+      "group": "cold",
+      "sample": 21,
+      "preparationMs": 239.79496699999982,
+      "lifecycleMarkers": [
+        {
+          "event": "fixture.dispatch",
+          "atMs": 14299.780674
+        },
+        {
+          "event": "fixture.model_completed",
+          "atMs": 14299.781148
+        },
+        {
+          "event": "execution.terminal_committed",
+          "atMs": 14319.357929,
+          "executionId": "0992bbd3-a09b-45aa-b1ed-1683d42f717d",
+          "requestId": "a0285eff-3bf6-4db6-9f18-e0bb33f765ff",
+          "elapsedMs": 1.7391769999994722
+        },
+        {
+          "event": "fixture.mission_status_published",
+          "atMs": 14320.967295,
+          "missionId": "4e49099e-27a3-43e1-9872-f6e42621c831",
+          "executionId": "0992bbd3-a09b-45aa-b1ed-1683d42f717d",
+          "status": "succeeded"
+        },
+        {
+          "event": "mission.terminal_status_published",
+          "atMs": 14321.067111,
+          "executionId": "0992bbd3-a09b-45aa-b1ed-1683d42f717d",
+          "missionId": "4e49099e-27a3-43e1-9872-f6e42621c831",
+          "requestId": "a0285eff-3bf6-4db6-9f18-e0bb33f765ff",
+          "status": "succeeded"
+        },
+        {
+          "event": "session.active_binding_released",
+          "atMs": 14330.622746,
+          "executionId": "0992bbd3-a09b-45aa-b1ed-1683d42f717d",
+          "requestId": "a0285eff-3bf6-4db6-9f18-e0bb33f765ff",
+          "elapsedMs": 11.166737999999896
+        }
+      ],
+      "counters": {
+        "projectRevisionReads": 1,
+        "projectHeadReads": 0,
+        "projectOpens": 1,
+        "storeCompileCalls": 0,
+        "openedProjectCompileCalls": 1,
+        "activeCapabilityReads": 4,
+        "credentialFingerprints": 3,
+        "contextStoreReads": 0,
+        "dslCompilerCalls": 2,
+        "readinessRequests": 1,
+        "runtimeHealthProbes": 4,
+        "modelCatalogReads": 4,
+        "pluginReads": 0
+      },
+      "phases": [
+        {
+          "event": "mission.prepare_phase",
+          "missionId": "4e49099e-27a3-43e1-9872-f6e42621c831",
+          "phase": "prompt_admission_wait",
+          "durationMs": 0,
+          "elapsedMs": 0
+        },
+        {
+          "event": "mission.performance",
+          "missionId": "4e49099e-27a3-43e1-9872-f6e42621c831",
+          "phase": "identity_revision_read",
+          "elapsedMs": 8.16845099999955
+        },
+        {
+          "event": "mission.prepare_phase",
+          "missionId": "4e49099e-27a3-43e1-9872-f6e42621c831",
+          "phase": "mission_load_and_executor_ready",
+          "durationMs": 16.74,
+          "elapsedMs": 16.79
+        },
+        {
+          "event": "mission.prepare_phase",
+          "missionId": "4e49099e-27a3-43e1-9872-f6e42621c831",
+          "phase": "execution_context",
+          "durationMs": 6.85,
+          "elapsedMs": 23.71
+        },
+        {
+          "event": "mission.prepare_phase",
+          "missionId": "4e49099e-27a3-43e1-9872-f6e42621c831",
+          "phase": "default_agent_compile",
+          "durationMs": 31.48,
+          "elapsedMs": 55.25
+        },
+        {
+          "event": "mission.prepare_phase",
+          "missionId": "4e49099e-27a3-43e1-9872-f6e42621c831",
+          "phase": "expert_session_open",
+          "durationMs": 12.14,
+          "elapsedMs": 67.47,
+          "cacheHit": false
+        },
+        {
+          "event": "mission.prepare_phase",
+          "missionId": "4e49099e-27a3-43e1-9872-f6e42621c831",
+          "phase": "expert_session_prompt",
+          "durationMs": 114.26,
+          "elapsedMs": 185.26
+        }
+      ],
+      "sourcePin": {
+        "id": "studio",
+        "revision": 1
+      },
+      "compilationEnvironment": {
+        "fingerprint": "14a60927e29fb7cd046655f39eb3cf807cf26008b05405a84d069c8116f11634",
+        "capabilities": [
+          {
+            "capabilityId": "00000000-0000-4000-8000-000000000001",
+            "resolvedRevision": 1,
+            "fingerprint": "2a37d4a11e1513b3cd0516a1a95e22d9f539be3ed1af18a8347b6eaf498efe6b"
+          }
+        ]
+      }
+    },
+    {
+      "missionId": "48e3080b-aac1-492c-9d9c-e7850306afd2",
+      "group": "cold",
+      "sample": 22,
+      "preparationMs": 236.32476300000053,
+      "lifecycleMarkers": [
+        {
+          "event": "fixture.dispatch",
+          "atMs": 14745.973613
+        },
+        {
+          "event": "fixture.model_completed",
+          "atMs": 14745.974137
+        },
+        {
+          "event": "execution.terminal_committed",
+          "atMs": 14766.927512,
+          "executionId": "af9d1792-9a0e-44bd-8bea-81d2efc31617",
+          "requestId": "6b1298c5-4b7e-47b3-85b9-1687b940e5f2",
+          "elapsedMs": 1.859548000000359
+        },
+        {
+          "event": "fixture.mission_status_published",
+          "atMs": 14768.631983,
+          "missionId": "48e3080b-aac1-492c-9d9c-e7850306afd2",
+          "executionId": "af9d1792-9a0e-44bd-8bea-81d2efc31617",
+          "status": "succeeded"
+        },
+        {
+          "event": "mission.terminal_status_published",
+          "atMs": 14768.73402,
+          "executionId": "af9d1792-9a0e-44bd-8bea-81d2efc31617",
+          "missionId": "48e3080b-aac1-492c-9d9c-e7850306afd2",
+          "requestId": "6b1298c5-4b7e-47b3-85b9-1687b940e5f2",
+          "status": "succeeded"
+        },
+        {
+          "event": "session.active_binding_released",
+          "atMs": 14778.834002,
+          "executionId": "af9d1792-9a0e-44bd-8bea-81d2efc31617",
+          "requestId": "6b1298c5-4b7e-47b3-85b9-1687b940e5f2",
+          "elapsedMs": 11.809371999999712
+        }
+      ],
+      "counters": {
+        "projectRevisionReads": 1,
+        "projectHeadReads": 0,
+        "projectOpens": 1,
+        "storeCompileCalls": 0,
+        "openedProjectCompileCalls": 1,
+        "activeCapabilityReads": 4,
+        "credentialFingerprints": 3,
+        "contextStoreReads": 0,
+        "dslCompilerCalls": 2,
+        "readinessRequests": 1,
+        "runtimeHealthProbes": 4,
+        "modelCatalogReads": 4,
+        "pluginReads": 0
+      },
+      "phases": [
+        {
+          "event": "mission.prepare_phase",
+          "missionId": "48e3080b-aac1-492c-9d9c-e7850306afd2",
+          "phase": "prompt_admission_wait",
+          "durationMs": 0,
+          "elapsedMs": 0
+        },
+        {
+          "event": "mission.performance",
+          "missionId": "48e3080b-aac1-492c-9d9c-e7850306afd2",
+          "phase": "identity_revision_read",
+          "elapsedMs": 7.544018999999025
+        },
+        {
+          "event": "mission.prepare_phase",
+          "missionId": "48e3080b-aac1-492c-9d9c-e7850306afd2",
+          "phase": "mission_load_and_executor_ready",
+          "durationMs": 17.47,
+          "elapsedMs": 17.52
+        },
+        {
+          "event": "mission.prepare_phase",
+          "missionId": "48e3080b-aac1-492c-9d9c-e7850306afd2",
+          "phase": "execution_context",
+          "durationMs": 6.82,
+          "elapsedMs": 24.43
+        },
+        {
+          "event": "mission.prepare_phase",
+          "missionId": "48e3080b-aac1-492c-9d9c-e7850306afd2",
+          "phase": "default_agent_compile",
+          "durationMs": 30.51,
+          "elapsedMs": 55.01
+        },
+        {
+          "event": "mission.prepare_phase",
+          "missionId": "48e3080b-aac1-492c-9d9c-e7850306afd2",
+          "phase": "expert_session_open",
+          "durationMs": 11.04,
+          "elapsedMs": 66.14,
+          "cacheHit": false
+        },
+        {
+          "event": "mission.prepare_phase",
+          "missionId": "48e3080b-aac1-492c-9d9c-e7850306afd2",
+          "phase": "expert_session_prompt",
+          "durationMs": 110.91,
+          "elapsedMs": 180.58
+        }
+      ],
+      "sourcePin": {
+        "id": "studio",
+        "revision": 1
+      },
+      "compilationEnvironment": {
+        "fingerprint": "14a60927e29fb7cd046655f39eb3cf807cf26008b05405a84d069c8116f11634",
+        "capabilities": [
+          {
+            "capabilityId": "00000000-0000-4000-8000-000000000001",
+            "resolvedRevision": 1,
+            "fingerprint": "2a37d4a11e1513b3cd0516a1a95e22d9f539be3ed1af18a8347b6eaf498efe6b"
+          }
+        ]
+      }
+    },
+    {
+      "missionId": "ec30a900-0d9f-459a-bda1-6f53c38406e4",
+      "group": "cold",
+      "sample": 23,
+      "preparationMs": 236.60105700000167,
+      "lifecycleMarkers": [
+        {
+          "event": "fixture.dispatch",
+          "atMs": 15192.818857
+        },
+        {
+          "event": "fixture.model_completed",
+          "atMs": 15192.819533
+        },
+        {
+          "event": "execution.terminal_committed",
+          "atMs": 15213.183833,
+          "executionId": "432f5b13-7b44-46f2-a24b-a9908fcea78e",
+          "requestId": "9c2cee14-f88a-4b43-8f74-3859908a9aff",
+          "elapsedMs": 1.8828369999991992
+        },
+        {
+          "event": "fixture.mission_status_published",
+          "atMs": 15214.849205,
+          "missionId": "ec30a900-0d9f-459a-bda1-6f53c38406e4",
+          "executionId": "432f5b13-7b44-46f2-a24b-a9908fcea78e",
+          "status": "succeeded"
+        },
+        {
+          "event": "mission.terminal_status_published",
+          "atMs": 15214.943167,
+          "executionId": "432f5b13-7b44-46f2-a24b-a9908fcea78e",
+          "missionId": "ec30a900-0d9f-459a-bda1-6f53c38406e4",
+          "requestId": "9c2cee14-f88a-4b43-8f74-3859908a9aff",
+          "status": "succeeded"
+        },
+        {
+          "event": "session.active_binding_released",
+          "atMs": 15224.00095,
+          "executionId": "432f5b13-7b44-46f2-a24b-a9908fcea78e",
+          "requestId": "9c2cee14-f88a-4b43-8f74-3859908a9aff",
+          "elapsedMs": 10.71766899999966
+        }
+      ],
+      "counters": {
+        "projectRevisionReads": 1,
+        "projectHeadReads": 0,
+        "projectOpens": 1,
+        "storeCompileCalls": 0,
+        "openedProjectCompileCalls": 1,
+        "activeCapabilityReads": 4,
+        "credentialFingerprints": 3,
+        "contextStoreReads": 0,
+        "dslCompilerCalls": 2,
+        "readinessRequests": 1,
+        "runtimeHealthProbes": 4,
+        "modelCatalogReads": 4,
+        "pluginReads": 0
+      },
+      "phases": [
+        {
+          "event": "mission.prepare_phase",
+          "missionId": "ec30a900-0d9f-459a-bda1-6f53c38406e4",
+          "phase": "prompt_admission_wait",
+          "durationMs": 0,
+          "elapsedMs": 0
+        },
+        {
+          "event": "mission.performance",
+          "missionId": "ec30a900-0d9f-459a-bda1-6f53c38406e4",
+          "phase": "identity_revision_read",
+          "elapsedMs": 7.648182999999335
+        },
+        {
+          "event": "mission.prepare_phase",
+          "missionId": "ec30a900-0d9f-459a-bda1-6f53c38406e4",
+          "phase": "mission_load_and_executor_ready",
+          "durationMs": 17.21,
+          "elapsedMs": 17.26
+        },
+        {
+          "event": "mission.prepare_phase",
+          "missionId": "ec30a900-0d9f-459a-bda1-6f53c38406e4",
+          "phase": "execution_context",
+          "durationMs": 6.78,
+          "elapsedMs": 24.12
+        },
+        {
+          "event": "mission.prepare_phase",
+          "missionId": "ec30a900-0d9f-459a-bda1-6f53c38406e4",
+          "phase": "default_agent_compile",
+          "durationMs": 30.43,
+          "elapsedMs": 54.62
+        },
+        {
+          "event": "mission.prepare_phase",
+          "missionId": "ec30a900-0d9f-459a-bda1-6f53c38406e4",
+          "phase": "expert_session_open",
+          "durationMs": 10.86,
+          "elapsedMs": 65.57,
+          "cacheHit": false
+        },
+        {
+          "event": "mission.prepare_phase",
+          "missionId": "ec30a900-0d9f-459a-bda1-6f53c38406e4",
+          "phase": "expert_session_prompt",
+          "durationMs": 115.05,
+          "elapsedMs": 184.23
+        }
+      ],
+      "sourcePin": {
+        "id": "studio",
+        "revision": 1
+      },
+      "compilationEnvironment": {
+        "fingerprint": "14a60927e29fb7cd046655f39eb3cf807cf26008b05405a84d069c8116f11634",
+        "capabilities": [
+          {
+            "capabilityId": "00000000-0000-4000-8000-000000000001",
+            "resolvedRevision": 1,
+            "fingerprint": "2a37d4a11e1513b3cd0516a1a95e22d9f539be3ed1af18a8347b6eaf498efe6b"
+          }
+        ]
+      }
+    },
+    {
+      "missionId": "37bdc46e-ee6d-4655-8958-62baa02c4318",
+      "group": "cold",
+      "sample": 24,
+      "preparationMs": 240.45426600000064,
+      "lifecycleMarkers": [
+        {
+          "event": "fixture.dispatch",
+          "atMs": 15646.959427
+        },
+        {
+          "event": "fixture.model_completed",
+          "atMs": 15646.960022
+        },
+        {
+          "event": "execution.terminal_committed",
+          "atMs": 15669.685577,
+          "executionId": "48b01c11-98bd-48d2-b13c-e4e659902627",
+          "requestId": "15c8c470-c0ec-4101-8796-9fab514c21c3",
+          "elapsedMs": 1.962335999998686
+        },
+        {
+          "event": "fixture.mission_status_published",
+          "atMs": 15671.486334,
+          "missionId": "37bdc46e-ee6d-4655-8958-62baa02c4318",
+          "executionId": "48b01c11-98bd-48d2-b13c-e4e659902627",
+          "status": "succeeded"
+        },
+        {
+          "event": "mission.terminal_status_published",
+          "atMs": 15671.597943,
+          "executionId": "48b01c11-98bd-48d2-b13c-e4e659902627",
+          "missionId": "37bdc46e-ee6d-4655-8958-62baa02c4318",
+          "requestId": "15c8c470-c0ec-4101-8796-9fab514c21c3",
+          "status": "succeeded"
+        },
+        {
+          "event": "session.active_binding_released",
+          "atMs": 15683.113645,
+          "executionId": "48b01c11-98bd-48d2-b13c-e4e659902627",
+          "requestId": "15c8c470-c0ec-4101-8796-9fab514c21c3",
+          "elapsedMs": 13.296677000000273
+        }
+      ],
+      "counters": {
+        "projectRevisionReads": 1,
+        "projectHeadReads": 0,
+        "projectOpens": 1,
+        "storeCompileCalls": 0,
+        "openedProjectCompileCalls": 1,
+        "activeCapabilityReads": 4,
+        "credentialFingerprints": 3,
+        "contextStoreReads": 0,
+        "dslCompilerCalls": 2,
+        "readinessRequests": 1,
+        "runtimeHealthProbes": 4,
+        "modelCatalogReads": 4,
+        "pluginReads": 0
+      },
+      "phases": [
+        {
+          "event": "mission.prepare_phase",
+          "missionId": "37bdc46e-ee6d-4655-8958-62baa02c4318",
+          "phase": "prompt_admission_wait",
+          "durationMs": 0,
+          "elapsedMs": 0.01
+        },
+        {
+          "event": "mission.performance",
+          "missionId": "37bdc46e-ee6d-4655-8958-62baa02c4318",
+          "phase": "identity_revision_read",
+          "elapsedMs": 7.776470999999219
+        },
+        {
+          "event": "mission.prepare_phase",
+          "missionId": "37bdc46e-ee6d-4655-8958-62baa02c4318",
+          "phase": "mission_load_and_executor_ready",
+          "durationMs": 17.39,
+          "elapsedMs": 17.47
+        },
+        {
+          "event": "mission.prepare_phase",
+          "missionId": "37bdc46e-ee6d-4655-8958-62baa02c4318",
+          "phase": "execution_context",
+          "durationMs": 6.85,
+          "elapsedMs": 24.4
+        },
+        {
+          "event": "mission.prepare_phase",
+          "missionId": "37bdc46e-ee6d-4655-8958-62baa02c4318",
+          "phase": "default_agent_compile",
+          "durationMs": 34.17,
+          "elapsedMs": 58.63
+        },
+        {
+          "event": "mission.prepare_phase",
+          "missionId": "37bdc46e-ee6d-4655-8958-62baa02c4318",
+          "phase": "expert_session_open",
+          "durationMs": 12.22,
+          "elapsedMs": 70.94,
+          "cacheHit": false
+        },
+        {
+          "event": "mission.prepare_phase",
+          "missionId": "37bdc46e-ee6d-4655-8958-62baa02c4318",
+          "phase": "expert_session_prompt",
+          "durationMs": 112.58,
+          "elapsedMs": 187.23
+        }
+      ],
+      "sourcePin": {
+        "id": "studio",
+        "revision": 1
+      },
+      "compilationEnvironment": {
+        "fingerprint": "14a60927e29fb7cd046655f39eb3cf807cf26008b05405a84d069c8116f11634",
+        "capabilities": [
+          {
+            "capabilityId": "00000000-0000-4000-8000-000000000001",
+            "resolvedRevision": 1,
+            "fingerprint": "2a37d4a11e1513b3cd0516a1a95e22d9f539be3ed1af18a8347b6eaf498efe6b"
+          }
+        ]
+      }
+    },
+    {
+      "missionId": "2da5ba95-bbfa-46ce-87cf-7c2ca8f11880",
+      "group": "cold",
+      "sample": 25,
+      "preparationMs": 234.33578900000066,
+      "lifecycleMarkers": [
+        {
+          "event": "fixture.dispatch",
+          "atMs": 16101.6463
+        },
+        {
+          "event": "fixture.model_completed",
+          "atMs": 16101.646937
+        },
+        {
+          "event": "execution.terminal_committed",
+          "atMs": 16123.200833,
+          "executionId": "4ec35863-ce49-49d4-ad60-a765db9c75a0",
+          "requestId": "6dcb4932-4190-4ab9-823d-6a64589942a9",
+          "elapsedMs": 1.8602050000008603
+        },
+        {
+          "event": "fixture.mission_status_published",
+          "atMs": 16124.921709,
+          "missionId": "2da5ba95-bbfa-46ce-87cf-7c2ca8f11880",
+          "executionId": "4ec35863-ce49-49d4-ad60-a765db9c75a0",
+          "status": "succeeded"
+        },
+        {
+          "event": "mission.terminal_status_published",
+          "atMs": 16125.015115,
+          "executionId": "4ec35863-ce49-49d4-ad60-a765db9c75a0",
+          "missionId": "2da5ba95-bbfa-46ce-87cf-7c2ca8f11880",
+          "requestId": "6dcb4932-4190-4ab9-823d-6a64589942a9",
+          "status": "succeeded"
+        },
+        {
+          "event": "session.active_binding_released",
+          "atMs": 16135.221496,
+          "executionId": "4ec35863-ce49-49d4-ad60-a765db9c75a0",
+          "requestId": "6dcb4932-4190-4ab9-823d-6a64589942a9",
+          "elapsedMs": 11.912755999999717
+        }
+      ],
+      "counters": {
+        "projectRevisionReads": 1,
+        "projectHeadReads": 0,
+        "projectOpens": 1,
+        "storeCompileCalls": 0,
+        "openedProjectCompileCalls": 1,
+        "activeCapabilityReads": 4,
+        "credentialFingerprints": 3,
+        "contextStoreReads": 0,
+        "dslCompilerCalls": 2,
+        "readinessRequests": 1,
+        "runtimeHealthProbes": 4,
+        "modelCatalogReads": 4,
+        "pluginReads": 0
+      },
+      "phases": [
+        {
+          "event": "mission.prepare_phase",
+          "missionId": "2da5ba95-bbfa-46ce-87cf-7c2ca8f11880",
+          "phase": "prompt_admission_wait",
+          "durationMs": 0,
+          "elapsedMs": 0
+        },
+        {
+          "event": "mission.performance",
+          "missionId": "2da5ba95-bbfa-46ce-87cf-7c2ca8f11880",
+          "phase": "identity_revision_read",
+          "elapsedMs": 8.640822999999727
+        },
+        {
+          "event": "mission.prepare_phase",
+          "missionId": "2da5ba95-bbfa-46ce-87cf-7c2ca8f11880",
+          "phase": "mission_load_and_executor_ready",
+          "durationMs": 17.81,
+          "elapsedMs": 17.92
+        },
+        {
+          "event": "mission.prepare_phase",
+          "missionId": "2da5ba95-bbfa-46ce-87cf-7c2ca8f11880",
+          "phase": "execution_context",
+          "durationMs": 6.93,
+          "elapsedMs": 24.91
+        },
+        {
+          "event": "mission.prepare_phase",
+          "missionId": "2da5ba95-bbfa-46ce-87cf-7c2ca8f11880",
+          "phase": "default_agent_compile",
+          "durationMs": 31.98,
+          "elapsedMs": 56.97
+        },
+        {
+          "event": "mission.prepare_phase",
+          "missionId": "2da5ba95-bbfa-46ce-87cf-7c2ca8f11880",
+          "phase": "expert_session_open",
+          "durationMs": 12.04,
+          "elapsedMs": 69.09,
+          "cacheHit": false
+        },
+        {
+          "event": "mission.prepare_phase",
+          "missionId": "2da5ba95-bbfa-46ce-87cf-7c2ca8f11880",
+          "phase": "expert_session_prompt",
+          "durationMs": 109.02,
+          "elapsedMs": 181.77
+        }
+      ],
+      "sourcePin": {
+        "id": "studio",
+        "revision": 1
+      },
+      "compilationEnvironment": {
+        "fingerprint": "14a60927e29fb7cd046655f39eb3cf807cf26008b05405a84d069c8116f11634",
+        "capabilities": [
+          {
+            "capabilityId": "00000000-0000-4000-8000-000000000001",
+            "resolvedRevision": 1,
+            "fingerprint": "2a37d4a11e1513b3cd0516a1a95e22d9f539be3ed1af18a8347b6eaf498efe6b"
+          }
+        ]
+      }
+    },
+    {
+      "missionId": "d7efb2c2-c212-420f-8cc8-8cae5787178e",
+      "group": "cold",
+      "sample": 26,
+      "preparationMs": 234.40533999999934,
+      "lifecycleMarkers": [
+        {
+          "event": "fixture.dispatch",
+          "atMs": 16548.488461
+        },
+        {
+          "event": "fixture.model_completed",
+          "atMs": 16548.489019
+        },
+        {
+          "event": "execution.terminal_committed",
+          "atMs": 16568.504202,
+          "executionId": "5b610f3b-5478-447f-bd7a-94a2f96c047e",
+          "requestId": "0e94cc58-20c0-4146-8a56-8fa7ebd74b0e",
+          "elapsedMs": 1.8402999999998428
+        },
+        {
+          "event": "fixture.mission_status_published",
+          "atMs": 16570.083129,
+          "missionId": "d7efb2c2-c212-420f-8cc8-8cae5787178e",
+          "executionId": "5b610f3b-5478-447f-bd7a-94a2f96c047e",
+          "status": "succeeded"
+        },
+        {
+          "event": "mission.terminal_status_published",
+          "atMs": 16570.182261,
+          "executionId": "5b610f3b-5478-447f-bd7a-94a2f96c047e",
+          "missionId": "d7efb2c2-c212-420f-8cc8-8cae5787178e",
+          "requestId": "0e94cc58-20c0-4146-8a56-8fa7ebd74b0e",
+          "status": "succeeded"
+        },
+        {
+          "event": "session.active_binding_released",
+          "atMs": 16579.508192,
+          "executionId": "5b610f3b-5478-447f-bd7a-94a2f96c047e",
+          "requestId": "0e94cc58-20c0-4146-8a56-8fa7ebd74b0e",
+          "elapsedMs": 10.911315000001196
+        }
+      ],
+      "counters": {
+        "projectRevisionReads": 1,
+        "projectHeadReads": 0,
+        "projectOpens": 1,
+        "storeCompileCalls": 0,
+        "openedProjectCompileCalls": 1,
+        "activeCapabilityReads": 4,
+        "credentialFingerprints": 3,
+        "contextStoreReads": 0,
+        "dslCompilerCalls": 2,
+        "readinessRequests": 1,
+        "runtimeHealthProbes": 4,
+        "modelCatalogReads": 4,
+        "pluginReads": 0
+      },
+      "phases": [
+        {
+          "event": "mission.prepare_phase",
+          "missionId": "d7efb2c2-c212-420f-8cc8-8cae5787178e",
+          "phase": "prompt_admission_wait",
+          "durationMs": 0,
+          "elapsedMs": 0
+        },
+        {
+          "event": "mission.performance",
+          "missionId": "d7efb2c2-c212-420f-8cc8-8cae5787178e",
+          "phase": "identity_revision_read",
+          "elapsedMs": 8.580970999999408
+        },
+        {
+          "event": "mission.prepare_phase",
+          "missionId": "d7efb2c2-c212-420f-8cc8-8cae5787178e",
+          "phase": "mission_load_and_executor_ready",
+          "durationMs": 17.95,
+          "elapsedMs": 17.99
+        },
+        {
+          "event": "mission.prepare_phase",
+          "missionId": "d7efb2c2-c212-420f-8cc8-8cae5787178e",
+          "phase": "execution_context",
+          "durationMs": 6.77,
+          "elapsedMs": 24.83
+        },
+        {
+          "event": "mission.prepare_phase",
+          "missionId": "d7efb2c2-c212-420f-8cc8-8cae5787178e",
+          "phase": "default_agent_compile",
+          "durationMs": 30.44,
+          "elapsedMs": 55.34
+        },
+        {
+          "event": "mission.prepare_phase",
+          "missionId": "d7efb2c2-c212-420f-8cc8-8cae5787178e",
+          "phase": "expert_session_open",
+          "durationMs": 11.47,
+          "elapsedMs": 66.89,
+          "cacheHit": false
+        },
+        {
+          "event": "mission.prepare_phase",
+          "missionId": "d7efb2c2-c212-420f-8cc8-8cae5787178e",
+          "phase": "expert_session_prompt",
+          "durationMs": 110.82,
+          "elapsedMs": 181.25
+        }
+      ],
+      "sourcePin": {
+        "id": "studio",
+        "revision": 1
+      },
+      "compilationEnvironment": {
+        "fingerprint": "14a60927e29fb7cd046655f39eb3cf807cf26008b05405a84d069c8116f11634",
+        "capabilities": [
+          {
+            "capabilityId": "00000000-0000-4000-8000-000000000001",
+            "resolvedRevision": 1,
+            "fingerprint": "2a37d4a11e1513b3cd0516a1a95e22d9f539be3ed1af18a8347b6eaf498efe6b"
+          }
+        ]
+      }
+    },
+    {
+      "missionId": "38765593-9828-4132-b550-ccecbc5ef24b",
+      "group": "cold",
+      "sample": 27,
+      "preparationMs": 220.2053620000006,
+      "lifecycleMarkers": [
+        {
+          "event": "fixture.dispatch",
+          "atMs": 16978.460186
+        },
+        {
+          "event": "fixture.model_completed",
+          "atMs": 16978.460797
+        },
+        {
+          "event": "execution.terminal_committed",
+          "atMs": 16999.057756,
+          "executionId": "8690ba12-e247-40f9-a80d-60a718d32cd2",
+          "requestId": "44e84a76-0b0c-4095-ae91-c9c7206d428f",
+          "elapsedMs": 1.8987189999970724
+        },
+        {
+          "event": "fixture.mission_status_published",
+          "atMs": 17000.741131,
+          "missionId": "38765593-9828-4132-b550-ccecbc5ef24b",
+          "executionId": "8690ba12-e247-40f9-a80d-60a718d32cd2",
+          "status": "succeeded"
+        },
+        {
+          "event": "mission.terminal_status_published",
+          "atMs": 17000.82885,
+          "executionId": "8690ba12-e247-40f9-a80d-60a718d32cd2",
+          "missionId": "38765593-9828-4132-b550-ccecbc5ef24b",
+          "requestId": "44e84a76-0b0c-4095-ae91-c9c7206d428f",
+          "status": "succeeded"
+        },
+        {
+          "event": "session.active_binding_released",
+          "atMs": 17010.753817,
+          "executionId": "8690ba12-e247-40f9-a80d-60a718d32cd2",
+          "requestId": "44e84a76-0b0c-4095-ae91-c9c7206d428f",
+          "elapsedMs": 11.593190999999933
+        }
+      ],
+      "counters": {
+        "projectRevisionReads": 1,
+        "projectHeadReads": 0,
+        "projectOpens": 1,
+        "storeCompileCalls": 0,
+        "openedProjectCompileCalls": 1,
+        "activeCapabilityReads": 4,
+        "credentialFingerprints": 3,
+        "contextStoreReads": 0,
+        "dslCompilerCalls": 2,
+        "readinessRequests": 1,
+        "runtimeHealthProbes": 4,
+        "modelCatalogReads": 4,
+        "pluginReads": 0
+      },
+      "phases": [
+        {
+          "event": "mission.prepare_phase",
+          "missionId": "38765593-9828-4132-b550-ccecbc5ef24b",
+          "phase": "prompt_admission_wait",
+          "durationMs": 0,
+          "elapsedMs": 0
+        },
+        {
+          "event": "mission.performance",
+          "missionId": "38765593-9828-4132-b550-ccecbc5ef24b",
+          "phase": "identity_revision_read",
+          "elapsedMs": 7.358235000003333
+        },
+        {
+          "event": "mission.prepare_phase",
+          "missionId": "38765593-9828-4132-b550-ccecbc5ef24b",
+          "phase": "mission_load_and_executor_ready",
+          "durationMs": 16.78,
+          "elapsedMs": 16.84
+        },
+        {
+          "event": "mission.prepare_phase",
+          "missionId": "38765593-9828-4132-b550-ccecbc5ef24b",
+          "phase": "execution_context",
+          "durationMs": 6.66,
+          "elapsedMs": 23.58
+        },
+        {
+          "event": "mission.prepare_phase",
+          "missionId": "38765593-9828-4132-b550-ccecbc5ef24b",
+          "phase": "default_agent_compile",
+          "durationMs": 31.63,
+          "elapsedMs": 55.28
+        },
+        {
+          "event": "mission.prepare_phase",
+          "missionId": "38765593-9828-4132-b550-ccecbc5ef24b",
+          "phase": "expert_session_open",
+          "durationMs": 12.43,
+          "elapsedMs": 67.8,
+          "cacheHit": false
+        },
+        {
+          "event": "mission.prepare_phase",
+          "missionId": "38765593-9828-4132-b550-ccecbc5ef24b",
+          "phase": "expert_session_prompt",
+          "durationMs": 112.54,
+          "elapsedMs": 183.89
+        }
+      ],
+      "sourcePin": {
+        "id": "studio",
+        "revision": 1
+      },
+      "compilationEnvironment": {
+        "fingerprint": "14a60927e29fb7cd046655f39eb3cf807cf26008b05405a84d069c8116f11634",
+        "capabilities": [
+          {
+            "capabilityId": "00000000-0000-4000-8000-000000000001",
+            "resolvedRevision": 1,
+            "fingerprint": "2a37d4a11e1513b3cd0516a1a95e22d9f539be3ed1af18a8347b6eaf498efe6b"
+          }
+        ]
+      }
+    },
+    {
+      "missionId": "aef3741c-ebf5-4b08-a2de-6a77ee1917c7",
+      "group": "cold",
+      "sample": 28,
+      "preparationMs": 225.9988970000013,
+      "lifecycleMarkers": [
+        {
+          "event": "fixture.dispatch",
+          "atMs": 17415.114767
+        },
+        {
+          "event": "fixture.model_completed",
+          "atMs": 17415.115411
+        },
+        {
+          "event": "execution.terminal_committed",
+          "atMs": 17434.843486,
+          "executionId": "c8b9abc0-e263-498a-883c-256666235515",
+          "requestId": "5d7967e0-5251-4e18-a48d-3caad68153f3",
+          "elapsedMs": 1.7613380000002508
+        },
+        {
+          "event": "fixture.mission_status_published",
+          "atMs": 17436.43901,
+          "missionId": "aef3741c-ebf5-4b08-a2de-6a77ee1917c7",
+          "executionId": "c8b9abc0-e263-498a-883c-256666235515",
+          "status": "succeeded"
+        },
+        {
+          "event": "mission.terminal_status_published",
+          "atMs": 17436.541466,
+          "executionId": "c8b9abc0-e263-498a-883c-256666235515",
+          "missionId": "aef3741c-ebf5-4b08-a2de-6a77ee1917c7",
+          "requestId": "5d7967e0-5251-4e18-a48d-3caad68153f3",
+          "status": "succeeded"
+        },
+        {
+          "event": "session.active_binding_released",
+          "atMs": 17447.747225,
+          "executionId": "c8b9abc0-e263-498a-883c-256666235515",
+          "requestId": "5d7967e0-5251-4e18-a48d-3caad68153f3",
+          "elapsedMs": 12.798524000001635
+        }
+      ],
+      "counters": {
+        "projectRevisionReads": 1,
+        "projectHeadReads": 0,
+        "projectOpens": 1,
+        "storeCompileCalls": 0,
+        "openedProjectCompileCalls": 1,
+        "activeCapabilityReads": 4,
+        "credentialFingerprints": 3,
+        "contextStoreReads": 0,
+        "dslCompilerCalls": 2,
+        "readinessRequests": 1,
+        "runtimeHealthProbes": 4,
+        "modelCatalogReads": 4,
+        "pluginReads": 0
+      },
+      "phases": [
+        {
+          "event": "mission.prepare_phase",
+          "missionId": "aef3741c-ebf5-4b08-a2de-6a77ee1917c7",
+          "phase": "prompt_admission_wait",
+          "durationMs": 0,
+          "elapsedMs": 0.01
+        },
+        {
+          "event": "mission.performance",
+          "missionId": "aef3741c-ebf5-4b08-a2de-6a77ee1917c7",
+          "phase": "identity_revision_read",
+          "elapsedMs": 8.667321999997512
+        },
+        {
+          "event": "mission.prepare_phase",
+          "missionId": "aef3741c-ebf5-4b08-a2de-6a77ee1917c7",
+          "phase": "mission_load_and_executor_ready",
+          "durationMs": 18.13,
+          "elapsedMs": 18.17
+        },
+        {
+          "event": "mission.prepare_phase",
+          "missionId": "aef3741c-ebf5-4b08-a2de-6a77ee1917c7",
+          "phase": "execution_context",
+          "durationMs": 5.96,
+          "elapsedMs": 24.21
+        },
+        {
+          "event": "mission.prepare_phase",
+          "missionId": "aef3741c-ebf5-4b08-a2de-6a77ee1917c7",
+          "phase": "default_agent_compile",
+          "durationMs": 30.89,
+          "elapsedMs": 55.16
+        },
+        {
+          "event": "mission.prepare_phase",
+          "missionId": "aef3741c-ebf5-4b08-a2de-6a77ee1917c7",
+          "phase": "expert_session_open",
+          "durationMs": 11.35,
+          "elapsedMs": 66.59,
+          "cacheHit": false
+        },
+        {
+          "event": "mission.prepare_phase",
+          "missionId": "aef3741c-ebf5-4b08-a2de-6a77ee1917c7",
+          "phase": "expert_session_prompt",
+          "durationMs": 103.36,
+          "elapsedMs": 173.16
+        }
+      ],
+      "sourcePin": {
+        "id": "studio",
+        "revision": 1
+      },
+      "compilationEnvironment": {
+        "fingerprint": "14a60927e29fb7cd046655f39eb3cf807cf26008b05405a84d069c8116f11634",
+        "capabilities": [
+          {
+            "capabilityId": "00000000-0000-4000-8000-000000000001",
+            "resolvedRevision": 1,
+            "fingerprint": "2a37d4a11e1513b3cd0516a1a95e22d9f539be3ed1af18a8347b6eaf498efe6b"
+          }
+        ]
+      }
+    },
+    {
+      "missionId": "626d32fd-17f2-4471-8137-0ac6b6649e4c",
+      "group": "cold",
+      "sample": 29,
+      "preparationMs": 236.34881799999857,
+      "lifecycleMarkers": [
+        {
+          "event": "fixture.dispatch",
+          "atMs": 17861.499096
+        },
+        {
+          "event": "fixture.model_completed",
+          "atMs": 17861.499719
+        },
+        {
+          "event": "execution.terminal_committed",
+          "atMs": 17882.066734,
+          "executionId": "87e9816e-a033-45a6-9212-38e307fb7d3b",
+          "requestId": "21d02f35-4fdc-4696-9547-af6aadc75649",
+          "elapsedMs": 1.8643239999983052
+        },
+        {
+          "event": "fixture.mission_status_published",
+          "atMs": 17883.681513,
+          "missionId": "626d32fd-17f2-4471-8137-0ac6b6649e4c",
+          "executionId": "87e9816e-a033-45a6-9212-38e307fb7d3b",
+          "status": "succeeded"
+        },
+        {
+          "event": "mission.terminal_status_published",
+          "atMs": 17883.776286,
+          "executionId": "87e9816e-a033-45a6-9212-38e307fb7d3b",
+          "missionId": "626d32fd-17f2-4471-8137-0ac6b6649e4c",
+          "requestId": "21d02f35-4fdc-4696-9547-af6aadc75649",
+          "status": "succeeded"
+        },
+        {
+          "event": "session.active_binding_released",
+          "atMs": 17893.102706,
+          "executionId": "87e9816e-a033-45a6-9212-38e307fb7d3b",
+          "requestId": "21d02f35-4fdc-4696-9547-af6aadc75649",
+          "elapsedMs": 10.943200999998226
+        }
+      ],
+      "counters": {
+        "projectRevisionReads": 1,
+        "projectHeadReads": 0,
+        "projectOpens": 1,
+        "storeCompileCalls": 0,
+        "openedProjectCompileCalls": 1,
+        "activeCapabilityReads": 4,
+        "credentialFingerprints": 3,
+        "contextStoreReads": 0,
+        "dslCompilerCalls": 2,
+        "readinessRequests": 1,
+        "runtimeHealthProbes": 4,
+        "modelCatalogReads": 4,
+        "pluginReads": 0
+      },
+      "phases": [
+        {
+          "event": "mission.prepare_phase",
+          "missionId": "626d32fd-17f2-4471-8137-0ac6b6649e4c",
+          "phase": "prompt_admission_wait",
+          "durationMs": 0,
+          "elapsedMs": 0
+        },
+        {
+          "event": "mission.performance",
+          "missionId": "626d32fd-17f2-4471-8137-0ac6b6649e4c",
+          "phase": "identity_revision_read",
+          "elapsedMs": 8.53948500000115
+        },
+        {
+          "event": "mission.prepare_phase",
+          "missionId": "626d32fd-17f2-4471-8137-0ac6b6649e4c",
+          "phase": "mission_load_and_executor_ready",
+          "durationMs": 17.67,
+          "elapsedMs": 17.72
+        },
+        {
+          "event": "mission.prepare_phase",
+          "missionId": "626d32fd-17f2-4471-8137-0ac6b6649e4c",
+          "phase": "execution_context",
+          "durationMs": 6.84,
+          "elapsedMs": 24.64
+        },
+        {
+          "event": "mission.prepare_phase",
+          "missionId": "626d32fd-17f2-4471-8137-0ac6b6649e4c",
+          "phase": "default_agent_compile",
+          "durationMs": 30.43,
+          "elapsedMs": 55.14
+        },
+        {
+          "event": "mission.prepare_phase",
+          "missionId": "626d32fd-17f2-4471-8137-0ac6b6649e4c",
+          "phase": "expert_session_open",
+          "durationMs": 12.71,
+          "elapsedMs": 67.94,
+          "cacheHit": false
+        },
+        {
+          "event": "mission.prepare_phase",
+          "missionId": "626d32fd-17f2-4471-8137-0ac6b6649e4c",
+          "phase": "expert_session_prompt",
+          "durationMs": 113.57,
+          "elapsedMs": 185.03
+        }
+      ],
+      "sourcePin": {
+        "id": "studio",
+        "revision": 1
+      },
+      "compilationEnvironment": {
+        "fingerprint": "14a60927e29fb7cd046655f39eb3cf807cf26008b05405a84d069c8116f11634",
+        "capabilities": [
+          {
+            "capabilityId": "00000000-0000-4000-8000-000000000001",
+            "resolvedRevision": 1,
+            "fingerprint": "2a37d4a11e1513b3cd0516a1a95e22d9f539be3ed1af18a8347b6eaf498efe6b"
+          }
+        ]
+      }
+    },
+    {
+      "missionId": "776aab5a-ee7e-4f57-91e9-0c2eef0d33c0",
+      "group": "cold",
+      "sample": 30,
+      "preparationMs": 251.99505300000237,
+      "lifecycleMarkers": [
+        {
+          "event": "fixture.dispatch",
+          "atMs": 18321.11531
+        },
+        {
+          "event": "fixture.model_completed",
+          "atMs": 18321.115882
+        },
+        {
+          "event": "execution.terminal_committed",
+          "atMs": 18341.089901,
+          "executionId": "44b25bf8-7720-4179-a549-a1058dfc8443",
+          "requestId": "1b519f1e-f685-4a97-962f-6e1d85809c52",
+          "elapsedMs": 1.848641000000498
+        },
+        {
+          "event": "fixture.mission_status_published",
+          "atMs": 18342.665205,
+          "missionId": "776aab5a-ee7e-4f57-91e9-0c2eef0d33c0",
+          "executionId": "44b25bf8-7720-4179-a549-a1058dfc8443",
+          "status": "succeeded"
+        },
+        {
+          "event": "mission.terminal_status_published",
+          "atMs": 18342.753985,
+          "executionId": "44b25bf8-7720-4179-a549-a1058dfc8443",
+          "missionId": "776aab5a-ee7e-4f57-91e9-0c2eef0d33c0",
+          "requestId": "1b519f1e-f685-4a97-962f-6e1d85809c52",
+          "status": "succeeded"
+        },
+        {
+          "event": "session.active_binding_released",
+          "atMs": 18350.975732,
+          "executionId": "44b25bf8-7720-4179-a549-a1058dfc8443",
+          "requestId": "1b519f1e-f685-4a97-962f-6e1d85809c52",
+          "elapsedMs": 9.783471999999165
+        }
+      ],
+      "counters": {
+        "projectRevisionReads": 1,
+        "projectHeadReads": 0,
+        "projectOpens": 1,
+        "storeCompileCalls": 0,
+        "openedProjectCompileCalls": 1,
+        "activeCapabilityReads": 4,
+        "credentialFingerprints": 3,
+        "contextStoreReads": 0,
+        "dslCompilerCalls": 2,
+        "readinessRequests": 1,
+        "runtimeHealthProbes": 4,
+        "modelCatalogReads": 4,
+        "pluginReads": 0
+      },
+      "phases": [
+        {
+          "event": "mission.prepare_phase",
+          "missionId": "776aab5a-ee7e-4f57-91e9-0c2eef0d33c0",
+          "phase": "prompt_admission_wait",
+          "durationMs": 0,
+          "elapsedMs": 0.01
+        },
+        {
+          "event": "mission.performance",
+          "missionId": "776aab5a-ee7e-4f57-91e9-0c2eef0d33c0",
+          "phase": "identity_revision_read",
+          "elapsedMs": 8.66565300000002
+        },
+        {
+          "event": "mission.prepare_phase",
+          "missionId": "776aab5a-ee7e-4f57-91e9-0c2eef0d33c0",
+          "phase": "mission_load_and_executor_ready",
+          "durationMs": 18.09,
+          "elapsedMs": 18.15
+        },
+        {
+          "event": "mission.prepare_phase",
+          "missionId": "776aab5a-ee7e-4f57-91e9-0c2eef0d33c0",
+          "phase": "execution_context",
+          "durationMs": 6.85,
+          "elapsedMs": 25.09
+        },
+        {
+          "event": "mission.prepare_phase",
+          "missionId": "776aab5a-ee7e-4f57-91e9-0c2eef0d33c0",
+          "phase": "default_agent_compile",
+          "durationMs": 29.74,
+          "elapsedMs": 54.92
+        },
+        {
+          "event": "mission.prepare_phase",
+          "missionId": "776aab5a-ee7e-4f57-91e9-0c2eef0d33c0",
+          "phase": "expert_session_open",
+          "durationMs": 11.5,
+          "elapsedMs": 66.5,
+          "cacheHit": false
+        },
+        {
+          "event": "mission.prepare_phase",
+          "missionId": "776aab5a-ee7e-4f57-91e9-0c2eef0d33c0",
+          "phase": "expert_session_prompt",
+          "durationMs": 129.21,
+          "elapsedMs": 199.24
+        }
+      ],
+      "sourcePin": {
+        "id": "studio",
+        "revision": 1
+      },
+      "compilationEnvironment": {
+        "fingerprint": "14a60927e29fb7cd046655f39eb3cf807cf26008b05405a84d069c8116f11634",
+        "capabilities": [
+          {
+            "capabilityId": "00000000-0000-4000-8000-000000000001",
+            "resolvedRevision": 1,
+            "fingerprint": "2a37d4a11e1513b3cd0516a1a95e22d9f539be3ed1af18a8347b6eaf498efe6b"
+          }
+        ]
+      }
+    },
+    {
+      "missionId": "ebf83d66-8eb7-468f-8b19-48edae0f90c7",
+      "group": "cold",
+      "sample": 31,
+      "preparationMs": 228.8120060000001,
+      "lifecycleMarkers": [
+        {
+          "event": "fixture.dispatch",
+          "atMs": 18766.867383
+        },
+        {
+          "event": "fixture.model_completed",
+          "atMs": 18766.868056
+        },
+        {
+          "event": "execution.terminal_committed",
+          "atMs": 18787.639195,
+          "executionId": "92c74adb-2405-464e-a305-9594a297feac",
+          "requestId": "f3d08f7f-3402-4372-8613-8971ca7e95f2",
+          "elapsedMs": 1.8811789999999746
+        },
+        {
+          "event": "fixture.mission_status_published",
+          "atMs": 18789.309551,
+          "missionId": "ebf83d66-8eb7-468f-8b19-48edae0f90c7",
+          "executionId": "92c74adb-2405-464e-a305-9594a297feac",
+          "status": "succeeded"
+        },
+        {
+          "event": "mission.terminal_status_published",
+          "atMs": 18789.409609,
+          "executionId": "92c74adb-2405-464e-a305-9594a297feac",
+          "missionId": "ebf83d66-8eb7-468f-8b19-48edae0f90c7",
+          "requestId": "f3d08f7f-3402-4372-8613-8971ca7e95f2",
+          "status": "succeeded"
+        },
+        {
+          "event": "session.active_binding_released",
+          "atMs": 18798.911412,
+          "executionId": "92c74adb-2405-464e-a305-9594a297feac",
+          "requestId": "f3d08f7f-3402-4372-8613-8971ca7e95f2",
+          "elapsedMs": 11.171469000000798
+        }
+      ],
+      "counters": {
+        "projectRevisionReads": 1,
+        "projectHeadReads": 0,
+        "projectOpens": 1,
+        "storeCompileCalls": 0,
+        "openedProjectCompileCalls": 1,
+        "activeCapabilityReads": 4,
+        "credentialFingerprints": 3,
+        "contextStoreReads": 0,
+        "dslCompilerCalls": 2,
+        "readinessRequests": 1,
+        "runtimeHealthProbes": 4,
+        "modelCatalogReads": 4,
+        "pluginReads": 0
+      },
+      "phases": [
+        {
+          "event": "mission.prepare_phase",
+          "missionId": "ebf83d66-8eb7-468f-8b19-48edae0f90c7",
+          "phase": "prompt_admission_wait",
+          "durationMs": 0,
+          "elapsedMs": 0
+        },
+        {
+          "event": "mission.performance",
+          "missionId": "ebf83d66-8eb7-468f-8b19-48edae0f90c7",
+          "phase": "identity_revision_read",
+          "elapsedMs": 8.639530000000377
+        },
+        {
+          "event": "mission.prepare_phase",
+          "missionId": "ebf83d66-8eb7-468f-8b19-48edae0f90c7",
+          "phase": "mission_load_and_executor_ready",
+          "durationMs": 17.79,
+          "elapsedMs": 17.85
+        },
+        {
+          "event": "mission.prepare_phase",
+          "missionId": "ebf83d66-8eb7-468f-8b19-48edae0f90c7",
+          "phase": "execution_context",
+          "durationMs": 6.64,
+          "elapsedMs": 24.57
+        },
+        {
+          "event": "mission.prepare_phase",
+          "missionId": "ebf83d66-8eb7-468f-8b19-48edae0f90c7",
+          "phase": "default_agent_compile",
+          "durationMs": 30.68,
+          "elapsedMs": 55.32
+        },
+        {
+          "event": "mission.prepare_phase",
+          "missionId": "ebf83d66-8eb7-468f-8b19-48edae0f90c7",
+          "phase": "expert_session_open",
+          "durationMs": 11.94,
+          "elapsedMs": 67.35,
+          "cacheHit": false
+        },
+        {
+          "event": "mission.prepare_phase",
+          "missionId": "ebf83d66-8eb7-468f-8b19-48edae0f90c7",
+          "phase": "expert_session_prompt",
+          "durationMs": 106.64,
+          "elapsedMs": 177.65
+        }
+      ],
+      "sourcePin": {
+        "id": "studio",
+        "revision": 1
+      },
+      "compilationEnvironment": {
+        "fingerprint": "14a60927e29fb7cd046655f39eb3cf807cf26008b05405a84d069c8116f11634",
+        "capabilities": [
+          {
+            "capabilityId": "00000000-0000-4000-8000-000000000001",
+            "resolvedRevision": 1,
+            "fingerprint": "2a37d4a11e1513b3cd0516a1a95e22d9f539be3ed1af18a8347b6eaf498efe6b"
+          }
+        ]
+      }
+    },
+    {
+      "missionId": "0fa8e63c-2296-4d0d-af34-9305aea327bb",
+      "group": "cold",
+      "sample": 32,
+      "preparationMs": 230.47461399999884,
+      "lifecycleMarkers": [
+        {
+          "event": "fixture.dispatch",
+          "atMs": 19213.078597
+        },
+        {
+          "event": "fixture.model_completed",
+          "atMs": 19213.079304
+        },
+        {
+          "event": "execution.terminal_committed",
+          "atMs": 19232.485848,
+          "executionId": "a182cdce-ba70-4033-8863-223d430e0530",
+          "requestId": "61ee436c-e93b-45a7-b93d-fadf69acd76d",
+          "elapsedMs": 1.7914190000010421
+        },
+        {
+          "event": "fixture.mission_status_published",
+          "atMs": 19234.008784,
+          "missionId": "0fa8e63c-2296-4d0d-af34-9305aea327bb",
+          "executionId": "a182cdce-ba70-4033-8863-223d430e0530",
+          "status": "succeeded"
+        },
+        {
+          "event": "mission.terminal_status_published",
+          "atMs": 19234.099276,
+          "executionId": "a182cdce-ba70-4033-8863-223d430e0530",
+          "missionId": "0fa8e63c-2296-4d0d-af34-9305aea327bb",
+          "requestId": "61ee436c-e93b-45a7-b93d-fadf69acd76d",
+          "status": "succeeded"
+        },
+        {
+          "event": "session.active_binding_released",
+          "atMs": 19244.14586,
+          "executionId": "a182cdce-ba70-4033-8863-223d430e0530",
+          "requestId": "61ee436c-e93b-45a7-b93d-fadf69acd76d",
+          "elapsedMs": 11.557936999997764
+        }
+      ],
+      "counters": {
+        "projectRevisionReads": 1,
+        "projectHeadReads": 0,
+        "projectOpens": 1,
+        "storeCompileCalls": 0,
+        "openedProjectCompileCalls": 1,
+        "activeCapabilityReads": 4,
+        "credentialFingerprints": 3,
+        "contextStoreReads": 0,
+        "dslCompilerCalls": 2,
+        "readinessRequests": 1,
+        "runtimeHealthProbes": 4,
+        "modelCatalogReads": 4,
+        "pluginReads": 0
+      },
+      "phases": [
+        {
+          "event": "mission.prepare_phase",
+          "missionId": "0fa8e63c-2296-4d0d-af34-9305aea327bb",
+          "phase": "prompt_admission_wait",
+          "durationMs": 0,
+          "elapsedMs": 0
+        },
+        {
+          "event": "mission.performance",
+          "missionId": "0fa8e63c-2296-4d0d-af34-9305aea327bb",
+          "phase": "identity_revision_read",
+          "elapsedMs": 8.496306000000914
+        },
+        {
+          "event": "mission.prepare_phase",
+          "missionId": "0fa8e63c-2296-4d0d-af34-9305aea327bb",
+          "phase": "mission_load_and_executor_ready",
+          "durationMs": 17.58,
+          "elapsedMs": 17.64
+        },
+        {
+          "event": "mission.prepare_phase",
+          "missionId": "0fa8e63c-2296-4d0d-af34-9305aea327bb",
+          "phase": "execution_context",
+          "durationMs": 6.9,
+          "elapsedMs": 24.62
+        },
+        {
+          "event": "mission.prepare_phase",
+          "missionId": "0fa8e63c-2296-4d0d-af34-9305aea327bb",
+          "phase": "default_agent_compile",
+          "durationMs": 29.6,
+          "elapsedMs": 54.29
+        },
+        {
+          "event": "mission.prepare_phase",
+          "missionId": "0fa8e63c-2296-4d0d-af34-9305aea327bb",
+          "phase": "expert_session_open",
+          "durationMs": 11.65,
+          "elapsedMs": 66.03,
+          "cacheHit": false
+        },
+        {
+          "event": "mission.prepare_phase",
+          "missionId": "0fa8e63c-2296-4d0d-af34-9305aea327bb",
+          "phase": "expert_session_prompt",
+          "durationMs": 109.34,
+          "elapsedMs": 178.96
+        }
+      ],
+      "sourcePin": {
+        "id": "studio",
+        "revision": 1
+      },
+      "compilationEnvironment": {
+        "fingerprint": "14a60927e29fb7cd046655f39eb3cf807cf26008b05405a84d069c8116f11634",
+        "capabilities": [
+          {
+            "capabilityId": "00000000-0000-4000-8000-000000000001",
+            "resolvedRevision": 1,
+            "fingerprint": "2a37d4a11e1513b3cd0516a1a95e22d9f539be3ed1af18a8347b6eaf498efe6b"
+          }
+        ]
+      }
+    },
+    {
+      "missionId": "4d8a9475-120a-48dd-a8e6-517ed44c0ada",
+      "group": "cold",
+      "sample": 33,
+      "preparationMs": 303.8801459999995,
+      "lifecycleMarkers": [
+        {
+          "event": "fixture.dispatch",
+          "atMs": 19723.707295
+        },
+        {
+          "event": "fixture.model_completed",
+          "atMs": 19723.70785
+        },
+        {
+          "event": "execution.terminal_committed",
+          "atMs": 19743.668095,
+          "executionId": "8085a4cc-2705-4b1a-bf29-fada5fd921b3",
+          "requestId": "4add9636-5cfa-473f-adda-e539a11974c7",
+          "elapsedMs": 1.6953839999987395
+        },
+        {
+          "event": "fixture.mission_status_published",
+          "atMs": 19745.331389,
+          "missionId": "4d8a9475-120a-48dd-a8e6-517ed44c0ada",
+          "executionId": "8085a4cc-2705-4b1a-bf29-fada5fd921b3",
+          "status": "succeeded"
+        },
+        {
+          "event": "mission.terminal_status_published",
+          "atMs": 19745.417707,
+          "executionId": "8085a4cc-2705-4b1a-bf29-fada5fd921b3",
+          "missionId": "4d8a9475-120a-48dd-a8e6-517ed44c0ada",
+          "requestId": "4add9636-5cfa-473f-adda-e539a11974c7",
+          "status": "succeeded"
+        },
+        {
+          "event": "session.active_binding_released",
+          "atMs": 19753.408632,
+          "executionId": "8085a4cc-2705-4b1a-bf29-fada5fd921b3",
+          "requestId": "4add9636-5cfa-473f-adda-e539a11974c7",
+          "elapsedMs": 9.628807000000961
+        }
+      ],
+      "counters": {
+        "projectRevisionReads": 1,
+        "projectHeadReads": 0,
+        "projectOpens": 1,
+        "storeCompileCalls": 0,
+        "openedProjectCompileCalls": 1,
+        "activeCapabilityReads": 4,
+        "credentialFingerprints": 3,
+        "contextStoreReads": 0,
+        "dslCompilerCalls": 2,
+        "readinessRequests": 1,
+        "runtimeHealthProbes": 4,
+        "modelCatalogReads": 4,
+        "pluginReads": 0
+      },
+      "phases": [
+        {
+          "event": "mission.prepare_phase",
+          "missionId": "4d8a9475-120a-48dd-a8e6-517ed44c0ada",
+          "phase": "prompt_admission_wait",
+          "durationMs": 0,
+          "elapsedMs": 0
+        },
+        {
+          "event": "mission.performance",
+          "missionId": "4d8a9475-120a-48dd-a8e6-517ed44c0ada",
+          "phase": "identity_revision_read",
+          "elapsedMs": 8.460465000000113
+        },
+        {
+          "event": "mission.prepare_phase",
+          "missionId": "4d8a9475-120a-48dd-a8e6-517ed44c0ada",
+          "phase": "mission_load_and_executor_ready",
+          "durationMs": 17.51,
+          "elapsedMs": 17.57
+        },
+        {
+          "event": "mission.prepare_phase",
+          "missionId": "4d8a9475-120a-48dd-a8e6-517ed44c0ada",
+          "phase": "execution_context",
+          "durationMs": 6.77,
+          "elapsedMs": 24.42
+        },
+        {
+          "event": "mission.prepare_phase",
+          "missionId": "4d8a9475-120a-48dd-a8e6-517ed44c0ada",
+          "phase": "default_agent_compile",
+          "durationMs": 30.67,
+          "elapsedMs": 55.17
+        },
+        {
+          "event": "mission.prepare_phase",
+          "missionId": "4d8a9475-120a-48dd-a8e6-517ed44c0ada",
+          "phase": "expert_session_open",
+          "durationMs": 11.51,
+          "elapsedMs": 66.76,
+          "cacheHit": false
+        },
+        {
+          "event": "mission.prepare_phase",
+          "missionId": "4d8a9475-120a-48dd-a8e6-517ed44c0ada",
+          "phase": "expert_session_prompt",
+          "durationMs": 147.95,
+          "elapsedMs": 218.34
+        }
+      ],
+      "sourcePin": {
+        "id": "studio",
+        "revision": 1
+      },
+      "compilationEnvironment": {
+        "fingerprint": "14a60927e29fb7cd046655f39eb3cf807cf26008b05405a84d069c8116f11634",
+        "capabilities": [
+          {
+            "capabilityId": "00000000-0000-4000-8000-000000000001",
+            "resolvedRevision": 1,
+            "fingerprint": "2a37d4a11e1513b3cd0516a1a95e22d9f539be3ed1af18a8347b6eaf498efe6b"
+          }
+        ]
+      }
+    },
+    {
+      "missionId": "fa697d93-16a1-4e68-9147-c4667df5a918",
+      "group": "cold",
+      "sample": 34,
+      "preparationMs": 225.0208160000002,
+      "lifecycleMarkers": [
+        {
+          "event": "fixture.dispatch",
+          "atMs": 20166.133214
+        },
+        {
+          "event": "fixture.model_completed",
+          "atMs": 20166.133738
+        },
+        {
+          "event": "execution.terminal_committed",
+          "atMs": 20186.603972,
+          "executionId": "9f0cfa43-3271-40d3-a91b-46f3e1a517db",
+          "requestId": "70e2df6e-8faf-42f4-8d22-7cf5a6282798",
+          "elapsedMs": 1.9150300000001153
+        },
+        {
+          "event": "fixture.mission_status_published",
+          "atMs": 20188.216658,
+          "missionId": "fa697d93-16a1-4e68-9147-c4667df5a918",
+          "executionId": "9f0cfa43-3271-40d3-a91b-46f3e1a517db",
+          "status": "succeeded"
+        },
+        {
+          "event": "mission.terminal_status_published",
+          "atMs": 20188.309776,
+          "executionId": "9f0cfa43-3271-40d3-a91b-46f3e1a517db",
+          "missionId": "fa697d93-16a1-4e68-9147-c4667df5a918",
+          "requestId": "70e2df6e-8faf-42f4-8d22-7cf5a6282798",
+          "status": "succeeded"
+        },
+        {
+          "event": "session.active_binding_released",
+          "atMs": 20196.531715,
+          "executionId": "9f0cfa43-3271-40d3-a91b-46f3e1a517db",
+          "requestId": "70e2df6e-8faf-42f4-8d22-7cf5a6282798",
+          "elapsedMs": 9.839958000000479
+        }
+      ],
+      "counters": {
+        "projectRevisionReads": 1,
+        "projectHeadReads": 0,
+        "projectOpens": 1,
+        "storeCompileCalls": 0,
+        "openedProjectCompileCalls": 1,
+        "activeCapabilityReads": 4,
+        "credentialFingerprints": 3,
+        "contextStoreReads": 0,
+        "dslCompilerCalls": 2,
+        "readinessRequests": 1,
+        "runtimeHealthProbes": 4,
+        "modelCatalogReads": 4,
+        "pluginReads": 0
+      },
+      "phases": [
+        {
+          "event": "mission.prepare_phase",
+          "missionId": "fa697d93-16a1-4e68-9147-c4667df5a918",
+          "phase": "prompt_admission_wait",
+          "durationMs": 0,
+          "elapsedMs": 0
+        },
+        {
+          "event": "mission.performance",
+          "missionId": "fa697d93-16a1-4e68-9147-c4667df5a918",
+          "phase": "identity_revision_read",
+          "elapsedMs": 8.562487999999576
+        },
+        {
+          "event": "mission.prepare_phase",
+          "missionId": "fa697d93-16a1-4e68-9147-c4667df5a918",
+          "phase": "mission_load_and_executor_ready",
+          "durationMs": 17.69,
+          "elapsedMs": 17.75
+        },
+        {
+          "event": "mission.prepare_phase",
+          "missionId": "fa697d93-16a1-4e68-9147-c4667df5a918",
+          "phase": "execution_context",
+          "durationMs": 5.98,
+          "elapsedMs": 23.8
+        },
+        {
+          "event": "mission.prepare_phase",
+          "missionId": "fa697d93-16a1-4e68-9147-c4667df5a918",
+          "phase": "default_agent_compile",
+          "durationMs": 29.98,
+          "elapsedMs": 53.85
+        },
+        {
+          "event": "mission.prepare_phase",
+          "missionId": "fa697d93-16a1-4e68-9147-c4667df5a918",
+          "phase": "expert_session_open",
+          "durationMs": 11.62,
+          "elapsedMs": 65.55,
+          "cacheHit": false
+        },
+        {
+          "event": "mission.prepare_phase",
+          "missionId": "fa697d93-16a1-4e68-9147-c4667df5a918",
+          "phase": "expert_session_prompt",
+          "durationMs": 105.54,
+          "elapsedMs": 174.67
+        }
+      ],
+      "sourcePin": {
+        "id": "studio",
+        "revision": 1
+      },
+      "compilationEnvironment": {
+        "fingerprint": "14a60927e29fb7cd046655f39eb3cf807cf26008b05405a84d069c8116f11634",
+        "capabilities": [
+          {
+            "capabilityId": "00000000-0000-4000-8000-000000000001",
+            "resolvedRevision": 1,
+            "fingerprint": "2a37d4a11e1513b3cd0516a1a95e22d9f539be3ed1af18a8347b6eaf498efe6b"
+          }
+        ]
+      }
+    },
+    {
+      "missionId": "55c06029-d0e0-4959-973e-b46b0a1c4f4f",
+      "group": "cold",
+      "sample": 35,
+      "preparationMs": 233.90325099999973,
+      "lifecycleMarkers": [
+        {
+          "event": "fixture.dispatch",
+          "atMs": 20609.389522
+        },
+        {
+          "event": "fixture.model_completed",
+          "atMs": 20609.39011
+        },
+        {
+          "event": "execution.terminal_committed",
+          "atMs": 20628.945891,
+          "executionId": "cf2cc04f-fba0-4dee-95f0-b04127b9822d",
+          "requestId": "690e197b-799d-466a-8d93-1c2a4f497d0d",
+          "elapsedMs": 1.730691000000661
+        },
+        {
+          "event": "fixture.mission_status_published",
+          "atMs": 20630.652337,
+          "missionId": "55c06029-d0e0-4959-973e-b46b0a1c4f4f",
+          "executionId": "cf2cc04f-fba0-4dee-95f0-b04127b9822d",
+          "status": "succeeded"
+        },
+        {
+          "event": "mission.terminal_status_published",
+          "atMs": 20630.755041,
+          "executionId": "cf2cc04f-fba0-4dee-95f0-b04127b9822d",
+          "missionId": "55c06029-d0e0-4959-973e-b46b0a1c4f4f",
+          "requestId": "690e197b-799d-466a-8d93-1c2a4f497d0d",
+          "status": "succeeded"
+        },
+        {
+          "event": "session.active_binding_released",
+          "atMs": 20639.549309,
+          "executionId": "cf2cc04f-fba0-4dee-95f0-b04127b9822d",
+          "requestId": "690e197b-799d-466a-8d93-1c2a4f497d0d",
+          "elapsedMs": 10.50177899999835
+        }
+      ],
+      "counters": {
+        "projectRevisionReads": 1,
+        "projectHeadReads": 0,
+        "projectOpens": 1,
+        "storeCompileCalls": 0,
+        "openedProjectCompileCalls": 1,
+        "activeCapabilityReads": 4,
+        "credentialFingerprints": 3,
+        "contextStoreReads": 0,
+        "dslCompilerCalls": 2,
+        "readinessRequests": 1,
+        "runtimeHealthProbes": 4,
+        "modelCatalogReads": 4,
+        "pluginReads": 0
+      },
+      "phases": [
+        {
+          "event": "mission.prepare_phase",
+          "missionId": "55c06029-d0e0-4959-973e-b46b0a1c4f4f",
+          "phase": "prompt_admission_wait",
+          "durationMs": 0,
+          "elapsedMs": 0
+        },
+        {
+          "event": "mission.performance",
+          "missionId": "55c06029-d0e0-4959-973e-b46b0a1c4f4f",
+          "phase": "identity_revision_read",
+          "elapsedMs": 8.619728000001487
+        },
+        {
+          "event": "mission.prepare_phase",
+          "missionId": "55c06029-d0e0-4959-973e-b46b0a1c4f4f",
+          "phase": "mission_load_and_executor_ready",
+          "durationMs": 17.43,
+          "elapsedMs": 17.48
+        },
+        {
+          "event": "mission.prepare_phase",
+          "missionId": "55c06029-d0e0-4959-973e-b46b0a1c4f4f",
+          "phase": "execution_context",
+          "durationMs": 6.86,
+          "elapsedMs": 24.41
+        },
+        {
+          "event": "mission.prepare_phase",
+          "missionId": "55c06029-d0e0-4959-973e-b46b0a1c4f4f",
+          "phase": "default_agent_compile",
+          "durationMs": 30.85,
+          "elapsedMs": 55.33
+        },
+        {
+          "event": "mission.prepare_phase",
+          "missionId": "55c06029-d0e0-4959-973e-b46b0a1c4f4f",
+          "phase": "expert_session_open",
+          "durationMs": 11.5,
+          "elapsedMs": 66.91,
+          "cacheHit": false
+        },
+        {
+          "event": "mission.prepare_phase",
+          "missionId": "55c06029-d0e0-4959-973e-b46b0a1c4f4f",
+          "phase": "expert_session_prompt",
+          "durationMs": 113.02,
+          "elapsedMs": 183.33
+        }
+      ],
+      "sourcePin": {
+        "id": "studio",
+        "revision": 1
+      },
+      "compilationEnvironment": {
+        "fingerprint": "14a60927e29fb7cd046655f39eb3cf807cf26008b05405a84d069c8116f11634",
+        "capabilities": [
+          {
+            "capabilityId": "00000000-0000-4000-8000-000000000001",
+            "resolvedRevision": 1,
+            "fingerprint": "2a37d4a11e1513b3cd0516a1a95e22d9f539be3ed1af18a8347b6eaf498efe6b"
+          }
+        ]
+      }
+    },
+    {
+      "missionId": "e174b0da-c461-4a78-90be-d204d46ac027",
+      "group": "cold",
+      "sample": 36,
+      "preparationMs": 235.63303099999757,
+      "lifecycleMarkers": [
+        {
+          "event": "fixture.dispatch",
+          "atMs": 21054.613454
+        },
+        {
+          "event": "fixture.model_completed",
+          "atMs": 21054.614136
+        },
+        {
+          "event": "execution.terminal_committed",
+          "atMs": 21078.210537,
+          "executionId": "284c3404-7104-4e71-a145-ef7bf4106286",
+          "requestId": "a05405b5-88fc-4023-bf81-2e33347c8af9",
+          "elapsedMs": 2.0207210000007763
+        },
+        {
+          "event": "fixture.mission_status_published",
+          "atMs": 21079.990421,
+          "missionId": "e174b0da-c461-4a78-90be-d204d46ac027",
+          "executionId": "284c3404-7104-4e71-a145-ef7bf4106286",
+          "status": "succeeded"
+        },
+        {
+          "event": "mission.terminal_status_published",
+          "atMs": 21080.09844,
+          "executionId": "284c3404-7104-4e71-a145-ef7bf4106286",
+          "missionId": "e174b0da-c461-4a78-90be-d204d46ac027",
+          "requestId": "a05405b5-88fc-4023-bf81-2e33347c8af9",
+          "status": "succeeded"
+        },
+        {
+          "event": "session.active_binding_released",
+          "atMs": 21092.285317,
+          "executionId": "284c3404-7104-4e71-a145-ef7bf4106286",
+          "requestId": "a05405b5-88fc-4023-bf81-2e33347c8af9",
+          "elapsedMs": 13.970567000000301
+        }
+      ],
+      "counters": {
+        "projectRevisionReads": 1,
+        "projectHeadReads": 0,
+        "projectOpens": 1,
+        "storeCompileCalls": 0,
+        "openedProjectCompileCalls": 1,
+        "activeCapabilityReads": 4,
+        "credentialFingerprints": 3,
+        "contextStoreReads": 0,
+        "dslCompilerCalls": 2,
+        "readinessRequests": 1,
+        "runtimeHealthProbes": 4,
+        "modelCatalogReads": 4,
+        "pluginReads": 0
+      },
+      "phases": [
+        {
+          "event": "mission.prepare_phase",
+          "missionId": "e174b0da-c461-4a78-90be-d204d46ac027",
+          "phase": "prompt_admission_wait",
+          "durationMs": 0,
+          "elapsedMs": 0
+        },
+        {
+          "event": "mission.performance",
+          "missionId": "e174b0da-c461-4a78-90be-d204d46ac027",
+          "phase": "identity_revision_read",
+          "elapsedMs": 8.732966999999917
+        },
+        {
+          "event": "mission.prepare_phase",
+          "missionId": "e174b0da-c461-4a78-90be-d204d46ac027",
+          "phase": "mission_load_and_executor_ready",
+          "durationMs": 18.2,
+          "elapsedMs": 18.24
+        },
+        {
+          "event": "mission.prepare_phase",
+          "missionId": "e174b0da-c461-4a78-90be-d204d46ac027",
+          "phase": "execution_context",
+          "durationMs": 6.93,
+          "elapsedMs": 25.25
+        },
+        {
+          "event": "mission.prepare_phase",
+          "missionId": "e174b0da-c461-4a78-90be-d204d46ac027",
+          "phase": "default_agent_compile",
+          "durationMs": 29.32,
+          "elapsedMs": 54.64
+        },
+        {
+          "event": "mission.prepare_phase",
+          "missionId": "e174b0da-c461-4a78-90be-d204d46ac027",
+          "phase": "expert_session_open",
+          "durationMs": 11.37,
+          "elapsedMs": 66.09,
+          "cacheHit": false
+        },
+        {
+          "event": "mission.prepare_phase",
+          "missionId": "e174b0da-c461-4a78-90be-d204d46ac027",
+          "phase": "expert_session_prompt",
+          "durationMs": 112.26,
+          "elapsedMs": 181.84
+        }
+      ],
+      "sourcePin": {
+        "id": "studio",
+        "revision": 1
+      },
+      "compilationEnvironment": {
+        "fingerprint": "14a60927e29fb7cd046655f39eb3cf807cf26008b05405a84d069c8116f11634",
+        "capabilities": [
+          {
+            "capabilityId": "00000000-0000-4000-8000-000000000001",
+            "resolvedRevision": 1,
+            "fingerprint": "2a37d4a11e1513b3cd0516a1a95e22d9f539be3ed1af18a8347b6eaf498efe6b"
+          }
+        ]
+      }
+    },
+    {
+      "missionId": "f044dac1-c74e-4149-9c6e-b8f194270dd6",
+      "group": "cold",
+      "sample": 37,
+      "preparationMs": 237.745805999999,
+      "lifecycleMarkers": [
+        {
+          "event": "fixture.dispatch",
+          "atMs": 21526.751508
+        },
+        {
+          "event": "fixture.model_completed",
+          "atMs": 21526.752078
+        },
+        {
+          "event": "execution.terminal_committed",
+          "atMs": 21546.260022,
+          "executionId": "a05b2b45-2479-4267-8ba4-1a0f7d047a39",
+          "requestId": "eddbee32-29fe-45f3-bd74-eeff1e1455eb",
+          "elapsedMs": 1.7757889999993495
+        },
+        {
+          "event": "fixture.mission_status_published",
+          "atMs": 21547.922115,
+          "missionId": "f044dac1-c74e-4149-9c6e-b8f194270dd6",
+          "executionId": "a05b2b45-2479-4267-8ba4-1a0f7d047a39",
+          "status": "succeeded"
+        },
+        {
+          "event": "mission.terminal_status_published",
+          "atMs": 21548.010811,
+          "executionId": "a05b2b45-2479-4267-8ba4-1a0f7d047a39",
+          "missionId": "f044dac1-c74e-4149-9c6e-b8f194270dd6",
+          "requestId": "eddbee32-29fe-45f3-bd74-eeff1e1455eb",
+          "status": "succeeded"
+        },
+        {
+          "event": "session.active_binding_released",
+          "atMs": 21556.784568,
+          "executionId": "a05b2b45-2479-4267-8ba4-1a0f7d047a39",
+          "requestId": "eddbee32-29fe-45f3-bd74-eeff1e1455eb",
+          "elapsedMs": 10.422442000002775
+        }
+      ],
+      "counters": {
+        "projectRevisionReads": 1,
+        "projectHeadReads": 0,
+        "projectOpens": 1,
+        "storeCompileCalls": 0,
+        "openedProjectCompileCalls": 1,
+        "activeCapabilityReads": 4,
+        "credentialFingerprints": 3,
+        "contextStoreReads": 0,
+        "dslCompilerCalls": 2,
+        "readinessRequests": 1,
+        "runtimeHealthProbes": 4,
+        "modelCatalogReads": 4,
+        "pluginReads": 0
+      },
+      "phases": [
+        {
+          "event": "mission.prepare_phase",
+          "missionId": "f044dac1-c74e-4149-9c6e-b8f194270dd6",
+          "phase": "prompt_admission_wait",
+          "durationMs": 0,
+          "elapsedMs": 0.01
+        },
+        {
+          "event": "mission.performance",
+          "missionId": "f044dac1-c74e-4149-9c6e-b8f194270dd6",
+          "phase": "identity_revision_read",
+          "elapsedMs": 9.217134000002261
+        },
+        {
+          "event": "mission.prepare_phase",
+          "missionId": "f044dac1-c74e-4149-9c6e-b8f194270dd6",
+          "phase": "mission_load_and_executor_ready",
+          "durationMs": 20,
+          "elapsedMs": 20.04
+        },
+        {
+          "event": "mission.prepare_phase",
+          "missionId": "f044dac1-c74e-4149-9c6e-b8f194270dd6",
+          "phase": "execution_context",
+          "durationMs": 7.36,
+          "elapsedMs": 27.51
+        },
+        {
+          "event": "mission.prepare_phase",
+          "missionId": "f044dac1-c74e-4149-9c6e-b8f194270dd6",
+          "phase": "default_agent_compile",
+          "durationMs": 33.58,
+          "elapsedMs": 61.17
+        },
+        {
+          "event": "mission.prepare_phase",
+          "missionId": "f044dac1-c74e-4149-9c6e-b8f194270dd6",
+          "phase": "expert_session_open",
+          "durationMs": 14.26,
+          "elapsedMs": 75.52,
+          "cacheHit": false
+        },
+        {
+          "event": "mission.prepare_phase",
+          "missionId": "f044dac1-c74e-4149-9c6e-b8f194270dd6",
+          "phase": "expert_session_prompt",
+          "durationMs": 106.01,
+          "elapsedMs": 184.66
+        }
+      ],
+      "sourcePin": {
+        "id": "studio",
+        "revision": 1
+      },
+      "compilationEnvironment": {
+        "fingerprint": "14a60927e29fb7cd046655f39eb3cf807cf26008b05405a84d069c8116f11634",
+        "capabilities": [
+          {
+            "capabilityId": "00000000-0000-4000-8000-000000000001",
+            "resolvedRevision": 1,
+            "fingerprint": "2a37d4a11e1513b3cd0516a1a95e22d9f539be3ed1af18a8347b6eaf498efe6b"
+          }
+        ]
+      }
+    },
+    {
+      "missionId": "e7d065a1-85ac-4c27-a389-84141c60d75d",
+      "group": "cold",
+      "sample": 38,
+      "preparationMs": 229.5464589999974,
+      "lifecycleMarkers": [
+        {
+          "event": "fixture.dispatch",
+          "atMs": 21970.160676
+        },
+        {
+          "event": "fixture.model_completed",
+          "atMs": 21970.161422
+        },
+        {
+          "event": "execution.terminal_committed",
+          "atMs": 21991.114447,
+          "executionId": "c469ca9f-b572-436d-aecc-c796e6aecfc7",
+          "requestId": "0e644020-4faf-4a9b-9729-d6e270eb621a",
+          "elapsedMs": 1.9356129999978293
+        },
+        {
+          "event": "fixture.mission_status_published",
+          "atMs": 21992.822583,
+          "missionId": "e7d065a1-85ac-4c27-a389-84141c60d75d",
+          "executionId": "c469ca9f-b572-436d-aecc-c796e6aecfc7",
+          "status": "succeeded"
+        },
+        {
+          "event": "mission.terminal_status_published",
+          "atMs": 21992.923148,
+          "executionId": "c469ca9f-b572-436d-aecc-c796e6aecfc7",
+          "missionId": "e7d065a1-85ac-4c27-a389-84141c60d75d",
+          "requestId": "0e644020-4faf-4a9b-9729-d6e270eb621a",
+          "status": "succeeded"
+        },
+        {
+          "event": "session.active_binding_released",
+          "atMs": 22001.575051,
+          "executionId": "c469ca9f-b572-436d-aecc-c796e6aecfc7",
+          "requestId": "0e644020-4faf-4a9b-9729-d6e270eb621a",
+          "elapsedMs": 10.352530000000115
+        }
+      ],
+      "counters": {
+        "projectRevisionReads": 1,
+        "projectHeadReads": 0,
+        "projectOpens": 1,
+        "storeCompileCalls": 0,
+        "openedProjectCompileCalls": 1,
+        "activeCapabilityReads": 4,
+        "credentialFingerprints": 3,
+        "contextStoreReads": 0,
+        "dslCompilerCalls": 2,
+        "readinessRequests": 1,
+        "runtimeHealthProbes": 4,
+        "modelCatalogReads": 4,
+        "pluginReads": 0
+      },
+      "phases": [
+        {
+          "event": "mission.prepare_phase",
+          "missionId": "e7d065a1-85ac-4c27-a389-84141c60d75d",
+          "phase": "prompt_admission_wait",
+          "durationMs": 0,
+          "elapsedMs": 0
+        },
+        {
+          "event": "mission.performance",
+          "missionId": "e7d065a1-85ac-4c27-a389-84141c60d75d",
+          "phase": "identity_revision_read",
+          "elapsedMs": 8.87626100000125
+        },
+        {
+          "event": "mission.prepare_phase",
+          "missionId": "e7d065a1-85ac-4c27-a389-84141c60d75d",
+          "phase": "mission_load_and_executor_ready",
+          "durationMs": 19.08,
+          "elapsedMs": 19.12
+        },
+        {
+          "event": "mission.prepare_phase",
+          "missionId": "e7d065a1-85ac-4c27-a389-84141c60d75d",
+          "phase": "execution_context",
+          "durationMs": 6.41,
+          "elapsedMs": 25.6
+        },
+        {
+          "event": "mission.prepare_phase",
+          "missionId": "e7d065a1-85ac-4c27-a389-84141c60d75d",
+          "phase": "default_agent_compile",
+          "durationMs": 30.4,
+          "elapsedMs": 56.06
+        },
+        {
+          "event": "mission.prepare_phase",
+          "missionId": "e7d065a1-85ac-4c27-a389-84141c60d75d",
+          "phase": "expert_session_open",
+          "durationMs": 11.44,
+          "elapsedMs": 67.59,
+          "cacheHit": false
+        },
+        {
+          "event": "mission.prepare_phase",
+          "missionId": "e7d065a1-85ac-4c27-a389-84141c60d75d",
+          "phase": "expert_session_prompt",
+          "durationMs": 105.99,
+          "elapsedMs": 176.55
+        }
+      ],
+      "sourcePin": {
+        "id": "studio",
+        "revision": 1
+      },
+      "compilationEnvironment": {
+        "fingerprint": "14a60927e29fb7cd046655f39eb3cf807cf26008b05405a84d069c8116f11634",
+        "capabilities": [
+          {
+            "capabilityId": "00000000-0000-4000-8000-000000000001",
+            "resolvedRevision": 1,
+            "fingerprint": "2a37d4a11e1513b3cd0516a1a95e22d9f539be3ed1af18a8347b6eaf498efe6b"
+          }
+        ]
+      }
+    },
+    {
+      "missionId": "1ded15bf-d5e4-4398-af4d-7a57ef42a40b",
+      "group": "cold",
+      "sample": 39,
+      "preparationMs": 266.98009300000194,
+      "lifecycleMarkers": [
+        {
+          "event": "fixture.dispatch",
+          "atMs": 22455.354382
+        },
+        {
+          "event": "fixture.model_completed",
+          "atMs": 22455.354971
+        },
+        {
+          "event": "execution.terminal_committed",
+          "atMs": 22475.145834,
+          "executionId": "0abfa29c-0b69-447c-a4b4-eb1253bea317",
+          "requestId": "6015eb7c-e5b3-4eb5-94d8-48fc0de76190",
+          "elapsedMs": 1.8528929999993125
+        },
+        {
+          "event": "fixture.mission_status_published",
+          "atMs": 22476.847235,
+          "missionId": "1ded15bf-d5e4-4398-af4d-7a57ef42a40b",
+          "executionId": "0abfa29c-0b69-447c-a4b4-eb1253bea317",
+          "status": "succeeded"
+        },
+        {
+          "event": "mission.terminal_status_published",
+          "atMs": 22476.941824,
+          "executionId": "0abfa29c-0b69-447c-a4b4-eb1253bea317",
+          "missionId": "1ded15bf-d5e4-4398-af4d-7a57ef42a40b",
+          "requestId": "6015eb7c-e5b3-4eb5-94d8-48fc0de76190",
+          "status": "succeeded"
+        },
+        {
+          "event": "session.active_binding_released",
+          "atMs": 22486.20088,
+          "executionId": "0abfa29c-0b69-447c-a4b4-eb1253bea317",
+          "requestId": "6015eb7c-e5b3-4eb5-94d8-48fc0de76190",
+          "elapsedMs": 10.945044000000053
+        }
+      ],
+      "counters": {
+        "projectRevisionReads": 1,
+        "projectHeadReads": 0,
+        "projectOpens": 1,
+        "storeCompileCalls": 0,
+        "openedProjectCompileCalls": 1,
+        "activeCapabilityReads": 4,
+        "credentialFingerprints": 3,
+        "contextStoreReads": 0,
+        "dslCompilerCalls": 2,
+        "readinessRequests": 1,
+        "runtimeHealthProbes": 4,
+        "modelCatalogReads": 4,
+        "pluginReads": 0
+      },
+      "phases": [
+        {
+          "event": "mission.prepare_phase",
+          "missionId": "1ded15bf-d5e4-4398-af4d-7a57ef42a40b",
+          "phase": "prompt_admission_wait",
+          "durationMs": 0,
+          "elapsedMs": 0.01
+        },
+        {
+          "event": "mission.performance",
+          "missionId": "1ded15bf-d5e4-4398-af4d-7a57ef42a40b",
+          "phase": "identity_revision_read",
+          "elapsedMs": 8.594113999999536
+        },
+        {
+          "event": "mission.prepare_phase",
+          "missionId": "1ded15bf-d5e4-4398-af4d-7a57ef42a40b",
+          "phase": "mission_load_and_executor_ready",
+          "durationMs": 17.66,
+          "elapsedMs": 17.74
+        },
+        {
+          "event": "mission.prepare_phase",
+          "missionId": "1ded15bf-d5e4-4398-af4d-7a57ef42a40b",
+          "phase": "execution_context",
+          "durationMs": 6.39,
+          "elapsedMs": 24.21
+        },
+        {
+          "event": "mission.prepare_phase",
+          "missionId": "1ded15bf-d5e4-4398-af4d-7a57ef42a40b",
+          "phase": "default_agent_compile",
+          "durationMs": 30.21,
+          "elapsedMs": 54.5
+        },
+        {
+          "event": "mission.prepare_phase",
+          "missionId": "1ded15bf-d5e4-4398-af4d-7a57ef42a40b",
+          "phase": "expert_session_open",
+          "durationMs": 11.47,
+          "elapsedMs": 66.06,
+          "cacheHit": false
+        },
+        {
+          "event": "mission.prepare_phase",
+          "missionId": "1ded15bf-d5e4-4398-af4d-7a57ef42a40b",
+          "phase": "expert_session_prompt",
+          "durationMs": 144.63,
+          "elapsedMs": 214.21
+        }
+      ],
+      "sourcePin": {
+        "id": "studio",
+        "revision": 1
+      },
+      "compilationEnvironment": {
+        "fingerprint": "14a60927e29fb7cd046655f39eb3cf807cf26008b05405a84d069c8116f11634",
+        "capabilities": [
+          {
+            "capabilityId": "00000000-0000-4000-8000-000000000001",
+            "resolvedRevision": 1,
+            "fingerprint": "2a37d4a11e1513b3cd0516a1a95e22d9f539be3ed1af18a8347b6eaf498efe6b"
+          }
+        ]
+      }
+    }
+  ],
+  "assertions": [
+    {
+      "group": "cold",
+      "sample": 0,
+      "id": "expected_compile_miss",
+      "passed": true,
+      "actual": 2
+    },
+    {
+      "group": "cold",
+      "sample": 0,
+      "id": "source_pin_preserved",
+      "passed": true
+    },
+    {
+      "group": "cold",
+      "sample": 0,
+      "id": "pinned_revision_shared_with_readiness",
+      "passed": true,
+      "actual": {
+        "headReads": 0,
+        "pinnedReads": 1
+      }
+    },
+    {
+      "group": "cold",
+      "sample": 1,
+      "id": "expected_compile_miss",
+      "passed": true,
+      "actual": 2
+    },
+    {
+      "group": "cold",
+      "sample": 1,
+      "id": "source_pin_preserved",
+      "passed": true
+    },
+    {
+      "group": "cold",
+      "sample": 1,
+      "id": "pinned_revision_shared_with_readiness",
+      "passed": true,
+      "actual": {
+        "headReads": 0,
+        "pinnedReads": 1
+      }
+    },
+    {
+      "group": "cold",
+      "sample": 2,
+      "id": "expected_compile_miss",
+      "passed": true,
+      "actual": 2
+    },
+    {
+      "group": "cold",
+      "sample": 2,
+      "id": "source_pin_preserved",
+      "passed": true
+    },
+    {
+      "group": "cold",
+      "sample": 2,
+      "id": "pinned_revision_shared_with_readiness",
+      "passed": true,
+      "actual": {
+        "headReads": 0,
+        "pinnedReads": 1
+      }
+    },
+    {
+      "group": "cold",
+      "sample": 3,
+      "id": "expected_compile_miss",
+      "passed": true,
+      "actual": 2
+    },
+    {
+      "group": "cold",
+      "sample": 3,
+      "id": "source_pin_preserved",
+      "passed": true
+    },
+    {
+      "group": "cold",
+      "sample": 3,
+      "id": "pinned_revision_shared_with_readiness",
+      "passed": true,
+      "actual": {
+        "headReads": 0,
+        "pinnedReads": 1
+      }
+    },
+    {
+      "group": "cold",
+      "sample": 4,
+      "id": "expected_compile_miss",
+      "passed": true,
+      "actual": 2
+    },
+    {
+      "group": "cold",
+      "sample": 4,
+      "id": "source_pin_preserved",
+      "passed": true
+    },
+    {
+      "group": "cold",
+      "sample": 4,
+      "id": "pinned_revision_shared_with_readiness",
+      "passed": true,
+      "actual": {
+        "headReads": 0,
+        "pinnedReads": 1
+      }
+    },
+    {
+      "group": "cold",
+      "sample": 5,
+      "id": "expected_compile_miss",
+      "passed": true,
+      "actual": 2
+    },
+    {
+      "group": "cold",
+      "sample": 5,
+      "id": "source_pin_preserved",
+      "passed": true
+    },
+    {
+      "group": "cold",
+      "sample": 5,
+      "id": "pinned_revision_shared_with_readiness",
+      "passed": true,
+      "actual": {
+        "headReads": 0,
+        "pinnedReads": 1
+      }
+    },
+    {
+      "group": "cold",
+      "sample": 6,
+      "id": "expected_compile_miss",
+      "passed": true,
+      "actual": 2
+    },
+    {
+      "group": "cold",
+      "sample": 6,
+      "id": "source_pin_preserved",
+      "passed": true
+    },
+    {
+      "group": "cold",
+      "sample": 6,
+      "id": "pinned_revision_shared_with_readiness",
+      "passed": true,
+      "actual": {
+        "headReads": 0,
+        "pinnedReads": 1
+      }
+    },
+    {
+      "group": "cold",
+      "sample": 7,
+      "id": "expected_compile_miss",
+      "passed": true,
+      "actual": 2
+    },
+    {
+      "group": "cold",
+      "sample": 7,
+      "id": "source_pin_preserved",
+      "passed": true
+    },
+    {
+      "group": "cold",
+      "sample": 7,
+      "id": "pinned_revision_shared_with_readiness",
+      "passed": true,
+      "actual": {
+        "headReads": 0,
+        "pinnedReads": 1
+      }
+    },
+    {
+      "group": "cold",
+      "sample": 8,
+      "id": "expected_compile_miss",
+      "passed": true,
+      "actual": 2
+    },
+    {
+      "group": "cold",
+      "sample": 8,
+      "id": "source_pin_preserved",
+      "passed": true
+    },
+    {
+      "group": "cold",
+      "sample": 8,
+      "id": "pinned_revision_shared_with_readiness",
+      "passed": true,
+      "actual": {
+        "headReads": 0,
+        "pinnedReads": 1
+      }
+    },
+    {
+      "group": "cold",
+      "sample": 9,
+      "id": "expected_compile_miss",
+      "passed": true,
+      "actual": 2
+    },
+    {
+      "group": "cold",
+      "sample": 9,
+      "id": "source_pin_preserved",
+      "passed": true
+    },
+    {
+      "group": "cold",
+      "sample": 9,
+      "id": "pinned_revision_shared_with_readiness",
+      "passed": true,
+      "actual": {
+        "headReads": 0,
+        "pinnedReads": 1
+      }
+    },
+    {
+      "group": "cold",
+      "sample": 10,
+      "id": "expected_compile_miss",
+      "passed": true,
+      "actual": 2
+    },
+    {
+      "group": "cold",
+      "sample": 10,
+      "id": "source_pin_preserved",
+      "passed": true
+    },
+    {
+      "group": "cold",
+      "sample": 10,
+      "id": "pinned_revision_shared_with_readiness",
+      "passed": true,
+      "actual": {
+        "headReads": 0,
+        "pinnedReads": 1
+      }
+    },
+    {
+      "group": "cold",
+      "sample": 11,
+      "id": "expected_compile_miss",
+      "passed": true,
+      "actual": 2
+    },
+    {
+      "group": "cold",
+      "sample": 11,
+      "id": "source_pin_preserved",
+      "passed": true
+    },
+    {
+      "group": "cold",
+      "sample": 11,
+      "id": "pinned_revision_shared_with_readiness",
+      "passed": true,
+      "actual": {
+        "headReads": 0,
+        "pinnedReads": 1
+      }
+    },
+    {
+      "group": "cold",
+      "sample": 12,
+      "id": "expected_compile_miss",
+      "passed": true,
+      "actual": 2
+    },
+    {
+      "group": "cold",
+      "sample": 12,
+      "id": "source_pin_preserved",
+      "passed": true
+    },
+    {
+      "group": "cold",
+      "sample": 12,
+      "id": "pinned_revision_shared_with_readiness",
+      "passed": true,
+      "actual": {
+        "headReads": 0,
+        "pinnedReads": 1
+      }
+    },
+    {
+      "group": "cold",
+      "sample": 13,
+      "id": "expected_compile_miss",
+      "passed": true,
+      "actual": 2
+    },
+    {
+      "group": "cold",
+      "sample": 13,
+      "id": "source_pin_preserved",
+      "passed": true
+    },
+    {
+      "group": "cold",
+      "sample": 13,
+      "id": "pinned_revision_shared_with_readiness",
+      "passed": true,
+      "actual": {
+        "headReads": 0,
+        "pinnedReads": 1
+      }
+    },
+    {
+      "group": "cold",
+      "sample": 14,
+      "id": "expected_compile_miss",
+      "passed": true,
+      "actual": 2
+    },
+    {
+      "group": "cold",
+      "sample": 14,
+      "id": "source_pin_preserved",
+      "passed": true
+    },
+    {
+      "group": "cold",
+      "sample": 14,
+      "id": "pinned_revision_shared_with_readiness",
+      "passed": true,
+      "actual": {
+        "headReads": 0,
+        "pinnedReads": 1
+      }
+    },
+    {
+      "group": "cold",
+      "sample": 15,
+      "id": "expected_compile_miss",
+      "passed": true,
+      "actual": 2
+    },
+    {
+      "group": "cold",
+      "sample": 15,
+      "id": "source_pin_preserved",
+      "passed": true
+    },
+    {
+      "group": "cold",
+      "sample": 15,
+      "id": "pinned_revision_shared_with_readiness",
+      "passed": true,
+      "actual": {
+        "headReads": 0,
+        "pinnedReads": 1
+      }
+    },
+    {
+      "group": "cold",
+      "sample": 16,
+      "id": "expected_compile_miss",
+      "passed": true,
+      "actual": 2
+    },
+    {
+      "group": "cold",
+      "sample": 16,
+      "id": "source_pin_preserved",
+      "passed": true
+    },
+    {
+      "group": "cold",
+      "sample": 16,
+      "id": "pinned_revision_shared_with_readiness",
+      "passed": true,
+      "actual": {
+        "headReads": 0,
+        "pinnedReads": 1
+      }
+    },
+    {
+      "group": "cold",
+      "sample": 17,
+      "id": "expected_compile_miss",
+      "passed": true,
+      "actual": 2
+    },
+    {
+      "group": "cold",
+      "sample": 17,
+      "id": "source_pin_preserved",
+      "passed": true
+    },
+    {
+      "group": "cold",
+      "sample": 17,
+      "id": "pinned_revision_shared_with_readiness",
+      "passed": true,
+      "actual": {
+        "headReads": 0,
+        "pinnedReads": 1
+      }
+    },
+    {
+      "group": "cold",
+      "sample": 18,
+      "id": "expected_compile_miss",
+      "passed": true,
+      "actual": 2
+    },
+    {
+      "group": "cold",
+      "sample": 18,
+      "id": "source_pin_preserved",
+      "passed": true
+    },
+    {
+      "group": "cold",
+      "sample": 18,
+      "id": "pinned_revision_shared_with_readiness",
+      "passed": true,
+      "actual": {
+        "headReads": 0,
+        "pinnedReads": 1
+      }
+    },
+    {
+      "group": "cold",
+      "sample": 19,
+      "id": "expected_compile_miss",
+      "passed": true,
+      "actual": 2
+    },
+    {
+      "group": "cold",
+      "sample": 19,
+      "id": "source_pin_preserved",
+      "passed": true
+    },
+    {
+      "group": "cold",
+      "sample": 19,
+      "id": "pinned_revision_shared_with_readiness",
+      "passed": true,
+      "actual": {
+        "headReads": 0,
+        "pinnedReads": 1
+      }
+    },
+    {
+      "group": "cold",
+      "sample": 20,
+      "id": "expected_compile_miss",
+      "passed": true,
+      "actual": 2
+    },
+    {
+      "group": "cold",
+      "sample": 20,
+      "id": "source_pin_preserved",
+      "passed": true
+    },
+    {
+      "group": "cold",
+      "sample": 20,
+      "id": "pinned_revision_shared_with_readiness",
+      "passed": true,
+      "actual": {
+        "headReads": 0,
+        "pinnedReads": 1
+      }
+    },
+    {
+      "group": "cold",
+      "sample": 21,
+      "id": "expected_compile_miss",
+      "passed": true,
+      "actual": 2
+    },
+    {
+      "group": "cold",
+      "sample": 21,
+      "id": "source_pin_preserved",
+      "passed": true
+    },
+    {
+      "group": "cold",
+      "sample": 21,
+      "id": "pinned_revision_shared_with_readiness",
+      "passed": true,
+      "actual": {
+        "headReads": 0,
+        "pinnedReads": 1
+      }
+    },
+    {
+      "group": "cold",
+      "sample": 22,
+      "id": "expected_compile_miss",
+      "passed": true,
+      "actual": 2
+    },
+    {
+      "group": "cold",
+      "sample": 22,
+      "id": "source_pin_preserved",
+      "passed": true
+    },
+    {
+      "group": "cold",
+      "sample": 22,
+      "id": "pinned_revision_shared_with_readiness",
+      "passed": true,
+      "actual": {
+        "headReads": 0,
+        "pinnedReads": 1
+      }
+    },
+    {
+      "group": "cold",
+      "sample": 23,
+      "id": "expected_compile_miss",
+      "passed": true,
+      "actual": 2
+    },
+    {
+      "group": "cold",
+      "sample": 23,
+      "id": "source_pin_preserved",
+      "passed": true
+    },
+    {
+      "group": "cold",
+      "sample": 23,
+      "id": "pinned_revision_shared_with_readiness",
+      "passed": true,
+      "actual": {
+        "headReads": 0,
+        "pinnedReads": 1
+      }
+    },
+    {
+      "group": "cold",
+      "sample": 24,
+      "id": "expected_compile_miss",
+      "passed": true,
+      "actual": 2
+    },
+    {
+      "group": "cold",
+      "sample": 24,
+      "id": "source_pin_preserved",
+      "passed": true
+    },
+    {
+      "group": "cold",
+      "sample": 24,
+      "id": "pinned_revision_shared_with_readiness",
+      "passed": true,
+      "actual": {
+        "headReads": 0,
+        "pinnedReads": 1
+      }
+    },
+    {
+      "group": "cold",
+      "sample": 25,
+      "id": "expected_compile_miss",
+      "passed": true,
+      "actual": 2
+    },
+    {
+      "group": "cold",
+      "sample": 25,
+      "id": "source_pin_preserved",
+      "passed": true
+    },
+    {
+      "group": "cold",
+      "sample": 25,
+      "id": "pinned_revision_shared_with_readiness",
+      "passed": true,
+      "actual": {
+        "headReads": 0,
+        "pinnedReads": 1
+      }
+    },
+    {
+      "group": "cold",
+      "sample": 26,
+      "id": "expected_compile_miss",
+      "passed": true,
+      "actual": 2
+    },
+    {
+      "group": "cold",
+      "sample": 26,
+      "id": "source_pin_preserved",
+      "passed": true
+    },
+    {
+      "group": "cold",
+      "sample": 26,
+      "id": "pinned_revision_shared_with_readiness",
+      "passed": true,
+      "actual": {
+        "headReads": 0,
+        "pinnedReads": 1
+      }
+    },
+    {
+      "group": "cold",
+      "sample": 27,
+      "id": "expected_compile_miss",
+      "passed": true,
+      "actual": 2
+    },
+    {
+      "group": "cold",
+      "sample": 27,
+      "id": "source_pin_preserved",
+      "passed": true
+    },
+    {
+      "group": "cold",
+      "sample": 27,
+      "id": "pinned_revision_shared_with_readiness",
+      "passed": true,
+      "actual": {
+        "headReads": 0,
+        "pinnedReads": 1
+      }
+    },
+    {
+      "group": "cold",
+      "sample": 28,
+      "id": "expected_compile_miss",
+      "passed": true,
+      "actual": 2
+    },
+    {
+      "group": "cold",
+      "sample": 28,
+      "id": "source_pin_preserved",
+      "passed": true
+    },
+    {
+      "group": "cold",
+      "sample": 28,
+      "id": "pinned_revision_shared_with_readiness",
+      "passed": true,
+      "actual": {
+        "headReads": 0,
+        "pinnedReads": 1
+      }
+    },
+    {
+      "group": "cold",
+      "sample": 29,
+      "id": "expected_compile_miss",
+      "passed": true,
+      "actual": 2
+    },
+    {
+      "group": "cold",
+      "sample": 29,
+      "id": "source_pin_preserved",
+      "passed": true
+    },
+    {
+      "group": "cold",
+      "sample": 29,
+      "id": "pinned_revision_shared_with_readiness",
+      "passed": true,
+      "actual": {
+        "headReads": 0,
+        "pinnedReads": 1
+      }
+    },
+    {
+      "group": "cold",
+      "sample": 30,
+      "id": "expected_compile_miss",
+      "passed": true,
+      "actual": 2
+    },
+    {
+      "group": "cold",
+      "sample": 30,
+      "id": "source_pin_preserved",
+      "passed": true
+    },
+    {
+      "group": "cold",
+      "sample": 30,
+      "id": "pinned_revision_shared_with_readiness",
+      "passed": true,
+      "actual": {
+        "headReads": 0,
+        "pinnedReads": 1
+      }
+    },
+    {
+      "group": "cold",
+      "sample": 31,
+      "id": "expected_compile_miss",
+      "passed": true,
+      "actual": 2
+    },
+    {
+      "group": "cold",
+      "sample": 31,
+      "id": "source_pin_preserved",
+      "passed": true
+    },
+    {
+      "group": "cold",
+      "sample": 31,
+      "id": "pinned_revision_shared_with_readiness",
+      "passed": true,
+      "actual": {
+        "headReads": 0,
+        "pinnedReads": 1
+      }
+    },
+    {
+      "group": "cold",
+      "sample": 32,
+      "id": "expected_compile_miss",
+      "passed": true,
+      "actual": 2
+    },
+    {
+      "group": "cold",
+      "sample": 32,
+      "id": "source_pin_preserved",
+      "passed": true
+    },
+    {
+      "group": "cold",
+      "sample": 32,
+      "id": "pinned_revision_shared_with_readiness",
+      "passed": true,
+      "actual": {
+        "headReads": 0,
+        "pinnedReads": 1
+      }
+    },
+    {
+      "group": "cold",
+      "sample": 33,
+      "id": "expected_compile_miss",
+      "passed": true,
+      "actual": 2
+    },
+    {
+      "group": "cold",
+      "sample": 33,
+      "id": "source_pin_preserved",
+      "passed": true
+    },
+    {
+      "group": "cold",
+      "sample": 33,
+      "id": "pinned_revision_shared_with_readiness",
+      "passed": true,
+      "actual": {
+        "headReads": 0,
+        "pinnedReads": 1
+      }
+    },
+    {
+      "group": "cold",
+      "sample": 34,
+      "id": "expected_compile_miss",
+      "passed": true,
+      "actual": 2
+    },
+    {
+      "group": "cold",
+      "sample": 34,
+      "id": "source_pin_preserved",
+      "passed": true
+    },
+    {
+      "group": "cold",
+      "sample": 34,
+      "id": "pinned_revision_shared_with_readiness",
+      "passed": true,
+      "actual": {
+        "headReads": 0,
+        "pinnedReads": 1
+      }
+    },
+    {
+      "group": "cold",
+      "sample": 35,
+      "id": "expected_compile_miss",
+      "passed": true,
+      "actual": 2
+    },
+    {
+      "group": "cold",
+      "sample": 35,
+      "id": "source_pin_preserved",
+      "passed": true
+    },
+    {
+      "group": "cold",
+      "sample": 35,
+      "id": "pinned_revision_shared_with_readiness",
+      "passed": true,
+      "actual": {
+        "headReads": 0,
+        "pinnedReads": 1
+      }
+    },
+    {
+      "group": "cold",
+      "sample": 36,
+      "id": "expected_compile_miss",
+      "passed": true,
+      "actual": 2
+    },
+    {
+      "group": "cold",
+      "sample": 36,
+      "id": "source_pin_preserved",
+      "passed": true
+    },
+    {
+      "group": "cold",
+      "sample": 36,
+      "id": "pinned_revision_shared_with_readiness",
+      "passed": true,
+      "actual": {
+        "headReads": 0,
+        "pinnedReads": 1
+      }
+    },
+    {
+      "group": "cold",
+      "sample": 37,
+      "id": "expected_compile_miss",
+      "passed": true,
+      "actual": 2
+    },
+    {
+      "group": "cold",
+      "sample": 37,
+      "id": "source_pin_preserved",
+      "passed": true
+    },
+    {
+      "group": "cold",
+      "sample": 37,
+      "id": "pinned_revision_shared_with_readiness",
+      "passed": true,
+      "actual": {
+        "headReads": 0,
+        "pinnedReads": 1
+      }
+    },
+    {
+      "group": "cold",
+      "sample": 38,
+      "id": "expected_compile_miss",
+      "passed": true,
+      "actual": 2
+    },
+    {
+      "group": "cold",
+      "sample": 38,
+      "id": "source_pin_preserved",
+      "passed": true
+    },
+    {
+      "group": "cold",
+      "sample": 38,
+      "id": "pinned_revision_shared_with_readiness",
+      "passed": true,
+      "actual": {
+        "headReads": 0,
+        "pinnedReads": 1
+      }
+    },
+    {
+      "group": "cold",
+      "sample": 39,
+      "id": "expected_compile_miss",
+      "passed": true,
+      "actual": 2
+    },
+    {
+      "group": "cold",
+      "sample": 39,
+      "id": "source_pin_preserved",
+      "passed": true
+    },
+    {
+      "group": "cold",
+      "sample": 39,
+      "id": "pinned_revision_shared_with_readiness",
+      "passed": true,
+      "actual": {
+        "headReads": 0,
+        "pinnedReads": 1
+      }
+    }
+  ],
+  "errors": [],
+  "sourceAfter": {
+    "sha256": "18b5258176b3a465d8dea62adf0b78f5dffc4c664103a8b3765efb36d96e7efb",
+    "files": [
+      "apps/desktop/src/main/features/missions/mission-runner-composition.ts",
+      "packages/local-host/src/missions/execution-service.ts",
+      "packages/local-host/src/missions/session-lifecycle.ts",
+      "packages/local-host/src/missions/flow-lifecycle.ts",
+      "packages/local-host/src/missions/repository/mission-store.ts",
+      "packages/local-host/src/missions/mission-execution-observer.ts",
+      "packages/local-host/src/missions/compile-service.ts",
+      "packages/local-host/src/missions/runtime-readiness.ts",
+      "packages/local-host/src/project-catalog.ts",
+      "packages/local-host/src/built-in-executors.ts",
+      "packages/local-host/src/node-mission-compiler.ts",
+      "packages/local-host/src/resources/resolvers.ts",
+      "packages/local-host/src/resources/capability-reader.ts",
+      "packages/local-host/src/resources/context-store-reader.ts",
+      "apps/desktop/src/main/features/projects/pragma-project-store.ts",
+      "apps/desktop/src/main/features/runtimes/runtime-availability.ts",
+      "apps/desktop/src/main/features/runtimes/runtime-environment-service.ts",
+      "packages/interpreter/src/compiler/project-compile.ts",
+      "packages/built-in-agents/src/builtin.ts"
+    ]
+  },
+  "sourceUnchanged": true,
+  "completedAt": "2026-10-03T12:37:28.081Z",
+  "completeProbePassed": true
+}
