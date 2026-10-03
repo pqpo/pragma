@@ -55,3 +55,5 @@ Node 改为只复制已发布 Project/CAS 不可变资源；Session 通过 `read
 Desktop 回归同步移除 Runtime Session 数据库目录复制，并隔离冷 Mission Inbox/owner scope。原测试共享控制目录，旧 standalone consumer 可能消费冷 Host 命令；隔离后取消记录必须落在 cold Session，保持原成功与身份断言。
 
 本轮只修改测试夹具和本文，生产源码摘要仍为 `4502e1a76d1ed74014c80112a7406c0cd146e0fad9b2f148e131650962ecb55d`，未重跑或新建性能批次。Node 7 项和 Desktop 2 项定向回归通过；lint、Local Host/Desktop 类型检查及完整 compilation gate 101 项通过。远程 CI 将在推送后核验，不能把此前本地结果当成新的远程通过证据。
+
+[CI 37109117171](https://github.com/pqpo/pragma/actions/runs/37109117171) 的重跑已消除上述 ENOENT，却暴露 Node Team 测试的收尾竞态：Execution 先提交 succeeded，Session/queue 收尾尚未完成，立即 release 正确触发 `ExpertSessionReleaseBlockedError`。测试改用同一 `MissionExecutionOwner` 的 Core `waitForPromptProcessing()` 屏障，并断言 idle 后再验证成功及 release；保留生产释放保护，不延长 timeout、不轮询重试 release。

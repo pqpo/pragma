@@ -12,6 +12,7 @@ import {
   PragmaPaths,
 } from "@pragma/core";
 import { createLocalHostCoreMissionControlAdapter } from "../src/core-control-adapter.ts";
+import { MissionExecutionOwner } from "../src/missions/execution-owner.ts";
 import { createMissionPinnedBinding } from "../src/missions/controller/pinned-binding.ts";
 import { MissionCommandSchema } from "@pragma/shared/integration";
 import { defineRuntimeTestDriver } from "@pragma/core/testing";
@@ -396,7 +397,9 @@ describe("default Node compilation reaches persisted Execution", { timeout: 15_0
           workspace: { canonicalPath: f.home, identityHash: `sha256:${"a".repeat(64)}` },
           provenance: "new_run",
         });
+        const owners = new MissionExecutionOwner();
         control = createLocalHostCoreMissionControlAdapter({
+          ownerAccess: owners,
           pragmaHome: home,
           runtimes: f.runtimes,
           executions: coldStore,
@@ -460,6 +463,11 @@ describe("default Node compilation reaches persisted Execution", { timeout: 15_0
         f.canUse.mockReturnValue({ usable: true });
         const continued = await apply();
         const executionId = continued.result.executionId as string;
+        const owner = owners.controlOwner(started.missionId);
+        if (owner?.kind !== "session") throw new Error("Expected the continued Session owner.");
+        // Execution terminal status is committed before Session/queue cleanup.
+        // Wait for Core's processing barrier before testing terminal release.
+        expect(await owner.session.waitForPromptProcessing()).toBe("idle");
         await vi.waitFor(async () =>
           expect((await coldStore!.get(executionId))?.status).toBe("succeeded"),
         );
