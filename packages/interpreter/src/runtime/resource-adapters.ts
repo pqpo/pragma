@@ -126,14 +126,20 @@ export interface PragmaResourceInspection<TContribution extends PragmaResourceCo
 }
 
 export class PragmaResourceNeedsAttentionError extends Error {
-  constructor(readonly health: PragmaResourceHealth) {
-    super(health.issues[0]?.message ?? `Pragma resource needs attention: ${health.ref}`);
+  constructor(
+    readonly health: PragmaResourceHealth,
+    options?: ErrorOptions,
+  ) {
+    super(health.issues[0]?.message ?? `Pragma resource needs attention: ${health.ref}`, options);
     this.name = "PragmaResourceNeedsAttentionError";
   }
 }
 
 export class PragmaResourceAdapterRegistry {
   private readonly adapters = new Map<string, PragmaResourceAdapter<PragmaDeclarativeResource>>();
+  // Keep Host exceptions out of serializable health/inspection records while
+  // preserving their typed diagnosis when compilation consumes an inspection.
+  private readonly inspectionErrors = new WeakMap<object, unknown>();
 
   register<TResource extends PragmaDeclarativeResource>(
     adapter: PragmaResourceAdapter<TResource>,
@@ -185,7 +191,9 @@ export class PragmaResourceAdapterRegistry {
   ): Promise<ResolvedPragmaResource<TContribution>> {
     const inspection = await this.inspect<TContribution>(resource, host);
     if (inspection.health.status !== "ready" || inspection.contribution === undefined) {
-      throw new PragmaResourceNeedsAttentionError(inspection.health);
+      throw new PragmaResourceNeedsAttentionError(inspection.health, {
+        cause: this.inspectionErrors.get(inspection),
+      });
     }
     return {
       ref: inspection.ref,
@@ -261,7 +269,7 @@ export class PragmaResourceAdapterRegistry {
         },
       };
     } catch (error) {
-      return {
+      const inspection: PragmaResourceInspection<TContribution> = {
         ref,
         health: {
           ref,
@@ -278,6 +286,8 @@ export class PragmaResourceAdapterRegistry {
           ],
         },
       };
+      this.inspectionErrors.set(inspection, error);
+      return inspection;
     }
   }
 

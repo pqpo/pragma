@@ -1,18 +1,10 @@
-import { join } from "node:path";
-
-import {
-  PragmaPaths,
-  type Expert,
-  type PragmaLoggerProvider,
-  type RuntimeResolver,
-} from "@pragma/core";
+import { type PragmaLoggerProvider, type RuntimeResolver } from "@pragma/core";
 import {
   BUILT_IN_AGENT_REFS,
   builtInAgentResource,
-  compileBuiltInAgent,
   type BuiltInAgentRef,
 } from "@pragma/built-in-agents";
-import type { PragmaAdapterHost, PragmaCompileOptions } from "@pragma/interpreter";
+import type { PragmaAdapterHost } from "@pragma/interpreter";
 import {
   ExecutorDescriptorSchema,
   type ExecutorDescriptor,
@@ -21,10 +13,11 @@ import {
 } from "@pragma/shared/integration";
 
 import type { LocalHostCoreExecutorDefinition } from "./core-run.ts";
-
-type LocalHostBuiltInExecutorDefinition = Omit<LocalHostCoreExecutorDefinition, "definition"> & {
-  readonly definition: Expert;
-};
+import { missionCompilationEnvironmentSnapshot } from "./missions/compile-service.ts";
+import {
+  createLocalHostNodeMissionCompiler,
+  type LocalHostNodeMissionCompiler,
+} from "./node-mission-compiler.ts";
 
 /**
  * Host-neutral catalog for the statically shipped Expert resources.
@@ -37,49 +30,72 @@ export function createLocalHostBuiltInExecutorResolver(options: {
   readonly environmentId?: string | undefined;
   readonly loggerProvider?: PragmaLoggerProvider | undefined;
   readonly adapterHost?: PragmaAdapterHost | undefined;
+  readonly compiler?: LocalHostNodeMissionCompiler | undefined;
 }): (input: {
   readonly ref: ExecutorReference;
   readonly workspace: WorkspaceSelection;
+  readonly purpose?: "execute" | "stop" | undefined;
 }) => Promise<LocalHostCoreExecutorDefinition | undefined> {
-  const paths = new PragmaPaths({ pragmaHome: options.pragmaHome });
-  const definitions = new Map<string, LocalHostBuiltInExecutorDefinition>();
-  const refs = new Set<string>(BUILT_IN_AGENT_REFS);
-
-  const resolveDefinition = async (
-    builtInRef: BuiltInAgentRef,
-    workspace: WorkspaceSelection,
-    ancestors: ReadonlySet<string> = new Set(),
-  ): Promise<LocalHostBuiltInExecutorDefinition> => {
-    if (ancestors.has(builtInRef)) {
-      throw new Error(`Cyclic built-in Expert dependency: ${builtInRef}`);
-    }
-    const key = `${builtInRef}\u0000${workspace.canonicalPath}`;
-    const existing = definitions.get(key);
-    if (existing !== undefined) return existing;
-    const nextAncestors = new Set(ancestors).add(builtInRef);
-    const created = await createDefinition({
-      builtInRef,
-      workspace,
-      pragmaHome: paths.root,
+  const compiler =
+    options.compiler ??
+    createLocalHostNodeMissionCompiler({
+      pragmaHome: options.pragmaHome,
       runtimes: options.runtimes,
-      environmentId: options.environmentId ?? "cli",
+      environmentId: options.environmentId,
       loggerProvider: options.loggerProvider,
-      definitionStateRoot: join(paths.root, "cache", "built-in-agents", "definitions"),
-      adapterHost: options.adapterHost,
-      resolveExternalInvocable: async (ref) => {
-        if (!refs.has(ref)) return undefined;
-        const dependencyRef = ref as BuiltInAgentRef;
-        const dependency = await resolveDefinition(dependencyRef, workspace, nextAncestors);
-        return { resource: builtInAgentResource(dependencyRef), value: dependency.definition };
-      },
+      ...(options.adapterHost === undefined
+        ? {}
+        : { resources: { adapterHost: () => options.adapterHost! } }),
     });
-    definitions.set(key, created);
-    return created;
-  };
-
-  return async ({ ref, workspace }) => {
-    if (ref.kind !== "expert" || !refs.has(`expert:${ref.id}`)) return undefined;
-    return await resolveDefinition(`expert:${ref.id}` as BuiltInAgentRef, workspace);
+  const refs = new Set<string>(BUILT_IN_AGENT_REFS);
+  return async ({ ref, workspace, purpose }) => {
+    const exactRef = `${ref.kind}:${ref.id}`;
+    if (ref.kind !== "expert" || !refs.has(exactRef)) return undefined;
+    const resource = builtInAgentResource(exactRef as BuiltInAgentRef);
+    const scope = compiler.service.createRequestScope({
+      id: `resolve:${exactRef}`,
+      // A logical source identity only: shipped resources need no project checkout.
+      project: { id: "built_in", revision: 1 },
+      executor: { kind: ref.kind, ref: exactRef, name: resource.metadata.name },
+      workspace: { path: workspace.canonicalPath },
+      contextMounts: [],
+    });
+    if (purpose === "stop") {
+      const compiled = await compiler.compileForStop(scope);
+      return {
+        descriptor: await createBuiltInDescriptor(
+          exactRef as BuiltInAgentRef,
+          options.runtimes,
+          true,
+        ),
+        definition: compiled.value,
+      };
+    }
+    const prepared = await compiler.prepare(scope);
+    const compilation = await prepared.ensureCompiled();
+    return {
+      descriptor: await createBuiltInDescriptor(
+        exactRef as BuiltInAgentRef,
+        options.runtimes,
+        true,
+      ),
+      definition: compilation.compiled.value,
+      environment: missionCompilationEnvironmentSnapshot(
+        compilation.compiled,
+        compilation.capabilities,
+        compilation.secrets,
+        compilation.plugins,
+      ),
+      compilation: {
+        identity: compilation.identity,
+        secrets: compilation.secrets,
+        plugins: compilation.plugins,
+        capabilities: compilation.capabilities,
+        ...(compilation.definitionFingerprint === undefined
+          ? {}
+          : { definitionFingerprint: compilation.definitionFingerprint }),
+      },
+    };
   };
 }
 
@@ -92,46 +108,20 @@ export async function listLocalHostBuiltInExecutorDescriptors(options: {
   return descriptors;
 }
 
-async function createDefinition(options: {
-  readonly builtInRef: BuiltInAgentRef;
-  readonly workspace: WorkspaceSelection;
-  readonly pragmaHome: string;
-  readonly runtimes: RuntimeResolver;
-  readonly environmentId: string;
-  readonly definitionStateRoot: string;
-  readonly loggerProvider?: PragmaLoggerProvider | undefined;
-  readonly adapterHost?: PragmaAdapterHost | undefined;
-  readonly resolveExternalInvocable?: PragmaCompileOptions["resolveExternalInvocable"];
-}): Promise<LocalHostBuiltInExecutorDefinition> {
-  const compiled = await compileBuiltInAgent({
-    ref: options.builtInRef,
-    environmentId: options.environmentId,
-    definitionStateRoot: options.definitionStateRoot,
-    workspace: options.workspace.canonicalPath,
-    pragmaHome: options.pragmaHome,
-    runtimes: options.runtimes,
-    loggerProvider: options.loggerProvider,
-    adapterHost: options.adapterHost,
-    resolveExternalInvocable: options.resolveExternalInvocable,
-  });
-  return {
-    descriptor: await createBuiltInDescriptor(options.builtInRef, options.runtimes),
-    definition: compiled.value,
-  };
-}
-
 async function createBuiltInDescriptor(
   ref: BuiltInAgentRef,
   runtimes: RuntimeResolver,
+  preparedUsable?: boolean,
 ): Promise<ExecutorDescriptor> {
   const resource = builtInAgentResource(ref);
-  let usable: boolean;
-  try {
-    const bound = await runtimes.bind({});
-    usable = (await bound.adapter.canUse()).usable;
-  } catch {
-    usable = false;
-  }
+  let usable = preparedUsable ?? false;
+  if (preparedUsable === undefined)
+    try {
+      const bound = await runtimes.bind({});
+      usable = (await bound.adapter.canUse()).usable;
+    } catch {
+      usable = false;
+    }
   return ExecutorDescriptorSchema.parse({
     schemaVersion: "pragma.integration-executor/v1",
     ref: { kind: "expert", id: ref.slice("expert:".length) },

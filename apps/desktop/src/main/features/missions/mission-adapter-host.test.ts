@@ -3,21 +3,20 @@ import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
   PRAGMA_MANAGEMENT_BINDING_REF,
   PRAGMA_MANAGEMENT_CAPABILITY_REVISION,
   createPragmaManagementTools,
 } from "@pragma/built-in-agents";
-import {
-  createStaticRuntimeResolver,
-  snapshotRuntimeFeatures,
-  type Expert,
-} from "@pragma/core";
+import { createStaticRuntimeResolver, snapshotRuntimeFeatures, type Expert } from "@pragma/core";
 import { createRuntimeTestFeatures } from "@pragma/core/testing";
 import { formatPragmaYaml, loadPragmaProject } from "@pragma/interpreter";
 import { PRAGMA_DSL_WRITE_API_VERSION } from "@pragma/interpreter/ast";
+
+import { createSecretStore } from "@pragma/local-host";
+import { createLocalHostResourceResolvers } from "@pragma/local-host/resources";
 
 import { createDesktopAdapterHost } from "./mission-adapter-host.ts";
 import { createContextStoreStore } from "../context-stores/context-store-store.ts";
@@ -34,6 +33,58 @@ afterEach(async () => {
 });
 
 describe("Desktop Pragma adapter Host", () => {
+  it("resolves persisted Secret bindings through the same credential authority as Node", async () => {
+    const root = await mkdtemp(join(tmpdir(), "pragma-desktop-secret-port-"));
+    temporaryRoots.push(root);
+    const keys = new Map<string, Uint8Array>();
+    const secretStore = createSecretStore({
+      root: join(root, "data", "secrets"),
+      dataRoot: join(root, "data"),
+      keychain: {
+        inspect: async () => ({ status: "ready", backend: "macos-keychain" }),
+        get: async (service, account) => keys.get(`${service}:${account}`) ?? null,
+        set: async (service, account, value) => {
+          keys.set(`${service}:${account}`, Uint8Array.from(value));
+        },
+        delete: async (service, account) => {
+          keys.delete(`${service}:${account}`);
+        },
+      },
+    });
+    const resources = createLocalHostResourceResolvers({ pragmaHome: root, secretStore });
+    const ref = "secret:fixture-http-token";
+    await resources.pluginCredentials.set(ref, "fixture-private-value");
+    const desktop = createDesktopAdapterHost(
+      {
+        capabilityStore: {} as never,
+        capabilityCredentials: {} as never,
+        capabilitiesPath: root,
+        resolveSecret: (target) => resources.pluginCredentials.get(target),
+      },
+      root,
+    );
+    const node = resources.adapterHost({ id: "fixture", workspace: { path: root } });
+    expect(await desktop.resolveSecret(ref)).toBe(await node.resolveSecret(ref));
+    await expect(desktop.resolveSecret("secret:missing")).rejects.toMatchObject({
+      code: "DEPENDENCY_UNAVAILABLE",
+      diagnosticCode: "secret_binding_unavailable",
+      resourceRef: "secret:missing",
+    });
+    const locked = new Error("fixture-keychain-locked");
+    const unavailable = createDesktopAdapterHost(
+      {
+        capabilityStore: {} as never,
+        capabilityCredentials: {} as never,
+        capabilitiesPath: root,
+        resolveSecret: vi.fn(async () => {
+          throw locked;
+        }),
+      },
+      root,
+    );
+    await expect(unavailable.resolveSecret(ref)).rejects.toBe(locked);
+  });
+
   it("does not resolve the management binding when no management ports are installed", async () => {
     const host = createDesktopAdapterHost(
       {} as Parameters<typeof createDesktopAdapterHost>[0],

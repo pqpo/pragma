@@ -73,6 +73,8 @@ describe("Mission execution owner", () => {
     const context = Promise.resolve({ id: "context-1" });
     service.setExecutionContext("mission-1", context);
     service.setCompilationIdentity("mission-1", "compile-1");
+    service.setCompilationSecrets("mission-1", [{ ref: "secret.fixture", fingerprint: "opaque" }]);
+    service.setCompilationPlugins("mission-1", []);
     service.setDefinitionFingerprint("mission-1", "definition-1");
 
     expect(await service.executionContext("mission-1")).toEqual({ id: "context-1" });
@@ -80,6 +82,8 @@ describe("Mission execution owner", () => {
     expect(service.executionContext("mission-1")).toBeUndefined();
     expect(service.compilationIdentity("mission-1")).toBeUndefined();
     expect(service.definitionFingerprint("mission-1")).toBeUndefined();
+    expect(service.compilationSecrets("mission-1")).toBeUndefined();
+    expect(service.compilationPlugins("mission-1")).toBeUndefined();
     expect(service.successorRequired("mission-1")).toBe(true);
     expect(service.consumeSuccessorRequirement("mission-1")).toBe(true);
     expect(service.consumeSuccessorRequirement("mission-1")).toBe(false);

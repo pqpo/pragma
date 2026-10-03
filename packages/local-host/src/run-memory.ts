@@ -18,7 +18,7 @@ export function createLocalHostRunMemory(options: {
   beforeFeedClose?: () => Promise<void>;
 }) {
   let feed: Promise<CanonicalEventFeed> | undefined;
-  const getFeed = () => (feed ??= createFileCanonicalEventFeed(options));
+  const getFeed = () => (feed ??= createFileCanonicalEventFeed({ pragmaHome: options.pragmaHome }));
   const canonical: CanonicalEventFeed = {
     append: async (events) => await (await getFeed()).append(events),
     read: async (input) => await (await getFeed()).read(input),

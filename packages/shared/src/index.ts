@@ -36,3 +36,8 @@ export * from "./stream-event.schema.ts";
 export * from "./tool-permission.schema.ts";
 
 export * from "./usage.schema.ts";
+
+export * from "./resources/tool-capability.schema.ts";
+export * from "./resources/capability.schema.ts";
+export * from "./resources/plugin.schema.ts";
+export * from "./resources/context-store.schema.ts";

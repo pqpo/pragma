@@ -1,9 +1,8 @@
 import { PragmaPaths, type PragmaLoggerProvider, type RuntimeResolver } from "@pragma/core";
-import { FileSystemContextStore } from "@pragma/context-filesystem";
+import { BUILT_IN_AGENT_REFS } from "@pragma/built-in-agents";
 import {
   canonicalPragmaResourceRef,
   PragmaInvocableResourceRefSchema,
-  type InvocableResource,
   type PragmaAdapterHost,
   type PragmaResource,
 } from "@pragma/interpreter";
@@ -15,6 +14,12 @@ import {
 } from "@pragma/shared/integration";
 
 import type { LocalHostCoreExecutorDefinition } from "./core-run.ts";
+import { missionCompilationEnvironmentSnapshot } from "./missions/compile-service.ts";
+import {
+  createLocalHostNodeMissionCompiler,
+  type LocalHostNodeMissionCompiler,
+} from "./node-mission-compiler.ts";
+import { createLocalHostResourceResolvers } from "./resources/resolvers.ts";
 import {
   createLocalHostProjectRevisionReader,
   type LocalHostProjectRevisionReader,
@@ -38,6 +43,7 @@ export interface LocalHostProjectCatalog {
     readonly projectId?: string | undefined;
     readonly revision?: number | undefined;
     readonly workspace: WorkspaceSelection;
+    readonly purpose?: "execute" | "stop" | undefined;
   }) => Promise<LocalHostCoreExecutorDefinition | undefined>;
   readonly listProjects: () => Promise<readonly LocalHostProjectSummary[]>;
   readonly getProjectRevision: (
@@ -62,6 +68,7 @@ export function createLocalHostProjectCatalog(options: {
   readonly environmentId?: string | undefined;
   readonly loggerProvider?: PragmaLoggerProvider | undefined;
   readonly reader?: LocalHostProjectRevisionReader | undefined;
+  readonly compiler?: LocalHostNodeMissionCompiler | undefined;
 }): LocalHostProjectCatalog {
   const projectId = options.projectId ?? LOCAL_HOST_DEFAULT_PROJECT_ID;
   const reader =
@@ -70,6 +77,17 @@ export function createLocalHostProjectCatalog(options: {
       projectsPath: options.projectsPath,
       objectsPath: options.objectsPath,
       projectViewsPath: options.projectViewsPath,
+      externalResourceRefs: new Set(BUILT_IN_AGENT_REFS),
+    });
+
+  const compiler =
+    options.compiler ??
+    createLocalHostNodeMissionCompiler({
+      pragmaHome: options.pragmaHome,
+      runtimes: options.runtimes,
+      environmentId: options.environmentId,
+      loggerProvider: options.loggerProvider,
+      reader,
     });
 
   const readLocation = async (requestedProjectId: string, revision?: number) =>
@@ -131,6 +149,7 @@ export function createLocalHostProjectCatalog(options: {
     readonly projectId?: string | undefined;
     readonly revision?: number | undefined;
     readonly workspace: WorkspaceSelection;
+    readonly purpose?: "execute" | "stop" | undefined;
   }): Promise<LocalHostCoreExecutorDefinition | undefined> => {
     const targetProjectId = input.projectId ?? projectId;
     const exactRef = `${input.ref.kind}:${input.ref.id}`;
@@ -138,42 +157,61 @@ export function createLocalHostProjectCatalog(options: {
     const location = await readLocation(targetProjectId, input.revision);
     if (location === undefined || location.projectFingerprint === undefined) return undefined;
     const sourceFingerprint = location.projectFingerprint;
-    return await withOpenedProject(location, async (project) => {
-      const resource = project
-        .listResources()
-        .find((candidate) => canonicalPragmaResourceRef(candidate) === exactRef);
-      if (resource === undefined || !isInvocableResource(resource)) return undefined;
-      const compiled = await project.compile<InvocableResource>(exactRef, {
-        workspace: input.workspace.canonicalPath,
-        ...(options.pragmaHome === undefined ? {} : { pragmaHome: options.pragmaHome }),
-        projectRoot: location.rootDir,
-        environmentId: options.environmentId ?? "cli",
-        runtimes: options.runtimes,
-        loggerProvider: options.loggerProvider,
-        adapterHost: createLocalHostAdapterHost(location.rootDir, options.environmentId ?? "cli"),
-      });
-      const expectedCompiledFingerprint =
-        location.derivedProjectFingerprint ?? location.projectFingerprint;
-      if (compiled.projectFingerprint !== expectedCompiledFingerprint) {
-        throw new Error(
-          `Compiled project fingerprint does not match the ${
-            location.derivedProjectFingerprint === undefined ? "published" : "derived compiler view"
-          } revision: ${location.projectId}@${location.revision}.`,
-        );
-      }
+    const revisionPromise = compiler.readRevision(location);
+    const snapshot = await revisionPromise;
+    const resource = snapshot.resources.find(
+      (candidate) => canonicalPragmaResourceRef(candidate) === exactRef,
+    );
+    if (resource === undefined || !isInvocableResource(resource)) return undefined;
+    const scope = compiler.service.createRequestScope(
+      {
+        id: `resolve:${exactRef}`,
+        project: { id: location.projectId, revision: location.revision },
+        executor: { kind: input.ref.kind, ref: exactRef, name: resource.metadata.name },
+        workspace: { path: input.workspace.canonicalPath },
+        contextMounts: [],
+      },
+      revisionPromise,
+    );
+    if (input.purpose === "stop") {
+      const compiled = await compiler.compileForStop(scope);
       return {
         descriptor: createProjectExecutorDescriptor({
           resource,
           projectId: location.projectId,
           revision: location.revision,
-          // The descriptor is the stable Mission/Revision pin. A migrated
-          // compiler view may have a different derived fingerprint, but that
-          // value must never replace the historical source fingerprint.
           fingerprint: sourceFingerprint,
         }),
         definition: compiled.value,
       };
-    });
+    }
+    const prepared = await compiler.prepare(scope);
+    const compilation = await prepared.ensureCompiled();
+    return {
+      descriptor: createProjectExecutorDescriptor({
+        resource,
+        projectId: location.projectId,
+        revision: location.revision,
+        // The immutable source fingerprint remains the historical Mission pin.
+        fingerprint: sourceFingerprint,
+      }),
+      definition: compilation.compiled.value,
+      environment: missionCompilationEnvironmentSnapshot(
+        compilation.compiled,
+        compilation.capabilities,
+        compilation.secrets,
+        compilation.plugins,
+      ),
+      compilation: {
+        identity: compilation.identity,
+        secrets: compilation.secrets,
+        plugins: compilation.plugins,
+        capabilities: compilation.capabilities,
+        ...(compilation.definitionFingerprint === undefined
+          ? {}
+          : { definitionFingerprint: compilation.definitionFingerprint }),
+      },
+    };
   };
 
   return {
@@ -210,27 +248,12 @@ export function createLocalHostProjectCatalog(options: {
 export function createLocalHostAdapterHost(
   projectRoot: string,
   environmentId = "cli",
+  pragmaHome = new PragmaPaths().root,
 ): PragmaAdapterHost {
-  return {
-    environmentId,
-    projectRoot,
-    async resolveBinding() {
-      return undefined;
-    },
-    async resolveArtifact(source) {
-      throw new Error(
-        `Local Host has no external artifact resolver for: ${
-          source.type === "project" ? source.path : source.uri
-        }`,
-      );
-    },
-    async resolveSecret() {
-      return undefined;
-    },
-    openFileContextStore({ rootDir }) {
-      return new FileSystemContextStore({ rootDir });
-    },
-  };
+  return createLocalHostResourceResolvers({ pragmaHome, environmentId }).adapterHost({
+    id: "local-host-adapter",
+    workspace: { path: projectRoot },
+  });
 }
 
 /** Compose the reader from the canonical Pragma storage roots. */
@@ -241,6 +264,7 @@ export function createLocalHostProjectCatalogFromHome(options: {
   readonly environmentId?: string | undefined;
   readonly loggerProvider?: PragmaLoggerProvider | undefined;
   readonly reader?: LocalHostProjectRevisionReader | undefined;
+  readonly compiler?: LocalHostNodeMissionCompiler | undefined;
 }): LocalHostProjectCatalog {
   const paths = new PragmaPaths(
     options.pragmaHome === undefined ? {} : { pragmaHome: options.pragmaHome },
@@ -255,6 +279,7 @@ export function createLocalHostProjectCatalogFromHome(options: {
     ...(options.environmentId === undefined ? {} : { environmentId: options.environmentId }),
     ...(options.loggerProvider === undefined ? {} : { loggerProvider: options.loggerProvider }),
     ...(options.reader === undefined ? {} : { reader: options.reader }),
+    ...(options.compiler === undefined ? {} : { compiler: options.compiler }),
   });
 }
 

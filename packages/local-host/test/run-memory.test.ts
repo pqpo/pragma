@@ -1,3 +1,7 @@
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { createNoopLoggerProvider } from "@pragma/core";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const fixtures = vi.hoisted(() => ({
@@ -53,6 +57,23 @@ beforeEach(() => {
 });
 
 describe("CLI Memory lifetime", () => {
+  it("opens the real canonical worker with logger and close callbacks kept in the Host", async () => {
+    const home = await mkdtemp(join(tmpdir(), "pragma-run-memory-worker-"));
+    const beforeFeedClose = vi.fn(async () => undefined);
+    const memory = createLocalHostRunMemory({
+      pragmaHome: home,
+      loggerProvider: createNoopLoggerProvider(),
+      beforeFeedClose,
+    });
+    try {
+      await expect(memory.canonical.inspect()).resolves.toBeDefined();
+      await memory.close();
+      expect(beforeFeedClose).toHaveBeenCalledOnce();
+    } finally {
+      await memory.close();
+      await rm(home, { recursive: true, force: true, maxRetries: 5 });
+    }
+  });
   it("finishes pending delivery before closing and creates a fresh service for a concurrent new owner", async () => {
     const memory = createLocalHostRunMemory({ pragmaHome: "/unused-memory-lifetime-fixture" });
     await memory.bindings({ missionId: "first", goal: "first" });

@@ -10,6 +10,7 @@ import {
 
 import type { ExpertAgentContext, ExpertAgentStartupMessage } from "../agent/context-manager.ts";
 import type { Expert } from "../agent/expert-agent.ts";
+import { assertExecutableDefinition } from "../agent/definition-execution-purpose.ts";
 import { SteerNotDispatchedError } from "../execution/steer-delivery-error.ts";
 import { createPragmaLogger, type PragmaLogger } from "../logging/logger.ts";
 import type { ExpertAgentProcessEnvironmentPatch } from "../plugins/expert-agent-plugin.ts";
@@ -1337,6 +1338,7 @@ class ManagedRuntimeSession<TNativeEvent, TNativeSession> {
         this.options.driver.compactContext === undefined
           ? undefined
           : async () => {
+              assertExecutableDefinition(this.options.agent);
               this.assertIdle("compact the context window");
               const usage = await this.options.driver.compactContext!(this.options.nativeSession);
               this.rearmStartupMessages();
@@ -1350,6 +1352,7 @@ class ManagedRuntimeSession<TNativeEvent, TNativeSession> {
   submit<TOutput = string>(
     submission: RuntimeSubmitRequest<TOutput>,
   ): RuntimeSubmitHandle<TOutput> {
+    assertExecutableDefinition(this.options.agent);
     const runId = submission.runId ?? randomUUID();
     const taskSubmission = omitRuntimeSubmissionExecution(submission);
     this.options.executionBindings.bind(runId, {
@@ -1721,6 +1724,7 @@ class ManagedRuntimeSession<TNativeEvent, TNativeSession> {
       const startedAt = new Date();
       const turnResult = await (async () => {
         await this.options.executionBindings.assertOwnership(runId);
+        assertExecutableDefinition(this.options.agent);
         const requestStartedAt = performance.now();
         this.options.logger.info(
           "runtime.model_request_dispatched",

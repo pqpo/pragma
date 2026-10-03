@@ -53,11 +53,17 @@ Cross-package imports must use `@pragma/*` names, not relative paths.
 owner lifecycle, query/watch, catalog, Board and Core run wiring). It may not depend on any `apps/*`,
 Electron, React/Next, or `@pragma/runtime-*`. Runtime factories
 or a Host-owned `RuntimeResolver` are injected by `apps/desktop` Main or `apps/cli` composition. A
-richer Host currently supplies narrow compile/first-run dependencies during issue #348 R1. Mission
+richer Host currently supplies first-run/lifecycle dependencies pending issue #348 R3. Mission
 commands use the factory-created Local Host Core control adapter and shared MissionExecutionOwner;
-Desktop must not implement another command consumer or strict-target resolver. Compile and full
-run/session/recovery migration remain R2/R3; removal of the remaining Node application overrides
-is scheduled for R4. See [R1 implementation status](local-host-kernel-r1-implementation.md).
+Desktop must not implement another command consumer or strict-target resolver. R2's Local Host
+compile service owns pinned Revision reuse, executor resolution, binding/fingerprint identity,
+stability retries, owner compilation cache and target readiness. Desktop, CLI and built-in sources
+provide resource ports; Interpreter retains the actual DSL compiler. `@pragma/local-host/resources`
+provides Node resource readers and credential access; OS interaction, mutation and approval remain
+Host adapters. Full run/session/recovery migration remains R3; remaining Node application overrides
+and Runner forwarding removal remain R4. R1 is merged through #353 with engineering and actual
+Native Mission smoke evidence, but full performance/product acceptance remains open. See
+[R2 implementation status](local-host-kernel-r2-implementation.md).
 `@pragma/shared`, Core, Interpreter, Evaluation, Built-in Agents, Memory,
 Context Filesystem, Runtime packages, plugins, and examples may not depend on
 `@pragma/local-host` or `@pqpo/pragma`. Desktop preload/renderer/shared code remains browser-safe and

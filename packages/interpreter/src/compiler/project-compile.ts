@@ -2,6 +2,9 @@ import { lstat, readFile, realpath } from "node:fs/promises";
 import { isAbsolute, relative, resolve } from "node:path";
 import {
   defineExpert,
+  markStopOnlyDefinition,
+  StaticContextStore,
+  StopOnlyDefinitionExecutionError,
   defineExpertTeam,
   defineFlow,
   mergeExpertAgentToolApprovals,
@@ -19,6 +22,7 @@ import {
 } from "@pragma/core";
 import { z } from "zod";
 import {
+  PragmaRuntimeProfileConfigSchema,
   type PragmaExpertResource,
   type PragmaDiagnostic,
   type PragmaDeclarativeResource,
@@ -148,12 +152,41 @@ export async function compileProjectResource<T extends InvocableResource>(
   const resolveDeclarative = async <TContribution extends PragmaResourceContribution>(
     resourceRef: string,
     kind: PragmaDeclarativeResource["kind"],
-  ): Promise<{ readonly contribution: TContribution; readonly health: PragmaResourceHealth }> => {
+  ): Promise<{ readonly contribution: TContribution }> => {
     const indexed = context.resolveResource(resourceRef);
     if (indexed.resource.kind !== kind) {
       throw new PragmaDslError(`Expected ${kind} resource, received: ${resourceRef}`);
     }
     const key = canonicalRef(indexed.resource);
+    if (host.compilationPurpose === "stop") {
+      // Recovery needs declaration metadata, never live execution contributions.
+      let contribution: PragmaResourceContribution;
+      if (indexed.resource.kind === "RuntimeProfile") {
+        if (indexed.resource.spec.adapter !== "pragma.runtime.profile@v1")
+          throw new PragmaDslError(`Unsupported stop-only RuntimeProfile adapter: ${resourceRef}`);
+        const config = PragmaRuntimeProfileConfigSchema.parse(indexed.resource.spec.config);
+        contribution = {
+          runtimeId: config.runtimeId,
+          ...(config.model === undefined || config.providerId === undefined
+            ? {}
+            : {
+                models: {
+                  default: {
+                    model: { providerId: config.providerId, modelId: config.model },
+                    ...(config.thinkingLevel === undefined
+                      ? {}
+                      : { thinkingLevel: config.thinkingLevel }),
+                  },
+                },
+              }),
+        };
+      } else if (indexed.resource.kind === "ContextStore") {
+        contribution = { store: new StaticContextStore([]) };
+      } else {
+        contribution = { tools: [], skills: { skills: [] } };
+      }
+      return { contribution: contribution as TContribution };
+    }
     const existing = resolvedResources.get(key);
     if (existing !== undefined) {
       return existing as {
@@ -345,10 +378,12 @@ export async function compileProjectResource<T extends InvocableResource>(
         actions,
         contextPolicies,
         resolveRuntime,
+        host.compilationPurpose,
       );
     } else {
       throw new PragmaDslError(`Resource is not invocable: ${resourceRef}`);
     }
+    if (host.compilationPurpose === "stop") markStopOnlyDefinition(value);
     compiling.delete(key);
     const resolved = { resource: indexed.resource, value } satisfies ResolvedInvocableResource;
     cache.set(key, resolved);
@@ -364,7 +399,7 @@ export async function compileProjectResource<T extends InvocableResource>(
     host,
   );
   let rootRuntimeEnvironment: unknown;
-  if (host.runtimes !== undefined) {
+  if (host.compilationPurpose !== "stop" && host.runtimes !== undefined) {
     const rootModelSelection = await resolveRootModelSelection(
       indexed.resource,
       context.resources,
@@ -417,6 +452,7 @@ export async function compileProjectResource<T extends InvocableResource>(
   const environmentFingerprintValue = sha256(
     stableStringify({
       environmentId: adapterHost.environmentId,
+      ...(host.compilationPurpose === "stop" ? { compilationPurpose: "stop" } : {}),
       projectFingerprint,
       resources: fingerprintResources,
       plugins: fingerprintPlugins,
@@ -460,7 +496,9 @@ export async function compileExpert(
   },
 ): Promise<Expert> {
   const [plugins, runtime, capabilities, contextStores] = await Promise.all([
-    Promise.all(resource.spec.plugins.map(resolvers.resolvePlugin)),
+    host.compilationPurpose === "stop"
+      ? Promise.resolve([])
+      : Promise.all(resource.spec.plugins.map(resolvers.resolvePlugin)),
     executionOverride !== undefined || resource.spec.runtime === undefined
       ? Promise.resolve(undefined)
       : resolvers.resolveRuntime(resource.spec.runtime.ref),
@@ -581,6 +619,7 @@ export async function compileFlowResource(
   actions: FlowActionRegistry,
   contextPolicies: ContextPolicyRegistry,
   resolveRuntime: (ref: string) => Promise<PragmaRuntimeProfileContribution>,
+  purpose: "execute" | "stop" = "execute",
 ): Promise<Flow> {
   const inputSchema = createJsonSchemaZod(resource.spec.input?.schema);
   const outputSchema = createJsonSchemaZod(resource.spec.output?.schema);
@@ -623,6 +662,22 @@ export async function compileFlowResource(
       ...(step.runtime === undefined ? {} : { runtime: step.runtime }),
     };
     if (step.action !== undefined) {
+      if (purpose === "stop") {
+        // The persisted graph describes Task identity and the DSL descriptor;
+        // action schemas and executable handlers are execution contributions.
+        references.set(
+          stepId,
+          flow.task({
+            id: stepId,
+            input: mappedInput,
+            descriptor,
+            handler: () => {
+              throw new StopOnlyDefinitionExecutionError();
+            },
+          }),
+        );
+        continue;
+      }
       const action = actions.resolve(step.action.ref);
       references.set(
         stepId,

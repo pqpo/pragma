@@ -1,0 +1,642 @@
+{
+  "scope": "Latest post-comment frozen-source serial preparation probe; real stores/Interpreter and fake Runtime. No model/UI/background acceptance, Plugin-heavy workload or inline Secret performance coverage. Counters are API calls, not physical I/O.",
+  "retention": "Aggregates only. Per-operation data and logs removed at user request; individual samples cannot be reconstructed from this file.",
+  "sourceSha256": "4502e1a76d1ed74014c80112a7406c0cd146e0fad9b2f148e131650962ecb55d",
+  "mainCommit": "a2741325ab106b3cbc8f472d4feec98b1367ae55",
+  "threshold": "candidate preparation P95 exceeds main by both 10% and 20ms",
+  "probeAssertionsPassed": true,
+  "comparisons": [
+    {
+      "batch": "full",
+      "pair": 1,
+      "scenario": "cold",
+      "samplesPerCheckout": 20,
+      "main": {
+        "p50Ms": 248.86268000000018,
+        "p95Ms": 292.1977230000002,
+        "compilePhaseP95Ms": 41.17,
+        "cacheHits": 0,
+        "counterProfile": "c01"
+      },
+      "candidate": {
+        "p50Ms": 246.43267500000002,
+        "p95Ms": 274.30660499999976,
+        "compilePhaseP95Ms": 41.11,
+        "cacheHits": 0,
+        "counterProfile": "c02"
+      },
+      "thresholdTriggered": false
+    },
+    {
+      "batch": "full",
+      "pair": 1,
+      "scenario": "warm",
+      "samplesPerCheckout": 20,
+      "main": {
+        "p50Ms": 583.1085060000005,
+        "p95Ms": 717.2246299999988,
+        "compilePhaseP95Ms": 0.01,
+        "cacheHits": 20,
+        "counterProfile": "c03"
+      },
+      "candidate": {
+        "p50Ms": 545.5943060000027,
+        "p95Ms": 580.8275150000009,
+        "compilePhaseP95Ms": 0,
+        "cacheHits": 20,
+        "counterProfile": "c04"
+      },
+      "thresholdTriggered": false
+    },
+    {
+      "batch": "full",
+      "pair": 1,
+      "scenario": "permission-invalidation",
+      "samplesPerCheckout": 20,
+      "main": {
+        "p50Ms": 599.6920530000025,
+        "p95Ms": 628.1820020000014,
+        "compilePhaseP95Ms": 27.71,
+        "cacheHits": 0,
+        "counterProfile": "c05"
+      },
+      "candidate": {
+        "p50Ms": 595.1730959999986,
+        "p95Ms": 629.9695019999999,
+        "compilePhaseP95Ms": 32.2,
+        "cacheHits": 0,
+        "counterProfile": "c06"
+      },
+      "thresholdTriggered": false
+    },
+    {
+      "batch": "full",
+      "pair": 1,
+      "scenario": "model-invalidation",
+      "samplesPerCheckout": 20,
+      "main": {
+        "p50Ms": 614.7817589999977,
+        "p95Ms": 659.2409740000003,
+        "compilePhaseP95Ms": 31.76,
+        "cacheHits": 0,
+        "counterProfile": "c07"
+      },
+      "candidate": {
+        "p50Ms": 609.727101000004,
+        "p95Ms": 632.6695289999989,
+        "compilePhaseP95Ms": 33.33,
+        "cacheHits": 0,
+        "counterProfile": "c08"
+      },
+      "thresholdTriggered": false
+    },
+    {
+      "batch": "full",
+      "pair": 1,
+      "scenario": "capability-invalidation",
+      "samplesPerCheckout": 20,
+      "main": {
+        "p50Ms": 626.8002659999984,
+        "p95Ms": 697.9924350000074,
+        "compilePhaseP95Ms": 30.39,
+        "cacheHits": 0,
+        "counterProfile": "c09"
+      },
+      "candidate": {
+        "p50Ms": 633.6859130000012,
+        "p95Ms": 711.6771960000042,
+        "compilePhaseP95Ms": 38.69,
+        "cacheHits": 0,
+        "counterProfile": "c10"
+      },
+      "thresholdTriggered": false
+    },
+    {
+      "batch": "full",
+      "pair": 1,
+      "scenario": "credential-invalidation",
+      "samplesPerCheckout": 20,
+      "main": {
+        "p50Ms": 675.5802759999933,
+        "p95Ms": 745.314166000011,
+        "compilePhaseP95Ms": 30.14,
+        "cacheHits": 0,
+        "counterProfile": "c11"
+      },
+      "candidate": {
+        "p50Ms": 656.6422250000032,
+        "p95Ms": 697.215790000002,
+        "compilePhaseP95Ms": 31.09,
+        "cacheHits": 0,
+        "counterProfile": "c12"
+      },
+      "thresholdTriggered": false
+    },
+    {
+      "batch": "full",
+      "pair": 1,
+      "scenario": "system-invalidation",
+      "samplesPerCheckout": 20,
+      "main": {
+        "p50Ms": 584.7217269999965,
+        "p95Ms": 636.9384299999947,
+        "compilePhaseP95Ms": 35.46,
+        "cacheHits": 0,
+        "counterProfile": "c13"
+      },
+      "candidate": {
+        "p50Ms": 608.5542300000088,
+        "p95Ms": 707.5278959999996,
+        "compilePhaseP95Ms": 37.02,
+        "cacheHits": 0,
+        "counterProfile": "c08"
+      },
+      "thresholdTriggered": true
+    },
+    {
+      "batch": "full",
+      "pair": 1,
+      "scenario": "context-mount-invalidation",
+      "samplesPerCheckout": 20,
+      "main": {
+        "p50Ms": 633.682044000001,
+        "p95Ms": 670.7465740000043,
+        "compilePhaseP95Ms": 29.76,
+        "cacheHits": 0,
+        "counterProfile": "c14"
+      },
+      "candidate": {
+        "p50Ms": 671.2985449999978,
+        "p95Ms": 699.7818100000004,
+        "compilePhaseP95Ms": 35.5,
+        "cacheHits": 0,
+        "counterProfile": "c10"
+      },
+      "thresholdTriggered": false
+    },
+    {
+      "batch": "full",
+      "pair": 2,
+      "scenario": "cold",
+      "samplesPerCheckout": 20,
+      "main": {
+        "p50Ms": 240.8539270000001,
+        "p95Ms": 257.6647659999999,
+        "compilePhaseP95Ms": 41.2,
+        "cacheHits": 0,
+        "counterProfile": "c01"
+      },
+      "candidate": {
+        "p50Ms": 241.88168300000143,
+        "p95Ms": 259.95580900000004,
+        "compilePhaseP95Ms": 34.8,
+        "cacheHits": 0,
+        "counterProfile": "c02"
+      },
+      "thresholdTriggered": false
+    },
+    {
+      "batch": "full",
+      "pair": 2,
+      "scenario": "warm",
+      "samplesPerCheckout": 20,
+      "main": {
+        "p50Ms": 577.8609420000012,
+        "p95Ms": 619.5137219999997,
+        "compilePhaseP95Ms": 0.01,
+        "cacheHits": 20,
+        "counterProfile": "c03"
+      },
+      "candidate": {
+        "p50Ms": 568.4706760000008,
+        "p95Ms": 620.8808680000002,
+        "compilePhaseP95Ms": 0,
+        "cacheHits": 20,
+        "counterProfile": "c04"
+      },
+      "thresholdTriggered": false
+    },
+    {
+      "batch": "full",
+      "pair": 2,
+      "scenario": "permission-invalidation",
+      "samplesPerCheckout": 20,
+      "main": {
+        "p50Ms": 609.5914499999999,
+        "p95Ms": 656.9685360000003,
+        "compilePhaseP95Ms": 33.86,
+        "cacheHits": 0,
+        "counterProfile": "c05"
+      },
+      "candidate": {
+        "p50Ms": 604.4403629999979,
+        "p95Ms": 634.0541799999992,
+        "compilePhaseP95Ms": 34.33,
+        "cacheHits": 0,
+        "counterProfile": "c06"
+      },
+      "thresholdTriggered": false
+    },
+    {
+      "batch": "full",
+      "pair": 2,
+      "scenario": "model-invalidation",
+      "samplesPerCheckout": 20,
+      "main": {
+        "p50Ms": 626.200656999994,
+        "p95Ms": 687.7187699999995,
+        "compilePhaseP95Ms": 31.3,
+        "cacheHits": 0,
+        "counterProfile": "c07"
+      },
+      "candidate": {
+        "p50Ms": 617.7898209999985,
+        "p95Ms": 653.3959959999993,
+        "compilePhaseP95Ms": 31.79,
+        "cacheHits": 0,
+        "counterProfile": "c08"
+      },
+      "thresholdTriggered": false
+    },
+    {
+      "batch": "full",
+      "pair": 2,
+      "scenario": "capability-invalidation",
+      "samplesPerCheckout": 20,
+      "main": {
+        "p50Ms": 642.442928000004,
+        "p95Ms": 660.4899270000024,
+        "compilePhaseP95Ms": 30.17,
+        "cacheHits": 0,
+        "counterProfile": "c09"
+      },
+      "candidate": {
+        "p50Ms": 634.2729400000026,
+        "p95Ms": 845.8570649999965,
+        "compilePhaseP95Ms": 31.72,
+        "cacheHits": 0,
+        "counterProfile": "c10"
+      },
+      "thresholdTriggered": true
+    },
+    {
+      "batch": "full",
+      "pair": 2,
+      "scenario": "credential-invalidation",
+      "samplesPerCheckout": 20,
+      "main": {
+        "p50Ms": 658.6785769999988,
+        "p95Ms": 719.308097000001,
+        "compilePhaseP95Ms": 29.94,
+        "cacheHits": 0,
+        "counterProfile": "c11"
+      },
+      "candidate": {
+        "p50Ms": 660.1124530000088,
+        "p95Ms": 678.5596249999944,
+        "compilePhaseP95Ms": 34.47,
+        "cacheHits": 0,
+        "counterProfile": "c12"
+      },
+      "thresholdTriggered": false
+    },
+    {
+      "batch": "full",
+      "pair": 2,
+      "scenario": "system-invalidation",
+      "samplesPerCheckout": 20,
+      "main": {
+        "p50Ms": 622.3300130000134,
+        "p95Ms": 674.0014789999987,
+        "compilePhaseP95Ms": 36.34,
+        "cacheHits": 0,
+        "counterProfile": "c13"
+      },
+      "candidate": {
+        "p50Ms": 617.9987610000098,
+        "p95Ms": 652.4808880000055,
+        "compilePhaseP95Ms": 38.64,
+        "cacheHits": 0,
+        "counterProfile": "c08"
+      },
+      "thresholdTriggered": false
+    },
+    {
+      "batch": "full",
+      "pair": 2,
+      "scenario": "context-mount-invalidation",
+      "samplesPerCheckout": 20,
+      "main": {
+        "p50Ms": 665.2888220000023,
+        "p95Ms": 725.572583000001,
+        "compilePhaseP95Ms": 30.36,
+        "cacheHits": 0,
+        "counterProfile": "c14"
+      },
+      "candidate": {
+        "p50Ms": 656.7295100000047,
+        "p95Ms": 723.2186550000042,
+        "compilePhaseP95Ms": 32.85,
+        "cacheHits": 0,
+        "counterProfile": "c10"
+      },
+      "thresholdTriggered": false
+    },
+    {
+      "batch": "repeat",
+      "pair": 3,
+      "scenario": "system-invalidation",
+      "samplesPerCheckout": 60,
+      "main": {
+        "p50Ms": 616.2890239999979,
+        "p95Ms": 651.2381220000025,
+        "compilePhaseP95Ms": 37.88,
+        "cacheHits": 0,
+        "counterProfile": "c05"
+      },
+      "candidate": {
+        "p50Ms": 617.0354519999964,
+        "p95Ms": 647.0688129999999,
+        "compilePhaseP95Ms": 41.92,
+        "cacheHits": 0,
+        "counterProfile": "c06"
+      },
+      "thresholdTriggered": false
+    },
+    {
+      "batch": "repeat",
+      "pair": 4,
+      "scenario": "system-invalidation",
+      "samplesPerCheckout": 60,
+      "main": {
+        "p50Ms": 619.7987069999999,
+        "p95Ms": 639.4814719999995,
+        "compilePhaseP95Ms": 37.73,
+        "cacheHits": 0,
+        "counterProfile": "c05"
+      },
+      "candidate": {
+        "p50Ms": 611.1433230000002,
+        "p95Ms": 698.7488439999943,
+        "compilePhaseP95Ms": 45.1,
+        "cacheHits": 0,
+        "counterProfile": "c06"
+      },
+      "thresholdTriggered": false
+    },
+    {
+      "batch": "repeat",
+      "pair": 3,
+      "scenario": "capability-invalidation",
+      "samplesPerCheckout": 60,
+      "main": {
+        "p50Ms": 629.3765569999996,
+        "p95Ms": 713.146514,
+        "compilePhaseP95Ms": 33.18,
+        "cacheHits": 0,
+        "counterProfile": "c09"
+      },
+      "candidate": {
+        "p50Ms": 626.7998030000017,
+        "p95Ms": 667.3667650000007,
+        "compilePhaseP95Ms": 35.24,
+        "cacheHits": 0,
+        "counterProfile": "c10"
+      },
+      "thresholdTriggered": false
+    },
+    {
+      "batch": "repeat",
+      "pair": 4,
+      "scenario": "capability-invalidation",
+      "samplesPerCheckout": 60,
+      "main": {
+        "p50Ms": 632.0143500000013,
+        "p95Ms": 668.9715920000017,
+        "compilePhaseP95Ms": 31.78,
+        "cacheHits": 0,
+        "counterProfile": "c09"
+      },
+      "candidate": {
+        "p50Ms": 626.1787999999942,
+        "p95Ms": 673.8045750000019,
+        "compilePhaseP95Ms": 37.57,
+        "cacheHits": 0,
+        "counterProfile": "c10"
+      },
+      "thresholdTriggered": false
+    }
+  ],
+  "counterProfiles": {
+    "c01": {
+      "projectRevisionReads": 1,
+      "projectHeadReads": 1,
+      "projectOpens": [0, 1],
+      "storeCompileCalls": 1,
+      "openedProjectCompileCalls": 0,
+      "activeCapabilityReads": 4,
+      "credentialFingerprints": 3,
+      "contextStoreReads": 0,
+      "dslCompilerCalls": 2,
+      "readinessRequests": 1,
+      "runtimeHealthProbes": [4, 5],
+      "modelCatalogReads": [4, 5],
+      "pluginReads": 0
+    },
+    "c02": {
+      "projectRevisionReads": 1,
+      "projectHeadReads": 0,
+      "projectOpens": [1, 2],
+      "storeCompileCalls": 0,
+      "openedProjectCompileCalls": 1,
+      "activeCapabilityReads": 4,
+      "credentialFingerprints": 3,
+      "contextStoreReads": 0,
+      "dslCompilerCalls": 2,
+      "readinessRequests": 1,
+      "runtimeHealthProbes": [4, 5],
+      "modelCatalogReads": [4, 5],
+      "pluginReads": 0
+    },
+    "c03": {
+      "projectRevisionReads": 1,
+      "projectHeadReads": 1,
+      "projectOpens": 0,
+      "storeCompileCalls": 0,
+      "openedProjectCompileCalls": 0,
+      "activeCapabilityReads": 1,
+      "credentialFingerprints": 1,
+      "contextStoreReads": 0,
+      "dslCompilerCalls": 0,
+      "readinessRequests": 1,
+      "runtimeHealthProbes": 0,
+      "modelCatalogReads": 0,
+      "pluginReads": 0
+    },
+    "c04": {
+      "projectRevisionReads": 1,
+      "projectHeadReads": 0,
+      "projectOpens": 0,
+      "storeCompileCalls": 0,
+      "openedProjectCompileCalls": 0,
+      "activeCapabilityReads": 1,
+      "credentialFingerprints": 1,
+      "contextStoreReads": 0,
+      "dslCompilerCalls": 0,
+      "readinessRequests": 1,
+      "runtimeHealthProbes": 0,
+      "modelCatalogReads": 0,
+      "pluginReads": 0
+    },
+    "c05": {
+      "projectRevisionReads": 1,
+      "projectHeadReads": 1,
+      "projectOpens": 0,
+      "storeCompileCalls": 1,
+      "openedProjectCompileCalls": 0,
+      "activeCapabilityReads": 5,
+      "credentialFingerprints": 4,
+      "contextStoreReads": 0,
+      "dslCompilerCalls": 2,
+      "readinessRequests": 1,
+      "runtimeHealthProbes": [4, 5],
+      "modelCatalogReads": [4, 5],
+      "pluginReads": 0
+    },
+    "c06": {
+      "projectRevisionReads": 1,
+      "projectHeadReads": 0,
+      "projectOpens": 1,
+      "storeCompileCalls": 0,
+      "openedProjectCompileCalls": 1,
+      "activeCapabilityReads": 5,
+      "credentialFingerprints": 4,
+      "contextStoreReads": 0,
+      "dslCompilerCalls": 2,
+      "readinessRequests": 1,
+      "runtimeHealthProbes": [4, 5],
+      "modelCatalogReads": [4, 5],
+      "pluginReads": 0
+    },
+    "c07": {
+      "projectRevisionReads": 1,
+      "projectHeadReads": 1,
+      "projectOpens": 0,
+      "storeCompileCalls": 1,
+      "openedProjectCompileCalls": 0,
+      "activeCapabilityReads": 5,
+      "credentialFingerprints": 4,
+      "contextStoreReads": 0,
+      "dslCompilerCalls": 2,
+      "readinessRequests": 1,
+      "runtimeHealthProbes": 4,
+      "modelCatalogReads": 4,
+      "pluginReads": 0
+    },
+    "c08": {
+      "projectRevisionReads": 1,
+      "projectHeadReads": 0,
+      "projectOpens": 1,
+      "storeCompileCalls": 0,
+      "openedProjectCompileCalls": 1,
+      "activeCapabilityReads": 5,
+      "credentialFingerprints": 4,
+      "contextStoreReads": 0,
+      "dslCompilerCalls": 2,
+      "readinessRequests": 1,
+      "runtimeHealthProbes": 4,
+      "modelCatalogReads": 4,
+      "pluginReads": 0
+    },
+    "c09": {
+      "projectRevisionReads": 1,
+      "projectHeadReads": 1,
+      "projectOpens": 0,
+      "storeCompileCalls": 1,
+      "openedProjectCompileCalls": 0,
+      "activeCapabilityReads": 5,
+      "credentialFingerprints": 4,
+      "contextStoreReads": 0,
+      "dslCompilerCalls": 2,
+      "readinessRequests": 1,
+      "runtimeHealthProbes": [5, 6],
+      "modelCatalogReads": [4, 5],
+      "pluginReads": 0
+    },
+    "c10": {
+      "projectRevisionReads": 1,
+      "projectHeadReads": 0,
+      "projectOpens": 1,
+      "storeCompileCalls": 0,
+      "openedProjectCompileCalls": 1,
+      "activeCapabilityReads": 5,
+      "credentialFingerprints": 4,
+      "contextStoreReads": 0,
+      "dslCompilerCalls": 2,
+      "readinessRequests": 1,
+      "runtimeHealthProbes": [5, 6],
+      "modelCatalogReads": [4, 5],
+      "pluginReads": 0
+    },
+    "c11": {
+      "projectRevisionReads": 1,
+      "projectHeadReads": 1,
+      "projectOpens": 0,
+      "storeCompileCalls": 1,
+      "openedProjectCompileCalls": 0,
+      "activeCapabilityReads": 5,
+      "credentialFingerprints": 4,
+      "contextStoreReads": 0,
+      "dslCompilerCalls": 2,
+      "readinessRequests": 1,
+      "runtimeHealthProbes": 5,
+      "modelCatalogReads": 4,
+      "pluginReads": 0
+    },
+    "c12": {
+      "projectRevisionReads": 1,
+      "projectHeadReads": 0,
+      "projectOpens": 1,
+      "storeCompileCalls": 0,
+      "openedProjectCompileCalls": 1,
+      "activeCapabilityReads": 5,
+      "credentialFingerprints": 4,
+      "contextStoreReads": 0,
+      "dslCompilerCalls": 2,
+      "readinessRequests": 1,
+      "runtimeHealthProbes": 5,
+      "modelCatalogReads": 4,
+      "pluginReads": 0
+    },
+    "c13": {
+      "projectRevisionReads": 1,
+      "projectHeadReads": 1,
+      "projectOpens": 0,
+      "storeCompileCalls": 1,
+      "openedProjectCompileCalls": 0,
+      "activeCapabilityReads": 5,
+      "credentialFingerprints": 4,
+      "contextStoreReads": 0,
+      "dslCompilerCalls": 2,
+      "readinessRequests": 1,
+      "runtimeHealthProbes": 4,
+      "modelCatalogReads": [4, 5],
+      "pluginReads": 0
+    },
+    "c14": {
+      "projectRevisionReads": 1,
+      "projectHeadReads": 1,
+      "projectOpens": 0,
+      "storeCompileCalls": 1,
+      "openedProjectCompileCalls": 0,
+      "activeCapabilityReads": 5,
+      "credentialFingerprints": 4,
+      "contextStoreReads": 0,
+      "dslCompilerCalls": 2,
+      "readinessRequests": 1,
+      "runtimeHealthProbes": [5, 6],
+      "modelCatalogReads": 4,
+      "pluginReads": 0
+    }
+  }
+}

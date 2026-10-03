@@ -22,6 +22,7 @@ import {
   PragmaExpertIdSchema,
   PragmaExpertRefSchema,
   PragmaExpertResourceSchema,
+  PragmaResourceSchema,
   PragmaSemanticResourceIdSchema,
   type PragmaExpertResource,
   type PragmaResource,
@@ -122,6 +123,18 @@ export function builtInAgentResource(ref: BuiltInAgentRef): PragmaExpertResource
   );
 }
 
+/** Static descriptors used by Host target preparation without materializing a bundle. */
+export function builtInAgentResources(ref: BuiltInAgentRef): readonly PragmaResource[] {
+  const entries = builtInAgentSourceEntries(ref, undefined, []);
+  const root = PragmaBundleSchema.parse(parsePragmaYaml(entries[0]![1]));
+  return [
+    ...root.resources,
+    ...entries
+      .filter(([path]) => path.endsWith(".pragma.yaml"))
+      .map(([, source]) => PragmaResourceSchema.parse(parsePragmaYaml(source))),
+  ];
+}
+
 export function builtInAgentFingerprint(
   ref: BuiltInAgentRef,
   expertResource?: PragmaExpertResource,
@@ -168,16 +181,18 @@ export async function materializeBuiltInAgentBundle(
 }
 
 export async function compileBuiltInAgent(options: {
+  readonly compilationPurpose?: PragmaCompileOptions["compilationPurpose"];
   readonly ref: BuiltInAgentRef;
   readonly environmentId: string;
   readonly definitionStateRoot: string;
   readonly workspace: string;
   readonly pragmaHome: string;
-  readonly runtimes: RuntimeResolver;
+  readonly runtimes?: RuntimeResolver | undefined;
   readonly defaultModelSelection?: RuntimeModelSelection | undefined;
   readonly expertResource?: PragmaExpertResource | undefined;
   readonly additionalResources?: readonly PragmaResource[] | undefined;
   readonly rootExecutionOverride?: PragmaCompileOptions["rootExecutionOverride"];
+  readonly rootModelSelectionOverride?: PragmaCompileOptions["rootModelSelectionOverride"];
   readonly plugins?: PragmaCompileOptions["plugins"];
   readonly adapterHost?: PragmaCompileOptions["adapterHost"];
   readonly loggerProvider?: PragmaCompileOptions["loggerProvider"];
@@ -225,6 +240,7 @@ export async function compileBuiltInAgent(options: {
   }
   const project = await projectPromise;
   return await project.compile<Expert>(options.ref, {
+    compilationPurpose: options.compilationPurpose,
     workspace: options.workspace,
     pragmaHome: options.pragmaHome,
     environmentId: options.environmentId,
@@ -236,6 +252,9 @@ export async function compileBuiltInAgent(options: {
     ...(options.rootExecutionOverride === undefined
       ? {}
       : { rootExecutionOverride: options.rootExecutionOverride }),
+    ...(options.rootModelSelectionOverride === undefined
+      ? {}
+      : { rootModelSelectionOverride: options.rootModelSelectionOverride }),
     ...(options.plugins === undefined ? {} : { plugins: options.plugins }),
     ...(options.resolveExternalInvocable === undefined
       ? {}

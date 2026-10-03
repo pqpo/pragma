@@ -32,6 +32,7 @@ export interface PragmaPluginResolution {
   readonly packageFingerprint: string;
   readonly cachePolicy?: "immutable" | "host-managed" | undefined;
   readonly verificationFingerprint: string;
+  readonly bindingFingerprint?: string | undefined;
   readonly userConfig: Readonly<Record<string, unknown>>;
   readonly hostBindings?: Readonly<Record<string, unknown>> | undefined;
 }
@@ -41,6 +42,7 @@ export interface PragmaPluginInspection {
   readonly status: "ready" | "needs_attention";
   readonly packageFingerprint?: string | undefined;
   readonly verificationFingerprint?: string | undefined;
+  readonly bindingFingerprint?: string | undefined;
   readonly issues: readonly PragmaDiagnostic[];
 }
 
@@ -169,6 +171,8 @@ export class ToolAdapterRegistry {
 }
 
 export interface PragmaCompileHost {
+  /** Stop-only definitions preserve recovery metadata and cannot be executed. */
+  readonly compilationPurpose?: "execute" | "stop" | undefined;
   readonly workspace: string;
   readonly projectRoot?: string | undefined;
   readonly environmentId?: string | undefined;

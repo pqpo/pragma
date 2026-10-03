@@ -69,21 +69,26 @@ Execution 的持久状态、Invocation patch 与 Canonical Event 通过幂等提
 
 ## Mission 与本机 Host
 
-当前 Mission controller、应用协议、Mission Control 与 active owner 访问已经共享；Desktop 仍通过
-`runExecutor` 注入自身的 MissionRunner 首轮执行与编译准备，CLI 使用 Local Host 的默认执行路径。
-统一控制、编译、运行与恢复的分阶段设计见
-[Mission 统一 Local Host 应用内核分阶段重构方案](local-host-application-kernel-refactor.md)。
-R1 代码实施与 CR 修复已交付，阶段验收未通过；该方案保留四轮首 Token 优化，R2/R3/R4 未开始。
+当前 Mission controller、应用协议、Mission Control、active owner 访问与 Mission 编译编排已经共享。
+Desktop、CLI、系统及内置 executor 使用 Local Host compile service；Interpreter 仍拥有 DSL compiler。
+Local Host 统一 pinned Revision、目标依赖、binding/fingerprint、identity、三次稳定环境检查、owner
+编译缓存与 30 秒成功 readiness 缓存。Host 通过具体 Capability、Plugin、Secret、ContextStore、artifact
+和管理端口提供能力；未配置的能力在准备边界提供稳定诊断。
 
 `@pragma/local-host/node-application` 组合 Mission controller、owner lease、command inbox、query/watch、
-Project catalog、Mission Board、Core store 与 Usage sink。Desktop 和 CLI 在相同应用协议上注入各自的
-Runtime factory、文件系统、SecretStore、交互界面与 Host policy。
+Project catalog、Mission Board、Core store 与 Usage sink。Desktop 和 CLI 注入 Runtime、文件系统、
+SecretStore、交互界面与 Host policy。`@pragma/local-host/resources` 提供共用 Node 资源读取与迁移；
+Desktop 的资源身份策略、mutation coordinator 和审批保留。
 
-Issue #348 的 R1 将 Mission command handlers、strict target、queue recovery/rejection 与消息 admission
-统一到 Local Host。Desktop 首轮运行与编译准备暂留窄依赖，通过同一个 `MissionExecutionOwner`
-访问 Session、generation 和 admission；Desktop metadata cache 仍归展示层。运行/编译/恢复的完整
-迁移属于 R2/R3，内部调用与旧 Runner 出口清理属于 R4。R1 性能退出状态见
-[实施与验证报告](local-host-kernel-r1-implementation.md)，不能据此宣称统一执行内核全部完成。
+统一控制、编译、运行与恢复的分阶段设计见
+[Mission 统一 Local Host 应用内核分阶段重构方案](local-host-application-kernel-refactor.md)。
+R1 已经 PR #353 合入 main，工程验证与真实 Native Mission smoke 已通过，真实模型性能及完整产品场景
+仍缺验收证据，不能标记 R1 全部完成。R2 实施与逐项验证见
+[R2 报告](local-host-kernel-r2-implementation.md)，阶段退出以该报告的实测结果和剩余缺口为准。
+
+Desktop 仍通过 `runExecutor` 注入首轮执行；完整 run/session/recovery 归 R3，内部调用和旧 Runner
+出口清理归 R4。它们继续通过 R1 的同一个 `MissionExecutionOwner` 访问 Session、generation 和
+admission。Desktop metadata cache 属于展示层；本次 R2 未扩大到 R3/R4。
 
 同一 Mission 的 mutation 由持久 `MissionControllerLease` 和单调 fencing token 协调。非 owner 的
 `send`、`steer`、`respond`、`interrupt` 与 queue mutation 写入持久 `MissionCommandInbox`；提交使用

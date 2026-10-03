@@ -1,3 +1,7 @@
+import type {
+  LocalHostResolvedSecretEnvironment,
+  LocalHostResolvedPluginEnvironment,
+} from "./compile-service.ts";
 import type { ExpertSession } from "@pragma/core";
 import type { LocalHostCoreActiveOwner } from "../core-control-adapter.ts";
 
@@ -37,6 +41,8 @@ interface OwnerRecord<TExecutionContext, TRun, TCompaction, TActive> {
   executionContext?: Promise<TExecutionContext>;
   session?: ExpertSession;
   compilationIdentity?: string;
+  compilationSecrets?: readonly LocalHostResolvedSecretEnvironment[];
+  compilationPlugins?: readonly LocalHostResolvedPluginEnvironment[];
   definitionFingerprint?: string;
   successorRequired?: boolean;
   contextBindingChanges?: number;
@@ -138,6 +144,30 @@ export class MissionExecutionOwner<
   setCompilationIdentity(missionId: string, identity: string): void {
     this.#record(missionId).compilationIdentity = identity;
   }
+  compilationSecrets(missionId: string): readonly LocalHostResolvedSecretEnvironment[] | undefined {
+    return this.#owners.get(missionId)?.compilationSecrets;
+  }
+  setCompilationSecrets(
+    missionId: string,
+    secrets: readonly LocalHostResolvedSecretEnvironment[] | undefined,
+  ): void {
+    const record = this.#record(missionId);
+    if (secrets === undefined) delete record.compilationSecrets;
+    else record.compilationSecrets = secrets;
+    this.#prune(missionId, record);
+  }
+  compilationPlugins(missionId: string): readonly LocalHostResolvedPluginEnvironment[] | undefined {
+    return this.#owners.get(missionId)?.compilationPlugins;
+  }
+  setCompilationPlugins(
+    missionId: string,
+    plugins: readonly LocalHostResolvedPluginEnvironment[] | undefined,
+  ): void {
+    const record = this.#record(missionId);
+    if (plugins === undefined) delete record.compilationPlugins;
+    else record.compilationPlugins = plugins;
+    this.#prune(missionId, record);
+  }
   definitionFingerprint(missionId: string): string | undefined {
     return this.#owners.get(missionId)?.definitionFingerprint;
   }
@@ -148,6 +178,8 @@ export class MissionExecutionOwner<
     const record = this.#owners.get(missionId);
     if (record === undefined) return;
     delete record.compilationIdentity;
+    delete record.compilationSecrets;
+    delete record.compilationPlugins;
     delete record.definitionFingerprint;
     this.#prune(missionId, record);
   }

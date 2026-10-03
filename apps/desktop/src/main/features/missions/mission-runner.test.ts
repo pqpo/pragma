@@ -1,8 +1,4 @@
-import {
-  builtInAgentResource,
-  createPragmaManagementTools,
-  STORE_REVISION_EXPERT_REF,
-} from "@pragma/built-in-agents";
+import { createPragmaManagementTools, STORE_REVISION_EXPERT_REF } from "@pragma/built-in-agents";
 import { PRAGMA_DSL_WRITE_API_VERSION } from "@pragma/interpreter/ast";
 import {
   copyFile,
@@ -88,7 +84,6 @@ import { writeMissionExecutionProjection } from "./mission-execution-projection.
 import {
   listPendingHumanInteractions,
   missionProjectionAddsUserVisibleOutput,
-  resolveMissionSystemDependencyFingerprints,
 } from "./mission-runner-composition.ts";
 import {
   activeMissionKnowledgeDraftNamespace,
@@ -101,6 +96,38 @@ import {
   type MissionRunner,
 } from "./mission-runner.ts";
 import { createMissionStore } from "./mission-store.ts";
+
+vi.mock("@pragma/built-in-agents", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@pragma/built-in-agents")>();
+  return {
+    ...actual,
+    compileBuiltInAgent: async (
+      options: Parameters<typeof actual.compileBuiltInAgent>[0] & {
+        readonly testCompiledResource?: unknown;
+      },
+    ) => options.testCompiledResource ?? (await actual.compileBuiltInAgent(options)),
+  };
+});
+
+function testSystemExecutorSource(
+  compile: (
+    input: Parameters<
+      NonNullable<Parameters<typeof createMissionRunnerImplementation>[0]["systemExecutorSource"]>
+    >[0],
+  ) => Promise<
+    import("@pragma/interpreter").CompiledResource<import("@pragma/interpreter").InvocableResource>
+  >,
+): NonNullable<Parameters<typeof createMissionRunnerImplementation>[0]["systemExecutorSource"]> {
+  return async (input) => ({
+    ref: input.mission.executor.ref as import("@pragma/built-in-agents").BuiltInAgentRef,
+    environmentId: "desktop",
+    definitionStateRoot: "test-system-resource",
+    workspace: input.mission.workspace.path,
+    pragmaHome: "test-home",
+    runtimes: input.runtimes,
+    testCompiledResource: await compile(input),
+  });
+}
 
 const temporaryPaths: string[] = [];
 const settlementTimeoutMs = 10_000;
@@ -645,49 +672,6 @@ describe("MissionRunner", { timeout: 30_000 }, () => {
     await expect(contextStores.resolve(store.id)).rejects.toMatchObject({
       code: "store_not_found",
     });
-  });
-
-  it("includes system dependencies reached from a project Expert in the compilation identity", async () => {
-    const root = await mkdtemp(join(tmpdir(), "pragma-mission-system-dependency-fingerprint-"));
-    temporaryPaths.push(root);
-    const project = createPragmaProjectStore({
-      projectsPath: join(root, "projects"),
-      reservedResourceRefs: new Set([STORE_REVISION_EXPERT_REF]),
-    });
-    const projectExpert = expertFixture();
-    projectExpert.spec.tools = [
-      {
-        adapter: "pragma.tool.call@v1",
-        target: { ref: STORE_REVISION_EXPERT_REF },
-        tool: {
-          name: "call_store_revision",
-          description: "Call Store Revision Agent.",
-          approval: "ask",
-        },
-      },
-    ];
-    const snapshot = await project.publish({
-      expectedRevision: 0,
-      resources: [runtimeFixture(), projectExpert],
-    });
-    const missions = createMissionStore({ missionsPath: join(root, "missions") });
-    const mission = await missions.create({
-      workspace: { path: root, basename: "workspace" },
-      goal: "Use the Store Revision Agent",
-      project: { id: snapshot.projectId, revision: snapshot.revision },
-      executor: missionExecutorSnapshot(projectExpert),
-    });
-
-    await expect(
-      resolveMissionSystemDependencyFingerprints({
-        mission,
-        project,
-        getSystemExecutorFingerprint: (ref) =>
-          ref === STORE_REVISION_EXPERT_REF ? "store-fingerprint-v2" : undefined,
-        getSystemExecutorResource: (ref) =>
-          ref === STORE_REVISION_EXPERT_REF ? builtInAgentResource(ref) : undefined,
-      }),
-    ).resolves.toContainEqual([STORE_REVISION_EXPERT_REF, "store-fingerprint-v2"]);
   });
 
   it("does not return a pending human request that raced with a terminal transition", async () => {
@@ -1470,7 +1454,17 @@ describe("MissionRunner", { timeout: 30_000 }, () => {
       expectedRevision: 0,
       resources: [runtimeFixture(), expertFixture()],
     });
-    const compile = vi.spyOn(project, "compile");
+    const compile = vi.fn();
+    const openRevision = project.openRevision.bind(project);
+    vi.spyOn(project, "openRevision").mockImplementation(async (revision) => {
+      const opened = await openRevision(revision);
+      const compiler = opened.compile.bind(opened);
+      opened.compile = ((ref, options) => {
+        compile();
+        return compiler(ref, options);
+      }) as typeof opened.compile;
+      return opened;
+    });
     const missions = createMissionStore({ missionsPath: join(root, "missions") });
     const mission = await missions.create({
       workspace: { path: root, basename: "workspace" },
@@ -2189,7 +2183,7 @@ describe("MissionRunner", { timeout: 30_000 }, () => {
         pragmaHome,
         runtimes,
         assertExecutorReady: async () => undefined,
-        compileSystemExecutor: async ({ mission, knowledgeRevisions }) => {
+        systemExecutorSource: testSystemExecutorSource(async ({ mission, knowledgeRevisions }) => {
           const expert = await defineExpert({
             id:
               mission.executor.kind === "team"
@@ -2240,7 +2234,7 @@ describe("MissionRunner", { timeout: 30_000 }, () => {
             rootRuntimeId: "fake",
             dependencies: [],
           };
-        },
+        }),
       });
       await runner.run(caller.id);
       await vi.waitFor(
@@ -2387,37 +2381,39 @@ describe("MissionRunner", { timeout: 30_000 }, () => {
       pragmaHome,
       runtimes: createStaticRuntimeResolver({ runtimes: [runtime], defaultRuntimeId: "fake" }),
       assertExecutorReady: async () => undefined,
-      compileSystemExecutor: async ({ mission: current, knowledgeRevisions }) => {
-        if (knowledgeRevisions === undefined) {
-          throw new Error("Knowledge revisions are unavailable.");
-        }
-        const expert = await defineExpert({
-          id: "0000000000st0rev",
-          name: "Store Revision Agent",
-          description: "Creates knowledge",
-          tags: [],
-          scope: "system-store-revision",
-          workspace: current.workspace.path,
-          pragmaHome,
-          defaultRuntimeId: "fake",
-          tools: createPragmaManagementTools({ knowledgeRevisions }),
-        });
-        return {
-          ref: current.executor.ref,
-          value: expert,
-          fingerprint: "a".repeat(64),
-          projectFingerprint: "b".repeat(64),
-          environmentFingerprint: {
-            environmentId: "desktop",
+      systemExecutorSource: testSystemExecutorSource(
+        async ({ mission: current, knowledgeRevisions }) => {
+          if (knowledgeRevisions === undefined) {
+            throw new Error("Knowledge revisions are unavailable.");
+          }
+          const expert = await defineExpert({
+            id: "0000000000st0rev",
+            name: "Store Revision Agent",
+            description: "Creates knowledge",
+            tags: [],
+            scope: "system-store-revision",
+            workspace: current.workspace.path,
+            pragmaHome,
+            defaultRuntimeId: "fake",
+            tools: createPragmaManagementTools({ knowledgeRevisions }),
+          });
+          return {
+            ref: current.executor.ref,
+            value: expert,
+            fingerprint: "a".repeat(64),
             projectFingerprint: "b".repeat(64),
-            value: "c".repeat(64),
-            resources: [],
-            plugins: [],
-          },
-          rootRuntimeId: "fake",
-          dependencies: [],
-        };
-      },
+            environmentFingerprint: {
+              environmentId: "desktop",
+              projectFingerprint: "b".repeat(64),
+              value: "c".repeat(64),
+              resources: [],
+              plugins: [],
+            },
+            rootRuntimeId: "fake",
+            dependencies: [],
+          };
+        },
+      ),
     });
 
     await runner.run(mission.id);
@@ -2582,36 +2578,38 @@ describe("MissionRunner", { timeout: 30_000 }, () => {
       pragmaHome,
       runtimes: createStaticRuntimeResolver({ runtimes: [runtime], defaultRuntimeId: "fake" }),
       assertExecutorReady: async () => undefined,
-      compileSystemExecutor: async ({ mission: current, knowledgeRevisions }) => {
-        if (knowledgeRevisions === undefined)
-          throw new Error("Knowledge revisions are unavailable.");
-        const expert = await defineExpert({
-          id: "0000000000st0rev",
-          name: "Store Revision Agent",
-          description: "Edits knowledge",
-          tags: [],
-          scope: "system-store-revision",
-          workspace: current.workspace.path,
-          pragmaHome,
-          defaultRuntimeId: "fake",
-          tools: createPragmaManagementTools({ knowledgeRevisions }),
-        });
-        return {
-          ref: current.executor.ref,
-          value: expert,
-          fingerprint: "a".repeat(64),
-          projectFingerprint: "b".repeat(64),
-          environmentFingerprint: {
-            environmentId: "desktop",
+      systemExecutorSource: testSystemExecutorSource(
+        async ({ mission: current, knowledgeRevisions }) => {
+          if (knowledgeRevisions === undefined)
+            throw new Error("Knowledge revisions are unavailable.");
+          const expert = await defineExpert({
+            id: "0000000000st0rev",
+            name: "Store Revision Agent",
+            description: "Edits knowledge",
+            tags: [],
+            scope: "system-store-revision",
+            workspace: current.workspace.path,
+            pragmaHome,
+            defaultRuntimeId: "fake",
+            tools: createPragmaManagementTools({ knowledgeRevisions }),
+          });
+          return {
+            ref: current.executor.ref,
+            value: expert,
+            fingerprint: "a".repeat(64),
             projectFingerprint: "b".repeat(64),
-            value: "c".repeat(64),
-            resources: [],
-            plugins: [],
-          },
-          rootRuntimeId: "fake",
-          dependencies: [],
-        };
-      },
+            environmentFingerprint: {
+              environmentId: "desktop",
+              projectFingerprint: "b".repeat(64),
+              value: "c".repeat(64),
+              resources: [],
+              plugins: [],
+            },
+            rootRuntimeId: "fake",
+            dependencies: [],
+          };
+        },
+      ),
     });
 
     await runner.run(mission.id);
@@ -2843,7 +2841,7 @@ describe("MissionRunner", { timeout: 30_000 }, () => {
           runtimes: [runtime],
           defaultRuntimeId: "fake",
         }),
-        compileSystemExecutor,
+        systemExecutorSource: testSystemExecutorSource(compileSystemExecutor),
         getSystemExecutorFingerprint: () => `definition-${definitionVersion}`,
         assertExecutorReady: async () => undefined,
       });
@@ -6972,7 +6970,7 @@ describe("MissionRunner", { timeout: 30_000 }, () => {
       capabilitiesPath: join(root, "capabilities"),
       pragmaHome: join(root, "state"),
       runtimes,
-      compileSystemExecutor: async ({ mission: current }) => {
+      systemExecutorSource: testSystemExecutorSource(async ({ mission: current }) => {
         const compiledExpert = await defineExpert({
           id: "writer",
           name: "Writer",
@@ -7001,7 +6999,7 @@ describe("MissionRunner", { timeout: 30_000 }, () => {
           rootRuntimeId: configured.runtimeId,
           dependencies: [],
         };
-      },
+      }),
     });
 
     const first = await runner.run(mission.id);
@@ -7240,7 +7238,7 @@ describe("MissionRunner", { timeout: 30_000 }, () => {
       capabilitiesPath: join(root, "capabilities"),
       pragmaHome,
       runtimes,
-      compileSystemExecutor: async () => ({
+      systemExecutorSource: testSystemExecutorSource(async () => ({
         ref: mission.executor.ref,
         value: expert,
         fingerprint: "b".repeat(64),
@@ -7254,7 +7252,7 @@ describe("MissionRunner", { timeout: 30_000 }, () => {
         },
         rootRuntimeId: "fake",
         dependencies: [],
-      }),
+      })),
     });
 
     const resumed = await runner.run(mission.id);
@@ -8056,7 +8054,7 @@ describe("MissionRunner", { timeout: 30_000 }, () => {
     unsubscribeChat();
   });
 
-  it("cold-interrupts the original Native Session when current capabilities and credentials are unavailable", async () => {
+  it("cold-interrupts the original Native Session through acquisition when readiness, capabilities and credentials are unavailable", async () => {
     const root = await mkdtemp(join(tmpdir(), "pragma-mission-cold-stop-"));
     temporaryPaths.push(root);
     const pragmaHome = join(root, "state");
@@ -8096,6 +8094,10 @@ describe("MissionRunner", { timeout: 30_000 }, () => {
       executor: missionExecutorSnapshot(flow),
     });
     let unavailable = false;
+    const readiness = vi.fn(async () => {
+      if (unavailable) throw new Error("Runtime readiness is unavailable after restart");
+    });
+    const canUse = vi.fn(async () => ({ usable: true }));
     const resolveActive = vi.fn(async () => {
       if (unavailable) throw new Error("MCP capability is unavailable after restart");
       return {
@@ -8126,6 +8128,7 @@ describe("MissionRunner", { timeout: 30_000 }, () => {
     const closeSession = vi.fn(() => undefined);
     const runtime = defineRuntimeTestDriver<never, { id: string }>({
       descriptor: { id: "fake", kind: "fake", displayName: "Fake" },
+      canUse,
       createSession: () => ({ id: "owned-native" }),
       restoreSession,
       readSession: (session) => ({ runtimeSessionId: session.id }),
@@ -8139,6 +8142,7 @@ describe("MissionRunner", { timeout: 30_000 }, () => {
     const runnerOptions: Parameters<typeof createMissionRunner>[0] = {
       missions,
       project,
+      assertExecutorReady: readiness,
       capabilityStore: { resolveActive } as unknown as CapabilityStore,
       capabilityCredentials: { fingerprint } as unknown as CapabilityCredentialStore,
       capabilitiesPath: join(root, "capabilities"),
@@ -8197,13 +8201,28 @@ describe("MissionRunner", { timeout: 30_000 }, () => {
     resolveActive.mockClear();
     fingerprint.mockClear();
     adapterHostForMission.mockClear();
+    readiness.mockClear();
+    canUse.mockClear();
     const restarted = createMissionRunner({ ...runnerOptions, executionStore: cold });
+    createTestMissionControl({ missionsPath: join(root, "missions"), missions, runner: restarted });
+    await expect(
+      restarted.missionControl.assertAcquisitionAllowed(mission.id, "execute"),
+    ).rejects.toThrow("Runtime readiness is unavailable after restart");
+    expect(readiness).toHaveBeenCalledOnce();
+    readiness.mockClear();
+    await expect(
+      restarted.missionControl.assertAcquisitionAllowed(mission.id, "stop"),
+    ).resolves.toBeUndefined();
     await expect(restarted.interrupt(mission.id, executionId)).resolves.toMatchObject({
       execution: { id: executionId, status: "cancelled" },
     });
     expect(resolveActive).not.toHaveBeenCalled();
     expect(fingerprint).not.toHaveBeenCalled();
     expect(adapterHostForMission).not.toHaveBeenCalled();
+    expect(readiness).not.toHaveBeenCalled();
+    // Only the actual Native restore probes availability; stop compilation
+    // must not add a preparation/readiness probe ahead of it.
+    expect(canUse).toHaveBeenCalledOnce();
     expect(startTurn).toHaveBeenCalledOnce();
     expect(restoreSession).toHaveBeenCalledOnce();
     expect(restoreSession.mock.calls[0]?.[0].request).toMatchObject({
@@ -8716,7 +8735,7 @@ describe("MissionRunner", { timeout: 30_000 }, () => {
         pragmaHome,
         runtimes: createStaticRuntimeResolver({ runtimes: [runtime], defaultRuntimeId: "fake" }),
         loggerProvider: createNoopLoggerProvider(),
-        compileSystemExecutor: async () => ({
+        systemExecutorSource: testSystemExecutorSource(async () => ({
           ref: mission.executor.ref,
           value: expert,
           fingerprint: "b".repeat(64),
@@ -8730,7 +8749,7 @@ describe("MissionRunner", { timeout: 30_000 }, () => {
           },
           rootRuntimeId: "fake",
           dependencies: [],
-        }),
+        })),
       });
       try {
         await runner.run(mission.id);

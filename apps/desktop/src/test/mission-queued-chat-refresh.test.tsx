@@ -269,6 +269,7 @@ async function fixture(kind: "codex" | "qoder") {
   };
   return {
     runner,
+    executionStore,
     missions,
     mission,
     updates,
@@ -286,6 +287,7 @@ it("bounds latest-page reads and leaves invalidations pending when every read ra
   const f = await fixture("codex");
   await f.runner.run(f.mission.id);
   await vi.waitFor(() => expect(f.started).toEqual(["First turn"]), { timeout: 10_000 });
+  const firstExecutionId = (await f.missions.get(f.mission.id)).execution!.id;
   const read = f.missions.readTimelinePage.bind(f.missions);
   let readCount = 0;
   const queuedIds: string[] = [];
@@ -327,7 +329,10 @@ it("bounds latest-page reads and leaves invalidations pending when every read ra
   await clearQueued();
   f.finishes.get("First turn")!();
   await vi.waitFor(
-    async () => expect((await f.missions.get(f.mission.id)).execution?.status).toBe("succeeded"),
+    // Queue removal projects a later cancelled Execution onto the Mission.
+    // Assert the captured running turn succeeded, independently of which
+    // Session Execution the asynchronous Mission projection currently shows.
+    async () => expect((await f.executionStore.get(firstExecutionId))?.status).toBe("succeeded"),
     { timeout: 10_000 },
   );
   await f.runner.stopLocalController(f.mission.id);

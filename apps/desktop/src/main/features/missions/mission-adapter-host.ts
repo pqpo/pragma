@@ -9,6 +9,7 @@ import {
 import type { McpToolRegistryPool } from "@pragma/core";
 import { FileSystemContextStore } from "@pragma/context-filesystem";
 import type { PragmaAdapterHost, PragmaBindingRecord } from "@pragma/interpreter";
+import { LocalHostResourceUnavailableError } from "@pragma/local-host/resources";
 
 import type { CapabilityCredentialStore } from "../capabilities/capability-credential-store.ts";
 import type { CapabilityStore } from "../capabilities/capability-store.ts";
@@ -29,6 +30,7 @@ export function createDesktopAdapterHost(
     readonly purpose?: "execute" | "stop" | undefined;
     readonly mcpToolRegistryPool?: McpToolRegistryPool | undefined;
     readonly contextStores?: ContextStoreStore | undefined;
+    readonly resolveSecret?: ((ref: string) => Promise<string | undefined>) | undefined;
     readonly pragmaManagement?: PragmaManagementToolPorts | undefined;
     readonly pragmaManagementScope?:
       { readonly missionId: string; readonly workspacePath: string } | undefined;
@@ -152,8 +154,15 @@ export function createDesktopAdapterHost(
           : `Desktop has no external artifact resolver for: ${source.uri}`,
       );
     },
-    async resolveSecret() {
-      return undefined;
+    async resolveSecret(ref) {
+      const value = await options.resolveSecret?.(ref);
+      if (value === undefined)
+        throw new LocalHostResourceUnavailableError(
+          "secret_binding_unavailable",
+          "The declared secret binding has no stored value.",
+          ref,
+        );
+      return value;
     },
     openFileContextStore({ rootDir }) {
       return new FileSystemContextStore({ rootDir });

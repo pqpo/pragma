@@ -14,6 +14,7 @@ import { z } from "zod";
 
 import { isExpertTeam, type ExpertDefinition, type ExpertTeam } from "../agent/expert-team.ts";
 import { describeExpertExecutionDefinition } from "../agent/expert-definition-descriptor.ts";
+import { assertExecutableDefinition } from "../agent/definition-execution-purpose.ts";
 import type { RuntimeResolver } from "../runtime-resolver.ts";
 import { createPragmaLogger, type PragmaLoggerProvider } from "../logging/logger.ts";
 import type { UsageSink } from "../runtime/usage.ts";
@@ -123,7 +124,9 @@ export class FlowExecutionManager {
     definition: FlowSpec<TInput, unknown> | Flow,
     request: StartFlowRequest<TInput>,
   ): Promise<FlowExecution> {
+    assertExecutableDefinition(definition);
     const flow = compileFlow(definition);
+    assertExecutableDefinition(flow);
     const input = flow.input?.parse(request.input) ?? request.input;
     const executionId = request.executionId ?? randomUUID();
     const runtimeId = (await this.runtimes.bind({ runtimeId: request.runtime })).binding.runtimeId;
@@ -180,7 +183,9 @@ export class FlowExecutionManager {
     definition: FlowSpec | Flow,
     request: { readonly executionId: string; readonly runtime?: string | undefined },
   ): Promise<FlowExecution> {
+    assertExecutableDefinition(definition);
     const flow = compileFlow(definition);
+    assertExecutableDefinition(flow);
     const record = await this.executions.get(request.executionId);
     if (record === undefined || record.kind !== "flow") {
       throw new Error(`FlowExecution not found: ${request.executionId}`);
@@ -606,6 +611,7 @@ async function runFlow(options: {
   readonly hostContextBindings?: HostContextBindings | undefined;
   readonly resolveHostContextBindings?: HostContextBindingsResolver | undefined;
 }): Promise<unknown> {
+  assertExecutableDefinition(options.flow);
   let deadline = await ensureFlowDeadline(options);
   deadline = await extendExpiredDeadlineForPendingHumanInteraction(options, deadline);
   const deadlineState: FlowDeadlineState = { deadline, timeout: undefined };
@@ -715,6 +721,7 @@ export async function runNestedFlowInvocation(options: {
   readonly hostContextBindings?: HostContextBindings | undefined;
   readonly resolveHostContextBindings?: HostContextBindingsResolver | undefined;
 }): Promise<unknown> {
+  assertExecutableDefinition(options.flow);
   const runtimeId = (await options.runtimes.bind({ runtimeId: options.runtime })).binding.runtimeId;
   await validateFlowRuntimeConfiguration(options.flow, options.runtimes, runtimeId);
   return await runFlow({ ...options, runtime: runtimeId });

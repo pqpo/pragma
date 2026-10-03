@@ -73,6 +73,7 @@ export function createLocalHostMissionCommandAdmission<
   Mission extends MissionMessageAdmissionMission,
   Prepared extends PreparedMissionMessage,
   Result,
+  PreparationScope = undefined,
 >(options: {
   readonly onAccepted?: ((input: MissionMessageAdmissionInput) => void) | undefined;
   readonly onPhase?:
@@ -93,12 +94,14 @@ export function createLocalHostMissionCommandAdmission<
   readonly successorRequired: (mission: Mission) => boolean;
   readonly hasActive: (id: string) => boolean;
   readonly session: (id: string) => ExpertSession | undefined;
-  readonly assertReady: (mission: Mission) => Promise<void>;
+  readonly createPreparationScope?: ((mission: Mission) => PreparationScope) | undefined;
+  readonly assertReady: (mission: Mission, scope: PreparationScope | undefined) => Promise<void>;
   readonly startInitialRun: (mission: Mission) => Promise<unknown>;
   readonly prepare: (
     mission: Mission,
     input: MissionMessageAdmissionInput,
     acceptedAt: number,
+    scope: PreparationScope | undefined,
   ) => Promise<Prepared>;
   readonly forgetSession: (id: string) => void;
   readonly projectAccepted: (input: {
@@ -165,8 +168,9 @@ export function createLocalHostMissionCommandAdmission<
                 );
               }
             }
+            const preparationScope = options.createPreparationScope?.(mission);
             const readinessStartedAt = performance.now();
-            await options.assertReady(mission);
+            await options.assertReady(mission, preparationScope);
             phase("executor_readiness", readinessStartedAt);
             if (mission.executor.kind === "flow") {
               throw new Error(
@@ -176,7 +180,7 @@ export function createLocalHostMissionCommandAdmission<
             if (mission.lifecycleStatus !== "active") {
               throw new Error("Reopen this mission before sending another message.");
             }
-            const prepared = await options.prepare(mission, input, acceptedAt);
+            const prepared = await options.prepare(mission, input, acceptedAt, preparationScope);
             const sessionOpenStartedAt = performance.now();
             let session = prepared.session;
             if (prepared.definitionChanged && session !== undefined) {

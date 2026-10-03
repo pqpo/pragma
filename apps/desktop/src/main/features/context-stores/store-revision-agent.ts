@@ -1,16 +1,11 @@
+import type { LocalHostSystemExecutorSource } from "@pragma/local-host";
 import { createHash } from "node:crypto";
 import { mkdir } from "node:fs/promises";
 import { basename, join } from "node:path";
 
 import { type PragmaLoggerProvider, type RuntimeResolver } from "@pragma/core";
-import {
-  STORE_REVISION_EXPERT_REF,
-  builtInAgentFingerprint,
-  compileBuiltInAgent,
-} from "@pragma/built-in-agents";
+import { STORE_REVISION_EXPERT_REF, builtInAgentFingerprint } from "@pragma/built-in-agents";
 import type {
-  CompiledResource,
-  InvocableResource,
   PragmaAdapterHost,
   PragmaCompileOptions,
   PragmaExpertResource,
@@ -26,14 +21,14 @@ import type { ContextStoreRevisionGenerator } from "./context-store-revision-ser
 
 export interface DesktopStoreRevisionAgent {
   readonly generator: ContextStoreRevisionGenerator;
-  compile(input: {
+  source(input: {
     readonly profile: ContextStoreRevisionProfile;
     readonly runtimes?: RuntimeResolver | undefined;
     readonly adapterHost?: PragmaAdapterHost | undefined;
     readonly expertResource?: PragmaExpertResource | undefined;
     readonly additionalResources?: readonly PragmaResource[] | undefined;
     readonly resolveExternalInvocable?: PragmaCompileOptions["resolveExternalInvocable"];
-  }): Promise<CompiledResource<InvocableResource>>;
+  }): Promise<LocalHostSystemExecutorSource>;
   fingerprint(profile: ContextStoreRevisionProfile): Promise<string>;
 }
 
@@ -112,9 +107,9 @@ export function createDesktopStoreRevisionAgent(options: {
   };
 
   const agent: DesktopStoreRevisionAgent = {
-    async compile(input) {
+    async source(input) {
       const runtime = await resolveRuntime(input.profile, input.runtimes);
-      return await compileBuiltInAgent({
+      return {
         ref: STORE_REVISION_EXPERT_REF,
         environmentId: "desktop-store-revision",
         definitionStateRoot: join(options.pragmaHome, "cache", "built-in-agents", "definitions"),
@@ -155,7 +150,7 @@ export function createDesktopStoreRevisionAgent(options: {
             ? {}
             : { openFileContextStore: input.adapterHost.openFileContextStore }),
         },
-      });
+      };
     },
 
     async fingerprint(profile) {

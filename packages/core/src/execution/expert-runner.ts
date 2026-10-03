@@ -27,6 +27,7 @@ import {
   type RuntimeByExpert,
 } from "../agent/agent-launcher.ts";
 import { ContextManager } from "../agent/context-manager.ts";
+import { assertExecutableDefinition } from "../agent/definition-execution-purpose.ts";
 import type { Expert } from "../agent/expert-agent.ts";
 import { isExpertTeam, type ExpertDefinition, type ExpertTeam } from "../agent/expert-team.ts";
 import {
@@ -1184,6 +1185,7 @@ export type NestedFlowInvocationExecutor = (
 ) => Promise<unknown>;
 
 export async function runExpertInvocation(options: RunExpertInvocationOptions): Promise<unknown> {
+  assertExecutableDefinition(options.expert);
   options = { ...options, store: options.controller.store };
   const preparationStartedAt = performance.now();
   let phaseStartedAt = preparationStartedAt;

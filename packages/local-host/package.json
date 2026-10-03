@@ -11,6 +11,11 @@
     "./node-application": {
       "types": "./dist/node-application.d.ts",
       "default": "./dist/node-application.js"
+    },
+    "./resources": {
+      "types": "./src/resources/index.ts",
+      "pragma-source": "./src/resources/index.ts",
+      "default": "./dist/resources/index.js"
     }
   },
   "scripts": {

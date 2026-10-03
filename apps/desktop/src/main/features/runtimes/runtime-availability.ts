@@ -1,3 +1,7 @@
+import {
+  createLocalHostRuntimeReadiness,
+  type LocalHostRuntimeReadiness,
+} from "@pragma/local-host";
 import type { RuntimeCanUseResult } from "@pragma/core";
 import type {
   DesktopRuntimeAvailability,
@@ -194,64 +198,39 @@ function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : "Runtime inspection failed.";
 }
 
-const targetProbes = new WeakMap<
-  RuntimeEnvironmentService,
-  Map<
-    string,
-    {
-      expiresAt: number;
-      value: Promise<DesktopRuntimeAvailability>;
-    }
-  >
->();
+const targetReadiness = new WeakMap<RuntimeEnvironmentService, LocalHostRuntimeReadiness>();
+
+function runtimeReadiness(runtimes: RuntimeEnvironmentService): LocalHostRuntimeReadiness {
+  let readiness = targetReadiness.get(runtimes);
+  if (readiness === undefined) {
+    readiness = createLocalHostRuntimeReadiness({
+      runtimes,
+      getEnvironmentKey: () => runtimes.getMaterializationCacheKey(),
+      onInvalidate: () => runtimes.invalidateModelValidation?.(),
+    });
+    targetReadiness.set(runtimes, readiness);
+  }
+  return readiness;
+}
 
 /** Execution readiness never enumerates or discovers unrelated Runtime models. */
 export async function getTargetRuntimeAvailability(
   runtimes: RuntimeEnvironmentService,
   runtimeIds: readonly string[],
 ): Promise<DesktopRuntimeAvailability[]> {
-  let cache = targetProbes.get(runtimes);
-  if (cache === undefined) {
-    cache = new Map();
-    targetProbes.set(runtimes, cache);
-  }
-  const environmentKey = await runtimes.getMaterializationCacheKey();
-  return await Promise.all(
-    [...new Set(runtimeIds)].map(async (runtimeId) => {
-      const resolved = await runtimes.bind({ runtimeId });
-      const key = JSON.stringify([resolved.binding, environmentKey]);
-      const cached = cache.get(key);
-      if (cached !== undefined && cached.expiresAt > Date.now()) return await cached.value;
-      const value = Promise.resolve()
-        .then(async (): Promise<DesktopRuntimeAvailability> => {
-          const availability = await resolved.adapter.canUse();
-          const entry = cache.get(key);
-          if (entry?.value === value) {
-            if (availability.usable) entry.expiresAt = Date.now() + 30_000;
-            else cache.delete(key);
-          }
-          return {
-            id: runtimeId,
-            revision: resolved.binding.revision,
-            isDefault: runtimeId === (await runtimes.getDefaultRuntimeId()),
-            displayName: resolved.adapter.descriptor.displayName,
-            kind: resolved.adapter.descriptor.kind,
-            status: availability.usable ? "available" : "unavailable",
-            ...(availability.reason === undefined ? {} : { reason: availability.reason }),
-          };
-        })
-        .catch((error: unknown) => {
-          if (cache.get(key)?.value === value) cache.delete(key);
-          throw error;
-        });
-      cache.set(key, { expiresAt: Infinity, value });
-      while (cache.size > 64) cache.delete(cache.keys().next().value!);
-      return await value;
-    }),
-  );
+  const results = await runtimeReadiness(runtimes).get(runtimeIds);
+  const defaultRuntimeId = await runtimes.getDefaultRuntimeId();
+  return results.map(({ runtimeId, resolved, availability }) => ({
+    id: runtimeId,
+    revision: resolved.binding.revision,
+    isDefault: runtimeId === defaultRuntimeId,
+    displayName: resolved.adapter.descriptor.displayName,
+    kind: resolved.adapter.descriptor.kind,
+    status: availability.usable ? "available" : "unavailable",
+    ...(availability.reason === undefined ? {} : { reason: availability.reason }),
+  }));
 }
 
 export function invalidateTargetRuntimeAvailability(runtimes: RuntimeEnvironmentService): void {
-  targetProbes.delete(runtimes);
-  runtimes.invalidateModelValidation?.();
+  runtimeReadiness(runtimes).invalidate();
 }

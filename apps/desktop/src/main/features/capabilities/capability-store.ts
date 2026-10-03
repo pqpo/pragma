@@ -1,3 +1,12 @@
+export { CapabilityStoreError } from "@pragma/local-host/resources";
+import {
+  createLocalHostCapabilityReader,
+  CapabilityStoreError,
+  writeJson,
+  CapabilityCreationJournalSchema,
+  CapabilityDeletionJournalSchema,
+  revisionDirectory,
+} from "@pragma/local-host/resources";
 import {
   readStorageFile as readFile,
   writeStorageFile as writeFile,
@@ -6,7 +15,6 @@ import {
 import { createHash, randomUUID } from "node:crypto";
 import { lstat, mkdir, readdir, rm } from "node:fs/promises";
 import { extname, join, relative, resolve, sep } from "node:path";
-
 import { unzipSync } from "fflate";
 import { z } from "zod";
 import {
@@ -20,11 +28,9 @@ import {
   createCodeServiceMcpServer,
   createHttpServiceMcpServer,
   createMcpToolRegistryPool,
-  withFileLock,
   type HttpServiceAuth,
   type McpToolRegistryPool,
 } from "@pragma/core";
-
 import {
   CapabilityDefinitionSchema,
   CapabilityIdSchema,
@@ -63,86 +69,8 @@ import type {
 import { classifyMcpError, toCoreMcpServer } from "./capability-verifier.ts";
 import type { CapabilityVerifier, CapabilityVerifierResult } from "./capability-verification.ts";
 import { copySkillTree, scanSkillWorkingTree } from "./skill-revision-draft-store.ts";
-
 const MAX_SKILL_BYTES = MAX_SKILL_PACKAGE_BYTES;
 const MAX_SKILL_FILES = 1000;
-
-const LegacyCapabilityManifestV1Schema = z.object({
-  schemaVersion: z.literal("pragma.capability/v1"),
-  id: z.string().uuid(),
-  runtimeKey: z.string().trim().min(1).max(80),
-  name: z.string().trim().min(1).max(120),
-  kind: z.enum(["skill", "mcp_server", "http_service", "code_service"]),
-  latestRevision: z.number().int().positive(),
-  createdAt: z.string().datetime(),
-  updatedAt: z.string().datetime(),
-});
-
-const LegacyCapabilityManifestV2Schema = z.object({
-  schemaVersion: z.literal("pragma.capability/v2"),
-  id: CapabilityIdSchema,
-  runtimeKey: z.string().trim().min(1).max(80),
-  name: z.string().trim().min(1).max(120),
-  kind: z.enum(["skill", "mcp_server", "http_service", "code_service"]),
-  latestRevision: z.number().int().positive(),
-  origin: z
-    .object({
-      kind: z.literal("pragma-bundle"),
-      logicalId: CapabilityIdSchema,
-    })
-    .strict()
-    .optional(),
-  createdAt: z.string().datetime(),
-  updatedAt: z.string().datetime(),
-});
-
-const LegacyCapabilityManifestV3Schema = z.object({
-  schemaVersion: z.literal("pragma.capability/v3"),
-  id: CapabilityIdSchema,
-  runtimeKey: z.string().trim().min(1).max(80),
-  name: z.string().trim().min(1).max(120),
-  kind: z.enum(["skill", "mcp_server", "http_service", "code_service"]),
-  latestRevision: z.number().int().positive(),
-  createdAt: z.string().datetime(),
-  updatedAt: z.string().datetime(),
-});
-
-const LegacyCapabilityManifestMigrationJournalSchema = z.object({
-  schemaVersion: z.literal("pragma.capability-manifest-migration/v1"),
-  sourceSchema: z.literal("pragma.capability/v1"),
-  targetSchema: z.literal("pragma.capability/v2"),
-  targetManifest: LegacyCapabilityManifestV2Schema,
-});
-
-const CapabilityManifestMigrationJournalSchema = z.object({
-  schemaVersion: z.literal("pragma.capability-manifest-migration/v2"),
-  sourceSchema: z.enum(["pragma.capability/v1", "pragma.capability/v2"]),
-  targetSchema: z.literal("pragma.capability/v3"),
-  targetManifest: LegacyCapabilityManifestV3Schema,
-});
-
-const CapabilityManifestV4MigrationJournalSchema = z.object({
-  schemaVersion: z.literal("pragma.capability-manifest-migration/v3"),
-  sourceSchema: z.enum(["pragma.capability/v1", "pragma.capability/v2", "pragma.capability/v3"]),
-  targetSchema: z.literal("pragma.capability/v4"),
-  targetManifest: CapabilityManifestSchema,
-});
-
-const CapabilityDeletionJournalSchema = z
-  .object({
-    schemaVersion: z.literal("pragma.capability-deletion/v1"),
-    capabilityId: CapabilityIdSchema,
-    expectedRevision: z.number().int().positive(),
-  })
-  .strict();
-
-const CapabilityCreationJournalSchema = z
-  .object({
-    schemaVersion: z.literal("pragma.capability-creation/v1"),
-    capabilityId: CapabilityIdSchema,
-  })
-  .strict();
-
 export interface CapabilityRepository {
   get(id: string, revision?: number): Promise<Capability>;
   resolveActive(id: string): Promise<Capability>;
@@ -154,7 +82,6 @@ export interface CapabilityRepository {
   ): Promise<boolean>;
   completeRemoval(id: string, expectedRevision: number): Promise<void>;
 }
-
 export interface CapabilityStore extends CapabilityRepository {
   list(): Promise<Capability[]>;
   /** Includes persisted assets that cannot currently be read or verified. */
@@ -165,7 +92,9 @@ export interface CapabilityStore extends CapabilityRepository {
   skillFilesPath(id: string, revision: number): Promise<string>;
   importSkill(
     input: ImportSkillCapability,
-    options?: { readonly executablePaths?: readonly string[] },
+    options?: {
+      readonly executablePaths?: readonly string[];
+    },
   ): Promise<Capability>;
   publishSkillRevisionCandidate(input: {
     readonly id: string;
@@ -189,18 +118,22 @@ export interface CapabilityStore extends CapabilityRepository {
   }): Promise<Capability>;
   create(
     input: CreateCapability,
-    options?: { readonly id?: string; readonly preserveDefinition?: boolean },
+    options?: {
+      readonly id?: string;
+      readonly preserveDefinition?: boolean;
+    },
   ): Promise<Capability>;
   update(
     input: UpdateCapability,
-    options?: { readonly preserveDefinition?: boolean },
+    options?: {
+      readonly preserveDefinition?: boolean;
+    },
   ): Promise<Capability>;
   retry(id: string, expectedRevision: number): Promise<Capability>;
   test(input: CapabilityTestRequest): Promise<CapabilityTestResult>;
   previewCode(input: PreviewCodeServiceRequest): Promise<PreviewCodeServiceResult>;
   remove(id: string, expectedRevision?: number): Promise<void>;
 }
-
 export interface CapabilityRevisionPublishInput {
   readonly current: Capability;
   readonly candidate: Capability;
@@ -211,7 +144,6 @@ export interface CapabilityRevisionPublishInput {
     (() => Promise<PreparedCapabilityCredentials | undefined>) | undefined;
   readonly commit: () => Promise<Capability>;
 }
-
 export interface CapabilityMutationService {
   publish(input: CapabilityRevisionPublishInput): Promise<Capability>;
   publishHealth(input: {
@@ -231,23 +163,6 @@ export interface CapabilityMutationService {
     readonly commit: () => Promise<void>;
   }): Promise<void>;
 }
-
-export class CapabilityStoreError extends Error {
-  constructor(
-    readonly code:
-      | "capability_not_found"
-      | "config_invalid"
-      | "import_invalid"
-      | "capability_referenced"
-      | "capability_incompatible"
-      | "revision_conflict",
-    message: string,
-  ) {
-    super(message);
-    this.name = "CapabilityStoreError";
-  }
-}
-
 export function createCapabilityStore(options: {
   readonly capabilitiesPath: string;
   readonly credentials: CapabilityCredentialStore;
@@ -257,16 +172,18 @@ export function createCapabilityStore(options: {
   readonly isReferenced: (capabilityId: string) => Promise<boolean>;
   readonly onSkillCreated?: ((capability: Capability) => void) | undefined;
 }): CapabilityStore {
-  const capabilityPath = (id: string) => join(options.capabilitiesPath, id);
-  const manifestPath = (id: string) => join(capabilityPath(id), "capability.json");
-  const healthPath = (id: string) => join(capabilityPath(id), "health.json");
-  const legacyMigrationJournalPath = (id: string) => join(capabilityPath(id), "v1-to-v2.json");
-  const migrationJournalPath = (id: string) => join(capabilityPath(id), "manifest-to-v4.json");
-  const v3MigrationJournalPath = (id: string) => join(capabilityPath(id), "manifest-to-v3.json");
-  const deletionJournalPath = (id: string) => join(capabilityPath(id), "deletion.json");
-  const creationJournalPath = (id: string) => join(capabilityPath(id), "creation.json");
-  const revisionPath = (id: string, revision: number) =>
-    join(capabilityPath(id), "revisions", revisionDirectory(revision));
+  const {
+    capabilityPath,
+    manifestPath,
+    healthPath,
+    deletionJournalPath,
+    creationJournalPath,
+    revisionPath,
+    recoverRemoval,
+    readManifest,
+    readCapability,
+    resolveActive,
+  } = createLocalHostCapabilityReader(options);
   const credentialsDiffer = async (
     id: string,
     credentials: Readonly<Record<string, string>>,
@@ -286,28 +203,6 @@ export function createCapabilityStore(options: {
         );
       }
     };
-  };
-  const recoverRemoval = async (id: string): Promise<void> => {
-    let journal;
-    try {
-      journal = CapabilityDeletionJournalSchema.parse(
-        JSON.parse(await readFile(deletionJournalPath(id), "utf8")) as unknown,
-      );
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code === "ENOENT") return;
-      throw new CapabilityStoreError(
-        "config_invalid",
-        `Capability ${id} has an invalid deletion journal.`,
-      );
-    }
-    if (journal.capabilityId !== id) {
-      throw new CapabilityStoreError(
-        "config_invalid",
-        `Capability ${id} has a deletion journal for another capability.`,
-      );
-    }
-    await options.credentials.removeCapability(id);
-    await rm(capabilityPath(id), { recursive: true, force: true });
   };
   const completeRemoval = async (id: string, expectedRevision: number): Promise<void> => {
     let manifest: CapabilityManifest;
@@ -335,236 +230,6 @@ export function createCapabilityStore(options: {
     );
     await recoverRemoval(id);
   };
-  const recoverCreation = async (id: string): Promise<void> => {
-    let journal;
-    try {
-      journal = CapabilityCreationJournalSchema.parse(
-        JSON.parse(await readFile(creationJournalPath(id), "utf8")) as unknown,
-      );
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code === "ENOENT") return;
-      throw new CapabilityStoreError(
-        "config_invalid",
-        `Capability ${id} has an invalid creation journal.`,
-      );
-    }
-    if (journal.capabilityId !== id) {
-      throw new CapabilityStoreError(
-        "config_invalid",
-        `Capability ${id} has a creation journal for another capability.`,
-      );
-    }
-    const manifest = await readFile(manifestPath(id), "utf8")
-      .then((content) => CapabilityManifestSchema.safeParse(JSON.parse(content) as unknown))
-      .catch(() => undefined);
-    const prepared = await options.credentials.pending(id);
-    if (manifest?.success === true && manifest.data.id === id) {
-      if (prepared !== undefined) {
-        await options.credentials.activate(prepared);
-        await options.credentials.finalize(prepared);
-      }
-      const health = CapabilityHealthSchema.parse(
-        JSON.parse(await readFile(healthPath(id), "utf8")) as unknown,
-      );
-      if (
-        health.status === "ready" &&
-        manifest.data.activeRevision !== manifest.data.latestRevision
-      ) {
-        await writeJson(
-          manifestPath(id),
-          CapabilityManifestSchema.parse({
-            ...manifest.data,
-            activeRevision: manifest.data.latestRevision,
-          }),
-        );
-      }
-      await rm(creationJournalPath(id), { force: true });
-      return;
-    }
-    if (prepared !== undefined) await options.credentials.rollback(prepared);
-    await rm(capabilityPath(id), { recursive: true, force: true });
-  };
-
-  const migrateManifest = async (id: string): Promise<CapabilityManifest> =>
-    await withFileLock(join(capabilityPath(id), ".v4-migration.lock"), async () => {
-      let raw = JSON.parse(await readFile(manifestPath(id), "utf8")) as unknown;
-      const current = CapabilityManifestSchema.safeParse(raw);
-      if (current.success) return current.data;
-      const pending = await readCapabilityV4MigrationJournal(migrationJournalPath(id));
-      if (pending !== undefined) {
-        if (pending.targetManifest.id !== id) {
-          throw new CapabilityStoreError(
-            "config_invalid",
-            `Capability ${id} has a migration journal for another capability.`,
-          );
-        }
-        await writeJson(manifestPath(id), pending.targetManifest);
-        await rm(migrationJournalPath(id), { force: true });
-        return pending.targetManifest;
-      }
-
-      const v3Pending = await readCapabilityMigrationJournal(v3MigrationJournalPath(id));
-      if (v3Pending !== undefined) {
-        if (v3Pending.targetManifest.id !== id) {
-          throw new CapabilityStoreError(
-            "config_invalid",
-            `Capability ${id} has a migration journal for another capability.`,
-          );
-        }
-        await writeJson(manifestPath(id), v3Pending.targetManifest);
-        await rm(v3MigrationJournalPath(id), { force: true });
-        raw = v3Pending.targetManifest;
-      }
-
-      const legacyPending = await readLegacyCapabilityMigrationJournal(
-        legacyMigrationJournalPath(id),
-      );
-      if (legacyPending !== undefined) {
-        if (legacyPending.targetManifest.id !== id) {
-          throw new CapabilityStoreError(
-            "config_invalid",
-            `Capability ${id} has a migration journal for another capability.`,
-          );
-        }
-        await writeJson(manifestPath(id), legacyPending.targetManifest);
-        await rm(legacyMigrationJournalPath(id), { force: true });
-        raw = legacyPending.targetManifest;
-      }
-
-      const legacyV3 = LegacyCapabilityManifestV3Schema.safeParse(raw);
-      const legacyV2 = LegacyCapabilityManifestV2Schema.safeParse(raw);
-      const legacyV1 = LegacyCapabilityManifestV1Schema.safeParse(raw);
-      const legacy = legacyV3.success
-        ? legacyV3.data
-        : legacyV2.success
-          ? legacyV2.data
-          : legacyV1.success
-            ? legacyV1.data
-            : undefined;
-      if (legacy === undefined || legacy.id !== id) {
-        throw new CapabilityStoreError(
-          "config_invalid",
-          `Capability ${id} has an invalid manifest.`,
-        );
-      }
-
-      for (let revision = 1; revision <= legacy.latestRevision; revision += 1) {
-        try {
-          CapabilityDefinitionSchema.parse(
-            JSON.parse(
-              await readFile(join(revisionPath(id, revision), "definition.json"), "utf8"),
-            ) as unknown,
-          );
-        } catch (error) {
-          throw new CapabilityStoreError(
-            "config_invalid",
-            `Capability ${id} revision ${revision} exceeds the current text limits at ${firstZodIssue(error)}. The original data was not changed.`,
-          );
-        }
-      }
-
-      const latestHealth = await readFile(healthPath(id), "utf8")
-        .then((value) => CapabilityHealthSchema.safeParse(JSON.parse(value) as unknown))
-        .catch(() => undefined);
-      // Legacy manifests did not persist the last activated revision. When the latest revision
-      // needs attention, guessing `latest - 1` can activate another failed candidate after
-      // consecutive unsuccessful updates. Leave the Capability inactive until a successful retry
-      // establishes an explicit active revision.
-      const activeRevision =
-        latestHealth?.success === true && latestHealth.data.status === "ready"
-          ? legacy.latestRevision
-          : undefined;
-      const targetManifest = CapabilityManifestSchema.parse({
-        ...legacy,
-        schemaVersion: "pragma.capability/v4",
-        ...(activeRevision === undefined ? {} : { activeRevision }),
-        origin: undefined,
-      });
-      const sourceVersion = legacy.schemaVersion.slice(-2);
-      const backupPath = join(
-        capabilityPath(id),
-        "migration-backups",
-        `capability.${sourceVersion}.json`,
-      );
-      const journal = CapabilityManifestV4MigrationJournalSchema.parse({
-        schemaVersion: "pragma.capability-manifest-migration/v3",
-        sourceSchema: legacy.schemaVersion,
-        targetSchema: "pragma.capability/v4",
-        targetManifest,
-      });
-      await writeJson(backupPath, legacy);
-      await writeJson(migrationJournalPath(id), journal);
-      await writeJson(manifestPath(id), targetManifest);
-      await rm(migrationJournalPath(id), { force: true });
-      return targetManifest;
-    });
-
-  const readManifest = async (id: string): Promise<CapabilityManifest> => {
-    await recoverCreation(id);
-    await recoverRemoval(id);
-    try {
-      const raw = JSON.parse(await readFile(manifestPath(id), "utf8")) as unknown;
-      const current = CapabilityManifestSchema.safeParse(raw);
-      if (current.success) {
-        await rm(migrationJournalPath(id), { force: true });
-        return current.data;
-      }
-      if (
-        LegacyCapabilityManifestV1Schema.safeParse(raw).success ||
-        LegacyCapabilityManifestV2Schema.safeParse(raw).success ||
-        LegacyCapabilityManifestV3Schema.safeParse(raw).success
-      )
-        return await migrateManifest(id);
-      throw new CapabilityStoreError("config_invalid", `Capability ${id} has an invalid manifest.`);
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code === "ENOENT") {
-        throw new CapabilityStoreError("capability_not_found", "The capability no longer exists.");
-      }
-      if (error instanceof CapabilityStoreError) throw error;
-      throw new CapabilityStoreError("config_invalid", `Capability ${id} has an invalid manifest.`);
-    }
-  };
-
-  const readCapability = async (id: string, requestedRevision?: number): Promise<Capability> => {
-    const manifest = await readManifest(id);
-    const revision = requestedRevision ?? manifest.latestRevision;
-    try {
-      const definition = CapabilityDefinitionSchema.parse(
-        JSON.parse(
-          await readFile(join(revisionPath(id, revision), "definition.json"), "utf8"),
-        ) as unknown,
-      );
-      const latestHealth = CapabilityHealthSchema.parse(
-        JSON.parse(await readFile(healthPath(id), "utf8")) as unknown,
-      );
-      const health =
-        latestHealth.revision === revision
-          ? latestHealth
-          : CapabilityHealthSchema.parse({
-              revision,
-              status: "ready",
-              checkedAt: manifest.updatedAt,
-            });
-      return CapabilitySchema.parse({
-        manifest: { ...manifest, latestRevision: revision },
-        definition,
-        health,
-      });
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code === "ENOENT") {
-        throw new CapabilityStoreError(
-          "capability_not_found",
-          `Capability ${id} revision ${revision} no longer exists.`,
-        );
-      }
-      if (error instanceof CapabilityStoreError) throw error;
-      throw new CapabilityStoreError(
-        "config_invalid",
-        `Capability ${id} revision ${revision} is invalid.`,
-      );
-    }
-  };
-
   const writeNewRevision = async (
     manifest: CapabilityManifest,
     definition: CapabilityDefinition,
@@ -589,10 +254,8 @@ export function createCapabilityStore(options: {
     }
     return await readCapability(manifest.id);
   };
-
   const publishRevision = async (input: CapabilityRevisionPublishInput): Promise<Capability> =>
     await options.mutations.publish(input);
-
   const publishHealth = async (
     id: string,
     expectedRevision: number,
@@ -632,7 +295,6 @@ export function createCapabilityStore(options: {
       targetHealth: health,
     });
   };
-
   return {
     async ensureActiveRevision(id, revision) {
       const manifest = await readManifest(id);
@@ -655,22 +317,7 @@ export function createCapabilityStore(options: {
         CapabilityManifestSchema.parse({ ...manifest, activeRevision: revision }),
       );
     },
-    async resolveActive(id) {
-      const manifest = await readManifest(id);
-      if ((await options.credentials.pending(id)) !== undefined) {
-        throw new CapabilityStoreError(
-          "capability_incompatible",
-          `Capability ${id} is completing an active environment change.`,
-        );
-      }
-      if (manifest.activeRevision === undefined) {
-        throw new CapabilityStoreError(
-          "capability_not_found",
-          `Capability ${id} has no active ready revision.`,
-        );
-      }
-      return await readCapability(id, manifest.activeRevision);
-    },
+    resolveActive,
     async list() {
       try {
         const entries = await readdir(options.capabilitiesPath, { withFileTypes: true });
@@ -738,7 +385,6 @@ export function createCapabilityStore(options: {
         );
       }
     },
-
     async listSkillFiles(input) {
       const capability = await readCapability(input.id, input.revision);
       if (capability.definition.kind !== "skill") {
@@ -759,7 +405,6 @@ export function createCapabilityStore(options: {
         );
       }
     },
-
     async getSkillFile(input) {
       const capability = await readCapability(input.id, input.revision);
       if (capability.definition.kind !== "skill") {
@@ -800,7 +445,6 @@ export function createCapabilityStore(options: {
         );
       }
     },
-
     async skillFilesPath(id, revision) {
       const capability = await readCapability(id, revision);
       if (capability.definition.kind !== "skill") {
@@ -1360,7 +1004,6 @@ export function createCapabilityStore(options: {
             `MCP tool ${input.toolName} does not exist in the current capability revision.`,
           );
         }
-
         try {
           const server = await toCoreMcpServer(
             current.definition,
@@ -1627,7 +1270,6 @@ export function createCapabilityStore(options: {
     },
   };
 }
-
 function assertCodeServiceReady(
   definition: CapabilityDefinition,
   health: Omit<CapabilityHealth, "revision">,
@@ -1638,9 +1280,13 @@ function assertCodeServiceReady(
     health.diagnostic?.message ?? "The code service could not be compiled.",
   );
 }
-
 function toCoreCodeService(
-  definition: Extract<CapabilityDefinition, { readonly kind: "code_service" }>,
+  definition: Extract<
+    CapabilityDefinition,
+    {
+      readonly kind: "code_service";
+    }
+  >,
 ) {
   return {
     name: definition.name,
@@ -1648,75 +1294,6 @@ function toCoreCodeService(
     tool: definition.tool,
   };
 }
-
-function revisionDirectory(revision: number): string {
-  return revision.toString().padStart(6, "0");
-}
-
-function firstZodIssue(error: unknown): string {
-  if (!(error instanceof z.ZodError)) return "definition";
-  const issue = error.issues[0];
-  return issue === undefined ? "definition" : issue.path.join(".") || "definition";
-}
-
-async function readCapabilityMigrationJournal(
-  path: string,
-): Promise<z.infer<typeof CapabilityManifestMigrationJournalSchema> | undefined> {
-  try {
-    return CapabilityManifestMigrationJournalSchema.parse(
-      JSON.parse(await readFile(path, "utf8")) as unknown,
-    );
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
-    if (error instanceof z.ZodError) {
-      throw new CapabilityStoreError("config_invalid", "Capability migration journal is invalid.");
-    }
-    throw error;
-  }
-}
-
-async function readCapabilityV4MigrationJournal(
-  path: string,
-): Promise<z.infer<typeof CapabilityManifestV4MigrationJournalSchema> | undefined> {
-  try {
-    return CapabilityManifestV4MigrationJournalSchema.parse(
-      JSON.parse(await readFile(path, "utf8")) as unknown,
-    );
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
-    if (error instanceof z.ZodError) {
-      throw new CapabilityStoreError("config_invalid", "Capability migration journal is invalid.");
-    }
-    throw error;
-  }
-}
-
-async function readLegacyCapabilityMigrationJournal(
-  path: string,
-): Promise<z.infer<typeof LegacyCapabilityManifestMigrationJournalSchema> | undefined> {
-  try {
-    return LegacyCapabilityManifestMigrationJournalSchema.parse(
-      JSON.parse(await readFile(path, "utf8")) as unknown,
-    );
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
-    if (error instanceof z.ZodError) {
-      throw new CapabilityStoreError(
-        "config_invalid",
-        "Legacy Capability migration journal is invalid.",
-      );
-    }
-    throw error;
-  }
-}
-
-async function writeJson(path: string, value: unknown): Promise<void> {
-  await mkdir(resolve(path, ".."), { recursive: true, mode: 0o700 });
-  const temporaryPath = `${path}.${randomUUID()}.tmp`;
-  await writeFile(temporaryPath, `${JSON.stringify(value, null, 2)}\n`, { mode: 0o600 });
-  await rename(temporaryPath, path);
-}
-
 function validateDefinition(definition: CapabilityDefinition): CapabilityDefinition {
   if (definition.kind !== "http_service") return definition;
   const url = new URL(definition.baseUrl);
@@ -1735,7 +1312,6 @@ function validateDefinition(definition: CapabilityDefinition): CapabilityDefinit
   }
   return definition;
 }
-
 export async function copySkillSource(sourcePath: string, targetPath: string): Promise<void> {
   if (extname(sourcePath).toLowerCase() === ".zip") {
     const archive = unzipSync(new Uint8Array(await readFile(sourcePath)));
@@ -1751,7 +1327,6 @@ export async function copySkillSource(sourcePath: string, targetPath: string): P
       bytes += content.byteLength;
       if (bytes > MAX_SKILL_BYTES) throw importLimitError();
     }
-
     const packageRoot = skillArchiveRoot(packageFiles.map(({ path }) => path));
     const writtenPaths = new Set<string>();
     for (const { path, content } of packageFiles) {
@@ -1769,14 +1344,12 @@ export async function copySkillSource(sourcePath: string, targetPath: string): P
     }
     return;
   }
-
   const sourceInfo = await lstat(sourcePath);
   if (!sourceInfo.isDirectory()) {
     throw new CapabilityStoreError("import_invalid", "Select a Skill directory or ZIP archive.");
   }
   await copySkillDirectory(sourcePath, targetPath, { files: 0, bytes: 0 });
 }
-
 async function writeGeneratedSkillPayload(input: SkillPackage, targetPath: string): Promise<void> {
   const parsed = SkillPackageSchema.parse(input);
   for (const file of parsed.files) {
@@ -1791,11 +1364,13 @@ async function writeGeneratedSkillPayload(input: SkillPackage, targetPath: strin
     await writeFile(target, file.content, { mode: 0o600 });
   }
 }
-
 async function copySkillDirectory(
   sourcePath: string,
   targetPath: string,
-  state: { files: number; bytes: number },
+  state: {
+    files: number;
+    bytes: number;
+  },
 ): Promise<void> {
   for (const entry of await readdir(sourcePath, { withFileTypes: true })) {
     if (entry.name.toLowerCase() === ".git") continue;
@@ -1820,7 +1395,6 @@ async function copySkillDirectory(
     await writeFile(target, await readFile(source), { mode: info.mode & 0o111 ? 0o700 : 0o600 });
   }
 }
-
 function validateArchivePath(name: string): string {
   const normalized = name.replaceAll("\\", "/");
   const segments = normalized.split("/");
@@ -1834,11 +1408,9 @@ function validateArchivePath(name: string): string {
   }
   return normalized;
 }
-
 function isMacOsArchiveMetadata(path: string): boolean {
   return path === ".DS_Store" || path.startsWith("__MACOSX/") || path.endsWith("/.DS_Store");
 }
-
 function skillArchiveRoot(paths: readonly string[]): string {
   if (paths.includes("SKILL.md")) return "";
   const candidates = paths
@@ -1857,14 +1429,12 @@ function skillArchiveRoot(paths: readonly string[]): string {
   }
   return packageRoots[0]!;
 }
-
 function importLimitError(): CapabilityStoreError {
   return new CapabilityStoreError(
     "import_invalid",
     "Skill packages are limited to 25 MiB and 1000 files.",
   );
 }
-
 function readSkillMetadata(content: string): {
   readonly name?: string;
   readonly description?: string;
@@ -1889,7 +1459,6 @@ function readSkillMetadata(content: string): {
     ...(values["description"] ? { description: values["description"] } : {}),
   };
 }
-
 function unquote(value: string): string {
   if (value.startsWith('"') && value.endsWith('"')) {
     try {
@@ -1900,7 +1469,6 @@ function unquote(value: string): string {
   }
   return value;
 }
-
 export async function hashSkillDirectoryContent(path: string): Promise<string> {
   const hash = createHash("sha256");
   const files = await listFiles(path);
@@ -1910,7 +1478,6 @@ export async function hashSkillDirectoryContent(path: string): Promise<string> {
   }
   return hash.digest("hex");
 }
-
 export async function portableSkillDirectoryContentHashes(
   path: string,
 ): Promise<ReadonlySet<string>> {
@@ -1926,13 +1493,11 @@ export async function portableSkillDirectoryContentHashes(
     sha256Chunks(legacyWindowsSkillBundleContentHashChunks(contentFiles)),
   ]);
 }
-
 function sha256Chunks(chunks: readonly (string | Uint8Array)[]): string {
   const hash = createHash("sha256");
   for (const chunk of chunks) hash.update(chunk);
   return hash.digest("hex");
 }
-
 async function listFiles(path: string): Promise<string[]> {
   const output: string[] = [];
   for (const entry of await readdir(path, { withFileTypes: true })) {
@@ -1942,7 +1507,6 @@ async function listFiles(path: string): Promise<string[]> {
   }
   return output;
 }
-
 async function listSkillFileEntries(path: string): Promise<SkillFileEntry[]> {
   const output: SkillFileEntry[] = [];
   for (const file of await listFiles(path)) {
@@ -1955,7 +1519,6 @@ async function listSkillFileEntries(path: string): Promise<SkillFileEntry[]> {
   }
   return output.toSorted((left, right) => left.path.localeCompare(right.path));
 }
-
 function decodeTextFile(bytes: Uint8Array): string | null {
   try {
     return new TextDecoder("utf-8", { fatal: true }).decode(bytes);
@@ -1963,14 +1526,12 @@ function decodeTextFile(bytes: Uint8Array): string | null {
     return null;
   }
 }
-
 function isPathInside(parent: string, candidate: string): boolean {
   const pathFromParent = relative(resolve(parent), candidate);
   return (
     pathFromParent.length > 0 && !pathFromParent.startsWith(`..${sep}`) && pathFromParent !== ".."
   );
 }
-
 function createRuntimeKey(name: string, id: string): string {
   const slug = name
     .toLowerCase()
@@ -1979,9 +1540,13 @@ function createRuntimeKey(name: string, id: string): string {
     .slice(0, 60);
   return `${slug || "capability"}_${id.replaceAll("-", "").slice(0, 8)}`;
 }
-
 async function resolveHttpAuth(
-  definition: Extract<CapabilityDefinition, { readonly kind: "http_service" }>,
+  definition: Extract<
+    CapabilityDefinition,
+    {
+      readonly kind: "http_service";
+    }
+  >,
   capabilityId: string,
   credentials: CapabilityCredentialStore,
 ): Promise<HttpServiceAuth> {
@@ -1997,11 +1562,9 @@ async function resolveHttpAuth(
     ? { type: "bearer", token: value }
     : { type: "api_key_header", headerName: definition.auth.headerName, value };
 }
-
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
-
 function readMcpResultText(value: unknown): string | undefined {
   if (!isRecord(value) || !Array.isArray(value["content"])) return undefined;
   return (
@@ -2013,11 +1576,15 @@ function readMcpResultText(value: unknown): string | undefined {
       .join("\n") || undefined
   );
 }
-
 function readToolFailure(
   value: unknown,
   fallbackMessage: string,
-): { readonly code: string; readonly message: string } | undefined {
+):
+  | {
+      readonly code: string;
+      readonly message: string;
+    }
+  | undefined {
   if (!isRecord(value) || value["isError"] !== true) return undefined;
   const details = isRecord(value["details"]) ? value["details"] : undefined;
   return {
@@ -2025,7 +1592,6 @@ function readToolFailure(
     message: readMcpResultText(value) ?? fallbackMessage,
   };
 }
-
 function readToolOutput(value: unknown): unknown | undefined {
   if (!isRecord(value)) return value;
   if (value["structuredContent"] !== undefined) return value["structuredContent"];
@@ -2043,12 +1609,10 @@ function readToolOutput(value: unknown): unknown | undefined {
   }
   return value["content"];
 }
-
 function readStructuredOutput(value: unknown): Record<string, unknown> | undefined {
   if (!isRecord(value)) return undefined;
   return isRecord(value["structuredContent"]) ? value["structuredContent"] : undefined;
 }
-
 function stableStringify(value: unknown): string {
   if (Array.isArray(value)) return `[${value.map(stableStringify).join(",")}]`;
   if (value !== null && typeof value === "object") {
@@ -2059,14 +1623,12 @@ function stableStringify(value: unknown): string {
   }
   return JSON.stringify(value);
 }
-
 function sameHealthState(left: CapabilityHealth, right: CapabilityHealth): boolean {
   return (
     left.status === right.status &&
     stableStringify(left.diagnostic ?? null) === stableStringify(right.diagnostic ?? null)
   );
 }
-
 function preserveTransferredDefinition(
   definition: CapabilityDefinition,
   observed: CapabilityVerifierResult,

@@ -1,3 +1,4 @@
+import type { LocalHostSystemExecutorSource } from "@pragma/local-host";
 import { createHash, randomUUID } from "node:crypto";
 import { mkdir, readFile, readdir, rename, rm, stat, writeFile } from "node:fs/promises";
 import { basename, dirname, join } from "node:path";
@@ -13,10 +14,8 @@ import {
 import {
   MEMORY_CURATOR_REF as BUILT_IN_MEMORY_CURATOR_REF,
   builtInAgentFingerprint,
-  compileBuiltInAgent,
   createBuiltInMemoryCurator,
 } from "@pragma/built-in-agents";
-import type { CompiledResource, InvocableResource } from "@pragma/interpreter";
 import {
   MEMORY_CURATOR_PROMPT_VERSION,
   SEMANTIC_MEMORY_CURATOR_PROMPT_VERSION,
@@ -59,13 +58,13 @@ const CuratorMissionRegistrySchema = z.object({
 export interface DesktopMemoryCurator {
   readonly episodicExtractor: EpisodicMemoryExtractor;
   readonly semanticExtractor: SemanticMemoryExtractor;
-  compile(input: {
+  source(input: {
     readonly missionId: string;
     readonly runtimes: RuntimeResolver;
     readonly workspace: string;
     readonly pragmaHome: string;
     readonly loggerProvider?: PragmaLoggerProvider | undefined;
-  }): Promise<CompiledResource<InvocableResource>>;
+  }): Promise<LocalHostSystemExecutorSource>;
   fingerprint(): Promise<string>;
   recoverOrphans(): Promise<number>;
   listRuns(input: {
@@ -147,15 +146,15 @@ export function createDesktopMemoryCurator(options: {
     return { profile, runtimeId, resolved, modelSelection };
   };
 
-  const compile = async (input: {
+  const source = async (input: {
     readonly missionId: string;
     readonly runtimes: RuntimeResolver;
     readonly workspace: string;
     readonly pragmaHome: string;
     readonly loggerProvider?: PragmaLoggerProvider | undefined;
-  }): Promise<CompiledResource<InvocableResource>> => {
+  }): Promise<LocalHostSystemExecutorSource> => {
     const runtime = await resolveRuntime(await options.profiles.get(), input.runtimes);
-    return await compileBuiltInAgent({
+    return {
       ref: BUILT_IN_MEMORY_CURATOR_REF,
       environmentId: "desktop",
       definitionStateRoot: join(input.pragmaHome, "cache", "built-in-agents", "definitions"),
@@ -170,7 +169,7 @@ export function createDesktopMemoryCurator(options: {
         ? {}
         : { defaultModelSelection: runtime.modelSelection }),
       loggerProvider: input.loggerProvider,
-    });
+    };
   };
 
   const curator = createBuiltInMemoryCurator({
@@ -201,7 +200,7 @@ export function createDesktopMemoryCurator(options: {
   });
 
   return {
-    compile,
+    source,
     async listRuns(input) {
       const archived = await runArchive.listForJob(input);
       const active = [...activeRuns.values()].filter(

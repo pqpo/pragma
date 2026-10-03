@@ -6,19 +6,19 @@ on:
       - main
       - master
     paths-ignore:
-      - '**.md'
-      - 'docs/**'
-      - '.gitignore'
-      - 'LICENSE'
+      - "**.md"
+      - "docs/**"
+      - ".gitignore"
+      - "LICENSE"
   pull_request:
     branches:
       - main
       - master
     paths-ignore:
-      - '**.md'
-      - 'docs/**'
-      - '.gitignore'
-      - 'LICENSE'
+      - "**.md"
+      - "docs/**"
+      - ".gitignore"
+      - "LICENSE"
 
 # Cancel in-progress jobs for the same branch/PR to prevent queuing
 concurrency:
@@ -73,6 +73,12 @@ jobs:
           PRAGMA_LOG_LEVEL: error
           CI: "true"
         run: pnpm test:mission-control
+
+      - name: Mission compilation regression tests
+        env:
+          PRAGMA_LOG_LEVEL: error
+          CI: "true"
+        run: pnpm test:mission-compilation
 
       - name: Knowledge revision regression tests
         env:
