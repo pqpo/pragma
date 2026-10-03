@@ -35,8 +35,9 @@ export interface LocalHostMissionControllerFactResources {
           executionId: string;
           projectId?: string;
         }): Promise<void>;
-        recovering(missionId: string): Promise<void>;
-        terminal(missionId: string, waiting?: boolean): Promise<void>;
+        recovering(missionId: string, executionId: string): Promise<void | (() => Promise<void>)>;
+        admitting?(missionId: string, requestId: string): Promise<void | (() => Promise<void>)>;
+        terminal(missionId: string, executionId: string, waiting?: boolean): Promise<void>;
         readonly release?: (() => Promise<void>) | undefined;
       }
     | undefined;
@@ -63,9 +64,9 @@ export function createControllerFactExecutionPorts(options: {
     (await resources.controller.listOperations({ missionId })).some(
       (operation) => operation.state === "queued" || operation.state === "applying",
     );
-  const completeResources = (missionId: string, waiting = false): void => {
+  const completeResources = (missionId: string, executionId: string, waiting = false): void => {
     void resources.memory
-      ?.terminal(missionId, waiting)
+      ?.terminal(missionId, executionId, waiting)
       .finally(async () => await resources.memory?.release?.())
       .catch(options.onBackgroundFailure);
   };
@@ -120,21 +121,39 @@ export function createControllerFactExecutionPorts(options: {
       ownerScope: options.ownerScope,
     }),
     hasPendingMissionCommands: hasPending,
-    onOwnerRecovering: async (missionId) => await resources.memory?.recovering(missionId),
+    assertMissionOwnership: async (missionId, guard) =>
+      await options.ownerScope?.assertOwnership(missionId, guard),
+    currentMissionGuard: (missionId) => options.ownerScope?.currentGuard(missionId),
+    onPromptAdmitting: async (missionId, requestId) =>
+      await resources.memory?.admitting?.(missionId, requestId),
+    onExecutionAccepted: async ({ missionId, executionId }) => {
+      await resources.memory?.linked({ missionId, executionId }).catch(options.onBackgroundFailure);
+    },
+    onOwnerRecovering: async (missionId) => {
+      const sessionId = await resources.resolveSessionId(missionId);
+      const state = sessionId === undefined ? undefined : await options.sessions.get(sessionId);
+      const executionId = state?.executionIds.at(-1) ?? missionId;
+      await resources.memory?.recovering(missionId, executionId);
+    },
     ...(options.ownerLifetime === "request"
       ? {
-          releaseMissionOwner: async (missionId) => {
+          releaseMissionOwner: async (missionId, guard) => {
+            await options.ownerScope?.assertOwnership(missionId, guard);
             if (await hasPending(missionId)) return;
             const sessionId = await resources.resolveSessionId(missionId);
             const session =
               sessionId === undefined ? undefined : await options.sessions.get(sessionId);
             const execution =
               session === undefined ? await options.executions.get(missionId) : undefined;
-            completeResources(
-              missionId,
-              session?.lastStatus === "waiting" || execution?.status === "waiting",
-            );
-            await options.ownerScope?.release(missionId);
+            await options.ownerScope?.assertOwnership(missionId, guard);
+            const executionId = session?.executionIds.at(-1) ?? execution?.executionId;
+            if (executionId !== undefined)
+              completeResources(
+                missionId,
+                executionId,
+                session?.lastStatus === "waiting" || execution?.status === "waiting",
+              );
+            await options.ownerScope?.release(missionId, guard);
           },
         }
       : {}),
@@ -143,8 +162,13 @@ export function createControllerFactExecutionPorts(options: {
     resolve: core.resolve,
     ...(core.validateInput === undefined ? {} : { validateInput: core.validateInput }),
     start: async (input) => {
+      const rollback = await resources.memory?.admitting?.(
+        input.missionId,
+        input.request.requestId,
+      );
       const handle = await core.start(input).catch(async (error: unknown) => {
-        completeResources(input.missionId);
+        if (rollback !== undefined) await rollback().catch(options.onBackgroundFailure);
+        completeResources(input.missionId, input.request.requestId);
         throw error;
       });
       try {
@@ -158,11 +182,15 @@ export function createControllerFactExecutionPorts(options: {
       } catch (error) {
         await handle.cancel?.("Mission resource registration failed").catch(() => undefined);
         await handle.release?.().catch(() => undefined);
-        completeResources(input.missionId);
+        completeResources(input.missionId, input.request.requestId);
         throw error;
       }
       void handle.result.then((terminal) => {
-        completeResources(input.missionId, terminal.status === "input_required");
+        completeResources(
+          input.missionId,
+          handle.executionId,
+          terminal.status === "input_required",
+        );
       }, options.onBackgroundFailure);
       return handle;
     },

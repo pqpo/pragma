@@ -45,6 +45,8 @@ describe("Local Host Core Mission control adapter", () => {
       options,
     }));
     const resumePromptQueue = vi.fn(async () => undefined);
+    const onExecutionAccepted = vi.fn(async () => undefined);
+    const onPromptAdmitting = vi.fn(async () => undefined);
     const session = {
       prompt,
       resumePromptQueue,
@@ -61,6 +63,8 @@ describe("Local Host Core Mission control adapter", () => {
       mission: { controller: {} as never, append: async () => undefined },
       executors: [],
       resolveMissionBinding: async () => undefined,
+      onExecutionAccepted,
+      onPromptAdmitting,
       resolveActiveOwner: async () => ({
         kind: "session",
         session,
@@ -110,6 +114,14 @@ describe("Local Host Core Mission control adapter", () => {
       requestId: command.request.requestId,
       mode: "enqueue",
       attachments: [attachment],
+    });
+    expect(onPromptAdmitting).toHaveBeenCalledExactlyOnceWith(
+      command.missionId,
+      command.request.requestId,
+    );
+    expect(onExecutionAccepted).toHaveBeenCalledExactlyOnceWith({
+      missionId: command.missionId,
+      executionId: "execution-1",
     });
     for (const recovery of [undefined, "abandon"] as const) {
       await adapter.consumer.apply({

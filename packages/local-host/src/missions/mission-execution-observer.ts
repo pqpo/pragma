@@ -33,6 +33,9 @@ export function observeMissionExecution(
   boundaries?: {
     readonly onDurableTerminal?: (error?: unknown) => void;
     readonly deferEnrichment?: boolean;
+    readonly assertEnrichmentOwnership?: (() => Promise<void>) | undefined;
+    readonly onTerminalEnrichment?:
+      ((terminal: MissionExecutionTerminalOutcome) => Promise<void>) | undefined;
   },
 ): Promise<"terminal" | "checkpointed"> {
   return (async () => {
@@ -99,6 +102,7 @@ export function observeMissionExecution(
       },
     ];
     let commitFailure: unknown;
+    let terminalFenced = false;
     const runSideEffect = async (sideEffect: () => void | Promise<void>): Promise<void> => {
       try {
         await sideEffect();
@@ -116,14 +120,50 @@ export function observeMissionExecution(
         await runSideEffect(sideEffect);
       } catch (error) {
         commitFailure ??= error;
+        if (
+          typeof error === "object" &&
+          error !== null &&
+          "code" in error &&
+          error.code === "MISSION_FENCING_REJECTED"
+        ) {
+          terminalFenced = true;
+          break;
+        }
+      }
+    }
+    if (!terminalFenced && boundaries?.onTerminalEnrichment !== undefined) {
+      try {
+        // Capture and launch this owner's Memory detach before request release
+        // can revoke its claim. Native stop/flush remains a background promise.
+        await boundaries.assertEnrichmentOwnership?.();
+        const enrichment = boundaries.onTerminalEnrichment(terminal);
+        void enrichment.catch((error: unknown) => {
+          try {
+            onSideEffectError?.(error);
+          } catch {
+            /* Diagnostics never change the durable terminal fact. */
+          }
+        });
+      } catch (error) {
+        try {
+          onSideEffectError?.(error);
+        } catch {
+          /* Diagnostics never change the durable terminal fact. */
+        }
       }
     }
     boundaries?.onDurableTerminal?.(commitFailure);
     for (const sideEffect of [
       onFinished,
       async () => {
-        if (!boundaries?.deferEnrichment && (!deferMaterialization || status === "cancelled"))
+        if (
+          !terminalFenced &&
+          !boundaries?.deferEnrichment &&
+          (!deferMaterialization || status === "cancelled")
+        ) {
+          await boundaries?.assertEnrichmentOwnership?.();
           await onMaterialize?.(terminal);
+        }
       },
     ]) {
       try {

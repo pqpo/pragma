@@ -87,11 +87,31 @@ export function planMissionRetention(input: {
   readonly policy: MissionRetentionPolicy;
 }): MissionRetentionPlan {
   const commandById = new Map(input.commands.map((command) => [command.commandId, command]));
+  const operationByCommandId = new Map(
+    Object.values(input.state.operations).map((operation) => [operation.commandId, operation]),
+  );
   const activeExecutionIds = findActiveExecutionIds(input.events);
   const latestStatusEventId = findLatestStatusEventId(input.events);
+  const latestSessionEvent = input.events.toReversed().find((event) => {
+    if (event.type !== "command.applied") return false;
+    const commandId = event.data["commandId"];
+    const operation =
+      typeof commandId === "string" ? operationByCommandId.get(commandId) : undefined;
+    return operation?.kind === "send" && typeof operation.result?.["sessionId"] === "string";
+  });
+  const latestSessionOperation =
+    latestSessionEvent === undefined
+      ? undefined
+      : operationByCommandId.get(latestSessionEvent.data["commandId"] as string);
+  const initialSessionEvent = input.events.find(
+    (event) => event.type === "run.started" && typeof event.data["sessionId"] === "string",
+  );
   const retainedEvents = selectRetainedItems(
     input.events,
-    (event) => isMandatoryEvent(event, commandById, activeExecutionIds, latestStatusEventId),
+    (event) =>
+      event === latestSessionEvent ||
+      event === initialSessionEvent ||
+      isMandatoryEvent(event, commandById, activeExecutionIds, latestStatusEventId),
     input.policy.events,
     (event) => serializedBytes(event),
   );
@@ -114,7 +134,11 @@ export function planMissionRetention(input: {
     (requestId) => {
       const command = commandByRequestId.get(requestId);
       const operation = operationByRequestId.get(requestId);
-      return isNonTerminalCommand(command) || isNonTerminalOperation(operation);
+      return (
+        (latestSessionOperation !== undefined && operation === latestSessionOperation) ||
+        isNonTerminalCommand(command) ||
+        isNonTerminalOperation(operation)
+      );
     },
     input.policy.terminalCommands,
     (requestId) =>

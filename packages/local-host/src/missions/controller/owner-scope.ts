@@ -33,7 +33,7 @@ export interface MissionOwnerScope {
   assertOwnership(missionId: string, guard: MissionControllerGuard): Promise<void>;
   /** Wake this process's owner after a command is durable; never bypasses the Inbox. */
   wake(missionId: string): void;
-  release(missionId: string): Promise<void>;
+  release(missionId: string, expectedGuard?: MissionControllerGuard): Promise<void>;
   /** Explicitly fences the current owner, including a live owner in another process. */
   forceRevoke(missionId: string): Promise<void>;
   releaseAfterLowerLevel(missionId: string, releaseLowerLevel: () => Promise<void>): Promise<void>;
@@ -471,10 +471,21 @@ export function createMissionOwnerScope(options: {
         acquiring.delete(missionId);
       }
     },
-    async release(missionId) {
-      cancelRecovery(missionId);
+    async release(missionId, expectedGuard) {
       const current = active.get(missionId);
       if (current === undefined) return;
+      if (
+        expectedGuard !== undefined &&
+        (current.guard.claimId !== expectedGuard.claimId ||
+          current.guard.fencingToken !== expectedGuard.fencingToken)
+      )
+        throw createIntegrationError({
+          code: "MISSION_FENCING_REJECTED",
+          category: "conflict",
+          message: "Mission release belongs to a previous owner claim.",
+          details: { missionId },
+        });
+      cancelRecovery(missionId);
       current.stopped = true;
       if (current.timer !== undefined) clearTimeout(current.timer);
       await stopPolling(missionId);

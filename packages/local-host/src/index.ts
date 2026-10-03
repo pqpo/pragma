@@ -35,6 +35,7 @@ export * from "./logger.ts";
 export * from "./mission-board.ts";
 export * from "./mission-event-projector.ts";
 export * from "./missions/activity.ts";
+export { createLocalHostMissionReadPorts } from "./missions/read-ports.ts";
 export * from "./missions/execution-owner.ts";
 export * from "./missions/command-dispatcher.ts";
 export * from "./missions/controller/command-payload.ts";

@@ -25,3 +25,23 @@ export async function stopLocalHostFlowExecution(
 ): Promise<void> {
   await app.flows.stop(definition, options);
 }
+
+/** Wait for native Runtime teardown without deleting durable Execution facts. */
+export async function releaseLocalHostFlowExecution(
+  execution: Pick<FlowExecution, "cancel" | "getState"> &
+    Partial<Pick<FlowExecution, "stopForDeletion" | "releaseRuntimeResources">>,
+): Promise<void> {
+  if (execution.releaseRuntimeResources !== undefined) {
+    await execution.releaseRuntimeResources();
+    return;
+  }
+  const state = await execution.getState();
+  if (state.status === "waiting")
+    throw new Error("A waiting Flow requires a native checkpoint release boundary.");
+  if (execution.stopForDeletion !== undefined)
+    await execution.stopForDeletion("Mission transient Flow resources released.");
+  else
+    // Cold terminal control facades bind cancel to Core's targeted flows.stop,
+    // which confirms native teardown while preserving the terminal Execution.
+    await execution.cancel("Mission transient Flow resources released.");
+}

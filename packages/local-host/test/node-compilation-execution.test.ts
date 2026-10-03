@@ -525,6 +525,38 @@ describe("default Node compilation reaches persisted Execution", { timeout: 15_0
       expect(successorSessionId).not.toBe(original.execution?.sessionId);
       const before = (await sessions.get(successorSessionId!))!;
       const beforeRoot = before.contexts[before.rootContextId]!;
+      if (controllerOnly) {
+        const compacting = createMissionControllerStore({
+          missionsPath: paths.missionsRoot(),
+          missionPath: missions.storagePath,
+          retention: {
+            events: { maxCount: 1, maxBytes: 1024 },
+            terminalCommands: { maxCount: 1, maxBytes: 2048 },
+          },
+        });
+        const guard = await compacting.claim({
+          missionId: started.missionId,
+          claimId: randomUUID(),
+          leaseMs: 30_000,
+        });
+        try {
+          await compacting.write({
+            missionId: started.missionId,
+            guard,
+            operation: async ({ appendEvent }) => {
+              for (let index = 0; index < 4; index++)
+                await appendEvent("output.chunk", { chunk: "x".repeat(600) });
+            },
+          });
+          await compacting.compactRetention({ missionId: started.missionId });
+          expect(await resolveSession(started.missionId)).toBe(successorSessionId);
+          expect(
+            (await sessions.get(successorSessionId!))?.contexts[before.rootContextId]?.snapshot,
+          ).toEqual(beforeRoot.snapshot);
+        } finally {
+          await compacting.release({ missionId: started.missionId, guard });
+        }
+      }
       const cold = createLocalHostNodeApplication({
         pragmaHome: f.home,
         runtimes: f.runtimes,
@@ -565,6 +597,85 @@ describe("default Node compilation reaches persisted Execution", { timeout: 15_0
       }
     },
   );
+  it.each(["scalar input", 42, ["array input"], null])(
+    "runs a schema-less Flow with non-object input %j using controller facts",
+    async (input) => {
+      const f = await fixture();
+      const started = await f.app.run!.start({
+        requestId: randomUUID(),
+        command: "flow.run",
+        executor: { kind: "flow", id: PUBLISHED_FLOW_ID },
+        project: { projectId: "studio", revision: 1 },
+        workspace: f.workspace,
+        input,
+        detach: false,
+      });
+      expect((await started.outcome).status).toBe("succeeded");
+      const executions = createSqliteExecutionStore({ pragmaHome: f.home });
+      const missions = createMissionStore({
+        missionsPath: new PragmaPaths({ pragmaHome: f.home }).missionsRoot(),
+      });
+      try {
+        expect((await executions.get(started.executionId!))?.input).toEqual(input);
+        await expect(missions.get(started.missionId)).rejects.toMatchObject({
+          code: "mission_not_found",
+        });
+      } finally {
+        executions.close();
+      }
+    },
+  );
+
+  it.each([false, true])(
+    "resumes a real HumanTask through the Node facade without replaying its Expert effect (controller-only=%s)",
+    { timeout: 20_000 },
+    async (controllerOnly) => {
+      const f = await fixture(false, true);
+      const started = await f.app.run!.start({
+        requestId: randomUUID(),
+        command: "flow.run",
+        executor: { kind: "flow", id: PUBLISHED_FLOW_ID },
+        project: { projectId: "studio", revision: 1 },
+        workspace: f.workspace,
+        input: controllerOnly ? "controller-only input" : {},
+        detach: false,
+      });
+      expect((await started.outcome).status).toBe("input_required");
+      const store = createSqliteExecutionStore({ pragmaHome: f.home });
+      const original = await store.listContexts(started.executionId!);
+      const paths = new PragmaPaths({ pragmaHome: f.home });
+      const originalNative = await readRuntimeSessionsForOwners(paths, [started.executionId!]);
+      expect(f.startTurn).toHaveBeenCalledOnce();
+      await f.app.dispose?.();
+      const cold = createLocalHostNodeApplication({
+        pragmaHome: f.home,
+        runtimes: f.runtimes,
+        client: { surface: "desktop", version: "test", instanceId: randomUUID() },
+      });
+      try {
+        const resumed = await cold.resumeMission!({
+          missionId: started.missionId,
+          requestId: randomUUID(),
+          onHumanInteraction: async () => ({
+            kind: "respond",
+            response: { answers: { "Continue?": "Yes" } },
+          }),
+        });
+        expect(resumed.execution.status).toBe("succeeded");
+        expect(f.startTurn).toHaveBeenCalledOnce();
+        expect(
+          (await store.listContexts(started.executionId!)).map((context) => context.snapshot),
+        ).toEqual(original.map((context) => context.snapshot));
+        expect(await readRuntimeSessionsForOwners(paths, [started.executionId!])).toEqual(
+          originalNative,
+        );
+      } finally {
+        await cold.dispose?.();
+        store.close();
+      }
+    },
+  );
+
   it.each(["expert", "team", "flow"] as const)(
     "records compiled environment and active Capability revision for %s",
     async (kind) => {

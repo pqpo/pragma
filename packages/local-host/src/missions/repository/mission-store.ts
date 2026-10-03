@@ -1093,7 +1093,25 @@ export function createMissionStore(options: {
           const summary = toMissionSummary(mission, await getListSource(mission));
           return { missionId, summary } as const;
         } catch (error) {
-          return { missionId, error: normalizeReadError(error, missionId) } as const;
+          const normalized = normalizeReadError(error, missionId);
+          if (normalized.code === "mission_not_found") {
+            const controller = await readJsonIfExists(
+              join(missionPath(missionId), "local-host", "aggregate.json"),
+            );
+            if (controller !== undefined) {
+              try {
+                const state = MissionAggregateStateSchema.parse(controller);
+                if (state.missionId !== missionId)
+                  throw new Error("Controller owner mismatch.", { cause: error });
+                // A controller-only owner is valid, but cannot be invented as
+                // a renderer Mission with project, origin and initial input.
+                return { missionId } as const;
+              } catch (cause) {
+                return { missionId, error: normalizeReadError(cause, missionId) } as const;
+              }
+            }
+          }
+          return { missionId, error: normalized } as const;
         }
       });
       const summaries: MissionSummary[] = [];

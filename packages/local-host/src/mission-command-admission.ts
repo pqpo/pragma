@@ -4,6 +4,41 @@ import { MissionSemanticWritePendingError } from "./missions/controller/mission-
 import { createIntegrationError } from "@pragma/shared/integration";
 import type { ExpertPromptAttachment } from "@pragma/shared";
 
+export type LocalHostMissionPromptAdmissionHook = (
+  missionId: string,
+  requestId: string,
+) => Promise<void | (() => Promise<void>)>;
+
+/** Optional Memory admission must neither reject Core work nor mask its failure. */
+export async function beginLocalHostMissionPromptAdmission(
+  hook: LocalHostMissionPromptAdmissionHook | undefined,
+  missionId: string,
+  requestId: string,
+  onError?: ((error: unknown) => void) | undefined,
+): Promise<(() => Promise<void>) | undefined> {
+  const report = (error: unknown): void => {
+    try {
+      onError?.(error);
+    } catch {
+      /* Diagnostic failures do not change prompt admission. */
+    }
+  };
+  try {
+    const rollback = await hook?.(missionId, requestId);
+    if (rollback === undefined) return undefined;
+    return async () => {
+      try {
+        await rollback();
+      } catch (error) {
+        report(error);
+      }
+    };
+  } catch (error) {
+    report(error);
+    return undefined;
+  }
+}
+
 const missionAdmissionFactory = Symbol("local-host.mission-command-admission");
 
 export interface LocalHostMissionCommandAdmission<Result> {
@@ -75,6 +110,8 @@ export function createLocalHostMissionCommandAdmission<
   Result,
   PreparationScope = undefined,
 >(options: {
+  readonly onPromptAdmitting?: LocalHostMissionPromptAdmissionHook | undefined;
+  readonly onPromptAdmissionError?: ((error: unknown) => void) | undefined;
   readonly onAccepted?: ((input: MissionMessageAdmissionInput) => void) | undefined;
   readonly onPhase?:
     | ((input: {
@@ -253,6 +290,12 @@ export function createLocalHostMissionCommandAdmission<
                 }
               }
             }
+            const rollbackPromptAdmission = await beginLocalHostMissionPromptAdmission(
+              options.onPromptAdmitting,
+              mission.id,
+              input.requestId,
+              options.onPromptAdmissionError,
+            );
             const promptStartedAt = performance.now();
             const turn = await session
               .prompt(input.content, {
@@ -275,7 +318,8 @@ export function createLocalHostMissionCommandAdmission<
                   ? {}
                   : { modelSelection: prepared.promptModelSelection }),
               })
-              .catch((error: unknown) => {
+              .catch(async (error: unknown) => {
+                await rollbackPromptAdmission?.();
                 if (
                   requestedMode === "steer" &&
                   error instanceof SteerNotDispatchedError &&

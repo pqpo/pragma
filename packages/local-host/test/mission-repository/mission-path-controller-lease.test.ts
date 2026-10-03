@@ -65,6 +65,37 @@ async function fixture() {
 }
 
 describe("Mission path migration and historical controller leases", () => {
+  it("shares one authority with a historical controller that reacquires after path upgrade", async () => {
+    const { missionsPath, store, legacy, missionId, guard, host } = await fixture();
+    await legacy.release({ missionId, guard });
+    await host.queryMission({ missionId, view: "summary", limit: 20 });
+    const canonical = createMissionControllerStore({
+      missionsPath,
+      missionPath: store.storagePath,
+    });
+    const claimed = await canonical.claim({
+      missionId,
+      claimId: "66666666-6666-4666-8666-666666666666",
+      leaseMs: 60_000,
+    });
+    await expect(
+      legacy.claim({ missionId, claimId: "77777777-7777-4777-8777-777777777777", leaseMs: 60_000 }),
+    ).rejects.toMatchObject({ code: "MISSION_LEASE_HELD" });
+    expect((await legacy.readSnapshot({ missionId })).snapshot.lease?.claimId).toBe(
+      claimed.claimId,
+    );
+    await canonical.release({ missionId, guard: claimed });
+    const reacquired = await legacy.claim({
+      missionId,
+      claimId: "77777777-7777-4777-8777-777777777777",
+      leaseMs: 60_000,
+    });
+    await expect(
+      canonical.claim({ missionId, claimId: claimed.claimId, leaseMs: 60_000 }),
+    ).rejects.toMatchObject({ code: "MISSION_LEASE_HELD" });
+    await legacy.release({ missionId, guard: reacquired });
+  });
+
   it("refuses Node reads and control while an old UUID-path controller is live, then preserves facts on migration", async () => {
     const { missionsPath, store, legacy, missionId, guard, host, dispatch } = await fixture();
     const original = await readFile(

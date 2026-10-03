@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { z } from "zod";
@@ -90,6 +91,7 @@ export function createLocalHostNodeExecutionResourcePorts(options: {
       executionStore,
       expertSessionStore,
       purpose,
+      assertExecutionOwnership,
     }) => {
       if (purpose === "stop")
         return {
@@ -106,6 +108,7 @@ export function createLocalHostNodeExecutionResourcePorts(options: {
             throw new Error("Cannot change tool permissions in a stop-only Mission context.");
           },
         };
+      const memoryBindingId = randomUUID();
       let historyIds: Promise<ReadonlySet<string>> | undefined;
       const branchHistory = await options.missions.readBranchHistory(mission.id);
       const branchBindings: readonly ExpertAgentContextStoreRegistrationInput[] =
@@ -121,6 +124,7 @@ export function createLocalHostNodeExecutionResourcePorts(options: {
               },
             ];
       const resolveHostContextBindings: HostContextBindingsResolver = async () => {
+        await assertExecutionOwnership?.();
         const current = await options.missions.get(mission.id);
         const mounted = await Promise.all(
           current.contextMounts.map(async (mount) => {
@@ -165,6 +169,7 @@ export function createLocalHostNodeExecutionResourcePorts(options: {
           })),
           ...(await options.memory.bindings({
             missionId: mission.id,
+            bindingId: memoryBindingId,
             goal: mission.goal,
             projectId: mission.project.id,
           })),

@@ -45,7 +45,7 @@ import {
   type LocalHostSystemExecutorSource,
   type MissionOwnerScope,
 } from "@pragma/local-host";
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { mkdir } from "node:fs/promises";
 import { join } from "node:path";
 import {
@@ -138,7 +138,10 @@ export interface DesktopMissionRunnerOptions {
   readonly knowledgeRevisionMountResources?: (() => readonly PragmaResource[]) | undefined;
   readonly hostContextStores?:
     | readonly ExpertAgentContextStoreRegistrationInput[]
-    | ((mission: Mission) => Promise<readonly ExpertAgentContextStoreRegistrationInput[]>)
+    | ((
+        mission: Mission,
+        bindingId: string,
+      ) => Promise<readonly ExpertAgentContextStoreRegistrationInput[]>)
     | undefined;
   readonly plugins?: PluginStore | undefined;
   readonly resolveSecret?: ((ref: string) => Promise<string | undefined>) | undefined;
@@ -208,6 +211,7 @@ export interface DesktopMissionRunnerOptions {
         readonly requestId: string;
       }) => Promise<void>)
     | undefined;
+  readonly onPromptAdmitting?: LocalHostMissionExecutionServiceOptions["onPromptAdmitting"];
   readonly onMissionActivity?:
     ((input: { readonly mission: Mission }) => Promise<void>) | undefined;
   readonly invalidateRuntimeReadiness?: (() => void) | undefined;
@@ -245,6 +249,7 @@ export function createMissionRunner(
       createExecutionContextResources: async ({
         mission,
         purpose,
+        assertExecutionOwnership,
         executionStore,
         expertSessionStore,
       }) => {
@@ -519,22 +524,26 @@ export function createMissionRunner(
                   mutationApproval: "none" as const,
                 },
               ];
+        const memoryBindingId = randomUUID();
         const resolveConfiguredHostContextBindings = async (): Promise<
           readonly ExpertAgentContextStoreRegistrationInput[]
         > => {
           if (systemMission || options.hostContextStores === undefined) return [];
           return typeof options.hostContextStores === "function"
-            ? await options.hostContextStores(mission)
+            ? await options.hostContextStores(mission, memoryBindingId)
             : options.hostContextStores;
         };
-        const resolveHostContextBindings: HostContextBindingsResolver = async () => [
-          ...(await resolveConfiguredHostContextBindings()),
-          ...legacyExecutionOutputBindings,
-          ...branchHistoryBindings,
-          ...board.bindings,
-          ...(await resolveMissionKnowledgeBindings()),
-          ...(await resolveActiveKnowledgeRevisionBindings()),
-        ];
+        const resolveHostContextBindings: HostContextBindingsResolver = async () => {
+          await assertExecutionOwnership?.();
+          return [
+            ...(await resolveConfiguredHostContextBindings()),
+            ...legacyExecutionOutputBindings,
+            ...branchHistoryBindings,
+            ...board.bindings,
+            ...(await resolveMissionKnowledgeBindings()),
+            ...(await resolveActiveKnowledgeRevisionBindings()),
+          ];
+        };
         const hostContextBindings = await resolveHostContextBindings();
         const seenNamespaces = new Set<string>();
         for (const binding of hostContextBindings) {

@@ -1,3 +1,7 @@
+import {
+  beginLocalHostMissionPromptAdmission,
+  type LocalHostMissionPromptAdmissionHook,
+} from "../mission-command-admission.ts";
 import { resumeLocalHostMission } from "./resume-use-case.ts";
 import {
   createControllerFactExecutionPorts,
@@ -5,7 +9,11 @@ import {
 } from "./controller-fact-execution.ts";
 import { createMissionPersistenceControlRouter } from "./persistence-control-router.ts";
 export type { LocalHostMissionControllerFactResources } from "./controller-fact-execution.ts";
-import { openLocalHostFlowExecution, stopLocalHostFlowExecution } from "./flow-lifecycle.ts";
+import {
+  openLocalHostFlowExecution,
+  releaseLocalHostFlowExecution,
+  stopLocalHostFlowExecution,
+} from "./flow-lifecycle.ts";
 import { createMissionRequestResourceRelease } from "./request-resource-release.ts";
 import { openLocalHostExpertSession, releaseLocalHostExpertSession } from "./session-lifecycle.ts";
 import { trackMissionDeletionSettlement } from "./mission-deletion-settlement.ts";
@@ -330,6 +338,7 @@ export interface LocalHostMissionExecutionResourcePorts {
   createExecutionContextResources(input: {
     readonly mission: Mission;
     readonly purpose: "execute" | "stop";
+    readonly assertExecutionOwnership?: (() => Promise<void>) | undefined;
     readonly executionStore: DurableExecutionStore;
     readonly expertSessionStore: ReturnType<typeof createFileExpertSessionStore>;
   }): Promise<LocalHostMissionExecutionContextResources>;
@@ -408,6 +417,7 @@ export interface LocalHostMissionExecutionServiceOptions {
         readonly requestId: string;
       }) => Promise<void>)
     | undefined;
+  readonly onPromptAdmitting?: LocalHostMissionPromptAdmissionHook | undefined;
   readonly onMissionActivity?:
     ((input: { readonly mission: Mission }) => Promise<void>) | undefined;
   readonly invalidateRuntimeReadiness?: (() => void) | undefined;
@@ -418,6 +428,7 @@ export interface LocalHostMissionExecutionServiceOptions {
         readonly status: "succeeded" | "failed" | "cancelled";
         readonly result?: unknown;
         readonly error?: unknown;
+        readonly guard?: import("../index.ts").MissionControllerGuard | undefined;
       }) => Promise<void>)
     | undefined;
   readonly onExecutionTerminal?:
@@ -622,18 +633,20 @@ export function createLocalHostMissionExecutionService(
     mission: Mission,
     purpose: "execute" | "stop",
   ): Promise<MissionExecutionContext> => {
+    const executionScope = options.ownerScope ?? standaloneOwnerScope;
     let executionGuard: Awaited<ReturnType<MissionOwnerScope["acquire"]>> | undefined;
+    if (executionScope !== undefined) {
+      bindStandaloneConsumer();
+      executionGuard = await executionScope.acquire(mission.id);
+    }
     const assertExecutionOwnership =
-      options.ownerScope === undefined
+      executionScope === undefined
         ? undefined
-        : async () => {
-            bindStandaloneConsumer();
-            executionGuard ??= await options.ownerScope!.acquire(mission.id);
-            await options.ownerScope!.assertOwnership(mission.id, executionGuard);
-          };
+        : async () => await executionScope.assertOwnership(mission.id, executionGuard!);
     const resources = await options.resourcePorts.createExecutionContextResources({
       mission,
       purpose,
+      assertExecutionOwnership,
       executionStore,
       expertSessionStore,
     });
@@ -1346,6 +1359,10 @@ export function createLocalHostMissionExecutionService(
     readonly onFinished?: (() => void | Promise<void>) | undefined;
   }): void => {
     const missionId = input.mission.id;
+    // Each observer keeps the claim that authorized its Core execution. A late
+    // terminal callback must never borrow a successor owner's fence.
+    const projectionOwnerScope = options.ownerScope ?? standaloneOwnerScope;
+    const projectionGuard = projectionOwnerScope?.currentGuard(missionId);
     if (lifecycleService.active(missionId)?.handle.executionId === input.handle.executionId) return;
     if (
       input.runGeneration !== undefined &&
@@ -1516,17 +1533,10 @@ export function createLocalHostMissionExecutionService(
       async () => {
         await humanWaitingObserver.drain();
         await input.onFinished?.();
-        if (options.commitExecutionTerminal !== undefined && terminalOutcome !== undefined)
-          await options.onExecutionTerminal?.({
-            mission: input.mission,
-            executionId: input.handle.executionId,
-            ...terminalOutcome,
-          });
       },
       input.sessionId,
       async (terminal) => {
         humanWaitingObserver.stop();
-        terminalOutcome = terminal;
         const mission = input.mission;
         if (terminal.status === "failed") options.invalidateRuntimeReadiness?.();
         // Core already committed the terminal fact. A rebuildable Mission
@@ -1545,11 +1555,26 @@ export function createLocalHostMissionExecutionService(
           });
         }
         if (options.commitExecutionTerminal !== undefined) {
-          await options.commitExecutionTerminal({
-            mission,
-            executionId: input.handle.executionId,
-            ...terminal,
-          });
+          if (projectionGuard !== undefined)
+            await projectionOwnerScope!.assertOwnership(missionId, projectionGuard);
+          terminalOutcome = terminal;
+          try {
+            await options.commitExecutionTerminal({
+              guard: projectionGuard,
+              mission,
+              executionId: input.handle.executionId,
+              ...terminal,
+            });
+          } catch (error) {
+            if (
+              typeof error === "object" &&
+              error !== null &&
+              "code" in error &&
+              error.code === "MISSION_FENCING_REJECTED"
+            )
+              terminalOutcome = undefined;
+            throw error;
+          }
           if (terminal.status === "cancelled" && options.ownerLifetime === "request") {
             await retryMissionProjectionWrite(
               options.missions,
@@ -1568,6 +1593,7 @@ export function createLocalHostMissionExecutionService(
           options.wakeExecutionDelivery?.();
           return;
         }
+        terminalOutcome = terminal;
         let canonicalProjectionFailure: unknown;
         try {
           await retryMissionEventProjection(async () =>
@@ -1669,6 +1695,18 @@ export function createLocalHostMissionExecutionService(
         onDurableTerminal: (error) =>
           error === undefined ? durableTerminalResolve() : durableTerminalReject(error),
         deferEnrichment: options.ownerLifetime === "request",
+        assertEnrichmentOwnership:
+          projectionGuard === undefined
+            ? undefined
+            : async () => await projectionOwnerScope!.assertOwnership(missionId, projectionGuard),
+        onTerminalEnrichment: async () => {
+          if (options.commitExecutionTerminal !== undefined && terminalOutcome !== undefined)
+            await options.onExecutionTerminal?.({
+              mission: input.mission,
+              executionId: input.handle.executionId,
+              ...terminalOutcome,
+            });
+        },
       },
     )
       .then((kind) => {
@@ -1754,6 +1792,17 @@ export function createLocalHostMissionExecutionService(
             sessionService.executionContext(missionId) !== requestContext
           )
             return false;
+          // Explicit resume owns its receipt and lease release. A recovered
+          // terminal can arrive before that reserved operation is completed.
+          if (
+            controllerFactResources !== undefined &&
+            (await controllerFactResources.controller.listOperations({ missionId })).some(
+              (operation) =>
+                operation.kind === "resume" &&
+                (operation.state === "queued" || operation.state === "applying"),
+            )
+          )
+            return false;
           if (requestSession !== undefined) {
             const prompts = await requestSession.getPromptQueue();
             if (
@@ -1789,6 +1838,8 @@ export function createLocalHostMissionExecutionService(
         releaseSession: async () => {
           if (requestSession !== undefined)
             await releaseLocalHostExpertSession(requestSession, "idle");
+          else if (input.mission.executor.kind === "flow")
+            await releaseLocalHostFlowExecution(input.handle);
         },
         detach: () => {
           if (requestSession !== undefined) {
@@ -1803,7 +1854,7 @@ export function createLocalHostMissionExecutionService(
         releaseOwner: async () => {
           if (requestGuard !== undefined) {
             await options.ownerScope!.assertOwnership(missionId, requestGuard);
-            await options.ownerScope!.release(missionId);
+            await options.ownerScope!.release(missionId, requestGuard);
           }
         },
       });
@@ -2235,22 +2286,49 @@ export function createLocalHostMissionExecutionService(
       });
     }
     phaseStartedAt = performance.now();
+    const promptRequestId =
+      recoveredTurn?.requestId ?? (recoverable ? randomUUID() : inputMessageId);
+    const rollbackPromptAdmission =
+      recoveredTurn === undefined
+        ? await beginLocalHostMissionPromptAdmission(
+            options.onPromptAdmitting,
+            mission.id,
+            promptRequestId,
+            (error) =>
+              logger.warn(
+                "mission.prompt_resource_admission_degraded",
+                "Optional prompt resources need recovery.",
+                {
+                  error,
+                  missionId: mission.id,
+                  requestId: promptRequestId,
+                  moduleId: "pragma.mission-resource-delivery",
+                  errorCode: "MISSION_PROMPT_RESOURCE_ADMISSION_DEGRADED",
+                },
+              ),
+          )
+        : undefined;
     const turn =
       recoveredTurn ??
-      (await session.prompt(
-        recoverable
-          ? [
-              "[Pragma mission recovery]",
-              "The previous Host process ended before this mission finished.",
-              "Continue the pinned mission from the restored ExpertSession context.",
-              `Mission goal: ${mission.goal}`,
-            ].join("\n")
-          : mission.goal,
-        {
-          requestId: recoverable ? randomUUID() : inputMessageId,
-          ...(promptAttachments.length === 0 ? {} : { attachments: promptAttachments }),
-        },
-      ));
+      (await session
+        .prompt(
+          recoverable
+            ? [
+                "[Pragma mission recovery]",
+                "The previous Host process ended before this mission finished.",
+                "Continue the pinned mission from the restored ExpertSession context.",
+                `Mission goal: ${mission.goal}`,
+              ].join("\n")
+            : mission.goal,
+          {
+            requestId: promptRequestId,
+            ...(promptAttachments.length === 0 ? {} : { attachments: promptAttachments }),
+          },
+        )
+        .catch(async (error: unknown) => {
+          await rollbackPromptAdmission?.();
+          throw error;
+        }));
     if (!lifecycleService.isRunGenerationCurrent(mission.id, runGeneration)) {
       await settlementOutcomeWithin(turn.cancel("Superseded Mission recovery generation."), 5_000);
       throw createIntegrationError({
@@ -2523,6 +2601,17 @@ export function createLocalHostMissionExecutionService(
     };
   };
   const sendMissionMessage = createLocalHostMissionCommandAdmission({
+    onPromptAdmitting: options.onPromptAdmitting,
+    onPromptAdmissionError: (error) =>
+      logger.warn(
+        "mission.prompt_resource_admission_degraded",
+        "Optional prompt resources need recovery.",
+        {
+          error,
+          moduleId: "pragma.mission-resource-delivery",
+          errorCode: "MISSION_PROMPT_RESOURCE_ADMISSION_DEGRADED",
+        },
+      ),
     onAccepted: (input) =>
       logger.info("mission.message_accepted", "Mission request accepted", {
         missionId: input.id,
@@ -2976,6 +3065,7 @@ export function createLocalHostMissionExecutionService(
           missionId: id,
           errorCode: error.message,
           outcome: stopped.status,
+          ...(stopped.status === "rejected" ? { error: stopped.error } : {}),
           unconfirmedSystemSessionIds: unconfirmedOwners.map((record) => record.systemSessionId),
         },
       );
@@ -4358,6 +4448,8 @@ export function createLocalHostMissionExecutionService(
       releaseSession: async () => {
         if (requestSession !== undefined)
           await releaseLocalHostExpertSession(requestSession, "idle");
+        else if (input.request.executor.kind === "flow")
+          await releaseLocalHostFlowExecution(current.handle);
       },
       detach: () => {
         if (requestSession !== undefined) {
@@ -4372,7 +4464,7 @@ export function createLocalHostMissionExecutionService(
       releaseOwner: async () => {
         if (requestOwner !== undefined) {
           await options.ownerScope!.assertOwnership(input.missionId, requestOwner);
-          await options.ownerScope!.release(input.missionId);
+          await options.ownerScope!.release(input.missionId, requestOwner);
         }
       },
     });
@@ -5588,7 +5680,7 @@ export function createLocalHostMissionExecutionService(
           sessionService.session(id) === undefined &&
           !lifecycleService.hasActive(id)
         ) {
-          await standaloneScope.release(id);
+          await standaloneScope.release(id, standaloneGuard);
         }
       };
       chatService.clearReads(id);
@@ -5720,6 +5812,7 @@ export function createLocalHostMissionExecutionService(
           !(await controllerFactResources.hasEnvelope(id))
         ) {
           const owner = executionOwner.controlOwner(id);
+          let releasedExecutionId: string | undefined;
           if (owner?.kind === "session") {
             const [state, prompts] = await Promise.all([
               owner.session.getState(),
@@ -5731,17 +5824,24 @@ export function createLocalHostMissionExecutionService(
               Date.now() - Date.parse(state.updatedAt) < idleTimeoutMs
             )
               return false;
+            releasedExecutionId = state.executionIds.at(-1);
             await releaseLocalHostExpertSession(owner.session, "terminal");
             if (!executionOwner.deleteControlOwnerIfCurrent(id, owner)) return false;
           } else if (owner?.kind === "flow") {
+            releasedExecutionId = owner.execution.executionId;
             const execution = await executionStore.get(owner.execution.executionId);
             if (execution !== undefined && !isMissionTerminalExecutionStatus(execution.status))
               return false;
+            await releaseLocalHostFlowExecution(owner.execution);
             if (!executionOwner.deleteControlOwnerIfCurrent(id, owner)) return false;
           }
           await releaseOwner();
-          void controllerFactResources.memory
-            ?.terminal(id)
+          const backgroundRelease =
+            releasedExecutionId === undefined
+              ? Promise.resolve()
+              : (controllerFactResources.memory?.terminal(id, releasedExecutionId) ??
+                Promise.resolve());
+          void backgroundRelease
             .finally(async () => await controllerFactResources?.memory?.release?.())
             .catch((error: unknown) =>
               logger.warn(
@@ -5784,6 +5884,11 @@ export function createLocalHostMissionExecutionService(
               : await executionStore.get(mission.execution.id);
           if (execution !== undefined && !isMissionTerminalExecutionStatus(execution.status))
             return false;
+          const owner = executionOwner.controlOwner(id);
+          if (owner?.kind === "flow") {
+            await releaseLocalHostFlowExecution(owner.execution);
+            if (!executionOwner.deleteControlOwnerIfCurrent(id, owner)) return false;
+          }
         }
         if (executionContext !== undefined)
           sessionService.deleteExecutionContextIfCurrent(id, executionContext);
@@ -5836,7 +5941,9 @@ export function createLocalHostMissionExecutionService(
         await persistMissionDeletionIntent(options.missions.storagePath?.(id), id);
         const inFlight = lifecycleService.run(id);
         lifecycleService.forgetRun(id);
-        await (options.ownerScope ?? standaloneOwnerScope)?.forceRevoke(id);
+        // The deletion intent freezes new admission. Preserve the original
+        // claim for Core cancellation and Native teardown; terminalDelete stops
+        // the consumer and holds that claim until the owner graph is moved.
         logger.info("mission.delete_phase", "Mission admission frozen.", {
           missionId: id,
           phase: "freeze",
@@ -5925,9 +6032,7 @@ export function createLocalHostMissionExecutionService(
     }
     const restored = lifecycleService.active(id);
     if (restored === undefined) {
-      throw new Error(
-        "This human interaction could not be restored in the current Host process.",
-      );
+      throw new Error("This human interaction could not be restored in the current Host process.");
     }
     if (interactionId !== "") await waitForRestoredHumanInteraction(restored.handle, interactionId);
     return restored;

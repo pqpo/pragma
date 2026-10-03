@@ -423,7 +423,11 @@ describe("MissionRunner", { timeout: 30_000 }, () => {
         executionStore: executions,
         ownerScope: lifecycle.ownerScope,
         loggerProvider: createNoopLoggerProvider(),
-        commitExecutionTerminal: terminalProjector.terminal,
+        commitExecutionTerminal: async (input) => {
+          expect(input.guard).toEqual(lifecycle.ownerScope.currentGuard(input.mission.id));
+          expect(input.guard).toBeDefined();
+          await terminalProjector.terminal(input);
+        },
       });
       const sessions = runner.controllerFactSessionStore;
       const association = createMissionSessionAssociationResolver({

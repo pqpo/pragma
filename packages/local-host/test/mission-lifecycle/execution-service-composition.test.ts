@@ -9,6 +9,7 @@ import {
   type RuntimeResolver,
 } from "@pragma/core";
 import { defineRuntimeTestDriver } from "@pragma/core/testing";
+import { releaseLocalHostFlowExecution } from "../../src/missions/flow-lifecycle.ts";
 import { MissionExecutionOwner } from "../../src/missions/execution-owner.ts";
 import { describe, expect, it, vi } from "vitest";
 import { createSqliteExecutionStore } from "../../src/execution/sqlite-execution-store.ts";
@@ -152,6 +153,210 @@ describe("execution service composition", () => {
     },
     15_000,
   );
+  it("retains a terminal controller-only Flow lease until native idle release completes", async () => {
+    const home = await mkdtemp(join(tmpdir(), "pragma-controller-flow-idle-"));
+    const executions = createSqliteExecutionStore({ pragmaHome: home });
+    const owners = new MissionExecutionOwner();
+    const controller = createMissionControllerStore({ missionsPath: join(home, "missions") });
+    const scope = createMissionOwnerScope({ controller });
+    scope.bindConsumer({ apply: async () => ({ result: {} }) });
+    let unblockClose = (): void => undefined;
+    const closeGate = new Promise<void>((resolve) => {
+      unblockClose = resolve;
+    });
+    const nativeClosed = vi.fn();
+    const nativeClose = vi.fn(async () => {
+      await closeGate;
+      nativeClosed();
+    });
+    const runtime = defineRuntimeTestDriver<never, { id: string }>({
+      descriptor: { id: "fake", kind: "fake", displayName: "Fake" },
+      createSession: ({ systemSessionId }) => ({ id: systemSessionId }),
+      readSession: (session) => ({ runtimeSessionId: session.id }),
+      startTurn: async () => ({ outputText: "done" }),
+      closeSession: nativeClose,
+      mapEvent: () => ({ events: [] }),
+    });
+    const runtimes = createStaticRuntimeResolver({ runtimes: [runtime], defaultRuntimeId: "fake" });
+    const service = createLocalHostMissionExecutionService({
+      pragmaHome: home,
+      executionStore: executions,
+      executionOwner: owners,
+      ownerScope: scope,
+      missions: {} as MissionStore,
+      runtimes,
+      resourcePorts: { createCompileService: () => ({}) } as LocalHostMissionExecutionResourcePorts,
+    });
+    service.bindControllerFacts({
+      controller,
+      hasEnvelope: async () => false,
+      resolveSessionId: async () => undefined,
+      resolveMissionBinding: async () => undefined,
+      executors: [],
+    });
+    const app = createPragma({
+      pragmaHome: home,
+      runtimes,
+      executionStore: executions,
+      expertSessionStore: service.controllerFactSessionStore,
+    });
+    const expert = await defineExpert({
+      id: "aaaaaaaaaaaaaaaa",
+      name: "Finishing expert",
+      scope: "test",
+      description: "",
+      tags: [],
+      workspace: home,
+      pragmaHome: home,
+    });
+    const flow = defineFlow({ id: "idle-flow" });
+    const step = flow.use("expert", expert);
+    flow.compose(({ start, end }) => start(step).next(end()));
+    const missionId = crypto.randomUUID();
+    const guard = await scope.acquire(missionId);
+    const handle = await app.flows.start(flow, { input: {} });
+    void handle.result.catch(() => undefined);
+    const owner = { kind: "flow" as const, execution: handle };
+    owners.setControlOwner(missionId, owner, "recovered");
+    let releasing: Promise<boolean> | undefined;
+    try {
+      await handle.result;
+      await vi.waitFor(() => expect(nativeClose).toHaveBeenCalled());
+      let released = false;
+      releasing = service.releaseIdleSession(missionId, 0, async () => {
+        released = true;
+        await scope.release(missionId);
+      });
+      await new Promise<void>((resolve) => setTimeout(resolve, 50));
+      expect(nativeClosed).not.toHaveBeenCalled();
+      expect(released).toBe(false);
+      expect(owners.controlOwner(missionId)).toBe(owner);
+      await expect(scope.assertOwnership(missionId, guard)).resolves.toBeUndefined();
+      unblockClose();
+      await expect(releasing).resolves.toBe(true);
+      expect(nativeClosed).toHaveBeenCalled();
+      expect(owners.controlOwner(missionId)).toBeUndefined();
+      expect((await executions.get(handle.executionId))?.status).toBe("succeeded");
+    } finally {
+      unblockClose();
+      await releasing;
+      await handle.stopForDeletion("test cleanup");
+      await scope.stop(missionId);
+      await vi.waitFor(async () => {
+        const contexts = await executions.listContexts(handle.executionId);
+        expect(contexts.every((context) => context["lifecycle"] === "closed")).toBe(true);
+      });
+      await executions.close();
+      await rm(home, { recursive: true, force: true });
+    }
+  });
+  it("confirms checkpoint native release without cancelling a waiting HumanTask", async () => {
+    const home = await mkdtemp(join(tmpdir(), "pragma-flow-checkpoint-native-"));
+    const executions = createSqliteExecutionStore({ pragmaHome: home });
+    let unblockClose = (): void => undefined;
+    const closeGate = new Promise<void>((resolve) => {
+      unblockClose = resolve;
+    });
+    unblockClose();
+    const effects = vi.fn(() => ({ outputText: "done" }));
+    const nativeClosed = vi.fn();
+    const nativeClose = vi.fn(async () => {
+      await closeGate;
+      nativeClosed();
+    });
+    const runtime = defineRuntimeTestDriver<never, { id: string }>({
+      descriptor: { id: "fake", kind: "fake", displayName: "Fake" },
+      createSession: ({ systemSessionId }) => ({ id: systemSessionId }),
+      readSession: (session) => ({ runtimeSessionId: session.id }),
+      startTurn: effects,
+      closeSession: nativeClose,
+      mapEvent: () => ({ events: [] }),
+    });
+    const runtimes = createStaticRuntimeResolver({ runtimes: [runtime], defaultRuntimeId: "fake" });
+    const app = createPragma({ pragmaHome: home, runtimes, executionStore: executions });
+    const expert = await defineExpert({
+      id: "aaaaaaaaaaaaaaaa",
+      name: "Checkpoint expert",
+      scope: "test",
+      description: "",
+      tags: [],
+      workspace: home,
+      pragmaHome: home,
+    });
+    const flow = defineFlow({ id: "checkpoint-native-flow" });
+    const step = flow.use("expert", expert);
+    const human = flow.humanTask({
+      id: "gate",
+      request: { kind: "manual_intervention", prompt: "Continue?" },
+    });
+    flow.compose(({ start, end }) => start(step).next(human).next(end()));
+    const handle = await app.flows.start(flow, { input: {} });
+    void handle.result.catch(() => undefined);
+    let recovered: typeof handle | undefined;
+    try {
+      await vi.waitFor(
+        async () =>
+          expect(
+            (await executions.listInvocations(handle.executionId)).some(
+              (invocation) =>
+                invocation.status === "waiting" && invocation.waitReason === "human_input",
+            ),
+          ).toBe(true),
+        { timeout: 3000 },
+      );
+      const originalContexts = await executions.listContexts(handle.executionId);
+      const events = await handle.listEvents({ scope: { kind: "all" } });
+      const interactionId = events.items.find((event) => event.type === "human.requested")?.data[
+        "interactionId"
+      ];
+      expect(typeof interactionId).toBe("string");
+      const subscription = await handle.subscribeEvents({ scope: { kind: "all" } });
+      const finished = (async () => {
+        for await (const event of subscription) {
+          expect(event.executionId).toBe(handle.executionId);
+        }
+      })();
+      await handle.checkpointWaitingHuman();
+      await vi.waitFor(() => expect(nativeClose).toHaveBeenCalled());
+      await releaseLocalHostFlowExecution(handle);
+      expect((await handle.getState()).status).toBe("waiting");
+      expect(nativeClosed).toHaveBeenCalled();
+      expect((await handle.getState()).status).toBe("waiting");
+      recovered = await app.flows.recover(flow, { executionId: handle.executionId });
+      expect(recovered).not.toBe(handle);
+      await finished;
+      await subscription.close();
+      void recovered.result.catch(() => undefined);
+      await recovered.respondToHumanInteraction(
+        interactionId as string,
+        { kind: "user_question", answered: true, answers: { "Continue?": "yes" } },
+        { requestId: crypto.randomUUID() },
+      );
+      await recovered.result;
+      await releaseLocalHostFlowExecution(recovered);
+      expect(effects).toHaveBeenCalledTimes(1);
+      expect((await recovered.getState()).status).toBe("succeeded");
+      const contexts = await executions.listContexts(handle.executionId);
+      for (const original of originalContexts)
+        expect(
+          contexts.find((context) => context.contextId === original.contextId)?.snapshot,
+        ).toEqual(original.snapshot);
+    } finally {
+      unblockClose();
+      await recovered?.cancel("test cleanup");
+      await handle.cancel("test cleanup");
+      await handle.releaseRuntimeResources();
+      await vi.waitFor(async () =>
+        expect(
+          (await executions.listContexts(handle.executionId)).every(
+            (context) => context.lifecycle === "closed",
+          ),
+        ).toBe(true),
+      );
+      await executions.close();
+      await rm(home, { recursive: true, force: true });
+    }
+  });
   it("leaves Inbox consumer binding to the composed persistence router", async () => {
     const home = await mkdtemp(join(tmpdir(), "pragma-execution-composition-"));
     const executions = createSqliteExecutionStore({ pragmaHome: home });

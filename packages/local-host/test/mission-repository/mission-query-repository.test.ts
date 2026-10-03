@@ -45,6 +45,61 @@ async function fixture() {
 }
 
 describe("Mission query repository authority", () => {
+  it("never returns an old turn result and prefers durable facts for the actual current Execution", async () => {
+    const { repository, mission, query, controller } = await fixture();
+    const previousId = "77777777-7777-4777-8777-777777777777";
+    const currentId = "88888888-8888-4888-8888-888888888888";
+    const guard = await controller.claim({
+      missionId: mission.id,
+      claimId: "99999999-9999-4999-8999-999999999999",
+      leaseMs: 60_000,
+    });
+    await controller.write({
+      missionId: mission.id,
+      guard,
+      operation: async ({ appendEvent }) => {
+        await appendEvent("mission.created", {
+          executor: { kind: "expert", id: "1xddvess309a6gme" },
+          workspace: mission.workspace.path,
+        });
+        await appendEvent("run.started", { executionId: previousId });
+        await appendEvent("run.succeeded", { executionId: previousId, result: { previous: true } });
+      },
+    });
+    await repository.updateExecution(mission.id, {
+      id: currentId,
+      inputMessageId: mission.initialMessageId,
+      status: "running",
+      startedAt: mission.createdAt,
+    });
+    await expect(
+      query.queryMission({ missionId: mission.id, view: "result", limit: 20 }),
+    ).rejects.toMatchObject({ code: "DEPENDENCY_UNAVAILABLE" });
+    await controller.write({
+      missionId: mission.id,
+      guard,
+      operation: async ({ appendEvent }) => {
+        await appendEvent("run.started", { executionId: currentId });
+        await appendEvent("run.succeeded", { executionId: currentId, result: { current: true } });
+      },
+    });
+    await expect(
+      query.queryMission({ missionId: mission.id, view: "summary", limit: 20 }),
+    ).resolves.toMatchObject({
+      status: "succeeded",
+      execution: { id: currentId, status: "succeeded" },
+    });
+    await expect(
+      query.queryMission({ missionId: mission.id, view: "result", limit: 20 }),
+    ).resolves.toMatchObject({
+      executionId: currentId,
+      available: true,
+      result: { current: true },
+    });
+    expect((await repository.get(mission.id)).execution?.status).toBe("running");
+    await controller.release({ missionId: mission.id, guard });
+  });
+
   it("reads real envelope summary and empty events without synthesizing execution results", async () => {
     const { repository, mission, query, controller } = await fixture();
     await expect(

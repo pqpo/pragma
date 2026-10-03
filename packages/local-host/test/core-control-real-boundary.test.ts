@@ -19,6 +19,7 @@ import {
 import { createInMemoryExecutionStore, defineRuntimeTestDriver } from "@pragma/core/testing";
 import { createSqliteExecutionStore } from "../src/execution/sqlite-execution-store.ts";
 import { MissionExecutionOwner } from "../src/missions/execution-owner.ts";
+import { createMissionOwnerScope } from "../src/missions/controller/owner-scope.ts";
 import { createLocalHostCoreMissionControlAdapter } from "../src/core-control-adapter.ts";
 import { createMissionControllerStore, MissionSemanticWritePendingError } from "../src/index.ts";
 import type { MissionCommand } from "@pragma/shared/integration";
@@ -105,6 +106,8 @@ async function approvalFixture(approved: boolean) {
     resolveActiveOwner: async () => ({ kind: "flow", execution }),
   });
   return {
+    app,
+    flow,
     executions,
     execution,
     adapter,
@@ -113,6 +116,139 @@ async function approvalFixture(approved: boolean) {
 }
 
 describe("Mission control against real Core execution boundaries", () => {
+  it.each(["release", "checkpoint", "settlement"] as const)(
+    "checkpoints a recovered HumanTask before releasing native resources via %s",
+    async (boundary) => {
+      const f = await approvalFixture(true);
+      const owners = new MissionExecutionOwner();
+      const checkpoint = vi.fn(async () => await f.execution.checkpointWaitingHuman());
+      const release = vi.fn(async () => {
+        expect((await f.executions.get(f.execution.executionId))?.status).toBe("waiting");
+        await f.execution.releaseRuntimeResources();
+      });
+      owners.setControlOwner(
+        f.execution.executionId,
+        {
+          kind: "flow",
+          execution: {
+            ...f.execution,
+            getState: () => f.execution.getState(),
+            checkpointWaitingHuman: checkpoint,
+            releaseRuntimeResources: release,
+          },
+        },
+        "recovered",
+      );
+      const releaseMissionOwner = vi.fn(async () => undefined);
+      const control = createLocalHostCoreMissionControlAdapter({
+        ownerAccess: owners,
+        runtimes,
+        executions: f.executions,
+        sessions: {} as ExpertSessionStore,
+        executors: [],
+        resolveMissionBinding: async () => undefined,
+        releaseMissionOwner,
+      });
+      if (boundary === "release") await control.release(f.execution.executionId);
+      else if (boundary === "checkpoint")
+        await control.releaseAfterHumanCheckpoint(f.execution.executionId, guard);
+      else {
+        await control.consumer.afterOutcome?.({ command: f.command, guard, state: "applied" });
+        await vi.waitFor(() => expect(releaseMissionOwner).toHaveBeenCalledOnce());
+      }
+      expect(checkpoint).toHaveBeenCalledOnce();
+      expect(release).toHaveBeenCalledOnce();
+      expect(owners.controlOwner(f.execution.executionId)).toBeUndefined();
+      const recovered = await f.app.flows.recover(f.flow, { executionId: f.execution.executionId });
+      const resumed = createLocalHostCoreMissionControlAdapter({
+        runtimes,
+        executions: f.executions,
+        sessions: {} as ExpertSessionStore,
+        executors: [],
+        resolveMissionBinding: async () => undefined,
+        resolveActiveOwner: async () => ({ kind: "flow", execution: recovered }),
+      });
+      await resumed.consumer.apply(input(f.command));
+      await expect(recovered.result).resolves.toMatchObject({ approved: true });
+      expect(
+        (await f.executions.readEvents(f.execution.executionId)).filter(
+          (event) => event.type === "human.requested",
+        ),
+      ).toHaveLength(1);
+    },
+  );
+
+  it.each([false, true])(
+    "retains the recovered Flow claim through terminal teardown (takeover: %s)",
+    async (takeover) => {
+      const f = await approvalFixture(true);
+      await f.adapter.consumer.apply(input(f.command));
+      await f.execution.result;
+      const owners = new MissionExecutionOwner();
+      let confirmClose: () => void = () => undefined;
+      const closed = new Promise<void>((resolve) => {
+        confirmClose = resolve;
+      });
+      const releaseRuntimeResources = vi.fn(async () => await closed);
+      const owner = {
+        kind: "flow" as const,
+        execution: { ...f.execution, releaseRuntimeResources },
+      };
+      owners.setControlOwner(f.execution.executionId, owner, "recovered");
+      const releaseMissionOwner = vi.fn(async () => undefined);
+      const controller = createMissionControllerStore({ missionsPath: await home() });
+      const scope = createMissionOwnerScope({ controller });
+      const originalGuard = await scope.acquire(f.execution.executionId);
+      const control = createLocalHostCoreMissionControlAdapter({
+        ownerAccess: owners,
+        runtimes,
+        executions: f.executions,
+        sessions: {} as ExpertSessionStore,
+        executors: [],
+        resolveMissionBinding: async () => undefined,
+        releaseMissionOwner,
+        assertMissionOwnership: (id, capturedGuard) => scope.assertOwnership(id, capturedGuard),
+      });
+      try {
+        const applied = await control.consumer.apply(input(f.command));
+        await control.consumer.afterOutcome?.({
+          command: f.command,
+          guard: originalGuard,
+          state: "applied",
+          result: applied.result,
+        });
+        await vi.waitFor(() => expect(releaseRuntimeResources).toHaveBeenCalledOnce());
+        expect(owners.controlOwner(f.execution.executionId)).toBe(owner);
+        expect(releaseMissionOwner).not.toHaveBeenCalled();
+        let replacementGuard;
+        if (takeover) {
+          await scope.forceRevoke(f.execution.executionId);
+          replacementGuard = await scope.acquire(f.execution.executionId);
+        }
+        const settlement = control.waitExecution({
+          missionId: f.execution.executionId,
+          executionId: f.execution.executionId,
+        });
+        confirmClose();
+        if (takeover) {
+          await expect(settlement).rejects.toMatchObject({ code: "MISSION_FENCING_REJECTED" });
+          expect(releaseMissionOwner).not.toHaveBeenCalled();
+          await scope.assertOwnership(f.execution.executionId, replacementGuard!);
+        } else {
+          await settlement;
+          expect(releaseMissionOwner).toHaveBeenCalledExactlyOnceWith(
+            f.execution.executionId,
+            originalGuard,
+          );
+          expect(owners.controlOwner(f.execution.executionId)).toBeUndefined();
+        }
+      } finally {
+        confirmClose();
+        await scope.stop(f.execution.executionId);
+      }
+    },
+  );
+
   it.each([true, false])(
     "answers a Flow approval using its original user-question shape: %s",
     async (approved) => {

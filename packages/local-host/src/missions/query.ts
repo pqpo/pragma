@@ -83,28 +83,10 @@ export function createMissionQuery(options: {
             mission,
           });
         case "result":
-          if (
-            mission?.execution !== undefined &&
-            !snapshot.events.some(
-              (event) =>
-                event.type === "run.started" ||
-                event.type === "execution.started" ||
-                event.type === "run.accepted",
-            )
-          ) {
-            throw createIntegrationError({
-              code: "DEPENDENCY_UNAVAILABLE",
-              category: "dependency",
-              message: "The Mission execution has no durable controller result facts.",
-              details: {
-                missionId: input.missionId,
-                reason: "mission_execution_facts_unavailable",
-              },
-            });
-          }
           return projectMissionResult({
             missionId: input.missionId,
             snapshot,
+            mission,
           });
         case "events":
           return projectMissionEvents({
@@ -126,31 +108,32 @@ export function projectMissionSummary(input: {
 }): MissionSummary {
   if (input.mission !== undefined) {
     const mission = input.mission;
-    const accepted = input.snapshot.events
-      .toReversed()
-      .find((event) => event.type === "run.accepted");
-    const started = input.snapshot.events
-      .toReversed()
-      .find((event) => event.type === "run.started" || event.type === "execution.started");
-    const queuedSuccessor =
-      accepted !== undefined && (started === undefined || accepted.sequence > started.sequence);
+    const execution = resolveCurrentExecution(input.snapshot.events, mission.execution);
+    const status =
+      execution === undefined
+        ? (mission.execution?.status ?? "queued")
+        : summaryStatus(execution.status);
+    const currentExecution =
+      execution === undefined ? mission.execution : executionSummary(execution);
+    const updatedAt =
+      execution?.occurredAt !== undefined && execution.occurredAt > mission.updatedAt
+        ? execution.occurredAt
+        : mission.updatedAt;
     return MissionSummarySchema.parse({
       schemaVersion: "pragma.mission-summary/v1",
       missionId: mission.id,
-      status: queuedSuccessor ? "queued" : (mission.execution?.status ?? "queued"),
+      status,
       lifecycleStatus: mission.lifecycleStatus,
       executor: {
         kind: mission.executor.kind,
         id: mission.executor.ref.slice(mission.executor.ref.indexOf(":") + 1),
       },
-      ...(mission.execution === undefined || queuedSuccessor
+      ...(currentExecution === undefined
         ? {}
-        : {
-            execution: { id: mission.execution.id, status: mission.execution.status },
-          }),
+        : { execution: { id: currentExecution.id, status: currentExecution.status } }),
       workspace: { canonicalPath: mission.workspace.path },
       createdAt: mission.createdAt,
-      updatedAt: mission.updatedAt,
+      updatedAt,
       eventSequence: input.snapshot.snapshot.eventSequence,
       cursor: input.snapshot.cursor,
     });
@@ -181,8 +164,20 @@ export function projectMissionSummary(input: {
 export function projectMissionResult(input: {
   readonly missionId: string;
   readonly snapshot: Awaited<ReturnType<MissionControllerStore["readSnapshot"]>>;
+  readonly mission?: Mission | undefined;
 }): MissionResult {
-  const execution = projectExecution(input.snapshot.events);
+  const execution =
+    input.mission === undefined
+      ? projectExecution(input.snapshot.events)
+      : resolveCurrentExecution(input.snapshot.events, input.mission.execution);
+  if (execution === undefined) {
+    throw createIntegrationError({
+      code: "DEPENDENCY_UNAVAILABLE",
+      category: "dependency",
+      message: "The current Mission execution has no durable controller result facts.",
+      details: { missionId: input.missionId, reason: "mission_execution_facts_unavailable" },
+    });
+  }
   return MissionResultSchema.parse({
     schemaVersion: "pragma.mission-result/v1",
     missionId: input.missionId,
@@ -215,10 +210,42 @@ export function projectMissionEvents(input: {
   });
 }
 
-function projectExecution(events: readonly MissionEvent[]): ExecutionProjection {
-  const anchor = [...events]
+function resolveCurrentExecution(
+  events: readonly MissionEvent[],
+  current: Mission["execution"],
+): ExecutionProjection | undefined {
+  if (current === undefined) return projectExecution(events);
+  const accepted = events.toReversed().find((event) => event.type === "run.accepted");
+  const latestStarted = events
     .toReversed()
     .find((event) => event.type === "run.started" || event.type === "execution.started");
+  const acceptedRequestId = accepted?.data["requestId"] ?? accepted?.data["inputMessageId"];
+  if (
+    accepted !== undefined &&
+    (latestStarted === undefined || accepted.sequence > latestStarted.sequence) &&
+    acceptedRequestId !== current.inputMessageId
+  )
+    return { status: "queued", hasResult: false };
+  const hasCurrentAnchor = events.some(
+    (event) =>
+      (event.type === "run.started" || event.type === "execution.started") &&
+      event.data["executionId"] === current.id,
+  );
+  if (!hasCurrentAnchor) return undefined;
+  return projectExecution(events, current.id);
+}
+
+function projectExecution(
+  events: readonly MissionEvent[],
+  executionId?: string,
+): ExecutionProjection {
+  const anchor = [...events]
+    .toReversed()
+    .find(
+      (event) =>
+        (event.type === "run.started" || event.type === "execution.started") &&
+        (executionId === undefined || event.data["executionId"] === executionId),
+    );
   const latestAccepted = [...events].toReversed().find((event) => event.type === "run.accepted");
 
   // A Mission may contain an earlier successful turn followed by a newly

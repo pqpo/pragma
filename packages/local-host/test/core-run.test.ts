@@ -12,6 +12,7 @@ import {
   createFileExpertSessionStore,
   createPragma,
   createPragmaLogger,
+  getExecutionLiveBus,
   createStaticRuntimeResolver,
   defineExpert,
   defineExpertTeam,
@@ -84,7 +85,7 @@ describe("Core-backed Local Host run composition", { timeout: 10_000 }, () => {
         await turn.result;
         await session.releaseAfterTerminal({ waitForIdle: true });
         await memory.register({ missionId, executionId: turn.executionId });
-        await memory.complete(missionId);
+        await memory.complete(missionId, turn.executionId);
         await memory.pause();
         completed.push(turn.executionId);
         for (const executionId of completed)
@@ -137,7 +138,7 @@ describe("Core-backed Local Host run composition", { timeout: 10_000 }, () => {
       );
       await turn.result;
       await memory.register({ missionId, executionId: turn.executionId });
-      await memory.complete(missionId);
+      await memory.complete(missionId, turn.executionId);
     } finally {
       await session.releaseAfterTerminal();
       await memory.close();
@@ -151,11 +152,11 @@ describe("Core-backed Local Host run composition", { timeout: 10_000 }, () => {
       expect(await desktop.episodic.store.list()).toHaveLength(0);
       // A resumed CLI owner must protect persisted extraction work even after
       // the checkpoint's six-hour idle window has expired in another Host.
-      await memory.resume(missionId);
+      await memory.resume(missionId, "resumed-execution");
       const afterIdleDeadline = new Date(Date.now() + 7 * 60 * 60_000);
       expect(await desktop.episodic.store.claimDueJob(afterIdleDeadline)).toBeUndefined();
       expect(await desktop.semantic.store.claimDueJob(afterIdleDeadline)).toBeUndefined();
-      await memory.complete(missionId);
+      await memory.complete(missionId, "resumed-execution");
       await memory.close();
       const extract = vi.fn(async (input: import("@pragma/memory").EpisodicExtractionInput) => {
         const ref = input.evidence.at(-1)!.messageId;
@@ -419,6 +420,99 @@ describe("Core-backed Local Host run composition", { timeout: 10_000 }, () => {
       await handle.release?.();
     }
     expect(executorPort.ownerAccess.controlOwner(missionId)).toBeUndefined();
+  });
+
+  it("refreshes real Memory Attention bindings for the second turn of a retained controller-only Session", async () => {
+    const f = await createRunFixture();
+    const policies = createFileMemoryPolicyStore({ pragmaHome: f.home });
+    await policies.updateGlobal({
+      expectedRevision: 0,
+      policy: {
+        enabled: "enabled",
+        capture: "enabled",
+        recall: "enabled",
+        learning: "local-candidates",
+      },
+    });
+    const data = await createLocalHostMemoryDataPlane({
+      pragmaHome: f.home,
+      executionStore: f.executions,
+    });
+    const contexts = createLocalHostMemoryContextService({
+      pragmaHome: f.home,
+      data,
+      secrets: {} as ReturnType<typeof createSecretStore>,
+    });
+    let latest!: ReturnType<typeof contexts.createContextStore>;
+    const binding = vi.fn(async ({ missionId }: { missionId: string }) => {
+      latest = contexts.createContextStore({ missionId, goal: "Warm Memory" });
+      return [{ namespace: "memory", store: latest }];
+    });
+    const port = createCoreRunExecutorPort({
+      pragmaHome: f.home,
+      runtimes: f.runtimes,
+      executions: f.executions,
+      sessions: f.sessions,
+      executors: f.executors,
+      createHostContextBindings: binding,
+    });
+    const missionId = randomUUID();
+    const bus = getExecutionLiveBus(f.executions);
+    const subscriptions = vi.spyOn(bus, "subscribeEvents");
+    const register = vi.spyOn(data, "registerExecutionContext");
+    const handle = await port.start({
+      missionId,
+      request: createRequest(f.home, "expert", "a".repeat(16), "first"),
+      executor: f.executors[0]!,
+    });
+    const owner = port.ownerAccess.controlOwner(missionId);
+    if (owner?.kind !== "session") throw new Error("Missing retained Session");
+    const readMemory = async (executionId: string) => {
+      await data.registerExecutionContext({ missionId, executionId });
+      const state = await owner.session.getState();
+      const record = (await f.executions.get(executionId))!;
+      const context = withExecutionRunScope(
+        createExpertAgentRunContext({
+          source: { type: "pragma.expert", id: "a".repeat(16) },
+          attributes: { [EXECUTION_CURRENT_EXPERT_ID_ATTR]: "a".repeat(16) },
+        }),
+        { executionId, contextId: state.rootContextId, invocationId: record.rootInvocationId },
+      );
+      await latest.listContext({ context });
+    };
+    try {
+      await handle.result;
+      await owner.session.waitForPromptProcessing();
+      await readMemory(handle.executionId);
+      const firstBinding = latest;
+      const firstSubscriptions = subscriptions.mock.calls.length;
+      expect(firstSubscriptions).toBeGreaterThan(0);
+      await contexts.stopMission(missionId);
+      const second = await owner.session.prompt("second", { requestId: randomUUID() });
+      await second.result;
+      await second.settled;
+      expect(latest).not.toBe(firstBinding);
+      await readMemory(second.executionId);
+      expect(subscriptions.mock.calls.length).toBeGreaterThan(firstSubscriptions);
+      expect(register.mock.calls.map(([input]) => input)).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ missionId, executionId: handle.executionId }),
+          expect.objectContaining({ missionId, executionId: second.executionId }),
+        ]),
+      );
+      expect(new Set(register.mock.calls.map(([input]) => input.executionId))).toEqual(
+        new Set([handle.executionId, second.executionId]),
+      );
+    } finally {
+      await contexts.stop();
+      await handle.release?.();
+      await data.scheduler.stop();
+      data.episodic.close();
+      data.semantic.close();
+      data.knowledge.close();
+      data.skill.close();
+      subscriptions.mockRestore();
+    }
   });
 
   it("releases terminal Expert runtime resources while retaining durable recovery state", async () => {

@@ -152,7 +152,11 @@ export function createCoreRunExecutorPort(
       executions,
       ...(options.pragmaHome === undefined ? {} : { pragmaHome: options.pragmaHome }),
     });
-  const createApp = (missionId: string, hostContextBindings?: HostContextBindings): PragmaApp => {
+  const createApp = (
+    missionId: string,
+    hostContextBindings?: HostContextBindings,
+    resolveBindings?: LocalHostCoreRunComposition["resolveHostContextBindings"],
+  ): PragmaApp => {
     const assertExecutionOwnership = options.createMissionExecutionOwnershipAssertion?.(missionId);
     return createPragma({
       pragmaHome: options.pragmaHome,
@@ -163,9 +167,14 @@ export function createCoreRunExecutorPort(
       ...(options.usageSink === undefined ? {} : { usageSink: options.usageSink }),
       ...(options.loggerProvider === undefined ? {} : { loggerProvider: options.loggerProvider }),
       ...(hostContextBindings === undefined ? {} : { hostContextBindings }),
-      ...(options.resolveHostContextBindings === undefined
+      ...(resolveBindings === undefined && options.resolveHostContextBindings === undefined
         ? {}
-        : { resolveHostContextBindings: options.resolveHostContextBindings }),
+        : {
+            resolveHostContextBindings: async () => {
+              await assertExecutionOwnership?.();
+              return await (resolveBindings ?? options.resolveHostContextBindings)!();
+            },
+          }),
     });
   };
   const ownerAccess = options.ownerAccess ?? new MissionExecutionOwner();
@@ -237,6 +246,14 @@ export function createCoreRunExecutorPort(
                   request: input.request,
                   executor: definition,
                 }),
+            options.createHostContextBindings === undefined
+              ? undefined
+              : async () =>
+                  await options.createHostContextBindings!({
+                    missionId: input.missionId,
+                    request: input.request,
+                    executor: definition,
+                  }),
           );
         const coreHandle = await startCoreDefinition({
           app: runApp,
@@ -337,7 +354,7 @@ async function startCoreDefinition(options: {
     const execution = await openLocalHostFlowExecution(options.app, options.definition.definition, {
       kind: "start",
       options: {
-        input: options.request.input ?? {},
+        input: options.request.input === undefined ? {} : options.request.input,
         executionId: options.missionId,
         ...(options.definition.environment === undefined
           ? {}
