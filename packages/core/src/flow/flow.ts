@@ -9,6 +9,10 @@ import type { z } from "zod";
 
 import { readAgentDelegationDefinition, type RuntimeByExpert } from "../agent/agent-launcher.ts";
 import type { Expert } from "../agent/expert-agent.ts";
+import {
+  isStopOnlyDefinition,
+  markStopOnlyDefinition,
+} from "../agent/definition-execution-purpose.ts";
 import { isExpertTeam, type ExpertDefinition } from "../agent/expert-team.ts";
 import type { ContextIdResolver } from "../execution/context-id-resolver.ts";
 import type { RuntimeModelSelection } from "../runtime/runtime-adapter.ts";
@@ -441,7 +445,7 @@ export class FlowSpec<TInput = unknown, TOutput = unknown> {
       })),
     });
     if (analysis.issues.length > 0) throw new FlowDefinitionError(analysis.issues);
-    return Object.freeze({
+    const flow = Object.freeze({
       kind: "flow" as const,
       id: this.id,
       input: this.input,
@@ -454,6 +458,7 @@ export class FlowSpec<TInput = unknown, TOutput = unknown> {
       transitions: new Map(this.transitionDefinitions),
       loops: new Map(this.loopDefinitions),
     });
+    return isStopOnlyDefinition(this) ? markStopOnlyDefinition(flow) : flow;
   }
 
   setTransition(stepId: string, transition: FlowTransition): void {

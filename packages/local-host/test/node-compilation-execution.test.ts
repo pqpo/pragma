@@ -1,12 +1,23 @@
 import { randomUUID } from "node:crypto";
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { cp, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { createStaticRuntimeResolver, PragmaPaths } from "@pragma/core";
+import {
+  createFileExpertSessionStore,
+  createStaticRuntimeResolver,
+  PragmaPaths,
+} from "@pragma/core";
+import { createLocalHostCoreMissionControlAdapter } from "../src/core-control-adapter.ts";
+import { createMissionPinnedBinding } from "../src/missions/controller/pinned-binding.ts";
+import { MissionCommandSchema } from "@pragma/shared/integration";
 import { defineRuntimeTestDriver } from "@pragma/core/testing";
 import { PragmaCapabilityResourceSchema } from "@pragma/interpreter/ast";
-import { CapabilityDefinitionSchema, CapabilityManifestSchema } from "@pragma/shared";
+import {
+  CapabilityDefinitionSchema,
+  CapabilityManifestSchema,
+  isTerminalExecutionStatus,
+} from "@pragma/shared";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { createLocalHostNodeApplication } from "../src/node-application.ts";
@@ -29,16 +40,27 @@ afterEach(async () => {
   );
 });
 
-async function fixture(fail = false, checkpoint = false) {
+async function fixture(fail = false, checkpoint = false, running = false) {
   const home = await mkdtemp(join(tmpdir(), "pragma-node-compiled-execution-"));
   roots.push(home);
+  const pending = new Map<string, (error: Error) => void>();
+  const restore = vi.fn(({ systemSessionId }: { systemSessionId: string }) => ({
+    id: `native-${systemSessionId}`,
+  }));
+  const stop = vi.fn((session: { id: string }) =>
+    pending.get(session.id)?.(new Error("Native stopped")),
+  );
   const driver = defineRuntimeTestDriver<never, { readonly id: string }>({
     descriptor: { id: "codex", kind: "test", displayName: "Fixture" },
     createSession: ({ systemSessionId }) => ({ id: `native-${systemSessionId}` }),
-    restoreSession: ({ systemSessionId }) => ({ id: `native-${systemSessionId}` }),
+    restoreSession: restore,
+    cancelTurn: stop,
+    closeSession: stop,
     readSession: (session) => ({ runtimeSessionId: session.id }),
     startTurn: async (session) => {
       if (fail) throw new Error("fixture execution failure");
+      if (running && pending.size === 0)
+        await new Promise<never>((_resolve, reject) => pending.set(session.id, reject));
       return { outputText: "done", runtimeSessionId: session.id };
     },
     mapEvent: () => ({ events: [] }),
@@ -136,7 +158,18 @@ async function fixture(fail = false, checkpoint = false) {
     },
   });
   const workspace = await app.resolveWorkspace(home);
-  return { home, runtimes, app, workspace, canUse, capabilityId, expertId: expert.metadata.id };
+  return {
+    home,
+    runtimes,
+    app,
+    workspace,
+    canUse,
+    capabilityId,
+    expertId: expert.metadata.id,
+    pending,
+    restore,
+    stop,
+  };
 }
 
 describe("default Node compilation reaches persisted Execution", { timeout: 15_000 }, () => {
@@ -251,6 +284,152 @@ describe("default Node compilation reaches persisted Execution", { timeout: 15_0
     await cold.missionControl!.stopOwner(started.missionId);
     expect(f.canUse).toHaveBeenCalled();
   });
+
+  it.each(["expert", "team"] as const)(
+    "interrupts a cold running %s Session without execution readiness or current Capability",
+    async (kind) => {
+      const f = await fixture(false, false, true);
+      const id = kind === "expert" ? f.expertId : PUBLISHED_TEAM_ID;
+      const started = await f.app.run!.start({
+        requestId: randomUUID(),
+        command: `${kind}.run`,
+        executor: { kind, id },
+        project: { projectId: "studio", revision: 1 },
+        workspace: f.workspace,
+        prompt: "keep running",
+        detach: false,
+      });
+      const source = createSqliteExecutionStore({ pragmaHome: f.home });
+      let coldStore: ReturnType<typeof createSqliteExecutionStore> | undefined;
+      let control: ReturnType<typeof createLocalHostCoreMissionControlAdapter> | undefined;
+      try {
+        await vi.waitFor(() => expect(f.pending.size).toBe(1));
+        const original = await source.get(started.executionId!);
+        const home = await mkdtemp(join(tmpdir(), "pragma-cold-running-"));
+        roots.push(home);
+        // Copy an actually written running snapshot after Native preparation.
+        // The original provider remains addressable by its exact Native ID.
+        await cp(f.home, home, { recursive: true });
+        await rm(
+          join(new PragmaPaths({ pragmaHome: home }).dataRoot(), "capabilities", f.capabilityId),
+          { recursive: true },
+        );
+        f.canUse.mockReturnValue({ usable: false, reason: "Host readiness API unavailable" });
+        f.canUse.mockClear();
+        const catalog = createLocalHostProjectCatalogFromHome({
+          pragmaHome: home,
+          runtimes: f.runtimes,
+        });
+        coldStore = createSqliteExecutionStore({ pragmaHome: home });
+        const coldPaths = new PragmaPaths({ pragmaHome: home });
+        const lease = JSON.parse(
+          await readFile(coldPaths.expertSessionLease(started.missionId), "utf8"),
+        ) as { claimId: string };
+        // Transfer only the copied transient lease using the authoritative
+        // store API. All running Execution/Context/Native facts remain intact.
+        await createFileExpertSessionStore({
+          pragmaHome: home,
+          executions: coldStore,
+        }).releaseLease(started.missionId, lease.claimId);
+        const project = (await catalog.listProjects())[0]!;
+        const binding = createMissionPinnedBinding({
+          requestId: randomUUID(),
+          payloadHash: `sha256:${"a".repeat(64)}`,
+          command: `${kind}.run`,
+          executor: {
+            source: "project",
+            ref: { kind, id },
+            project: {
+              projectId: "studio",
+              revision: 1,
+              fingerprint: project.fingerprint,
+            },
+          },
+          workspace: { canonicalPath: f.home, identityHash: `sha256:${"a".repeat(64)}` },
+          provenance: "new_run",
+        });
+        control = createLocalHostCoreMissionControlAdapter({
+          pragmaHome: home,
+          runtimes: f.runtimes,
+          executions: coldStore,
+          executors: catalog.resolve,
+          resolveMissionBinding: async () => binding,
+          resolveExecutionId: async () => started.executionId,
+        });
+        const command = MissionCommandSchema.parse({
+          schemaVersion: "pragma.mission-command/v2",
+          commandId: randomUUID(),
+          missionId: started.missionId,
+          kind: "interrupt",
+          payload: { kind: "interrupt", reason: "Stop cold running Session" },
+          request: {
+            schemaVersion: "pragma.integration-request/v1",
+            requestId: randomUUID(),
+            payloadHash: `sha256:${"a".repeat(64)}`,
+            requestedAt: new Date().toISOString(),
+            client: { surface: "cli", version: "test", instanceId: randomUUID() },
+          },
+          state: "accepted",
+          createdAt: new Date().toISOString(),
+        });
+        await expect(
+          control.consumer.apply({
+            command,
+            guard: { claimId: randomUUID(), fencingToken: "1" },
+            signal: new AbortController().signal,
+            deadlineAt: new Date(Date.now() + 30_000).toISOString(),
+          }),
+        ).resolves.toMatchObject({ result: { targetStatus: "interrupted" } });
+        expect(f.canUse).not.toHaveBeenCalled();
+        expect((await coldStore.get(started.executionId!))?.status).toBe("interrupted");
+        expect((await coldStore.get(started.executionId!))?.environment).toEqual(
+          original?.environment,
+        );
+        // Existing ExpertSession recovery marks an abandoned running turn
+        // interrupted. It does not provide Flow's Native stop protocol.
+        expect(f.restore).not.toHaveBeenCalled();
+        await control.release(started.missionId);
+        const send = MissionCommandSchema.parse({
+          ...command,
+          commandId: randomUUID(),
+          kind: "send",
+          request: { ...command.request, requestId: randomUUID() },
+          payload: { kind: "send", input: { prompt: "continue after resources restored" } },
+        });
+        const apply = () =>
+          control!.consumer.apply({
+            command: send,
+            guard: { claimId: randomUUID(), fencingToken: "2" },
+            signal: new AbortController().signal,
+            deadlineAt: new Date(Date.now() + 30_000).toISOString(),
+          });
+        await expect(apply()).rejects.toMatchObject({ code: "RUNTIME_UNAVAILABLE" });
+        await cp(
+          join(new PragmaPaths({ pragmaHome: f.home }).dataRoot(), "capabilities", f.capabilityId),
+          join(coldPaths.dataRoot(), "capabilities", f.capabilityId),
+          { recursive: true },
+        );
+        f.canUse.mockReturnValue({ usable: true });
+        const continued = await apply();
+        const executionId = continued.result.executionId as string;
+        await vi.waitFor(async () =>
+          expect((await coldStore!.get(executionId))?.status).toBe("succeeded"),
+        );
+        await control.release(started.missionId);
+        control = undefined;
+      } finally {
+        await control?.release(started.missionId);
+        const originalRecord = await source.get(started.executionId!);
+        if (originalRecord !== undefined && !isTerminalExecutionStatus(originalRecord.status)) {
+          await started.cancel("fixture cleanup");
+        }
+        await started.outcome;
+        await f.app.missionControl!.stopOwner(started.missionId);
+        source.close();
+        coldStore?.close();
+      }
+    },
+  );
 
   it("invalidates successful readiness when the default Node execution fails", async () => {
     const createCompiler = nodeCompiler.createLocalHostNodeMissionCompiler;

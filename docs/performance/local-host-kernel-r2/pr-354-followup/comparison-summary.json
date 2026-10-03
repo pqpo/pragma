@@ -1,0 +1,1737 @@
+{
+  "scope": "Post-PR-comment repair frozen source, serial compilation preparation probe with isolated real stores and fake Runtime; no model/UI/background acceptance. Counters are API calls, not physical I/O. No inline Secret or Plugin contribution declared in this performance fixture.",
+  "comparisons": [
+    {
+      "pair": 1,
+      "scenario": "cold",
+      "main": {
+        "samples": 20,
+        "p50Ms": 248.86268000000018,
+        "p95Ms": 292.1977230000002,
+        "compilePhaseP95Ms": 41.17,
+        "counters": {
+          "projectRevisionReads": [
+            1
+          ],
+          "projectHeadReads": [
+            1
+          ],
+          "projectOpens": [
+            0,
+            1
+          ],
+          "storeCompileCalls": [
+            1
+          ],
+          "openedProjectCompileCalls": [
+            0
+          ],
+          "activeCapabilityReads": [
+            4
+          ],
+          "credentialFingerprints": [
+            3
+          ],
+          "contextStoreReads": [
+            0
+          ],
+          "dslCompilerCalls": [
+            2
+          ],
+          "readinessRequests": [
+            1
+          ],
+          "runtimeHealthProbes": [
+            4,
+            5
+          ],
+          "modelCatalogReads": [
+            4,
+            5
+          ],
+          "pluginReads": [
+            0
+          ]
+        },
+        "cacheHits": 0
+      },
+      "candidate": {
+        "samples": 20,
+        "p50Ms": 246.43267500000002,
+        "p95Ms": 274.30660499999976,
+        "compilePhaseP95Ms": 41.11,
+        "counters": {
+          "projectRevisionReads": [
+            1
+          ],
+          "projectHeadReads": [
+            0
+          ],
+          "projectOpens": [
+            1,
+            2
+          ],
+          "storeCompileCalls": [
+            0
+          ],
+          "openedProjectCompileCalls": [
+            1
+          ],
+          "activeCapabilityReads": [
+            4
+          ],
+          "credentialFingerprints": [
+            3
+          ],
+          "contextStoreReads": [
+            0
+          ],
+          "dslCompilerCalls": [
+            2
+          ],
+          "readinessRequests": [
+            1
+          ],
+          "runtimeHealthProbes": [
+            4,
+            5
+          ],
+          "modelCatalogReads": [
+            4,
+            5
+          ],
+          "pluginReads": [
+            0
+          ]
+        },
+        "cacheHits": 0
+      },
+      "gate": {
+        "deltaMs": -17.89111800000046,
+        "deltaPercent": -6.122949151113148,
+        "triggered": false
+      }
+    },
+    {
+      "pair": 1,
+      "scenario": "warm",
+      "main": {
+        "samples": 20,
+        "p50Ms": 583.1085060000005,
+        "p95Ms": 717.2246299999988,
+        "compilePhaseP95Ms": 0.01,
+        "counters": {
+          "projectRevisionReads": [
+            1
+          ],
+          "projectHeadReads": [
+            1
+          ],
+          "projectOpens": [
+            0
+          ],
+          "storeCompileCalls": [
+            0
+          ],
+          "openedProjectCompileCalls": [
+            0
+          ],
+          "activeCapabilityReads": [
+            1
+          ],
+          "credentialFingerprints": [
+            1
+          ],
+          "contextStoreReads": [
+            0
+          ],
+          "dslCompilerCalls": [
+            0
+          ],
+          "readinessRequests": [
+            1
+          ],
+          "runtimeHealthProbes": [
+            0
+          ],
+          "modelCatalogReads": [
+            0
+          ],
+          "pluginReads": [
+            0
+          ]
+        },
+        "cacheHits": 20
+      },
+      "candidate": {
+        "samples": 20,
+        "p50Ms": 545.5943060000027,
+        "p95Ms": 580.8275150000009,
+        "compilePhaseP95Ms": 0,
+        "counters": {
+          "projectRevisionReads": [
+            1
+          ],
+          "projectHeadReads": [
+            0
+          ],
+          "projectOpens": [
+            0
+          ],
+          "storeCompileCalls": [
+            0
+          ],
+          "openedProjectCompileCalls": [
+            0
+          ],
+          "activeCapabilityReads": [
+            1
+          ],
+          "credentialFingerprints": [
+            1
+          ],
+          "contextStoreReads": [
+            0
+          ],
+          "dslCompilerCalls": [
+            0
+          ],
+          "readinessRequests": [
+            1
+          ],
+          "runtimeHealthProbes": [
+            0
+          ],
+          "modelCatalogReads": [
+            0
+          ],
+          "pluginReads": [
+            0
+          ]
+        },
+        "cacheHits": 20
+      },
+      "gate": {
+        "deltaMs": -136.39711499999794,
+        "deltaPercent": -19.017349557557466,
+        "triggered": false
+      }
+    },
+    {
+      "pair": 1,
+      "scenario": "permission-invalidation",
+      "main": {
+        "samples": 20,
+        "p50Ms": 599.6920530000025,
+        "p95Ms": 628.1820020000014,
+        "compilePhaseP95Ms": 27.71,
+        "counters": {
+          "projectRevisionReads": [
+            1
+          ],
+          "projectHeadReads": [
+            1
+          ],
+          "projectOpens": [
+            0
+          ],
+          "storeCompileCalls": [
+            1
+          ],
+          "openedProjectCompileCalls": [
+            0
+          ],
+          "activeCapabilityReads": [
+            5
+          ],
+          "credentialFingerprints": [
+            4
+          ],
+          "contextStoreReads": [
+            0
+          ],
+          "dslCompilerCalls": [
+            2
+          ],
+          "readinessRequests": [
+            1
+          ],
+          "runtimeHealthProbes": [
+            4,
+            5
+          ],
+          "modelCatalogReads": [
+            4,
+            5
+          ],
+          "pluginReads": [
+            0
+          ]
+        },
+        "cacheHits": 0
+      },
+      "candidate": {
+        "samples": 20,
+        "p50Ms": 595.1730959999986,
+        "p95Ms": 629.9695019999999,
+        "compilePhaseP95Ms": 32.2,
+        "counters": {
+          "projectRevisionReads": [
+            1
+          ],
+          "projectHeadReads": [
+            0
+          ],
+          "projectOpens": [
+            1
+          ],
+          "storeCompileCalls": [
+            0
+          ],
+          "openedProjectCompileCalls": [
+            1
+          ],
+          "activeCapabilityReads": [
+            5
+          ],
+          "credentialFingerprints": [
+            4
+          ],
+          "contextStoreReads": [
+            0
+          ],
+          "dslCompilerCalls": [
+            2
+          ],
+          "readinessRequests": [
+            1
+          ],
+          "runtimeHealthProbes": [
+            4,
+            5
+          ],
+          "modelCatalogReads": [
+            4,
+            5
+          ],
+          "pluginReads": [
+            0
+          ]
+        },
+        "cacheHits": 0
+      },
+      "gate": {
+        "deltaMs": 1.7874999999985448,
+        "deltaPercent": 0.2845512915536445,
+        "triggered": false
+      }
+    },
+    {
+      "pair": 1,
+      "scenario": "model-invalidation",
+      "main": {
+        "samples": 20,
+        "p50Ms": 614.7817589999977,
+        "p95Ms": 659.2409740000003,
+        "compilePhaseP95Ms": 31.76,
+        "counters": {
+          "projectRevisionReads": [
+            1
+          ],
+          "projectHeadReads": [
+            1
+          ],
+          "projectOpens": [
+            0
+          ],
+          "storeCompileCalls": [
+            1
+          ],
+          "openedProjectCompileCalls": [
+            0
+          ],
+          "activeCapabilityReads": [
+            5
+          ],
+          "credentialFingerprints": [
+            4
+          ],
+          "contextStoreReads": [
+            0
+          ],
+          "dslCompilerCalls": [
+            2
+          ],
+          "readinessRequests": [
+            1
+          ],
+          "runtimeHealthProbes": [
+            4
+          ],
+          "modelCatalogReads": [
+            4
+          ],
+          "pluginReads": [
+            0
+          ]
+        },
+        "cacheHits": 0
+      },
+      "candidate": {
+        "samples": 20,
+        "p50Ms": 609.727101000004,
+        "p95Ms": 632.6695289999989,
+        "compilePhaseP95Ms": 33.33,
+        "counters": {
+          "projectRevisionReads": [
+            1
+          ],
+          "projectHeadReads": [
+            0
+          ],
+          "projectOpens": [
+            1
+          ],
+          "storeCompileCalls": [
+            0
+          ],
+          "openedProjectCompileCalls": [
+            1
+          ],
+          "activeCapabilityReads": [
+            5
+          ],
+          "credentialFingerprints": [
+            4
+          ],
+          "contextStoreReads": [
+            0
+          ],
+          "dslCompilerCalls": [
+            2
+          ],
+          "readinessRequests": [
+            1
+          ],
+          "runtimeHealthProbes": [
+            4
+          ],
+          "modelCatalogReads": [
+            4
+          ],
+          "pluginReads": [
+            0
+          ]
+        },
+        "cacheHits": 0
+      },
+      "gate": {
+        "deltaMs": -26.571445000001404,
+        "deltaPercent": -4.030611877592638,
+        "triggered": false
+      }
+    },
+    {
+      "pair": 1,
+      "scenario": "capability-invalidation",
+      "main": {
+        "samples": 20,
+        "p50Ms": 626.8002659999984,
+        "p95Ms": 697.9924350000074,
+        "compilePhaseP95Ms": 30.39,
+        "counters": {
+          "projectRevisionReads": [
+            1
+          ],
+          "projectHeadReads": [
+            1
+          ],
+          "projectOpens": [
+            0
+          ],
+          "storeCompileCalls": [
+            1
+          ],
+          "openedProjectCompileCalls": [
+            0
+          ],
+          "activeCapabilityReads": [
+            5
+          ],
+          "credentialFingerprints": [
+            4
+          ],
+          "contextStoreReads": [
+            0
+          ],
+          "dslCompilerCalls": [
+            2
+          ],
+          "readinessRequests": [
+            1
+          ],
+          "runtimeHealthProbes": [
+            5,
+            6
+          ],
+          "modelCatalogReads": [
+            4,
+            5
+          ],
+          "pluginReads": [
+            0
+          ]
+        },
+        "cacheHits": 0
+      },
+      "candidate": {
+        "samples": 20,
+        "p50Ms": 633.6859130000012,
+        "p95Ms": 711.6771960000042,
+        "compilePhaseP95Ms": 38.69,
+        "counters": {
+          "projectRevisionReads": [
+            1
+          ],
+          "projectHeadReads": [
+            0
+          ],
+          "projectOpens": [
+            1
+          ],
+          "storeCompileCalls": [
+            0
+          ],
+          "openedProjectCompileCalls": [
+            1
+          ],
+          "activeCapabilityReads": [
+            5
+          ],
+          "credentialFingerprints": [
+            4
+          ],
+          "contextStoreReads": [
+            0
+          ],
+          "dslCompilerCalls": [
+            2
+          ],
+          "readinessRequests": [
+            1
+          ],
+          "runtimeHealthProbes": [
+            5,
+            6
+          ],
+          "modelCatalogReads": [
+            4,
+            5
+          ],
+          "pluginReads": [
+            0
+          ]
+        },
+        "cacheHits": 0
+      },
+      "gate": {
+        "deltaMs": 13.684760999996797,
+        "deltaPercent": 1.9605887275836524,
+        "triggered": false
+      }
+    },
+    {
+      "pair": 1,
+      "scenario": "credential-invalidation",
+      "main": {
+        "samples": 20,
+        "p50Ms": 675.5802759999933,
+        "p95Ms": 745.314166000011,
+        "compilePhaseP95Ms": 30.14,
+        "counters": {
+          "projectRevisionReads": [
+            1
+          ],
+          "projectHeadReads": [
+            1
+          ],
+          "projectOpens": [
+            0
+          ],
+          "storeCompileCalls": [
+            1
+          ],
+          "openedProjectCompileCalls": [
+            0
+          ],
+          "activeCapabilityReads": [
+            5
+          ],
+          "credentialFingerprints": [
+            4
+          ],
+          "contextStoreReads": [
+            0
+          ],
+          "dslCompilerCalls": [
+            2
+          ],
+          "readinessRequests": [
+            1
+          ],
+          "runtimeHealthProbes": [
+            5
+          ],
+          "modelCatalogReads": [
+            4
+          ],
+          "pluginReads": [
+            0
+          ]
+        },
+        "cacheHits": 0
+      },
+      "candidate": {
+        "samples": 20,
+        "p50Ms": 656.6422250000032,
+        "p95Ms": 697.215790000002,
+        "compilePhaseP95Ms": 31.09,
+        "counters": {
+          "projectRevisionReads": [
+            1
+          ],
+          "projectHeadReads": [
+            0
+          ],
+          "projectOpens": [
+            1
+          ],
+          "storeCompileCalls": [
+            0
+          ],
+          "openedProjectCompileCalls": [
+            1
+          ],
+          "activeCapabilityReads": [
+            5
+          ],
+          "credentialFingerprints": [
+            4
+          ],
+          "contextStoreReads": [
+            0
+          ],
+          "dslCompilerCalls": [
+            2
+          ],
+          "readinessRequests": [
+            1
+          ],
+          "runtimeHealthProbes": [
+            5
+          ],
+          "modelCatalogReads": [
+            4
+          ],
+          "pluginReads": [
+            0
+          ]
+        },
+        "cacheHits": 0
+      },
+      "gate": {
+        "deltaMs": -48.09837600000901,
+        "deltaPercent": -6.453436442533456,
+        "triggered": false
+      }
+    },
+    {
+      "pair": 1,
+      "scenario": "system-invalidation",
+      "main": {
+        "samples": 20,
+        "p50Ms": 584.7217269999965,
+        "p95Ms": 636.9384299999947,
+        "compilePhaseP95Ms": 35.46,
+        "counters": {
+          "projectRevisionReads": [
+            1
+          ],
+          "projectHeadReads": [
+            1
+          ],
+          "projectOpens": [
+            0
+          ],
+          "storeCompileCalls": [
+            1
+          ],
+          "openedProjectCompileCalls": [
+            0
+          ],
+          "activeCapabilityReads": [
+            5
+          ],
+          "credentialFingerprints": [
+            4
+          ],
+          "contextStoreReads": [
+            0
+          ],
+          "dslCompilerCalls": [
+            2
+          ],
+          "readinessRequests": [
+            1
+          ],
+          "runtimeHealthProbes": [
+            4
+          ],
+          "modelCatalogReads": [
+            4,
+            5
+          ],
+          "pluginReads": [
+            0
+          ]
+        },
+        "cacheHits": 0
+      },
+      "candidate": {
+        "samples": 20,
+        "p50Ms": 608.5542300000088,
+        "p95Ms": 707.5278959999996,
+        "compilePhaseP95Ms": 37.02,
+        "counters": {
+          "projectRevisionReads": [
+            1
+          ],
+          "projectHeadReads": [
+            0
+          ],
+          "projectOpens": [
+            1
+          ],
+          "storeCompileCalls": [
+            0
+          ],
+          "openedProjectCompileCalls": [
+            1
+          ],
+          "activeCapabilityReads": [
+            5
+          ],
+          "credentialFingerprints": [
+            4
+          ],
+          "contextStoreReads": [
+            0
+          ],
+          "dslCompilerCalls": [
+            2
+          ],
+          "readinessRequests": [
+            1
+          ],
+          "runtimeHealthProbes": [
+            4
+          ],
+          "modelCatalogReads": [
+            4
+          ],
+          "pluginReads": [
+            0
+          ]
+        },
+        "cacheHits": 0
+      },
+      "gate": {
+        "deltaMs": 70.5894660000049,
+        "deltaPercent": 11.082620026555077,
+        "triggered": true
+      }
+    },
+    {
+      "pair": 1,
+      "scenario": "context-mount-invalidation",
+      "main": {
+        "samples": 20,
+        "p50Ms": 633.682044000001,
+        "p95Ms": 670.7465740000043,
+        "compilePhaseP95Ms": 29.76,
+        "counters": {
+          "projectRevisionReads": [
+            1
+          ],
+          "projectHeadReads": [
+            1
+          ],
+          "projectOpens": [
+            0
+          ],
+          "storeCompileCalls": [
+            1
+          ],
+          "openedProjectCompileCalls": [
+            0
+          ],
+          "activeCapabilityReads": [
+            5
+          ],
+          "credentialFingerprints": [
+            4
+          ],
+          "contextStoreReads": [
+            0
+          ],
+          "dslCompilerCalls": [
+            2
+          ],
+          "readinessRequests": [
+            1
+          ],
+          "runtimeHealthProbes": [
+            5,
+            6
+          ],
+          "modelCatalogReads": [
+            4
+          ],
+          "pluginReads": [
+            0
+          ]
+        },
+        "cacheHits": 0
+      },
+      "candidate": {
+        "samples": 20,
+        "p50Ms": 671.2985449999978,
+        "p95Ms": 699.7818100000004,
+        "compilePhaseP95Ms": 35.5,
+        "counters": {
+          "projectRevisionReads": [
+            1
+          ],
+          "projectHeadReads": [
+            0
+          ],
+          "projectOpens": [
+            1
+          ],
+          "storeCompileCalls": [
+            0
+          ],
+          "openedProjectCompileCalls": [
+            1
+          ],
+          "activeCapabilityReads": [
+            5
+          ],
+          "credentialFingerprints": [
+            4
+          ],
+          "contextStoreReads": [
+            0
+          ],
+          "dslCompilerCalls": [
+            2
+          ],
+          "readinessRequests": [
+            1
+          ],
+          "runtimeHealthProbes": [
+            5,
+            6
+          ],
+          "modelCatalogReads": [
+            4,
+            5
+          ],
+          "pluginReads": [
+            0
+          ]
+        },
+        "cacheHits": 0
+      },
+      "gate": {
+        "deltaMs": 29.035235999996075,
+        "deltaPercent": 4.328793783745199,
+        "triggered": false
+      }
+    },
+    {
+      "pair": 2,
+      "scenario": "cold",
+      "main": {
+        "samples": 20,
+        "p50Ms": 240.8539270000001,
+        "p95Ms": 257.6647659999999,
+        "compilePhaseP95Ms": 41.2,
+        "counters": {
+          "projectRevisionReads": [
+            1
+          ],
+          "projectHeadReads": [
+            1
+          ],
+          "projectOpens": [
+            0,
+            1
+          ],
+          "storeCompileCalls": [
+            1
+          ],
+          "openedProjectCompileCalls": [
+            0
+          ],
+          "activeCapabilityReads": [
+            4
+          ],
+          "credentialFingerprints": [
+            3
+          ],
+          "contextStoreReads": [
+            0
+          ],
+          "dslCompilerCalls": [
+            2
+          ],
+          "readinessRequests": [
+            1
+          ],
+          "runtimeHealthProbes": [
+            4,
+            5
+          ],
+          "modelCatalogReads": [
+            4,
+            5
+          ],
+          "pluginReads": [
+            0
+          ]
+        },
+        "cacheHits": 0
+      },
+      "candidate": {
+        "samples": 20,
+        "p50Ms": 241.88168300000143,
+        "p95Ms": 259.95580900000004,
+        "compilePhaseP95Ms": 34.8,
+        "counters": {
+          "projectRevisionReads": [
+            1
+          ],
+          "projectHeadReads": [
+            0
+          ],
+          "projectOpens": [
+            1,
+            2
+          ],
+          "storeCompileCalls": [
+            0
+          ],
+          "openedProjectCompileCalls": [
+            1
+          ],
+          "activeCapabilityReads": [
+            4
+          ],
+          "credentialFingerprints": [
+            3
+          ],
+          "contextStoreReads": [
+            0
+          ],
+          "dslCompilerCalls": [
+            2
+          ],
+          "readinessRequests": [
+            1
+          ],
+          "runtimeHealthProbes": [
+            4,
+            5
+          ],
+          "modelCatalogReads": [
+            4,
+            5
+          ],
+          "pluginReads": [
+            0
+          ]
+        },
+        "cacheHits": 0
+      },
+      "gate": {
+        "deltaMs": 2.2910430000001725,
+        "deltaPercent": 0.8891564941402091,
+        "triggered": false
+      }
+    },
+    {
+      "pair": 2,
+      "scenario": "warm",
+      "main": {
+        "samples": 20,
+        "p50Ms": 577.8609420000012,
+        "p95Ms": 619.5137219999997,
+        "compilePhaseP95Ms": 0.01,
+        "counters": {
+          "projectRevisionReads": [
+            1
+          ],
+          "projectHeadReads": [
+            1
+          ],
+          "projectOpens": [
+            0
+          ],
+          "storeCompileCalls": [
+            0
+          ],
+          "openedProjectCompileCalls": [
+            0
+          ],
+          "activeCapabilityReads": [
+            1
+          ],
+          "credentialFingerprints": [
+            1
+          ],
+          "contextStoreReads": [
+            0
+          ],
+          "dslCompilerCalls": [
+            0
+          ],
+          "readinessRequests": [
+            1
+          ],
+          "runtimeHealthProbes": [
+            0
+          ],
+          "modelCatalogReads": [
+            0
+          ],
+          "pluginReads": [
+            0
+          ]
+        },
+        "cacheHits": 20
+      },
+      "candidate": {
+        "samples": 20,
+        "p50Ms": 568.4706760000008,
+        "p95Ms": 620.8808680000002,
+        "compilePhaseP95Ms": 0,
+        "counters": {
+          "projectRevisionReads": [
+            1
+          ],
+          "projectHeadReads": [
+            0
+          ],
+          "projectOpens": [
+            0
+          ],
+          "storeCompileCalls": [
+            0
+          ],
+          "openedProjectCompileCalls": [
+            0
+          ],
+          "activeCapabilityReads": [
+            1
+          ],
+          "credentialFingerprints": [
+            1
+          ],
+          "contextStoreReads": [
+            0
+          ],
+          "dslCompilerCalls": [
+            0
+          ],
+          "readinessRequests": [
+            1
+          ],
+          "runtimeHealthProbes": [
+            0
+          ],
+          "modelCatalogReads": [
+            0
+          ],
+          "pluginReads": [
+            0
+          ]
+        },
+        "cacheHits": 20
+      },
+      "gate": {
+        "deltaMs": 1.3671460000005027,
+        "deltaPercent": 0.22068050334492886,
+        "triggered": false
+      }
+    },
+    {
+      "pair": 2,
+      "scenario": "permission-invalidation",
+      "main": {
+        "samples": 20,
+        "p50Ms": 609.5914499999999,
+        "p95Ms": 656.9685360000003,
+        "compilePhaseP95Ms": 33.86,
+        "counters": {
+          "projectRevisionReads": [
+            1
+          ],
+          "projectHeadReads": [
+            1
+          ],
+          "projectOpens": [
+            0
+          ],
+          "storeCompileCalls": [
+            1
+          ],
+          "openedProjectCompileCalls": [
+            0
+          ],
+          "activeCapabilityReads": [
+            5
+          ],
+          "credentialFingerprints": [
+            4
+          ],
+          "contextStoreReads": [
+            0
+          ],
+          "dslCompilerCalls": [
+            2
+          ],
+          "readinessRequests": [
+            1
+          ],
+          "runtimeHealthProbes": [
+            4,
+            5
+          ],
+          "modelCatalogReads": [
+            4,
+            5
+          ],
+          "pluginReads": [
+            0
+          ]
+        },
+        "cacheHits": 0
+      },
+      "candidate": {
+        "samples": 20,
+        "p50Ms": 604.4403629999979,
+        "p95Ms": 634.0541799999992,
+        "compilePhaseP95Ms": 34.33,
+        "counters": {
+          "projectRevisionReads": [
+            1
+          ],
+          "projectHeadReads": [
+            0
+          ],
+          "projectOpens": [
+            1
+          ],
+          "storeCompileCalls": [
+            0
+          ],
+          "openedProjectCompileCalls": [
+            1
+          ],
+          "activeCapabilityReads": [
+            5
+          ],
+          "credentialFingerprints": [
+            4
+          ],
+          "contextStoreReads": [
+            0
+          ],
+          "dslCompilerCalls": [
+            2
+          ],
+          "readinessRequests": [
+            1
+          ],
+          "runtimeHealthProbes": [
+            4,
+            5
+          ],
+          "modelCatalogReads": [
+            4,
+            5
+          ],
+          "pluginReads": [
+            0
+          ]
+        },
+        "cacheHits": 0
+      },
+      "gate": {
+        "deltaMs": -22.914356000001135,
+        "deltaPercent": -3.487892455172484,
+        "triggered": false
+      }
+    },
+    {
+      "pair": 2,
+      "scenario": "model-invalidation",
+      "main": {
+        "samples": 20,
+        "p50Ms": 626.200656999994,
+        "p95Ms": 687.7187699999995,
+        "compilePhaseP95Ms": 31.3,
+        "counters": {
+          "projectRevisionReads": [
+            1
+          ],
+          "projectHeadReads": [
+            1
+          ],
+          "projectOpens": [
+            0
+          ],
+          "storeCompileCalls": [
+            1
+          ],
+          "openedProjectCompileCalls": [
+            0
+          ],
+          "activeCapabilityReads": [
+            5
+          ],
+          "credentialFingerprints": [
+            4
+          ],
+          "contextStoreReads": [
+            0
+          ],
+          "dslCompilerCalls": [
+            2
+          ],
+          "readinessRequests": [
+            1
+          ],
+          "runtimeHealthProbes": [
+            4
+          ],
+          "modelCatalogReads": [
+            4
+          ],
+          "pluginReads": [
+            0
+          ]
+        },
+        "cacheHits": 0
+      },
+      "candidate": {
+        "samples": 20,
+        "p50Ms": 617.7898209999985,
+        "p95Ms": 653.3959959999993,
+        "compilePhaseP95Ms": 31.79,
+        "counters": {
+          "projectRevisionReads": [
+            1
+          ],
+          "projectHeadReads": [
+            0
+          ],
+          "projectOpens": [
+            1
+          ],
+          "storeCompileCalls": [
+            0
+          ],
+          "openedProjectCompileCalls": [
+            1
+          ],
+          "activeCapabilityReads": [
+            5
+          ],
+          "credentialFingerprints": [
+            4
+          ],
+          "contextStoreReads": [
+            0
+          ],
+          "dslCompilerCalls": [
+            2
+          ],
+          "readinessRequests": [
+            1
+          ],
+          "runtimeHealthProbes": [
+            4
+          ],
+          "modelCatalogReads": [
+            4
+          ],
+          "pluginReads": [
+            0
+          ]
+        },
+        "cacheHits": 0
+      },
+      "gate": {
+        "deltaMs": -34.32277400000021,
+        "deltaPercent": -4.9908153590166275,
+        "triggered": false
+      }
+    },
+    {
+      "pair": 2,
+      "scenario": "capability-invalidation",
+      "main": {
+        "samples": 20,
+        "p50Ms": 642.442928000004,
+        "p95Ms": 660.4899270000024,
+        "compilePhaseP95Ms": 30.17,
+        "counters": {
+          "projectRevisionReads": [
+            1
+          ],
+          "projectHeadReads": [
+            1
+          ],
+          "projectOpens": [
+            0
+          ],
+          "storeCompileCalls": [
+            1
+          ],
+          "openedProjectCompileCalls": [
+            0
+          ],
+          "activeCapabilityReads": [
+            5
+          ],
+          "credentialFingerprints": [
+            4
+          ],
+          "contextStoreReads": [
+            0
+          ],
+          "dslCompilerCalls": [
+            2
+          ],
+          "readinessRequests": [
+            1
+          ],
+          "runtimeHealthProbes": [
+            5,
+            6
+          ],
+          "modelCatalogReads": [
+            4,
+            5
+          ],
+          "pluginReads": [
+            0
+          ]
+        },
+        "cacheHits": 0
+      },
+      "candidate": {
+        "samples": 20,
+        "p50Ms": 634.2729400000026,
+        "p95Ms": 845.8570649999965,
+        "compilePhaseP95Ms": 31.72,
+        "counters": {
+          "projectRevisionReads": [
+            1
+          ],
+          "projectHeadReads": [
+            0
+          ],
+          "projectOpens": [
+            1
+          ],
+          "storeCompileCalls": [
+            0
+          ],
+          "openedProjectCompileCalls": [
+            1
+          ],
+          "activeCapabilityReads": [
+            5
+          ],
+          "credentialFingerprints": [
+            4
+          ],
+          "contextStoreReads": [
+            0
+          ],
+          "dslCompilerCalls": [
+            2
+          ],
+          "readinessRequests": [
+            1
+          ],
+          "runtimeHealthProbes": [
+            5,
+            6
+          ],
+          "modelCatalogReads": [
+            4,
+            5
+          ],
+          "pluginReads": [
+            0
+          ]
+        },
+        "cacheHits": 0
+      },
+      "gate": {
+        "deltaMs": 185.36713799999416,
+        "deltaPercent": 28.065096895867345,
+        "triggered": true
+      }
+    },
+    {
+      "pair": 2,
+      "scenario": "credential-invalidation",
+      "main": {
+        "samples": 20,
+        "p50Ms": 658.6785769999988,
+        "p95Ms": 719.308097000001,
+        "compilePhaseP95Ms": 29.94,
+        "counters": {
+          "projectRevisionReads": [
+            1
+          ],
+          "projectHeadReads": [
+            1
+          ],
+          "projectOpens": [
+            0
+          ],
+          "storeCompileCalls": [
+            1
+          ],
+          "openedProjectCompileCalls": [
+            0
+          ],
+          "activeCapabilityReads": [
+            5
+          ],
+          "credentialFingerprints": [
+            4
+          ],
+          "contextStoreReads": [
+            0
+          ],
+          "dslCompilerCalls": [
+            2
+          ],
+          "readinessRequests": [
+            1
+          ],
+          "runtimeHealthProbes": [
+            5
+          ],
+          "modelCatalogReads": [
+            4
+          ],
+          "pluginReads": [
+            0
+          ]
+        },
+        "cacheHits": 0
+      },
+      "candidate": {
+        "samples": 20,
+        "p50Ms": 660.1124530000088,
+        "p95Ms": 678.5596249999944,
+        "compilePhaseP95Ms": 34.47,
+        "counters": {
+          "projectRevisionReads": [
+            1
+          ],
+          "projectHeadReads": [
+            0
+          ],
+          "projectOpens": [
+            1
+          ],
+          "storeCompileCalls": [
+            0
+          ],
+          "openedProjectCompileCalls": [
+            1
+          ],
+          "activeCapabilityReads": [
+            5
+          ],
+          "credentialFingerprints": [
+            4
+          ],
+          "contextStoreReads": [
+            0
+          ],
+          "dslCompilerCalls": [
+            2
+          ],
+          "readinessRequests": [
+            1
+          ],
+          "runtimeHealthProbes": [
+            5
+          ],
+          "modelCatalogReads": [
+            4
+          ],
+          "pluginReads": [
+            0
+          ]
+        },
+        "cacheHits": 0
+      },
+      "gate": {
+        "deltaMs": -40.748472000006586,
+        "deltaPercent": -5.664953886930391,
+        "triggered": false
+      }
+    },
+    {
+      "pair": 2,
+      "scenario": "system-invalidation",
+      "main": {
+        "samples": 20,
+        "p50Ms": 622.3300130000134,
+        "p95Ms": 674.0014789999987,
+        "compilePhaseP95Ms": 36.34,
+        "counters": {
+          "projectRevisionReads": [
+            1
+          ],
+          "projectHeadReads": [
+            1
+          ],
+          "projectOpens": [
+            0
+          ],
+          "storeCompileCalls": [
+            1
+          ],
+          "openedProjectCompileCalls": [
+            0
+          ],
+          "activeCapabilityReads": [
+            5
+          ],
+          "credentialFingerprints": [
+            4
+          ],
+          "contextStoreReads": [
+            0
+          ],
+          "dslCompilerCalls": [
+            2
+          ],
+          "readinessRequests": [
+            1
+          ],
+          "runtimeHealthProbes": [
+            4
+          ],
+          "modelCatalogReads": [
+            4,
+            5
+          ],
+          "pluginReads": [
+            0
+          ]
+        },
+        "cacheHits": 0
+      },
+      "candidate": {
+        "samples": 20,
+        "p50Ms": 617.9987610000098,
+        "p95Ms": 652.4808880000055,
+        "compilePhaseP95Ms": 38.64,
+        "counters": {
+          "projectRevisionReads": [
+            1
+          ],
+          "projectHeadReads": [
+            0
+          ],
+          "projectOpens": [
+            1
+          ],
+          "storeCompileCalls": [
+            0
+          ],
+          "openedProjectCompileCalls": [
+            1
+          ],
+          "activeCapabilityReads": [
+            5
+          ],
+          "credentialFingerprints": [
+            4
+          ],
+          "contextStoreReads": [
+            0
+          ],
+          "dslCompilerCalls": [
+            2
+          ],
+          "readinessRequests": [
+            1
+          ],
+          "runtimeHealthProbes": [
+            4
+          ],
+          "modelCatalogReads": [
+            4
+          ],
+          "pluginReads": [
+            0
+          ]
+        },
+        "cacheHits": 0
+      },
+      "gate": {
+        "deltaMs": -21.520590999993146,
+        "deltaPercent": -3.19295901722987,
+        "triggered": false
+      }
+    },
+    {
+      "pair": 2,
+      "scenario": "context-mount-invalidation",
+      "main": {
+        "samples": 20,
+        "p50Ms": 665.2888220000023,
+        "p95Ms": 725.572583000001,
+        "compilePhaseP95Ms": 30.36,
+        "counters": {
+          "projectRevisionReads": [
+            1
+          ],
+          "projectHeadReads": [
+            1
+          ],
+          "projectOpens": [
+            0
+          ],
+          "storeCompileCalls": [
+            1
+          ],
+          "openedProjectCompileCalls": [
+            0
+          ],
+          "activeCapabilityReads": [
+            5
+          ],
+          "credentialFingerprints": [
+            4
+          ],
+          "contextStoreReads": [
+            0
+          ],
+          "dslCompilerCalls": [
+            2
+          ],
+          "readinessRequests": [
+            1
+          ],
+          "runtimeHealthProbes": [
+            5,
+            6
+          ],
+          "modelCatalogReads": [
+            4
+          ],
+          "pluginReads": [
+            0
+          ]
+        },
+        "cacheHits": 0
+      },
+      "candidate": {
+        "samples": 20,
+        "p50Ms": 656.7295100000047,
+        "p95Ms": 723.2186550000042,
+        "compilePhaseP95Ms": 32.85,
+        "counters": {
+          "projectRevisionReads": [
+            1
+          ],
+          "projectHeadReads": [
+            0
+          ],
+          "projectOpens": [
+            1
+          ],
+          "storeCompileCalls": [
+            0
+          ],
+          "openedProjectCompileCalls": [
+            1
+          ],
+          "activeCapabilityReads": [
+            5
+          ],
+          "credentialFingerprints": [
+            4
+          ],
+          "contextStoreReads": [
+            0
+          ],
+          "dslCompilerCalls": [
+            2
+          ],
+          "readinessRequests": [
+            1
+          ],
+          "runtimeHealthProbes": [
+            5,
+            6
+          ],
+          "modelCatalogReads": [
+            4,
+            5
+          ],
+          "pluginReads": [
+            0
+          ]
+        },
+        "cacheHits": 0
+      },
+      "gate": {
+        "deltaMs": -2.353927999996813,
+        "deltaPercent": -0.3244235042983714,
+        "triggered": false
+      }
+    }
+  ],
+  "triggers": [
+    {
+      "pair": 1,
+      "scenario": "system-invalidation",
+      "deltaMs": 70.5894660000049,
+      "deltaPercent": 11.082620026555077,
+      "triggered": true
+    },
+    {
+      "pair": 2,
+      "scenario": "capability-invalidation",
+      "deltaMs": 185.36713799999416,
+      "deltaPercent": 28.065096895867345,
+      "triggered": true
+    }
+  ]
+}

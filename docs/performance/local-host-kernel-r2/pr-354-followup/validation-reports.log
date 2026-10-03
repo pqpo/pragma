@@ -1,0 +1,15 @@
+
+> @pqpo/pragma@0.1.0-next.18 release:reports /Users/linminqiu/.codex/worktrees/issue-348-r2/expert-mesh/apps/cli
+> node scripts/release-reports.mjs
+
+{
+  "ok": true,
+  "package": "@pqpo/pragma",
+  "version": "0.1.0-next.18",
+  "tarball": "/Users/linminqiu/.codex/worktrees/issue-348-r2/expert-mesh/apps/cli/.release/pqpo-pragma-0.1.0-next.18.tgz",
+  "sha256": "e273a13f823d2ac1ac1a6909b21f52fb18b246799648b01b0b6089cf7eec0dfb",
+  "tarballBytes": 6224545,
+  "sbom": "/Users/linminqiu/.codex/worktrees/issue-348-r2/expert-mesh/apps/cli/.release/reports/sbom.cdx.json",
+  "licenseReport": "/Users/linminqiu/.codex/worktrees/issue-348-r2/expert-mesh/apps/cli/.release/reports/license-report.txt",
+  "artifactDirectory": "/Users/linminqiu/.codex/worktrees/issue-348-r2/expert-mesh/apps/cli/.release/ci-artifact"
+}

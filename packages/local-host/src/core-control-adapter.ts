@@ -172,7 +172,8 @@ export function createLocalHostCoreMissionControlAdapter(options: {
   readonly ownerAccess?: MissionExecutionOwnerAccess | undefined;
   /** Narrow R3 recovery port: returns a Core handle, never applies a command. */
   readonly recoverActiveOwner?:
-    ((missionId: string) => Promise<LocalHostCoreActiveOwner>) | undefined;
+    | ((missionId: string, purpose?: "execute" | "stop") => Promise<LocalHostCoreActiveOwner>)
+    | undefined;
   /** Narrow compile/Core port for stopping a cold Flow without running its graph. */
   readonly stopFlow?:
     | ((
@@ -313,6 +314,7 @@ export function createLocalHostCoreMissionControlAdapter(options: {
     missionId: string,
     admissionOwned = false,
     preparedExecutor?: LocalHostCoreExecutorDefinition,
+    purpose: "execute" | "stop" = "execute",
   ): Promise<CoreMissionOwner> => {
     const existing = owners.controlOwner(missionId);
     if (existing !== undefined) return existing;
@@ -325,7 +327,7 @@ export function createLocalHostCoreMissionControlAdapter(options: {
     if (options.recoverActiveOwner !== undefined) {
       return await owners.recoverControlOwner(
         missionId,
-        () => options.recoverActiveOwner!(missionId),
+        () => options.recoverActiveOwner!(missionId, purpose),
         { admission: "owned" },
       );
     }
@@ -333,7 +335,7 @@ export function createLocalHostCoreMissionControlAdapter(options: {
       missionId,
       async () => {
         const binding = await readBinding(missionId);
-        const executor = preparedExecutor ?? (await resolveExecutor(binding));
+        const executor = preparedExecutor ?? (await resolveExecutor(binding, purpose));
         assertExecutorMatchesBinding(executor.descriptor, binding);
         const app = await createControlApp({
           options,
@@ -935,7 +937,7 @@ export function createLocalHostCoreMissionControlAdapter(options: {
             result = await applyCoreMissionCommand({
               command,
               executions,
-              recover,
+              recover: (missionId, purpose) => recover(missionId, false, undefined, purpose),
               resolveExecutionId: options.resolveExecutionId,
               stopFlow: async (executionId, reason) => {
                 try {
@@ -1132,7 +1134,7 @@ async function createControlApp(options: {
 async function applyCoreMissionCommand(options: {
   readonly command: MissionCommand;
   readonly executions: ExecutionStore;
-  readonly recover: (missionId: string) => Promise<CoreMissionOwner>;
+  readonly recover: (missionId: string, purpose?: "execute" | "stop") => Promise<CoreMissionOwner>;
   readonly resolveExecutionId?: ((missionId: string) => Promise<string | undefined>) | undefined;
   readonly stopFlow: (executionId: string, reason: string | undefined) => Promise<void>;
   readonly retainedOwner?: CoreMissionOwner | undefined;
@@ -1183,7 +1185,12 @@ async function applyCoreMissionCommand(options: {
       targetStatus: "interrupted",
     };
   }
-  const owner = options.retainedOwner ?? (await options.recover(command.missionId));
+  const owner =
+    options.retainedOwner ??
+    (await options.recover(
+      command.missionId,
+      command.payload.kind === "interrupt" ? "stop" : "execute",
+    ));
   if (owner.kind === "flow") {
     if (command.payload.kind === "interrupt") {
       const target = command.target?.executionId;

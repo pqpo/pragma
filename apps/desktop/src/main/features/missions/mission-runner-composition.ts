@@ -2775,12 +2775,23 @@ export function createMissionRunner(options: {
     return running;
   };
 
+  const stopRecoverySessions = new WeakSet<ExpertSession>();
+
   const prepareMissionMessage = async (
     mission: Mission,
     input: import("@pragma/local-host").MissionMessageAdmissionInput,
     acceptedAt: number,
     compileScope = compileService.createRequestScope(mission),
   ) => {
+    // A stop-only recovery retains the durable Session but cannot own a new
+    // prompt. Release its transient lease before ordinary compilation resumes
+    // that same Session with an executable definition.
+    const stoppingSession = sessionService.session(mission.id);
+    if (stoppingSession !== undefined && stopRecoverySessions.has(stoppingSession)) {
+      await stoppingSession.releaseAfterTerminal();
+      if (sessionService.deleteSessionIfCurrent(mission.id, stoppingSession))
+        sessionService.clearCompilation(mission.id);
+    }
     const requestLogger = logger.child({
       scope: { missionId: input.id, requestId: input.requestId },
     });
@@ -4628,6 +4639,7 @@ export function createMissionRunner(options: {
   const openMissionSessionForQueueMutation = async (
     id: string,
     generation: number,
+    purpose: "execute" | "stop" = "execute",
   ): Promise<{
     readonly mission: Mission;
     readonly session: ExpertSession;
@@ -4641,10 +4653,12 @@ export function createMissionRunner(options: {
     const rootContext = await readMissionRootContext(mission);
     assertRunGenerationCurrent(id, generation, "before creating its prompt queue context");
     const { app, runtimes: baseRuntimes } = await executionContext(mission);
-    const stableCompilation = await compileService.compileStable(
-      compileService.createRequestScope(mission),
-      withMissionRuntimeBinding(baseRuntimes, rootContext),
-    );
+    const scope = compileService.createRequestScope(mission);
+    const runtimes = withMissionRuntimeBinding(baseRuntimes, rootContext);
+    const stableCompilation =
+      purpose === "stop"
+        ? { compiled: await compileService.compile(scope, runtimes, "stop"), capabilities: [] }
+        : await compileService.compileStable(scope, runtimes);
     const { compiled } = stableCompilation;
     assertRunGenerationCurrent(id, generation, "while compiling its prompt queue owner");
     if ("kind" in compiled.value && compiled.value.kind === "flow") {
@@ -4658,7 +4672,12 @@ export function createMissionRunner(options: {
       sessionId,
     );
     sessionService.setSession(id, session);
-    rememberSessionCompilation(id, stableCompilation.identity, compiled);
+    if ("identity" in stableCompilation)
+      rememberSessionCompilation(id, stableCompilation.identity, compiled);
+    else {
+      stopRecoverySessions.add(session);
+      sessionService.clearCompilation(id);
+    }
     return { mission, session };
   };
 
@@ -4901,7 +4920,7 @@ export function createMissionRunner(options: {
         return { kind: "flow", execution: active.handle };
       return undefined;
     },
-    recoverActiveOwner: async (id) => {
+    recoverActiveOwner: async (id, purpose: "execute" | "stop" = "execute") => {
       const generation = lifecycleService.runGeneration(id);
       const mission = await options.missions.get(id);
       assertRunGenerationCurrent(id, generation, "while reading its control owner");
@@ -4910,7 +4929,7 @@ export function createMissionRunner(options: {
         return { kind: "flow", execution: active.handle };
       }
       return await withMissionPromptAdmission(id, async () => {
-        const { session } = await openMissionSessionForQueueMutation(id, generation);
+        const { session } = await openMissionSessionForQueueMutation(id, generation, purpose);
         return { kind: "session" as const, session };
       });
     },
@@ -4994,6 +5013,20 @@ export function createMissionRunner(options: {
             },
             { executionId: mission.execution.id, statuses: ["queued", "running", "waiting"] },
           );
+        }
+      }
+      if (command.kind === "interrupt") {
+        const recovered = sessionService.session(command.missionId);
+        if (recovered !== undefined && stopRecoverySessions.has(recovered)) {
+          const state = await recovered.getState();
+          if (state.activeExecutionId === undefined) {
+            const prompts = await recovered.getPromptQueue();
+            if (prompts.some((prompt) => prompt.status === "queued"))
+              await recovered.releaseAfterHumanCheckpoint();
+            else await recovered.releaseAfterTerminal();
+            if (sessionService.deleteSessionIfCurrent(command.missionId, recovered))
+              sessionService.clearCompilation(command.missionId);
+          }
         }
       }
       if (command.kind.startsWith("queue.")) {

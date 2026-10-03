@@ -22,6 +22,11 @@ export {
   type RuntimeByExpert,
 } from "./agent/agent-launcher.ts";
 export * from "./agent/context-manager.ts";
+export {
+  assertExecutableDefinition,
+  markStopOnlyDefinition,
+  StopOnlyDefinitionExecutionError,
+} from "./agent/definition-execution-purpose.ts";
 export * from "./agent/expert-agent.ts";
 export * from "./agent/expert-definition-descriptor.ts";
 export * from "./agent/expert-team.ts";

@@ -42,3 +42,7 @@ stop 边界说明：Desktop full controller 回归的初版把 Native Runtime �
 与工程门禁同一冻结源码，串行两组main/R2各8场景×20样本完成；缓存/失效/pin计数全部通过，warm DSL=0、miss DSL=2、R2 head/pinned=0/1。组2system失效P95触发602.20→672.11 ms（+11.61%），保留原始结果并追加两组每端60样本，669.25→675.88与689.34→648.48 ms均未重复触发。完整准备与编译phase耗时、API读取集合、缓存计数、逐命令退出及源码摘要见[CR后性能章节](../performance/local-host-kernel-r2-performance.md#cr-后冻结源码对照)。未新增真实模型样本，不将局部复测冒充完整产品验收。
 
 最终结论：CR01–CR08 的确认问题全部修复且复核通过，工程门禁通过；原始性能触发已如实记录并复测。R2代码实施交付，阶段验收保持未完成。
+
+## PR 评论中的补充触发路径
+
+PR #354 后续复核确认此前取消覆盖不完整：冷 Expert/Team recovery 仍默认 execute，stop 编译仍调用 Plugin/inline Secret。两项修复与新的冻结验证单独记录在 [PR #354 后续报告](local-host-kernel-r2-pr-354-followup.md)，不能用上文旧源码门禁替代本次验证。阶段验收缺口继续保留。

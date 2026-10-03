@@ -168,3 +168,33 @@ CR 修复后的生产摘要为 `e064f7e657f9736c782d1847ecb7fbb55a8c2cb446d407ff
 每组R2暖owner20/20命中、DSL编译0，cold及六类失效均miss且DSL编译2（root+system）；main等同缓存断言通过。R2每请求head/pinned Revision读取0/1，main为1/1；R2暖project open0、失效1（cold {1,2}），main暖0、失效0并经store compile。暖active Capability/credential fingerprint读取1/1，system失效5/4，其余完整计数保存在JSON。Context mount失效仅读取目标store；此probe无Plugin/inline Secret，Plugin读取0，不能证明重Plugin workload性能。新增guard正确性由真实存储/DSL的轮换、删除、编译期间变化与映射交换回归证明，非OS Keychain验收。读取数为API调用，不是物理I/O。全场景暖组health/model读取0；系统复测因TTL/Runtime探测链health/model读取{4,5}，不把readiness自身不调model list扩大为全链零读取。
 
 [全场景摘要](local-host-kernel-r2/cr/comparison-summary.json)、[系统复测摘要](local-host-kernel-r2/cr/repeat-summary.json)、[全场景逐命令退出](local-host-kernel-r2/cr/measure-ledger.json)、[复测逐命令退出](local-host-kernel-r2/cr/system-repeat-ledger.json)、[最终工程门禁](local-host-kernel-r2/cr/validation.json)与同目录逐样本raw JSON保存原始证据。此前真实provider每端0有效样本、OS凭据/完整产品指标和正常Memory/Automation负载缺口继续保留；R1/R2均未标记全部验收完成。
+
+## PR #354 评论修复后的独立测量批次
+
+本批对应 [评论裁决与实现](../architecture/local-host-kernel-r2-pr-354-followup.md)，不覆盖此前 R2/CR 数据。冻结 production 摘要 `4502e1a76d1ed74014c80112a7406c0cd146e0fad9b2f148e131650962ecb55d`（1,149 文件），工程门禁、两组完整测量与两类追加复测前后均一致；基线仍为 `a2741325ab106b3cbc8f472d4feec98b1367ae55`，main 摘要 `d9c5a7f493826556a8443a07c2f6d28d498a420a1f2aa05ea3382cf1fe11159e`。Node 24.18.0，同一 unchanged probe、隔离真实存储/Interpreter、fake Runtime；测试与构建结束后 main→候选串行运行。每端每组 8 场景×20 样本，两组共 640 次准备操作；system 与 Capability 各追加两组每端 60 样本，共 480 次目标操作（另 8 个 setup cold 不计目标 P95）。所有命令退出 0，pin/cache/source assertions 通过。
+
+| 场景                       | main/候选 准备 P95 组1 ms | main/候选 准备 P95 组2 ms | main/候选 编译 phase P95 组1/2 ms |
+| -------------------------- | ------------------------: | ------------------------: | --------------------------------- |
+| cold                       |             292.20/274.31 |             257.66/259.96 | 41.17/41.11 · 41.20/34.80         |
+| warm                       |             717.22/580.83 |             619.51/620.88 | 0.01/0.00 · 0.01/0.00             |
+| permission-invalidation    |             628.18/629.97 |             656.97/634.05 | 27.71/32.20 · 33.86/34.33         |
+| model-invalidation         |             659.24/632.67 |             687.72/653.40 | 31.76/33.33 · 31.30/31.79         |
+| capability-invalidation    |             697.99/711.68 |             660.49/845.86 | 30.39/38.69 · 30.17/31.72         |
+| credential-invalidation    |             745.31/697.22 |             719.31/678.56 | 30.14/31.09 · 29.94/34.47         |
+| system-invalidation        |             636.94/707.53 |             674.00/652.48 | 35.46/37.02 · 36.34/38.64         |
+| context-mount-invalidation |             670.75/699.78 |             725.57/723.22 | 29.76/35.50 · 30.36/32.85         |
+
+组1 system 636.94→707.53 ms（+11.08%）、组2 Capability 660.49→845.86 ms（+28.07%）触发既有 >10% 且 >20ms 阈值，原始数据保留。追加结果：
+
+| 场景/复测组               | main/候选 准备 P95 ms |   差异 | main/候选 编译 phase P95 ms |
+| ------------------------- | --------------------: | -----: | --------------------------: |
+| system-invalidation/3     |         651.24/647.07 | -0.64% |                 37.88/41.92 |
+| system-invalidation/4     |         639.48/698.75 | +9.27% |                 37.73/45.10 |
+| capability-invalidation/3 |         713.15/667.37 | -6.42% |                 33.18/35.24 |
+| capability-invalidation/4 |         668.97/673.80 | +0.72% |                 31.78/37.57 |
+
+四组均未重复触发准备耗时阈值，未改超时/性能预算；编译 phase 成本仍有波动，不宣称稳定性能收益或完整性能验收通过。
+
+每组暖 owner 20/20 命中、DSL=0；cold 与六类失效均 miss、DSL=2（root+system）。候选每请求 head/pinned Revision=0/1，main=1/1；候选暖 Project open=0、失效=1、cold={1,2}。暖 active Capability/credential fingerprint=1/1，失效=5/4；候选暖 health/model=0，system 复测={4,5}，Capability 复测 health={5,6}/model={4,5}。这是真实 API 调用计数，不是物理 I/O；该夹具 Plugin、ContextStore port 计数为 0，未测 Plugin 重负载或 inline Secret，不能把正确性回归当作相应性能证明。全部计数/P50/P95/逐样本 phase 保存在原始 JSON。
+
+[完整摘要](local-host-kernel-r2/pr-354-followup/comparison-summary.json)、[复测摘要](local-host-kernel-r2/pr-354-followup/repeat-summary.json)、[工程门禁](local-host-kernel-r2/pr-354-followup/validation.json)、[完整测量命令](local-host-kernel-r2/pr-354-followup/measure-ledger.json)、[system 复测命令](local-host-kernel-r2/pr-354-followup/system-repeat-ledger.json)、[Capability 复测命令](local-host-kernel-r2/pr-354-followup/capability-repeat-ledger.json)及同目录原始 JSON/日志可复核。本轮未取得新真实模型样本；此前每端 0 有效样本及 OS 凭据、产品 UI/terminal、正常 Memory/Automation 负载和并发缺口均继续保留，R1/R2 完整验收仍未通过。

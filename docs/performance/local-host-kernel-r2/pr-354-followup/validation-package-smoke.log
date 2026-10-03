@@ -1,0 +1,11 @@
+{
+  "ok": true,
+  "mode": "positive",
+  "node": "24.18.0",
+  "platform": "darwin",
+  "arch": "x64",
+  "version": "0.1.0-next.18",
+  "commit": "a355f31649f4832a10d23dda5ae71749b0a8c79f",
+  "cliSha256": "2aece08c465394477dd5d070166a0518e3215f49215d520aa675f4b4a7c5b332",
+  "tarballSha256": "e273a13f823d2ac1ac1a6909b21f52fb18b246799648b01b0b6089cf7eec0dfb"
+}

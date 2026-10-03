@@ -2,12 +2,20 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 
-import { createStaticRuntimeResolver, PragmaPaths, type IExpertAgentMcpConfig } from "@pragma/core";
+import {
+  assertExecutableDefinition,
+  createStaticRuntimeResolver,
+  fingerprintExpertExecutionDefinition,
+  PragmaPaths,
+  type ExpertDefinition,
+  type IExpertAgentMcpConfig,
+} from "@pragma/core";
 import { defineRuntimeTestDriver } from "@pragma/core/testing";
 import { BUILT_IN_PRAGMA_REF } from "@pragma/built-in-agents";
 import {
   canonicalPragmaResourceRef,
   formatPragmaYaml,
+  FlowActionRegistry,
   loadPragmaProject,
   PragmaDslError,
   type PragmaResource,
@@ -41,13 +49,38 @@ afterEach(async () => {
 
 async function fixture(
   kind:
-    "plugin" | "capability" | "plain" | "inline-secret" | "context" | "installed-plugin" = "plain",
+    | "plugin"
+    | "capability"
+    | "plain"
+    | "inline-secret"
+    | "context"
+    | "installed-plugin"
+    | "inline-artifact"
+    | "missing-action" = "plain",
+  delegation = false,
 ) {
   const home = await mkdtemp(join(tmpdir(), "pragma-node-compile-errors-"));
   roots.push(home);
   const resources: PragmaResource[] = [...createPublishedProjectResources()];
   const expert = resources.find((resource) => resource.kind === "Expert")!;
   if (expert.kind !== "Expert") throw new Error("Expert fixture missing.");
+  if (delegation) {
+    const member = resources.filter((candidate) => candidate.kind === "Expert")[1]!;
+    const runtime = resources.find((candidate) => candidate.kind === "RuntimeProfile")!;
+    if (runtime.kind !== "RuntimeProfile") throw new Error("Runtime missing");
+    runtime.spec.config = { runtimeId: "codex", providerId: "test", model: "test-model" };
+    expert.spec.tools = [
+      {
+        adapter: "pragma.tool.delegate@v1",
+        targets: [{ ref: canonicalPragmaResourceRef(member) }],
+        policy: {
+          maxConcurrency: 2,
+          maxDepth: 3,
+          runtimes: { [member.metadata.id]: canonicalPragmaResourceRef(runtime) },
+        },
+      },
+    ];
+  }
   if (kind === "plugin") expert.spec.plugins = [{ ref: "plugin:missing@1.0.0", config: {} }];
   if (kind === "installed-plugin")
     expert.spec.plugins = [{ ref: "plugin:example@1.0.0", config: {} }];
@@ -96,6 +129,31 @@ async function fixture(
       }),
     );
   }
+  if (kind === "inline-artifact") {
+    expert.spec.capabilities = [{ ref: `capability:${capabilityId}`, kind: "skill" }];
+    resources.push(
+      PragmaCapabilityResourceSchema.parse({
+        apiVersion: expert.apiVersion,
+        kind: "Capability",
+        metadata: {
+          id: capabilityId,
+          name: "Unavailable Skill",
+          description: "Remote artifact",
+          tags: [],
+        },
+        spec: {
+          adapter: "pragma.capability.skill@v1",
+          config: {
+            source: {
+              type: "uri",
+              uri: "https://example.test/missing-skill",
+              integrity: `sha256:${"a".repeat(64)}`,
+            },
+          },
+        },
+      }),
+    );
+  }
   const contextId = "00000000-0000-4000-8000-000000000031";
   if (kind === "context") {
     expert.spec.contextStores = [
@@ -118,6 +176,11 @@ async function fixture(
         },
       }),
     );
+  }
+  if (kind === "missing-action") {
+    const flow = resources.find((candidate) => candidate.kind === "Flow")!;
+    if (flow.kind !== "Flow") throw new Error("Flow missing");
+    flow.spec.graph.steps.run = { action: { ref: "action:test.missing@v1" } };
   }
   const entry = join(home, "pragma.yaml");
   await writeFile(
@@ -271,6 +334,186 @@ async function installPlugin(f: Awaited<ReturnType<typeof fixture>>) {
 }
 
 describe("Node Mission compiler error boundary", () => {
+  it.each(["expert", "team", "flow"] as const)(
+    "compiles %s stop metadata without reading broken Plugin or execution resource ports",
+    async (kind) => {
+      const f = await fixture("installed-plugin", true);
+      const installed = await installPlugin(f);
+      const snapshot = await f.compiler.service.createRequestScope(f.request).getRevision();
+      const resource = snapshot.resources.find(
+        (candidate) =>
+          candidate.kind ===
+          (kind === "expert" ? "Expert" : kind === "team" ? "ExpertTeam" : "Flow"),
+      )!;
+      const request = {
+        ...f.request,
+        executor: {
+          kind,
+          ref: canonicalPragmaResourceRef(resource),
+          name: resource.metadata.name,
+        },
+      };
+      const original = await f.compiler.service.compile(
+        f.compiler.service.createRequestScope(request),
+        f.runtimes,
+      );
+      // Stop compilation retains the definition contract needed by Core recovery.
+      const resolve = vi.spyOn(f.ports.plugins, "resolve");
+      const inspect = vi.spyOn(f.ports.plugins, "inspect");
+      const credentials = vi.spyOn(f.ports.pluginCredentials, "get");
+      const adapter = f.ports.adapterHost;
+      const bindings = vi.fn(async () => {
+        throw new Error("Execution binding unavailable");
+      });
+      const secrets = vi.fn(async () => {
+        throw new Error("Secret Store locked");
+      });
+      const artifacts = vi.fn(async () => {
+        throw new Error("Artifact missing");
+      });
+      const compiler = createLocalHostNodeMissionCompiler({
+        pragmaHome: f.home,
+        reader: f.compiler.reader,
+        runtimes: f.runtimes,
+        resources: {
+          ...f.ports,
+          adapterHost: (input, purpose) => ({
+            ...adapter(input, purpose),
+            resolveBinding: bindings,
+            resolveSecret: secrets,
+            resolveArtifact: artifacts,
+          }),
+        },
+      });
+      for (const damage of ["corrupted", "locked", "missing"] as const) {
+        if (damage === "corrupted")
+          await writeFile(join(installed.root, "plugin.json"), "corrupted package");
+        if (damage === "locked") f.keychainState.locked = true;
+        if (damage === "missing") await rm(installed.root, { recursive: true });
+        const stopped = await compiler.compileForStop(compiler.service.createRequestScope(request));
+        expect(stopped.ref).toBe(original.ref);
+        expect(stopped.fingerprint).toBe(original.fingerprint);
+        expect(stopped.projectFingerprint).toBe(original.projectFingerprint);
+        expect(stopped.environmentFingerprint.value).not.toBe(
+          original.environmentFingerprint.value,
+        );
+        expect(() => assertExecutableDefinition(stopped.value)).toThrow("stop-only");
+        if (kind !== "flow")
+          expect(fingerprintExpertExecutionDefinition(stopped.value as ExpertDefinition)).toBe(
+            fingerprintExpertExecutionDefinition(original.value as ExpertDefinition),
+          );
+      }
+      expect(resolve).not.toHaveBeenCalled();
+      expect(inspect).not.toHaveBeenCalled();
+      expect(credentials).not.toHaveBeenCalled();
+      expect(bindings).not.toHaveBeenCalled();
+      expect(secrets).not.toHaveBeenCalled();
+      expect(artifacts).not.toHaveBeenCalled();
+      // A Host without Plugin execution support still has enough metadata to stop.
+      const withoutPlugins = createLocalHostNodeMissionCompiler({
+        pragmaHome: f.home,
+        reader: f.compiler.reader,
+        runtimes: f.runtimes,
+        resources: { ...f.ports, plugins: undefined },
+      });
+      await expect(
+        withoutPlugins.compileForStop(withoutPlugins.service.createRequestScope(request)),
+      ).resolves.toMatchObject({ ref: original.ref });
+    },
+  );
+
+  it("builds stop-only Task metadata without requiring the execution FlowAction registry", async () => {
+    const f = await fixture("missing-action");
+    const snapshot = await f.compiler.service.createRequestScope(f.request).getRevision();
+    const resource = snapshot.resources.find((candidate) => candidate.kind === "Flow")!;
+    const request = {
+      ...f.request,
+      executor: {
+        kind: "flow",
+        ref: canonicalPragmaResourceRef(resource),
+        name: resource.metadata.name,
+      },
+    };
+    const actions = new FlowActionRegistry().register({
+      id: "test.missing",
+      version: "v1",
+      inputSchema: { type: "object" },
+      outputSchema: { type: "object" },
+      execute: vi.fn(async () => ({})),
+    });
+    const project = await f.compiler.reader.openRevision(
+      (await f.compiler.reader.getRevision("studio", 1))!,
+    );
+    try {
+      const resolve = vi.spyOn(actions, "resolve");
+      const compiled = await project.compile(request.executor.ref as `flow:${string}`, {
+        workspace: f.home,
+        compilationPurpose: "stop",
+        runtimes: f.runtimes,
+        actions,
+      });
+      expect(resolve).not.toHaveBeenCalled();
+      expect(() => assertExecutableDefinition(compiled.value)).toThrow("stop-only");
+      if (!("kind" in compiled.value) || compiled.value.kind !== "flow")
+        throw new Error("Flow missing");
+      const task = compiled.value.steps.get("run")!.definition;
+      if (!("kind" in task) || task.kind !== "task") throw new Error("Task missing");
+      expect(() => task.handler({} as never)).toThrow("stop-only");
+    } finally {
+      await project.dispose();
+    }
+    await expect(
+      f.compiler.compileForStop(f.compiler.service.createRequestScope(request)),
+    ).resolves.toMatchObject({ ref: request.executor.ref });
+    await expect(
+      f.compiler.prepare(f.compiler.service.createRequestScope(request)),
+    ).rejects.toBeDefined();
+  });
+
+  it("stops with a missing external Skill artifact without claiming execution readiness", async () => {
+    const f = await fixture("inline-artifact");
+    const adapter = f.ports.adapterHost;
+    const resolveArtifact = vi.fn(async () => {
+      throw new Error("Artifact missing");
+    });
+    const compiler = createLocalHostNodeMissionCompiler({
+      pragmaHome: f.home,
+      reader: f.compiler.reader,
+      runtimes: f.runtimes,
+      resources: {
+        ...f.ports,
+        adapterHost: (input, purpose) => ({ ...adapter(input, purpose), resolveArtifact }),
+      },
+    });
+    const stopped = await compiler.compileForStop(compiler.service.createRequestScope(f.request));
+    expect(() => assertExecutableDefinition(stopped.value)).toThrow("stop-only");
+    expect(resolveArtifact).not.toHaveBeenCalled();
+    await expect(
+      compiler.prepare(compiler.service.createRequestScope(f.request)),
+    ).rejects.toBeDefined();
+    expect(resolveArtifact).toHaveBeenCalledTimes(1);
+  });
+
+  it("skips inline HTTP Secret, binding and artifact resolution for stop while execute remains fail closed", async () => {
+    const f = await fixture("inline-secret");
+    await f.ports.pluginCredentials.set("binding:http-token", "stop-test-private-token");
+    await f.compiler.service.compile(f.compiler.service.createRequestScope(f.request), f.runtimes);
+    await f.ports.pluginCredentials.remove("binding:http-token");
+    const gets = vi.spyOn(f.ports.pluginCredentials, "get");
+    const fingerprints = vi.spyOn(f.ports, "secretFingerprint");
+    for (const locked of [false, true]) {
+      f.keychainState.locked = locked;
+      await expect(
+        f.compiler.compileForStop(f.compiler.service.createRequestScope(f.request)),
+      ).resolves.toMatchObject({ ref: f.request.executor.ref });
+    }
+    expect(gets).not.toHaveBeenCalled();
+    expect(fingerprints).not.toHaveBeenCalled();
+    await expect(
+      f.compiler.prepare(f.compiler.service.createRequestScope(f.request)),
+    ).rejects.toBeDefined();
+  });
+
   it("invalidates a persisted Plugin Secret mapping swap without changing its historical verification hash", async () => {
     const f = await fixture("installed-plugin");
     const installed = await installPlugin(f);

@@ -502,6 +502,7 @@ export function createLocalHostMissionCompileService<
             };
       return await compileBuiltInAgent({
         ...source,
+        compilationPurpose: purpose,
         ...(source.plugins === undefined && options.plugins === undefined
           ? {}
           : { plugins: guardPlugins(source.plugins ?? options.plugins!) }),
@@ -600,6 +601,7 @@ export function createLocalHostMissionCompileService<
                 scope.request.project,
                 async (project) =>
                   await project.compile<InvocableResource>(ref, {
+                    compilationPurpose: purpose,
                     workspace: scope.request.workspace.path,
                     projectRoot: dirname(project.entryFile),
                     pragmaHome: options.pragmaHome,

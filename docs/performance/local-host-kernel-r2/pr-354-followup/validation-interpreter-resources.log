@@ -1,0 +1,9 @@
+
+ RUN  v5.0.2 /Users/linminqiu/.codex/worktrees/issue-348-r2/expert-mesh/packages/interpreter
+
+
+ Test Files  1 passed (1)
+      Tests  10 passed (10)
+   Start at  14:56:29
+   Duration  2.25s (transform 72%, import 25%, tests 3%)
+

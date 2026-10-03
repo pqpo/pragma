@@ -181,6 +181,7 @@ export async function materializeBuiltInAgentBundle(
 }
 
 export async function compileBuiltInAgent(options: {
+  readonly compilationPurpose?: PragmaCompileOptions["compilationPurpose"];
   readonly ref: BuiltInAgentRef;
   readonly environmentId: string;
   readonly definitionStateRoot: string;
@@ -239,6 +240,7 @@ export async function compileBuiltInAgent(options: {
   }
   const project = await projectPromise;
   return await project.compile<Expert>(options.ref, {
+    compilationPurpose: options.compilationPurpose,
     workspace: options.workspace,
     pragmaHome: options.pragmaHome,
     environmentId: options.environmentId,

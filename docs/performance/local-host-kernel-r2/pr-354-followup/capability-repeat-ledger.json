@@ -1,0 +1,78 @@
+[
+  {
+    "label": "compilation-capability-repeat-main-3",
+    "command": [
+      "pnpm",
+      "exec",
+      "tsx",
+      "/Users/linminqiu/.codex/worktrees/issue-348-r2/expert-mesh/docs/performance/local-host-kernel-r2-compilation-probe.mjs",
+      "--checkout",
+      "/Users/linminqiu/Workspace/expert-mesh",
+      "--samples",
+      "60",
+      "--scenario",
+      "capability-invalidation",
+      "--output",
+      "/tmp/pragma-pr354-compilation-capability-repeat-main-3.json"
+    ],
+    "exitCode": 0,
+    "elapsedSeconds": 48.6758668422699
+  },
+  {
+    "label": "compilation-capability-repeat-candidate-3",
+    "command": [
+      "pnpm",
+      "exec",
+      "tsx",
+      "/Users/linminqiu/.codex/worktrees/issue-348-r2/expert-mesh/docs/performance/local-host-kernel-r2-compilation-probe.mjs",
+      "--checkout",
+      "/Users/linminqiu/.codex/worktrees/issue-348-r2/expert-mesh",
+      "--samples",
+      "60",
+      "--scenario",
+      "capability-invalidation",
+      "--output",
+      "/tmp/pragma-pr354-compilation-capability-repeat-candidate-3.json"
+    ],
+    "exitCode": 0,
+    "elapsedSeconds": 48.306899070739746
+  },
+  {
+    "label": "compilation-capability-repeat-main-4",
+    "command": [
+      "pnpm",
+      "exec",
+      "tsx",
+      "/Users/linminqiu/.codex/worktrees/issue-348-r2/expert-mesh/docs/performance/local-host-kernel-r2-compilation-probe.mjs",
+      "--checkout",
+      "/Users/linminqiu/Workspace/expert-mesh",
+      "--samples",
+      "60",
+      "--scenario",
+      "capability-invalidation",
+      "--output",
+      "/tmp/pragma-pr354-compilation-capability-repeat-main-4.json"
+    ],
+    "exitCode": 0,
+    "elapsedSeconds": 48.77703285217285
+  },
+  {
+    "label": "compilation-capability-repeat-candidate-4",
+    "command": [
+      "pnpm",
+      "exec",
+      "tsx",
+      "/Users/linminqiu/.codex/worktrees/issue-348-r2/expert-mesh/docs/performance/local-host-kernel-r2-compilation-probe.mjs",
+      "--checkout",
+      "/Users/linminqiu/.codex/worktrees/issue-348-r2/expert-mesh",
+      "--samples",
+      "60",
+      "--scenario",
+      "capability-invalidation",
+      "--output",
+      "/tmp/pragma-pr354-compilation-capability-repeat-candidate-4.json"
+    ],
+    "exitCode": 0,
+    "elapsedSeconds": 48.42990493774414
+  }
+]

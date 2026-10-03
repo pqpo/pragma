@@ -1,2 +1,3 @@
 # Preserve raw CR evidence logs, including terminal whitespace and recorded hashes.
 docs/performance/local-host-kernel-r2/cr/*.log -whitespace
+docs/performance/local-host-kernel-r2/pr-354-followup/*.log -whitespace

@@ -1,0 +1,70 @@
+[
+  {
+    "label": "compilation-main-1",
+    "command": [
+      "pnpm",
+      "exec",
+      "tsx",
+      "/Users/linminqiu/.codex/worktrees/issue-348-r2/expert-mesh/docs/performance/local-host-kernel-r2-compilation-probe.mjs",
+      "--checkout",
+      "/Users/linminqiu/Workspace/expert-mesh",
+      "--samples",
+      "20",
+      "--output",
+      "/tmp/pragma-pr354-compilation-main-1.json"
+    ],
+    "exitCode": 0,
+    "elapsedSeconds": 110.64460706710815
+  },
+  {
+    "label": "compilation-candidate-1",
+    "command": [
+      "pnpm",
+      "exec",
+      "tsx",
+      "/Users/linminqiu/.codex/worktrees/issue-348-r2/expert-mesh/docs/performance/local-host-kernel-r2-compilation-probe.mjs",
+      "--checkout",
+      "/Users/linminqiu/.codex/worktrees/issue-348-r2/expert-mesh",
+      "--samples",
+      "20",
+      "--output",
+      "/tmp/pragma-pr354-compilation-candidate-1.json"
+    ],
+    "exitCode": 0,
+    "elapsedSeconds": 109.17388916015625
+  },
+  {
+    "label": "compilation-main-2",
+    "command": [
+      "pnpm",
+      "exec",
+      "tsx",
+      "/Users/linminqiu/.codex/worktrees/issue-348-r2/expert-mesh/docs/performance/local-host-kernel-r2-compilation-probe.mjs",
+      "--checkout",
+      "/Users/linminqiu/Workspace/expert-mesh",
+      "--samples",
+      "20",
+      "--output",
+      "/tmp/pragma-pr354-compilation-main-2.json"
+    ],
+    "exitCode": 0,
+    "elapsedSeconds": 110.38042902946472
+  },
+  {
+    "label": "compilation-candidate-2",
+    "command": [
+      "pnpm",
+      "exec",
+      "tsx",
+      "/Users/linminqiu/.codex/worktrees/issue-348-r2/expert-mesh/docs/performance/local-host-kernel-r2-compilation-probe.mjs",
+      "--checkout",
+      "/Users/linminqiu/.codex/worktrees/issue-348-r2/expert-mesh",
+      "--samples",
+      "20",
+      "--output",
+      "/tmp/pragma-pr354-compilation-candidate-2.json"
+    ],
+    "exitCode": 0,
+    "elapsedSeconds": 109.07506680488586
+  }
+]

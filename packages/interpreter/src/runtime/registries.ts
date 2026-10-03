@@ -171,6 +171,8 @@ export class ToolAdapterRegistry {
 }
 
 export interface PragmaCompileHost {
+  /** Stop-only definitions preserve recovery metadata and cannot be executed. */
+  readonly compilationPurpose?: "execute" | "stop" | undefined;
   readonly workspace: string;
   readonly projectRoot?: string | undefined;
   readonly environmentId?: string | undefined;

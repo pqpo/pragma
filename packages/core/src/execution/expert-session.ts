@@ -24,6 +24,10 @@ import {
 } from "@pragma/shared";
 
 import { fingerprintExpertExecutionDefinition } from "../agent/expert-definition-descriptor.ts";
+import {
+  assertExecutableDefinition,
+  isStopOnlyDefinition,
+} from "../agent/definition-execution-purpose.ts";
 import type { ExpertDefinition } from "../agent/expert-team.ts";
 import { isExpertTeam } from "../agent/expert-team.ts";
 import type {
@@ -408,6 +412,7 @@ export class ExpertSessionManager {
     expert: ExpertDefinition,
     options: CreateExpertSessionOptions = {},
   ): Promise<ExpertSession> {
+    assertExecutableDefinition(expert);
     const sessionId = options.sessionId ?? randomUUID();
     const now = new Date().toISOString();
     const rootExpert = isExpertTeam(expert) ? expert.coordinator : expert;
@@ -920,6 +925,7 @@ class ExpertSessionImpl implements ExpertSession {
   }
 
   async prompt(content: string, options: PromptOptions = {}): Promise<ExpertTurn> {
+    assertExecutableDefinition(this.expert);
     const admission = this.promptInternal(content, options);
     this.promptAdmissions.add(admission);
     try {
@@ -1056,6 +1062,7 @@ class ExpertSessionImpl implements ExpertSession {
     options: PromptOptions,
     fallbackReason?: string,
   ): Promise<ExpertTurn> {
+    assertExecutableDefinition(this.expert);
     const id = randomUUID();
     const now = new Date().toISOString();
     const session = await this.getState();
@@ -1788,6 +1795,7 @@ class ExpertSessionImpl implements ExpertSession {
   }
 
   async compactRootContext(): Promise<RuntimeContextWindowUsage | undefined> {
+    assertExecutableDefinition(this.expert);
     if (this.leaseError !== undefined) throw this.leaseError;
     if (this.closePromise !== undefined || this.stopPromise !== undefined || this.deletionFrozen) {
       throw new Error(`ExpertSession is closing or closed: ${this.sessionId}`);
@@ -1910,6 +1918,7 @@ class ExpertSessionImpl implements ExpertSession {
   async resumePromptQueue(
     options: { readonly recovery?: "abandon" | undefined } = {},
   ): Promise<void> {
+    assertExecutableDefinition(this.expert);
     if (this.resourcesReleasing || this.terminalReleaseRequested)
       throw new Error(`ExpertSession resources are being released: ${this.sessionId}`);
     if (this.queueRecoveryInFlight)
@@ -2198,6 +2207,7 @@ class ExpertSessionImpl implements ExpertSession {
   }
 
   async attemptQueuedPromptSteer(requestId: string): Promise<QueuedPromptSteerAttempt> {
+    assertExecutableDefinition(this.expert);
     const queue = await this.getPromptQueue();
     const prompt = queue.find((candidate) => candidate.requestId === requestId);
     if (prompt?.mode !== "enqueue" || prompt.status !== "queued") {
@@ -2245,6 +2255,7 @@ class ExpertSessionImpl implements ExpertSession {
     requestId: string,
     options: { readonly target?: ExpertSteerTarget | undefined } = {},
   ): Promise<ExpertTurn> {
+    assertExecutableDefinition(this.expert);
     if (this.resourcesReleasing || this.terminalReleaseRequested)
       throw new Error(`ExpertSession resources are being released: ${this.sessionId}`);
     const admission = this.steerQueuedPromptInternal(requestId, options);
@@ -2915,6 +2926,7 @@ class ExpertSessionImpl implements ExpertSession {
 
   private startProcessing(): void {
     if (
+      isStopOnlyDefinition(this.expert) ||
       this.closePromise !== undefined ||
       this.leaseError !== undefined ||
       this.paused ||
@@ -2968,6 +2980,7 @@ class ExpertSessionImpl implements ExpertSession {
 
   private async processQueue(generation: number): Promise<void> {
     while (true) {
+      if (isStopOnlyDefinition(this.expert)) return;
       if (this.paused || this.queueSteersInFlight.size > 0) return;
       if (this.leaseError !== undefined) return;
       if (this.processingGeneration !== generation) return;
@@ -3005,6 +3018,7 @@ class ExpertSessionImpl implements ExpertSession {
   private async runPrompt(
     prompt: PromptRequest,
   ): Promise<"succeeded" | "failed" | "cancelled" | "checkpointed"> {
+    assertExecutableDefinition(this.expert);
     const now = new Date().toISOString();
     const claimed = await this.ownedSessions.transact(this.sessionId, ({ session, prompts }) => {
       const current = prompts.find((candidate) => candidate.requestId === prompt.requestId);

@@ -100,3 +100,5 @@ R2保持“代码实施已交付，阶段验收未完成”。真实模型同条
 独立 CR、逐项裁决与修复验证另见 [R2 CR 报告](local-host-kernel-r2-code-review.md)。修复后的源码属于新的测量批次；此前性能证据保留其原源码摘要，不能作为修复后源码已测量的声明。阶段验收缺口保持，不因 CR 问题修复而标记 R2 完成。
 
 CR 后暖缓存同时定向复核实际使用的 Secret 与 Plugin guard，含 Plugin 凭据配置位置映射。guard 仅含引用与 hash，普通无贡献路径保持原读取数和 identity；非空 guard 追加新 Execution environment hash，以准确记录实际环境，已有 Execution 不重写，空 guard hash 不变。具体结果见 CR 报告，R3 successor 边界继续保留。
+
+PR #354 评论补查进一步补齐冷 Expert/Team 的 stop 目的和 Interpreter 专用停止元数据编译。Core 阻断停止定义误执行，不改持久恢复/Native snapshot 协议；停止后的暂态 owner 与正常发送分离。新验证和限制见 [PR 后续报告](local-host-kernel-r2-pr-354-followup.md)。

@@ -1,3 +1,4 @@
+import { assertExecutableDefinition } from "../agent/definition-execution-purpose.ts";
 import type {
   RuntimeAdapter,
   RuntimeAgentSession,
@@ -18,6 +19,9 @@ export async function openRuntimeSession(
   runtime: RuntimeAdapter,
   request: RuntimeDriverSessionRequest,
 ): Promise<RuntimeAgentSession> {
+  // Recovery may restore an owned Native snapshot to stop it, but may not
+  // create a fresh Native conversation from a stop-only definition.
+  if (request.runtimeSession === undefined) assertExecutableDefinition(request.agent);
   const factory = runtimeSessionFactories.get(runtime);
   if (factory === undefined) {
     throw new Error(
