@@ -57,3 +57,5 @@ Desktop 回归同步移除 Runtime Session 数据库目录复制，并隔离冷 
 本轮只修改测试夹具和本文，生产源码摘要仍为 `4502e1a76d1ed74014c80112a7406c0cd146e0fad9b2f148e131650962ecb55d`，未重跑或新建性能批次。Node 7 项和 Desktop 2 项定向回归通过；lint、Local Host/Desktop 类型检查及完整 compilation gate 101 项通过。远程 CI 将在推送后核验，不能把此前本地结果当成新的远程通过证据。
 
 [CI 37109117171](https://github.com/pqpo/pragma/actions/runs/37109117171) 的重跑已消除上述 ENOENT，却暴露 Node Team 测试的收尾竞态：Execution 先提交 succeeded，Session/queue 收尾尚未完成，立即 release 正确触发 `ExpertSessionReleaseBlockedError`。测试改用同一 `MissionExecutionOwner` 的 Core `waitForPromptProcessing()` 屏障，并断言 idle 后再验证成功及 release；保留生产释放保护，不延长 timeout、不轮询重试 release。
+
+[CI 37110030034](https://github.com/pqpo/pragma/actions/runs/37110030034) 的第三次运行在既有 Mission chat 回归较早失败，未进入 compilation gate：`bounds latest-page reads...` 的第一轮完成检查读取 Mission 当前投影，收到后来排队并移除的 Execution 的 cancelled。Core `removeQueuedPrompt` 只取消对应排队项，Mission 多 Execution 的异步终态投影不保证显示最早第一轮。测试现固定第一轮 Execution ID，从权威 SQLite 验证该轮 succeeded；保留页面最多读取三次、pending invalidation 和完整渲染断言，不把成功改成取消。此修改仍仅属于测试，生产摘要不变。
