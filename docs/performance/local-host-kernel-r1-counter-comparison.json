@@ -1,0 +1,527 @@
+{
+  "serial": true,
+  "scope": "Isolated warmed Core countText and event-loop delay, not Mission E2E acceptance",
+  "performanceAcceptancePassed": false,
+  "mainHead": "ceb29c9c516828ba1735de23c4904a609d1e1dc5",
+  "candidateBaseHead": "2fa01557c7a91e396bbdc6d300a20578b48cb140",
+  "candidateUncommittedFix": true,
+  "probeSha256": "5e9adf7ea099d1e86ab872274b0eabd26bbc5ab86a13cd5cdd098b7308c7cb90",
+  "tokenizerVersion": "3.4.0",
+  "order": ["main", "candidate", "candidate", "main"],
+  "runs": [
+    {
+      "capturedAt": "2026-10-02T12:58:42.026Z",
+      "node": "v24.18.0",
+      "platform": "darwin",
+      "architecture": "x64",
+      "cpu": "Intel(R) Core(TM) i7-9750H CPU @ 2.60GHz",
+      "sourcePath": "/Users/linminqiu/Workspace/expert-mesh/packages/core/src/runtime/token-counter.ts",
+      "sourceSha256": "cb204e771e7ae89a3617b9d6c60d942ef21bd9e233fad87d41bd8ff055d32b3a",
+      "tokenizer": "gpt-tokenizer/encoding/o200k_base",
+      "tokenizerLoaded": true,
+      "ordinary": {
+        "characters": 128000,
+        "samples": [
+          {
+            "elapsedMs": 15.221164999999985,
+            "tokens": 25601,
+            "source": "tokenizer"
+          },
+          {
+            "elapsedMs": 13.168333999999959,
+            "tokens": 25601,
+            "source": "tokenizer"
+          },
+          {
+            "elapsedMs": 12.324457999999993,
+            "tokens": 25601,
+            "source": "tokenizer"
+          },
+          {
+            "elapsedMs": 11.489492000000041,
+            "tokens": 25601,
+            "source": "tokenizer"
+          },
+          {
+            "elapsedMs": 10.365789000000007,
+            "tokens": 25601,
+            "source": "tokenizer"
+          },
+          {
+            "elapsedMs": 10.542385000000024,
+            "tokens": 25601,
+            "source": "tokenizer"
+          },
+          {
+            "elapsedMs": 10.34726999999998,
+            "tokens": 25601,
+            "source": "tokenizer"
+          },
+          {
+            "elapsedMs": 10.590302000000008,
+            "tokens": 25601,
+            "source": "tokenizer"
+          },
+          {
+            "elapsedMs": 10.475111000000027,
+            "tokens": 25601,
+            "source": "tokenizer"
+          },
+          {
+            "elapsedMs": 10.38217000000003,
+            "tokens": 25601,
+            "source": "tokenizer"
+          },
+          {
+            "elapsedMs": 10.481152000000009,
+            "tokens": 25601,
+            "source": "tokenizer"
+          },
+          {
+            "elapsedMs": 10.298707000000036,
+            "tokens": 25601,
+            "source": "tokenizer"
+          },
+          {
+            "elapsedMs": 10.63385900000003,
+            "tokens": 25601,
+            "source": "tokenizer"
+          },
+          {
+            "elapsedMs": 10.370432999999935,
+            "tokens": 25601,
+            "source": "tokenizer"
+          },
+          {
+            "elapsedMs": 10.27667800000006,
+            "tokens": 25601,
+            "source": "tokenizer"
+          },
+          {
+            "elapsedMs": 10.45342800000003,
+            "tokens": 25601,
+            "source": "tokenizer"
+          },
+          {
+            "elapsedMs": 10.421275000000037,
+            "tokens": 25601,
+            "source": "tokenizer"
+          },
+          {
+            "elapsedMs": 10.618212999999969,
+            "tokens": 25601,
+            "source": "tokenizer"
+          },
+          {
+            "elapsedMs": 10.33633599999996,
+            "tokens": 25601,
+            "source": "tokenizer"
+          },
+          {
+            "elapsedMs": 10.530823999999939,
+            "tokens": 25601,
+            "source": "tokenizer"
+          }
+        ]
+      },
+      "oversized": {
+        "characters": 200001,
+        "elapsedMs": 20647.146859,
+        "timerElapsedMs": 20647.362946,
+        "tokens": 25001,
+        "source": "tokenizer"
+      },
+      "index": 0,
+      "label": "main",
+      "exitCode": 0
+    },
+    {
+      "capturedAt": "2026-10-02T12:58:42.777Z",
+      "node": "v24.18.0",
+      "platform": "darwin",
+      "architecture": "x64",
+      "cpu": "Intel(R) Core(TM) i7-9750H CPU @ 2.60GHz",
+      "sourcePath": "/Users/linminqiu/.codex/worktrees/issue-348-r1/expert-mesh/packages/core/src/runtime/token-counter.ts",
+      "sourceSha256": "fd093be928c3b57fcd13381452142502e75dbb3bea06d3be13659590b2c17466",
+      "tokenizer": "gpt-tokenizer/encoding/o200k_base",
+      "tokenizerLoaded": true,
+      "ordinary": {
+        "characters": 128000,
+        "samples": [
+          {
+            "elapsedMs": 15.940686999999969,
+            "tokens": 25601,
+            "source": "tokenizer"
+          },
+          {
+            "elapsedMs": 13.434229000000016,
+            "tokens": 25601,
+            "source": "tokenizer"
+          },
+          {
+            "elapsedMs": 13.55692700000003,
+            "tokens": 25601,
+            "source": "tokenizer"
+          },
+          {
+            "elapsedMs": 13.176042999999993,
+            "tokens": 25601,
+            "source": "tokenizer"
+          },
+          {
+            "elapsedMs": 13.086905999999999,
+            "tokens": 25601,
+            "source": "tokenizer"
+          },
+          {
+            "elapsedMs": 13.74267599999996,
+            "tokens": 25601,
+            "source": "tokenizer"
+          },
+          {
+            "elapsedMs": 13.116357999999991,
+            "tokens": 25601,
+            "source": "tokenizer"
+          },
+          {
+            "elapsedMs": 13.094894999999951,
+            "tokens": 25601,
+            "source": "tokenizer"
+          },
+          {
+            "elapsedMs": 12.921275000000037,
+            "tokens": 25601,
+            "source": "tokenizer"
+          },
+          {
+            "elapsedMs": 13.281882999999993,
+            "tokens": 25601,
+            "source": "tokenizer"
+          },
+          {
+            "elapsedMs": 13.198109000000045,
+            "tokens": 25601,
+            "source": "tokenizer"
+          },
+          {
+            "elapsedMs": 13.837068000000045,
+            "tokens": 25601,
+            "source": "tokenizer"
+          },
+          {
+            "elapsedMs": 12.874187000000006,
+            "tokens": 25601,
+            "source": "tokenizer"
+          },
+          {
+            "elapsedMs": 14.181749999999965,
+            "tokens": 25601,
+            "source": "tokenizer"
+          },
+          {
+            "elapsedMs": 13.158551999999986,
+            "tokens": 25601,
+            "source": "tokenizer"
+          },
+          {
+            "elapsedMs": 13.07964400000003,
+            "tokens": 25601,
+            "source": "tokenizer"
+          },
+          {
+            "elapsedMs": 13.317790999999943,
+            "tokens": 25601,
+            "source": "tokenizer"
+          },
+          {
+            "elapsedMs": 13.185545999999931,
+            "tokens": 25601,
+            "source": "tokenizer"
+          },
+          {
+            "elapsedMs": 13.093029000000001,
+            "tokens": 25601,
+            "source": "tokenizer"
+          },
+          {
+            "elapsedMs": 13.478737000000024,
+            "tokens": 25601,
+            "source": "tokenizer"
+          }
+        ]
+      },
+      "oversized": {
+        "characters": 200001,
+        "elapsedMs": 3.3945790000000216,
+        "timerElapsedMs": 3.888333999999986,
+        "tokens": 50001,
+        "source": "heuristic"
+      },
+      "index": 1,
+      "label": "candidate",
+      "exitCode": 0
+    },
+    {
+      "capturedAt": "2026-10-02T12:58:43.490Z",
+      "node": "v24.18.0",
+      "platform": "darwin",
+      "architecture": "x64",
+      "cpu": "Intel(R) Core(TM) i7-9750H CPU @ 2.60GHz",
+      "sourcePath": "/Users/linminqiu/.codex/worktrees/issue-348-r1/expert-mesh/packages/core/src/runtime/token-counter.ts",
+      "sourceSha256": "fd093be928c3b57fcd13381452142502e75dbb3bea06d3be13659590b2c17466",
+      "tokenizer": "gpt-tokenizer/encoding/o200k_base",
+      "tokenizerLoaded": true,
+      "ordinary": {
+        "characters": 128000,
+        "samples": [
+          {
+            "elapsedMs": 15.904378000000008,
+            "tokens": 25601,
+            "source": "tokenizer"
+          },
+          {
+            "elapsedMs": 13.382907999999986,
+            "tokens": 25601,
+            "source": "tokenizer"
+          },
+          {
+            "elapsedMs": 13.332827000000009,
+            "tokens": 25601,
+            "source": "tokenizer"
+          },
+          {
+            "elapsedMs": 13.28128300000003,
+            "tokens": 25601,
+            "source": "tokenizer"
+          },
+          {
+            "elapsedMs": 13.234213000000011,
+            "tokens": 25601,
+            "source": "tokenizer"
+          },
+          {
+            "elapsedMs": 13.370287000000019,
+            "tokens": 25601,
+            "source": "tokenizer"
+          },
+          {
+            "elapsedMs": 13.29344999999995,
+            "tokens": 25601,
+            "source": "tokenizer"
+          },
+          {
+            "elapsedMs": 13.192289000000017,
+            "tokens": 25601,
+            "source": "tokenizer"
+          },
+          {
+            "elapsedMs": 13.178421000000014,
+            "tokens": 25601,
+            "source": "tokenizer"
+          },
+          {
+            "elapsedMs": 13.259614999999997,
+            "tokens": 25601,
+            "source": "tokenizer"
+          },
+          {
+            "elapsedMs": 13.233060999999964,
+            "tokens": 25601,
+            "source": "tokenizer"
+          },
+          {
+            "elapsedMs": 13.149107999999956,
+            "tokens": 25601,
+            "source": "tokenizer"
+          },
+          {
+            "elapsedMs": 13.178490999999894,
+            "tokens": 25601,
+            "source": "tokenizer"
+          },
+          {
+            "elapsedMs": 13.30837299999996,
+            "tokens": 25601,
+            "source": "tokenizer"
+          },
+          {
+            "elapsedMs": 13.168266000000017,
+            "tokens": 25601,
+            "source": "tokenizer"
+          },
+          {
+            "elapsedMs": 13.096554999999967,
+            "tokens": 25601,
+            "source": "tokenizer"
+          },
+          {
+            "elapsedMs": 14.023289999999974,
+            "tokens": 25601,
+            "source": "tokenizer"
+          },
+          {
+            "elapsedMs": 13.169780999999944,
+            "tokens": 25601,
+            "source": "tokenizer"
+          },
+          {
+            "elapsedMs": 13.209884999999986,
+            "tokens": 25601,
+            "source": "tokenizer"
+          },
+          {
+            "elapsedMs": 13.373497000000043,
+            "tokens": 25601,
+            "source": "tokenizer"
+          }
+        ]
+      },
+      "oversized": {
+        "characters": 200001,
+        "elapsedMs": 3.8100259999999935,
+        "timerElapsedMs": 4.006114999999909,
+        "tokens": 50001,
+        "source": "heuristic"
+      },
+      "index": 2,
+      "label": "candidate",
+      "exitCode": 0
+    },
+    {
+      "capturedAt": "2026-10-02T12:59:05.166Z",
+      "node": "v24.18.0",
+      "platform": "darwin",
+      "architecture": "x64",
+      "cpu": "Intel(R) Core(TM) i7-9750H CPU @ 2.60GHz",
+      "sourcePath": "/Users/linminqiu/Workspace/expert-mesh/packages/core/src/runtime/token-counter.ts",
+      "sourceSha256": "cb204e771e7ae89a3617b9d6c60d942ef21bd9e233fad87d41bd8ff055d32b3a",
+      "tokenizer": "gpt-tokenizer/encoding/o200k_base",
+      "tokenizerLoaded": true,
+      "ordinary": {
+        "characters": 128000,
+        "samples": [
+          {
+            "elapsedMs": 11.966219999999964,
+            "tokens": 25601,
+            "source": "tokenizer"
+          },
+          {
+            "elapsedMs": 12.064632000000017,
+            "tokens": 25601,
+            "source": "tokenizer"
+          },
+          {
+            "elapsedMs": 11.956797999999992,
+            "tokens": 25601,
+            "source": "tokenizer"
+          },
+          {
+            "elapsedMs": 11.144412999999986,
+            "tokens": 25601,
+            "source": "tokenizer"
+          },
+          {
+            "elapsedMs": 10.170574000000045,
+            "tokens": 25601,
+            "source": "tokenizer"
+          },
+          {
+            "elapsedMs": 10.158269000000018,
+            "tokens": 25601,
+            "source": "tokenizer"
+          },
+          {
+            "elapsedMs": 10.485760000000028,
+            "tokens": 25601,
+            "source": "tokenizer"
+          },
+          {
+            "elapsedMs": 10.471198000000015,
+            "tokens": 25601,
+            "source": "tokenizer"
+          },
+          {
+            "elapsedMs": 10.509111000000019,
+            "tokens": 25601,
+            "source": "tokenizer"
+          },
+          {
+            "elapsedMs": 10.189617999999996,
+            "tokens": 25601,
+            "source": "tokenizer"
+          },
+          {
+            "elapsedMs": 10.192879000000005,
+            "tokens": 25601,
+            "source": "tokenizer"
+          },
+          {
+            "elapsedMs": 10.695378000000005,
+            "tokens": 25601,
+            "source": "tokenizer"
+          },
+          {
+            "elapsedMs": 10.38993099999999,
+            "tokens": 25601,
+            "source": "tokenizer"
+          },
+          {
+            "elapsedMs": 10.163186999999994,
+            "tokens": 25601,
+            "source": "tokenizer"
+          },
+          {
+            "elapsedMs": 10.171794000000034,
+            "tokens": 25601,
+            "source": "tokenizer"
+          },
+          {
+            "elapsedMs": 10.331637,
+            "tokens": 25601,
+            "source": "tokenizer"
+          },
+          {
+            "elapsedMs": 10.393324000000007,
+            "tokens": 25601,
+            "source": "tokenizer"
+          },
+          {
+            "elapsedMs": 10.360082000000034,
+            "tokens": 25601,
+            "source": "tokenizer"
+          },
+          {
+            "elapsedMs": 10.166734999999903,
+            "tokens": 25601,
+            "source": "tokenizer"
+          },
+          {
+            "elapsedMs": 10.268543999999906,
+            "tokens": 25601,
+            "source": "tokenizer"
+          }
+        ]
+      },
+      "oversized": {
+        "characters": 200001,
+        "elapsedMs": 21091.220958,
+        "timerElapsedMs": 21091.438211,
+        "tokens": 25001,
+        "source": "tokenizer"
+      },
+      "index": 3,
+      "label": "main",
+      "exitCode": 0
+    }
+  ],
+  "mainOrdinarySummary": {
+    "samples": 40,
+    "p50Ms": 10.421275000000037,
+    "p95Ms": 12.324457999999993
+  },
+  "candidateOrdinarySummary": {
+    "samples": 40,
+    "p50Ms": 13.233060999999964,
+    "p95Ms": 14.181749999999965
+  }
+}

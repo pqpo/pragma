@@ -20,6 +20,8 @@ import {
   AsyncPushQueue,
   createFileExpertSessionStore,
   createPragma,
+  ExpertSessionReleaseBlockedError,
+  hasUncertainSteerDelivery,
   isHumanInteractionCheckpointError,
 } from "@pragma/core";
 import {
@@ -44,6 +46,10 @@ import {
 import { createSqliteExecutionStore } from "./execution/sqlite-execution-store.ts";
 
 import type { LocalHostCoreActiveOwner } from "./core-control-adapter.ts";
+import {
+  MissionExecutionOwner,
+  type MissionExecutionOwnerAccess,
+} from "./missions/execution-owner.ts";
 import {
   type LocalHostRunEvent,
   type LocalHostRunExecutorPort,
@@ -82,6 +88,7 @@ export function createLocalHostCoreStores(
 }
 
 export interface LocalHostCoreRunComposition {
+  readonly ownerAccess?: MissionExecutionOwnerAccess | undefined;
   readonly runtimes: RuntimeResolver;
   readonly pragmaHome?: string | undefined;
   readonly app?: PragmaApp | undefined;
@@ -115,6 +122,7 @@ export interface LocalHostCoreRunComposition {
  * composition root supplies only a RuntimeResolver.
  */
 export interface LocalHostCoreRunExecutorPort extends LocalHostRunExecutorPort {
+  readonly ownerAccess: MissionExecutionOwnerAccess;
   readonly resolveActiveOwner: (missionId: string) => Promise<LocalHostCoreActiveOwner | undefined>;
 }
 
@@ -142,7 +150,8 @@ export function createCoreRunExecutorPort(
         ? {}
         : { resolveHostContextBindings: options.resolveHostContextBindings }),
     });
-  const active = new Map<string, CoreRunHandleState>();
+  const ownerAccess = options.ownerAccess ?? new MissionExecutionOwner();
+  const active = new Map<string, LocalHostCoreRunHandleState>();
 
   const resolve = async (input: {
     readonly ref: ExecutorReference;
@@ -170,6 +179,7 @@ export function createCoreRunExecutorPort(
   };
 
   return {
+    ownerAccess,
     resolve,
     validateInput: async ({ request, executor }) => {
       const coreExecutor = executor as LocalHostCoreExecutorDefinition;
@@ -190,52 +200,50 @@ export function createCoreRunExecutorPort(
         });
       }
     },
-    resolveActiveOwner: async (missionId) => {
-      for (const state of active.values()) {
-        if (state.missionId !== missionId) continue;
-        return state.owner;
-      }
-      return undefined;
-    },
-    start: async (input) => {
-      const definition = input.executor as LocalHostCoreExecutorDefinition;
-      if (definition.definition === undefined) {
-        throw new Error(`Core executor definition is missing: ${input.request.executor.id}`);
-      }
-      const runApp =
-        options.app ??
-        createApp(
-          options.createHostContextBindings === undefined
-            ? options.hostContextBindings
-            : await options.createHostContextBindings({
-                missionId: input.missionId,
-                request: input.request,
-                executor: definition,
-              }),
-        );
-      const coreHandle = await startCoreDefinition({
-        app: runApp,
-        executions,
-        sessions,
-        definition,
-        request: input.request,
-        missionId: input.missionId,
-      });
-      const state = createCoreRunHandleState({
-        coreHandle: coreHandle.handle,
-        owner: coreHandle.owner,
-        release: coreHandle.release,
-        executions,
-        missionId: input.missionId,
-        onEvent: input.onEvent,
-      });
-      active.set(coreHandle.handle.executionId, state);
-      void state.pump.finally(() => {
-        if (active.get(coreHandle.handle.executionId) === state)
-          active.delete(coreHandle.handle.executionId);
-      });
-      return state.handle;
-    },
+    resolveActiveOwner: async (missionId) => ownerAccess.controlOwner(missionId),
+    start: async (input) =>
+      await ownerAccess.admit(input.missionId, async () => {
+        const definition = input.executor as LocalHostCoreExecutorDefinition;
+        if (definition.definition === undefined) {
+          throw new Error(`Core executor definition is missing: ${input.request.executor.id}`);
+        }
+        const runApp =
+          options.app ??
+          createApp(
+            options.createHostContextBindings === undefined
+              ? options.hostContextBindings
+              : await options.createHostContextBindings({
+                  missionId: input.missionId,
+                  request: input.request,
+                  executor: definition,
+                }),
+          );
+        const coreHandle = await startCoreDefinition({
+          app: runApp,
+          executions,
+          sessions,
+          definition,
+          request: input.request,
+          missionId: input.missionId,
+        });
+        const state = createLocalHostRunHandleState({
+          coreHandle: coreHandle.handle,
+          release: async () => {
+            await coreHandle.release();
+            ownerAccess.deleteControlOwnerIfCurrent(input.missionId, coreHandle.owner);
+          },
+          executions,
+          missionId: input.missionId,
+          onEvent: input.onEvent,
+        });
+        ownerAccess.setControlOwner(input.missionId, coreHandle.owner, "live");
+        active.set(coreHandle.handle.executionId, state);
+        void state.pump.finally(() => {
+          if (active.get(coreHandle.handle.executionId) === state)
+            active.delete(coreHandle.handle.executionId);
+        });
+        return state.handle;
+      }),
     respond: async (input) => {
       const state = active.get(input.executionId);
       if (state === undefined) {
@@ -248,14 +256,6 @@ export function createCoreRunExecutorPort(
       await state.respond(input.interactionId, input.response, input.requestId);
     },
   };
-}
-
-interface CoreRunHandleState {
-  readonly handle: LocalHostRunHandle;
-  readonly pump: Promise<void>;
-  readonly respond: (interactionId: string, response: unknown, requestId: string) => Promise<void>;
-  readonly owner: LocalHostCoreActiveOwner;
-  readonly missionId: string;
 }
 
 interface StartedCoreHandle {
@@ -330,15 +330,44 @@ async function startCoreDefinition(options: {
 }
 
 async function releaseExpertSessionOwner(session: ExpertSession): Promise<void> {
-  const [state, prompts] = await Promise.all([session.getState(), session.getPromptQueue()]);
-  const hasRecoverableCheckpoint =
-    state.activeExecutionId === undefined &&
-    (state.lastStatus === "waiting" || prompts.some((prompt) => prompt.status === "queued"));
-  if (hasRecoverableCheckpoint) {
-    await session.releaseAfterHumanCheckpoint();
-    return;
+  let boundaryRechecks = 0;
+  for (;;) {
+    // Core owns the queue drain and in-flight delivery tasks. A running queue
+    // receipt can be steering another turn and need not settle as a turn.
+    if ((await session.waitForPromptProcessing()) === "lease-lost") {
+      // Core has fenced the old owner and completed its bounded cleanup.
+      // Finish that owner's release without treating retained work as idle.
+      await session.releaseAfterTerminal();
+      return;
+    }
+    const [state, prompts] = await Promise.all([session.getState(), session.getPromptQueue()]);
+    const pending = prompts.filter(
+      (prompt) =>
+        prompt.mode === "enqueue" && (prompt.status === "queued" || prompt.status === "running"),
+    );
+    const activeExecutionId = state.activeExecutionId;
+    const checkpointed =
+      activeExecutionId === undefined &&
+      (state.lastStatus === "waiting" ||
+        (state.lastStatus === "failed" && pending.length > 0) ||
+        pending.some((prompt) => prompt.purpose === "human_checkpoint_recovery") ||
+        hasUncertainSteerDelivery(prompts));
+    try {
+      if (checkpointed) await session.releaseAfterHumanCheckpoint();
+      else await session.releaseAfterTerminal();
+      return;
+    } catch (error) {
+      // Admission can change the boundary between the completed drain and
+      // release validation. Rejoin actual Core work before rereading it.
+      if (
+        error instanceof ExpertSessionReleaseBlockedError &&
+        (checkpointed || error.retryable) &&
+        boundaryRechecks++ < 3
+      )
+        continue;
+      throw error;
+    }
   }
-  await session.releaseAfterTerminal();
 }
 
 export interface LocalHostCoreRunHandleState {
@@ -483,21 +512,6 @@ export function createLocalHostRunHandleState(options: {
     pump,
     respond: async (interactionId, response, requestId) =>
       await handle.respondToHumanInteraction?.(interactionId, response, requestId),
-  };
-}
-
-function createCoreRunHandleState(options: {
-  readonly coreHandle: ExpertTurn | FlowExecution;
-  readonly owner: LocalHostCoreActiveOwner;
-  readonly release: () => Promise<void>;
-  readonly executions: ExecutionStore;
-  readonly missionId: string;
-  readonly onEvent?: ((event: LocalHostRunEvent) => void) | undefined;
-}): CoreRunHandleState {
-  return {
-    ...createLocalHostRunHandleState(options),
-    owner: options.owner,
-    missionId: options.missionId,
   };
 }
 
@@ -679,17 +693,24 @@ function toHumanInteractionRequest(value: unknown): HumanInteractionRequest | un
   }
   if (value["kind"] === "user_question") {
     const presentation = HumanInteractionRequestSchema.safeParse(value["presentation"]);
-    if (presentation.success) return presentation.data;
     const questions = Array.isArray(value["questions"])
       ? value["questions"].flatMap((question) => {
           const parsedQuestion = userQuestionToShared(question);
           return parsedQuestion === undefined ? [] : [parsedQuestion];
         })
       : [];
+    const semantics = readObject(value["semantics"]);
     return HumanInteractionRequestSchema.parse({
-      kind: "question",
-      title: questions[0]?.header ?? "Question",
-      prompt: questions[0]?.question ?? "Response required",
+      ...(presentation.success
+        ? presentation.data
+        : {
+            kind: semantics?.["kind"] === "approval" ? "approval" : "question",
+            title: questions[0]?.header ?? "Question",
+            prompt: questions[0]?.question ?? "Response required",
+          }),
+      ...(typeof semantics?.["approveOption"] === "string"
+        ? { approveOption: semantics["approveOption"] }
+        : {}),
       ...(questions.length === 0 ? {} : { questions }),
     });
   }
@@ -725,13 +746,47 @@ function userQuestionToShared(value: unknown) {
 
 export function toCoreResponse(request: HumanInteractionRequest, value: unknown): unknown {
   const response = HumanInteractionResponseSchema.parse(value);
-  if (request.kind === "approval") {
+  if (request.kind === "approval" && (request.questions?.length ?? 0) === 0) {
     const decision = response.decision ?? response.selection;
     const first = Array.isArray(decision) ? decision[0] : decision;
     return {
       kind: "tool_approval",
-      approved: response.approved ?? first === request.approveOption,
+      approved:
+        response.approved ??
+        (first === "approved" ||
+          first === "approve" ||
+          (request.approveOption !== undefined && first === request.approveOption)),
       ...(response.notes === undefined ? {} : { reason: response.notes }),
+    };
+  }
+  if ((request.questions?.length ?? 0) > 0) {
+    const answers: Record<string, unknown> = isRecord(response.answers)
+      ? { ...response.answers }
+      : {};
+    for (const question of request.questions ?? []) {
+      if (answers[question.question] !== undefined) continue;
+      if (question.kind === "text" && response.notes !== undefined) {
+        answers[question.question] = response.notes;
+      } else if (question.kind === "single_choice") {
+        const selected =
+          response.approved === undefined
+            ? (response.decision ?? response.selection)
+            : response.approved
+              ? request.approveOption
+              : (response.decision ??
+                question.options.find((option) => option.label !== request.approveOption)?.label);
+        if (selected !== undefined) answers[question.question] = selected;
+      } else if (question.kind === "multiple_choice" && response.selection !== undefined) {
+        answers[question.question] = response.selection;
+      }
+    }
+    return {
+      kind: "user_question",
+      answered: true,
+      answers,
+      ...(response.notes === undefined || response.notes.trim() === ""
+        ? {}
+        : { notes: response.notes }),
     };
   }
   return {

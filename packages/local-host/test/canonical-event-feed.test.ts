@@ -24,12 +24,17 @@ describe("Canonical Event Feed", () => {
     const gate = new Promise<void>((resolve) => {
       release = resolve;
     });
+    let deliveryStarted!: () => void;
+    const backgroundStarted = new Promise<void>((resolve) => {
+      deliveryStarted = resolve;
+    });
     const onError = vi.fn();
     const store = createTestExecutionStore({
       pragmaHome: home,
       canonicalEventFeed: {
         ...durable,
         async append() {
+          deliveryStarted();
           await gate;
           throw new Error("feed unavailable");
         },
@@ -49,6 +54,9 @@ describe("Canonical Event Feed", () => {
         );
       }
     } finally {
+      // The warning belongs to background dispatch; explicit drain does not log it.
+      // Wait for the actual delivery boundary rather than assuming six commits exceed 250 ms.
+      await backgroundStarted;
       release();
       await expect(store.drainCanonicalEvents()).rejects.toThrow("feed unavailable");
     }
@@ -446,12 +454,24 @@ describe("Canonical Event Feed", () => {
     });
     await expect(durable.inspect()).resolves.toMatchObject({ lastSequence: 0, eventCount: 0 });
 
+    // A retained failure remains degraded during the existing 500 ms retry backoff.
     await expect(store.recoverPendingCanonicalEvents()).resolves.toEqual({
-      recovered: 1,
-      pending: 0,
-      failed: 0,
+      recovered: 0,
+      pending: 1,
+      failed: 1,
       quarantined: 0,
     });
+    const clock = vi.spyOn(Date, "now").mockReturnValue(Date.now() + 1_000);
+    try {
+      await expect(store.recoverPendingCanonicalEvents()).resolves.toEqual({
+        recovered: 1,
+        pending: 0,
+        failed: 0,
+        quarantined: 0,
+      });
+    } finally {
+      clock.mockRestore();
+    }
     const page = await durable.read({ limit: 10 });
     expect(
       page.items.flatMap((item) =>

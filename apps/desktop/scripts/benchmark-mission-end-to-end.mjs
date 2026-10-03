@@ -1,12 +1,23 @@
 /* global window, document, requestAnimationFrame, MutationObserver, HTMLTextAreaElement */
 import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
-import { mkdtemp, mkdir, readFile, writeFile, rm, readdir, copyFile } from "node:fs/promises";
+import { mkdtemp, mkdir, readFile, writeFile, rm, copyFile } from "node:fs/promises";
 import { cpus, tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { parseArgs } from "node:util";
 import electronPath from "electron";
+import {
+  E2E_GROUPS,
+  enrichRound,
+  summarize,
+  summarizeByRole,
+  verifyBackgroundModelOverlap,
+  parseCoreTerminalConsole,
+  readDiagnosticRecords,
+} from "./mission-e2e-benchmark-result.mjs";
+import { rendererScenarioRun } from "./mission-e2e-benchmark-scenarios.mjs";
+import { PRAGMA_DSL_WRITE_API_VERSION } from "@pragma/interpreter/ast";
 import {
   createSecretStore,
   createNativeOsKeychain,
@@ -21,12 +32,16 @@ const { values } = parseArgs({
     thinking: { type: "string", default: "medium" },
     groups: { type: "string", default: "cold,new,warm" },
     output: { type: "string" },
+    "background-load": { type: "boolean", default: false },
   },
 });
 if (!values["source-home"])
   throw new Error("Pass --source-home for the existing provider configuration.");
 const samples = Number(values.samples);
 if (!Number.isSafeInteger(samples) || samples < 1) throw new Error("Invalid sample count.");
+const groups = values.groups.split(",");
+if (groups.some((group) => !E2E_GROUPS.includes(group)))
+  throw new Error("Unknown benchmark group.");
 const desktop = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const temporary = await mkdtemp(join(tmpdir(), "pragma-mission-e2e-"));
 const home = join(temporary, "pragma");
@@ -36,6 +51,10 @@ const sourceData = join(source, "data");
 const data = join(home, "data");
 let createdKey = false;
 const startedAt = new Date().toISOString();
+const rounds = [];
+const launches = [];
+const failures = [];
+let phase = "provider-configuration";
 try {
   const providers = JSON.parse(await readFile(join(sourceData, "model-providers.json"), "utf8"));
   const provider = providers.providers.find((item) =>
@@ -52,14 +71,19 @@ try {
     dataRoot: data,
     keychain,
   });
+  phase = "credentials";
   if (provider.apiKeySecretRef) {
+    process.send?.({ phase: "credentials-read" });
     const handle = await originalSecrets.get(provider.apiKeySecretRef);
+    process.send?.({ phase: "credentials-read-complete" });
     try {
+      process.send?.({ phase: "credentials-write" });
       provider.apiKeySecretRef = await benchmarkSecrets.put({
         owner: provider.apiKeySecretRef.owner,
         value: handle.bytes(),
       });
       createdKey = true;
+      process.send?.({ phase: "credentials-write-complete" });
     } finally {
       handle.dispose();
     }
@@ -83,88 +107,33 @@ try {
     providerId: provider.id,
     model: values.model,
     thinking: values.thinking,
+    backgroundLoad: values["background-load"],
+    dslApiVersion: PRAGMA_DSL_WRITE_API_VERSION,
   };
   await mkdir(configuration.workspace, { recursive: true });
   const main = join(temporary, "main.cjs");
-  const rounds = [];
-  for (const group of values.groups.split(",")) {
-    if (!["cold", "new", "warm"].includes(group)) throw new Error("Unknown benchmark group.");
-    const launches = group === "cold" ? samples : 1;
-    for (let launch = 0; launch < launches; launch++) {
+  phase = "desktop-scenarios";
+  for (const group of groups) {
+    const launchCount = group === "cold" ? samples : 1;
+    for (let launch = 0; launch < launchCount; launch++) {
+      const launchedAt = Date.now();
       await writeFile(
         main,
         harness(
-          { ...configuration, group, samples: group === "cold" ? 1 : samples },
+          { ...configuration, group, samples: group === "cold" ? 1 : samples, launchedAt },
           join(desktop, "out/main/index.js"),
         ),
       );
       const result = await runElectron(main);
-      rounds.push(...result.rounds);
+      rounds.push(...(result.rounds ?? []));
+      launches.push({ group, launchedAt, ...result.startup, background: result.background });
+      failures.push(...(result.failures ?? []));
+      if (result.error) failures.push({ group, phase: "renderer", error: result.error });
     }
   }
-  const records = await diagnosticRecords(join(home, "archives/diagnostics/desktop"));
-  for (const round of rounds) {
-    const executionRecords = records.filter(
-      (record) =>
-        record.scope?.executionId === round.executionId ||
-        record.attributes?.executionId === round.executionId,
-    );
-    const timestamp = (event) => {
-      const record = executionRecords.find((entry) => entry.event === event);
-      return record ? Date.parse(record.occurredAt) : undefined;
-    };
-    const dispatch = timestamp("runtime.model_request_dispatched");
-    const finished = timestamp("runtime.model_request_finished");
-    const terminal = timestamp("execution.terminal_committed");
-    const release = timestamp("session.active_binding_released");
-    const observer = timestamp("mission.observer_settled");
-    const acceptance = records
-      .filter(
-        (record) =>
-          record.event === "mission.inbox_durable" &&
-          (record.scope?.missionId === round.missionId ||
-            record.attributes?.missionId === round.missionId) &&
-          Date.parse(record.occurredAt) >= round.clickAt,
-      )
-      .sort((a, b) => Date.parse(a.occurredAt) - Date.parse(b.occurredAt))[0];
-    const accepted = acceptance ? Date.parse(acceptance.occurredAt) : undefined;
-    const controlAvailable = round.controlUpdates?.find((update) => update.at >= accepted)?.at;
-    Object.assign(round, {
-      clickToDispatchMs: difference(dispatch, round.clickAt),
-      durableAcceptToControlAvailableMs: difference(controlAvailable, accepted),
-      runtimeTextToPaintMs: difference(round.textPaintAt, timestamp("runtime.first_text_delta")),
-      runtimeReasoningToPaintMs: difference(
-        round.reasoningPaintAt,
-        timestamp("runtime.first_reasoning_delta"),
-      ),
-      sdkTextTtftMs: difference(timestamp("runtime.first_text_delta"), dispatch),
-      sdkReasoningTtftMs: difference(timestamp("runtime.first_reasoning_delta"), dispatch),
-      sdkDurationMs: difference(finished, dispatch),
-      modelEndToCoreTerminalMs: difference(terminal, finished),
-      coreTerminalToPaintMs: difference(round.terminalPaintAt, terminal),
-      sessionReleaseAfterCoreMs: difference(release, terminal),
-      observerAfterCoreMs: difference(observer, terminal),
-    });
-    round.measurementIssues = [
-      "clickToDispatchMs",
-      "durableAcceptToControlAvailableMs",
-      "runtimeTextToPaintMs",
-      "modelEndToCoreTerminalMs",
-      "coreTerminalToPaintMs",
-      "sessionReleaseAfterCoreMs",
-    ].filter((metric) => !Number.isFinite(round[metric]) || round[metric] < 0);
-    round.timeline = {
-      dispatch,
-      accepted,
-      controlAvailable,
-      finished,
-      terminal,
-      release,
-      observer,
-      runtimeText: timestamp("runtime.first_text_delta"),
-      runtimeReasoning: timestamp("runtime.first_reasoning_delta"),
-    };
-  }
+  phase = "diagnostic-enrichment";
+  const records = await readDiagnosticRecords(join(home, "archives/diagnostics/desktop"));
+  enrichResults(records);
   const output = {
     schemaVersion: "pragma.mission-e2e-benchmark/v1",
     startedAt,
@@ -172,18 +141,72 @@ try {
     cpu: cpus()[0]?.model,
     model: values.model,
     thinking: values.thinking,
-    workload:
-      "Full Desktop with default background services; isolated empty business data. Real provider. No copied user automations.",
+    workload: values["background-load"]
+      ? "Isolated synthetic Automation and Memory capture/curator configuration; actual activity recorded per launch. No copied user automations."
+      : "Full Desktop with default background services; isolated empty business data. Real provider. No copied user automations.",
+    backgroundLoad: values["background-load"],
+    launches,
+    failures,
+    verification: {
+      realModelSamples: rounds.filter(
+        (round) =>
+          Number.isFinite(round.timeline?.dispatch) && !round.error && round.status === "succeeded",
+      ).length,
+      validMeasuredRounds: rounds.filter(
+        (round) =>
+          round.status === "succeeded" && !round.error && round.measurementIssues.length === 0,
+      ).length,
+      exactCoreEventTrigger:
+        "immediate-core uses existing execution.terminal_committed synchronous console marker; occurredAt is Core fact time, observedAt and relay delay are separate",
+      backgroundExtraction:
+        "Job running is only a claim observation; complete correlated curator Runtime attempts must overlap actual foreground rounds.",
+    },
     summary: Object.fromEntries(
       values.groups
         .split(",")
         .map((group) => [group, summarize(rounds.filter((round) => round.group === group))]),
     ),
+    summaryByRole: Object.fromEntries(
+      groups.map((group) => [
+        group,
+        summarizeByRole(rounds.filter((round) => round.group === group)),
+      ]),
+    ),
+    summaryPolicy:
+      "summary combines all roles for continuity; use summaryByRole for initial/followup comparisons. Only succeeded, enriched rounds without measurement issues enter percentiles; metric omissions and all excluded reasons are counted. Four-missions retains four initial rounds and samples followup sends per owner.",
     rounds,
   };
   if (values.output)
     await writeFile(resolve(values.output), `${JSON.stringify(output, null, 2)}\n`);
   process.stdout.write(`${JSON.stringify(output, null, 2)}\n`);
+  if (failures.length) process.exitCode = 1;
+} catch (error) {
+  const records = await readDiagnosticRecords(join(home, "archives/diagnostics/desktop")).catch(
+    () => [],
+  );
+  enrichResults(records);
+  const output = {
+    schemaVersion: "pragma.mission-e2e-benchmark/v1",
+    startedAt,
+    build: "production",
+    model: values.model,
+    thinking: values.thinking,
+    groups,
+    rounds,
+    launches,
+    failures: [...failures, { phase, error: error.message }],
+    verification: {
+      realModelSamples: rounds.filter(
+        (round) =>
+          Number.isFinite(round.timeline?.dispatch) && round.status === "succeeded" && !round.error,
+      ).length,
+      status: "failed",
+    },
+  };
+  if (values.output)
+    await writeFile(resolve(values.output), `${JSON.stringify(output, null, 2)}\n`);
+  process.stdout.write(`${JSON.stringify(output, null, 2)}\n`);
+  process.exitCode = 1;
 } finally {
   process.send?.({ phase: "credentials-cleanup" });
   if (createdKey)
@@ -194,56 +217,32 @@ try {
   await rm(temporary, { recursive: true, force: true });
 }
 
-function difference(end, start) {
-  return !Number.isFinite(end) || !Number.isFinite(start)
-    ? null
-    : Math.round((end - start) * 100) / 100;
-}
-function summarize(rounds) {
-  const metrics = [
-    "clickToDispatchMs",
-    "durableAcceptToControlAvailableMs",
-    "runtimeTextToPaintMs",
-    "runtimeReasoningToPaintMs",
-    "sdkTextTtftMs",
-    "sdkReasoningTtftMs",
-    "sdkDurationMs",
-    "modelEndToCoreTerminalMs",
-    "coreTerminalToPaintMs",
-    "sessionReleaseAfterCoreMs",
-    "observerAfterCoreMs",
-  ];
-  return Object.fromEntries(
-    metrics.map((metric) => {
-      const values = rounds
-        .map((round) => round[metric])
-        .filter((value) => Number.isFinite(value) && value >= 0)
-        .sort((a, b) => a - b);
-      return [
-        metric,
-        {
-          samples: values.length,
-          p50: values[Math.max(0, Math.ceil(values.length * 0.5) - 1)] ?? null,
-          p95: values[Math.max(0, Math.ceil(values.length * 0.95) - 1)] ?? null,
-        },
-      ];
-    }),
-  );
-}
-async function diagnosticRecords(root) {
-  const records = [];
-  for (const item of await readdir(root, { withFileTypes: true }).catch(() => [])) {
-    const path = join(root, item.name);
-    if (item.isDirectory()) records.push(...(await diagnosticRecords(path)));
-    else if (item.name.startsWith("operations-") && item.name.endsWith(".jsonl"))
-      for (const line of (await readFile(path, "utf8")).split("\n"))
-        if (line) records.push(JSON.parse(line));
+function enrichResults(records) {
+  for (const round of rounds) enrichRound(round, records);
+  for (const launch of launches) {
+    if (!launch.background?.enabled) continue;
+    const launchRounds = rounds.filter((round) => round.launchId === launch.launchedAt);
+    verifyBackgroundModelOverlap(launch.background, launchRounds, records);
+    for (const failure of launch.background.failures.filter(
+      (failure) => failure.phase === "memory-model-overlap",
+    ))
+      if (
+        !failures.some(
+          (existing) => existing.phase === failure.phase && existing.launchId === launch.launchedAt,
+        )
+      )
+        failures.push({ ...failure, group: launch.group, launchId: launch.launchedAt });
   }
-  return records;
 }
+
 function runElectron(main) {
   return new Promise((resolveRun, reject) => {
-    const environment = { ...process.env, PRAGMA_HOME: home, PRAGMA_LOG_LEVEL: "info" };
+    const environment = {
+      ...process.env,
+      PRAGMA_HOME: home,
+      PRAGMA_LOG_LEVEL: "info",
+      PRAGMA_BENCHMARK_LAUNCHED_AT: String(Date.now()),
+    };
     delete environment.ELECTRON_RUN_AS_NODE;
     const child = spawn(electronPath, [main], {
       cwd: desktop,
@@ -274,21 +273,48 @@ function runElectron(main) {
     });
     child.on("exit", (code) => {
       clearTimeout(timeout);
-      if (code !== 0 || !result || result.error)
-        reject(new Error(result?.error ?? `Desktop benchmark exited ${code}: ${errorText}`));
+      if (code !== 0 || !result)
+        reject(new Error(`Desktop benchmark exited ${code}: ${errorText}`));
       else resolveRun(result);
     });
   });
 }
 function harness(configuration, entry) {
-  return `const { app, BrowserWindow } = require('electron');
+  const renderer =
+    ["cold", "new", "warm"].includes(configuration.group) && !configuration.backgroundLoad
+      ? rendererRun
+      : rendererScenarioRun;
+  return `const processStartedAt = Date.now();
+const { app } = require('electron');
 const { pathToFileURL } = require('node:url');
 const configuration = ${JSON.stringify(configuration)};
+configuration.launchedAt = Number(process.env.PRAGMA_BENCHMARK_LAUNCHED_AT);
+configuration.processStartedAt = processStartedAt;
+let benchmarkWindow;
+const coreRelayFailures = [];
+if (configuration.group === 'immediate-core') {
+ const parseCoreMarker = ${parseCoreTerminalConsole.toString()};
+ const consoleInfo = console.info.bind(console);
+ console.info = (payload, ...rest) => {
+  const marker = parseCoreMarker(payload, Date.now());
+  consoleInfo(payload, ...rest);
+  if (marker && benchmarkWindow && !benchmarkWindow.isDestroyed()) {
+   void benchmarkWindow.webContents.executeJavaScript('window.__pragmaE2ECoreTerminal?.(' + JSON.stringify(marker) + ')').catch((error) => {
+    coreRelayFailures.push({phase: 'core-terminal-relay', error: error.message});
+    console.error('PRAGMA_E2E_CORE_RELAY_FAILURE:' + error.message);
+   });
+  }
+ };
+}
 app.setPath('userData', ${JSON.stringify(join(temporary, "electron-user-data"))});
 app.on('browser-window-created', (_event, window) => {
+ benchmarkWindow ??= window;
+ configuration.windowCreatedAt = Date.now();
  window.webContents.once('did-finish-load', async () => {
+  configuration.rendererLoadedAt = Date.now();
   try {
-   const result = await window.webContents.executeJavaScript('(' + (${rendererRun.toString()}).toString() + ')(' + JSON.stringify(configuration) + ')');
+   const result = await window.webContents.executeJavaScript('window.__pragmaE2EBaselineRun = ' + ${JSON.stringify(rendererRun.toString())} + '; (' + (${renderer.toString()}).toString() + ')(' + JSON.stringify(configuration) + ')');
+   result.failures = [...(result.failures ?? []), ...coreRelayFailures];
    console.log('PRAGMA_E2E_RESULT:' + JSON.stringify(result));
   } catch (error) { console.log('PRAGMA_E2E_RESULT:' + JSON.stringify({error: error.message})); }
   app.quit();
@@ -314,6 +340,14 @@ async function rendererRun(configuration) {
     () => api.getBridgeSnapshot().then((snapshot) => snapshot.startup.status === "ready"),
     "Bridge startup",
   );
+  const startup = {
+    launchedAt: configuration.launchedAt,
+    processStartedAt: configuration.processStartedAt,
+    windowCreatedAt: configuration.windowCreatedAt,
+    rendererLoadedAt: configuration.rendererLoadedAt,
+    bridgeReadyAt: Date.now(),
+    startupMs: Date.now() - configuration.launchedAt,
+  };
   const executors = await api.listMissionExecutors();
   const executor =
     executors.find((entry) => entry.name === "Pragma" && entry.kind !== "flow") ??
@@ -323,6 +357,7 @@ async function rendererRun(configuration) {
   const terminalStatuses = new Map();
   const currentSamples = new Map();
   const previousExecutions = new Map();
+  const creationMarkers = new Map();
   const stop = api.subscribeMissionStatusUpdates((update) => {
     const execution = update.execution;
     if (!execution) return;
@@ -334,11 +369,16 @@ async function rendererRun(configuration) {
   const run = async (mission, first) => {
     const sample = {
       group: configuration.group,
+      launchId: configuration.launchedAt,
+      role: first ? "initial" : "followup",
+      presentation: "foreground-ui",
+      ...(first ? creationMarkers.get(mission.id) : {}),
       missionId: mission.id,
       clickAt: Date.now(),
       previousId: previousExecutions.get(mission.id),
       controlUpdates: [],
     };
+    rounds.push(sample);
     currentSamples.set(mission.id, sample);
     const stopControl = api.subscribeMissionChat(mission.id, (update) => {
       if (update.kind === "patch" && update.patches.some((patch) => patch.type === "queue.update"))
@@ -429,8 +469,12 @@ async function rendererRun(configuration) {
       await wait(() => typeof sample.terminalPaintAt === "number", "Terminal paint");
       await delay(50);
       previousExecutions.set(mission.id, sample.executionId);
+      sample.previousExecutionId = sample.previousId;
       delete sample.previousId;
-      rounds.push(sample);
+      sample.status = terminal;
+    } catch (error) {
+      sample.error = error.message;
+      throw error;
     } finally {
       stopControl();
       observing.disconnect();
@@ -438,6 +482,7 @@ async function rendererRun(configuration) {
     }
   };
   const create = async () => {
+    const createStartedAt = Date.now();
     const mission = await api.createMission({
       workspace: configuration.workspace,
       executor: { ref: executor.ref },
@@ -448,6 +493,7 @@ async function rendererRun(configuration) {
         thinkingLevel: configuration.thinking,
       },
     });
+    creationMarkers.set(mission.id, { createStartedAt, createFinishedAt: Date.now() });
     document.querySelectorAll(".navigation-item")[1].click();
     const row = await wait(() => document.querySelector(".mission-row-open"), "Mission row");
     row.click();
@@ -472,7 +518,9 @@ async function rendererRun(configuration) {
         await api.deleteMission(mission.id);
       }
     await delay(500);
-    return { rounds };
+    return { rounds, startup };
+  } catch (error) {
+    return { rounds, startup, error: error.message };
   } finally {
     stop();
   }

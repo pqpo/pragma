@@ -1,10 +1,20 @@
 import { basename } from "node:path";
+import { z } from "zod";
+import {
+  MissionExecutionOwner,
+  type MissionExecutionOwnerAccess,
+} from "./missions/execution-owner.ts";
+import {
+  createLocalHostMissionCommandAdmission,
+  type LocalHostMissionCommandAdmission,
+} from "./mission-command-admission.ts";
 import { createSqliteExecutionStore } from "./execution/sqlite-execution-store.ts";
 
 import type {
   ExecutionStore,
   ExpertSession,
   ExpertSessionStore,
+  ExpertTurn,
   Flow,
   FlowExecution,
   FlowSpec,
@@ -18,6 +28,10 @@ import type {
 import {
   createFileExpertSessionStore,
   createPragma,
+  ExecutionController,
+  ExpertAgentHumanRequestSchema,
+  ExpertAgentHumanResponseSchema,
+  FlowInterruptionUnconfirmedError,
   runtimeSupportsSteer,
   SteerNotDispatchedError,
   unwrapInvocationOutput,
@@ -49,6 +63,7 @@ import {
 import { createLocalHostMissionEventProjector } from "./mission-event-projector.ts";
 import { dispatchMissionCommand } from "./missions/command-dispatcher.ts";
 import type {
+  MissionControlApplication,
   MissionControlExecutionOutcome,
   MissionControlTargetResolution,
 } from "./missions/controller/mission-control.ts";
@@ -56,6 +71,7 @@ import type {
   MissionCommandConsumer,
   MissionControllerGuard,
 } from "./missions/controller/mission-controller-store.ts";
+import { MissionSemanticWritePendingError } from "./missions/controller/mission-controller-store.ts";
 import {
   createPinnedBindingRecoveryError,
   type MissionPinnedBinding,
@@ -63,7 +79,16 @@ import {
 import { createRunRedactor, type RunRedactor } from "./redaction.ts";
 import type { LocalHostRunMissionPort, LocalHostRunTerminal } from "./run.ts";
 
+const coreMissionControlFactory = Symbol("local-host.core-mission-control");
+const humanResponseReceiptSchema = z.object({
+  interactionId: z.string().min(1),
+  requestId: z.string().min(1),
+  response: ExpertAgentHumanResponseSchema,
+});
+
 export interface LocalHostCoreMissionControlAdapter {
+  readonly [coreMissionControlFactory]: true;
+  readonly bindApplication: (application: MissionControlApplication) => void;
   readonly consumer: MissionCommandConsumer;
   readonly assertAcquisitionAllowed: (missionId: string) => Promise<void>;
   readonly resolveStrictTarget: (input: {
@@ -91,12 +116,15 @@ export type LocalHostCoreActiveOwner =
   | {
       readonly kind: "session";
       readonly session: ExpertSession;
-      readonly executor: LocalHostCoreExecutorDefinition;
+      readonly executor?: LocalHostCoreExecutorDefinition;
     }
   | {
       readonly kind: "flow";
-      readonly execution: FlowExecution;
-      readonly executor: LocalHostCoreExecutorDefinition;
+      readonly execution: Pick<
+        FlowExecution,
+        "executionId" | "cancel" | "respondToHumanInteraction"
+      >;
+      readonly executor?: LocalHostCoreExecutorDefinition;
     };
 
 /**
@@ -111,7 +139,7 @@ export function createLocalHostCoreMissionControlAdapter(options: {
   readonly executions?: ExecutionStore | undefined;
   readonly sessions?: ExpertSessionStore | undefined;
   /** Mission event sink shared with the initial Local Host run path. */
-  readonly mission: Pick<LocalHostRunMissionPort, "controller" | "append">;
+  readonly mission?: Pick<LocalHostRunMissionPort, "controller" | "append"> | undefined;
   readonly redactor?: RunRedactor | undefined;
   readonly usageSink?: UsageSink | undefined;
   readonly loggerProvider?: PragmaLoggerProvider | undefined;
@@ -126,6 +154,44 @@ export function createLocalHostCoreMissionControlAdapter(options: {
         readonly revision?: number | undefined;
         readonly workspace: WorkspaceSelection;
       }) => Promise<LocalHostCoreExecutorDefinition | undefined>);
+  readonly assertMissionReady?: ((missionId: string) => Promise<void>) | undefined;
+  readonly resolveExecutionId?: ((missionId: string) => Promise<string | undefined>) | undefined;
+  readonly resolveSessionId?: ((missionId: string) => Promise<string | undefined>) | undefined;
+  readonly ownerAccess?: MissionExecutionOwnerAccess | undefined;
+  /** Narrow R3 recovery port: returns a Core handle, never applies a command. */
+  readonly recoverActiveOwner?:
+    ((missionId: string) => Promise<LocalHostCoreActiveOwner>) | undefined;
+  /** Narrow compile/Core port for stopping a cold Flow without running its graph. */
+  readonly stopFlow?:
+    | ((
+        missionId: string,
+        executionId: string,
+        reason: string | undefined,
+        signal: AbortSignal,
+      ) => Promise<void>)
+    | undefined;
+  readonly admission?: LocalHostMissionCommandAdmission<Record<string, unknown>> | undefined;
+  readonly resolveInteractionHandle?:
+    | ((
+        missionId: string,
+        executionId: string,
+      ) =>
+        | Pick<ExpertTurn, "respondToHumanInteraction">
+        | undefined
+        | Promise<Pick<ExpertTurn, "respondToHumanInteraction"> | undefined>)
+    | undefined;
+  readonly executionSettlement?: ((missionId: string) => Promise<unknown> | undefined) | undefined;
+  readonly runWithGuard?:
+    | (<T>(
+        missionId: string,
+        guard: MissionControllerGuard,
+        operation: () => Promise<T>,
+      ) => Promise<T>)
+    | undefined;
+  readonly onCommandApplied?:
+    ((command: MissionCommand, result: Record<string, unknown>) => Promise<void>) | undefined;
+  readonly onApplicationBound?: ((application: MissionControlApplication) => void) | undefined;
+  readonly onCommandOutcome?: MissionCommandConsumer["afterOutcome"];
   readonly resolveActiveOwner?:
     ((missionId: string) => Promise<LocalHostCoreActiveOwner | undefined>) | undefined;
   readonly resolveMissionBinding: (missionId: string) => Promise<MissionPinnedBinding | undefined>;
@@ -144,11 +210,11 @@ export function createLocalHostCoreMissionControlAdapter(options: {
       executions,
       ...(options.pragmaHome === undefined ? {} : { pragmaHome: options.pragmaHome }),
     });
-  // Only cache owners recovered by this control adapter.  A live owner that
-  // belongs to the ordinary run executor must be resolved fresh on every
-  // command; caching it here would leave a closed ExpertSession behind after
-  // the foreground run releases its resources.
-  const recoveredOwners = new Map<string, CoreMissionOwner>();
+  const owners = options.ownerAccess ?? new MissionExecutionOwner();
+  const recoveredOwner = (missionId: string) =>
+    owners.controlOwnerOrigin(missionId) === "recovered"
+      ? owners.controlOwner(missionId)
+      : undefined;
   const settlementTasks = new Map<string, Promise<void>>();
   const redactor = options.redactor ?? createRunRedactor();
 
@@ -216,34 +282,55 @@ export function createLocalHostCoreMissionControlAdapter(options: {
   };
 
   const assertAcquisitionAllowed = async (missionId: string): Promise<void> => {
+    await options.assertMissionReady?.(missionId);
+    if (
+      owners.controlOwner(missionId) !== undefined ||
+      (await options.resolveActiveOwner?.(missionId)) !== undefined
+    )
+      return;
+    if (options.recoverActiveOwner !== undefined) return;
     await resolveExecutor(await readBinding(missionId));
   };
 
-  const recover = async (missionId: string): Promise<CoreMissionOwner> => {
-    const existing = recoveredOwners.get(missionId);
+  const recover = async (missionId: string, admissionOwned = false): Promise<CoreMissionOwner> => {
+    const existing = owners.controlOwner(missionId);
     if (existing !== undefined) return existing;
-    const active = await options.resolveActiveOwner?.(missionId);
+    const active =
+      owners.controlOwner(missionId) ?? (await options.resolveActiveOwner?.(missionId));
     if (active !== undefined) {
+      owners.setControlOwner(missionId, active, "live");
       return active;
     }
-    const binding = await readBinding(missionId);
-    const executor = await resolveExecutor(binding);
-    const app = await createControlApp({
-      options,
-      binding,
+    if (options.recoverActiveOwner !== undefined) {
+      return await owners.recoverControlOwner(
+        missionId,
+        () => options.recoverActiveOwner!(missionId),
+        { admission: "owned" },
+      );
+    }
+    return await owners.recoverControlOwner(
       missionId,
-      createApp,
-    });
-    await options.onOwnerRecovering?.(missionId);
-    const owner = await recoverOwner({
-      app,
-      sessions,
-      executions,
-      missionId,
-      executor,
-    });
-    recoveredOwners.set(missionId, owner);
-    return owner;
+      async () => {
+        const binding = await readBinding(missionId);
+        const executor = await resolveExecutor(binding);
+        const app = await createControlApp({
+          options,
+          binding,
+          missionId,
+          createApp,
+        });
+        await options.onOwnerRecovering?.(missionId);
+        const owner = await recoverOwner({
+          app,
+          sessions,
+          executions,
+          missionId,
+          executor,
+        });
+        return owner;
+      },
+      { admission: admissionOwned ? "owned" : "acquire" },
+    );
   };
 
   const recoverMission = async (missionId: string): Promise<void> => {
@@ -259,7 +346,7 @@ export function createLocalHostCoreMissionControlAdapter(options: {
     // newly accepted prompt before deciding that an acquired owner is idle.
     await unrefDelay(25);
     for (;;) {
-      const owner = recoveredOwners.get(missionId);
+      const owner = recoveredOwner(missionId);
       if (owner === undefined) return;
       if (await options.hasPendingMissionCommands?.(missionId)) {
         await unrefDelay(50);
@@ -283,7 +370,7 @@ export function createLocalHostCoreMissionControlAdapter(options: {
           guard,
           executionIds: state.executionIds,
           executions,
-          mission: options.mission,
+          mission: options.mission!,
           redactor,
         });
         const checkpointed =
@@ -309,7 +396,7 @@ export function createLocalHostCoreMissionControlAdapter(options: {
           guard,
           executionIds: [missionId],
           executions,
-          mission: options.mission,
+          mission: options.mission!,
           redactor,
         });
       }
@@ -317,7 +404,11 @@ export function createLocalHostCoreMissionControlAdapter(options: {
       // Lower-level release is complete. Remove the recovered handle before
       // releasing the Mission lease so a concurrent command can reconstruct a
       // fresh owner; the callback performs its own final pending-item check.
-      if (recoveredOwners.get(missionId) === owner) recoveredOwners.delete(missionId);
+      if (
+        recoveredOwner(missionId) !== owner ||
+        !owners.deleteControlOwnerIfCurrent(missionId, owner)
+      )
+        return;
       await options.releaseMissionOwner(missionId);
       return;
     }
@@ -327,7 +418,8 @@ export function createLocalHostCoreMissionControlAdapter(options: {
     missionId: string,
     guard: MissionControllerGuard,
   ): void => {
-    if (options.releaseMissionOwner === undefined || !recoveredOwners.has(missionId)) return;
+    if (options.releaseMissionOwner === undefined || !(recoveredOwner(missionId) !== undefined))
+      return;
     if (settlementTasks.has(missionId)) return;
     const task = settleRecoveredOwner(missionId, guard).finally(() => {
       if (settlementTasks.get(missionId) === task) settlementTasks.delete(missionId);
@@ -342,7 +434,7 @@ export function createLocalHostCoreMissionControlAdapter(options: {
     // Give the poller a turn to finish the durable outcome, then release the
     // Mission lease if no newer command or ordinary live owner needs it.
     await unrefDelay(25);
-    if (recoveredOwners.has(missionId)) return;
+    if (recoveredOwner(missionId) !== undefined) return;
     if (options.resolveActiveOwner !== undefined) {
       const active = await options.resolveActiveOwner(missionId);
       if (active !== undefined) return;
@@ -352,7 +444,8 @@ export function createLocalHostCoreMissionControlAdapter(options: {
   };
 
   const scheduleUnbackedMissionOwnerSettlement = (missionId: string): void => {
-    if (options.releaseMissionOwner === undefined || recoveredOwners.has(missionId)) return;
+    if (options.releaseMissionOwner === undefined || recoveredOwner(missionId) !== undefined)
+      return;
     if (settlementTasks.has(missionId)) return;
     const task = settleUnbackedMissionOwner(missionId).finally(() => {
       if (settlementTasks.get(missionId) === task) settlementTasks.delete(missionId);
@@ -364,8 +457,15 @@ export function createLocalHostCoreMissionControlAdapter(options: {
     readonly missionId: string;
     readonly expectedExecutionId?: string | undefined;
   }): Promise<MissionControlTargetResolution | undefined> => {
-    await assertStrictSteerSupported(input.missionId);
-    const current = await readActiveExpertTarget(sessions, input.missionId);
+    const active =
+      owners.controlOwner(input.missionId) ?? (await options.resolveActiveOwner?.(input.missionId));
+    if (active?.kind === "flow") await assertStrictSteerSupported(input.missionId);
+    const sessionId =
+      active?.kind === "session"
+        ? active.session.sessionId
+        : ((await options.resolveSessionId?.(input.missionId)) ?? input.missionId);
+    const current = await readActiveExpertTarget(sessions, sessionId);
+    if (current !== undefined) await assertStrictSteerSupported(input.missionId);
     if (
       current !== undefined &&
       input.expectedExecutionId !== undefined &&
@@ -389,7 +489,21 @@ export function createLocalHostCoreMissionControlAdapter(options: {
     readonly missionId: string;
     readonly expectedExecutionId?: string | undefined;
   }): Promise<string | undefined> => {
-    const current = await readCurrentExecutionId(sessions, executions, input.missionId);
+    const active =
+      owners.controlOwner(input.missionId) ?? (await options.resolveActiveOwner?.(input.missionId));
+    const sessionId =
+      active?.kind === "session"
+        ? active.session.sessionId
+        : ((await options.resolveSessionId?.(input.missionId)) ?? input.missionId);
+    const current =
+      active?.kind === "flow"
+        ? active.execution.executionId
+        : await readCurrentExecutionId(
+            sessions,
+            executions,
+            sessionId,
+            (await options.resolveExecutionId?.(input.missionId)) ?? input.missionId,
+          );
     if (input.expectedExecutionId !== undefined && current !== input.expectedExecutionId) {
       throw createIntegrationError({
         code: "COMMAND_REJECTED",
@@ -407,7 +521,8 @@ export function createLocalHostCoreMissionControlAdapter(options: {
   };
 
   const assertStrictSteerSupported = async (missionId: string): Promise<void> => {
-    const active = await options.resolveActiveOwner?.(missionId);
+    const active =
+      owners.controlOwner(missionId) ?? (await options.resolveActiveOwner?.(missionId));
     if (active !== undefined) {
       if (active.kind === "flow") {
         throw commandRejected(missionId, "steer_not_supported");
@@ -417,8 +532,17 @@ export function createLocalHostCoreMissionControlAdapter(options: {
       }
       return;
     }
-    const execution = await executions.get(missionId);
+    const execution = await executions.get(
+      (await options.resolveExecutionId?.(missionId)) ?? missionId,
+    );
     if (execution?.kind === "flow") throw commandRejected(missionId, "steer_not_supported");
+    const sessionId = (await options.resolveSessionId?.(missionId)) ?? missionId;
+    const persistedSession = await sessions.get(sessionId);
+    if (persistedSession !== undefined) {
+      if (!(await sessionRecordSupportsSteer(persistedSession, options.runtimes)))
+        throw commandRejected(missionId, "steer_not_supported");
+      return;
+    }
     // A persisted owner without a live in-process handle is only consulted
     // after an exact pin has been resolved. This never reads a project head.
     const binding = await options.resolveMissionBinding(missionId);
@@ -444,7 +568,28 @@ export function createLocalHostCoreMissionControlAdapter(options: {
   }): Promise<void> => {
     const { command } = input;
     if (command.kind !== "steer" && command.kind !== "queue.steer") return;
-    await assertStrictSteerSupported(command.missionId);
+    if (command.kind === "steer" || command.kind === "queue.steer") {
+      const active =
+        owners.controlOwner(command.missionId) ??
+        (await options.resolveActiveOwner?.(command.missionId));
+      const sessionId =
+        active?.kind === "session"
+          ? active.session.sessionId
+          : ((await options.resolveSessionId?.(command.missionId)) ?? command.missionId);
+      const duplicate = (await sessions.listPrompts(sessionId)).find(
+        (prompt) =>
+          prompt.requestId ===
+            (command.payload.kind === "queue.steer"
+              ? command.payload.requestId
+              : command.request.requestId) &&
+          (command.kind === "queue.steer"
+            ? prompt.mode === "enqueue" && prompt.deliveryAttempt?.kind === "queue_steer"
+            : prompt.mode === "steer" && prompt.deliveryAttempt?.kind === "strict_steer") &&
+          prompt.status === "succeeded" &&
+          prompt.deliveryAttempt?.state === "confirmed",
+      );
+      if (duplicate !== undefined) return;
+    }
     const current = await resolveStrictTarget({ missionId: command.missionId });
     const target = command.target;
     if (target?.executionId === undefined || target.turnId === undefined) {
@@ -483,22 +628,160 @@ export function createLocalHostCoreMissionControlAdapter(options: {
     }
   };
 
+  const defaultAdmission = createLocalHostMissionCommandAdmission({
+    getMission: async (id: string) => {
+      const active = owners.controlOwner(id);
+      const kind =
+        active?.kind === "flow"
+          ? "flow"
+          : active?.kind === "session"
+            ? "expert"
+            : ((await executions.get(id))?.kind ??
+              (await options.resolveMissionBinding(id))?.executor.ref.kind ??
+              "expert");
+      return { id, lifecycleStatus: "active", executor: { kind }, execution: true };
+    },
+    admit: (id, operation) => owners.admit(id, operation),
+    withController: async (_id, operation) => await operation(),
+    settleTerminal: async () => false,
+    contextBindingsChanging: () => false,
+    successorRequired: () => false,
+    hasActive: () => true,
+    session: (id) => {
+      const owner = owners.controlOwner(id);
+      return owner?.kind === "session" ? owner.session : undefined;
+    },
+    assertReady: async () => undefined,
+    startInitialRun: async () => undefined,
+    prepare: async (mission) => {
+      const owner = await recover(mission.id, true);
+      if (owner.kind !== "session") throw commandRejected(mission.id, "send_not_supported");
+      return {
+        session: owner.session,
+        definitionChanged: false,
+        contextStoresChanged: false,
+        createSession: async () => owner.session,
+        rememberSession: () => undefined,
+      };
+    },
+    forgetSession: () => undefined,
+    projectAccepted: async ({ mission, prepared, turn, requestedMode }) => {
+      const queue = await prepared.session.getPromptQueue();
+      const queueState = await prepared.session.getPromptQueueState();
+      const queuedPosition = queue
+        .filter((prompt) => prompt.mode === "enqueue" && prompt.status === "queued")
+        .findIndex((prompt) => prompt.requestId === turn.requestId);
+      return {
+        missionId: mission.id,
+        executionId: turn.executionId,
+        turnId: turn.requestId,
+        mode: requestedMode,
+        queueState: queueState.state,
+        ...(queuedPosition < 0 ? {} : { queuePosition: queuedPosition + 1 }),
+      };
+    },
+  });
+  const send = options.admission ?? defaultAdmission;
+
+  const readResponseReceipt = async (
+    command: MissionCommand,
+  ): Promise<Record<string, unknown> | undefined> => {
+    if (command.payload.kind !== "respond" || command.target?.interactionId === undefined)
+      return undefined;
+    const interactionId = command.target.interactionId;
+    const checked = new Set<string>();
+    let originalInteractionFound = false;
+    const read = async (executionId: string | undefined) => {
+      if (executionId === undefined || checked.has(executionId)) return undefined;
+      checked.add(executionId);
+      const events = await executions.readEvents(executionId);
+      const requested = events.find(
+        (event) =>
+          event.type === "human.requested" &&
+          typeof event.data === "object" &&
+          event.data !== null &&
+          "interactionId" in event.data &&
+          event.data.interactionId === interactionId,
+      );
+      if (requested !== undefined) {
+        z.object({
+          interactionId: z.string().min(1),
+          request: ExpertAgentHumanRequestSchema,
+        }).parse(requested.data);
+        originalInteractionFound = true;
+      }
+      const responded = events.find((event) => {
+        if (event.type !== "human.responded") return false;
+        const data = event.data;
+        return (
+          typeof data === "object" &&
+          data !== null &&
+          "interactionId" in data &&
+          data.interactionId === interactionId
+        );
+      });
+      if (responded === undefined) return undefined;
+      if (requested === undefined)
+        throw new Error(`Human response receipt has no original request: ${interactionId}.`);
+      const receipt = humanResponseReceiptSchema.parse(responded.data);
+      if (receipt.requestId !== command.request.requestId)
+        throw createIntegrationError({
+          code: "INTERACTION_NOT_PENDING",
+          category: "conflict",
+          message: "Human interaction was already answered by another request.",
+          details: { missionId: command.missionId, interactionId },
+        });
+      return { missionId: command.missionId, executionId, interactionId };
+    };
+    // Reconcile receipts before opening a Session or activating a Flow. A
+    // terminal execution can acknowledge its durable response without recovery.
+    const targetIds =
+      command.target.executionId === undefined
+        ? [await options.resolveExecutionId?.(command.missionId), command.missionId]
+        : [command.target.executionId];
+    for (const id of targetIds) {
+      const receipt = await read(id);
+      if (receipt !== undefined) return receipt;
+      if (originalInteractionFound) return undefined;
+    }
+    // An explicitly pinned target is authoritative, including the absence of a
+    // receipt. Normal replies must not scan historical Session turns.
+    if (command.target.executionId !== undefined) return undefined;
+    const active =
+      owners.controlOwner(command.missionId) ??
+      (await options.resolveActiveOwner?.(command.missionId));
+    if (active?.kind === "flow") return undefined;
+    const sessionId =
+      active?.session.sessionId ??
+      (await options.resolveSessionId?.(command.missionId)) ??
+      command.missionId;
+    const session =
+      active?.kind === "session" ? await active.session.getState() : await sessions.get(sessionId);
+    for (const id of session?.executionIds.toReversed() ?? []) {
+      const receipt = await read(id);
+      if (receipt !== undefined) return receipt;
+    }
+    return undefined;
+  };
+
   const adapter: LocalHostCoreMissionControlAdapter = {
+    [coreMissionControlFactory]: true,
+    bindApplication: (application) => options.onApplicationBound?.(application),
     assertAcquisitionAllowed,
     resolveStrictTarget,
     resolveExecutionTarget,
     recoverMission,
     waitExecution: async (input) => await waitForExecution(executions, input),
     release: async (missionId) => {
-      const owner = recoveredOwners.get(missionId);
+      const owner = recoveredOwner(missionId);
       if (owner === undefined) return;
       if (owner.kind === "session") {
         await owner.session.releaseAfterTerminal();
       }
-      recoveredOwners.delete(missionId);
+      owners.deleteControlOwnerIfCurrent(missionId, owner);
     },
     releaseAfterHumanCheckpoint: async (missionId, guard) => {
-      const owner = recoveredOwners.get(missionId);
+      const owner = recoveredOwner(missionId);
       if (owner === undefined) return;
       const executionIds =
         owner.kind === "session" ? (await owner.session.getState()).executionIds : [missionId];
@@ -507,27 +790,159 @@ export function createLocalHostCoreMissionControlAdapter(options: {
         guard,
         executionIds,
         executions,
-        mission: options.mission,
+        mission: options.mission!,
         redactor,
       });
       if (owner.kind === "session") {
         await owner.session.releaseAfterHumanCheckpoint();
       }
-      recoveredOwners.delete(missionId);
+      owners.deleteControlOwnerIfCurrent(missionId, owner);
     },
     consumer: {
       validateStrictTarget,
-      async apply({ command, guard }) {
+      async apply({ command, guard, signal }) {
+        if (signal.aborted)
+          throw createIntegrationError({
+            code: "COMMAND_RESULT_TIMEOUT",
+            category: "conflict",
+            message: "Mission command application was cancelled before dispatch.",
+            details: { missionId: command.missionId, commandId: command.commandId },
+          });
         // The first check happens before Runtime work. Repeat it immediately
         // before the Core call so a target change in the intervening window
         // cannot turn strict steer into an enqueue or another target.
-        await validateStrictTarget({ command, guard });
-        return {
-          result: await applyCoreMissionCommand({ command, executions, recover }),
+        const execute = async () => {
+          await validateStrictTarget({ command, guard });
+          let result: Record<string, unknown>;
+          const receipt = await readResponseReceipt(command);
+          if (receipt !== undefined) {
+            result = receipt;
+          } else if (
+            (command.kind === "send" || command.kind === "steer") &&
+            (command.payload.kind === "send" || command.payload.kind === "steer")
+          ) {
+            result = await send({
+              id: command.missionId,
+              signal,
+              content: command.payload.input.prompt,
+              requestId: command.request.requestId,
+              requestedAt: command.request.requestedAt,
+              mode: command.kind === "steer" ? "steer" : "enqueue",
+              attachments: command.payload.input.attachments,
+              ...(command.target === undefined ? {} : { target: command.target }),
+            });
+          } else {
+            result = await applyCoreMissionCommand({
+              command,
+              executions,
+              recover,
+              resolveExecutionId: options.resolveExecutionId,
+              stopFlow: async (executionId, reason) => {
+                try {
+                  if (options.stopFlow !== undefined) {
+                    await options.stopFlow(command.missionId, executionId, reason, signal);
+                  } else {
+                    const binding = await readBinding(command.missionId);
+                    const executor = await resolveExecutor(binding);
+                    if (!isFlowDefinition(executor.definition))
+                      throw commandRejected(command.missionId, "flow_definition_required");
+                    const app = await createControlApp({
+                      options,
+                      binding,
+                      missionId: command.missionId,
+                      createApp,
+                    });
+                    await app.flows.stop(executor.definition, { executionId, reason, signal });
+                  }
+                  if (owners instanceof MissionExecutionOwner)
+                    owners.clearControlIssue(command.missionId);
+                } catch (error: unknown) {
+                  if (error instanceof FlowInterruptionUnconfirmedError) {
+                    if (owners instanceof MissionExecutionOwner)
+                      owners.setControlIssue(command.missionId, {
+                        state: "interrupt_uncertain",
+                        reasonCode: "MISSION_INTERRUPT_UNCERTAIN",
+                        observedAt: new Date().toISOString(),
+                      });
+                    options.loggerProvider
+                      ?.createLogger({ component: "local-host.mission-control" })
+                      .warn(
+                        "mission.interrupt_native_stop_uncertain",
+                        "Native Flow interruption was not confirmed.",
+                        {
+                          missionId: command.missionId,
+                          executionId,
+                          code: "MISSION_INTERRUPT_UNCERTAIN",
+                          nativeStopCode: error.code,
+                        },
+                      );
+                    throw new MissionSemanticWritePendingError({ cause: error });
+                  }
+                  throw error;
+                }
+              },
+              retainedOwner:
+                owners.controlOwner(command.missionId) ??
+                (await options.resolveActiveOwner?.(command.missionId)),
+              resolveInteractionHandle: options.resolveInteractionHandle,
+              interrupt: async (owner, current, reason) => {
+                const stop =
+                  owner.kind === "session"
+                    ? owner.session.cancelPromptQueue(reason ?? "Stopped and cleared by user.")
+                    : owner.execution.cancel(reason ?? "Interrupted by user.");
+                const cancellation = await settleWithin(stop, 5_000);
+                const pending = options.executionSettlement?.(command.missionId);
+                const settlement =
+                  pending === undefined
+                    ? { status: "fulfilled" as const }
+                    : await settleWithin(pending, 30_000);
+                if (cancellation.status !== "fulfilled" || settlement.status !== "fulfilled") {
+                  if (owners instanceof MissionExecutionOwner)
+                    owners.setControlIssue(command.missionId, {
+                      state: "interrupt_uncertain",
+                      reasonCode: "MISSION_INTERRUPT_UNCERTAIN",
+                      observedAt: new Date().toISOString(),
+                    });
+                  const persisted = await executions.get(current);
+                  if (persisted !== undefined && !isTerminalExecutionStatus(persisted.status))
+                    await new ExecutionController(current, executions).cancel(
+                      "Forced Mission interruption after settlement timeout.",
+                    );
+                  owners.deleteControlOwnerIfCurrent(command.missionId, owner);
+                  options.loggerProvider
+                    ?.createLogger({ component: "local-host.mission-control" })
+                    .warn(
+                      "mission.interrupt_settlement_uncertain",
+                      "Mission interruption did not settle cooperatively.",
+                      {
+                        missionId: command.missionId,
+                        executionId: current,
+                        cancellation: cancellation.status,
+                        settlement: settlement.status,
+                        code: "MISSION_INTERRUPT_UNCERTAIN",
+                      },
+                    );
+                } else if (owners instanceof MissionExecutionOwner)
+                  owners.clearControlIssue(command.missionId);
+              },
+            });
+          }
+          if (options.onCommandApplied !== undefined)
+            await options.onCommandApplied(command, result).catch((error: unknown) => {
+              throw error instanceof MissionSemanticWritePendingError
+                ? error
+                : new MissionSemanticWritePendingError({ cause: error });
+            });
+          return { result };
         };
+        return options.runWithGuard === undefined
+          ? await execute()
+          : await options.runWithGuard(command.missionId, guard, execute);
       },
-      afterOutcome({ command, guard }) {
-        if (recoveredOwners.has(command.missionId)) {
+      async afterOutcome(outcome) {
+        const { command, guard } = outcome;
+        await options.onCommandOutcome?.(outcome);
+        if (recoveredOwner(command.missionId) !== undefined) {
           scheduleRecoveredOwnerSettlement(command.missionId, guard);
         } else {
           scheduleUnbackedMissionOwnerSettlement(command.missionId);
@@ -653,27 +1068,64 @@ async function applyCoreMissionCommand(options: {
   readonly command: MissionCommand;
   readonly executions: ExecutionStore;
   readonly recover: (missionId: string) => Promise<CoreMissionOwner>;
+  readonly resolveExecutionId?: ((missionId: string) => Promise<string | undefined>) | undefined;
+  readonly stopFlow: (executionId: string, reason: string | undefined) => Promise<void>;
+  readonly retainedOwner?: CoreMissionOwner | undefined;
+  readonly resolveInteractionHandle?:
+    | ((
+        missionId: string,
+        executionId: string,
+      ) =>
+        | Pick<ExpertTurn, "respondToHumanInteraction">
+        | undefined
+        | Promise<Pick<ExpertTurn, "respondToHumanInteraction"> | undefined>)
+    | undefined;
+  readonly interrupt: (
+    owner: CoreMissionOwner,
+    executionId: string,
+    reason?: string,
+  ) => Promise<void>;
 }): Promise<Record<string, unknown>> {
   const { command } = options;
   // Reject unsupported Flow mutations before recovery. Recovering a Flow can
   // allocate a live Core owner, so a rejected send/queue command must not
   // create that side effect merely to discover the executor kind.
-  const persistedExecution = await options.executions.get(command.missionId);
+  const persistedExecution =
+    options.retainedOwner === undefined
+      ? await options.executions.get(
+          (await options.resolveExecutionId?.(command.missionId)) ?? command.missionId,
+        )
+      : undefined;
   if (
-    persistedExecution?.kind === "flow" &&
+    (options.retainedOwner?.kind === "flow" || persistedExecution?.kind === "flow") &&
     command.payload.kind !== "interrupt" &&
     command.payload.kind !== "respond"
   ) {
     throw commandRejected(command.missionId, `${command.kind.replaceAll(".", "_")}_not_supported`);
   }
-  const owner = await options.recover(command.missionId);
+  if (
+    options.retainedOwner === undefined &&
+    persistedExecution?.kind === "flow" &&
+    command.payload.kind === "interrupt"
+  ) {
+    const target = command.target?.executionId;
+    if (target !== undefined && target !== persistedExecution.executionId)
+      throw executionTargetChanged(command.missionId, target, persistedExecution.executionId);
+    await options.stopFlow(persistedExecution.executionId, command.payload.reason);
+    return {
+      missionId: command.missionId,
+      executionId: persistedExecution.executionId,
+      targetStatus: "interrupted",
+    };
+  }
+  const owner = options.retainedOwner ?? (await options.recover(command.missionId));
   if (owner.kind === "flow") {
     if (command.payload.kind === "interrupt") {
       const target = command.target?.executionId;
       if (target !== undefined && target !== owner.execution.executionId) {
         throw executionTargetChanged(command.missionId, target, owner.execution.executionId);
       }
-      await owner.execution.cancel(command.payload.reason);
+      await options.interrupt(owner, owner.execution.executionId, command.payload.reason);
       return {
         missionId: command.missionId,
         executionId: owner.execution.executionId,
@@ -688,50 +1140,42 @@ async function applyCoreMissionCommand(options: {
 
   return await dispatchMissionCommand(command, {
     async send(command) {
-      const turn = await owner.session.prompt(command.payload.input.prompt, {
-        requestId: command.request.requestId,
-        mode: "enqueue",
-        attachments: command.payload.input.attachments,
-      });
-      const queue = await owner.session.getPromptQueue();
-      const queueState = await owner.session.getPromptQueueState();
-      const queuedPosition = queue
-        .filter((prompt) => prompt.mode === "enqueue" && prompt.status === "queued")
-        .findIndex((prompt) => prompt.requestId === command.request.requestId);
-      return {
-        missionId: command.missionId,
-        executionId: turn.executionId,
-        turnId: turn.requestId,
-        mode: "enqueue",
-        queueState: queueState.state,
-        ...(queuedPosition < 0 ? {} : { queuePosition: queuedPosition + 1 }),
-      };
+      throw commandRejected(command.missionId, "send_requires_admission");
     },
     async steer(command) {
-      const turn = await owner.session.prompt(command.payload.input.prompt, {
-        requestId: command.request.requestId,
-        mode: "steer",
-        attachments: command.payload.input.attachments,
-      });
-      return {
-        missionId: command.missionId,
-        executionId: turn.executionId,
-        turnId: turn.requestId,
-        mode: "steer",
-      };
+      throw commandRejected(command.missionId, "steer_requires_admission");
     },
     async respond(command) {
-      return await applySessionResponse(owner.session, options.executions, command);
+      return await applySessionResponse(
+        owner.session,
+        options.executions,
+        command,
+        options.resolveInteractionHandle,
+      );
     },
     async interrupt(command) {
       const state = await owner.session.getState();
       const current = state.activeExecutionId;
       const expected = command.target?.executionId;
       if (current === undefined) {
+        const previousId = state.executionIds.at(-1);
+        const previous =
+          previousId === undefined ? undefined : await options.executions.get(previousId);
+        if (
+          previous !== undefined &&
+          (previous.status === "cancelled" || previous.status === "interrupted") &&
+          (expected === undefined || expected === previous.executionId)
+        ) {
+          return {
+            missionId: command.missionId,
+            executionId: previous.executionId,
+            targetStatus: "interrupted",
+          };
+        }
         if (expected === undefined || !state.executionIds.includes(expected)) {
           throw commandRejected(command.missionId, "no_active_execution");
         }
-        await owner.session.abortExecution(expected, command.payload.reason);
+        await options.interrupt(owner, expected, command.payload.reason);
         return {
           missionId: command.missionId,
           executionId: expected,
@@ -741,7 +1185,7 @@ async function applyCoreMissionCommand(options: {
       if (expected !== undefined && expected !== current) {
         throw executionTargetChanged(command.missionId, expected, current);
       }
-      await owner.session.abort(command.payload.reason);
+      await options.interrupt(owner, current, command.payload.reason);
       return {
         missionId: command.missionId,
         executionId: current,
@@ -767,7 +1211,14 @@ async function applyCoreMissionCommand(options: {
     },
     async "queue.steer"(command) {
       try {
-        const turn = await owner.session.steerQueuedPrompt(command.payload.requestId);
+        const turn = await owner.session.steerQueuedPrompt(
+          command.payload.requestId,
+          command.target?.executionId === undefined || command.target.turnId === undefined
+            ? undefined
+            : {
+                target: { executionId: command.target.executionId, turnId: command.target.turnId },
+              },
+        );
         return {
           missionId: command.missionId,
           executionId: turn.executionId,
@@ -785,7 +1236,13 @@ async function applyCoreMissionCommand(options: {
             details: { missionId: command.missionId },
           });
         }
-        throw commandRejected(command.missionId, "queue_item_not_steerable");
+        throw createIntegrationError({
+          code: "COMMAND_REJECTED",
+          category: "conflict",
+          message:
+            error instanceof Error ? error.message : "The queued prompt could not be steered.",
+          details: { missionId: command.missionId, reason: "queue_item_not_steerable" },
+        });
       }
     },
     async "queue.try-steer"(command) {
@@ -808,7 +1265,13 @@ async function applyCoreMissionCommand(options: {
             };
       } catch (error) {
         if (isIntegrationError(error)) throw error;
-        throw commandRejected(command.missionId, "queue_item_not_steerable");
+        throw createIntegrationError({
+          code: "COMMAND_REJECTED",
+          category: "conflict",
+          message:
+            error instanceof Error ? error.message : "The queued prompt could not be steered.",
+          details: { missionId: command.missionId, reason: "queue_item_not_steerable" },
+        });
       }
     },
   });
@@ -818,6 +1281,13 @@ async function applySessionResponse(
   session: ExpertSession,
   executions: ExecutionStore,
   command: MissionCommand,
+  resolveHandle?: (
+    missionId: string,
+    executionId: string,
+  ) =>
+    | Pick<ExpertTurn, "respondToHumanInteraction">
+    | undefined
+    | Promise<Pick<ExpertTurn, "respondToHumanInteraction"> | undefined>,
 ): Promise<Record<string, unknown>> {
   const interactionId = command.target?.interactionId;
   if (interactionId === undefined) throw commandRejected(command.missionId, "interaction_required");
@@ -825,7 +1295,16 @@ async function applySessionResponse(
     throw commandRejected(command.missionId, "respond_payload_required");
   }
   const state = await session.getState();
-  const candidates = state.executionIds;
+  const candidates = [
+    ...new Set(
+      [
+        command.target?.executionId,
+        state.activeExecutionId,
+        ...state.executionIds.toReversed(),
+      ].filter((id): id is string => id !== undefined),
+    ),
+  ];
+  let turns: Awaited<ReturnType<ExpertSession["listTurns"]>> | undefined;
   for (const executionId of candidates) {
     const envelope = await readPendingInteraction(
       executions,
@@ -835,9 +1314,11 @@ async function applySessionResponse(
       interactionId,
     ).catch(() => undefined);
     if (envelope === undefined) continue;
-    const turn = (await session.listTurns()).find(
-      (candidate) => candidate.executionId === executionId,
-    );
+    let turn = await resolveHandle?.(command.missionId, executionId);
+    if (turn === undefined) {
+      turns ??= await session.listTurns();
+      turn = turns.find((candidate) => candidate.executionId === executionId);
+    }
     if (turn === undefined) continue;
     const response = HumanInteractionResponseSchema.parse(command.payload.response);
     await turn.respondToHumanInteraction(
@@ -856,7 +1337,7 @@ async function applySessionResponse(
 }
 
 async function applyFlowResponse(
-  execution: FlowExecution,
+  execution: Pick<FlowExecution, "executionId" | "cancel" | "respondToHumanInteraction">,
   executions: ExecutionStore,
   command: MissionCommand,
 ): Promise<Record<string, unknown>> {
@@ -899,17 +1380,17 @@ async function projectRecoveredOwner(options: {
   readonly guard: MissionControllerGuard;
   readonly executionIds: readonly string[];
   readonly executions: ExecutionStore;
-  readonly mission: Pick<LocalHostRunMissionPort, "controller" | "append">;
+  readonly mission?: Pick<LocalHostRunMissionPort, "controller" | "append"> | undefined;
   readonly redactor: RunRedactor;
 }): Promise<void> {
-  const snapshot = await options.mission.controller.readSnapshot({
+  const snapshot = await options.mission!.controller.readSnapshot({
     missionId: options.missionId,
   });
   const knownEventIds = new Set(snapshot.events.map((event) => event.eventId));
   const projector = createLocalHostMissionEventProjector({
     missionId: options.missionId,
     guard: options.guard,
-    mission: options.mission,
+    mission: options.mission!,
     redactor: options.redactor,
     knownEventIds,
   });
@@ -1011,6 +1492,7 @@ async function readCurrentExecutionId(
   sessions: ExpertSessionStore,
   executions: ExecutionStore,
   missionId: string,
+  flowExecutionId = missionId,
 ): Promise<string | undefined> {
   const session = await sessions.get(missionId);
   if (session?.activeExecutionId !== undefined) return session.activeExecutionId;
@@ -1029,7 +1511,7 @@ async function readCurrentExecutionId(
       }
     }
   }
-  const execution = await executions.get(missionId);
+  const execution = await executions.get(flowExecutionId);
   return execution !== undefined && ["running", "waiting"].includes(execution.status)
     ? execution.executionId
     : undefined;
@@ -1215,4 +1697,23 @@ function isIntegrationError(error: unknown): error is ReturnType<typeof createIn
     "schemaVersion" in error &&
     (error as { readonly schemaVersion?: unknown }).schemaVersion === "pragma.integration-error/v1"
   );
+}
+
+async function settleWithin(
+  operation: Promise<unknown>,
+  milliseconds: number,
+): Promise<{ readonly status: "fulfilled" | "rejected" | "timed_out" }> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  return await Promise.race([
+    operation.then(
+      () => ({ status: "fulfilled" as const }),
+      () => ({ status: "rejected" as const }),
+    ),
+    new Promise<{ readonly status: "timed_out" }>((resolve) => {
+      timer = setTimeout(() => resolve({ status: "timed_out" }), milliseconds);
+      timer.unref();
+    }),
+  ]).finally(() => {
+    if (timer !== undefined) clearTimeout(timer);
+  });
 }

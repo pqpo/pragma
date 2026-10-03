@@ -1,0 +1,25 @@
+{
+  "package": "@pqpo/pragma",
+  "version": "0.1.0-next.18",
+  "buildIdentity": {
+    "version": "0.1.0-next.18",
+    "commit": "8fdbd4526d0f62d0b36891165539ed9ec47dc603",
+    "cliSha256": "918fc99fd77e1f8790812185e82e2f9cdc01ac796e771cfb81d3779abb02940a"
+  },
+  "tarball": "pragma-cli.tgz",
+  "sha256": "e2e10788ceeb60f0113d2f3952173bf685b34c23ad3fdfd92d6f262aec4c27b7",
+  "tarballBytes": 6177494,
+  "unpackedBytes": 28846458,
+  "files": [
+    "LICENSE",
+    "README.md",
+    "THIRD_PARTY_NOTICES.txt",
+    "dist/canonical-event-feed-worker.js",
+    "dist/claude-acp-worker.js",
+    "dist/cli.js",
+    "dist/code-service-worker.js",
+    "dist/pragma.js",
+    "dist/vector-worker.js",
+    "package.json"
+  ]
+}

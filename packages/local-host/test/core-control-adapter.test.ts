@@ -64,6 +64,8 @@ describe("Local Host Core Mission control adapter", () => {
     });
 
     await adapter.consumer.apply({
+      signal: new AbortController().signal,
+      deadlineAt: "2026-10-02T01:00:00.000Z",
       command,
       guard: {
         claimId: "00000000-0000-4000-8000-000000000006",
@@ -78,6 +80,8 @@ describe("Local Host Core Mission control adapter", () => {
     });
     for (const recovery of [undefined, "abandon"] as const) {
       await adapter.consumer.apply({
+        signal: new AbortController().signal,
+        deadlineAt: "2026-10-02T01:00:00.000Z",
         command: MissionCommandSchema.parse({
           ...command,
           kind: "queue.resume",

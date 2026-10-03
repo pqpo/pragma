@@ -1,0 +1,38 @@
+{
+  "node": "v24.18.0",
+  "serial": true,
+  "results": [
+    {
+      "name": "controller-process-final",
+      "command": [
+        "pnpm",
+        "--filter",
+        "@pragma/local-host",
+        "exec",
+        "vitest",
+        "run",
+        "test/mission-controller-process.integration.test.ts"
+      ],
+      "startedAt": "2026-10-02T08:36:10.194238+00:00",
+      "seconds": 25.47,
+      "exitCode": 0,
+      "log": "/tmp/pragma-r1-controller-process-final.log"
+    },
+    {
+      "name": "shared-values-final",
+      "command": [
+        "pnpm",
+        "--filter",
+        "@pragma/shared",
+        "exec",
+        "vitest",
+        "run",
+        "test/mission-values.test.ts"
+      ],
+      "startedAt": "2026-10-02T08:36:35.665349+00:00",
+      "seconds": 1.395,
+      "exitCode": 0,
+      "log": "/tmp/pragma-r1-shared-values-final.log"
+    }
+  ]
+}

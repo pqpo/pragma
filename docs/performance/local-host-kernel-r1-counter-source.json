@@ -1,0 +1,82 @@
+{
+  "capturedAt": "2026-10-02T14:28:33.572415+00:00",
+  "baseHead": "2fa01557c7a91e396bbdc6d300a20578b48cb140",
+  "captureState": "Uncommitted final counter and release fixes; docs excluded from production digest",
+  "inventoryReference": "local-host-kernel-r1-cr-source-snapshots.json#candidate.files",
+  "additionalProductionFiles": ["packages/memory/src/retrieval/projection.ts"],
+  "fileCount": 1165,
+  "digestAlgorithm": "SHA256 of sorted path + NUL + file SHA256 + LF records",
+  "sha256": "97dc2af78fdc1b8fb748ef9a3f45223ec4ed0583506bbb5c0f8f802c19c6b6c8",
+  "changedProductionFiles": [
+    {
+      "path": "package.json",
+      "sha256": "c6682c842205b1d71251a9c0cb9b5f51587fe106c19f604a3d764bf2de722c69"
+    },
+    {
+      "path": "packages/core/src/execution/expert-session.ts",
+      "sha256": "a2d432b78a53e33165dc264bc3a90cdceacc9c42d573dc43f979bec9702c0378"
+    },
+    {
+      "path": "packages/core/src/runtime/token-counter.ts",
+      "sha256": "fd093be928c3b57fcd13381452142502e75dbb3bea06d3be13659590b2c17466"
+    },
+    {
+      "path": "packages/local-host/src/core-run.ts",
+      "sha256": "f7c286dc23438ec15d7090b75e27cd9435a84b12461c5416d8dd2c0b4f1fe4fe"
+    },
+    {
+      "path": "packages/local-host/src/missions/controller/owner-scope.ts",
+      "sha256": "4743681fbef89579be51bfa663ad3379cffc1e0ee8205bd4098356306ea3d6d7"
+    },
+    {
+      "path": "packages/memory/src/retrieval/projection.ts",
+      "sha256": "c4ea3e32d279da66c7608c669a9ea123813979973a5d081311f839509e6e9ad8"
+    }
+  ],
+  "validationFiles": [
+    {
+      "path": "apps/desktop/package.json",
+      "sha256": "8088ce084a68aa38c086a07e4ec1638f01d8e791c351a8d705b9dc6546d987a7"
+    },
+    {
+      "path": "packages/core/test/token-counter.test.ts",
+      "sha256": "5e507b9d126c64317ed932a20e71c53b951162a03d9808a479c1e3269a9be4ae"
+    },
+    {
+      "path": "packages/core/test/runtime-stream-controller.test.ts",
+      "sha256": "f0bcbcdc36c39d4e1fcf48ac4830a7aa23c5d73796be75d25010a88df09e1514"
+    },
+    {
+      "path": "packages/memory/test/retrieval.test.ts",
+      "sha256": "301c105d6946c9d750bb688ac63c149f4b8f4b90c2bccf7e9f41a844994979dd"
+    },
+    {
+      "path": "packages/local-host/test/core-run.test.ts",
+      "sha256": "eb4233b91546aa2828b8edc526bf8d64856ba86ff88310fb1dcd166193a3922f"
+    },
+    {
+      "path": "packages/local-host/test/owner-scope.test.ts",
+      "sha256": "9e2f8a98d4edd10f543fe64356bd4919578fdcad0a5a287f2c0c21067e6ede17"
+    },
+    {
+      "path": "packages/local-host/test/execution-system.test.ts",
+      "sha256": "1b6cdac91078fd5f545c851c24dadd01b71e02292587ea54be2cf66291c2e486"
+    },
+    {
+      "path": ".github/workflows/ci.yml",
+      "sha256": "b4bb6c9f4bb4c81697f3fbc276e9f635b61c41770f7ac776f8bd7dd86455560e"
+    },
+    {
+      "path": ".github/workflows/desktop-release.yml",
+      "sha256": "7ce359c87fea53837fe42cfb8160e83998f3762f1f1a233d15a00dca01800310"
+    },
+    {
+      "path": "docs/performance/local-host-kernel-r1-counter-probe.mjs",
+      "sha256": "5e9adf7ea099d1e86ab872274b0eabd26bbc5ab86a13cd5cdd098b7308c7cb90"
+    },
+    {
+      "path": "docs/performance/local-host-kernel-r1-native-mission-probe.mts",
+      "sha256": "2feb6c37fa292f052fafdfb842309b61ab2804dfca8cd3de9b586d02f4dfb925"
+    }
+  ]
+}

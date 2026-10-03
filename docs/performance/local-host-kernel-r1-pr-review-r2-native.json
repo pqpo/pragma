@@ -1,0 +1,213 @@
+{
+  "serial": true,
+  "node": "v24.18.0",
+  "performanceAcceptancePassed": false,
+  "runs": [
+    {
+      "probe": "resume-before-fix",
+      "exitCode": -15,
+      "timedOut": true,
+      "elapsedSeconds": 240.0396444229409,
+      "logSha256": "5bda3f9725fbc1a1808a55902efe0a1b3b0c8b1029b327ae99f390a7bb36b34c",
+      "assertions": [
+        {
+          "id": "resume.executed",
+          "feature": "resume",
+          "stage": "executed",
+          "status": "passed",
+          "message": "resume probe completed."
+        },
+        {
+          "id": "resume.executed_after_refresh",
+          "feature": "resume",
+          "stage": "executed",
+          "status": "passed",
+          "message": "Native Session identity resumed after refresh."
+        }
+      ],
+      "runtime": {
+        "id": "codex-local",
+        "kind": "codex-local",
+        "version": "codex-cli 0.159.0"
+      },
+      "environment": {
+        "capturedAt": "2026-10-02T11:50:35.297Z",
+        "platform": "darwin",
+        "architecture": "x64",
+        "authenticationMode": "native-cli-profile"
+      },
+      "sourceSha256": null,
+      "temporaryResourceDiagnostics": true,
+      "activeResourcesAtSummary": ["FSReqCallback", "TCPServerWrap"],
+      "probeSourceSha256": "f7fdbb4893ed01e8b2746aff06f32daa48d1b2f58c1490a084c166bd3a1cfca7"
+    },
+    {
+      "probe": "resume",
+      "exitCode": 0,
+      "timedOut": false,
+      "elapsedSeconds": 29.465418074047193,
+      "logSha256": "c445f183f209be1b51425778ee9e96b15c610d3634fbe712eccd9572de11f4ce",
+      "assertions": [
+        {
+          "id": "resume.executed",
+          "feature": "resume",
+          "stage": "executed",
+          "status": "passed",
+          "message": "resume probe completed."
+        },
+        {
+          "id": "resume.executed_after_refresh",
+          "feature": "resume",
+          "stage": "executed",
+          "status": "passed",
+          "message": "Native Session identity resumed after refresh."
+        }
+      ],
+      "runtime": {
+        "id": "codex-local",
+        "kind": "codex-local",
+        "version": "codex-cli 0.159.0"
+      },
+      "environment": {
+        "capturedAt": "2026-10-02T12:05:23.870Z",
+        "platform": "darwin",
+        "architecture": "x64",
+        "authenticationMode": "native-cli-profile"
+      },
+      "sourceSha256": "46a62dbdf4fa71ad904a69b216027f265eb019bd65482c3234d01855c289f271",
+      "temporaryResourceDiagnostics": false,
+      "activeResourcesAtSummary": null,
+      "probeSourceSha256": "f7fdbb4893ed01e8b2746aff06f32daa48d1b2f58c1490a084c166bd3a1cfca7"
+    },
+    {
+      "probe": "steering-unmodified",
+      "exitCode": 1,
+      "timedOut": false,
+      "elapsedSeconds": 19.676725725876167,
+      "probeSourceSha256": "f7fdbb4893ed01e8b2746aff06f32daa48d1b2f58c1490a084c166bd3a1cfca7",
+      "sourceSha256": "46a62dbdf4fa71ad904a69b216027f265eb019bd65482c3234d01855c289f271",
+      "assertions": [
+        {
+          "id": "steering.failed",
+          "feature": "steering",
+          "stage": "executed",
+          "status": "failed",
+          "message": "Agent session work did not settle before cleanup."
+        }
+      ],
+      "runtime": {
+        "id": "codex-local",
+        "kind": "codex-local",
+        "version": "codex-cli 0.159.0"
+      },
+      "environment": {
+        "capturedAt": "2026-10-02T12:06:00.675Z",
+        "platform": "darwin",
+        "architecture": "x64",
+        "authenticationMode": "native-cli-profile"
+      },
+      "evidenceSha256": "ba0bab3678b029fbf92d95d74a6494ea548f153f5f750afedf27b9b01a9d7ead",
+      "originalFailureUnknown": true,
+      "note": "Cleanup overwrote the original probe error; no steering consumption assertion."
+    },
+    {
+      "probe": "steering-corrected",
+      "exitCode": 0,
+      "timedOut": false,
+      "elapsedSeconds": 31.221156609011814,
+      "logSha256": "3438788f451cb2cf9da77c9173d101549a40f8427830a016f6ba3d16e4401149",
+      "assertions": [
+        {
+          "id": "steering.executed",
+          "feature": "steering",
+          "stage": "executed",
+          "status": "passed",
+          "message": "The original turn completed with the injected steering marker."
+        }
+      ],
+      "runtime": {
+        "id": "codex-local",
+        "kind": "codex-local",
+        "version": "codex-cli 0.159.0"
+      },
+      "environment": {
+        "capturedAt": "2026-10-02T12:08:41.352Z",
+        "platform": "darwin",
+        "architecture": "x64",
+        "authenticationMode": "native-cli-profile"
+      },
+      "sourceSha256": "46a62dbdf4fa71ad904a69b216027f265eb019bd65482c3234d01855c289f271",
+      "probeSourceSha256": "97efa55c007f759c259ed3a1dcb12e7b69403246cd1edb6e32d116471b1dea80",
+      "originalTurnOutput": "STEERING_PROBE_OK_8172",
+      "evidenceObservationTruncated": true
+    },
+    {
+      "probe": "resume-final",
+      "exitCode": 0,
+      "timedOut": false,
+      "elapsedSeconds": 29.618632709840313,
+      "logSha256": "042cbf4aabe794bdd9be86e35cf3fb1a7ebb5d3f706ac13755c942a122fb187a",
+      "evidenceSha256": "946881d995e838c4fb9d31ce6e438aa4a552f68483254d8a6b7bd30973214c16",
+      "assertions": [
+        {
+          "id": "resume.executed",
+          "feature": "resume",
+          "stage": "executed",
+          "status": "passed",
+          "message": "resume probe completed."
+        },
+        {
+          "id": "resume.executed_after_refresh",
+          "feature": "resume",
+          "stage": "executed",
+          "status": "passed",
+          "message": "Native Session identity resumed after refresh."
+        }
+      ],
+      "runtime": {
+        "id": "codex-local",
+        "kind": "codex-local",
+        "version": "codex-cli 0.159.0"
+      },
+      "environment": {
+        "capturedAt": "2026-10-02T12:16:05.548Z",
+        "platform": "darwin",
+        "architecture": "x64",
+        "authenticationMode": "native-cli-profile"
+      },
+      "sourceSha256": "46a62dbdf4fa71ad904a69b216027f265eb019bd65482c3234d01855c289f271",
+      "probeSourceSha256": "d73c6ba7edb333ba9add8c7c79f9533cf3e6d8314546d6bec7d866f9c62acf71"
+    },
+    {
+      "probe": "steering-final",
+      "exitCode": 0,
+      "timedOut": false,
+      "elapsedSeconds": 25.068249077070504,
+      "logSha256": "e81c20bb29c943d0a63a428b0cb05dced3962cde1c39061a5b708a65785722c2",
+      "evidenceSha256": "f8060b95646016827f7594ffa60db0aae33d69d933349e1a4bf6be182cd364ae",
+      "assertions": [
+        {
+          "id": "steering.executed",
+          "feature": "steering",
+          "stage": "executed",
+          "status": "passed",
+          "message": "The original turn completed with the injected steering marker."
+        }
+      ],
+      "runtime": {
+        "id": "codex-local",
+        "kind": "codex-local",
+        "version": "codex-cli 0.159.0"
+      },
+      "environment": {
+        "capturedAt": "2026-10-02T12:16:30.662Z",
+        "platform": "darwin",
+        "architecture": "x64",
+        "authenticationMode": "native-cli-profile"
+      },
+      "sourceSha256": "46a62dbdf4fa71ad904a69b216027f265eb019bd65482c3234d01855c289f271",
+      "probeSourceSha256": "d73c6ba7edb333ba9add8c7c79f9533cf3e6d8314546d6bec7d866f9c62acf71",
+      "originalTurnOutput": "STEERING_PROBE_OK_8172"
+    }
+  ]
+}

@@ -1,0 +1,16 @@
+{
+  "schemaVersion": "pragma.local-host-kernel-model-baseline-status/v1",
+  "recordedAt": "2026-10-02T07:20:57.989157+00:00",
+  "commit": "8fdbd4526d0f62d0b36891165539ed9ec47dc603",
+  "build": "production",
+  "model": "deepseek-v4-flash",
+  "thinking": "medium",
+  "requestedGroups": ["warm"],
+  "requestedSamplesPerGroup": 1,
+  "validSamples": 0,
+  "exitCode": 1,
+  "status": "blocked",
+  "errorCodes": ["MISSION_BENCHMARK_KEYCHAIN_TIMEOUT"],
+  "credentialPreparationTimeoutMs": 120000,
+  "measurement": "R1 retried unchanged main production build. Native Keychain preparation timed out before credentials-ready; no result file. Full cold/new/warm measurement not started; E2E acceptance remains unverified."
+}

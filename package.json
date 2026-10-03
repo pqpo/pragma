@@ -39,7 +39,8 @@
     "check": "pnpm runtime:features:check && pnpm dsl:versions:check && pnpm lint && pnpm typecheck && pnpm test:core",
     "cache:clean": "node ./scripts/clean-turbo-cache.mjs",
     "clean": "turbo run clean && pnpm cache:clean && rm -rf node_modules",
-    "test:mission-chat": "turbo run build --filter=\"@pragma/desktop^...\" && pnpm --filter @pragma/desktop test:mission-chat"
+    "test:mission-chat": "turbo run build --filter=\"@pragma/desktop^...\" && pnpm --filter @pragma/core exec vitest run test/runtime-stream-controller.test.ts -t \"settles oversized\" && pnpm --filter @pragma/memory exec vitest run test/retrieval.test.ts -t \"preserves oversized\" && pnpm --filter @pragma/desktop test:mission-chat",
+    "test:mission-control": "turbo run build --filter=\"@pragma/desktop^...\" && pnpm --filter @pragma/local-host exec vitest run test/mission-command-contract.test.ts test/mission-command-admission.test.ts test/mission-execution-owner.test.ts test/core-control-adapter.test.ts test/mission-control.test.ts test/mission-controller-store.test.ts test/owner-scope.test.ts test/core-run.test.ts test/queue-steer-crash.test.ts test/strict-steer-fallback-crash.test.ts test/core-human-response.test.ts test/core-control-retained-owner.test.ts test/core-control-real-boundary.test.ts && pnpm --filter @pragma/local-host exec vitest run test/execution-system.test.ts -t \"atomically rejects a changed strict target|replays accepted .* steer after its target ends|finishes queued steer source cancellation on same-Session receipt replay|waitForPromptProcessing\" && pnpm --filter @pragma/desktop exec vitest run src/main/features/missions/mission-runner.test.ts -t \"forwards a durable\""
   },
   "devDependencies": {
     "@eslint/js": "latest",

@@ -1,0 +1,139 @@
+{
+  "schemaVersion": "pragma.local-host-kernel-r1-cr-review/v1",
+  "completedAt": "2026-10-02T10:45:18.658877+00:00",
+  "findings": [
+    {
+      "id": "O1",
+      "priority": "P1",
+      "problem": "generation 撤销期间 recovery 发布 Session，迟到返回被释放但缓存仍引用该关闭对象",
+      "remediation": "撤销同身份的 Session/controlOwner/编译缓存；Desktop 关键 await 后检查 generation；保留 successor",
+      "status": "fixed-and-reviewed"
+    },
+    {
+      "id": "O2",
+      "priority": "P1",
+      "problem": "recovered Flow 终态后重跑，controlOwner 仍指旧 Execution",
+      "remediation": "安装、终态、checkpoint、停止与删除按 handle 身份同步发布/撤销；Desktop 真正重跑后 interrupt 必须针对新 Execution",
+      "status": "fixed-and-reviewed"
+    },
+    {
+      "id": "O3",
+      "priority": "P2",
+      "problem": "queued steer receipt 已确认，但 source cancel 提交失败，同进程重放跳过清理",
+      "remediation": "confirmed replay 幂等取消 source；真实 SQLite 注入一次失败，fake Runtime driver steer 一次，queued result 正确取消",
+      "status": "fixed-and-reviewed"
+    },
+    {
+      "id": "C1",
+      "priority": "P1",
+      "problem": "Flow approval presentation 覆盖 Core user_question 语义，回传 tool_approval 导致 Flow 失败",
+      "remediation": "保留 Core questions 与 approval semantics；真实 Core Flow approve/reject 回归",
+      "status": "fixed-and-reviewed"
+    },
+    {
+      "id": "C2",
+      "priority": "P2",
+      "problem": "human.responded 已耐久提交而投影失败，重放被拒绝为 INTERACTION_NOT_PENDING",
+      "remediation": "recovery 前读取原 receipt，保持 applying，重放收敛；其他 requestId 拒绝；正常当前 interaction 不扫描历史",
+      "status": "fixed-and-reviewed"
+    },
+    {
+      "id": "C3",
+      "priority": "P3",
+      "problem": "admission 检查后 Core CAS 发现 strict target 改变，异常被归为 COMMAND_REJECTED",
+      "remediation": "转为稳定 STEER_TARGET_CHANGED，不投递 Native，不改变拒绝含义",
+      "status": "fixed-and-reviewed"
+    },
+    {
+      "id": "C4",
+      "priority": "P2",
+      "problem": "冷 Flow interrupt 调用 recover，重新启动未完成 Task 后才 cancel",
+      "remediation": "增加 Core stop-only 窄边界，不 activate graph/startTurn；恢复原 Native identity 并确认停止后才持久取消；claim/CAS/fencing、缺 snapshot、停止失败与重放回归",
+      "status": "fixed-and-reviewed"
+    },
+    {
+      "id": "C5",
+      "priority": "P1",
+      "problem": "终态释放封闭新 prompt 后，共用 dispatch guard 阻止在途 cancellation 的耐久提交",
+      "remediation": "分离取消 ownership 检查与新执行封闭，保留 Host/Session fencing；延迟取消与释放回归",
+      "status": "fixed-and-reviewed"
+    },
+    {
+      "id": "C6",
+      "priority": "P2",
+      "problem": "lease takeover 后旧 owner 正确失去持久写权限，但 turn result 等待尚未终态的 Execution 永不结束",
+      "remediation": "本地 lease loss 取消 completion 观察并拒绝 result/usage，清订阅与计时器，不写 successor 的 Execution",
+      "status": "fixed-and-reviewed"
+    },
+    {
+      "id": "H1",
+      "priority": "P2",
+      "problem": "缺 Execution identity 的失败轮次错误匹配无 scope 日志，产生假指标",
+      "remediation": "缺 identity 保留 null 与缺测原因",
+      "status": "fixed-and-reviewed"
+    },
+    {
+      "id": "H2",
+      "priority": "P2",
+      "problem": "失败、部分和不完整轮次进入百分位",
+      "remediation": "保留原始轮次；逐指标记录排除数/原因；无有效样本为 null",
+      "status": "fixed-and-reviewed"
+    },
+    {
+      "id": "H3",
+      "priority": "P2",
+      "problem": "four-missions 每批新建四个 Mission，未覆盖四个 owner 的暖复用",
+      "remediation": "只建立四个 Mission，记录 initial 与每批 followup identity",
+      "status": "fixed-and-reviewed"
+    },
+    {
+      "id": "H4",
+      "priority": "P2",
+      "problem": "retained steer 或 SDK ACK 被当作已消费",
+      "remediation": "原目标 Execution 实际 assistant output 出现唯一 marker 才验证消费；retained/ACK-only 保留失败",
+      "status": "fixed-and-reviewed"
+    },
+    {
+      "id": "H5",
+      "priority": "P2",
+      "problem": "initial 与 followup 聚合隐藏冷暖差别",
+      "remediation": "保留总览，同时提供独立角色汇总及明确统计策略",
+      "status": "fixed-and-reviewed"
+    },
+    {
+      "id": "H6",
+      "priority": "P2",
+      "problem": "测量起点 lane=running 被当作持续后台模型负载",
+      "remediation": "对每轮验证完整 boot/Execution/runtime run/attempt 的 Native 调用时间与真实前台区间重叠；缺任何证据为未验证",
+      "status": "fixed-and-reviewed"
+    }
+  ],
+  "confirmedFindings": 15,
+  "unresolvedConfirmedFindings": 0,
+  "reviewScope": "R1 candidate changes plus control/owner/contract/harness regressions; not an assertion that the whole repository has no defects.",
+  "sourceDigests": {
+    "main": "bfba71f5b8cdb29fff47cf4d117ac1f2aed40e97fa727483ee8e392b0b55043a",
+    "candidate": "228f00277f24f0588abad69e374e713afd3790f3c42973f5b3f11c5a3563b430"
+  },
+  "sourcesUnchangedDuringMeasurements": true,
+  "localPairedRuns": 12,
+  "localLatencyDualThresholdTriggers": [],
+  "performanceAcceptancePassed": false,
+  "stageR1Complete": false,
+  "remaining": [
+    "Desktop oversized reply test fails:80passed/1failed/0unhandled; main same scene also failed, different assertion/deadline evidence retained.",
+    "Real model pilot: Keychain120s timeout, validSamples0; no comparable actual-model acceptance.",
+    "Required scenario/background, actual Mission/Studio first-screen, per-request IO measurements missing.",
+    "Native complete queue/steer/recovery smoke remains unverified."
+  ],
+  "teamRestartTestDebtRemediated": true,
+  "teamRestartChange": "Assert actual cleanup cause in AggregateError; all restart Runtime/Context identity assertions retained and executed successfully.",
+  "modelPilotStatus": "local-host-kernel-r1-cr-model-pilot-status.json",
+  "validation": "local-host-kernel-r1-cr-validation.json",
+  "report": "../architecture/local-host-kernel-r1-code-review.md",
+  "candidateUncommitted": true,
+  "sourceUnchangedAfterFinalValidation": true,
+  "finalCrossProcessAndMigrationTests": 20,
+  "originalWorkspaceClean": true,
+  "publicationNote": "candidateUncommitted records the review/measurement capture time. Subsequent Git publication does not change the executable source digest or stage acceptance status."
+}

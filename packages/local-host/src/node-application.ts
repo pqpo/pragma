@@ -42,6 +42,7 @@ import {
   listLocalHostBuiltInExecutorDescriptors,
   backfillMissionPinnedBinding,
   type LocalHostApplicationPort,
+  type LocalHostCoreMissionControlAdapter,
   type LocalHostSharedBoardListRequest,
   type LocalHostSharedBoardReadRequest,
   type LocalHostSharedBoardSearchRequest,
@@ -53,7 +54,6 @@ import {
   type LocalHostRunExecutorPort,
 } from "./index.ts";
 import type { LocalHostMissionControllerComposition } from "./missions/controller/composition.ts";
-import type { MissionCommandConsumer } from "./missions/controller/mission-controller-store.ts";
 import type { MissionWatchPort } from "./missions/controller/watch.ts";
 
 /**
@@ -96,7 +96,7 @@ export interface LocalHostNodeApplicationPorts {
   /** Optional Mission lifecycle supplied by a richer Host (for example Desktop). */
   readonly missionLifecycle?: LocalHostMissionControllerComposition | undefined;
   /** Mission command adapter supplied by a richer Host's domain runner. */
-  readonly missionControlAdapter?: LocalHostNodeMissionControlAdapter | undefined;
+  readonly missionControlAdapter?: LocalHostCoreMissionControlAdapter | undefined;
   readonly assertMission?: ((missionId: string) => Promise<void>) | undefined;
   readonly onOwnerStartError?:
     | ((input: { readonly missionId: string; readonly error: unknown }) => Promise<void> | void)
@@ -116,30 +116,6 @@ export interface LocalHostNodeApplicationPorts {
     | undefined;
   readonly runExecutor?: LocalHostRunExecutorPort | undefined;
   readonly run?: LocalHostApplicationPort["run"] | undefined;
-}
-
-export interface LocalHostNodeMissionControlAdapter {
-  readonly consumer: MissionCommandConsumer;
-  readonly assertAcquisitionAllowed?: ((missionId: string) => Promise<void>) | undefined;
-  readonly resolveStrictTarget?:
-    | ((input: {
-        readonly missionId: string;
-        readonly expectedExecutionId?: string | undefined;
-      }) => Promise<
-        | {
-            readonly executionId: string;
-            readonly turnId: string;
-          }
-        | undefined
-      >)
-    | undefined;
-  readonly resolveExecutionTarget?:
-    | ((input: {
-        readonly missionId: string;
-        readonly expectedExecutionId?: string | undefined;
-      }) => Promise<string | undefined>)
-    | undefined;
-  readonly waitExecution?: MissionControlApplication["waitExecution"];
 }
 
 const LOCAL_HOST_FEATURES = [
@@ -198,7 +174,7 @@ function composeInjectedMissionControl(
   if (application === undefined || lifecycle === undefined || adapter === undefined) {
     return undefined;
   }
-  return createMissionControlApplication({
+  const control = createMissionControlApplication({
     logger: options.logger,
     controller: lifecycle.controller,
     ownerScope: lifecycle.ownerScope,
@@ -221,6 +197,8 @@ function composeInjectedMissionControl(
       ? {}
       : { onOwnerStartError: application.onOwnerStartError }),
   });
+  adapter.bindApplication(control);
+  return control;
 }
 
 function composeInjectedRun(
@@ -449,6 +427,7 @@ export function createLocalHostNodeApplication(
       })),
     ],
     executors: resolveExecutor,
+    ownerAccess: rawExecutorPort.ownerAccess,
     resolveActiveOwner: executorPort.resolveActiveOwner,
     resolveMissionBinding: async (missionId) =>
       findMissionPinnedBinding((await missionController.readSnapshot({ missionId })).events),

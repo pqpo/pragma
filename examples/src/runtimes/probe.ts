@@ -335,6 +335,7 @@ async function runSessionProbe(
     probe === "full"
       ? (["stream", "native-tool", "mcp", "skills", "attachments", "resume", "steering"] as const)
       : [probe];
+  const failures: unknown[] = [];
   try {
     for (const operation of operations) {
       const eventStart = liveEvents.length;
@@ -416,7 +417,13 @@ async function runSessionProbe(
         for (let attempt = 0; attempt < 100; attempt++) {
           const items = liveEvents.slice(eventStart);
           if (
-            items.some((event) => event.type === "tool.started" || event.type === "message.delta")
+            items.some(
+              (event) =>
+                event.type === "tool.started" ||
+                event.type === "message.delta" ||
+                event.type === "thought.delta" ||
+                (event.type === "progress" && event.payload.stage === "turn/started"),
+            )
           ) {
             observedActive = true;
             break;
@@ -588,12 +595,46 @@ async function runSessionProbe(
         if (!passed) throw new Error("The resumed turn did not recall the marker.");
       }
     }
-  } finally {
-    try {
-      await session.close("Runtime probe completed.");
-    } finally {
-      await executionStore.close?.();
+  } catch (error) {
+    if (!paths.assertions.some(({ status }) => status === "failed")) {
+      paths.assertions.push(
+        assertion(
+          `${probe}.failed`,
+          probeFeature(probe),
+          "executed",
+          "failed",
+          error instanceof Error ? error.message : String(error),
+        ),
+      );
     }
+    recordObservation(paths.observations, {
+      phase: "session-probe-failed",
+      eventTypes: [...new Set(liveEvents.map(({ type }) => type))],
+    });
+    failures.push(error);
+  }
+  for (const [phase, close] of [
+    ["session", async () => await session.close("Runtime probe completed.")],
+    ["execution-store", async () => await executionStore.close?.()],
+  ] as const) {
+    try {
+      await close();
+    } catch (error) {
+      paths.assertions.push(
+        assertion(
+          `${probe}.${phase}.cleanup.failed`,
+          "cleanup",
+          "executed",
+          "failed",
+          error instanceof Error ? error.message : String(error),
+        ),
+      );
+      failures.push(error);
+    }
+  }
+  if (failures.length === 1) throw failures[0];
+  if (failures.length > 1) {
+    throw new AggregateError(failures, "Runtime probe and cleanup failed.", { cause: failures[0] });
   }
 }
 

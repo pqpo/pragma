@@ -1,0 +1,333 @@
+{
+  "schemaVersion": "pragma.local-host-kernel-verification-summary/v1",
+  "capturedAt": "2026-10-02T08:54:28.492277+00:00",
+  "status": "R1 code delivered; stage acceptance not passed; not marked complete",
+  "codeBaseCommit": "8fdbd4526d0f62d0b36891165539ed9ec47dc603",
+  "laterMainDocumentationOnlyCommit": "ceb29c9c516828ba1735de23c4904a609d1e1dc5",
+  "nodes": {
+    "initialCheck": "v23.11.0",
+    "finalTouchedPackagesAndBenchmarks": "v24.18.0"
+  },
+  "countsAreNotAdditive": true,
+  "runs": [
+    {
+      "log": "/tmp/pragma-r1-check-final.log",
+      "testSummaries": [
+        "@pragma/shared:test:core:  Test Files  13 passed (13)",
+        "@pragma/shared:test:core:       Tests  64 passed (64)",
+        "@pragma/core:test:core: > vitest run --passWithNoTests test/resource-id.test.ts test/pragma-paths.test.ts test/token-counter.test.ts test/plugin-manifest.test.ts test/context-binding-metadata.test.ts test/process-probe.test.ts test/process-supervisor.test.ts test/runtime-conformance.test.ts test/runtime-probe-evidence.test.ts test/runtime-resource-scope.test.ts test/runtime-preparation-graph.test.ts test/model-catalog-cache.test.ts test/runtime-session-environment.test.ts",
+        "@pragma/core:test:core:  Test Files  13 passed (13)",
+        "@pragma/core:test:core:       Tests  66 passed (66)",
+        "@pragma/runtime-claude-code:test:core: > vitest run --passWithNoTests test/adapter-contract.test.ts test/models.test.ts test/session.test.ts test/acp-permissions.test.ts test/acp-errors.test.ts",
+        "@pragma/runtime-qodercli:test:core: > vitest run --passWithNoTests test/adapter-contract.test.ts test/models.test.ts",
+        "@pragma/runtime-antigravity:test:core: > vitest run --passWithNoTests test/adapter-contract.test.ts test/models.test.ts",
+        "@pragma/runtime-codex:test:core: > vitest run --passWithNoTests test/adapter-contract.test.ts test/models.test.ts",
+        "@pragma/runtime-pi:test:core: > vitest run --passWithNoTests test/adapter-contract.test.ts",
+        "@pragma/runtime-claude-code:test:core:  Test Files  5 passed (5)",
+        "@pragma/runtime-claude-code:test:core:       Tests  30 passed (30)",
+        "@pragma/runtime-qodercli:test:core:  Test Files  2 passed (2)",
+        "@pragma/runtime-qodercli:test:core:       Tests  6 passed (6)",
+        "@pragma/interpreter:test:core:  Test Files  10 passed (10)",
+        "@pragma/interpreter:test:core:       Tests  116 passed (116)",
+        "@pragma/runtime-antigravity:test:core:  Test Files  2 passed (2)",
+        "@pragma/runtime-antigravity:test:core:       Tests  10 passed (10)",
+        "@pragma/runtime-codex:test:core:  Test Files  2 passed (2)",
+        "@pragma/runtime-codex:test:core:       Tests  7 passed (7)",
+        "@pragma/runtime-pi:test:core:  Test Files  1 passed (1)",
+        "@pragma/runtime-pi:test:core:       Tests  3 passed (3)",
+        "@pragma/memory:test:core:  Test Files  7 passed (7)",
+        "@pragma/memory:test:core:       Tests  132 passed (132)",
+        "@pragma/local-host:test:core:  Test Files  2 passed (2)",
+        "@pragma/local-host:test:core:       Tests  17 passed (17)",
+        "@pragma/desktop:test:core: > pnpm run test:packaging && vitest run --passWithNoTests src/main/bootstrap/application-identity.test.ts src/main/bootstrap/startup-sequence.test.ts",
+        "@pragma/desktop:test:core:  Test Files  2 passed (2)",
+        "@pragma/desktop:test:core:       Tests  5 passed (5)"
+      ],
+      "buildTaskSummaries": [
+        "Tasks:    19 successful, 19 total",
+        "@pragma/examples:typecheck:  Tasks:    9 successful, 9 total",
+        "Tasks:    19 successful, 19 total",
+        "@pragma/core:test:core: stdout | test/runtime-preparation-graph.test.ts > Runtime preparation graph > rolls back successful parallel Session preparation branches when a sibling fails",
+        "@pragma/core:test:core: stdout | test/runtime-preparation-graph.test.ts > Runtime preparation graph > rolls back successful parallel Session preparation branches when a sibling fails",
+        "@pragma/core:test:core: stdout | test/runtime-preparation-graph.test.ts > Runtime preparation graph > rolls back successful parallel Session preparation branches when a sibling fails",
+        "@pragma/core:test:core: stdout | test/runtime-preparation-graph.test.ts > Runtime preparation graph > rolls back successful parallel Session preparation branches when a sibling fails",
+        "@pragma/core:test:core: stdout | test/runtime-preparation-graph.test.ts > Runtime preparation graph > rolls back successful parallel Session preparation branches when a sibling fails",
+        "@pragma/core:test:core: stdout | test/runtime-preparation-graph.test.ts > Runtime preparation graph > rolls back successful parallel Session preparation branches when a sibling fails",
+        "@pragma/core:test:core: stdout | test/runtime-preparation-graph.test.ts > Runtime preparation graph > rolls back successful parallel Session preparation branches when a sibling fails",
+        "@pragma/core:test:core: stdout | test/runtime-preparation-graph.test.ts > Runtime preparation graph > rolls back successful parallel Session preparation branches when a sibling fails",
+        "@pragma/core:test:core: stderr | test/runtime-preparation-graph.test.ts > Runtime preparation graph > rolls back successful parallel Session preparation branches when a sibling fails",
+        "@pragma/core:test:core: stdout | test/runtime-session-environment.test.ts > Runtime Session process environment > retries a managed close failure without repeating native stop or successful destroy hooks",
+        "@pragma/core:test:core: stdout | test/runtime-session-environment.test.ts > Runtime Session process environment > retries a managed close failure without repeating native stop or successful destroy hooks",
+        "@pragma/core:test:core: stdout | test/runtime-session-environment.test.ts > Runtime Session process environment > retries a managed close failure without repeating native stop or successful destroy hooks",
+        "@pragma/core:test:core: stdout | test/runtime-session-environment.test.ts > Runtime Session process environment > retries a managed close failure without repeating native stop or successful destroy hooks",
+        "@pragma/core:test:core: stdout | test/runtime-session-environment.test.ts > Runtime Session process environment > retries a managed close failure without repeating native stop or successful destroy hooks",
+        "@pragma/core:test:core: stdout | test/runtime-session-environment.test.ts > Runtime Session process environment > retries a managed close failure without repeating native stop or successful destroy hooks",
+        "@pragma/core:test:core: stdout | test/runtime-session-environment.test.ts > Runtime Session process environment > retries a managed close failure without repeating native stop or successful destroy hooks",
+        "@pragma/core:test:core: stdout | test/runtime-session-environment.test.ts > Runtime Session process environment > retries a managed close failure without repeating native stop or successful destroy hooks",
+        "@pragma/core:test:core: stdout | test/runtime-session-environment.test.ts > Runtime Session process environment > retries a managed close failure without repeating native stop or successful destroy hooks",
+        "@pragma/core:test:core: stdout | test/runtime-session-environment.test.ts > Runtime Session process environment > retries a managed close failure without repeating native stop or successful destroy hooks",
+        "Tasks:    11 successful, 11 total"
+      ],
+      "evidenceUse": "Latest attempt at this pathname; historical attempts are recorded separately."
+    },
+    {
+      "log": "/tmp/pragma-r1-serial-build.log",
+      "testSummaries": [],
+      "buildTaskSummaries": ["Tasks:    19 successful, 19 total"],
+      "evidenceUse": "Latest attempt at this pathname; historical attempts are recorded separately."
+    },
+    {
+      "log": "/tmp/pragma-r1-serial-mission-control-final.log",
+      "testSummaries": [
+        "Test Files  11 passed (11)",
+        "Tests  93 passed (93)",
+        "Test Files  1 passed (1)",
+        "Tests  3 passed | 116 skipped (119)"
+      ],
+      "buildTaskSummaries": ["Tasks:    9 successful, 9 total"],
+      "evidenceUse": "Latest attempt at this pathname; historical attempts are recorded separately."
+    },
+    {
+      "log": "/tmp/pragma-r1-serial-mission-chat.log",
+      "testSummaries": [
+        "Test Files  3 passed (3)",
+        "Tests  71 passed (71)",
+        "Test Files  1 passed (1)",
+        "Tests  5 passed | 74 skipped (79)"
+      ],
+      "buildTaskSummaries": ["Tasks:    15 successful, 15 total"],
+      "evidenceUse": "Latest attempt at this pathname; historical attempts are recorded separately."
+    },
+    {
+      "log": "/tmp/pragma-r1-serial-revision.log",
+      "testSummaries": [
+        "Test Files  1 passed (1)",
+        "Tests  13 passed (13)",
+        "Test Files  2 passed (2)",
+        "Tests  69 passed (69)",
+        "Test Files  1 passed (1)",
+        "Tests  6 passed | 73 skipped (79)"
+      ],
+      "buildTaskSummaries": ["Tasks:    15 successful, 15 total"],
+      "evidenceUse": "Latest attempt at this pathname; historical attempts are recorded separately."
+    },
+    {
+      "log": "/tmp/pragma-r1-serial-core-protection.log",
+      "testSummaries": ["Test Files  3 passed (3)", "Tests  19 passed (19)"],
+      "buildTaskSummaries": [],
+      "evidenceUse": "Latest attempt at this pathname; historical attempts are recorded separately."
+    },
+    {
+      "log": "/tmp/pragma-r1-serial-storage-protection.log",
+      "testSummaries": ["Test Files  7 passed (7)", "Tests  74 passed (74)"],
+      "buildTaskSummaries": [],
+      "evidenceUse": "Latest attempt at this pathname; historical attempts are recorded separately."
+    },
+    {
+      "log": "/tmp/pragma-r1-desktop-protection.log",
+      "testSummaries": ["Test Files  5 passed (5)", "Tests  22 passed | 2 skipped (24)"],
+      "buildTaskSummaries": [],
+      "evidenceUse": "Latest attempt at this pathname; historical attempts are recorded separately."
+    },
+    {
+      "log": "/tmp/pragma-r1-controller-process-final.log",
+      "testSummaries": ["Test Files  1 passed (1)", "Tests  8 passed (8)"],
+      "buildTaskSummaries": [],
+      "evidenceUse": "Latest attempt at this pathname; historical attempts are recorded separately."
+    },
+    {
+      "log": "/tmp/pragma-r1-serial-state-migration.log",
+      "testSummaries": ["Test Files  1 passed (1)", "Tests  12 passed (12)"],
+      "buildTaskSummaries": [],
+      "evidenceUse": "Latest attempt at this pathname; historical attempts are recorded separately."
+    },
+    {
+      "log": "/tmp/pragma-r1-shared-values-final.log",
+      "testSummaries": ["Test Files  1 passed (1)", "Tests  3 passed (3)"],
+      "buildTaskSummaries": [],
+      "evidenceUse": "Latest attempt at this pathname; historical attempts are recorded separately."
+    },
+    {
+      "log": "/tmp/pragma-r1-serial-desktop-runner.log",
+      "testSummaries": [
+        "⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯",
+        "Test Files  1 failed (1)",
+        "Tests  1 failed | 79 passed (80)"
+      ],
+      "buildTaskSummaries": [],
+      "evidenceUse": "Latest attempt at this pathname; historical attempts are recorded separately."
+    },
+    {
+      "log": "/tmp/pragma-r1-serial-cli.log",
+      "testSummaries": ["Test Files  13 passed (13)", "Tests  108 passed (108)"],
+      "buildTaskSummaries": [],
+      "evidenceUse": "Latest attempt at this pathname; historical attempts are recorded separately."
+    },
+    {
+      "log": "/tmp/pragma-r1-serial-contracts.log",
+      "testSummaries": ["Test Files  2 passed (2)", "Tests  55 passed (55)"],
+      "buildTaskSummaries": [],
+      "evidenceUse": "Latest attempt at this pathname; historical attempts are recorded separately."
+    },
+    {
+      "log": "/tmp/pragma-r1-serial-harness.log",
+      "testSummaries": [],
+      "buildTaskSummaries": [
+        "✔ retains partial samples and transport failure instead of inventing a successful result (2.058859ms)"
+      ],
+      "evidenceUse": "Latest attempt at this pathname; historical attempts are recorded separately."
+    },
+    {
+      "log": "/tmp/pragma-r1-serial-desktop-last-lint.log",
+      "testSummaries": [],
+      "buildTaskSummaries": [],
+      "evidenceUse": "Latest attempt at this pathname; historical attempts are recorded separately."
+    },
+    {
+      "log": "/tmp/pragma-r1-serial-desktop-last-typecheck.log",
+      "testSummaries": [],
+      "buildTaskSummaries": [],
+      "evidenceUse": "Latest attempt at this pathname; historical attempts are recorded separately."
+    },
+    {
+      "log": "/tmp/pragma-r1-serial-final-local-host-typecheck.log",
+      "testSummaries": [],
+      "buildTaskSummaries": [],
+      "evidenceUse": "Latest attempt at this pathname; historical attempts are recorded separately."
+    },
+    {
+      "log": "/tmp/pragma-r1-serial-desktop-final-build.log",
+      "testSummaries": [],
+      "buildTaskSummaries": [],
+      "evidenceUse": "Latest attempt at this pathname; historical attempts are recorded separately."
+    },
+    {
+      "log": "/tmp/pragma-r1-serial-cli-pack.log",
+      "testSummaries": [],
+      "buildTaskSummaries": [],
+      "evidenceUse": "Latest attempt at this pathname; historical attempts are recorded separately."
+    },
+    {
+      "log": "/tmp/pragma-r1-serial-cli-release-reports.log",
+      "testSummaries": [],
+      "buildTaskSummaries": [],
+      "evidenceUse": "Latest attempt at this pathname; historical attempts are recorded separately."
+    },
+    {
+      "log": "/tmp/pragma-r1-serial-cli-installed-smoke.log",
+      "testSummaries": [],
+      "buildTaskSummaries": [],
+      "evidenceUse": "Latest attempt at this pathname; historical attempts are recorded separately."
+    },
+    {
+      "log": "/tmp/pragma-r1-final-global-check.log",
+      "testSummaries": [
+        "@pragma/shared:test:core:  Test Files  13 passed (13)",
+        "@pragma/shared:test:core:       Tests  64 passed (64)",
+        "@pragma/core:test:core: > vitest run --passWithNoTests test/resource-id.test.ts test/pragma-paths.test.ts test/token-counter.test.ts test/plugin-manifest.test.ts test/context-binding-metadata.test.ts test/process-probe.test.ts test/process-supervisor.test.ts test/runtime-conformance.test.ts test/runtime-probe-evidence.test.ts test/runtime-resource-scope.test.ts test/runtime-preparation-graph.test.ts test/model-catalog-cache.test.ts test/runtime-session-environment.test.ts",
+        "@pragma/core:test:core:  Test Files  13 passed (13)",
+        "@pragma/core:test:core:       Tests  66 passed (66)",
+        "@pragma/runtime-antigravity:test:core: > vitest run --passWithNoTests test/adapter-contract.test.ts test/models.test.ts",
+        "@pragma/runtime-pi:test:core: > vitest run --passWithNoTests test/adapter-contract.test.ts",
+        "@pragma/runtime-claude-code:test:core: > vitest run --passWithNoTests test/adapter-contract.test.ts test/models.test.ts test/session.test.ts test/acp-permissions.test.ts test/acp-errors.test.ts",
+        "@pragma/runtime-antigravity:test:core:  Test Files  2 passed (2)",
+        "@pragma/runtime-antigravity:test:core:       Tests  10 passed (10)",
+        "@pragma/runtime-codex:test:core: > vitest run --passWithNoTests test/adapter-contract.test.ts test/models.test.ts",
+        "@pragma/runtime-pi:test:core:  Test Files  1 passed (1)",
+        "@pragma/runtime-pi:test:core:       Tests  3 passed (3)",
+        "@pragma/runtime-qodercli:test:core: > vitest run --passWithNoTests test/adapter-contract.test.ts test/models.test.ts",
+        "@pragma/runtime-claude-code:test:core:  Test Files  5 passed (5)",
+        "@pragma/runtime-claude-code:test:core:       Tests  30 passed (30)",
+        "@pragma/runtime-codex:test:core:  Test Files  2 passed (2)",
+        "@pragma/runtime-codex:test:core:       Tests  7 passed (7)",
+        "@pragma/memory:test:core:  Test Files  7 passed (7)",
+        "@pragma/memory:test:core:       Tests  132 passed (132)",
+        "@pragma/runtime-qodercli:test:core:  Test Files  2 passed (2)",
+        "@pragma/runtime-qodercli:test:core:       Tests  6 passed (6)",
+        "@pragma/interpreter:test:core:  Test Files  10 passed (10)",
+        "@pragma/interpreter:test:core:       Tests  116 passed (116)",
+        "@pragma/local-host:test:core:  Test Files  2 passed (2)",
+        "@pragma/local-host:test:core:       Tests  17 passed (17)",
+        "@pragma/desktop:test:core: > pnpm run test:packaging && vitest run --passWithNoTests src/main/bootstrap/application-identity.test.ts src/main/bootstrap/startup-sequence.test.ts",
+        "@pragma/desktop:test:core:  Test Files  2 passed (2)",
+        "@pragma/desktop:test:core:       Tests  5 passed (5)"
+      ],
+      "buildTaskSummaries": [
+        "Tasks:    19 successful, 19 total",
+        "Cached:    15 cached, 19 total",
+        "@pragma/examples:typecheck:  Tasks:    9 successful, 9 total",
+        "@pragma/examples:typecheck: Cached:    9 cached, 9 total",
+        "Tasks:    19 successful, 19 total",
+        "Cached:    15 cached, 19 total",
+        "Tasks:    11 successful, 11 total",
+        "Cached:    9 cached, 11 total"
+      ],
+      "evidenceUse": "Final Node24 execution after all R1 source changes; valid Turbo cache retained."
+    },
+    {
+      "log": "/tmp/pragma-r1-final-global-build.log",
+      "testSummaries": [],
+      "buildTaskSummaries": ["Tasks:    19 successful, 19 total", "Cached:    16 cached, 19 total"],
+      "evidenceUse": "Final Node24 execution after all R1 source changes; valid Turbo cache retained."
+    }
+  ],
+  "knownBaselineFailures": [
+    "Team Session restart cleanup diagnostic assertion",
+    "Desktop oversized reply settlement"
+  ],
+  "realModelValidSamples": {
+    "main": 0,
+    "candidate": 0
+  },
+  "nativeSmoke": {
+    "runtime": "codex-cli 0.159.0",
+    "resumeOutputAssertions": "2 passed; process timeout240, complete smoke not passed",
+    "steering": "active Runtime turn not observed; assertion failed; process timeout240"
+  },
+  "localPerformance": {
+    "twoAlternatingRounds": true,
+    "sourceUnchangedDuringMeasurements": true,
+    "dualThresholdReviewTriggers": [],
+    "scope": "Storage/preparation/offscreen synthetic UI only; no full Mission admission/normal product background/model acceptance."
+  },
+  "historicalAttempts": {
+    "records": "local-host-kernel-r1-validation.json",
+    "details": [
+      "Interrupted initial Runner attempt retained as exit-15; not a passing suite.",
+      "Initial full Runner had five wiring regressions plus one main-reproduced oversized reply failure and one unhandled error. Wiring fixes and cancellation-aware fake resolved the new failures; final full Runner79 passed/1 baseline failure/0 unhandled.",
+      "Harness lint regex escaping and Desktop TypeScript standaloneScope narrowing failures repaired, latest lint/typecheck pass.",
+      "Earlier same-name /tmp log files may have been overwritten by later attempts; JSON timestamps/exitCodes retain attempt history, latest summaries refer only to last content."
+    ]
+  },
+  "finalGlobalCheck": {
+    "exitCode": 0,
+    "vitestPassed": 456,
+    "coreTestTasks": 11,
+    "cachedCoreTestTasks": 9,
+    "executedCoreTestTasks": 2,
+    "node": "v24.18.0"
+  },
+  "finalGlobalBuild": {
+    "exitCode": 0,
+    "node": "v24.18.0",
+    "taskSummaries": ["Tasks:    19 successful, 19 total", "Cached:    16 cached, 19 total"]
+  },
+  "finalSourceAudit": {
+    "capturedAt": "2026-10-02T09:00:00.842370+00:00",
+    "variants": {
+      "main": {
+        "sha256": "bfba71f5b8cdb29fff47cf4d117ac1f2aed40e97fa727483ee8e392b0b55043a",
+        "matchesMeasuredSnapshot": true,
+        "files": 1158
+      },
+      "candidate": {
+        "sha256": "3e0794988f11084df4d0678b233ca058421fa1a54c09a66abfd22c29b54a8380",
+        "matchesMeasuredSnapshot": true,
+        "files": 1163
+      }
+    },
+    "originalWorkspaceStatus": "",
+    "candidateBranch": "codex/issue-348-r1",
+    "candidateChangesUncommitted": true
+  }
+}

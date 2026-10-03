@@ -1,6 +1,10 @@
 # Mission 统一 Local Host 应用内核分阶段重构方案
 
-日期：2026-10-02。状态：技术方案，尚未实施。
+新增 PR 评论核验、Native 资源释放修复及最新验收状态见[第二轮补充](local-host-kernel-r1-pr-review-r2.md)。
+
+大输出同步计数、关联 Memory 预算及真实 Mission 释放修复见[计数问题补充](local-host-kernel-r1-token-counter-followup.md)；依据维护者后续修复要求披露估算策略变化，R1 阶段验收仍未完成。
+
+日期：2026-10-02。状态：R1 代码实施已交付，阶段验收未通过，未标记完成；R2/R3/R4 未开始，见[实施与验证报告](local-host-kernel-r1-implementation.md)和[CR 与复核](local-host-kernel-r1-code-review.md)。
 
 本方案对应 [issue #348](https://github.com/pqpo/pragma/issues/348)，基于拉取后的 `main`，代码基线为 `8fdbd4526d0f62d0b36891165539ed9ec47dc603`。目标是让 Desktop 与 CLI 的 Mission 控制、编译编排、运行、Session 与恢复共用 `@pragma/local-host` 的一套实现，同时保留最近四轮首 Token 优化。实施采用 R1 至 R4 四个阶段；基线测量与中立契约准备并入 R1 的前置工作；每阶段独立验证、合并，并删除该阶段已替代的业务路径。
 

@@ -1,0 +1,37 @@
+{
+  "node": "v24.18.0",
+  "serial": true,
+  "variant": "candidate-after-CR",
+  "sourceDigests": {
+    "main": "bfba71f5b8cdb29fff47cf4d117ac1f2aed40e97fa727483ee8e392b0b55043a",
+    "candidate": "228f00277f24f0588abad69e374e713afd3790f3c42973f5b3f11c5a3563b430"
+  },
+  "command": [
+    "node",
+    "apps/desktop/scripts/run-mission-latency-benchmark.mjs",
+    "--source-home",
+    "/Users/linminqiu/.pragma",
+    "--samples",
+    "1",
+    "--groups",
+    "warm",
+    "--model",
+    "deepseek-v4-flash",
+    "--thinking",
+    "medium",
+    "--output",
+    "/Users/linminqiu/.codex/worktrees/issue-348-r1/expert-mesh/docs/performance/local-host-kernel-r1-cr-candidate-model-pilot.json"
+  ],
+  "startedAt": "2026-10-02T10:38:36.842531+00:00",
+  "requestedSamplesPerGroup": 1,
+  "requestedGroups": ["warm"],
+  "log": "/tmp/pragma-r1-cr-candidate-model-pilot.log",
+  "performanceAcceptancePassed": false,
+  "exitCode": 1,
+  "seconds": 120.156,
+  "logSha256": "b6314d2b42c9590dd8f030c1dc4728b5f74312e68a66cc2722ac4e2ef49468a6",
+  "errorCodes": ["MISSION_BENCHMARK_KEYCHAIN_TIMEOUT"],
+  "validSamples": 0,
+  "raw": null,
+  "measurement": "No result file; no valid sample. Keychain failure cannot establish model or performance acceptance."
+}

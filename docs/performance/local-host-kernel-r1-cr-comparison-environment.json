@@ -1,0 +1,152 @@
+{
+  "schemaVersion": "pragma.local-host-kernel-comparison-environment/v1",
+  "node": "v24.18.0",
+  "baseCommit": "ceb29c9c516828ba1735de23c4904a609d1e1dc5",
+  "candidateBranch": "codex/issue-348-r1",
+  "candidateDirty": true,
+  "serial": true,
+  "sourceDigests": {
+    "main": "bfba71f5b8cdb29fff47cf4d117ac1f2aed40e97fa727483ee8e392b0b55043a",
+    "candidate": "228f00277f24f0588abad69e374e713afd3790f3c42973f5b3f11c5a3563b430"
+  },
+  "runs": [
+    {
+      "benchmark": "storage",
+      "variant": "main",
+      "round": 1,
+      "startedAt": "2026-10-02T10:35:40.786240+00:00",
+      "loadAverageBefore": [5.04638671875, 7.25732421875, 8.13037109375],
+      "output": "local-host-kernel-r1-cr-main-storage-1.json",
+      "exitCode": 0,
+      "seconds": 19.758,
+      "loadAverageAfter": [5.11279296875, 7.126953125, 8.0625]
+    },
+    {
+      "benchmark": "storage",
+      "variant": "candidate",
+      "round": 1,
+      "startedAt": "2026-10-02T10:36:00.546378+00:00",
+      "loadAverageBefore": [5.11279296875, 7.126953125, 8.0625],
+      "output": "local-host-kernel-r1-cr-candidate-storage-1.json",
+      "exitCode": 0,
+      "seconds": 19.334,
+      "loadAverageAfter": [5.4365234375, 7.06884765625, 8.01953125]
+    },
+    {
+      "benchmark": "storage",
+      "variant": "main",
+      "round": 2,
+      "startedAt": "2026-10-02T10:36:19.882700+00:00",
+      "loadAverageBefore": [5.4365234375, 7.06884765625, 8.01953125],
+      "output": "local-host-kernel-r1-cr-main-storage-2.json",
+      "exitCode": 0,
+      "seconds": 19.322,
+      "loadAverageAfter": [6.03857421875, 7.0966796875, 8.005859375]
+    },
+    {
+      "benchmark": "storage",
+      "variant": "candidate",
+      "round": 2,
+      "startedAt": "2026-10-02T10:36:39.206407+00:00",
+      "loadAverageBefore": [6.03857421875, 7.0966796875, 8.005859375],
+      "output": "local-host-kernel-r1-cr-candidate-storage-2.json",
+      "exitCode": 0,
+      "seconds": 19.499,
+      "loadAverageAfter": [5.42626953125, 6.9111328125, 7.92333984375]
+    },
+    {
+      "benchmark": "preparation",
+      "variant": "main",
+      "round": 1,
+      "startedAt": "2026-10-02T10:36:58.707378+00:00",
+      "loadAverageBefore": [5.42626953125, 6.9111328125, 7.92333984375],
+      "output": "local-host-kernel-r1-cr-main-preparation-1.json",
+      "exitCode": 0,
+      "seconds": 7.766,
+      "loadAverageAfter": [5.28662109375, 6.83154296875, 7.8828125]
+    },
+    {
+      "benchmark": "preparation",
+      "variant": "candidate",
+      "round": 1,
+      "startedAt": "2026-10-02T10:37:06.474348+00:00",
+      "loadAverageBefore": [5.28662109375, 6.83154296875, 7.8828125],
+      "output": "local-host-kernel-r1-cr-candidate-preparation-1.json",
+      "exitCode": 0,
+      "seconds": 7.587,
+      "loadAverageAfter": [5.58349609375, 6.8671875, 7.88916015625]
+    },
+    {
+      "benchmark": "preparation",
+      "variant": "main",
+      "round": 2,
+      "startedAt": "2026-10-02T10:37:14.062559+00:00",
+      "loadAverageBefore": [5.58349609375, 6.8671875, 7.88916015625],
+      "output": "local-host-kernel-r1-cr-main-preparation-2.json",
+      "exitCode": 0,
+      "seconds": 7.446,
+      "loadAverageAfter": [5.1923828125, 6.73974609375, 7.83154296875]
+    },
+    {
+      "benchmark": "preparation",
+      "variant": "candidate",
+      "round": 2,
+      "startedAt": "2026-10-02T10:37:21.509690+00:00",
+      "loadAverageBefore": [5.1923828125, 6.73974609375, 7.83154296875],
+      "output": "local-host-kernel-r1-cr-candidate-preparation-2.json",
+      "exitCode": 0,
+      "seconds": 7.57,
+      "loadAverageAfter": [5.0087890625, 6.64892578125, 7.78662109375]
+    },
+    {
+      "benchmark": "stream-ui",
+      "variant": "main",
+      "round": 1,
+      "startedAt": "2026-10-02T10:37:29.080701+00:00",
+      "loadAverageBefore": [5.0087890625, 6.64892578125, 7.78662109375],
+      "output": "local-host-kernel-r1-cr-main-stream-ui-1.json",
+      "exitCode": 0,
+      "seconds": 10.509,
+      "loadAverageAfter": [4.5458984375, 6.4951171875, 7.71826171875]
+    },
+    {
+      "benchmark": "stream-ui",
+      "variant": "candidate",
+      "round": 1,
+      "startedAt": "2026-10-02T10:37:39.591010+00:00",
+      "loadAverageBefore": [4.5458984375, 6.4951171875, 7.71826171875],
+      "output": "local-host-kernel-r1-cr-candidate-stream-ui-1.json",
+      "exitCode": 0,
+      "seconds": 10.33,
+      "loadAverageAfter": [4.70166015625, 6.46240234375, 7.69189453125]
+    },
+    {
+      "benchmark": "stream-ui",
+      "variant": "main",
+      "round": 2,
+      "startedAt": "2026-10-02T10:37:49.923189+00:00",
+      "loadAverageBefore": [4.70166015625, 6.46240234375, 7.69189453125],
+      "output": "local-host-kernel-r1-cr-main-stream-ui-2.json",
+      "exitCode": 0,
+      "seconds": 9.799,
+      "loadAverageAfter": [4.875, 6.44580078125, 7.67138671875]
+    },
+    {
+      "benchmark": "stream-ui",
+      "variant": "candidate",
+      "round": 2,
+      "startedAt": "2026-10-02T10:37:59.723995+00:00",
+      "loadAverageBefore": [4.875, 6.44580078125, 7.67138671875],
+      "output": "local-host-kernel-r1-cr-candidate-stream-ui-2.json",
+      "exitCode": 0,
+      "seconds": 10.197,
+      "loadAverageAfter": [4.6533203125, 6.34765625, 7.6220703125]
+    }
+  ],
+  "scope": "Interactive host; user applications untouched. No concurrent task build/tests/benchmarks. Synthetic isolated temporary owners/offscreen renderer; no actual model/normal product Memory+Automation load in these local benchmarks.",
+  "sourceDigestsAfter": {
+    "main": "bfba71f5b8cdb29fff47cf4d117ac1f2aed40e97fa727483ee8e392b0b55043a",
+    "candidate": "228f00277f24f0588abad69e374e713afd3790f3c42973f5b3f11c5a3563b430"
+  },
+  "sourceUnchangedDuringMeasurements": true
+}

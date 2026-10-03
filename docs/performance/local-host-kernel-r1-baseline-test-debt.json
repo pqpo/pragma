@@ -1,0 +1,51 @@
+{
+  "schemaVersion": "pragma.local-host-kernel-baseline-test-debt/v1",
+  "node": "v24.18.0",
+  "baseCommit": "8fdbd4526d0f62d0b36891165539ed9ec47dc603",
+  "test": "packages/local-host/test/execution-system.test.ts: reuses a Team member Context across ExpertSession restart and persists its snapshot",
+  "expected": "Runtime Session pool cleanup failed",
+  "actual": "Runtime deletion stop was not confirmed.",
+  "unchangedMain": {
+    "exitCode": 1,
+    "failed": 1,
+    "excludedByFilter": 115,
+    "seconds": 3.75
+  },
+  "candidateExpandedSuite": {
+    "exitCode": 1,
+    "passed": 211,
+    "failed": 1,
+    "filesPassed": 11,
+    "filesFailed": 1,
+    "seconds": 131.3
+  },
+  "decision": "Record existing main failure and leave unrelated Runtime cleanup behavior outside R1. Dedicated Mission Control command and real SQLite/Core CAS/receipt replay suites remain separately required. This record is not a passing result.",
+  "desktopOverflow": {
+    "test": "projects oversized replies as Mission Board references without copying full text",
+    "unchangedMain": {
+      "exitCode": 1,
+      "passed": 5,
+      "failed": 1,
+      "excludedByFilter": 73,
+      "seconds": 34.73,
+      "failure": "Existing settlement assertion observed running rather than succeeded; oversized reply case took18.593s."
+    },
+    "candidateFullBeforeWiringFix": {
+      "exitCode": 1,
+      "passed": 73,
+      "failed": 6,
+      "unhandledErrors": 1,
+      "seconds": 197.23
+    },
+    "decision": "Five R1 wiring regressions and fake missed-abort behavior repaired. Main also fails the oversized output fixture; original output algorithm, assertions and deadline retained. Final complete Runner has79 passed/1 failure/0 unhandled.",
+    "candidateFinalSuite": {
+      "exitCode": 1,
+      "passed": 79,
+      "failed": 1,
+      "total": 80,
+      "unhandledErrors": 0,
+      "seconds": 183.14,
+      "decision": "Main-reproduced oversized reply failure remains; all five R1 wiring regressions fixed; not a passing suite."
+    }
+  }
+}

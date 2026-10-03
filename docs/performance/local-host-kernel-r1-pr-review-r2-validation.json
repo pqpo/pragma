@@ -1,0 +1,84 @@
+{
+  "node": "v24.18.0",
+  "reviewedHead": "6da4af3d8e59c0b3197a89b2d728976192e60c9c",
+  "sourceSha256": "46a62dbdf4fa71ad904a69b216027f265eb019bd65482c3234d01855c289f271",
+  "capturedAt": "2026-10-02T12:16:11.624110+00:00",
+  "performanceAcceptancePassed": false,
+  "r1Complete": false,
+  "runs": [
+    {
+      "name": "check",
+      "exitCode": 0,
+      "summary": "lint/typecheck and 459 base tests passed; final test fixture ID separately rerun",
+      "log": "/tmp/pragma-pr353-r2-check.log",
+      "logSha256": "7e2503fbaa2eb2f764b0bfc6953ec58c4eb7864e1940c49e5b4dd6883334ebf5"
+    },
+    {
+      "name": "build",
+      "exitCode": 0,
+      "summary": "19 tasks; main/preload/styles/storage worker checks passed; before the leaf probe harness change",
+      "log": "/tmp/pragma-pr353-r2-build.log",
+      "logSha256": "9ceebd9ea8acd5fa9ee5b731aee5c91dc788491df19eb5e48f395f38a6b7943a"
+    },
+    {
+      "name": "close-red",
+      "exitCode": 1,
+      "summary": "Initial fixture cleanup error; not a production regression reproduction",
+      "log": "/tmp/pragma-pr353-r2-close-red.log",
+      "logSha256": "c99248e2fcfc79523bc93ca7a1fa2e163c1eea3b6350df7ce79ee7f33da50306"
+    },
+    {
+      "name": "close-green",
+      "exitCode": 1,
+      "summary": "Initial fixture expected old endpoint 404, but final old registration closes listener",
+      "log": "/tmp/pragma-pr353-r2-close-green.log",
+      "logSha256": "28c6dde7ad383d08ac05493898b993023a1acb6089ea50e5daac4da33f3a79c1"
+    },
+    {
+      "name": "close-red-final",
+      "exitCode": 1,
+      "summary": "Reviewed production code: 2 failed, 1 passed",
+      "log": "/tmp/pragma-pr353-r2-close-red-final.log",
+      "logSha256": "1139ed09f0754b33015829f447737de27f6e84b19c300bb5bfb877696681eb0d"
+    },
+    {
+      "name": "close-final",
+      "exitCode": 0,
+      "summary": "Final canonical fixture ID: 3 passed",
+      "log": "/tmp/pragma-pr353-r2-close-final.log",
+      "logSha256": "71595dcebf6f0049ef32118fd6dc5ab23508901be77149ba3e0532100561dae1"
+    },
+    {
+      "name": "examples-lint",
+      "exitCode": 1,
+      "summary": "no-unsafe-finally; fixed by collecting errors and throwing after sequential cleanup",
+      "log": "/tmp/pragma-pr353-r2-examples-lint.log",
+      "logSha256": "841dc047d668841426cfd311e8958efbfa44d489b55d21c4cda11e8b822f3651"
+    },
+    {
+      "name": "examples-lint-final",
+      "exitCode": 0,
+      "summary": "Final probe harness lint passed",
+      "log": "/tmp/pragma-pr353-r2-examples-lint-final.log",
+      "logSha256": "c8080d55a1c31da85201a0774fd7ce8adf865a56b4909baf9126f6a3fb126c5e"
+    },
+    {
+      "name": "examples-typecheck",
+      "exitCode": 0,
+      "summary": "Final probe harness typecheck passed",
+      "log": "/tmp/pragma-pr353-r2-examples-typecheck.log",
+      "logSha256": "d7568a4e28eb8fc7215ef181516b6e0c8a72fd257c30c1858fec3f84a5d83ef9"
+    },
+    {
+      "name": "runner-final",
+      "exitCode": 1,
+      "summary": "84 passed, 1 oversized reply failed; 30000 ms deadline; scenario 55630 ms; total 185.69 seconds; no unhandled section",
+      "log": "/tmp/pragma-pr353-r2-runner-final.log",
+      "logSha256": "02d57814296b86e26fd4f0fdd7bded42df41f397f401389f10158e0664498b84"
+    }
+  ],
+  "boundaryRunsReference": "local-host-kernel-r1-pr-review-r2-boundaries.json",
+  "nativeRunsReference": "local-host-kernel-r1-pr-review-r2-native.json",
+  "modelPilotReference": "local-host-kernel-r1-pr-review-r2-model-pilot-status.json",
+  "oversizedDiagnosticReference": "local-host-kernel-r1-pr-review-r2-oversized-trace.jsonl"
+}

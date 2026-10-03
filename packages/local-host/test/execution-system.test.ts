@@ -32,6 +32,7 @@ import {
   EXECUTION_ID_ATTR,
   INVOCATION_ID_ATTR,
   fingerprintExpertExecutionDefinition,
+  getExecutionLiveBus,
   PragmaPaths,
   readRuntimeSessionRecord,
   StaticContextStore,
@@ -632,6 +633,236 @@ async function trackedFixture(
 
 import { createTestExecutionStore, createPragma } from "./execution-test-host.ts";
 describe("ExpertSession", { timeout: 30_000 }, () => {
+  it("waitForPromptProcessing returns lease-lost after cleanup while Native turn and delivery ignore cancellation", async () => {
+    const home = await createTemporaryHome("pragma-processing-lease-loss-");
+    const executions = createTestExecutionStore({ pragmaHome: home });
+    const sessions = createFileExpertSessionStore({ executions, pragmaHome: home });
+    let releaseNative!: () => void;
+    const nativeGate = new Promise<void>((resolve) => {
+      releaseNative = resolve;
+    });
+    let releaseDelivery!: () => void;
+    const deliveryGate = new Promise<void>((resolve) => {
+      releaseDelivery = resolve;
+    });
+    let markDeliveryStarted!: () => void;
+    const deliveryStarted = new Promise<void>((resolve) => {
+      markDeliveryStarted = resolve;
+    });
+    let markStarted!: () => void;
+    const started = new Promise<void>((resolve) => {
+      markStarted = resolve;
+    });
+    let markExited!: () => void;
+    const exited = new Promise<void>((resolve) => {
+      markExited = resolve;
+    });
+    const cancelNative = vi.fn(() => undefined);
+    const closeNative = vi.fn(() => undefined);
+    const runtime = defineRuntimeDriver<never, { id: string }>({
+      descriptor: { id: "processing-lease", kind: "test", displayName: "Processing lease" },
+      features: createRuntimeTestFeatures({ enabled: ["close", "cancellation", "steering"] }),
+      createSession: (context) => ({ id: `native-${context.systemSessionId}` }),
+      readSession: (native) => ({ runtimeSessionId: native.id }),
+      startTurn: async () => {
+        markStarted();
+        await nativeGate;
+        markExited();
+        return { outputText: "late Native result" };
+      },
+      mapEvent: () => ({ events: [] }),
+      steerTurn: async () => {
+        markDeliveryStarted();
+        await deliveryGate;
+      },
+      cancelTurn: cancelNative,
+      closeSession: closeNative,
+    });
+    const app = createPragma({
+      pragmaHome: home,
+      executionStore: executions,
+      expertSessionStore: sessions,
+      loggerProvider: createNoopLoggerProvider(),
+      runtimes: createStaticRuntimeResolver({
+        runtimes: [runtime],
+        defaultRuntimeId: runtime.descriptor.id,
+      }),
+    });
+    const expert = await defineExpert({
+      id: "pr0cess1ng000001",
+      name: "Processing lease",
+      description: "Processing lease",
+      tags: [],
+      scope: "test",
+      workspace: home,
+      pragmaHome: home,
+    });
+    let heartbeat: (() => void) | undefined;
+    const scheduleInterval = globalThis.setInterval;
+    const intervals = vi
+      .spyOn(globalThis, "setInterval")
+      .mockImplementation((callback, delay, ...args) => {
+        if (delay === 10_000) heartbeat = callback as () => void;
+        return scheduleInterval(callback, delay, ...args);
+      });
+    const session = await app.experts.createSession(expert);
+    let waiting: Promise<unknown> | undefined;
+    let delivery: Promise<unknown> | undefined;
+    let nativeExited = false;
+    void exited.then(() => {
+      nativeExited = true;
+    });
+    try {
+      const active = await session.prompt("active", { requestId: "active" });
+      await started;
+      const queued = await session.prompt("successor", { requestId: "successor" });
+      delivery = session
+        .prompt("guidance", { requestId: "guidance", mode: "steer" })
+        .catch((error: unknown) => error);
+      await deliveryStarted;
+      waiting = session.waitForPromptProcessing().catch((error: unknown) => error);
+      const stateBefore = await sessions.get(session.sessionId);
+      const queueBefore = await sessions.listPrompts(session.sessionId);
+      const activeBefore = await executions.get(active.executionId);
+      const successorBefore = await executions.get(queued.executionId);
+      vi.useFakeTimers({ toFake: ["Date"] });
+      vi.setSystemTime(Date.now() + 3 * 24 * 60 * 60 * 1_000);
+      await expect(sessions.claimLease(session.sessionId, "successor-owner", 30_000)).resolves.toBe(
+        true,
+      );
+      heartbeat!();
+      expect(await waiting).toBe("lease-lost");
+      expect(cancelNative).toHaveBeenCalled();
+      expect(closeNative).toHaveBeenCalledOnce();
+      expect(nativeExited).toBe(false);
+      await expect(session.waitForPromptProcessing()).resolves.toBe("lease-lost");
+      await expect(session.releaseAfterTerminal()).resolves.toBeUndefined();
+      expect(await sessions.get(session.sessionId)).toEqual(stateBefore);
+      expect(await sessions.listPrompts(session.sessionId)).toEqual(queueBefore);
+      expect((await executions.get(active.executionId))?.status).toBe(activeBefore?.status);
+      expect(await executions.get(queued.executionId)).toEqual(successorBefore);
+      await expect(
+        sessions.assertLeaseOwner!(session.sessionId, "successor-owner"),
+      ).resolves.toBeUndefined();
+    } finally {
+      releaseNative();
+      releaseDelivery();
+      await exited;
+      await delivery;
+      await waiting;
+      vi.useRealTimers();
+      intervals.mockRestore();
+      await sessions.releaseLease(session.sessionId, "successor-owner");
+    }
+  });
+
+  it("waitForPromptProcessing waits for an in-flight queue steer without awaiting its recoverable source turn", async () => {
+    const home = await createTemporaryHome("pragma-processing-queue-steer-");
+    const gate = () => {
+      let resolve!: () => void;
+      const promise = new Promise<void>((done) => {
+        resolve = done;
+      });
+      return { promise, resolve };
+    };
+    const activeGate = gate();
+    const activeStarted = gate();
+    const steerGate = gate();
+    const steerStarted = gate();
+    const started: string[] = [];
+    let closed = 0;
+    const runtime = defineRuntimeDriver<never, { id: string }>({
+      descriptor: { id: "processing-fixture", kind: "test", displayName: "Processing fixture" },
+      features: createRuntimeTestFeatures({ enabled: ["close", "cancellation", "steering"] }),
+      createSession: (context) => ({ id: `native-${context.systemSessionId}` }),
+      readSession: (native) => ({ runtimeSessionId: native.id }),
+      startTurn: async (_native, turn) => {
+        started.push(turn.rawQuery);
+        activeStarted.resolve();
+        await activeGate.promise;
+        return { outputText: "active done" };
+      },
+      mapEvent: () => ({ events: [] }),
+      steerTurn: async () => {
+        steerStarted.resolve();
+        await steerGate.promise;
+        throw new Error("Native delivery cannot be confirmed");
+      },
+      cancelTurn: () => undefined,
+      closeSession: () => {
+        closed++;
+      },
+    });
+    const app = createPragma({
+      pragmaHome: home,
+      runtimes: createStaticRuntimeResolver({
+        runtimes: [runtime],
+        defaultRuntimeId: runtime.descriptor.id,
+      }),
+    });
+    const expert = await defineExpert({
+      id: "pr0cess1ng000002",
+      name: "Processing fixture",
+      description: "Processing fixture",
+      tags: [],
+      scope: "test",
+      workspace: home,
+      pragmaHome: home,
+    });
+    const session = await app.experts.createSession(expert);
+    let released = false;
+    let delivery: Promise<unknown> | undefined;
+    let processing: Promise<"idle" | "lease-lost"> | undefined;
+    try {
+      const active = await session.prompt("active", { requestId: "active" });
+      await activeStarted.promise;
+      const source = await session.prompt("redirect", { requestId: "redirect" });
+      delivery = session.steerQueuedPrompt("redirect").catch((error: unknown) => error);
+      await steerStarted.promise;
+      processing = session.waitForPromptProcessing();
+      let drained = false;
+      void processing.then(() => {
+        drained = true;
+      });
+      activeGate.resolve();
+      await active.settled;
+      expect((await session.getState()).activeExecutionId).toBeUndefined();
+      expect(
+        (await session.getPromptQueue()).find(
+          (prompt) => prompt.executionId === source.executionId,
+        ),
+      ).toMatchObject({
+        status: "running",
+        deliveryAttempt: { kind: "queue_steer", state: "dispatching" },
+      });
+      expect(drained).toBe(false);
+      expect(closed).toBe(0);
+      steerGate.resolve();
+      expect(await delivery).toBeInstanceOf(SteerDeliveryUncertainError);
+      await expect(processing).resolves.toBe("idle");
+      expect(
+        (await session.getPromptQueue()).find(
+          (prompt) => prompt.executionId === source.executionId,
+        ),
+      ).toMatchObject({
+        status: "queued",
+        purpose: "user",
+        deliveryAttempt: { state: "uncertain" },
+      });
+      expect(started).toEqual(["active"]);
+      await session.releaseAfterHumanCheckpoint();
+      released = true;
+      expect(closed).toBe(1);
+      expect((await session.getState()).status).toBe("open");
+    } finally {
+      activeGate.resolve();
+      steerGate.resolve();
+      await delivery;
+      await processing;
+      if (!released) await session.close();
+    }
+  });
+
   it("logs the current Execution when a Runtime Session is reused", async () => {
     const executions: (string | undefined)[] = [];
     const loggerProvider = createLoggerProvider({
@@ -1362,7 +1593,12 @@ describe("ExpertSession", { timeout: 30_000 }, () => {
       ),
     ).toEqual(["persistent-team", "persistent-team"]);
 
-    await expect(session.close()).rejects.toThrow("Runtime Session pool cleanup failed");
+    await expect(session.close()).rejects.toMatchObject({
+      name: "AggregateError",
+      errors: expect.arrayContaining([
+        expect.objectContaining({ message: "simulated process cleanup failure" }),
+      ]),
+    });
     const recoveredStats = createFakeRuntimeStats();
     const recoveryApp = createPragma({
       pragmaHome: home,
@@ -1600,12 +1836,6 @@ describe("ExpertSession", { timeout: 30_000 }, () => {
       const claimLease = vi.spyOn(sessions, "claimLease");
       let heartbeat: (() => void) | undefined;
       const scheduleInterval = globalThis.setInterval;
-      const intervals = vi
-        .spyOn(globalThis, "setInterval")
-        .mockImplementation((callback, delay, ...args) => {
-          if (delay === 10_000) heartbeat = callback as () => void;
-          return scheduleInterval(callback, delay, ...args);
-        });
       let releaseTurn!: () => void;
       const turnGate = new Promise<void>((resolve) => {
         releaseTurn = resolve;
@@ -1629,11 +1859,48 @@ describe("ExpertSession", { timeout: 30_000 }, () => {
         scope: "test",
         workspace: home,
       });
-      const session = await app.experts.createSession(expert);
+      const liveBus = getExecutionLiveBus(executions);
+      const subscribe = liveBus.subscribeEvents.bind(liveBus);
+      const observerClosures: Array<() => boolean> = [];
+      const subscriptions = vi.spyOn(liveBus, "subscribeEvents").mockImplementation((id) => {
+        const subscription = subscribe(id);
+        const close = vi.spyOn(subscription, "close");
+        observerClosures.push(() => close.mock.calls.length > 0);
+        return subscription;
+      });
+      let releaseRead: (() => void) | undefined;
+      let readSpy: { mockRestore(): void } | undefined;
+      const unhandled: unknown[] = [];
+      const onUnhandled = (reason: unknown) => unhandled.push(reason);
+      process.on("unhandledRejection", onUnhandled);
+      const intervals = vi
+        .spyOn(globalThis, "setInterval")
+        .mockImplementation((callback, delay, ...args) => {
+          if (delay === 10_000) heartbeat = callback as () => void;
+          return scheduleInterval(callback, delay, ...args);
+        });
+      let createdSession: { close(): Promise<void> } | undefined;
       try {
+        const session = await app.experts.createSession(expert);
+        createdSession = session;
         const active = await session.prompt("active", { requestId: "active" });
         await vi.waitFor(() => expect(stats.executionIds).toHaveLength(1));
         const ownerClaimId = claimLease.mock.calls[0]![1];
+        if (takeover) {
+          const read = executions.get.bind(executions);
+          let readBlocked = false;
+          const readGate = new Promise<void>((resolve) => {
+            releaseRead = resolve;
+          });
+          readSpy = vi.spyOn(executions, "get").mockImplementation(async (id) => {
+            if (id === active.executionId && !readBlocked) {
+              readBlocked = true;
+              await readGate;
+            }
+            return await read(id);
+          });
+          await vi.waitFor(() => expect(readBlocked).toBe(true));
+        }
         vi.useFakeTimers({ toFake: ["Date"] });
         vi.setSystemTime(Date.now() + 3 * 24 * 60 * 60 * 1_000);
         if (takeover) {
@@ -1657,12 +1924,29 @@ describe("ExpertSession", { timeout: 30_000 }, () => {
             await expect(session.prompt("late")).rejects.toThrow("lease was lost");
           });
           releaseTurn();
-          await expect(active.result).rejects.toThrow();
+          await expect(active.result).rejects.toThrow("lease was lost");
+          await expect(active.usage).rejects.toThrow("lease was lost");
           await expect(active.settled).rejects.toThrow("lease was lost");
           const historical = (await session.listTurns()).find(
             (turn) => turn.requestId === "active",
           )!;
           await expect(historical.settled).rejects.toThrow("lease was lost");
+          await expect(historical.result).rejects.toThrow("lease was lost");
+          await expect(historical.usage).rejects.toThrow("lease was lost");
+          // The aggregate read is still blocked: local ownership loss must
+          // reject result/usage and release its subscription independently.
+          expect(observerClosures.some((closed) => closed())).toBe(true);
+          releaseRead!();
+          readSpy!.mockRestore();
+          readSpy = undefined;
+          await vi.waitFor(() => expect(stats.closeSessionCalls).toBeGreaterThan(0));
+          expect((await executions.get(active.executionId))?.status).not.toBe("cancelled");
+          await expect(
+            sessions.assertLeaseOwner!(session.sessionId, "successor"),
+          ).resolves.toBeUndefined();
+          expect(stats.executionIds).toHaveLength(1);
+          await new Promise<void>((resolve) => setImmediate(resolve));
+          expect(unhandled).toEqual([]);
           await sessions.releaseLease(session.sessionId, "successor");
         } else {
           await vi.waitFor(() => expect(claimLease).toHaveBeenCalledTimes(2));
@@ -1675,11 +1959,15 @@ describe("ExpertSession", { timeout: 30_000 }, () => {
           expect(stats.cancelTurnCalls).toBe(0);
         }
       } finally {
+        releaseRead?.();
+        readSpy?.mockRestore();
         releaseTurn();
         vi.useRealTimers();
         intervals.mockRestore();
+        subscriptions.mockRestore();
+        process.off("unhandledRejection", onUnhandled);
         claimLease.mockRestore();
-        await session.close().catch(() => undefined);
+        await createdSession?.close().catch(() => undefined);
       }
     },
   );
@@ -1697,12 +1985,6 @@ describe("ExpertSession", { timeout: 30_000 }, () => {
     });
     let heartbeat!: () => void;
     const scheduleInterval = globalThis.setInterval;
-    const intervals = vi
-      .spyOn(globalThis, "setInterval")
-      .mockImplementation((callback, delay, ...args) => {
-        if (delay === 10_000) heartbeat = callback as () => void;
-        return scheduleInterval(callback, delay, ...args);
-      });
     let releaseTurn!: () => void;
     const turnGate = new Promise<void>((resolve) => {
       releaseTurn = resolve;
@@ -1726,8 +2008,16 @@ describe("ExpertSession", { timeout: 30_000 }, () => {
       scope: "test",
       workspace: home,
     });
-    const session = await app.experts.createSession(expert);
+    const intervals = vi
+      .spyOn(globalThis, "setInterval")
+      .mockImplementation((callback, delay, ...args) => {
+        if (delay === 10_000) heartbeat = callback as () => void;
+        return scheduleInterval(callback, delay, ...args);
+      });
+    let createdSession: { close(): Promise<void> } | undefined;
     try {
+      const session = await app.experts.createSession(expert);
+      createdSession = session;
       const turn = await session.prompt("active");
       await vi.waitFor(() => expect(stats.executionIds).toHaveLength(1));
       vi.useFakeTimers({ toFake: ["Date"] });
@@ -1742,7 +2032,7 @@ describe("ExpertSession", { timeout: 30_000 }, () => {
       vi.useRealTimers();
       intervals.mockRestore();
       claimLease.mockRestore();
-      await session.close();
+      await createdSession?.close();
     }
   });
 
@@ -2357,6 +2647,142 @@ describe("ExpertSession", { timeout: 30_000 }, () => {
     expect(tree.children[0]?.invocation.status).toBe("succeeded");
     await session.close();
   }, 30_000);
+
+  it("atomically rejects a changed strict target without claiming or dispatching steer", async () => {
+    let finish!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      finish = resolve;
+    });
+    const steer = vi.fn();
+    const { app, expert, stats } = await trackedFixture({ turnGate: gate, onSteer: steer });
+    const session = await app.experts.createSession(expert);
+    const active = await session.prompt("active", { requestId: "active" });
+    const queued = await session.prompt("queued", { requestId: "queued" });
+    await vi.waitFor(() => expect(stats.executionIds).toContain(active.executionId));
+    const target = { executionId: active.executionId, turnId: "stale-request" };
+    try {
+      await expect(
+        session.prompt("redirect", { requestId: "strict", mode: "steer", target }),
+      ).rejects.toMatchObject({ reason: "target_changed" });
+      await expect(session.steerQueuedPrompt("queued", { target })).rejects.toMatchObject({
+        reason: "target_changed",
+      });
+      expect(steer).not.toHaveBeenCalled();
+      expect(
+        (await session.getPromptQueue()).find((prompt) => prompt.requestId === "strict"),
+      ).toBeUndefined();
+      expect(
+        (await session.getPromptQueue()).find((prompt) => prompt.requestId === "queued")?.status,
+      ).toBe("queued");
+    } finally {
+      finish();
+      await active.result;
+      await queued.result;
+      await session.close();
+    }
+  });
+
+  it.each(["strict", "queued"] as const)(
+    "replays accepted %s steer after its target ends without native redelivery",
+    async (kind) => {
+      let finish!: () => void;
+      const gate = new Promise<void>((resolve) => {
+        finish = resolve;
+      });
+      const steer = vi.fn();
+      const { app, expert, stats } = await trackedFixture({ turnGate: gate, onSteer: steer });
+      const session = await app.experts.createSession(expert);
+      const active = await session.prompt("active", { requestId: "active" });
+      const queued =
+        kind === "queued" ? await session.prompt("redirect", { requestId: "redirect" }) : undefined;
+      await vi.waitFor(() => expect(stats.executionIds).toContain(active.executionId));
+      const target = { executionId: active.executionId, turnId: "active" };
+      const apply = () =>
+        kind === "strict"
+          ? session.prompt("redirect", { requestId: "redirect", mode: "steer", target })
+          : session.steerQueuedPrompt("redirect", { target });
+      try {
+        const applied = await apply();
+        expect(applied.executionId).toBe(active.executionId);
+        if (queued !== undefined)
+          await expect(queued.result).rejects.toThrow("Moved from the prompt queue");
+        finish();
+        await active.result;
+        await active.settled;
+        expect((await session.getState()).activeExecutionId).toBeUndefined();
+        const replayed = await apply();
+        expect(replayed.executionId).toBe(applied.executionId);
+        expect(steer).toHaveBeenCalledOnce();
+      } finally {
+        finish();
+        await session.close();
+      }
+    },
+  );
+
+  it("finishes queued steer source cancellation on same-Session receipt replay", async () => {
+    const home = await createTemporaryHome("pragma-queued-steer-source-replay-");
+    const executions = createTestExecutionStore({ pragmaHome: home });
+    const stats = createFakeRuntimeStats();
+    const steer = vi.fn();
+    let finish!: () => void;
+    const turnGate = new Promise<void>((resolve) => (finish = resolve));
+    const app = createPragma({
+      pragmaHome: home,
+      executionStore: executions,
+      loggerProvider: createNoopLoggerProvider(),
+      runtimes: createStaticRuntimeResolver({
+        runtimes: [createFakeRuntime({ stats, turnGate, onSteer: steer })],
+        defaultRuntimeId: "fake",
+      }),
+    });
+    const expert = await defineExpert({
+      id: "queued-steer-source-replay",
+      name: "Queued Steer Replay",
+      description: "Queued steer cancellation retry",
+      tags: [],
+      scope: "test",
+      workspace: home,
+    });
+    const session = await app.experts.createSession(expert);
+    const active = await session.prompt("active", { requestId: "active" });
+    const queued = await session.prompt("redirect", { requestId: "redirect" });
+    const commit = executions.commit.bind(executions);
+    let failed = false;
+    const fault = vi.spyOn(executions, "commit").mockImplementation(async (input) => {
+      if (
+        !failed &&
+        input.executionId === queued.executionId &&
+        input.executionPatch?.status === "cancelled"
+      ) {
+        failed = true;
+        throw new Error("Synthetic source cancellation failure");
+      }
+      return await commit(input);
+    });
+    try {
+      await vi.waitFor(() => expect(stats.executionIds).toContain(active.executionId));
+      const target = { executionId: active.executionId, turnId: "active" };
+      await expect(session.steerQueuedPrompt("redirect", { target })).rejects.toThrow(
+        "Synthetic source cancellation failure",
+      );
+      expect(await executions.get(queued.executionId)).toMatchObject({ status: "queued" });
+      expect(
+        (await session.getPromptQueue()).find((prompt) => prompt.requestId === "redirect"),
+      ).toMatchObject({ status: "succeeded", deliveryAttempt: { state: "confirmed" } });
+      const replayed = await session.steerQueuedPrompt("redirect", { target });
+      expect(replayed.executionId).toBe(active.executionId);
+      await expect(queued.result).rejects.toThrow("Moved from the prompt queue");
+      expect(await executions.get(queued.executionId)).toMatchObject({ status: "cancelled" });
+      expect(steer).toHaveBeenCalledOnce();
+    } finally {
+      fault.mockRestore();
+      finish();
+      await active.result;
+      await active.settled;
+      await session.close();
+    }
+  });
 
   it("moves one queued prompt into the active turn as steer", async () => {
     const home = await createTemporaryHome("pragma-queued-steer-");

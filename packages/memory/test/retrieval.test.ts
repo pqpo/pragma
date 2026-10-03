@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join, dirname } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { PragmaPaths, defaultRuntimeTokenCounter } from "@pragma/core";
+import { PragmaPaths, createRuntimeTokenCounter, defaultRuntimeTokenCounter } from "@pragma/core";
 import {
   createEpisodicMemoryStore,
   createSemanticMemoryStore,
@@ -61,6 +61,39 @@ const embedded = (input: readonly string[]) => ({
   vectors: input.map(() => new Float32Array([1, 0])),
 });
 describe("Memory vector retrieval", () => {
+  it.each([
+    { label: "ASCII", text: "x".repeat(8193), maxTokens: 1024 },
+    { label: "Unicode", text: "上".repeat(8193), maxTokens: 1024 },
+    {
+      label: "sentence cut across estimate sources",
+      text: "a_".repeat(1800) + "." + "a_".repeat(3000),
+      maxTokens: 1500,
+    },
+  ])(
+    "preserves oversized $label text and segment budgets with the warm shared counter",
+    async ({ text, maxTokens }) => {
+      const counter = createRuntimeTokenCounter();
+      await counter.load();
+      const record = EpisodicMemoryRecordSchema.parse(
+        JSON.parse(await readFile(fixture("episodic-record.json"), "utf8")),
+      );
+      record.goal.text = text;
+      const source = { module: "episodic" as const, record };
+      const segments = projectMemory(source, maxTokens, counter);
+      for (const field of memoryProjectionFields(source)) {
+        expect(
+          segments
+            .filter((segment) => segment.fieldPath === field.path)
+            .map((segment) => segment.text)
+            .join(""),
+        ).toBe(field.text);
+      }
+      for (const segment of segments) {
+        expect(counter.countText(segment.text).tokens).toBeLessThanOrEqual(maxTokens);
+      }
+      counter.dispose();
+    },
+  );
   it("validates a model with one-input and one-token limits", async () => {
     const fetcher = vi.fn<typeof fetch>(async () =>
       Response.json({ model: "embedding", data: [{ index: 0, embedding: [1, 0] }] }),

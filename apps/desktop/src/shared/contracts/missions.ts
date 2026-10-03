@@ -8,7 +8,11 @@ import {
   ExpertPromptAttachmentSchema,
   HumanInteractionRequestSchema,
   HumanInteractionResponseSchema,
+  MissionContextMountSchema,
+  MissionContextMountsSchema,
+  MissionExecutionBindingSchema,
   MissionExecutorRefSchema,
+  MissionLifecycleStatusSchema,
   MissionExecutorSchema,
   PragmaAvatarIdSchema,
   RuntimeContextWindowUsageSchema,
@@ -42,7 +46,7 @@ export const MissionModelOptionsSchema = z.object({
   defaultSelection: MissionModelOverrideSchema.optional(),
 });
 
-export const MissionLifecycleStatusSchema = z.enum(["active", "completed"]);
+export { MissionContextMountSchema, MissionContextMountsSchema, MissionLifecycleStatusSchema };
 
 export const MissionUserMessageSchema = z.object({
   id: z.string().uuid(),
@@ -114,14 +118,7 @@ export const MissionWorkSnapshotSchema = z.object({
   records: z.array(MissionWorkRecordSchema),
 });
 
-const MissionExecutionStatusSchema = z.enum([
-  "queued",
-  "running",
-  "waiting",
-  "succeeded",
-  "failed",
-  "cancelled",
-]);
+const MissionExecutionStatusSchema = MissionExecutionBindingSchema.shape.status;
 
 export const MissionBaseSchema = z.object({
   id: MissionIdSchema,
@@ -136,37 +133,7 @@ export const MissionBaseSchema = z.object({
   }),
   executor: MissionExecutorSchema,
   modelOverride: MissionModelOverrideSchema.optional(),
-  execution: z
-    .object({
-      id: z.string().uuid(),
-      inputMessageId: z.string().uuid(),
-      sessionId: z.string().uuid().optional(),
-      status: MissionExecutionStatusSchema,
-      waitReason: z.enum(["experts", "human_input"]).optional(),
-      contextMountsFingerprint: z
-        .string()
-        .regex(/^[a-f0-9]{64}$/)
-        .optional(),
-      environmentFingerprint: z
-        .string()
-        .regex(/^[a-f0-9]{64}$/)
-        .optional(),
-      resolvedCapabilities: z
-        .array(
-          z
-            .object({
-              capabilityId: CapabilityIdSchema,
-              resolvedRevision: z.number().int().positive(),
-              fingerprint: z.string().regex(/^[a-f0-9]{64}$/),
-            })
-            .strict(),
-        )
-        .optional(),
-      startedAt: z.string().datetime(),
-      finishedAt: z.string().datetime().optional(),
-      error: z.string().max(10_000).optional(),
-    })
-    .optional(),
+  execution: MissionExecutionBindingSchema.optional(),
   lifecycleStatus: MissionLifecycleStatusSchema,
   createdAt: z.string().datetime(),
   updatedAt: z.string().datetime(),
@@ -221,39 +188,6 @@ export const MissionContextMountV10Schema = z.discriminatedUnion("kind", [
     })
     .strict(),
 ]);
-
-export const MissionContextMountSchema = z.discriminatedUnion("kind", [
-  ...MissionContextMountV10Schema.options,
-  z
-    .object({
-      kind: z.literal("skill-revision-draft"),
-      draftId: z.string().uuid(),
-      revisionJobId: z.string().uuid(),
-      capabilityId: CapabilityIdSchema,
-    })
-    .strict(),
-]);
-
-export const MissionContextMountsSchema = z
-  .array(MissionContextMountSchema)
-  .max(200)
-  .superRefine((mounts, context) => {
-    const seen = new Set<string>();
-    for (const [index, mount] of mounts.entries()) {
-      const identity =
-        mount.kind === "context-store"
-          ? `store:${mount.storeId}`
-          : `${mount.kind}:${mount.draftId}`;
-      if (seen.has(identity)) {
-        context.addIssue({
-          code: "custom",
-          message: "Mission Context mounts must be unique.",
-          path: [index],
-        });
-      }
-      seen.add(identity);
-    }
-  });
 
 export const MissionBranchSourceSchema = z.object({
   sourceMissionId: MissionIdSchema,

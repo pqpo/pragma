@@ -38,3 +38,14 @@ changes PATH or shell configuration. The CLI is not a daemon, cloud listener, MC
 - Package manifests and ESLint enforce the direction, including no relative imports across packages.
 - npm scope ownership, public access, OIDC trusted publishing, and provenance remain release
   prerequisites; they do not alter the source architecture.
+
+## R1 implementation note (2026-10-02)
+
+Issue #348 R1 centralizes Mission command dispatch, message admission, strict-target checks,
+queue mutations and command rejection in Local Host. Desktop and the default Node/CLI
+composition share the same control factory and process-local MissionExecutionOwner access.
+Desktop presentation metadata remains outside that owner. Compile preparation and first-run
+execution retain narrow temporary dependencies for R2/R3, so this note does not declare a complete
+application-kernel migration. Persistent Schema/wire versions, transaction fencing and historical
+migration chains are unchanged. The [implementation report](../architecture/local-host-kernel-r1-implementation.md)
+records correctness and performance exit status independently.

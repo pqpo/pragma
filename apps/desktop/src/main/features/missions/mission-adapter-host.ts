@@ -25,6 +25,8 @@ export function createDesktopAdapterHost(
     readonly capabilityStore: CapabilityStore;
     readonly capabilityCredentials: CapabilityCredentialStore;
     readonly capabilitiesPath: string;
+    /** Stop definitions preserve identity metadata and must never be executed. */
+    readonly purpose?: "execute" | "stop" | undefined;
     readonly mcpToolRegistryPool?: McpToolRegistryPool | undefined;
     readonly contextStores?: ContextStoreStore | undefined;
     readonly pragmaManagement?: PragmaManagementToolPorts | undefined;
@@ -37,6 +39,19 @@ export function createDesktopAdapterHost(
     environmentId: "desktop",
     projectRoot,
     async resolveBinding(ref): Promise<PragmaBindingRecord | undefined> {
+      if (
+        options.purpose === "stop" &&
+        (ref === PRAGMA_MANAGEMENT_BINDING_REF ||
+          parseDesktopCapabilityBindingRef(ref) !== undefined ||
+          parseLegacyDesktopCapabilityBindingRef(ref) !== undefined)
+      ) {
+        return {
+          ref,
+          revision: "stop",
+          fingerprint: createHash("sha256").update(`stop:${ref}`).digest("hex"),
+          value: { contribution: { tools: [], skills: { skills: [] } } },
+        };
+      }
       if (ref === PRAGMA_MANAGEMENT_BINDING_REF) {
         if (options.pragmaManagement === undefined) return undefined;
         const tools = createPragmaManagementTools(
@@ -107,6 +122,16 @@ export function createDesktopAdapterHost(
 
       const contextId = parseDesktopContextBindingRef(ref);
       if (contextId !== undefined) {
+        if (options.purpose === "stop") {
+          return {
+            ref,
+            revision: "stop",
+            fingerprint: createHash("sha256").update(`stop:${ref}`).digest("hex"),
+            // Construction performs no reads. Namespace/required metadata is
+            // retained by Interpreter for Core's definition graph validation.
+            value: { store: new FileSystemContextStore({ rootDir: projectRoot }) },
+          };
+        }
         if (options.contextStores === undefined) {
           throw new Error(`Desktop context binding is unavailable: ${contextId}`);
         }

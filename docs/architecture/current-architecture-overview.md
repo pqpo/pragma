@@ -69,15 +69,21 @@ Execution 的持久状态、Invocation patch 与 Canonical Event 通过幂等提
 
 ## Mission 与本机 Host
 
-当前 Mission controller 与应用协议已经共享，但 Desktop 仍通过 `missionControlAdapter` 和
-`runExecutor` 注入自身的 MissionRunner 执行内核，CLI 使用 Local Host 的默认执行路径。
-统一控制、编译、运行与恢复的后续设计见
+当前 Mission controller、应用协议、Mission Control 与 active owner 访问已经共享；Desktop 仍通过
+`runExecutor` 注入自身的 MissionRunner 首轮执行与编译准备，CLI 使用 Local Host 的默认执行路径。
+统一控制、编译、运行与恢复的分阶段设计见
 [Mission 统一 Local Host 应用内核分阶段重构方案](local-host-application-kernel-refactor.md)。
-该方案保留四轮首 Token 优化，尚未实施，不能视为两端执行内核已经统一。
+R1 代码实施与 CR 修复已交付，阶段验收未通过；该方案保留四轮首 Token 优化，R2/R3/R4 未开始。
 
 `@pragma/local-host/node-application` 组合 Mission controller、owner lease、command inbox、query/watch、
 Project catalog、Mission Board、Core store 与 Usage sink。Desktop 和 CLI 在相同应用协议上注入各自的
 Runtime factory、文件系统、SecretStore、交互界面与 Host policy。
+
+Issue #348 的 R1 将 Mission command handlers、strict target、queue recovery/rejection 与消息 admission
+统一到 Local Host。Desktop 首轮运行与编译准备暂留窄依赖，通过同一个 `MissionExecutionOwner`
+访问 Session、generation 和 admission；Desktop metadata cache 仍归展示层。运行/编译/恢复的完整
+迁移属于 R2/R3，内部调用与旧 Runner 出口清理属于 R4。R1 性能退出状态见
+[实施与验证报告](local-host-kernel-r1-implementation.md)，不能据此宣称统一执行内核全部完成。
 
 同一 Mission 的 mutation 由持久 `MissionControllerLease` 和单调 fencing token 协调。非 owner 的
 `send`、`steer`、`respond`、`interrupt` 与 queue mutation 写入持久 `MissionCommandInbox`；提交使用

@@ -11,6 +11,22 @@ Runtime adapters must treat model usage emitted during a single runtime turn as 
 - Every usage value declares whether it is `reported`, `derived`, `estimated`, or legacy `unknown`.
   Aggregation retains the least precise measurement.
 
+## Shared fallback safety
+
+Only Core's `RuntimeTokenCounter` estimates missing Runtime usage. While its local tokenizer
+loads, it uses the shared Unicode heuristic. After loading, a whitespace or non-whitespace run
+longer than 4,096 UTF-16 code units also uses that existing heuristic for the whole input, because
+the tokenizer's BPE merge on a single very large piece can block the Node thread for seconds.
+Ordinary text with shorter runs still uses the tokenizer; reported usage bypasses estimation.
+This is an estimate, not a billing count: 200,001 consecutive `x` characters estimate as 50,001
+tokens rather than the tokenizer's 25,001. Context and Memory budgets use the same counter.
+Memory rechecks a preferred sentence cut before replacing its already budgeted segment, since
+shortening text can switch between heuristic and tokenizer estimates and increase the count.
+
+Usage delivery and ledger writes remain asynchronous. Fallback counting still happens at the
+Runtime attempt boundary, once per attempt, never for each streaming delta. This protection
+avoids giant individual pieces; it does not make arbitrary input sizes constant-time.
+
 ## Claude Code
 
 Claude Code uses `claude-agent-acp` 0.81.2, whose prompt activation resets its token accumulator. Its terminal `session/prompt` usage covers the current turn, including results produced by steering. The Claude binding explicitly selects turn-scoped accounting; Core uses that terminal total directly and never adds raw SDK observations to it. Other ACP bindings can select session-scoped snapshots, which Core differences into turn observations. Manual compaction does not charge its usage to the next user prompt.

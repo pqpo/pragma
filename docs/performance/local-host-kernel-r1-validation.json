@@ -1,0 +1,315 @@
+{
+  "schemaVersion": "pragma.local-host-kernel-validation/v1",
+  "node": "v24.18.0",
+  "serial": true,
+  "results": [
+    {
+      "name": "mission-control",
+      "command": ["pnpm", "test:mission-control"],
+      "startedAt": "2026-10-02T07:50:59.618608+00:00",
+      "seconds": 55.497,
+      "exitCode": 0,
+      "log": "/tmp/pragma-r1-serial-mission-control.log"
+    },
+    {
+      "name": "mission-chat",
+      "command": ["pnpm", "test:mission-chat"],
+      "startedAt": "2026-10-02T07:51:55.118321+00:00",
+      "seconds": 40.389,
+      "exitCode": 0,
+      "log": "/tmp/pragma-r1-serial-mission-chat.log"
+    },
+    {
+      "name": "revision",
+      "command": ["pnpm", "test:revision"],
+      "startedAt": "2026-10-02T07:52:35.509401+00:00",
+      "seconds": 27.221,
+      "exitCode": 0,
+      "log": "/tmp/pragma-r1-serial-revision.log"
+    },
+    {
+      "name": "core-protection",
+      "command": [
+        "pnpm",
+        "--filter",
+        "@pragma/core",
+        "exec",
+        "vitest",
+        "run",
+        "test/execution-event-writer.test.ts",
+        "test/runtime-stream-controller.test.ts",
+        "test/expert-orchestrator-recovery.test.ts"
+      ],
+      "startedAt": "2026-10-02T07:53:02.731474+00:00",
+      "seconds": 2.706,
+      "exitCode": 0,
+      "log": "/tmp/pragma-r1-serial-core-protection.log"
+    },
+    {
+      "name": "storage-protection",
+      "command": [
+        "pnpm",
+        "--filter",
+        "@pragma/local-host",
+        "exec",
+        "vitest",
+        "run",
+        "test/sqlite-execution-store.test.ts",
+        "test/host-storage-pool.test.ts",
+        "test/execution-view-pagination.test.ts",
+        "test/usage.test.ts",
+        "test/canonical-event-feed.test.ts",
+        "test/mission-deletion.test.ts",
+        "test/owner-deletion.test.ts"
+      ],
+      "startedAt": "2026-10-02T07:53:05.438086+00:00",
+      "seconds": 80.371,
+      "exitCode": 0,
+      "log": "/tmp/pragma-r1-serial-storage-protection.log"
+    },
+    {
+      "name": "desktop-runner",
+      "command": [
+        "pnpm",
+        "--filter",
+        "@pragma/desktop",
+        "exec",
+        "vitest",
+        "run",
+        "src/main/features/missions/mission-runner.test.ts"
+      ],
+      "startedAt": "2026-10-02T07:54:25.812640+00:00",
+      "seconds": 224.503,
+      "exitCode": -15,
+      "log": "/tmp/pragma-r1-serial-desktop-runner.log"
+    },
+    {
+      "name": "desktop-runner",
+      "command": [
+        "pnpm",
+        "--filter",
+        "@pragma/desktop",
+        "exec",
+        "vitest",
+        "run",
+        "src/main/features/missions/mission-runner.test.ts"
+      ],
+      "startedAt": "2026-10-02T08:07:37.956503+00:00",
+      "seconds": 198.128,
+      "exitCode": 1,
+      "log": "/tmp/pragma-r1-serial-desktop-runner.log"
+    },
+    {
+      "name": "final-lint",
+      "command": ["pnpm", "--filter", "@pragma/local-host", "--filter", "@pragma/desktop", "lint"],
+      "startedAt": "2026-10-02T08:17:40.133619+00:00",
+      "seconds": 16.775,
+      "exitCode": 1,
+      "log": "/tmp/pragma-r1-serial-final-lint.log"
+    },
+    {
+      "name": "final-lint",
+      "command": ["pnpm", "--filter", "@pragma/local-host", "--filter", "@pragma/desktop", "lint"],
+      "startedAt": "2026-10-02T08:18:17.148905+00:00",
+      "seconds": 17.228,
+      "exitCode": 0,
+      "log": "/tmp/pragma-r1-serial-final-lint.log"
+    },
+    {
+      "name": "final-local-host-typecheck",
+      "command": ["pnpm", "--filter", "@pragma/local-host", "typecheck"],
+      "startedAt": "2026-10-02T08:18:34.378662+00:00",
+      "seconds": 8.891,
+      "exitCode": 0,
+      "log": "/tmp/pragma-r1-serial-final-local-host-typecheck.log"
+    },
+    {
+      "name": "final-desktop-node-typecheck",
+      "command": ["pnpm", "--filter", "@pragma/desktop", "typecheck:node"],
+      "startedAt": "2026-10-02T08:18:43.270501+00:00",
+      "seconds": 8.116,
+      "exitCode": 2,
+      "log": "/tmp/pragma-r1-serial-final-desktop-node-typecheck.log"
+    },
+    {
+      "name": "final-lint",
+      "command": ["pnpm", "--filter", "@pragma/local-host", "--filter", "@pragma/desktop", "lint"],
+      "startedAt": "2026-10-02T08:19:00.024892+00:00",
+      "seconds": 17.605,
+      "exitCode": 0,
+      "log": "/tmp/pragma-r1-serial-final-lint.log"
+    },
+    {
+      "name": "final-local-host-typecheck",
+      "command": ["pnpm", "--filter", "@pragma/local-host", "typecheck"],
+      "startedAt": "2026-10-02T08:19:17.631522+00:00",
+      "seconds": 9.198,
+      "exitCode": 0,
+      "log": "/tmp/pragma-r1-serial-final-local-host-typecheck.log"
+    },
+    {
+      "name": "final-desktop-node-typecheck",
+      "command": ["pnpm", "--filter", "@pragma/desktop", "typecheck:node"],
+      "startedAt": "2026-10-02T08:19:26.831270+00:00",
+      "seconds": 7.911,
+      "exitCode": 0,
+      "log": "/tmp/pragma-r1-serial-final-desktop-node-typecheck.log"
+    },
+    {
+      "name": "mission-control-final",
+      "command": ["pnpm", "test:mission-control"],
+      "startedAt": "2026-10-02T08:19:34.743166+00:00",
+      "seconds": 66.136,
+      "exitCode": 0,
+      "log": "/tmp/pragma-r1-serial-mission-control-final.log"
+    },
+    {
+      "name": "desktop-runner",
+      "command": [
+        "pnpm",
+        "--filter",
+        "@pragma/desktop",
+        "exec",
+        "vitest",
+        "run",
+        "src/main/features/missions/mission-runner.test.ts"
+      ],
+      "startedAt": "2026-10-02T08:20:40.880841+00:00",
+      "seconds": 187.225,
+      "exitCode": 1,
+      "log": "/tmp/pragma-r1-serial-desktop-runner.log"
+    },
+    {
+      "name": "desktop-last-lint",
+      "command": ["pnpm", "--filter", "@pragma/desktop", "lint"],
+      "startedAt": "2026-10-02T08:29:30.423595+00:00",
+      "seconds": 13.204,
+      "exitCode": 0,
+      "log": "/tmp/pragma-r1-serial-desktop-last-lint.log"
+    },
+    {
+      "name": "desktop-last-typecheck",
+      "command": ["pnpm", "--filter", "@pragma/desktop", "typecheck:node"],
+      "startedAt": "2026-10-02T08:29:43.623293+00:00",
+      "seconds": 7.348,
+      "exitCode": 0,
+      "log": "/tmp/pragma-r1-serial-desktop-last-typecheck.log"
+    },
+    {
+      "name": "desktop-runner",
+      "command": [
+        "pnpm",
+        "--filter",
+        "@pragma/desktop",
+        "exec",
+        "vitest",
+        "run",
+        "src/main/features/missions/mission-runner.test.ts"
+      ],
+      "startedAt": "2026-10-02T08:29:50.971305+00:00",
+      "seconds": 184.06,
+      "exitCode": 1,
+      "log": "/tmp/pragma-r1-serial-desktop-runner.log",
+      "baselineFailure": {
+        "test": " FAIL  src/main/features/missions/mission-runner.test.ts > MissionRunner > projects oversized replies as Mission Board references without copying full text",
+        "mainReproduction": "/tmp/pragma-r1-main-runner-failures.log",
+        "decision": "Recorded pre-existing failure; continue other validation, not a passing suite."
+      }
+    },
+    {
+      "name": "cli",
+      "command": ["pnpm", "--filter", "@pqpo/pragma", "exec", "vitest", "run"],
+      "startedAt": "2026-10-02T08:32:55.032729+00:00",
+      "seconds": 71.31,
+      "exitCode": 0,
+      "log": "/tmp/pragma-r1-serial-cli.log"
+    },
+    {
+      "name": "contracts",
+      "command": [
+        "pnpm",
+        "--filter",
+        "@pragma/desktop",
+        "exec",
+        "vitest",
+        "run",
+        "src/main/features/missions/mission-contract-extraction.test.ts",
+        "src/shared/contracts/contracts.test.ts"
+      ],
+      "startedAt": "2026-10-02T08:34:06.344110+00:00",
+      "seconds": 1.981,
+      "exitCode": 0,
+      "log": "/tmp/pragma-r1-serial-contracts.log"
+    },
+    {
+      "name": "harness",
+      "command": [
+        "node",
+        "--test",
+        "apps/desktop/scripts/mission-e2e-benchmark-result.test.mjs",
+        "apps/desktop/scripts/mission-e2e-benchmark-scenarios.test.mjs"
+      ],
+      "startedAt": "2026-10-02T08:34:08.326625+00:00",
+      "seconds": 0.443,
+      "exitCode": 0,
+      "log": "/tmp/pragma-r1-serial-harness.log"
+    },
+    {
+      "name": "desktop-final-build",
+      "command": ["pnpm", "--filter", "@pragma/desktop", "build"],
+      "startedAt": "2026-10-02T08:34:08.771346+00:00",
+      "seconds": 86.148,
+      "exitCode": 0,
+      "log": "/tmp/pragma-r1-serial-desktop-final-build.log"
+    },
+    {
+      "name": "cli-pack",
+      "command": ["pnpm", "--filter", "@pqpo/pragma", "package:pack"],
+      "startedAt": "2026-10-02T08:35:34.922113+00:00",
+      "seconds": 8.487,
+      "exitCode": 0,
+      "log": "/tmp/pragma-r1-serial-cli-pack.log"
+    },
+    {
+      "name": "cli-release-reports",
+      "command": ["pnpm", "--filter", "@pqpo/pragma", "release:reports"],
+      "startedAt": "2026-10-02T08:35:43.411135+00:00",
+      "seconds": 1.829,
+      "exitCode": 0,
+      "log": "/tmp/pragma-r1-serial-cli-release-reports.log"
+    },
+    {
+      "name": "cli-installed-smoke",
+      "command": [
+        "pnpm",
+        "--filter",
+        "@pqpo/pragma",
+        "ci:smoke",
+        "--mode",
+        "positive",
+        "--artifact-dir",
+        ".release/ci-artifact"
+      ],
+      "startedAt": "2026-10-02T08:35:45.241406+00:00",
+      "seconds": 20.081,
+      "exitCode": 0,
+      "log": "/tmp/pragma-r1-serial-cli-installed-smoke.log"
+    },
+    {
+      "name": "final-global-check",
+      "command": ["pnpm", "check"],
+      "startedAt": "2026-10-02T08:55:19.297074+00:00",
+      "seconds": 145.622,
+      "exitCode": 0,
+      "log": "/tmp/pragma-r1-final-global-check.log"
+    },
+    {
+      "name": "final-global-build",
+      "command": ["pnpm", "build"],
+      "startedAt": "2026-10-02T08:57:44.923600+00:00",
+      "seconds": 89.843,
+      "exitCode": 0,
+      "log": "/tmp/pragma-r1-final-global-build.log"
+    }
+  ]
+}

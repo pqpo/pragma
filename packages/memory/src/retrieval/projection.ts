@@ -97,7 +97,10 @@ export function projectMemory(
       if (end < points.length) {
         for (let i = end; i > start + (end - start) / 2; i--)
           if (/[\n.!?。！？]/u.test(points[i - 1]!)) {
-            end = i;
+            // Shortening can switch the shared counter's estimate source. Keep
+            // the already budgeted end when the preferred sentence is too large.
+            if (i === end || counter.countText(points.slice(start, i).join("")).tokens <= maxTokens)
+              end = i;
             break;
           }
       }

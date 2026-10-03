@@ -1,6 +1,9 @@
 import {
   MissionExecutorRefSchema,
   MissionExecutorSchema,
+  MissionIdSchema,
+  MissionModelOverrideSchema,
+  MissionWorkspaceSchema,
   type MissionExecutor,
 } from "@pragma/shared";
 import { PragmaObjectJsonSchemaSchema } from "@pragma/interpreter/ast";
@@ -11,19 +14,17 @@ import {
   PragmaAvatarIdSchema,
 } from "@pragma/shared";
 
-import { ExpertModelConfigSchema } from "./capabilities.ts";
 import { ExpertRefSchema } from "./experts.ts";
 import { DesktopToolPermissionModeSchema } from "./settings.ts";
 
-export { MissionExecutorRefSchema, MissionExecutorSchema };
+export {
+  MissionExecutorRefSchema,
+  MissionExecutorSchema,
+  MissionIdSchema,
+  MissionModelOverrideSchema,
+  MissionWorkspaceSchema,
+};
 export type { MissionExecutor };
-
-export const MissionIdSchema = z.string().uuid();
-
-export const MissionWorkspaceSchema = z.object({
-  path: z.string().trim().min(1).max(2_000),
-  basename: z.string().trim().min(1).max(255),
-});
 
 const MissionExecutorOptionBaseSchema = z.object({
   ref: MissionExecutorRefSchema,
@@ -150,7 +151,3 @@ export const UpdateHomeExecutorPreferenceSchema = z
       });
     }
   });
-
-export const MissionModelOverrideSchema = ExpertModelConfigSchema.omit({
-  runtimeId: true,
-}).strict();
