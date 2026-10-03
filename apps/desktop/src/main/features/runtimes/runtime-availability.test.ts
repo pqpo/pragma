@@ -3,13 +3,9 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { defineRuntimeTestDriver } from "@pragma/core/testing";
-import { describe, expect, it, vi } from "vitest";
+import { describe, expect, it } from "vitest";
 
-import {
-  getRuntimeAvailability,
-  getTargetRuntimeAvailability,
-  invalidateTargetRuntimeAvailability,
-} from "./runtime-availability.ts";
+import { getRuntimeAvailability, getTargetRuntimeAvailability } from "./runtime-availability.ts";
 import { createRuntimeEnvironmentService } from "./runtime-environment-service.ts";
 import { createRuntimeEnvironmentStore } from "./runtime-environment-store.ts";
 
@@ -237,53 +233,33 @@ describe("getRuntimeAvailability", () => {
   });
 });
 
-it("prepares only the requested runtime, shares probes and invalidates failures and environment changes", async () => {
-  const pragmaHome = await mkdtemp(join(tmpdir(), "pragma-runtime-target-"));
-  let generation = 1;
-  let usable = true;
-  const probe = vi.fn(async () => ({ usable }));
-  const models = vi.fn(async () => []);
-  const created: string[] = [];
+it("maps Local Host target readiness into the Desktop availability DTO", async () => {
+  const pragmaHome = await mkdtemp(join(tmpdir(), "pragma-runtime-target-mapping-"));
   const runtimes = createRuntimeEnvironmentService({
-    store: createRuntimeEnvironmentStore({
-      pragmaHome,
-      builtIns: [definition("pi", "Pi"), definition("unrelated", "Slow")],
-    }),
-    getMaterializationCacheKey: () => String(generation),
+    store: createRuntimeEnvironmentStore({ pragmaHome, builtIns: [definition("pi", "Pi")] }),
     factories: [
       {
         id: "test.runtime",
         version: "v1",
-        create: (env) => {
-          created.push(env.id);
-          return defineRuntimeTestDriver({
-            descriptor: { id: env.id, kind: "test", displayName: env.displayName },
-            canUse: probe,
-            listModels: models,
+        create: (environment) =>
+          defineRuntimeTestDriver({
+            descriptor: { id: environment.id, kind: "test", displayName: environment.displayName },
+            canUse: () => ({ usable: false, reason: "not configured" }),
             createSession: () => ({}),
             startTurn: () => ({ outputText: "" }),
             mapEvent: () => ({ events: [] }),
-          });
-        },
+          }),
       },
     ],
   });
-  const list = vi.spyOn(runtimes, "list");
-  await Promise.all(
-    Array.from({ length: 10 }, () => getTargetRuntimeAvailability(runtimes, ["pi"])),
-  );
-  expect(probe).toHaveBeenCalledTimes(1);
-  expect(list).not.toHaveBeenCalled();
-  expect(models).not.toHaveBeenCalled();
-  expect(created).toEqual(["pi"]);
-  generation++;
-  await getTargetRuntimeAvailability(runtimes, ["pi"]);
-  expect(probe).toHaveBeenCalledTimes(2);
-  invalidateTargetRuntimeAvailability(runtimes);
-  usable = false;
-  await getTargetRuntimeAvailability(runtimes, ["pi"]);
-  await getTargetRuntimeAvailability(runtimes, ["pi"]);
-  expect(probe).toHaveBeenCalledTimes(4);
+  await expect(getTargetRuntimeAvailability(runtimes, ["pi"])).resolves.toEqual([
+    expect.objectContaining({
+      id: "pi",
+      revision: 1,
+      status: "unavailable",
+      reason: "not configured",
+    }),
+  ]);
 });
 
 function definition(id: string, displayName: string) {

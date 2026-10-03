@@ -1,0 +1,71 @@
+{
+  "scope": "Same provider pilot parameters main/R2; credential-timeout gives zero model samples, no P50/P95",
+  "pilots": [
+    {
+      "checkout": "main",
+      "supervisor": {
+        "command": [
+          "node",
+          "apps/desktop/scripts/run-mission-latency-benchmark.mjs",
+          "--source-home",
+          "/Users/linminqiu/.pragma",
+          "--samples",
+          "1",
+          "--groups",
+          "warm",
+          "--model",
+          "deepseek-v4-flash",
+          "--thinking",
+          "medium",
+          "--output",
+          "/tmp/pragma-r2-model-main.json"
+        ],
+        "node": "v24.18.0",
+        "elapsedSeconds": 120.12302017211914,
+        "exitCode": 1,
+        "timedOut": false,
+        "processExitConfirmed": true,
+        "startedAtUnix": 1790997571.0115788
+      },
+      "validSamples": 0,
+      "diagnostics": [
+        "MISSION_BENCHMARK_CREDENTIAL_PHASE: credentials-read",
+        "MISSION_BENCHMARK_KEYCHAIN_TIMEOUT: phase=credentials-read; benchmark process stopped; no valid latency result."
+      ],
+      "reportAvailable": false
+    },
+    {
+      "checkout": "candidate",
+      "supervisor": {
+        "command": [
+          "node",
+          "apps/desktop/scripts/run-mission-latency-benchmark.mjs",
+          "--source-home",
+          "/Users/linminqiu/.pragma",
+          "--samples",
+          "1",
+          "--groups",
+          "warm",
+          "--model",
+          "deepseek-v4-flash",
+          "--thinking",
+          "medium",
+          "--output",
+          "/tmp/pragma-r2-model-candidate.json"
+        ],
+        "node": "v24.18.0",
+        "elapsedSeconds": 120.14723801612854,
+        "exitCode": 1,
+        "timedOut": false,
+        "processExitConfirmed": true,
+        "startedAtUnix": 1790997777.081941
+      },
+      "validSamples": 0,
+      "diagnostics": [
+        "MISSION_BENCHMARK_CREDENTIAL_PHASE: credentials-read",
+        "MISSION_BENCHMARK_KEYCHAIN_TIMEOUT: phase=credentials-read; benchmark process stopped; no valid latency result."
+      ],
+      "reportAvailable": false
+    }
+  ]
+}

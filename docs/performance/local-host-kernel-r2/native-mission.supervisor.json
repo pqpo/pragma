@@ -1,0 +1,15 @@
+{
+  "command": [
+    "node",
+    "--import",
+    "tsx",
+    "docs/performance/local-host-kernel-r1-native-mission-probe.mts",
+    "/tmp/pragma-r2-native-mission.json"
+  ],
+  "node": "v24.18.0",
+  "elapsedSeconds": 72.91816115379333,
+  "exitCode": 0,
+  "timedOut": false,
+  "processExitConfirmed": true,
+  "startedAtUnix": 1790997485.5371368
+}

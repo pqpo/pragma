@@ -4,7 +4,7 @@
 
 大输出同步计数、关联 Memory 预算及真实 Mission 释放修复见[计数问题补充](local-host-kernel-r1-token-counter-followup.md)；依据维护者后续修复要求披露估算策略变化，R1 阶段验收仍未完成。
 
-日期：2026-10-02。状态：R1 代码实施已交付，阶段验收未通过，未标记完成；R2/R3/R4 未开始，见[实施与验证报告](local-host-kernel-r1-implementation.md)和[CR 与复核](local-host-kernel-r1-code-review.md)。
+日期：2026-10-03。状态：R1 已通过 PR #353 合入 main，工程验证与真实 Native Mission smoke 已通过；真实模型性能及完整产品场景验收仍有缺口，未标记全部完成。R2 编译编排实施已交付，阶段退出以 [R2 实施与验证报告](local-host-kernel-r2-implementation.md)的逐项结果及缺口为准；R3/R4 未开始。R1 历史证据见[实施与验证报告](local-host-kernel-r1-implementation.md)和[CR 与复核](local-host-kernel-r1-code-review.md)。
 
 本方案对应 [issue #348](https://github.com/pqpo/pragma/issues/348)，基于拉取后的 `main`，代码基线为 `8fdbd4526d0f62d0b36891165539ed9ec47dc603`。目标是让 Desktop 与 CLI 的 Mission 控制、编译编排、运行、Session 与恢复共用 `@pragma/local-host` 的一套实现，同时保留最近四轮首 Token 优化。实施采用 R1 至 R4 四个阶段；基线测量与中立契约准备并入 R1 的前置工作；每阶段独立验证、合并，并删除该阶段已替代的业务路径。
 

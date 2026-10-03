@@ -1,0 +1,14 @@
+{
+  "schemaVersion": "pragma.capability/v2",
+  "id": "0123456789abcdef",
+  "runtimeKey": "historical_http_01234567",
+  "name": "Historical HTTP",
+  "kind": "http_service",
+  "latestRevision": 1,
+  "origin": {
+    "kind": "pragma-bundle",
+    "logicalId": "fedcba9876543210"
+  },
+  "createdAt": "2025-08-14T09:30:00.000Z",
+  "updatedAt": "2025-08-14T09:30:00.000Z"
+}

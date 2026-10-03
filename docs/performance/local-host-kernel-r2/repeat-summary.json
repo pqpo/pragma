@@ -1,0 +1,61 @@
+{
+  "scope": "Additional targeted probes; single cold seed plus60 Capability mutations per side. Same script per pair; fixed production source. Do not pool with full-group samples.",
+  "comparisons": [
+    {
+      "comparisonGroup": 3,
+      "samplesPerSide": 60,
+      "scenario": "capability-invalidation",
+      "main": {
+        "p50Ms": 621.8376700000008,
+        "p95Ms": 673.9043810000003,
+        "maxMs": 753.6597539999993,
+        "compilePhaseP95Ms": 32.07,
+        "sourceUnchanged": true,
+        "completeProbePassed": true,
+        "probeSha256": "745827813768e1d3c03e71f8813d5c3e1e6c542bb565212d6322dcb6b0d2d3f1"
+      },
+      "candidate": {
+        "p50Ms": 629.3887639999994,
+        "p95Ms": 664.949956000004,
+        "maxMs": 802.9380940000001,
+        "compilePhaseP95Ms": 34.63,
+        "sourceUnchanged": true,
+        "completeProbePassed": true,
+        "probeSha256": "745827813768e1d3c03e71f8813d5c3e1e6c542bb565212d6322dcb6b0d2d3f1"
+      },
+      "gate": {
+        "deltaMs": -8.954424999996263,
+        "deltaPercent": -1.3287382086326405,
+        "triggered": false
+      }
+    },
+    {
+      "comparisonGroup": 4,
+      "samplesPerSide": 60,
+      "scenario": "capability-invalidation",
+      "main": {
+        "p50Ms": 629.976122,
+        "p95Ms": 688.1670549999981,
+        "maxMs": 784.5945499999998,
+        "compilePhaseP95Ms": 32.56,
+        "sourceUnchanged": true,
+        "completeProbePassed": true,
+        "probeSha256": "745827813768e1d3c03e71f8813d5c3e1e6c542bb565212d6322dcb6b0d2d3f1"
+      },
+      "candidate": {
+        "p50Ms": 630.5418859999991,
+        "p95Ms": 668.3745309999995,
+        "maxMs": 804.336671,
+        "compilePhaseP95Ms": 33.6,
+        "sourceUnchanged": true,
+        "completeProbePassed": true,
+        "probeSha256": "745827813768e1d3c03e71f8813d5c3e1e6c542bb565212d6322dcb6b0d2d3f1"
+      },
+      "gate": {
+        "deltaMs": -19.792523999998593,
+        "deltaPercent": -2.876121990466207,
+        "triggered": false
+      }
+    }
+  ]
+}

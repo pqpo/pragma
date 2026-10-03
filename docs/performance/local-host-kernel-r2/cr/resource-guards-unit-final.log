@@ -1,0 +1,13 @@
+
+ RUN  v5.0.2 /Users/linminqiu/.codex/worktrees/issue-348-r2/expert-mesh/packages/local-host
+
+
+ Test Files  1 passed (1)
+      Tests  18 passed (18)
+   Start at  13:05:01
+   Duration  3.12s (transform 68%, import 23%, tests 9%)
+
+  Transform  transforming modules took 2.00s · 68% of tracked time, re-done on every run
+             persist transforms across runs with fsModuleCache: true
+             learn more: https://vitest.dev/guide/improving-performance#caching-between-reruns
+

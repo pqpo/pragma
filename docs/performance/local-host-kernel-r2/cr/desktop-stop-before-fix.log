@@ -1,0 +1,488 @@
+
+ RUN  v5.0.2 /Users/linminqiu/.codex/worktrees/issue-348-r2/expert-mesh/apps/desktop
+
+stdout | src/main/features/missions/mission-runner.test.ts > MissionRunner > cold-interrupts the original Native Session through acquisition when readiness, capabilities and credentials are unavailable
+[2026-10-03T04:35:37.048Z] INFO interpreter.compiler/interpreter.blueprint_cache_lookup - Pragma project Blueprint cache miss.
+  stream: operation
+  sequence: 0
+  host: kind=node bootId=769d46d1-c7d0-4a56-b38f-df0c893c6b78
+  attributes:
+    {
+      "projectId": "studio",
+      "revision": 1,
+      "cacheTier": "miss",
+      "cacheHit": false,
+      "durationMs": 0.13
+    }
+
+stdout | src/main/features/missions/mission-runner.test.ts > MissionRunner > cold-interrupts the original Native Session through acquisition when readiness, capabilities and credentials are unavailable
+[2026-10-03T04:35:37.089Z] INFO desktop.mission-runner/mission.prepare_phase - Mission preparation phase completed: prompt_admission_wait
+  stream: operation
+  sequence: 1
+  host: kind=node bootId=769d46d1-c7d0-4a56-b38f-df0c893c6b78
+  attributes:
+    {
+      "missionId": "0e3eaba3-249d-4628-aa62-38148fffb3fa",
+      "phase": "prompt_admission_wait",
+      "durationMs": 0.11,
+      "elapsedMs": 0.11
+    }
+
+stdout | src/main/features/missions/mission-runner.test.ts > MissionRunner > cold-interrupts the original Native Session through acquisition when readiness, capabilities and credentials are unavailable
+[2026-10-03T04:35:37.090Z] INFO desktop.mission-runner/mission.message_accepted - Mission request accepted
+  stream: operation
+  sequence: 2
+  host: kind=node bootId=769d46d1-c7d0-4a56-b38f-df0c893c6b78
+  attributes:
+    {
+      "missionId": "0e3eaba3-249d-4628-aa62-38148fffb3fa",
+      "kind": "initial"
+    }
+
+stdout | src/main/features/missions/mission-runner.test.ts > MissionRunner > cold-interrupts the original Native Session through acquisition when readiness, capabilities and credentials are unavailable
+[2026-10-03T04:35:37.096Z] INFO desktop.mission-runner/mission.prepare_phase - Mission preparation phase completed: mission_load_and_executor_ready
+  stream: operation
+  sequence: 3
+  host: kind=node bootId=769d46d1-c7d0-4a56-b38f-df0c893c6b78
+  attributes:
+    {
+      "missionId": "0e3eaba3-249d-4628-aa62-38148fffb3fa",
+      "phase": "mission_load_and_executor_ready",
+      "durationMs": 6.09,
+      "elapsedMs": 6.28
+    }
+
+stdout | src/main/features/missions/mission-runner.test.ts > MissionRunner > cold-interrupts the original Native Session through acquisition when readiness, capabilities and credentials are unavailable
+[2026-10-03T04:35:37.107Z] INFO desktop.mission-runner/mission.prepare_phase - Mission preparation phase completed: execution_context
+  stream: operation
+  sequence: 4
+  host: kind=node bootId=769d46d1-c7d0-4a56-b38f-df0c893c6b78
+  attributes:
+    {
+      "missionId": "0e3eaba3-249d-4628-aa62-38148fffb3fa",
+      "phase": "execution_context",
+      "durationMs": 10.62,
+      "elapsedMs": 17.15
+    }
+
+stdout | src/main/features/missions/mission-runner.test.ts > MissionRunner > cold-interrupts the original Native Session through acquisition when readiness, capabilities and credentials are unavailable
+[2026-10-03T04:35:37.125Z] INFO desktop.mission-runner/mission.performance - Mission phase completed
+  stream: operation
+  sequence: 5
+  host: kind=node bootId=769d46d1-c7d0-4a56-b38f-df0c893c6b78
+  attributes:
+    {
+      "missionId": "0e3eaba3-249d-4628-aa62-38148fffb3fa",
+      "phase": "identity_revision_read",
+      "elapsedMs": 17.407908000000134
+    }
+
+stdout | src/main/features/missions/mission-runner.test.ts > MissionRunner > cold-interrupts the original Native Session through acquisition when readiness, capabilities and credentials are unavailable
+[2026-10-03T04:35:37.141Z] INFO expert-agent/expert.plugins_loading - Loading Expert plugins
+  stream: operation
+  sequence: 6
+  host: kind=node bootId=769d46d1-c7d0-4a56-b38f-df0c893c6b78
+  scope: agentId=1xddvess309a6gme
+  attributes:
+    {
+      "pluginCount": 0
+    }
+
+stdout | src/main/features/missions/mission-runner.test.ts > MissionRunner > cold-interrupts the original Native Session through acquisition when readiness, capabilities and credentials are unavailable
+[2026-10-03T04:35:37.142Z] INFO expert-agent/expert.created - Expert created
+  stream: operation
+  sequence: 7
+  host: kind=node bootId=769d46d1-c7d0-4a56-b38f-df0c893c6b78
+  scope: agentId=1xddvess309a6gme
+  attributes:
+    {
+      "pluginCount": 0,
+      "pluginLoadIssueCount": 0
+    }
+
+stdout | src/main/features/missions/mission-runner.test.ts > MissionRunner > cold-interrupts the original Native Session through acquisition when readiness, capabilities and credentials are unavailable
+[2026-10-03T04:35:37.147Z] INFO desktop.mission-runner/mission.prepare_phase - Mission preparation phase completed: default_agent_compile
+  stream: operation
+  sequence: 8
+  host: kind=node bootId=769d46d1-c7d0-4a56-b38f-df0c893c6b78
+  attributes:
+    {
+      "missionId": "0e3eaba3-249d-4628-aa62-38148fffb3fa",
+      "phase": "default_agent_compile",
+      "durationMs": 40.09,
+      "elapsedMs": 57.5
+    }
+
+stdout | src/main/features/missions/mission-runner.test.ts > MissionRunner > cold-interrupts the original Native Session through acquisition when readiness, capabilities and credentials are unavailable
+[2026-10-03T04:35:37.833Z] INFO execution.expert-runner/execution.invocation_prepare_phase - Expert Invocation preparation phase completed
+  stream: operation
+  sequence: 9
+  host: kind=node bootId=769d46d1-c7d0-4a56-b38f-df0c893c6b78
+  scope: executionId=f3d84270-9821-42fd-80a3-3f8e3f3266e9 invocationId=9d2a0569-51cd-4dbf-a886-a6795cd8bb06 contextId=fda990e8-6f03-4dc1-87e0-f5604d26bc3d
+  attributes:
+    {
+      "phase": "ownership_and_host_context",
+      "durationMs": 13.41,
+      "elapsedMs": 13.41
+    }
+[2026-10-03T04:35:37.834Z] INFO execution.expert-runner/execution.invocation_prepare_phase - Expert Invocation preparation phase completed
+  stream: operation
+  sequence: 10
+  host: kind=node bootId=769d46d1-c7d0-4a56-b38f-df0c893c6b78
+  scope: executionId=f3d84270-9821-42fd-80a3-3f8e3f3266e9 invocationId=9d2a0569-51cd-4dbf-a886-a6795cd8bb06 contextId=fda990e8-6f03-4dc1-87e0-f5604d26bc3d
+  attributes:
+    {
+      "phase": "expert_and_orchestrator",
+      "durationMs": 0.86,
+      "elapsedMs": 14.27
+    }
+
+stdout | src/main/features/missions/mission-runner.test.ts > MissionRunner > cold-interrupts the original Native Session through acquisition when readiness, capabilities and credentials are unavailable
+[2026-10-03T04:35:37.856Z] INFO execution.expert-runner/execution.invocation_prepare_phase - Expert Invocation preparation phase completed
+  stream: operation
+  sequence: 11
+  host: kind=node bootId=769d46d1-c7d0-4a56-b38f-df0c893c6b78
+  scope: executionId=f3d84270-9821-42fd-80a3-3f8e3f3266e9 invocationId=9d2a0569-51cd-4dbf-a886-a6795cd8bb06 contextId=fda990e8-6f03-4dc1-87e0-f5604d26bc3d
+  attributes:
+    {
+      "phase": "invocation_and_user_message_persistence",
+      "durationMs": 22.28,
+      "elapsedMs": 36.55
+    }
+
+stdout | src/main/features/missions/mission-runner.test.ts > MissionRunner > cold-interrupts the original Native Session through acquisition when readiness, capabilities and credentials are unavailable
+[2026-10-03T04:35:37.857Z] INFO execution.expert-runner/execution.invocation_prepare_phase - Expert Invocation preparation phase completed
+  stream: operation
+  sequence: 12
+  host: kind=node bootId=769d46d1-c7d0-4a56-b38f-df0c893c6b78
+  scope: executionId=f3d84270-9821-42fd-80a3-3f8e3f3266e9 invocationId=9d2a0569-51cd-4dbf-a886-a6795cd8bb06 contextId=fda990e8-6f03-4dc1-87e0-f5604d26bc3d
+  attributes:
+    {
+      "phase": "runtime_routing_validation",
+      "durationMs": 0.66,
+      "elapsedMs": 37.21,
+      "runtimeId": "fake"
+    }
+[2026-10-03T04:35:37.858Z] INFO runtime.adapter/runtime.session_prepare_started - Runtime Session preparation started
+  stream: operation
+  sequence: 13
+  host: kind=node bootId=769d46d1-c7d0-4a56-b38f-df0c893c6b78
+  scope: executionId=f3d84270-9821-42fd-80a3-3f8e3f3266e9 invocationId=9d2a0569-51cd-4dbf-a886-a6795cd8bb06 contextId=fda990e8-6f03-4dc1-87e0-f5604d26bc3d agentId=1xddvess309a6gme runtimeId=fake systemSessionId=d5dbf2d6-b7b1-4ac3-920e-3851c8511d71
+  attributes:
+    {
+      "restoring": false
+    }
+
+stdout | src/main/features/missions/mission-runner.test.ts > MissionRunner > cold-interrupts the original Native Session through acquisition when readiness, capabilities and credentials are unavailable
+[2026-10-03T04:35:37.860Z] INFO runtime.adapter/runtime.session_phase - Runtime Session phase completed: runtime.can_use
+  stream: operation
+  sequence: 14
+  host: kind=node bootId=769d46d1-c7d0-4a56-b38f-df0c893c6b78
+  scope: executionId=f3d84270-9821-42fd-80a3-3f8e3f3266e9 invocationId=9d2a0569-51cd-4dbf-a886-a6795cd8bb06 contextId=fda990e8-6f03-4dc1-87e0-f5604d26bc3d agentId=1xddvess309a6gme runtimeId=fake systemSessionId=d5dbf2d6-b7b1-4ac3-920e-3851c8511d71
+  attributes:
+    {
+      "phase": "runtime.can_use",
+      "durationMs": 0.18,
+      "elapsedMs": 1.26
+    }
+
+stdout | src/main/features/missions/mission-runner.test.ts > MissionRunner > cold-interrupts the original Native Session through acquisition when readiness, capabilities and credentials are unavailable
+[2026-10-03T04:35:37.877Z] INFO runtime.adapter/runtime.session_phase - Runtime Session phase completed: runtime.session_record
+  stream: operation
+  sequence: 15
+  host: kind=node bootId=769d46d1-c7d0-4a56-b38f-df0c893c6b78
+  scope: executionId=f3d84270-9821-42fd-80a3-3f8e3f3266e9 invocationId=9d2a0569-51cd-4dbf-a886-a6795cd8bb06 contextId=fda990e8-6f03-4dc1-87e0-f5604d26bc3d agentId=1xddvess309a6gme runtimeId=fake systemSessionId=d5dbf2d6-b7b1-4ac3-920e-3851c8511d71
+  attributes:
+    {
+      "phase": "runtime.session_record",
+      "durationMs": 17.57,
+      "elapsedMs": 19.05
+    }
+
+stdout | src/main/features/missions/mission-runner.test.ts > MissionRunner > cold-interrupts the original Native Session through acquisition when readiness, capabilities and credentials are unavailable
+[2026-10-03T04:35:37.878Z] INFO runtime.adapter/runtime.session_phase - Runtime Session phase completed: runtime.before_session_hook
+  stream: operation
+  sequence: 16
+  host: kind=node bootId=769d46d1-c7d0-4a56-b38f-df0c893c6b78
+  scope: executionId=f3d84270-9821-42fd-80a3-3f8e3f3266e9 invocationId=9d2a0569-51cd-4dbf-a886-a6795cd8bb06 contextId=fda990e8-6f03-4dc1-87e0-f5604d26bc3d agentId=1xddvess309a6gme runtimeId=fake systemSessionId=d5dbf2d6-b7b1-4ac3-920e-3851c8511d71
+  attributes:
+    {
+      "phase": "runtime.before_session_hook",
+      "durationMs": 0.21,
+      "elapsedMs": 19.53
+    }
+
+stdout | src/main/features/missions/mission-runner.test.ts > MissionRunner > cold-interrupts the original Native Session through acquisition when readiness, capabilities and credentials are unavailable
+[2026-10-03T04:35:37.878Z] INFO runtime.adapter/runtime.session_phase - Runtime Session phase completed: runtime.persistence_restore
+  stream: operation
+  sequence: 17
+  host: kind=node bootId=769d46d1-c7d0-4a56-b38f-df0c893c6b78
+  scope: executionId=f3d84270-9821-42fd-80a3-3f8e3f3266e9 invocationId=9d2a0569-51cd-4dbf-a886-a6795cd8bb06 contextId=fda990e8-6f03-4dc1-87e0-f5604d26bc3d agentId=1xddvess309a6gme runtimeId=fake systemSessionId=d5dbf2d6-b7b1-4ac3-920e-3851c8511d71
+  attributes:
+    {
+      "phase": "runtime.persistence_restore",
+      "durationMs": 0.09,
+      "elapsedMs": 19.8
+    }
+
+stdout | src/main/features/missions/mission-runner.test.ts > MissionRunner > cold-interrupts the original Native Session through acquisition when readiness, capabilities and credentials are unavailable
+[2026-10-03T04:35:37.893Z] INFO runtime.adapter/runtime.session_phase - Runtime Session phase completed: runtime.context_prepared
+  stream: operation
+  sequence: 18
+  host: kind=node bootId=769d46d1-c7d0-4a56-b38f-df0c893c6b78
+  scope: executionId=f3d84270-9821-42fd-80a3-3f8e3f3266e9 invocationId=9d2a0569-51cd-4dbf-a886-a6795cd8bb06 contextId=fda990e8-6f03-4dc1-87e0-f5604d26bc3d agentId=1xddvess309a6gme runtimeId=fake systemSessionId=d5dbf2d6-b7b1-4ac3-920e-3851c8511d71
+  attributes:
+    {
+      "phase": "runtime.context_prepared",
+      "durationMs": 14.77,
+      "elapsedMs": 34.73,
+      "systemPromptCharacters": 1907,
+      "startupMessageCount": 1,
+      "toolCount": 0
+    }
+
+stdout | src/main/features/missions/mission-runner.test.ts > MissionRunner > cold-interrupts the original Native Session through acquisition when readiness, capabilities and credentials are unavailable
+[2026-10-03T04:35:37.894Z] INFO runtime.adapter/runtime.session_phase - Runtime Session phase completed: runtime.native_session_create
+  stream: operation
+  sequence: 19
+  host: kind=node bootId=769d46d1-c7d0-4a56-b38f-df0c893c6b78
+  scope: executionId=f3d84270-9821-42fd-80a3-3f8e3f3266e9 invocationId=9d2a0569-51cd-4dbf-a886-a6795cd8bb06 contextId=fda990e8-6f03-4dc1-87e0-f5604d26bc3d agentId=1xddvess309a6gme runtimeId=fake systemSessionId=d5dbf2d6-b7b1-4ac3-920e-3851c8511d71
+  attributes:
+    {
+      "phase": "runtime.native_session_create",
+      "durationMs": 0.05,
+      "elapsedMs": 35.93
+    }
+
+stdout | src/main/features/missions/mission-runner.test.ts > MissionRunner > cold-interrupts the original Native Session through acquisition when readiness, capabilities and credentials are unavailable
+[2026-10-03T04:35:37.909Z] INFO runtime.adapter/runtime.session_ready - Runtime Session preparation completed
+  stream: operation
+  sequence: 20
+  host: kind=node bootId=769d46d1-c7d0-4a56-b38f-df0c893c6b78
+  scope: executionId=f3d84270-9821-42fd-80a3-3f8e3f3266e9 invocationId=9d2a0569-51cd-4dbf-a886-a6795cd8bb06 contextId=fda990e8-6f03-4dc1-87e0-f5604d26bc3d agentId=1xddvess309a6gme runtimeId=fake systemSessionId=d5dbf2d6-b7b1-4ac3-920e-3851c8511d71
+  attributes:
+    {
+      "elapsedMs": 50.86,
+      "restored": false
+    }
+
+stdout | src/main/features/missions/mission-runner.test.ts > MissionRunner > cold-interrupts the original Native Session through acquisition when readiness, capabilities and credentials are unavailable
+[2026-10-03T04:35:37.910Z] INFO execution.expert-runner/execution.invocation_prepare_phase - Expert Invocation preparation phase completed
+  stream: operation
+  sequence: 21
+  host: kind=node bootId=769d46d1-c7d0-4a56-b38f-df0c893c6b78
+  scope: executionId=f3d84270-9821-42fd-80a3-3f8e3f3266e9 invocationId=9d2a0569-51cd-4dbf-a886-a6795cd8bb06 contextId=fda990e8-6f03-4dc1-87e0-f5604d26bc3d
+  attributes:
+    {
+      "phase": "runtime_session_acquire",
+      "durationMs": 52.99,
+      "elapsedMs": 90.2,
+      "cacheHit": false
+    }
+
+stdout | src/main/features/missions/mission-runner.test.ts > MissionRunner > cold-interrupts the original Native Session through acquisition when readiness, capabilities and credentials are unavailable
+[2026-10-03T04:35:37.910Z] INFO execution.expert-runner/execution.invocation_prepare_phase - Expert Invocation preparation phase completed
+  stream: operation
+  sequence: 22
+  host: kind=node bootId=769d46d1-c7d0-4a56-b38f-df0c893c6b78
+  scope: executionId=f3d84270-9821-42fd-80a3-3f8e3f3266e9 invocationId=9d2a0569-51cd-4dbf-a886-a6795cd8bb06 contextId=fda990e8-6f03-4dc1-87e0-f5604d26bc3d
+  attributes:
+    {
+      "phase": "pending_messages",
+      "durationMs": 0.23,
+      "elapsedMs": 90.43
+    }
+
+stdout | src/main/features/missions/mission-runner.test.ts > MissionRunner > cold-interrupts the original Native Session through acquisition when readiness, capabilities and credentials are unavailable
+[2026-10-03T04:35:37.914Z] INFO runtime.adapter/runtime.model_request_dispatched - Runtime adapter dispatched the native model request
+  stream: operation
+  sequence: 23
+  host: kind=node bootId=769d46d1-c7d0-4a56-b38f-df0c893c6b78
+  scope: executionId=f3d84270-9821-42fd-80a3-3f8e3f3266e9 invocationId=9d2a0569-51cd-4dbf-a886-a6795cd8bb06 contextId=fda990e8-6f03-4dc1-87e0-f5604d26bc3d agentId=1xddvess309a6gme runId=9d2a0569-51cd-4dbf-a886-a6795cd8bb06 runtimeId=fake systemSessionId=d5dbf2d6-b7b1-4ac3-920e-3851c8511d71
+  attributes:
+    {
+      "runId": "9d2a0569-51cd-4dbf-a886-a6795cd8bb06",
+      "attempt": 1,
+      "isRetry": false
+    }
+
+stdout | src/main/features/missions/mission-runner.test.ts > MissionRunner > cold-interrupts the original Native Session through acquisition when readiness, capabilities and credentials are unavailable
+[2026-10-03T04:35:37.914Z] INFO runtime.adapter/runtime.model_request_finished - Runtime adapter finished the native model request
+  stream: operation
+  sequence: 24
+  host: kind=node bootId=769d46d1-c7d0-4a56-b38f-df0c893c6b78
+  scope: executionId=f3d84270-9821-42fd-80a3-3f8e3f3266e9 invocationId=9d2a0569-51cd-4dbf-a886-a6795cd8bb06 contextId=fda990e8-6f03-4dc1-87e0-f5604d26bc3d agentId=1xddvess309a6gme runId=9d2a0569-51cd-4dbf-a886-a6795cd8bb06 runtimeId=fake systemSessionId=d5dbf2d6-b7b1-4ac3-920e-3851c8511d71
+  attributes:
+    {
+      "runId": "9d2a0569-51cd-4dbf-a886-a6795cd8bb06",
+      "attempt": 1,
+      "durationMs": 0.4
+    }
+
+stdout | src/main/features/missions/mission-runner.test.ts > MissionRunner > cold-interrupts the original Native Session through acquisition when readiness, capabilities and credentials are unavailable
+[2026-10-03T04:35:37.919Z] INFO core.execution.runtime-turn/execution.runtime_result_observed - Runtime result observed
+  stream: operation
+  sequence: 25
+  host: kind=node bootId=769d46d1-c7d0-4a56-b38f-df0c893c6b78
+  scope: executionId=f3d84270-9821-42fd-80a3-3f8e3f3266e9 invocationId=9d2a0569-51cd-4dbf-a886-a6795cd8bb06
+  attributes:
+    {
+      "runId": "9d2a0569-51cd-4dbf-a886-a6795cd8bb06"
+    }
+
+stdout | src/main/features/missions/mission-runner.test.ts > MissionRunner > cold-interrupts the original Native Session through acquisition when readiness, capabilities and credentials are unavailable
+[2026-10-03T04:35:38.067Z] INFO core.execution.runtime-events/execution.runtime_events_committed - Runtime event batch durably committed
+  stream: operation
+  sequence: 26
+  host: kind=node bootId=769d46d1-c7d0-4a56-b38f-df0c893c6b78
+  scope: executionId=f3d84270-9821-42fd-80a3-3f8e3f3266e9 invocationId=9d2a0569-51cd-4dbf-a886-a6795cd8bb06
+  attributes:
+    {
+      "executionId": "f3d84270-9821-42fd-80a3-3f8e3f3266e9",
+      "eventCount": 2,
+      "version": 8,
+      "durationMs": 148.72
+    }
+
+stdout | src/main/features/missions/mission-runner.test.ts > MissionRunner > cold-interrupts the original Native Session through acquisition when readiness, capabilities and credentials are unavailable
+[2026-10-03T04:35:38.068Z] INFO core.execution.runtime-turn/execution.turn_phase - Runtime turn phase completed
+  stream: operation
+  sequence: 27
+  host: kind=node bootId=769d46d1-c7d0-4a56-b38f-df0c893c6b78
+  scope: executionId=f3d84270-9821-42fd-80a3-3f8e3f3266e9 invocationId=9d2a0569-51cd-4dbf-a886-a6795cd8bb06
+  attributes:
+    {
+      "phase": "event_writer_flush",
+      "runId": "9d2a0569-51cd-4dbf-a886-a6795cd8bb06",
+      "elapsedMs": 149.106941
+    }
+
+stdout | src/main/features/missions/mission-runner.test.ts > MissionRunner > cold-interrupts the original Native Session through acquisition when readiness, capabilities and credentials are unavailable
+[2026-10-03T04:35:38.068Z] INFO core.execution.runtime-turn/execution.turn_phase - Runtime turn phase completed
+  stream: operation
+  sequence: 28
+  host: kind=node bootId=769d46d1-c7d0-4a56-b38f-df0c893c6b78
+  scope: executionId=f3d84270-9821-42fd-80a3-3f8e3f3266e9 invocationId=9d2a0569-51cd-4dbf-a886-a6795cd8bb06
+  attributes:
+    {
+      "phase": "event_pump_drain",
+      "runId": "9d2a0569-51cd-4dbf-a886-a6795cd8bb06",
+      "elapsedMs": 148.7866700000004
+    }
+
+stdout | src/main/features/missions/mission-runner.test.ts > MissionRunner > cold-interrupts the original Native Session through acquisition when readiness, capabilities and credentials are unavailable
+[2026-10-03T04:35:38.070Z] INFO core.execution.runtime-turn/execution.turn_phase - Runtime turn phase completed
+  stream: operation
+  sequence: 29
+  host: kind=node bootId=769d46d1-c7d0-4a56-b38f-df0c893c6b78
+  scope: executionId=f3d84270-9821-42fd-80a3-3f8e3f3266e9 invocationId=9d2a0569-51cd-4dbf-a886-a6795cd8bb06
+  attributes:
+    {
+      "phase": "usage_fact_staged",
+      "runId": "9d2a0569-51cd-4dbf-a886-a6795cd8bb06",
+      "elapsedMs": 0.3094729999993433
+    }
+
+stdout | src/main/features/missions/mission-runner.test.ts > MissionRunner > cold-interrupts the original Native Session through acquisition when readiness, capabilities and credentials are unavailable
+[2026-10-03T04:35:38.071Z] INFO core.execution.runtime-turn/execution.turn_phase - Runtime turn phase completed
+  stream: operation
+  sequence: 30
+  host: kind=node bootId=769d46d1-c7d0-4a56-b38f-df0c893c6b78
+  scope: executionId=f3d84270-9821-42fd-80a3-3f8e3f3266e9 invocationId=9d2a0569-51cd-4dbf-a886-a6795cd8bb06
+  attributes:
+    {
+      "phase": "event_writer_flush",
+      "runId": "9d2a0569-51cd-4dbf-a886-a6795cd8bb06",
+      "elapsedMs": 0.05213700000058452
+    }
+
+stdout | src/main/features/missions/mission-runner.test.ts > MissionRunner > cold-interrupts the original Native Session through acquisition when readiness, capabilities and credentials are unavailable
+[2026-10-03T04:35:38.800Z] INFO desktop.mission-runner/mission.terminal_status_published - Core terminal status published to Desktop
+  stream: operation
+  sequence: 31
+  host: kind=node bootId=769d46d1-c7d0-4a56-b38f-df0c893c6b78
+  attributes:
+    {
+      "missionId": "0e3eaba3-249d-4628-aa62-38148fffb3fa",
+      "executionId": "f3d84270-9821-42fd-80a3-3f8e3f3266e9",
+      "requestId": "f7bf0f2f-c7f6-4eee-a717-d801ecbcf165",
+      "status": "cancelled"
+    }
+
+stdout | src/main/features/missions/mission-runner.test.ts > MissionRunner > cold-interrupts the original Native Session through acquisition when readiness, capabilities and credentials are unavailable
+[2026-10-03T04:35:38.896Z] INFO desktop.mission-runner/mission.final_result - Mission execution reached a final result
+  stream: operation
+  sequence: 32
+  host: kind=node bootId=769d46d1-c7d0-4a56-b38f-df0c893c6b78
+  attributes:
+    {
+      "missionId": "0e3eaba3-249d-4628-aa62-38148fffb3fa",
+      "executionId": "f3d84270-9821-42fd-80a3-3f8e3f3266e9",
+      "elapsedMs": 1806.42
+    }
+
+stdout | src/main/features/missions/mission-runner.test.ts > MissionRunner > cold-interrupts the original Native Session through acquisition when readiness, capabilities and credentials are unavailable
+[2026-10-03T04:35:38.897Z] INFO desktop.mission-runner/mission.output_coalescing - Mission live output coalescing completed.
+  stream: operation
+  sequence: 33
+  host: kind=node bootId=769d46d1-c7d0-4a56-b38f-df0c893c6b78
+  attributes:
+    {
+      "missionId": "0e3eaba3-249d-4628-aa62-38148fffb3fa",
+      "executionId": "f3d84270-9821-42fd-80a3-3f8e3f3266e9",
+      "rawItems": 1,
+      "emittedItems": 1,
+      "coalescedItems": 0,
+      "maxBufferedCharacters": 0
+    }
+
+stdout | src/main/features/missions/mission-runner.test.ts > MissionRunner > cold-interrupts the original Native Session through acquisition when readiness, capabilities and credentials are unavailable
+[2026-10-03T04:35:38.897Z] INFO desktop.mission-runner/mission.observer_settled - Mission observer cleanup completed
+  stream: operation
+  sequence: 34
+  host: kind=node bootId=769d46d1-c7d0-4a56-b38f-df0c893c6b78
+  attributes:
+    {
+      "missionId": "0e3eaba3-249d-4628-aa62-38148fffb3fa",
+      "executionId": "f3d84270-9821-42fd-80a3-3f8e3f3266e9",
+      "requestId": "f7bf0f2f-c7f6-4eee-a717-d801ecbcf165",
+      "elapsedMs": 97.22222099999999
+    }
+
+ ❯ src/main/features/missions/mission-runner.test.ts (84 tests | 1 failed | 83 skipped) 2218ms
+   ❯ MissionRunner (83)
+     × cold-interrupts the original Native Session through acquisition when readiness, capabilities and credentials are unavailable 2216ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  src/main/features/missions/mission-runner.test.ts > MissionRunner > cold-interrupts the original Native Session through acquisition when readiness, capabilities and credentials are unavailable
+AssertionError: promise rejected "Error: Runtime readiness is unavailable a…" instead of resolving
+ ❯ src/main/features/missions/mission-runner.test.ts:8211:87
+    8209|     expect(readiness).toHaveBeenCalledOnce();
+    8210|     readiness.mockClear();
+    8211|     await expect(restarted.missionControl.assertAcquisitionAllowed(mis…
+       |                                                                                       ^
+    8212|     await expect(restarted.interrupt(mission.id, executionId)).resolve…
+    8213|       execution: { id: executionId, status: "cancelled" },
+
+Caused by: Error: Runtime readiness is unavailable after restart
+ ❯ Object.<anonymous> src/main/features/missions/mission-runner.test.ts:8098:30
+ ❯ Object.assertMissionReady src/main/features/missions/mission-runner-composition.ts:4871:21
+ ❯ Object.assertAcquisitionAllowed ../../packages/local-host/src/core-control-adapter.ts:302:5
+ ❯ src/main/features/missions/mission-runner.test.ts:8211:5
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  1 failed | 83 skipped (84)
+   Start at  12:35:32
+   Duration  6.81s (transform 50%, tests 33%, import 16%, setup 1%)
+
+  Transform  transforming modules took 3.31s · 50% of tracked time, re-done on every run
+             persist transforms across runs with fsModuleCache: true
+             learn more: https://vitest.dev/guide/improving-performance#caching-between-reruns
+
+undefined
+/Users/linminqiu/.codex/worktrees/issue-348-r2/expert-mesh/apps/desktop:
+ ERR_PNPM_RECURSIVE_EXEC_FIRST_FAIL  Command failed with exit code 1: vitest run src/main/features/missions/mission-runner.test.ts -t cold-interrupts the original Native Session through acquisition

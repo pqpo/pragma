@@ -20,10 +20,12 @@ export const PUBLISHED_TEAM_ID = "vyv9pwwzaksth2dd" as const;
 export const PUBLISHED_FLOW_ID = "t9ne4d8njvvxv2ea" as const;
 
 /** Write the same v5 manifest/CAS layout used by the Desktop publisher. */
-export async function writePublishedProjectFixture(home: string): Promise<{
+export async function writePublishedProjectFixture(
+  home: string,
+  resources: readonly PragmaResource[] = createPublishedProjectResources(),
+): Promise<{
   readonly fingerprint: string;
 }> {
-  const resources = createPublishedProjectResources();
   const service = new PragmaProjectService({ repository: emptyRepository() });
   const files = await service.renderProjectFiles({ resources });
   const lock = PragmaLockSchema.parse(parsePragmaYaml(files.get("pragma.lock.yaml")!));

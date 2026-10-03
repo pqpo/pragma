@@ -112,7 +112,8 @@ export function createMissionControlApplication(options: {
   readonly consumer: MissionCommandConsumer;
   readonly client?: MissionControlClient | undefined;
   readonly assertMission?: ((missionId: string) => Promise<void>) | undefined;
-  readonly assertAcquisitionAllowed?: ((missionId: string) => Promise<void>) | undefined;
+  readonly assertAcquisitionAllowed?:
+    ((missionId: string, purpose?: "execute" | "stop") => Promise<void>) | undefined;
   readonly resolveStrictTarget?:
     | ((input: {
         readonly missionId: string;
@@ -134,7 +135,10 @@ export function createMissionControlApplication(options: {
   const now = options.now ?? (() => new Date());
   options.ownerScope.bindConsumer(options.consumer);
 
-  const startOwnerUnmeasured = async (missionId: string): Promise<"live" | "acquired"> => {
+  const startOwnerUnmeasured = async (
+    missionId: string,
+    purpose: "execute" | "stop" = "execute",
+  ): Promise<"live" | "acquired"> => {
     const current = options.ownerScope.currentGuard(missionId);
     if (current !== undefined) {
       // Acquisition of an existing owner restarts a poller stopped by a
@@ -146,7 +150,7 @@ export function createMissionControlApplication(options: {
     const snapshot = await options.controller.readSnapshot({ missionId });
     if (hasLiveLease(snapshot.snapshot.lease, now())) return "live";
 
-    await options.assertAcquisitionAllowed?.(missionId);
+    await options.assertAcquisitionAllowed?.(missionId, purpose);
     try {
       await options.ownerScope.acquire(missionId);
     } catch (error) {
@@ -159,9 +163,10 @@ export function createMissionControlApplication(options: {
   const startOwner = async (
     missionId: string,
     requestId?: string,
+    purpose: "execute" | "stop" = "execute",
   ): Promise<"live" | "acquired"> => {
     const startedAt = performance.now();
-    const result = await startOwnerUnmeasured(missionId);
+    const result = await startOwnerUnmeasured(missionId, purpose);
     options.logger?.info("mission.owner_ready", "Mission owner is ready", {
       missionId,
       ...(requestId === undefined ? {} : { requestId }),
@@ -258,7 +263,10 @@ export function createMissionControlApplication(options: {
               !replayingTerminalCommand &&
               options.ownerScope.currentGuard(input.missionId) === undefined
             )
-              await options.assertAcquisitionAllowed?.(input.missionId);
+              await options.assertAcquisitionAllowed?.(
+                input.missionId,
+                input.kind === "interrupt" ? "stop" : "execute",
+              );
 
             const appendStartedAt = performance.now();
             const appended = await withStorageDiagnostics(
@@ -309,7 +317,11 @@ export function createMissionControlApplication(options: {
               options.ownerScope.wake(input.missionId);
               return { ...appended, owner: "live" };
             }
-            void startOwner(input.missionId, input.requestId).catch(async (error: unknown) => {
+            void startOwner(
+              input.missionId,
+              input.requestId,
+              input.kind === "interrupt" ? "stop" : "execute",
+            ).catch(async (error: unknown) => {
               try {
                 await options.onOwnerStartError?.({ missionId: input.missionId, error });
               } catch {

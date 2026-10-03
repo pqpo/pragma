@@ -33,6 +33,7 @@ import {
   type HumanInteractionResponse,
   type JsonValue,
   type WorkspaceSelection,
+  type ExecutionEnvironmentSnapshot,
 } from "@pragma/shared";
 import {
   createIntegrationError,
@@ -46,6 +47,7 @@ import {
 import { createSqliteExecutionStore } from "./execution/sqlite-execution-store.ts";
 
 import type { LocalHostCoreActiveOwner } from "./core-control-adapter.ts";
+import type { LocalHostStableMissionCompilation } from "./missions/compile-service.ts";
 import {
   MissionExecutionOwner,
   type MissionExecutionOwnerAccess,
@@ -64,6 +66,13 @@ export type LocalHostCoreDefinition = ExpertDefinition | FlowSpec<unknown, unkno
 export interface LocalHostCoreExecutorDefinition extends ResolvedRunExecutor {
   readonly descriptor: ExecutorDescriptor;
   readonly definition: LocalHostCoreDefinition;
+  readonly environment?: ExecutionEnvironmentSnapshot | undefined;
+  readonly compilation?:
+    | Pick<
+        LocalHostStableMissionCompilation,
+        "identity" | "capabilities" | "definitionFingerprint" | "secrets" | "plugins"
+      >
+    | undefined;
 }
 
 export interface LocalHostCoreStores {
@@ -175,6 +184,8 @@ export function createCoreRunExecutorPort(
     return {
       descriptor: ExecutorDescriptorSchema.parse(candidate.descriptor),
       definition: candidate.definition,
+      ...(candidate.environment === undefined ? {} : { environment: candidate.environment }),
+      ...(candidate.compilation === undefined ? {} : { compilation: candidate.compilation }),
     };
   };
 
@@ -292,6 +303,9 @@ async function startCoreDefinition(options: {
     const execution = await options.app.flows.start(options.definition.definition, {
       input: options.request.input ?? {},
       executionId: options.missionId,
+      ...(options.definition.environment === undefined
+        ? {}
+        : { environment: options.definition.environment }),
     });
     return {
       handle: execution,
@@ -309,9 +323,15 @@ async function startCoreDefinition(options: {
     existing === undefined
       ? await options.app.experts.createSession(options.definition.definition, {
           sessionId: options.missionId,
+          ...(options.definition.environment === undefined
+            ? {}
+            : { environment: options.definition.environment }),
         })
       : await options.app.experts.resumeSession(options.definition.definition, {
           sessionId: options.missionId,
+          ...(options.definition.environment === undefined
+            ? {}
+            : { environment: options.definition.environment }),
         });
   try {
     const turn = await session.prompt(

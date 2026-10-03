@@ -1,3 +1,4 @@
+import { compileBuiltInAgent } from "@pragma/built-in-agents";
 import { copyFile, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -75,27 +76,29 @@ describe("legacy revision profile retirement", () => {
       project: {} as Parameters<typeof createDesktopSkillAgents>[0]["project"],
       resolveDraftWorkspace: async () => f.root,
     });
-    const compile = () =>
-      agents.compile({
-        expertResource: systemExperts.getResource(SKILL_REVISION_EXPERT_REF)!,
-        adapterHost: {
-          environmentId: "desktop",
-          projectRoot: f.root,
-          resolveBinding: async (ref) =>
-            ref === "binding:pragma.management"
-              ? {
-                  ref,
-                  revision: "1",
-                  fingerprint: "e".repeat(64),
-                  value: { contribution: { tools: [] } },
-                }
-              : undefined,
-          resolveArtifact: async () => {
-            throw new Error("Unexpected artifact");
+    const compile = async () =>
+      compileBuiltInAgent(
+        await agents.source({
+          expertResource: systemExperts.getResource(SKILL_REVISION_EXPERT_REF)!,
+          adapterHost: {
+            environmentId: "desktop",
+            projectRoot: f.root,
+            resolveBinding: async (ref) =>
+              ref === "binding:pragma.management"
+                ? {
+                    ref,
+                    revision: "1",
+                    fingerprint: "e".repeat(64),
+                    value: { contribution: { tools: [] } },
+                  }
+                : undefined,
+            resolveArtifact: async () => {
+              throw new Error("Unexpected artifact");
+            },
+            resolveSecret: async () => undefined,
           },
-          resolveSecret: async () => undefined,
-        },
-      });
+        }),
+      );
     const fingerprint = await agents.fingerprint();
     expect((await compile()).rootRuntimeId).toBe("codex");
     expect(bind).toHaveBeenCalledWith({

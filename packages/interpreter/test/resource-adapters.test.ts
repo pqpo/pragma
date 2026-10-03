@@ -13,6 +13,7 @@ import {
   formatPragmaYaml,
   loadPragmaProject,
   PragmaResourceAdapterRegistry,
+  PragmaResourceNeedsAttentionError,
   type PragmaAdapterHost,
 } from "../src/index.ts";
 import type {
@@ -23,6 +24,29 @@ import type {
 } from "../src/ast/index.ts";
 
 describe("Pragma resource adapters", () => {
+  it("preserves a Host exception for compilation without exposing it in inspection records", async () => {
+    const failure = Object.assign(new Error("Host artifact unavailable."), {
+      code: "KEYCHAIN_UNAVAILABLE",
+      privateContext: "private-host-diagnostic",
+    });
+    const registry = createDefaultPragmaResourceAdapterRegistry();
+    const resource = codeResource({
+      type: "registry",
+      uri: "registry://tools/example",
+      integrity: `sha256:${sha256("expected")}`,
+    });
+    const adapterHost = host(async () => {
+      throw failure;
+    });
+    const inspection = await registry.inspect(resource, adapterHost);
+    expect(inspection.health.status).toBe("needs_attention");
+    expect(JSON.stringify(inspection)).not.toContain("private-host-diagnostic");
+    expect(Object.keys(inspection)).not.toContain("cause");
+    const error = await registry.resolve(resource, adapterHost).catch((caught: unknown) => caught);
+    expect(error).toBeInstanceOf(PragmaResourceNeedsAttentionError);
+    expect((error as Error).cause).toBe(failure);
+  });
+
   it("rejects a mutable project artifact that changes after project loading", async () => {
     const root = await mkdtemp(join(tmpdir(), "pragma-mutable-project-artifact-"));
     const artifact = join(root, "tool.js");

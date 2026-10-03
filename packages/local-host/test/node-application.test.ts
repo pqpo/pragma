@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import type { RuntimeResolver } from "@pragma/core";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import { createLocalHostMissionController, type MissionCommandConsumer } from "../src/index.ts";
 import {
@@ -59,7 +59,7 @@ function createPorts(input: {
       query: async () => ({ items: [], nextCursor: undefined }),
     },
     missionLifecycle: input.lifecycle,
-    missionControlAdapter: { consumer: input.consumer },
+    missionControlAdapter: { consumer: input.consumer, bindApplication: vi.fn() },
     board: {
       list: async () => ({ items: [] }),
       read: async () => ({ id: "missing" }),

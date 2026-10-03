@@ -111,6 +111,7 @@ export function createLocalHostProjectRevisionReader(options: {
   readonly projectsPath: string;
   readonly objectsPath: string;
   readonly projectViewsPath: string;
+  readonly externalResourceRefs?: ReadonlySet<string> | undefined;
 }): LocalHostProjectRevisionReader {
   const objects = new ContentAddressedStore(options.objectsPath);
   const projectViewLocksPath = join(dirname(options.projectViewsPath), "project-view-locks");
@@ -209,7 +210,10 @@ export function createLocalHostProjectRevisionReader(options: {
       throw new Error("The Local Host project revision reader is read-only.");
     },
   };
-  const migrationRenderer = new PragmaProjectService({ repository: sourceRepository });
+  const migrationRenderer = new PragmaProjectService({
+    repository: sourceRepository,
+    externalResourceRefs: options.externalResourceRefs,
+  });
 
   const toLocation = async (
     projectId: string,
@@ -239,6 +243,7 @@ export function createLocalHostProjectRevisionReader(options: {
   ): Promise<PragmaProject> => {
     const project = await loadPragmaProject(location.entryFile, {
       rootDir: location.rootDir,
+      externalResourceRefs: options.externalResourceRefs,
       requireLock: true,
       ...(location.compilerVersion === undefined
         ? {}

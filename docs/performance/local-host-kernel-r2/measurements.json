@@ -1,0 +1,230 @@
+[
+  {
+    "label": "pilot-main",
+    "command": [
+      "pnpm",
+      "exec",
+      "tsx",
+      "/Users/linminqiu/.codex/worktrees/issue-348-r2/expert-mesh/docs/performance/local-host-kernel-r2-compilation-probe.mjs",
+      "--checkout",
+      "/Users/linminqiu/Workspace/expert-mesh",
+      "--samples",
+      "1",
+      "--output",
+      "/tmp/pragma-r2-pilot-main.json"
+    ],
+    "checkout": "main",
+    "exitCode": 0,
+    "elapsedSeconds": 11.66871190071106
+  },
+  {
+    "label": "pilot-candidate",
+    "command": [
+      "pnpm",
+      "exec",
+      "tsx",
+      "/Users/linminqiu/.codex/worktrees/issue-348-r2/expert-mesh/docs/performance/local-host-kernel-r2-compilation-probe.mjs",
+      "--checkout",
+      "/Users/linminqiu/.codex/worktrees/issue-348-r2/expert-mesh",
+      "--samples",
+      "1",
+      "--output",
+      "/tmp/pragma-r2-pilot-candidate.json"
+    ],
+    "checkout": "candidate",
+    "exitCode": 0,
+    "elapsedSeconds": 10.99669885635376
+  },
+  {
+    "label": "compilation-main-1",
+    "command": [
+      "pnpm",
+      "exec",
+      "tsx",
+      "/Users/linminqiu/.codex/worktrees/issue-348-r2/expert-mesh/docs/performance/local-host-kernel-r2-compilation-probe.mjs",
+      "--checkout",
+      "/Users/linminqiu/Workspace/expert-mesh",
+      "--samples",
+      "20",
+      "--output",
+      "/tmp/pragma-r2-compilation-main-1.json"
+    ],
+    "checkout": "main",
+    "exitCode": 0,
+    "elapsedSeconds": 109.19302701950073
+  },
+  {
+    "label": "execution-storage-main-1",
+    "command": [
+      "node",
+      "packages/local-host/scripts/benchmark-execution-storage.mjs"
+    ],
+    "checkout": "main",
+    "exitCode": 0,
+    "elapsedSeconds": 18.955054759979248
+  },
+  {
+    "label": "storage-preparation-main-1",
+    "command": [
+      "node",
+      "packages/local-host/scripts/benchmark-storage-preparation.mjs"
+    ],
+    "checkout": "main",
+    "exitCode": 0,
+    "elapsedSeconds": 7.501762866973877
+  },
+  {
+    "label": "stream-ui-main-1",
+    "command": [
+      "node",
+      "apps/desktop/scripts/benchmark-mission-stream-ui.mjs"
+    ],
+    "checkout": "main",
+    "exitCode": 0,
+    "elapsedSeconds": 10.6302490234375
+  },
+  {
+    "label": "compilation-candidate-1",
+    "command": [
+      "pnpm",
+      "exec",
+      "tsx",
+      "/Users/linminqiu/.codex/worktrees/issue-348-r2/expert-mesh/docs/performance/local-host-kernel-r2-compilation-probe.mjs",
+      "--checkout",
+      "/Users/linminqiu/.codex/worktrees/issue-348-r2/expert-mesh",
+      "--samples",
+      "20",
+      "--output",
+      "/tmp/pragma-r2-compilation-candidate-1.json"
+    ],
+    "checkout": "candidate",
+    "exitCode": 0,
+    "elapsedSeconds": 109.80151391029358
+  },
+  {
+    "label": "execution-storage-candidate-1",
+    "command": [
+      "node",
+      "packages/local-host/scripts/benchmark-execution-storage.mjs"
+    ],
+    "checkout": "candidate",
+    "exitCode": 0,
+    "elapsedSeconds": 19.243537187576294
+  },
+  {
+    "label": "storage-preparation-candidate-1",
+    "command": [
+      "node",
+      "packages/local-host/scripts/benchmark-storage-preparation.mjs"
+    ],
+    "checkout": "candidate",
+    "exitCode": 0,
+    "elapsedSeconds": 7.574508905410767
+  },
+  {
+    "label": "stream-ui-candidate-1",
+    "command": [
+      "node",
+      "apps/desktop/scripts/benchmark-mission-stream-ui.mjs"
+    ],
+    "checkout": "candidate",
+    "exitCode": 0,
+    "elapsedSeconds": 10.297030210494995
+  },
+  {
+    "label": "compilation-main-2",
+    "command": [
+      "pnpm",
+      "exec",
+      "tsx",
+      "/Users/linminqiu/.codex/worktrees/issue-348-r2/expert-mesh/docs/performance/local-host-kernel-r2-compilation-probe.mjs",
+      "--checkout",
+      "/Users/linminqiu/Workspace/expert-mesh",
+      "--samples",
+      "20",
+      "--output",
+      "/tmp/pragma-r2-compilation-main-2.json"
+    ],
+    "checkout": "main",
+    "exitCode": 0,
+    "elapsedSeconds": 109.95722484588623
+  },
+  {
+    "label": "execution-storage-main-2",
+    "command": [
+      "node",
+      "packages/local-host/scripts/benchmark-execution-storage.mjs"
+    ],
+    "checkout": "main",
+    "exitCode": 0,
+    "elapsedSeconds": 19.457008123397827
+  },
+  {
+    "label": "storage-preparation-main-2",
+    "command": [
+      "node",
+      "packages/local-host/scripts/benchmark-storage-preparation.mjs"
+    ],
+    "checkout": "main",
+    "exitCode": 0,
+    "elapsedSeconds": 7.508224010467529
+  },
+  {
+    "label": "stream-ui-main-2",
+    "command": [
+      "node",
+      "apps/desktop/scripts/benchmark-mission-stream-ui.mjs"
+    ],
+    "checkout": "main",
+    "exitCode": 0,
+    "elapsedSeconds": 9.780015230178833
+  },
+  {
+    "label": "compilation-candidate-2",
+    "command": [
+      "pnpm",
+      "exec",
+      "tsx",
+      "/Users/linminqiu/.codex/worktrees/issue-348-r2/expert-mesh/docs/performance/local-host-kernel-r2-compilation-probe.mjs",
+      "--checkout",
+      "/Users/linminqiu/.codex/worktrees/issue-348-r2/expert-mesh",
+      "--samples",
+      "20",
+      "--output",
+      "/tmp/pragma-r2-compilation-candidate-2.json"
+    ],
+    "checkout": "candidate",
+    "exitCode": 0,
+    "elapsedSeconds": 109.9849648475647
+  },
+  {
+    "label": "execution-storage-candidate-2",
+    "command": [
+      "node",
+      "packages/local-host/scripts/benchmark-execution-storage.mjs"
+    ],
+    "checkout": "candidate",
+    "exitCode": 0,
+    "elapsedSeconds": 19.979006052017212
+  },
+  {
+    "label": "storage-preparation-candidate-2",
+    "command": [
+      "node",
+      "packages/local-host/scripts/benchmark-storage-preparation.mjs"
+    ],
+    "checkout": "candidate",
+    "exitCode": 0,
+    "elapsedSeconds": 7.817428112030029
+  },
+  {
+    "label": "stream-ui-candidate-2",
+    "command": [
+      "node",
+      "apps/desktop/scripts/benchmark-mission-stream-ui.mjs"
+    ],
+    "checkout": "candidate",
+    "exitCode": 0,
+    "elapsedSeconds": 9.774559020996094
+  }
+]

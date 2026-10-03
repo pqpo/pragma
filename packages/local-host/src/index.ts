@@ -397,3 +397,11 @@ export * from "./missions/deletion.ts";
 export { readDeletedExecutionUsageSource } from "./execution/deleted-execution-usage.ts";
 
 export * from "./mission-command-admission.ts";
+
+export * from "./missions/runtime-readiness.ts";
+
+export * from "./missions/compile-service.ts";
+export * from "./missions/resource-dependencies.ts";
+export * from "./node-mission-compiler.ts";
+
+export * from "./missions/system-expert-runtime.ts";

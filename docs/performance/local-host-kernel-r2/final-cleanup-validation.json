@@ -1,0 +1,108 @@
+{
+  "checks": [
+    {
+      "label": "dead-port-build",
+      "command": [
+        "pnpm",
+        "build"
+      ],
+      "exitCode": 0,
+      "elapsedSeconds": 88.25448799133301,
+      "testCounts": [],
+      "logSha256": "01a1a5cfe6606d4a4cd75572ab1edff8c99c701001358f4542b0e392d1227349"
+    },
+    {
+      "label": "dead-port-compilation",
+      "command": [
+        "pnpm",
+        "test:mission-compilation"
+      ],
+      "exitCode": 0,
+      "elapsedSeconds": 42.70069408416748,
+      "testCounts": [
+        57,
+        13
+      ],
+      "logSha256": "157682c2e3c1919942d5d8ae89ec425d520c7ea1275216f8e7be9e2b92fc6787"
+    },
+    {
+      "label": "compilation-main-5",
+      "command": [
+        "pnpm",
+        "exec",
+        "tsx",
+        "/Users/linminqiu/.codex/worktrees/issue-348-r2/expert-mesh/docs/performance/local-host-kernel-r2-compilation-probe.mjs",
+        "--checkout",
+        "/Users/linminqiu/Workspace/expert-mesh",
+        "--samples",
+        "20",
+        "--output",
+        "/tmp/pragma-r2-compilation-main-5.json"
+      ],
+      "exitCode": 0,
+      "elapsedSeconds": 110.76154088973999,
+      "testCounts": [],
+      "logSha256": "1bebc1e3f157c025f9a4cfc0cdfcca5040ac0b434df12884bca06cf4f0ccf0cb"
+    },
+    {
+      "label": "compilation-candidate-5",
+      "command": [
+        "pnpm",
+        "exec",
+        "tsx",
+        "/Users/linminqiu/.codex/worktrees/issue-348-r2/expert-mesh/docs/performance/local-host-kernel-r2-compilation-probe.mjs",
+        "--checkout",
+        "/Users/linminqiu/.codex/worktrees/issue-348-r2/expert-mesh",
+        "--samples",
+        "20",
+        "--output",
+        "/tmp/pragma-r2-compilation-candidate-5.json"
+      ],
+      "exitCode": 0,
+      "elapsedSeconds": 109.78731274604797,
+      "testCounts": [],
+      "logSha256": "3314c7fc9cee87a396c6ec017ebf09261730ecc135c5574c01556f806a254796"
+    },
+    {
+      "label": "compilation-main-6",
+      "command": [
+        "pnpm",
+        "exec",
+        "tsx",
+        "/Users/linminqiu/.codex/worktrees/issue-348-r2/expert-mesh/docs/performance/local-host-kernel-r2-compilation-probe.mjs",
+        "--checkout",
+        "/Users/linminqiu/Workspace/expert-mesh",
+        "--samples",
+        "20",
+        "--output",
+        "/tmp/pragma-r2-compilation-main-6.json"
+      ],
+      "exitCode": 0,
+      "elapsedSeconds": 110.56159472465515,
+      "testCounts": [],
+      "logSha256": "11acf7f9dbf8e4a3ff6a084f5d42e1e257ee506f1e2fc21eafc53f8f915c44ab"
+    },
+    {
+      "label": "compilation-candidate-6",
+      "command": [
+        "pnpm",
+        "exec",
+        "tsx",
+        "/Users/linminqiu/.codex/worktrees/issue-348-r2/expert-mesh/docs/performance/local-host-kernel-r2-compilation-probe.mjs",
+        "--checkout",
+        "/Users/linminqiu/.codex/worktrees/issue-348-r2/expert-mesh",
+        "--samples",
+        "20",
+        "--output",
+        "/tmp/pragma-r2-compilation-candidate-6.json"
+      ],
+      "exitCode": 0,
+      "elapsedSeconds": 109.28012895584106,
+      "testCounts": [],
+      "logSha256": "c67ff7cbaeb89d8b0d2a482a810e851ba4cfac7a97ca1059bf37d3d33c73b332"
+    }
+  ],
+  "desktopNodeTypecheckExitCode": 0,
+  "lintExitCode": 0,
+  "change": "Remove unused Desktop ProjectStore.compile method, type declaration and its two type imports; no remaining callers. Interpreter compiler unchanged."
+}

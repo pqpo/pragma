@@ -78,6 +78,7 @@ import {
 } from "./missions/controller/pinned-binding.ts";
 import { createRunRedactor, type RunRedactor } from "./redaction.ts";
 import type { LocalHostRunMissionPort, LocalHostRunTerminal } from "./run.ts";
+import type { createLocalHostNodeMissionCompiler } from "./node-mission-compiler.ts";
 
 const coreMissionControlFactory = Symbol("local-host.core-mission-control");
 const humanResponseReceiptSchema = z.object({
@@ -90,7 +91,10 @@ export interface LocalHostCoreMissionControlAdapter {
   readonly [coreMissionControlFactory]: true;
   readonly bindApplication: (application: MissionControlApplication) => void;
   readonly consumer: MissionCommandConsumer;
-  readonly assertAcquisitionAllowed: (missionId: string) => Promise<void>;
+  readonly assertAcquisitionAllowed: (
+    missionId: string,
+    purpose?: "execute" | "stop",
+  ) => Promise<void>;
   readonly resolveStrictTarget: (input: {
     readonly missionId: string;
     readonly expectedExecutionId?: string | undefined;
@@ -153,8 +157,16 @@ export function createLocalHostCoreMissionControlAdapter(options: {
         readonly projectId?: string | undefined;
         readonly revision?: number | undefined;
         readonly workspace: WorkspaceSelection;
+        readonly purpose?: "execute" | "stop" | undefined;
       }) => Promise<LocalHostCoreExecutorDefinition | undefined>);
-  readonly assertMissionReady?: ((missionId: string) => Promise<void>) | undefined;
+  readonly assertMissionReady?:
+    ((missionId: string, purpose?: "execute" | "stop") => Promise<void>) | undefined;
+  readonly compiler?:
+    | Pick<
+        ReturnType<typeof createLocalHostNodeMissionCompiler>,
+        "service" | "prepare" | "readiness"
+      >
+    | undefined;
   readonly resolveExecutionId?: ((missionId: string) => Promise<string | undefined>) | undefined;
   readonly resolveSessionId?: ((missionId: string) => Promise<string | undefined>) | undefined;
   readonly ownerAccess?: MissionExecutionOwnerAccess | undefined;
@@ -235,6 +247,7 @@ export function createLocalHostCoreMissionControlAdapter(options: {
 
   const resolveExecutor = async (
     binding: MissionPinnedBinding,
+    purpose: "execute" | "stop" = "execute",
   ): Promise<LocalHostCoreExecutorDefinition> => {
     const workspace = workspaceFromBinding(binding);
     const candidate =
@@ -242,6 +255,7 @@ export function createLocalHostCoreMissionControlAdapter(options: {
         ? await options.executors({
             ref: binding.executor.ref,
             workspace,
+            purpose,
             ...(binding.executor.source === "project"
               ? {
                   projectId: binding.executor.project.projectId,
@@ -268,7 +282,7 @@ export function createLocalHostCoreMissionControlAdapter(options: {
     }
     const descriptor = ExecutorDescriptorSchema.parse(candidate.descriptor);
     assertExecutorMatchesBinding(descriptor, binding);
-    return { descriptor, definition: candidate.definition };
+    return { ...candidate, descriptor };
   };
 
   const readBinding = async (missionId: string): Promise<MissionPinnedBinding> => {
@@ -281,18 +295,25 @@ export function createLocalHostCoreMissionControlAdapter(options: {
     return binding;
   };
 
-  const assertAcquisitionAllowed = async (missionId: string): Promise<void> => {
-    await options.assertMissionReady?.(missionId);
+  const assertAcquisitionAllowed = async (
+    missionId: string,
+    purpose: "execute" | "stop" = "execute",
+  ): Promise<void> => {
+    await options.assertMissionReady?.(missionId, purpose);
     if (
       owners.controlOwner(missionId) !== undefined ||
       (await options.resolveActiveOwner?.(missionId)) !== undefined
     )
       return;
     if (options.recoverActiveOwner !== undefined) return;
-    await resolveExecutor(await readBinding(missionId));
+    await resolveExecutor(await readBinding(missionId), purpose);
   };
 
-  const recover = async (missionId: string, admissionOwned = false): Promise<CoreMissionOwner> => {
+  const recover = async (
+    missionId: string,
+    admissionOwned = false,
+    preparedExecutor?: LocalHostCoreExecutorDefinition,
+  ): Promise<CoreMissionOwner> => {
     const existing = owners.controlOwner(missionId);
     if (existing !== undefined) return existing;
     const active =
@@ -312,10 +333,12 @@ export function createLocalHostCoreMissionControlAdapter(options: {
       missionId,
       async () => {
         const binding = await readBinding(missionId);
-        const executor = await resolveExecutor(binding);
+        const executor = preparedExecutor ?? (await resolveExecutor(binding));
+        assertExecutorMatchesBinding(executor.descriptor, binding);
         const app = await createControlApp({
           options,
           binding,
+          executor,
           missionId,
           createApp,
         });
@@ -628,6 +651,38 @@ export function createLocalHostCoreMissionControlAdapter(options: {
     }
   };
 
+  const prepareCompilation = async (missionId: string, owner: CoreMissionOwner) => {
+    const compiler = options.compiler;
+    if (compiler === undefined) return undefined;
+    const binding = await readBinding(missionId);
+    const executor = owner.executor;
+    if (executor?.compilation === undefined)
+      throw commandRejected(missionId, "executor_compilation_identity_required");
+    const scope = compiler.service.createRequestScope({
+      id: missionId,
+      project:
+        binding.executor.source === "project"
+          ? { id: binding.executor.project.projectId, revision: binding.executor.project.revision }
+          : { id: "built_in", revision: 1 },
+      executor: {
+        kind: binding.executor.ref.kind,
+        ref: `${binding.executor.ref.kind}:${binding.executor.ref.id}`,
+        name: executor.descriptor.name,
+      },
+      workspace: { path: binding.workspace.canonicalPath },
+      contextMounts: [],
+    });
+    const prepared = await compiler.prepare(scope, {
+      hasOwner: true,
+      ...executor.compilation,
+    });
+    // Node has no durable successor Session pointer yet. Preserve the original
+    // Session and reject a changed authority instead of executing its old tools.
+    if (!prepared.cacheHit || prepared.definitionChanged)
+      throw commandRejected(missionId, "executor_environment_changed_requires_successor");
+    return prepared;
+  };
+
   const defaultAdmission = createLocalHostMissionCommandAdmission({
     getMission: async (id: string) => {
       const active = owners.controlOwner(id);
@@ -651,11 +706,42 @@ export function createLocalHostCoreMissionControlAdapter(options: {
       const owner = owners.controlOwner(id);
       return owner?.kind === "session" ? owner.session : undefined;
     },
-    assertReady: async () => undefined,
+    createPreparationScope: (mission) => {
+      if (options.compiler === undefined) return undefined;
+      const owner = owners.controlOwner(mission.id);
+      return (async () => {
+        const actualOwner = owner ?? (await options.resolveActiveOwner?.(mission.id));
+        if (actualOwner !== undefined) {
+          if (owner === undefined) owners.setControlOwner(mission.id, actualOwner, "live");
+          await prepareCompilation(mission.id, actualOwner);
+          return { authorityChecked: true, checkedOwner: actualOwner, executor: undefined };
+        }
+        if (options.recoverActiveOwner !== undefined || typeof options.executors !== "function")
+          return { authorityChecked: false, checkedOwner: undefined, executor: undefined };
+        // Default catalog resolution already validates readiness and compiles
+        // against one pinned Revision scope. Keep that result for this request's
+        // recovery instead of resolving and immediately preparing it again.
+        const executor = await resolveExecutor(await readBinding(mission.id));
+        if (executor.compilation === undefined)
+          throw commandRejected(mission.id, "executor_compilation_identity_required");
+        return { authorityChecked: true, checkedOwner: undefined, executor };
+      })();
+    },
+    assertReady: async (_mission, scope) => {
+      await scope;
+    },
     startInitialRun: async () => undefined,
-    prepare: async (mission) => {
-      const owner = await recover(mission.id, true);
+    prepare: async (mission, _input, _acceptedAt, scope) => {
+      const preparation = await scope;
+      const owner = await recover(mission.id, true, preparation?.executor);
       if (owner.kind !== "session") throw commandRejected(mission.id, "send_not_supported");
+      if (
+        preparation?.authorityChecked !== true ||
+        (preparation.checkedOwner !== undefined
+          ? owner !== preparation.checkedOwner
+          : owner.executor !== preparation.executor)
+      )
+        await prepareCompilation(mission.id, owner);
       return {
         session: owner.session,
         definitionChanged: false,
@@ -666,6 +752,20 @@ export function createLocalHostCoreMissionControlAdapter(options: {
     },
     forgetSession: () => undefined,
     projectAccepted: async ({ mission, prepared, turn, requestedMode }) => {
+      if (options.compiler !== undefined) {
+        let invalidated = false;
+        const invalidate = () => {
+          if (invalidated) return;
+          invalidated = true;
+          options.compiler!.readiness.invalidate();
+        };
+        void turn.result.catch(invalidate);
+        void turn.settled
+          .then(async () => {
+            if ((await executions.get(turn.executionId))?.status === "failed") invalidate();
+          })
+          .catch(invalidate);
+      }
       const queue = await prepared.session.getPromptQueue();
       const queueState = await prepared.session.getPromptQueueState();
       const queuedPosition = queue
@@ -843,12 +943,13 @@ export function createLocalHostCoreMissionControlAdapter(options: {
                     await options.stopFlow(command.missionId, executionId, reason, signal);
                   } else {
                     const binding = await readBinding(command.missionId);
-                    const executor = await resolveExecutor(binding);
+                    const executor = await resolveExecutor(binding, "stop");
                     if (!isFlowDefinition(executor.definition))
                       throw commandRejected(command.missionId, "flow_definition_required");
                     const app = await createControlApp({
                       options,
                       binding,
+                      executor,
                       missionId: command.missionId,
                       createApp,
                     });
@@ -992,6 +1093,9 @@ async function recoverOwner(options: {
     kind: "session",
     session: await options.app.experts.resumeSession(options.executor.definition, {
       sessionId: options.missionId,
+      ...(options.executor.environment === undefined
+        ? {}
+        : { environment: options.executor.environment }),
     }),
     executor: options.executor,
   };
@@ -1000,13 +1104,14 @@ async function recoverOwner(options: {
 async function createControlApp(options: {
   readonly options: Parameters<typeof createLocalHostCoreMissionControlAdapter>[0];
   readonly binding: MissionPinnedBinding;
+  readonly executor: LocalHostCoreExecutorDefinition;
   readonly missionId: string;
   readonly createApp: (hostContextBindings?: HostContextBindings) => PragmaApp;
 }): Promise<PragmaApp> {
   if (options.options.createHostContextBindings === undefined) {
     return options.createApp(options.options.hostContextBindings);
   }
-  const executor = await resolveForContext(options.options, options.binding);
+  const executor = options.executor;
   const workspace = workspaceFromBinding(options.binding);
   const request = {
     requestId: options.binding.requestId,
@@ -1022,46 +1127,6 @@ async function createControlApp(options: {
       executor,
     }),
   );
-}
-
-async function resolveForContext(
-  options: Parameters<typeof createLocalHostCoreMissionControlAdapter>[0],
-  binding: MissionPinnedBinding,
-): Promise<LocalHostCoreExecutorDefinition> {
-  const workspace = workspaceFromBinding(binding);
-  const candidate =
-    typeof options.executors === "function"
-      ? await options.executors({
-          ref: binding.executor.ref,
-          workspace,
-          ...(binding.executor.source === "project"
-            ? {
-                projectId: binding.executor.project.projectId,
-                revision: binding.executor.project.revision,
-              }
-            : {}),
-        })
-      : options.executors.find(
-          (entry) =>
-            entry.descriptor.ref.kind === binding.executor.ref.kind &&
-            entry.descriptor.ref.id === binding.executor.ref.id &&
-            (binding.executor.source !== "project" ||
-              (entry.descriptor.project?.projectId === binding.executor.project.projectId &&
-                entry.descriptor.project.revision === binding.executor.project.revision &&
-                entry.descriptor.project.fingerprint === binding.executor.project.fingerprint)),
-        );
-  if (candidate === undefined)
-    throw createIntegrationError({
-      code: "EXECUTOR_NOT_FOUND",
-      category: "not_found",
-      message: `Executor not found: ${binding.executor.ref.kind}:${binding.executor.ref.id}.`,
-    });
-  const descriptor = ExecutorDescriptorSchema.parse(candidate.descriptor);
-  assertExecutorMatchesBinding(descriptor, binding);
-  return {
-    descriptor,
-    definition: candidate.definition,
-  };
 }
 
 async function applyCoreMissionCommand(options: {

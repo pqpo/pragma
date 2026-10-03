@@ -1,16 +1,11 @@
+import type { LocalHostSystemExecutorSource } from "@pragma/local-host";
 import { createHash, randomUUID } from "node:crypto";
 import { mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { basename, dirname, join } from "node:path";
 
 import { withFileLock, type PragmaLoggerProvider, type RuntimeResolver } from "@pragma/core";
-import {
-  SKILL_REVISION_EXPERT_REF,
-  builtInAgentFingerprint,
-  compileBuiltInAgent,
-} from "@pragma/built-in-agents";
+import { SKILL_REVISION_EXPERT_REF, builtInAgentFingerprint } from "@pragma/built-in-agents";
 import type {
-  CompiledResource,
-  InvocableResource,
   PragmaCompileOptions,
   PragmaExpertResource,
   PragmaResource,
@@ -26,14 +21,14 @@ import type { SkillRevisionGenerator } from "./skill-revision-service.ts";
 
 export interface DesktopSkillAgents {
   readonly revisionGenerator: SkillRevisionGenerator;
-  compile(input: {
+  source(input: {
     readonly runtimes?: RuntimeResolver;
     readonly workspace?: string;
     readonly adapterHost?: PragmaCompileOptions["adapterHost"];
     readonly expertResource?: PragmaExpertResource;
     readonly additionalResources?: readonly PragmaResource[];
     readonly resolveExternalInvocable?: PragmaCompileOptions["resolveExternalInvocable"];
-  }): Promise<CompiledResource<InvocableResource>>;
+  }): Promise<LocalHostSystemExecutorSource>;
   fingerprint(): Promise<string>;
   recoverOrphans(): Promise<number>;
 }
@@ -132,9 +127,9 @@ export function createDesktopSkillAgents(options: {
         return undefined;
       },
     },
-    async compile(input) {
+    async source(input) {
       const runtime = await resolveRuntime(input.runtimes);
-      return await compileBuiltInAgent({
+      return {
         ref: SKILL_REVISION_EXPERT_REF,
         environmentId: "desktop",
         definitionStateRoot: join(options.pragmaHome, "cache", "built-in-agents", "definitions"),
@@ -159,7 +154,7 @@ export function createDesktopSkillAgents(options: {
         ...(input.resolveExternalInvocable === undefined
           ? {}
           : { resolveExternalInvocable: input.resolveExternalInvocable }),
-      });
+      };
     },
     async fingerprint() {
       return createHash("sha256")

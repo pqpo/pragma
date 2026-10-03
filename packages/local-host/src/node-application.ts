@@ -8,6 +8,7 @@ import {
   type RuntimeResolver,
   type PragmaLogger,
 } from "@pragma/core";
+import { createLocalHostNodeMissionCompiler } from "./node-mission-compiler.ts";
 import { createLocalHostRunMemory } from "./run-memory.ts";
 import {
   createIntegrationError,
@@ -260,16 +261,24 @@ export function createLocalHostNodeApplication(
   }
   const loggerProvider = createLocalHostStderrLoggerProvider();
   const missionLogger = loggerProvider.createLogger({ component: "local-host.mission-controller" });
+  const compiler = createLocalHostNodeMissionCompiler({
+    pragmaHome: options.pragmaHome,
+    runtimes: runtimeResolver,
+    loggerProvider,
+  });
   const resolveBuiltInExecutor = createLocalHostBuiltInExecutorResolver({
     pragmaHome: options.pragmaHome,
     runtimes: runtimeResolver,
     loggerProvider,
+    compiler,
   });
   const projectCatalog = createLocalHostProjectCatalogFromHome({
     pragmaHome: options.pragmaHome,
     projectId: options.projectId,
     runtimes: runtimeResolver,
     loggerProvider,
+    compiler,
+    reader: compiler.reader,
   });
   const missionLifecycle = createLocalHostMissionController({
     logger: missionLogger,
@@ -338,8 +347,11 @@ export function createLocalHostNodeApplication(
       }),
   });
   const resolveExecutor = async (input: Parameters<typeof projectCatalog.resolve>[0]) =>
-    (await resolveBuiltInExecutor({ ref: input.ref, workspace: input.workspace })) ??
-    (await projectCatalog.resolve(input));
+    (await resolveBuiltInExecutor({
+      ref: input.ref,
+      workspace: input.workspace,
+      purpose: input.purpose,
+    })) ?? (await projectCatalog.resolve(input));
   const rawExecutorPort = createCoreRunExecutorPort({
     pragmaHome: options.pragmaHome,
     runtimes: runtimeResolver,
@@ -364,6 +376,7 @@ export function createLocalHostNodeApplication(
       try {
         handle = await rawExecutorPort.start(input);
       } catch (error) {
+        compiler.readiness.invalidate();
         try {
           await runMemory.complete(input.missionId);
         } finally {
@@ -394,6 +407,16 @@ export function createLocalHostNodeApplication(
       }
       return {
         ...handle,
+        result: handle.result.then(
+          (terminal) => {
+            if (terminal.status === "failed") compiler.readiness.invalidate();
+            return terminal;
+          },
+          (error: unknown) => {
+            compiler.readiness.invalidate();
+            throw error;
+          },
+        ),
         release: async () => {
           try {
             const terminal = await handle.result;
@@ -411,6 +434,7 @@ export function createLocalHostNodeApplication(
   };
   const missionPort = createControllerRunMissionPort(missionController, { ownerScope });
   const coreControl = createLocalHostCoreMissionControlAdapter({
+    compiler,
     pragmaHome: options.pragmaHome,
     runtimes: runtimeResolver,
     usageSink,

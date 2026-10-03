@@ -1,4 +1,4 @@
-import { canonicalPragmaResourceRef } from "@pragma/interpreter";
+import { PragmaProjectSnapshotSchema } from "../../shared/contracts/index.ts";
 import { createMissionAttentionRetirement } from "./mission-attention-retirement.ts";
 import {
   createMissionDeletionService,
@@ -25,12 +25,11 @@ import { createHomeProjectStore } from "../features/missions/home-project-store.
 import { createMissionDeliveryRecovery } from "../features/missions/mission-delivery-recovery.ts";
 import { createMissionDelivery } from "../features/missions/mission-delivery.ts";
 import { persistMissionExecutionProjection } from "../features/missions/mission-runner-composition.ts";
-import { referencedPragmaResourceRefs } from "../features/projects/pragma-resource-references.ts";
+import { missionTargetRuntimeIds } from "@pragma/local-host";
 
 import {
   BUILT_IN_PRAGMA_REF,
   builtInAgentFingerprint,
-  compileBuiltInAgent,
   EVALUATION_JUDGE_EXPERT_REF,
   pragmaManagementCapabilityResource,
   SKILL_REVISION_EXPERT_REF,
@@ -1159,6 +1158,7 @@ export async function createDesktopApplicationContainer(
   const assertBundleExecutorReady = async (
     ref: string,
     operation: "create_mission" | "run_mission",
+    scope?: import("@pragma/local-host").LocalHostMissionCompileScope<Mission>,
   ): Promise<void> => {
     const measure = async <T>(phase: string, read: () => Promise<T>): Promise<T> => {
       const startedAt = performance.now();
@@ -1173,27 +1173,16 @@ export async function createDesktopApplicationContainer(
         });
       }
     };
-    const projectSnapshot = await measure("project_snapshot", () => pragmaProjectStore.get());
-    const byRef = new Map(
-      projectSnapshot.resources.map((resource) => [canonicalPragmaResourceRef(resource), resource]),
+    const projectSnapshot = await measure("project_snapshot", async () =>
+      scope === undefined
+        ? await pragmaProjectStore.get()
+        : PragmaProjectSnapshotSchema.parse(await scope.getRevision()),
     );
-    const visited = new Set<string>();
-    const pending = [ref];
-    const runtimeIds = new Set<string>();
-    while (pending.length > 0) {
-      const current = pending.pop()!;
-      if (visited.has(current)) continue;
-      visited.add(current);
-      const resource = byRef.get(current) ?? systemExperts.getResource(current);
-      if (resource === undefined) continue;
-      if (resource.kind === "RuntimeProfile") {
-        const config = resource.spec.config as { runtimeId?: string };
-        if (config.runtimeId !== undefined) runtimeIds.add(config.runtimeId);
-      }
-      pending.push(...referencedPragmaResourceRefs([resource]));
-    }
+    const runtimeIds = missionTargetRuntimeIds(ref, projectSnapshot.resources, (target) =>
+      systemExperts.getDependencyResource(target),
+    );
     const runtimesAvailable = await measure("runtime_availability", () =>
-      getTargetRuntimeAvailability(runtimes, [...runtimeIds]),
+      getTargetRuntimeAvailability(runtimes, runtimeIds),
     );
     const dependencies = [
       ...(await measure("bundle_readiness", () =>
@@ -1277,6 +1266,8 @@ export async function createDesktopApplicationContainer(
     project: pragmaProjectStore,
     capabilityStore,
     capabilityCredentials,
+    resolveSecret: (ref) => pluginCredentials.get(ref),
+    secretFingerprint: (ref) => pluginCredentials.fingerprint([ref]),
     capabilitiesPath,
     mcpToolRegistryPool,
     pragmaHome: pragmaPaths.root,
@@ -1346,6 +1337,7 @@ export async function createDesktopApplicationContainer(
         avatarId: expert.avatarId,
       })),
     getSystemExecutorResource: (ref) => systemExperts.getResource(ref),
+    getSystemDependencyResource: (ref) => systemExperts.getDependencyResource(ref),
     invalidateRuntimeReadiness: () => invalidateTargetRuntimeAvailability(runtimes),
     onExecutionTerminal: async ({ mission, executionId, status, result, error }) => {
       await executionEventProjector.terminal({ mission, executionId, status, result, error });
@@ -1378,14 +1370,31 @@ export async function createDesktopApplicationContainer(
             : ref === EVALUATION_JUDGE_EXPERT_REF
               ? builtInAgentFingerprint(EVALUATION_JUDGE_EXPERT_REF)
               : systemExperts.fingerprint(ref),
-    assertExecutorReady: async (ref) => await assertBundleExecutorReady(ref, "run_mission"),
-    compileSystemExecutor: async ({
+    assertExecutorReady: async (ref, scope) =>
+      await assertBundleExecutorReady(ref, "run_mission", scope),
+    systemExecutorSource: async ({
       mission,
       runtimes: scopedRuntimes,
       knowledgeRevisions,
-      resolveExternalInvocable,
+      purpose,
+      adapterHost,
     }) => {
       const planningRef = mission.executor.ref;
+      if (purpose === "stop") {
+        const resource = systemExperts.getResource(planningRef);
+        if (resource === undefined) return undefined;
+        return {
+          ref: planningRef as import("@pragma/built-in-agents").BuiltInAgentRef,
+          environmentId: "desktop",
+          definitionStateRoot: join(defaultAgentStateRoot, "definitions"),
+          workspace: mission.workspace.path,
+          pragmaHome: pragmaPaths.root,
+          runtimes: scopedRuntimes,
+          expertResource: resource,
+          additionalResources: systemExperts.getAdditionalResources(planningRef),
+          adapterHost,
+        };
+      }
       if (
         mission.origin.type === "system-memory" &&
         ((planningRef === STORE_REVISION_EXPERT_REF &&
@@ -1407,7 +1416,7 @@ export async function createDesktopApplicationContainer(
           configuredModel,
           mission.modelOverride,
         );
-        return await compileBuiltInAgent({
+        return {
           ref: planningRef,
           environmentId: "desktop-memory-revision-planning",
           definitionStateRoot: join(defaultAgentStateRoot, "definitions"),
@@ -1433,13 +1442,13 @@ export async function createDesktopApplicationContainer(
               plugins: [],
             },
           },
-        });
+        };
       }
       if (mission.executor.ref === MEMORY_CURATOR_REF) {
         if (memoryCuratorRef.current === undefined || mission.origin.type !== "system-memory") {
           throw new Error("The Memory Curator has not been initialized.");
         }
-        return await memoryCuratorRef.current.compile({
+        return await memoryCuratorRef.current.source({
           missionId: mission.id,
           runtimes: scopedRuntimes,
           workspace: mission.workspace.path,
@@ -1459,6 +1468,7 @@ export async function createDesktopApplicationContainer(
           {
             capabilityStore,
             capabilityCredentials,
+            resolveSecret: (ref) => pluginCredentials.get(ref),
             capabilitiesPath,
             mcpToolRegistryPool,
             contextStores,
@@ -1468,7 +1478,7 @@ export async function createDesktopApplicationContainer(
           },
           mission.workspace.path,
         );
-        return await storeRevisionAgentRef.current.compile({
+        return await storeRevisionAgentRef.current.source({
           profile:
             storeRevisionDefinition.executionProfile.mode === "pinned"
               ? {
@@ -1488,7 +1498,6 @@ export async function createDesktopApplicationContainer(
           adapterHost: managementHost,
           expertResource: systemExperts.getResource(STORE_REVISION_EXPERT_REF),
           additionalResources: systemExperts.getAdditionalResources(STORE_REVISION_EXPERT_REF),
-          resolveExternalInvocable,
         });
       }
       if (mission.executor.ref === SKILL_REVISION_EXPERT_REF) {
@@ -1570,13 +1579,14 @@ export async function createDesktopApplicationContainer(
         }
         const expertResource = systemExperts.getResource(SKILL_REVISION_EXPERT_REF);
         const additionalResources = systemExperts.getAdditionalResources(SKILL_REVISION_EXPERT_REF);
-        return await skillAgentsRef.current.compile({
+        return await skillAgentsRef.current.source({
           runtimes: scopedRuntimes,
           workspace: mission.workspace.path,
           adapterHost: createDesktopAdapterHost(
             {
               capabilityStore,
               capabilityCredentials,
+              resolveSecret: (ref) => pluginCredentials.get(ref),
               capabilitiesPath,
               mcpToolRegistryPool,
               contextStores,
@@ -1586,7 +1596,6 @@ export async function createDesktopApplicationContainer(
           ),
           ...(expertResource === undefined ? {} : { expertResource }),
           ...(additionalResources === undefined ? {} : { additionalResources }),
-          resolveExternalInvocable,
         });
       }
       if (mission.executor.ref === EVALUATION_JUDGE_EXPERT_REF) {
@@ -1600,7 +1609,7 @@ export async function createDesktopApplicationContainer(
           configuredModel,
           mission.modelOverride,
         );
-        return await compileBuiltInAgent({
+        return {
           ref: EVALUATION_JUDGE_EXPERT_REF,
           environmentId: "desktop-evaluation",
           definitionStateRoot: join(defaultAgentStateRoot, "definitions"),
@@ -1617,7 +1626,7 @@ export async function createDesktopApplicationContainer(
           ...(defaults.modelSelection === undefined
             ? {}
             : { defaultModelSelection: defaults.modelSelection }),
-        });
+        };
       }
       if (mission.executor.ref !== BUILT_IN_PRAGMA_REF) return undefined;
       if (pragmaManagementPortsRef.current === undefined) {
@@ -1635,7 +1644,7 @@ export async function createDesktopApplicationContainer(
         configuredModel,
         createsSession ? mission.modelOverride : undefined,
       );
-      return await compileBuiltInAgent({
+      return {
         ref: BUILT_IN_PRAGMA_REF,
         environmentId: "desktop-system-expert",
         definitionStateRoot: join(defaultAgentStateRoot, "definitions"),
@@ -1657,11 +1666,11 @@ export async function createDesktopApplicationContainer(
           ? { expertResource: systemExperts.getResource(BUILT_IN_PRAGMA_REF) }
           : {}),
         additionalResources: systemExperts.getAdditionalResources(BUILT_IN_PRAGMA_REF),
-        resolveExternalInvocable,
         adapterHost: createDesktopAdapterHost(
           {
             capabilityStore,
             capabilityCredentials,
+            resolveSecret: (ref) => pluginCredentials.get(ref),
             capabilitiesPath,
             mcpToolRegistryPool,
             contextStores,
@@ -1690,7 +1699,7 @@ export async function createDesktopApplicationContainer(
               secretBindings: binding.secretBindings,
             }),
         },
-      });
+      };
     },
   });
   const usageProjectNames = new Map<string, ReadonlyMap<string, string>>();

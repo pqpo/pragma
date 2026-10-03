@@ -1,0 +1,218 @@
+{
+  "comparisons": [
+    {
+      "pair": 3,
+      "scenario": "system-invalidation",
+      "main": {
+        "samples": 60,
+        "p50Ms": 620.0721439999998,
+        "p95Ms": 669.250454999994,
+        "compilePhaseP95Ms": 38.92,
+        "counters": {
+          "projectRevisionReads": [
+            1
+          ],
+          "projectHeadReads": [
+            1
+          ],
+          "projectOpens": [
+            0
+          ],
+          "storeCompileCalls": [
+            1
+          ],
+          "openedProjectCompileCalls": [
+            0
+          ],
+          "activeCapabilityReads": [
+            5
+          ],
+          "credentialFingerprints": [
+            4
+          ],
+          "contextStoreReads": [
+            0
+          ],
+          "dslCompilerCalls": [
+            2
+          ],
+          "readinessRequests": [
+            1
+          ],
+          "runtimeHealthProbes": [
+            4,
+            5
+          ],
+          "modelCatalogReads": [
+            4,
+            5
+          ],
+          "pluginReads": [
+            0
+          ]
+        }
+      },
+      "candidate": {
+        "samples": 60,
+        "p50Ms": 606.8766679999972,
+        "p95Ms": 675.8789200000028,
+        "compilePhaseP95Ms": 41.51,
+        "counters": {
+          "projectRevisionReads": [
+            1
+          ],
+          "projectHeadReads": [
+            0
+          ],
+          "projectOpens": [
+            1
+          ],
+          "storeCompileCalls": [
+            0
+          ],
+          "openedProjectCompileCalls": [
+            1
+          ],
+          "activeCapabilityReads": [
+            5
+          ],
+          "credentialFingerprints": [
+            4
+          ],
+          "contextStoreReads": [
+            0
+          ],
+          "dslCompilerCalls": [
+            2
+          ],
+          "readinessRequests": [
+            1
+          ],
+          "runtimeHealthProbes": [
+            4,
+            5
+          ],
+          "modelCatalogReads": [
+            4,
+            5
+          ],
+          "pluginReads": [
+            0
+          ]
+        }
+      },
+      "gate": {
+        "deltaMs": 6.628465000008873,
+        "deltaPercent": 0.9904311533129899,
+        "triggered": false
+      }
+    },
+    {
+      "pair": 4,
+      "scenario": "system-invalidation",
+      "main": {
+        "samples": 60,
+        "p50Ms": 624.3736119999958,
+        "p95Ms": 689.3360990000001,
+        "compilePhaseP95Ms": 38.49,
+        "counters": {
+          "projectRevisionReads": [
+            1
+          ],
+          "projectHeadReads": [
+            1
+          ],
+          "projectOpens": [
+            0
+          ],
+          "storeCompileCalls": [
+            1
+          ],
+          "openedProjectCompileCalls": [
+            0
+          ],
+          "activeCapabilityReads": [
+            5
+          ],
+          "credentialFingerprints": [
+            4
+          ],
+          "contextStoreReads": [
+            0
+          ],
+          "dslCompilerCalls": [
+            2
+          ],
+          "readinessRequests": [
+            1
+          ],
+          "runtimeHealthProbes": [
+            4,
+            5
+          ],
+          "modelCatalogReads": [
+            4,
+            5
+          ],
+          "pluginReads": [
+            0
+          ]
+        }
+      },
+      "candidate": {
+        "samples": 60,
+        "p50Ms": 614.2114079999956,
+        "p95Ms": 648.4845559999994,
+        "compilePhaseP95Ms": 40.23,
+        "counters": {
+          "projectRevisionReads": [
+            1
+          ],
+          "projectHeadReads": [
+            0
+          ],
+          "projectOpens": [
+            1
+          ],
+          "storeCompileCalls": [
+            0
+          ],
+          "openedProjectCompileCalls": [
+            1
+          ],
+          "activeCapabilityReads": [
+            5
+          ],
+          "credentialFingerprints": [
+            4
+          ],
+          "contextStoreReads": [
+            0
+          ],
+          "dslCompilerCalls": [
+            2
+          ],
+          "readinessRequests": [
+            1
+          ],
+          "runtimeHealthProbes": [
+            4,
+            5
+          ],
+          "modelCatalogReads": [
+            4,
+            5
+          ],
+          "pluginReads": [
+            0
+          ]
+        }
+      },
+      "gate": {
+        "deltaMs": -40.851543000000675,
+        "deltaPercent": -5.9262155368423075,
+        "triggered": false
+      }
+    }
+  ]
+}

@@ -1,0 +1,318 @@
+
+> pragma@ build /Users/linminqiu/.codex/worktrees/issue-348-r2/expert-mesh
+> turbo run build
+
+
+   • Packages in scope: @pqpo/pragma, @pragma/built-in-agents, @pragma/context-filesystem, @pragma/core, @pragma/desktop, @pragma/eslint-config, @pragma/evaluation, @pragma/examples, @pragma/interpreter, @pragma/local-host, @pragma/memory, @pragma/runtime-antigravity, @pragma/runtime-claude-code, @pragma/runtime-codex, @pragma/runtime-opencode, @pragma/runtime-pi, @pragma/runtime-qodercli, @pragma/shared, @pragma/tsconfig
+   • Running build in 19 packages
+   • Remote caching disabled, using shared worktree cache
+
+@pragma/eslint-config:build: cache hit, replaying logs 6edd145ff6e3ac08
+@pragma/tsconfig:build: cache hit, replaying logs 79a142739f84601b
+@pragma/eslint-config:build: 
+@pragma/eslint-config:build: > @pragma/eslint-config@0.0.0 build /Users/linminqiu/Workspace/expert-mesh/packages/eslint-config
+@pragma/eslint-config:build: > node -e "process.exit(0)"
+@pragma/eslint-config:build: 
+@pragma/tsconfig:build: 
+@pragma/tsconfig:build: > @pragma/tsconfig@0.0.0 build /Users/linminqiu/.codex/worktrees/82b9/expert-mesh/packages/tsconfig
+@pragma/tsconfig:build: > node -e "process.exit(0)"
+@pragma/tsconfig:build: 
+@pragma/shared:build: cache hit, replaying logs 9786d9b434e2ae52
+@pragma/shared:build: 
+@pragma/shared:build: > @pragma/shared@0.0.0 build /Users/linminqiu/.codex/worktrees/issue-348-r2/expert-mesh/packages/shared
+@pragma/shared:build: > tsc -p tsconfig.build.json
+@pragma/shared:build: 
+@pragma/core:build: cache hit, replaying logs e11684112382c781
+@pragma/core:build: 
+@pragma/core:build: > @pragma/core@0.0.0 build /Users/linminqiu/.codex/worktrees/issue-348-r2/expert-mesh/packages/core
+@pragma/core:build: > tsc -p tsconfig.build.json
+@pragma/core:build: 
+@pragma/context-filesystem:build: cache hit, replaying logs 2f510ba65b66154f
+@pragma/context-filesystem:build: 
+@pragma/context-filesystem:build: > @pragma/context-filesystem@0.0.0 build /Users/linminqiu/.codex/worktrees/issue-348-r2/expert-mesh/packages/context-filesystem
+@pragma/context-filesystem:build: > tsc -p tsconfig.build.json
+@pragma/context-filesystem:build: 
+@pragma/evaluation:build: cache hit, replaying logs 33c55190a4bf0cf5
+@pragma/evaluation:build: 
+@pragma/evaluation:build: > @pragma/evaluation@0.0.0 build /Users/linminqiu/.codex/worktrees/issue-348-r2/expert-mesh/packages/evaluation
+@pragma/evaluation:build: > tsc -p tsconfig.build.json
+@pragma/evaluation:build: 
+@pragma/runtime-qodercli:build: cache hit, replaying logs 532a40239981d34f
+@pragma/runtime-qodercli:build: 
+@pragma/runtime-qodercli:build: > @pragma/runtime-qodercli@0.0.0 build /Users/linminqiu/.codex/worktrees/issue-348-r2/expert-mesh/packages/runtime/qodercli
+@pragma/runtime-qodercli:build: > tsc -p tsconfig.build.json
+@pragma/runtime-qodercli:build: 
+@pragma/runtime-opencode:build: cache hit, replaying logs 113b7604e16fd492
+@pragma/runtime-opencode:build: 
+@pragma/runtime-opencode:build: > @pragma/runtime-opencode@0.0.0 build /Users/linminqiu/.codex/worktrees/issue-348-r2/expert-mesh/packages/runtime/opencode
+@pragma/runtime-opencode:build: > tsc -p tsconfig.build.json
+@pragma/runtime-opencode:build: 
+@pragma/runtime-antigravity:build: cache hit, replaying logs ec1afabf2432a751
+@pragma/runtime-codex:build: cache hit, replaying logs 38fe186e25359129
+@pragma/runtime-antigravity:build: 
+@pragma/runtime-antigravity:build: > @pragma/runtime-antigravity@0.0.0 build /Users/linminqiu/.codex/worktrees/issue-348-r2/expert-mesh/packages/runtime/antigravity
+@pragma/runtime-antigravity:build: > tsc -p tsconfig.build.json
+@pragma/runtime-antigravity:build: 
+@pragma/runtime-codex:build: 
+@pragma/runtime-codex:build: > @pragma/runtime-codex@0.0.0 build /Users/linminqiu/.codex/worktrees/issue-348-r2/expert-mesh/packages/runtime/codex
+@pragma/runtime-codex:build: > tsc -p tsconfig.build.json
+@pragma/runtime-codex:build: 
+@pragma/runtime-claude-code:build: cache hit, replaying logs 1aeb1ad055a6f531
+@pragma/runtime-claude-code:build: 
+@pragma/runtime-claude-code:build: > @pragma/runtime-claude-code@0.0.0 build /Users/linminqiu/.codex/worktrees/issue-348-r2/expert-mesh/packages/runtime/claude-code
+@pragma/runtime-claude-code:build: > tsc -p tsconfig.build.json
+@pragma/runtime-claude-code:build: 
+@pragma/runtime-pi:build: cache hit, replaying logs 9137445c824e2403
+@pragma/runtime-pi:build: 
+@pragma/runtime-pi:build: > @pragma/runtime-pi@0.0.0 build /Users/linminqiu/.codex/worktrees/issue-348-r2/expert-mesh/packages/runtime/pi
+@pragma/runtime-pi:build: > tsc -p tsconfig.build.json
+@pragma/runtime-pi:build: 
+@pragma/interpreter:build: cache hit, replaying logs da67f0f5d8ec71cb
+@pragma/interpreter:build: 
+@pragma/interpreter:build: > @pragma/interpreter@0.0.0 build /Users/linminqiu/.codex/worktrees/issue-348-r2/expert-mesh/packages/interpreter
+@pragma/interpreter:build: > tsc -p tsconfig.build.json
+@pragma/interpreter:build: 
+@pragma/memory:build: cache hit, replaying logs bedc99db1d2c3e77
+@pragma/memory:build: 
+@pragma/memory:build: > @pragma/memory@0.0.0 build /Users/linminqiu/.codex/worktrees/issue-348-r2/expert-mesh/packages/memory
+@pragma/memory:build: > tsc -p tsconfig.build.json
+@pragma/memory:build: 
+@pragma/built-in-agents:build: cache hit, replaying logs 312870638e862190
+@pragma/built-in-agents:build: 
+@pragma/built-in-agents:build: > @pragma/built-in-agents@0.0.0 build /Users/linminqiu/.codex/worktrees/issue-348-r2/expert-mesh/packages/built-in-agents
+@pragma/built-in-agents:build: > tsc -p tsconfig.build.json
+@pragma/built-in-agents:build: 
+@pragma/local-host:build: cache hit, replaying logs 7d177eaa0033c897
+@pragma/local-host:build: 
+@pragma/local-host:build: > @pragma/local-host@0.0.0 build /Users/linminqiu/.codex/worktrees/issue-348-r2/expert-mesh/packages/local-host
+@pragma/local-host:build: > tsc -p tsconfig.build.json
+@pragma/local-host:build: 
+@pragma/desktop:build: cache miss, executing 5c4577eb7a0f1880
+@pragma/examples:build: cache miss, executing 7656d40ed74abfc7
+@pqpo/pragma:build: cache miss, executing 1cb49b1148797c19
+@pqpo/pragma:build: 
+@pqpo/pragma:build: > @pqpo/pragma@0.1.0-next.18 build /Users/linminqiu/.codex/worktrees/issue-348-r2/expert-mesh/apps/cli
+@pqpo/pragma:build: > node scripts/build-package.mjs
+@pqpo/pragma:build: 
+@pragma/desktop:build: 
+@pragma/desktop:build: > @pragma/desktop@0.2.49 prebuild /Users/linminqiu/.codex/worktrees/issue-348-r2/expert-mesh/apps/desktop
+@pragma/desktop:build: > pnpm --filter "@pragma/desktop^..." build && pnpm run prepare:plugins
+@pragma/desktop:build: 
+@pragma/examples:build: 
+@pragma/examples:build: > @pragma/examples@0.0.0 build /Users/linminqiu/.codex/worktrees/issue-348-r2/expert-mesh/examples
+@pragma/examples:build: > tsc -p tsconfig.build.json
+@pragma/examples:build: 
+@pragma/desktop:build: Scope: 15 of 20 workspace projects
+@pragma/desktop:build: ../../packages/tsconfig build$ node -e "process.exit(0)"
+@pragma/desktop:build: ../../packages/tsconfig build: Done
+@pragma/desktop:build: ../../packages/shared build$ tsc -p tsconfig.build.json
+@pqpo/pragma:build: 
+@pqpo/pragma:build:   dist/cli.js  22.4mb ⚠️
+@pqpo/pragma:build: 
+@pqpo/pragma:build: ⚡ Done in 1105ms
+@pqpo/pragma:build: 
+@pqpo/pragma:build:   dist/code-service-worker.js  751.0kb
+@pqpo/pragma:build: 
+@pqpo/pragma:build: ⚡ Done in 43ms
+@pqpo/pragma:build: 
+@pqpo/pragma:build:   dist/canonical-event-feed-worker.js  983.8kb
+@pqpo/pragma:build: 
+@pqpo/pragma:build: ⚡ Done in 52ms
+@pqpo/pragma:build: 
+@pqpo/pragma:build:   dist/vector-worker.js  684.2kb
+@pqpo/pragma:build: 
+@pqpo/pragma:build: ⚡ Done in 35ms
+@pqpo/pragma:build: 
+@pqpo/pragma:build:   dist/claude-acp-worker.js  3.0mb ⚠️
+@pqpo/pragma:build: 
+@pqpo/pragma:build: ⚡ Done in 308ms
+@pqpo/pragma:build: 
+@pqpo/pragma:build:   dist/pragma.js  846b 
+@pqpo/pragma:build: 
+@pqpo/pragma:build: ⚡ Done in 4ms
+@pqpo/pragma:build: Built @pqpo/pragma 0.1.0-next.18.
+@pqpo/pragma:build: Staging package: /Users/linminqiu/.codex/worktrees/issue-348-r2/expert-mesh/apps/cli/.release/package
+@pragma/desktop:build: ../../packages/shared build: Done
+@pragma/desktop:build: ../../packages/core build$ tsc -p tsconfig.build.json
+@pragma/desktop:build: ../../packages/core build: Done
+@pragma/desktop:build: ../../packages/evaluation build$ tsc -p tsconfig.build.json
+@pragma/desktop:build: ../../packages/context-filesystem build$ tsc -p tsconfig.build.json
+@pragma/desktop:build: ../../packages/memory build$ tsc -p tsconfig.build.json
+@pragma/desktop:build: ../../packages/runtime/antigravity build$ tsc -p tsconfig.build.json
+@pragma/desktop:build: ../../packages/evaluation build: Done
+@pragma/desktop:build: ../../packages/runtime/claude-code build$ tsc -p tsconfig.build.json
+@pragma/desktop:build: ../../packages/context-filesystem build: Done
+@pragma/desktop:build: ../../packages/runtime/codex build$ tsc -p tsconfig.build.json
+@pragma/desktop:build: ../../packages/runtime/antigravity build: Done
+@pragma/desktop:build: ../../packages/runtime/opencode build$ tsc -p tsconfig.build.json
+@pragma/desktop:build: ../../packages/memory build: Done
+@pragma/desktop:build: ../../packages/runtime/pi build$ tsc -p tsconfig.build.json
+@pragma/desktop:build: ../../packages/runtime/claude-code build: Done
+@pragma/desktop:build: ../../packages/runtime/qodercli build$ tsc -p tsconfig.build.json
+@pragma/desktop:build: ../../packages/runtime/codex build: Done
+@pragma/desktop:build: ../../packages/runtime/opencode build: Done
+@pragma/desktop:build: ../../packages/runtime/pi build: Done
+@pragma/desktop:build: ../../packages/runtime/qodercli build: Done
+@pragma/desktop:build: ../../packages/interpreter build$ tsc -p tsconfig.build.json
+@pragma/desktop:build: ../../packages/interpreter build: Done
+@pragma/desktop:build: ../../packages/built-in-agents build$ tsc -p tsconfig.build.json
+@pragma/desktop:build: ../../packages/built-in-agents build: Done
+@pragma/desktop:build: ../../packages/local-host build$ tsc -p tsconfig.build.json
+@pragma/desktop:build: ../../packages/local-host build: Done
+@pragma/desktop:build: 
+@pragma/desktop:build: > @pragma/desktop@0.2.49 prepare:plugins /Users/linminqiu/.codex/worktrees/issue-348-r2/expert-mesh/apps/desktop
+@pragma/desktop:build: > node ./scripts/package-built-in-plugins.mjs
+@pragma/desktop:build: 
+@pragma/desktop:build: 
+@pragma/desktop:build: > @pragma/desktop@0.2.49 build /Users/linminqiu/.codex/worktrees/issue-348-r2/expert-mesh/apps/desktop
+@pragma/desktop:build: > electron-vite build && pnpm run verify:styles && pnpm run verify:main && pnpm run verify:preload && pnpm run verify:storage-worker
+@pragma/desktop:build: 
+@pragma/desktop:build: vite v7.3.6 building ssr environment for production...
+@pragma/desktop:build: transforming...
+@pragma/desktop:build: ✓ 3462 modules transformed.
+@pragma/desktop:build: ../../node_modules/.pnpm/gray-matter@4.0.3/node_modules/gray-matter/lib/engines.js (43:13): Use of eval in "../../node_modules/.pnpm/gray-matter@4.0.3/node_modules/gray-matter/lib/engines.js" is strongly discouraged as it poses security risks and may cause issues with minification.
+@pragma/desktop:build: rendering chunks...
+@pragma/desktop:build: [plugin vite:reporter] 
+@pragma/desktop:build: (!) /Users/linminqiu/.codex/worktrees/issue-348-r2/expert-mesh/packages/interpreter/dist/compiler-migrations/index.js is dynamically imported by /Users/linminqiu/.codex/worktrees/issue-348-r2/expert-mesh/packages/interpreter/dist/compiler/project-loader.js but also statically imported by /Users/linminqiu/.codex/worktrees/issue-348-r2/expert-mesh/packages/interpreter/dist/index.js, dynamic import will not move module into another chunk.
+@pragma/desktop:build: 
+@pragma/desktop:build: out/main/chunks/jiti-loader-BYdRxNIw.js                   0.06 kB
+@pragma/desktop:build: out/main/chunks/jiti-static-loader-BrnDDeN1.js            0.07 kB
+@pragma/desktop:build: out/main/chunks/sanitize-unicode-BvtkLirb.js              0.18 kB
+@pragma/desktop:build: out/main/chunks/openai-prompt-cache-COP8flKD.js           0.35 kB
+@pragma/desktop:build: out/main/chunks/node-D114Lvr2.js                          0.36 kB
+@pragma/desktop:build: out/main/chunks/_commonjsHelpers-DWwsNxpa.js              0.40 kB
+@pragma/desktop:build: out/main/chunks/headers-CHRjKt3O.js                       0.49 kB
+@pragma/desktop:build: out/main/chunks/hash-RwksDas4.js                          0.50 kB
+@pragma/desktop:build: out/main/chunks/github-copilot-headers-eBo5GwLf.js        0.85 kB
+@pragma/desktop:build: out/main/canonical-event-feed-worker.js                   2.66 kB
+@pragma/desktop:build: out/main/chunks/error-body-DKhVTZMw.js                    2.81 kB
+@pragma/desktop:build: out/main/chunks/provider-retry-CLODmUJt.js                3.06 kB
+@pragma/desktop:build: out/main/storage-capacity-worker.js                       3.14 kB
+@pragma/desktop:build: out/main/chunks/openrouter-images-BxzWqPAk.js             4.65 kB
+@pragma/desktop:build: out/main/code-service-worker.js                           6.04 kB
+@pragma/desktop:build: out/main/chunks/multipart-parser-C4Q8au8L.js             10.26 kB
+@pragma/desktop:build: out/main/chunks/pi-messages-Du6uJEq6.js                  11.48 kB
+@pragma/desktop:build: out/main/chunks/openai-responses-2JKy02AS.js             13.17 kB
+@pragma/desktop:build: out/main/vector-worker.js                                13.19 kB
+@pragma/desktop:build: out/main/chunks/google-generative-ai-CPBXSI8V.js         15.30 kB
+@pragma/desktop:build: out/main/chunks/canonical-event-feed-Bk6rTdwR.js         16.02 kB
+@pragma/desktop:build: out/main/chunks/azure-openai-responses-CroY-fO6.js       16.28 kB
+@pragma/desktop:build: out/main/chunks/google-vertex-BMKVIS8N.js                17.38 kB
+@pragma/desktop:build: out/main/chunks/transform-messages-CuOqcyKE.js           20.23 kB
+@pragma/desktop:build: out/main/chunks/openai-responses-shared-DOEjY2T8.js      24.99 kB
+@pragma/desktop:build: out/main/chunks/mistral-conversations-BKsrSw1c.js        27.57 kB
+@pragma/desktop:build: out/main/chunks/pragma-paths-ySMCe-7e.js                 36.63 kB
+@pragma/desktop:build: out/main/chunks/index-CQV6On1v.js                        39.55 kB
+@pragma/desktop:build: out/main/chunks/openai-completions-3_GCmqqy.js           50.55 kB
+@pragma/desktop:build: out/main/chunks/openai-codex-responses-CdXZchpf.js       51.67 kB
+@pragma/desktop:build: out/main/chunks/module-ES6BEMUI-CUtjIvGx.js              53.83 kB
+@pragma/desktop:build: out/main/chunks/photon_rs-BvecfauN.js                    54.28 kB
+@pragma/desktop:build: out/main/chunks/node-fBIvkRuq.js                         88.16 kB
+@pragma/desktop:build: out/main/sqlite-execution-worker.js                      96.94 kB
+@pragma/desktop:build: out/main/chunks/context-store.schema-BvrV3std.js        146.90 kB
+@pragma/desktop:build: out/main/chunks/index-CzVLsf5_.js                       240.80 kB
+@pragma/desktop:build: out/main/chunks/client-BjqfcAKe.js                      320.47 kB
+@pragma/desktop:build: out/main/chunks/anthropic-messages-Cv7Q_Fd_.js          519.08 kB
+@pragma/desktop:build: out/main/chunks/index-D-Ajj2gB.js                       700.05 kB
+@pragma/desktop:build: out/main/chunks/index-XlEEGalk.js                     1,118.39 kB
+@pragma/desktop:build: out/main/chunks/virtual-modules-t3iSFWuW.js           1,301.92 kB
+@pragma/desktop:build: out/main/chunks/google-shared-DMv1RB9V.js             1,418.52 kB
+@pragma/desktop:build: out/main/chunks/index-8P3dGPuo.js                     1,678.27 kB
+@pragma/desktop:build: out/main/chunks/o200k_base-CftdvNsI.js                2,266.98 kB
+@pragma/desktop:build: out/main/index.js                                    10,410.64 kB
+@pragma/desktop:build: ✓ built in 16.67s
+@pragma/desktop:build: vite v7.3.6 building ssr environment for production...
+@pragma/desktop:build: transforming...
+@pragma/desktop:build: ../../node_modules/.pnpm/zod@4.6.5/node_modules/zod/v4/core/util.js (400:0): A comment
+@pragma/desktop:build: 
+@pragma/desktop:build: "// Wrapped in a `@__PURE__` IIFE: esbuild never tree-shakes a top-level initializer that contains a member access on `Number`, so the bare object literal survived into every bundle."
+@pragma/desktop:build: 
+@pragma/desktop:build: in "../../node_modules/.pnpm/zod@4.6.5/node_modules/zod/v4/core/util.js" contains an annotation that Rollup cannot interpret due to the position of the comment. The comment will be removed to avoid issues.
+@pragma/desktop:build: ../../node_modules/.pnpm/zod@4.6.5/node_modules/zod/v4/core/regexes.js (74:0): A comment
+@pragma/desktop:build: 
+@pragma/desktop:build: "/** Anchors a pattern source. The interpolation lives here rather than at the call site because
+@pragma/desktop:build:  * esbuild will not drop a `@__PURE__` call whose own argument interpolates a variable, but it
+@pragma/desktop:build:  * will drop `anchor(dateSource)`. Keeping it inline pinned `date` into every bundle. */"
+@pragma/desktop:build: 
+@pragma/desktop:build: in "../../node_modules/.pnpm/zod@4.6.5/node_modules/zod/v4/core/regexes.js" contains an annotation that Rollup cannot interpret due to the position of the comment. The comment will be removed to avoid issues.
+@pragma/desktop:build: ✓ 203 modules transformed.
+@pragma/desktop:build: rendering chunks...
+@pragma/desktop:build: out/preload/index.mjs  571.92 kB
+@pragma/desktop:build: ✓ built in 843ms
+@pragma/desktop:build: vite v7.3.6 building client environment for production...
+@pragma/desktop:build: transforming...
+@pragma/desktop:build: ../../node_modules/.pnpm/zod@4.6.5/node_modules/zod/v4/core/regexes.js (74:0): A comment
+@pragma/desktop:build: 
+@pragma/desktop:build: "/** Anchors a pattern source. The interpolation lives here rather than at the call site because
+@pragma/desktop:build:  * esbuild will not drop a `@__PURE__` call whose own argument interpolates a variable, but it
+@pragma/desktop:build:  * will drop `anchor(dateSource)`. Keeping it inline pinned `date` into every bundle. */"
+@pragma/desktop:build: 
+@pragma/desktop:build: in "../../node_modules/.pnpm/zod@4.6.5/node_modules/zod/v4/core/regexes.js" contains an annotation that Rollup cannot interpret due to the position of the comment. The comment will be removed to avoid issues.
+@pragma/desktop:build: ../../node_modules/.pnpm/zod@4.6.5/node_modules/zod/v4/core/util.js (400:0): A comment
+@pragma/desktop:build: 
+@pragma/desktop:build: "// Wrapped in a `@__PURE__` IIFE: esbuild never tree-shakes a top-level initializer that contains a member access on `Number`, so the bare object literal survived into every bundle."
+@pragma/desktop:build: 
+@pragma/desktop:build: in "../../node_modules/.pnpm/zod@4.6.5/node_modules/zod/v4/core/util.js" contains an annotation that Rollup cannot interpret due to the position of the comment. The comment will be removed to avoid issues.
+@pragma/desktop:build: ✓ 5242 modules transformed.
+@pragma/desktop:build: rendering chunks...
+@pragma/desktop:build: ../../out/renderer/index.html                                  0.39 kB
+@pragma/desktop:build: ../../out/renderer/assets/expert-26-C-rT0nVu.jpg              22.69 kB
+@pragma/desktop:build: ../../out/renderer/assets/expert-15-CG7fnfaF.jpg              23.82 kB
+@pragma/desktop:build: ../../out/renderer/assets/expert-27-BvTQVaVv.jpg              24.10 kB
+@pragma/desktop:build: ../../out/renderer/assets/expert-13-DHTr3HNp.jpg              24.33 kB
+@pragma/desktop:build: ../../out/renderer/assets/expert-20-Dt-UZpG8.jpg              24.39 kB
+@pragma/desktop:build: ../../out/renderer/assets/expert-01-B_s7huKU.jpg              24.46 kB
+@pragma/desktop:build: ../../out/renderer/assets/expert-16-B3EZMXWR.jpg              24.74 kB
+@pragma/desktop:build: ../../out/renderer/assets/expert-22-DzKyoBZv.jpg              24.82 kB
+@pragma/desktop:build: ../../out/renderer/assets/expert-10-DpEuWO75.jpg              24.83 kB
+@pragma/desktop:build: ../../out/renderer/assets/expert-24-D3doPp7b.jpg              24.84 kB
+@pragma/desktop:build: ../../out/renderer/assets/expert-03-9SBVw7ly.jpg              24.90 kB
+@pragma/desktop:build: ../../out/renderer/assets/expert-11-C6tWSN4P.jpg              24.93 kB
+@pragma/desktop:build: ../../out/renderer/assets/expert-14-LQINrA6j.jpg              25.01 kB
+@pragma/desktop:build: ../../out/renderer/assets/expert-18-ZXuEqz5H.jpg              25.23 kB
+@pragma/desktop:build: ../../out/renderer/assets/expert-23-sTYFn2hN.jpg              25.28 kB
+@pragma/desktop:build: ../../out/renderer/assets/expert-19-BDMiXjUD.jpg              25.50 kB
+@pragma/desktop:build: ../../out/renderer/assets/expert-09-DBtNHojA.jpg              25.55 kB
+@pragma/desktop:build: ../../out/renderer/assets/expert-21-BDH_0NiP.jpg              26.24 kB
+@pragma/desktop:build: ../../out/renderer/assets/expert-17-BdFNMrx1.jpg              26.35 kB
+@pragma/desktop:build: ../../out/renderer/assets/expert-12-CnqVFTul.jpg              27.31 kB
+@pragma/desktop:build: ../../out/renderer/assets/expert-04-CAmXjAa8.jpg              28.99 kB
+@pragma/desktop:build: ../../out/renderer/assets/expert-07-rOJGMTfp.jpg              29.09 kB
+@pragma/desktop:build: ../../out/renderer/assets/expert-06-BteZQovp.jpg              29.51 kB
+@pragma/desktop:build: ../../out/renderer/assets/expert-25-B21VAo2h.jpg              29.57 kB
+@pragma/desktop:build: ../../out/renderer/assets/expert-05-D9yp-72m.jpg              30.01 kB
+@pragma/desktop:build: ../../out/renderer/assets/pragma-icon-Q0PdGKzE.png            31.23 kB
+@pragma/desktop:build: ../../out/renderer/assets/expert-02-CxhYDpL6.jpg              32.79 kB
+@pragma/desktop:build: ../../out/renderer/assets/expert-08-DdM_hPtC.jpg              36.18 kB
+@pragma/desktop:build: ../../out/renderer/assets/qoder--37wACA4.svg                  39.26 kB
+@pragma/desktop:build: ../../out/renderer/assets/antigravity-Bh5qecM7.png            71.91 kB
+@pragma/desktop:build: ../../out/renderer/assets/Gloock-Regular-D7QuuIwD.ttf         98.10 kB
+@pragma/desktop:build: ../../out/renderer/assets/index-DEP4AVXo.css                 621.95 kB
+@pragma/desktop:build: ../../out/renderer/assets/AssetGitMergeEditor-CzrwJOxE.js    685.35 kB
+@pragma/desktop:build: ../../out/renderer/assets/index-FvMJTjgl.js                4,794.22 kB
+@pragma/desktop:build: ✓ built in 8.64s
+@pragma/desktop:build: 
+@pragma/desktop:build: > @pragma/desktop@0.2.49 verify:styles /Users/linminqiu/.codex/worktrees/issue-348-r2/expert-mesh/apps/desktop
+@pragma/desktop:build: > node ./scripts/verify-renderer-styles.mjs
+@pragma/desktop:build: 
+@pragma/desktop:build: Renderer styles verified: 34 files, 4500 rules, 16950 declarations, no cross-file selector ownership conflicts.
+@pragma/desktop:build: 
+@pragma/desktop:build: > @pragma/desktop@0.2.49 verify:main /Users/linminqiu/.codex/worktrees/issue-348-r2/expert-mesh/apps/desktop
+@pragma/desktop:build: > node ./scripts/verify-main-bundle.mjs
+@pragma/desktop:build: 
+@pragma/desktop:build: Desktop main bundle contains no external @pragma imports.
+@pragma/desktop:build: 
+@pragma/desktop:build: > @pragma/desktop@0.2.49 verify:preload /Users/linminqiu/.codex/worktrees/issue-348-r2/expert-mesh/apps/desktop
+@pragma/desktop:build: > node ./scripts/verify-preload-bundle.mjs
+@pragma/desktop:build: 
+@pragma/desktop:build: Desktop preload bundle is self-contained and exposes pragmaDesktop.
+@pragma/desktop:build: 
+@pragma/desktop:build: > @pragma/desktop@0.2.49 verify:storage-worker /Users/linminqiu/.codex/worktrees/issue-348-r2/expert-mesh/apps/desktop
+@pragma/desktop:build: > node ./scripts/verify-storage-worker.mjs
+@pragma/desktop:build: 
+@pragma/desktop:build: Packaged Host storage worker starts and durably opens a receipt database.
+
+ Tasks:    19 successful, 19 total
+Cached:    16 cached, 19 total
+  Time:    1m30.312s 
+

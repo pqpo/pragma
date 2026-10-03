@@ -1,0 +1,181 @@
+[
+  {
+    "stage": "check",
+    "command": [
+      "pnpm",
+      "check"
+    ],
+    "exitCode": 0,
+    "elapsedSeconds": 189.244127035141,
+    "node": "v24.18.0",
+    "testSummaries": [
+      "64 passed (64)",
+      "78 passed (78)",
+      "6 passed (6)",
+      "3 passed (3)",
+      "10 passed (10)",
+      "7 passed (7)",
+      "30 passed (30)",
+      "135 passed (135)",
+      "117 passed (117)",
+      "17 passed (17)",
+      "5 passed (5)"
+    ],
+    "log": "validation-check.log",
+    "logSha256": "04b4ec23511278062c701e7d3458d3ffbdec4f0c931061b23ca0ba200647b4e7"
+  },
+  {
+    "stage": "build",
+    "command": [
+      "pnpm",
+      "build"
+    ],
+    "exitCode": 0,
+    "elapsedSeconds": 91.01752495765686,
+    "node": "v24.18.0",
+    "testSummaries": [],
+    "log": "validation-build.log",
+    "logSha256": "7e55393f0f740e11703e4d0f3c21683e770456c17ad4a09c6026560804358931"
+  },
+  {
+    "stage": "compilation",
+    "command": [
+      "pnpm",
+      "test:mission-compilation"
+    ],
+    "exitCode": 0,
+    "elapsedSeconds": 54.647135972976685,
+    "node": "v24.18.0",
+    "testSummaries": [
+      "76 passed (76)",
+      "15 passed (15)"
+    ],
+    "log": "validation-compilation.log",
+    "logSha256": "d946f1d51ba474286bfe129da4ab3136524ca17a64fe8d29f0e82197709d7028"
+  },
+  {
+    "stage": "control",
+    "command": [
+      "pnpm",
+      "test:mission-control"
+    ],
+    "exitCode": 0,
+    "elapsedSeconds": 91.00322413444519,
+    "node": "v24.18.0",
+    "testSummaries": [
+      "124 passed (124)",
+      "6 passed | 116 skipped (122)",
+      "4 passed | 80 skipped (84)"
+    ],
+    "log": "validation-control.log",
+    "logSha256": "0d59367d190fb9332746e643618af8e779236df40ba241e98914eb1a0db491f5"
+  },
+  {
+    "stage": "desktop-stop",
+    "command": [
+      "pnpm",
+      "--filter",
+      "@pragma/desktop",
+      "exec",
+      "vitest",
+      "run",
+      "src/main/features/missions/mission-runner.test.ts",
+      "-t",
+      "cold-interrupts the original Native Session through acquisition"
+    ],
+    "exitCode": 0,
+    "elapsedSeconds": 8.220213890075684,
+    "node": "v24.18.0",
+    "testSummaries": [
+      "1 passed | 83 skipped (84)"
+    ],
+    "log": "validation-desktop-stop.log",
+    "logSha256": "e9e61beb8ab06294be44ddb234cdf036906b10f3d6716a2ac349bd447eaa53e1"
+  },
+  {
+    "stage": "interpreter-resources",
+    "command": [
+      "pnpm",
+      "--filter",
+      "@pragma/interpreter",
+      "exec",
+      "vitest",
+      "run",
+      "test/resource-adapters.test.ts"
+    ],
+    "exitCode": 0,
+    "elapsedSeconds": 3.0832879543304443,
+    "node": "v24.18.0",
+    "testSummaries": [
+      "10 passed (10)"
+    ],
+    "log": "validation-interpreter-resources.log",
+    "logSha256": "d833f1c4a203da02de80a5252bbffde54324cf289d4103542bdb2c1394045a8f"
+  },
+  {
+    "stage": "cli",
+    "command": [
+      "pnpm",
+      "--filter",
+      "@pqpo/pragma",
+      "exec",
+      "vitest",
+      "run"
+    ],
+    "exitCode": 0,
+    "elapsedSeconds": 72.71486520767212,
+    "node": "v24.18.0",
+    "testSummaries": [
+      "108 passed (108)"
+    ],
+    "log": "validation-cli.log",
+    "logSha256": "aa5cccddd5975389609d7f90390feb42fb60ae25282ef9ae60e896bf9ef0df2a"
+  },
+  {
+    "stage": "pack",
+    "command": [
+      "pnpm",
+      "--filter",
+      "@pqpo/pragma",
+      "package:pack"
+    ],
+    "exitCode": 0,
+    "elapsedSeconds": 8.467980146408081,
+    "node": "v24.18.0",
+    "testSummaries": [],
+    "log": "validation-pack.log",
+    "logSha256": "c051d7086f0c9e49d9fe0d21084ae33483e80620e799dac968169f2ef2e9dc2e"
+  },
+  {
+    "stage": "reports",
+    "command": [
+      "pnpm",
+      "--filter",
+      "@pqpo/pragma",
+      "release:reports"
+    ],
+    "exitCode": 0,
+    "elapsedSeconds": 1.793830156326294,
+    "node": "v24.18.0",
+    "testSummaries": [],
+    "log": "validation-reports.log",
+    "logSha256": "a575d6a70042bef5379c4e53dec9039d862f3eab3372099bdf469438bb9ad7f0"
+  },
+  {
+    "stage": "package-smoke",
+    "command": [
+      "node",
+      "apps/cli/scripts/smoke-package.mjs",
+      "--mode",
+      "positive",
+      "--artifact-dir",
+      "apps/cli/.release/ci-artifact"
+    ],
+    "exitCode": 0,
+    "elapsedSeconds": 19.732566118240356,
+    "node": "v24.18.0",
+    "testSummaries": [],
+    "log": "validation-package-smoke.log",
+    "logSha256": "ab365343d666619c74bfe894191d8ecc99e6726cab74df1680b40dca36d203ff"
+  }
+]

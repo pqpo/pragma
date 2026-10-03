@@ -1,0 +1,14 @@
+
+ RUN  v5.0.2 /Users/linminqiu/.codex/worktrees/issue-348-r2/expert-mesh/apps/desktop
+
+
+ Test Files  1 passed (1)
+      Tests  1 passed | 83 skipped (84)
+   Start at  13:14:09
+   Duration  7.40s (transform 46%, tests 39%, import 14%, setup 1%)
+
+  Transform  transforming modules took 3.30s · 46% of tracked time, re-done on every run
+             persist transforms across runs with fsModuleCache: true
+             on CI this only helps when the cache directory is persisted between runs
+             learn more: https://vitest.dev/guide/improving-performance#caching-between-reruns
+

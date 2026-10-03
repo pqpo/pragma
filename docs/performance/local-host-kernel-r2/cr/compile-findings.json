@@ -1,0 +1,68 @@
+{
+  "review": "R2 common compile service and Desktop compile wiring",
+  "baseline": "a2741325ab106b3cbc8f472d4feec98b1367ae55",
+  "findings": [
+    {
+      "id": "compile-system-stability",
+      "severity": "P1",
+      "origin": "existing Desktop algorithm carried into the new R2 service",
+      "locationBeforeFix": "packages/local-host/src/missions/compile-service.ts: compileStable",
+      "trigger": "system customization fingerprint changes while the old source is being compiled; Capability authority remains equal",
+      "observedBeforeFix": {
+        "compiledSourceGeneration": 0,
+        "currentSourceGeneration": 1,
+        "nextCacheHit": true,
+        "compiles": 1
+      },
+      "reproductionMethod": "Node 24 pnpm exec tsx minimal port fixture: project compile captures generation 0 then mutates system fingerprint to generation 1; next prepare receives returned identity as owner identity",
+      "impact": "compiled old definition is paired with the new identity and incorrectly reused on the next request",
+      "fix": "compare complete identity before and after compilation, retry at most three times; retain existing identity serialization",
+      "verification": "regression checks one mutation recompiles twice and continually changing system fingerprints fail after three attempts"
+    },
+    {
+      "id": "compile-system-model-override",
+      "severity": "P1",
+      "origin": "new shared-service contract gap; Desktop custom source handled some models previously, default Node source ignored request override",
+      "locationBeforeFix": "packages/local-host/src/missions/compile-service.ts: compileRef system source branch",
+      "trigger": "system source provides its own profile or an explicit RuntimeProfile; request.modelOverride changes",
+      "evidence": "identity included request.modelOverride, but both compileBuiltInAgent system branches forwarded only source plus resolveExternalInvocable, without applying the request override. No pre-fix runtime output was captured for this finding; evidence is code inspection plus post-fix real compiler regression.",
+      "fix": "root only model/thinking override merges existing source rootExecutionOverride; otherwise helper forwards Interpreter rootModelSelectionOverride. Child request.modelOverride is undefined and child profile is preserved.",
+      "verification": "real system DSL compilation checks root override and child request isolation; explicit RuntimeProfile pi remains pi while Runtime bind receives requested model"
+    },
+    {
+      "id": "compile-external-inflight",
+      "severity": "P2",
+      "origin": "existing Desktop completed-only Map carried into R2",
+      "locationBeforeFix": "packages/local-host/src/missions/compile-service.ts: compileRef completed Map",
+      "trigger": "parallel tool.delegate targets share an external system dependency (root -> store/skill and store -> skill)",
+      "evidence": "Interpreter resolves tool target arrays with Promise.all and old service stored completed results only after await. No numerical pre-fix compile trace was captured; do not present an inferred count as measured.",
+      "fix": "request-local pending Promise map shares the same external compilation. A dependency reachability check rejects parallel cross-sibling cycles before awaiting in-flight work.",
+      "verification": "actual system Interpreter regression records skill prepare once; parallel store -> skill and skill -> store rejects Cyclic external resource dependency without hanging"
+    }
+  ],
+  "validation": {
+    "builtinBuild": "exit 0",
+    "serviceTests": "14/14 passed after building updated helper",
+    "localHostTypecheck": "exit 0",
+    "changedFilesEslint": "exit 0",
+    "initialFixtureFailures": "tool.call with targets array was an invalid test fixture, changed to actual tool.delegate; explicit model forward initially used stale package dist until builtin helper build. These initial test runs are not successful validation.",
+    "log": "/tmp/pragma-r2-cr-compile-tests.log"
+  },
+  "independentSecondReview": "resources reviewer examined identity, model, in-flight/cycle and stop compiler changes and reported no new confirmed issue",
+  "nodeSecondReview": "stop purpose reaches submit/preflight/startOwner, catalog compileForStop and cold Flow consumer; external owner reference changes recheck compile authority; normal send keeps execute readiness; no new confirmed issue in reviewed Node/control fix",
+  "remainingBoundary": "R3 durable successor pointers and unavailable real model/product acceptance remain outside this CR repair. Stop compilation omits readiness probes, but actual Native restore continues requiring its own Runtime canUse guard.",
+  "desktopStopFollowup": {
+    "severity": "P1",
+    "origin": "existing Desktop readiness callback in cold interruption acquisition",
+    "fix": "assertMissionReady takes optional purpose; still reads Mission but stop skips readiness, execute retains it",
+    "negativeLog": "/tmp/pragma-r2-cr-desktop-stop-before-fix.log",
+    "negativeExit": 1,
+    "negativeCause": "Runtime readiness is unavailable after restart in assertMissionReady -> assertAcquisitionAllowed(stop)",
+    "positiveLog": "/tmp/pragma-r2-cr-desktop-stop-test.log",
+    "positiveExit": 0,
+    "positiveTests": "1/1 targeted cold original Native Session via full controller acquisition",
+    "assertions": "execute acquisition rejects unavailable readiness, stop skips readiness; Capability/credential resolution and mission adapter hook not called; original Native Session restored exactly once and stopped; canUse called once by actual native restoration",
+    "failedExtraScopeLog": "/tmp/pragma-r2-cr-desktop-stop-cause.log",
+    "failedExtraScope": "Setting Native canUse=false fails inside Core createManagedRuntimeSession/assertRuntimeCanUse during real native restoration; Flow stop unconfirmed remains recoverable. This protected behavior was retained and fixture now keeps actual Native Runtime usable while Mission compile/readiness resources are unavailable."
+  }
+}

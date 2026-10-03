@@ -20,8 +20,6 @@ import {
   migratePragmaDslProjectToCurrent,
   parsePragmaYaml,
   type PragmaProject,
-  type CompiledResource,
-  type InvocableResource,
   type PragmaProjectRevisionLocation,
   type PragmaProjectSourceRepository,
   type PragmaBlueprintCacheStore,
@@ -121,9 +119,6 @@ export interface PragmaProjectStore {
     readonly diagnostics: readonly PragmaDiagnostic[];
   }>;
   validateChanges(input: PragmaProjectChangeSetInput): Promise<readonly PragmaDiagnostic[]>;
-  compile<T extends InvocableResource>(
-    input: Parameters<PragmaProjectService["compile"]>[0],
-  ): Promise<CompiledResource<T>>;
   openRevision(revision: number): Promise<PragmaProject>;
   readArtifacts(revision: number): Promise<ReadonlyMap<string, string>>;
   renderProjectFiles(input: {
@@ -691,12 +686,6 @@ export function createPragmaProjectStore(options: {
     },
     previewChanges,
     validateChanges,
-    async compile<T extends InvocableResource>(
-      input: Parameters<PragmaProjectService["compile"]>[0],
-    ) {
-      await ensureMigrated();
-      return await service.compile<T>(input);
-    },
     async openRevision(revision) {
       await ensureMigrated();
       let location = await repository.getRevision(projectId, revision);
@@ -749,6 +738,7 @@ export function createPragmaProjectStore(options: {
       try {
         const project = await loadPragmaProject(location.entryFile, {
           rootDir: location.rootDir,
+          externalResourceRefs: options.reservedResourceRefs,
           requireLock: true,
           ...(location.compilerVersion === undefined
             ? {}

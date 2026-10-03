@@ -1,0 +1,47 @@
+{
+  "schemaVersion": "pragma.r2-compilation-probe/v1",
+  "startedAt": "2026-10-03T02:35:32.074Z",
+  "node": "v24.18.0",
+  "cpu": "Intel(R) Core(TM) i7-9750H CPU @ 2.60GHz",
+  "probeSha256": "f7504c6635d1012899f3dc16e1ec0cc99dda63ef89d735bc7bbef4cca85060be",
+  "commit": "a2741325ab106b3cbc8f472d4feec98b1367ae55",
+  "sourceBefore": {
+    "sha256": "406c579953a5d49af186026d11cb152786b5a0f1b06850d138aab8ecfa53a351",
+    "files": [
+      "apps/desktop/src/main/features/missions/mission-runner-composition.ts",
+      "packages/local-host/src/project-catalog.ts",
+      "packages/local-host/src/built-in-executors.ts",
+      "apps/desktop/src/main/features/projects/pragma-project-store.ts",
+      "apps/desktop/src/main/features/runtimes/runtime-availability.ts",
+      "apps/desktop/src/main/features/runtimes/runtime-environment-service.ts",
+      "packages/interpreter/src/compiler/project-compile.ts",
+      "packages/built-in-agents/src/builtin.ts"
+    ]
+  },
+  "scope": "Desktop Mission composition, isolated real Project/Mission/Capability/ContextStore/SQLite stores, fake Runtime and fixture verification/credential ports. Cold first run, retained-owner send, Capability/credential/system/model/permission/Context mount invalidation. No real model, renderer, Memory/Automation background load or performance acceptance.",
+  "counterMeaning": "Read counts are API calls, not physical I/O. projectHeadReads wraps ProjectStore.get. dslCompilerCalls wraps the real Interpreter PragmaProjectImpl.compile prototype for both project and built-in executors; storeCompileCalls/openedProjectCompileCalls identify entrypoints and must not be added to dslCompilerCalls. Cache flags and phases come from production logs. Readiness traverses the actual target closure on each side but Runtime health is a fixture port; plugin reads remain zero because this fixture declares no plugin.",
+  "operations": [],
+  "assertions": [],
+  "errors": [
+    {
+      "name": "Error",
+      "message": "Default Runtime Environment is not built in: pi."
+    }
+  ],
+  "sourceAfter": {
+    "sha256": "406c579953a5d49af186026d11cb152786b5a0f1b06850d138aab8ecfa53a351",
+    "files": [
+      "apps/desktop/src/main/features/missions/mission-runner-composition.ts",
+      "packages/local-host/src/project-catalog.ts",
+      "packages/local-host/src/built-in-executors.ts",
+      "apps/desktop/src/main/features/projects/pragma-project-store.ts",
+      "apps/desktop/src/main/features/runtimes/runtime-availability.ts",
+      "apps/desktop/src/main/features/runtimes/runtime-environment-service.ts",
+      "packages/interpreter/src/compiler/project-compile.ts",
+      "packages/built-in-agents/src/builtin.ts"
+    ]
+  },
+  "sourceUnchanged": true,
+  "completedAt": "2026-10-03T02:35:32.642Z",
+  "completeProbePassed": false
+}

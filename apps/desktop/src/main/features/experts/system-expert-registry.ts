@@ -50,6 +50,7 @@ export interface DesktopSystemExpertRegistry {
   listResources(): readonly PragmaExpertResource[];
   get(ref: string): ExpertDefinition | undefined;
   getResource(ref: string): PragmaExpertResource | undefined;
+  getDependencyResource(ref: string): PragmaResource | undefined;
   getAdditionalResources(ref: string): readonly PragmaResource[];
   getExecutor(ref: string): MissionExecutor | undefined;
   listExecutors(): readonly MissionExecutorOption[];
@@ -306,6 +307,16 @@ export function createDesktopSystemExpertRegistry(options?: {
     listResources: () => editableRefs.map((ref) => effectiveResource(ref)),
     get: (ref) => (defaultResources.has(ref) ? definition(ref) : undefined),
     getResource: (ref) => (defaultResources.has(ref) ? effectiveResource(ref) : undefined),
+    getDependencyResource: (ref) => {
+      if (defaultResources.has(ref)) return effectiveResource(ref);
+      for (const expertRef of editableRefs) {
+        const resource = customizationResources(customizations.get(expertRef)).find(
+          (candidate) => canonicalPragmaResourceRef(candidate) === ref,
+        );
+        if (resource !== undefined) return resource;
+      }
+      return undefined;
+    },
     getAdditionalResources: (ref) =>
       defaultResources.has(ref) ? customizationResources(customizations.get(ref)) : [],
     getExecutor: (ref) => {

@@ -1,0 +1,20 @@
+
+ RUN  v5.0.2 /Users/linminqiu/.codex/worktrees/issue-348-r2/expert-mesh/apps/cli
+
+{"schemaVersion":"pragma.log/v1","recordId":"e82fb0d4-02e1-4bef-b6dc-7f8838c8dcac","occurredAt":"2026-10-03T05:14:29.821Z","sequence":0,"host":{"kind":"cli","bootId":"ccfe87be-eae4-4d32-a995-734a9dc6629d","pid":70776},"component":"local-host.mission-controller","event":"mission.control_request_entered","message":"Mission control request entered","scope":{},"attributes":{"missionId":"11111111-1111-4111-8111-111111111111","requestId":"77777777-7777-4777-8777-777777777777","kind":"respond"},"stream":"operation","level":"info"}
+{"schemaVersion":"pragma.log/v1","recordId":"e1d9ae8a-ca4b-4b78-beda-56d8474eb653","occurredAt":"2026-10-03T05:14:29.901Z","sequence":1,"host":{"kind":"cli","bootId":"ccfe87be-eae4-4d32-a995-734a9dc6629d","pid":70776},"component":"local-host.mission-controller","event":"mission.inbox_durable","message":"Mission command is durably accepted","scope":{},"attributes":{"missionId":"11111111-1111-4111-8111-111111111111","requestId":"77777777-7777-4777-8777-777777777777","commandId":"bd4d945b-039d-424e-84ae-a0552c7c7a3e","appendMs":65.25204599999961,"elapsedMs":80.45636000000013},"stream":"operation","level":"info"}
+{"schemaVersion":"pragma.log/v1","recordId":"2f1fac86-96a3-48bd-850d-efd063b80c1a","occurredAt":"2026-10-03T05:14:29.903Z","sequence":2,"host":{"kind":"cli","bootId":"ccfe87be-eae4-4d32-a995-734a9dc6629d","pid":70776},"component":"local-host.mission-controller","event":"mission.control_request_entered","message":"Mission control request entered","scope":{},"attributes":{"missionId":"11111111-1111-4111-8111-111111111111","requestId":"88888888-8888-4888-8888-888888888888","kind":"respond"},"stream":"operation","level":"info"}
+{"schemaVersion":"pragma.log/v1","recordId":"7b592342-9556-45c8-a8ef-d944823e9368","occurredAt":"2026-10-03T05:14:29.908Z","sequence":3,"host":{"kind":"cli","bootId":"ccfe87be-eae4-4d32-a995-734a9dc6629d","pid":70776},"component":"local-host.mission-controller","event":"mission.owner_ready","message":"Mission owner is ready","scope":{},"attributes":{"missionId":"11111111-1111-4111-8111-111111111111","requestId":"77777777-7777-4777-8777-777777777777","outcome":"live","elapsedMs":6.017783000001145},"stream":"operation","level":"info"}
+{"schemaVersion":"pragma.log/v1","recordId":"bcf96463-52bf-4142-93f8-ae8fcecfa7cc","occurredAt":"2026-10-03T05:14:29.988Z","sequence":4,"host":{"kind":"cli","bootId":"ccfe87be-eae4-4d32-a995-734a9dc6629d","pid":70776},"component":"local-host.mission-controller","event":"mission.inbox_durable","message":"Mission command is durably accepted","scope":{},"attributes":{"missionId":"11111111-1111-4111-8111-111111111111","requestId":"88888888-8888-4888-8888-888888888888","commandId":"fd688180-1dbc-4ce7-9c07-cc0a335b767a","appendMs":66.597901000001,"elapsedMs":83.92352299999948},"stream":"operation","level":"info"}
+{"schemaVersion":"pragma.log/v1","recordId":"9117e964-3657-452c-b963-3df802f7dfea","occurredAt":"2026-10-03T05:14:29.991Z","sequence":5,"host":{"kind":"cli","bootId":"ccfe87be-eae4-4d32-a995-734a9dc6629d","pid":70776},"component":"local-host.mission-controller","event":"mission.owner_ready","message":"Mission owner is ready","scope":{},"attributes":{"missionId":"11111111-1111-4111-8111-111111111111","requestId":"88888888-8888-4888-8888-888888888888","outcome":"live","elapsedMs":3.5512290000006033},"stream":"operation","level":"info"}
+
+ Test Files  13 passed (13)
+      Tests  108 passed (108)
+   Start at  13:14:20
+   Duration  71.87s (tests 56%, transform 29%, import 15%)
+
+  Transform  transforming modules took 37.56s · 29% of tracked time, re-done on every run
+             persist transforms across runs with fsModuleCache: true
+             on CI this only helps when the cache directory is persisted between runs
+             learn more: https://vitest.dev/guide/improving-performance#caching-between-reruns
+

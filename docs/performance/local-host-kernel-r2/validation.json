@@ -1,0 +1,164 @@
+{
+  "schemaVersion": "pragma.r2-validation-evidence/v1",
+  "stages": [
+    {
+      "stage": "check",
+      "command": [
+        "pnpm",
+        "check"
+      ],
+      "exitCode": 0,
+      "elapsedSeconds": 159.06648015975952,
+      "node": "v24.18.0",
+      "testCounts": [
+        64,
+        78,
+        6,
+        10,
+        7,
+        3,
+        30,
+        135,
+        116,
+        17,
+        5
+      ],
+      "testFiles": [
+        13,
+        14,
+        2,
+        2,
+        2,
+        1,
+        5,
+        7,
+        10,
+        2,
+        2
+      ],
+      "logSha256": "1570b1d1d2429d57da1ad8089f224ef278b7f7ad57252504a5e1e390e6479df5"
+    },
+    {
+      "stage": "build",
+      "command": [
+        "pnpm",
+        "build"
+      ],
+      "exitCode": 0,
+      "elapsedSeconds": 90.65430688858032,
+      "node": "v24.18.0",
+      "testCounts": [],
+      "testFiles": [],
+      "logSha256": "1bee7b620a93313995ff5b5f233873f62d30bb10c025280b2cfa95aea821b43e"
+    },
+    {
+      "stage": "compilation",
+      "command": [
+        "pnpm",
+        "test:mission-compilation"
+      ],
+      "exitCode": 0,
+      "elapsedSeconds": 42.72883129119873,
+      "node": "v24.18.0",
+      "testCounts": [
+        57,
+        13
+      ],
+      "testFiles": [
+        11,
+        3
+      ],
+      "logSha256": "c0a84a87e47f30e38559060405ac8773102f2eb1645594f4825eda58a14d693c"
+    },
+    {
+      "stage": "control",
+      "command": [
+        "pnpm",
+        "test:mission-control"
+      ],
+      "exitCode": 0,
+      "elapsedSeconds": 89.51927495002747,
+      "node": "v24.18.0",
+      "testCounts": [
+        124,
+        6,
+        4
+      ],
+      "testFiles": [
+        13,
+        1,
+        1
+      ],
+      "logSha256": "425cf6b6d0ffa07dfbf2c99fcaae94728608205187d52f08aaf6164e31f335d3"
+    },
+    {
+      "stage": "cli",
+      "command": [
+        "pnpm",
+        "--filter",
+        "@pqpo/pragma",
+        "exec",
+        "vitest",
+        "run"
+      ],
+      "exitCode": 0,
+      "elapsedSeconds": 71.99563193321228,
+      "node": "v24.18.0",
+      "testCounts": [
+        108
+      ],
+      "testFiles": [
+        13
+      ],
+      "logSha256": "a4cfc9f7765be0161b605b94eca92c9572af79190824fe098632b7e2cd75fcc8"
+    },
+    {
+      "stage": "pack",
+      "command": [
+        "pnpm",
+        "--filter",
+        "@pqpo/pragma",
+        "package:pack"
+      ],
+      "exitCode": 0,
+      "elapsedSeconds": 8.366164922714233,
+      "node": "v24.18.0",
+      "testCounts": [],
+      "testFiles": [],
+      "logSha256": "c051d7086f0c9e49d9fe0d21084ae33483e80620e799dac968169f2ef2e9dc2e"
+    },
+    {
+      "stage": "reports",
+      "command": [
+        "pnpm",
+        "--filter",
+        "@pqpo/pragma",
+        "release:reports"
+      ],
+      "exitCode": 0,
+      "elapsedSeconds": 1.779191017150879,
+      "node": "v24.18.0",
+      "testCounts": [],
+      "testFiles": [],
+      "logSha256": "359950b0d66c911f675920ea9b4bcb4e56cd082cb48f5f7e81f1ef9d9ad3b7e7"
+    },
+    {
+      "stage": "package-smoke",
+      "command": [
+        "node",
+        "apps/cli/scripts/smoke-package.mjs",
+        "--mode",
+        "positive",
+        "--artifact-dir",
+        "apps/cli/.release/ci-artifact"
+      ],
+      "exitCode": 0,
+      "elapsedSeconds": 18.850575923919678,
+      "node": "v24.18.0",
+      "testCounts": [],
+      "testFiles": [],
+      "logSha256": "a8b343be3bdb4cdadaaaa69a0e21b6fb4cd199e5311dbdbd611635caa0d9a1f7"
+    }
+  ],
+  "scope": "macOS local validation; no test:all or unexecuted Linux/native credential acceptance claim"
+}

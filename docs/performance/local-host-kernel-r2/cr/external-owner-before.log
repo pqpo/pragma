@@ -1,0 +1,50 @@
+
+ RUN  v5.0.2 /Users/linminqiu/.codex/worktrees/issue-348-r2/expert-mesh/packages/local-host
+
+ ❯ test/core-control-compilation-authority.test.ts (7 tests | 1 failed | 6 skipped) 128ms
+   ❯ retained Node Mission compilation authority (7)
+     × checks an external live owner rather than treating a newly resolved definition as its authority 126ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  test/core-control-compilation-authority.test.ts > retained Node Mission compilation authority > checks an external live owner rather than treating a newly resolved definition as its authority
+AssertionError: promise resolved "{ result: { …(5) } }" instead of rejecting
+
+- Expected
++ Received
+
+- Error {
+-   "message": "rejected promise",
++ {
++   "result": {
++     "executionId": "da2ad885-da4c-4e73-9bb4-837dfddb86e9",
++     "missionId": "347f07b3-9e1f-4792-b68e-76a2dc6305cb",
++     "mode": "enqueue",
++     "queueState": "idle",
++     "turnId": "81d3ed1f-ea80-4d00-928c-10baa926e0fe",
++   },
+  }
+
+ ❯ test/core-control-compilation-authority.test.ts:344:27
+    342|     const f = await fixture(false, true);
+    343|     f.change();
+    344|     await expect(f.send()).rejects.toMatchObject({
+       |                           ^
+    345|       code: "COMMAND_REJECTED",
+    346|       details: { reason: "executor_environment_changed_requires_succes…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  1 failed | 6 skipped (7)
+   Start at  12:26:02
+   Duration  3.41s (transform 72%, import 24%, tests 4%)
+
+  Transform  transforming modules took 2.32s · 72% of tracked time, re-done on every run
+             persist transforms across runs with fsModuleCache: true
+             learn more: https://vitest.dev/guide/improving-performance#caching-between-reruns
+
+undefined
+/Users/linminqiu/.codex/worktrees/issue-348-r2/expert-mesh/packages/local-host:
+ ERR_PNPM_RECURSIVE_EXEC_FIRST_FAIL  Command failed with exit code 1: vitest run test/core-control-compilation-authority.test.ts -t external live

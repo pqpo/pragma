@@ -1,0 +1,83 @@
+{
+  "scope": "Node compiler/catalog/builtin/core owner/control + R2 report; baseline a2741325ab106b3cbc8f472d4feec98b1367ae55",
+  "findings": [
+    {
+      "id": "node-external-owner-authority",
+      "severity": "P1",
+      "status": "fixed",
+      "path": "packages/local-host/src/core-control-adapter.ts",
+      "trigger": "ownerAccess lacks live owner; resolveActiveOwner supplies original Session; mutable Capability active revision changes; cold scope resolves new definition and incorrectly marks authorityChecked; recover returns old external Session",
+      "observed_before": "Targeted test resolved accepted prompt using old Session instead of COMMAND_REJECTED; reverting only two new owner guards produced exit 1; finally restored source",
+      "fix": "Adopt actual external owner inside admission; prepare compilation using its metadata; remember checked owner; if recovery returns different owner/executor recheck authority",
+      "tests": "external live owner and owner-replacement race regressions, plus unchanged warm/cold compile-count cases",
+      "evidence": [
+        "/tmp/pragma-r2-cr-external-owner-before.log",
+        "/tmp/pragma-r2-cr-external-owner-fixed.log",
+        "/tmp/pragma-r2-cr-node-final-tests.log"
+      ]
+    },
+    {
+      "id": "node-cold-flow-stop-compilation",
+      "severity": "P1",
+      "status": "fixed",
+      "path": "packages/local-host/src/core-control-adapter.ts",
+      "trigger": "default Node cold Flow interrupt resolves catalog executor through execute preparation; external execution-readiness API or Capability failure prevents metadata required by existing Core stop-only API",
+      "classification": "R2 omission in stop resource-purpose wiring; baseline Interpreter RuntimeProfile compiler already checks adapter readiness. Native Session internal availability is a separate Core boundary and remains usable in this fixture.",
+      "fix": "Carry stop purpose through submit/acquisition/startOwner and cold Flow resolver; Node stop compiler bypasses execution readiness/active Capability authority; common service uses Interpreter without Runtime verification for metadata (compile reviewer changes); Core stop still receives real resolver and persisted snapshots",
+      "tests": "Real default Node/CAS/SQLite Flow awaits HumanTask after an Expert has created a Native context; destroy Capability and return unusable only from the external Host-facing adapter canUse API; configured Native Session availability remains usable. New Node composition interrupt applied and Execution cancelled with zero calls to the external canUse spy; subsequent normal send rejected RUNTIME_UNAVAILABLE. This does not prove cancellation when the Native provider itself is unavailable.",
+      "evidence": [
+        "/tmp/pragma-r2-cr-cold-stop-fixed.log",
+        "/tmp/pragma-r2-cr-node-final-tests.log"
+      ]
+    }
+  ],
+  "non_findings_or_retained_gaps": [
+    "Node catalog/builtin baseline never offered modelOverride inputs; common public compile request override omission is a separate confirmed service contract issue handled by root/compile reviewer, not Node old-API regression.",
+    "Full cold submit still can resolve/compile in submit preflight, async startOwner preflight, consumer preparation. Baseline R1 also resolved multiple times; report accurately discloses this. Consumer local Revision reuse test is not complete submit evidence.",
+    "Node changed authority still requires durable successor Session pointer (R3); current fail closed behavior accurately documented; no fake definition migration added.",
+    "Provider valid samples=0; real Native smoke scope and credential failures accurately reported; R2 acceptance remains incomplete."
+  ],
+  "verification": {
+    "node_targeted_tests": {
+      "exit": 0,
+      "files": 5,
+      "tests": 20,
+      "log": "/tmp/pragma-r2-cr-node-final-tests.log"
+    },
+    "eslint": {
+      "exit": 0,
+      "log": "/tmp/pragma-r2-cr-node-lint-final.log"
+    },
+    "host_typecheck": {
+      "exit": 0,
+      "log": "/tmp/pragma-r2-cr-node-types-final.log"
+    }
+  },
+  "fixtures": "Early cold-stop fixture failures (two options, valid string transition, operation state applied rather than succeeded, durable submit vs consumer rejection) corrected; production guards were not weakened to satisfy fixture expectations.",
+  "source_frozen": true,
+  "performance_run": false,
+  "native_stop_limit": "The Native test driver has a separately configured internal availability; overriding its exported canUse spy does not change Core Native Session assertRuntimeCanUse. Zero spy calls proves external readiness isolation only.",
+  "cr07_cr08_owner_metadata_addendum": {
+    "status": "production wiring frozen; latest SQLite assertions pending root full gate",
+    "wiring": [
+      "Core executor compilation metadata Pick and Node catalog/builtin include secrets/plugins",
+      "Desktop MissionExecutionOwner getters/setters persist transient guards with existing compilation metadata lifecycle; clearCompilation clears both",
+      "Desktop rememberSessionCompilation and prepare owner pass both guards; bootstrap supplies Secret authority metadata fingerprint",
+      "Node catalog/builtin and Desktop snapshot wrapper pass secrets and plugins as optional third/fourth arguments"
+    ],
+    "cross_review": {
+      "secret_guard": "Compile resolve checks metadata fingerprint before/after read and again at stable boundary; warm callback fingerprint avoids plaintext retrieval; empty guard arrays add no Secret reads",
+      "plugin_guard": "Concrete inspect and resolve both supply canonical hash of effective secret binding map. Service includes optional bindingFingerprint alongside package/verification fingerprints in identical actual/inspect formulas. Warm uses inspect, not resolve or entry load. Immutable package policy stays fail closed.",
+      "snapshot_compatibility": "Snapshot only adds nonempty Secret/Plugin guards; existing two-argument/empty calls preserve old hash input and identities/protocol versions unchanged",
+      "confirmed_unresolved_issues": []
+    },
+    "tests": {
+      "previous_desktop_guard_suite": "4/4 passed before final snapshot assertions (actual Desktop owner warm hit, Secret/host-managed Plugin rotate+delete; existing external caller/system Capability cases)",
+      "owner_registry": "17/17 passed including clearing both guards",
+      "latest_host_build": "exit 0, /tmp/pragma-r2-cr-owner-guards-host-build.log",
+      "latest_sqlite_assertions": "Actual SQLite Execution store injected. Assert rotated new Execution fingerprint differs and initial Execution environment remains byte-equivalent. Present in mission-runner-external-system.test.ts; root full gate must verify.",
+      "latest_test_invocation": "Root cwd pnpm exec vitest failed transformation due Desktop node_modules/tsconfig.base.json lookup; zero tests collected, not product failure. Correct Desktop package test configuration required. /tmp/pragma-r2-cr-desktop-owner-guards.log contains this failed invocation."
+    },
+    "processes": "all agent processes stopped; no performance run"
+  }
+}
