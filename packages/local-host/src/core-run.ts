@@ -1,8 +1,8 @@
+import { openLocalHostFlowExecution } from "./missions/flow-lifecycle.ts";
 import type {
   ExecutionEvent,
   ExecutionStore,
   ExpertDefinition,
-  ExpertSession,
   ExpertSessionStore,
   ExpertTurn,
   Flow,
@@ -20,8 +20,6 @@ import {
   AsyncPushQueue,
   createFileExpertSessionStore,
   createPragma,
-  ExpertSessionReleaseBlockedError,
-  hasUncertainSteerDelivery,
   isHumanInteractionCheckpointError,
 } from "@pragma/core";
 import {
@@ -45,6 +43,11 @@ import {
   type HumanInteractionRequestEnvelope,
 } from "@pragma/shared/integration";
 import { createSqliteExecutionStore } from "./execution/sqlite-execution-store.ts";
+
+import {
+  openLocalHostExpertSession,
+  releaseLocalHostExpertSession,
+} from "./missions/session-lifecycle.ts";
 
 import type { LocalHostCoreActiveOwner } from "./core-control-adapter.ts";
 import type { LocalHostStableMissionCompilation } from "./missions/compile-service.ts";
@@ -98,6 +101,9 @@ export function createLocalHostCoreStores(
 
 export interface LocalHostCoreRunComposition {
   readonly ownerAccess?: MissionExecutionOwnerAccess | undefined;
+  readonly resolveSessionId?: ((missionId: string) => Promise<string | undefined>) | undefined;
+  readonly createMissionExecutionOwnershipAssertion?:
+    ((missionId: string) => () => Promise<void>) | undefined;
   readonly runtimes: RuntimeResolver;
   readonly pragmaHome?: string | undefined;
   readonly app?: PragmaApp | undefined;
@@ -146,21 +152,32 @@ export function createCoreRunExecutorPort(
       executions,
       ...(options.pragmaHome === undefined ? {} : { pragmaHome: options.pragmaHome }),
     });
-  const createApp = (hostContextBindings?: HostContextBindings): PragmaApp =>
-    createPragma({
+  const createApp = (
+    missionId: string,
+    hostContextBindings?: HostContextBindings,
+    resolveBindings?: LocalHostCoreRunComposition["resolveHostContextBindings"],
+  ): PragmaApp => {
+    const assertExecutionOwnership = options.createMissionExecutionOwnershipAssertion?.(missionId);
+    return createPragma({
       pragmaHome: options.pragmaHome,
       runtimes: options.runtimes,
       executionStore: executions,
       expertSessionStore: sessions,
+      ...(assertExecutionOwnership === undefined ? {} : { assertExecutionOwnership }),
       ...(options.usageSink === undefined ? {} : { usageSink: options.usageSink }),
       ...(options.loggerProvider === undefined ? {} : { loggerProvider: options.loggerProvider }),
       ...(hostContextBindings === undefined ? {} : { hostContextBindings }),
-      ...(options.resolveHostContextBindings === undefined
+      ...(resolveBindings === undefined && options.resolveHostContextBindings === undefined
         ? {}
-        : { resolveHostContextBindings: options.resolveHostContextBindings }),
+        : {
+            resolveHostContextBindings: async () => {
+              await assertExecutionOwnership?.();
+              return await (resolveBindings ?? options.resolveHostContextBindings)!();
+            },
+          }),
     });
+  };
   const ownerAccess = options.ownerAccess ?? new MissionExecutionOwner();
-  const active = new Map<string, LocalHostCoreRunHandleState>();
 
   const resolve = async (input: {
     readonly ref: ExecutorReference;
@@ -221,6 +238,7 @@ export function createCoreRunExecutorPort(
         const runApp =
           options.app ??
           createApp(
+            input.missionId,
             options.createHostContextBindings === undefined
               ? options.hostContextBindings
               : await options.createHostContextBindings({
@@ -228,6 +246,14 @@ export function createCoreRunExecutorPort(
                   request: input.request,
                   executor: definition,
                 }),
+            options.createHostContextBindings === undefined
+              ? undefined
+              : async () =>
+                  await options.createHostContextBindings!({
+                    missionId: input.missionId,
+                    request: input.request,
+                    executor: definition,
+                  }),
           );
         const coreHandle = await startCoreDefinition({
           app: runApp,
@@ -236,6 +262,7 @@ export function createCoreRunExecutorPort(
           definition,
           request: input.request,
           missionId: input.missionId,
+          sessionId: (await options.resolveSessionId?.(input.missionId)) ?? input.missionId,
         });
         const state = createLocalHostRunHandleState({
           coreHandle: coreHandle.handle,
@@ -248,23 +275,44 @@ export function createCoreRunExecutorPort(
           onEvent: input.onEvent,
         });
         ownerAccess.setControlOwner(input.missionId, coreHandle.owner, "live");
-        active.set(coreHandle.handle.executionId, state);
-        void state.pump.finally(() => {
-          if (active.get(coreHandle.handle.executionId) === state)
-            active.delete(coreHandle.handle.executionId);
-        });
-        return state.handle;
+        return coreHandle.owner.kind === "session"
+          ? { ...state.handle, sessionId: coreHandle.owner.session.sessionId }
+          : state.handle;
       }),
     respond: async (input) => {
-      const state = active.get(input.executionId);
-      if (state === undefined) {
+      const owner = ownerAccess.controlOwner(input.missionId);
+      const handle =
+        owner?.kind === "flow"
+          ? owner.execution.executionId === input.executionId
+            ? owner.execution
+            : undefined
+          : owner?.kind === "session"
+            ? (await owner.session.listTurns()).find(
+                (turn) => turn.executionId === input.executionId,
+              )
+            : undefined;
+      const envelope =
+        handle === undefined
+          ? undefined
+          : await readPendingInteraction(
+              executions,
+              input.executionId,
+              input.missionId,
+              new Map(),
+              input.interactionId,
+            );
+      if (handle === undefined || envelope === undefined) {
         throw createIntegrationError({
           code: "INTERACTION_NOT_PENDING",
           category: "conflict",
           message: `Human interaction is not active: ${input.interactionId}.`,
         });
       }
-      await state.respond(input.interactionId, input.response, input.requestId);
+      await handle.respondToHumanInteraction(
+        input.interactionId,
+        toCoreResponse(envelope.interaction, input.response),
+        { requestId: input.requestId },
+      );
     },
   };
 }
@@ -282,6 +330,7 @@ async function startCoreDefinition(options: {
   readonly definition: LocalHostCoreExecutorDefinition;
   readonly request: LocalHostRunRequest;
   readonly missionId: string;
+  readonly sessionId: string;
 }): Promise<StartedCoreHandle> {
   if (options.definition.descriptor.ref.kind === "flow") {
     if (!isFlowDefinition(options.definition.definition)) {
@@ -291,21 +340,26 @@ async function startCoreDefinition(options: {
     }
     const existing = await options.executions.get(options.missionId);
     if (existing !== undefined) {
-      const execution = await options.app.flows.recover(options.definition.definition, {
-        executionId: options.missionId,
-      });
+      const execution = await openLocalHostFlowExecution(
+        options.app,
+        options.definition.definition,
+        { kind: "recover", options: { executionId: options.missionId } },
+      );
       return {
         handle: execution,
         owner: { kind: "flow", execution, executor: options.definition },
         release: async () => undefined,
       };
     }
-    const execution = await options.app.flows.start(options.definition.definition, {
-      input: options.request.input ?? {},
-      executionId: options.missionId,
-      ...(options.definition.environment === undefined
-        ? {}
-        : { environment: options.definition.environment }),
+    const execution = await openLocalHostFlowExecution(options.app, options.definition.definition, {
+      kind: "start",
+      options: {
+        input: options.request.input === undefined ? {} : options.request.input,
+        executionId: options.missionId,
+        ...(options.definition.environment === undefined
+          ? {}
+          : { environment: options.definition.environment }),
+      },
     });
     return {
       handle: execution,
@@ -318,20 +372,26 @@ async function startCoreDefinition(options: {
       `Non-Flow executor definition is a FlowSpec: ${options.definition.descriptor.ref.id}`,
     );
   }
-  const existing = await options.sessions.get(options.missionId);
+  const existing = await options.sessions.get(options.sessionId);
   const session =
     existing === undefined
-      ? await options.app.experts.createSession(options.definition.definition, {
-          sessionId: options.missionId,
-          ...(options.definition.environment === undefined
-            ? {}
-            : { environment: options.definition.environment }),
+      ? await openLocalHostExpertSession(options.app, options.definition.definition, {
+          kind: "create",
+          options: {
+            sessionId: options.sessionId,
+            ...(options.definition.environment === undefined
+              ? {}
+              : { environment: options.definition.environment }),
+          },
         })
-      : await options.app.experts.resumeSession(options.definition.definition, {
-          sessionId: options.missionId,
-          ...(options.definition.environment === undefined
-            ? {}
-            : { environment: options.definition.environment }),
+      : await openLocalHostExpertSession(options.app, options.definition.definition, {
+          kind: "resume",
+          options: {
+            sessionId: options.sessionId,
+            ...(options.definition.environment === undefined
+              ? {}
+              : { environment: options.definition.environment }),
+          },
         });
   try {
     const turn = await session.prompt(
@@ -341,52 +401,11 @@ async function startCoreDefinition(options: {
     return {
       handle: turn,
       owner: { kind: "session", session, executor: options.definition },
-      release: async () => await releaseExpertSessionOwner(session),
+      release: async () => await releaseLocalHostExpertSession(session),
     };
   } catch (error) {
-    await releaseExpertSessionOwner(session).catch(() => undefined);
+    await releaseLocalHostExpertSession(session).catch(() => undefined);
     throw error;
-  }
-}
-
-async function releaseExpertSessionOwner(session: ExpertSession): Promise<void> {
-  let boundaryRechecks = 0;
-  for (;;) {
-    // Core owns the queue drain and in-flight delivery tasks. A running queue
-    // receipt can be steering another turn and need not settle as a turn.
-    if ((await session.waitForPromptProcessing()) === "lease-lost") {
-      // Core has fenced the old owner and completed its bounded cleanup.
-      // Finish that owner's release without treating retained work as idle.
-      await session.releaseAfterTerminal();
-      return;
-    }
-    const [state, prompts] = await Promise.all([session.getState(), session.getPromptQueue()]);
-    const pending = prompts.filter(
-      (prompt) =>
-        prompt.mode === "enqueue" && (prompt.status === "queued" || prompt.status === "running"),
-    );
-    const activeExecutionId = state.activeExecutionId;
-    const checkpointed =
-      activeExecutionId === undefined &&
-      (state.lastStatus === "waiting" ||
-        (state.lastStatus === "failed" && pending.length > 0) ||
-        pending.some((prompt) => prompt.purpose === "human_checkpoint_recovery") ||
-        hasUncertainSteerDelivery(prompts));
-    try {
-      if (checkpointed) await session.releaseAfterHumanCheckpoint();
-      else await session.releaseAfterTerminal();
-      return;
-    } catch (error) {
-      // Admission can change the boundary between the completed drain and
-      // release validation. Rejoin actual Core work before rereading it.
-      if (
-        error instanceof ExpertSessionReleaseBlockedError &&
-        (checkpointed || error.retryable) &&
-        boundaryRechecks++ < 3
-      )
-        continue;
-      throw error;
-    }
   }
 }
 

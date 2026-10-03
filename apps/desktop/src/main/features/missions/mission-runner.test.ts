@@ -1,3 +1,4 @@
+import { createLocalHostNodeApplication } from "@pragma/local-host/node-application";
 import { createPragmaManagementTools, STORE_REVISION_EXPERT_REF } from "@pragma/built-in-agents";
 import { PRAGMA_DSL_WRITE_API_VERSION } from "@pragma/interpreter/ast";
 import {
@@ -48,6 +49,12 @@ import type {
 } from "@pragma/interpreter/ast";
 import {
   createControllerRunMissionPort,
+  createLocalHostNodeMissionCompiler,
+  createLocalHostProjectCatalogFromHome,
+  createLocalHostMissionController,
+  createMissionSessionAssociationResolver,
+  createMissionExecutionEventProjector,
+  findMissionPinnedBinding,
   createLocalHostRunApplication,
   createMissionControlApplication,
   createMissionControllerStore,
@@ -341,6 +348,229 @@ afterEach(async () => {
 });
 
 describe("MissionRunner", { timeout: 30_000 }, () => {
+  it.each([false, true])(
+    "hands a real Node Mission to the Desktop factory and injected facade (controller-only=%s)",
+    async (controllerOnly) => {
+      const home = await mkdtemp(join(tmpdir(), "pragma-desktop-real-takeover-"));
+      temporaryPaths.push(home);
+      const paths = new PragmaPaths({ pragmaHome: home });
+      const project = createPragmaProjectStore({
+        projectsPath: paths.projectsRoot(),
+        objectsPath: paths.contentObjectsRoot(),
+        projectViewsPath: paths.projectViewsCacheRoot(),
+      });
+      const expert = expertFixture();
+      const published = await project.publish({
+        expectedRevision: 0,
+        resources: [runtimeFixture(), expert],
+      });
+      const effects = vi.fn(() => ({ outputText: "done" }));
+      const runtime = defineRuntimeTestDriver<never, { id: string }>({
+        descriptor: { id: "fake", kind: "fake", displayName: "Fake" },
+        createSession: ({ systemSessionId }) => ({ id: `native-${systemSessionId}` }),
+        restoreSession: ({ systemSessionId }) => ({ id: `native-${systemSessionId}` }),
+        readSession: (session) => ({ runtimeSessionId: session.id }),
+        startTurn: effects,
+        mapEvent: () => ({ events: [] }),
+      });
+      const runtimes = createStaticRuntimeResolver({
+        runtimes: [runtime],
+        defaultRuntimeId: "fake",
+      });
+      const workspacePort = {
+        stat: async () => ({ isDirectory: () => true }),
+        access: async () => undefined,
+        realpath: async (path: string) => path,
+      };
+      const node = createLocalHostNodeApplication({
+        pragmaHome: home,
+        runtimes,
+        client: { surface: "cli", version: "test", instanceId: crypto.randomUUID() },
+        workspace: workspacePort,
+      });
+      const workspace = await node.resolveWorkspace(home);
+      const first = await node.run!.start({
+        requestId: crypto.randomUUID(),
+        command: "expert.run",
+        executor: { kind: "expert", id: expert.metadata.id },
+        project: { projectId: published.projectId, revision: published.revision },
+        workspace,
+        prompt: "first",
+        detach: false,
+      });
+      expect((await first.outcome).status).toBe("succeeded");
+      const missions = createMissionStore({ missionsPath: paths.missionsRoot() });
+      const original = await missions.get(first.missionId);
+      if (controllerOnly) await rm(join(missions.storagePath!(first.missionId), "mission.yaml"));
+      const executions = createSqliteExecutionStore({ pragmaHome: home });
+      const lifecycle = createLocalHostMissionController({
+        missionsPath: paths.missionsRoot(),
+        missionPath: missions.storagePath,
+        recoverSemanticWrite: async () => undefined,
+      });
+      const terminalProjector = createMissionExecutionEventProjector({
+        controller: lifecycle.controller,
+        ownerScope: lifecycle.ownerScope,
+      });
+      const runner = createMissionRunnerImplementation({
+        missions,
+        project,
+        capabilityStore: {} as CapabilityStore,
+        capabilityCredentials: {} as CapabilityCredentialStore,
+        capabilitiesPath: join(paths.dataRoot(), "capabilities"),
+        pragmaHome: home,
+        runtimes,
+        executionStore: executions,
+        ownerScope: lifecycle.ownerScope,
+        loggerProvider: createNoopLoggerProvider(),
+        commitExecutionTerminal: async (input) => {
+          expect(input.guard).toEqual(lifecycle.ownerScope.currentGuard(input.mission.id));
+          expect(input.guard).toBeDefined();
+          await terminalProjector.terminal(input);
+        },
+      });
+      const sessions = runner.controllerFactSessionStore;
+      const association = createMissionSessionAssociationResolver({
+        controller: lifecycle.controller,
+        executions,
+        sessions,
+        repositorySessionId: async () =>
+          controllerOnly ? undefined : (await missions.get(first.missionId)).execution?.sessionId,
+      });
+      const before = (await sessions.get(original.execution!.sessionId!))!;
+      const beforeRoot = before.contexts[before.rootContextId]!;
+      const compiler = createLocalHostNodeMissionCompiler({ pragmaHome: home, runtimes });
+      const catalog = createLocalHostProjectCatalogFromHome({
+        pragmaHome: home,
+        runtimes,
+        compiler,
+      });
+      let unblockMemory = (): void => undefined;
+      const blockedMemory = new Promise<void>((resolve) => {
+        unblockMemory = resolve;
+      });
+      const memoryTerminal = vi.fn(async () => await blockedMemory);
+      runner.bindControllerFacts({
+        controller: lifecycle.controller,
+        hasEnvelope: async () => !controllerOnly,
+        resolveSessionId: association,
+        resolveMissionBinding: async (id) =>
+          findMissionPinnedBinding(
+            (await lifecycle.controller.readSnapshot({ missionId: id })).events,
+          ),
+        executors: catalog.resolve,
+        compiler,
+        memory: {
+          linked: async () => undefined,
+          recovering: async () => undefined,
+          terminal: memoryTerminal,
+        },
+      });
+      const desktop = createLocalHostNodeApplication({
+        pragmaHome: home,
+        runtimes,
+        workspace: workspacePort,
+        client: { surface: "desktop", version: "test", instanceId: crypto.randomUUID() },
+        application: {
+          executionService: runner,
+          executorResolver: catalog.resolve,
+          missionLifecycle: lifecycle,
+          catalog: {
+            listProjects: node.listProjects,
+            getProjectRevision: node.getProjectRevision,
+            listExecutors: node.listExecutors,
+          },
+          missions: {
+            get: node.getMission,
+            list: node.listMissions,
+            query: lifecycle.query.queryMission,
+          },
+          board: {
+            list: ({ missionId }) => node.listSharedBoard(missionId),
+            read: ({ missionId, id, start, maxBytes }) =>
+              node.readSharedBoard(missionId, id, start, maxBytes),
+            search: ({ missionId, query, maxResults }) =>
+              node.searchSharedBoard(missionId, query, maxResults),
+          },
+        },
+      });
+      try {
+        await desktop.resumeMission!({
+          missionId: first.missionId,
+          requestId: crypto.randomUUID(),
+          detach: false,
+        });
+        expect(effects).toHaveBeenCalledTimes(1);
+        const requestId = crypto.randomUUID();
+        await desktop.missionControl!.submit({
+          missionId: first.missionId,
+          requestId,
+          kind: "send",
+          payload: { kind: "send", input: { prompt: "desktop followup", attachments: [] } },
+        });
+        const accepted = await desktop.missionControl!.waitForTerminal({
+          missionId: first.missionId,
+          requestId,
+          timeoutMs: 10000,
+        });
+        expect(accepted, JSON.stringify(accepted.error)).toMatchObject({ state: "applied" });
+        await desktop.missionControl!.waitExecution!({
+          missionId: first.missionId,
+          executionId: accepted.result!["executionId"] as string,
+        });
+        await vi.waitFor(async () =>
+          expect(
+            await runner.releaseIdleSession(first.missionId, 0, () =>
+              lifecycle.ownerScope.release(first.missionId),
+            ),
+          ).toBe(true),
+        );
+        if (controllerOnly) expect(memoryTerminal).toHaveBeenCalled();
+        expect(effects).toHaveBeenCalledTimes(2);
+        const afterDesktop = (await sessions.get(original.execution!.sessionId!))!;
+        expect(afterDesktop.rootContextId).toBe(before.rootContextId);
+        expect(afterDesktop.contexts[afterDesktop.rootContextId]?.snapshot).toEqual(
+          beforeRoot.snapshot,
+        );
+        await desktop.missionControl!.stopOwner(first.missionId);
+        const reopened = createLocalHostNodeApplication({
+          pragmaHome: home,
+          runtimes,
+          workspace: workspacePort,
+          client: { surface: "cli", version: "test", instanceId: crypto.randomUUID() },
+        });
+        const followup = crypto.randomUUID();
+        await reopened.missionControl!.submit({
+          missionId: first.missionId,
+          requestId: followup,
+          kind: "send",
+          payload: { kind: "send", input: { prompt: "node reopened", attachments: [] } },
+        });
+        const final = await reopened.missionControl!.waitForTerminal({
+          missionId: first.missionId,
+          requestId: followup,
+          timeoutMs: 10000,
+        });
+        expect(final, JSON.stringify(final.error)).toMatchObject({ state: "applied" });
+        await reopened.missionControl!.waitExecution!({
+          missionId: first.missionId,
+          executionId: final.result!["executionId"] as string,
+        });
+        expect(effects).toHaveBeenCalledTimes(3);
+        const afterNode = (await sessions.get(original.execution!.sessionId!))!;
+        expect(afterNode.rootContextId).toBe(before.rootContextId);
+        expect(afterNode.contexts[afterNode.rootContextId]?.snapshot).toEqual(beforeRoot.snapshot);
+        expect(await association(first.missionId)).toBe(original.execution!.sessionId);
+        if (controllerOnly) await expect(missions.get(first.missionId)).rejects.toThrow();
+        await reopened.missionControl!.stopOwner(first.missionId);
+      } finally {
+        unblockMemory();
+        await lifecycle.ownerScope.release(first.missionId);
+        await runner.missionControl.release(first.missionId);
+        await executions.close();
+      }
+    },
+  );
   it.each(["expired", "failed", "rejected", "applied"] as const)(
     "forwards a durable %s command outcome without reporting false success",
     async (state) => {
@@ -857,7 +1087,7 @@ describe("MissionRunner", { timeout: 30_000 }, () => {
     const projectionPath = join(projectionDirectory, `${executionId}.jsonl`);
     // Written by the pre-repair writer at d48a414d839d, before orderingVersion existed.
     const historicalProjection = new URL(
-      "./fixtures/mission-execution-projection-pre-order-repair.jsonl",
+      "../../../../../../packages/local-host/test/mission-repository/fixtures/mission-execution-projection-pre-order-repair.jsonl",
       import.meta.url,
     );
     await mkdir(projectionDirectory, { recursive: true });
@@ -4080,7 +4310,7 @@ describe("MissionRunner", { timeout: 30_000 }, () => {
         // Produced by the actual v3 writer at 76b0af71, not by changing a current fixture's version.
         await copyFile(
           new URL(
-            "./fixtures/mission-execution-projection-v3-rejected-attempt.jsonl",
+            "../../../../../../packages/local-host/test/mission-repository/fixtures/mission-execution-projection-v3-rejected-attempt.jsonl",
             import.meta.url,
           ),
           projectionPath,
@@ -7417,6 +7647,7 @@ describe("MissionRunner", { timeout: 30_000 }, () => {
         start: async (input) => await runner.startLocalHostRun(input),
       },
       mission: createControllerRunMissionPort(controller, { ownerScope }),
+      commandConsumer: runner.missionControl.consumer,
     });
     try {
       const first = await application.startAttached({

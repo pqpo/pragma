@@ -74,6 +74,45 @@ function fixture() {
   };
 }
 describe("Local Host message admission", () => {
+  it("rolls back optional resources when Core rejects without masking the original error", async () => {
+    const f = fixture();
+    const coreFailure = new Error("Core rejected the prompt");
+    const rollbackFailure = new Error("Memory rollback degraded");
+    f.prompt.mockRejectedValueOnce(coreFailure);
+    const rollback = vi.fn(async () => {
+      throw rollbackFailure;
+    });
+    const onPromptAdmitting = vi.fn(async () => rollback);
+    const onPromptAdmissionError = vi.fn();
+    const send = createLocalHostMissionCommandAdmission({
+      ...f.options,
+      onPromptAdmitting,
+      onPromptAdmissionError,
+    });
+    await expect(send({ id: missionId, requestId, content: "Refused" })).rejects.toBe(coreFailure);
+    expect(onPromptAdmitting).toHaveBeenCalledWith(missionId, requestId);
+    expect(rollback).toHaveBeenCalledOnce();
+    expect(onPromptAdmissionError).toHaveBeenCalledWith(rollbackFailure);
+    expect(f.dispatch).not.toHaveBeenCalled();
+  });
+
+  it("continues Core admission when optional Memory admission is unavailable", async () => {
+    const f = fixture();
+    const unavailable = new Error("Memory unavailable");
+    const onPromptAdmitting = vi.fn(async () => {
+      throw unavailable;
+    });
+    const onPromptAdmissionError = vi.fn();
+    const send = createLocalHostMissionCommandAdmission({
+      ...f.options,
+      onPromptAdmitting,
+      onPromptAdmissionError,
+    });
+    await send({ id: missionId, requestId, content: "Run" });
+    expect(f.dispatch).toHaveBeenCalledOnce();
+    expect(onPromptAdmissionError).toHaveBeenCalledWith(unavailable);
+  });
+
   it("rechecks the captured steer target after preparation before dispatch", async () => {
     const f = fixture();
     let activeExecutionId = "10000000-0000-4000-8000-000000000001";

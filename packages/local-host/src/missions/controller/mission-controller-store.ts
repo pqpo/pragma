@@ -1,9 +1,11 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 import { randomUUID } from "node:crypto";
+import { existsSync } from "node:fs";
 import { mkdir, open, readdir, rm, stat, truncate } from "node:fs/promises";
 import { dirname, join } from "node:path";
 
 import {
+  encodePragmaPathSegment,
   isRetryableStorageContentionError,
   withFileLock,
   withStorageDiagnostics,
@@ -394,8 +396,20 @@ export function createMissionControllerStore(options: {
     throw new Error("Mission command apply timeout must be a finite positive number.");
   }
   const retentionPolicy: MissionRetentionPolicy = resolveMissionRetentionPolicy(options.retention);
-  const missionDirectory = (missionId: string) =>
-    join(options.missionPath?.(missionId) ?? join(options.missionsPath, missionId), "local-host");
+  const missionDirectory = (missionId: string) => {
+    if (options.missionPath !== undefined)
+      return join(options.missionPath(missionId), "local-host");
+    // Re-evaluate inside each aggregate operation: an already constructed
+    // controller must follow a completed owner-path migration rather than
+    // recreate a second UUID-path aggregate after releasing its old lease.
+    const canonical = join(options.missionsPath, encodePragmaPathSegment(missionId));
+    if (
+      existsSync(join(canonical, "local-host", "aggregate.json")) ||
+      existsSync(join(canonical, "mission.yaml"))
+    )
+      return join(canonical, "local-host");
+    return join(options.missionsPath, missionId, "local-host");
+  };
   const statePath = (missionId: string) => join(missionDirectory(missionId), "aggregate.json");
   const commandsPath = (missionId: string) =>
     join(missionDirectory(missionId), "command-inbox.json");

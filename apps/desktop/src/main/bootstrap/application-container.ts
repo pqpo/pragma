@@ -1,3 +1,11 @@
+import {
+  createLocalHostNodeMissionCompiler,
+  createLocalHostProjectCatalogFromHome,
+  createLocalHostBuiltInExecutorResolver,
+  createLocalHostMissionBoardBindings,
+  createMissionSessionAssociationResolver,
+  findMissionPinnedBinding,
+} from "@pragma/local-host";
 import { PragmaProjectSnapshotSchema } from "../../shared/contracts/index.ts";
 import { createMissionAttentionRetirement } from "./mission-attention-retirement.ts";
 import {
@@ -47,10 +55,10 @@ import {
 } from "@pragma/core";
 import {
   createLocalHostMissionController,
+  createLocalHostMissionReadPorts,
   createMissionActivityReader,
   createNativeOsKeychain,
   createSecretStore,
-  type LocalHostRunExecutorPort,
   type MissionControllerStore,
 } from "@pragma/local-host";
 import { createLocalHostNodeApplication } from "@pragma/local-host/node-application";
@@ -348,11 +356,21 @@ export async function createDesktopApplicationContainer(
   const missionControllerRef: {
     current?: MissionControllerStore;
   } = {};
+  const readMissionEnvelope = async (id: string): Promise<Mission | undefined> => {
+    try {
+      return await missionStore.get(id);
+    } catch (error) {
+      if (error instanceof MissionStoreError && error.code === "mission_not_found")
+        return undefined;
+      throw error;
+    }
+  };
   // Local Host owns aggregate lease persistence and the query/watch lifecycle;
   // Desktop supplies only Electron-facing stop/replay hooks.
   const missionLifecycle = createLocalHostMissionController({
     logger: mainLogger,
     missionsPath,
+    readMission: readMissionEnvelope,
     onIdleError: (missionId, error) => {
       mainLogger.warn(
         "mission.idle_release_failed",
@@ -1275,7 +1293,12 @@ export async function createDesktopApplicationContainer(
     contextStores,
     contextStoreRevisions: storeRevisions,
     knowledgeRevisionMountResources: systemExpertKnowledgeRevisionMountResources,
-    hostContextStores: async (mission) => {
+    hostContextStores: async (mission, bindingId) => {
+      if (controllerMemoryBindings.get(mission.id) !== bindingId) {
+        controllerMemoryBindings.set(mission.id, bindingId);
+        if (!controllerMemoryExecution.has(mission.id))
+          controllerMemoryExecution.set(mission.id, { executionId: bindingId });
+      }
       const globalPolicy = await memoryPlane.policies.getGlobal();
       return globalPolicy.policy.enabled === "enabled"
         ? [
@@ -1317,12 +1340,15 @@ export async function createDesktopApplicationContainer(
     },
     onExecutionContextLinked: async ({ mission, executionId }) => {
       if (!isUserFacingMissionOrigin(mission.origin)) return;
+      controllerMemoryExecution.set(mission.id, { executionId });
+      controllerMemoryIntents.delete(mission.id);
       await memoryPlane.registerMemoryExecutionContext({
         executionId,
         missionId: mission.id,
         projectId: mission.project.id,
       });
     },
+    onPromptAdmitting: (missionId, requestId) => beginMemoryIntent(missionId, requestId),
     onMissionActivity: async ({ mission }) => {
       if (!isUserFacingMissionOrigin(mission.origin)) return;
       await memoryPlane.setMemoryConversationState({
@@ -1339,15 +1365,39 @@ export async function createDesktopApplicationContainer(
     getSystemExecutorResource: (ref) => systemExperts.getResource(ref),
     getSystemDependencyResource: (ref) => systemExperts.getDependencyResource(ref),
     invalidateRuntimeReadiness: () => invalidateTargetRuntimeAvailability(runtimes),
-    onExecutionTerminal: async ({ mission, executionId, status, result, error }) => {
-      await executionEventProjector.terminal({ mission, executionId, status, result, error });
+    commitExecutionTerminal: (input) => executionEventProjector.terminal(input),
+    onExecutionTerminal: async function completeMemoryTerminal({
+      mission,
+      executionId,
+    }: {
+      mission: Mission;
+      executionId: string;
+    }) {
       if (!isUserFacingMissionOrigin(mission.origin)) return;
+      const capturedMemoryOwner = controllerMemoryExecution.get(mission.id);
       try {
+        const intent = controllerMemoryIntents.get(mission.id);
+        if (
+          intent !== undefined &&
+          intent.owner === capturedMemoryOwner &&
+          intent.previous?.executionId === executionId
+        ) {
+          intent.deferred = async () => await completeMemoryTerminal({ mission, executionId });
+          return;
+        }
+        if (capturedMemoryOwner?.executionId !== executionId) return;
+        capturedMemoryOwner.terminal = async () =>
+          await completeMemoryTerminal({ mission, executionId });
         await memoryPlane.stopMissionAttention(mission.id);
+        if (controllerMemoryExecution.get(mission.id) !== capturedMemoryOwner) return;
         await memoryPlane.setMemoryConversationState({
           missionId: mission.id,
           state: mission.lifecycleStatus === "completed" ? "completed" : "active",
         });
+        if (controllerMemoryExecution.get(mission.id) === capturedMemoryOwner) {
+          controllerMemoryExecution.delete(mission.id);
+          controllerMemoryIntents.delete(mission.id);
+        }
       } catch (memoryError) {
         mainLogger.warn(
           "mission.memory_terminal_projection_failed",
@@ -1893,16 +1943,152 @@ export async function createDesktopApplicationContainer(
       }),
   });
   missionRunnerRef.current = missionRunner;
-  const localHostMissionControlAdapter = missionRunner.missionControl;
   const localHostRunExecutorResolver = createDesktopLocalHostExecutorResolver({
     executors: missionExecutors,
     project: pragmaProjectStore,
   });
-  const localHostRunExecutor: LocalHostRunExecutorPort = {
-    resolve: localHostRunExecutorResolver,
-    assertStartAllowed: async (input) => await missionRunner.assertLocalHostRunAllowed(input),
-    start: async (input) => await missionRunner.startLocalHostRun(input),
+  const controllerFactCompiler = createLocalHostNodeMissionCompiler({
+    pragmaHome: pragmaPaths.root,
+    runtimes,
+    loggerProvider,
+  });
+  const controllerFactCatalog = createLocalHostProjectCatalogFromHome({
+    pragmaHome: pragmaPaths.root,
+    runtimes,
+    loggerProvider,
+    compiler: controllerFactCompiler,
+  });
+  const controllerFactBuiltIns = createLocalHostBuiltInExecutorResolver({
+    pragmaHome: pragmaPaths.root,
+    runtimes,
+    loggerProvider,
+    compiler: controllerFactCompiler,
+  });
+  const hasMissionEnvelope = async (id: string): Promise<boolean> =>
+    (await readMissionEnvelope(id)) !== undefined;
+  const resolveControllerFactSession = createMissionSessionAssociationResolver({
+    controller: missionControllerStore,
+    executions: memoryPlane.executionStore,
+    sessions: missionRunner.controllerFactSessionStore,
+    repositorySessionId: async (id) => {
+      try {
+        return (await missionStore.get(id)).execution?.sessionId;
+      } catch (error) {
+        if (error instanceof MissionStoreError && error.code === "mission_not_found")
+          return undefined;
+        throw error;
+      }
+    },
+  });
+  type MemoryExecutionOwner = { executionId: string; terminal?: () => Promise<void> };
+  const controllerMemoryExecution = new Map<string, MemoryExecutionOwner>();
+  const controllerMemoryIntents = new Map<
+    string,
+    {
+      owner: MemoryExecutionOwner;
+      previous: MemoryExecutionOwner | undefined;
+      deferred?: () => Promise<void>;
+    }
+  >();
+  const beginMemoryIntent = async (missionId: string, executionId: string) => {
+    const previous = controllerMemoryExecution.get(missionId);
+    const owner = { executionId };
+    const intent = { owner, previous, deferred: previous?.terminal } as {
+      owner: typeof owner;
+      previous: typeof previous;
+      deferred?: () => Promise<void>;
+    };
+    controllerMemoryIntents.set(missionId, intent);
+    controllerMemoryExecution.set(missionId, owner);
+    return async () => {
+      if (controllerMemoryExecution.get(missionId) !== owner) return;
+      if (previous === undefined) controllerMemoryExecution.delete(missionId);
+      else controllerMemoryExecution.set(missionId, previous);
+      controllerMemoryIntents.delete(missionId);
+      void intent
+        .deferred?.()
+        .catch((error: unknown) =>
+          mainLogger.warn(
+            "mission.memory_terminal_projection_failed",
+            "Deferred Memory terminal projection needs recovery.",
+            { error, missionId, retryable: true },
+          ),
+        );
+    };
   };
+  const controllerMemoryBindings = new Map<string, string>();
+  missionRunner.bindControllerFacts({
+    controller: missionControllerStore,
+    hasEnvelope: hasMissionEnvelope,
+    resolveSessionId: resolveControllerFactSession,
+    resolveMissionBinding: async (id) =>
+      findMissionPinnedBinding(
+        (await missionControllerStore.readSnapshot({ missionId: id })).events,
+      ),
+    executors: async (input) =>
+      (await controllerFactBuiltIns(input)) ?? (await controllerFactCatalog.resolve(input)),
+    compiler: controllerFactCompiler,
+    usageSink: localHostUsageRef.current,
+    createHostContextBindings: async ({ missionId, request }) => [
+      ...(await createLocalHostMissionBoardBindings({ pragmaHome: pragmaPaths.root, missionId })),
+      ...((await memoryPlane.policies.getGlobal()).policy.enabled === "enabled"
+        ? [
+            {
+              namespace: "memory",
+              store: memoryPlane.createMissionContextStore({
+                missionId,
+                goal: request.prompt ?? "",
+                ...(request.project === undefined ? {} : { projectId: request.project.projectId }),
+              }),
+            },
+          ]
+        : []),
+    ],
+    memory: {
+      linked: async ({ missionId, executionId, projectId }) => {
+        controllerMemoryExecution.set(missionId, { executionId });
+        controllerMemoryIntents.delete(missionId);
+        await memoryPlane.registerMemoryExecutionContext({
+          missionId,
+          executionId,
+          ...(projectId === undefined ? {} : { projectId }),
+        });
+        await memoryPlane.setMemoryConversationState({ missionId, state: "running" });
+      },
+      recovering: async (missionId, executionId) => {
+        controllerMemoryExecution.set(missionId, { executionId });
+        controllerMemoryIntents.delete(missionId);
+        await memoryPlane.setMemoryConversationState({ missionId, state: "running" });
+      },
+      admitting: (missionId, requestId) => beginMemoryIntent(missionId, requestId),
+      terminal: async function completeMemoryTerminal(missionId, executionId, waiting) {
+        const capturedMemoryOwner = controllerMemoryExecution.get(missionId);
+        const intent = controllerMemoryIntents.get(missionId);
+        if (
+          intent !== undefined &&
+          intent.owner === capturedMemoryOwner &&
+          intent.previous?.executionId === executionId
+        ) {
+          intent.deferred = async () =>
+            await completeMemoryTerminal(missionId, executionId, waiting);
+          return;
+        }
+        if (capturedMemoryOwner?.executionId !== executionId) return;
+        capturedMemoryOwner.terminal = async () =>
+          await completeMemoryTerminal(missionId, executionId, waiting);
+        await memoryPlane.stopMissionAttention(missionId);
+        if (controllerMemoryExecution.get(missionId) !== capturedMemoryOwner) return;
+        await memoryPlane.setMemoryConversationState({
+          missionId,
+          state: waiting ? "active" : "completed",
+        });
+        if (controllerMemoryExecution.get(missionId) === capturedMemoryOwner) {
+          controllerMemoryExecution.delete(missionId);
+          controllerMemoryIntents.delete(missionId);
+        }
+      },
+    },
+  });
   const memoryCurator = createDesktopMemoryCurator({
     profiles: memoryPlane.extractorProfiles,
     missions: missionStore,
@@ -2038,6 +2224,13 @@ export async function createDesktopApplicationContainer(
     missions: missionStore,
     activity: missionActivity,
   });
+  const missionReadPorts = createLocalHostMissionReadPorts({
+    pragmaHome: pragmaPaths.root,
+    repository: missionStore,
+    controller: missionControllerStore,
+    query: missionQuery,
+    watch: missionWatch,
+  });
   const localHost = createLocalHostNodeApplication({
     logger: mainLogger,
     pragmaHome: pragmaPaths.root,
@@ -2057,53 +2250,18 @@ export async function createDesktopApplicationContainer(
             : undefined,
         listExecutors: async () => await missionExecutors.list(),
       },
-      missions: {
-        get: async (missionId) => await missionReadModel.get(missionId),
-        list: async () => await missionReadModel.list(),
-        query: missionQuery.queryMission,
-      },
+      missions: missionReadPorts.missions,
       missionLifecycle,
-      missionControlAdapter: localHostMissionControlAdapter,
-      assertMission: async (missionId) => {
-        await missionStore.get(missionId);
-      },
+      executionService: missionRunner,
+      executorResolver: localHostRunExecutorResolver,
+      assertMission: missionReadPorts.assertMission,
       onOwnerStartError: ({ missionId, error }) =>
         mainLogger.warn(
           "mission.controller_owner_start_failed",
           "Mission command is durable, but its owner could not be started yet.",
           { missionId, error },
         ),
-      board: {
-        list: async ({ missionId, storeId, scopeId }) =>
-          await missionContextStoreBrowser.list({ missionId, storeId, scopeId }),
-        read: async ({ missionId, storeId, scopeId, id, start, maxBytes }) =>
-          await missionContextStoreBrowser.read({
-            missionId,
-            storeId,
-            scopeId,
-            id,
-            start,
-            maxBytes,
-          }),
-        search: async ({
-          missionId,
-          storeId,
-          scopeId,
-          query,
-          maxResults,
-          contextLines,
-          caseSensitive,
-        }) =>
-          await missionContextStoreBrowser.search({
-            missionId,
-            storeId,
-            scopeId,
-            query,
-            maxResults,
-            contextLines,
-            caseSensitive: caseSensitive ?? false,
-          }),
-      },
+      board: missionReadPorts.board,
       queue: {
         list: async (missionId) => {
           if (missionRunner.listPromptQueue === undefined) {
@@ -2112,8 +2270,7 @@ export async function createDesktopApplicationContainer(
           return await missionRunner.listPromptQueue(missionId);
         },
       },
-      watch: missionWatch,
-      runExecutor: localHostRunExecutor,
+      watch: missionReadPorts.watch,
     },
   });
   if (localHost.missionControl === undefined || localHost.run === undefined) {
@@ -2126,8 +2283,8 @@ export async function createDesktopApplicationContainer(
   const desktopLocalHost = {
     ...localHost,
     getMission: async (missionId: string) =>
-      MissionSchema.parse(await localHost.getMission(missionId)),
-    listMissions: async () => MissionSummarySchema.array().parse(await localHost.listMissions()),
+      MissionSchema.parse(await missionReadModel.get(missionId)),
+    listMissions: async () => MissionSummarySchema.array().parse(await missionReadModel.list()),
     listExecutors: async () =>
       MissionExecutorOptionSchema.array().parse(await localHost.listExecutors()),
     missionControl: localHost.missionControl,

@@ -145,6 +145,33 @@ describe("Mission deletion integration", () => {
       code: "ENOENT",
     });
   });
+  it("retains the owner graph when Native close rejects and retries the original stop", async () => {
+    const close = vi
+      .fn<() => Promise<void>>()
+      .mockImplementationOnce(async () => {
+        throw new Error("Native close rejected.");
+      })
+      .mockImplementation(async () => undefined);
+    const target = await fixture(close);
+    await target.runner.run(target.mission.id);
+    await vi.waitFor(
+      async () =>
+        expect((await target.missions.get(target.mission.id)).execution?.status).toBe("succeeded"),
+      { timeout: 10_000 },
+    );
+    await expect(target.runner.delete(target.mission.id)).rejects.toMatchObject({
+      code: "MISSION_DELETE_RUNTIME_STOP_UNCONFIRMED",
+    });
+    await access(target.missions.storagePath!(target.mission.id));
+    expect((await target.deletion.read(target.mission.id))?.phase).toBe("prepared");
+    expect(close).toHaveBeenCalledOnce();
+    await target.runner.delete(target.mission.id);
+    expect(close).toHaveBeenCalledTimes(2);
+    await expect(access(target.missions.storagePath!(target.mission.id))).rejects.toMatchObject({
+      code: "ENOENT",
+    });
+  });
+
   it("commits with hung cleanup, shares duplicate deletes, and rejects late Mission writes", async () => {
     const target = await fixture();
     await Promise.all([

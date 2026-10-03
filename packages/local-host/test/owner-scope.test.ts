@@ -36,6 +36,49 @@ describe("Mission owner scope", () => {
     });
   };
 
+  it("drains an idle recovery read before stop returns and prevents reacquisition", async () => {
+    const root = await mkdtemp(join(tmpdir(), "pragma-owner-recovery-stop-"));
+    const controller = createMissionControllerStore({ missionsPath: root });
+    const readEntered = deferred();
+    const allowRead = deferred();
+    const listOperations = vi.spyOn(controller, "listOperations").mockImplementation(async () => {
+      readEntered.resolve();
+      await allowRead.promise;
+      return [{ state: "accepted" }] as Awaited<ReturnType<typeof controller.listOperations>>;
+    });
+    const claim = vi.spyOn(controller, "claim");
+    const scope = createMissionOwnerScope({
+      controller,
+      idleTimeoutMs: 10,
+      onIdle: async ({ releaseOwner }) => await releaseOwner(),
+    });
+    scope.bindConsumer({ apply: async () => ({ result: {} }) });
+    let stop: Promise<void> | undefined;
+    try {
+      await scope.acquire(missionId);
+      await readEntered.promise;
+      let stopped = false;
+      stop = scope.stop(missionId).then(() => {
+        stopped = true;
+      });
+      await Promise.resolve();
+      expect(stopped).toBe(false);
+      allowRead.resolve();
+      await stop;
+      expect(claim).toHaveBeenCalledOnce();
+      expect(listOperations).toHaveBeenCalledOnce();
+      expect(scope.diagnostics()).toMatchObject({
+        activeMissionOwnerCount: 0,
+        activeInboxPollerCount: 0,
+      });
+    } finally {
+      allowRead.resolve();
+      await stop;
+      await scope.stop(missionId);
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
   it("keeps renewal and Inbox consumption alive until gated lower-level release completes", async () => {
     const root = await mkdtemp(join(tmpdir(), "pragma-owner-drain-"));
     const controller = createMissionControllerStore({ missionsPath: root });

@@ -1,0 +1,331 @@
+{
+  "date": "2026-10-03",
+  "codeCommit": "8387482a0374fd9ac466b387fbb8fd8b478254b2",
+  "baseCommit": "921376a446d9da878b8d9fa5c9f1df69ab323272",
+  "node": "24.18.0",
+  "pnpm": "10.12.1",
+  "gates": [
+    {
+      "label": "cr-lifecycle-final-3",
+      "command": ["pnpm", "test:mission-lifecycle"],
+      "exitCode": 0,
+      "elapsedSeconds": 373.679,
+      "logSha256": "68352f5b29fa871e46ca841258607a5f10e0d5f5da8f4b0f7a2ba2f0b3f368b8",
+      "testSummary": [
+        "Test Files  21 passed (21)",
+        "Tests  166 passed (166)",
+        "Test Files  3 passed (3)",
+        "Tests  92 passed | 2 skipped (94)"
+      ]
+    },
+    {
+      "label": "cr-compilation-final",
+      "command": ["pnpm", "test:mission-compilation"],
+      "exitCode": 0,
+      "elapsedSeconds": 251.078,
+      "logSha256": "9227ed7d22f8240613ea5a41e8e1e786af42c16979e633fec4cb22add3543bdf",
+      "testSummary": [
+        "Test Files  11 passed (11)",
+        "Tests  98 passed (98)",
+        "Test Files  4 passed (4)",
+        "Tests  17 passed (17)"
+      ]
+    },
+    {
+      "label": "cr-control-final",
+      "command": ["pnpm", "test:mission-control"],
+      "exitCode": 0,
+      "elapsedSeconds": 98.062,
+      "logSha256": "fe0e160c7d049a3f1ff39887d5f685f5526bb46bebc7bae41d2fc50eae9bf94c",
+      "testSummary": [
+        "Test Files  13 passed (13)",
+        "Tests  135 passed (135)",
+        "Test Files  1 passed (1)",
+        "Tests  6 passed | 116 skipped (122)",
+        "Test Files  1 passed (1)",
+        "Tests  4 passed | 82 skipped (86)"
+      ]
+    },
+    {
+      "label": "cr-chat-final",
+      "command": ["pnpm", "test:mission-chat"],
+      "exitCode": 0,
+      "elapsedSeconds": 147.143,
+      "logSha256": "ff2f34f1c2bb17bfc0d24e435175688b960f11633cfb55ebd4f0eaf25d3c9752",
+      "testSummary": [
+        "Test Files  1 passed (1)",
+        "Tests  2 passed | 7 skipped (9)",
+        "Test Files  1 passed (1)",
+        "Tests  3 passed | 9 skipped (12)",
+        "Test Files  9 passed (9)",
+        "Tests  44 passed (44)",
+        "Test Files  2 passed (2)",
+        "Tests  66 passed (66)",
+        "Test Files  1 passed (1)",
+        "Tests  6 passed | 80 skipped (86)"
+      ]
+    },
+    {
+      "label": "cr-revision-final",
+      "command": ["pnpm", "test:revision"],
+      "exitCode": 0,
+      "elapsedSeconds": 59.453,
+      "logSha256": "ddcdebb1767cb840c86ed1f04414ac71da217da8d24ff7bb3240db012de765e0",
+      "testSummary": [
+        "Test Files  1 passed (1)",
+        "Tests  13 passed (13)",
+        "Test Files  2 passed (2)",
+        "Tests  69 passed (69)",
+        "Test Files  1 passed (1)",
+        "Tests  6 passed | 80 skipped (86)"
+      ]
+    },
+    {
+      "label": "cr-cli-final-2",
+      "command": ["pnpm", "--filter", "@pqpo/pragma", "test"],
+      "exitCode": 0,
+      "elapsedSeconds": 141.877,
+      "logSha256": "2013d86ff5302d4d199bb5f371021a7a1964d2c631897297fc923663e826870e",
+      "testSummary": ["Test Files  13 passed (13)", "Tests  108 passed (108)"]
+    },
+    {
+      "label": "cr-memory-final",
+      "command": [
+        "pnpm",
+        "--filter",
+        "@pragma/local-host",
+        "exec",
+        "vitest",
+        "run",
+        "test/run-memory.test.ts"
+      ],
+      "exitCode": 0,
+      "elapsedSeconds": 6.082,
+      "logSha256": "8418ea67e83c8b84325fca2fa0086ad0715ff1f52d4aed8d110eb51a63f0641b",
+      "testSummary": ["Test Files  1 passed (1)", "Tests  9 passed (9)"]
+    },
+    {
+      "label": "cr-core-flow-final",
+      "command": [
+        "pnpm",
+        "--filter",
+        "@pragma/core",
+        "exec",
+        "vitest",
+        "run",
+        "test/human-interaction-checkpoint.test.ts",
+        "test/flow-control.test.ts"
+      ],
+      "exitCode": 0,
+      "elapsedSeconds": 2.972,
+      "logSha256": "da1f162e05f58d46fe1ebaf8299060571d97e217627f483ab61f8eec47dff31d",
+      "testSummary": ["Test Files  2 passed (2)", "Tests  6 passed (6)"]
+    },
+    {
+      "label": "cr-check-final-2",
+      "command": ["pnpm", "check"],
+      "exitCode": 0,
+      "elapsedSeconds": 200.385,
+      "logSha256": "65355526f7cf3a504dc8b83d58360f5ec6439d9d72e59c62ca1823040fcdf47f",
+      "testSummary": [
+        "Test Files  13 passed (13)",
+        "Tests  64 passed (64)",
+        "Test Files  15 passed (15)",
+        "Tests  87 passed (87)",
+        "Test Files  2 passed (2)",
+        "Tests  7 passed (7)",
+        "Test Files  5 passed (5)",
+        "Tests  30 passed (30)",
+        "Test Files  2 passed (2)",
+        "Tests  6 passed (6)",
+        "Test Files  2 passed (2)",
+        "Tests  10 passed (10)",
+        "Test Files  10 passed (10)",
+        "Tests  117 passed (117)",
+        "Test Files  1 passed (1)",
+        "Tests  3 passed (3)",
+        "Test Files  7 passed (7)",
+        "Tests  135 passed (135)",
+        "Test Files  2 passed (2)",
+        "Tests  17 passed (17)",
+        "Test Files  2 passed (2)",
+        "Tests  5 passed (5)"
+      ]
+    },
+    {
+      "label": "cr-native-delete-final",
+      "command": [
+        "env",
+        "PRAGMA_MISSION_DELETE_NATIVE=1",
+        "PRAGMA_MISSION_DELETE_MODEL=gpt-6.1-sol",
+        "pnpm",
+        "--filter",
+        "@pragma/desktop",
+        "exec",
+        "vitest",
+        "run",
+        "src/main/features/missions/mission-deletion.test.ts",
+        "-t",
+        "real suspended Codex"
+      ],
+      "exitCode": 0,
+      "elapsedSeconds": 34.955,
+      "logSha256": "930da216a98e0653e588e7434e15b2605d8399e0731214775f8770de4ad68f89",
+      "testSummary": ["Test Files  1 passed (1)", "Tests  1 passed | 5 skipped (6)"]
+    },
+    {
+      "label": "cr-build-final-2",
+      "command": ["pnpm", "build"],
+      "exitCode": 0,
+      "elapsedSeconds": 92.88,
+      "logSha256": "967e72adc5472bf97847a58f817732ca63dabfa122ee4b806c15449e58e29b95",
+      "testSummary": []
+    },
+    {
+      "label": "cr-pack-final",
+      "command": ["pnpm", "--filter", "@pqpo/pragma", "package:pack"],
+      "exitCode": 0,
+      "elapsedSeconds": 8.434,
+      "logSha256": "3e9a7f60e5df44d1b3ecbf0aef7299d03a7d6305ac8a7ac3dafc5c2236d8cdbc",
+      "testSummary": []
+    },
+    {
+      "label": "cr-pack-audit-final",
+      "command": ["pnpm", "--filter", "@pqpo/pragma", "audit:pack"],
+      "exitCode": 0,
+      "elapsedSeconds": 1.8,
+      "logSha256": "c899d05f976da6f5fe723ac183ffaf3c187a97e28f24a36a4254f8cf95dd6d5a",
+      "testSummary": []
+    },
+    {
+      "label": "cr-pack-reports-final",
+      "command": ["pnpm", "--filter", "@pqpo/pragma", "release:reports"],
+      "exitCode": 0,
+      "elapsedSeconds": 1.801,
+      "logSha256": "18b593cd0adc3d1378f73e77695f283e8b7bd2ccd0af29ce4116cea0e726aaab",
+      "testSummary": []
+    },
+    {
+      "label": "cr-pack-smoke-final",
+      "command": [
+        "pnpm",
+        "--filter",
+        "@pqpo/pragma",
+        "ci:smoke",
+        "--",
+        "--mode",
+        "positive",
+        "--artifact-dir",
+        ".release/ci-artifact"
+      ],
+      "exitCode": 0,
+      "elapsedSeconds": 20.698,
+      "logSha256": "ecab7a79171824479111667ce9945c191b427905fb3b42ecf8fe864908e4d9ba",
+      "testSummary": []
+    }
+  ],
+  "review": {
+    "confirmedFindingGroups": 11,
+    "unresolvedConfirmedFindings": 0,
+    "independentReview": "all reproduced findings closed; last deletion change additionally checked against two real independent owner scopes"
+  },
+  "resolvedGateFailures": [
+    {
+      "label": "cr-lifecycle-final",
+      "cause": "premature forceRevoke before deletion cancellation",
+      "resolution": "preserve original lease through terminalDelete; no stop error ignored",
+      "exitCode": 1,
+      "logSha256": "74e1f5571f24f4649f8fd93ee37a2f3e8ff5bdbb0f52d684dbb2915ffc035f69"
+    },
+    {
+      "label": "cr-check-final",
+      "cause": "Memory terminal replay recursive call required unused status through contextual typing",
+      "resolution": "explicit narrow callback input type; no fabricated status",
+      "exitCode": 2,
+      "logSha256": "3e7332b1594a6f2650cf0920d24f901b1ab6bb4bcbed27fc1759bc070bea4c3a"
+    },
+    {
+      "label": "cr-cli-final",
+      "cause": "doctor build beforeAll deadline during concurrent dependency rebuild",
+      "resolution": "serial full CLI suite passed unchanged timeout/assertions",
+      "exitCode": 1,
+      "logSha256": "92468e37ffcd133132c8b82938aca6d2087975215f435f7ac2740295f8d7c9d7"
+    },
+    {
+      "label": "cr-lifecycle-final-2",
+      "cause": "two subprocess startup-marker deadlines during concurrent dependency rebuild",
+      "resolution": "serial full lifecycle passed unchanged source/assertions/timeouts; interference inference, no distinct production cause proven",
+      "exitCode": 1,
+      "logSha256": "f04d0ea7f35daa29b00de0b855f8287e7ab9128eb4f0d89538ccb78b91d60fdd"
+    }
+  ],
+  "sourceScopeNote": "Compilation/control/chat/revision passed before the last narrow deletion ordering and callback parameter-type correction; final lifecycle/check/native gate cover those last changes. No sum of overlapping tests.",
+  "acceptance": "R3 engineering delivery and CR fixes verified locally; real provider, OS credentials and full product performance acceptance incomplete",
+  "performance": {
+    "report": "../local-host-kernel-r3-cr-comparison.md",
+    "fullGroupsPerSide": 2,
+    "samplesPerScenario": 20,
+    "resamplesPerSide": 2,
+    "resampleSamplesPerScenario": 40,
+    "resampledScenarios": ["cold", "model-invalidation", "capability-invalidation"],
+    "initialTriggers": [
+      {
+        "repeat": 1,
+        "scenario": "cold",
+        "metrics": ["preparation"]
+      },
+      {
+        "repeat": 1,
+        "scenario": "model-invalidation",
+        "metrics": ["coreTerminalToHostStatus"]
+      },
+      {
+        "repeat": 1,
+        "scenario": "capability-invalidation",
+        "metrics": ["activeBindingReleaseToNextDispatch"]
+      },
+      {
+        "repeat": 2,
+        "scenario": "capability-invalidation",
+        "metrics": ["activeBindingReleaseToNextDispatch"]
+      }
+    ],
+    "storageTriggers": [],
+    "persistentResampleTriggers": [],
+    "sourceIdentity": {
+      "main": {
+        "before": {
+          "commit": "921376a446d9da878b8d9fa5c9f1df69ab323272",
+          "fileCount": 1141,
+          "sha256": "b10e9b3415a3f4d849ce3e2607681f1965d7da64959e269173d4583b18ccc387"
+        },
+        "after": {
+          "commit": "921376a446d9da878b8d9fa5c9f1df69ab323272",
+          "fileCount": 1141,
+          "sha256": "b10e9b3415a3f4d849ce3e2607681f1965d7da64959e269173d4583b18ccc387"
+        },
+        "unchanged": true
+      },
+      "r3": {
+        "before": {
+          "commit": "8387482a0374fd9ac466b387fbb8fd8b478254b2",
+          "fileCount": 1179,
+          "sha256": "87f2b50df48cdbfa482440aacc2d295667867b4ace5ea1615769cd147d66d91d"
+        },
+        "after": {
+          "commit": "8387482a0374fd9ac466b387fbb8fd8b478254b2",
+          "fileCount": 1179,
+          "sha256": "87f2b50df48cdbfa482440aacc2d295667867b4ace5ea1615769cd147d66d91d"
+        },
+        "unchanged": true
+      }
+    },
+    "extraResampleTrigger": "capability-invalidation repeat 1 fixtureCompletionToCoreTerminal; repeat 2 not triggered",
+    "scope": "fixture only; no full-product performance acceptance"
+  },
+  "latestMainComparison": {
+    "originMain": "921376a446d9da878b8d9fa5c9f1df69ab323272",
+    "matchesBase": true,
+    "fetchedAt": "2026-10-03"
+  }
+}

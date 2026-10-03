@@ -1,3 +1,13 @@
+import {
+  openLocalHostFlowExecution,
+  releaseLocalHostFlowExecution,
+  stopLocalHostFlowExecution,
+} from "./missions/flow-lifecycle.ts";
+import {
+  openLocalHostExpertSession,
+  releaseLocalHostExpertSession,
+} from "./missions/session-lifecycle.ts";
+import { missionCompilationEnvironmentSnapshot } from "./missions/compile-service.ts";
 import { basename } from "node:path";
 import { z } from "zod";
 import {
@@ -126,8 +136,14 @@ export type LocalHostCoreActiveOwner =
       readonly kind: "flow";
       readonly execution: Pick<
         FlowExecution,
-        "executionId" | "cancel" | "respondToHumanInteraction"
-      >;
+        "executionId" | "cancel" | "respondToHumanInteraction" | "getState"
+      > &
+        Partial<
+          Pick<
+            FlowExecution,
+            "releaseRuntimeResources" | "checkpointWaitingHuman" | "stopForDeletion"
+          >
+        >;
       readonly executor?: LocalHostCoreExecutorDefinition;
     };
 
@@ -150,6 +166,7 @@ export function createLocalHostCoreMissionControlAdapter(options: {
   readonly hostContextBindings?: HostContextBindings | undefined;
   readonly resolveHostContextBindings?: HostContextBindingsResolver | undefined;
   readonly createHostContextBindings?: LocalHostCoreRunComposition["createHostContextBindings"];
+  readonly createMissionExecutionOwnershipAssertion?: LocalHostCoreRunComposition["createMissionExecutionOwnershipAssertion"];
   readonly executors:
     | readonly LocalHostCoreExecutorDefinition[]
     | ((input: {
@@ -210,8 +227,17 @@ export function createLocalHostCoreMissionControlAdapter(options: {
   readonly resolveMissionBinding: (missionId: string) => Promise<MissionPinnedBinding | undefined>;
   /** Host lifecycle before recovering an owner that may resume Runtime work. */
   readonly onOwnerRecovering?: ((missionId: string) => Promise<void>) | undefined;
+  readonly onExecutionAccepted?:
+    ((input: { missionId: string; executionId: string }) => Promise<void>) | undefined;
+  readonly onPromptAdmitting?:
+    ((missionId: string, requestId: string) => Promise<void | (() => Promise<void>)>) | undefined;
   /** Release the Mission lease after a recovered lower-level owner settles. */
-  readonly releaseMissionOwner?: ((missionId: string) => Promise<void>) | undefined;
+  readonly releaseMissionOwner?:
+    ((missionId: string, guard: MissionControllerGuard) => Promise<void>) | undefined;
+  readonly assertMissionOwnership?:
+    ((missionId: string, guard: MissionControllerGuard) => Promise<void>) | undefined;
+  readonly currentMissionGuard?:
+    ((missionId: string) => MissionControllerGuard | undefined) | undefined;
   /** Used to avoid releasing a lease while a newer Inbox item is arriving. */
   readonly hasPendingMissionCommands?: ((missionId: string) => Promise<boolean>) | undefined;
 }): LocalHostCoreMissionControlAdapter {
@@ -231,20 +257,41 @@ export function createLocalHostCoreMissionControlAdapter(options: {
   const settlementTasks = new Map<string, Promise<void>>();
   const redactor = options.redactor ?? createRunRedactor();
 
-  const createApp = (hostContextBindings?: HostContextBindings): PragmaApp =>
-    options.app ??
-    createPragma({
-      pragmaHome: options.pragmaHome,
-      runtimes: options.runtimes,
-      executionStore: executions,
-      expertSessionStore: sessions,
-      ...(options.usageSink === undefined ? {} : { usageSink: options.usageSink }),
-      ...(options.loggerProvider === undefined ? {} : { loggerProvider: options.loggerProvider }),
-      ...(hostContextBindings === undefined ? {} : { hostContextBindings }),
-      ...(options.resolveHostContextBindings === undefined
-        ? {}
-        : { resolveHostContextBindings: options.resolveHostContextBindings }),
-    });
+  const createApp = (
+    hostContextBindings?: HostContextBindings,
+    missionId?: string,
+    resolveBindings?: HostContextBindingsResolver,
+  ): PragmaApp => {
+    const assertExecutionOwnership =
+      missionId === undefined
+        ? undefined
+        : options.createMissionExecutionOwnershipAssertion?.(missionId);
+    return (
+      options.app ??
+      createPragma({
+        pragmaHome: options.pragmaHome,
+        runtimes: options.runtimes,
+        executionStore: executions,
+        expertSessionStore: sessions,
+        ...(assertExecutionOwnership === undefined
+          ? {}
+          : {
+              assertExecutionOwnership,
+            }),
+        ...(options.usageSink === undefined ? {} : { usageSink: options.usageSink }),
+        ...(options.loggerProvider === undefined ? {} : { loggerProvider: options.loggerProvider }),
+        ...(hostContextBindings === undefined ? {} : { hostContextBindings }),
+        ...(resolveBindings === undefined && options.resolveHostContextBindings === undefined
+          ? {}
+          : {
+              resolveHostContextBindings: async () => {
+                await assertExecutionOwnership?.();
+                return await (resolveBindings ?? options.resolveHostContextBindings)!();
+              },
+            }),
+      })
+    );
+  };
 
   const resolveExecutor = async (
     binding: MissionPinnedBinding,
@@ -350,6 +397,8 @@ export function createLocalHostCoreMissionControlAdapter(options: {
           sessions,
           executions,
           missionId,
+          sessionId: (await options.resolveSessionId?.(missionId)) ?? missionId,
+          executionId: (await options.resolveExecutionId?.(missionId)) ?? missionId,
           executor,
         });
         return owner;
@@ -373,6 +422,7 @@ export function createLocalHostCoreMissionControlAdapter(options: {
     for (;;) {
       const owner = recoveredOwner(missionId);
       if (owner === undefined) return;
+      await options.assertMissionOwnership?.(missionId, guard);
       if (await options.hasPendingMissionCommands?.(missionId)) {
         await unrefDelay(50);
         continue;
@@ -400,41 +450,52 @@ export function createLocalHostCoreMissionControlAdapter(options: {
         });
         const checkpointed =
           state.lastStatus === "waiting" || prompts.some((prompt) => prompt.status === "queued");
-        if (checkpointed) await owner.session.releaseAfterHumanCheckpoint();
-        else await owner.session.releaseAfterTerminal();
+        if (checkpointed) await releaseLocalHostExpertSession(owner.session, "checkpoint");
+        else await releaseLocalHostExpertSession(owner.session, "terminal");
       } else {
-        const execution = await executions.get(missionId);
+        const executionId = owner.execution.executionId;
+        const execution = await executions.get(executionId);
         if (execution !== undefined && !isTerminalExecutionStatus(execution.status)) {
-          const waitingForHuman =
-            execution.status === "waiting" &&
-            (await executions.listInvocations(missionId)).some(
-              (invocation) =>
-                invocation.status === "waiting" && invocation.waitReason === "human_input",
-            );
+          const waitingForHuman = (await executions.listInvocations(executionId)).some(
+            (invocation) =>
+              invocation.status === "waiting" && invocation.waitReason === "human_input",
+          );
           if (!waitingForHuman) {
             await unrefDelay(100);
             continue;
           }
         }
+        if (execution !== undefined && !isTerminalExecutionStatus(execution.status)) {
+          if (owner.execution.checkpointWaitingHuman === undefined)
+            throw new Error("Recovered waiting Flow has no checkpoint release boundary.");
+          await owner.execution.checkpointWaitingHuman();
+        }
         await projectRecoveredOwner({
           missionId,
           guard,
-          executionIds: [missionId],
+          executionIds: [executionId],
           executions,
           mission: options.mission!,
           redactor,
         });
+        if (
+          execution !== undefined &&
+          (isTerminalExecutionStatus(execution.status) ||
+            owner.execution.checkpointWaitingHuman !== undefined)
+        )
+          await releaseLocalHostFlowExecution(owner.execution);
       }
 
       // Lower-level release is complete. Remove the recovered handle before
       // releasing the Mission lease so a concurrent command can reconstruct a
       // fresh owner; the callback performs its own final pending-item check.
+      await options.assertMissionOwnership?.(missionId, guard);
       if (
         recoveredOwner(missionId) !== owner ||
         !owners.deleteControlOwnerIfCurrent(missionId, owner)
       )
         return;
-      await options.releaseMissionOwner(missionId);
+      await options.releaseMissionOwner(missionId, guard);
       return;
     }
   };
@@ -449,32 +510,58 @@ export function createLocalHostCoreMissionControlAdapter(options: {
     const task = settleRecoveredOwner(missionId, guard).finally(() => {
       if (settlementTasks.get(missionId) === task) settlementTasks.delete(missionId);
     });
+    void task.catch((error: unknown) =>
+      options.loggerProvider
+        ?.createLogger({ component: "local-host.mission-control" })
+        .warn(
+          "mission.recovered_owner_settlement_degraded",
+          "Recovered Mission owner settlement needs recovery.",
+          { missionId, error },
+        ),
+    );
     settlementTasks.set(missionId, task);
   };
 
-  const settleUnbackedMissionOwner = async (missionId: string): Promise<void> => {
+  const settleUnbackedMissionOwner = async (
+    missionId: string,
+    guard: MissionControllerGuard,
+  ): Promise<void> => {
     if (options.releaseMissionOwner === undefined) return;
     // The lower-level recovery may have failed before it could publish a
     // recovered owner (for example, Flow send or queue mutation rejection).
     // Give the poller a turn to finish the durable outcome, then release the
     // Mission lease if no newer command or ordinary live owner needs it.
     await unrefDelay(25);
+    await options.assertMissionOwnership?.(missionId, guard);
     if (recoveredOwner(missionId) !== undefined) return;
     if (options.resolveActiveOwner !== undefined) {
       const active = await options.resolveActiveOwner(missionId);
       if (active !== undefined) return;
     }
     if (await options.hasPendingMissionCommands?.(missionId)) return;
-    await options.releaseMissionOwner(missionId);
+    await options.assertMissionOwnership?.(missionId, guard);
+    await options.releaseMissionOwner(missionId, guard);
   };
 
-  const scheduleUnbackedMissionOwnerSettlement = (missionId: string): void => {
+  const scheduleUnbackedMissionOwnerSettlement = (
+    missionId: string,
+    guard: MissionControllerGuard,
+  ): void => {
     if (options.releaseMissionOwner === undefined || recoveredOwner(missionId) !== undefined)
       return;
     if (settlementTasks.has(missionId)) return;
-    const task = settleUnbackedMissionOwner(missionId).finally(() => {
+    const task = settleUnbackedMissionOwner(missionId, guard).finally(() => {
       if (settlementTasks.get(missionId) === task) settlementTasks.delete(missionId);
     });
+    void task.catch((error: unknown) =>
+      options.loggerProvider
+        ?.createLogger({ component: "local-host.mission-control" })
+        .warn(
+          "mission.unbacked_owner_settlement_degraded",
+          "Mission owner settlement needs recovery.",
+          { missionId, error },
+        ),
+    );
     settlementTasks.set(missionId, task);
   };
 
@@ -653,7 +740,11 @@ export function createLocalHostCoreMissionControlAdapter(options: {
     }
   };
 
-  const prepareCompilation = async (missionId: string, owner: CoreMissionOwner) => {
+  const prepareCompilation = async (
+    missionId: string,
+    owner: CoreMissionOwner,
+    allowSuccessor = false,
+  ) => {
     const compiler = options.compiler;
     if (compiler === undefined) return undefined;
     const binding = await readBinding(missionId);
@@ -678,10 +769,27 @@ export function createLocalHostCoreMissionControlAdapter(options: {
       hasOwner: true,
       ...executor.compilation,
     });
-    // Node has no durable successor Session pointer yet. Preserve the original
-    // Session and reject a changed authority instead of executing its old tools.
-    if (!prepared.cacheHit || prepared.definitionChanged)
-      throw commandRejected(missionId, "executor_environment_changed_requires_successor");
+    if (!prepared.cacheHit || prepared.definitionChanged) {
+      const state = owner.kind === "session" ? await owner.session.getState() : undefined;
+      const latest = state?.executionIds.at(-1);
+      const previous = latest === undefined ? undefined : await executions.get(latest);
+      if (
+        !allowSuccessor ||
+        previous?.environment === undefined ||
+        state === undefined ||
+        owner.kind !== "session"
+      )
+        throw commandRejected(missionId, "executor_environment_changed_requires_successor");
+      if (
+        !isTerminalExecutionStatus(previous.status) ||
+        state.activeExecutionId !== undefined ||
+        state.lastStatus === "waiting" ||
+        (await owner.session.getPromptQueue()).some(
+          (prompt) => prompt.status === "running" || prompt.status === "queued",
+        )
+      )
+        throw commandRejected(missionId, "execution_environment_changed_pending_prompts");
+    }
     return prepared;
   };
 
@@ -700,6 +808,7 @@ export function createLocalHostCoreMissionControlAdapter(options: {
     },
     admit: (id, operation) => owners.admit(id, operation),
     withController: async (_id, operation) => await operation(),
+    onPromptAdmitting: options.onPromptAdmitting,
     settleTerminal: async () => false,
     contextBindingsChanging: () => false,
     successorRequired: () => false,
@@ -715,18 +824,32 @@ export function createLocalHostCoreMissionControlAdapter(options: {
         const actualOwner = owner ?? (await options.resolveActiveOwner?.(mission.id));
         if (actualOwner !== undefined) {
           if (owner === undefined) owners.setControlOwner(mission.id, actualOwner, "live");
-          await prepareCompilation(mission.id, actualOwner);
+          const prepared = await prepareCompilation(mission.id, actualOwner, true);
+          if (prepared !== undefined && (!prepared.cacheHit || prepared.definitionChanged)) {
+            const compilation = await prepared.ensureCompiled();
+            const executor: LocalHostCoreExecutorDefinition = {
+              ...actualOwner.executor!,
+              definition: compilation.compiled.value,
+              environment: missionCompilationEnvironmentSnapshot(
+                compilation.compiled,
+                compilation.capabilities,
+                compilation.secrets,
+                compilation.plugins,
+              ),
+              compilation,
+            };
+            return { authorityChecked: true, checkedOwner: undefined, executor };
+          }
           return { authorityChecked: true, checkedOwner: actualOwner, executor: undefined };
         }
         if (options.recoverActiveOwner !== undefined || typeof options.executors !== "function")
           return { authorityChecked: false, checkedOwner: undefined, executor: undefined };
-        // Default catalog resolution already validates readiness and compiles
-        // against one pinned Revision scope. Keep that result for this request's
-        // recovery instead of resolving and immediately preparing it again.
+        // One pinned catalog preparation provides current authority for both
+        // warm and cold Sessions; persisted Execution facts decide succession.
         const executor = await resolveExecutor(await readBinding(mission.id));
         if (executor.compilation === undefined)
           throw commandRejected(mission.id, "executor_compilation_identity_required");
-        return { authorityChecked: true, checkedOwner: undefined, executor };
+        return { authorityChecked: true, checkedOwner: actualOwner, executor };
       })();
     },
     assertReady: async (_mission, scope) => {
@@ -735,7 +858,59 @@ export function createLocalHostCoreMissionControlAdapter(options: {
     startInitialRun: async () => undefined,
     prepare: async (mission, _input, _acceptedAt, scope) => {
       const preparation = await scope;
-      const owner = await recover(mission.id, true, preparation?.executor);
+      let owner = owners.controlOwner(mission.id);
+      const nextExecutor = preparation?.executor;
+      const sessionId =
+        owner?.kind === "session"
+          ? owner.session.sessionId
+          : ((await options.resolveSessionId?.(mission.id)) ?? mission.id);
+      const previousState =
+        owner?.kind === "session" ? await owner.session.getState() : await sessions.get(sessionId);
+      const previousExecution = previousState?.executionIds.at(-1);
+      const previousEnvironment =
+        previousExecution === undefined
+          ? undefined
+          : (await executions.get(previousExecution))?.environment?.fingerprint;
+      const authorityChanged =
+        nextExecutor?.environment?.fingerprint !== undefined &&
+        previousEnvironment !== undefined &&
+        previousEnvironment !== nextExecutor.environment.fingerprint;
+      if (authorityChanged && previousState !== undefined && nextExecutor !== undefined) {
+        const prompts =
+          owner?.kind === "session"
+            ? await owner.session.getPromptQueue()
+            : await sessions.listPrompts(sessionId);
+        if (
+          previousState.activeExecutionId !== undefined ||
+          previousState.lastStatus === "waiting" ||
+          prompts.some((prompt) => prompt.status === "running" || prompt.status === "queued")
+        )
+          throw commandRejected(mission.id, "execution_environment_changed_pending_prompts");
+        if (isFlowDefinition(nextExecutor.definition))
+          throw commandRejected(mission.id, "send_not_supported");
+        const binding = await readBinding(mission.id);
+        const app = await createControlApp({
+          options,
+          binding,
+          executor: nextExecutor,
+          missionId: mission.id,
+          createApp,
+        });
+        if (owner?.kind === "session") {
+          await releaseLocalHostExpertSession(owner.session);
+          owners.deleteControlOwnerIfCurrent(mission.id, owner);
+        }
+        await options.onOwnerRecovering?.(mission.id);
+        owner = {
+          kind: "session",
+          executor: nextExecutor,
+          session: await openLocalHostExpertSession(app, nextExecutor.definition, {
+            kind: "create",
+            options: { environment: nextExecutor.environment },
+          }),
+        };
+        owners.setControlOwner(mission.id, owner, "recovered");
+      } else owner = await recover(mission.id, true, nextExecutor);
       if (owner.kind !== "session") throw commandRejected(mission.id, "send_not_supported");
       if (
         preparation?.authorityChecked !== true ||
@@ -754,6 +929,7 @@ export function createLocalHostCoreMissionControlAdapter(options: {
     },
     forgetSession: () => undefined,
     projectAccepted: async ({ mission, prepared, turn, requestedMode }) => {
+      await options.onExecutionAccepted?.({ missionId: mission.id, executionId: turn.executionId });
       if (options.compiler !== undefined) {
         let invalidated = false;
         const invalidate = () => {
@@ -777,6 +953,7 @@ export function createLocalHostCoreMissionControlAdapter(options: {
         missionId: mission.id,
         executionId: turn.executionId,
         turnId: turn.requestId,
+        sessionId: prepared.session.sessionId,
         mode: requestedMode,
         queueState: queueState.state,
         ...(queuedPosition < 0 ? {} : { queuePosition: queuedPosition + 1 }),
@@ -873,20 +1050,50 @@ export function createLocalHostCoreMissionControlAdapter(options: {
     resolveStrictTarget,
     resolveExecutionTarget,
     recoverMission,
-    waitExecution: async (input) => await waitForExecution(executions, input),
+    waitExecution: async (input) => {
+      const outcome = await waitForExecution(executions, input);
+      if (isTerminalExecutionStatus(outcome.status)) {
+        await options.executionSettlement?.(input.missionId);
+        if (!(await options.hasPendingMissionCommands?.(input.missionId)))
+          await settlementTasks.get(input.missionId);
+      }
+      return outcome;
+    },
     release: async (missionId) => {
+      const capturedGuard = options.currentMissionGuard?.(missionId);
+      if (capturedGuard !== undefined)
+        await options.assertMissionOwnership?.(missionId, capturedGuard);
       const owner = recoveredOwner(missionId);
       if (owner === undefined) return;
       if (owner.kind === "session") {
-        await owner.session.releaseAfterTerminal();
+        await releaseLocalHostExpertSession(owner.session, "terminal");
+      } else {
+        const state = await owner.execution.getState();
+        if (
+          !isTerminalExecutionStatus(state.status) &&
+          (await executions.listInvocations(state.executionId)).some(
+            (invocation) =>
+              invocation.status === "waiting" && invocation.waitReason === "human_input",
+          )
+        ) {
+          if (owner.execution.checkpointWaitingHuman === undefined)
+            throw new Error("Recovered waiting Flow has no checkpoint release boundary.");
+          await owner.execution.checkpointWaitingHuman();
+        }
+        await releaseLocalHostFlowExecution(owner.execution);
       }
+      if (capturedGuard !== undefined)
+        await options.assertMissionOwnership?.(missionId, capturedGuard);
       owners.deleteControlOwnerIfCurrent(missionId, owner);
     },
     releaseAfterHumanCheckpoint: async (missionId, guard) => {
+      await options.assertMissionOwnership?.(missionId, guard);
       const owner = recoveredOwner(missionId);
       if (owner === undefined) return;
       const executionIds =
-        owner.kind === "session" ? (await owner.session.getState()).executionIds : [missionId];
+        owner.kind === "session"
+          ? (await owner.session.getState()).executionIds
+          : [owner.execution.executionId];
       await projectRecoveredOwner({
         missionId,
         guard,
@@ -896,8 +1103,16 @@ export function createLocalHostCoreMissionControlAdapter(options: {
         redactor,
       });
       if (owner.kind === "session") {
-        await owner.session.releaseAfterHumanCheckpoint();
+        await releaseLocalHostExpertSession(owner.session, "checkpoint");
+      } else {
+        if (!isTerminalExecutionStatus((await owner.execution.getState()).status)) {
+          if (owner.execution.checkpointWaitingHuman === undefined)
+            throw new Error("Recovered waiting Flow has no checkpoint release boundary.");
+          await owner.execution.checkpointWaitingHuman();
+        }
+        await releaseLocalHostFlowExecution(owner.execution);
       }
+      await options.assertMissionOwnership?.(missionId, guard);
       owners.deleteControlOwnerIfCurrent(missionId, owner);
     },
     consumer: {
@@ -955,7 +1170,11 @@ export function createLocalHostCoreMissionControlAdapter(options: {
                       missionId: command.missionId,
                       createApp,
                     });
-                    await app.flows.stop(executor.definition, { executionId, reason, signal });
+                    await stopLocalHostFlowExecution(app, executor.definition, {
+                      executionId,
+                      reason,
+                      signal,
+                    });
                   }
                   if (owners instanceof MissionExecutionOwner)
                     owners.clearControlIssue(command.missionId);
@@ -1048,7 +1267,7 @@ export function createLocalHostCoreMissionControlAdapter(options: {
         if (recoveredOwner(command.missionId) !== undefined) {
           scheduleRecoveredOwnerSettlement(command.missionId, guard);
         } else {
-          scheduleUnbackedMissionOwnerSettlement(command.missionId);
+          scheduleUnbackedMissionOwnerSettlement(command.missionId, guard);
         }
       },
     },
@@ -1063,6 +1282,8 @@ async function recoverOwner(options: {
   readonly sessions: ExpertSessionStore;
   readonly executions: ExecutionStore;
   readonly missionId: string;
+  readonly sessionId: string;
+  readonly executionId: string;
   readonly executor: LocalHostCoreExecutorDefinition;
 }): Promise<CoreMissionOwner> {
   const kind = options.executor.descriptor.ref.kind;
@@ -1072,13 +1293,14 @@ async function recoverOwner(options: {
         `Flow executor definition is not a Flow: ${options.executor.descriptor.ref.id}`,
       );
     }
-    if ((await options.executions.get(options.missionId)) === undefined) {
+    if ((await options.executions.get(options.executionId)) === undefined) {
       throw commandRejected(options.missionId, "execution_not_found");
     }
     return {
       kind: "flow",
-      execution: await options.app.flows.recover(options.executor.definition, {
-        executionId: options.missionId,
+      execution: await openLocalHostFlowExecution(options.app, options.executor.definition, {
+        kind: "recover",
+        options: { executionId: options.executionId },
       }),
       executor: options.executor,
     };
@@ -1088,16 +1310,19 @@ async function recoverOwner(options: {
       `Non-Flow executor definition is a Flow: ${options.executor.descriptor.ref.id}`,
     );
   }
-  if ((await options.sessions.get(options.missionId)) === undefined) {
+  if ((await options.sessions.get(options.sessionId)) === undefined) {
     throw commandRejected(options.missionId, "session_not_found");
   }
   return {
     kind: "session",
-    session: await options.app.experts.resumeSession(options.executor.definition, {
-      sessionId: options.missionId,
-      ...(options.executor.environment === undefined
-        ? {}
-        : { environment: options.executor.environment }),
+    session: await openLocalHostExpertSession(options.app, options.executor.definition, {
+      kind: "resume",
+      options: {
+        sessionId: options.sessionId,
+        ...(options.executor.environment === undefined
+          ? {}
+          : { environment: options.executor.environment }),
+      },
     }),
     executor: options.executor,
   };
@@ -1108,10 +1333,14 @@ async function createControlApp(options: {
   readonly binding: MissionPinnedBinding;
   readonly executor: LocalHostCoreExecutorDefinition;
   readonly missionId: string;
-  readonly createApp: (hostContextBindings?: HostContextBindings) => PragmaApp;
+  readonly createApp: (
+    hostContextBindings?: HostContextBindings,
+    missionId?: string,
+    resolveBindings?: HostContextBindingsResolver,
+  ) => PragmaApp;
 }): Promise<PragmaApp> {
   if (options.options.createHostContextBindings === undefined) {
-    return options.createApp(options.options.hostContextBindings);
+    return options.createApp(options.options.hostContextBindings, options.missionId);
   }
   const executor = options.executor;
   const workspace = workspaceFromBinding(options.binding);
@@ -1128,6 +1357,13 @@ async function createControlApp(options: {
       request,
       executor,
     }),
+    options.missionId,
+    async () =>
+      await options.options.createHostContextBindings!({
+        missionId: options.missionId,
+        request,
+        executor,
+      }),
   );
 }
 
@@ -1455,7 +1691,8 @@ async function projectRecoveredOwner(options: {
   readonly mission?: Pick<LocalHostRunMissionPort, "controller" | "append"> | undefined;
   readonly redactor: RunRedactor;
 }): Promise<void> {
-  const snapshot = await options.mission!.controller.readSnapshot({
+  if (options.mission === undefined) return;
+  const snapshot = await options.mission.controller.readSnapshot({
     missionId: options.missionId,
   });
   const knownEventIds = new Set(snapshot.events.map((event) => event.eventId));
@@ -1610,7 +1847,15 @@ async function waitForExecution(
     if (execution === undefined) {
       throw commandRejected(input.missionId, "execution_not_found");
     }
-    if (execution.status === "waiting") {
+    if (
+      execution.status === "waiting" ||
+      (execution.kind === "flow" &&
+        !isTerminalExecutionStatus(execution.status) &&
+        (await executions.listInvocations(input.executionId)).some(
+          (invocation) =>
+            invocation.status === "waiting" && invocation.waitReason === "human_input",
+        ))
+    ) {
       const interaction = await readPendingInteraction(
         executions,
         input.executionId,
@@ -1620,7 +1865,7 @@ async function waitForExecution(
       if (interaction !== undefined) {
         return {
           executionId: execution.executionId,
-          status: execution.status,
+          status: "waiting",
           interaction: JsonValueSchema.parse(interaction),
           ...(execution.usage === undefined ? {} : { usage: execution.usage }),
         };

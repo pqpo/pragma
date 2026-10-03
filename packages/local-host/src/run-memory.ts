@@ -35,7 +35,27 @@ export function createLocalHostRunMemory(options: {
   const logger = createPragmaLogger(options.loggerProvider, { component: "local-host.memory" });
   const executionStore = createSqliteExecutionStore({ ...options, canonicalEventFeed: canonical });
   const paths = new PragmaPaths(options);
-  const owners = new Set<string>();
+  type MemoryOwner = {
+    bindingId: string;
+    executionId?: string;
+    terminal?: { executionId: string; waiting: boolean };
+  };
+  const owners = new Map<string, MemoryOwner>();
+  const intents = new Map<
+    string,
+    {
+      owner: MemoryOwner;
+      previous: MemoryOwner | undefined;
+      deferred?: { executionId: string; waiting: boolean };
+    }
+  >();
+  const replayCompletion = async (
+    missionId: string,
+    executionId: string,
+    waiting: boolean,
+  ): Promise<void> => await api.complete(missionId, executionId, waiting);
+  const bindings = new Map<string, string>();
+  const pendingCompletions = new Set<Promise<void>>();
   let memory:
     | Promise<{
         data: Awaited<ReturnType<typeof createLocalHostMemoryDataPlane>>;
@@ -80,12 +100,44 @@ export function createLocalHostRunMemory(options: {
       subsystem: "memory",
       code: "memory_delivery_unavailable",
     });
-  return {
+  const stopIdleMemory = async (): Promise<void> => {
+    try {
+      if (memory !== undefined) {
+        const { data, contexts } = await memory;
+        try {
+          await contexts.stop();
+        } finally {
+          try {
+            await data.scheduler.stop();
+          } finally {
+            data.episodic.close();
+            data.semantic.close();
+            data.knowledge.close();
+            data.skill.close();
+          }
+        }
+      }
+    } catch {
+      degraded();
+    } finally {
+      memory = undefined;
+      bindings.clear();
+    }
+  };
+  const api = {
     canonical,
     executionStore,
-    async bindings(input: { missionId: string; goal: string; projectId?: string }) {
+    async bindings(input: {
+      missionId: string;
+      goal: string;
+      projectId?: string;
+      bindingId?: string;
+    }) {
       return serialize(async () => {
-        owners.add(input.missionId);
+        const bindingId = input.bindingId ?? input.missionId;
+        bindings.set(input.missionId, bindingId);
+        if (owners.get(input.missionId)?.bindingId !== bindingId)
+          owners.set(input.missionId, { bindingId, executionId: bindingId });
         try {
           const { data, contexts } = await get();
           if ((await data.policies.getGlobal()).policy.enabled !== "enabled") return [];
@@ -98,6 +150,12 @@ export function createLocalHostRunMemory(options: {
     },
     async register(input: { missionId: string; executionId: string; projectId?: string }) {
       return serialize(async () => {
+        const owner = owners.get(input.missionId) ?? { bindingId: input.missionId };
+        owners.set(input.missionId, {
+          bindingId: owner.bindingId,
+          executionId: input.executionId,
+        });
+        intents.delete(input.missionId);
         try {
           const { data } = await get();
           await data.registerExecutionContext(input);
@@ -107,72 +165,129 @@ export function createLocalHostRunMemory(options: {
         }
       });
     },
-    async resume(missionId: string) {
+    async resume(missionId: string, executionId: string, admitting = false) {
       return serialize(async () => {
-        owners.add(missionId);
+        const previous = owners.get(missionId);
+        const owner = previous ?? { bindingId: bindings.get(missionId) ?? missionId };
+        const intent = { bindingId: owner.bindingId, executionId };
+        owners.set(missionId, intent);
+        const pending = { owner: intent, previous, deferred: previous?.terminal } as {
+          owner: typeof intent;
+          previous: typeof previous;
+          deferred?: { executionId: string; waiting: boolean };
+        };
+        if (admitting) intents.set(missionId, pending);
+        else intents.delete(missionId);
         try {
           const { data } = await get();
-          await data.setConversationState({ missionId, state: "running" });
+          if (!admitting) await data.setConversationState({ missionId, state: "running" });
         } catch {
           degraded();
         }
+        return async () => {
+          const deferred = await serialize(async () => {
+            if (owners.get(missionId) !== intent) return undefined;
+            if (previous === undefined) owners.delete(missionId);
+            else owners.set(missionId, previous);
+            intents.delete(missionId);
+            return pending.deferred;
+          });
+          if (deferred !== undefined)
+            void replayCompletion(missionId, deferred.executionId, deferred.waiting).catch(
+              degraded,
+            );
+        };
       });
     },
-    async complete(missionId: string, waiting = false) {
-      return serialize(async () => {
+    async beginPrompt(missionId: string, requestId: string): Promise<() => Promise<void>> {
+      return await api.resume(missionId, requestId, true);
+    },
+    async complete(missionId: string, executionId: string, waiting = false) {
+      const capturedOwner = owners.get(missionId);
+      // Preserve the terminal fact on this generation before native teardown.
+      // A rejected prompt may restore it while that teardown is still pending.
+      if (capturedOwner?.executionId === executionId)
+        capturedOwner.terminal = { executionId, waiting };
+      const completion = (async () => {
         try {
-          if (memory === undefined) return;
-          const { data, contexts } = await memory;
-          await contexts.stopMission(missionId);
-          await data.setConversationState({ missionId, state: waiting ? "active" : "completed" });
-          await data.flushDelivery();
+          const closing = await serialize(async () => {
+            const intent = intents.get(missionId);
+            if (
+              intent !== undefined &&
+              owners.get(missionId) === intent.owner &&
+              intent.previous?.executionId === executionId
+            ) {
+              intent.deferred = { executionId, waiting };
+              return undefined;
+            }
+            if (
+              owners.get(missionId) !== capturedOwner ||
+              capturedOwner?.executionId !== executionId ||
+              memory === undefined
+            )
+              return undefined;
+            const { data, contexts } = await memory;
+            if (owners.get(missionId) !== capturedOwner) return undefined;
+            // stopMission detaches its current generation synchronously. Its
+            // native cancellation may finish after the next round registers.
+            const stopped = contexts.stopMission(missionId);
+            void stopped.catch(() => undefined);
+            return { data, stopped };
+          });
+          if (closing === undefined) return;
+          await closing.stopped;
+          await serialize(async () => {
+            if (owners.get(missionId) !== capturedOwner) return;
+            await closing.data.setConversationState({
+              missionId,
+              state: waiting ? "active" : "completed",
+            });
+            owners.delete(missionId);
+            intents.delete(missionId);
+          });
+          await closing.data.flushDelivery();
         } catch {
+          await serialize(async () => {
+            if (owners.get(missionId) === capturedOwner) owners.delete(missionId);
+          });
           degraded();
-        } finally {
-          owners.delete(missionId);
         }
+      })();
+      pendingCompletions.add(completion);
+      try {
+        await completion;
+      } finally {
+        pendingCompletions.delete(completion);
+      }
+    },
+    async pause() {
+      return serialize(async () => {
+        if (owners.size > 0 || pendingCompletions.size > 0) return;
+        await stopIdleMemory();
+        await executionStore.drainCanonicalEvents();
       });
     },
     async close() {
       return serialize(async () => {
-        if (owners.size > 0) return;
+        if (owners.size > 0 || pendingCompletions.size > 0) return;
+        await stopIdleMemory();
         try {
-          if (memory !== undefined) {
-            const { data, contexts } = await memory;
-            try {
-              await contexts.stop();
-            } finally {
-              try {
-                await data.scheduler.stop();
-              } finally {
-                data.episodic.close();
-                data.semantic.close();
-                data.knowledge.close();
-                data.skill.close();
-              }
-            }
-          }
+          await executionStore.close();
         } catch {
           degraded();
-        } finally {
-          memory = undefined;
-          try {
-            await executionStore.close();
-          } catch {
-            degraded();
-          }
-          try {
-            await options.beforeFeedClose?.();
-          } catch {
-            degraded();
-          }
-          try {
-            await canonical.close();
-          } catch {
-            degraded();
-          }
+        }
+        try {
+          await options.beforeFeedClose?.();
+        } catch {
+          degraded();
+        }
+        try {
+          await canonical.close();
+        } catch {
+          degraded();
         }
       });
     },
   };
+  return api;
 }

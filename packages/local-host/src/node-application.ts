@@ -1,5 +1,5 @@
 import { PragmaPaths } from "@pragma/core";
-import { readdir, stat } from "node:fs/promises";
+import type { Mission } from "@pragma/shared";
 import { join } from "node:path";
 
 import {
@@ -10,24 +10,13 @@ import {
 } from "@pragma/core";
 import { createLocalHostNodeMissionCompiler } from "./node-mission-compiler.ts";
 import { createLocalHostRunMemory } from "./run-memory.ts";
-import {
-  createIntegrationError,
-  HumanInteractionRequestEnvelopeSchema,
-  type IntegrationError,
-  IntegrationErrorSchema,
-  MissionIdSchema,
-  type IntegrationCapability,
-} from "@pragma/shared/integration";
+import { createIntegrationError, type IntegrationCapability } from "@pragma/shared/integration";
 
 import {
-  LOCAL_HOST_SHARED_BOARD_STORE_ID,
   createControllerRunMissionPort,
-  createCoreRunExecutorPort,
   createExpertSessionPromptQueueProjection,
   createLocalHostApplication,
   createLocalHostBuiltInExecutorResolver,
-  createLocalHostCoreMissionControlAdapter,
-  createLocalHostCoreStores,
   createLocalHostMissionBoardBindings,
   createLocalHostProjectCatalogFromHome,
   createLocalHostRunApplication,
@@ -35,27 +24,35 @@ import {
   createLocalHostStderrLoggerProvider,
   createLocalHostUsageSink,
   createMissionControlApplication,
-  createMissionControllerStore,
-  createMissionOwnerScope,
   createLocalHostMissionController,
   findMissionPinnedBinding,
-  hashMissionResumePayload,
   listLocalHostBuiltInExecutorDescriptors,
-  backfillMissionPinnedBinding,
   type LocalHostApplicationPort,
   type LocalHostCoreMissionControlAdapter,
   type LocalHostSharedBoardListRequest,
   type LocalHostSharedBoardReadRequest,
   type LocalHostSharedBoardSearchRequest,
-  type LocalHostMissionResumeRequest,
   type WorkspaceFilesystemPort,
   type MissionControlClient,
-  type MissionControlExecutionOutcome,
   type MissionControlApplication,
   type LocalHostRunExecutorPort,
 } from "./index.ts";
 import type { LocalHostMissionControllerComposition } from "./missions/controller/composition.ts";
 import type { MissionWatchPort } from "./missions/controller/watch.ts";
+import { createMissionSessionAssociationResolver } from "./missions/session-association.ts";
+import { createMissionStore, MissionStoreError } from "./missions/repository/mission-store.ts";
+import { createFencedMissionStore } from "./missions/repository/mission-store-fenced-adapter.ts";
+import { createNodeMissionRepository } from "./missions/node-mission-repository.ts";
+import { createLocalHostMissionReadPorts } from "./missions/read-ports.ts";
+import {
+  createLocalHostMissionExecutionService,
+  type LocalHostMissionExecutionServiceOptions,
+} from "./missions/execution-service.ts";
+import { createLocalHostNodeExecutionResourcePorts } from "./node-execution-resources.ts";
+import { MissionExecutionOwner } from "./missions/execution-owner.ts";
+import { createMissionExecutionEventProjector } from "./missions/mission-execution-event-projector.ts";
+import { createLocalHostMissionExecutionRunPort } from "./missions/execution-run-port.ts";
+import type { LocalHostMissionExecutionService } from "./missions/execution-service.ts";
 
 /**
  * The Node Host composition shared by Desktop Main and the CLI.
@@ -111,12 +108,11 @@ export interface LocalHostNodeApplicationPorts {
   readonly watch?: MissionWatchPort | undefined;
   readonly missionControl?:
     | {
-        readonly resume?: (input: LocalHostMissionResumeRequest) => Promise<unknown>;
         readonly commands?: MissionControlApplication;
       }
     | undefined;
-  readonly runExecutor?: LocalHostRunExecutorPort | undefined;
-  readonly run?: LocalHostApplicationPort["run"] | undefined;
+  readonly executionService?: LocalHostMissionExecutionService | undefined;
+  readonly executorResolver?: LocalHostRunExecutorPort["resolve"] | undefined;
 }
 
 const LOCAL_HOST_FEATURES = [
@@ -171,7 +167,8 @@ function composeInjectedMissionControl(
 ): MissionControlApplication | undefined {
   const application = options.application;
   const lifecycle = application?.missionLifecycle;
-  const adapter = application?.missionControlAdapter;
+  const adapter =
+    application?.executionService?.missionControl ?? application?.missionControlAdapter;
   if (application === undefined || lifecycle === undefined || adapter === undefined) {
     return undefined;
   }
@@ -207,18 +204,21 @@ function composeInjectedRun(
 ): LocalHostApplicationPort["run"] | undefined {
   const application = options.application;
   const lifecycle = application?.missionLifecycle;
-  const adapter = application?.missionControlAdapter;
-  const executors = application?.runExecutor;
+  const adapter =
+    application?.executionService?.missionControl ?? application?.missionControlAdapter;
+  const service = application?.executionService;
+  const resolve = application?.executorResolver;
   if (
     application === undefined ||
     lifecycle === undefined ||
     adapter === undefined ||
-    executors === undefined
+    service === undefined ||
+    resolve === undefined
   ) {
     return undefined;
   }
   return createLocalHostRunApplication({
-    executors,
+    executors: createLocalHostMissionExecutionRunPort(service, resolve),
     mission: createControllerRunMissionPort(lifecycle.controller, {
       ownerScope: lifecycle.ownerScope,
     }),
@@ -235,7 +235,7 @@ export function createLocalHostNodeApplication(
 
   if (options.application !== undefined) {
     const missionControl = composeInjectedMissionControl(options);
-    const run = options.application.run ?? composeInjectedRun(options);
+    const run = composeInjectedRun(options);
     const commands = options.application.missionControl?.commands ?? missionControl;
     return createLocalHostApplication({
       integrationCapability,
@@ -249,9 +249,12 @@ export function createLocalHostNodeApplication(
         ? {}
         : {
             missionControl: {
-              ...(options.application.missionControl?.resume === undefined
+              ...(options.application.executionService === undefined
                 ? {}
-                : { resume: options.application.missionControl.resume }),
+                : {
+                    resume: (input) =>
+                      options.application!.executionService!.resumeLocalHostMission(input),
+                  }),
               ...(commands === undefined ? {} : { commands }),
             },
           }),
@@ -280,9 +283,37 @@ export function createLocalHostNodeApplication(
     compiler,
     reader: compiler.reader,
   });
-  const missionLifecycle = createLocalHostMissionController({
+  const rawMissionRepository = createMissionStore({
+    missionsPath: join(options.pragmaHome, "data", "missions"),
+  });
+  const readMissionEnvelope = async (id: string): Promise<Mission | undefined> => {
+    try {
+      return await rawMissionRepository.get(id);
+    } catch (error) {
+      if (error instanceof MissionStoreError && error.code === "mission_not_found")
+        return undefined;
+      throw error;
+    }
+  };
+  let replaySemanticWrite:
+    | Parameters<
+        import("./missions/controller/mission-controller-store.ts").MissionControllerStore["recoverSemanticWrite"]
+      >[0]["replay"]
+    | undefined;
+  const missionLifecycle: LocalHostMissionControllerComposition = createLocalHostMissionController({
     logger: missionLogger,
     missionsPath: join(options.pragmaHome, "data", "missions"),
+    missionPath: rawMissionRepository.storagePath,
+    readMission: readMissionEnvelope,
+    recoverSemanticWrite: async ({ missionId, guard }) => {
+      if (replaySemanticWrite === undefined)
+        throw new Error("Mission repository replay is not initialized.");
+      await missionLifecycle.controller.recoverSemanticWrite({
+        missionId,
+        guard,
+        replay: replaySemanticWrite,
+      });
+    },
     onPollingError: ({ missionId, error, consecutiveFailures }) =>
       missionLogger.warn(
         "mission.controller_inbox_poll_failed",
@@ -302,6 +333,23 @@ export function createLocalHostNodeApplication(
     watch: missionWatch,
     ownerScope,
   } = missionLifecycle;
+  const missionRepository = createFencedMissionStore(rawMissionRepository, {
+    controller: missionController,
+    ownerScope,
+    setSemanticWriteReplay: (replay) => {
+      replaySemanticWrite = replay;
+    },
+  });
+  const nodeMissionRepository = createNodeMissionRepository({
+    store: missionRepository,
+    controller: missionController,
+    readDefaultProject: async () => {
+      const revision = await compiler.reader.getHead(options.projectId ?? "studio");
+      return revision === undefined
+        ? undefined
+        : { id: revision.projectId, revision: revision.revision };
+    },
+  });
   const runMemory = createLocalHostRunMemory({
     pragmaHome: options.pragmaHome,
     loggerProvider,
@@ -315,9 +363,23 @@ export function createLocalHostNodeApplication(
     pragmaHome: options.pragmaHome,
     executions: executionStore,
   });
+  const resolveMissionSessionId = createMissionSessionAssociationResolver({
+    controller: missionController,
+    executions: executionStore,
+    sessions: expertSessionStore,
+    repositorySessionId: async (id) => {
+      try {
+        return (await rawMissionRepository.get(id)).execution?.sessionId;
+      } catch (error) {
+        if (error instanceof MissionStoreError && error.code === "mission_not_found")
+          return undefined;
+        throw error;
+      }
+    },
+  });
   const promptQueueProjection = createExpertSessionPromptQueueProjection({
     sessions: expertSessionStore,
-    resolveSessionId: async (missionId) => (await expertSessionStore.get(missionId))?.sessionId,
+    resolveSessionId: resolveMissionSessionId,
     steeringFeatures: async (_sessionId, session) => {
       const rootContext = session.contexts[session.rootContextId];
       if (rootContext === undefined) return { supportsSteer: false };
@@ -352,129 +414,101 @@ export function createLocalHostNodeApplication(
       workspace: input.workspace,
       purpose: input.purpose,
     })) ?? (await projectCatalog.resolve(input));
-  const rawExecutorPort = createCoreRunExecutorPort({
-    pragmaHome: options.pragmaHome,
-    runtimes: runtimeResolver,
-    usageSink,
-    loggerProvider,
-    executions: executionStore,
-    sessions: expertSessionStore,
-    createHostContextBindings: async ({ missionId, request }) => [
-      ...(await createLocalHostMissionBoardBindings({ pragmaHome: options.pragmaHome, missionId })),
-      ...(await runMemory.bindings({
-        missionId,
-        goal: request.prompt ?? "",
-        ...(request.project === undefined ? {} : { projectId: request.project.projectId }),
-      })),
-    ],
-    executors: resolveExecutor,
+  const executionOwner: NonNullable<LocalHostMissionExecutionServiceOptions["executionOwner"]> =
+    new MissionExecutionOwner();
+  const executionProjector = createMissionExecutionEventProjector({
+    controller: missionController,
+    ownerScope,
   });
+  const hasEnvelope = async (id: string): Promise<boolean> =>
+    (await readMissionEnvelope(id)) !== undefined;
+  const executionService = createLocalHostMissionExecutionService({
+    pragmaHome: options.pragmaHome,
+    missions: missionRepository,
+    executionStore,
+    expertSessionStore,
+    executionOwner,
+    ownerScope,
+    ownerLifetime: "request",
+    controllerFacts: {
+      controller: missionController,
+      hasEnvelope,
+      resolveSessionId: resolveMissionSessionId,
+      resolveMissionBinding: async (missionId) =>
+        findMissionPinnedBinding((await missionController.readSnapshot({ missionId })).events),
+      executors: resolveExecutor,
+      compiler,
+      usageSink,
+      createHostContextBindings: async ({ missionId, request }) => [
+        ...(await createLocalHostMissionBoardBindings({
+          pragmaHome: options.pragmaHome,
+          missionId,
+        })),
+        ...(await runMemory.bindings({
+          missionId,
+          bindingId: request.requestId,
+          goal: request.prompt ?? "",
+          ...(request.project === undefined ? {} : { projectId: request.project.projectId }),
+        })),
+      ],
+      memory: {
+        linked: ({ missionId, executionId, projectId }) =>
+          runMemory.register({
+            missionId,
+            executionId,
+            ...(projectId === undefined ? {} : { projectId }),
+          }),
+        recovering: (id, executionId) => runMemory.resume(id, executionId),
+        admitting: (id, requestId) => runMemory.beginPrompt(id, requestId),
+        terminal: (id, executionId, waiting) => runMemory.complete(id, executionId, waiting),
+        release: () => runMemory.pause(),
+      },
+    },
+    runtimes: runtimeResolver,
+    loggerProvider,
+    resourcePorts: createLocalHostNodeExecutionResourcePorts({
+      pragmaHome: options.pragmaHome,
+      runtimes: runtimeResolver,
+      compiler,
+      memory: runMemory,
+      usageSink,
+      loggerProvider,
+      missions: missionRepository,
+    }),
+    assertExecutorReady: async (_ref, scope) => {
+      if (scope !== undefined) await compiler.assertReady(scope);
+    },
+    invalidateRuntimeReadiness: () => compiler.readiness.invalidate(),
+    onExecutionLinked: (input) => executionProjector.link(input),
+    onPromptAdmitting: (missionId, requestId) => runMemory.beginPrompt(missionId, requestId),
+    onExecutionContextLinked: async ({ mission, executionId }) => {
+      await runMemory.register({
+        missionId: mission.id,
+        executionId,
+        projectId: mission.project.id,
+      });
+    },
+    commitExecutionTerminal: (input) => executionProjector.terminal(input),
+    onExecutionTerminal: async (input) => {
+      await runMemory.complete(input.mission.id, input.executionId);
+      await runMemory.pause();
+    },
+  });
+  const missionPort = createControllerRunMissionPort(missionController, { ownerScope });
+  const coreControl = executionService.missionControl;
+  const sharedExecutorPort = createLocalHostMissionExecutionRunPort(
+    executionService,
+    resolveExecutor,
+  );
   const executorPort = {
-    ...rawExecutorPort,
-    start: async (input: Parameters<typeof rawExecutorPort.start>[0]) => {
-      let handle: Awaited<ReturnType<typeof rawExecutorPort.start>>;
-      try {
-        handle = await rawExecutorPort.start(input);
-      } catch (error) {
-        compiler.readiness.invalidate();
-        try {
-          await runMemory.complete(input.missionId);
-        } finally {
-          await runMemory.close();
-        }
-        throw error;
-      }
-      try {
-        await runMemory.register({
-          missionId: input.missionId,
-          executionId: handle.executionId,
-          ...(input.request.project === undefined
-            ? {}
-            : { projectId: input.request.project.projectId }),
-        });
-      } catch (error) {
-        await handle.cancel?.();
-        try {
-          await handle.release?.();
-        } finally {
-          try {
-            await runMemory.complete(input.missionId);
-          } finally {
-            await runMemory.close();
-          }
-        }
-        throw error;
-      }
-      return {
-        ...handle,
-        result: handle.result.then(
-          (terminal) => {
-            if (terminal.status === "failed") compiler.readiness.invalidate();
-            return terminal;
-          },
-          (error: unknown) => {
-            compiler.readiness.invalidate();
-            throw error;
-          },
-        ),
-        release: async () => {
-          try {
-            const terminal = await handle.result;
-            await runMemory.complete(input.missionId, terminal.status === "input_required");
-          } finally {
-            try {
-              await handle.release?.();
-            } finally {
-              await runMemory.close();
-            }
-          }
-        },
-      };
+    ...sharedExecutorPort,
+    assertStartAllowed: async (
+      input: Parameters<NonNullable<LocalHostRunExecutorPort["assertStartAllowed"]>>[0],
+    ) => {
+      await nodeMissionRepository.ensureFreshMission(input);
+      await sharedExecutorPort.assertStartAllowed?.(input);
     },
   };
-  const missionPort = createControllerRunMissionPort(missionController, { ownerScope });
-  const coreControl = createLocalHostCoreMissionControlAdapter({
-    compiler,
-    pragmaHome: options.pragmaHome,
-    runtimes: runtimeResolver,
-    usageSink,
-    loggerProvider,
-    executions: executionStore,
-    sessions: expertSessionStore,
-    mission: missionPort,
-    createHostContextBindings: async ({ missionId, request }) => [
-      ...(await createLocalHostMissionBoardBindings({ pragmaHome: options.pragmaHome, missionId })),
-      ...(await runMemory.bindings({
-        missionId,
-        goal: request.prompt ?? "",
-        ...(request.project === undefined ? {} : { projectId: request.project.projectId }),
-      })),
-    ],
-    executors: resolveExecutor,
-    ownerAccess: rawExecutorPort.ownerAccess,
-    resolveActiveOwner: executorPort.resolveActiveOwner,
-    resolveMissionBinding: async (missionId) =>
-      findMissionPinnedBinding((await missionController.readSnapshot({ missionId })).events),
-    hasPendingMissionCommands: async (missionId) =>
-      (await missionController.listOperations({ missionId })).some(
-        (operation) => operation.state === "queued" || operation.state === "applying",
-      ),
-    onOwnerRecovering: async (missionId) => await runMemory.resume(missionId),
-    releaseMissionOwner: async (missionId) => {
-      const hasPending = (await missionController.listOperations({ missionId })).some(
-        (operation) => operation.state === "queued" || operation.state === "applying",
-      );
-      if (hasPending) return;
-      const session = await expertSessionStore.get(missionId);
-      const execution = session === undefined ? await executionStore.get(missionId) : undefined;
-      await runMemory.complete(
-        missionId,
-        session?.lastStatus === "waiting" || execution?.status === "waiting",
-      );
-      await runMemory.close();
-      await ownerScope.release(missionId);
-    },
-  });
   const missionControl = createMissionControlApplication({
     logger: missionLogger,
     controller: missionController,
@@ -482,8 +516,9 @@ export function createLocalHostNodeApplication(
     consumer: coreControl.consumer,
     client: options.client,
     assertMission: async (missionId) => {
+      const envelope = await hasEnvelope(missionId);
       const snapshot = await missionController.readSnapshot({ missionId });
-      if (!snapshot.events.some((event) => event.type === "mission.created")) {
+      if (!envelope && !snapshot.events.some((event) => event.type === "mission.created")) {
         throw createIntegrationError({
           code: "MISSION_NOT_FOUND",
           category: "not_found",
@@ -508,6 +543,14 @@ export function createLocalHostNodeApplication(
     mission: missionPort,
     commandConsumer: coreControl.consumer,
   });
+  coreControl.bindApplication(missionControl);
+  const readPorts = createLocalHostMissionReadPorts({
+    pragmaHome: options.pragmaHome,
+    repository: rawMissionRepository,
+    controller: missionController,
+    query: missionQuery,
+    watch: missionWatch,
+  });
 
   return createLocalHostApplication({
     integrationCapability,
@@ -521,51 +564,13 @@ export function createLocalHostNodeApplication(
           ...(await projectCatalog.listExecutors()),
         ],
     },
-    missions: {
-      get: async (missionId) => await missionController.readSnapshot({ missionId }),
-      list: async () =>
-        await listMissionSnapshots(missionController, join(options.pragmaHome, "data", "missions")),
-      query: missionQuery.queryMission,
-    },
+    missions: readPorts.missions,
     workspace: options.workspace,
-    board: {
-      list: async ({ missionId }) =>
-        await readProductionSharedBoardList(missionController, options.pragmaHome, missionId),
-      read: async ({ missionId, id, start, maxBytes }) =>
-        await readProductionSharedBoardItem(
-          missionController,
-          options.pragmaHome,
-          missionId,
-          id,
-          start,
-          maxBytes,
-        ),
-      search: async ({ missionId, query, maxResults, contextLines, caseSensitive }) =>
-        await searchProductionSharedBoard(
-          missionController,
-          options.pragmaHome,
-          missionId,
-          query,
-          maxResults,
-          contextLines,
-          caseSensitive,
-        ),
-    },
+    board: readPorts.board,
     queue: { list: async (missionId) => await promptQueueProjection.list(missionId) },
-    watch: missionWatch,
+    watch: readPorts.watch,
     missionControl: {
-      resume: async (input) =>
-        await resumeMission({
-          input,
-          missionController,
-          missionControl,
-          coreControl,
-          ownerScope,
-          projectCatalog,
-          resolveBuiltInExecutor,
-          expertSessionStore,
-          executionStore,
-        }),
+      resume: (input) => executionService.resumeLocalHostMission(input),
       commands: missionControl,
     },
     runtime: { resolver: runtimeResolver },
@@ -573,553 +578,8 @@ export function createLocalHostNodeApplication(
   });
 }
 
-async function resumeMission(input: {
-  readonly input: LocalHostMissionResumeRequest;
-  readonly missionController: ReturnType<typeof createMissionControllerStore>;
-  readonly missionControl: MissionControlApplication;
-  readonly coreControl: ReturnType<typeof createLocalHostCoreMissionControlAdapter>;
-  readonly ownerScope: ReturnType<typeof createMissionOwnerScope>;
-  readonly projectCatalog: ReturnType<typeof createLocalHostProjectCatalogFromHome>;
-  readonly resolveBuiltInExecutor: ReturnType<typeof createLocalHostBuiltInExecutorResolver>;
-  readonly expertSessionStore: ReturnType<typeof createLocalHostCoreStores>["sessions"];
-  readonly executionStore: ReturnType<typeof createLocalHostCoreStores>["executions"];
-}): Promise<unknown> {
-  const { input: request } = input;
-  await backfillMissionPinnedBinding(
-    {
-      controller: input.missionController,
-      catalog: input.projectCatalog,
-      builtInResolver: async ({ ref, workspace }) =>
-        await input.resolveBuiltInExecutor({ ref, workspace }),
-      sessions: input.expertSessionStore,
-      executions: input.executionStore,
-    },
-    request,
-  );
-  await input.coreControl.assertAcquisitionAllowed(request.missionId);
-  const requestId = request.requestId ?? globalThis.crypto.randomUUID();
-  const payloadHash = hashMissionResumePayload({
-    missionId: request.missionId,
-    ...(request.project === undefined ? {} : { project: request.project }),
-    ...(request.expectedFingerprint === undefined
-      ? {}
-      : { expectedFingerprint: request.expectedFingerprint }),
-  });
-  const reserved = await input.missionControl.reserveOperation({
-    missionId: request.missionId,
-    requestId,
-    payloadHash,
-    kind: "resume",
-  });
-  if (reserved.operation.state === "applied") {
-    return reserved.operation.result ?? { missionId: request.missionId, status: "resumed" };
-  }
-  if (reserved.operation.state === "rejected" || reserved.operation.state === "failed") {
-    throw resumeOperationError(reserved.operation.error, request.missionId);
-  }
-  const snapshot = await input.missionController.readSnapshot({ missionId: request.missionId });
-  if (
-    snapshot.snapshot.lease !== undefined &&
-    Date.parse(snapshot.snapshot.lease.expiresAt) > Date.now()
-  ) {
-    const error = createIntegrationError({
-      code: "MISSION_LEASE_HELD",
-      category: "conflict",
-      message: "Mission already has a live owner.",
-      details: { missionId: request.missionId },
-    });
-    await input.missionControl.completeOperation({
-      missionId: request.missionId,
-      requestId,
-      payloadHash,
-      state: "rejected",
-      error,
-    });
-    throw error;
-  }
-  if (request.detach) {
-    // Resume is represented by a reserved Local Host operation rather than a
-    // Mission command. Preserve the same durable-receipt contract as command
-    // mutations: schedule owner acquisition/recovery and return the queued
-    // operation without waiting for the owner or Runtime execution.
-    void resumeMission({
-      ...input,
-      input: {
-        ...request,
-        requestId,
-        detach: false,
-        onHumanInteraction: undefined,
-      },
-    }).catch(() => undefined);
-    return {
-      missionId: request.missionId,
-      status: "accepted",
-      operation: reserved.operation,
-    };
-  }
-  let acquired = false;
-  let recovered = false;
-  let operationCompleted = false;
-  try {
-    const owner = await input.missionControl.startOwner(request.missionId);
-    if (owner === "live") {
-      const error = createIntegrationError({
-        code: "MISSION_LEASE_HELD",
-        category: "conflict",
-        message: "Mission already has a live owner.",
-        details: { missionId: request.missionId },
-      });
-      await input.missionControl.completeOperation({
-        missionId: request.missionId,
-        requestId,
-        payloadHash,
-        state: "rejected",
-        error,
-      });
-      operationCompleted = true;
-      throw error;
-    }
-    acquired = true;
-    await input.coreControl.recoverMission(request.missionId);
-    recovered = true;
-    const base = {
-      missionId: request.missionId,
-      status: request.detach ? "accepted" : "resumed",
-    } as const;
-    let result: Record<string, unknown> = base;
-    if (!request.detach) {
-      const executionId = await input.coreControl.resolveExecutionTarget({
-        missionId: request.missionId,
-      });
-      if (executionId !== undefined) {
-        const execution = await waitForResumedExecution({
-          missionId: request.missionId,
-          executionId,
-          control: input.missionControl,
-          onHumanInteraction: request.onHumanInteraction,
-        });
-        if (execution.status === "failed") {
-          throw (
-            execution.error ??
-            createIntegrationError({
-              code: "EXECUTION_FAILED",
-              category: "execution",
-              retryable: false,
-              message: "The resumed Mission execution failed.",
-            })
-          );
-        }
-        result = {
-          ...base,
-          ...(execution.status === "waiting" ? { status: "input_required" as const } : {}),
-          execution,
-        };
-      }
-    }
-    const operation = await input.missionControl.completeOperation({
-      missionId: request.missionId,
-      requestId,
-      payloadHash,
-      state: "applied",
-      result,
-      guard: input.ownerScope.currentGuard(request.missionId),
-    });
-    operationCompleted = true;
-    const completed = { ...result, operation };
-    if (!request.detach) {
-      await releaseRecoveredOwner({
-        missionId: request.missionId,
-        coreControl: input.coreControl,
-        ownerScope: input.ownerScope,
-      });
-    }
-    return completed;
-  } catch (error) {
-    const parsedError = IntegrationErrorSchema.safeParse(error);
-    const integrationError = parsedError.success
-      ? parsedError.data
-      : createIntegrationError({
-          code: "COMMAND_REJECTED",
-          category: "conflict",
-          message: error instanceof Error ? error.message : "Mission resume failed.",
-        });
-    if (!operationCompleted) {
-      await input.missionControl
-        .completeOperation({
-          missionId: request.missionId,
-          requestId,
-          payloadHash,
-          state: "rejected",
-          error: integrationError,
-          guard: input.ownerScope.currentGuard(request.missionId),
-        })
-        .catch(() => undefined);
-    }
-    if (acquired && recovered) {
-      await releaseRecoveredOwner({
-        missionId: request.missionId,
-        coreControl: input.coreControl,
-        ownerScope: input.ownerScope,
-      }).catch(() => undefined);
-    } else if (acquired) {
-      await input.coreControl.release(request.missionId).catch(() => undefined);
-      await input.ownerScope.release(request.missionId).catch(() => undefined);
-    }
-    throw error;
-  }
-}
-
-async function waitForResumedExecution(options: {
-  readonly missionId: string;
-  readonly executionId: string;
-  readonly control: MissionControlApplication;
-  readonly onHumanInteraction?: LocalHostMissionResumeRequest["onHumanInteraction"];
-}): Promise<MissionControlExecutionOutcome> {
-  for (;;) {
-    const execution = await options.control.waitExecution!({
-      missionId: options.missionId,
-      executionId: options.executionId,
-    });
-    if (execution.status !== "waiting" || execution.interaction === undefined) return execution;
-    const interaction = HumanInteractionRequestEnvelopeSchema.parse(execution.interaction);
-    if (options.onHumanInteraction === undefined) return execution;
-    const decision = await options.onHumanInteraction(interaction);
-    if (decision.kind === "checkpoint") return execution;
-    const responseRequestId = globalThis.crypto.randomUUID();
-    await options.control.submit({
-      missionId: options.missionId,
-      requestId: responseRequestId,
-      kind: "respond",
-      payload: { kind: "respond", response: decision.response },
-      target: { interactionId: interaction.interactionId },
-    });
-    const responseOperation = await options.control.waitForTerminal({
-      missionId: options.missionId,
-      requestId: responseRequestId,
-    });
-    assertAppliedOperation(responseOperation, options.missionId);
-  }
-}
-
-function assertAppliedOperation(
-  operation: { readonly state: string; readonly error?: Record<string, unknown> },
-  missionId: string,
-): void {
-  if (operation.state === "applied") return;
-  throw resumeOperationError(operation.error, missionId);
-}
-
-async function releaseRecoveredOwner(options: {
-  readonly missionId: string;
-  readonly coreControl: ReturnType<typeof createLocalHostCoreMissionControlAdapter>;
-  readonly ownerScope: ReturnType<typeof createMissionOwnerScope>;
-}): Promise<void> {
-  const guard = options.ownerScope.currentGuard(options.missionId);
-  if (guard === undefined) {
-    await options.coreControl.release(options.missionId);
-    return;
-  }
-  try {
-    await options.coreControl.releaseAfterHumanCheckpoint(options.missionId, guard);
-  } catch (error) {
-    // A recovered owner may have started a subsequent queued execution while
-    // the requested execution was being observed. Keep that owner alive and
-    // let its poller continue; the command outcome is already durable.
-    if (!(error instanceof Error) || !error.message.includes("active execution")) throw error;
-    return;
-  }
-  await options.ownerScope.release(options.missionId);
-}
-
-function resumeOperationError(error: Record<string, unknown> | undefined, missionId: string) {
-  const parsed = IntegrationErrorSchema.safeParse(error);
-  return parsed.success
-    ? parsed.data
-    : createIntegrationError({
-        code: "COMMAND_REJECTED",
-        category: "conflict",
-        message: "Mission resume was rejected: " + missionId + ".",
-      });
-}
-
-async function openProductionSharedBoardStore(
-  controller: ReturnType<typeof createMissionControllerStore>,
-  pragmaHome: string,
-  missionId: string,
-) {
-  let snapshot;
-  try {
-    snapshot = await controller.readSnapshot({ missionId });
-  } catch (error) {
-    return rethrowBoardStorageError(error);
-  }
-  if (!snapshot.events.some((event) => event.type === "mission.created")) {
-    throw createIntegrationError({
-      code: "MISSION_NOT_FOUND",
-      category: "not_found",
-      message: `Mission not found: ${missionId}.`,
-      details: { missionId },
-    });
-  }
-  let bindings;
-  try {
-    bindings = await createLocalHostMissionBoardBindings({ pragmaHome, missionId });
-  } catch (error) {
-    return rethrowBoardStorageError(error);
-  }
-  const shared = bindings.find((binding) => binding.namespace === LOCAL_HOST_SHARED_BOARD_STORE_ID);
-  if (shared?.store === undefined) {
-    throw createIntegrationError({
-      code: "DEPENDENCY_UNAVAILABLE",
-      category: "dependency",
-      message: "The Local Host shared Mission Board is unavailable.",
-    });
-  }
-  return shared.store;
-}
-
-async function readProductionSharedBoardList(
-  controller: ReturnType<typeof createMissionControllerStore>,
-  pragmaHome: string,
-  missionId: string,
-) {
-  const store = await openProductionSharedBoardStore(controller, pragmaHome, missionId);
-  const result = await store.listContext({});
-  return unwrapBoardContextResult(result).map((item) => ({
-    ...item,
-    namespace: LOCAL_HOST_SHARED_BOARD_STORE_ID,
-  }));
-}
-
-async function readProductionSharedBoardItem(
-  controller: ReturnType<typeof createMissionControllerStore>,
-  pragmaHome: string,
-  missionId: string,
-  id: string,
-  start: number,
-  maxBytes: number,
-) {
-  const store = await openProductionSharedBoardStore(controller, pragmaHome, missionId);
-  const result = await store.readContext({ id, start, offset: maxBytes });
-  return { ...unwrapBoardContextResult(result), namespace: LOCAL_HOST_SHARED_BOARD_STORE_ID };
-}
-
-async function searchProductionSharedBoard(
-  controller: ReturnType<typeof createMissionControllerStore>,
-  pragmaHome: string,
-  missionId: string,
-  query: string,
-  maxResults: number,
-  contextLines: number,
-  caseSensitive: boolean | undefined,
-) {
-  const store = await openProductionSharedBoardStore(controller, pragmaHome, missionId);
-  const [searchResult, listResult] = await Promise.all([
-    store.searchContext({ query, maxResults, contextLines, caseSensitive }),
-    store.listContext({}),
-  ]);
-  const summaries = unwrapBoardContextResult(listResult);
-  const summariesById = new Map(
-    summaries.map((item) => [item.id, { ...item, namespace: LOCAL_HOST_SHARED_BOARD_STORE_ID }]),
-  );
-  return unwrapBoardContextResult(searchResult).map((match) => ({
-    ...match,
-    item: summariesById.get(match.id) ?? {
-      id: match.id,
-      namespace: LOCAL_HOST_SHARED_BOARD_STORE_ID,
-      metadata: { trigger: "manual" as const, priority: "normal" as const },
-      revision: "unknown",
-      sizeBytes: 0,
-    },
-  }));
-}
-
-function unwrapBoardContextResult<T>(
-  result:
-    | { readonly ok: true; readonly value: T }
-    | { readonly ok: false; readonly error: { readonly code: string } },
-): T {
-  if (result.ok) return result.value;
-  switch (result.error.code) {
-    case "context_not_found":
-      throw createIntegrationError({
-        code: "BOARD_ITEM_NOT_FOUND",
-        category: "not_found",
-        message: "Mission Board item not found.",
-      });
-    case "permission_denied":
-      throw createIntegrationError({
-        code: "PERMISSION_DENIED",
-        category: "permission",
-        message: "Private Mission Board namespaces are not readable.",
-      });
-    case "invalid_input":
-    case "context_too_large":
-    case "context_budget_exceeded":
-      throw createIntegrationError({
-        code: "INVALID_ARGUMENT",
-        category: "usage",
-        message: "The Mission Board request is invalid.",
-      });
-    case "store_unavailable":
-      throw createIntegrationError({
-        code: "DEPENDENCY_UNAVAILABLE",
-        category: "dependency",
-        message: "The Mission Board storage is unavailable.",
-      });
-    case "store_error":
-    default:
-      throw createIntegrationError({
-        code: "STORAGE_CORRUPTED",
-        category: "protocol",
-        message: "The Mission Board storage is corrupted.",
-      });
-  }
-}
-
-function rethrowBoardStorageError(error: unknown): never {
-  const parsed = IntegrationErrorSchema.safeParse(error);
-  if (parsed.success) throw parsed.data;
-  throw createIntegrationError({
-    code: "STORAGE_CORRUPTED",
-    category: "protocol",
-    message: "The Mission Board storage is corrupted.",
-  });
-}
-
 function hasPromptAttachments(value: unknown): boolean {
   if (typeof value !== "object" || value === null || Array.isArray(value)) return false;
   const attachments = (value as { readonly attachments?: unknown }).attachments;
   return Array.isArray(attachments) && attachments.length > 0;
-}
-
-async function listMissionSnapshots(
-  controller: ReturnType<typeof createMissionControllerStore>,
-  missionsPath: string,
-): Promise<readonly Record<string, unknown>[]> {
-  let directories;
-  try {
-    directories = await readdir(missionsPath, { withFileTypes: true });
-  } catch (error) {
-    if (isNodeError(error, "ENOENT")) return [];
-    throw error;
-  }
-  const missionIds: string[] = [];
-  for (const entry of directories) {
-    if (!entry.isDirectory() || entry.name.startsWith(".")) continue;
-    if (!MissionIdSchema.safeParse(entry.name).success) continue;
-    const localHostPath = join(missionsPath, entry.name, "local-host");
-    let localHostDirectory: Awaited<ReturnType<typeof stat>> | undefined;
-    try {
-      localHostDirectory = await stat(localHostPath);
-    } catch (error) {
-      if (isNodeError(error, "ENOENT")) continue;
-      throw localHostStorageError(entry.name);
-    }
-    if (!localHostDirectory.isDirectory()) throw localHostStorageError(entry.name);
-    let aggregate: Awaited<ReturnType<typeof stat>> | undefined;
-    try {
-      aggregate = await stat(join(localHostPath, "aggregate.json"));
-    } catch (error) {
-      if (isNodeError(error, "ENOENT")) throw localHostStorageError(entry.name);
-      throw localHostStorageError(entry.name);
-    }
-    if (!aggregate.isFile()) throw localHostStorageError(entry.name);
-    missionIds.push(entry.name);
-  }
-  const snapshots: Array<Record<string, unknown> | undefined> = await Promise.all(
-    missionIds.map(async (missionId) => {
-      let snapshot;
-      try {
-        snapshot = await controller.readSnapshot({ missionId });
-      } catch (error) {
-        if (IntegrationErrorSchema.safeParse(error).success) throw error;
-        throw localHostStorageError(missionId);
-      }
-      const created = snapshot.events.find((event) => event.type === "mission.created");
-      if (created === undefined) return undefined;
-      const latest = snapshot.events.at(-1);
-      const status = missionStatus(snapshot.events.map((event) => event.type));
-      const executor = created.data["executor"];
-      return {
-        id: missionId,
-        missionId,
-        title: missionId,
-        ...(executor === undefined ? {} : { executor }),
-        ...(created.data["workspace"] === undefined
-          ? {}
-          : { workspace: { canonicalPath: created.data["workspace"] } }),
-        status,
-        lifecycleStatus: ["succeeded", "failed", "cancelled"].includes(status)
-          ? "completed"
-          : status === "queued"
-            ? "queued"
-            : "active",
-        execution: executionSummary(snapshot.events),
-        createdAt: created.occurredAt,
-        updatedAt: latest?.occurredAt ?? created.occurredAt,
-        eventSequence: snapshot.snapshot.eventSequence,
-        cursor: snapshot.cursor,
-      };
-    }),
-  );
-  return snapshots
-    .filter((snapshot): snapshot is Record<string, unknown> => snapshot !== undefined)
-    .toSorted((left, right) => String(right["updatedAt"]).localeCompare(String(left["updatedAt"])));
-}
-
-function localHostStorageError(missionId: string): IntegrationError {
-  return createIntegrationError({
-    code: "STORAGE_CORRUPTED",
-    category: "protocol",
-    message: "A Local Host Mission aggregate is corrupted.",
-    details: { missionId },
-  });
-}
-
-function missionStatus(
-  eventTypes: readonly string[],
-): "queued" | "running" | "waiting" | "succeeded" | "failed" | "cancelled" {
-  for (const type of eventTypes.toReversed()) {
-    switch (type) {
-      case "run.succeeded":
-        return "succeeded";
-      case "run.failed":
-        return "failed";
-      case "run.interrupted":
-        return "cancelled";
-      case "run.input_required":
-      case "human.requested":
-      case "human.interaction.requested":
-        return "waiting";
-      case "run.started":
-      case "execution.started":
-        return "running";
-      case "run.accepted":
-        return "queued";
-    }
-  }
-  return "queued";
-}
-
-function executionSummary(
-  events: readonly { readonly type: string; readonly data: Record<string, unknown> }[],
-): Record<string, unknown> | undefined {
-  const started = events.toReversed().find((event) => event.type === "run.started");
-  if (started === undefined) return undefined;
-  const executionId = started.data["executionId"];
-  const status = missionStatus(events.map((event) => event.type));
-  return {
-    ...(typeof executionId === "string" ? { id: executionId } : {}),
-    status: status === "cancelled" ? "interrupted" : status,
-  };
-}
-
-function isNodeError(error: unknown, code: string): boolean {
-  return (
-    typeof error === "object" &&
-    error !== null &&
-    "code" in error &&
-    (error as { readonly code?: unknown }).code === code
-  );
 }

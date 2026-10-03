@@ -80,6 +80,12 @@ jobs:
           CI: "true"
         run: pnpm test:mission-compilation
 
+      - name: Mission lifecycle regression tests
+        env:
+          PRAGMA_LOG_LEVEL: error
+          CI: "true"
+        run: pnpm test:mission-lifecycle
+
       - name: Knowledge revision regression tests
         env:
           PRAGMA_LOG_LEVEL: error
