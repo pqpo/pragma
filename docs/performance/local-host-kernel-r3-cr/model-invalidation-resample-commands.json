@@ -1,0 +1,86 @@
+[
+  {
+    "label": "main-model-invalidation-resample-1",
+    "exitCode": 0,
+    "elapsedSeconds": 31.814,
+    "command": [
+      "pnpm",
+      "exec",
+      "tsx",
+      "/Users/linminqiu/.codex/worktrees/issue-348-r3/expert-mesh/docs/performance/local-host-kernel-r2-compilation-probe.mjs",
+      "--checkout",
+      "/tmp/pragma-issue-348-r3-main",
+      "--samples",
+      "40",
+      "--scenario",
+      "model-invalidation",
+      "--lifecycle",
+      "true",
+      "--output",
+      "/Users/linminqiu/.codex/worktrees/issue-348-r3/expert-mesh/docs/performance/local-host-kernel-r3-cr/main-model-invalidation-resample-1.json"
+    ]
+  },
+  {
+    "label": "r3-model-invalidation-resample-1",
+    "exitCode": 0,
+    "elapsedSeconds": 31.19,
+    "command": [
+      "pnpm",
+      "exec",
+      "tsx",
+      "/Users/linminqiu/.codex/worktrees/issue-348-r3/expert-mesh/docs/performance/local-host-kernel-r2-compilation-probe.mjs",
+      "--checkout",
+      "/Users/linminqiu/.codex/worktrees/issue-348-r3/expert-mesh",
+      "--samples",
+      "40",
+      "--scenario",
+      "model-invalidation",
+      "--lifecycle",
+      "true",
+      "--output",
+      "/Users/linminqiu/.codex/worktrees/issue-348-r3/expert-mesh/docs/performance/local-host-kernel-r3-cr/r3-model-invalidation-resample-1.json"
+    ]
+  },
+  {
+    "label": "main-model-invalidation-resample-2",
+    "exitCode": 0,
+    "elapsedSeconds": 31.553,
+    "command": [
+      "pnpm",
+      "exec",
+      "tsx",
+      "/Users/linminqiu/.codex/worktrees/issue-348-r3/expert-mesh/docs/performance/local-host-kernel-r2-compilation-probe.mjs",
+      "--checkout",
+      "/tmp/pragma-issue-348-r3-main",
+      "--samples",
+      "40",
+      "--scenario",
+      "model-invalidation",
+      "--lifecycle",
+      "true",
+      "--output",
+      "/Users/linminqiu/.codex/worktrees/issue-348-r3/expert-mesh/docs/performance/local-host-kernel-r3-cr/main-model-invalidation-resample-2.json"
+    ]
+  },
+  {
+    "label": "r3-model-invalidation-resample-2",
+    "exitCode": 0,
+    "elapsedSeconds": 31.399,
+    "command": [
+      "pnpm",
+      "exec",
+      "tsx",
+      "/Users/linminqiu/.codex/worktrees/issue-348-r3/expert-mesh/docs/performance/local-host-kernel-r2-compilation-probe.mjs",
+      "--checkout",
+      "/Users/linminqiu/.codex/worktrees/issue-348-r3/expert-mesh",
+      "--samples",
+      "40",
+      "--scenario",
+      "model-invalidation",
+      "--lifecycle",
+      "true",
+      "--output",
+      "/Users/linminqiu/.codex/worktrees/issue-348-r3/expert-mesh/docs/performance/local-host-kernel-r3-cr/r3-model-invalidation-resample-2.json"
+    ]
+  }
+]
