@@ -1,10 +1,13 @@
 import { randomUUID } from "node:crypto";
-import { cp, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import {
   createFileExpertSessionStore,
+  createRuntimeSessionRecord,
+  readRuntimeSessionsForOwners,
+  updateRuntimeSessionRecord,
   createExpertAgentPluginPackageFingerprint,
   createNoopLoggerProvider,
   createStaticRuntimeResolver,
@@ -287,9 +290,32 @@ it.each(["expert", "team"] as const)(
       }));
       const paths = new PragmaPaths({ pragmaHome: home });
       const coldPaths = new PragmaPaths({ pragmaHome: coldHome });
-      await cp(paths.runtimeSessionsRoot(), coldPaths.runtimeSessionsRoot(), { recursive: true });
+      const nativeRecords = await readRuntimeSessionsForOwners(paths, [sessionId]);
+      expect(nativeRecords.length).toBeGreaterThan(0);
+      for (const record of nativeRecords) {
+        await createRuntimeSessionRecord({
+          paths: coldPaths,
+          owner: record.owner,
+          systemSessionId: record.systemSessionId,
+          agentId: record.expertId,
+          runtime: { ...record.runtime, displayName: "Fixture" },
+          workspace: record.currentWorkspace,
+        });
+        await updateRuntimeSessionRecord(coldPaths, record, {});
+      }
       await original.stopLocalController(mission.id);
-      await missions.updateExecution(mission.id, runningMission.execution!);
+      // A separate Inbox/owner scope prevents the original standalone control
+      // loop from consuming a command intended for this cold Host.
+      const coldMissionsPath = join(coldHome, "missions");
+      const coldMissions = createMissionStore({ missionsPath: coldMissionsPath });
+      await coldMissions.create({
+        id: mission.id,
+        workspace: { path: root, basename: "fixture" },
+        goal: "Hold the first turn",
+        project: { id: snapshot.projectId, revision: snapshot.revision },
+        executor: missionExecutorSnapshot(target),
+      });
+      await coldMissions.updateExecution(mission.id, runningMission.execution!);
       broken = true;
       readiness.mockClear();
       inspect.mockClear();
@@ -300,10 +326,11 @@ it.each(["expert", "team"] as const)(
         ...common,
         pragmaHome: coldHome,
         executionStore: coldStore,
+        missions: coldMissions,
       });
       const controller = createMissionControllerStore({
-        missionsPath,
-        missionPath: missions.storagePath,
+        missionsPath: coldMissionsPath,
+        missionPath: coldMissions.storagePath,
       });
       const ownerScope = createMissionOwnerScope({
         controller,
@@ -314,7 +341,7 @@ it.each(["expert", "team"] as const)(
         ownerScope,
         consumer: restarted.missionControl.consumer,
         assertMission: async (id) => {
-          await missions.get(id);
+          await coldMissions.get(id);
         },
         assertAcquisitionAllowed: restarted.missionControl.assertAcquisitionAllowed,
         resolveStrictTarget: restarted.missionControl.resolveStrictTarget,
@@ -379,7 +406,7 @@ it.each(["expert", "team"] as const)(
       expect(resolve).toHaveBeenCalled();
       expect(secret).toHaveBeenCalled();
       expect(startTurn).toHaveBeenCalled();
-      expect((await missions.get(mission.id)).execution?.sessionId).toBe(sessionId);
+      expect((await coldMissions.get(mission.id)).execution?.sessionId).toBe(sessionId);
     } finally {
       resume.mockRestore();
       await restarted?.stopLocalController(mission.id);

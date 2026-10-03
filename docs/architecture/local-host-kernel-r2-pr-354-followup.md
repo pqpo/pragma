@@ -45,3 +45,13 @@ Desktop 另用真实 published Project/CAS、Plugin package bytes/fingerprint、
 [逐命令结果与原始日志摘要](../performance/local-host-kernel-r2/pr-354-followup/validation.json)保存退出码、耗时、测试计数和日志 SHA256。此前 R2、CR 性能批次继续保留独立源码摘要。本次两组每端8场景×20样本，以及 system/Capability 各两组每端60样本全部串行；原完整批次两处阈值触发保留，四组追加复测未重复触发。暖缓存每组20/20、DSL=0，失效DSL=2，head/pinned读取0/1。详细准备/compile phase耗时、读取数与证据见 [性能报告](../performance/local-host-kernel-r2-performance.md#pr-354-评论修复后的独立测量批次)。
 
 两处已确认 P1 的修复与上述工程门禁通过；R2 仍只标代码实施交付，完整阶段验收未完成。未获得新的真实 provider 样本，不关闭 #348、不宣称 R1/R2 全部完成；原 Native 进程取消、OS 凭据与完整产品性能等缺口继续保留。
+
+## CI 跟进：活动存储复制竞态
+
+[CI 37105763242](https://github.com/pqpo/pragma/actions/runs/37105763242/job/111153832527) 在 Mission compilation gate 失败：Node 冷 Expert 测试复制活动 Home 时，`aggregate.json.<uuid>.tmp` 被原子替换，递归 `cp` 的 `lstat` 报 `ENOENT`。这是测试快照构造竞态；CLI 跨 OS/Node 发布包门禁通过。此前本地通过不能证明该夹具没有竞态。
+
+Node 改为只复制已发布 Project/CAS 不可变资源；Session 通过 `readSnapshot/create/transact/appendEvent`、Execution 通过 SQLite aggregate API、Runtime Session 通过 owner 定向读取及原子 claim/update API 重建。既有状态与 Native identity 保留，不复制 lease、活动 SQLite/WAL、Mission Inbox 或临时文件，不忽略 ENOENT、不增加超时。
+
+Desktop 回归同步移除 Runtime Session 数据库目录复制，并隔离冷 Mission Inbox/owner scope。原测试共享控制目录，旧 standalone consumer 可能消费冷 Host 命令；隔离后取消记录必须落在 cold Session，保持原成功与身份断言。
+
+本轮只修改测试夹具和本文，生产源码摘要仍为 `4502e1a76d1ed74014c80112a7406c0cd146e0fad9b2f148e131650962ecb55d`，未重跑或新建性能批次。Node 7 项和 Desktop 2 项定向回归通过；lint、Local Host/Desktop 类型检查及完整 compilation gate 101 项通过。远程 CI 将在推送后核验，不能把此前本地结果当成新的远程通过证据。

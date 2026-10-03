@@ -1,10 +1,13 @@
 import { randomUUID } from "node:crypto";
-import { cp, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { cp, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import {
   createFileExpertSessionStore,
+  createRuntimeSessionRecord,
+  readRuntimeSessionsForOwners,
+  updateRuntimeSessionRecord,
   createStaticRuntimeResolver,
   PragmaPaths,
 } from "@pragma/core";
@@ -307,30 +310,75 @@ describe("default Node compilation reaches persisted Execution", { timeout: 15_0
         const original = await source.get(started.executionId!);
         const home = await mkdtemp(join(tmpdir(), "pragma-cold-running-"));
         roots.push(home);
-        // Copy an actually written running snapshot after Native preparation.
-        // The original provider remains addressable by its exact Native ID.
-        await cp(f.home, home, { recursive: true });
-        await rm(
-          join(new PragmaPaths({ pragmaHome: home }).dataRoot(), "capabilities", f.capabilityId),
-          { recursive: true },
-        );
+        const sourcePaths = new PragmaPaths({ pragmaHome: f.home });
+        const coldPaths = new PragmaPaths({ pragmaHome: home });
+        const checkpoint = (await createFileExpertSessionStore({
+          pragmaHome: f.home,
+          executions: source,
+        }).readSnapshot(started.missionId))!;
+        // Only immutable published resources are copied. Active stores are
+        // rebuilt from their authoritative snapshots, never SQLite/WAL files
+        // or directories containing atomically replaced temporary files.
+        await cp(sourcePaths.projectsRoot(), coldPaths.projectsRoot(), { recursive: true });
+        await cp(sourcePaths.contentObjectsRoot(), coldPaths.contentObjectsRoot(), {
+          recursive: true,
+        });
+        coldStore = createSqliteExecutionStore({ pragmaHome: home });
+        for (const executionId of checkpoint.session.executionIds) {
+          const execution = (await source.get(executionId))!;
+          const invocations = await source.listInvocations(executionId);
+          await coldStore.create(
+            execution,
+            invocations.find((entry) => entry.invocationId === execution.rootInvocationId)!,
+          );
+          await coldStore.commit({
+            commitId: `checkpoint:${executionId}`,
+            executionId,
+            invocationPuts: invocations.filter(
+              (entry) => entry.invocationId !== execution.rootInvocationId,
+            ),
+            contextPuts: await source.listContexts(executionId),
+            agentPuts: await source.listAgents(executionId),
+            events: (await source.readEvents(executionId)).map((event) => ({
+              eventId: event.eventId,
+              invocationId: event.invocationId,
+              type: event.type,
+              data: event.data,
+              occurredAt: event.occurredAt,
+            })),
+          });
+        }
+        const coldSessions = createFileExpertSessionStore({
+          pragmaHome: home,
+          executions: coldStore,
+        });
+        await coldSessions.create(checkpoint.session);
+        await coldSessions.transact(started.missionId, () => ({
+          result: undefined,
+          session: checkpoint.session,
+          prompts: checkpoint.prompts,
+        }));
+        for (const event of checkpoint.events)
+          await coldSessions.appendEvent(started.missionId, event);
+        const nativeRecords = await readRuntimeSessionsForOwners(sourcePaths, [started.missionId]);
+        expect(nativeRecords.length).toBeGreaterThan(0);
+        for (const record of nativeRecords) {
+          await createRuntimeSessionRecord({
+            paths: coldPaths,
+            owner: record.owner,
+            systemSessionId: record.systemSessionId,
+            agentId: record.expertId,
+            runtime: { ...record.runtime, displayName: "Fixture" },
+            workspace: record.currentWorkspace,
+          });
+          await updateRuntimeSessionRecord(coldPaths, record, {});
+        }
         f.canUse.mockReturnValue({ usable: false, reason: "Host readiness API unavailable" });
         f.canUse.mockClear();
         const catalog = createLocalHostProjectCatalogFromHome({
           pragmaHome: home,
           runtimes: f.runtimes,
         });
-        coldStore = createSqliteExecutionStore({ pragmaHome: home });
-        const coldPaths = new PragmaPaths({ pragmaHome: home });
-        const lease = JSON.parse(
-          await readFile(coldPaths.expertSessionLease(started.missionId), "utf8"),
-        ) as { claimId: string };
-        // Transfer only the copied transient lease using the authoritative
-        // store API. All running Execution/Context/Native facts remain intact.
-        await createFileExpertSessionStore({
-          pragmaHome: home,
-          executions: coldStore,
-        }).releaseLease(started.missionId, lease.claimId);
         const project = (await catalog.listProjects())[0]!;
         const binding = createMissionPinnedBinding({
           requestId: randomUUID(),
