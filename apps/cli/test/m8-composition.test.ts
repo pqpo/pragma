@@ -6,6 +6,7 @@ import { describe, expect, it, vi } from "vitest";
 
 import {
   createMissionControllerStore,
+  createMissionStore,
   createLocalHostMissionBoardBindings,
   type MissionControlApplication,
 } from "@pragma/local-host";
@@ -57,9 +58,10 @@ describe("M8 production composition", () => {
       );
       expect(host.listMissionQueue).toEqual(expect.any(Function));
 
-      const controller = createMissionControllerStore({
-        missionsPath: join(pragmaHome, "data", "missions"),
-      });
+      const missionsPath = join(pragmaHome, "data", "missions");
+      // Historical CLI owners used the UUID directory. The production
+      // reader must perform the existing locked path migration on access.
+      const controller = createMissionControllerStore({ missionsPath });
       const guard = await controller.claim({
         missionId: MISSION_ID,
         claimId: CLAIM_ID,
@@ -105,7 +107,7 @@ describe("M8 production composition", () => {
     }
   });
 
-  it("lists only Local Host Missions when Board and Desktop directories share the root", async () => {
+  it("lists controller-only and full-envelope Missions while ignoring Board-only directories", async () => {
     const pragmaHome = await mkdtemp(join(tmpdir(), "pragma-cli-mission-list-composition-"));
     const previousHome = process.env["PRAGMA_HOME"];
     const missionId = "370f4e66-c547-4db3-8a46-1af9f1fd4147";
@@ -113,7 +115,10 @@ describe("M8 production composition", () => {
     const missionsPath = join(pragmaHome, "data", "missions");
     process.env["PRAGMA_HOME"] = pragmaHome;
     try {
-      const controller = createMissionControllerStore({ missionsPath });
+      const controller = createMissionControllerStore({
+        missionsPath,
+        missionPath: createMissionStore({ missionsPath }).storagePath,
+      });
       const guard = await controller.claim({
         missionId,
         claimId: CLAIM_ID,
@@ -148,36 +153,67 @@ describe("M8 production composition", () => {
         metadata: { description: "Plan", trigger: "manual", priority: "high" },
       });
 
-      await mkdir(join(missionsPath, legacyMissionId), { recursive: true });
-      await writeFile(
-        join(missionsPath, legacyMissionId, "mission.yaml"),
-        "legacy: true\n",
-        "utf8",
-      );
+      const desktopMission = await createMissionStore({ missionsPath }).create({
+        id: legacyMissionId,
+        workspace: { path: "/tmp/desktop-workspace", basename: "desktop-workspace" },
+        goal: "Read a real Desktop Mission",
+        project: { id: "studio", revision: 1 },
+        executor: { kind: "expert", ref: "expert:1xddvess309a6gme", name: "Writer" },
+      });
+      await createLocalHostMissionBoardBindings({
+        pragmaHome,
+        missionId: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+      });
       await mkdir(join(missionsPath, ".desktop-legacy"), { recursive: true });
       await mkdir(join(missionsPath, ".locks"), { recursive: true });
 
       const host = createProductionLocalHost();
       const snapshots = await host.listMissions();
-      expect(snapshots).toHaveLength(1);
-      expect(snapshots[0]).toMatchObject({
+      expect(snapshots).toHaveLength(2);
+      expect(snapshots.find((snapshot) => snapshot["missionId"] === missionId)).toMatchObject({
         id: missionId,
         missionId,
         status: "succeeded",
         lifecycleStatus: "completed",
       });
 
+      expect(
+        snapshots.find((snapshot) => snapshot["missionId"] === desktopMission.id),
+      ).toMatchObject({
+        title: desktopMission.title,
+        executor: { kind: "expert", id: "1xddvess309a6gme" },
+        workspace: { canonicalPath: desktopMission.workspace.path },
+        lifecycleStatus: "active",
+      });
+      await expect(
+        host.queryMission({ missionId: desktopMission.id, view: "summary", limit: 20 }),
+      ).resolves.toMatchObject({
+        missionId: desktopMission.id,
+        executor: { kind: "expert", id: "1xddvess309a6gme" },
+        workspace: { canonicalPath: desktopMission.workspace.path },
+        eventSequence: 0,
+      });
+      await expect(
+        host.queryMission({ missionId: desktopMission.id, view: "events", limit: 20 }),
+      ).resolves.toMatchObject({ items: [] });
+      await expect(host.listSharedBoard(desktopMission.id)).resolves.toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ id: "GUIDE.md", namespace: "mission-board" }),
+        ]),
+      );
       const io = createIo();
       await expect(runCli(["mission", "list", "--json"], io, { localHost: host })).resolves.toBe(0);
       expect(io.stderr).toEqual([]);
       const result = CliResultV2Schema.parse(JSON.parse(io.stdout[0]!));
       expect(result).toMatchObject({
         status: "succeeded",
-        result: { items: [{ id: missionId }] },
+        result: { items: expect.arrayContaining([expect.objectContaining({ id: missionId })]) },
       });
       const items = (result.result as { readonly items: readonly { readonly id: string }[] }).items;
-      expect(items).toHaveLength(1);
-      expect(items.map((item) => item.id)).toEqual([missionId]);
+      expect(items).toHaveLength(2);
+      expect(items.map((item) => item.id)).toEqual(
+        expect.arrayContaining([missionId, desktopMission.id]),
+      );
       expect(JSON.stringify(result)).not.toContain(
         Buffer.from(missionId, "utf8").toString("base64url"),
       );
@@ -195,7 +231,10 @@ describe("M8 production composition", () => {
     const missionsPath = join(pragmaHome, "data", "missions");
     process.env["PRAGMA_HOME"] = pragmaHome;
     try {
-      const controller = createMissionControllerStore({ missionsPath });
+      const controller = createMissionControllerStore({
+        missionsPath,
+        missionPath: createMissionStore({ missionsPath }).storagePath,
+      });
       const guard = await controller.claim({
         missionId,
         claimId: CLAIM_ID,
@@ -211,7 +250,15 @@ describe("M8 production composition", () => {
           }),
       });
       await controller.release({ missionId, guard });
-      await writeFile(join(missionsPath, missionId, "local-host", "aggregate.json"), "{\n", "utf8");
+      await writeFile(
+        join(
+          createMissionStore({ missionsPath }).storagePath!(missionId),
+          "local-host",
+          "aggregate.json",
+        ),
+        "{\n",
+        "utf8",
+      );
 
       const host = createProductionLocalHost();
       await expect(host.listMissions()).rejects.toMatchObject({
@@ -233,8 +280,11 @@ describe("M8 production composition", () => {
     const previousHome = process.env["PRAGMA_HOME"];
     process.env["PRAGMA_HOME"] = pragmaHome;
     try {
+      const missionsPath = join(pragmaHome, "data", "missions");
+      const repository = createMissionStore({ missionsPath });
       const controller = createMissionControllerStore({
-        missionsPath: join(pragmaHome, "data", "missions"),
+        missionsPath,
+        missionPath: repository.storagePath,
       });
       const guard = await controller.claim({
         missionId: MISSION_ID,
@@ -380,8 +430,11 @@ describe("M8 production composition", () => {
     const previousHome = process.env["PRAGMA_HOME"];
     process.env["PRAGMA_HOME"] = pragmaHome;
     try {
+      const missionsPath = join(pragmaHome, "data", "missions");
+      const repository = createMissionStore({ missionsPath });
       const controller = createMissionControllerStore({
-        missionsPath: join(pragmaHome, "data", "missions"),
+        missionsPath,
+        missionPath: repository.storagePath,
       });
       const guard = await controller.claim({
         missionId: MISSION_ID,

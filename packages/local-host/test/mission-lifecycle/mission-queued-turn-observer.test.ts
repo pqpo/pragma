@@ -1,4 +1,4 @@
-import { createSqliteExecutionStore as createTestExecutionStore } from "@pragma/local-host";
+import { createSqliteExecutionStore as createTestExecutionStore } from "../../src/index.ts";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -6,7 +6,7 @@ import { getExecutionLiveBus } from "@pragma/core";
 import { ExecutionEventSchema, ExecutionRecordSchema } from "@pragma/shared";
 import { expect, it, vi } from "vitest";
 
-import { observeMissionQueuedTurn } from "./mission-queued-turn-observer.ts";
+import { observeMissionQueuedTurn } from "../../src/missions/mission-queued-turn-observer.ts";
 
 function fixture() {
   const store = createTestExecutionStore({

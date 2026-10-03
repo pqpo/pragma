@@ -1,7 +1,7 @@
 import type { ExecutionOutputItem } from "@pragma/shared";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { createMissionOutputCoalescer } from "./mission-output-coalescer.ts";
+import { createMissionOutputCoalescer } from "../../src/missions/mission-output-coalescer.ts";
 
 afterEach(() => vi.useRealTimers());
 

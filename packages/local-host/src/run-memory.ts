@@ -80,6 +80,29 @@ export function createLocalHostRunMemory(options: {
       subsystem: "memory",
       code: "memory_delivery_unavailable",
     });
+  const stopIdleMemory = async (): Promise<void> => {
+    try {
+      if (memory !== undefined) {
+        const { data, contexts } = await memory;
+        try {
+          await contexts.stop();
+        } finally {
+          try {
+            await data.scheduler.stop();
+          } finally {
+            data.episodic.close();
+            data.semantic.close();
+            data.knowledge.close();
+            data.skill.close();
+          }
+        }
+      }
+    } catch {
+      degraded();
+    } finally {
+      memory = undefined;
+    }
+  };
   return {
     canonical,
     executionStore,
@@ -133,44 +156,31 @@ export function createLocalHostRunMemory(options: {
         }
       });
     },
+    async pause() {
+      return serialize(async () => {
+        if (owners.size > 0) return;
+        await stopIdleMemory();
+        await executionStore.drainCanonicalEvents();
+      });
+    },
     async close() {
       return serialize(async () => {
         if (owners.size > 0) return;
+        await stopIdleMemory();
         try {
-          if (memory !== undefined) {
-            const { data, contexts } = await memory;
-            try {
-              await contexts.stop();
-            } finally {
-              try {
-                await data.scheduler.stop();
-              } finally {
-                data.episodic.close();
-                data.semantic.close();
-                data.knowledge.close();
-                data.skill.close();
-              }
-            }
-          }
+          await executionStore.close();
         } catch {
           degraded();
-        } finally {
-          memory = undefined;
-          try {
-            await executionStore.close();
-          } catch {
-            degraded();
-          }
-          try {
-            await options.beforeFeedClose?.();
-          } catch {
-            degraded();
-          }
-          try {
-            await canonical.close();
-          } catch {
-            degraded();
-          }
+        }
+        try {
+          await options.beforeFeedClose?.();
+        } catch {
+          degraded();
+        }
+        try {
+          await canonical.close();
+        } catch {
+          degraded();
         }
       });
     },

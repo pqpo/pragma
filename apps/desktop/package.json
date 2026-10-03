@@ -40,7 +40,7 @@
     "clean": "rm -rf out dist .plugin-bundles",
     "test:packaging": "node --test ./scripts/audit-packaged-app.test.mjs",
     "test:claude-worker": "node --test ./scripts/claude-worker-boundary.test.mjs",
-    "test:mission-chat": "vitest run src/test/mission-queued-chat-refresh.test.tsx src/main/features/missions/mission-chat-service.test.ts src/renderer/src/pages/missions/mission-conversation-model.test.ts && vitest run src/main/features/missions/mission-runner.test.ts -t \"streams every queued turn|keeps the captured live answer|projects an already-finished queued turn|projects oversized replies\""
+    "test:mission-chat": "vitest run src/test/mission-queued-chat-refresh.test.tsx src/renderer/src/pages/missions/mission-conversation-model.test.ts && vitest run src/main/features/missions/mission-runner.test.ts -t \"streams every queued turn|keeps the captured live answer|projects an already-finished queued turn|projects oversized replies\""
   },
   "dependencies": {
     "@codemirror/commands": "^6.11.1",

@@ -10,9 +10,11 @@ import {
   createLocalHostNodeApplication,
   type LocalHostNodeApplicationPorts,
 } from "../src/node-application.ts";
+import { createLocalHostMissionExecutionRunPort } from "../src/missions/execution-run-port.ts";
+import type { LocalHostMissionExecutionService } from "../src/missions/execution-service.ts";
 
 describe("Local Host Node application composition", () => {
-  it("composes injected Mission control and run ports instead of requiring app wiring", async () => {
+  it("composes injected Mission control without accepting a surface-owned run implementation", async () => {
     const home = await mkdtemp(join(tmpdir(), "pragma-local-host-node-"));
     try {
       const lifecycle = createLocalHostMissionController({
@@ -36,10 +38,21 @@ describe("Local Host Node application composition", () => {
 
       expect(application.runtimeResolver()).toBe(resolver);
       expect(application.missionControl).toBeDefined();
-      expect(application.run).toBeDefined();
+      expect(application.run).toBeUndefined();
     } finally {
       await rm(home, { recursive: true, force: true });
     }
+  });
+
+  it("rejects an arbitrary execution service even when it supplies run methods", () => {
+    const foreignService = {
+      assertLocalHostRunAllowed: vi.fn(),
+      startLocalHostRun: vi.fn(),
+    } as unknown as LocalHostMissionExecutionService;
+    expect(() =>
+      createLocalHostMissionExecutionRunPort(foreignService, async () => undefined),
+    ).toThrow("Mission execution must be created by the Local Host execution service factory.");
+    expect(foreignService.startLocalHostRun).not.toHaveBeenCalled();
   });
 });
 
@@ -64,12 +77,6 @@ function createPorts(input: {
       list: async () => ({ items: [] }),
       read: async () => ({ id: "missing" }),
       search: async () => ({ matches: [] }),
-    },
-    runExecutor: {
-      resolve: async () => undefined,
-      start: async () => {
-        throw new Error("not invoked by this composition test");
-      },
     },
   };
 }

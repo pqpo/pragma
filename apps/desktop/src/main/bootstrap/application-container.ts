@@ -1,3 +1,11 @@
+import {
+  createLocalHostNodeMissionCompiler,
+  createLocalHostProjectCatalogFromHome,
+  createLocalHostBuiltInExecutorResolver,
+  createLocalHostMissionBoardBindings,
+  createMissionSessionAssociationResolver,
+  findMissionPinnedBinding,
+} from "@pragma/local-host";
 import { PragmaProjectSnapshotSchema } from "../../shared/contracts/index.ts";
 import { createMissionAttentionRetirement } from "./mission-attention-retirement.ts";
 import {
@@ -50,7 +58,6 @@ import {
   createMissionActivityReader,
   createNativeOsKeychain,
   createSecretStore,
-  type LocalHostRunExecutorPort,
   type MissionControllerStore,
 } from "@pragma/local-host";
 import { createLocalHostNodeApplication } from "@pragma/local-host/node-application";
@@ -1339,8 +1346,8 @@ export async function createDesktopApplicationContainer(
     getSystemExecutorResource: (ref) => systemExperts.getResource(ref),
     getSystemDependencyResource: (ref) => systemExperts.getDependencyResource(ref),
     invalidateRuntimeReadiness: () => invalidateTargetRuntimeAvailability(runtimes),
-    onExecutionTerminal: async ({ mission, executionId, status, result, error }) => {
-      await executionEventProjector.terminal({ mission, executionId, status, result, error });
+    commitExecutionTerminal: (input) => executionEventProjector.terminal(input),
+    onExecutionTerminal: async ({ mission, executionId }) => {
       if (!isUserFacingMissionOrigin(mission.origin)) return;
       try {
         await memoryPlane.stopMissionAttention(mission.id);
@@ -1893,16 +1900,95 @@ export async function createDesktopApplicationContainer(
       }),
   });
   missionRunnerRef.current = missionRunner;
-  const localHostMissionControlAdapter = missionRunner.missionControl;
   const localHostRunExecutorResolver = createDesktopLocalHostExecutorResolver({
     executors: missionExecutors,
     project: pragmaProjectStore,
   });
-  const localHostRunExecutor: LocalHostRunExecutorPort = {
-    resolve: localHostRunExecutorResolver,
-    assertStartAllowed: async (input) => await missionRunner.assertLocalHostRunAllowed(input),
-    start: async (input) => await missionRunner.startLocalHostRun(input),
+  const controllerFactCompiler = createLocalHostNodeMissionCompiler({
+    pragmaHome: pragmaPaths.root,
+    runtimes,
+    loggerProvider,
+  });
+  const controllerFactCatalog = createLocalHostProjectCatalogFromHome({
+    pragmaHome: pragmaPaths.root,
+    runtimes,
+    loggerProvider,
+    compiler: controllerFactCompiler,
+  });
+  const controllerFactBuiltIns = createLocalHostBuiltInExecutorResolver({
+    pragmaHome: pragmaPaths.root,
+    runtimes,
+    loggerProvider,
+    compiler: controllerFactCompiler,
+  });
+  const hasMissionEnvelope = async (id: string): Promise<boolean> => {
+    try {
+      await missionStore.get(id);
+      return true;
+    } catch (error) {
+      if (error instanceof MissionStoreError && error.code === "mission_not_found") return false;
+      throw error;
+    }
   };
+  const resolveControllerFactSession = createMissionSessionAssociationResolver({
+    controller: missionControllerStore,
+    executions: memoryPlane.executionStore,
+    sessions: missionRunner.controllerFactSessionStore,
+    repositorySessionId: async (id) => {
+      try {
+        return (await missionStore.get(id)).execution?.sessionId;
+      } catch (error) {
+        if (error instanceof MissionStoreError && error.code === "mission_not_found")
+          return undefined;
+        throw error;
+      }
+    },
+  });
+  missionRunner.bindControllerFacts({
+    controller: missionControllerStore,
+    hasEnvelope: hasMissionEnvelope,
+    resolveSessionId: resolveControllerFactSession,
+    resolveMissionBinding: async (id) =>
+      findMissionPinnedBinding(
+        (await missionControllerStore.readSnapshot({ missionId: id })).events,
+      ),
+    executors: async (input) =>
+      (await controllerFactBuiltIns(input)) ?? (await controllerFactCatalog.resolve(input)),
+    compiler: controllerFactCompiler,
+    usageSink: localHostUsageRef.current,
+    createHostContextBindings: async ({ missionId, request }) => [
+      ...(await createLocalHostMissionBoardBindings({ pragmaHome: pragmaPaths.root, missionId })),
+      ...((await memoryPlane.policies.getGlobal()).policy.enabled === "enabled"
+        ? [
+            {
+              namespace: "memory",
+              store: memoryPlane.createMissionContextStore({
+                missionId,
+                goal: request.prompt ?? "",
+                ...(request.project === undefined ? {} : { projectId: request.project.projectId }),
+              }),
+            },
+          ]
+        : []),
+    ],
+    memory: {
+      linked: ({ missionId, executionId, projectId }) =>
+        memoryPlane.registerMemoryExecutionContext({
+          missionId,
+          executionId,
+          ...(projectId === undefined ? {} : { projectId }),
+        }),
+      recovering: (missionId) =>
+        memoryPlane.setMemoryConversationState({ missionId, state: "running" }),
+      terminal: async (missionId, waiting) => {
+        await memoryPlane.stopMissionAttention(missionId);
+        await memoryPlane.setMemoryConversationState({
+          missionId,
+          state: waiting ? "active" : "completed",
+        });
+      },
+    },
+  });
   const memoryCurator = createDesktopMemoryCurator({
     profiles: memoryPlane.extractorProfiles,
     missions: missionStore,
@@ -2063,9 +2149,13 @@ export async function createDesktopApplicationContainer(
         query: missionQuery.queryMission,
       },
       missionLifecycle,
-      missionControlAdapter: localHostMissionControlAdapter,
+      executionService: missionRunner,
+      executorResolver: localHostRunExecutorResolver,
       assertMission: async (missionId) => {
-        await missionStore.get(missionId);
+        if (await hasMissionEnvelope(missionId)) return;
+        const snapshot = await missionControllerStore.readSnapshot({ missionId });
+        if (!snapshot.events.some((event) => event.type === "mission.created"))
+          throw new MissionStoreError("mission_not_found", `Mission not found: ${missionId}.`);
       },
       onOwnerStartError: ({ missionId, error }) =>
         mainLogger.warn(
@@ -2113,7 +2203,6 @@ export async function createDesktopApplicationContainer(
         },
       },
       watch: missionWatch,
-      runExecutor: localHostRunExecutor,
     },
   });
   if (localHost.missionControl === undefined || localHost.run === undefined) {

@@ -7,7 +7,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import {
   hasMissionDeletionIntent,
   persistMissionDeletionIntent,
-} from "./mission-deletion-intent.ts";
+} from "../../src/missions/repository/mission-deletion-intent.ts";
 
 const missionId = "00000000-0000-4000-8000-000000000001";
 const temporaryPaths: string[] = [];

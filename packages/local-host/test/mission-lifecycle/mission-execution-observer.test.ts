@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 
-import { observeMissionExecution } from "./mission-execution-observer.ts";
-import type { MissionStore } from "./mission-store.ts";
+import { observeMissionExecution } from "../../src/missions/mission-execution-observer.ts";
+import type { MissionStore } from "../../src/missions/repository/mission-store.ts";
 
 describe("Mission execution observer", () => {
   it("settles successful admission without waiting for deferred product writes", async () => {
@@ -202,4 +202,86 @@ describe("Mission execution observer", () => {
       expect.objectContaining({ message: "snapshot unavailable" }),
     );
   });
+});
+
+it("exposes the necessary terminal boundary before blocked history and cleanup", async () => {
+  let releaseCleanup!: () => void;
+  const cleanup = new Promise<void>((resolve) => {
+    releaseCleanup = resolve;
+  });
+  let durable!: () => void;
+  const committed = new Promise<void>((resolve) => {
+    durable = resolve;
+  });
+  const order: string[] = [];
+  const observer = observeMissionExecution(
+    {
+      updateExecution: async () => {
+        order.push("snapshot");
+      },
+    } as unknown as MissionStore,
+    "mission",
+    {
+      executionId: "execution",
+      result: Promise.resolve("answer"),
+      getState: async () => ({ status: "succeeded" }),
+    },
+    "2026-10-03T00:00:00.000Z",
+    "request",
+    async () => {
+      order.push("cleanup");
+      await cleanup;
+    },
+    undefined,
+    async () => {
+      order.push("canonical");
+    },
+    undefined,
+    async () => {
+      order.push("history");
+    },
+    undefined,
+    false,
+    {
+      onDurableTerminal: () => {
+        order.push("durable");
+        durable();
+      },
+    },
+  );
+  await committed;
+  expect(order.slice(0, 3)).toEqual(["canonical", "snapshot", "durable"]);
+  expect(order).not.toContain("history");
+  releaseCleanup();
+  await observer;
+  expect(order).toEqual(["canonical", "snapshot", "durable", "cleanup", "history"]);
+});
+
+it("reports a failed necessary terminal write independently from enrichment failures", async () => {
+  const failure = new Error("snapshot unavailable");
+  const onDurableTerminal = vi.fn();
+  await observeMissionExecution(
+    {
+      updateExecution: async () => {
+        throw failure;
+      },
+    } as unknown as MissionStore,
+    "mission",
+    {
+      executionId: "execution",
+      result: Promise.resolve("answer"),
+      getState: async () => ({ status: "succeeded" }),
+    },
+    "2026-10-03T00:00:00.000Z",
+    "request",
+    async () => undefined,
+    undefined,
+    undefined,
+    undefined,
+    async () => undefined,
+    undefined,
+    false,
+    { onDurableTerminal, deferEnrichment: true },
+  );
+  expect(onDurableTerminal).toHaveBeenCalledWith(failure);
 });

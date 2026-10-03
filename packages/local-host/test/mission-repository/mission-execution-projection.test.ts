@@ -4,7 +4,7 @@ import { join } from "node:path";
 
 import { afterEach, describe, expect, it } from "vitest";
 
-import type { MissionChatEntry } from "../../../shared/contracts/index.ts";
+import type { MissionChatEntry } from "@pragma/shared";
 import {
   MISSION_EXECUTION_PROJECTION_MAX_BYTES,
   MISSION_EXECUTION_PROJECTION_MAX_CONTENT_LENGTH,
@@ -15,7 +15,7 @@ import {
   MISSION_EXECUTION_PROJECTION_ORDERING_VERSION,
   writeMissionExecutionProjection,
   type MissionExecutionProjectionWriteMetrics,
-} from "./mission-execution-projection.ts";
+} from "../../src/missions/repository/mission-execution-projection.ts";
 
 const temporaryPaths: string[] = [];
 

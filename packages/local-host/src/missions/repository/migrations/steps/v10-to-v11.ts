@@ -1,4 +1,4 @@
-import { MissionSchema } from "../../../../../shared/contracts/missions.ts";
+import { MissionSchema } from "@pragma/shared";
 import { MissionV10Schema } from "../schemas/v10.ts";
 
 export const missionV10ToV11Step = {

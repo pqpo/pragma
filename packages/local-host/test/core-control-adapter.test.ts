@@ -5,6 +5,39 @@ import { describe, expect, it, vi } from "vitest";
 import { createLocalHostCoreMissionControlAdapter } from "../src/index.ts";
 
 describe("Local Host Core Mission control adapter", () => {
+  it("waits for the Mission terminal commit after Core terminal", async () => {
+    let commit: () => void = () => undefined;
+    const durableTerminal = new Promise<void>((resolve) => {
+      commit = resolve;
+    });
+    const executionSettlement = vi.fn(() => durableTerminal);
+    const adapter = createLocalHostCoreMissionControlAdapter({
+      runtimes: {} as RuntimeResolver,
+      executions: {
+        get: async () => ({ executionId: "execution-1", status: "succeeded" }),
+      } as unknown as ExecutionStore,
+      sessions: {} as never,
+      mission: { controller: {} as never, append: async () => undefined },
+      executors: [],
+      resolveMissionBinding: async () => undefined,
+      executionSettlement,
+    });
+    let returned = false;
+    const outcome = adapter
+      .waitExecution({ missionId: "mission-1", executionId: "execution-1" })
+      .then((value) => {
+        returned = true;
+        return value;
+      });
+    await vi.waitFor(() => expect(executionSettlement).toHaveBeenCalledWith("mission-1"));
+    expect(returned).toBe(false);
+    commit();
+    await expect(outcome).resolves.toMatchObject({
+      executionId: "execution-1",
+      status: "succeeded",
+    });
+  });
+
   it("forwards durable command attachments and explicit queue recovery to Core", async () => {
     const prompt = vi.fn(async (_content: string, options: unknown) => ({
       executionId: "execution-1",
@@ -24,7 +57,7 @@ describe("Local Host Core Mission control adapter", () => {
     const adapter = createLocalHostCoreMissionControlAdapter({
       runtimes: {} as RuntimeResolver,
       executions,
-      sessions: {} as never,
+      sessions: { get: async () => undefined } as never,
       mission: { controller: {} as never, append: async () => undefined },
       executors: [],
       resolveMissionBinding: async () => undefined,

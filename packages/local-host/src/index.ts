@@ -405,3 +405,37 @@ export * from "./missions/resource-dependencies.ts";
 export * from "./node-mission-compiler.ts";
 
 export * from "./missions/system-expert-runtime.ts";
+
+export * from "./missions/repository/mission-store.ts";
+export * from "./missions/repository/mission-store-error.ts";
+export * from "./missions/repository/mission-store-fenced-adapter.ts";
+export * from "./missions/repository/mission-list-source.ts";
+export * from "./missions/repository/mission-timeline-storage.ts";
+export * from "./missions/repository/mission-projection-storage.ts";
+export * from "./missions/repository/mission-execution-projection.ts";
+export * from "./missions/repository/mission-deletion-intent.ts";
+
+export * from "./missions/execution-service.ts";
+export * from "./missions/mission-runner-contracts.ts";
+export * from "./missions/mission-chat-history.ts";
+export * from "./missions/mission-chat-live.ts";
+export * from "./missions/mission-chat-projection-common.ts";
+export * from "./missions/mission-chat-service.ts";
+export * from "./missions/mission-command-service.ts";
+export * from "./missions/mission-deletion-settlement.ts";
+export * from "./missions/mission-execution-observer.ts";
+export * from "./missions/mission-output-coalescer.ts";
+export * from "./missions/mission-queued-turn-observer.ts";
+export * from "./missions/mission-session-upgrade.ts";
+export * from "./missions/mission-status-service.ts";
+export * from "./missions/mission-work-service.ts";
+export * from "./missions/mission-branch-context.ts";
+
+export * from "./missions/node-mission-repository.ts";
+
+export {
+  createMissionExecutionEventProjector,
+  type MissionExecutionEventProjector,
+} from "./missions/mission-execution-event-projector.ts";
+
+export { createMissionSessionAssociationResolver } from "./missions/session-association.ts";

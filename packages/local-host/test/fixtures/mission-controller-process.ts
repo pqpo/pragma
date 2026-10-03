@@ -63,18 +63,20 @@ if (action === "claim") {
 }
 
 if (action === "claim-then-assert") {
-  const [missionId, claimId, leaseMs, delayMs] = value?.split("|") ?? [];
+  const [missionId, claimId, leaseMs, assertionSignalPath] = value?.split("|") ?? [];
   if (
     missionId === undefined ||
     claimId === undefined ||
     leaseMs === undefined ||
-    delayMs === undefined
+    assertionSignalPath === undefined
   ) {
     throw new Error("Expected claim and assertion input.");
   }
   const guard = await store.claim({ missionId, claimId, leaseMs: Number(leaseMs) });
   process.stdout.write(`${JSON.stringify({ guard })}\n`);
-  await new Promise((resolve) => setTimeout(resolve, Number(delayMs)));
+  while (!(await exists(assertionSignalPath))) {
+    await new Promise((resolve) => setTimeout(resolve, 2));
+  }
   try {
     await store.assertWriteGuard({ missionId, guard });
     process.stdout.write(`${JSON.stringify({ code: "UNEXPECTED_WRITE_ALLOWED" })}\n`);

@@ -64,6 +64,44 @@ afterEach(async () => {
 });
 
 describe("Core-backed Local Host run composition", { timeout: 10_000 }, () => {
+  it("pauses idle Memory between runs while retaining the shared Execution store and feed", async () => {
+    const f = await createRunFixture();
+    const beforeFeedClose = vi.fn();
+    const memory = createLocalHostRunMemory({ pragmaHome: f.home, beforeFeedClose });
+    const app = createPragma({
+      pragmaHome: f.home,
+      runtimes: f.runtimes,
+      executionStore: memory.executionStore,
+    });
+    const definition = f.executors[0]!.definition as Awaited<ReturnType<typeof defineExpert>>;
+    const completed: string[] = [];
+    try {
+      for (const content of ["first run", "second run"]) {
+        const missionId = randomUUID();
+        await memory.bindings({ missionId, goal: content });
+        const session = await app.experts.createSession(definition, { sessionId: missionId });
+        const turn = await session.prompt(content);
+        await turn.result;
+        await session.releaseAfterTerminal({ waitForIdle: true });
+        await memory.register({ missionId, executionId: turn.executionId });
+        await memory.complete(missionId);
+        await memory.pause();
+        completed.push(turn.executionId);
+        for (const executionId of completed)
+          expect((await memory.executionStore.get(executionId))?.status).toBe("succeeded");
+        expect(beforeFeedClose).not.toHaveBeenCalled();
+      }
+      expect(completed).toHaveLength(2);
+    } finally {
+      await memory.close();
+      f.executions.close();
+    }
+    expect(beforeFeedClose).toHaveBeenCalledOnce();
+    await expect(memory.executionStore.get(completed[0]!)).rejects.toThrow(
+      "Execution store is closed.",
+    );
+  });
+
   it("publishes CLI Evidence and pending work which a subsequent Desktop pump can extract", async () => {
     const { home, runtimes, executors } = await createRunFixture();
     const policies = createFileMemoryPolicyStore({ pragmaHome: home });

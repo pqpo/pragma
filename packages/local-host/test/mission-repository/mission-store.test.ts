@@ -1,4 +1,4 @@
-import { missionContextMountsFingerprint } from "./mission-context-mounts.ts";
+import { missionCompileContextMountsFingerprint as missionContextMountsFingerprint } from "../../src/missions/compile-service.ts";
 import { PRAGMA_DSL_WRITE_API_VERSION } from "@pragma/interpreter/ast";
 import {
   appendFile,
@@ -18,13 +18,24 @@ import { afterEach, describe, expect, it } from "vitest";
 import { formatPragmaYaml, parsePragmaYaml } from "@pragma/interpreter";
 import type { PragmaExpertResource } from "@pragma/interpreter/ast";
 import { encodePragmaPathSegment, withFileLock } from "@pragma/core";
-import { missionExecutorSnapshot } from "../../../shared/contracts/index.ts";
+import { MissionExecutorSchema } from "@pragma/shared";
+function missionExecutorSnapshot(resource: PragmaExpertResource) {
+  return MissionExecutorSchema.parse({
+    kind: "expert",
+    ref: `expert:${resource.metadata.id}`,
+    name: resource.metadata.name,
+  });
+}
+
 import {
   MISSION_EXECUTION_PROJECTION_MAX_BYTES,
   MISSION_EXECUTION_PROJECTION_MAX_CONTENT_LENGTH,
   MISSION_EXECUTION_PROJECTION_MAX_ENTRIES,
-} from "./mission-execution-projection.ts";
-import { createMissionStore, MISSION_TITLE_MAX_LENGTH } from "./mission-store.ts";
+} from "../../src/missions/repository/mission-execution-projection.ts";
+import {
+  createMissionStore,
+  MISSION_TITLE_MAX_LENGTH,
+} from "../../src/missions/repository/mission-store.ts";
 
 const temporaryPaths: string[] = [];
 

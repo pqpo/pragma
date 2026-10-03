@@ -1,15 +1,15 @@
 import type { DurableExecutionStore } from "@pragma/core";
-import type { MissionStore } from "./mission-store.ts";
+import type { MissionStore } from "../../src/missions/repository/mission-store.ts";
 import { createHash } from "node:crypto";
 import { describe, expect, it, vi } from "vitest";
-import { GetMissionChatPageSchema } from "../../../shared/contracts/index.ts";
+import { GetMissionChatPageSchema } from "@pragma/shared";
 import {
   readMissionChatHistoryPage,
   decodeMissionChatPageCursor,
   encodeMissionChatPageCursor,
   orderMissionExecutionEntries,
   ensureTerminalExecutionResultEntry,
-} from "./mission-chat-history.ts";
+} from "../../src/missions/mission-chat-history.ts";
 
 describe("Mission chat history", () => {
   it.each(["pending", "unavailable"] as const)(

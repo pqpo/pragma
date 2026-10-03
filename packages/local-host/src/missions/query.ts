@@ -14,7 +14,7 @@ import {
   type MissionResult,
   type MissionSummary,
 } from "@pragma/shared/integration";
-import { AgentMessageUsageSchema } from "@pragma/shared";
+import { AgentMessageUsageSchema, type Mission } from "@pragma/shared";
 
 import {
   makeMissionEventCursor,
@@ -57,6 +57,7 @@ interface ExecutionProjection {
  */
 export function createMissionQuery(options: {
   readonly controller: Pick<MissionControllerStore, "readSnapshot">;
+  readonly readMission?: ((missionId: string) => Promise<Mission | undefined>) | undefined;
 }): MissionQueryPort {
   return {
     async queryMission(input) {
@@ -65,20 +66,42 @@ export function createMissionQuery(options: {
       }
       assertQueryLimit(input.limit);
 
+      const mission = await options.readMission?.(input.missionId);
       const snapshot = await options.controller.readSnapshot(
         input.view === "events" && input.cursor !== undefined
           ? { missionId: input.missionId, after: input.cursor }
           : { missionId: input.missionId },
       );
-      assertMissionExists(input.missionId, snapshot.snapshot.eventSequence, snapshot.events);
+      if (mission === undefined)
+        assertMissionExists(input.missionId, snapshot.snapshot.eventSequence, snapshot.events);
 
       switch (input.view) {
         case "summary":
           return projectMissionSummary({
             missionId: input.missionId,
             snapshot,
+            mission,
           });
         case "result":
+          if (
+            mission?.execution !== undefined &&
+            !snapshot.events.some(
+              (event) =>
+                event.type === "run.started" ||
+                event.type === "execution.started" ||
+                event.type === "run.accepted",
+            )
+          ) {
+            throw createIntegrationError({
+              code: "DEPENDENCY_UNAVAILABLE",
+              category: "dependency",
+              message: "The Mission execution has no durable controller result facts.",
+              details: {
+                missionId: input.missionId,
+                reason: "mission_execution_facts_unavailable",
+              },
+            });
+          }
           return projectMissionResult({
             missionId: input.missionId,
             snapshot,
@@ -99,7 +122,39 @@ export function createMissionQuery(options: {
 export function projectMissionSummary(input: {
   readonly missionId: string;
   readonly snapshot: Awaited<ReturnType<MissionControllerStore["readSnapshot"]>>;
+  readonly mission?: Mission | undefined;
 }): MissionSummary {
+  if (input.mission !== undefined) {
+    const mission = input.mission;
+    const accepted = input.snapshot.events
+      .toReversed()
+      .find((event) => event.type === "run.accepted");
+    const started = input.snapshot.events
+      .toReversed()
+      .find((event) => event.type === "run.started" || event.type === "execution.started");
+    const queuedSuccessor =
+      accepted !== undefined && (started === undefined || accepted.sequence > started.sequence);
+    return MissionSummarySchema.parse({
+      schemaVersion: "pragma.mission-summary/v1",
+      missionId: mission.id,
+      status: queuedSuccessor ? "queued" : (mission.execution?.status ?? "queued"),
+      lifecycleStatus: mission.lifecycleStatus,
+      executor: {
+        kind: mission.executor.kind,
+        id: mission.executor.ref.slice(mission.executor.ref.indexOf(":") + 1),
+      },
+      ...(mission.execution === undefined || queuedSuccessor
+        ? {}
+        : {
+            execution: { id: mission.execution.id, status: mission.execution.status },
+          }),
+      workspace: { canonicalPath: mission.workspace.path },
+      createdAt: mission.createdAt,
+      updatedAt: mission.updatedAt,
+      eventSequence: input.snapshot.snapshot.eventSequence,
+      cursor: input.snapshot.cursor,
+    });
+  }
   const created = findCreatedEvent(input.snapshot.events);
   const execution = projectExecution(input.snapshot.events);
   const executor = ExecutorReferenceSchema.safeParse(created.data["executor"]);
@@ -114,9 +169,7 @@ export function projectMissionSummary(input: {
     status,
     lifecycleStatus: lifecycleStatus(status),
     ...(executor.success ? { executor: executor.data } : {}),
-    ...(executionView === undefined
-      ? {}
-      : { execution: executionView }),
+    ...(executionView === undefined ? {} : { execution: executionView }),
     ...(workspace === undefined ? {} : { workspace }),
     createdAt: created.occurredAt,
     updatedAt: latest.occurredAt,

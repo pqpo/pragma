@@ -5,7 +5,7 @@ import {
   MissionBranchSourceSchema,
   MissionContextMountV10Schema,
   MissionOriginSchema,
-} from "../../../../../shared/contracts/missions.ts";
+} from "@pragma/shared";
 
 export const MissionV10Schema = MissionBaseSchema.extend({
   schemaVersion: z.literal("pragma.mission/v10"),

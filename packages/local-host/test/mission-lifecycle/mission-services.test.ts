@@ -1,9 +1,12 @@
 import { describe, expect, it, vi } from "vitest";
 
-import { MissionChatService } from "./mission-chat-service.ts";
-import { MissionCommandService } from "./mission-command-service.ts";
-import { MissionStatusService } from "./mission-status-service.ts";
-import { MissionWorkService, type MissionWorkProjection } from "./mission-work-service.ts";
+import { MissionChatService } from "../../src/missions/mission-chat-service.ts";
+import { MissionCommandService } from "../../src/missions/mission-command-service.ts";
+import { MissionStatusService } from "../../src/missions/mission-status-service.ts";
+import {
+  MissionWorkService,
+  type MissionWorkProjection,
+} from "../../src/missions/mission-work-service.ts";
 
 describe("Mission service state ownership", () => {
   it("publishes Mission status independently from chat and work revisions", () => {

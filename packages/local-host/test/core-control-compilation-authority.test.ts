@@ -11,6 +11,7 @@ import {
   type ExpertSessionStore,
   type PragmaApp,
 } from "@pragma/core";
+import { ExpertSessionRecordSchema } from "@pragma/shared";
 import { defineRuntimeTestDriver } from "@pragma/core/testing";
 import {
   canonicalPragmaResourceRef,
@@ -176,11 +177,38 @@ async function fixture(cold = false, external = false) {
     settled: Promise.resolve(),
   }));
   const close = vi.fn();
+  const rootContextId = randomUUID();
+  const now = new Date().toISOString();
+  const state = ExpertSessionRecordSchema.parse({
+    schemaVersion: "pragma.expert-session/v7",
+    sessionId: missionId,
+    expertId: expert.metadata.id,
+    definitionFingerprint: compilation.definitionFingerprint,
+    status: "open",
+    queuedRequestIds: [],
+    executionIds: [],
+    rootContextId,
+    contexts: {
+      [rootContextId]: {
+        schemaVersion: "pragma.runtime-context/v5",
+        contextId: rootContextId,
+        owner: { type: "expert-session", ownerId: missionId },
+        origin: { type: "expert-session", sessionId: missionId },
+        expert: { id: expert.metadata.id },
+        runtime: (await runtimes.bind()).binding,
+        lifecycle: "open",
+        createdAt: now,
+        updatedAt: now,
+      },
+    },
+    createdAt: now,
+    updatedAt: now,
+  });
   const session = {
     sessionId: missionId,
     prompt,
     close,
-    getState: async () => ({ sessionId: missionId }),
+    getState: async () => state,
     getPromptQueue: async () => [],
     getPromptQueueState: async () => ({ state: "idle", pendingCount: 0 }),
   } as unknown as ExpertSession;
@@ -241,7 +269,10 @@ async function fixture(cold = false, external = false) {
     executions: {
       get: async () => ({ status: failed ? "failed" : "succeeded" }),
     } as unknown as ExecutionStore,
-    sessions: { get: async () => ({ sessionId: missionId }) } as unknown as ExpertSessionStore,
+    sessions: {
+      get: async () => state,
+      listPrompts: async () => [],
+    } as unknown as ExpertSessionStore,
     resolveMissionBinding: async () => binding,
     ...(cold
       ? { app: { experts: { resumeSession: resume } } as unknown as PragmaApp }

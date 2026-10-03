@@ -2,13 +2,22 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { createMissionControllerStore, createMissionOwnerScope } from "@pragma/local-host";
+import { createMissionControllerStore } from "../../src/missions/controller/mission-controller-store.ts";
+import { createMissionOwnerScope } from "../../src/missions/controller/owner-scope.ts";
 import { PRAGMA_DSL_WRITE_API_VERSION, type PragmaExpertResource } from "@pragma/interpreter/ast";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { missionExecutorSnapshot } from "../../../shared/contracts/index.ts";
-import { createMissionStore } from "./mission-store.ts";
-import { createFencedMissionStore } from "./mission-store-fenced-adapter.ts";
+import { MissionExecutorSchema } from "@pragma/shared";
+function missionExecutorSnapshot(resource: PragmaExpertResource) {
+  return MissionExecutorSchema.parse({
+    kind: "expert",
+    ref: `expert:${resource.metadata.id}`,
+    name: resource.metadata.name,
+  });
+}
+
+import { createMissionStore } from "../../src/missions/repository/mission-store.ts";
+import { createFencedMissionStore } from "../../src/missions/repository/mission-store-fenced-adapter.ts";
 
 const roots: string[] = [];
 
@@ -23,7 +32,7 @@ afterEach(async () => {
   );
 });
 
-describe("Desktop fenced MissionStore adapter", () => {
+describe("Local Host fenced Mission repository", () => {
   it("uses the shared Local Host owner scope for semantic writes", async () => {
     const root = await mkdtemp(join(tmpdir(), "pragma-desktop-fenced-store-"));
     roots.push(root);
@@ -81,6 +90,38 @@ describe("Desktop fenced MissionStore adapter", () => {
       workspace: { path: join(root, "workspace"), basename: "workspace" },
     });
     await fencedStore.unmountSkillRevisionDraft({ id: mission.id, draftId: skillDraftId });
+    await fencedStore.mountSkillRevisionDraft({
+      id: mission.id,
+      draftId: skillDraftId,
+      revisionJobId: skillJobId,
+      capabilityId: skillCapabilityId,
+    });
+    await fencedStore.unmountSkillRevisionDraft({ id: mission.id, draftId: skillDraftId });
+    await fencedStore.updateExecution(mission.id, {
+      id: executionId,
+      inputMessageId: mission.initialMessageId,
+      status: "succeeded",
+      startedAt: "2026-09-16T00:00:00.000Z",
+      finishedAt: "2026-09-16T00:01:00.000Z",
+    });
+    const storeId = "55555555-5555-4555-8555-555555555555";
+    const managedDraftId = "66666666-6666-4666-8666-666666666666";
+    const managedJobId = "77777777-7777-4777-8777-777777777777";
+    await fencedStore.updateContextMounts(mission.id, [{ kind: "context-store", storeId }]);
+    await fencedStore.mountManagedRevisionDraft({
+      id: mission.id,
+      expectedExecutorRef: mission.executor.ref,
+      storeId,
+      draftId: managedDraftId,
+      revisionJobId: managedJobId,
+    });
+    await fencedStore.restoreManagedRevisionStore({
+      id: mission.id,
+      storeId,
+      draftId: managedDraftId,
+      revisionJobId: managedJobId,
+    });
+    await fencedStore.updateContextMounts(mission.id, []);
     await expect(rawStore.get(mission.id)).resolves.toMatchObject({
       toolPermissionMode: "full-access",
       workspace: { path: join(root, "workspace"), basename: "workspace" },
@@ -92,6 +133,9 @@ describe("Desktop fenced MissionStore adapter", () => {
         expect.objectContaining({ type: "mission.execution.updated" }),
         expect.objectContaining({ type: "mission.skill-revision-workspace.rebound" }),
         expect.objectContaining({ type: "mission.skill-revision-draft.unmounted" }),
+        expect.objectContaining({ type: "mission.skill-revision-draft.mounted" }),
+        expect.objectContaining({ type: "mission.managed-revision-draft.mounted" }),
+        expect.objectContaining({ type: "mission.managed-revision-store.restored" }),
       ]),
     });
     expect(onExecutionChanged).toHaveBeenCalledWith({
@@ -158,6 +202,82 @@ describe("Desktop fenced MissionStore adapter", () => {
       events: [expect.objectContaining({ type: "mission.options.updated" })],
     });
     await ownerScope.release(mission.id);
+  });
+
+  it("returns the replay result without overwriting a successor after lease revocation", async () => {
+    const root = await mkdtemp(join(tmpdir(), "pragma-fenced-recovery-revoked-"));
+    roots.push(root);
+    const missionsPath = join(root, "missions");
+    const rawStore = createMissionStore({ missionsPath });
+    const mission = await rawStore.create({
+      workspace: { path: join(root, "workspace"), basename: "workspace" },
+      goal: "Preserve the successor mutation",
+      project: { id: "studio", revision: 1 },
+      executor: missionExecutorSnapshot(expertFixture()),
+    });
+    const controller = createMissionControllerStore({
+      missionsPath,
+      missionPath: rawStore.storagePath,
+    });
+    const ownerScope = createMissionOwnerScope({ controller, leaseMs: 1_000 });
+    const successor = createMissionOwnerScope({ controller, leaseMs: 1_000 });
+    const fencedStore = createFencedMissionStore(rawStore, {
+      controller,
+      ownerScope,
+      setSemanticWriteReplay: () => undefined,
+    });
+    const guard = await ownerScope.acquire(mission.id);
+    const operation = {
+      name: "mission.options.update",
+      input: { id: mission.id, input: { toolPermissionMode: "request-approval" } },
+    };
+    await expect(
+      controller.coordinateSemanticWrite({
+        missionId: mission.id,
+        guard,
+        operation,
+        eventType: "mission.options.updated",
+        eventData: {},
+        apply: async () => {
+          throw new Error("interrupted before mutation");
+        },
+      }),
+    ).rejects.toMatchObject({ name: "MissionSemanticWritePendingError" });
+
+    const mutations = vi.spyOn(rawStore, "updateOptions");
+    const recover = controller.recoverSemanticWrite.bind(controller);
+    vi.spyOn(controller, "recoverSemanticWrite").mockImplementationOnce(async (input) => {
+      const result = await recover(input);
+      await ownerScope.forceRevoke(mission.id);
+      const successorGuard = await successor.acquire(mission.id);
+      await controller.coordinateSemanticWrite({
+        missionId: mission.id,
+        guard: successorGuard,
+        operation: {
+          name: "mission.options.update",
+          input: { id: mission.id, input: { toolPermissionMode: "full-access" } },
+        },
+        eventType: "mission.options.updated",
+        eventData: {},
+        apply: async () =>
+          await rawStore.updateOptions(mission.id, { toolPermissionMode: "full-access" }),
+      });
+      return result;
+    });
+    await expect(
+      fencedStore.updateOptions(mission.id, {
+        toolPermissionMode: "request-approval",
+      }),
+    ).resolves.toMatchObject({ toolPermissionMode: "request-approval" });
+    expect(mutations).toHaveBeenCalledTimes(2);
+    await expect(rawStore.get(mission.id)).resolves.toMatchObject({
+      toolPermissionMode: "full-access",
+    });
+    const snapshot = await controller.readSnapshot({ missionId: mission.id });
+    expect(
+      snapshot.events.filter((event) => event.type === "mission.options.updated"),
+    ).toHaveLength(2);
+    await successor.release(mission.id);
   });
 
   it("rejects a late scoped write instead of letting it acquire a successor lease", async () => {

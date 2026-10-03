@@ -1,0 +1,2586 @@
+import type { ContextStoreRevisionRequest } from "@pragma/built-in-agents/contracts";
+import {
+  readStorageFile as readFile,
+  writeStorageFile as writeFile,
+  replaceStorageFile as rename,
+} from "@pragma/core";
+import { missionCompileContextMountsFingerprint as missionContextMountsFingerprint } from "../compile-service.ts";
+import { resolveMissionListSource } from "./mission-list-source.ts";
+import { randomUUID } from "node:crypto";
+import { mkdir, cp, copyFile, open, realpath, readdir, rm, stat } from "node:fs/promises";
+import { basename, dirname, extname, isAbsolute, join, relative } from "node:path";
+
+import { decodePragmaPathSegment, encodePragmaPathSegment, withFileLock } from "@pragma/core";
+import type { ExpertPromptAttachment } from "@pragma/shared";
+import { createIntegrationError } from "@pragma/shared/integration";
+import { MissionAggregateStateSchema } from "../controller/schemas.ts";
+import { formatPragmaYaml, parsePragmaYaml } from "@pragma/interpreter";
+import { z } from "zod";
+
+import {
+  MissionIdSchema,
+  MissionOriginSchema,
+  MissionSchema,
+  MissionTimelineRecordSchema,
+  isUserFacingMissionOrigin,
+  MissionAttachmentsManifestSchema,
+  MissionChatEntrySchema,
+  MissionBranchHistorySchema,
+  latestMissionBranchableReply,
+  MissionUserMessageSchema,
+  type Mission,
+  type MissionContextMount,
+  type MissionExecutor,
+  type MissionModelOverride,
+  type MissionRepositorySummary as MissionSummary,
+  type MissionTimelineRecord,
+  type MissionChatEntry,
+  type MissionBranchHistory,
+  type MissionUserMessage,
+  type MissionAttachmentsManifest,
+  type ToolPermissionMode,
+} from "@pragma/shared";
+import {
+  MissionV6Schema,
+  MissionV7Schema,
+  MissionV8Schema,
+  MissionV9Schema,
+  MissionV10Schema,
+  missionV3ToV4Step,
+  missionV4ToV5Step,
+  missionV5ToV6Step,
+  missionV6ToV7Step,
+  missionV7ToV8Step,
+  missionV8ToV9Step,
+  missionV9ToV10Step,
+  missionV10ToV11Step,
+} from "./migrations/index.ts";
+import {
+  MissionExecutionProjectionError,
+  type MissionExecutionProjectionPage,
+} from "./mission-execution-projection.ts";
+import {
+  createMissionProjectionStorage,
+  MissionProjectionStorageError,
+} from "./mission-projection-storage.ts";
+import { MissionStoreError } from "./mission-store-error.ts";
+import {
+  hasMissionDeletionIntent,
+  persistMissionDeletionIntent,
+} from "./mission-deletion-intent.ts";
+import {
+  foldTimeline,
+  readTimelinePageFromTail,
+  readTimelineRecords,
+  timelinePageFromTurns,
+  type MissionTimelinePage,
+} from "./mission-timeline-storage.ts";
+
+export { MissionStoreError } from "./mission-store-error.ts";
+export type { MissionTimelinePage, MissionTimelineTurn } from "./mission-timeline-storage.ts";
+
+export interface MissionContextStoreReference {
+  readonly id: string;
+  readonly title: string;
+}
+
+export interface MissionStore {
+  withDeletionBarrier?<T>(id: string, action: () => Promise<T>): Promise<T>;
+  readonly storagePath?: ((id: string) => string) | undefined;
+  readonly forget?: ((id: string) => void) | undefined;
+  list(): Promise<MissionSummary[]>;
+  getListSource(mission: Mission): Promise<MissionSummary["source"]>;
+  resolveExecutionTitles(executionIds: readonly string[]): Promise<ReadonlyMap<string, string>>;
+  get(id: string): Promise<Mission>;
+  backfillAutomationOrigin(id: string, automationRef: string): Promise<Mission>;
+  getAttachments(id: string): Promise<readonly ExpertPromptAttachment[]>;
+  readBranchHistory(id: string): Promise<MissionBranchHistory | undefined>;
+  createBranch(input: {
+    readonly sourceMissionId: string;
+    readonly expectedSourceUpdatedAt: string;
+    readonly expectedExecutionId: string | null;
+    readonly expectedMessageId: string;
+    readonly project: { readonly id: string; readonly revision: number };
+    readonly executor: MissionExecutor;
+    readonly history: readonly MissionChatEntry[];
+  }): Promise<Mission>;
+  create(input: {
+    readonly id?: string | undefined;
+    /** Stable initial request identity supplied by the Host run reservation. */
+    readonly initialMessageId?: string | undefined;
+    readonly workspace: { readonly path: string; readonly basename: string };
+    readonly goal: string;
+    readonly title?: string | undefined;
+    readonly flowInput?: Readonly<Record<string, unknown>> | undefined;
+    readonly project: { readonly id: string; readonly revision: number };
+    readonly executor: MissionExecutor;
+    readonly attachments?: readonly ExpertPromptAttachment[] | undefined;
+    readonly toolPermissionMode?: ToolPermissionMode | undefined;
+    readonly modelOverride?: MissionModelOverride | undefined;
+    readonly origin?: Mission["origin"] | undefined;
+    readonly contextMounts?: readonly MissionContextMount[] | undefined;
+  }): Promise<Mission>;
+  updateOptions(
+    id: string,
+    input: {
+      readonly toolPermissionMode: ToolPermissionMode;
+      readonly modelOverride?: MissionModelOverride | undefined;
+    },
+  ): Promise<Mission>;
+  updateContextMounts(id: string, contextMounts: readonly MissionContextMount[]): Promise<Mission>;
+  mountManagedRevisionDraft(input: {
+    readonly id: string;
+    readonly expectedExecutorRef: string;
+    readonly allowUnmountedTarget?: boolean;
+    /** The Host has already registered dynamic namespaces for this draft. */
+    readonly preserveSession?: boolean;
+    readonly storeId: string;
+    readonly draftId: string;
+    readonly revisionJobId: string;
+  }): Promise<Mission>;
+  mountSkillRevisionDraft(input: {
+    readonly id: string;
+    readonly draftId: string;
+    readonly revisionJobId: string;
+    readonly capabilityId: string;
+  }): Promise<Mission>;
+  unmountSkillRevisionDraft(input: {
+    readonly id: string;
+    readonly draftId: string;
+  }): Promise<Mission>;
+  rebindLegacySkillRevisionWorkspace(input: {
+    readonly id: string;
+    readonly draftId: string;
+    readonly expectedWorkspacePath: string;
+    readonly workspace: { readonly path: string; readonly basename: string };
+  }): Promise<Mission>;
+  restoreManagedRevisionStore(input: {
+    readonly id: string;
+    readonly preserveSession?: boolean;
+    readonly storeId: string;
+    readonly draftId: string;
+    readonly revisionJobId: string;
+  }): Promise<Mission>;
+  isContextStoreReferenced(storeId: string): Promise<boolean>;
+  listContextStoreReferences(storeId: string): Promise<readonly MissionContextStoreReference[]>;
+  updateExecution(
+    id: string,
+    execution: NonNullable<Mission["execution"]>,
+    guard?: {
+      readonly executionId?: string | undefined;
+      readonly statuses?: readonly NonNullable<Mission["execution"]>["status"][] | undefined;
+    },
+  ): Promise<Mission>;
+  appendUserMessage(id: string, message: MissionUserMessage): Promise<MissionTimelineRecord>;
+  appendExecutionReference(input: {
+    readonly missionId: string;
+    readonly inputMessageId: string;
+    readonly executionId: string;
+    readonly createdAt: string;
+  }): Promise<MissionTimelineRecord>;
+  readTimelinePage(
+    id: string,
+    options: { readonly beforeSequence?: number | undefined; readonly limit: number },
+  ): Promise<MissionTimelinePage>;
+  markComplete(id: string): Promise<Mission>;
+  reopen(id: string): Promise<Mission>;
+  claimCompletedTaskDeletion(id: string): Promise<void>;
+  remove(id: string): Promise<void>;
+  readExecutionProjection(
+    id: string,
+    executionId: string,
+  ): Promise<readonly MissionChatEntry[] | undefined>;
+  readExecutionProjectionPage(
+    id: string,
+    executionId: string,
+    input: { readonly beforeOffset?: number | undefined; readonly limit: number },
+  ): Promise<MissionExecutionProjectionPage | undefined>;
+  writeExecutionProjection(
+    id: string,
+    executionId: string,
+    entries: readonly MissionChatEntry[],
+    sourceUpdatedAt?: string,
+  ): Promise<void>;
+}
+
+export interface MissionStoreReadIssue {
+  readonly missionId: string;
+  readonly error: MissionStoreError;
+}
+
+const MessageTransactionSchema = z.object({
+  schemaVersion: z.literal("pragma.mission-message-transaction/v1"),
+  record: MissionTimelineRecordSchema,
+  updatedAt: z.string().datetime(),
+});
+
+type MessageTransaction = z.infer<typeof MessageTransactionSchema>;
+
+const UserMessageAttachmentsTransactionSchema = z.object({
+  schemaVersion: z.literal("pragma.mission-user-message-attachments-transaction/v1"),
+  baseAttachments: MissionAttachmentsManifestSchema,
+  targetAttachments: MissionAttachmentsManifestSchema,
+  record: MissionTimelineRecordSchema,
+  updatedAt: z.string().datetime(),
+});
+
+type UserMessageAttachmentsTransaction = z.infer<typeof UserMessageAttachmentsTransactionSchema>;
+
+const MissionV7MigrationTransactionSchema = z.object({
+  schemaVersion: z.literal("pragma.mission-v7-migration/v1"),
+  missionId: MissionIdSchema,
+  target: MissionV7Schema,
+});
+
+const MissionV8MigrationTransactionSchema = z.object({
+  schemaVersion: z.literal("pragma.mission-v8-migration/v1"),
+  missionId: MissionIdSchema,
+  target: MissionV8Schema,
+});
+
+const MissionV9MigrationTransactionSchema = z.object({
+  schemaVersion: z.literal("pragma.mission-v9-migration/v1"),
+  missionId: MissionIdSchema,
+  target: MissionV9Schema,
+});
+
+const MissionV10MigrationTransactionSchema = z.object({
+  schemaVersion: z.literal("pragma.mission-v10-migration/v1"),
+  missionId: MissionIdSchema,
+  target: MissionV10Schema,
+});
+
+const MissionV11MigrationTransactionSchema = z.object({
+  schemaVersion: z.literal("pragma.mission-v11-migration/v1"),
+  missionId: MissionIdSchema,
+  target: MissionSchema,
+});
+
+const EarlyMissionMigrationTransactionSchema = z.object({
+  schemaVersion: z.literal("pragma.mission-schema-migration/v1"),
+  missionId: MissionIdSchema,
+  fromVersion: z.enum(["pragma.mission/v3", "pragma.mission/v4", "pragma.mission/v5"]),
+  toVersion: z.enum(["pragma.mission/v4", "pragma.mission/v5", "pragma.mission/v6"]),
+  target: z.record(z.string(), z.unknown()),
+});
+
+const MissionPathMigrationTransactionSchema = z
+  .object({
+    schemaVersion: z.literal("pragma.mission-path-migration/v1"),
+    missionId: MissionIdSchema,
+    legacy: z.string().min(1),
+    target: z.string().min(1),
+  })
+  .strict();
+
+export function createMissionStore(options: {
+  readonly missionsPath: string;
+  readonly isDeletionFenced?: ((id: string) => Promise<boolean>) | undefined;
+  readonly getRevisionSource?:
+    ((jobId: string) => Promise<ContextStoreRevisionRequest["source"]>) | undefined;
+  readonly onReadIssue?: ((issue: MissionStoreReadIssue) => void) | undefined;
+}): MissionStore {
+  const getListSource = async (mission: Mission): Promise<MissionSummary["source"]> => {
+    try {
+      return await resolveMissionListSource(mission, async (jobId) => {
+        if (options.getRevisionSource === undefined)
+          throw new Error("Revision source resolver is unavailable.");
+        return await options.getRevisionSource(jobId);
+      });
+    } catch (cause) {
+      options.onReadIssue?.({
+        missionId: mission.id,
+        error: new MissionStoreError(
+          "projection_invalid",
+          `mission_revision_source_unavailable: ${mission.origin.type === "system-store-revision" ? mission.origin.jobId : mission.id}: ${String(cause)}`,
+        ),
+      });
+      return { type: "internal" };
+    }
+  };
+  const missionPath = (id: string) => join(options.missionsPath, encodePragmaPathSegment(id));
+  const legacyMissionPath = (id: string) => join(options.missionsPath, id);
+  const manifestPath = (id: string) => join(missionPath(id), "mission.yaml");
+  const messagesPath = (id: string) => join(missionPath(id), "messages.jsonl");
+  const attachmentsPath = (id: string) => join(missionPath(id), "attachments.json");
+  const transactionPath = (id: string) => join(missionPath(id), ".messages.transaction.json");
+  const userMessageAttachmentsTransactionPath = (id: string) =>
+    join(missionPath(id), ".user-message-attachments.transaction.json");
+  const userMessageAttachmentsStagingPath = (id: string, messageId: string) =>
+    join(missionPath(id), `.user-message-${messageId}.attachments.tmp`);
+  const v7MigrationTransactionPath = (id: string) =>
+    join(missionPath(id), ".v6-to-v7.transaction.json");
+  const earlyMigrationTransactionPath = (id: string) =>
+    join(missionPath(id), ".schema-migration.transaction.json");
+  const earlyBackupPath = (id: string, version: string) =>
+    join(missionPath(id), "migration-backups", `mission.${version}.yaml`);
+  const v6BackupPath = (id: string) =>
+    join(missionPath(id), "migration-backups", "mission.v6.yaml");
+  const v8MigrationTransactionPath = (id: string) =>
+    join(missionPath(id), ".v7-to-v8.transaction.json");
+  const v7BackupPath = (id: string) =>
+    join(missionPath(id), "migration-backups", "mission.v7.yaml");
+  const v9MigrationTransactionPath = (id: string) =>
+    join(missionPath(id), ".v8-to-v9.transaction.json");
+  const v8BackupPath = (id: string) =>
+    join(missionPath(id), "migration-backups", "mission.v8.yaml");
+  const v10MigrationTransactionPath = (id: string) =>
+    join(missionPath(id), ".v9-to-v10.transaction.json");
+  const v9BackupPath = (id: string) =>
+    join(missionPath(id), "migration-backups", "mission.v9.yaml");
+  const v11MigrationTransactionPath = (id: string) =>
+    join(missionPath(id), ".v10-to-v11.transaction.json");
+  const v10BackupPath = (id: string) =>
+    join(missionPath(id), "migration-backups", "mission.v10.yaml");
+  const branchHistoryPath = (id: string) => join(missionPath(id), "branch", "history.json");
+  const projections = createMissionProjectionStorage(missionPath);
+  const lockPath = (id: string) =>
+    join(options.missionsPath, ".locks", `${encodePragmaPathSegment(id)}.lock`);
+  const timelineCache = new Map<
+    string,
+    { readonly size: number; readonly mtimeMs: number; readonly records: MissionTimelineRecord[] }
+  >();
+  const executionTitleIndex = new Map<
+    string,
+    { readonly missionId: string; readonly title: string }
+  >();
+  let executionTitleIndexInitialized = false;
+  let missionMutationVersion = 0;
+  let listRequest:
+    { readonly version: number; readonly promise: Promise<MissionSummary[]> } | undefined;
+  const markMissionMutation = (): void => {
+    missionMutationVersion += 1;
+  };
+
+  const withMissionLock = async <T>(
+    id: string,
+    operationName: string,
+    operation: () => Promise<T>,
+  ): Promise<T> => {
+    await migrateLegacyMissionPath(id);
+    return await withFileLock(
+      lockPath(id),
+      async () => {
+        if (
+          !operationName.endsWith(".read") &&
+          !operationName.endsWith(".read-page") &&
+          operationName !== "mission.remove" &&
+          operationName !== "mission.cleanup-claim" &&
+          (await options.isDeletionFenced?.(id))
+        ) {
+          throw new Error("MISSION_DELETION_PENDING");
+        }
+        return await operation();
+      },
+      { operation: operationName },
+    );
+  };
+
+  const assertLegacyControllerReleased = async (id: string): Promise<void> => {
+    const raw = await readJsonIfExists(join(legacyMissionPath(id), "local-host", "aggregate.json"));
+    if (raw === undefined) return;
+    const state = MissionAggregateStateSchema.parse(raw);
+    if (state.missionId !== id)
+      throw new MissionStoreError("config_invalid", `Mission ${id} controller owner mismatch.`);
+    if (state.lease !== undefined && Date.parse(state.lease.expiresAt) > Date.now()) {
+      throw createIntegrationError({
+        code: "MISSION_LEASE_HELD",
+        category: "conflict",
+        message: `Mission ${id} still has a controller lease at its historical storage path.`,
+        details: { missionId: id },
+      });
+    }
+  };
+
+  const migrateLegacyMissionPath = async (id: string): Promise<void> => {
+    const journal = join(
+      options.missionsPath,
+      `.path-migration.${encodePragmaPathSegment(id)}.json`,
+    );
+    if (!(await pathExists(legacyMissionPath(id))) && !(await pathExists(journal))) return;
+    // Refusal is safe without a lock and prevents re-entering an aggregate
+    // lock held by an old live owner's callback. Permission to move is always
+    // checked again under that exact historical controller lock below.
+    await assertLegacyControllerReleased(id);
+    await withFileLock(
+      join(options.missionsPath, ".locks", `${id}.aggregate.lock`),
+      async () =>
+        await withFileLock(
+          lockPath(id),
+          async () => {
+            await assertLegacyControllerReleased(id);
+            await migrateLegacyMissionPathUnlocked(id);
+          },
+          { operation: "mission.path-migration.metadata" },
+        ),
+      { operation: "mission.path-migration.controller" },
+    );
+  };
+
+  const migrateLegacyMissionPathUnlocked = async (id: string): Promise<void> => {
+    const legacy = legacyMissionPath(id);
+    const target = missionPath(id);
+    const journal = join(
+      options.missionsPath,
+      `.path-migration.${encodePragmaPathSegment(id)}.json`,
+    );
+    const pendingValue = await readJsonIfExists(journal);
+    if (pendingValue !== undefined) {
+      const pending = MissionPathMigrationTransactionSchema.parse(pendingValue);
+      if (pending.missionId !== id || pending.legacy !== legacy || pending.target !== target) {
+        throw new MissionStoreError(
+          "config_invalid",
+          `Mission ${id} has an invalid path migration journal.`,
+        );
+      }
+    }
+    if (!(await pathExists(legacy))) {
+      if (pendingValue !== undefined && (await pathExists(target)))
+        await rm(journal, { force: true });
+      else if (pendingValue !== undefined) {
+        throw new MissionStoreError(
+          "config_invalid",
+          `Mission ${id} path migration lost both its source and target.`,
+        );
+      }
+      return;
+    }
+    if (pendingValue === undefined) {
+      await writeJsonAtomically(
+        journal,
+        MissionPathMigrationTransactionSchema.parse({
+          schemaVersion: "pragma.mission-path-migration/v1",
+          missionId: id,
+          legacy,
+          target,
+        }),
+      );
+    }
+    if (await pathExists(target)) {
+      if (await directoryContainsFiles(target)) {
+        throw new MissionStoreError("config_invalid", `mission_path_migration_conflict: ${id}`);
+      }
+      await rm(target, { recursive: true, force: true });
+    }
+    await rename(legacy, target);
+    await rm(journal, { force: true });
+  };
+
+  const listMissionIds = async (): Promise<readonly string[]> => {
+    const directories = (await readdir(options.missionsPath, { withFileTypes: true })).filter(
+      (entry) => entry.isDirectory() && !entry.name.startsWith("."),
+    );
+    return [
+      ...new Set(
+        directories.map((entry) => {
+          try {
+            return MissionIdSchema.parse(decodePragmaPathSegment(entry.name));
+          } catch {
+            return MissionIdSchema.parse(entry.name);
+          }
+        }),
+      ),
+    ];
+  };
+
+  const recoverEarlyMigration = async (id: string): Promise<unknown | undefined> => {
+    const value = await readJsonIfExists(earlyMigrationTransactionPath(id));
+    if (value === undefined) return undefined;
+    const transaction = EarlyMissionMigrationTransactionSchema.parse(value);
+    if (transaction.missionId !== id || transaction.target["id"] !== id) {
+      throw new MissionStoreError(
+        "config_invalid",
+        `Mission ${id} has an early migration journal for a different Mission.`,
+      );
+    }
+    const persisted = parsePragmaYaml(await readFile(manifestPath(id), "utf8"));
+    const persistedVersion = readSchemaVersion(persisted);
+    if (
+      persistedVersion !== transaction.fromVersion &&
+      persistedVersion !== transaction.toVersion
+    ) {
+      throw new MissionStoreError(
+        "unsupported_schema",
+        `Mission ${id} cannot replay ${transaction.fromVersion}-to-${transaction.toVersion} from ${String(persistedVersion)}.`,
+      );
+    }
+    await writeYamlAtomically(manifestPath(id), transaction.target);
+    await rm(earlyMigrationTransactionPath(id), { force: true });
+    return transaction.target;
+  };
+
+  const applyEarlyMigration = async (input: {
+    readonly id: string;
+    readonly fromVersion: "pragma.mission/v3" | "pragma.mission/v4" | "pragma.mission/v5";
+    readonly toVersion: "pragma.mission/v4" | "pragma.mission/v5" | "pragma.mission/v6";
+    readonly source: unknown;
+    readonly target: Record<string, unknown>;
+  }): Promise<Record<string, unknown>> => {
+    await writeTextIfAbsent(
+      earlyBackupPath(input.id, input.fromVersion.replace("pragma.mission/", "")),
+      formatPragmaYaml(input.source),
+    );
+    await writeJsonAtomically(
+      earlyMigrationTransactionPath(input.id),
+      EarlyMissionMigrationTransactionSchema.parse({
+        schemaVersion: "pragma.mission-schema-migration/v1",
+        missionId: input.id,
+        fromVersion: input.fromVersion,
+        toVersion: input.toVersion,
+        target: input.target,
+      }),
+    );
+    await writeYamlAtomically(manifestPath(input.id), input.target);
+    await rm(earlyMigrationTransactionPath(input.id), { force: true });
+    return input.target;
+  };
+
+  const recoverV7Migration = async (
+    id: string,
+  ): Promise<z.infer<typeof MissionV7Schema> | undefined> => {
+    const value = await readJsonIfExists(v7MigrationTransactionPath(id));
+    if (value === undefined) return undefined;
+    const transaction = MissionV7MigrationTransactionSchema.parse(value);
+    if (transaction.missionId !== id || transaction.target.id !== id) {
+      throw new MissionStoreError(
+        "config_invalid",
+        `Mission ${id} has a migration journal for a different Mission.`,
+      );
+    }
+    const persisted = parsePragmaYaml(await readFile(manifestPath(id), "utf8"));
+    const persistedVersion = readSchemaVersion(persisted);
+    if (persistedVersion !== "pragma.mission/v6" && persistedVersion !== "pragma.mission/v7") {
+      throw new MissionStoreError(
+        "unsupported_schema",
+        `Mission ${id} cannot replay its v6-to-v7 migration from ${String(persistedVersion)}.`,
+      );
+    }
+    await writeYamlAtomically(manifestPath(id), transaction.target);
+    await rm(v7MigrationTransactionPath(id), { force: true });
+    return transaction.target;
+  };
+
+  const migrateV6ToV7 = async (
+    id: string,
+    legacy: z.infer<typeof MissionV6Schema>,
+  ): Promise<z.infer<typeof MissionV7Schema>> => {
+    const target = missionV6ToV7Step.migrate(legacy);
+    await writeTextIfAbsent(v6BackupPath(id), formatPragmaYaml(legacy));
+    await writeJsonAtomically(
+      v7MigrationTransactionPath(id),
+      MissionV7MigrationTransactionSchema.parse({
+        schemaVersion: "pragma.mission-v7-migration/v1",
+        missionId: id,
+        target,
+      }),
+    );
+    await writeYamlAtomically(manifestPath(id), target);
+    await rm(v7MigrationTransactionPath(id), { force: true });
+    return target;
+  };
+
+  const recoverV8Migration = async (
+    id: string,
+  ): Promise<z.infer<typeof MissionV8Schema> | undefined> => {
+    const value = await readJsonIfExists(v8MigrationTransactionPath(id));
+    if (value === undefined) return undefined;
+    const transaction = MissionV8MigrationTransactionSchema.parse(value);
+    if (transaction.missionId !== id || transaction.target.id !== id) {
+      throw new MissionStoreError(
+        "config_invalid",
+        `Mission ${id} has a migration journal for a different Mission.`,
+      );
+    }
+    const persisted = parsePragmaYaml(await readFile(manifestPath(id), "utf8"));
+    const persistedVersion = readSchemaVersion(persisted);
+    if (persistedVersion !== "pragma.mission/v7" && persistedVersion !== "pragma.mission/v8") {
+      throw new MissionStoreError(
+        "unsupported_schema",
+        `Mission ${id} cannot replay its v7-to-v8 migration from ${String(persistedVersion)}.`,
+      );
+    }
+    await writeYamlAtomically(manifestPath(id), transaction.target);
+    await rm(v8MigrationTransactionPath(id), { force: true });
+    return transaction.target;
+  };
+
+  const migrateV7ToV8 = async (
+    id: string,
+    legacy: z.infer<typeof MissionV7Schema>,
+  ): Promise<z.infer<typeof MissionV8Schema>> => {
+    const target = missionV7ToV8Step.migrate(legacy);
+    await writeTextIfAbsent(v7BackupPath(id), formatPragmaYaml(legacy));
+    await writeJsonAtomically(
+      v8MigrationTransactionPath(id),
+      MissionV8MigrationTransactionSchema.parse({
+        schemaVersion: "pragma.mission-v8-migration/v1",
+        missionId: id,
+        target,
+      }),
+    );
+    await writeYamlAtomically(manifestPath(id), target);
+    await rm(v8MigrationTransactionPath(id), { force: true });
+    return target;
+  };
+
+  const recoverV9Migration = async (
+    id: string,
+  ): Promise<z.infer<typeof MissionV9Schema> | undefined> => {
+    const value = await readJsonIfExists(v9MigrationTransactionPath(id));
+    if (value === undefined) return undefined;
+    const transaction = MissionV9MigrationTransactionSchema.parse(value);
+    if (transaction.missionId !== id || transaction.target.id !== id) {
+      throw new MissionStoreError(
+        "config_invalid",
+        `Mission ${id} has a migration journal for a different Mission.`,
+      );
+    }
+    const persisted = parsePragmaYaml(await readFile(manifestPath(id), "utf8"));
+    const persistedVersion = readSchemaVersion(persisted);
+    if (persistedVersion !== "pragma.mission/v8" && persistedVersion !== "pragma.mission/v9") {
+      throw new MissionStoreError(
+        "unsupported_schema",
+        `Mission ${id} cannot replay its v8-to-v9 migration from ${String(persistedVersion)}.`,
+      );
+    }
+    await writeYamlAtomically(manifestPath(id), transaction.target);
+    await rm(v9MigrationTransactionPath(id), { force: true });
+    return transaction.target;
+  };
+
+  const migrateV8ToV9 = async (
+    id: string,
+    legacy: z.infer<typeof MissionV8Schema>,
+  ): Promise<z.infer<typeof MissionV9Schema>> => {
+    const target = missionV8ToV9Step.migrate(legacy);
+    await writeTextIfAbsent(v8BackupPath(id), formatPragmaYaml(legacy));
+    await writeJsonAtomically(
+      v9MigrationTransactionPath(id),
+      MissionV9MigrationTransactionSchema.parse({
+        schemaVersion: "pragma.mission-v9-migration/v1",
+        missionId: id,
+        target,
+      }),
+    );
+    await writeYamlAtomically(manifestPath(id), target);
+    await rm(v9MigrationTransactionPath(id), { force: true });
+    return target;
+  };
+
+  const recoverV10Migration = async (
+    id: string,
+  ): Promise<z.infer<typeof MissionV10Schema> | undefined> => {
+    const value = await readJsonIfExists(v10MigrationTransactionPath(id));
+    if (value === undefined) return undefined;
+    const transaction = MissionV10MigrationTransactionSchema.parse(value);
+    if (transaction.missionId !== id || transaction.target.id !== id) {
+      throw new MissionStoreError(
+        "config_invalid",
+        `Mission ${id} has a migration journal for a different Mission.`,
+      );
+    }
+    const persisted = parsePragmaYaml(await readFile(manifestPath(id), "utf8"));
+    const persistedVersion = readSchemaVersion(persisted);
+    if (persistedVersion !== "pragma.mission/v9" && persistedVersion !== "pragma.mission/v10") {
+      throw new MissionStoreError(
+        "unsupported_schema",
+        `Mission ${id} cannot replay its v9-to-v10 migration from ${String(persistedVersion)}.`,
+      );
+    }
+    await writeYamlAtomically(manifestPath(id), transaction.target);
+    await rm(v10MigrationTransactionPath(id), { force: true });
+    return transaction.target;
+  };
+
+  const migrateV9ToV10 = async (
+    id: string,
+    legacy: z.infer<typeof MissionV9Schema>,
+  ): Promise<z.infer<typeof MissionV10Schema>> => {
+    const target = missionV9ToV10Step.migrate(legacy);
+    await writeTextIfAbsent(v9BackupPath(id), formatPragmaYaml(legacy));
+    await writeJsonAtomically(
+      v10MigrationTransactionPath(id),
+      MissionV10MigrationTransactionSchema.parse({
+        schemaVersion: "pragma.mission-v10-migration/v1",
+        missionId: id,
+        target,
+      }),
+    );
+    await writeYamlAtomically(manifestPath(id), target);
+    await rm(v10MigrationTransactionPath(id), { force: true });
+    return target;
+  };
+
+  const recoverV11Migration = async (id: string): Promise<Mission | undefined> => {
+    const value = await readJsonIfExists(v11MigrationTransactionPath(id));
+    if (value === undefined) return undefined;
+    const transaction = MissionV11MigrationTransactionSchema.parse(value);
+    if (transaction.missionId !== id || transaction.target.id !== id) {
+      throw new MissionStoreError(
+        "config_invalid",
+        `Mission ${id} has a migration journal for a different Mission.`,
+      );
+    }
+    const persisted = parsePragmaYaml(await readFile(manifestPath(id), "utf8"));
+    const persistedVersion = readSchemaVersion(persisted);
+    if (persistedVersion !== "pragma.mission/v10" && persistedVersion !== "pragma.mission/v11") {
+      throw new MissionStoreError(
+        "unsupported_schema",
+        `Mission ${id} cannot replay its v10-to-v11 migration from ${String(persistedVersion)}.`,
+      );
+    }
+    await writeYamlAtomically(manifestPath(id), transaction.target);
+    await rm(v11MigrationTransactionPath(id), { force: true });
+    return transaction.target;
+  };
+
+  const migrateV10ToV11 = async (
+    id: string,
+    legacy: z.infer<typeof MissionV10Schema>,
+  ): Promise<Mission> => {
+    const target = missionV10ToV11Step.migrate(legacy);
+    await writeTextIfAbsent(v10BackupPath(id), formatPragmaYaml(legacy));
+    await writeJsonAtomically(
+      v11MigrationTransactionPath(id),
+      MissionV11MigrationTransactionSchema.parse({
+        schemaVersion: "pragma.mission-v11-migration/v1",
+        missionId: id,
+        target,
+      }),
+    );
+    await writeYamlAtomically(manifestPath(id), target);
+    await rm(v11MigrationTransactionPath(id), { force: true });
+    return target;
+  };
+
+  const migrateV9ToCurrent = async (
+    id: string,
+    legacy: z.infer<typeof MissionV9Schema>,
+  ): Promise<Mission> => await migrateV10ToV11(id, await migrateV9ToV10(id, legacy));
+
+  const readRecords = async (
+    id: string,
+    repairTornTail: boolean,
+  ): Promise<MissionTimelineRecord[]> => {
+    if (!repairTornTail) {
+      const metadata = await stat(messagesPath(id)).catch((error: unknown) => {
+        if (isNodeError(error, "ENOENT")) return undefined;
+        throw error;
+      });
+      const cached = timelineCache.get(id);
+      if (
+        metadata !== undefined &&
+        cached?.size === metadata.size &&
+        cached.mtimeMs === metadata.mtimeMs
+      ) {
+        return cached.records;
+      }
+    }
+    const records = await readTimelineRecords(messagesPath(id), repairTornTail);
+    const metadata = await stat(messagesPath(id)).catch(() => undefined);
+    if (metadata === undefined) timelineCache.delete(id);
+    else timelineCache.set(id, { size: metadata.size, mtimeMs: metadata.mtimeMs, records });
+    return records;
+  };
+
+  const readMissionUnlocked = async (id: string): Promise<Mission> => {
+    try {
+      const recoveredV11 = await recoverV11Migration(id);
+      if (recoveredV11 !== undefined) return recoveredV11;
+      const recoveredV10 = await recoverV10Migration(id);
+      if (recoveredV10 !== undefined) return await migrateV10ToV11(id, recoveredV10);
+      const recoveredV9 = await recoverV9Migration(id);
+      if (recoveredV9 !== undefined)
+        return await migrateV10ToV11(id, await migrateV9ToV10(id, recoveredV9));
+      const recoveredV8 = await recoverV8Migration(id);
+      if (recoveredV8 !== undefined)
+        return await migrateV10ToV11(
+          id,
+          await migrateV9ToV10(id, await migrateV8ToV9(id, recoveredV8)),
+        );
+      const recoveredV7 = await recoverV7Migration(id);
+      const recoveredEarly = await recoverEarlyMigration(id);
+      const value =
+        recoveredV7 ?? recoveredEarly ?? parsePragmaYaml(await readFile(manifestPath(id), "utf8"));
+      const schemaVersion = readSchemaVersion(value);
+      let current = value;
+      if (schemaVersion === "pragma.mission/v3") {
+        current = await applyEarlyMigration({
+          id,
+          fromVersion: "pragma.mission/v3",
+          toVersion: "pragma.mission/v4",
+          source: value,
+          target: missionV3ToV4Step.migrate(value),
+        });
+      }
+      const currentVersion = readSchemaVersion(current);
+      if (currentVersion === "pragma.mission/v4") {
+        current = await applyEarlyMigration({
+          id,
+          fromVersion: "pragma.mission/v4",
+          toVersion: "pragma.mission/v5",
+          source: current,
+          target: missionV4ToV5Step.migrate(current),
+        });
+      }
+      const versionAfterRefMigration = readSchemaVersion(current);
+      if (versionAfterRefMigration === "pragma.mission/v5") {
+        const migrated = await applyEarlyMigration({
+          id,
+          fromVersion: "pragma.mission/v5",
+          toVersion: "pragma.mission/v6",
+          source: current,
+          target: missionV5ToV6Step.migrate(current),
+        });
+        return await migrateV9ToCurrent(
+          id,
+          await migrateV8ToV9(
+            id,
+            await migrateV7ToV8(id, await migrateV6ToV7(id, MissionV6Schema.parse(migrated))),
+          ),
+        );
+      }
+      if (versionAfterRefMigration === "pragma.mission/v6") {
+        const legacy = MissionV6Schema.parse(current);
+        return await migrateV9ToCurrent(
+          id,
+          await migrateV8ToV9(id, await migrateV7ToV8(id, await migrateV6ToV7(id, legacy))),
+        );
+      }
+      if (versionAfterRefMigration === "pragma.mission/v7") {
+        return await migrateV9ToCurrent(
+          id,
+          await migrateV8ToV9(id, await migrateV7ToV8(id, MissionV7Schema.parse(current))),
+        );
+      }
+      if (versionAfterRefMigration === "pragma.mission/v8") {
+        return await migrateV9ToCurrent(
+          id,
+          await migrateV8ToV9(id, MissionV8Schema.parse(current)),
+        );
+      }
+      if (versionAfterRefMigration === "pragma.mission/v9") {
+        return await migrateV9ToCurrent(id, MissionV9Schema.parse(current));
+      }
+      if (versionAfterRefMigration === "pragma.mission/v10") {
+        return await migrateV10ToV11(id, MissionV10Schema.parse(current));
+      }
+      if (versionAfterRefMigration !== "pragma.mission/v11") {
+        throw new MissionStoreError(
+          "unsupported_schema",
+          `Mission ${id} uses a schema this Pragma version cannot read safely. Update Pragma or use compatible recovery tooling. The Mission data was preserved.`,
+        );
+      }
+      return MissionSchema.parse(current);
+    } catch (error) {
+      throw normalizeReadError(error, id);
+    }
+  };
+
+  const recoverMessageTransaction = async (id: string): Promise<void> => {
+    const value = await readJsonIfExists(transactionPath(id));
+    if (value === undefined) return;
+    const transaction = MessageTransactionSchema.parse(value);
+    const records = await readRecords(id, true);
+    const existing = findSameIdentity(records, transaction.record);
+    if (existing === undefined) {
+      await appendJsonLine(messagesPath(id), transaction.record);
+      timelineCache.delete(id);
+    } else if (!sameRecord(existing, transaction.record)) {
+      throw messageConflict(transaction.record);
+    }
+    const mission = await readMissionUnlocked(id);
+    if (mission.updatedAt < transaction.updatedAt) {
+      await writeYamlAtomically(manifestPath(id), { ...mission, updatedAt: transaction.updatedAt });
+    }
+    await rm(transactionPath(id), { force: true });
+  };
+
+  const readAttachmentsManifest = async (id: string): Promise<MissionAttachmentsManifest> =>
+    MissionAttachmentsManifestSchema.parse(
+      (await readJsonIfExists(attachmentsPath(id))) ?? {
+        schemaVersion: "pragma.mission-attachments/v1",
+        attachments: [],
+      },
+    );
+
+  const applyUserMessageAttachmentsTransaction = async (
+    id: string,
+    mission: Mission,
+    transaction: UserMessageAttachmentsTransaction,
+  ): Promise<void> => {
+    if (transaction.record.kind !== "user") {
+      throw new MissionStoreError(
+        "config_invalid",
+        `Mission ${id} has an attachment transaction without a user message.`,
+      );
+    }
+    const currentAttachments = await readAttachmentsManifest(id);
+    const manifestAlreadyApplied = sameValue(currentAttachments, transaction.targetAttachments);
+    if (!manifestAlreadyApplied && !sameValue(currentAttachments, transaction.baseAttachments)) {
+      throw new MissionStoreError(
+        "config_invalid",
+        `Mission ${id} attachment transaction conflicts with its attachment manifest.`,
+      );
+    }
+    await moveStagedAttachmentImages({
+      attachments: transaction.record.attachments ?? [],
+      stagingPath: userMessageAttachmentsStagingPath(id, transaction.record.id),
+      targetMissionPath: missionPath(id),
+    });
+    if (!manifestAlreadyApplied) {
+      await writeJsonAtomically(attachmentsPath(id), transaction.targetAttachments);
+    }
+    const records = await readRecords(id, true);
+    const existing = findSameIdentity(records, transaction.record);
+    if (existing === undefined) {
+      await appendJsonLine(messagesPath(id), transaction.record);
+      timelineCache.delete(id);
+    } else if (!sameRecord(existing, transaction.record)) {
+      throw messageConflict(transaction.record);
+    }
+    if (mission.updatedAt < transaction.updatedAt) {
+      await writeYamlAtomically(manifestPath(id), { ...mission, updatedAt: transaction.updatedAt });
+    }
+    await rm(userMessageAttachmentsStagingPath(id, transaction.record.id), {
+      recursive: true,
+      force: true,
+    });
+    await rm(userMessageAttachmentsTransactionPath(id), { force: true });
+    markMissionMutation();
+  };
+
+  const recoverUserMessageAttachmentsTransaction = async (id: string): Promise<void> => {
+    const value = await readJsonIfExists(userMessageAttachmentsTransactionPath(id));
+    if (value === undefined) return;
+    const transaction = UserMessageAttachmentsTransactionSchema.parse(value);
+    const mission = await readMissionUnlocked(id);
+    await applyUserMessageAttachmentsTransaction(id, mission, transaction);
+  };
+
+  // A claimed Node reservation already owns the directory containing controller facts.
+  // The atomically installed staging directory is the create journal; publish the
+  // manifest last so Runtime acquisition only sees a complete envelope.
+  const recoverClaimedMissionCreate = async (id: string): Promise<void> => {
+    const stagingPath = join(missionPath(id), ".mission-create.transaction");
+    if (
+      !(await stat(stagingPath).catch((error: unknown) => {
+        if (isNodeError(error, "ENOENT")) return undefined;
+        throw error;
+      }))
+    )
+      return;
+    const stagedManifest = join(stagingPath, "mission.yaml");
+    const sourceManifest = await readFile(stagedManifest, "utf8").catch((error: unknown) => {
+      if (isNodeError(error, "ENOENT")) return undefined;
+      throw error;
+    });
+    const mission = MissionSchema.parse(
+      parsePragmaYaml(sourceManifest ?? (await readFile(manifestPath(id), "utf8"))),
+    );
+    if (mission.id !== id)
+      throw new MissionStoreError("config_invalid", "Mission creation owner mismatch.");
+    const publishedManifest = await readFile(manifestPath(id), "utf8").catch((error: unknown) => {
+      if (isNodeError(error, "ENOENT")) return undefined;
+      throw error;
+    });
+    if (publishedManifest !== undefined) {
+      const published = MissionSchema.parse(parsePragmaYaml(publishedManifest));
+      if (published.id !== mission.id || published.initialMessageId !== mission.initialMessageId) {
+        throw new MissionStoreError(
+          "message_conflict",
+          "Mission creation conflicts with a published owner.",
+        );
+      }
+    }
+    for (const name of ["attachments", "attachments.json", "messages.jsonl", "mission.yaml"]) {
+      await rename(join(stagingPath, name), join(missionPath(id), name)).catch(
+        async (error: unknown) => {
+          if (!isNodeError(error, "ENOENT")) throw error;
+          if (name !== "attachments") await stat(join(missionPath(id), name));
+        },
+      );
+    }
+    await rm(stagingPath, { recursive: true, force: true });
+  };
+
+  const recoverPendingTransactions = async (id: string): Promise<void> => {
+    await recoverClaimedMissionCreate(id);
+    await recoverUserMessageAttachmentsTransaction(id);
+    await recoverMessageTransaction(id);
+  };
+
+  const readMission = async (id: string): Promise<Mission> =>
+    await withMissionLock(id, "mission.read", async () => {
+      await recoverPendingTransactions(id);
+      return await readMissionUnlocked(id);
+    });
+
+  const updateMission = async (
+    id: string,
+    update: (current: Mission, timestamp: string) => Mission,
+    rejectDeletionIntent = false,
+  ): Promise<Mission> =>
+    await withMissionLock(id, "mission.update", async () => {
+      await recoverPendingTransactions(id);
+      if (rejectDeletionIntent && (await hasMissionDeletionIntent(missionPath(id), id))) {
+        throw new Error("Mission deletion is already pending.");
+      }
+      const current = await readMissionUnlocked(id);
+      const timestamp = new Date().toISOString();
+      const updated = MissionSchema.parse(update(current, timestamp));
+      await writeYamlAtomically(manifestPath(id), updated);
+      markMissionMutation();
+      return updated;
+    });
+
+  const appendRecord = async (
+    id: string,
+    operationName: string,
+    create: (sequence: number, records: readonly MissionTimelineRecord[]) => MissionTimelineRecord,
+  ): Promise<MissionTimelineRecord> =>
+    await withMissionLock(id, operationName, async () => {
+      await recoverPendingTransactions(id);
+      const mission = await readMissionUnlocked(id);
+      const records = await readRecords(id, false);
+      const candidate = MissionTimelineRecordSchema.parse(
+        create((records.at(-1)?.sequence ?? 0) + 1, records),
+      );
+      const existing = findSameIdentity(records, candidate);
+      if (existing !== undefined) {
+        if (!sameRecordInput(existing, candidate)) throw messageConflict(candidate);
+        return existing;
+      }
+      if (
+        candidate.kind === "execution" &&
+        !records.some((record) => record.kind === "user" && record.id === candidate.inputMessageId)
+      ) {
+        throw new MissionStoreError(
+          "timeline_invalid",
+          `Mission execution ${candidate.executionId} references a missing input message.`,
+        );
+      }
+      const updatedAt = new Date().toISOString();
+      const transaction = MessageTransactionSchema.parse({
+        schemaVersion: "pragma.mission-message-transaction/v1",
+        record: candidate,
+        updatedAt,
+      });
+      await writeJsonAtomically(transactionPath(id), transaction);
+      await applyMessageTransaction(id, mission, transaction);
+      return candidate;
+    });
+
+  const applyMessageTransaction = async (
+    id: string,
+    mission: Mission,
+    transaction: MessageTransaction,
+  ): Promise<void> => {
+    await appendJsonLine(messagesPath(id), transaction.record);
+    timelineCache.delete(id);
+    await writeYamlAtomically(manifestPath(id), { ...mission, updatedAt: transaction.updatedAt });
+    await rm(transactionPath(id), { force: true });
+    markMissionMutation();
+  };
+
+  const listMissions = async (): Promise<MissionSummary[]> => {
+    try {
+      const missionIds = await listMissionIds();
+      const results = await mapWithConcurrency(missionIds, 4, async (missionId) => {
+        try {
+          const mission = await readMission(missionId);
+          if (!isUserFacingMissionOrigin(mission.origin)) return { missionId } as const;
+          const summary = toMissionSummary(mission, await getListSource(mission));
+          return { missionId, summary } as const;
+        } catch (error) {
+          return { missionId, error: normalizeReadError(error, missionId) } as const;
+        }
+      });
+      const summaries: MissionSummary[] = [];
+      const failures: MissionStoreReadIssue[] = [];
+      for (const result of results) {
+        if ("error" in result) {
+          const issue = { missionId: result.missionId, error: result.error };
+          failures.push(issue);
+          options.onReadIssue?.(issue);
+        } else if (result.summary !== undefined && result.summary.source.type !== "internal") {
+          summaries.push(result.summary);
+        }
+      }
+      summaries.sort((left, right) => right.updatedAt.localeCompare(left.updatedAt));
+      if (summaries.length === 0 && failures.length > 0) throw failures[0]?.error;
+      return summaries;
+    } catch (error) {
+      if (isNodeError(error, "ENOENT")) return [];
+      throw error;
+    }
+  };
+
+  const getContextStoreReferences = async (
+    storeId: string,
+  ): Promise<readonly MissionContextStoreReference[]> => {
+    let missionIds: readonly string[];
+    try {
+      missionIds = await listMissionIds();
+    } catch (error) {
+      if (isNodeError(error, "ENOENT")) return [];
+      throw error;
+    }
+    const references: MissionContextStoreReference[] = [];
+    for (const missionId of missionIds) {
+      const mission = await readMission(missionId);
+      if (
+        isUserFacingMissionOrigin(mission.origin) &&
+        mission.contextMounts.some(
+          (mount) => mount.kind === "context-store" && mount.storeId === storeId,
+        )
+      ) {
+        references.push({ id: mission.id, title: mission.title });
+      }
+    }
+    return references;
+  };
+
+  return {
+    storagePath: missionPath,
+    forget(id) {
+      timelineCache.delete(id);
+      for (const [executionId, entry] of executionTitleIndex) {
+        if (entry.missionId === id) executionTitleIndex.delete(executionId);
+      }
+      markMissionMutation();
+    },
+    async readExecutionProjection(id, executionId) {
+      const parsedId = MissionIdSchema.parse(id);
+      return await withMissionLock(parsedId, "mission.execution-projection.read", async () => {
+        await recoverPendingTransactions(parsedId);
+        await readMissionUnlocked(parsedId);
+        try {
+          return await projections.read(parsedId, executionId);
+        } catch (error) {
+          if (error instanceof MissionStoreError) throw error;
+          if (error instanceof MissionProjectionStorageError) {
+            throw new MissionStoreError(error.code, error.message);
+          }
+          throw new MissionStoreError(
+            "projection_invalid",
+            error instanceof Error ? error.message : String(error),
+          );
+        }
+      });
+    },
+    async readExecutionProjectionPage(id, executionId, input) {
+      const parsedId = MissionIdSchema.parse(id);
+      return await withMissionLock(parsedId, "mission.execution-projection.read-page", async () => {
+        await recoverPendingTransactions(parsedId);
+        await readMissionUnlocked(parsedId);
+        try {
+          return await projections.readPage(parsedId, executionId, input);
+        } catch (error) {
+          if (error instanceof MissionStoreError) throw error;
+          if (error instanceof MissionProjectionStorageError) {
+            throw new MissionStoreError(error.code, error.message);
+          }
+          throw new MissionStoreError(
+            "projection_invalid",
+            error instanceof Error ? error.message : String(error),
+          );
+        }
+      });
+    },
+    async withDeletionBarrier(id, action) {
+      return await withFileLock(lockPath(id), action, { operation: "mission.deletion-barrier" });
+    },
+    async writeExecutionProjection(id, executionId, entries, sourceUpdatedAt) {
+      const parsedId = MissionIdSchema.parse(id);
+      await withMissionLock(parsedId, "mission.execution-projection.write", async () => {
+        await recoverPendingTransactions(parsedId);
+        await readMissionUnlocked(parsedId);
+        try {
+          await projections.write(parsedId, executionId, entries, sourceUpdatedAt);
+        } catch (error) {
+          if (error instanceof MissionExecutionProjectionError) {
+            throw new MissionStoreError("projection_invalid", error.message);
+          }
+          throw error;
+        }
+      });
+    },
+    getListSource,
+    list() {
+      const version = missionMutationVersion;
+      if (listRequest?.version === version) return listRequest.promise;
+      const request = listMissions().finally(() => {
+        if (listRequest?.promise === request) listRequest = undefined;
+      });
+      listRequest = { version, promise: request };
+      return request;
+    },
+    async resolveExecutionTitles(executionIds) {
+      const unresolved = new Set(executionIds);
+      const resolved = new Map<string, string>();
+      if (unresolved.size === 0) return resolved;
+      for (const executionId of unresolved) {
+        const cached = executionTitleIndex.get(executionId);
+        if (cached === undefined) continue;
+        resolved.set(executionId, cached.title);
+        unresolved.delete(executionId);
+      }
+      if (unresolved.size === 0 || executionTitleIndexInitialized) return resolved;
+      let missionIds;
+      try {
+        missionIds = await listMissionIds();
+      } catch (error) {
+        if (isNodeError(error, "ENOENT")) return resolved;
+        throw error;
+      }
+      for (const missionId of missionIds) {
+        const records = await readRecords(missionId, false);
+        const executions = records.filter((record) => record.kind === "execution");
+        if (executions.length === 0) continue;
+        const mission = await readMission(missionId);
+        for (const record of executions) {
+          if (record.kind !== "execution") continue;
+          executionTitleIndex.set(record.executionId, {
+            missionId: mission.id,
+            title: mission.title,
+          });
+        }
+      }
+      executionTitleIndexInitialized = true;
+      for (const executionId of unresolved) {
+        const indexed = executionTitleIndex.get(executionId);
+        if (indexed !== undefined) resolved.set(executionId, indexed.title);
+      }
+      return resolved;
+    },
+    async get(id) {
+      return await readMission(MissionIdSchema.parse(id));
+    },
+    async backfillAutomationOrigin(id, automationRef) {
+      const parsedId = MissionIdSchema.parse(id);
+      const parsedOrigin = MissionOriginSchema.parse({ type: "automation", automationRef });
+      if (parsedOrigin.type !== "automation") throw new Error("Invalid Automation origin.");
+      return await withMissionLock(parsedId, "mission.automation-origin.backfill", async () => {
+        await recoverPendingTransactions(parsedId);
+        const current = await readMissionUnlocked(parsedId);
+        if (current.origin.type === "automation") {
+          if (current.origin.automationRef !== parsedOrigin.automationRef) {
+            throw new MissionStoreError(
+              "config_invalid",
+              `Mission ${parsedId} is already owned by ${current.origin.automationRef}.`,
+            );
+          }
+          return current;
+        }
+        if (current.origin.type !== "user") {
+          throw new MissionStoreError(
+            "config_invalid",
+            `Mission ${parsedId} is not a user-facing legacy Automation Mission.`,
+          );
+        }
+        const updated = MissionSchema.parse({ ...current, origin: parsedOrigin });
+        await writeYamlAtomically(manifestPath(parsedId), updated);
+        markMissionMutation();
+        return updated;
+      });
+    },
+    async readBranchHistory(id) {
+      const parsedId = MissionIdSchema.parse(id);
+      return await withMissionLock(parsedId, "mission.branch-history.read", async () => {
+        await recoverPendingTransactions(parsedId);
+        const mission = await readMissionUnlocked(parsedId);
+        if (mission.branch === undefined) return undefined;
+        const value = await readJsonIfExists(branchHistoryPath(parsedId));
+        if (value === undefined) {
+          throw new MissionStoreError(
+            "config_invalid",
+            `Mission ${parsedId} is missing its branch history.`,
+          );
+        }
+        return MissionBranchHistorySchema.parse(value);
+      });
+    },
+    async createBranch(input) {
+      const sourceMissionId = MissionIdSchema.parse(input.sourceMissionId);
+      return await withMissionLock(sourceMissionId, "mission.branch.create", async () => {
+        await recoverPendingTransactions(sourceMissionId);
+        const source = await readMissionUnlocked(sourceMissionId);
+        if (source.executor.kind === "flow") {
+          throw new MissionStoreError("config_invalid", "Flow missions cannot create branches.");
+        }
+        if (
+          source.updatedAt !== input.expectedSourceUpdatedAt ||
+          (source.execution?.id ?? null) !== input.expectedExecutionId ||
+          (source.execution !== undefined &&
+            ["queued", "running", "waiting"].includes(source.execution.status))
+        ) {
+          throw new MissionStoreError(
+            "mission_active",
+            "The source Mission changed before the branch was created. Refresh and try again.",
+          );
+        }
+        const finalAssistant = latestMissionBranchableReply(input.history);
+        if (finalAssistant?.id !== input.expectedMessageId) {
+          throw new MissionStoreError(
+            "config_invalid",
+            "The selected reply is no longer the latest completed Mission reply.",
+          );
+        }
+        const cutoffIndex = input.history.findIndex((entry) => entry.id === finalAssistant.id);
+        if (cutoffIndex < 0) {
+          throw new MissionStoreError(
+            "config_invalid",
+            "The selected reply is missing from the Mission history.",
+          );
+        }
+        const historyThroughReply = input.history.slice(0, cutoffIndex + 1);
+        const sourceUsers = historyThroughReply.filter(
+          (entry): entry is Extract<MissionChatEntry, { kind: "user" }> =>
+            entry.kind === "user" &&
+            entry.timelineSequence !== undefined &&
+            entry.delivery?.removed !== true,
+        );
+        const firstUser = sourceUsers[0];
+        if (firstUser === undefined || firstUser.id !== source.initialMessageId) {
+          throw new MissionStoreError(
+            "config_invalid",
+            "The source Mission history is incomplete and cannot be branched safely.",
+          );
+        }
+
+        const id = MissionIdSchema.parse(randomUUID());
+        const timestamp = new Date().toISOString();
+        const branchSource = {
+          sourceMissionId,
+          sourceProjectRevision: source.project.revision,
+          ...(finalAssistant.executionId === undefined
+            ? {}
+            : { cutoffExecutionId: finalAssistant.executionId }),
+          cutoffMessageId: input.expectedMessageId,
+          createdAt: timestamp,
+        };
+        const mission = MissionSchema.parse({
+          schemaVersion: "pragma.mission/v11",
+          id,
+          title: normalizeBranchTitle(source.title),
+          goal: source.goal,
+          initialMessageId: source.initialMessageId,
+          toolPermissionMode: source.toolPermissionMode,
+          workspace: source.workspace,
+          project: input.project,
+          executor: input.executor,
+          ...(source.modelOverride === undefined ? {} : { modelOverride: source.modelOverride }),
+          origin: { type: "user" },
+          contextMounts: source.contextMounts.filter(
+            (mount): mount is Extract<MissionContextMount, { kind: "context-store" }> =>
+              mount.kind === "context-store",
+          ),
+          branch: branchSource,
+          lifecycleStatus: "active",
+          createdAt: timestamp,
+          updatedAt: timestamp,
+        });
+        const targetPath = missionPath(id);
+        const temporaryPath = join(options.missionsPath, `.${id}.${randomUUID()}.tmp`);
+        await mkdir(temporaryPath, { recursive: true, mode: 0o700 });
+        try {
+          const sourceAttachments = await readAttachmentsManifest(sourceMissionId);
+          const attachments = await materializeMissionAttachments({
+            attachments: sourceAttachments.attachments,
+            temporaryMissionPath: temporaryPath,
+            targetMissionPath: targetPath,
+          });
+          const attachmentsById = new Map(
+            attachments.attachments.map((attachment) => [attachment.id, attachment] as const),
+          );
+          const sourceTimelineSequences = new Set(
+            sourceUsers.map((entry) => entry.timelineSequence!),
+          );
+          const branchUserSequences = new Map(
+            sourceUsers.map((entry, index) => [entry.id, index + 1] as const),
+          );
+          const userRecords = sourceUsers.map((entry, index) =>
+            MissionTimelineRecordSchema.parse({
+              schemaVersion: "pragma.mission-message/v1",
+              sequence: index + 1,
+              kind: "user",
+              id: entry.id,
+              content: entry.content,
+              ...(entry.attachments === undefined
+                ? {}
+                : {
+                    attachments: entry.attachments.map((attachment) => {
+                      const copied = attachmentsById.get(attachment.id);
+                      if (copied === undefined) {
+                        throw new MissionStoreError(
+                          "config_invalid",
+                          `Mission attachment is missing while creating a branch: ${attachment.id}`,
+                        );
+                      }
+                      return copied;
+                    }),
+                  }),
+              createdAt: entry.createdAt,
+            }),
+          );
+          // Execution output can span several conversation inputs after a steer.
+          // Rebuild turn membership from the canonical order instead of copying
+          // the source Execution's timeline sequence back onto its final reply.
+          let branchTimelineSequence = 1;
+          const inheritedEntries = historyThroughReply.map((entry) => {
+            if (entry.kind === "user") {
+              const userSequence = branchUserSequences.get(entry.id);
+              if (userSequence === undefined) {
+                throw new MissionStoreError(
+                  "config_invalid",
+                  "Mission branch history contains an invalid user turn.",
+                );
+              }
+              branchTimelineSequence = userSequence;
+            }
+            return inheritedBranchEntry(
+              sourceMissionId,
+              entry,
+              attachmentsById,
+              branchTimelineSequence,
+              sourceTimelineSequences,
+            );
+          });
+          const branchHistory = MissionBranchHistorySchema.parse({
+            schemaVersion: "pragma.mission-branch-history/v1",
+            source: branchSource,
+            entries: inheritedEntries,
+          });
+          await writeFile(join(temporaryPath, "mission.yaml"), formatPragmaYaml(mission), {
+            mode: 0o600,
+          });
+          await writeFile(
+            join(temporaryPath, "attachments.json"),
+            `${JSON.stringify(attachments, null, 2)}\n`,
+            { mode: 0o600 },
+          );
+          await writeFile(
+            join(temporaryPath, "messages.jsonl"),
+            `${userRecords.map((record) => JSON.stringify(record)).join("\n")}\n`,
+            { mode: 0o600 },
+          );
+          await mkdir(join(temporaryPath, "branch"), { recursive: true, mode: 0o700 });
+          await writeFile(
+            join(temporaryPath, "branch", "history.json"),
+            `${JSON.stringify(branchHistory, null, 2)}\n`,
+            { mode: 0o600 },
+          );
+          await copyDirectoryIfExists(
+            join(missionPath(sourceMissionId), "board", "shared"),
+            join(temporaryPath, "board", "shared"),
+          );
+          await copyDirectoryIfExists(
+            join(missionPath(sourceMissionId), "board", "private"),
+            join(temporaryPath, "branch", "private-board-archive"),
+          );
+          await mkdir(options.missionsPath, { recursive: true, mode: 0o700 });
+          await rename(temporaryPath, targetPath);
+          markMissionMutation();
+        } catch (error) {
+          await rm(temporaryPath, { recursive: true, force: true });
+          throw error;
+        }
+        return mission;
+      });
+    },
+    async getAttachments(id) {
+      const parsedId = MissionIdSchema.parse(id);
+      return await withMissionLock(parsedId, "mission.attachments.read", async () => {
+        await recoverPendingTransactions(parsedId);
+        await readMissionUnlocked(parsedId);
+        try {
+          return (await readAttachmentsManifest(parsedId)).attachments;
+        } catch (error) {
+          throw new MissionStoreError(
+            "config_invalid",
+            `Mission ${parsedId} has an invalid attachment manifest: ${error instanceof Error ? error.message : String(error)}`,
+          );
+        }
+      });
+    },
+    async create(input) {
+      const id = MissionIdSchema.parse(input.id ?? randomUUID());
+      if (await options.isDeletionFenced?.(id)) throw new Error("MISSION_DELETION_PENDING");
+      const initialMessageId = input.initialMessageId ?? randomUUID();
+      const timestamp = new Date().toISOString();
+      const goal = input.goal.trim();
+      const mission = MissionSchema.parse({
+        schemaVersion: "pragma.mission/v11",
+        id,
+        title: input.title === undefined ? titleFromGoal(goal) : normalizeMissionTitle(input.title),
+        goal,
+        initialMessageId,
+        toolPermissionMode: input.toolPermissionMode ?? "request-approval",
+        workspace: input.workspace,
+        project: input.project,
+        executor: input.executor,
+        ...(input.flowInput === undefined ? {} : { flowInput: input.flowInput }),
+        ...(input.modelOverride === undefined ? {} : { modelOverride: input.modelOverride }),
+        origin: input.origin ?? { type: "user" },
+        contextMounts: input.contextMounts ?? [],
+        lifecycleStatus: "active",
+        createdAt: timestamp,
+        updatedAt: timestamp,
+      });
+      const firstMessage = MissionTimelineRecordSchema.parse({
+        schemaVersion: "pragma.mission-message/v1",
+        sequence: 1,
+        kind: "user",
+        id: initialMessageId,
+        content: goal,
+        createdAt: timestamp,
+      });
+      const targetPath = missionPath(id);
+      const temporaryPath = join(options.missionsPath, `.${id}.${randomUUID()}.tmp`);
+      await mkdir(temporaryPath, { recursive: true, mode: 0o700 });
+      try {
+        const attachments = await materializeMissionAttachments({
+          attachments: input.attachments ?? [],
+          temporaryMissionPath: temporaryPath,
+          targetMissionPath: targetPath,
+        });
+        const firstMessageWithAttachments = MissionTimelineRecordSchema.parse({
+          ...firstMessage,
+          ...(attachments.attachments.length === 0 ? {} : { attachments: attachments.attachments }),
+        });
+        await writeFile(join(temporaryPath, "mission.yaml"), formatPragmaYaml(mission), {
+          mode: 0o600,
+        });
+        await writeFile(
+          join(temporaryPath, "attachments.json"),
+          `${JSON.stringify(attachments, null, 2)}\n`,
+          { mode: 0o600 },
+        );
+        await writeFile(
+          join(temporaryPath, "messages.jsonl"),
+          `${JSON.stringify(firstMessageWithAttachments)}\n`,
+          {
+            mode: 0o600,
+          },
+        );
+        await mkdir(options.missionsPath, { recursive: true, mode: 0o700 });
+        await withMissionLock(id, "mission.create", async () => {
+          await recoverClaimedMissionCreate(id);
+          const existing = await readFile(manifestPath(id), "utf8").catch((error: unknown) => {
+            if (isNodeError(error, "ENOENT")) return undefined;
+            throw error;
+          });
+          if (existing !== undefined) {
+            const current = MissionSchema.parse(parsePragmaYaml(existing));
+            if (
+              input.initialMessageId === undefined ||
+              current.initialMessageId !== input.initialMessageId
+            ) {
+              throw new MissionStoreError(
+                "message_conflict",
+                "Mission creation identity already exists.",
+              );
+            }
+            await rm(temporaryPath, { recursive: true, force: true });
+            return;
+          }
+          const targetExists = await stat(targetPath).catch((error: unknown) => {
+            if (isNodeError(error, "ENOENT")) return undefined;
+            throw error;
+          });
+          if (targetExists === undefined) {
+            await rename(temporaryPath, targetPath);
+          } else {
+            await rename(temporaryPath, join(targetPath, ".mission-create.transaction"));
+            await recoverClaimedMissionCreate(id);
+          }
+        });
+        markMissionMutation();
+      } catch (error) {
+        await rm(temporaryPath, { recursive: true, force: true });
+        throw error;
+      }
+      return await readMission(id);
+    },
+    async updateOptions(id, input) {
+      return await updateMission(MissionIdSchema.parse(id), (current, timestamp) => {
+        if (
+          input.toolPermissionMode !== current.toolPermissionMode &&
+          current.execution !== undefined &&
+          ["queued", "running", "waiting"].includes(current.execution.status)
+        ) {
+          throw new MissionStoreError(
+            "mission_active",
+            "Wait for the current execution before changing mission permissions.",
+          );
+        }
+        const next = {
+          ...current,
+          toolPermissionMode: input.toolPermissionMode,
+          updatedAt: timestamp,
+        };
+        if (input.modelOverride === undefined) delete next.modelOverride;
+        else next.modelOverride = input.modelOverride;
+        return next;
+      });
+    },
+    async updateContextMounts(id, contextMounts) {
+      return await updateMission(MissionIdSchema.parse(id), (current, timestamp) => {
+        if (
+          current.execution !== undefined &&
+          ["queued", "running", "waiting"].includes(current.execution.status)
+        ) {
+          throw new MissionStoreError(
+            "mission_active",
+            "Wait for the current execution before changing Mission Knowledge Stores.",
+          );
+        }
+        assertManagedRevisionMountsPreserved(current.contextMounts, contextMounts);
+        return { ...current, contextMounts: [...contextMounts], updatedAt: timestamp };
+      });
+    },
+    async mountManagedRevisionDraft(input) {
+      return await updateMission(MissionIdSchema.parse(input.id), (current, timestamp) => {
+        if (current.executor.ref !== input.expectedExecutorRef) {
+          throw new MissionStoreError(
+            "config_invalid",
+            "Only the owning revision Agent can mount a managed Mission Knowledge Draft.",
+          );
+        }
+        if (
+          current.contextMounts.some(
+            (mount) =>
+              mount.kind === "context-store-draft" &&
+              mount.draftId === input.draftId &&
+              mount.revisionJobId === input.revisionJobId,
+          )
+        ) {
+          return current;
+        }
+        const publishedStoreMounted = current.contextMounts.some(
+          (mount) => mount.kind === "context-store" && mount.storeId === input.storeId,
+        );
+        const selectedDraftMounted = current.contextMounts.some(
+          (mount) =>
+            mount.kind === "context-store-draft" &&
+            mount.draftId === input.draftId &&
+            mount.revisionJobId === undefined,
+        );
+        if (
+          !publishedStoreMounted &&
+          !selectedDraftMounted &&
+          input.allowUnmountedTarget !== true
+        ) {
+          throw new MissionStoreError(
+            "config_invalid",
+            "The selected knowledge base is not mounted in this Mission.",
+          );
+        }
+        const updated: Mission = {
+          ...current,
+          contextMounts: [
+            ...current.contextMounts.filter(
+              (mount) =>
+                !(mount.kind === "context-store-draft" && mount.draftId === input.draftId) &&
+                (input.preserveSession === true ||
+                  !(mount.kind === "context-store" && mount.storeId === input.storeId)),
+            ),
+            {
+              kind: "context-store-draft" as const,
+              draftId: input.draftId,
+              revisionJobId: input.revisionJobId,
+            },
+          ],
+          updatedAt: timestamp,
+        };
+        // Persist the acknowledged binding fingerprint in the same atomic write as
+        // the claim, so recovery also keeps the existing Team Session and contexts.
+        return input.preserveSession === true && updated.execution !== undefined
+          ? {
+              ...updated,
+              execution: {
+                ...updated.execution,
+                contextMountsFingerprint: missionContextMountsFingerprint(updated),
+              },
+            }
+          : updated;
+      });
+    },
+    async mountSkillRevisionDraft(input) {
+      return await updateMission(MissionIdSchema.parse(input.id), (current, timestamp) => {
+        const mount = {
+          kind: "skill-revision-draft" as const,
+          draftId: input.draftId,
+          revisionJobId: input.revisionJobId,
+          capabilityId: input.capabilityId,
+        };
+        if (
+          current.contextMounts.some(
+            (candidate) =>
+              candidate.kind === mount.kind &&
+              candidate.draftId === mount.draftId &&
+              candidate.revisionJobId === mount.revisionJobId,
+          )
+        )
+          return current;
+        return {
+          ...current,
+          contextMounts: [
+            ...current.contextMounts.filter(
+              (candidate) =>
+                candidate.kind !== "skill-revision-draft" || candidate.draftId !== input.draftId,
+            ),
+            mount,
+          ],
+          updatedAt: timestamp,
+        };
+      });
+    },
+    async unmountSkillRevisionDraft(input) {
+      return await updateMission(MissionIdSchema.parse(input.id), (current, timestamp) => {
+        const contextMounts = current.contextMounts.filter(
+          (candidate) =>
+            candidate.kind !== "skill-revision-draft" || candidate.draftId !== input.draftId,
+        );
+        return contextMounts.length === current.contextMounts.length
+          ? current
+          : { ...current, contextMounts, updatedAt: timestamp };
+      });
+    },
+    async rebindLegacySkillRevisionWorkspace(input) {
+      return await updateMission(MissionIdSchema.parse(input.id), (current, timestamp) => {
+        const ownsDraft = current.contextMounts.some(
+          (mount) => mount.kind === "skill-revision-draft" && mount.draftId === input.draftId,
+        );
+        if (current.origin.type !== "system-skill-revision" || !ownsDraft) {
+          throw new MissionStoreError(
+            "config_invalid",
+            `Mission ${current.id} is not the legacy owner of Skill draft ${input.draftId}.`,
+          );
+        }
+        if (current.workspace.path === input.workspace.path) return current;
+        if (current.workspace.path !== input.expectedWorkspacePath) {
+          throw new MissionStoreError(
+            "config_invalid",
+            `Mission ${current.id} no longer uses the expected legacy Skill draft workspace.`,
+          );
+        }
+        return { ...current, workspace: input.workspace, updatedAt: timestamp };
+      });
+    },
+    async restoreManagedRevisionStore(input) {
+      return await updateMission(MissionIdSchema.parse(input.id), (current, timestamp) => {
+        const claimed = current.contextMounts.some(
+          (mount) =>
+            mount.kind === "context-store-draft" &&
+            mount.draftId === input.draftId &&
+            mount.revisionJobId === input.revisionJobId,
+        );
+        if (!claimed) return current;
+        const updated: Mission = {
+          ...current,
+          contextMounts: [
+            ...current.contextMounts.filter(
+              (mount) =>
+                !(
+                  mount.kind === "context-store-draft" &&
+                  mount.draftId === input.draftId &&
+                  mount.revisionJobId === input.revisionJobId
+                ) && !(mount.kind === "context-store" && mount.storeId === input.storeId),
+            ),
+            { kind: "context-store" as const, storeId: input.storeId },
+          ],
+          updatedAt: timestamp,
+        };
+        return input.preserveSession === true && updated.execution !== undefined
+          ? {
+              ...updated,
+              execution: {
+                ...updated.execution,
+                contextMountsFingerprint: missionContextMountsFingerprint(updated),
+              },
+            }
+          : updated;
+      });
+    },
+    async isContextStoreReferenced(storeId) {
+      return (await getContextStoreReferences(storeId)).length > 0;
+    },
+    async listContextStoreReferences(storeId) {
+      return await getContextStoreReferences(storeId);
+    },
+    async updateExecution(id, execution, guard) {
+      return await updateMission(MissionIdSchema.parse(id), (current, timestamp) => {
+        if (guard?.executionId !== undefined && current.execution?.id !== guard.executionId) {
+          return current;
+        }
+        if (
+          guard?.statuses !== undefined &&
+          (current.execution === undefined || !guard.statuses.includes(current.execution.status))
+        ) {
+          return current;
+        }
+        return {
+          ...current,
+          execution: {
+            ...execution,
+            ...(current.execution?.id === execution.id
+              ? {
+                  ...(execution.contextMountsFingerprint === undefined &&
+                  current.execution.contextMountsFingerprint !== undefined
+                    ? { contextMountsFingerprint: current.execution.contextMountsFingerprint }
+                    : {}),
+                  ...(execution.environmentFingerprint === undefined &&
+                  current.execution.environmentFingerprint !== undefined
+                    ? { environmentFingerprint: current.execution.environmentFingerprint }
+                    : {}),
+                  ...(execution.resolvedCapabilities === undefined &&
+                  current.execution.resolvedCapabilities !== undefined
+                    ? { resolvedCapabilities: current.execution.resolvedCapabilities }
+                    : {}),
+                }
+              : {}),
+          },
+          updatedAt: timestamp,
+        };
+      });
+    },
+    async appendUserMessage(id, message) {
+      const parsedId = MissionIdSchema.parse(id);
+      const parsedMessage = MissionUserMessageSchema.parse(message);
+      if ((parsedMessage.attachments?.length ?? 0) > 0) {
+        return await withMissionLock(
+          parsedId,
+          "mission.user-message.attachments.append",
+          async () => {
+            await recoverPendingTransactions(parsedId);
+            const mission = await readMissionUnlocked(parsedId);
+            const records = await readRecords(parsedId, false);
+            const existing = records.find(
+              (record) => record.kind === "user" && record.id === parsedMessage.id,
+            );
+            if (existing !== undefined) {
+              if (existing.kind !== "user") throw messageConflict(existing);
+              if (!sameUserMessageInput(existing, parsedMessage)) throw messageConflict(existing);
+              return existing;
+            }
+            const baseAttachments = await readAttachmentsManifest(parsedId);
+            const inputAttachments = parsedMessage.attachments ?? [];
+            const inputIds = new Set(inputAttachments.map((attachment) => attachment.id));
+            if (inputIds.size !== inputAttachments.length) {
+              throw new Error("Mission attachment ids must be unique.");
+            }
+            if (baseAttachments.attachments.some((attachment) => inputIds.has(attachment.id))) {
+              throw new Error("Mission attachment ids must be unique.");
+            }
+            if (baseAttachments.attachments.length + inputAttachments.length > 20) {
+              throw new Error("A mission can include up to 20 attachments.");
+            }
+            const stagingPath = userMessageAttachmentsStagingPath(parsedId, parsedMessage.id);
+            await rm(stagingPath, { recursive: true, force: true });
+            await mkdir(stagingPath, { recursive: true, mode: 0o700 });
+            let journalWritten = false;
+            try {
+              const added = await materializeMissionAttachments({
+                attachments: inputAttachments,
+                temporaryMissionPath: stagingPath,
+                targetMissionPath: missionPath(parsedId),
+              });
+              const record = MissionTimelineRecordSchema.parse({
+                schemaVersion: "pragma.mission-message/v1",
+                sequence: (records.at(-1)?.sequence ?? 0) + 1,
+                kind: "user",
+                ...parsedMessage,
+                attachments: added.attachments,
+              });
+              const transaction = UserMessageAttachmentsTransactionSchema.parse({
+                schemaVersion: "pragma.mission-user-message-attachments-transaction/v1",
+                baseAttachments,
+                targetAttachments: {
+                  schemaVersion: "pragma.mission-attachments/v1",
+                  attachments: [...baseAttachments.attachments, ...added.attachments],
+                },
+                record,
+                updatedAt: new Date().toISOString(),
+              });
+              await writeJsonAtomically(
+                userMessageAttachmentsTransactionPath(parsedId),
+                transaction,
+              );
+              journalWritten = true;
+              await applyUserMessageAttachmentsTransaction(parsedId, mission, transaction);
+              return record;
+            } catch (error) {
+              if (!journalWritten) {
+                await rm(stagingPath, { recursive: true, force: true });
+              }
+              throw error;
+            }
+          },
+        );
+      }
+      return await appendRecord(parsedId, "mission.user-message.append", (sequence) => ({
+        schemaVersion: "pragma.mission-message/v1",
+        sequence,
+        kind: "user",
+        ...parsedMessage,
+      }));
+    },
+    async appendExecutionReference(input) {
+      const missionId = MissionIdSchema.parse(input.missionId);
+      const executionId = MissionIdSchema.parse(input.executionId);
+      const mission = await readMission(missionId);
+      const record = await appendRecord(
+        missionId,
+        "mission.execution-reference.append",
+        (sequence) => ({
+          schemaVersion: "pragma.mission-message/v1",
+          sequence,
+          kind: "execution",
+          inputMessageId: MissionIdSchema.parse(input.inputMessageId),
+          executionId,
+          createdAt: z.string().datetime().parse(input.createdAt),
+        }),
+      );
+      executionTitleIndex.set(executionId, { missionId, title: mission.title });
+      return record;
+    },
+    async readTimelinePage(id, pageOptions) {
+      const parsedId = MissionIdSchema.parse(id);
+      return await withMissionLock(parsedId, "mission.timeline.read-page", async () => {
+        await recoverPendingTransactions(parsedId);
+        await readMissionUnlocked(parsedId);
+        const file = messagesPath(parsedId);
+        const metadata = await stat(file).catch((error: unknown) => {
+          if (isNodeError(error, "ENOENT")) return undefined;
+          throw error;
+        });
+        const cached = timelineCache.get(parsedId);
+        if (
+          metadata !== undefined &&
+          cached?.size === metadata.size &&
+          cached.mtimeMs === metadata.mtimeMs
+        ) {
+          return timelinePageFromTurns(foldTimeline(cached.records), pageOptions);
+        }
+        return await readTimelinePageFromTail(file, pageOptions, (records, completeMetadata) => {
+          timelineCache.set(parsedId, {
+            size: completeMetadata.size,
+            mtimeMs: completeMetadata.mtimeMs,
+            records: [...records],
+          });
+        });
+      });
+    },
+    async markComplete(id) {
+      return await updateMission(
+        MissionIdSchema.parse(id),
+        (current, timestamp) => ({
+          ...current,
+          lifecycleStatus: "completed",
+          completedAt: timestamp,
+          updatedAt: timestamp,
+        }),
+        true,
+      );
+    },
+    async reopen(id) {
+      return await updateMission(
+        MissionIdSchema.parse(id),
+        (current, timestamp) => {
+          const mission = { ...current };
+          delete mission.completedAt;
+          return { ...mission, lifecycleStatus: "active", updatedAt: timestamp };
+        },
+        true,
+      );
+    },
+    async claimCompletedTaskDeletion(id) {
+      const parsedId = MissionIdSchema.parse(id);
+      await withMissionLock(parsedId, "mission.cleanup-claim", async () => {
+        await recoverPendingTransactions(parsedId);
+        const mission = await readMissionUnlocked(parsedId);
+        if (
+          mission.origin.type !== "user" ||
+          mission.lifecycleStatus !== "completed" ||
+          (mission.execution !== undefined &&
+            ["queued", "running", "waiting"].includes(mission.execution.status))
+        ) {
+          throw new Error("Only completed user-created conversations can be cleaned up.");
+        }
+        await persistMissionDeletionIntent(missionPath(parsedId), parsedId);
+      });
+    },
+    async remove(id) {
+      const parsedId = MissionIdSchema.parse(id);
+      await withMissionLock(parsedId, "mission.remove", async () => {
+        await recoverPendingTransactions(parsedId);
+        const current = await readMissionUnlocked(parsedId);
+        if (
+          current.execution !== undefined &&
+          ["queued", "running", "waiting"].includes(current.execution.status)
+        ) {
+          throw new MissionStoreError(
+            "mission_active",
+            "Stop the active execution before deleting this mission.",
+          );
+        }
+        await rm(missionPath(parsedId), { recursive: true, force: true });
+        timelineCache.delete(parsedId);
+        for (const [executionId, entry] of executionTitleIndex) {
+          if (entry.missionId === parsedId) executionTitleIndex.delete(executionId);
+        }
+        markMissionMutation();
+      });
+    },
+  };
+}
+
+const MAX_IMAGE_ATTACHMENT_BYTES = 20 * 1024 * 1024;
+
+function inheritedBranchEntry(
+  sourceMissionId: string,
+  entry: MissionChatEntry,
+  attachmentsById: ReadonlyMap<string, ExpertPromptAttachment>,
+  branchTimelineSequence: number,
+  sourceTimelineSequences: ReadonlySet<number>,
+): MissionChatEntry {
+  if (
+    entry.timelineSequence !== undefined &&
+    !sourceTimelineSequences.has(entry.timelineSequence)
+  ) {
+    throw new MissionStoreError(
+      "config_invalid",
+      `Mission branch history references an unknown Turn: ${entry.timelineSequence}`,
+    );
+  }
+  const timelineEntry = {
+    ...entry,
+    timelineSequence: branchTimelineSequence,
+  };
+  const rewrittenEntry =
+    timelineEntry.kind === "user" && timelineEntry.attachments !== undefined
+      ? {
+          ...timelineEntry,
+          attachments: timelineEntry.attachments.map((attachment) => {
+            const copied = attachmentsById.get(attachment.id);
+            if (copied === undefined) {
+              throw new MissionStoreError(
+                "config_invalid",
+                `Mission attachment is missing while creating branch history: ${attachment.id}`,
+              );
+            }
+            return copied;
+          }),
+        }
+      : timelineEntry;
+  const sessionSafeEntry =
+    rewrittenEntry.kind === "agent_activity"
+      ? (() => {
+          const {
+            senderSessionId: _senderSessionId,
+            targetSessionIds: _targetSessionIds,
+            ...safeEntry
+          } = rewrittenEntry;
+          void _senderSessionId;
+          void _targetSessionIds;
+          return { ...safeEntry, targetSessionIds: [] };
+        })()
+      : rewrittenEntry;
+  const {
+    id: sourceEntryId,
+    executionId: _executionId,
+    invocationId: _invocationId,
+    ...inherited
+  } = sessionSafeEntry;
+  void _executionId;
+  void _invocationId;
+  return MissionChatEntrySchema.parse({
+    ...inherited,
+    id: `branch:${sourceMissionId}:${sourceEntryId}`,
+  });
+}
+
+async function copyDirectoryIfExists(source: string, target: string): Promise<void> {
+  const metadata = await statIfExists(source);
+  if (metadata === undefined) return;
+  if (!metadata.isDirectory())
+    throw new Error(`Mission branch source is not a directory: ${source}`);
+  await mkdir(dirname(target), { recursive: true, mode: 0o700 });
+  await cp(source, target, { recursive: true, errorOnExist: true, force: false });
+}
+
+async function materializeMissionAttachments(options: {
+  readonly attachments: readonly ExpertPromptAttachment[];
+  readonly temporaryMissionPath: string;
+  readonly targetMissionPath: string;
+}): Promise<MissionAttachmentsManifest> {
+  const input = MissionAttachmentsManifestSchema.parse({
+    schemaVersion: "pragma.mission-attachments/v1",
+    attachments: options.attachments,
+  });
+  const attachments = await Promise.all(
+    input.attachments.map(async (attachment): Promise<ExpertPromptAttachment> => {
+      const sourcePath = await realpath(attachment.path);
+      const metadata = await stat(sourcePath);
+      if (attachment.kind === "directory") {
+        if (!metadata.isDirectory()) {
+          throw new Error(`Mission attachment is not a directory: ${sourcePath}`);
+        }
+        return {
+          id: attachment.id,
+          kind: attachment.kind,
+          name: basename(sourcePath),
+          path: sourcePath,
+        };
+      }
+      if (!metadata.isFile()) {
+        throw new Error(`Mission attachment is not a file: ${sourcePath}`);
+      }
+      if (attachment.kind === "file") {
+        return {
+          id: attachment.id,
+          kind: attachment.kind,
+          name: attachment.name,
+          path: sourcePath,
+          size: metadata.size,
+        };
+      }
+      if (metadata.size === 0 || metadata.size > MAX_IMAGE_ATTACHMENT_BYTES) {
+        throw new Error(`Image attachments must be 20 MiB or smaller: ${basename(sourcePath)}`);
+      }
+      const mimeType = missionImageMimeType(sourcePath);
+      if (mimeType !== attachment.mimeType) {
+        throw new Error(`Image attachment type does not match its path: ${basename(sourcePath)}`);
+      }
+      const originalRelativePath = join(
+        "attachments",
+        "images",
+        `${attachment.id}${imageExtension(mimeType)}`,
+      );
+      const temporaryPath = join(options.temporaryMissionPath, originalRelativePath);
+      await mkdir(dirname(temporaryPath), { recursive: true, mode: 0o700 });
+      await copyFile(sourcePath, temporaryPath);
+      const optimized =
+        attachment.optimized === undefined
+          ? undefined
+          : await materializeOptimizedImage({
+              attachment,
+              temporaryMissionPath: options.temporaryMissionPath,
+              targetMissionPath: options.targetMissionPath,
+            });
+      return {
+        id: attachment.id,
+        kind: attachment.kind,
+        name: attachment.name,
+        path: join(options.targetMissionPath, originalRelativePath),
+        mimeType,
+        size: metadata.size,
+        ...(optimized === undefined ? {} : { optimized }),
+      };
+    }),
+  );
+  return MissionAttachmentsManifestSchema.parse({
+    schemaVersion: "pragma.mission-attachments/v1",
+    attachments,
+  });
+}
+
+async function moveStagedAttachmentImages(options: {
+  readonly attachments: readonly ExpertPromptAttachment[];
+  readonly stagingPath: string;
+  readonly targetMissionPath: string;
+}): Promise<void> {
+  for (const attachment of options.attachments) {
+    if (attachment.kind !== "image") continue;
+    const imagesRoot = join(options.targetMissionPath, "attachments", "images");
+    for (const image of [
+      { path: attachment.path, mimeType: attachment.mimeType, size: attachment.size },
+      attachment.optimized,
+    ]) {
+      if (image === undefined) continue;
+      const target = image.path;
+      const relativeImagePath = relative(imagesRoot, target);
+      if (
+        relativeImagePath === "" ||
+        relativeImagePath === ".." ||
+        relativeImagePath.startsWith("../") ||
+        relativeImagePath.startsWith("..\\") ||
+        isAbsolute(relativeImagePath)
+      ) {
+        throw new MissionStoreError(
+          "config_invalid",
+          "Mission attachment transaction escaped its Mission image directory.",
+        );
+      }
+      if (image.mimeType === undefined || missionImageMimeType(target) !== image.mimeType) {
+        throw new MissionStoreError(
+          "config_invalid",
+          `Mission attachment transaction has an invalid image type: ${basename(target)}`,
+        );
+      }
+      const relativeTarget = relative(options.targetMissionPath, target);
+      const source = join(options.stagingPath, relativeTarget);
+      const sourceMetadata = await statIfExists(source);
+      const targetMetadata = await statIfExists(target);
+      if (sourceMetadata !== undefined && targetMetadata !== undefined) {
+        throw new MissionStoreError(
+          "config_invalid",
+          `Mission attachment transaction found duplicate image files: ${basename(target)}`,
+        );
+      }
+      if (sourceMetadata !== undefined) {
+        if (!sourceMetadata.isFile()) {
+          throw new MissionStoreError(
+            "config_invalid",
+            `Mission attachment staging path is not a file: ${basename(target)}`,
+          );
+        }
+        await mkdir(dirname(target), { recursive: true, mode: 0o700 });
+        await rename(source, target);
+      }
+      const persisted = await statIfExists(target);
+      if (
+        persisted === undefined ||
+        !persisted.isFile() ||
+        (image.size !== undefined && persisted.size !== image.size)
+      ) {
+        throw new MissionStoreError(
+          "config_invalid",
+          `Mission attachment transaction has an invalid image: ${basename(target)}`,
+        );
+      }
+    }
+  }
+}
+
+async function materializeOptimizedImage(options: {
+  readonly attachment: ExpertPromptAttachment;
+  readonly temporaryMissionPath: string;
+  readonly targetMissionPath: string;
+}): Promise<NonNullable<ExpertPromptAttachment["optimized"]>> {
+  const optimized = options.attachment.optimized;
+  if (optimized === undefined) throw new Error("Optimized image metadata is missing.");
+  const sourcePath = await realpath(optimized.path);
+  const metadata = await stat(sourcePath);
+  if (!metadata.isFile() || metadata.size === 0 || metadata.size > MAX_IMAGE_ATTACHMENT_BYTES) {
+    throw new Error(`Optimized image attachment is unavailable: ${basename(sourcePath)}`);
+  }
+  const mimeType = missionImageMimeType(sourcePath);
+  if (mimeType !== optimized.mimeType) {
+    throw new Error(`Optimized image type does not match its path: ${basename(sourcePath)}`);
+  }
+  const relativePath = join(
+    "attachments",
+    "images",
+    "optimized",
+    `${options.attachment.id}${imageExtension(mimeType)}`,
+  );
+  const temporaryPath = join(options.temporaryMissionPath, relativePath);
+  await mkdir(dirname(temporaryPath), { recursive: true, mode: 0o700 });
+  await copyFile(sourcePath, temporaryPath);
+  return {
+    path: join(options.targetMissionPath, relativePath),
+    mimeType,
+    size: metadata.size,
+  };
+}
+
+function missionImageMimeType(
+  path: string,
+): "image/gif" | "image/jpeg" | "image/png" | "image/webp" {
+  switch (extname(path).toLowerCase()) {
+    case ".gif":
+      return "image/gif";
+    case ".jpg":
+    case ".jpeg":
+      return "image/jpeg";
+    case ".png":
+      return "image/png";
+    case ".webp":
+      return "image/webp";
+    default:
+      throw new Error(`Unsupported image attachment type: ${basename(path)}`);
+  }
+}
+
+function imageExtension(mimeType: "image/gif" | "image/jpeg" | "image/png" | "image/webp") {
+  switch (mimeType) {
+    case "image/gif":
+      return ".gif";
+    case "image/jpeg":
+      return ".jpg";
+    case "image/png":
+      return ".png";
+    case "image/webp":
+      return ".webp";
+  }
+}
+
+function toMissionSummary(mission: Mission, source: MissionSummary["source"]): MissionSummary {
+  return {
+    id: mission.id,
+    title: mission.title,
+    workspace: { basename: mission.workspace.basename },
+    executor: {
+      kind: mission.executor.kind,
+      name: mission.executor.name,
+      ref: mission.executor.ref,
+    },
+    ...(mission.execution === undefined
+      ? {}
+      : {
+          execution: {
+            id: mission.execution.id,
+            status: mission.execution.status,
+            ...(mission.execution.waitReason === undefined
+              ? {}
+              : { waitReason: mission.execution.waitReason }),
+          },
+        }),
+    source,
+    lifecycleStatus: mission.lifecycleStatus,
+    updatedAt: mission.updatedAt,
+  };
+}
+
+async function appendJsonLine(file: string, value: unknown): Promise<void> {
+  await mkdir(dirname(file), { recursive: true, mode: 0o700 });
+  const handle = await open(file, "a", 0o600);
+  try {
+    await handle.writeFile(`${JSON.stringify(value)}\n`, "utf8");
+    await handle.sync();
+  } finally {
+    await handle.close();
+  }
+}
+
+async function writeYamlAtomically(path: string, value: unknown): Promise<void> {
+  await writeTextAtomically(path, formatPragmaYaml(value));
+}
+
+async function writeJsonAtomically(path: string, value: unknown): Promise<void> {
+  await writeTextAtomically(path, `${JSON.stringify(value, null, 2)}\n`);
+}
+
+async function writeTextAtomically(path: string, content: string): Promise<void> {
+  await mkdir(dirname(path), { recursive: true, mode: 0o700 });
+  const temporaryPath = `${path}.${randomUUID()}.tmp`;
+  await writeFile(temporaryPath, content, { mode: 0o600 });
+  await rename(temporaryPath, path);
+}
+
+async function writeTextIfAbsent(path: string, content: string): Promise<void> {
+  await mkdir(dirname(path), { recursive: true, mode: 0o700 });
+  let handle;
+  try {
+    handle = await open(path, "wx", 0o600);
+    await handle.writeFile(content, "utf8");
+    await handle.sync();
+  } catch (error) {
+    if (!isNodeError(error, "EEXIST")) throw error;
+  } finally {
+    await handle?.close();
+  }
+}
+
+async function readJsonIfExists(path: string): Promise<unknown | undefined> {
+  try {
+    return JSON.parse(await readFile(path, "utf8")) as unknown;
+  } catch (error) {
+    if (isNodeError(error, "ENOENT")) return undefined;
+    throw error;
+  }
+}
+
+async function statIfExists(path: string) {
+  try {
+    return await stat(path);
+  } catch (error) {
+    if (isNodeError(error, "ENOENT")) return undefined;
+    throw error;
+  }
+}
+
+function findSameIdentity(
+  records: readonly MissionTimelineRecord[],
+  candidate: MissionTimelineRecord,
+): MissionTimelineRecord | undefined {
+  return records.find((record) =>
+    candidate.kind === "user"
+      ? record.kind === "user" && record.id === candidate.id
+      : record.kind === "execution" && record.executionId === candidate.executionId,
+  );
+}
+
+function sameRecord(left: MissionTimelineRecord, right: MissionTimelineRecord): boolean {
+  return JSON.stringify(left) === JSON.stringify(right);
+}
+
+function assertManagedRevisionMountsPreserved(
+  current: readonly MissionContextMount[],
+  next: readonly MissionContextMount[],
+): void {
+  const required = current.filter(isManagedRevisionMount);
+  if (required.length === 0) return;
+  const incoming = new Set(next.filter(isManagedRevisionMount).map(managedRevisionMountIdentity));
+  const missing = required.find((mount) => !incoming.has(managedRevisionMountIdentity(mount)));
+  if (missing === undefined) return;
+  throw new MissionStoreError(
+    "config_invalid",
+    `Managed Mission Knowledge Draft ${missing.draftId} cannot be changed manually.`,
+  );
+}
+
+function isManagedRevisionMount(
+  mount: MissionContextMount,
+): mount is MissionContextMount & { kind: "context-store-draft"; revisionJobId: string } {
+  return mount.kind === "context-store-draft" && mount.revisionJobId !== undefined;
+}
+
+function managedRevisionMountIdentity(
+  mount: MissionContextMount & { kind: "context-store-draft"; revisionJobId: string },
+): string {
+  return `${mount.draftId}:${mount.revisionJobId}`;
+}
+
+function sameValue(left: unknown, right: unknown): boolean {
+  return JSON.stringify(left) === JSON.stringify(right);
+}
+
+function sameUserMessageInput(
+  existing: Extract<MissionTimelineRecord, { readonly kind: "user" }>,
+  input: MissionUserMessage,
+): boolean {
+  return (
+    existing.id === input.id &&
+    existing.content === input.content &&
+    sameValue(
+      (existing.attachments ?? []).map(attachmentRequestIdentity),
+      (input.attachments ?? []).map(attachmentRequestIdentity),
+    )
+  );
+}
+
+function attachmentRequestIdentity(attachment: ExpertPromptAttachment): unknown {
+  return {
+    id: attachment.id,
+    kind: attachment.kind,
+    name: attachment.name,
+    ...(attachment.mimeType === undefined ? {} : { mimeType: attachment.mimeType }),
+    ...(attachment.optimized === undefined
+      ? {}
+      : {
+          optimized: {
+            mimeType: attachment.optimized.mimeType,
+            size: attachment.optimized.size,
+          },
+        }),
+  };
+}
+
+function sameRecordInput(left: MissionTimelineRecord, right: MissionTimelineRecord): boolean {
+  if (left.kind !== right.kind) return false;
+  return left.kind === "user"
+    ? right.kind === "user" && sameUserMessageInput(left, right)
+    : right.kind === "execution" &&
+        left.executionId === right.executionId &&
+        left.inputMessageId === right.inputMessageId;
+}
+
+function messageConflict(record: MissionTimelineRecord): MissionStoreError {
+  const id = record.kind === "user" ? record.id : record.executionId;
+  return new MissionStoreError(
+    "message_conflict",
+    `Mission timeline idempotency conflict for ${id}.`,
+  );
+}
+
+function titleFromGoal(goal: string): string {
+  const firstLine = goal.split(/\r?\n/, 1)[0]?.trim() ?? "";
+  return normalizeMissionTitle(firstLine);
+}
+
+export const MISSION_TITLE_MAX_LENGTH = 48;
+const MISSION_SCHEMA_TITLE_MAX_LENGTH = 120;
+
+export function normalizeMissionTitle(value: string): string {
+  return normalizeMissionTitleToLength(value, MISSION_TITLE_MAX_LENGTH);
+}
+
+function normalizeBranchTitle(sourceTitle: string): string {
+  return normalizeMissionTitleToLength(`分支 · ${sourceTitle}`, MISSION_SCHEMA_TITLE_MAX_LENGTH);
+}
+
+function normalizeMissionTitleToLength(value: string, maximumLength: number): string {
+  const compact = value.replace(/\s+/gu, " ").trim();
+  const characters = Array.from(compact);
+  if (characters.length === 0) throw new Error("Mission title cannot be empty.");
+  if (characters.length <= maximumLength) return compact;
+  return `${characters
+    .slice(0, maximumLength - 1)
+    .join("")
+    .trimEnd()}…`;
+}
+
+function readSchemaVersion(value: unknown): unknown {
+  return typeof value === "object" && value !== null && "schemaVersion" in value
+    ? value.schemaVersion
+    : undefined;
+}
+
+function normalizeReadError(error: unknown, id: string): MissionStoreError {
+  if (error instanceof MissionStoreError) return error;
+  if (isNodeError(error, "ENOENT")) {
+    return new MissionStoreError("mission_not_found", `Mission ${id} was not found.`);
+  }
+  return new MissionStoreError(
+    "config_invalid",
+    error instanceof Error ? error.message : `Mission ${id} is invalid.`,
+  );
+}
+
+async function pathExists(path: string): Promise<boolean> {
+  try {
+    await stat(path);
+    return true;
+  } catch (error) {
+    if (isNodeError(error, "ENOENT")) return false;
+    throw error;
+  }
+}
+
+async function directoryContainsFiles(root: string): Promise<boolean> {
+  for (const entry of await readdir(root, { withFileTypes: true })) {
+    if (entry.isFile() || entry.isSymbolicLink()) return true;
+    if (entry.isDirectory() && (await directoryContainsFiles(join(root, entry.name)))) return true;
+  }
+  return false;
+}
+
+function isNodeError(error: unknown, code: string): boolean {
+  return error instanceof Error && "code" in error && error.code === code;
+}
+
+async function mapWithConcurrency<T, R>(
+  values: readonly T[],
+  concurrency: number,
+  operation: (value: T) => Promise<R>,
+): Promise<R[]> {
+  const results = new Array<R>(values.length);
+  let nextIndex = 0;
+  const workers = Array.from(
+    { length: Math.min(Math.max(1, concurrency), values.length) },
+    async () => {
+      while (nextIndex < values.length) {
+        const index = nextIndex;
+        nextIndex += 1;
+        const value = values[index];
+        if (value !== undefined) results[index] = await operation(value);
+      }
+    },
+  );
+  await Promise.all(workers);
+  return results;
+}

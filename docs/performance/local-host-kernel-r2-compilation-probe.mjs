@@ -18,6 +18,7 @@ for (let index = 2; index < process.argv.length; index += 2)
   argumentsByName.set(process.argv[index], process.argv[index + 1]);
 const checkout = resolve(argumentsByName.get("--checkout") ?? process.cwd());
 const output = resolve(argumentsByName.get("--output") ?? "/tmp/pragma-r2-compilation.json");
+const captureLifecycle = argumentsByName.get("--lifecycle") === "true";
 const samples = Number(argumentsByName.get("--samples") ?? 20);
 const scenarios = [
   "warm",
@@ -73,6 +74,11 @@ const { missionExecutorSnapshot } = await load("apps/desktop/src/shared/contract
 const root = await mkdtemp(join(tmpdir(), "pragma-r2-compilation-"));
 const sourcePaths = [
   "apps/desktop/src/main/features/missions/mission-runner-composition.ts",
+  "packages/local-host/src/missions/execution-service.ts",
+  "packages/local-host/src/missions/session-lifecycle.ts",
+  "packages/local-host/src/missions/flow-lifecycle.ts",
+  "packages/local-host/src/missions/repository/mission-store.ts",
+  "packages/local-host/src/missions/mission-execution-observer.ts",
   "packages/local-host/src/missions/compile-service.ts",
   "packages/local-host/src/missions/runtime-readiness.ts",
   "packages/local-host/src/project-catalog.ts",
@@ -113,6 +119,9 @@ const report = {
   sourceBefore: await digest(),
   scope:
     "Desktop Mission composition, isolated real Project/Mission/Capability/ContextStore/SQLite stores, fake Runtime and fixture verification/credential ports. Cold first run, retained-owner send, Capability/credential/system/model/permission/Context mount invalidation. No real model, renderer, Memory/Automation background load or performance acceptance.",
+  lifecycleScope: captureLifecycle
+    ? "Monotonic fake Runtime dispatch/completion and production logger Core terminal/active-binding release/Mission publication markers. Publication is not renderer display; active-binding release is not native process termination or lease release."
+    : undefined,
   counterMeaning:
     "Read counts are API calls, not physical I/O. projectHeadReads wraps ProjectStore.get. dslCompilerCalls wraps the real Interpreter PragmaProjectImpl.compile prototype for both project and built-in executors; storeCompileCalls/openedProjectCompileCalls identify entrypoints and must not be added to dslCompilerCalls. Cache flags and phases come from production logs. Readiness traverses the actual target closure on each side but Runtime health is a fixture port; plugin reads remain zero because this fixture declares no plugin.",
   scenario: scenario ?? "all",
@@ -123,6 +132,7 @@ const report = {
 };
 let counters;
 let phases;
+let lifecycle;
 let runner;
 let executionStore;
 const missionIds = [];
@@ -319,7 +329,11 @@ try {
     createSession: () => ({ id: randomUUID() }),
     restoreSession: (context) => ({ id: context.request.runtimeSession.id }),
     readSession: (session) => ({ runtimeSessionId: session.id }),
-    startTurn: () => ({ outputText: "done" }),
+    startTurn: () => {
+      lifecycle?.push({ event: "fixture.dispatch", atMs: performance.now() });
+      lifecycle?.push({ event: "fixture.model_completed", atMs: performance.now() });
+      return { outputText: "done" };
+    },
     closeSession: () => undefined,
     listModels: async () => {
       if (counters) counters.modelCatalogReads++;
@@ -385,6 +399,21 @@ try {
   const loggerProvider = core.createLoggerProvider({
     handler: {
       write: (record) => {
+        if (
+          captureLifecycle &&
+          lifecycle &&
+          [
+            "execution.terminal_committed",
+            "session.active_binding_released",
+            "mission.terminal_status_published",
+          ].includes(record.event)
+        )
+          lifecycle.push({
+            event: record.event,
+            atMs: performance.now(),
+            executionId: record.scope?.executionId,
+            ...record.attributes,
+          });
         if (phases && ["mission.prepare_phase", "mission.performance"].includes(record.event))
           phases.push({ event: record.event, ...record.attributes });
       },
@@ -448,6 +477,20 @@ try {
       pragmaHome: join(root, "state"),
     })),
   });
+  if (captureLifecycle)
+    runner.subscribeStatus((notification) => {
+      if (
+        notification.execution !== undefined &&
+        ["succeeded", "failed", "cancelled"].includes(notification.execution.status)
+      )
+        lifecycle?.push({
+          event: "fixture.mission_status_published",
+          atMs: performance.now(),
+          missionId: notification.missionId,
+          executionId: notification.execution.id,
+          status: notification.execution.status,
+        });
+    });
   const measure = async (group, sample, mission, operation) => {
     const previousExecution = (await missions.get(mission.id)).execution?.id;
     counters = {
@@ -466,6 +509,7 @@ try {
       pluginReads: 0,
     };
     phases = [];
+    lifecycle = captureLifecycle ? [] : undefined;
     const started = performance.now();
     await operation();
     const preparationMs = performance.now() - started;
@@ -474,10 +518,14 @@ try {
     counters = undefined;
     phases = undefined;
     const settled = await untilSettled(missions, mission.id, previousExecution);
+    const lifecycleMarkers = lifecycle;
+    lifecycle = undefined;
     report.operations.push({
+      missionId: mission.id,
       group,
       sample,
       preparationMs,
+      ...(lifecycleMarkers === undefined ? {} : { lifecycleMarkers }),
       counters: reads,
       phases: preparationPhases,
       sourcePin: settled.project,
