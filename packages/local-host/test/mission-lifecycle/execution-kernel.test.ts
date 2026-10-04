@@ -52,7 +52,14 @@ describe("shared Mission execution kernel with durable Core stores", { timeout: 
       finishMemory = resolve;
     });
     let execution: FlowExecution | undefined;
-    const accepted = vi.fn(async () => await memoryGate);
+    let signalAcceptedEntered!: () => void;
+    const acceptedEntered = new Promise<void>((resolve) => {
+      signalAcceptedEntered = resolve;
+    });
+    const accepted = vi.fn(async () => {
+      signalAcceptedEntered();
+      await memoryGate;
+    });
     const coreStart = vi.spyOn(f.app.flows, "start");
     const subject: MissionExecutionSubject = {
       missionId: "fast-start-mission",
@@ -70,9 +77,16 @@ describe("shared Mission execution kernel with durable Core stores", { timeout: 
       return execution;
     });
     try {
-      await vi.waitFor(() => expect(accepted).toHaveBeenCalledOnce());
-      await vi.waitFor(async () =>
-        expect((await f.executions.get(execution!.executionId))?.status).toBe("failed"),
+      await Promise.race([
+        acceptedEntered,
+        admission.then(() => {
+          throw new Error("Admission completed before entering Memory registration");
+        }),
+      ]);
+      expect(accepted).toHaveBeenCalledOnce();
+      await vi.waitFor(
+        async () => expect((await f.executions.get(execution!.executionId))?.status).toBe("failed"),
+        { timeout: 5000, interval: 10 },
       );
       // Cross an event-loop turn before attaching the downstream observer: Vitest
       // reports an unhandled rejection here if the shared opener fails to observe it.
@@ -120,12 +134,14 @@ describe("shared Mission execution kernel with durable Core stores", { timeout: 
     const original = await f.app.flows.start(flow, { input: {} });
     void original.result.catch(() => undefined);
     f.openFlows.push(original);
-    await vi.waitFor(async () =>
-      expect(
-        (await f.executions.readEvents(original.executionId)).some(
-          (event) => event.type === "human.requested",
-        ),
-      ).toBe(true),
+    await vi.waitFor(
+      async () =>
+        expect(
+          (await f.executions.readEvents(original.executionId)).some(
+            (event) => event.type === "human.requested",
+          ),
+        ).toBe(true),
+      { timeout: 5000, interval: 10 },
     );
     const requested = (await f.executions.readEvents(original.executionId)).find(
       (event) => event.type === "human.requested",
@@ -144,6 +160,10 @@ describe("shared Mission execution kernel with durable Core stores", { timeout: 
     const projectionGate = new Promise<void>((resolve) => {
       finishProjection = resolve;
     });
+    let signalProjectionEntered!: () => void;
+    const projectionEntered = new Promise<void>((resolve) => {
+      signalProjectionEntered = resolve;
+    });
     let recovered: FlowExecution | undefined;
     const projection = vi.fn(
       async (
@@ -158,6 +178,7 @@ describe("shared Mission execution kernel with durable Core stores", { timeout: 
           { kind: "user_question", answered: true, answers: { "Continue?": "Yes" } },
           { requestId: "00000000-0000-4000-8000-000000000001" },
         );
+        signalProjectionEntered();
         await projectionGate;
       },
     );
@@ -183,9 +204,16 @@ describe("shared Mission execution kernel with durable Core stores", { timeout: 
     });
     const recovery = adapter.recoverMission(missionId);
     try {
-      await vi.waitFor(() => expect(projection).toHaveBeenCalledOnce());
-      await vi.waitFor(async () =>
-        expect((await f.executions.get(original.executionId))?.status).toBe("failed"),
+      await Promise.race([
+        projectionEntered,
+        recovery.then(() => {
+          throw new Error("Recovery completed before entering owner projection");
+        }),
+      ]);
+      expect(projection).toHaveBeenCalledOnce();
+      await vi.waitFor(
+        async () => expect((await f.executions.get(original.executionId))?.status).toBe("failed"),
+        { timeout: 5000, interval: 10 },
       );
       await new Promise<void>((resolve) => setTimeout(resolve, 25));
       await lease.assertOwnership(missionId, guard);

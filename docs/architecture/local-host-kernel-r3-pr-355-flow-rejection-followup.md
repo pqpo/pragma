@@ -23,6 +23,10 @@ durable failed 后跨事件循环才让下游观察 result；不安装全局 unh
 
 把生产 helper 恢复为原提交实现、保持新测试不变：2 个断言通过，但捕获 2 个 unhandled rejection，命令退出 **1**，复现成功。随后恢复修复：完整 kernel **19 项通过、退出 0**。原真实 SIGKILL 接管用例在 `CI=true` 下 **1 项通过**，原 `EXECUTION_FAILED`、Context/Runtime refs 与 Native 副作用次数断言未修改。
 
+修复提交 `2265bed1` 的首轮 [CI](https://github.com/pqpo/pragma/actions/runs/37179215302/job/111368161618) 又发现新增测试使用默认 1 秒 `waitFor`，Memory gate 尚未进入即超时；该次聊天门禁 75 通过、1 失败，无 unhandled 报告。改为明确的 Memory/projectOwner 进入信号，并与原 operation 的拒绝或意外提前完成竞争；不提前观察 result，不只延长进入门禁的超时。等待 durable.failed 保留有界条件检查。
+
+同步调整后再次用原生产 helper 跑新测试：仍复现 2 个 unhandled、退出 1；恢复修复后完整 kernel 19 项、Host lint/typecheck 均通过。独立复核确认没有遮蔽原操作错误或削弱任何断言。生产源码 SHA-256 保持 `b099fd7588578a628d8a972cca0e314c5bbc9acff9c84f8cb7baa10982cfc6a2`。本地完整生命周期（Host 198、Desktop 87）和 Revision（13 + 69 + 6）在同一生产源码下通过；同步调整只改测试。
+
 ## 工程门禁与边界
 
 本轮 `pnpm check` 和 `pnpm build`（19/19 tasks）均退出 0，生产源码前后摘要一致。命令、退出码、unhandled 数量、日志摘要及源码摘要见 [验证记录](../performance/local-host-kernel-r3-pr-355/flow-rejection-verification.json)。完整远程 CI（聊天、控制、编译、生命周期、Revision 和 Build）以 [PR #355 checks](https://github.com/pqpo/pragma/pull/355/checks) 的最新提交结果为准；不能把通过断言数单独当作门禁通过。
