@@ -90,7 +90,7 @@ export interface DesktopMemoryPlane {
   registerMemoryExecutionContext(input: {
     readonly executionId: string;
     readonly missionId: string;
-    readonly projectId: string;
+    readonly projectId?: string;
   }): Promise<void>;
   setMemoryConversationState(input: {
     readonly missionId: string;

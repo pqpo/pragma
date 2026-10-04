@@ -44,7 +44,9 @@ export interface LocalHostCompileResourcePorts {
 }
 
 /** Default Node composition uses the same compiler as rich Host compositions. */
-export function createLocalHostNodeMissionCompiler(options: {
+export function createLocalHostNodeMissionCompiler<
+  Request extends LocalHostMissionCompileRequest = LocalHostMissionCompileRequest,
+>(options: {
   readonly pragmaHome?: string | undefined;
   readonly runtimes: RuntimeResolver;
   readonly resources?: LocalHostCompileResourcePorts | undefined;
@@ -106,7 +108,7 @@ export function createLocalHostNodeMissionCompiler(options: {
     ),
   );
   const environmentId = options.environmentId ?? "cli";
-  const service = createLocalHostMissionCompileService({
+  const service = createLocalHostMissionCompileService<Request>({
     environmentId,
     pragmaHome: paths.root,
     loggerProvider: options.loggerProvider,
@@ -200,4 +202,6 @@ export function createLocalHostNodeMissionCompiler(options: {
   };
 }
 
-export type LocalHostNodeMissionCompiler = ReturnType<typeof createLocalHostNodeMissionCompiler>;
+export type LocalHostNodeMissionCompiler<
+  Request extends LocalHostMissionCompileRequest = LocalHostMissionCompileRequest,
+> = ReturnType<typeof createLocalHostNodeMissionCompiler<Request>>;

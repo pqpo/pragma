@@ -1,8 +1,7 @@
 /**
- * Stable Mission Runner facade.
- *
- * Stateful domain ownership lives in the Session, Lifecycle, Command, Chat, and Work services.
- * The composition module wires those services to Desktop storage and Runtime adapters.
+ * Desktop resource composition facade. The Local Host execution service owns
+ * Run, Session, recovery, queue continuation and persistent Mission semantics.
+ * Internal callers retain this thin export until the R4 entry-point migration.
  */
 export {
   activeMissionKnowledgeDraftNamespace,

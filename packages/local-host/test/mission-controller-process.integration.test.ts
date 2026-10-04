@@ -86,10 +86,11 @@ describe("MissionControllerStore cross-process integration", () => {
   it("takes over after expiry, fences the old process writer, and recovers after SIGKILL", async () => {
     const root = await temporaryRoot();
     const target = mission(301);
+    const assertionSignalPath = join(root, "takeover-committed");
     const original = child(
       root,
       "claim-then-assert",
-      `${target}|00000000-0000-4000-8000-000000000031|40|2000`,
+      `${target}|00000000-0000-4000-8000-000000000031|40|${assertionSignalPath}`,
     );
     const originalLines = collectLines(original);
     const originalGrant = JSON.parse(await originalLines.next()) as { readonly guard: unknown };
@@ -98,6 +99,7 @@ describe("MissionControllerStore cross-process integration", () => {
     const takeover = child(root, "claim", `${target}|00000000-0000-4000-8000-000000000032|1000`);
     await expect(waitForLine(takeover)).resolves.toContain("fencingToken");
     await waitForExit(takeover);
+    await writeFile(assertionSignalPath, "assert stale writer");
     await expect(originalLines.next()).resolves.toContain("MISSION_FENCING_REJECTED");
     await waitForExit(original);
 

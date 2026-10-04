@@ -1,0 +1,2380 @@
+import { missionCompileContextMountsFingerprint as missionContextMountsFingerprint } from "../../src/missions/compile-service.ts";
+import { PRAGMA_DSL_WRITE_API_VERSION } from "@pragma/interpreter/ast";
+import {
+  appendFile,
+  mkdir,
+  mkdtemp,
+  readFile,
+  realpath,
+  rename,
+  rm,
+  writeFile,
+} from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { basename, join } from "node:path";
+
+import { afterEach, describe, expect, it } from "vitest";
+
+import { formatPragmaYaml, parsePragmaYaml } from "@pragma/interpreter";
+import type { PragmaExpertResource } from "@pragma/interpreter/ast";
+import { encodePragmaPathSegment, withFileLock } from "@pragma/core";
+import { MissionExecutorSchema } from "@pragma/shared";
+function missionExecutorSnapshot(resource: PragmaExpertResource) {
+  return MissionExecutorSchema.parse({
+    kind: "expert",
+    ref: `expert:${resource.metadata.id}`,
+    name: resource.metadata.name,
+  });
+}
+
+import {
+  MISSION_EXECUTION_PROJECTION_MAX_BYTES,
+  MISSION_EXECUTION_PROJECTION_MAX_CONTENT_LENGTH,
+  MISSION_EXECUTION_PROJECTION_MAX_ENTRIES,
+} from "../../src/missions/repository/mission-execution-projection.ts";
+import {
+  createMissionStore,
+  MISSION_TITLE_MAX_LENGTH,
+} from "../../src/missions/repository/mission-store.ts";
+
+const temporaryPaths: string[] = [];
+
+afterEach(async () => {
+  await Promise.all(
+    temporaryPaths.splice(0).map((path) =>
+      rm(path, {
+        recursive: true,
+        force: true,
+        maxRetries: 5,
+        retryDelay: 50,
+      }),
+    ),
+  );
+});
+
+describe("mission store", { timeout: 30_000 }, () => {
+  it("claims cleanup only for settled completed user conversations and blocks reopening", async () => {
+    const root = await temporaryRoot();
+    const store = createMissionStore({ missionsPath: join(root, "missions") });
+    const created = await store.create({
+      workspace: { path: join(root, "workspace"), basename: "workspace" },
+      goal: "Review cleanup eligibility",
+      project: { id: "studio", revision: 1 },
+      executor: missionExecutorSnapshot(expertFixture()),
+    });
+    await expect(store.claimCompletedTaskDeletion(created.id)).rejects.toThrow(
+      "Only completed user-created conversations",
+    );
+    const running = await store.updateExecution(created.id, {
+      id: "00000000-0000-4000-8000-000000000111",
+      inputMessageId: created.initialMessageId,
+      status: "running",
+      startedAt: new Date().toISOString(),
+    });
+    await store.markComplete(created.id);
+    await expect(store.claimCompletedTaskDeletion(created.id)).rejects.toThrow(
+      "Only completed user-created conversations",
+    );
+    await store.updateExecution(created.id, { ...running.execution!, status: "succeeded" });
+    await store.claimCompletedTaskDeletion(created.id);
+    await expect(
+      readFile(join(store.storagePath!(created.id), "deletion-intent.json"), "utf8"),
+    ).resolves.toContain(created.id);
+    await expect(store.reopen(created.id)).rejects.toThrow("Mission deletion is already pending");
+  });
+
+  it("migrates a legacy raw-id directory over an empty encoded board skeleton", async () => {
+    const root = await temporaryRoot();
+    const store = createMissionStore({ missionsPath: join(root, "missions") });
+    const created = await store.create({
+      workspace: { path: join(root, "workspace"), basename: "workspace" },
+      goal: "Migrate Mission path",
+      project: { id: "studio", revision: 1 },
+      executor: missionExecutorSnapshot(expertFixture()),
+    });
+    const encoded = store.storagePath!(created.id);
+    const legacy = join(root, "missions", created.id);
+    await rename(encoded, legacy);
+    await mkdir(join(encoded, "board", "shared"), { recursive: true });
+
+    await expect(store.get(created.id)).resolves.toMatchObject({ id: created.id });
+    await expect(readFile(join(encoded, "mission.yaml"), "utf8")).resolves.toContain(created.id);
+    await expect(readFile(join(legacy, "mission.yaml"), "utf8")).rejects.toMatchObject({
+      code: "ENOENT",
+    });
+  });
+
+  it("replays a Mission path migration interrupted after the directory rename", async () => {
+    const root = await temporaryRoot();
+    const missionsPath = join(root, "missions");
+    const store = createMissionStore({ missionsPath });
+    const created = await store.create({
+      workspace: { path: join(root, "workspace"), basename: "workspace" },
+      goal: "Recover Mission path",
+      project: { id: "studio", revision: 1 },
+      executor: missionExecutorSnapshot(expertFixture()),
+    });
+    const target = store.storagePath!(created.id);
+    const legacy = join(missionsPath, created.id);
+    const journal = join(missionsPath, `.path-migration.${basename(target)}.json`);
+    await rename(target, legacy);
+    await writeFile(
+      journal,
+      `${JSON.stringify({
+        schemaVersion: "pragma.mission-path-migration/v1",
+        missionId: created.id,
+        legacy,
+        target,
+      })}\n`,
+    );
+    await rename(legacy, target);
+
+    await expect(store.get(created.id)).resolves.toMatchObject({ id: created.id });
+    await expect(readFile(journal, "utf8")).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
+  it("persists a mission pinned to an immutable project revision", async () => {
+    const root = await temporaryRoot();
+    const store = createMissionStore({ missionsPath: join(root, "missions") });
+    const expert = expertFixture();
+
+    const created = await store.create({
+      workspace: { path: join(root, "workspace"), basename: "workspace" },
+      goal: "Design the Missions experience\nwith a second line.",
+      project: { id: "studio", revision: 3 },
+      executor: missionExecutorSnapshot(expert),
+      toolPermissionMode: "full-access",
+      modelOverride: {
+        providerId: "provider",
+        modelId: "configured-model",
+        thinkingLevel: "high",
+      },
+    });
+
+    expect(created.title).toBe("Design the Missions experience");
+    expect(created.executor).toMatchObject({
+      kind: "expert",
+      ref: "expert:v2vt1v01vzz6j24q",
+    });
+    expect(created.project).toEqual({ id: "studio", revision: 3 });
+    expect(created.toolPermissionMode).toBe("full-access");
+    expect(created.modelOverride).toEqual({
+      providerId: "provider",
+      modelId: "configured-model",
+      thinkingLevel: "high",
+    });
+    await expect(store.get(created.id)).resolves.toEqual(created);
+    const listRequest = store.list();
+    expect(store.list()).toBe(listRequest);
+    await expect(listRequest).resolves.toEqual([
+      expect.objectContaining({ id: created.id, title: created.title }),
+    ]);
+    const manifest = await readFile(join(store.storagePath!(created.id), "mission.yaml"), "utf8");
+    expect(manifest).toContain("schemaVersion: pragma.mission/v11");
+    expect(created.contextMounts).toEqual([]);
+    expect(manifest).toContain("revision: 3");
+    expect(manifest).toContain("toolPermissionMode: full-access");
+    expect(manifest).toContain("modelOverride:");
+    expect(manifest).not.toContain("messages:");
+    expect(
+      await readFile(join(store.storagePath!(created.id), "messages.jsonl"), "utf8"),
+    ).toContain('"kind":"user"');
+    await expect(store.getAttachments(created.id)).resolves.toEqual([]);
+  });
+
+  it("does not reuse an in-flight list snapshot after a mission mutation", async () => {
+    const root = await temporaryRoot();
+    const missionsPath = join(root, "missions");
+    const store = createMissionStore({ missionsPath });
+    const first = await store.create({
+      workspace: { path: join(root, "workspace"), basename: "workspace" },
+      goal: "Delete this mission",
+      project: { id: "studio", revision: 1 },
+      executor: missionExecutorSnapshot(expertFixture()),
+    });
+    const blocked = await store.create({
+      workspace: { path: join(root, "workspace"), basename: "workspace" },
+      goal: "Block list completion",
+      project: { id: "studio", revision: 1 },
+      executor: missionExecutorSnapshot(expertFixture()),
+    });
+    let releaseLock!: () => void;
+    const lockReleased = new Promise<void>((resolve) => {
+      releaseLock = resolve;
+    });
+    let markLockHeld!: () => void;
+    const lockHeld = new Promise<void>((resolve) => {
+      markLockHeld = resolve;
+    });
+    const heldLock = withFileLock(
+      join(missionsPath, ".locks", `${encodePragmaPathSegment(blocked.id)}.lock`),
+      async () => {
+        markLockHeld();
+        await lockReleased;
+      },
+      { operation: "mission.test-list-snapshot" },
+    );
+    await lockHeld;
+
+    const staleList = store.list();
+    await new Promise<void>((resolve) => setTimeout(resolve, 50));
+    await store.remove(first.id);
+    const freshList = store.list();
+    expect(freshList).not.toBe(staleList);
+
+    releaseLock();
+    await heldLock;
+    await expect(staleList).resolves.toEqual(
+      expect.arrayContaining([expect.objectContaining({ id: first.id })]),
+    );
+    await expect(freshList).resolves.not.toEqual(
+      expect.arrayContaining([expect.objectContaining({ id: first.id })]),
+    );
+  });
+
+  it("invalidates an in-flight list snapshot when an external deletion is forgotten", async () => {
+    const root = await temporaryRoot();
+    const missionsPath = join(root, "missions");
+    const store = createMissionStore({ missionsPath });
+    const first = await store.create({
+      workspace: { path: join(root, "workspace"), basename: "workspace" },
+      goal: "Delete this mission externally",
+      project: { id: "studio", revision: 1 },
+      executor: missionExecutorSnapshot(expertFixture()),
+    });
+    const blocked = await store.create({
+      workspace: { path: join(root, "workspace"), basename: "workspace" },
+      goal: "Block external deletion list completion",
+      project: { id: "studio", revision: 1 },
+      executor: missionExecutorSnapshot(expertFixture()),
+    });
+    let releaseLock!: () => void;
+    const lockReleased = new Promise<void>((resolve) => {
+      releaseLock = resolve;
+    });
+    let markLockHeld!: () => void;
+    const lockHeld = new Promise<void>((resolve) => {
+      markLockHeld = resolve;
+    });
+    const heldLock = withFileLock(
+      join(missionsPath, ".locks", `${encodePragmaPathSegment(blocked.id)}.lock`),
+      async () => {
+        markLockHeld();
+        await lockReleased;
+      },
+      { operation: "mission.test-external-deletion-list-snapshot" },
+    );
+    await lockHeld;
+
+    const staleList = store.list();
+    await new Promise<void>((resolve) => setTimeout(resolve, 50));
+    await rm(store.storagePath!(first.id), { recursive: true, force: true });
+    store.forget?.(first.id);
+    const freshList = store.list();
+    expect(freshList).not.toBe(staleList);
+
+    releaseLock();
+    await heldLock;
+    await expect(staleList).resolves.toEqual(
+      expect.arrayContaining([expect.objectContaining({ id: first.id })]),
+    );
+    await expect(freshList).resolves.not.toEqual(
+      expect.arrayContaining([expect.objectContaining({ id: first.id })]),
+    );
+  });
+
+  it("tracks Knowledge Store references without owning the Store lifecycle", async () => {
+    const root = await temporaryRoot();
+    const store = createMissionStore({ missionsPath: join(root, "missions") });
+    const contextStoreId = "10000000-0000-4000-8000-000000000001";
+    const created = await store.create({
+      workspace: { path: join(root, "workspace"), basename: "workspace" },
+      goal: "Use Mission Knowledge",
+      project: { id: "studio", revision: 1 },
+      executor: missionExecutorSnapshot(expertFixture()),
+      contextMounts: [{ kind: "context-store", storeId: contextStoreId }],
+    });
+
+    await expect(store.isContextStoreReferenced(contextStoreId)).resolves.toBe(true);
+    await expect(store.updateContextMounts(created.id, [])).resolves.toMatchObject({
+      contextMounts: [],
+    });
+    await expect(store.isContextStoreReferenced(contextStoreId)).resolves.toBe(false);
+  });
+
+  it("unmounts a submitted Skill draft while its owning execution is still running", async () => {
+    const root = await temporaryRoot();
+    const store = createMissionStore({ missionsPath: join(root, "missions") });
+    const draftId = "20000000-0000-4000-8000-000000000002";
+    const revisionJobId = "30000000-0000-4000-8000-000000000003";
+    const created = await store.create({
+      workspace: { path: join(root, "workspace"), basename: "workspace" },
+      goal: "Submit a Skill revision",
+      project: { id: "studio", revision: 1 },
+      executor: missionExecutorSnapshot(expertFixture()),
+      contextMounts: [
+        {
+          kind: "skill-revision-draft",
+          draftId,
+          revisionJobId,
+          capabilityId: "40000000-0000-4000-8000-000000000004",
+        },
+      ],
+    });
+    await store.updateExecution(created.id, {
+      id: "50000000-0000-4000-8000-000000000005",
+      inputMessageId: created.initialMessageId,
+      status: "running",
+      startedAt: "2026-09-20T00:00:00.000Z",
+    });
+
+    await expect(
+      store.unmountSkillRevisionDraft({ id: created.id, draftId }),
+    ).resolves.toMatchObject({ contextMounts: [] });
+  });
+
+  it("rebinds only the owning legacy Skill revision Mission workspace", async () => {
+    const root = await temporaryRoot();
+    const store = createMissionStore({ missionsPath: join(root, "missions") });
+    const draftId = "20000000-0000-4000-8000-000000000002";
+    const jobId = "30000000-0000-4000-8000-000000000003";
+    const capabilityId = "0123456789abcdef";
+    const legacyWorkspace = join(root, "data", "skill-revision-drafts", draftId, "worktree");
+    const targetWorkspace = join(root, "workspace");
+    const created = await store.create({
+      workspace: { path: legacyWorkspace, basename: "worktree" },
+      goal: "Continue a legacy Skill revision",
+      project: { id: "studio", revision: 1 },
+      executor: missionExecutorSnapshot(expertFixture()),
+      origin: { type: "system-skill-revision", jobId, capabilityId },
+      contextMounts: [
+        { kind: "skill-revision-draft", draftId, revisionJobId: jobId, capabilityId },
+      ],
+    });
+
+    await expect(
+      store.rebindLegacySkillRevisionWorkspace({
+        id: created.id,
+        draftId,
+        expectedWorkspacePath: legacyWorkspace,
+        workspace: { path: targetWorkspace, basename: "workspace" },
+      }),
+    ).resolves.toMatchObject({
+      workspace: { path: targetWorkspace, basename: "workspace" },
+      contextMounts: [expect.objectContaining({ kind: "skill-revision-draft", draftId })],
+    });
+    await expect(
+      store.rebindLegacySkillRevisionWorkspace({
+        id: created.id,
+        draftId,
+        expectedWorkspacePath: legacyWorkspace,
+        workspace: { path: targetWorkspace, basename: "workspace" },
+      }),
+    ).resolves.toMatchObject({ workspace: { path: targetWorkspace } });
+
+    const unrelated = await store.create({
+      workspace: { path: legacyWorkspace, basename: "worktree" },
+      goal: "Do unrelated work",
+      project: { id: "studio", revision: 1 },
+      executor: missionExecutorSnapshot(expertFixture()),
+      contextMounts: [
+        { kind: "skill-revision-draft", draftId, revisionJobId: jobId, capabilityId },
+      ],
+    });
+    await expect(
+      store.rebindLegacySkillRevisionWorkspace({
+        id: unrelated.id,
+        draftId,
+        expectedWorkspacePath: legacyWorkspace,
+        workspace: { path: targetWorkspace, basename: "workspace" },
+      }),
+    ).rejects.toMatchObject({ code: "config_invalid" });
+  });
+
+  it("replaces a published mount with an owning revision draft and restores it", async () => {
+    const root = await temporaryRoot();
+    const store = createMissionStore({ missionsPath: join(root, "missions") });
+    const contextStoreId = "10000000-0000-4000-8000-000000000001";
+    const draftId = "20000000-0000-4000-8000-000000000002";
+    const revisionJobId = "30000000-0000-4000-8000-000000000003";
+    const revisionExpertRef = "expert:0000000000st0rev";
+    const created = await store.create({
+      workspace: { path: join(root, "workspace"), basename: "workspace" },
+      goal: "Revise Mission Knowledge",
+      project: { id: "studio", revision: 1 },
+      executor: { kind: "expert", ref: revisionExpertRef, name: "Store Revision Agent" },
+      contextMounts: [{ kind: "context-store", storeId: contextStoreId }],
+    });
+
+    await expect(
+      store.mountManagedRevisionDraft({
+        id: created.id,
+        expectedExecutorRef: revisionExpertRef,
+        storeId: contextStoreId,
+        draftId,
+        revisionJobId,
+      }),
+    ).resolves.toMatchObject({
+      contextMounts: [{ kind: "context-store-draft", draftId, revisionJobId }],
+    });
+    await expect(
+      store.mountManagedRevisionDraft({
+        id: created.id,
+        expectedExecutorRef: revisionExpertRef,
+        storeId: contextStoreId,
+        draftId,
+        revisionJobId,
+      }),
+    ).resolves.toMatchObject({
+      contextMounts: [{ kind: "context-store-draft", draftId, revisionJobId }],
+    });
+    await expect(store.updateContextMounts(created.id, [])).rejects.toThrow(
+      "Managed Mission Knowledge Draft",
+    );
+    await store.updateContextMounts(created.id, [
+      { kind: "context-store-draft", draftId, revisionJobId },
+      { kind: "context-store", storeId: contextStoreId },
+    ]);
+    await expect(
+      store.restoreManagedRevisionStore({
+        id: created.id,
+        storeId: contextStoreId,
+        draftId,
+        revisionJobId,
+      }),
+    ).resolves.toMatchObject({
+      contextMounts: [{ kind: "context-store", storeId: contextStoreId }],
+    });
+  });
+
+  it("lets the revision Agent claim an already-mounted unowned draft", async () => {
+    const root = await temporaryRoot();
+    const store = createMissionStore({ missionsPath: join(root, "missions") });
+    const contextStoreId = "10000000-0000-4000-8000-000000000001";
+    const draftId = "20000000-0000-4000-8000-000000000002";
+    const revisionJobId = "30000000-0000-4000-8000-000000000003";
+    const revisionExpertRef = "expert:0000000000st0rev";
+    const created = await store.create({
+      workspace: { path: join(root, "workspace"), basename: "workspace" },
+      goal: "Continue an existing draft",
+      project: { id: "studio", revision: 1 },
+      executor: { kind: "expert", ref: revisionExpertRef, name: "Store Revision Agent" },
+      contextMounts: [{ kind: "context-store-draft", draftId }],
+    });
+
+    await expect(
+      store.mountManagedRevisionDraft({
+        id: created.id,
+        expectedExecutorRef: revisionExpertRef,
+        storeId: contextStoreId,
+        draftId,
+        revisionJobId,
+      }),
+    ).resolves.toMatchObject({
+      contextMounts: [{ kind: "context-store-draft", draftId, revisionJobId }],
+    });
+    await expect(
+      store.restoreManagedRevisionStore({
+        id: created.id,
+        storeId: contextStoreId,
+        draftId,
+        revisionJobId,
+      }),
+    ).resolves.toMatchObject({
+      contextMounts: [{ kind: "context-store", storeId: contextStoreId }],
+    });
+  });
+
+  it("keeps independent managed drafts mounted for multiple knowledge bases", async () => {
+    const root = await temporaryRoot();
+    const store = createMissionStore({ missionsPath: join(root, "missions") });
+    const firstStoreId = "10000000-0000-4000-8000-000000000001";
+    const secondStoreId = "10000000-0000-4000-8000-000000000002";
+    const firstDraftId = "20000000-0000-4000-8000-000000000001";
+    const secondDraftId = "20000000-0000-4000-8000-000000000002";
+    const firstJobId = "30000000-0000-4000-8000-000000000001";
+    const secondJobId = "30000000-0000-4000-8000-000000000002";
+    const revisionExpertRef = "expert:0000000000st0rev";
+    const created = await store.create({
+      workspace: { path: join(root, "workspace"), basename: "workspace" },
+      goal: "Revise two knowledge bases",
+      project: { id: "studio", revision: 1 },
+      executor: { kind: "expert", ref: revisionExpertRef, name: "Store Revision Agent" },
+      contextMounts: [
+        { kind: "context-store", storeId: firstStoreId },
+        { kind: "context-store", storeId: secondStoreId },
+      ],
+    });
+
+    await store.mountManagedRevisionDraft({
+      id: created.id,
+      expectedExecutorRef: revisionExpertRef,
+      storeId: firstStoreId,
+      draftId: firstDraftId,
+      revisionJobId: firstJobId,
+    });
+    await expect(
+      store.mountManagedRevisionDraft({
+        id: created.id,
+        expectedExecutorRef: revisionExpertRef,
+        storeId: secondStoreId,
+        draftId: secondDraftId,
+        revisionJobId: secondJobId,
+      }),
+    ).resolves.toMatchObject({
+      contextMounts: [
+        { kind: "context-store-draft", draftId: firstDraftId, revisionJobId: firstJobId },
+        { kind: "context-store-draft", draftId: secondDraftId, revisionJobId: secondJobId },
+      ],
+    });
+  });
+
+  it("materializes images inside the Mission while keeping file and directory references", async () => {
+    const root = await temporaryRoot();
+    const sourceDir = join(root, "source");
+    const folder = join(sourceDir, "fixtures");
+    const image = join(sourceDir, "screen.png");
+    const optimizedImage = join(sourceDir, "screen.optimized.webp");
+    const file = join(sourceDir, "requirements.md");
+    await mkdir(folder, { recursive: true });
+    await writeFile(image, "image-bytes");
+    await writeFile(optimizedImage, "optimized-image-bytes");
+    await writeFile(file, "requirements");
+    const store = createMissionStore({ missionsPath: join(root, "missions") });
+
+    const mission = await store.create({
+      workspace: { path: join(root, "workspace"), basename: "workspace" },
+      goal: "Review the attached context",
+      project: { id: "studio", revision: 1 },
+      executor: missionExecutorSnapshot(expertFixture()),
+      attachments: [
+        {
+          id: "00000000-0000-4000-8000-000000000001",
+          kind: "image",
+          name: "screen.png",
+          path: image,
+          mimeType: "image/png",
+          optimized: {
+            path: optimizedImage,
+            mimeType: "image/webp",
+            size: 21,
+          },
+        },
+        {
+          id: "00000000-0000-4000-8000-000000000002",
+          kind: "file",
+          name: "requirements.md",
+          path: file,
+        },
+        {
+          id: "00000000-0000-4000-8000-000000000003",
+          kind: "directory",
+          name: "fixtures",
+          path: folder,
+        },
+      ],
+    });
+
+    const stored = await store.getAttachments(mission.id);
+    expect(stored).toHaveLength(3);
+    expect(stored[0]).toMatchObject({ kind: "image", mimeType: "image/png" });
+    expect(stored[0]?.path).toBe(
+      join(store.storagePath!(mission.id), "attachments", "images", `${stored[0]?.id}.png`),
+    );
+    await expect(readFile(stored[0]!.path, "utf8")).resolves.toBe("image-bytes");
+    expect(stored[0]?.optimized?.path).toBe(
+      join(
+        store.storagePath!(mission.id),
+        "attachments",
+        "images",
+        "optimized",
+        `${stored[0]?.id}.webp`,
+      ),
+    );
+    await expect(readFile(stored[0]!.optimized!.path, "utf8")).resolves.toBe(
+      "optimized-image-bytes",
+    );
+    expect(stored[1]).toMatchObject({ kind: "file", path: await realpath(file), size: 12 });
+    expect(stored[2]).toEqual({
+      id: "00000000-0000-4000-8000-000000000003",
+      kind: "directory",
+      name: "fixtures",
+      path: await realpath(folder),
+    });
+    expect(
+      JSON.parse(await readFile(join(store.storagePath!(mission.id), "attachments.json"), "utf8")),
+    ).toMatchObject({ schemaVersion: "pragma.mission-attachments/v1" });
+    const initialTurn = (await store.readTimelinePage(mission.id, { limit: 10 })).turns[0];
+    expect(initialTurn?.message.attachments).toEqual(stored);
+  });
+
+  it("materializes follow-up attachments on their own timeline message", async () => {
+    const root = await temporaryRoot();
+    const firstImage = join(root, "first.png");
+    const followupImage = join(root, "followup.png");
+    await writeFile(firstImage, "first-image");
+    await writeFile(followupImage, "followup-image");
+    const store = createMissionStore({ missionsPath: join(root, "missions") });
+    const mission = await store.create({
+      workspace: { path: join(root, "workspace"), basename: "workspace" },
+      goal: "Review the first image",
+      project: { id: "studio", revision: 1 },
+      executor: missionExecutorSnapshot(expertFixture()),
+      attachments: [
+        {
+          id: "00000000-0000-4000-8000-000000000001",
+          kind: "image",
+          name: "first.png",
+          path: firstImage,
+          mimeType: "image/png",
+        },
+      ],
+    });
+
+    const followup = {
+      id: "00000000-0000-4000-8000-000000000003",
+      content: "Now review this image.",
+      attachments: [
+        {
+          id: "00000000-0000-4000-8000-000000000002",
+          kind: "image" as const,
+          name: "pasted-image.png",
+          path: followupImage,
+          mimeType: "image/png",
+        },
+      ],
+      createdAt: "2026-08-10T00:00:00.000Z",
+    };
+    const record = await store.appendUserMessage(mission.id, followup);
+    expect(record.kind).toBe("user");
+    await expect(
+      store.appendUserMessage(mission.id, {
+        ...followup,
+        createdAt: "2026-08-10T00:00:01.000Z",
+      }),
+    ).resolves.toEqual(record);
+    await expect(
+      store.appendUserMessage(mission.id, {
+        ...followup,
+        attachments: [{ ...followup.attachments[0]!, name: "different.png" }],
+      }),
+    ).rejects.toMatchObject({ code: "message_conflict" });
+    const added = record.kind === "user" ? (record.attachments ?? []) : [];
+
+    const turns = (await store.readTimelinePage(mission.id, { limit: 10 })).turns;
+    expect(turns[0]?.message.attachments?.map(({ name }) => name)).toEqual(["first.png"]);
+    expect(turns[1]?.message.attachments?.map(({ name }) => name)).toEqual(["pasted-image.png"]);
+    await expect(readFile(added[0]!.path, "utf8")).resolves.toBe("followup-image");
+    await expect(store.getAttachments(mission.id)).resolves.toHaveLength(2);
+  });
+
+  it("creates an isolated branch from the latest reply and copies current Mission context", async () => {
+    const root = await temporaryRoot();
+    const sourceImage = join(root, "branch-source.png");
+    await writeFile(sourceImage, "branch-image");
+    const store = createMissionStore({ missionsPath: join(root, "missions") });
+    const contextStoreId = "10000000-0000-4000-8000-000000000001";
+    const draftId = "20000000-0000-4000-8000-000000000001";
+    const source = await store.create({
+      workspace: { path: join(root, "workspace"), basename: "workspace" },
+      goal: "Continue a long-running investigation",
+      title: "A".repeat(48),
+      project: { id: "studio", revision: 2 },
+      executor: missionExecutorSnapshot(expertFixture()),
+      contextMounts: [
+        { kind: "context-store", storeId: contextStoreId },
+        { kind: "context-store-draft", draftId },
+      ],
+      toolPermissionMode: "full-access",
+      modelOverride: { providerId: "provider", modelId: "old-model", thinkingLevel: "high" },
+      attachments: [
+        {
+          id: "00000000-0000-4000-8000-000000000030",
+          kind: "image",
+          name: "branch-source.png",
+          path: sourceImage,
+          mimeType: "image/png",
+        },
+      ],
+    });
+    const executionId = "00000000-0000-4000-8000-000000000031";
+    await store.appendExecutionReference({
+      missionId: source.id,
+      inputMessageId: source.initialMessageId,
+      executionId,
+      createdAt: "2026-08-20T00:00:00.000Z",
+    });
+    await store.updateExecution(source.id, {
+      id: executionId,
+      inputMessageId: source.initialMessageId,
+      status: "succeeded",
+      startedAt: "2026-08-20T00:00:00.000Z",
+      finishedAt: "2026-08-20T00:01:00.000Z",
+    });
+    const followUpId = "00000000-0000-4000-8000-000000000032";
+    await store.appendUserMessage(source.id, {
+      id: followUpId,
+      content: "Continue with the new evidence",
+      createdAt: "2026-08-20T00:02:00.000Z",
+    });
+    const latestExecutionId = "00000000-0000-4000-8000-000000000033";
+    await store.appendExecutionReference({
+      missionId: source.id,
+      inputMessageId: followUpId,
+      executionId: latestExecutionId,
+      createdAt: "2026-08-20T00:02:00.000Z",
+    });
+    const settled = await store.updateExecution(source.id, {
+      id: latestExecutionId,
+      inputMessageId: followUpId,
+      status: "succeeded",
+      startedAt: "2026-08-20T00:02:00.000Z",
+      finishedAt: "2026-08-20T00:03:00.000Z",
+    });
+    const sourceDirectory = store.storagePath!(source.id);
+    await mkdir(join(sourceDirectory, "board", "shared"), { recursive: true });
+    await mkdir(join(sourceDirectory, "board", "private"), { recursive: true });
+    await writeFile(join(sourceDirectory, "board", "shared", "result.md"), "shared result");
+    await writeFile(join(sourceDirectory, "board", "private", "notes.md"), "private notes");
+    const sourceTurns = (await store.readTimelinePage(source.id, { limit: 10 })).turns;
+    const initialTurn = sourceTurns[0]!;
+    const followUpTurn = sourceTurns[1]!;
+    const initialMessage = {
+      ...initialTurn.message,
+      kind: "user" as const,
+      timelineSequence: initialTurn.sequence,
+    };
+    const firstReply = {
+      id: "assistant:first",
+      kind: "assistant" as const,
+      content: "Initial answer",
+      executionId,
+      timelineSequence: initialTurn.sequence,
+      streaming: false,
+      createdAt: "2026-08-20T00:01:00.000Z",
+    };
+    const followUpMessage = {
+      ...followUpTurn.message,
+      kind: "user" as const,
+      timelineSequence: followUpTurn.sequence,
+    };
+    const inheritedActivity = {
+      id: "activity:latest",
+      kind: "agent_activity" as const,
+      commandId: "command:latest",
+      action: "spawn" as const,
+      phase: "completed" as const,
+      senderSessionId: "source-sender-session",
+      targetSessionIds: ["source-target-session"],
+      executionId: latestExecutionId,
+      timelineSequence: followUpTurn.sequence,
+      createdAt: "2026-08-20T00:02:30.000Z",
+    };
+    const finalReply = {
+      id: "assistant:final",
+      kind: "assistant" as const,
+      content: "# Final answer\n\nKeep this Markdown.",
+      executionId: latestExecutionId,
+      timelineSequence: followUpTurn.sequence,
+      streaming: false,
+      createdAt: "2026-08-20T00:03:00.000Z",
+    };
+    const updatedExecutor = { ...source.executor, name: "Updated Product Designer" };
+
+    const branch = await store.createBranch({
+      sourceMissionId: source.id,
+      expectedSourceUpdatedAt: settled.updatedAt,
+      expectedExecutionId: latestExecutionId,
+      expectedMessageId: finalReply.id,
+      project: { id: "studio", revision: 7 },
+      executor: updatedExecutor,
+      history: [initialMessage, firstReply, followUpMessage, inheritedActivity, finalReply],
+    });
+
+    expect(branch).toMatchObject({
+      schemaVersion: "pragma.mission/v11",
+      title: `分支 · ${source.title}`,
+      workspace: source.workspace,
+      project: { id: "studio", revision: 7 },
+      executor: { name: "Updated Product Designer" },
+      contextMounts: [{ kind: "context-store", storeId: contextStoreId }],
+      toolPermissionMode: "full-access",
+      modelOverride: { modelId: "old-model" },
+      branch: {
+        sourceMissionId: source.id,
+        sourceProjectRevision: 2,
+        cutoffExecutionId: latestExecutionId,
+        cutoffMessageId: finalReply.id,
+      },
+    });
+    expect(branch.execution).toBeUndefined();
+    const branchTimeline = await store.readTimelinePage(branch.id, { limit: 10 });
+    expect(branchTimeline.turns.map((turn) => turn.sequence)).toEqual([1, 2]);
+    expect(branchTimeline.turns.every((turn) => turn.executionId === undefined)).toBe(true);
+    const branchHistory = await store.readBranchHistory(branch.id);
+    expect(branchHistory?.entries).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: `branch:${source.id}:${source.initialMessageId}`,
+          kind: "user",
+          timelineSequence: 1,
+        }),
+        expect.objectContaining({
+          id: `branch:${source.id}:${followUpId}`,
+          kind: "user",
+          timelineSequence: 2,
+        }),
+      ]),
+    );
+    const inheritedFinalReply = branchHistory?.entries.find(
+      (entry) => entry.id === `branch:${source.id}:${finalReply.id}`,
+    );
+    expect(inheritedFinalReply).toMatchObject({
+      id: `branch:${source.id}:${finalReply.id}`,
+      kind: "assistant",
+      content: finalReply.content,
+      timelineSequence: 2,
+    });
+    expect(inheritedFinalReply).not.toHaveProperty("executionId");
+    const inheritedAgentActivity = branchHistory?.entries.find(
+      (entry) => entry.id === `branch:${source.id}:${inheritedActivity.id}`,
+    );
+    expect(inheritedAgentActivity).not.toHaveProperty("senderSessionId");
+    expect(inheritedAgentActivity).toMatchObject({ targetSessionIds: [] });
+
+    const branchUsers = branchTimeline.turns.map((turn) => ({
+      ...turn.message,
+      kind: "user" as const,
+      timelineSequence: turn.sequence,
+    }));
+    const nestedSourceHistory = [
+      ...branchUsers,
+      ...(branchHistory?.entries.filter((entry) => entry.kind !== "user") ?? []),
+    ].toSorted((left, right) => {
+      const sequence = (left.timelineSequence ?? 0) - (right.timelineSequence ?? 0);
+      return sequence === 0 ? left.createdAt.localeCompare(right.createdAt) : sequence;
+    });
+    const nestedReplyId = `branch:${source.id}:${finalReply.id}`;
+    const nestedBranch = await store.createBranch({
+      sourceMissionId: branch.id,
+      expectedSourceUpdatedAt: branch.updatedAt,
+      expectedExecutionId: null,
+      expectedMessageId: nestedReplyId,
+      project: branch.project,
+      executor: branch.executor,
+      history: nestedSourceHistory,
+    });
+    expect(nestedBranch.branch).toMatchObject({
+      sourceMissionId: branch.id,
+      cutoffMessageId: nestedReplyId,
+    });
+    expect(nestedBranch.branch).not.toHaveProperty("cutoffExecutionId");
+
+    const interruptedUserId = "00000000-0000-4000-8000-000000000034";
+    await store.appendUserMessage(source.id, {
+      id: interruptedUserId,
+      content: "Start work that will be interrupted",
+      createdAt: "2026-08-20T00:04:00.000Z",
+    });
+    const interruptedExecutionId = "00000000-0000-4000-8000-000000000035";
+    await store.appendExecutionReference({
+      missionId: source.id,
+      inputMessageId: interruptedUserId,
+      executionId: interruptedExecutionId,
+      createdAt: "2026-08-20T00:04:00.000Z",
+    });
+    const interrupted = await store.updateExecution(source.id, {
+      id: interruptedExecutionId,
+      inputMessageId: interruptedUserId,
+      status: "cancelled",
+      startedAt: "2026-08-20T00:04:00.000Z",
+      finishedAt: "2026-08-20T00:05:00.000Z",
+    });
+    const interruptedBranch = await store.createBranch({
+      sourceMissionId: source.id,
+      expectedSourceUpdatedAt: interrupted.updatedAt,
+      expectedExecutionId: interruptedExecutionId,
+      expectedMessageId: finalReply.id,
+      project: interrupted.project,
+      executor: interrupted.executor,
+      history: [
+        initialMessage,
+        firstReply,
+        followUpMessage,
+        inheritedActivity,
+        finalReply,
+        {
+          id: interruptedUserId,
+          kind: "user",
+          content: "Start work that will be interrupted",
+          executionId: interruptedExecutionId,
+          timelineSequence: 3,
+          createdAt: "2026-08-20T00:04:00.000Z",
+        },
+        {
+          id: `result:${interruptedExecutionId}`,
+          kind: "assistant",
+          content: "Execution interrupted.",
+          executionId: interruptedExecutionId,
+          timelineSequence: 3,
+          streaming: false,
+          createdAt: "2026-08-20T00:05:00.000Z",
+        },
+      ],
+    });
+    expect(interruptedBranch.branch).toMatchObject({
+      cutoffExecutionId: latestExecutionId,
+      cutoffMessageId: finalReply.id,
+    });
+    expect((await store.readTimelinePage(interruptedBranch.id, { limit: 10 })).turns).toHaveLength(
+      2,
+    );
+    const interruptedBranchHistory = await store.readBranchHistory(interruptedBranch.id);
+    expect(
+      interruptedBranchHistory?.entries.some(
+        (entry) =>
+          entry.id.includes(interruptedUserId) || entry.id.includes(interruptedExecutionId),
+      ),
+    ).toBe(false);
+
+    const branchAttachments = await store.getAttachments(branch.id);
+    expect(branchAttachments).toHaveLength(1);
+    expect(branchAttachments[0]?.path).toContain(
+      join(store.storagePath!(branch.id), "attachments"),
+    );
+    expect(
+      branchHistory?.entries[0]?.kind === "user"
+        ? branchHistory.entries[0].attachments?.[0]?.path
+        : undefined,
+    ).toBe(branchAttachments[0]?.path);
+    await expect(readFile(branchAttachments[0]!.path, "utf8")).resolves.toBe("branch-image");
+    await expect(
+      readFile(join(store.storagePath!(branch.id), "board", "shared", "result.md"), "utf8"),
+    ).resolves.toBe("shared result");
+    await expect(
+      readFile(
+        join(store.storagePath!(branch.id), "branch", "private-board-archive", "notes.md"),
+        "utf8",
+      ),
+    ).resolves.toBe("private notes");
+    await expect(store.get(source.id)).resolves.toEqual(interrupted);
+  });
+
+  it("recovers a follow-up whose attachment manifest persisted before its user message", async () => {
+    const root = await temporaryRoot();
+    const source = join(root, "followup.png");
+    await writeFile(source, "followup-image");
+    const store = createMissionStore({ missionsPath: join(root, "missions") });
+    const mission = await store.create({
+      workspace: { path: join(root, "workspace"), basename: "workspace" },
+      goal: "Review an image",
+      project: { id: "studio", revision: 1 },
+      executor: missionExecutorSnapshot(expertFixture()),
+    });
+    const missionDirectory = store.storagePath!(mission.id);
+    const messageId = "00000000-0000-4000-8000-000000000003";
+    const attachmentId = "00000000-0000-4000-8000-000000000002";
+    const storedPath = join(missionDirectory, "attachments", "images", `${attachmentId}.png`);
+    await mkdir(join(missionDirectory, "attachments", "images"), { recursive: true });
+    await writeFile(storedPath, "followup-image");
+    const storedAttachment = {
+      id: attachmentId,
+      kind: "image" as const,
+      name: "followup.png",
+      path: storedPath,
+      mimeType: "image/png" as const,
+      size: 14,
+    };
+    const baseAttachments = {
+      schemaVersion: "pragma.mission-attachments/v1" as const,
+      attachments: [],
+    };
+    const targetAttachments = {
+      schemaVersion: "pragma.mission-attachments/v1" as const,
+      attachments: [storedAttachment],
+    };
+    await writeFile(
+      join(missionDirectory, "attachments.json"),
+      `${JSON.stringify(targetAttachments, null, 2)}\n`,
+    );
+    await writeFile(
+      join(missionDirectory, ".user-message-attachments.transaction.json"),
+      `${JSON.stringify({
+        schemaVersion: "pragma.mission-user-message-attachments-transaction/v1",
+        baseAttachments,
+        targetAttachments,
+        record: {
+          schemaVersion: "pragma.mission-message/v1",
+          sequence: 2,
+          kind: "user",
+          id: messageId,
+          content: "Now review this image.",
+          attachments: [storedAttachment],
+          createdAt: "2026-08-10T00:00:00.000Z",
+        },
+        updatedAt: "2026-08-10T00:00:01.000Z",
+      })}\n`,
+    );
+
+    const recovered = await store.readTimelinePage(mission.id, { limit: 10 });
+
+    expect(recovered.turns[1]?.message).toMatchObject({
+      id: messageId,
+      attachments: [expect.objectContaining({ id: attachmentId, path: storedPath })],
+    });
+    await expect(store.getAttachments(mission.id)).resolves.toEqual([storedAttachment]);
+    await expect(
+      readFile(join(missionDirectory, ".user-message-attachments.transaction.json"), "utf8"),
+    ).rejects.toMatchObject({ code: "ENOENT" });
+    const duplicate = await store.appendUserMessage(mission.id, {
+      id: messageId,
+      content: "Now review this image.",
+      attachments: [
+        {
+          id: attachmentId,
+          kind: "image",
+          name: "followup.png",
+          path: source,
+          mimeType: "image/png",
+        },
+      ],
+      createdAt: "2026-08-10T00:00:00.000Z",
+    });
+    expect(duplicate).toMatchObject({
+      schemaVersion: "pragma.mission-message/v1",
+      sequence: 2,
+      kind: "user",
+      id: messageId,
+      attachments: [expect.objectContaining({ id: attachmentId })],
+    });
+    await expect(store.readTimelinePage(mission.id, { limit: 10 })).resolves.toMatchObject({
+      turns: [{}, {}],
+    });
+  });
+
+  it("fails closed when the attachment manifest is corrupted", async () => {
+    const root = await temporaryRoot();
+    const store = createMissionStore({ missionsPath: join(root, "missions") });
+    const mission = await store.create({
+      workspace: { path: join(root, "workspace"), basename: "workspace" },
+      goal: "Review the attached context",
+      project: { id: "studio", revision: 1 },
+      executor: missionExecutorSnapshot(expertFixture()),
+    });
+    await writeFile(join(store.storagePath!(mission.id), "attachments.json"), "{not-json");
+
+    await expect(store.getAttachments(mission.id)).rejects.toMatchObject({
+      code: "config_invalid",
+    });
+  });
+
+  it("resolves legacy execution-scoped jobs to their Mission titles", async () => {
+    const root = await temporaryRoot();
+    const store = createMissionStore({ missionsPath: join(root, "missions") });
+    const mission = await store.create({
+      workspace: { path: join(root, "workspace"), basename: "workspace" },
+      goal: "Prepare the release notes",
+      project: { id: "studio", revision: 1 },
+      executor: missionExecutorSnapshot(expertFixture()),
+    });
+    const executionId = "18e8cabd-dab7-4256-be4c-731ad50339b1";
+    await store.appendExecutionReference({
+      missionId: mission.id,
+      inputMessageId: mission.initialMessageId,
+      executionId,
+      createdAt: "2026-08-05T08:00:00.000Z",
+    });
+
+    const titles = await store.resolveExecutionTitles([executionId, crypto.randomUUID()]);
+    expect(titles.get(executionId)).toBe("Prepare the release notes");
+    expect(titles.size).toBe(1);
+
+    await store.remove(mission.id);
+    expect(await store.resolveExecutionTitles([executionId])).toEqual(new Map());
+  });
+
+  it("marks a mission complete and reopens it", async () => {
+    const root = await temporaryRoot();
+    const store = createMissionStore({ missionsPath: join(root, "missions") });
+    const created = await store.create({
+      workspace: { path: join(root, "workspace"), basename: "workspace" },
+      goal: "Review the desktop shell",
+      project: { id: "studio", revision: 1 },
+      executor: missionExecutorSnapshot(expertFixture()),
+    });
+
+    const completed = await store.markComplete(created.id);
+    expect(completed.lifecycleStatus).toBe("completed");
+    expect(completed.completedAt).toBeDefined();
+
+    const reopened = await store.reopen(created.id);
+    expect(reopened.lifecycleStatus).toBe("active");
+    expect(reopened.completedAt).toBeUndefined();
+  });
+
+  it("lists user and Automation Missions while keeping system Memory Missions internal", async () => {
+    const root = await temporaryRoot();
+    const store = createMissionStore({ missionsPath: join(root, "missions") });
+    const user = await store.create({
+      workspace: { path: join(root, "workspace"), basename: "workspace" },
+      goal: "Visible Mission",
+      project: { id: "studio", revision: 1 },
+      executor: missionExecutorSnapshot(expertFixture()),
+    });
+    const internal = await store.create({
+      workspace: { path: join(root, "workspace"), basename: "workspace" },
+      goal: "Internal extraction",
+      project: { id: "studio", revision: 1 },
+      executor: missionExecutorSnapshot(expertFixture()),
+      origin: { type: "system-memory", jobId: "memory-job" },
+    });
+    const automation = await store.create({
+      workspace: { path: join(root, "workspace"), basename: "workspace" },
+      goal: "Scheduled review",
+      project: { id: "studio", revision: 1 },
+      executor: missionExecutorSnapshot(expertFixture()),
+      origin: { type: "automation", automationRef: "automation:m9a8n9nxvvyb4j01" },
+    });
+
+    await expect(store.list()).resolves.toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: automation.id,
+          source: { type: "automation", automationRef: "automation:m9a8n9nxvvyb4j01" },
+        }),
+        expect.objectContaining({ id: user.id, source: { type: "task" } }),
+      ]),
+    );
+    await expect(store.get(internal.id)).resolves.toMatchObject({
+      origin: { type: "system-memory" },
+    });
+  });
+
+  it("persists a recoverable legacy Automation origin without changing Mission recency", async () => {
+    const root = await temporaryRoot();
+    const store = createMissionStore({ missionsPath: join(root, "missions") });
+    const legacy = await store.create({
+      workspace: { path: join(root, "workspace"), basename: "workspace" },
+      goal: "Legacy scheduled review",
+      project: { id: "studio", revision: 1 },
+      executor: missionExecutorSnapshot(expertFixture()),
+    });
+
+    const migrated = await store.backfillAutomationOrigin(legacy.id, "automation:m9a8n9nxvvyb4j01");
+
+    expect(migrated).toMatchObject({
+      id: legacy.id,
+      origin: { type: "automation", automationRef: "automation:m9a8n9nxvvyb4j01" },
+      updatedAt: legacy.updatedAt,
+    });
+    await expect(store.list()).resolves.toEqual([
+      expect.objectContaining({
+        id: legacy.id,
+        source: { type: "automation", automationRef: "automation:m9a8n9nxvvyb4j01" },
+        updatedAt: legacy.updatedAt,
+      }),
+    ]);
+  });
+
+  it("limits rule-based titles derived from the Mission goal", async () => {
+    const root = await temporaryRoot();
+    const store = createMissionStore({ missionsPath: join(root, "missions") });
+    const created = await store.create({
+      workspace: { path: join(root, "workspace"), basename: "workspace" },
+      goal: "为每一个 Git 子模块创建并推送 feature/pnpm-workspace-compat 分支，同时检查远程状态",
+      project: { id: "studio", revision: 1 },
+      executor: missionExecutorSnapshot(expertFixture()),
+    });
+
+    expect(Array.from(created.title)).toHaveLength(MISSION_TITLE_MAX_LENGTH);
+    expect(created.title.endsWith("…")).toBe(true);
+  });
+
+  it("atomically preserves the Session fingerprint and published mounts when adding a dynamic draft", async () => {
+    const root = await temporaryRoot();
+    const options = { missionsPath: join(root, "missions") };
+    const store = createMissionStore(options);
+    const storeId = "00000000-0000-4000-8000-000000000021";
+    const mission = await store.create({
+      workspace: { path: root, basename: "workspace" },
+      goal: "Revise in the Team",
+      project: { id: "studio", revision: 1 },
+      executor: missionExecutorSnapshot(expertFixture()),
+      contextMounts: [{ kind: "context-store", storeId }],
+    });
+    const sessionId = "00000000-0000-4000-8000-000000000022";
+    await store.updateExecution(mission.id, {
+      id: "00000000-0000-4000-8000-000000000023",
+      sessionId,
+      inputMessageId: mission.initialMessageId,
+      status: "running",
+      startedAt: "2026-09-15T00:00:00.000Z",
+      contextMountsFingerprint: missionContextMountsFingerprint(mission),
+    });
+    await store.mountManagedRevisionDraft({
+      id: mission.id,
+      expectedExecutorRef: mission.executor.ref,
+      storeId,
+      draftId: "00000000-0000-4000-8000-000000000024",
+      revisionJobId: "00000000-0000-4000-8000-000000000025",
+      preserveSession: true,
+    });
+    const reopened = await createMissionStore(options).get(mission.id);
+    expect(reopened.execution).toMatchObject({
+      sessionId,
+      contextMountsFingerprint: missionContextMountsFingerprint(reopened),
+    });
+    expect(reopened.contextMounts).toEqual(
+      expect.arrayContaining([
+        { kind: "context-store", storeId },
+        expect.objectContaining({ kind: "context-store-draft" }),
+      ]),
+    );
+    await store.restoreManagedRevisionStore({
+      id: mission.id,
+      storeId,
+      draftId: "00000000-0000-4000-8000-000000000024",
+      revisionJobId: "00000000-0000-4000-8000-000000000025",
+      preserveSession: true,
+    });
+    const restored = await createMissionStore(options).get(mission.id);
+    expect(restored.execution).toMatchObject({
+      sessionId,
+      contextMountsFingerprint: missionContextMountsFingerprint(restored),
+    });
+    expect(restored.contextMounts).toEqual([{ kind: "context-store", storeId }]);
+  });
+
+  it("updates idle Mission options without changing pinned Mission identity", async () => {
+    const root = await temporaryRoot();
+    const store = createMissionStore({ missionsPath: join(root, "missions") });
+    const created = await store.create({
+      workspace: { path: join(root, "workspace"), basename: "workspace" },
+      goal: "Continue with a different model",
+      project: { id: "studio", revision: 1 },
+      executor: missionExecutorSnapshot(expertFixture()),
+    });
+    const execution = {
+      id: "00000000-0000-4000-8000-000000000010",
+      inputMessageId: created.initialMessageId,
+      status: "running" as const,
+      startedAt: "2026-07-15T00:00:00.000Z",
+    };
+    await store.updateExecution(created.id, execution);
+
+    await expect(
+      store.updateOptions(created.id, {
+        toolPermissionMode: "full-access",
+      }),
+    ).rejects.toThrow("Wait for the current execution");
+
+    const duringRun = await store.updateOptions(created.id, {
+      toolPermissionMode: created.toolPermissionMode,
+      modelOverride: { providerId: "provider", modelId: "next-model", thinkingLevel: "high" },
+    });
+    expect(duringRun.execution).toEqual(execution);
+    expect(duringRun.modelOverride?.modelId).toBe("next-model");
+    await store.updateExecution(created.id, { ...execution, status: "succeeded" });
+    const updated = await store.updateOptions(created.id, {
+      toolPermissionMode: "auto-approve",
+      modelOverride: { providerId: "provider", modelId: "next-model", thinkingLevel: "high" },
+    });
+
+    expect(updated.toolPermissionMode).toBe("auto-approve");
+    expect(updated.modelOverride?.modelId).toBe("next-model");
+    expect(updated.workspace).toEqual(created.workspace);
+    expect(updated.executor).toEqual(created.executor);
+    expect(updated.project).toEqual(created.project);
+
+    const cleared = await store.updateOptions(created.id, {
+      toolPermissionMode: "request-approval",
+    });
+    expect(cleared.modelOverride).toBeUndefined();
+  });
+
+  it("does not let a stale observer overwrite a terminal execution status", async () => {
+    const root = await temporaryRoot();
+    const store = createMissionStore({ missionsPath: join(root, "missions") });
+    const created = await store.create({
+      workspace: { path: join(root, "workspace"), basename: "workspace" },
+      goal: "Run once",
+      project: { id: "studio", revision: 1 },
+      executor: missionExecutorSnapshot(expertFixture()),
+    });
+    const executionId = "00000000-0000-4000-8000-000000000001";
+    const startedAt = "2026-07-15T00:00:00.000Z";
+    await store.updateExecution(created.id, {
+      id: executionId,
+      inputMessageId: created.initialMessageId,
+      status: "running",
+      startedAt,
+    });
+    await store.updateExecution(
+      created.id,
+      {
+        id: executionId,
+        inputMessageId: created.initialMessageId,
+        status: "succeeded",
+        startedAt,
+        finishedAt: "2026-07-15T00:01:00.000Z",
+      },
+      { executionId, statuses: ["running", "waiting"] },
+    );
+
+    const stale = await store.updateExecution(
+      created.id,
+      {
+        id: executionId,
+        inputMessageId: created.initialMessageId,
+        status: "waiting",
+        startedAt,
+      },
+      { executionId, statuses: ["running", "waiting"] },
+    );
+
+    expect(stale.execution?.status).toBe("succeeded");
+    expect((await store.get(created.id)).execution?.status).toBe("succeeded");
+  });
+
+  it("preserves an execution environment snapshot across status projections", async () => {
+    const root = await temporaryRoot();
+    const store = createMissionStore({ missionsPath: join(root, "missions") });
+    const created = await store.create({
+      workspace: { path: join(root, "workspace"), basename: "workspace" },
+      goal: "Recover the same environment",
+      project: { id: "studio", revision: 1 },
+      executor: missionExecutorSnapshot(expertFixture()),
+    });
+    const executionId = "00000000-0000-4000-8000-000000000031";
+    const startedAt = "2026-09-22T00:00:00.000Z";
+    const fingerprint = "a".repeat(64);
+    await store.updateExecution(created.id, {
+      id: executionId,
+      inputMessageId: created.initialMessageId,
+      status: "running",
+      startedAt,
+      contextMountsFingerprint: fingerprint,
+      environmentFingerprint: fingerprint,
+      resolvedCapabilities: [
+        {
+          capabilityId: "1h2j3k4m5n6p7q8r",
+          resolvedRevision: 2,
+          fingerprint,
+        },
+      ],
+    });
+
+    const waiting = await store.updateExecution(created.id, {
+      id: executionId,
+      inputMessageId: created.initialMessageId,
+      status: "waiting",
+      waitReason: "human_input",
+      startedAt,
+    });
+
+    expect(waiting.execution).toMatchObject({
+      contextMountsFingerprint: fingerprint,
+      environmentFingerprint: fingerprint,
+      resolvedCapabilities: [
+        {
+          capabilityId: "1h2j3k4m5n6p7q8r",
+          resolvedRevision: 2,
+          fingerprint,
+        },
+      ],
+    });
+  });
+
+  it("reports a stable error for a missing mission", async () => {
+    const root = await temporaryRoot();
+    const store = createMissionStore({ missionsPath: join(root, "missions") });
+    await expect(store.get("00000000-0000-4000-8000-000000000000")).rejects.toMatchObject({
+      code: "mission_not_found",
+    });
+  });
+
+  it("deletes an idle mission and protects an active execution", async () => {
+    const root = await temporaryRoot();
+    const store = createMissionStore({ missionsPath: join(root, "missions") });
+    const idle = await store.create({
+      workspace: { path: join(root, "workspace"), basename: "workspace" },
+      goal: "Remove this conversation",
+      project: { id: "studio", revision: 1 },
+      executor: missionExecutorSnapshot(expertFixture()),
+    });
+    await store.remove(idle.id);
+    await expect(store.get(idle.id)).rejects.toMatchObject({ code: "mission_not_found" });
+
+    const active = await store.create({
+      workspace: { path: join(root, "workspace"), basename: "workspace" },
+      goal: "Keep this execution",
+      project: { id: "studio", revision: 1 },
+      executor: missionExecutorSnapshot(expertFixture()),
+    });
+    await store.updateExecution(active.id, {
+      id: "00000000-0000-4000-8000-000000000002",
+      inputMessageId: active.initialMessageId,
+      status: "running",
+      startedAt: "2026-07-16T00:00:00.000Z",
+    });
+    await expect(store.remove(active.id)).rejects.toMatchObject({ code: "mission_active" });
+  });
+
+  it("appends idempotent timeline records and pages logical turns", async () => {
+    const root = await temporaryRoot();
+    const store = createMissionStore({ missionsPath: join(root, "missions") });
+    const created = await store.create({
+      workspace: { path: join(root, "workspace"), basename: "workspace" },
+      goal: "Initial request",
+      project: { id: "studio", revision: 1 },
+      executor: missionExecutorSnapshot(expertFixture()),
+    });
+    const message = {
+      id: "00000000-0000-4000-8000-000000000010",
+      content: "Follow up",
+      createdAt: "2026-07-17T00:00:00.000Z",
+    };
+    const first = await store.appendUserMessage(created.id, message);
+    const duplicate = await store.appendUserMessage(created.id, {
+      ...message,
+      createdAt: "2026-07-17T00:00:00.500Z",
+    });
+    expect(duplicate).toEqual(first);
+    const executionReference = {
+      missionId: created.id,
+      inputMessageId: message.id,
+      executionId: "00000000-0000-4000-8000-000000000011",
+      createdAt: "2026-07-17T00:00:01.000Z",
+    };
+    const firstExecutionReference = await store.appendExecutionReference(executionReference);
+    await expect(
+      store.appendExecutionReference({
+        ...executionReference,
+        createdAt: "2026-07-17T00:00:01.500Z",
+      }),
+    ).resolves.toEqual(firstExecutionReference);
+
+    const latest = await store.readTimelinePage(created.id, { limit: 1 });
+    expect(latest.turns).toEqual([
+      expect.objectContaining({
+        sequence: 2,
+        message: expect.objectContaining({ content: "Follow up" }),
+        executionId: "00000000-0000-4000-8000-000000000011",
+      }),
+    ]);
+    expect(latest.nextBeforeSequence).toBe(2);
+    await expect(
+      store.readTimelinePage(created.id, { beforeSequence: 2, limit: 1 }),
+    ).resolves.toMatchObject({
+      turns: [expect.objectContaining({ sequence: 1 })],
+    });
+    await expect(
+      store.appendUserMessage(created.id, { ...message, content: "Conflicting content" }),
+    ).rejects.toMatchObject({ code: "message_conflict" });
+    await expect(
+      store.appendExecutionReference({
+        ...executionReference,
+        inputMessageId: created.initialMessageId,
+      }),
+    ).rejects.toMatchObject({ code: "message_conflict" });
+  });
+
+  it("reads recent logical turns from the timeline tail after reopening", async () => {
+    const root = await temporaryRoot();
+    const missionsPath = join(root, "missions");
+    const store = createMissionStore({ missionsPath });
+    const created = await store.create({
+      workspace: { path: join(root, "workspace"), basename: "workspace" },
+      goal: "Initial request",
+      project: { id: "studio", revision: 1 },
+      executor: missionExecutorSnapshot(expertFixture()),
+    });
+    for (let index = 1; index <= 24; index += 1) {
+      await store.appendUserMessage(created.id, {
+        id: `00000000-0000-4000-8000-${String(index).padStart(12, "0")}`,
+        content: `Follow up ${index} ${"x".repeat(3_000)}`,
+        createdAt: new Date(Date.UTC(2026, 6, 17, 0, 0, index)).toISOString(),
+      });
+    }
+
+    const reopened = createMissionStore({ missionsPath });
+    const latest = await reopened.readTimelinePage(created.id, { limit: 5 });
+    expect(latest.turns.map((turn) => /^Follow up \d+/u.exec(turn.message.content)?.[0])).toEqual([
+      "Follow up 20",
+      "Follow up 21",
+      "Follow up 22",
+      "Follow up 23",
+      "Follow up 24",
+    ]);
+    expect(latest.nextBeforeSequence).toBe(latest.oldestSequence);
+
+    const earlier = await reopened.readTimelinePage(created.id, {
+      beforeSequence: latest.nextBeforeSequence,
+      limit: 5,
+    });
+    expect(earlier.turns.map((turn) => /^Follow up \d+/u.exec(turn.message.content)?.[0])).toEqual([
+      "Follow up 15",
+      "Follow up 16",
+      "Follow up 17",
+      "Follow up 18",
+      "Follow up 19",
+    ]);
+  });
+
+  it("reads farther back when a tail execution references a user outside the first chunk", async () => {
+    const root = await temporaryRoot();
+    const missionsPath = join(root, "missions");
+    const store = createMissionStore({ missionsPath });
+    const created = await store.create({
+      workspace: { path: join(root, "workspace"), basename: "workspace" },
+      goal: `Large initial request ${"x".repeat(70_000)}`,
+      project: { id: "studio", revision: 1 },
+      executor: missionExecutorSnapshot(expertFixture()),
+    });
+    await store.appendUserMessage(created.id, {
+      id: "00000000-0000-4000-8000-000000000101",
+      content: "Later queued request",
+      createdAt: "2026-07-17T00:00:01.000Z",
+    });
+    await store.appendExecutionReference({
+      missionId: created.id,
+      inputMessageId: created.initialMessageId,
+      executionId: "00000000-0000-4000-8000-000000000102",
+      createdAt: "2026-07-17T00:00:02.000Z",
+    });
+
+    const reopened = createMissionStore({ missionsPath });
+    const latest = await reopened.readTimelinePage(created.id, { limit: 1 });
+    expect(latest.turns).toEqual([
+      expect.objectContaining({
+        message: expect.objectContaining({ content: "Later queued request" }),
+      }),
+    ]);
+    const earlier = await reopened.readTimelinePage(created.id, {
+      beforeSequence: latest.nextBeforeSequence,
+      limit: 1,
+    });
+    expect(earlier.turns).toEqual([
+      expect.objectContaining({ executionId: "00000000-0000-4000-8000-000000000102" }),
+    ]);
+  });
+
+  it("recovers a journaled append and repairs only a torn final line", async () => {
+    const root = await temporaryRoot();
+    const store = createMissionStore({ missionsPath: join(root, "missions") });
+    const created = await store.create({
+      workspace: { path: join(root, "workspace"), basename: "workspace" },
+      goal: "Recover timeline",
+      project: { id: "studio", revision: 1 },
+      executor: missionExecutorSnapshot(expertFixture()),
+    });
+    const directory = store.storagePath!(created.id);
+    await appendFile(join(directory, "messages.jsonl"), '{"torn"', "utf8");
+    await writeFile(
+      join(directory, ".messages.transaction.json"),
+      `${JSON.stringify({
+        schemaVersion: "pragma.mission-message-transaction/v1",
+        record: {
+          schemaVersion: "pragma.mission-message/v1",
+          sequence: 2,
+          kind: "execution",
+          inputMessageId: created.initialMessageId,
+          executionId: "00000000-0000-4000-8000-000000000012",
+          createdAt: "2026-07-17T00:00:01.000Z",
+        },
+        updatedAt: "2026-07-17T00:00:02.000Z",
+      })}\n`,
+      "utf8",
+    );
+
+    await store.get(created.id);
+    const timeline = await store.readTimelinePage(created.id, { limit: 10 });
+    expect(timeline.turns[0]?.executionId).toBe("00000000-0000-4000-8000-000000000012");
+    expect(await readFile(join(directory, "messages.jsonl"), "utf8")).not.toContain("torn");
+  });
+
+  it("stores bounded Execution projections as recoverable JSONL", async () => {
+    const root = await temporaryRoot();
+    const store = createMissionStore({ missionsPath: join(root, "missions") });
+    const created = await store.create({
+      workspace: { path: join(root, "workspace"), basename: "workspace" },
+      goal: "Keep bounded history",
+      project: { id: "studio", revision: 1 },
+      executor: missionExecutorSnapshot(expertFixture()),
+    });
+    const executionId = "00000000-0000-4000-8000-000000000020";
+    const entries = Array.from(
+      { length: MISSION_EXECUTION_PROJECTION_MAX_ENTRIES + 2 },
+      (_, index) => ({
+        id: `assistant:${index}`,
+        executionId,
+        eventSequence: index,
+        kind: "assistant" as const,
+        content:
+          index === MISSION_EXECUTION_PROJECTION_MAX_ENTRIES + 1
+            ? "x".repeat(MISSION_EXECUTION_PROJECTION_MAX_CONTENT_LENGTH + 10)
+            : `answer ${index}`,
+        streaming: false,
+        createdAt: "2026-07-17T00:00:01.000Z",
+      }),
+    );
+
+    await store.writeExecutionProjection(created.id, executionId, entries);
+
+    const projectionPath = join(
+      store.storagePath!(created.id),
+      "execution-projections",
+      `${executionId}.jsonl`,
+    );
+    const content = await readFile(projectionPath, "utf8");
+    const lines = content.trimEnd().split("\n");
+    const header = JSON.parse(lines[0]!) as {
+      omittedEntries: number;
+      truncatedFields: number;
+    };
+    const lastRecord = JSON.parse(lines.at(-1)!) as {
+      truncation?: { truncated: boolean; fields: Array<{ originalLength: number }> };
+    };
+    expect(Buffer.byteLength(content)).toBeLessThanOrEqual(MISSION_EXECUTION_PROJECTION_MAX_BYTES);
+    expect(lines).toHaveLength(MISSION_EXECUTION_PROJECTION_MAX_ENTRIES + 1);
+    expect(header).toMatchObject({ omittedEntries: 2, truncatedFields: 1 });
+    expect(lastRecord.truncation).toMatchObject({
+      truncated: true,
+      fields: [{ originalLength: MISSION_EXECUTION_PROJECTION_MAX_CONTENT_LENGTH + 10 }],
+    });
+
+    const projected = await store.readExecutionProjection(created.id, executionId);
+    expect(projected).toHaveLength(MISSION_EXECUTION_PROJECTION_MAX_ENTRIES);
+    expect(projected?.[0]).toMatchObject({ id: "assistant:2", eventSequence: 2 });
+    expect(projected?.at(-1)).toMatchObject({
+      id: `assistant:${MISSION_EXECUTION_PROJECTION_MAX_ENTRIES + 1}`,
+      content: "x".repeat(MISSION_EXECUTION_PROJECTION_MAX_CONTENT_LENGTH),
+    });
+
+    const latestPage = await store.readExecutionProjectionPage(created.id, executionId, {
+      limit: 20,
+    });
+    expect(latestPage).toMatchObject({ omittedEntries: 2, truncatedFields: 1 });
+    expect(latestPage?.entries).toHaveLength(20);
+    expect(latestPage?.entries[0]).toMatchObject({
+      id: `assistant:${MISSION_EXECUTION_PROJECTION_MAX_ENTRIES - 18}`,
+      eventSequence: MISSION_EXECUTION_PROJECTION_MAX_ENTRIES - 18,
+    });
+    expect(latestPage?.entries.at(-1)?.id).toBe(
+      `assistant:${MISSION_EXECUTION_PROJECTION_MAX_ENTRIES + 1}`,
+    );
+    expect(latestPage?.nextBeforeOffset).toBeTypeOf("number");
+    const earlierPage = await store.readExecutionProjectionPage(created.id, executionId, {
+      beforeOffset: latestPage!.nextBeforeOffset,
+      limit: 20,
+    });
+    expect(earlierPage?.entries).toHaveLength(20);
+    expect(earlierPage?.entries.at(-1)?.id).toBe(
+      `assistant:${MISSION_EXECUTION_PROJECTION_MAX_ENTRIES - 19}`,
+    );
+    expect(
+      earlierPage?.entries.some((entry) =>
+        latestPage?.entries.some((latestEntry) => latestEntry.id === entry.id),
+      ),
+    ).toBe(false);
+
+    await appendFile(projectionPath, '{"torn"', "utf8");
+    await expect(store.readExecutionProjection(created.id, executionId)).resolves.toHaveLength(
+      MISSION_EXECUTION_PROJECTION_MAX_ENTRIES,
+    );
+    await appendFile(projectionPath, "\n", "utf8");
+    await expect(store.readExecutionProjection(created.id, executionId)).rejects.toMatchObject({
+      code: "projection_invalid",
+    });
+
+    await store.writeExecutionProjection(created.id, executionId, entries);
+    await appendFile(
+      projectionPath,
+      JSON.stringify({ ...lastRecord, executionId: "another-execution" }),
+      "utf8",
+    );
+    await expect(store.readExecutionProjection(created.id, executionId)).rejects.toMatchObject({
+      code: "projection_invalid",
+    });
+  });
+
+  it("caps a projection by encoded byte size and retains the newest output", async () => {
+    const root = await temporaryRoot();
+    const store = createMissionStore({ missionsPath: join(root, "missions") });
+    const created = await store.create({
+      workspace: { path: join(root, "workspace"), basename: "workspace" },
+      goal: "Keep the newest bounded output",
+      project: { id: "studio", revision: 1 },
+      executor: missionExecutorSnapshot(expertFixture()),
+    });
+    const executionId = "00000000-0000-4000-8000-000000000022";
+    const entryCount = 140;
+    const entries = Array.from({ length: entryCount }, (_, index) => ({
+      id: `large-assistant:${index}`,
+      executionId,
+      kind: "assistant" as const,
+      content: `${index}:`.padEnd(MISSION_EXECUTION_PROJECTION_MAX_CONTENT_LENGTH, "x"),
+      streaming: false,
+      createdAt: "2026-07-17T00:00:01.000Z",
+    }));
+
+    await store.writeExecutionProjection(created.id, executionId, entries);
+
+    const projectionPath = join(
+      store.storagePath!(created.id),
+      "execution-projections",
+      `${executionId}.jsonl`,
+    );
+    const content = await readFile(projectionPath, "utf8");
+    const header = JSON.parse(content.split("\n", 1)[0]!) as { omittedEntries: number };
+    const projected = await store.readExecutionProjection(created.id, executionId);
+    expect(Buffer.byteLength(content)).toBeLessThanOrEqual(MISSION_EXECUTION_PROJECTION_MAX_BYTES);
+    expect(header.omittedEntries).toBeGreaterThan(0);
+    expect(projected?.length).toBeLessThan(entryCount);
+    expect(projected?.at(-1)?.id).toBe(`large-assistant:${entryCount - 1}`);
+  });
+
+  it("migrates legacy JSON projections on first read and removes them with the Mission", async () => {
+    const root = await temporaryRoot();
+    const store = createMissionStore({ missionsPath: join(root, "missions") });
+    const created = await store.create({
+      workspace: { path: join(root, "workspace"), basename: "workspace" },
+      goal: "Migrate visible history",
+      project: { id: "studio", revision: 1 },
+      executor: missionExecutorSnapshot(expertFixture()),
+    });
+    const executionId = "00000000-0000-4000-8000-000000000021";
+    const directory = join(store.storagePath!(created.id), "execution-projections");
+    const legacyPath = join(directory, `${executionId}.json`);
+    const currentPath = join(directory, `${executionId}.jsonl`);
+    const entry = {
+      id: "assistant:legacy",
+      executionId,
+      kind: "assistant" as const,
+      content: "Legacy answer",
+      streaming: false,
+      createdAt: "2026-07-17T00:00:01.000Z",
+    };
+    await mkdir(directory, { recursive: true });
+    await writeFile(
+      legacyPath,
+      `${JSON.stringify({
+        schemaVersion: "pragma.mission-execution-projection/v1",
+        executionId,
+        entries: [entry],
+        createdAt: "2026-07-17T00:00:02.000Z",
+      })}\n`,
+      "utf8",
+    );
+
+    await expect(store.readExecutionProjection(created.id, executionId)).resolves.toEqual([entry]);
+    await expect(readFile(legacyPath, "utf8")).rejects.toMatchObject({ code: "ENOENT" });
+    expect(await readFile(currentPath, "utf8")).toContain(
+      '"schemaVersion":"pragma.mission-execution-projection/v2"',
+    );
+    expect(
+      await store.readExecutionProjectionPage(created.id, executionId, { limit: 10 }),
+    ).toMatchObject({
+      orderingVersion: 1,
+    });
+    expect(await readFile(`${legacyPath}.before-jsonl-migration`, "utf8")).toContain(
+      '"schemaVersion":"pragma.mission-execution-projection/v1"',
+    );
+
+    await store.remove(created.id);
+    await expect(readFile(currentPath, "utf8")).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
+  it("backs up a legacy projection only after validation succeeds", async () => {
+    const root = await temporaryRoot();
+    const store = createMissionStore({ missionsPath: join(root, "missions") });
+    const created = await store.create({
+      workspace: { path: join(root, "workspace"), basename: "workspace" },
+      goal: "Preserve a valid migration backup",
+      project: { id: "studio", revision: 1 },
+      executor: missionExecutorSnapshot(expertFixture()),
+    });
+    const executionId = "00000000-0000-4000-8000-000000000023";
+    const directory = join(store.storagePath!(created.id), "execution-projections");
+    const legacyPath = join(directory, `${executionId}.json`);
+    const backupPath = `${legacyPath}.before-jsonl-migration`;
+    const currentPath = join(directory, `${executionId}.jsonl`);
+    const legacyDocument = (content: string) =>
+      `${JSON.stringify({
+        schemaVersion: "pragma.mission-execution-projection/v1",
+        executionId,
+        entries: [
+          {
+            id: "assistant:legacy-retry",
+            executionId,
+            kind: "assistant",
+            content,
+            streaming: false,
+            createdAt: "2026-07-17T00:00:01.000Z",
+          },
+        ],
+        createdAt: "2026-07-17T00:00:02.000Z",
+      })}\n`;
+    await mkdir(directory, { recursive: true });
+    await writeFile(legacyPath, legacyDocument("x".repeat(200_001)), "utf8");
+
+    await expect(store.readExecutionProjection(created.id, executionId)).rejects.toMatchObject({
+      code: "projection_invalid",
+    });
+    await expect(readFile(backupPath, "utf8")).rejects.toMatchObject({ code: "ENOENT" });
+    await expect(readFile(currentPath, "utf8")).rejects.toMatchObject({ code: "ENOENT" });
+
+    await writeFile(legacyPath, legacyDocument("repaired answer"), "utf8");
+    await expect(store.readExecutionProjection(created.id, executionId)).resolves.toEqual([
+      expect.objectContaining({ id: "assistant:legacy-retry", content: "repaired answer" }),
+    ]);
+    await expect(readFile(legacyPath, "utf8")).rejects.toMatchObject({ code: "ENOENT" });
+    await expect(readFile(backupPath, "utf8")).resolves.toContain('"content":"repaired answer"');
+    await expect(readFile(currentPath, "utf8")).resolves.toContain(
+      '"schemaVersion":"pragma.mission-execution-projection/v2"',
+    );
+  });
+
+  it("rejects v2 explicitly and does not read timelines while listing summaries", async () => {
+    const root = await temporaryRoot();
+    const store = createMissionStore({ missionsPath: join(root, "missions") });
+    const created = await store.create({
+      workspace: { path: join(root, "workspace"), basename: "workspace" },
+      goal: "Versioned storage",
+      project: { id: "studio", revision: 1 },
+      executor: missionExecutorSnapshot(expertFixture()),
+    });
+    const directory = store.storagePath!(created.id);
+    await appendFile(join(directory, "messages.jsonl"), "invalid-json\n", "utf8");
+    await expect(store.list()).resolves.toEqual([expect.objectContaining({ id: created.id })]);
+    await expect(store.readTimelinePage(created.id, { limit: 50 })).rejects.toMatchObject({
+      code: "timeline_invalid",
+    });
+
+    const manifestPath = join(directory, "mission.yaml");
+    await writeFile(
+      manifestPath,
+      (await readFile(manifestPath, "utf8")).replace("pragma.mission/v11", "pragma.mission/v2"),
+      "utf8",
+    );
+    await expect(store.get(created.id)).rejects.toMatchObject({ code: "unsupported_schema" });
+  });
+
+  it("keeps readable Missions visible when another Mission uses an unsupported schema", async () => {
+    const root = await temporaryRoot();
+    const issues: Array<{ readonly missionId: string; readonly error: { readonly code: string } }> =
+      [];
+    const store = createMissionStore({
+      missionsPath: join(root, "missions"),
+      onReadIssue: (issue) => issues.push(issue),
+    });
+    const readable = await store.create({
+      workspace: { path: join(root, "workspace"), basename: "workspace" },
+      goal: "Readable Mission",
+      project: { id: "studio", revision: 1 },
+      executor: missionExecutorSnapshot(expertFixture()),
+    });
+    const unsupported = await store.create({
+      workspace: { path: join(root, "workspace"), basename: "workspace" },
+      goal: "Future Mission",
+      project: { id: "studio", revision: 1 },
+      executor: missionExecutorSnapshot(expertFixture()),
+    });
+    const unsupportedManifest = join(store.storagePath!(unsupported.id), "mission.yaml");
+    await writeFile(
+      unsupportedManifest,
+      (await readFile(unsupportedManifest, "utf8")).replace(
+        "pragma.mission/v11",
+        "pragma.mission/v99",
+      ),
+      "utf8",
+    );
+
+    await expect(store.list()).resolves.toEqual([
+      expect.objectContaining({ id: readable.id, title: readable.title }),
+    ]);
+    expect(issues).toEqual([
+      expect.objectContaining({
+        missionId: unsupported.id,
+        error: expect.objectContaining({ code: "unsupported_schema" }),
+      }),
+    ]);
+    await expect(readFile(unsupportedManifest, "utf8")).resolves.toContain(
+      "schemaVersion: pragma.mission/v99",
+    );
+  });
+
+  it("reports an error instead of presenting an empty list when no user Mission is readable", async () => {
+    const root = await temporaryRoot();
+    const store = createMissionStore({ missionsPath: join(root, "missions") });
+    await store.create({
+      workspace: { path: join(root, "workspace"), basename: "workspace" },
+      goal: "Readable internal Mission",
+      project: { id: "studio", revision: 1 },
+      executor: missionExecutorSnapshot(expertFixture()),
+      origin: { type: "system-memory", jobId: "memory-job" },
+    });
+    const unsupported = await store.create({
+      workspace: { path: join(root, "workspace"), basename: "workspace" },
+      goal: "Only future Mission",
+      project: { id: "studio", revision: 1 },
+      executor: missionExecutorSnapshot(expertFixture()),
+    });
+    const unsupportedManifest = join(store.storagePath!(unsupported.id), "mission.yaml");
+    await writeFile(
+      unsupportedManifest,
+      (await readFile(unsupportedManifest, "utf8")).replace(
+        "pragma.mission/v11",
+        "pragma.mission/v99",
+      ),
+      "utf8",
+    );
+
+    await expect(store.list()).rejects.toMatchObject({ code: "unsupported_schema" });
+    await expect(readFile(unsupportedManifest, "utf8")).resolves.toContain(
+      "schemaVersion: pragma.mission/v99",
+    );
+  });
+
+  it("migrates v3 Flow input atomically and rejects future Mission schemas", async () => {
+    const root = await temporaryRoot();
+    const store = createMissionStore({ missionsPath: join(root, "missions") });
+    const workspace = join(root, "workspace");
+    const created = await store.create({
+      workspace: { path: workspace, basename: "workspace" },
+      goal: "Legacy Flow goal",
+      flowInput: { goal: "Legacy Flow goal", workspace },
+      project: { id: "studio", revision: 1 },
+      executor: {
+        kind: "flow",
+        ref: "flow:x22wv3j4gn3k9j5v",
+        name: "Legacy Flow",
+      },
+    });
+    const manifestPath = join(store.storagePath!(created.id), "mission.yaml");
+    const legacy = parsePragmaYaml(await readFile(manifestPath, "utf8")) as Record<string, unknown>;
+    legacy["schemaVersion"] = "pragma.mission/v3";
+    legacy["executor"] = { ...(legacy["executor"] as object), version: "1.0.0" };
+    delete legacy["flowInput"];
+    await writeFile(manifestPath, formatPragmaYaml(legacy), "utf8");
+
+    await expect(store.get(created.id)).resolves.toMatchObject({
+      schemaVersion: "pragma.mission/v11",
+      flowInput: { goal: "Legacy Flow goal", workspace },
+    });
+    expect(await readFile(manifestPath, "utf8")).toContain("schemaVersion: pragma.mission/v11");
+    for (const version of ["v3", "v4", "v5"]) {
+      await expect(
+        readFile(
+          join(store.storagePath!(created.id), "migration-backups", `mission.${version}.yaml`),
+          "utf8",
+        ),
+      ).resolves.toContain(`schemaVersion: pragma.mission/${version}`);
+    }
+
+    const future = parsePragmaYaml(await readFile(manifestPath, "utf8")) as Record<string, unknown>;
+    future["schemaVersion"] = "pragma.mission/v99";
+    await writeFile(manifestPath, formatPragmaYaml(future), "utf8");
+    await expect(store.get(created.id)).rejects.toMatchObject({ code: "unsupported_schema" });
+  });
+
+  it("migrates v5 Missions to an explicit user origin", async () => {
+    const root = await temporaryRoot();
+    const store = createMissionStore({ missionsPath: join(root, "missions") });
+    const created = await store.create({
+      workspace: { path: join(root, "workspace"), basename: "workspace" },
+      goal: "Migrate Mission ownership",
+      project: { id: "studio", revision: 1 },
+      executor: missionExecutorSnapshot(expertFixture()),
+    });
+    const manifestPath = join(store.storagePath!(created.id), "mission.yaml");
+    const legacy = parsePragmaYaml(await readFile(manifestPath, "utf8")) as Record<string, unknown>;
+    legacy["schemaVersion"] = "pragma.mission/v5";
+    delete legacy["origin"];
+    await writeFile(manifestPath, formatPragmaYaml(legacy), "utf8");
+
+    await expect(store.get(created.id)).resolves.toMatchObject({
+      schemaVersion: "pragma.mission/v11",
+      origin: { type: "user" },
+    });
+    expect(await readFile(manifestPath, "utf8")).toContain("type: user");
+    await expect(
+      readFile(
+        join(store.storagePath!(created.id), "migration-backups", "mission.v5.yaml"),
+        "utf8",
+      ),
+    ).resolves.toContain("schemaVersion: pragma.mission/v5");
+    expect(
+      await readFile(
+        join(store.storagePath!(created.id), "migration-backups", "mission.v6.yaml"),
+        "utf8",
+      ),
+    ).toContain("schemaVersion: pragma.mission/v6");
+  });
+
+  it("replays an interrupted v5-to-v6 migration journal before business parsing", async () => {
+    const root = await temporaryRoot();
+    const store = createMissionStore({ missionsPath: join(root, "missions") });
+    const created = await store.create({
+      workspace: { path: join(root, "workspace"), basename: "workspace" },
+      goal: "Replay early migration",
+      project: { id: "studio", revision: 1 },
+      executor: missionExecutorSnapshot(expertFixture()),
+    });
+    const directory = store.storagePath!(created.id);
+    const manifestPath = join(directory, "mission.yaml");
+    const legacy = parsePragmaYaml(await readFile(manifestPath, "utf8")) as Record<string, unknown>;
+    legacy["schemaVersion"] = "pragma.mission/v5";
+    delete legacy["origin"];
+    delete legacy["contextMounts"];
+    const target = { ...legacy, schemaVersion: "pragma.mission/v6", origin: { type: "user" } };
+    await writeFile(manifestPath, formatPragmaYaml(legacy), "utf8");
+    await writeFile(
+      join(directory, ".schema-migration.transaction.json"),
+      `${JSON.stringify({
+        schemaVersion: "pragma.mission-schema-migration/v1",
+        missionId: created.id,
+        fromVersion: "pragma.mission/v5",
+        toVersion: "pragma.mission/v6",
+        target,
+      })}\n`,
+      "utf8",
+    );
+
+    await expect(store.get(created.id)).resolves.toMatchObject({
+      schemaVersion: "pragma.mission/v11",
+      origin: { type: "user" },
+    });
+    await expect(
+      readFile(join(directory, ".schema-migration.transaction.json"), "utf8"),
+    ).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
+  it("migrates v7 Missions to empty Mission Knowledge references with a backup", async () => {
+    const root = await temporaryRoot();
+    const store = createMissionStore({ missionsPath: join(root, "missions") });
+    const { id, source } = await installMissionV7Fixture(root);
+
+    await expect(store.get(id)).resolves.toMatchObject({
+      schemaVersion: "pragma.mission/v11",
+      contextMounts: [],
+    });
+    expect(
+      parsePragmaYaml(
+        await readFile(
+          join(store.storagePath!(id), "migration-backups", "mission.v7.yaml"),
+          "utf8",
+        ),
+      ),
+    ).toEqual(parsePragmaYaml(source));
+  });
+
+  it("replays an interrupted v7-to-v8 migration journal", async () => {
+    const root = await temporaryRoot();
+    const store = createMissionStore({ missionsPath: join(root, "missions") });
+    const { directory, id, source } = await installMissionV7Fixture(root);
+    const target = {
+      ...(parsePragmaYaml(source) as Record<string, unknown>),
+      schemaVersion: "pragma.mission/v8",
+      contextStoreIds: [],
+    };
+    await writeFile(
+      join(directory, ".v7-to-v8.transaction.json"),
+      `${JSON.stringify({
+        schemaVersion: "pragma.mission-v8-migration/v1",
+        missionId: id,
+        target,
+      })}\n`,
+      "utf8",
+    );
+
+    await expect(store.get(id)).resolves.toMatchObject({
+      schemaVersion: "pragma.mission/v11",
+      contextMounts: [],
+    });
+    await expect(
+      readFile(join(store.storagePath!(id), ".v7-to-v8.transaction.json"), "utf8"),
+    ).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
+  it("migrates the historical v8 Mission fixture to v9 with a backup", async () => {
+    const root = await temporaryRoot();
+    const store = createMissionStore({ missionsPath: join(root, "missions") });
+    const { id, source } = await installMissionV8Fixture(root);
+
+    const migrated = await store.get(id);
+    expect(migrated).toMatchObject({
+      schemaVersion: "pragma.mission/v11",
+      contextMounts: [{ kind: "context-store", storeId: "10000000-0000-4000-8000-000000000001" }],
+    });
+    expect(migrated.branch).toBeUndefined();
+    expect(
+      parsePragmaYaml(
+        await readFile(
+          join(store.storagePath!(id), "migration-backups", "mission.v8.yaml"),
+          "utf8",
+        ),
+      ),
+    ).toEqual(parsePragmaYaml(source));
+  });
+
+  it("replays an interrupted v8-to-v9 migration journal", async () => {
+    const root = await temporaryRoot();
+    const store = createMissionStore({ missionsPath: join(root, "missions") });
+    const { directory, id, source } = await installMissionV8Fixture(root);
+    const target = {
+      ...(parsePragmaYaml(source) as Record<string, unknown>),
+      schemaVersion: "pragma.mission/v9",
+    };
+    await writeFile(
+      join(directory, ".v8-to-v9.transaction.json"),
+      `${JSON.stringify({
+        schemaVersion: "pragma.mission-v9-migration/v1",
+        missionId: id,
+        target,
+      })}\n`,
+      "utf8",
+    );
+
+    await expect(store.get(id)).resolves.toMatchObject({ schemaVersion: "pragma.mission/v11" });
+    await expect(
+      readFile(join(store.storagePath!(id), ".v8-to-v9.transaction.json"), "utf8"),
+    ).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
+  it("migrates the historical v9 Mission fixture to typed v10 mounts with a backup", async () => {
+    const root = await temporaryRoot();
+    const store = createMissionStore({ missionsPath: join(root, "missions") });
+    const { id, source } = await installMissionV9Fixture(root);
+
+    await expect(store.get(id)).resolves.toMatchObject({
+      schemaVersion: "pragma.mission/v11",
+      contextMounts: [{ kind: "context-store", storeId: "10000000-0000-4000-8000-000000000001" }],
+      branch: {
+        sourceMissionId: "80000000-0000-4000-8000-000000000008",
+        cutoffMessageId: "historical-assistant-message",
+      },
+    });
+    expect((await store.get(id)).branch).not.toHaveProperty("cutoffExecutionId");
+    expect(
+      parsePragmaYaml(
+        await readFile(
+          join(store.storagePath!(id), "migration-backups", "mission.v9.yaml"),
+          "utf8",
+        ),
+      ),
+    ).toEqual(parsePragmaYaml(source));
+  });
+
+  it("replays an interrupted v9-to-v10 migration journal", async () => {
+    const root = await temporaryRoot();
+    const store = createMissionStore({ missionsPath: join(root, "missions") });
+    const { directory, id, source } = await installMissionV9Fixture(root);
+    const legacy = parsePragmaYaml(source) as Record<string, unknown>;
+    const { contextStoreIds, ...rest } = legacy;
+    const target = {
+      ...rest,
+      schemaVersion: "pragma.mission/v10",
+      contextMounts: (contextStoreIds as string[]).map((storeId) => ({
+        kind: "context-store",
+        storeId,
+      })),
+    };
+    await writeFile(
+      join(directory, ".v9-to-v10.transaction.json"),
+      `${JSON.stringify({
+        schemaVersion: "pragma.mission-v10-migration/v1",
+        missionId: id,
+        target,
+      })}\n`,
+      "utf8",
+    );
+
+    await expect(store.get(id)).resolves.toMatchObject({ schemaVersion: "pragma.mission/v11" });
+    await expect(
+      readFile(join(store.storagePath!(id), ".v9-to-v10.transaction.json"), "utf8"),
+    ).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
+  it("preserves v6 when the adjacent v7 target fails historical validation", async () => {
+    const root = await temporaryRoot();
+    const store = createMissionStore({ missionsPath: join(root, "missions") });
+    const { directory, id, source } = await installMissionV7Fixture(root);
+    const malformedV6 = {
+      ...(parsePragmaYaml(source) as Record<string, unknown>),
+      schemaVersion: "pragma.mission/v6",
+      executor: {
+        kind: "flow",
+        ref: "flow:v2vt1v01vzz6j24q",
+        name: "Broken historical Flow",
+      },
+    };
+    await writeFile(join(directory, "mission.yaml"), formatPragmaYaml(malformedV6), "utf8");
+
+    await expect(store.get(id)).rejects.toMatchObject({ code: "config_invalid" });
+    expect(
+      (
+        parsePragmaYaml(await readFile(join(store.storagePath!(id), "mission.yaml"), "utf8")) as {
+          schemaVersion: string;
+        }
+      ).schemaVersion,
+    ).toBe("pragma.mission/v6");
+    await expect(
+      readFile(join(store.storagePath!(id), ".v6-to-v7.transaction.json"), "utf8"),
+    ).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
+  it("isolates a failed historical Mission migration from unrelated list and get queries", async () => {
+    const root = await temporaryRoot();
+    const issues: unknown[] = [];
+    const store = createMissionStore({
+      missionsPath: join(root, "missions"),
+      onReadIssue: (issue) => issues.push(issue),
+    });
+    const healthy = await store.create({
+      workspace: { path: join(root, "workspace"), basename: "workspace" },
+      goal: "Healthy Mission",
+      project: { id: "studio", revision: 1 },
+      executor: missionExecutorSnapshot(expertFixture()),
+    });
+    const { directory, id, source } = await installMissionV7Fixture(root);
+    const malformedV6 = {
+      ...(parsePragmaYaml(source) as Record<string, unknown>),
+      schemaVersion: "pragma.mission/v6",
+      executor: {
+        kind: "flow",
+        ref: "flow:v2vt1v01vzz6j24q",
+        name: "Broken historical Flow",
+      },
+    };
+    await writeFile(join(directory, "mission.yaml"), formatPragmaYaml(malformedV6), "utf8");
+
+    await expect(store.get(id)).rejects.toMatchObject({ code: "config_invalid" });
+    expect(
+      (
+        parsePragmaYaml(await readFile(join(store.storagePath!(id), "mission.yaml"), "utf8")) as {
+          schemaVersion: string;
+        }
+      ).schemaVersion,
+    ).toBe("pragma.mission/v6");
+    await expect(store.list()).resolves.toEqual([
+      expect.objectContaining({ id: healthy.id, title: healthy.title }),
+    ]);
+    await expect(store.get(healthy.id)).resolves.toMatchObject({ id: healthy.id });
+    expect(issues).toContainEqual(
+      expect.objectContaining({
+        missionId: id,
+        error: expect.objectContaining({ code: "config_invalid" }),
+      }),
+    );
+  });
+
+  it("replays an interrupted v6-to-v7 migration journal", async () => {
+    const root = await temporaryRoot();
+    const store = createMissionStore({ missionsPath: join(root, "missions") });
+    const created = await store.create({
+      workspace: { path: join(root, "workspace"), basename: "workspace" },
+      goal: "Recover Mission migration",
+      project: { id: "studio", revision: 1 },
+      executor: missionExecutorSnapshot(expertFixture()),
+    });
+    const directory = store.storagePath!(created.id);
+    const manifestPath = join(directory, "mission.yaml");
+    const current = parsePragmaYaml(await readFile(manifestPath, "utf8")) as Record<
+      string,
+      unknown
+    >;
+    const legacy = {
+      ...current,
+      schemaVersion: "pragma.mission/v6",
+    };
+    const target = { ...legacy, schemaVersion: "pragma.mission/v7" };
+    await writeFile(manifestPath, formatPragmaYaml(legacy), "utf8");
+    await writeFile(
+      join(directory, ".v6-to-v7.transaction.json"),
+      `${JSON.stringify({
+        schemaVersion: "pragma.mission-v7-migration/v1",
+        missionId: created.id,
+        target,
+      })}\n`,
+      "utf8",
+    );
+
+    await expect(store.get(created.id)).resolves.toMatchObject({
+      schemaVersion: "pragma.mission/v11",
+      id: created.id,
+    });
+    await expect(
+      readFile(join(directory, ".v6-to-v7.transaction.json"), "utf8"),
+    ).rejects.toMatchObject({ code: "ENOENT" });
+  });
+});
+
+async function temporaryRoot(): Promise<string> {
+  const path = await mkdtemp(join(tmpdir(), "pragma-missions-"));
+  temporaryPaths.push(path);
+  return path;
+}
+
+function expertFixture(): PragmaExpertResource {
+  return {
+    apiVersion: PRAGMA_DSL_WRITE_API_VERSION,
+    kind: "Expert",
+    metadata: {
+      id: "v2vt1v01vzz6j24q",
+      avatarId: "pragma.avatar.expert.default",
+      name: "Product Designer",
+      description: "Designs product experiences.",
+      tags: ["design"],
+    },
+    spec: {
+      scope: "Product experience design.",
+      instructions: "Design accessible product experiences.",
+      runtime: { ref: "runtime-profile:9a20pvstre59317h" },
+      capabilities: [],
+      toolApprovals: {},
+      contextStores: [],
+      plugins: [],
+      tools: [],
+    },
+  };
+}
+
+async function installMissionV7Fixture(root: string): Promise<{
+  readonly directory: string;
+  readonly id: string;
+  readonly source: string;
+}> {
+  const source = await readFile(new URL("./fixtures/mission-v7.yaml", import.meta.url), "utf8");
+  const manifest = parsePragmaYaml(source) as { readonly id: string };
+  const directory = join(root, "missions", manifest.id);
+  await mkdir(directory, { recursive: true });
+  await writeFile(join(directory, "mission.yaml"), source, "utf8");
+  return { directory, id: manifest.id, source };
+}
+
+async function installMissionV8Fixture(root: string): Promise<{
+  readonly directory: string;
+  readonly id: string;
+  readonly source: string;
+}> {
+  const source = await readFile(new URL("./fixtures/mission-v8.yaml", import.meta.url), "utf8");
+  const manifest = parsePragmaYaml(source) as { readonly id: string };
+  const directory = join(root, "missions", manifest.id);
+  await mkdir(directory, { recursive: true });
+  await writeFile(join(directory, "mission.yaml"), source, "utf8");
+  return { directory, id: manifest.id, source };
+}
+
+async function installMissionV9Fixture(root: string): Promise<{
+  readonly directory: string;
+  readonly id: string;
+  readonly source: string;
+}> {
+  const source = await readFile(new URL("./fixtures/mission-v9.yaml", import.meta.url), "utf8");
+  const manifest = parsePragmaYaml(source) as { readonly id: string };
+  const directory = join(root, "missions", manifest.id);
+  await mkdir(directory, { recursive: true });
+  await writeFile(join(directory, "mission.yaml"), source, "utf8");
+  return { directory, id: manifest.id, source };
+}

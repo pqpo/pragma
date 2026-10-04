@@ -40,6 +40,10 @@ function fixture() {
   };
   const project = vi.fn(async () => ({ missionId, requestId }));
   const options = {
+    executionKernel: {
+      preparePromptSession: async () => ({ session, replaced: false }),
+      receiptStatus: async () => undefined,
+    },
     getMission: async () => mission,
     admit: <T>(id: string, operation: () => Promise<T>) => owner.admit(id, operation),
     withController: async <T>(_id: string, operation: () => Promise<T>) => await operation(),
@@ -54,7 +58,7 @@ function fixture() {
       session,
       definitionChanged: false,
       contextStoresChanged: false,
-      createSession: open,
+      subject: { missionId, request: { requestId } },
       rememberSession: () => undefined,
     }),
     forgetSession: () => undefined,
@@ -74,6 +78,97 @@ function fixture() {
   };
 }
 describe("Local Host message admission", () => {
+  it("leaves admission before coalescing the initial run and rereads before dispatch", async () => {
+    const f = fixture();
+    let reservationOwned = false;
+    let initialized = false;
+    let initialRuns = 0;
+    let missionReads = 0;
+    const mission = {
+      id: missionId,
+      lifecycleStatus: "active",
+      executor: { kind: "expert" },
+    };
+    const options = {
+      ...f.options,
+      getMission: async () => {
+        missionReads += 1;
+        return initialized ? { ...mission, execution: { id: "initial-execution" } } : mission;
+      },
+      admit: <T>(id: string, operation: () => Promise<T>) =>
+        f.owner.admit(id, async () => {
+          reservationOwned = true;
+          try {
+            return await operation();
+          } finally {
+            reservationOwned = false;
+          }
+        }),
+      startInitialRun: async () => {
+        expect(reservationOwned).toBe(false);
+        const start = () =>
+          f.owner.startRun(
+            missionId,
+            async () =>
+              await f.owner.admit(missionId, async () => {
+                initialRuns += 1;
+                initialized = true;
+              }),
+          );
+        // A simultaneously attached initial run must share the same start.
+        await Promise.all([start(), start()]);
+      },
+    };
+    await createLocalHostMissionCommandAdmission(options)({
+      id: missionId,
+      requestId,
+      content: "Followup before initial run",
+    });
+    expect(initialRuns).toBe(1);
+    expect(missionReads).toBe(2);
+    expect(f.dispatch).toHaveBeenCalledOnce();
+    expect(f.project).toHaveBeenCalledOnce();
+  });
+
+  it("rolls back optional resources when Core rejects without masking the original error", async () => {
+    const f = fixture();
+    const coreFailure = new Error("Core rejected the prompt");
+    const rollbackFailure = new Error("Memory rollback degraded");
+    f.prompt.mockRejectedValueOnce(coreFailure);
+    const rollback = vi.fn(async () => {
+      throw rollbackFailure;
+    });
+    const onPromptAdmitting = vi.fn(async () => rollback);
+    const onPromptAdmissionError = vi.fn();
+    const send = createLocalHostMissionCommandAdmission({
+      ...f.options,
+      onPromptAdmitting,
+      onPromptAdmissionError,
+    });
+    await expect(send({ id: missionId, requestId, content: "Refused" })).rejects.toBe(coreFailure);
+    expect(onPromptAdmitting).toHaveBeenCalledWith(missionId, requestId);
+    expect(rollback).toHaveBeenCalledOnce();
+    expect(onPromptAdmissionError).toHaveBeenCalledWith(rollbackFailure);
+    expect(f.dispatch).not.toHaveBeenCalled();
+  });
+
+  it("continues Core admission when optional Memory admission is unavailable", async () => {
+    const f = fixture();
+    const unavailable = new Error("Memory unavailable");
+    const onPromptAdmitting = vi.fn(async () => {
+      throw unavailable;
+    });
+    const onPromptAdmissionError = vi.fn();
+    const send = createLocalHostMissionCommandAdmission({
+      ...f.options,
+      onPromptAdmitting,
+      onPromptAdmissionError,
+    });
+    await send({ id: missionId, requestId, content: "Run" });
+    expect(f.dispatch).toHaveBeenCalledOnce();
+    expect(onPromptAdmissionError).toHaveBeenCalledWith(unavailable);
+  });
+
   it("rechecks the captured steer target after preparation before dispatch", async () => {
     const f = fixture();
     let activeExecutionId = "10000000-0000-4000-8000-000000000001";

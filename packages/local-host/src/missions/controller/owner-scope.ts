@@ -33,7 +33,7 @@ export interface MissionOwnerScope {
   assertOwnership(missionId: string, guard: MissionControllerGuard): Promise<void>;
   /** Wake this process's owner after a command is durable; never bypasses the Inbox. */
   wake(missionId: string): void;
-  release(missionId: string): Promise<void>;
+  release(missionId: string, expectedGuard?: MissionControllerGuard): Promise<void>;
   /** Explicitly fences the current owner, including a live owner in another process. */
   forceRevoke(missionId: string): Promise<void>;
   releaseAfterLowerLevel(missionId: string, releaseLowerLevel: () => Promise<void>): Promise<void>;
@@ -113,6 +113,19 @@ export function createMissionOwnerScope(options: {
   const pollers = new Map<string, { stop(): Promise<void>; wake(): void }>();
   const acquiring = new Map<string, Promise<MissionControllerGuard>>();
   const recoveryTimers = new Map<string, ReturnType<typeof setTimeout>>();
+  const recoveryGeneration = new Map<string, number>();
+  const background = new Map<string, Set<Promise<unknown>>>();
+  const trackBackground = (missionId: string, task: Promise<unknown>): void => {
+    const tasks = background.get(missionId) ?? new Set<Promise<unknown>>();
+    background.set(missionId, tasks);
+    tasks.add(task);
+    void task
+      .finally(() => {
+        tasks.delete(task);
+        if (tasks.size === 0 && background.get(missionId) === tasks) background.delete(missionId);
+      })
+      .catch(() => undefined);
+  };
   const operationGuard = new AsyncLocalStorage<{
     readonly missionId: string;
     readonly guard: MissionControllerGuard;
@@ -136,21 +149,31 @@ export function createMissionOwnerScope(options: {
 
   const scheduleRecovery = (missionId: string, delayMs = leaseMs): void => {
     if (boundConsumer === undefined || recoveryTimers.has(missionId)) return;
+    const generation = recoveryGeneration.get(missionId) ?? 0;
     const timer = setTimeout(
       () => {
         recoveryTimers.delete(missionId);
-        void (async () => {
-          if (active.has(missionId) || !(await hasPendingOperation(missionId))) return;
+        const task = (async () => {
+          if (
+            generation !== (recoveryGeneration.get(missionId) ?? 0) ||
+            active.has(missionId) ||
+            !(await hasPendingOperation(missionId))
+          )
+            return;
+          if (generation !== (recoveryGeneration.get(missionId) ?? 0)) return;
           try {
             await scope.acquire(missionId);
           } catch (error) {
             await options.onPollingError?.({ missionId, error, consecutiveFailures: 0 });
-            scheduleRecovery(missionId, Math.min(5_000, leaseMs));
+            if (generation === (recoveryGeneration.get(missionId) ?? 0))
+              scheduleRecovery(missionId, Math.min(5_000, leaseMs));
           }
         })().catch((error: unknown) => {
           void options.onPollingError?.({ missionId, error, consecutiveFailures: 0 });
-          scheduleRecovery(missionId, Math.min(5_000, leaseMs));
+          if (generation === (recoveryGeneration.get(missionId) ?? 0))
+            scheduleRecovery(missionId, Math.min(5_000, leaseMs));
         });
+        trackBackground(missionId, task);
       },
       Math.max(1, delayMs),
     );
@@ -207,7 +230,10 @@ export function createMissionOwnerScope(options: {
         // The timer has no caller to observe its Promise. Keep the final
         // rejection boundary here even though the normal lease-loss path is
         // defensive, so a host/poller failure can never become unhandled.
-        void renew(missionId).catch(() => undefined);
+        trackBackground(
+          missionId,
+          renew(missionId).catch(() => undefined),
+        );
       },
       Math.max(1, Math.floor(leaseMs / 2)),
     );
@@ -445,10 +471,21 @@ export function createMissionOwnerScope(options: {
         acquiring.delete(missionId);
       }
     },
-    async release(missionId) {
-      cancelRecovery(missionId);
+    async release(missionId, expectedGuard) {
       const current = active.get(missionId);
       if (current === undefined) return;
+      if (
+        expectedGuard !== undefined &&
+        (current.guard.claimId !== expectedGuard.claimId ||
+          current.guard.fencingToken !== expectedGuard.fencingToken)
+      )
+        throw createIntegrationError({
+          code: "MISSION_FENCING_REJECTED",
+          category: "conflict",
+          message: "Mission release belongs to a previous owner claim.",
+          details: { missionId },
+        });
+      cancelRecovery(missionId);
       current.stopped = true;
       if (current.timer !== undefined) clearTimeout(current.timer);
       await stopPolling(missionId);
@@ -514,8 +551,26 @@ export function createMissionOwnerScope(options: {
       }
     },
     async stop(missionId) {
+      const generation = (recoveryGeneration.get(missionId) ?? 0) + 1;
+      recoveryGeneration.set(missionId, generation);
       cancelRecovery(missionId);
       await stopWithoutCallback(missionId);
+      const acquisition = acquiring.get(missionId);
+      await Promise.allSettled([
+        ...(background.get(missionId) ?? []),
+        ...(acquisition === undefined ? [] : [acquisition]),
+      ]);
+      // An acquisition already inside claim when stop began can finish while
+      // draining. Stop that owner before the caller tears down its storage.
+      cancelRecovery(missionId);
+      await stopWithoutCallback(missionId);
+      if (
+        recoveryGeneration.get(missionId) === generation &&
+        !background.has(missionId) &&
+        !acquiring.has(missionId) &&
+        !recoveryTimers.has(missionId)
+      )
+        recoveryGeneration.delete(missionId);
     },
   };
   return scope;

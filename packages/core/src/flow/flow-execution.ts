@@ -91,6 +91,8 @@ export interface FlowExecution extends MutableExecution {
   readonly result: Promise<unknown>;
   /** Checkpoint this execution only when a HumanTask is durably waiting. */
   readonly checkpointWaitingHuman: () => Promise<void>;
+  /** Confirm native release and graph detachment after terminal or a human checkpoint. */
+  readonly releaseRuntimeResources: () => Promise<void>;
 }
 
 export type FlowExecutionView = ExecutionView;
@@ -394,7 +396,8 @@ export class FlowExecutionManager {
       ...(recoverHumanInteractionIds.length === 0 ? {} : { recoverHumanInteractionIds }),
       automaticHumanInteractionHandler: this.automaticHumanInteractionHandler,
     });
-    const handle = this.createHandle(executionId, controller);
+    let processing: Promise<void> = Promise.resolve();
+    const handle = this.createHandle(executionId, controller, async () => await processing);
     this.active.set(executionId, { controller, handle });
     const logger = createPragmaLogger(this.loggerProvider, {
       component: "flow-execution",
@@ -423,9 +426,17 @@ export class FlowExecutionManager {
       );
     }, 10_000);
     renewal.unref();
-    void this.execute(flow, executionId, controller, runtime, claimId).finally(() => {
+    processing = this.execute(flow, executionId, controller, runtime, claimId).finally(() => {
       clearInterval(renewal);
-      this.active.delete(executionId);
+      if (this.active.get(executionId)?.controller === controller) this.active.delete(executionId);
+    });
+    void processing.catch((error: unknown) => {
+      logger.error(
+        "flow.resource_release_failed",
+        "Flow graph or native Runtime release needs recovery.",
+        error,
+        { executionId, claimId },
+      );
     });
     return handle;
   }
@@ -574,10 +585,18 @@ export class FlowExecutionManager {
     }
   }
 
-  private createHandle(executionId: string, controller: ExecutionController): FlowExecution {
+  private createHandle(
+    executionId: string,
+    controller: ExecutionController,
+    waitForProcessing: () => Promise<void>,
+  ): FlowExecution {
     const view = new StoredExecutionView(executionId, this.executions);
     return Object.assign(view, {
       result: waitForResult(this.executions, executionId),
+      releaseRuntimeResources: async () => {
+        await controller.closeRuntimes();
+        await waitForProcessing();
+      },
       cancel: async (reason?: string) => await controller.cancel(reason),
       stopForDeletion: async (reason?: string) => await controller.stopForDeletion(reason),
       finishDeletion: async () => await controller.finishDeletion(),

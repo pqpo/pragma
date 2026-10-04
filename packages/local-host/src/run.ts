@@ -75,6 +75,7 @@ export interface LocalHostRunTerminal {
 
 export interface LocalHostRunHandle {
   readonly executionId: string;
+  readonly sessionId?: string | undefined;
   /** A continuing Host owns the Mission beyond this individual run. */
   readonly missionOwnerLifetime?: "host" | undefined;
   readonly events?: AsyncIterable<LocalHostRunEvent> | undefined;
@@ -481,6 +482,7 @@ export function createLocalHostRunApplication(options: {
       if (!existingEvents.some((event) => event.type === "run.started")) {
         await options.mission.append(reservation.missionId, guard, "run.started", {
           executionId: handle.executionId,
+          ...(handle.sessionId === undefined ? {} : { sessionId: handle.sessionId }),
         });
       }
     } catch (error) {

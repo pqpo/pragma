@@ -14,7 +14,7 @@ import {
   type MissionResult,
   type MissionSummary,
 } from "@pragma/shared/integration";
-import { AgentMessageUsageSchema } from "@pragma/shared";
+import { AgentMessageUsageSchema, type Mission } from "@pragma/shared";
 
 import {
   makeMissionEventCursor,
@@ -57,6 +57,7 @@ interface ExecutionProjection {
  */
 export function createMissionQuery(options: {
   readonly controller: Pick<MissionControllerStore, "readSnapshot">;
+  readonly readMission?: ((missionId: string) => Promise<Mission | undefined>) | undefined;
 }): MissionQueryPort {
   return {
     async queryMission(input) {
@@ -65,23 +66,27 @@ export function createMissionQuery(options: {
       }
       assertQueryLimit(input.limit);
 
+      const mission = await options.readMission?.(input.missionId);
       const snapshot = await options.controller.readSnapshot(
         input.view === "events" && input.cursor !== undefined
           ? { missionId: input.missionId, after: input.cursor }
           : { missionId: input.missionId },
       );
-      assertMissionExists(input.missionId, snapshot.snapshot.eventSequence, snapshot.events);
+      if (mission === undefined)
+        assertMissionExists(input.missionId, snapshot.snapshot.eventSequence, snapshot.events);
 
       switch (input.view) {
         case "summary":
           return projectMissionSummary({
             missionId: input.missionId,
             snapshot,
+            mission,
           });
         case "result":
           return projectMissionResult({
             missionId: input.missionId,
             snapshot,
+            mission,
           });
         case "events":
           return projectMissionEvents({
@@ -99,7 +104,40 @@ export function createMissionQuery(options: {
 export function projectMissionSummary(input: {
   readonly missionId: string;
   readonly snapshot: Awaited<ReturnType<MissionControllerStore["readSnapshot"]>>;
+  readonly mission?: Mission | undefined;
 }): MissionSummary {
+  if (input.mission !== undefined) {
+    const mission = input.mission;
+    const execution = resolveCurrentExecution(input.snapshot.events, mission.execution);
+    const status =
+      execution === undefined
+        ? (mission.execution?.status ?? "queued")
+        : summaryStatus(execution.status);
+    const currentExecution =
+      execution === undefined ? mission.execution : executionSummary(execution);
+    const updatedAt =
+      execution?.occurredAt !== undefined && execution.occurredAt > mission.updatedAt
+        ? execution.occurredAt
+        : mission.updatedAt;
+    return MissionSummarySchema.parse({
+      schemaVersion: "pragma.mission-summary/v1",
+      missionId: mission.id,
+      status,
+      lifecycleStatus: mission.lifecycleStatus,
+      executor: {
+        kind: mission.executor.kind,
+        id: mission.executor.ref.slice(mission.executor.ref.indexOf(":") + 1),
+      },
+      ...(currentExecution === undefined
+        ? {}
+        : { execution: { id: currentExecution.id, status: currentExecution.status } }),
+      workspace: { canonicalPath: mission.workspace.path },
+      createdAt: mission.createdAt,
+      updatedAt,
+      eventSequence: input.snapshot.snapshot.eventSequence,
+      cursor: input.snapshot.cursor,
+    });
+  }
   const created = findCreatedEvent(input.snapshot.events);
   const execution = projectExecution(input.snapshot.events);
   const executor = ExecutorReferenceSchema.safeParse(created.data["executor"]);
@@ -114,9 +152,7 @@ export function projectMissionSummary(input: {
     status,
     lifecycleStatus: lifecycleStatus(status),
     ...(executor.success ? { executor: executor.data } : {}),
-    ...(executionView === undefined
-      ? {}
-      : { execution: executionView }),
+    ...(executionView === undefined ? {} : { execution: executionView }),
     ...(workspace === undefined ? {} : { workspace }),
     createdAt: created.occurredAt,
     updatedAt: latest.occurredAt,
@@ -128,8 +164,20 @@ export function projectMissionSummary(input: {
 export function projectMissionResult(input: {
   readonly missionId: string;
   readonly snapshot: Awaited<ReturnType<MissionControllerStore["readSnapshot"]>>;
+  readonly mission?: Mission | undefined;
 }): MissionResult {
-  const execution = projectExecution(input.snapshot.events);
+  const execution =
+    input.mission === undefined
+      ? projectExecution(input.snapshot.events)
+      : resolveCurrentExecution(input.snapshot.events, input.mission.execution);
+  if (execution === undefined) {
+    throw createIntegrationError({
+      code: "DEPENDENCY_UNAVAILABLE",
+      category: "dependency",
+      message: "The current Mission execution has no durable controller result facts.",
+      details: { missionId: input.missionId, reason: "mission_execution_facts_unavailable" },
+    });
+  }
   return MissionResultSchema.parse({
     schemaVersion: "pragma.mission-result/v1",
     missionId: input.missionId,
@@ -162,10 +210,42 @@ export function projectMissionEvents(input: {
   });
 }
 
-function projectExecution(events: readonly MissionEvent[]): ExecutionProjection {
-  const anchor = [...events]
+function resolveCurrentExecution(
+  events: readonly MissionEvent[],
+  current: Mission["execution"],
+): ExecutionProjection | undefined {
+  if (current === undefined) return projectExecution(events);
+  const accepted = events.toReversed().find((event) => event.type === "run.accepted");
+  const latestStarted = events
     .toReversed()
     .find((event) => event.type === "run.started" || event.type === "execution.started");
+  const acceptedRequestId = accepted?.data["requestId"] ?? accepted?.data["inputMessageId"];
+  if (
+    accepted !== undefined &&
+    (latestStarted === undefined || accepted.sequence > latestStarted.sequence) &&
+    acceptedRequestId !== current.inputMessageId
+  )
+    return { status: "queued", hasResult: false };
+  const hasCurrentAnchor = events.some(
+    (event) =>
+      (event.type === "run.started" || event.type === "execution.started") &&
+      event.data["executionId"] === current.id,
+  );
+  if (!hasCurrentAnchor) return undefined;
+  return projectExecution(events, current.id);
+}
+
+function projectExecution(
+  events: readonly MissionEvent[],
+  executionId?: string,
+): ExecutionProjection {
+  const anchor = [...events]
+    .toReversed()
+    .find(
+      (event) =>
+        (event.type === "run.started" || event.type === "execution.started") &&
+        (executionId === undefined || event.data["executionId"] === executionId),
+    );
   const latestAccepted = [...events].toReversed().find((event) => event.type === "run.accepted");
 
   // A Mission may contain an earlier successful turn followed by a newly

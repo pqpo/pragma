@@ -5,6 +5,7 @@ import {
   type CanonicalEventFeed,
   type PragmaLoggerProvider,
 } from "@pragma/core";
+import { createLocalHostMissionMemoryLifecycle } from "./mission-memory-lifecycle.ts";
 import { createSqliteExecutionStore } from "./execution/sqlite-execution-store.ts";
 import { createLocalHostMemoryContextService } from "./memory-context.ts";
 import { createLocalHostMemoryDataPlane } from "./memory-data-plane.ts";
@@ -35,7 +36,6 @@ export function createLocalHostRunMemory(options: {
   const logger = createPragmaLogger(options.loggerProvider, { component: "local-host.memory" });
   const executionStore = createSqliteExecutionStore({ ...options, canonicalEventFeed: canonical });
   const paths = new PragmaPaths(options);
-  const owners = new Set<string>();
   let memory:
     | Promise<{
         data: Awaited<ReturnType<typeof createLocalHostMemoryDataPlane>>;
@@ -69,110 +69,73 @@ export function createLocalHostRunMemory(options: {
       });
       return { data, contexts };
     })());
-  let tail: Promise<unknown> = Promise.resolve();
-  const serialize = <T>(operation: () => Promise<T>): Promise<T> => {
-    const result = tail.then(operation);
-    tail = result.catch(() => undefined);
-    return result;
-  };
   const degraded = () =>
     logger.warn("memory.delivery_degraded", "Memory is unavailable; execution can continue.", {
       subsystem: "memory",
       code: "memory_delivery_unavailable",
     });
-  return {
-    canonical,
-    executionStore,
-    async bindings(input: { missionId: string; goal: string; projectId?: string }) {
-      return serialize(async () => {
-        owners.add(input.missionId);
+  const stopIdleMemory = async (): Promise<void> => {
+    try {
+      if (memory !== undefined) {
+        const { data, contexts } = await memory;
         try {
-          const { data, contexts } = await get();
-          if ((await data.policies.getGlobal()).policy.enabled !== "enabled") return [];
-          return [{ namespace: "memory", store: contexts.createContextStore(input) }];
-        } catch {
-          degraded();
-          return [];
-        }
-      });
-    },
-    async register(input: { missionId: string; executionId: string; projectId?: string }) {
-      return serialize(async () => {
-        try {
-          const { data } = await get();
-          await data.registerExecutionContext(input);
-          await data.setConversationState({ missionId: input.missionId, state: "running" });
-        } catch {
-          degraded();
-        }
-      });
-    },
-    async resume(missionId: string) {
-      return serialize(async () => {
-        owners.add(missionId);
-        try {
-          const { data } = await get();
-          await data.setConversationState({ missionId, state: "running" });
-        } catch {
-          degraded();
-        }
-      });
-    },
-    async complete(missionId: string, waiting = false) {
-      return serialize(async () => {
-        try {
-          if (memory === undefined) return;
-          const { data, contexts } = await memory;
-          await contexts.stopMission(missionId);
-          await data.setConversationState({ missionId, state: waiting ? "active" : "completed" });
-          await data.flushDelivery();
-        } catch {
-          degraded();
+          await contexts.stop();
         } finally {
-          owners.delete(missionId);
-        }
-      });
-    },
-    async close() {
-      return serialize(async () => {
-        if (owners.size > 0) return;
-        try {
-          if (memory !== undefined) {
-            const { data, contexts } = await memory;
-            try {
-              await contexts.stop();
-            } finally {
-              try {
-                await data.scheduler.stop();
-              } finally {
-                data.episodic.close();
-                data.semantic.close();
-                data.knowledge.close();
-                data.skill.close();
-              }
-            }
-          }
-        } catch {
-          degraded();
-        } finally {
-          memory = undefined;
           try {
-            await executionStore.close();
-          } catch {
-            degraded();
-          }
-          try {
-            await options.beforeFeedClose?.();
-          } catch {
-            degraded();
-          }
-          try {
-            await canonical.close();
-          } catch {
-            degraded();
+            await data.scheduler.stop();
+          } finally {
+            data.episodic.close();
+            data.semantic.close();
+            data.knowledge.close();
+            data.skill.close();
           }
         }
-      });
-    },
+      }
+    } catch {
+      degraded();
+    } finally {
+      memory = undefined;
+    }
   };
+  const lifecycle = createLocalHostMissionMemoryLifecycle({
+    onError: degraded,
+    ports: {
+      bindings: async (input) => {
+        const { data, contexts } = await get();
+        if ((await data.policies.getGlobal()).policy.enabled !== "enabled") return [];
+        return [{ namespace: "memory", store: contexts.createContextStore(input) }];
+      },
+      register: async (input) => await (await get()).data.registerExecutionContext(input),
+      setConversationState: async (input) => await (await get()).data.setConversationState(input),
+      stopMission: async (missionId) => {
+        if (memory !== undefined) await (await memory).contexts.stopMission(missionId);
+      },
+      flushDelivery: async () => {
+        if (memory !== undefined) await (await memory).data.flushDelivery();
+      },
+      pause: async () => {
+        await stopIdleMemory();
+        await executionStore.drainCanonicalEvents();
+      },
+      close: async () => {
+        await stopIdleMemory();
+        try {
+          await executionStore.close();
+        } catch {
+          degraded();
+        }
+        try {
+          await options.beforeFeedClose?.();
+        } catch {
+          degraded();
+        }
+        try {
+          await canonical.close();
+        } catch {
+          degraded();
+        }
+      },
+    },
+  });
+  return { canonical, executionStore, ...lifecycle };
 }
