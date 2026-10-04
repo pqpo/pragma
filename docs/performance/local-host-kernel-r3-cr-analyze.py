@@ -1,9 +1,9 @@
 """Recompute R3 review performance statistics from the committed raw samples."""
 
-import json, math
+import json, math, sys
 from pathlib import Path
 ROOT = Path(__file__).resolve().parent
-DATA = ROOT / 'local-host-kernel-r3-cr'
+DATA = ROOT / (sys.argv[1] if len(sys.argv) > 1 else 'local-host-kernel-r3-cr')
 
 def read(name):
     return json.loads((DATA / name).read_text())
