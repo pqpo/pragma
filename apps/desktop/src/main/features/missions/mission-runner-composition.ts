@@ -216,6 +216,7 @@ export interface DesktopMissionRunnerOptions {
     ((input: { readonly mission: Mission }) => Promise<void>) | undefined;
   readonly invalidateRuntimeReadiness?: (() => void) | undefined;
   readonly commitExecutionTerminal?: LocalHostMissionExecutionServiceOptions["commitExecutionTerminal"];
+  readonly onExecutionCheckpointed?: LocalHostMissionExecutionServiceOptions["onExecutionCheckpointed"];
   readonly onExecutionTerminal?:
     | ((input: {
         readonly mission: Mission;

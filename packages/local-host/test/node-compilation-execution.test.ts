@@ -36,6 +36,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { createLocalHostNodeApplication } from "../src/node-application.ts";
 import * as nodeCompiler from "../src/node-mission-compiler.ts";
+import * as runMemoryModule from "../src/run-memory.ts";
 import { createSqliteExecutionStore } from "../src/execution/sqlite-execution-store.ts";
 import { createLocalHostProjectCatalogFromHome } from "../src/project-catalog.ts";
 import { createLocalHostResourceResolvers } from "../src/resources/resolvers.ts";
@@ -630,6 +631,15 @@ describe("default Node compilation reaches persisted Execution", { timeout: 15_0
     "resumes a real HumanTask through the Node facade without replaying its Expert effect (controller-only=%s)",
     { timeout: 20_000 },
     async (controllerOnly) => {
+      const createMemory = runMemoryModule.createLocalHostRunMemory;
+      const completions: ReturnType<typeof vi.spyOn>[] = [];
+      const pauses: ReturnType<typeof vi.spyOn>[] = [];
+      vi.spyOn(runMemoryModule, "createLocalHostRunMemory").mockImplementation((options) => {
+        const memory = createMemory(options);
+        completions.push(vi.spyOn(memory, "complete"));
+        pauses.push(vi.spyOn(memory, "pause"));
+        return memory;
+      });
       const f = await fixture(false, true);
       const started = await f.app.run!.start({
         requestId: randomUUID(),
@@ -641,6 +651,10 @@ describe("default Node compilation reaches persisted Execution", { timeout: 15_0
         detach: false,
       });
       expect((await started.outcome).status).toBe("input_required");
+      // input_required must expose the actual Execution's completed Memory
+      // generation; the original request ID is not the durable Flow identity.
+      expect(completions[0]).toHaveBeenCalledWith(started.missionId, started.executionId, true);
+      expect(pauses[0]).toHaveBeenCalled();
       const store = createSqliteExecutionStore({ pragmaHome: f.home });
       const original = await store.listContexts(started.executionId!);
       const paths = new PragmaPaths({ pragmaHome: f.home });

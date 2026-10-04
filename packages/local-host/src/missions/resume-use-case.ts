@@ -68,53 +68,16 @@ export async function resumeLocalHostMission(input: {
   if (reserved.operation.state === "rejected" || reserved.operation.state === "failed") {
     throw resumeOperationError(reserved.operation.error, request.missionId);
   }
-  const snapshot = await input.missionController.readSnapshot({ missionId: request.missionId });
-  if (
-    snapshot.snapshot.lease !== undefined &&
-    Date.parse(snapshot.snapshot.lease.expiresAt) > Date.now()
-  ) {
-    const error = createIntegrationError({
-      code: "MISSION_LEASE_HELD",
-      category: "conflict",
-      message: "Mission already has a live owner.",
-      details: { missionId: request.missionId },
-    });
-    await input.missionControl.completeOperation({
-      missionId: request.missionId,
-      requestId,
-      payloadHash,
-      state: "rejected",
-      error,
-    });
-    throw error;
-  }
-  if (request.detach) {
-    // Resume is represented by a reserved Local Host operation rather than a
-    // Mission command. Preserve the same durable-receipt contract as command
-    // mutations: schedule owner acquisition/recovery and return the queued
-    // operation without waiting for the owner or Runtime execution.
-    void resumeLocalHostMission({
-      ...input,
-      input: {
-        ...request,
-        requestId,
-        detach: false,
-        onHumanInteraction: undefined,
-      },
-    }).catch(() => undefined);
-    return {
-      missionId: request.missionId,
-      status: "accepted",
-      operation: reserved.operation,
-    };
-  }
   let acquired = false;
   let acquiredGuard: MissionControllerGuard | undefined;
   let recovered = false;
   let operationCompleted = false;
   try {
-    const owner = await input.missionControl.startOwner(request.missionId);
-    if (owner === "live") {
+    const snapshot = await input.missionController.readSnapshot({ missionId: request.missionId });
+    if (
+      snapshot.snapshot.lease !== undefined &&
+      Date.parse(snapshot.snapshot.lease.expiresAt) > Date.now()
+    ) {
       const error = createIntegrationError({
         code: "MISSION_LEASE_HELD",
         category: "conflict",
@@ -131,27 +94,84 @@ export async function resumeLocalHostMission(input: {
       operationCompleted = true;
       throw error;
     }
-    acquiredGuard = input.ownerScope.currentGuard(request.missionId);
-    if (acquiredGuard === undefined)
-      throw createIntegrationError({
-        code: "MISSION_FENCING_REJECTED",
-        category: "conflict",
-        message: "Mission resume lost its acquired owner.",
-      });
-    acquired = true;
-    await input.ownerScope.runWithGuard(
-      request.missionId,
-      acquiredGuard,
-      async () => await input.coreControl.recoverMission(request.missionId),
-    );
-    await input.ownerScope.assertOwnership(request.missionId, acquiredGuard);
-    recovered = true;
-    const base = {
+  } catch (error) {
+    await rejectOperation(error);
+    throw error;
+  }
+  if (request.detach) {
+    // Continue this reserved operation directly: repeating admission/backfill
+    // in a recursive call could fail before settling its durable receipt.
+    void resumeReservedOperation().catch(() => undefined);
+    return {
       missionId: request.missionId,
-      status: request.detach ? "accepted" : "resumed",
-    } as const;
-    let result: Record<string, unknown> = base;
-    if (!request.detach) {
+      status: "accepted",
+      operation: reserved.operation,
+    };
+  }
+  return await resumeReservedOperation();
+
+  async function rejectOperation(error: unknown): Promise<void> {
+    if (operationCompleted) return;
+    const parsedError = IntegrationErrorSchema.safeParse(error);
+    const integrationError = parsedError.success
+      ? parsedError.data
+      : createIntegrationError({
+          code: "COMMAND_REJECTED",
+          category: "conflict",
+          message: error instanceof Error ? error.message : "Mission resume failed.",
+        });
+    await input.missionControl
+      .completeOperation({
+        missionId: request.missionId,
+        requestId,
+        payloadHash,
+        state: "rejected",
+        error: integrationError,
+        guard: acquiredGuard,
+      })
+      .catch(() => undefined);
+  }
+
+  async function resumeReservedOperation(): Promise<unknown> {
+    try {
+      const owner = await input.missionControl.startOwner(request.missionId);
+      if (owner === "live") {
+        const error = createIntegrationError({
+          code: "MISSION_LEASE_HELD",
+          category: "conflict",
+          message: "Mission already has a live owner.",
+          details: { missionId: request.missionId },
+        });
+        await input.missionControl.completeOperation({
+          missionId: request.missionId,
+          requestId,
+          payloadHash,
+          state: "rejected",
+          error,
+        });
+        operationCompleted = true;
+        throw error;
+      }
+      acquiredGuard = input.ownerScope.currentGuard(request.missionId);
+      if (acquiredGuard === undefined)
+        throw createIntegrationError({
+          code: "MISSION_FENCING_REJECTED",
+          category: "conflict",
+          message: "Mission resume lost its acquired owner.",
+        });
+      acquired = true;
+      await input.ownerScope.runWithGuard(
+        request.missionId,
+        acquiredGuard,
+        async () => await input.coreControl.recoverMission(request.missionId),
+      );
+      await input.ownerScope.assertOwnership(request.missionId, acquiredGuard);
+      recovered = true;
+      const base = {
+        missionId: request.missionId,
+        status: "resumed",
+      } as const;
+      let result: Record<string, unknown> = base;
       const executionId = await input.coreControl.resolveExecutionTarget({
         missionId: request.missionId,
       });
@@ -162,7 +182,7 @@ export async function resumeLocalHostMission(input: {
           control: input.missionControl,
           assertOwnership: () =>
             input.ownerScope.assertOwnership(request.missionId, acquiredGuard!),
-          onHumanInteraction: request.onHumanInteraction,
+          onHumanInteraction: request.detach ? undefined : request.onHumanInteraction,
         });
         if (execution.status === "failed") {
           throw (
@@ -181,72 +201,53 @@ export async function resumeLocalHostMission(input: {
           execution,
         };
       }
-    }
-    // Keep the reserved resume pending through native teardown. Automatic
-    // settlement waits for pending operations and cannot release this claim
-    // before its guarded completion is committed.
-    const releaseLease =
-      !request.detach && input.ownerLifetime === "request"
-        ? await releaseRecoveredLowerOwner({
-            missionId: request.missionId,
-            coreControl: input.coreControl,
-            ownerScope: input.ownerScope,
-            guard: acquiredGuard,
-          })
-        : false;
-    const operation = await input.missionControl.completeOperation({
-      missionId: request.missionId,
-      requestId,
-      payloadHash,
-      state: "applied",
-      result,
-      guard: acquiredGuard,
-    });
-    operationCompleted = true;
-    const completed = { ...result, operation };
-    if (releaseLease) await input.ownerScope.release(request.missionId, acquiredGuard);
-    return completed;
-  } catch (error) {
-    const parsedError = IntegrationErrorSchema.safeParse(error);
-    const integrationError = parsedError.success
-      ? parsedError.data
-      : createIntegrationError({
-          code: "COMMAND_REJECTED",
-          category: "conflict",
-          message: error instanceof Error ? error.message : "Mission resume failed.",
-        });
-    if (!operationCompleted) {
-      await input.missionControl
-        .completeOperation({
-          missionId: request.missionId,
-          requestId,
-          payloadHash,
-          state: "rejected",
-          error: integrationError,
-          guard: acquiredGuard,
-        })
-        .catch(() => undefined);
-    }
-    if (acquired && recovered) {
-      await releaseRecoveredOwner({
+      // Keep the reserved resume pending through native teardown. Automatic
+      // settlement waits for pending operations and cannot release this claim
+      // before its guarded completion is committed.
+      const releaseLease =
+        input.ownerLifetime === "request"
+          ? await releaseRecoveredLowerOwner({
+              missionId: request.missionId,
+              coreControl: input.coreControl,
+              ownerScope: input.ownerScope,
+              guard: acquiredGuard,
+            })
+          : false;
+      const operation = await input.missionControl.completeOperation({
         missionId: request.missionId,
-        coreControl: input.coreControl,
-        ownerScope: input.ownerScope,
-        guard: acquiredGuard!,
-      }).catch(() => undefined);
-    } else if (acquired) {
-      await (async () => {
-        await input.ownerScope.assertOwnership(request.missionId, acquiredGuard!);
-        await input.ownerScope.runWithGuard(
-          request.missionId,
-          acquiredGuard!,
-          async () => await input.coreControl.release(request.missionId),
-        );
-        await input.ownerScope.assertOwnership(request.missionId, acquiredGuard!);
-        await input.ownerScope.release(request.missionId, acquiredGuard);
-      })().catch(() => undefined);
+        requestId,
+        payloadHash,
+        state: "applied",
+        result,
+        guard: acquiredGuard,
+      });
+      operationCompleted = true;
+      const completed = { ...result, operation };
+      if (releaseLease) await input.ownerScope.release(request.missionId, acquiredGuard);
+      return completed;
+    } catch (error) {
+      await rejectOperation(error);
+      if (acquired && recovered) {
+        await releaseRecoveredOwner({
+          missionId: request.missionId,
+          coreControl: input.coreControl,
+          ownerScope: input.ownerScope,
+          guard: acquiredGuard!,
+        }).catch(() => undefined);
+      } else if (acquired) {
+        await (async () => {
+          await input.ownerScope.assertOwnership(request.missionId, acquiredGuard!);
+          await input.ownerScope.runWithGuard(
+            request.missionId,
+            acquiredGuard!,
+            async () => await input.coreControl.release(request.missionId),
+          );
+          await input.ownerScope.assertOwnership(request.missionId, acquiredGuard!);
+          await input.ownerScope.release(request.missionId, acquiredGuard);
+        })().catch(() => undefined);
+      }
+      throw error;
     }
-    throw error;
   }
 }
 

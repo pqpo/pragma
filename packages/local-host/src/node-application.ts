@@ -489,6 +489,10 @@ export function createLocalHostNodeApplication(
       });
     },
     commitExecutionTerminal: (input) => executionProjector.terminal(input),
+    onExecutionCheckpointed: async ({ mission, executionId }) => {
+      await runMemory.complete(mission.id, executionId, true);
+      await runMemory.pause();
+    },
     onExecutionTerminal: async (input) => {
       await runMemory.complete(input.mission.id, input.executionId);
       await runMemory.pause();

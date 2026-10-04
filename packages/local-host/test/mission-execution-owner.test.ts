@@ -85,8 +85,8 @@ describe("Mission execution owner", () => {
     expect(service.compilationSecrets("mission-1")).toBeUndefined();
     expect(service.compilationPlugins("mission-1")).toBeUndefined();
     expect(service.successorRequired("mission-1")).toBe(true);
-    expect(service.consumeSuccessorRequirement("mission-1")).toBe(true);
-    expect(service.consumeSuccessorRequirement("mission-1")).toBe(false);
+    service.clearSuccessorRequirement("mission-1");
+    expect(service.successorRequired("mission-1")).toBe(false);
   });
 
   it("does not let stale cleanup remove a replacement Session", () => {

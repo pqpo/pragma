@@ -278,7 +278,7 @@ async function fixture(cold = false, external = false) {
       ? { app: { experts: { resumeSession: resume } } as unknown as PragmaApp }
       : external
         ? {}
-        : { recoverActiveOwner: recover }),
+        : { prepareRecoveryResources: recover }),
   });
   const send = async () =>
     await control.consumer.apply({

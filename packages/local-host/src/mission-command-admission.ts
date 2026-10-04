@@ -4,40 +4,17 @@ import { MissionSemanticWritePendingError } from "./missions/controller/mission-
 import { createIntegrationError } from "@pragma/shared/integration";
 import type { ExpertPromptAttachment } from "@pragma/shared";
 
-export type LocalHostMissionPromptAdmissionHook = (
-  missionId: string,
-  requestId: string,
-) => Promise<void | (() => Promise<void>)>;
-
-/** Optional Memory admission must neither reject Core work nor mask its failure. */
-export async function beginLocalHostMissionPromptAdmission(
-  hook: LocalHostMissionPromptAdmissionHook | undefined,
-  missionId: string,
-  requestId: string,
-  onError?: ((error: unknown) => void) | undefined,
-): Promise<(() => Promise<void>) | undefined> {
-  const report = (error: unknown): void => {
-    try {
-      onError?.(error);
-    } catch {
-      /* Diagnostic failures do not change prompt admission. */
-    }
-  };
-  try {
-    const rollback = await hook?.(missionId, requestId);
-    if (rollback === undefined) return undefined;
-    return async () => {
-      try {
-        await rollback();
-      } catch (error) {
-        report(error);
-      }
-    };
-  } catch (error) {
-    report(error);
-    return undefined;
-  }
-}
+import {
+  withMissionNativeAdmission,
+  type createMissionExecutionKernel,
+  type MissionExecutionSubject,
+  type MissionExecutionResources,
+} from "./missions/execution-kernel.ts";
+import type { LocalHostMissionPromptAdmissionHook } from "./missions/prompt-admission.ts";
+export {
+  beginLocalHostMissionPromptAdmission,
+  type LocalHostMissionPromptAdmissionHook,
+} from "./missions/prompt-admission.ts";
 
 const missionAdmissionFactory = Symbol("local-host.mission-command-admission");
 
@@ -94,8 +71,10 @@ export interface PreparedMissionMessage {
   readonly session?: ExpertSession | undefined;
   readonly definitionChanged: boolean;
   readonly contextStoresChanged: boolean;
+  readonly previousEnvironmentAvailable?: boolean | undefined;
   readonly promptModelSelection?: RuntimeModelSelection | undefined;
-  readonly createSession: (successor: boolean) => Promise<ExpertSession>;
+  readonly subject: MissionExecutionSubject;
+  readonly nativeResources?: Extract<MissionExecutionResources, { kind: "session" }> | undefined;
   readonly rememberSession: (session: ExpertSession) => void;
 }
 
@@ -104,13 +83,31 @@ export interface PreparedMissionMessage {
  * retain compilation and timeline/observer projection until their scheduled stages.
  * In particular, no Host port accepts a MissionCommand or sends a prompt.
  */
-export function createLocalHostMissionCommandAdmission<
+export interface LocalHostMissionMessageResources<
   Mission extends MissionMessageAdmissionMission,
   Prepared extends PreparedMissionMessage,
   Result,
   PreparationScope = undefined,
->(options: {
+> {
+  readonly executionKernel: Pick<
+    ReturnType<typeof createMissionExecutionKernel>,
+    "preparePromptSession" | "receiptStatus"
+  >;
   readonly onPromptAdmitting?: LocalHostMissionPromptAdmissionHook | undefined;
+  readonly onTerminalReceipt?:
+    | ((input: {
+        readonly mission: Mission;
+        readonly turn: ExpertTurn;
+        readonly status: "succeeded" | "failed" | "cancelled";
+      }) => void)
+    | undefined;
+  readonly onNativeAccepted?:
+    | ((input: {
+        readonly mission: Mission;
+        readonly turn: ExpertTurn;
+        readonly requestId: string;
+      }) => Promise<void>)
+    | undefined;
   readonly onPromptAdmissionError?: ((error: unknown) => void) | undefined;
   readonly onAccepted?: ((input: MissionMessageAdmissionInput) => void) | undefined;
   readonly onPhase?:
@@ -148,26 +145,53 @@ export function createLocalHostMissionCommandAdmission<
     readonly requestedMode: "enqueue" | "steer";
     readonly input: MissionMessageAdmissionInput & { readonly requestedAt: string };
     readonly acceptedAt: number;
+    readonly replayed: boolean;
   }) => Promise<Result>;
-}): LocalHostMissionCommandAdmission<Result> {
-  return bindAdmission(
-    async (input: MissionMessageAdmissionInput): Promise<Result> =>
-      await options.admit(
-        input.id,
-        async () =>
-          await options.withController(input.id, async () => {
-            const initialReadAt = performance.now();
-            let mission = await options.getMission(input.id);
-            if (
-              input.mode !== "steer" &&
-              mission.lifecycleStatus === "active" &&
-              mission.executor.kind !== "flow" &&
-              mission.execution === undefined &&
-              mission.branch === undefined
-            ) {
-              await options.startInitialRun(mission);
-              mission = await options.getMission(input.id);
-            }
+}
+
+export function createLocalHostMissionCommandAdmission<
+  Mission extends MissionMessageAdmissionMission,
+  Prepared extends PreparedMissionMessage,
+  Result,
+  PreparationScope = undefined,
+>(
+  options: LocalHostMissionMessageResources<Mission, Prepared, Result, PreparationScope>,
+): LocalHostMissionCommandAdmission<Result> {
+  return bindAdmission(async (input) => await acceptMissionMessage(options, input));
+}
+
+async function acceptMissionMessage<
+  Mission extends MissionMessageAdmissionMission,
+  Prepared extends PreparedMissionMessage,
+  Result,
+  PreparationScope,
+>(
+  options: LocalHostMissionMessageResources<Mission, Prepared, Result, PreparationScope>,
+  input: MissionMessageAdmissionInput,
+): Promise<Result> {
+  return await options.admit(
+    input.id,
+    async () =>
+      await options.withController(input.id, async () => {
+        const initialReadAt = performance.now();
+        let mission = await options.getMission(input.id);
+        if (
+          input.mode !== "steer" &&
+          mission.lifecycleStatus === "active" &&
+          mission.executor.kind !== "flow" &&
+          mission.execution === undefined &&
+          mission.branch === undefined
+        ) {
+          await options.startInitialRun(mission);
+          mission = await options.getMission(input.id);
+        }
+        return await withMissionNativeAdmission(
+          { missionId: input.id, request: { requestId: input.requestId } },
+          {
+            onPromptAdmitting: options.onPromptAdmitting,
+            onFailure: options.onPromptAdmissionError,
+          },
+          async (admission) => {
             const acceptedAt = performance.now();
             const phase = (name: string, startedAt: number, cacheHit?: boolean) =>
               options.onPhase?.({
@@ -219,25 +243,18 @@ export function createLocalHostMissionCommandAdmission<
             }
             const prepared = await options.prepare(mission, input, acceptedAt, preparationScope);
             const sessionOpenStartedAt = performance.now();
-            let session = prepared.session;
-            if (prepared.definitionChanged && session !== undefined) {
-              await session.close("Mission executor environment changed.");
-              options.forgetSession(mission.id);
-              session = undefined;
-            }
-            if (
-              prepared.contextStoresChanged &&
-              session !== undefined &&
-              !options.hasActive(mission.id)
-            ) {
-              await session.close("Mission context bindings changed.");
-              options.forgetSession(mission.id);
-              session = undefined;
-            }
-            const sessionCacheHit = session !== undefined;
-            session ??= await prepared.createSession(
-              prepared.definitionChanged || prepared.contextStoresChanged,
-            );
+            const sessionCacheHit = prepared.session !== undefined;
+            const opened = await options.executionKernel.preparePromptSession({
+              subject: prepared.subject,
+              resources: prepared.nativeResources,
+              session: prepared.session,
+              definitionChanged: prepared.definitionChanged,
+              contextStoresChanged: prepared.contextStoresChanged,
+              hasActive: options.hasActive(mission.id),
+              previousEnvironmentAvailable: prepared.previousEnvironmentAvailable,
+            });
+            const session = opened.session;
+            if (opened.replaced) options.forgetSession(mission.id);
             prepared.rememberSession(session);
             phase("expert_session_open", sessionOpenStartedAt, sessionCacheHit);
             if (input.signal?.aborted)
@@ -290,11 +307,8 @@ export function createLocalHostMissionCommandAdmission<
                 }
               }
             }
-            const rollbackPromptAdmission = await beginLocalHostMissionPromptAdmission(
-              options.onPromptAdmitting,
-              mission.id,
-              input.requestId,
-              options.onPromptAdmissionError,
+            const replayed = (await session.getPromptQueue()).some(
+              (prompt) => prompt.requestId === input.requestId,
             );
             const promptStartedAt = performance.now();
             const turn = await session
@@ -319,7 +333,6 @@ export function createLocalHostMissionCommandAdmission<
                   : { modelSelection: prepared.promptModelSelection }),
               })
               .catch(async (error: unknown) => {
-                await rollbackPromptAdmission?.();
                 if (
                   requestedMode === "steer" &&
                   error instanceof SteerNotDispatchedError &&
@@ -333,6 +346,40 @@ export function createLocalHostMissionCommandAdmission<
                   });
                 throw error;
               });
+            const receiptStatus = replayed
+              ? await options.executionKernel.receiptStatus(turn.executionId)
+              : undefined;
+            const recoveredReceipt =
+              replayed &&
+              !sessionCacheHit &&
+              (receiptStatus === "queued" ||
+                receiptStatus === "running" ||
+                receiptStatus === "waiting");
+            if (!replayed || recoveredReceipt) {
+              admission.accepted(turn.executionId);
+              try {
+                await options.onNativeAccepted?.({ mission, turn, requestId: input.requestId });
+              } catch (error) {
+                try {
+                  options.onPromptAdmissionError?.(error);
+                } catch {
+                  /* optional diagnostics */
+                }
+              }
+            }
+            if (replayed) {
+              const status = receiptStatus;
+              if (status === "succeeded" || status === "failed" || status === "cancelled")
+                try {
+                  options.onTerminalReceipt?.({ mission, turn, status });
+                } catch (error) {
+                  try {
+                    options.onPromptAdmissionError?.(error);
+                  } catch {
+                    /* optional diagnostics */
+                  }
+                }
+            }
             phase("expert_session_prompt", promptStartedAt);
             return await options
               .projectAccepted({
@@ -341,6 +388,7 @@ export function createLocalHostMissionCommandAdmission<
                 turn,
                 requestedMode,
                 acceptedAt,
+                replayed,
                 input: { ...input, requestedAt: input.requestedAt ?? new Date().toISOString() },
               })
               .catch((error: unknown) => {
@@ -348,8 +396,51 @@ export function createLocalHostMissionCommandAdmission<
                   ? error
                   : new MissionSemanticWritePendingError({ cause: error });
               });
-          }),
-        input.requestId,
-      ),
+          },
+        );
+      }),
+    input.requestId,
+  );
+}
+
+/** Type-erased resource format; the admission algorithm remains a single implementation. */
+export interface LocalHostMissionMessageFormat {
+  withResources<T>(
+    apply: <M extends MissionMessageAdmissionMission, P extends PreparedMissionMessage, R, S>(
+      resources: LocalHostMissionMessageResources<M, P, R, S>,
+      project: (result: R) => Promise<Record<string, unknown>>,
+    ) => Promise<T>,
+  ): Promise<T>;
+}
+
+export function defineLocalHostMissionMessageFormat<
+  M extends MissionMessageAdmissionMission,
+  P extends PreparedMissionMessage,
+  R,
+  S = undefined,
+>(
+  resources: LocalHostMissionMessageResources<M, P, R, S>,
+  project: (result: R) => Promise<Record<string, unknown>>,
+): LocalHostMissionMessageFormat {
+  return { withResources: async (apply) => await apply(resources, project) };
+}
+
+export function createLocalHostMissionFormatAdmission(
+  resolve: (missionId: string) => Promise<LocalHostMissionMessageFormat>,
+): LocalHostMissionCommandAdmission<Record<string, unknown>> {
+  return bindAdmission(
+    async (input) =>
+      await (
+        await resolve(input.id)
+      ).withResources(async (resources, project) => {
+        const result = await acceptMissionMessage(resources, input);
+        try {
+          return await project(result);
+        } catch (error) {
+          throw error instanceof MissionSemanticWritePendingError
+            ? error
+            : new MissionSemanticWritePendingError({ cause: error });
+        }
+      }),
   );
 }

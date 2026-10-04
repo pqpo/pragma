@@ -36,7 +36,7 @@ it("mutates a retained Session queue without probing storage using the Mission i
     sessions: {} as ExpertSessionStore,
     executors: [],
     resolveMissionBinding: async () => undefined,
-    recoverActiveOwner: recover,
+    prepareRecoveryResources: recover,
   });
   const command = MissionCommandSchema.parse({
     schemaVersion: "pragma.mission-command/v2",

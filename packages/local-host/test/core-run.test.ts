@@ -788,11 +788,11 @@ describe("Core-backed Local Host run composition", { timeout: 10_000 }, () => {
 
       const ownerScope = createMissionOwnerScope({ controller });
       const mission = createControllerRunMissionPort(controller, { ownerScope });
-      const onOwnerRecovering = vi.fn(async (missionId: string) => {
+      const onPromptAdmitting = vi.fn(async (missionId: string) => {
         expect((await executions.get(missionId))?.status).toBe("waiting");
       });
       const coreControl = createLocalHostCoreMissionControlAdapter({
-        onOwnerRecovering,
+        onPromptAdmitting,
         pragmaHome: home,
         runtimes,
         executions,
@@ -873,7 +873,7 @@ describe("Core-backed Local Host run composition", { timeout: 10_000 }, () => {
           result: { answers: { "Review this run.": "approved" } },
         },
       });
-      expect(onOwnerRecovering).toHaveBeenCalledExactlyOnceWith(human.missionId);
+      expect(onPromptAdmitting).toHaveBeenCalledExactlyOnceWith(human.missionId, human.missionId);
       expect((await executions.get(human.missionId))?.status).toBe("succeeded");
       expect(completedSnapshot.snapshot.lease).toBeUndefined();
       await expect(watchPromise).resolves.toMatchObject({

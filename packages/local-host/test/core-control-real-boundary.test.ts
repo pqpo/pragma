@@ -11,6 +11,7 @@ import {
   ExecutionController,
   FlowExecutionManager,
   FlowInterruptionUnconfirmedError,
+  type PragmaApp,
   type ExecutionStore,
   type ExpertSessionStore,
   type RuntimeResolver,
@@ -281,7 +282,7 @@ describe("Mission control against real Core execution boundaries", () => {
       sessions: {} as ExpertSessionStore,
       executors: [],
       resolveMissionBinding: async () => undefined,
-      recoverActiveOwner: recover,
+      prepareRecoveryResources: recover,
     });
     await expect(replay.consumer.apply(input(f.command))).resolves.toMatchObject({
       result: { interactionId: f.command.target?.interactionId },
@@ -415,7 +416,7 @@ describe("Mission control against real Core execution boundaries", () => {
       resolveMissionBinding: async () => undefined,
       resolveExecutionId: async () => "newer-execution",
       resolveSessionId: async () => session.sessionId,
-      recoverActiveOwner: recover,
+      prepareRecoveryResources: recover,
     });
     await expect(replay.consumer.apply(input(command))).resolves.toMatchObject({
       result: { executionId: turn.executionId, interactionId },
@@ -537,12 +538,25 @@ describe("cold Flow interruption", () => {
       sessions: {} as ExpertSessionStore,
       executors: [],
       resolveMissionBinding: async () => undefined,
-      recoverActiveOwner: recover,
-      stopFlow: async (_missionId, executionId, reason, signal) => {
-        if (failStop)
-          throw new FlowInterruptionUnconfirmedError(executionId, new Error("native unavailable"));
-        await stopped.stop(flow, { executionId, reason, signal });
-      },
+      prepareRecoveryResources: recover,
+      prepareFlowStopResources: async () => ({
+        definition: flow,
+        app: {
+          flows: {
+            stop: async (
+              _definition: unknown,
+              options: { executionId: string; reason?: string; signal?: AbortSignal },
+            ) => {
+              if (failStop)
+                throw new FlowInterruptionUnconfirmedError(
+                  options.executionId,
+                  new Error("native unavailable"),
+                );
+              await stopped.stop(flow, options);
+            },
+          },
+        } as unknown as PragmaApp,
+      }),
     });
     const command = {
       missionId: original.executionId,

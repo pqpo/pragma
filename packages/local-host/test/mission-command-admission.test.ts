@@ -40,6 +40,10 @@ function fixture() {
   };
   const project = vi.fn(async () => ({ missionId, requestId }));
   const options = {
+    executionKernel: {
+      preparePromptSession: async () => ({ session, replaced: false }),
+      receiptStatus: async () => undefined,
+    },
     getMission: async () => mission,
     admit: <T>(id: string, operation: () => Promise<T>) => owner.admit(id, operation),
     withController: async <T>(_id: string, operation: () => Promise<T>) => await operation(),
@@ -54,7 +58,7 @@ function fixture() {
       session,
       definitionChanged: false,
       contextStoresChanged: false,
-      createSession: open,
+      subject: { missionId, request: { requestId } },
       rememberSession: () => undefined,
     }),
     forgetSession: () => undefined,

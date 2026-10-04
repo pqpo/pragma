@@ -196,11 +196,6 @@ export class MissionExecutionOwner<
       this.#prune(missionId, record);
     }
   }
-  consumeSuccessorRequirement(missionId: string): boolean {
-    const required = this.successorRequired(missionId);
-    this.clearSuccessorRequirement(missionId);
-    return required;
-  }
   beginContextBindingChange(missionId: string): void {
     const record = this.#record(missionId);
     record.contextBindingChanges = (record.contextBindingChanges ?? 0) + 1;
@@ -228,11 +223,6 @@ export class MissionExecutionOwner<
       delete record.memoryBindingsChanged;
       this.#prune(missionId, record);
     }
-  }
-  consumeMemoryBindingsChanged(missionId: string): boolean {
-    const changed = this.memoryBindingsChanged(missionId);
-    this.clearMemoryBindingsChanged(missionId);
-    return changed;
   }
   invalidateContextBindings(missionId: string): void {
     this.deleteExecutionContext(missionId);

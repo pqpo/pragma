@@ -6,16 +6,11 @@ import type {
   UsageSink,
 } from "@pragma/core";
 import type { LocalHostCoreRunComposition } from "../core-run.ts";
-import { createCoreRunExecutorPort } from "../core-run.ts";
-import { createLocalHostCoreMissionControlAdapter } from "../core-control-adapter.ts";
-import type { LocalHostCoreMissionControlAdapter } from "../core-control-adapter.ts";
-import { createControllerRunMissionPort } from "../run.ts";
 import type { MissionControllerStore } from "./controller/mission-controller-store.ts";
 import type { MissionOwnerScope } from "./controller/owner-scope.ts";
 import type { MissionPinnedBinding } from "./controller/pinned-binding.ts";
 import type { MissionExecutionOwnerAccess } from "./execution-owner.ts";
 import type { LocalHostNodeMissionCompiler } from "../node-mission-compiler.ts";
-import type { LocalHostRunExecutorPort } from "../run.ts";
 
 /** Historical controller facts are read directly; this port never invents an envelope. */
 export interface LocalHostMissionControllerFactResources {
@@ -43,10 +38,9 @@ export interface LocalHostMissionControllerFactResources {
     | undefined;
 }
 
-/** The canonical service owns both formats with the same Core boundaries and owner registry. */
-export function createControllerFactExecutionPorts(options: {
+/** Map historical facts to resource ports. Lifecycle policy belongs to the execution service. */
+export function createControllerFactRunComposition(options: {
   readonly pragmaHome: string;
-  readonly ownerLifetime: "host" | "request";
   readonly runtimes: RuntimeResolver;
   readonly executions: DurableExecutionStore;
   readonly sessions: ExpertSessionStore;
@@ -55,22 +49,9 @@ export function createControllerFactExecutionPorts(options: {
   readonly loggerProvider?: PragmaLoggerProvider | undefined;
   readonly resources: LocalHostMissionControllerFactResources;
   readonly onBackgroundFailure: (error: unknown) => void;
-}): {
-  readonly run: LocalHostRunExecutorPort;
-  readonly control: LocalHostCoreMissionControlAdapter;
-} {
+}): LocalHostCoreRunComposition {
   const { resources } = options;
-  const hasPending = async (missionId: string) =>
-    (await resources.controller.listOperations({ missionId })).some(
-      (operation) => operation.state === "queued" || operation.state === "applying",
-    );
-  const completeResources = (missionId: string, executionId: string, waiting = false): void => {
-    void resources.memory
-      ?.terminal(missionId, executionId, waiting)
-      .finally(async () => await resources.memory?.release?.())
-      .catch(options.onBackgroundFailure);
-  };
-  const core = createCoreRunExecutorPort({
+  return {
     pragmaHome: options.pragmaHome,
     runtimes: options.runtimes,
     executions: options.executions,
@@ -81,6 +62,22 @@ export function createControllerFactExecutionPorts(options: {
     createHostContextBindings: resources.createHostContextBindings,
     executors: resources.executors,
     resolveSessionId: resources.resolveSessionId,
+    onBackgroundFailure: options.onBackgroundFailure,
+    onPromptAdmitting: resources.memory?.admitting,
+    onExecutionAccepted: async ({ missionId, executionId, request }) =>
+      await resources.memory?.linked({
+        missionId,
+        executionId,
+        ...(request.project === undefined ? {} : { projectId: request.project.projectId }),
+      }),
+    onExecutionCheckpointed: async ({ missionId, executionId }) => {
+      await resources.memory?.terminal(missionId, executionId, true);
+      await resources.memory?.release?.();
+    },
+    onExecutionTerminal: async ({ missionId, executionId }) => {
+      await resources.memory?.terminal(missionId, executionId);
+      await resources.memory?.release?.();
+    },
     createMissionExecutionOwnershipAssertion:
       options.ownerScope === undefined
         ? undefined
@@ -92,109 +89,5 @@ export function createControllerFactExecutionPorts(options: {
               await options.ownerScope!.assertOwnership(missionId, guard);
             };
           },
-  });
-  const control = createLocalHostCoreMissionControlAdapter({
-    pragmaHome: options.pragmaHome,
-    runtimes: options.runtimes,
-    executions: options.executions,
-    sessions: options.sessions,
-    ownerAccess: options.ownerAccess,
-    usageSink: resources.usageSink,
-    loggerProvider: options.loggerProvider,
-    createHostContextBindings: resources.createHostContextBindings,
-    createMissionExecutionOwnershipAssertion:
-      options.ownerScope === undefined
-        ? undefined
-        : (missionId) => {
-            const guard = options.ownerScope!.currentGuard(missionId);
-            return async () => {
-              if (guard === undefined)
-                throw new Error(`Mission execution owner is unavailable: ${missionId}`);
-              await options.ownerScope!.assertOwnership(missionId, guard);
-            };
-          },
-    executors: resources.executors,
-    compiler: resources.compiler,
-    resolveSessionId: resources.resolveSessionId,
-    resolveMissionBinding: resources.resolveMissionBinding,
-    mission: createControllerRunMissionPort(resources.controller, {
-      ownerScope: options.ownerScope,
-    }),
-    hasPendingMissionCommands: hasPending,
-    assertMissionOwnership: async (missionId, guard) =>
-      await options.ownerScope?.assertOwnership(missionId, guard),
-    currentMissionGuard: (missionId) => options.ownerScope?.currentGuard(missionId),
-    onPromptAdmitting: async (missionId, requestId) =>
-      await resources.memory?.admitting?.(missionId, requestId),
-    onExecutionAccepted: async ({ missionId, executionId }) => {
-      await resources.memory?.linked({ missionId, executionId }).catch(options.onBackgroundFailure);
-    },
-    onOwnerRecovering: async (missionId) => {
-      const sessionId = await resources.resolveSessionId(missionId);
-      const state = sessionId === undefined ? undefined : await options.sessions.get(sessionId);
-      const executionId = state?.executionIds.at(-1) ?? missionId;
-      await resources.memory?.recovering(missionId, executionId);
-    },
-    ...(options.ownerLifetime === "request"
-      ? {
-          releaseMissionOwner: async (missionId, guard) => {
-            await options.ownerScope?.assertOwnership(missionId, guard);
-            if (await hasPending(missionId)) return;
-            const sessionId = await resources.resolveSessionId(missionId);
-            const session =
-              sessionId === undefined ? undefined : await options.sessions.get(sessionId);
-            const execution =
-              session === undefined ? await options.executions.get(missionId) : undefined;
-            await options.ownerScope?.assertOwnership(missionId, guard);
-            const executionId = session?.executionIds.at(-1) ?? execution?.executionId;
-            if (executionId !== undefined)
-              completeResources(
-                missionId,
-                executionId,
-                session?.lastStatus === "waiting" || execution?.status === "waiting",
-              );
-            await options.ownerScope?.release(missionId, guard);
-          },
-        }
-      : {}),
-  });
-  const run: LocalHostRunExecutorPort = {
-    resolve: core.resolve,
-    ...(core.validateInput === undefined ? {} : { validateInput: core.validateInput }),
-    start: async (input) => {
-      const rollback = await resources.memory?.admitting?.(
-        input.missionId,
-        input.request.requestId,
-      );
-      const handle = await core.start(input).catch(async (error: unknown) => {
-        if (rollback !== undefined) await rollback().catch(options.onBackgroundFailure);
-        completeResources(input.missionId, input.request.requestId);
-        throw error;
-      });
-      try {
-        await resources.memory?.linked({
-          missionId: input.missionId,
-          executionId: handle.executionId,
-          ...(input.request.project === undefined
-            ? {}
-            : { projectId: input.request.project.projectId }),
-        });
-      } catch (error) {
-        await handle.cancel?.("Mission resource registration failed").catch(() => undefined);
-        await handle.release?.().catch(() => undefined);
-        completeResources(input.missionId, input.request.requestId);
-        throw error;
-      }
-      void handle.result.then((terminal) => {
-        completeResources(
-          input.missionId,
-          handle.executionId,
-          terminal.status === "input_required",
-        );
-      }, options.onBackgroundFailure);
-      return handle;
-    },
-    respond: core.respond,
   };
-  return { run, control };
 }

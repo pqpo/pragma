@@ -50,6 +50,7 @@ describe("Local Host Core Mission control adapter", () => {
     const session = {
       prompt,
       resumePromptQueue,
+      getState: async () => ({ executionIds: [] }),
       getPromptQueue: async () => [],
       getPromptQueueState: async () => ({ state: "idle", pendingCount: 0 }),
     } as unknown as ExpertSession;

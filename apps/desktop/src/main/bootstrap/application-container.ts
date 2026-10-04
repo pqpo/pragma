@@ -3,6 +3,7 @@ import {
   createLocalHostProjectCatalogFromHome,
   createLocalHostBuiltInExecutorResolver,
   createLocalHostMissionBoardBindings,
+  createLocalHostMissionMemoryLifecycle,
   createMissionSessionAssociationResolver,
   findMissionPinnedBinding,
 } from "@pragma/local-host";
@@ -1152,6 +1153,23 @@ export async function createDesktopApplicationContainer(
     },
   });
   memoryPlaneRef.current = memoryPlane;
+  const missionMemory = createLocalHostMissionMemoryLifecycle({
+    ports: {
+      bindings: async (input) =>
+        (await memoryPlane.policies.getGlobal()).policy.enabled === "enabled"
+          ? [{ namespace: "memory", store: memoryPlane.createMissionContextStore(input) }]
+          : [],
+      register: (input) => memoryPlane.registerMemoryExecutionContext(input),
+      setConversationState: (input) => memoryPlane.setMemoryConversationState(input),
+      stopMission: (missionId) => memoryPlane.stopMissionAttention(missionId),
+    },
+    onError: (error) =>
+      mainLogger.warn(
+        "mission.memory_terminal_projection_failed",
+        "Optional Mission Memory projection needs recovery.",
+        { error, subsystem: "memory", code: "memory_delivery_unavailable", retryable: true },
+      ),
+  });
   const bundleService = createPragmaBundleService({
     paths: pragmaPaths,
     project: pragmaProjectStore,
@@ -1293,26 +1311,13 @@ export async function createDesktopApplicationContainer(
     contextStores,
     contextStoreRevisions: storeRevisions,
     knowledgeRevisionMountResources: systemExpertKnowledgeRevisionMountResources,
-    hostContextStores: async (mission, bindingId) => {
-      if (controllerMemoryBindings.get(mission.id) !== bindingId) {
-        controllerMemoryBindings.set(mission.id, bindingId);
-        if (!controllerMemoryExecution.has(mission.id))
-          controllerMemoryExecution.set(mission.id, { executionId: bindingId });
-      }
-      const globalPolicy = await memoryPlane.policies.getGlobal();
-      return globalPolicy.policy.enabled === "enabled"
-        ? [
-            {
-              namespace: "memory",
-              store: memoryPlane.createMissionContextStore({
-                missionId: mission.id,
-                goal: mission.goal,
-                projectId: mission.project.id,
-              }),
-            },
-          ]
-        : [];
-    },
+    hostContextStores: (mission, bindingId) =>
+      missionMemory.bindings({
+        missionId: mission.id,
+        goal: mission.goal,
+        projectId: mission.project.id,
+        bindingId,
+      }),
     plugins: pluginStore,
     runtimes,
     usage: usageStore,
@@ -1340,15 +1345,13 @@ export async function createDesktopApplicationContainer(
     },
     onExecutionContextLinked: async ({ mission, executionId }) => {
       if (!isUserFacingMissionOrigin(mission.origin)) return;
-      controllerMemoryExecution.set(mission.id, { executionId });
-      controllerMemoryIntents.delete(mission.id);
-      await memoryPlane.registerMemoryExecutionContext({
+      await missionMemory.register({
         executionId,
         missionId: mission.id,
         projectId: mission.project.id,
       });
     },
-    onPromptAdmitting: (missionId, requestId) => beginMemoryIntent(missionId, requestId),
+    onPromptAdmitting: (missionId, requestId) => missionMemory.beginPrompt(missionId, requestId),
     onMissionActivity: async ({ mission }) => {
       if (!isUserFacingMissionOrigin(mission.origin)) return;
       await memoryPlane.setMemoryConversationState({
@@ -1366,45 +1369,17 @@ export async function createDesktopApplicationContainer(
     getSystemDependencyResource: (ref) => systemExperts.getDependencyResource(ref),
     invalidateRuntimeReadiness: () => invalidateTargetRuntimeAvailability(runtimes),
     commitExecutionTerminal: (input) => executionEventProjector.terminal(input),
-    onExecutionTerminal: async function completeMemoryTerminal({
-      mission,
-      executionId,
-    }: {
-      mission: Mission;
-      executionId: string;
-    }) {
+    onExecutionCheckpointed: async ({ mission, executionId }) => {
       if (!isUserFacingMissionOrigin(mission.origin)) return;
-      const capturedMemoryOwner = controllerMemoryExecution.get(mission.id);
-      try {
-        const intent = controllerMemoryIntents.get(mission.id);
-        if (
-          intent !== undefined &&
-          intent.owner === capturedMemoryOwner &&
-          intent.previous?.executionId === executionId
-        ) {
-          intent.deferred = async () => await completeMemoryTerminal({ mission, executionId });
-          return;
-        }
-        if (capturedMemoryOwner?.executionId !== executionId) return;
-        capturedMemoryOwner.terminal = async () =>
-          await completeMemoryTerminal({ mission, executionId });
-        await memoryPlane.stopMissionAttention(mission.id);
-        if (controllerMemoryExecution.get(mission.id) !== capturedMemoryOwner) return;
-        await memoryPlane.setMemoryConversationState({
-          missionId: mission.id,
-          state: mission.lifecycleStatus === "completed" ? "completed" : "active",
-        });
-        if (controllerMemoryExecution.get(mission.id) === capturedMemoryOwner) {
-          controllerMemoryExecution.delete(mission.id);
-          controllerMemoryIntents.delete(mission.id);
-        }
-      } catch (memoryError) {
-        mainLogger.warn(
-          "mission.memory_terminal_projection_failed",
-          "Mission terminal state committed while its Memory conversation projection remained stale.",
-          { error: memoryError, missionId: mission.id, executionId, retryable: true },
-        );
-      }
+      await missionMemory.complete(mission.id, executionId, true);
+    },
+    onExecutionTerminal: async ({ mission, executionId }) => {
+      if (!isUserFacingMissionOrigin(mission.origin)) return;
+      await missionMemory.complete(
+        mission.id,
+        executionId,
+        mission.lifecycleStatus !== "completed",
+      );
     },
     getSystemExecutorFingerprint: async (ref) =>
       ref === MEMORY_CURATOR_REF
@@ -1885,13 +1860,13 @@ export async function createDesktopApplicationContainer(
                     isUserFacingMissionOrigin(current.origin) &&
                     current.execution?.id === executionId
                   ) {
-                    const cleanup = memoryPlane.stopMissionAttention(current.id);
-                    void cleanup.catch(() => undefined);
-                    await memoryPlane.setMemoryConversationState({
-                      missionId: current.id,
-                      state: current.lifecycleStatus === "completed" ? "completed" : "active",
-                    });
-                    return { cleanup };
+                    return {
+                      cleanup: missionMemory.reconcile(
+                        current.id,
+                        executionId,
+                        current.lifecycleStatus !== "completed",
+                      ),
+                    };
                   }
                   return undefined;
                 },
@@ -1980,43 +1955,6 @@ export async function createDesktopApplicationContainer(
       }
     },
   });
-  type MemoryExecutionOwner = { executionId: string; terminal?: () => Promise<void> };
-  const controllerMemoryExecution = new Map<string, MemoryExecutionOwner>();
-  const controllerMemoryIntents = new Map<
-    string,
-    {
-      owner: MemoryExecutionOwner;
-      previous: MemoryExecutionOwner | undefined;
-      deferred?: () => Promise<void>;
-    }
-  >();
-  const beginMemoryIntent = async (missionId: string, executionId: string) => {
-    const previous = controllerMemoryExecution.get(missionId);
-    const owner = { executionId };
-    const intent = { owner, previous, deferred: previous?.terminal } as {
-      owner: typeof owner;
-      previous: typeof previous;
-      deferred?: () => Promise<void>;
-    };
-    controllerMemoryIntents.set(missionId, intent);
-    controllerMemoryExecution.set(missionId, owner);
-    return async () => {
-      if (controllerMemoryExecution.get(missionId) !== owner) return;
-      if (previous === undefined) controllerMemoryExecution.delete(missionId);
-      else controllerMemoryExecution.set(missionId, previous);
-      controllerMemoryIntents.delete(missionId);
-      void intent
-        .deferred?.()
-        .catch((error: unknown) =>
-          mainLogger.warn(
-            "mission.memory_terminal_projection_failed",
-            "Deferred Memory terminal projection needs recovery.",
-            { error, missionId, retryable: true },
-          ),
-        );
-    };
-  };
-  const controllerMemoryBindings = new Map<string, string>();
   missionRunner.bindControllerFacts({
     controller: missionControllerStore,
     hasEnvelope: hasMissionEnvelope,
@@ -2031,62 +1969,19 @@ export async function createDesktopApplicationContainer(
     usageSink: localHostUsageRef.current,
     createHostContextBindings: async ({ missionId, request }) => [
       ...(await createLocalHostMissionBoardBindings({ pragmaHome: pragmaPaths.root, missionId })),
-      ...((await memoryPlane.policies.getGlobal()).policy.enabled === "enabled"
-        ? [
-            {
-              namespace: "memory",
-              store: memoryPlane.createMissionContextStore({
-                missionId,
-                goal: request.prompt ?? "",
-                ...(request.project === undefined ? {} : { projectId: request.project.projectId }),
-              }),
-            },
-          ]
-        : []),
+      ...(await missionMemory.bindings({
+        missionId,
+        goal: request.prompt ?? "",
+        bindingId: request.requestId,
+        ...(request.project === undefined ? {} : { projectId: request.project.projectId }),
+      })),
     ],
     memory: {
-      linked: async ({ missionId, executionId, projectId }) => {
-        controllerMemoryExecution.set(missionId, { executionId });
-        controllerMemoryIntents.delete(missionId);
-        await memoryPlane.registerMemoryExecutionContext({
-          missionId,
-          executionId,
-          ...(projectId === undefined ? {} : { projectId }),
-        });
-        await memoryPlane.setMemoryConversationState({ missionId, state: "running" });
-      },
-      recovering: async (missionId, executionId) => {
-        controllerMemoryExecution.set(missionId, { executionId });
-        controllerMemoryIntents.delete(missionId);
-        await memoryPlane.setMemoryConversationState({ missionId, state: "running" });
-      },
-      admitting: (missionId, requestId) => beginMemoryIntent(missionId, requestId),
-      terminal: async function completeMemoryTerminal(missionId, executionId, waiting) {
-        const capturedMemoryOwner = controllerMemoryExecution.get(missionId);
-        const intent = controllerMemoryIntents.get(missionId);
-        if (
-          intent !== undefined &&
-          intent.owner === capturedMemoryOwner &&
-          intent.previous?.executionId === executionId
-        ) {
-          intent.deferred = async () =>
-            await completeMemoryTerminal(missionId, executionId, waiting);
-          return;
-        }
-        if (capturedMemoryOwner?.executionId !== executionId) return;
-        capturedMemoryOwner.terminal = async () =>
-          await completeMemoryTerminal(missionId, executionId, waiting);
-        await memoryPlane.stopMissionAttention(missionId);
-        if (controllerMemoryExecution.get(missionId) !== capturedMemoryOwner) return;
-        await memoryPlane.setMemoryConversationState({
-          missionId,
-          state: waiting ? "active" : "completed",
-        });
-        if (controllerMemoryExecution.get(missionId) === capturedMemoryOwner) {
-          controllerMemoryExecution.delete(missionId);
-          controllerMemoryIntents.delete(missionId);
-        }
-      },
+      linked: (input) => missionMemory.register(input),
+      recovering: (missionId, executionId) => missionMemory.resume(missionId, executionId),
+      admitting: (missionId, requestId) => missionMemory.beginPrompt(missionId, requestId),
+      terminal: (missionId, executionId, waiting) =>
+        missionMemory.complete(missionId, executionId, waiting),
     },
   });
   const memoryCurator = createDesktopMemoryCurator({

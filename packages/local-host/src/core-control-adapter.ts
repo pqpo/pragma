@@ -1,12 +1,8 @@
 import {
-  openLocalHostFlowExecution,
-  releaseLocalHostFlowExecution,
-  stopLocalHostFlowExecution,
-} from "./missions/flow-lifecycle.ts";
-import {
-  openLocalHostExpertSession,
-  releaseLocalHostExpertSession,
-} from "./missions/session-lifecycle.ts";
+  createMissionExecutionKernel,
+  type MissionExecutionRecoveryResources,
+} from "./missions/execution-kernel.ts";
+import { stopLocalHostFlowExecution } from "./missions/flow-lifecycle.ts";
 import { missionCompilationEnvironmentSnapshot } from "./missions/compile-service.ts";
 import { basename } from "node:path";
 import { z } from "zod";
@@ -15,8 +11,9 @@ import {
   type MissionExecutionOwnerAccess,
 } from "./missions/execution-owner.ts";
 import {
-  createLocalHostMissionCommandAdmission,
-  type LocalHostMissionCommandAdmission,
+  defineLocalHostMissionMessageFormat,
+  createLocalHostMissionFormatAdmission,
+  type LocalHostMissionMessageFormat,
 } from "./mission-command-admission.ts";
 import { createSqliteExecutionStore } from "./execution/sqlite-execution-store.ts";
 
@@ -187,20 +184,26 @@ export function createLocalHostCoreMissionControlAdapter(options: {
   readonly resolveExecutionId?: ((missionId: string) => Promise<string | undefined>) | undefined;
   readonly resolveSessionId?: ((missionId: string) => Promise<string | undefined>) | undefined;
   readonly ownerAccess?: MissionExecutionOwnerAccess | undefined;
-  /** Narrow R3 recovery port: returns a Core handle, never applies a command. */
-  readonly recoverActiveOwner?:
-    | ((missionId: string, purpose?: "execute" | "stop") => Promise<LocalHostCoreActiveOwner>)
+  readonly prepareRecoveryResources?:
+    | ((
+        missionId: string,
+        purpose?: "execute" | "stop",
+      ) => Promise<MissionExecutionRecoveryResources | undefined>)
     | undefined;
-  /** Narrow compile/Core port for stopping a cold Flow without running its graph. */
-  readonly stopFlow?:
+  readonly prepareFlowStopResources?:
     | ((
         missionId: string,
         executionId: string,
-        reason: string | undefined,
-        signal: AbortSignal,
-      ) => Promise<void>)
+      ) => Promise<
+        | {
+            readonly app: PragmaApp;
+            readonly definition: Parameters<PragmaApp["flows"]["stop"]>[0];
+          }
+        | undefined
+      >)
     | undefined;
-  readonly admission?: LocalHostMissionCommandAdmission<Record<string, unknown>> | undefined;
+  readonly messageFormat?:
+    ((missionId: string) => Promise<LocalHostMissionMessageFormat | undefined>) | undefined;
   readonly resolveInteractionHandle?:
     | ((
         missionId: string,
@@ -225,8 +228,13 @@ export function createLocalHostCoreMissionControlAdapter(options: {
   readonly resolveActiveOwner?:
     ((missionId: string) => Promise<LocalHostCoreActiveOwner | undefined>) | undefined;
   readonly resolveMissionBinding: (missionId: string) => Promise<MissionPinnedBinding | undefined>;
-  /** Host lifecycle before recovering an owner that may resume Runtime work. */
-  readonly onOwnerRecovering?: ((missionId: string) => Promise<void>) | undefined;
+  readonly onTerminalReceipt?:
+    | ((input: {
+        missionId: string;
+        executionId: string;
+        status: "succeeded" | "failed" | "cancelled";
+      }) => void)
+    | undefined;
   readonly onExecutionAccepted?:
     ((input: { missionId: string; executionId: string }) => Promise<void>) | undefined;
   readonly onPromptAdmitting?:
@@ -250,6 +258,7 @@ export function createLocalHostCoreMissionControlAdapter(options: {
       ...(options.pragmaHome === undefined ? {} : { pragmaHome: options.pragmaHome }),
     });
   const owners = options.ownerAccess ?? new MissionExecutionOwner();
+  const kernel = createMissionExecutionKernel({ executions, sessions, owners });
   const recoveredOwner = (missionId: string) =>
     owners.controlOwnerOrigin(missionId) === "recovered"
       ? owners.controlOwner(missionId)
@@ -353,8 +362,9 @@ export function createLocalHostCoreMissionControlAdapter(options: {
       (await options.resolveActiveOwner?.(missionId)) !== undefined
     )
       return;
-    if (options.recoverActiveOwner !== undefined) return;
-    await resolveExecutor(await readBinding(missionId), purpose);
+    const binding = await options.resolveMissionBinding(missionId);
+    if (binding !== undefined) await resolveExecutor(binding, purpose);
+    else if (options.prepareRecoveryResources === undefined) await readBinding(missionId);
   };
 
   const recover = async (
@@ -371,37 +381,102 @@ export function createLocalHostCoreMissionControlAdapter(options: {
       owners.setControlOwner(missionId, active, "live");
       return active;
     }
-    if (options.recoverActiveOwner !== undefined) {
-      return await owners.recoverControlOwner(
-        missionId,
-        () => options.recoverActiveOwner!(missionId, purpose),
-        { admission: "owned" },
-      );
-    }
     return await owners.recoverControlOwner(
       missionId,
       async () => {
-        const binding = await readBinding(missionId);
-        const executor = preparedExecutor ?? (await resolveExecutor(binding, purpose));
-        assertExecutorMatchesBinding(executor.descriptor, binding);
-        const app = await createControlApp({
-          options,
-          binding,
-          executor,
-          missionId,
-          createApp,
-        });
-        await options.onOwnerRecovering?.(missionId);
-        const owner = await recoverOwner({
-          app,
-          sessions,
-          executions,
-          missionId,
-          sessionId: (await options.resolveSessionId?.(missionId)) ?? missionId,
-          executionId: (await options.resolveExecutionId?.(missionId)) ?? missionId,
-          executor,
-        });
-        return owner;
+        const executionId = (await options.resolveExecutionId?.(missionId)) ?? missionId;
+        return await kernel.admit(
+          { missionId, intent: "recover", request: { requestId: executionId } },
+          {
+            admissionOwned: true,
+            onPromptAdmitting: options.onPromptAdmitting,
+            onFailure: (error) =>
+              options.loggerProvider
+                ?.createLogger({ component: "local-host.mission-control" })
+                .warn(
+                  "mission.recovery_resources_degraded",
+                  "Optional recovery resources need attention.",
+                  { error, missionId },
+                ),
+          },
+          async (admission) => {
+            const projected = await options.prepareRecoveryResources?.(missionId, purpose);
+            const plan: MissionExecutionRecoveryResources & {
+              executor?: LocalHostCoreExecutorDefinition;
+            } =
+              projected ??
+              (await (async (): Promise<
+                MissionExecutionRecoveryResources & { executor?: LocalHostCoreExecutorDefinition }
+              > => {
+                const binding = await readBinding(missionId);
+                const executor = preparedExecutor ?? (await resolveExecutor(binding, purpose));
+                assertExecutorMatchesBinding(executor.descriptor, binding);
+                const app = await createControlApp({
+                  options,
+                  binding,
+                  executor,
+                  missionId,
+                  createApp,
+                });
+                const sessionId = (await options.resolveSessionId?.(missionId)) ?? missionId;
+                const prior = await executions.get(executionId);
+                const subject = {
+                  missionId,
+                  intent: "recover" as const,
+                  sessionId,
+                  request: { requestId: missionId },
+                  ...(prior === undefined
+                    ? {}
+                    : {
+                        priorExecution: {
+                          id: prior.executionId,
+                          status: prior.status,
+                          sessionId: isFlowDefinition(executor.definition) ? undefined : sessionId,
+                        },
+                      }),
+                };
+                return {
+                  subject,
+                  executor,
+                  resources: isFlowDefinition(executor.definition)
+                    ? { kind: "flow", app, definition: executor.definition }
+                    : {
+                        kind: "session",
+                        app,
+                        definition: executor.definition,
+                        resumeOptions:
+                          executor.environment === undefined
+                            ? undefined
+                            : { environment: executor.environment },
+                      },
+                };
+              })());
+            const native = await kernel.openOwner(plan.subject, plan.resources);
+            const actualId =
+              native.kind === "flow"
+                ? native.execution.executionId
+                : (await native.session.getState()).executionIds.at(-1);
+            if (actualId !== undefined) {
+              admission.accepted(actualId);
+              try {
+                await options.onExecutionAccepted?.({ missionId, executionId: actualId });
+              } catch (error) {
+                options.loggerProvider
+                  ?.createLogger({ component: "local-host.mission-control" })
+                  .warn(
+                    "mission.recovery_resources_degraded",
+                    "Optional recovery resources need attention.",
+                    { error, missionId },
+                  );
+              }
+            }
+            await plan.projectOwner?.(native);
+            return {
+              ...native,
+              ...(plan.executor === undefined ? {} : { executor: plan.executor }),
+            };
+          },
+        );
       },
       { admission: admissionOwned ? "owned" : "acquire" },
     );
@@ -428,74 +503,39 @@ export function createLocalHostCoreMissionControlAdapter(options: {
         continue;
       }
 
-      if (owner.kind === "session") {
-        const [state, prompts] = await Promise.all([
-          owner.session.getState(),
-          owner.session.getPromptQueue(),
-        ]);
-        if (
-          state.activeExecutionId !== undefined ||
-          prompts.some((prompt) => prompt.status === "running")
-        ) {
-          await unrefDelay(100);
-          continue;
-        }
-        await projectRecoveredOwner({
-          missionId,
-          guard,
-          executionIds: state.executionIds,
-          executions,
-          mission: options.mission!,
-          redactor,
-        });
-        const checkpointed =
-          state.lastStatus === "waiting" || prompts.some((prompt) => prompt.status === "queued");
-        if (checkpointed) await releaseLocalHostExpertSession(owner.session, "checkpoint");
-        else await releaseLocalHostExpertSession(owner.session, "terminal");
-      } else {
-        const executionId = owner.execution.executionId;
-        const execution = await executions.get(executionId);
-        if (execution !== undefined && !isTerminalExecutionStatus(execution.status)) {
-          const waitingForHuman = (await executions.listInvocations(executionId)).some(
-            (invocation) =>
-              invocation.status === "waiting" && invocation.waitReason === "human_input",
-          );
-          if (!waitingForHuman) {
-            await unrefDelay(100);
-            continue;
-          }
-        }
-        if (execution !== undefined && !isTerminalExecutionStatus(execution.status)) {
-          if (owner.execution.checkpointWaitingHuman === undefined)
-            throw new Error("Recovered waiting Flow has no checkpoint release boundary.");
-          await owner.execution.checkpointWaitingHuman();
-        }
-        await projectRecoveredOwner({
-          missionId,
-          guard,
-          executionIds: [executionId],
-          executions,
-          mission: options.mission!,
-          redactor,
-        });
-        if (
-          execution !== undefined &&
-          (isTerminalExecutionStatus(execution.status) ||
-            owner.execution.checkpointWaitingHuman !== undefined)
-        )
-          await releaseLocalHostFlowExecution(owner.execution);
+      const settlement = await kernel.settlement(owner);
+      if (!settlement.ready) {
+        await unrefDelay(100);
+        continue;
       }
-
-      // Lower-level release is complete. Remove the recovered handle before
-      // releasing the Mission lease so a concurrent command can reconstruct a
-      // fresh owner; the callback performs its own final pending-item check.
-      await options.assertMissionOwnership?.(missionId, guard);
-      if (
-        recoveredOwner(missionId) !== owner ||
-        !owners.deleteControlOwnerIfCurrent(missionId, owner)
-      )
-        return;
-      await options.releaseMissionOwner(missionId, guard);
+      const finished = await owners.admit(missionId, async () => {
+        await options.assertMissionOwnership?.(missionId, guard);
+        if (recoveredOwner(missionId) !== owner) return true;
+        if (await options.hasPendingMissionCommands?.(missionId)) return false;
+        const current = await kernel.settlement(owner);
+        if (!current.ready) return false;
+        await projectRecoveredOwner({
+          missionId,
+          guard,
+          executionIds: current.executionIds,
+          executions,
+          mission: options.mission!,
+          redactor,
+        });
+        await kernel.release(owner, current.boundary);
+        await options.assertMissionOwnership?.(missionId, guard);
+        if (
+          recoveredOwner(missionId) !== owner ||
+          !owners.deleteControlOwnerIfCurrent(missionId, owner)
+        )
+          return true;
+        await options.releaseMissionOwner!(missionId, guard);
+        return true;
+      });
+      if (!finished) {
+        await unrefDelay(50);
+        continue;
+      }
       return;
     }
   };
@@ -507,8 +547,14 @@ export function createLocalHostCoreMissionControlAdapter(options: {
     if (options.releaseMissionOwner === undefined || !(recoveredOwner(missionId) !== undefined))
       return;
     if (settlementTasks.has(missionId)) return;
+    const scheduledOwner = recoveredOwner(missionId);
     const task = settleRecoveredOwner(missionId, guard).finally(() => {
-      if (settlementTasks.get(missionId) === task) settlementTasks.delete(missionId);
+      if (settlementTasks.get(missionId) !== task) return;
+      settlementTasks.delete(missionId);
+      const successor = recoveredOwner(missionId);
+      const successorGuard = options.currentMissionGuard?.(missionId);
+      if (successor !== undefined && successor !== scheduledOwner && successorGuard !== undefined)
+        scheduleRecoveredOwnerSettlement(missionId, successorGuard);
     });
     void task.catch((error: unknown) =>
       options.loggerProvider
@@ -532,15 +578,17 @@ export function createLocalHostCoreMissionControlAdapter(options: {
     // Give the poller a turn to finish the durable outcome, then release the
     // Mission lease if no newer command or ordinary live owner needs it.
     await unrefDelay(25);
-    await options.assertMissionOwnership?.(missionId, guard);
-    if (recoveredOwner(missionId) !== undefined) return;
-    if (options.resolveActiveOwner !== undefined) {
-      const active = await options.resolveActiveOwner(missionId);
-      if (active !== undefined) return;
-    }
-    if (await options.hasPendingMissionCommands?.(missionId)) return;
-    await options.assertMissionOwnership?.(missionId, guard);
-    await options.releaseMissionOwner(missionId, guard);
+    await owners.admit(missionId, async () => {
+      await options.assertMissionOwnership?.(missionId, guard);
+      if (recoveredOwner(missionId) !== undefined) return;
+      if (options.resolveActiveOwner !== undefined) {
+        const active = await options.resolveActiveOwner(missionId);
+        if (active !== undefined) return;
+      }
+      if (await options.hasPendingMissionCommands?.(missionId)) return;
+      await options.assertMissionOwnership?.(missionId, guard);
+      await options.releaseMissionOwner!(missionId, guard);
+    });
   };
 
   const scheduleUnbackedMissionOwnerSettlement = (
@@ -551,7 +599,11 @@ export function createLocalHostCoreMissionControlAdapter(options: {
       return;
     if (settlementTasks.has(missionId)) return;
     const task = settleUnbackedMissionOwner(missionId, guard).finally(() => {
-      if (settlementTasks.get(missionId) === task) settlementTasks.delete(missionId);
+      if (settlementTasks.get(missionId) !== task) return;
+      settlementTasks.delete(missionId);
+      const successorGuard = options.currentMissionGuard?.(missionId);
+      if (recoveredOwner(missionId) !== undefined && successorGuard !== undefined)
+        scheduleRecoveredOwnerSettlement(missionId, successorGuard);
     });
     void task.catch((error: unknown) =>
       options.loggerProvider
@@ -740,11 +792,7 @@ export function createLocalHostCoreMissionControlAdapter(options: {
     }
   };
 
-  const prepareCompilation = async (
-    missionId: string,
-    owner: CoreMissionOwner,
-    allowSuccessor = false,
-  ) => {
+  const prepareCompilation = async (missionId: string, owner: CoreMissionOwner) => {
     const compiler = options.compiler;
     if (compiler === undefined) return undefined;
     const binding = await readBinding(missionId);
@@ -769,198 +817,225 @@ export function createLocalHostCoreMissionControlAdapter(options: {
       hasOwner: true,
       ...executor.compilation,
     });
-    if (!prepared.cacheHit || prepared.definitionChanged) {
-      const state = owner.kind === "session" ? await owner.session.getState() : undefined;
-      const latest = state?.executionIds.at(-1);
-      const previous = latest === undefined ? undefined : await executions.get(latest);
-      if (
-        !allowSuccessor ||
-        previous?.environment === undefined ||
-        state === undefined ||
-        owner.kind !== "session"
-      )
-        throw commandRejected(missionId, "executor_environment_changed_requires_successor");
-      if (
-        !isTerminalExecutionStatus(previous.status) ||
-        state.activeExecutionId !== undefined ||
-        state.lastStatus === "waiting" ||
-        (await owner.session.getPromptQueue()).some(
-          (prompt) => prompt.status === "running" || prompt.status === "queued",
-        )
-      )
-        throw commandRejected(missionId, "execution_environment_changed_pending_prompts");
-    }
     return prepared;
   };
 
-  const defaultAdmission = createLocalHostMissionCommandAdmission({
-    getMission: async (id: string) => {
-      const active = owners.controlOwner(id);
-      const kind =
-        active?.kind === "flow"
-          ? "flow"
-          : active?.kind === "session"
-            ? "expert"
-            : ((await executions.get(id))?.kind ??
-              (await options.resolveMissionBinding(id))?.executor.ref.kind ??
-              "expert");
-      return { id, lifecycleStatus: "active", executor: { kind }, execution: true };
-    },
-    admit: (id, operation) => owners.admit(id, operation),
-    withController: async (_id, operation) => await operation(),
-    onPromptAdmitting: options.onPromptAdmitting,
-    settleTerminal: async () => false,
-    contextBindingsChanging: () => false,
-    successorRequired: () => false,
-    hasActive: () => true,
-    session: (id) => {
-      const owner = owners.controlOwner(id);
-      return owner?.kind === "session" ? owner.session : undefined;
-    },
-    createPreparationScope: (mission) => {
-      if (options.compiler === undefined) return undefined;
-      const owner = owners.controlOwner(mission.id);
-      return (async () => {
-        const actualOwner = owner ?? (await options.resolveActiveOwner?.(mission.id));
-        if (actualOwner !== undefined) {
-          if (owner === undefined) owners.setControlOwner(mission.id, actualOwner, "live");
-          const prepared = await prepareCompilation(mission.id, actualOwner, true);
+  const factMessageResources = defineLocalHostMissionMessageFormat(
+    {
+      executionKernel: kernel,
+      onTerminalReceipt: ({ mission, turn, status }) =>
+        options.onTerminalReceipt?.({
+          missionId: mission.id,
+          executionId: turn.executionId,
+          status,
+        }),
+      onNativeAccepted: async ({ mission, turn }) =>
+        await options.onExecutionAccepted?.({
+          missionId: mission.id,
+          executionId: turn.executionId,
+        }),
+      getMission: async (id: string) => {
+        const active = owners.controlOwner(id);
+        const kind =
+          active?.kind === "flow"
+            ? "flow"
+            : active?.kind === "session"
+              ? "expert"
+              : ((await executions.get(id))?.kind ??
+                (await options.resolveMissionBinding(id))?.executor.ref.kind ??
+                "expert");
+        return { id, lifecycleStatus: "active", executor: { kind }, execution: true };
+      },
+      admit: (id, operation) => owners.admit(id, operation),
+      withController: async (_id, operation) => await operation(),
+      onPromptAdmitting: options.onPromptAdmitting,
+      settleTerminal: async () => false,
+      contextBindingsChanging: () => false,
+      successorRequired: () => false,
+      hasActive: () => true,
+      session: (id) => {
+        const owner = owners.controlOwner(id);
+        return owner?.kind === "session" ? owner.session : undefined;
+      },
+      createPreparationScope: (mission) => {
+        if (options.compiler === undefined) return undefined;
+        const owner = owners.controlOwner(mission.id);
+        return (async () => {
+          const actualOwner = owner ?? (await options.resolveActiveOwner?.(mission.id));
+          if (actualOwner !== undefined) {
+            if (owner === undefined) owners.setControlOwner(mission.id, actualOwner, "live");
+            const prepared = await prepareCompilation(mission.id, actualOwner);
+            if (prepared !== undefined && (!prepared.cacheHit || prepared.definitionChanged)) {
+              const compilation = await prepared.ensureCompiled();
+              const executor: LocalHostCoreExecutorDefinition = {
+                ...actualOwner.executor!,
+                definition: compilation.compiled.value,
+                environment: missionCompilationEnvironmentSnapshot(
+                  compilation.compiled,
+                  compilation.capabilities,
+                  compilation.secrets,
+                  compilation.plugins,
+                ),
+                compilation,
+              };
+              return { authorityChecked: true, checkedOwner: undefined, executor };
+            }
+            return { authorityChecked: true, checkedOwner: actualOwner, executor: undefined };
+          }
+          if (typeof options.executors !== "function")
+            return { authorityChecked: false, checkedOwner: undefined, executor: undefined };
+          // One pinned catalog preparation provides current authority for both
+          // warm and cold Sessions; persisted Execution facts decide succession.
+          const executor = await resolveExecutor(await readBinding(mission.id));
+          if (executor.compilation === undefined)
+            throw commandRejected(mission.id, "executor_compilation_identity_required");
+          return { authorityChecked: true, checkedOwner: actualOwner, executor };
+        })();
+      },
+      assertReady: async (_mission, scope) => {
+        await scope;
+      },
+      startInitialRun: async () => undefined,
+      prepare: async (mission, _input, _acceptedAt, scope) => {
+        let preparation = await scope;
+        let owner =
+          owners.controlOwner(mission.id) ?? (await options.resolveActiveOwner?.(mission.id));
+        if (
+          owner !== undefined &&
+          preparation?.checkedOwner !== undefined &&
+          owner !== preparation.checkedOwner
+        ) {
+          const prepared = await prepareCompilation(mission.id, owner);
           if (prepared !== undefined && (!prepared.cacheHit || prepared.definitionChanged)) {
             const compilation = await prepared.ensureCompiled();
-            const executor: LocalHostCoreExecutorDefinition = {
-              ...actualOwner.executor!,
-              definition: compilation.compiled.value,
-              environment: missionCompilationEnvironmentSnapshot(
-                compilation.compiled,
-                compilation.capabilities,
-                compilation.secrets,
-                compilation.plugins,
-              ),
-              compilation,
+            preparation = {
+              authorityChecked: true,
+              checkedOwner: undefined,
+              executor: {
+                ...owner.executor!,
+                definition: compilation.compiled.value,
+                environment: missionCompilationEnvironmentSnapshot(
+                  compilation.compiled,
+                  compilation.capabilities,
+                  compilation.secrets,
+                  compilation.plugins,
+                ),
+                compilation,
+              },
             };
-            return { authorityChecked: true, checkedOwner: undefined, executor };
-          }
-          return { authorityChecked: true, checkedOwner: actualOwner, executor: undefined };
+          } else preparation = { authorityChecked: true, checkedOwner: owner, executor: undefined };
         }
-        if (options.recoverActiveOwner !== undefined || typeof options.executors !== "function")
-          return { authorityChecked: false, checkedOwner: undefined, executor: undefined };
-        // One pinned catalog preparation provides current authority for both
-        // warm and cold Sessions; persisted Execution facts decide succession.
-        const executor = await resolveExecutor(await readBinding(mission.id));
-        if (executor.compilation === undefined)
-          throw commandRejected(mission.id, "executor_compilation_identity_required");
-        return { authorityChecked: true, checkedOwner: actualOwner, executor };
-      })();
-    },
-    assertReady: async (_mission, scope) => {
-      await scope;
-    },
-    startInitialRun: async () => undefined,
-    prepare: async (mission, _input, _acceptedAt, scope) => {
-      const preparation = await scope;
-      let owner = owners.controlOwner(mission.id);
-      const nextExecutor = preparation?.executor;
-      const sessionId =
-        owner?.kind === "session"
-          ? owner.session.sessionId
-          : ((await options.resolveSessionId?.(mission.id)) ?? mission.id);
-      const previousState =
-        owner?.kind === "session" ? await owner.session.getState() : await sessions.get(sessionId);
-      const previousExecution = previousState?.executionIds.at(-1);
-      const previousEnvironment =
-        previousExecution === undefined
-          ? undefined
-          : (await executions.get(previousExecution))?.environment?.fingerprint;
-      const authorityChanged =
-        nextExecutor?.environment?.fingerprint !== undefined &&
-        previousEnvironment !== undefined &&
-        previousEnvironment !== nextExecutor.environment.fingerprint;
-      if (authorityChanged && previousState !== undefined && nextExecutor !== undefined) {
-        const prompts =
+        const nextExecutor = preparation?.executor;
+        const sessionId =
           owner?.kind === "session"
-            ? await owner.session.getPromptQueue()
-            : await sessions.listPrompts(sessionId);
-        if (
-          previousState.activeExecutionId !== undefined ||
-          previousState.lastStatus === "waiting" ||
-          prompts.some((prompt) => prompt.status === "running" || prompt.status === "queued")
-        )
-          throw commandRejected(mission.id, "execution_environment_changed_pending_prompts");
-        if (isFlowDefinition(nextExecutor.definition))
-          throw commandRejected(mission.id, "send_not_supported");
-        const binding = await readBinding(mission.id);
-        const app = await createControlApp({
-          options,
-          binding,
-          executor: nextExecutor,
-          missionId: mission.id,
-          createApp,
-        });
-        if (owner?.kind === "session") {
-          await releaseLocalHostExpertSession(owner.session);
-          owners.deleteControlOwnerIfCurrent(mission.id, owner);
+            ? owner.session.sessionId
+            : ((await options.resolveSessionId?.(mission.id)) ?? mission.id);
+        const previousState =
+          owner?.kind === "session"
+            ? await owner.session.getState()
+            : await sessions.get(sessionId);
+        const previousExecution = previousState?.executionIds.at(-1);
+        const previousEnvironment =
+          previousExecution === undefined
+            ? undefined
+            : (await executions.get(previousExecution))?.environment?.fingerprint;
+        const authorityChanged =
+          nextExecutor?.environment?.fingerprint !== undefined &&
+          (owner !== undefined || previousEnvironment !== undefined) &&
+          previousState !== undefined &&
+          (previousEnvironment === undefined ||
+            previousEnvironment !== nextExecutor.environment.fingerprint);
+        const executor =
+          nextExecutor ??
+          owner?.executor ??
+          (owner === undefined ? await resolveExecutor(await readBinding(mission.id)) : undefined);
+        const nativeResources =
+          (owner === undefined || nextExecutor !== undefined) && executor !== undefined
+            ? await (async () => {
+                if (isFlowDefinition(executor.definition))
+                  throw commandRejected(mission.id, "send_not_supported");
+                const app = await createControlApp({
+                  options,
+                  binding: await readBinding(mission.id),
+                  executor,
+                  missionId: mission.id,
+                  createApp,
+                });
+                return {
+                  kind: "session" as const,
+                  app,
+                  definition: executor.definition,
+                  createOptions: { environment: executor.environment },
+                  resumeOptions: { environment: executor.environment },
+                };
+              })()
+            : undefined;
+        return {
+          subject: {
+            missionId: mission.id,
+            sessionId,
+            intent: "recover" as const,
+            request: { requestId: _input.requestId },
+          },
+          nativeResources,
+          session: owner?.kind === "session" ? owner.session : undefined,
+          definitionChanged: authorityChanged,
+          previousEnvironmentAvailable: previousEnvironment !== undefined,
+          contextStoresChanged: false,
+          rememberSession: (session: ExpertSession) => {
+            if (owner?.kind === "session" && owner.session === session) {
+              if (owners.controlOwner(mission.id) === undefined)
+                owners.setControlOwner(mission.id, owner, "live");
+              return;
+            }
+            owner = { kind: "session", session, ...(executor === undefined ? {} : { executor }) };
+            owners.setControlOwner(mission.id, owner, "recovered");
+          },
+        };
+      },
+      forgetSession: (id) => {
+        const owner = owners.controlOwner(id);
+        if (owner !== undefined) owners.deleteControlOwnerIfCurrent(id, owner);
+      },
+      projectAccepted: async ({ mission, turn, requestedMode }) => {
+        if (options.compiler !== undefined) {
+          let invalidated = false;
+          const invalidate = () => {
+            if (invalidated) return;
+            invalidated = true;
+            options.compiler!.readiness.invalidate();
+          };
+          void turn.result.catch(invalidate);
+          void turn.settled
+            .then(async () => {
+              if ((await executions.get(turn.executionId))?.status === "failed") invalidate();
+            })
+            .catch(invalidate);
         }
-        await options.onOwnerRecovering?.(mission.id);
-        owner = {
-          kind: "session",
-          executor: nextExecutor,
-          session: await openLocalHostExpertSession(app, nextExecutor.definition, {
-            kind: "create",
-            options: { environment: nextExecutor.environment },
-          }),
+        const current = owners.controlOwner(mission.id);
+        if (current?.kind !== "session") throw commandRejected(mission.id, "session_not_found");
+        const session = current.session;
+        const queue = await session.getPromptQueue();
+        const queueState = await session.getPromptQueueState();
+        const queuedPosition = queue
+          .filter((prompt) => prompt.mode === "enqueue" && prompt.status === "queued")
+          .findIndex((prompt) => prompt.requestId === turn.requestId);
+        return {
+          missionId: mission.id,
+          executionId: turn.executionId,
+          turnId: turn.requestId,
+          sessionId: session.sessionId,
+          mode: requestedMode,
+          queueState: queueState.state,
+          ...(queuedPosition < 0 ? {} : { queuePosition: queuedPosition + 1 }),
         };
-        owners.setControlOwner(mission.id, owner, "recovered");
-      } else owner = await recover(mission.id, true, nextExecutor);
-      if (owner.kind !== "session") throw commandRejected(mission.id, "send_not_supported");
-      if (
-        preparation?.authorityChecked !== true ||
-        (preparation.checkedOwner !== undefined
-          ? owner !== preparation.checkedOwner
-          : owner.executor !== preparation.executor)
-      )
-        await prepareCompilation(mission.id, owner);
-      return {
-        session: owner.session,
-        definitionChanged: false,
-        contextStoresChanged: false,
-        createSession: async () => owner.session,
-        rememberSession: () => undefined,
-      };
+      },
     },
-    forgetSession: () => undefined,
-    projectAccepted: async ({ mission, prepared, turn, requestedMode }) => {
-      await options.onExecutionAccepted?.({ missionId: mission.id, executionId: turn.executionId });
-      if (options.compiler !== undefined) {
-        let invalidated = false;
-        const invalidate = () => {
-          if (invalidated) return;
-          invalidated = true;
-          options.compiler!.readiness.invalidate();
-        };
-        void turn.result.catch(invalidate);
-        void turn.settled
-          .then(async () => {
-            if ((await executions.get(turn.executionId))?.status === "failed") invalidate();
-          })
-          .catch(invalidate);
-      }
-      const queue = await prepared.session.getPromptQueue();
-      const queueState = await prepared.session.getPromptQueueState();
-      const queuedPosition = queue
-        .filter((prompt) => prompt.mode === "enqueue" && prompt.status === "queued")
-        .findIndex((prompt) => prompt.requestId === turn.requestId);
-      return {
-        missionId: mission.id,
-        executionId: turn.executionId,
-        turnId: turn.requestId,
-        sessionId: prepared.session.sessionId,
-        mode: requestedMode,
-        queueState: queueState.state,
-        ...(queuedPosition < 0 ? {} : { queuePosition: queuedPosition + 1 }),
-      };
-    },
-  });
-  const send = options.admission ?? defaultAdmission;
+    async (result) => result,
+  );
+  const send = createLocalHostMissionFormatAdmission(
+    async (id) => (await options.messageFormat?.(id)) ?? factMessageResources,
+  );
 
   const readResponseReceipt = async (
     command: MissionCommand,
@@ -1065,23 +1140,7 @@ export function createLocalHostCoreMissionControlAdapter(options: {
         await options.assertMissionOwnership?.(missionId, capturedGuard);
       const owner = recoveredOwner(missionId);
       if (owner === undefined) return;
-      if (owner.kind === "session") {
-        await releaseLocalHostExpertSession(owner.session, "terminal");
-      } else {
-        const state = await owner.execution.getState();
-        if (
-          !isTerminalExecutionStatus(state.status) &&
-          (await executions.listInvocations(state.executionId)).some(
-            (invocation) =>
-              invocation.status === "waiting" && invocation.waitReason === "human_input",
-          )
-        ) {
-          if (owner.execution.checkpointWaitingHuman === undefined)
-            throw new Error("Recovered waiting Flow has no checkpoint release boundary.");
-          await owner.execution.checkpointWaitingHuman();
-        }
-        await releaseLocalHostFlowExecution(owner.execution);
-      }
+      await kernel.release(owner, "control");
       if (capturedGuard !== undefined)
         await options.assertMissionOwnership?.(missionId, capturedGuard);
       owners.deleteControlOwnerIfCurrent(missionId, owner);
@@ -1102,16 +1161,7 @@ export function createLocalHostCoreMissionControlAdapter(options: {
         mission: options.mission!,
         redactor,
       });
-      if (owner.kind === "session") {
-        await releaseLocalHostExpertSession(owner.session, "checkpoint");
-      } else {
-        if (!isTerminalExecutionStatus((await owner.execution.getState()).status)) {
-          if (owner.execution.checkpointWaitingHuman === undefined)
-            throw new Error("Recovered waiting Flow has no checkpoint release boundary.");
-          await owner.execution.checkpointWaitingHuman();
-        }
-        await releaseLocalHostFlowExecution(owner.execution);
-      }
+      await kernel.release(owner, "checkpoint");
       await options.assertMissionOwnership?.(missionId, guard);
       owners.deleteControlOwnerIfCurrent(missionId, owner);
     },
@@ -1156,8 +1206,16 @@ export function createLocalHostCoreMissionControlAdapter(options: {
               resolveExecutionId: options.resolveExecutionId,
               stopFlow: async (executionId, reason) => {
                 try {
-                  if (options.stopFlow !== undefined) {
-                    await options.stopFlow(command.missionId, executionId, reason, signal);
+                  const provided = await options.prepareFlowStopResources?.(
+                    command.missionId,
+                    executionId,
+                  );
+                  if (provided !== undefined) {
+                    await stopLocalHostFlowExecution(provided.app, provided.definition, {
+                      executionId,
+                      reason,
+                      signal,
+                    });
                   } else {
                     const binding = await readBinding(command.missionId);
                     const executor = await resolveExecutor(binding, "stop");
@@ -1276,57 +1334,6 @@ export function createLocalHostCoreMissionControlAdapter(options: {
 }
 
 type CoreMissionOwner = LocalHostCoreActiveOwner;
-
-async function recoverOwner(options: {
-  readonly app: PragmaApp;
-  readonly sessions: ExpertSessionStore;
-  readonly executions: ExecutionStore;
-  readonly missionId: string;
-  readonly sessionId: string;
-  readonly executionId: string;
-  readonly executor: LocalHostCoreExecutorDefinition;
-}): Promise<CoreMissionOwner> {
-  const kind = options.executor.descriptor.ref.kind;
-  if (kind === "flow") {
-    if (!isFlowDefinition(options.executor.definition)) {
-      throw new Error(
-        `Flow executor definition is not a Flow: ${options.executor.descriptor.ref.id}`,
-      );
-    }
-    if ((await options.executions.get(options.executionId)) === undefined) {
-      throw commandRejected(options.missionId, "execution_not_found");
-    }
-    return {
-      kind: "flow",
-      execution: await openLocalHostFlowExecution(options.app, options.executor.definition, {
-        kind: "recover",
-        options: { executionId: options.executionId },
-      }),
-      executor: options.executor,
-    };
-  }
-  if (isFlowDefinition(options.executor.definition)) {
-    throw new Error(
-      `Non-Flow executor definition is a Flow: ${options.executor.descriptor.ref.id}`,
-    );
-  }
-  if ((await options.sessions.get(options.sessionId)) === undefined) {
-    throw commandRejected(options.missionId, "session_not_found");
-  }
-  return {
-    kind: "session",
-    session: await openLocalHostExpertSession(options.app, options.executor.definition, {
-      kind: "resume",
-      options: {
-        sessionId: options.sessionId,
-        ...(options.executor.environment === undefined
-          ? {}
-          : { environment: options.executor.environment }),
-      },
-    }),
-    executor: options.executor,
-  };
-}
 
 async function createControlApp(options: {
   readonly options: Parameters<typeof createLocalHostCoreMissionControlAdapter>[0];

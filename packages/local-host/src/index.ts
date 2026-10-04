@@ -373,6 +373,7 @@ function workspaceError(
 
 export * from "./memory-attention-settings.ts";
 export * from "./memory-context.ts";
+export * from "./mission-memory-lifecycle.ts";
 export * from "./memory-data-plane.ts";
 export * from "./memory-recall-scope.ts";
 export * from "./memory-subject-identity.ts";
