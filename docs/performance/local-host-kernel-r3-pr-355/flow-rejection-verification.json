@@ -551,5 +551,135 @@
     "distRestored": true,
     "fullFinalGates": "see latest PR checks; earlier snapshot full gates are separately source-bound",
     "performance": "no new measurement; warm admission retains one read"
+  },
+  "finalFixturePhaseFollowup": {
+    "ci": {
+      "head": "a19abadcf1ea21bee6e7dd9c0f4192dd2d1158dd",
+      "url": "https://github.com/pqpo/pragma/actions/runs/37182471303",
+      "conclusion": "failure",
+      "hostPassed": 198,
+      "desktopPassed": 86,
+      "desktopFailed": 1,
+      "desktopDefaultSkipped": 2,
+      "revisionBuild": "skipped",
+      "logSha256": "cba9136c9ceeba9d8a7827e4029e736237fc8c543cd52db224331d902ba91221"
+    },
+    "localFrozenProductionGates": {
+      "sourceBefore": {
+        "commit": "0453ca0ca693f5d069d3588bc57842b7259123bf",
+        "productionFiles": 1181,
+        "sourceSha256": "5de2487c846c077d0ea68760bc02c7307395104df007988d3854a987783d93ce"
+      },
+      "sourceAfter": {
+        "commit": "a19abadcf1ea21bee6e7dd9c0f4192dd2d1158dd",
+        "productionFiles": 1181,
+        "sourceSha256": "5de2487c846c077d0ea68760bc02c7307395104df007988d3854a987783d93ce"
+      },
+      "sourceUnchanged": true,
+      "validation": [
+        {
+          "label": "pr355-final-check",
+          "command": ["pnpm", "check"],
+          "exitCode": 0,
+          "elapsedSeconds": 162.085,
+          "logSha256": "ed44ebfcb8cd34d953dafd4e9974be4fb7858c80bbcc7a3cf2c87f1dbbe387ad",
+          "testSummary": [
+            "Test Files  13 passed (13)",
+            "Tests  64 passed (64)",
+            "Test Files  15 passed (15)",
+            "Tests  87 passed (87)",
+            "Test Files  2 passed (2)",
+            "Test Files  1 passed (1)",
+            "Tests  3 passed (3)",
+            "Tests  6 passed (6)",
+            "Test Files  2 passed (2)",
+            "Tests  7 passed (7)",
+            "Test Files  7 passed (7)",
+            "Tests  135 passed (135)",
+            "Test Files  5 passed (5)",
+            "Test Files  2 passed (2)",
+            "Tests  10 passed (10)",
+            "Tests  30 passed (30)",
+            "Test Files  10 passed (10)",
+            "Tests  117 passed (117)",
+            "Test Files  2 passed (2)",
+            "Tests  17 passed (17)",
+            "Test Files  2 passed (2)",
+            "Tests  5 passed (5)"
+          ]
+        },
+        {
+          "label": "pr355-final-build",
+          "command": ["pnpm", "build"],
+          "exitCode": 0,
+          "elapsedSeconds": 93.019,
+          "logSha256": "6a3e63b768051645eb8afd0c7a82e5276868324ed3a2ea609e340faba13a196d",
+          "testSummary": []
+        },
+        {
+          "label": "pr355-final-lifecycle",
+          "command": ["env", "CI=true", "PRAGMA_LOG_LEVEL=error", "pnpm", "test:mission-lifecycle"],
+          "exitCode": 0,
+          "elapsedSeconds": 399.667,
+          "logSha256": "fb2040d96aae0edcf190391db92c4984b01e55265ad7addb81126ad716e16c37",
+          "testSummary": [
+            "Test Files  24 passed (24)",
+            "Tests  198 passed (198)",
+            "Test Files  3 passed (3)",
+            "Tests  87 passed | 2 skipped (89)"
+          ]
+        },
+        {
+          "label": "pr355-final-revision",
+          "command": ["env", "CI=true", "PRAGMA_LOG_LEVEL=error", "pnpm", "test:revision"],
+          "exitCode": 0,
+          "elapsedSeconds": 27.775,
+          "logSha256": "a82353b46653469a82e33ceb4bb0b09185ba105a67a71fa24b03f3e68c5c5e2b",
+          "testSummary": [
+            "Test Files  1 passed (1)",
+            "Tests  13 passed (13)",
+            "Test Files  2 passed (2)",
+            "Tests  69 passed (69)",
+            "Test Files  1 passed (1)",
+            "Tests  6 passed | 75 skipped (81)"
+          ]
+        }
+      ]
+    },
+    "validation": [
+      {
+        "label": "owner-precheck-old-red",
+        "exitCode": 1,
+        "summary": "1 failed: actual initial phase count 0 vs required 1",
+        "logSha256": "25ec38eba098e965589dfc1c4a15dbb6f8ffe72489e246c2c778329953c54a2e"
+      },
+      {
+        "label": "phase-final-green",
+        "exitCode": 0,
+        "summary": "8 passed; 73 filtered",
+        "logSha256": "8cf6cc5f0686c61f3f746b7c571b05da65d14fbad686e31c24a1525e8401fc75"
+      },
+      {
+        "label": "phase-typecheck",
+        "exitCode": 0,
+        "summary": "passed",
+        "logSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      {
+        "label": "phase-lint",
+        "exitCode": 0,
+        "summary": "passed",
+        "logSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      {
+        "label": "phase-format",
+        "exitCode": 0,
+        "summary": "passed",
+        "logSha256": "17aa973d3f004560237d9a95171210b0671deff23d61628eecf7322ff5938f20"
+      }
+    ],
+    "productionChanged": false,
+    "result": "test-only phase correction, all success/identity/native/timeout assertions preserved",
+    "latestFullCi": "https://github.com/pqpo/pragma/pull/355/checks"
   }
 }

@@ -1,3 +1,4 @@
+import { AsyncLocalStorage } from "node:async_hooks";
 import { createLocalHostNodeApplication } from "@pragma/local-host/node-application";
 import { createPragmaManagementTools, STORE_REVISION_EXPERT_REF } from "@pragma/built-in-agents";
 import { PRAGMA_DSL_WRITE_API_VERSION } from "@pragma/interpreter/ast";
@@ -1404,18 +1405,43 @@ describe("MissionRunner", { timeout: 30_000 }, () => {
         },
         mapEvent: () => ({ events: [] }),
       });
+      let initialRunAccepted = 0;
+      let initialRunAcceptedAtGate = 0;
+      const loggerProvider = createLoggerProvider({
+        handler: {
+          write(record) {
+            if (
+              record.event === "mission.message_accepted" &&
+              record.attributes?.["kind"] === "initial"
+            )
+              initialRunAccepted += 1;
+          },
+        },
+      });
       const startupReadiness = vi.fn(async () => {
+        initialRunAcceptedAtGate = initialRunAccepted;
         markAdmissionStarted();
         await admissionGate;
       });
-      const readinessCheck = vi
-        .fn(async (): Promise<void> => undefined)
-        .mockImplementationOnce(startupReadiness);
-      if (entry === "direct-rejection") {
-        readinessCheck.mockImplementationOnce(async () => {
+      const readinessPhase = new AsyncLocalStorage<"owner-precheck">();
+      let ownerPrecheckReadiness = 0;
+      let initialReadinessEntered = false;
+      let firstSendRejected = false;
+      const readinessCheck = vi.fn(async (): Promise<void> => {
+        if (readinessPhase.getStore() === "owner-precheck") {
+          ownerPrecheckReadiness += 1;
+          return;
+        }
+        if (initialRunAccepted > 0 && !initialReadinessEntered) {
+          initialReadinessEntered = true;
+          await startupReadiness();
+          return;
+        }
+        if (entry === "direct-rejection" && initialReadinessEntered && !firstSendRejected) {
+          firstSendRejected = true;
           throw new Error("One rejected send");
-        });
-      }
+        }
+      });
       const runner = createMissionRunner({
         missions,
         project,
@@ -1425,7 +1451,12 @@ describe("MissionRunner", { timeout: 30_000 }, () => {
         pragmaHome,
         runtimes: createStaticRuntimeResolver({ runtimes: [runtime], defaultRuntimeId: "fake" }),
         assertExecutorReady: readinessCheck,
+        loggerProvider,
       });
+      const assertAcquisitionAllowed = runner.missionControl.assertAcquisitionAllowed;
+      vi.spyOn(runner.missionControl, "assertAcquisitionAllowed").mockImplementation((...args) =>
+        readinessPhase.run("owner-precheck", () => assertAcquisitionAllowed(...args)),
+      );
       const queuePatches: MissionChatUpdate[] = [];
       runner.subscribeChat(({ update }) => queuePatches.push(update));
       const control = createTestMissionControl({
@@ -1475,6 +1506,8 @@ describe("MissionRunner", { timeout: 30_000 }, () => {
         }
         // Give concurrent file-backed callers time to reach the startup gate.
         await new Promise((resolve) => setTimeout(resolve, 100));
+        expect(initialRunAcceptedAtGate).toBe(1);
+        if (entry === "before-run") expect(ownerPrecheckReadiness).toBeGreaterThan(0);
         expect(startupReadiness).toHaveBeenCalledTimes(1);
         expect((await missions.get(mission.id)).execution).toBeUndefined();
         releaseAdmission();

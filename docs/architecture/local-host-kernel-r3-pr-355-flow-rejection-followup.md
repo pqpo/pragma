@@ -51,6 +51,14 @@ queued steer 的源排队 Execution 会由 Core 取消，但 receipt 成功。�
 
 successor 修复快照 `ccff3efa…` 下已重新通过 check、build（19/19）、Host 生命周期 198、Desktop 87、Revision 13+69+6，前后摘要一致。最终初轮 / queue 修复的完整门禁以最新提交 CI 为准，不把前一源码快照的结果当作新源码证明。
 
+## 最终 Desktop fixture 的阶段校正
+
+生产修复 `a19abadc`（源码 SHA-256 `5de2487c846c077d0ea68760bc02c7307395104df007988d3854a987783d93ce`）本地 check、19/19 build、Host 生命周期 198 / Desktop 87、Revision 13+69+6 全通过，前后摘要一致。其 [远程 CI](https://github.com/pqpo/pragma/actions/runs/37182471303) Host 198 通过，Desktop 86 通过、1 失败、2 默认跳过；Revision / Build 再次跳过，不能记作最终门禁通过。
+
+before-run 用例的 `mockImplementationOnce` 把 owner acquisition 的 readiness precheck 当初轮 gate。真实初轮尚未开始时已阻塞，该 gate 不能约束随后显式 Run。加实际 `mission.message_accepted(kind=initial)` 阶段诊断后，旧 fixture 确定性得到 0 对 1、退出 1，证明该次剩余失败是测试阶段定位错误。
+
+仅修 fixture：用局部 AsyncLocalStorage 标记真实 adapter owner precheck，正常完成它；真实初轮首次 readiness 才进入 gate，并断言进入时已登记且仅有一个 initial run。首次实际 send 拒绝、no-execution、队列顺序、原 ID 成功、Core receipt / source 及 Native 次数断言保留，不放宽超时。修正后初轮 / steer 8/8、Desktop typecheck、ESLint、格式检查通过。生产 / dist 保持原源码，完整最终远程门禁以最新 PR checks 为准。
+
 ## 工程门禁与边界
 
 本轮 `pnpm check` 和 `pnpm build`（19/19 tasks）均退出 0，生产源码前后摘要一致。命令、退出码、unhandled 数量、日志摘要及源码摘要见 [验证记录](../performance/local-host-kernel-r3-pr-355/flow-rejection-verification.json)。完整远程 CI（聊天、控制、编译、生命周期、Revision 和 Build）以 [PR #355 checks](https://github.com/pqpo/pragma/pull/355/checks) 的最新提交结果为准；不能把通过断言数单独当作门禁通过。
