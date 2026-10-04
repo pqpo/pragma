@@ -16,6 +16,9 @@ import {
 } from "@pragma/core";
 import { defineRuntimeTestDriver } from "@pragma/core/testing";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { createLocalHostCoreMissionControlAdapter } from "../../src/core-control-adapter.ts";
+import { createMissionControllerStore } from "../../src/missions/controller/mission-controller-store.ts";
+import { createMissionOwnerScope } from "../../src/missions/controller/owner-scope.ts";
 import { createLocalHostMissionCommandAdmission } from "../../src/mission-command-admission.ts";
 import { createLocalHostRunMemory } from "../../src/run-memory.ts";
 import { createSqliteExecutionStore } from "../../src/execution/sqlite-execution-store.ts";
@@ -37,6 +40,179 @@ afterEach(async () => {
 });
 
 describe("shared Mission execution kernel with durable Core stores", { timeout: 15_000 }, () => {
+  it("observes an immediately failed Flow while optional Memory registration is blocked", async () => {
+    const originalError = new Error("fast Native failure before Memory finishes");
+    const f = await fixture(async () => {
+      throw originalError;
+    });
+    const flow = defineFlow({ id: "fast-start-failure" });
+    flow.compose(({ start, end }) => start(flow.use("native", f.expert)).next(end()));
+    let finishMemory!: () => void;
+    const memoryGate = new Promise<void>((resolve) => {
+      finishMemory = resolve;
+    });
+    let execution: FlowExecution | undefined;
+    const accepted = vi.fn(async () => await memoryGate);
+    const coreStart = vi.spyOn(f.app.flows, "start");
+    const subject: MissionExecutionSubject = {
+      missionId: "fast-start-mission",
+      intent: "start",
+      request: { requestId: "fast-start-request", input: {} },
+    };
+    const admission = f.kernel.admit(subject, {}, async (scope) => {
+      const native = await f.kernel.start(subject, { kind: "flow", app: f.app, definition: flow });
+      if (native.kind !== "native" || native.owner.kind !== "flow")
+        throw new Error("Expected Flow");
+      execution = native.owner.execution;
+      f.openFlows.push(execution);
+      await scope.accepted(execution.executionId);
+      await accepted();
+      return execution;
+    });
+    try {
+      await vi.waitFor(() => expect(accepted).toHaveBeenCalledOnce());
+      await vi.waitFor(async () =>
+        expect((await f.executions.get(execution!.executionId))?.status).toBe("failed"),
+      );
+      // Cross an event-loop turn before attaching the downstream observer: Vitest
+      // reports an unhandled rejection here if the shared opener fails to observe it.
+      await new Promise<void>((resolve) => setTimeout(resolve, 25));
+      finishMemory();
+      const opened = await admission;
+      const coreHandle = await coreStart.mock.results[0]!.value;
+      expect(opened).toBe(coreHandle);
+      expect(opened.result).toBe(coreHandle.result);
+      await expect(opened.result).rejects.toThrow(originalError.message);
+      expect((await f.executions.get(opened.executionId))?.error?.message).toContain(
+        "fast Native failure",
+      );
+      expect(f.dispatched).toHaveBeenCalledOnce();
+      expect(f.created).toHaveBeenCalledOnce();
+      await opened.releaseRuntimeResources();
+      expect(f.closed).toHaveBeenCalledOnce();
+    } finally {
+      finishMemory();
+      await admission;
+    }
+  });
+
+  it("observes a recovered Flow failure while its durable owner projection is blocked", async () => {
+    const f = await fixture();
+    const flow = defineFlow({ id: "fast-recovery-failure" });
+    const native = flow.use("once", f.expert);
+    const human = flow.humanTask({
+      id: "approval",
+      request: {
+        kind: "approval",
+        prompt: "Continue?",
+        options: [{ label: "Yes", description: "Continue" }],
+        approveOption: "Yes",
+      },
+    });
+    const originalError = new Error("fast recovered failure before projection finishes");
+    const failure = flow.task({
+      id: "failure",
+      handler: () => {
+        throw originalError;
+      },
+    });
+    flow.compose(({ start, end }) => start(native).next(human).next(failure).next(end()));
+    const original = await f.app.flows.start(flow, { input: {} });
+    void original.result.catch(() => undefined);
+    f.openFlows.push(original);
+    await vi.waitFor(async () =>
+      expect(
+        (await f.executions.readEvents(original.executionId)).some(
+          (event) => event.type === "human.requested",
+        ),
+      ).toBe(true),
+    );
+    const requested = (await f.executions.readEvents(original.executionId)).find(
+      (event) => event.type === "human.requested",
+    )!;
+    const interactionId = (requested.data as { interactionId: string }).interactionId;
+    await original.checkpointWaitingHuman();
+    await original.releaseRuntimeResources();
+    const contexts = await f.executions.listContexts(original.executionId);
+    expect(contexts.length).toBeGreaterThan(0);
+    const controller = createMissionControllerStore({ missionsPath: join(f.home, "missions") });
+    const lease = createMissionOwnerScope({ controller });
+    const missionId = original.executionId;
+    const guard = await lease.acquire(missionId);
+    const owners = new MissionExecutionOwner();
+    let finishProjection!: () => void;
+    const projectionGate = new Promise<void>((resolve) => {
+      finishProjection = resolve;
+    });
+    let recovered: FlowExecution | undefined;
+    const projection = vi.fn(
+      async (
+        owner:
+          { kind: "flow"; execution: FlowExecution } | { kind: "session"; session: ExpertSession },
+      ) => {
+        if (owner.kind !== "flow") throw new Error("Expected Flow");
+        recovered = owner.execution;
+        f.openFlows.push(recovered);
+        await recovered.respondToHumanInteraction(
+          interactionId,
+          { kind: "user_question", answered: true, answers: { "Continue?": "Yes" } },
+          { requestId: "00000000-0000-4000-8000-000000000001" },
+        );
+        await projectionGate;
+      },
+    );
+    const coreRecover = vi.spyOn(f.app.flows, "recover");
+    const adapter = createLocalHostCoreMissionControlAdapter({
+      runtimes: f.runtimes,
+      executions: f.executions,
+      sessions: f.sessions,
+      ownerAccess: owners,
+      executors: [],
+      resolveMissionBinding: async () => undefined,
+      resolveExecutionId: async () => original.executionId,
+      prepareRecoveryResources: async () => ({
+        subject: {
+          missionId,
+          intent: "recover",
+          request: { requestId: original.executionId },
+          priorExecution: { id: original.executionId, status: "waiting" },
+        },
+        resources: { kind: "flow", app: f.app, definition: flow },
+        projectOwner: projection,
+      }),
+    });
+    const recovery = adapter.recoverMission(missionId);
+    try {
+      await vi.waitFor(() => expect(projection).toHaveBeenCalledOnce());
+      await vi.waitFor(async () =>
+        expect((await f.executions.get(original.executionId))?.status).toBe("failed"),
+      );
+      await new Promise<void>((resolve) => setTimeout(resolve, 25));
+      await lease.assertOwnership(missionId, guard);
+      finishProjection();
+      await recovery;
+      const coreHandle = await coreRecover.mock.results[0]!.value;
+      expect(recovered).toBe(coreHandle);
+      expect(recovered!.result).toBe(coreHandle.result);
+      await expect(recovered!.result).rejects.toThrow(originalError.message);
+      expect((await f.executions.get(original.executionId))?.error?.message).toContain(
+        "fast recovered failure",
+      );
+      expect(await f.executions.listContexts(original.executionId)).toEqual(contexts);
+      expect(f.created).toHaveBeenCalledOnce();
+      expect(f.dispatched).toHaveBeenCalledOnce();
+      await adapter.release(missionId);
+      expect(f.closed).toHaveBeenCalledOnce();
+      await lease.release(missionId, guard);
+      expect(owners.controlOwner(missionId)).toBeUndefined();
+      expect(lease.diagnostics().activeMissionOwnerCount).toBe(0);
+    } finally {
+      finishProjection();
+      await recovery;
+      await lease.stop(missionId);
+    }
+  });
+
   it.each(["missing-record", "missing-association"])(
     "rejects explicit Session recovery with %s before allocation or native dispatch",
     async (missing) => {
@@ -635,6 +811,7 @@ async function fixture(
   const executions = createSqliteExecutionStore({ pragmaHome: home });
   const sessions = createFileExpertSessionStore({ pragmaHome: home, executions });
   const created = vi.fn();
+  const closed = vi.fn();
   const dispatched = vi.fn<(query: string, nativeId: string) => Promise<void>>(
     async () => undefined,
   );
@@ -648,6 +825,9 @@ async function fixture(
       return { id: context.systemSessionId, context };
     },
     readSession: (session) => ({ runtimeSessionId: session.id }),
+    closeSession: () => {
+      closed();
+    },
     startTurn: async (session, turn) => {
       await dispatched(turn.rawQuery, session.id);
       await beforeTurn?.(turn.rawQuery, session.context);
@@ -678,10 +858,12 @@ async function fixture(
   const f = {
     home,
     app,
+    runtimes,
     expert,
     executions,
     sessions,
     created,
+    closed,
     dispatched,
     openSessions: [] as ExpertSession[],
     openFlows: [] as FlowExecution[],

@@ -12,9 +12,15 @@ export async function openLocalHostFlowExecution(
   definition: FlowDefinition,
   request: LocalHostFlowOpenRequest,
 ): Promise<FlowExecution> {
-  return request.kind === "start"
-    ? await app.flows.start(definition, request.options)
-    : await app.flows.recover(definition, request.options);
+  const execution =
+    request.kind === "start"
+      ? await app.flows.start(definition, request.options)
+      : await app.flows.recover(definition, request.options);
+  // Recovery can fail while the Host is still registering Memory or persisting
+  // its owner projection. Observe rejection before those asynchronous steps,
+  // retaining the original result Promise and its error for later consumers.
+  void execution.result.catch(() => undefined);
+  return execution;
 }
 
 /** Cold cancellation uses stop compilation and never starts or recovers the graph. */

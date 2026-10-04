@@ -2,6 +2,8 @@
 
 2026-10-04。读取 PR #355 全部普通评论（2）、行内评论（2）和 review（1），包括分页结果。审查提交 `a41c763dc2da78d4a3dd8b66f8d521c5193b3245`；最新 `origin/main` 为 `921376a446d9da878b8d9fa5c9f1df69ab323272`。本报告是本轮修复记录，先前 CR 与性能报告仍只证明各自冻结提交。
 
+后续远程 CI 的 Flow 未处理拒绝已确认，诊断与修复见 [Flow result 跟进报告](./local-host-kernel-r3-pr-355-flow-rejection-followup.md)；本文本地结果与性能仍只绑定原冻结源码。
+
 ## 评论裁决
 
 | 来源                                                                                       | 判定                   | 修复范围                                                                                                                                          |

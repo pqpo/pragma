@@ -1,0 +1,148 @@
+{
+  "date": "2026-10-04",
+  "scope": "PR 355 Flow result rejection observation; R3 full acceptance incomplete",
+  "ciBaseline": {
+    "commit": "2a89780a14f73d2cb8319e1bc96cd6fbc7cdff43",
+    "url": "https://github.com/pqpo/pragma/actions/runs/37174256448/job/111353468774",
+    "conclusion": "FAILURE",
+    "hostAssertionsPassed": 196,
+    "unhandledErrors": 1,
+    "revisionAndBuild": "skipped",
+    "failedLogSha256": "316ff157652bed383310ae83ba368ecdb88a013d05973bb99439e4a4f540f82a"
+  },
+  "sourceBefore": {
+    "commit": "2a89780a14f73d2cb8319e1bc96cd6fbc7cdff43",
+    "fileCount": 1181,
+    "sha256": "b099fd7588578a628d8a972cca0e314c5bbc9acff9c84f8cb7baa10982cfc6a2"
+  },
+  "sourceAfter": {
+    "commit": "2a89780a14f73d2cb8319e1bc96cd6fbc7cdff43",
+    "fileCount": 1181,
+    "sha256": "b099fd7588578a628d8a972cca0e314c5bbc9acff9c84f8cb7baa10982cfc6a2"
+  },
+  "sourceUnchanged": true,
+  "validation": [
+    {
+      "label": "pr355-flow-rejection-before",
+      "command": [
+        "env",
+        "CI=true",
+        "PRAGMA_LOG_LEVEL=error",
+        "pnpm",
+        "--filter",
+        "@pragma/local-host",
+        "exec",
+        "vitest",
+        "run",
+        "test/mission-lifecycle/execution-kernel.test.ts",
+        "-t",
+        "observes .*Flow"
+      ],
+      "exitCode": 1,
+      "elapsedSeconds": 6.709,
+      "logSha256": "29e492d9e2619fc62d8cf50a2a85878540da7b28e8c9979e87e812bfdda1f352",
+      "testSummary": [
+        "Test Files  1 passed (1)",
+        "Tests  2 passed | 17 skipped (19)"
+      ],
+      "unhandledErrorCount": 2
+    },
+    {
+      "label": "pr355-flow-rejection-after",
+      "command": [
+        "env",
+        "CI=true",
+        "PRAGMA_LOG_LEVEL=error",
+        "pnpm",
+        "--filter",
+        "@pragma/local-host",
+        "exec",
+        "vitest",
+        "run",
+        "test/mission-lifecycle/execution-kernel.test.ts"
+      ],
+      "exitCode": 0,
+      "elapsedSeconds": 23.109,
+      "logSha256": "d786f91a863d71ce2c804d40fe99fda39a9e5ba201b9c473ea5d2d144c8889fc",
+      "testSummary": [
+        "Test Files  1 passed (1)",
+        "Tests  19 passed (19)"
+      ],
+      "unhandledErrorCount": 0
+    },
+    {
+      "label": "pr355-flow-rejection-crash-after",
+      "command": [
+        "env",
+        "CI=true",
+        "PRAGMA_LOG_LEVEL=error",
+        "pnpm",
+        "--filter",
+        "@pragma/local-host",
+        "exec",
+        "vitest",
+        "run",
+        "test/node-compilation-execution.test.ts",
+        "-t",
+        "takes over a real Flow Native crash"
+      ],
+      "exitCode": 0,
+      "elapsedSeconds": 39.426,
+      "logSha256": "dda85625b91645107aa4b3839bb14a7249ae9715055f47e92ba38d15851c9a0b",
+      "testSummary": [
+        "Test Files  1 passed (1)",
+        "Tests  1 passed | 19 skipped (20)"
+      ],
+      "unhandledErrorCount": 0
+    },
+    {
+      "label": "pr355-flow-rejection-check",
+      "command": [
+        "pnpm",
+        "check"
+      ],
+      "exitCode": 0,
+      "elapsedSeconds": 161.416,
+      "logSha256": "913b2891c2bd535274ef228874ac8ff0a9ac2b56fc06c68faa799a26aff934ba",
+      "testSummary": [
+        "Test Files  13 passed (13)",
+        "Tests  64 passed (64)",
+        "Test Files  15 passed (15)",
+        "Tests  87 passed (87)",
+        "Test Files  2 passed (2)",
+        "Tests  6 passed (6)",
+        "Test Files  5 passed (5)",
+        "Tests  30 passed (30)",
+        "Test Files  2 passed (2)",
+        "Test Files  2 passed (2)",
+        "Tests  7 passed (7)",
+        "Tests  10 passed (10)",
+        "Test Files  7 passed (7)",
+        "Tests  135 passed (135)",
+        "Test Files  1 passed (1)",
+        "Tests  3 passed (3)",
+        "Test Files  10 passed (10)",
+        "Tests  117 passed (117)",
+        "Test Files  2 passed (2)",
+        "Tests  17 passed (17)",
+        "Test Files  2 passed (2)",
+        "Tests  5 passed (5)"
+      ],
+      "unhandledErrorCount": 0
+    },
+    {
+      "label": "pr355-flow-rejection-build",
+      "command": [
+        "pnpm",
+        "build"
+      ],
+      "exitCode": 0,
+      "elapsedSeconds": 93.109,
+      "logSha256": "c03fb461b40d64d5be1569b04fd13e630c85be18f156c800ecd7a3b12b35321c",
+      "testSummary": [],
+      "unhandledErrorCount": 0
+    }
+  ],
+  "fullRemoteCi": "Latest commit CI is required; see PR checks, not historical passed-assertion counts",
+  "performance": "Not remeasured in this narrow synchronous observer fix; previous evidence remains bound to its recorded source"
+}
