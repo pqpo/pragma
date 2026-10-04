@@ -1,4 +1,4 @@
-import type { MissionSurfaceAudience } from "./mission-runner-contracts.ts";
+import type { MissionSurfaceAudience } from "./mission-execution-use-cases.ts";
 
 export interface MissionStatusNotification {
   readonly audience: MissionSurfaceAudience;

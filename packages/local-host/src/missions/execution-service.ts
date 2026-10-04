@@ -166,24 +166,24 @@ import { observeMissionQueuedTurn } from "./mission-queued-turn-observer.ts";
 import {
   readMissionConversationSnapshot,
   type MissionMessageApplicationResult,
-  type MissionRunner,
+  type MissionExecutionUseCases,
   type MissionSurfaceAudience,
   type MissionWorkConversationStreamNotification,
-} from "./mission-runner-contracts.ts";
+} from "./mission-execution-use-cases.ts";
 import { createMissionResumeOptions } from "./mission-session-upgrade.ts";
 import { MissionStatusService } from "./mission-status-service.ts";
 import { MissionStoreError } from "./repository/mission-store-error.ts";
 import type { MissionStore, MissionTimelineTurn } from "./repository/mission-store.ts";
 import { MissionWorkService } from "./mission-work-service.ts";
 
-export { readMissionConversationSnapshot } from "./mission-runner-contracts.ts";
+export { readMissionConversationSnapshot } from "./mission-execution-use-cases.ts";
 export type {
   MissionChatNotification,
   MissionCommandOutcomeNotification,
-  MissionRunner,
+  MissionExecutionUseCases,
   MissionSurfaceAudience,
   MissionWorkNotification,
-} from "./mission-runner-contracts.ts";
+} from "./mission-execution-use-cases.ts";
 
 export async function collectMissionExecutionIds(
   missions: MissionStore,
@@ -453,7 +453,7 @@ export interface LocalHostMissionExecutionServiceOptions {
 
 const canonicalMissionExecutionServices = new WeakSet<object>();
 declare const missionExecutionServiceBrand: unique symbol;
-export type LocalHostMissionExecutionService = MissionRunner & {
+export type LocalHostMissionExecutionService = MissionExecutionUseCases & {
   readonly [missionExecutionServiceBrand]: true;
 };
 export function isLocalHostMissionExecutionService(
@@ -5576,7 +5576,7 @@ export function createLocalHostMissionExecutionService(
     return await options.ownerScope.runWithGuard(missionId, guard, operation);
   };
 
-  const service: MissionRunner = {
+  const service: MissionExecutionUseCases = {
     async get(id) {
       const mission = await options.missions.get(id);
       if (mission.execution !== undefined)
@@ -5604,12 +5604,8 @@ export function createLocalHostMissionExecutionService(
       for (const mission of await options.missions.list()) invalidateChat(mission.id, "user");
     },
     refreshMemoryContextBindings,
-    async run(id) {
-      return await startMission(id);
-    },
-    async recover(id, expectedExecutionId) {
-      return await recoverMission(id, expectedExecutionId);
-    },
+    startRun: startMission,
+    recoverMission,
     startLocalHostRun,
     assertLocalHostRunAllowed,
     validateLocalHostRunInput: async (input) => await controllerPorts?.validateInput?.(input),
@@ -5877,13 +5873,43 @@ export function createLocalHostMissionExecutionService(
       const session = sessionService.session(id);
       const executionContext = sessionService.executionContext(id);
       const pendingSettlement: Promise<unknown>[] = [];
-      if (current !== undefined) {
+      if (current !== undefined && session !== undefined) {
+        // Session.releaseAfterTerminal owns Native teardown and lease custody.
+        // A rejected turn settlement must still enter that release boundary.
         const cancelling = current.handle.cancel("Mission controller lease was lost.");
         pendingSettlement.push(cancelling, current.settlement);
         await settlementOutcomeWithin(cancelling, 5_000);
         await settlementOutcomeWithin(current.settlement, 30_000);
         lifecycleService.deleteActiveIfCurrent(id, current);
         forgetFlowControlOwner(id, current.handle);
+      } else if (current !== undefined) {
+        const stopping = (async () => {
+          const flow = current.handle as typeof current.handle &
+            Partial<Pick<FlowExecution, "stopForDeletion">>;
+          if (flow.stopForDeletion !== undefined) {
+            await flow.stopForDeletion("Mission controller lease was lost.");
+          } else {
+            await current.handle.cancel("Mission controller lease was lost.");
+          }
+          await current.settlement;
+          lifecycleService.deleteActiveIfCurrent(id, current);
+          forgetFlowControlOwner(id, current.handle);
+          await releaseStandaloneOwner();
+        })();
+        pendingSettlement.push(stopping);
+        const stopped = await settlementOutcomeWithin(stopping, 30_000);
+        if (stopped.status !== "fulfilled") {
+          logger.warn(
+            "mission.controller_active_flow_release_pending",
+            `Mission ${id} retained its active Flow owner while controller teardown is pending.`,
+            {
+              missionId: id,
+              executionId: current.handle.executionId,
+              ...(stopped.status === "rejected" ? { error: stopped.error } : {}),
+            },
+          );
+          return;
+        }
       }
       const controlOwner = executionOwner.controlOwner(id);
       if (current === undefined && controlOwner?.kind === "flow") {

@@ -4,16 +4,20 @@ import {
   createNoopLoggerProvider,
   type CanonicalEventFeed,
 } from "@pragma/core";
-import { PRAGMA_DSL_WRITE_API_VERSION } from "@pragma/interpreter/ast";
 import { mkdir, mkdtemp, rename, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { missionExecutorSnapshot } from "../../../shared/contracts/index.ts";
-import { createMissionDeliveryRecovery } from "./mission-delivery-recovery.ts";
-import { createMissionDelivery, type MissionDeliveryStep } from "./mission-delivery.ts";
-import { createMissionStore } from "./mission-store.ts";
+
+import { MissionExecutionOwner } from "../src/missions/execution-owner.ts";
+import { acquireHostStoragePool } from "../src/host-storage-pool.ts";
+import { createMissionDeliveryRecovery } from "../src/missions/mission-delivery-recovery.ts";
+import {
+  createMissionDelivery,
+  type MissionDeliveryStep,
+} from "../src/missions/mission-delivery.ts";
+import { createMissionStore } from "../src/missions/repository/mission-store.ts";
 
 const resources: {
   root: string;
@@ -28,33 +32,13 @@ afterEach(async () => {
   }
 });
 const executionId = "00000000-0000-4000-8000-000000000111";
-async function fixture(callback?: (step: MissionDeliveryStep) => Promise<void>) {
+async function fixture(callback?: (step: MissionDeliveryStep) => Promise<void | "deferred">) {
   const root = await mkdtemp(join(tmpdir(), "pragma-mission-delivery-"));
   const mission = await createMissionStore({ missionsPath: join(root, "missions") }).create({
     workspace: { path: root, basename: "workspace" },
     goal: "Delivery test",
     project: { id: "studio", revision: 1 },
-    executor: missionExecutorSnapshot({
-      apiVersion: PRAGMA_DSL_WRITE_API_VERSION,
-      kind: "Expert",
-      metadata: {
-        id: "v2vt1v01vzz6j24q",
-        avatarId: "pragma.avatar.expert.default",
-        name: "Expert",
-        description: "Test",
-        tags: [],
-      },
-      spec: {
-        scope: "test",
-        instructions: "Reply OK",
-        runtime: { ref: "runtime-profile:9a20pvstre59317h" },
-        capabilities: [],
-        toolApprovals: {},
-        contextStores: [],
-        plugins: [],
-        tools: [],
-      },
-    }),
+    executor: { kind: "expert", ref: "expert:v2vt1v01vzz6j24q", name: "Expert" },
   });
   const feed = await createFileCanonicalEventFeed({ pragmaHome: root });
   const usage = vi.fn(async () => undefined);
@@ -119,6 +103,67 @@ async function publish(feed: CanonicalEventFeed, kind: "usage" | "terminal") {
   ]);
 }
 describe("Mission durable delivery", { timeout: 15000 }, () => {
+  it("defers released request custody without failure and resumes from the same step", async () => {
+    let released = true;
+    const target = await fixture(async () => (released ? "deferred" : undefined));
+    await target.delivery.register(target.mission, executionId, target.mission.initialMessageId);
+    target.delivery.start();
+    await publish(target.feed, "terminal");
+    await vi.waitFor(() => expect(target.terminal).toHaveBeenCalled());
+    await vi.waitFor(() =>
+      expect(target.delivery.inspect()).toMatchObject({ state: "healthy", pending: 5 }),
+    );
+    await target.delivery.close();
+    const database = new DatabaseSync(target.path);
+    try {
+      const rows = database.prepare("SELECT attempts,error_code FROM delivery_tasks").all();
+      expect(rows).toHaveLength(5);
+      expect(rows.every((row) => row.attempts === 0 && row.error_code === null)).toBe(true);
+    } finally {
+      database.close();
+    }
+    released = false;
+    target.delivery = await createMissionDelivery(target);
+    resources[resources.length - 1]!.delivery = target.delivery;
+    await target.delivery.retry(target.mission.id);
+    target.terminal.mockClear();
+    target.delivery.start();
+    await vi.waitFor(() => expect(target.terminal).toHaveBeenCalledTimes(5));
+  });
+  it("pauses dispatch without waiting for a receipt blocked on real Mission admission", async () => {
+    const owner = new MissionExecutionOwner();
+    let entering!: () => void;
+    const entered = new Promise<void>((resolve) => {
+      entering = resolve;
+    });
+    const target = await fixture(async () => {
+      entering();
+      await owner.admit("mission", async () => undefined);
+    });
+    await target.delivery.register(target.mission, executionId, target.mission.initialMessageId);
+    await owner.admit("mission", async () => {
+      target.delivery.start();
+      await publish(target.feed, "terminal");
+      await entered;
+      // The claimed receipt owns custody but waits for this reservation.
+      await target.delivery.pause();
+    });
+    target.delivery.start();
+    await vi.waitFor(() => expect(target.terminal).toHaveBeenCalledTimes(5));
+  });
+  it("pauses request background dispatch and resumes durable receipts on the next request", async () => {
+    const target = await fixture();
+    await target.delivery.register(target.mission, executionId, target.mission.initialMessageId);
+    target.delivery.start();
+    await publish(target.feed, "usage");
+    await vi.waitFor(() => expect(target.usage).toHaveBeenCalledOnce());
+    await target.delivery.pause();
+    await publish(target.feed, "terminal");
+    expect(target.terminal).not.toHaveBeenCalled();
+    target.delivery.start();
+    await vi.waitFor(() => expect(target.terminal).toHaveBeenCalledTimes(5));
+    expect(target.usage).toHaveBeenCalledOnce();
+  });
   it("receives a fact before Mission association and delivers it after registration", async () => {
     const target = await fixture();
     await publish(target.feed, "usage");
@@ -496,6 +541,8 @@ describe("Mission durable delivery", { timeout: 15000 }, () => {
 
 describe("Mission delivery initialization recovery", () => {
   it("retries a real database open failure after background start and preserves custody", async () => {
+    // Production keeps the shared Execution/Usage pool alive while this optional consumer retries.
+    const pool = acquireHostStoragePool();
     const target = await fixture();
     await publish(target.feed, "usage");
     target.delivery.start();
@@ -547,6 +594,7 @@ describe("Mission delivery initialization recovery", () => {
     } finally {
       await recovery.close();
       vi.useRealTimers();
+      await pool.close();
     }
   });
 

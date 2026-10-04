@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { MissionStoreError } from "../features/missions/mission-store-error.ts";
+import { MissionStoreError } from "@pragma/local-host";
 import { toContextStoreMissionDeletionError } from "./context-store-mission-deletion-error.ts";
 
 describe("Context Store Mission deletion errors", () => {

@@ -378,6 +378,12 @@ CREATE TABLE IF NOT EXISTS delivery_metadata (key TEXT PRIMARY KEY, value TEXT N
             .get(missionId!) === undefined;
         break;
       }
+      case "defer":
+        // Request lifetime ended normally. Keep custody without creating a failure/attempt.
+        db.prepare(
+          "UPDATE delivery_tasks SET next_at=?,claim=NULL,expires_at=0 WHERE id=? AND claim=?",
+        ).run(Date.now() + 30_000, args[0] as string, args[1] as string);
+        break;
       case "fail": {
         const [id, claim, invalid, attempts] = args as [string, string, boolean, number];
         db.prepare(

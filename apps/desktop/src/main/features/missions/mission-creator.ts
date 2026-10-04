@@ -13,7 +13,7 @@ import type {
   MissionChatEntry,
 } from "../../../shared/contracts/index.ts";
 import type { MissionExecutorCatalog } from "./mission-executor-catalog.ts";
-import type { MissionStore } from "./mission-store.ts";
+import type { MissionStore } from "@pragma/local-host";
 import {
   withContextStoreRevisionLocks,
   ContextStoreStoreError,

@@ -31,9 +31,13 @@ import {
 } from "../features/asset-git/asset-sync-coordinator.ts";
 import { migrateLegacyRevisionProfile } from "../features/experts/legacy-revision-profile-migration.ts";
 import { createHomeProjectStore } from "../features/missions/home-project-store.ts";
-import { createMissionDeliveryRecovery } from "../features/missions/mission-delivery-recovery.ts";
-import { createMissionDelivery } from "../features/missions/mission-delivery.ts";
-import { persistMissionExecutionProjection } from "../features/missions/mission-runner-composition.ts";
+import { createMissionDeliveryRecovery } from "@pragma/local-host";
+import {
+  createMissionDelivery,
+  createMissionTerminalMaterializer,
+  createLocalHostMissionApplication,
+  createLocalHostApplication,
+} from "@pragma/local-host";
 import { missionTargetRuntimeIds } from "@pragma/local-host";
 
 import {
@@ -62,7 +66,6 @@ import {
   createSecretStore,
   type MissionControllerStore,
 } from "@pragma/local-host";
-import { createLocalHostNodeApplication } from "@pragma/local-host/node-application";
 import { MEMORY_CURATOR_REF } from "@pragma/memory";
 import { powerMonitor, type BrowserWindow } from "electron";
 import {
@@ -147,17 +150,18 @@ import { createHomeExecutorCatalog } from "../features/missions/home-executor-ca
 import { createHomeExecutorPreferenceStore } from "../features/missions/home-executor-preference-store.ts";
 import { createDesktopLocalHostExecutorResolver } from "../features/missions/local-host-mission-adapter.ts";
 import { createDesktopAdapterHost } from "../features/missions/mission-adapter-host.ts";
-import { createMissionExecutionEventProjector } from "../features/missions/mission-command-execution-projector.ts";
+import { createMissionExecutionEventProjector } from "@pragma/local-host";
 import { installMissionContextStoreBrowserHandlers } from "../features/missions/mission-context-store-browser-ipc.ts";
 import { createMissionContextStoreBrowserService } from "../features/missions/mission-context-store-browser.ts";
 import { createMissionCreator } from "../features/missions/mission-creator.ts";
 import { createMissionExecutorCatalog } from "../features/missions/mission-executor-catalog.ts";
 import { installMissionHandlers } from "../features/missions/mission-ipc.ts";
 import { createMissionReadModel } from "../features/missions/mission-read-model.ts";
-import { createMissionRunner } from "../features/missions/mission-runner.ts";
-import { MissionStatusService } from "../features/missions/mission-status-service.ts";
-import { createFencedMissionStore } from "../features/missions/mission-store-fenced-adapter.ts";
-import { createMissionStore, MissionStoreError } from "../features/missions/mission-store.ts";
+import { createLocalHostIntegrationCapability } from "@pragma/local-host/node-application";
+import { createDesktopMissionExecutionResources } from "../features/missions/desktop-mission-execution-resources.ts";
+import { MissionStatusService } from "@pragma/local-host";
+import { createFencedMissionStore } from "@pragma/local-host";
+import { createMissionStore, MissionStoreError } from "@pragma/local-host";
 import { installModelProviderHandlers } from "../features/model-providers/model-provider-ipc.ts";
 import { createModelProviderStore } from "../features/model-providers/model-provider-store.ts";
 import { createPluginCredentialStore } from "../features/plugins/plugin-credential-store.ts";
@@ -348,8 +352,8 @@ export async function createDesktopApplicationContainer(
         { missionId, errorCode: error.code, error },
       ),
   });
-  const missionRunnerRef: {
-    current?: ReturnType<typeof createMissionRunner>;
+  const missionApplicationRef: {
+    current?: ReturnType<typeof createLocalHostMissionApplication>;
   } = {};
   const semanticWriteReplayRef: {
     current?: Parameters<MissionControllerStore["recoverSemanticWrite"]>[0]["replay"];
@@ -385,7 +389,7 @@ export async function createDesktopApplicationContainer(
       );
     },
     onIdle: async ({ missionId, idleTimeoutMs, releaseOwner }): Promise<void> => {
-      const runner = missionRunnerRef.current;
+      const runner = missionApplicationRef.current;
       if (runner === undefined) return;
       const released = await runner.releaseIdleSession(missionId, idleTimeoutMs, releaseOwner);
       mainLogger.info("mission.owner_resources", "Mission owner resource diagnostics", {
@@ -416,7 +420,7 @@ export async function createDesktopApplicationContainer(
       );
     },
     onLeaseLost: async (missionId, error) => {
-      await missionRunnerRef.current?.stopLocalController(missionId);
+      await missionApplicationRef.current?.stopLocalController(missionId);
       mainLogger.warn(
         "mission.controller_lease_lost",
         "Mission controller lease was lost; local execution was stopped and subsequent semantic writes are fenced.",
@@ -656,13 +660,15 @@ export async function createDesktopApplicationContainer(
     },
     removeMissionMounts: async (storeId) => {
       const references = await missionStore.listContextStoreReferences(storeId);
-      const missionRunner = missionRunnerRef.current;
-      if (references.length > 0 && missionRunner === undefined) {
-        throw new Error("Mission runner is unavailable while removing Mission Knowledge mounts.");
+      const missionApplication = missionApplicationRef.current;
+      if (references.length > 0 && missionApplication === undefined) {
+        throw new Error(
+          "Mission application is unavailable while removing Mission Knowledge mounts.",
+        );
       }
       const assertSafeToUnmount = async (missionId: string): Promise<void> => {
         try {
-          await missionRunner?.assertContextMountChangeAllowed(missionId);
+          await missionApplication?.assertContextMountChangeAllowed(missionId);
         } catch (error) {
           const blocked = toContextStoreMissionDeletionError(error);
           if (blocked !== undefined) throw blocked;
@@ -674,7 +680,7 @@ export async function createDesktopApplicationContainer(
       }
       for (const reference of references) {
         try {
-          await missionRunner?.removeContextStoreMount({ id: reference.id, storeId });
+          await missionApplication?.removeContextStoreMount({ id: reference.id, storeId });
         } catch (error) {
           const blocked = toContextStoreMissionDeletionError(error);
           if (blocked !== undefined) throw blocked;
@@ -1290,323 +1296,432 @@ export async function createDesktopApplicationContainer(
     systemExperts,
   });
   const memoryCuratorRef: { current?: DesktopMemoryCurator } = {};
-  const missionRunner = createMissionRunner({
-    get deferTerminalProjection() {
-      return missionDeliveryRef.current !== undefined;
-    },
-    registerExecutionDelivery: (mission, executionId, requestId) =>
-      missionDeliveryRef.current?.register(mission, executionId, requestId),
-    wakeExecutionDelivery: () => missionDeliveryRef.current?.wake(),
-    missions: guardedMissionStore,
-    missionStatus,
-    project: pragmaProjectStore,
-    capabilityStore,
-    capabilityCredentials,
-    resolveSecret: (ref) => pluginCredentials.get(ref),
-    secretFingerprint: (ref) => pluginCredentials.fingerprint([ref]),
-    capabilitiesPath,
-    mcpToolRegistryPool,
+  const missionReadPorts = createLocalHostMissionReadPorts({
     pragmaHome: pragmaPaths.root,
-    executionStore: memoryPlane.executionStore,
-    contextStores,
-    contextStoreRevisions: storeRevisions,
-    knowledgeRevisionMountResources: systemExpertKnowledgeRevisionMountResources,
-    hostContextStores: (mission, bindingId) =>
-      missionMemory.bindings({
-        missionId: mission.id,
-        goal: mission.goal,
-        projectId: mission.project.id,
-        bindingId,
-      }),
-    plugins: pluginStore,
-    runtimes,
-    usage: usageStore,
-    loggerProvider,
-    automaticHumanInteractionHandler,
-    runtimesForToolPermissionMode: (mode) => runtimes.forToolPermissionMode(mode),
-    automaticHumanInteractionHandlerForToolPermissionMode: (mode) =>
-      createAutomaticToolPermissionHandler(() => mode),
-    adapterHostForMission: (mission, fallback) => evaluationMocks.forMission(mission, fallback),
-    ownerScope,
-    pragmaManagementPorts: () => {
-      if (pragmaManagementPortsRef.current === undefined) {
-        throw new Error("The Pragma management ports have not been initialized.");
-      }
-      return pragmaManagementPortsRef.current;
-    },
-    onStorageTrashed: () => trashMaintenance.schedule("mission-storage-trashed"),
-    deletionService: missionDeletion,
-    prepareOwnerDeletion: async ({ mission, executionIds }) => {
-      await missionDeliveryRef.current?.fenceMission(mission.id, executionIds);
-      void retiringAttention.stop(mission.id).catch(() => undefined);
-    },
-    onExecutionLinked: async ({ mission, executionId, requestId }) => {
-      await executionEventProjector.link({ mission, executionId, requestId });
-    },
-    onExecutionContextLinked: async ({ mission, executionId }) => {
-      if (!isUserFacingMissionOrigin(mission.origin)) return;
-      await missionMemory.register({
-        executionId,
-        missionId: mission.id,
-        projectId: mission.project.id,
-      });
-    },
-    onPromptAdmitting: (missionId, requestId) => missionMemory.beginPrompt(missionId, requestId),
-    onMissionActivity: async ({ mission }) => {
-      if (!isUserFacingMissionOrigin(mission.origin)) return;
-      await memoryPlane.setMemoryConversationState({
-        missionId: mission.id,
-        state: "active",
-      });
-    },
-    getSystemExecutorMetadata: () =>
-      systemExperts.list().map((expert) => ({
-        id: expert.id,
-        name: expert.name,
-        avatarId: expert.avatarId,
-      })),
-    getSystemExecutorResource: (ref) => systemExperts.getResource(ref),
-    getSystemDependencyResource: (ref) => systemExperts.getDependencyResource(ref),
-    invalidateRuntimeReadiness: () => invalidateTargetRuntimeAvailability(runtimes),
-    commitExecutionTerminal: (input) => executionEventProjector.terminal(input),
-    onExecutionCheckpointed: async ({ mission, executionId }) => {
-      if (!isUserFacingMissionOrigin(mission.origin)) return;
-      await missionMemory.complete(mission.id, executionId, true);
-    },
-    onExecutionTerminal: async ({ mission, executionId }) => {
-      if (!isUserFacingMissionOrigin(mission.origin)) return;
-      await missionMemory.complete(
-        mission.id,
-        executionId,
-        mission.lifecycleStatus !== "completed",
-      );
-    },
-    getSystemExecutorFingerprint: async (ref) =>
-      ref === MEMORY_CURATOR_REF
-        ? await memoryCuratorRef.current?.fingerprint()
-        : ref === STORE_REVISION_EXPERT_REF
-          ? systemExperts.fingerprint(STORE_REVISION_EXPERT_REF)
-          : ref === SKILL_REVISION_EXPERT_REF
-            ? createHash("sha256")
-                .update((await skillAgentsRef.current?.fingerprint()) ?? "unavailable")
-                .update("\0")
-                .update(systemExperts.fingerprint(SKILL_REVISION_EXPERT_REF) ?? "unavailable")
-                .digest("hex")
-            : ref === EVALUATION_JUDGE_EXPERT_REF
-              ? builtInAgentFingerprint(EVALUATION_JUDGE_EXPERT_REF)
-              : systemExperts.fingerprint(ref),
-    assertExecutorReady: async (ref, scope) =>
-      await assertBundleExecutorReady(ref, "run_mission", scope),
-    systemExecutorSource: async ({
-      mission,
-      runtimes: scopedRuntimes,
-      knowledgeRevisions,
-      purpose,
-      adapterHost,
-    }) => {
-      const planningRef = mission.executor.ref;
-      if (purpose === "stop") {
-        const resource = systemExperts.getResource(planningRef);
-        if (resource === undefined) return undefined;
-        return {
-          ref: planningRef as import("@pragma/built-in-agents").BuiltInAgentRef,
-          environmentId: "desktop",
-          definitionStateRoot: join(defaultAgentStateRoot, "definitions"),
-          workspace: mission.workspace.path,
-          pragmaHome: pragmaPaths.root,
-          runtimes: scopedRuntimes,
-          expertResource: resource,
-          additionalResources: systemExperts.getAdditionalResources(planningRef),
-          adapterHost,
-        };
-      }
-      if (
-        mission.origin.type === "system-memory" &&
-        ((planningRef === STORE_REVISION_EXPERT_REF &&
-          mission.origin.jobId.startsWith("knowledge-plan:")) ||
-          (planningRef === SKILL_REVISION_EXPERT_REF &&
-            mission.origin.jobId.startsWith("skill-plan:")))
-      ) {
-        const resource = systemExperts.getResource(planningRef);
-        if (resource === undefined) throw new Error("Memory revision planning Agent is missing.");
-        const definition = systemExperts.get(planningRef);
-        if (definition === undefined)
-          throw new Error("Memory revision planning profile is missing.");
+    repository: missionStore,
+    controller: missionControllerStore,
+    query: missionQuery,
+    watch: missionWatch,
+  });
+  const localHostRunExecutorResolver = createDesktopLocalHostExecutorResolver({
+    executors: missionExecutors,
+    project: pragmaProjectStore,
+  });
+  const missionApplication = createLocalHostMissionApplication({
+    lifecycle: missionLifecycle,
+    client: { surface: "desktop", version: "desktop", instanceId: randomUUID() },
+    logger: mainLogger,
+    resolveExecutor: localHostRunExecutorResolver,
+    assertMission: missionReadPorts.assertMission,
+    onOwnerStartError: ({ missionId, error }) =>
+      mainLogger.warn(
+        "mission.controller_owner_start_failed",
+        "Mission command is durable, but its owner could not be started yet.",
+        { missionId, error },
+      ),
+    execution: createDesktopMissionExecutionResources({
+      get deferTerminalProjection() {
+        return missionDeliveryRef.current !== undefined;
+      },
+      registerExecutionDelivery: (mission, executionId, requestId) =>
+        missionDeliveryRef.current?.register(mission, executionId, requestId),
+      wakeExecutionDelivery: () => missionDeliveryRef.current?.wake(),
+      missions: guardedMissionStore,
+      missionStatus,
+      project: pragmaProjectStore,
+      capabilityStore,
+      capabilityCredentials,
+      resolveSecret: (ref) => pluginCredentials.get(ref),
+      secretFingerprint: (ref) => pluginCredentials.fingerprint([ref]),
+      capabilitiesPath,
+      mcpToolRegistryPool,
+      pragmaHome: pragmaPaths.root,
+      executionStore: memoryPlane.executionStore,
+      contextStores,
+      contextStoreRevisions: storeRevisions,
+      knowledgeRevisionMountResources: systemExpertKnowledgeRevisionMountResources,
+      hostContextStores: (mission, bindingId) =>
+        missionMemory.bindings({
+          missionId: mission.id,
+          goal: mission.goal,
+          projectId: mission.project.id,
+          bindingId,
+        }),
+      plugins: pluginStore,
+      runtimes,
+      usage: usageStore,
+      loggerProvider,
+      automaticHumanInteractionHandler,
+      runtimesForToolPermissionMode: (mode) => runtimes.forToolPermissionMode(mode),
+      automaticHumanInteractionHandlerForToolPermissionMode: (mode) =>
+        createAutomaticToolPermissionHandler(() => mode),
+      adapterHostForMission: (mission, fallback) => evaluationMocks.forMission(mission, fallback),
+      ownerScope,
+      pragmaManagementPorts: () => {
+        if (pragmaManagementPortsRef.current === undefined) {
+          throw new Error("The Pragma management ports have not been initialized.");
+        }
+        return pragmaManagementPortsRef.current;
+      },
+      onStorageTrashed: () => trashMaintenance.schedule("mission-storage-trashed"),
+      deletionService: missionDeletion,
+      prepareOwnerDeletion: async ({ mission, executionIds }) => {
+        await missionDeliveryRef.current?.fenceMission(mission.id, executionIds);
+        void retiringAttention.stop(mission.id).catch(() => undefined);
+      },
+      onExecutionLinked: async ({ mission, executionId, requestId }) => {
+        await executionEventProjector.link({ mission, executionId, requestId });
+      },
+      onExecutionContextLinked: async ({ mission, executionId }) => {
+        if (!isUserFacingMissionOrigin(mission.origin)) return;
+        await missionMemory.register({
+          executionId,
+          missionId: mission.id,
+          projectId: mission.project.id,
+        });
+      },
+      onPromptAdmitting: (missionId, requestId) => missionMemory.beginPrompt(missionId, requestId),
+      onMissionActivity: async ({ mission }) => {
+        if (!isUserFacingMissionOrigin(mission.origin)) return;
+        await memoryPlane.setMemoryConversationState({
+          missionId: mission.id,
+          state: "active",
+        });
+      },
+      getSystemExecutorMetadata: () =>
+        systemExperts.list().map((expert) => ({
+          id: expert.id,
+          name: expert.name,
+          avatarId: expert.avatarId,
+        })),
+      getSystemExecutorResource: (ref) => systemExperts.getResource(ref),
+      getSystemDependencyResource: (ref) => systemExperts.getDependencyResource(ref),
+      invalidateRuntimeReadiness: () => invalidateTargetRuntimeAvailability(runtimes),
+      commitExecutionTerminal: (input) => executionEventProjector.terminal(input),
+      onExecutionCheckpointed: async ({ mission, executionId }) => {
+        if (!isUserFacingMissionOrigin(mission.origin)) return;
+        await missionMemory.complete(mission.id, executionId, true);
+      },
+      onExecutionTerminal: async ({ mission, executionId }) => {
+        if (!isUserFacingMissionOrigin(mission.origin)) return;
+        await missionMemory.complete(
+          mission.id,
+          executionId,
+          mission.lifecycleStatus !== "completed",
+        );
+      },
+      getSystemExecutorFingerprint: async (ref) =>
+        ref === MEMORY_CURATOR_REF
+          ? await memoryCuratorRef.current?.fingerprint()
+          : ref === STORE_REVISION_EXPERT_REF
+            ? systemExperts.fingerprint(STORE_REVISION_EXPERT_REF)
+            : ref === SKILL_REVISION_EXPERT_REF
+              ? createHash("sha256")
+                  .update((await skillAgentsRef.current?.fingerprint()) ?? "unavailable")
+                  .update("\0")
+                  .update(systemExperts.fingerprint(SKILL_REVISION_EXPERT_REF) ?? "unavailable")
+                  .digest("hex")
+              : ref === EVALUATION_JUDGE_EXPERT_REF
+                ? builtInAgentFingerprint(EVALUATION_JUDGE_EXPERT_REF)
+                : systemExperts.fingerprint(ref),
+      assertExecutorReady: async (ref, scope) =>
+        await assertBundleExecutorReady(ref, "run_mission", scope),
+      systemExecutorSource: async ({
+        mission,
+        runtimes: scopedRuntimes,
+        knowledgeRevisions,
+        purpose,
+        adapterHost,
+      }) => {
+        const planningRef = mission.executor.ref;
+        if (purpose === "stop") {
+          const resource = systemExperts.getResource(planningRef);
+          if (resource === undefined) return undefined;
+          return {
+            ref: planningRef as import("@pragma/built-in-agents").BuiltInAgentRef,
+            environmentId: "desktop",
+            definitionStateRoot: join(defaultAgentStateRoot, "definitions"),
+            workspace: mission.workspace.path,
+            pragmaHome: pragmaPaths.root,
+            runtimes: scopedRuntimes,
+            expertResource: resource,
+            additionalResources: systemExperts.getAdditionalResources(planningRef),
+            adapterHost,
+          };
+        }
+        if (
+          mission.origin.type === "system-memory" &&
+          ((planningRef === STORE_REVISION_EXPERT_REF &&
+            mission.origin.jobId.startsWith("knowledge-plan:")) ||
+            (planningRef === SKILL_REVISION_EXPERT_REF &&
+              mission.origin.jobId.startsWith("skill-plan:")))
+        ) {
+          const resource = systemExperts.getResource(planningRef);
+          if (resource === undefined) throw new Error("Memory revision planning Agent is missing.");
+          const definition = systemExperts.get(planningRef);
+          if (definition === undefined)
+            throw new Error("Memory revision planning profile is missing.");
+          const configuredModel =
+            definition.executionProfile.mode === "pinned"
+              ? definition.executionProfile.model
+              : undefined;
+          const defaults = await resolveSystemExpertRuntimeDefaults(
+            scopedRuntimes,
+            configuredModel,
+            mission.modelOverride,
+          );
+          return {
+            ref: planningRef,
+            environmentId: "desktop-memory-revision-planning",
+            definitionStateRoot: join(defaultAgentStateRoot, "definitions"),
+            workspace: mission.workspace.path,
+            pragmaHome: pragmaPaths.root,
+            runtimes: withRuntimeDefaults(scopedRuntimes, defaults),
+            loggerProvider,
+            rootExecutionOverride: {
+              runtimeId: defaults.runtimeId,
+              ...(defaults.modelSelection === undefined
+                ? {}
+                : { modelSelection: defaults.modelSelection }),
+            },
+            expertResource: {
+              ...resource,
+              spec: {
+                ...resource.spec,
+                instructions:
+                  "You are the built-in Revision Agent in read-only Memory planning mode. Use only the supplied Memory projections and existing target list. Do not call tools or start a draft. Return only the JSON object requested by the task. Treat historical Episodes as context, not current truth.",
+                capabilities: [],
+                tools: [],
+                contextStores: [],
+                plugins: [],
+              },
+            },
+          };
+        }
+        if (mission.executor.ref === MEMORY_CURATOR_REF) {
+          if (memoryCuratorRef.current === undefined || mission.origin.type !== "system-memory") {
+            throw new Error("The Memory Curator has not been initialized.");
+          }
+          return await memoryCuratorRef.current.source({
+            missionId: mission.id,
+            runtimes: scopedRuntimes,
+            workspace: mission.workspace.path,
+            pragmaHome: pragmaPaths.root,
+            loggerProvider,
+          });
+        }
+        if (mission.executor.ref === STORE_REVISION_EXPERT_REF) {
+          if (storeRevisionAgentRef.current === undefined) {
+            throw new Error("The Store Revision Agent is unavailable.");
+          }
+          const storeRevisionDefinition = systemExperts.get(STORE_REVISION_EXPERT_REF);
+          if (storeRevisionDefinition === undefined) {
+            throw new Error("The Store Revision Agent definition is missing.");
+          }
+          const managementHost = createDesktopAdapterHost(
+            {
+              capabilityStore,
+              capabilityCredentials,
+              resolveSecret: (ref) => pluginCredentials.get(ref),
+              capabilitiesPath,
+              mcpToolRegistryPool,
+              contextStores,
+              ...(knowledgeRevisions === undefined
+                ? {}
+                : { pragmaManagement: { knowledgeRevisions } }),
+            },
+            mission.workspace.path,
+          );
+          return await storeRevisionAgentRef.current.source({
+            profile:
+              storeRevisionDefinition.executionProfile.mode === "pinned"
+                ? {
+                    schemaVersion: "pragma.context-store-revision-profile/v1",
+                    revision: storeRevisionDefinition.revision,
+                    mode: "pinned",
+                    model: storeRevisionDefinition.executionProfile.model,
+                    updatedAt: storeRevisionDefinition.updatedAt,
+                  }
+                : {
+                    schemaVersion: "pragma.context-store-revision-profile/v1",
+                    revision: storeRevisionDefinition.revision,
+                    mode: "inherit-default",
+                    updatedAt: storeRevisionDefinition.updatedAt,
+                  },
+            runtimes: scopedRuntimes,
+            adapterHost: managementHost,
+            expertResource: systemExperts.getResource(STORE_REVISION_EXPERT_REF),
+            additionalResources: systemExperts.getAdditionalResources(STORE_REVISION_EXPERT_REF),
+          });
+        }
+        if (mission.executor.ref === SKILL_REVISION_EXPERT_REF) {
+          if (skillAgentsRef.current === undefined) {
+            throw new Error("The Skill Revision Agent is unavailable.");
+          }
+          const definition = systemExperts.get(SKILL_REVISION_EXPERT_REF);
+          if (definition === undefined)
+            throw new Error("The Skill Revision Agent definition is missing.");
+          const skillRevisionPort = createDesktopSkillRevisionSubmissionPort({
+            capabilities: capabilityStore,
+            revisions: skillRevisions,
+            inlineMissionId: mission.id,
+            inlineWorkspacePath: mission.workspace.path,
+            mountDraft: async (input) => {
+              await missionStore.mountSkillRevisionDraft({
+                id: input.missionId,
+                draftId: input.draftId,
+                revisionJobId: input.jobId,
+                capabilityId: input.capabilityId,
+              });
+            },
+            unmountDraft: async (input) => {
+              await missionStore.unmountSkillRevisionDraft({
+                id: input.missionId,
+                draftId: input.draftId,
+              });
+            },
+            onUnmountDraftError: (error) =>
+              mainLogger.warn(
+                "desktop.skill_revision_unmount_failed",
+                "Failed to unmount a submitted Skill draft from its Mission.",
+                { error },
+              ),
+          });
+          const mountedDrafts = mission.contextMounts.filter(
+            (mount): mount is Extract<typeof mount, { kind: "skill-revision-draft" }> =>
+              mount.kind === "skill-revision-draft",
+          );
+          const staleDraftIds: string[] = [];
+          for (const mountedDraft of mountedDrafts) {
+            let inspection = await skillRevisions.inspectDraft(mountedDraft.draftId, mission.id);
+            const mountedJob = await skillRevisions.get(mountedDraft.revisionJobId);
+            if (
+              inspection.draft.state === "needs_attention" &&
+              mountedJob.state === "needs_attention" &&
+              mountedJob.error?.code === "skill_revision_validation_required"
+            ) {
+              await skillRevisions.start(mountedJob.request, {
+                draftId: mountedDraft.draftId,
+                missionId: mission.id,
+              });
+              inspection = await skillRevisions.inspectDraft(mountedDraft.draftId, mission.id);
+            }
+            if (inspection.draftPath !== undefined) {
+              continue;
+            }
+            if (
+              inspection.draft.submissionHash !== undefined ||
+              ["pending_review", "publishing", "completed", "rejected", "needs_rebase"].includes(
+                inspection.draft.state,
+              )
+            ) {
+              staleDraftIds.push(mountedDraft.draftId);
+              continue;
+            }
+            throw Object.assign(
+              new Error("The mounted Skill draft is not writable by this Mission."),
+              { code: "skill_revision_runtime_file_tools_unavailable" },
+            );
+          }
+          if (
+            staleDraftIds.length > 0 &&
+            !["queued", "running", "waiting"].includes(mission.execution?.status ?? "")
+          ) {
+            for (const draftId of staleDraftIds) {
+              await missionStore.unmountSkillRevisionDraft({ id: mission.id, draftId });
+            }
+          }
+          const expertResource = systemExperts.getResource(SKILL_REVISION_EXPERT_REF);
+          const additionalResources =
+            systemExperts.getAdditionalResources(SKILL_REVISION_EXPERT_REF);
+          return await skillAgentsRef.current.source({
+            runtimes: scopedRuntimes,
+            workspace: mission.workspace.path,
+            adapterHost: createDesktopAdapterHost(
+              {
+                capabilityStore,
+                capabilityCredentials,
+                resolveSecret: (ref) => pluginCredentials.get(ref),
+                capabilitiesPath,
+                mcpToolRegistryPool,
+                contextStores,
+                pragmaManagement: { skillRevisions: skillRevisionPort },
+              },
+              mission.workspace.path,
+            ),
+            ...(expertResource === undefined ? {} : { expertResource }),
+            ...(additionalResources === undefined ? {} : { additionalResources }),
+          });
+        }
+        if (mission.executor.ref === EVALUATION_JUDGE_EXPERT_REF) {
+          if (mission.origin.type !== "system-evaluation" || mission.origin.phase !== "judge") {
+            throw new Error("The Evaluation Judge Agent mission is invalid.");
+          }
+          const settings = await evaluationStore.getSettings();
+          const configuredModel =
+            settings.judge.mode === "pinned" ? settings.judge.model : undefined;
+          const defaults = await resolveSystemExpertRuntimeDefaults(
+            scopedRuntimes,
+            configuredModel,
+            mission.modelOverride,
+          );
+          return {
+            ref: EVALUATION_JUDGE_EXPERT_REF,
+            environmentId: "desktop-evaluation",
+            definitionStateRoot: join(defaultAgentStateRoot, "definitions"),
+            workspace: mission.workspace.path,
+            pragmaHome: pragmaPaths.root,
+            runtimes: withRuntimeDefaults(scopedRuntimes, defaults),
+            loggerProvider,
+            rootExecutionOverride: {
+              runtimeId: defaults.runtimeId,
+              ...(defaults.modelSelection === undefined
+                ? {}
+                : { modelSelection: defaults.modelSelection }),
+            },
+            ...(defaults.modelSelection === undefined
+              ? {}
+              : { defaultModelSelection: defaults.modelSelection }),
+          };
+        }
+        if (mission.executor.ref !== BUILT_IN_PRAGMA_REF) return undefined;
+        if (pragmaManagementPortsRef.current === undefined) {
+          throw new Error("The Pragma management ports have not been initialized.");
+        }
+        const definition = systemExperts.get(BUILT_IN_PRAGMA_REF);
+        if (definition === undefined) throw new Error("The built-in Pragma definition is missing.");
+        const createsSession = mission.execution?.sessionId === undefined;
         const configuredModel =
-          definition.executionProfile.mode === "pinned"
+          createsSession && definition.executionProfile.mode === "pinned"
             ? definition.executionProfile.model
             : undefined;
         const defaults = await resolveSystemExpertRuntimeDefaults(
           scopedRuntimes,
           configuredModel,
-          mission.modelOverride,
+          createsSession ? mission.modelOverride : undefined,
         );
         return {
-          ref: planningRef,
-          environmentId: "desktop-memory-revision-planning",
+          ref: BUILT_IN_PRAGMA_REF,
+          environmentId: "desktop-system-expert",
           definitionStateRoot: join(defaultAgentStateRoot, "definitions"),
           workspace: mission.workspace.path,
           pragmaHome: pragmaPaths.root,
           runtimes: withRuntimeDefaults(scopedRuntimes, defaults),
           loggerProvider,
+          ...(defaults.modelSelection === undefined
+            ? {}
+            : { defaultModelSelection: defaults.modelSelection }),
           rootExecutionOverride: {
             runtimeId: defaults.runtimeId,
             ...(defaults.modelSelection === undefined
               ? {}
               : { modelSelection: defaults.modelSelection }),
           },
-          expertResource: {
-            ...resource,
-            spec: {
-              ...resource.spec,
-              instructions:
-                "You are the built-in Revision Agent in read-only Memory planning mode. Use only the supplied Memory projections and existing target list. Do not call tools or start a draft. Return only the JSON object requested by the task. Treat historical Episodes as context, not current truth.",
-              capabilities: [],
-              tools: [],
-              contextStores: [],
-              plugins: [],
-            },
-          },
-        };
-      }
-      if (mission.executor.ref === MEMORY_CURATOR_REF) {
-        if (memoryCuratorRef.current === undefined || mission.origin.type !== "system-memory") {
-          throw new Error("The Memory Curator has not been initialized.");
-        }
-        return await memoryCuratorRef.current.source({
-          missionId: mission.id,
-          runtimes: scopedRuntimes,
-          workspace: mission.workspace.path,
-          pragmaHome: pragmaPaths.root,
-          loggerProvider,
-        });
-      }
-      if (mission.executor.ref === STORE_REVISION_EXPERT_REF) {
-        if (storeRevisionAgentRef.current === undefined) {
-          throw new Error("The Store Revision Agent is unavailable.");
-        }
-        const storeRevisionDefinition = systemExperts.get(STORE_REVISION_EXPERT_REF);
-        if (storeRevisionDefinition === undefined) {
-          throw new Error("The Store Revision Agent definition is missing.");
-        }
-        const managementHost = createDesktopAdapterHost(
-          {
-            capabilityStore,
-            capabilityCredentials,
-            resolveSecret: (ref) => pluginCredentials.get(ref),
-            capabilitiesPath,
-            mcpToolRegistryPool,
-            contextStores,
-            ...(knowledgeRevisions === undefined
-              ? {}
-              : { pragmaManagement: { knowledgeRevisions } }),
-          },
-          mission.workspace.path,
-        );
-        return await storeRevisionAgentRef.current.source({
-          profile:
-            storeRevisionDefinition.executionProfile.mode === "pinned"
-              ? {
-                  schemaVersion: "pragma.context-store-revision-profile/v1",
-                  revision: storeRevisionDefinition.revision,
-                  mode: "pinned",
-                  model: storeRevisionDefinition.executionProfile.model,
-                  updatedAt: storeRevisionDefinition.updatedAt,
-                }
-              : {
-                  schemaVersion: "pragma.context-store-revision-profile/v1",
-                  revision: storeRevisionDefinition.revision,
-                  mode: "inherit-default",
-                  updatedAt: storeRevisionDefinition.updatedAt,
-                },
-          runtimes: scopedRuntimes,
-          adapterHost: managementHost,
-          expertResource: systemExperts.getResource(STORE_REVISION_EXPERT_REF),
-          additionalResources: systemExperts.getAdditionalResources(STORE_REVISION_EXPERT_REF),
-        });
-      }
-      if (mission.executor.ref === SKILL_REVISION_EXPERT_REF) {
-        if (skillAgentsRef.current === undefined) {
-          throw new Error("The Skill Revision Agent is unavailable.");
-        }
-        const definition = systemExperts.get(SKILL_REVISION_EXPERT_REF);
-        if (definition === undefined)
-          throw new Error("The Skill Revision Agent definition is missing.");
-        const skillRevisionPort = createDesktopSkillRevisionSubmissionPort({
-          capabilities: capabilityStore,
-          revisions: skillRevisions,
-          inlineMissionId: mission.id,
-          inlineWorkspacePath: mission.workspace.path,
-          mountDraft: async (input) => {
-            await missionStore.mountSkillRevisionDraft({
-              id: input.missionId,
-              draftId: input.draftId,
-              revisionJobId: input.jobId,
-              capabilityId: input.capabilityId,
-            });
-          },
-          unmountDraft: async (input) => {
-            await missionStore.unmountSkillRevisionDraft({
-              id: input.missionId,
-              draftId: input.draftId,
-            });
-          },
-          onUnmountDraftError: (error) =>
-            mainLogger.warn(
-              "desktop.skill_revision_unmount_failed",
-              "Failed to unmount a submitted Skill draft from its Mission.",
-              { error },
-            ),
-        });
-        const mountedDrafts = mission.contextMounts.filter(
-          (mount): mount is Extract<typeof mount, { kind: "skill-revision-draft" }> =>
-            mount.kind === "skill-revision-draft",
-        );
-        const staleDraftIds: string[] = [];
-        for (const mountedDraft of mountedDrafts) {
-          let inspection = await skillRevisions.inspectDraft(mountedDraft.draftId, mission.id);
-          const mountedJob = await skillRevisions.get(mountedDraft.revisionJobId);
-          if (
-            inspection.draft.state === "needs_attention" &&
-            mountedJob.state === "needs_attention" &&
-            mountedJob.error?.code === "skill_revision_validation_required"
-          ) {
-            await skillRevisions.start(mountedJob.request, {
-              draftId: mountedDraft.draftId,
-              missionId: mission.id,
-            });
-            inspection = await skillRevisions.inspectDraft(mountedDraft.draftId, mission.id);
-          }
-          if (inspection.draftPath !== undefined) {
-            continue;
-          }
-          if (
-            inspection.draft.submissionHash !== undefined ||
-            ["pending_review", "publishing", "completed", "rejected", "needs_rebase"].includes(
-              inspection.draft.state,
-            )
-          ) {
-            staleDraftIds.push(mountedDraft.draftId);
-            continue;
-          }
-          throw Object.assign(
-            new Error("The mounted Skill draft is not writable by this Mission."),
-            { code: "skill_revision_runtime_file_tools_unavailable" },
-          );
-        }
-        if (
-          staleDraftIds.length > 0 &&
-          !["queued", "running", "waiting"].includes(mission.execution?.status ?? "")
-        ) {
-          for (const draftId of staleDraftIds) {
-            await missionStore.unmountSkillRevisionDraft({ id: mission.id, draftId });
-          }
-        }
-        const expertResource = systemExperts.getResource(SKILL_REVISION_EXPERT_REF);
-        const additionalResources = systemExperts.getAdditionalResources(SKILL_REVISION_EXPERT_REF);
-        return await skillAgentsRef.current.source({
-          runtimes: scopedRuntimes,
-          workspace: mission.workspace.path,
+          blueprintCache,
+          ...(definition.customized
+            ? { expertResource: systemExperts.getResource(BUILT_IN_PRAGMA_REF) }
+            : {}),
+          additionalResources: systemExperts.getAdditionalResources(BUILT_IN_PRAGMA_REF),
           adapterHost: createDesktopAdapterHost(
             {
               capabilityStore,
@@ -1615,117 +1730,34 @@ export async function createDesktopApplicationContainer(
               capabilitiesPath,
               mcpToolRegistryPool,
               contextStores,
-              pragmaManagement: { skillRevisions: skillRevisionPort },
+              pragmaManagement: {
+                ...pragmaManagementPortsRef.current,
+                ...(knowledgeRevisions === undefined ? {} : { knowledgeRevisions }),
+              },
+              pragmaManagementScope: {
+                missionId: mission.id,
+                workspacePath: mission.workspace.path,
+              },
             },
             mission.workspace.path,
           ),
-          ...(expertResource === undefined ? {} : { expertResource }),
-          ...(additionalResources === undefined ? {} : { additionalResources }),
-        });
-      }
-      if (mission.executor.ref === EVALUATION_JUDGE_EXPERT_REF) {
-        if (mission.origin.type !== "system-evaluation" || mission.origin.phase !== "judge") {
-          throw new Error("The Evaluation Judge Agent mission is invalid.");
-        }
-        const settings = await evaluationStore.getSettings();
-        const configuredModel = settings.judge.mode === "pinned" ? settings.judge.model : undefined;
-        const defaults = await resolveSystemExpertRuntimeDefaults(
-          scopedRuntimes,
-          configuredModel,
-          mission.modelOverride,
-        );
-        return {
-          ref: EVALUATION_JUDGE_EXPERT_REF,
-          environmentId: "desktop-evaluation",
-          definitionStateRoot: join(defaultAgentStateRoot, "definitions"),
-          workspace: mission.workspace.path,
-          pragmaHome: pragmaPaths.root,
-          runtimes: withRuntimeDefaults(scopedRuntimes, defaults),
-          loggerProvider,
-          rootExecutionOverride: {
-            runtimeId: defaults.runtimeId,
-            ...(defaults.modelSelection === undefined
-              ? {}
-              : { modelSelection: defaults.modelSelection }),
+          plugins: {
+            inspect: async ({ binding }) =>
+              await pluginStore.inspect({
+                ref: binding.ref,
+                config: binding.config,
+                secretBindings: binding.secretBindings,
+              }),
+            resolve: async ({ binding }) =>
+              await pluginStore.resolve({
+                ref: binding.ref,
+                config: binding.config,
+                secretBindings: binding.secretBindings,
+              }),
           },
-          ...(defaults.modelSelection === undefined
-            ? {}
-            : { defaultModelSelection: defaults.modelSelection }),
         };
-      }
-      if (mission.executor.ref !== BUILT_IN_PRAGMA_REF) return undefined;
-      if (pragmaManagementPortsRef.current === undefined) {
-        throw new Error("The Pragma management ports have not been initialized.");
-      }
-      const definition = systemExperts.get(BUILT_IN_PRAGMA_REF);
-      if (definition === undefined) throw new Error("The built-in Pragma definition is missing.");
-      const createsSession = mission.execution?.sessionId === undefined;
-      const configuredModel =
-        createsSession && definition.executionProfile.mode === "pinned"
-          ? definition.executionProfile.model
-          : undefined;
-      const defaults = await resolveSystemExpertRuntimeDefaults(
-        scopedRuntimes,
-        configuredModel,
-        createsSession ? mission.modelOverride : undefined,
-      );
-      return {
-        ref: BUILT_IN_PRAGMA_REF,
-        environmentId: "desktop-system-expert",
-        definitionStateRoot: join(defaultAgentStateRoot, "definitions"),
-        workspace: mission.workspace.path,
-        pragmaHome: pragmaPaths.root,
-        runtimes: withRuntimeDefaults(scopedRuntimes, defaults),
-        loggerProvider,
-        ...(defaults.modelSelection === undefined
-          ? {}
-          : { defaultModelSelection: defaults.modelSelection }),
-        rootExecutionOverride: {
-          runtimeId: defaults.runtimeId,
-          ...(defaults.modelSelection === undefined
-            ? {}
-            : { modelSelection: defaults.modelSelection }),
-        },
-        blueprintCache,
-        ...(definition.customized
-          ? { expertResource: systemExperts.getResource(BUILT_IN_PRAGMA_REF) }
-          : {}),
-        additionalResources: systemExperts.getAdditionalResources(BUILT_IN_PRAGMA_REF),
-        adapterHost: createDesktopAdapterHost(
-          {
-            capabilityStore,
-            capabilityCredentials,
-            resolveSecret: (ref) => pluginCredentials.get(ref),
-            capabilitiesPath,
-            mcpToolRegistryPool,
-            contextStores,
-            pragmaManagement: {
-              ...pragmaManagementPortsRef.current,
-              ...(knowledgeRevisions === undefined ? {} : { knowledgeRevisions }),
-            },
-            pragmaManagementScope: {
-              missionId: mission.id,
-              workspacePath: mission.workspace.path,
-            },
-          },
-          mission.workspace.path,
-        ),
-        plugins: {
-          inspect: async ({ binding }) =>
-            await pluginStore.inspect({
-              ref: binding.ref,
-              config: binding.config,
-              secretBindings: binding.secretBindings,
-            }),
-          resolve: async ({ binding }) =>
-            await pluginStore.resolve({
-              ref: binding.ref,
-              config: binding.config,
-              secretBindings: binding.secretBindings,
-            }),
-        },
-      };
-    },
+      },
+    }),
   });
   const usageProjectNames = new Map<string, ReadonlyMap<string, string>>();
   const usageInvocationOwners = new Map<string, Map<string, import("@pragma/shared").Invocation>>();
@@ -1807,87 +1839,40 @@ export async function createDesktopApplicationContainer(
         path: pragmaPaths.missionDelivery(),
         feed: memoryPlane.canonical,
         logger: mainLogger,
-        onDegraded: (missionId) => missionRunner.markDeliveryDegraded?.(missionId),
-        onRecovered: (missionId) => missionRunner.markDeliveryRecovered?.(missionId),
+        onDegraded: (missionId) => missionApplication.markDeliveryDegraded?.(missionId),
+        onRecovered: (missionId) => missionApplication.markDeliveryRecovered?.(missionId),
         usage: async (mission, observation) =>
           await persistMissionUsageBatch(mission, [observation]),
-        terminal: async (registered, executionId, requestId, status, step) => {
-          const guard = await ownerScope.acquire(registered.id);
-          await ownerScope.runWithGuard(registered.id, guard, async () => {
-            const mission = await missionStore.get(registered.id);
-            const execution = await memoryPlane.executionStore.get(executionId);
-            if (execution === undefined) throw new Error("MISSION_DELIVERY_EXECUTION_UNAVAILABLE");
-            const failure =
-              typeof execution.error === "object" &&
-              execution.error !== null &&
-              "message" in execution.error &&
-              typeof execution.error.message === "string"
-                ? execution.error.message
-                : String(execution.error ?? "Execution failed");
-            if (step === "terminal") {
-              await executionEventProjector.terminal({
-                mission,
-                executionId,
-                status,
-                result:
-                  execution.output?.type === "inline" ? execution.output.value : execution.output,
-                error: status === "failed" ? new Error(failure) : execution.error,
-                guard,
-              });
-            } else if (step === "metadata") {
-              await guardedMissionStore.updateExecution(
-                mission.id,
-                {
-                  id: executionId,
-                  inputMessageId: requestId,
-                  ...(mission.execution?.id === executionId &&
-                  mission.execution.sessionId !== undefined
-                    ? { sessionId: mission.execution.sessionId }
-                    : {}),
-                  status,
-                  startedAt: execution.createdAt,
-                  finishedAt: execution.updatedAt,
-                  ...(status === "failed" ? { error: failure } : {}),
-                },
-                { executionId, statuses: ["queued", "running", "waiting"] },
-              );
-            } else if (step === "memory") {
-              const detached = await missionRunner.coordinateMemoryTerminal!(
-                mission.id,
-                async () => {
-                  const current = await missionStore.get(mission.id);
-                  if (
-                    isUserFacingMissionOrigin(current.origin) &&
-                    current.execution?.id === executionId
-                  ) {
-                    return {
-                      cleanup: missionMemory.reconcile(
-                        current.id,
-                        executionId,
-                        current.lifecycleStatus !== "completed",
-                      ),
-                    };
-                  }
-                  return undefined;
-                },
-              );
-              await detached?.cleanup;
-            } else if (step === "history") {
-              const projection = await persistMissionExecutionProjection(
-                guardedMissionStore,
-                memoryPlane.executionStore,
-                mission.id,
-                executionId,
-                status === "cancelled",
-              );
-              if (projection.status !== "current")
-                throw new Error("MISSION_CHAT_PROJECTION_PARTIAL");
-              missionRunner.notifyProjectionChanged?.(mission.id);
-            } else {
-              await memoryPlane.executionStore.archive(executionId);
-            }
-          });
-        },
+        terminal: createMissionTerminalMaterializer({
+          ownerScope,
+          missions: guardedMissionStore,
+          executions: memoryPlane.executionStore,
+          projector: executionEventProjector,
+          memory: async (mission, executionId) => {
+            const detached = await missionApplication.coordinateMemoryTerminal!(
+              mission.id,
+              async () => {
+                const current = await missionStore.get(mission.id);
+                if (
+                  isUserFacingMissionOrigin(current.origin) &&
+                  current.execution?.id === executionId
+                ) {
+                  return {
+                    cleanup: missionMemory.reconcile(
+                      current.id,
+                      executionId,
+                      current.lifecycleStatus !== "completed",
+                    ),
+                  };
+                }
+                return undefined;
+              },
+            );
+            await detached?.cleanup;
+          },
+          onProjectionChanged: (missionId) =>
+            missionApplication.notifyProjectionChanged?.(missionId),
+        }),
       }),
     onRecovered: () => {
       missionDeliveryInitializationError = undefined;
@@ -1917,11 +1902,7 @@ export async function createDesktopApplicationContainer(
         error,
       }),
   });
-  missionRunnerRef.current = missionRunner;
-  const localHostRunExecutorResolver = createDesktopLocalHostExecutorResolver({
-    executors: missionExecutors,
-    project: pragmaProjectStore,
-  });
+  missionApplicationRef.current = missionApplication;
   const controllerFactCompiler = createLocalHostNodeMissionCompiler({
     pragmaHome: pragmaPaths.root,
     runtimes,
@@ -1944,7 +1925,7 @@ export async function createDesktopApplicationContainer(
   const resolveControllerFactSession = createMissionSessionAssociationResolver({
     controller: missionControllerStore,
     executions: memoryPlane.executionStore,
-    sessions: missionRunner.controllerFactSessionStore,
+    sessions: missionApplication.controllerFactSessionStore,
     repositorySessionId: async (id) => {
       try {
         return (await missionStore.get(id)).execution?.sessionId;
@@ -1955,7 +1936,7 @@ export async function createDesktopApplicationContainer(
       }
     },
   });
-  missionRunner.bindControllerFacts({
+  missionApplication.bindControllerFacts({
     controller: missionControllerStore,
     hasEnvelope: hasMissionEnvelope,
     resolveSessionId: resolveControllerFactSession,
@@ -1987,7 +1968,7 @@ export async function createDesktopApplicationContainer(
   const memoryCurator = createDesktopMemoryCurator({
     profiles: memoryPlane.extractorProfiles,
     missions: missionStore,
-    runner: missionRunner,
+    application: missionApplication,
     project: pragmaProjectStore,
     runtimes,
     workspace: initialSettings.defaultWorkspace,
@@ -1997,7 +1978,7 @@ export async function createDesktopApplicationContainer(
   memoryCuratorRef.current = memoryCurator;
   storeRevisionAgentRef.current = createDesktopStoreRevisionAgent({
     missions: missionStore,
-    runner: missionRunner,
+    application: missionApplication,
     project: pragmaProjectStore,
     runtimes,
     pragmaHome: pragmaPaths.root,
@@ -2010,7 +1991,7 @@ export async function createDesktopApplicationContainer(
   skillAgentsRef.current = createDesktopSkillAgents({
     systemExperts,
     missions: missionStore,
-    runner: missionRunner,
+    application: missionApplication,
     project: pragmaProjectStore,
     runtimes,
     pragmaHome: pragmaPaths.root,
@@ -2027,7 +2008,7 @@ export async function createDesktopApplicationContainer(
     project: pragmaProjectStore,
     executor: createMissionAgentEvaluationExecutor({
       missions: missionStore,
-      runner: missionRunner,
+      application: missionApplication,
       project: pragmaProjectStore,
       store: evaluationStore,
       mocks: evaluationMocks,
@@ -2044,7 +2025,7 @@ export async function createDesktopApplicationContainer(
   const memoryRevisionPlanners = createMemoryRevisionLearningPlanners({
     pragmaHome: pragmaPaths.root,
     missions: missionStore,
-    runner: missionRunner,
+    application: missionApplication,
     project: pragmaProjectStore,
   });
   await Promise.all([
@@ -2052,7 +2033,7 @@ export async function createDesktopApplicationContainer(
     memoryPlane.setSkillPlanner(memoryRevisionPlanners.skill),
   ]);
   const unsubscribeTokenCounter = tokenCounter.subscribe(() => {
-    void missionRunner.invalidateEstimatedContextWindows().catch((error: unknown) => {
+    void missionApplication.invalidateEstimatedContextWindows().catch((error: unknown) => {
       mainLogger.warn(
         "desktop.tokenizer_context_refresh_failed",
         "Mission context windows could not be refreshed after a tokenizer update.",
@@ -2066,7 +2047,7 @@ export async function createDesktopApplicationContainer(
     store: createAutomationStore(pragmaPaths, pragmaProjectStore.projectId),
     missions: missionStore,
     creator: missionCreator,
-    runner: missionRunner,
+    application: missionApplication,
     loggerProvider,
     onStorageTrashed: () => trashMaintenance.schedule("automation-storage-trashed"),
   });
@@ -2074,7 +2055,7 @@ export async function createDesktopApplicationContainer(
   const homeProjects = createHomeProjectStore(join(pragmaPaths.dataRoot(), "home-projects.json"));
   const pragmaAgentMissions = createDesktopPragmaAgentMissionPort({
     missions: missionStore,
-    runner: missionRunner,
+    application: missionApplication,
     creator: missionCreator,
     stateRoot: defaultAgentStateRoot,
   });
@@ -2102,7 +2083,7 @@ export async function createDesktopApplicationContainer(
     project: pragmaProjectStore,
     systemExperts,
     memory: memoryPlane,
-    runner: missionRunner,
+    application: missionApplication,
   });
   const missionActivity = createMissionActivityReader({
     controller: missionControllerStore,
@@ -2119,54 +2100,30 @@ export async function createDesktopApplicationContainer(
     missions: missionStore,
     activity: missionActivity,
   });
-  const missionReadPorts = createLocalHostMissionReadPorts({
-    pragmaHome: pragmaPaths.root,
-    repository: missionStore,
-    controller: missionControllerStore,
-    query: missionQuery,
-    watch: missionWatch,
-  });
-  const localHost = createLocalHostNodeApplication({
-    logger: mainLogger,
-    pragmaHome: pragmaPaths.root,
-    runtimes,
-    client: {
-      surface: "desktop",
-      version: "desktop",
-      instanceId: randomUUID(),
+
+  const localHost = createLocalHostApplication({
+    integrationCapability: async () => createLocalHostIntegrationCapability(),
+    catalog: {
+      listProjects: async () => [{ id: pragmaProjectStore.projectId }],
+      getProjectRevision: async (projectId, revision) =>
+        projectId === pragmaProjectStore.projectId
+          ? await pragmaProjectStore.getRevision(revision)
+          : undefined,
+      listExecutors: async () => await missionExecutors.list(),
     },
+    missions: missionReadPorts.missions,
     workspace: createWorkspaceFilesystemPort(),
-    application: {
-      catalog: {
-        listProjects: async () => [{ id: pragmaProjectStore.projectId }],
-        getProjectRevision: async (projectId, revision) =>
-          projectId === pragmaProjectStore.projectId
-            ? await pragmaProjectStore.getRevision(revision)
-            : undefined,
-        listExecutors: async () => await missionExecutors.list(),
+    board: missionReadPorts.board,
+    queue: {
+      list: async (missionId) => {
+        if (missionApplication.listPromptQueue === undefined)
+          throw new Error("Desktop ExpertSession prompt queue projection is unavailable.");
+        return await missionApplication.listPromptQueue(missionId);
       },
-      missions: missionReadPorts.missions,
-      missionLifecycle,
-      executionService: missionRunner,
-      executorResolver: localHostRunExecutorResolver,
-      assertMission: missionReadPorts.assertMission,
-      onOwnerStartError: ({ missionId, error }) =>
-        mainLogger.warn(
-          "mission.controller_owner_start_failed",
-          "Mission command is durable, but its owner could not be started yet.",
-          { missionId, error },
-        ),
-      board: missionReadPorts.board,
-      queue: {
-        list: async (missionId) => {
-          if (missionRunner.listPromptQueue === undefined) {
-            throw new Error("Desktop ExpertSession prompt queue projection is unavailable.");
-          }
-          return await missionRunner.listPromptQueue(missionId);
-        },
-      },
-      watch: missionReadPorts.watch,
     },
+    watch: missionReadPorts.watch,
+    runtime: { resolver: runtimes },
+    missionApplication,
   });
   if (localHost.missionControl === undefined || localHost.run === undefined) {
     throw new Error("Desktop Local Host control and run ports were not composed.");
@@ -2196,7 +2153,7 @@ export async function createDesktopApplicationContainer(
     project: pragmaProjectStore,
     systemExperts,
     getWindow: options.getWindow,
-    runner: missionRunner,
+    application: missionApplication,
     getAutomationMissionSources: () => automationService.listMissionSources(),
     getDefaultToolPermissionMode: getToolPermissionMode,
     getDefaultWorkspace: async () =>
@@ -2232,7 +2189,7 @@ export async function createDesktopApplicationContainer(
   installDesktopStorageCleanupHandlers({
     paths: pragmaPaths,
     missions: missionStore,
-    runner: missionRunner,
+    application: missionApplication,
   });
   installMemoryPolicyHandlers(memoryPlane, {
     missions: missionStore,
@@ -2240,7 +2197,7 @@ export async function createDesktopApplicationContainer(
     systemExperts,
     curator: memoryCurator,
     getWindow: options.getWindow,
-    onGlobalPolicyUpdated: () => missionRunner.refreshMemoryContextBindings(),
+    onGlobalPolicyUpdated: () => missionApplication.refreshMemoryContextBindings(),
   });
   installExpertMemoryContextStoreBrowserHandlers(
     createExpertMemoryContextStoreBrowserService({
@@ -2268,7 +2225,7 @@ export async function createDesktopApplicationContainer(
     paths: pragmaPaths,
     logger: mainLogger,
     isIdle: () => {
-      const resources = missionRunner.getResourceDiagnostics();
+      const resources = missionApplication.getResourceDiagnostics();
       return (
         powerMonitor.getSystemIdleTime() >= 300 &&
         resources.warmSessionCount === 0 &&

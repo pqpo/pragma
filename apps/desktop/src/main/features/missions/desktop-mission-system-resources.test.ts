@@ -28,8 +28,8 @@ import type { PluginStore } from "../plugins/plugin-store.ts";
 import type { CapabilityStore } from "../capabilities/capability-store.ts";
 import type { CapabilityCredentialStore } from "../capabilities/capability-credential-store.ts";
 import { createPragmaProjectStore } from "../projects/pragma-project-store.ts";
-import { createMissionStore } from "./mission-store.ts";
-import { createMissionRunner } from "./mission-runner.ts";
+import { createMissionStore } from "@pragma/local-host";
+import { createDesktopMissionTestApplication } from "./fixtures/desktop-mission-test-application.ts";
 import { createDesktopSystemExpertRegistry } from "../experts/system-expert-registry.ts";
 import { parseDesktopCapabilityBindingRef } from "../../platform/bindings/desktop-binding-ref.ts";
 
@@ -101,7 +101,7 @@ it("compiles and executes a real published caller of an external system Expert",
       mission: request,
       runtimes,
     }: Parameters<
-      NonNullable<Parameters<typeof createMissionRunner>[0]["systemExecutorSource"]>
+      NonNullable<Parameters<typeof createDesktopMissionTestApplication>[0]["systemExecutorSource"]>
     >[0]) =>
       request.executor.ref === STORE_REVISION_EXPERT_REF
         ? {
@@ -117,7 +117,7 @@ it("compiles and executes a real published caller of an external system Expert",
           }
         : undefined,
   );
-  const runner = createMissionRunner({
+  const runner = createDesktopMissionTestApplication({
     missions,
     project,
     loggerProvider,
@@ -132,7 +132,7 @@ it("compiles and executes a real published caller of an external system Expert",
     systemExecutorSource: source,
   });
   try {
-    await runner.run(mission.id);
+    await runner.startRun(mission.id);
     await vi.waitFor(
       async () => expect((await missions.get(mission.id)).execution?.status).toBe("succeeded"),
       { timeout: 10_000 },
@@ -405,7 +405,7 @@ it.each(["secret", "plugin"] as const)(
       mapEvent: () => ({ events: [] }),
     });
     const executions = createSqliteExecutionStore({ pragmaHome: join(root, "home") });
-    const runner = createMissionRunner({
+    const runner = createDesktopMissionTestApplication({
       missions,
       executionStore: executions,
       project,
@@ -440,7 +440,7 @@ it.each(["secret", "plugin"] as const)(
         { timeout: 10_000 },
       );
     try {
-      await runner.run(mission.id);
+      await runner.startRun(mission.id);
       await settle();
       const initialState = (await missions.get(mission.id)).execution!;
       const initialSession = initialState.sessionId;

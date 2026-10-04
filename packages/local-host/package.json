@@ -25,7 +25,9 @@
     "test": "vitest run --passWithNoTests",
     "test:core": "vitest run test/model-provider-reader.test.ts test/memory-retrieval.test.ts",
     "test:m10": "vitest run test/mission-controller-process.collection.test.ts test/m10-process-runner.test.ts test/m10-performance-runner.test.ts test/mission-controller-process.integration.test.ts",
-    "clean": "rm -rf dist"
+    "clean": "rm -rf dist",
+    "test:business": "vitest run --exclude test/native-keychain-cross-host.test.ts",
+    "test:platform": "vitest run test/native-keychain-cross-host.test.ts"
   },
   "dependencies": {
     "@napi-rs/keyring": "1.3.0",

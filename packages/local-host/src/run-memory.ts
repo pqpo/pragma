@@ -17,6 +17,7 @@ export function createLocalHostRunMemory(options: {
   pragmaHome: string;
   loggerProvider?: PragmaLoggerProvider;
   beforeFeedClose?: () => Promise<void>;
+  onPause?: () => Promise<void>;
 }) {
   let feed: Promise<CanonicalEventFeed> | undefined;
   const getFeed = () => (feed ??= createFileCanonicalEventFeed({ pragmaHome: options.pragmaHome }));
@@ -26,6 +27,26 @@ export function createLocalHostRunMemory(options: {
     inspect: async () => await (await getFeed()).inspect(),
     maintain: async (input) => await (await getFeed()).maintain(input),
     forgetCorrelation: async (id) => await (await getFeed()).forgetCorrelation(id),
+    subscribeChanges: (listener) => {
+      let cancelled = false;
+      let unsubscribe: (() => void) | undefined;
+      void getFeed().then(
+        (source) => {
+          if (!cancelled) unsubscribe = source.subscribeChanges?.(listener);
+        },
+        (error: unknown) => {
+          logger.warn("canonical.subscription_degraded", "Canonical delivery wake needs recovery", {
+            moduleId: "pragma.mission-delivery",
+            errorCode: "MISSION_DELIVERY_RECEIVE_FAILED",
+            error,
+          });
+        },
+      );
+      return () => {
+        cancelled = true;
+        unsubscribe?.();
+      };
+    },
     close: async () => {
       if (feed !== undefined) {
         await (await feed).close();
@@ -97,6 +118,7 @@ export function createLocalHostRunMemory(options: {
       memory = undefined;
     }
   };
+  let deliveryPause: Promise<void> | undefined;
   const lifecycle = createLocalHostMissionMemoryLifecycle({
     onError: degraded,
     ports: {
@@ -114,18 +136,18 @@ export function createLocalHostRunMemory(options: {
         if (memory !== undefined) await (await memory).data.flushDelivery();
       },
       pause: async () => {
+        deliveryPause = options.onPause?.();
+        // Receipt materialization may itself complete Memory; do not wait under its state lock.
+        void deliveryPause?.catch(degraded);
         await stopIdleMemory();
         await executionStore.drainCanonicalEvents();
       },
+      beforeClose: options.beforeFeedClose,
       close: async () => {
         await stopIdleMemory();
+
         try {
           await executionStore.close();
-        } catch {
-          degraded();
-        }
-        try {
-          await options.beforeFeedClose?.();
         } catch {
           degraded();
         }
@@ -137,5 +159,15 @@ export function createLocalHostRunMemory(options: {
       },
     },
   });
-  return { canonical, executionStore, ...lifecycle };
+  return {
+    canonical,
+    executionStore,
+    ...lifecycle,
+    pause: async () => {
+      await lifecycle.pause();
+      const pending = deliveryPause;
+      await pending;
+      if (deliveryPause === pending) deliveryPause = undefined;
+    },
+  };
 }

@@ -8,9 +8,9 @@ import {
   createMissionDeliveryReceiptStore,
   type MissionReceiptDiagnostic,
   type MissionReceiptRow,
-} from "@pragma/local-host";
+} from "../mission-delivery-receipt-store.ts";
 import { z } from "zod";
-import { MissionSchema, type Mission } from "../../../shared/contracts/index.ts";
+import { MissionSchema, type Mission } from "@pragma/shared";
 
 const LinkSchema = z.object({ mission: MissionSchema, requestId: z.string().min(1) });
 const TaskSchema = z.discriminatedUnion("kind", [
@@ -40,7 +40,7 @@ export async function createMissionDelivery(input: {
     requestId: string,
     status: "succeeded" | "failed" | "cancelled",
     step: MissionDeliveryStep,
-  ) => Promise<void>;
+  ) => Promise<void | "deferred">;
 }) {
   const receipts = await createMissionDeliveryReceiptStore({
     path: input.path,
@@ -96,7 +96,17 @@ export async function createMissionDelivery(input: {
         if (await receipts.isDeleted(row.mission_id)) return;
         const owned = await receipts.owned(row.id, claim);
         if (!owned) return;
-        await input.terminal(mission, row.execution_id, requestId, task.status, STEPS[row.step]!);
+        const outcome = await input.terminal(
+          mission,
+          row.execution_id,
+          requestId,
+          task.status,
+          STEPS[row.step]!,
+        );
+        if (outcome === "deferred") {
+          await receipts.defer(row.id, claim);
+          return;
+        }
       }
       const recovered = await receipts.acknowledge(row.id, claim, row.mission_id);
       if (row.attempts > 0 && recovered) input.onRecovered?.(row.mission_id);
@@ -256,6 +266,14 @@ export async function createMissionDelivery(input: {
       );
       await receipts.finishDelete(missionId);
       diagnostic = await receipts.inspect();
+    },
+    pause() {
+      // Request release can own Mission admission while a claimed task waits
+      // for it. Stop scheduling here; only shutdown waits for custody settlement.
+      stopped = true;
+      unsubscribe?.();
+      unsubscribe = undefined;
+      if (timer !== undefined) clearTimeout(timer);
     },
     async close() {
       if (closing !== undefined) return await closing;

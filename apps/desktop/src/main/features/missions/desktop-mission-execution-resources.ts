@@ -1,7 +1,5 @@
 import {
-  createLocalHostMissionExecutionService,
   collectMissionExecutionIds,
-  type LocalHostMissionExecutionService,
   type LocalHostMissionExecutionServiceOptions,
   type LocalHostMissionExecutionContextResources,
 } from "@pragma/local-host";
@@ -74,18 +72,9 @@ import {
 } from "../projects/pragma-project-store.ts";
 import type { DesktopUsageStore } from "../usage/usage-store.ts";
 import { createDesktopAdapterHost } from "./mission-adapter-host.ts";
-import { createMissionBranchContext } from "./mission-branch-context.ts";
-import { MissionStatusService } from "./mission-status-service.ts";
-import type { MissionStore } from "./mission-store.ts";
-
-export { readMissionConversationSnapshot } from "./mission-runner-contracts.ts";
-export type {
-  MissionChatNotification,
-  MissionCommandOutcomeNotification,
-  MissionRunner,
-  MissionSurfaceAudience,
-  MissionWorkNotification,
-} from "./mission-runner-contracts.ts";
+import { createMissionBranchContext } from "@pragma/local-host";
+import { MissionStatusService } from "@pragma/local-host";
+import type { MissionStore } from "@pragma/local-host";
 
 interface ExecutorMetadata {
   readonly names: ReadonlyMap<string, string>;
@@ -123,7 +112,7 @@ export function mergeMissionExecutorMetadata(
   return { names, avatarIds };
 }
 
-export interface DesktopMissionRunnerOptions {
+export interface DesktopMissionExecutionResourceOptions {
   readonly missions: MissionStore;
   readonly missionStatus?: MissionStatusService | undefined;
   readonly project: PragmaProjectStore;
@@ -232,9 +221,9 @@ export interface DesktopMissionRunnerOptions {
   readonly ownerScope?: MissionOwnerScope | undefined;
 }
 
-export function createMissionRunner(
-  options: DesktopMissionRunnerOptions,
-): LocalHostMissionExecutionService {
+export function createDesktopMissionExecutionResources(
+  options: DesktopMissionExecutionResourceOptions,
+): LocalHostMissionExecutionServiceOptions {
   const logger = createPragmaLogger(options.loggerProvider, {
     component: "desktop.mission-resources",
   });
@@ -244,7 +233,7 @@ export function createMissionRunner(
     options.automaticHumanInteractionHandlerForToolPermissionMode?.(mode) ??
     options.automaticHumanInteractionHandler;
 
-  return createLocalHostMissionExecutionService({
+  return {
     ...options,
     resourcePorts: {
       createExecutionContextResources: async ({
@@ -972,7 +961,7 @@ export function createMissionRunner(
         await options.contextStoreRevisions?.releaseMissionClaim(input);
       },
     },
-  });
+  };
 }
 
 export {

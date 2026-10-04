@@ -602,7 +602,10 @@ export function createLocalHostRunHandleState(options: {
   pump = (async () => {
     const subscription = await options.coreHandle.subscribeEvents({ scope: { kind: "all" } });
     try {
-      for await (const event of subscription) {
+      const seen = new Set<string>();
+      const publish = (event: ExecutionEvent): void => {
+        if (seen.has(event.eventId)) return;
+        seen.add(event.eventId);
         const mapped = mapExecutionEvent(
           event,
           options.missionId,
@@ -611,7 +614,56 @@ export function createLocalHostRunHandleState(options: {
         );
         options.onEvent?.(mapped);
         queue.push(mapped);
+      };
+      // Native execution can reach a human wait before Host registration finishes.
+      // Reconstruct only pending interactions from bounded durable pages. Historical
+      // output and already answered interactions must not be presented again.
+      const requests = new Map<string, ExecutionEvent>();
+      let after: ExecutionEvent["cursor"] | undefined;
+      while (true) {
+        const page = await options.executions.readEvents(
+          options.coreHandle.executionId,
+          after,
+          200,
+        );
+        for (const event of page) {
+          if (event.type === "human.requested" || event.type === "human.responded") {
+            const mapped = mapExecutionEvent(
+              event,
+              options.missionId,
+              options.coreHandle.executionId,
+              pending,
+            );
+            const envelope = HumanInteractionRequestEnvelopeSchema.safeParse(mapped.data);
+            if (envelope.success) requests.set(envelope.data.interactionId, event);
+            if (event.type === "human.responded") {
+              for (const interactionId of requests.keys()) {
+                if (!pending.has(interactionId)) requests.delete(interactionId);
+              }
+            }
+          }
+        }
+        after = page.at(-1)?.cursor ?? after;
+        if (page.length < 200) break;
       }
+      for (const [interactionId, event] of requests) {
+        if (pending.has(interactionId)) publish(event);
+      }
+      for await (const event of subscription) {
+        // Only Human facts were reconstructed by the scan. Other buffered live
+        // events must still reach callers even when they also entered that page.
+        if (
+          (event.type === "human.requested" || event.type === "human.responded") &&
+          after !== undefined &&
+          event.cursor.sequence <= after.sequence
+        )
+          continue;
+        publish(event);
+      }
+    } catch (error) {
+      // Closing first would mask a failed catch-up as successful end-of-stream.
+      queue.fail(error);
+      throw error;
     } finally {
       await subscription.close();
       queue.close();

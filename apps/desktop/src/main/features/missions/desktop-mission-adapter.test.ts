@@ -49,6 +49,8 @@ import type {
   PragmaRuntimeProfileResource,
 } from "@pragma/interpreter/ast";
 import {
+  createLocalHostMissionApplication,
+  createLocalHostMissionReadPorts,
   createControllerRunMissionPort,
   createLocalHostNodeMissionCompiler,
   createLocalHostProjectCatalogFromHome,
@@ -61,9 +63,7 @@ import {
   createMissionControllerStore,
   createMissionOwnerScope,
   createSqliteExecutionStore,
-  hashMissionCommandPayload,
 } from "@pragma/local-host";
-import { createIntegrationError } from "@pragma/shared/integration";
 import { createCodexRuntime } from "@pragma/runtime-codex";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { z } from "zod";
@@ -86,17 +86,17 @@ import { createPragmaProjectStore } from "../projects/pragma-project-store.ts";
 import { desktopCapabilityBindingRef } from "../../platform/bindings/desktop-binding-ref.ts";
 import type { DesktopUsageStore } from "../usage/usage-store.ts";
 import { createCodexQueuePeer } from "./fixtures/codex-queue-peer.ts";
-import { messageRecordsToChatEntries } from "./mission-chat-history.ts";
-import { persistMissionDeletionIntent } from "./mission-deletion-intent.ts";
-import { writeMissionExecutionProjection } from "./mission-execution-projection.ts";
+import { messageRecordsToChatEntries } from "@pragma/local-host";
+import { persistMissionDeletionIntent } from "@pragma/local-host";
 import {
   activeMissionKnowledgeDraftNamespace,
-  createMissionRunner as createMissionRunnerImplementation,
+  createDesktopMissionTestApplication as createDesktopMissionTestApplicationImplementation,
   missionKnowledgeNamespace,
   readMissionConversationSnapshot,
-  type MissionRunner,
-} from "./mission-runner.ts";
-import { createMissionStore } from "./mission-store.ts";
+  type DesktopMissionTestApplication,
+} from "./fixtures/desktop-mission-test-application.ts";
+import { createDesktopMissionExecutionResources } from "./desktop-mission-execution-resources.ts";
+import { createMissionStore } from "@pragma/local-host";
 
 vi.mock("@pragma/built-in-agents", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@pragma/built-in-agents")>();
@@ -113,12 +113,18 @@ vi.mock("@pragma/built-in-agents", async (importOriginal) => {
 function testSystemExecutorSource(
   compile: (
     input: Parameters<
-      NonNullable<Parameters<typeof createMissionRunnerImplementation>[0]["systemExecutorSource"]>
+      NonNullable<
+        Parameters<
+          typeof createDesktopMissionTestApplicationImplementation
+        >[0]["systemExecutorSource"]
+      >
     >[0],
   ) => Promise<
     import("@pragma/interpreter").CompiledResource<import("@pragma/interpreter").InvocableResource>
   >,
-): NonNullable<Parameters<typeof createMissionRunnerImplementation>[0]["systemExecutorSource"]> {
+): NonNullable<
+  Parameters<typeof createDesktopMissionTestApplicationImplementation>[0]["systemExecutorSource"]
+> {
   return async (input) => ({
     ref: input.mission.executor.ref as import("@pragma/built-in-agents").BuiltInAgentRef,
     environmentId: "desktop",
@@ -149,14 +155,16 @@ async function appendExecutionEvent(
 }
 const memoryBindingReopenTimeoutMs = 20_000;
 const trackedRunners = new Set<{
-  readonly runner: MissionRunner;
+  readonly runner: DesktopMissionTestApplication;
   readonly missionIds: ReadonlySet<string>;
-  readonly ownerScope?: Parameters<typeof createMissionRunnerImplementation>[0]["ownerScope"];
+  readonly ownerScope?: Parameters<
+    typeof createDesktopMissionTestApplicationImplementation
+  >[0]["ownerScope"];
 }>();
 const pendingObserverCompletions = new Set<Promise<void>>();
 const missionRunnerMethods = new Set([
   "get",
-  "run",
+  "startRun",
   "startLocalHostRun",
   "assertLocalHostRunAllowed",
   "updateOptions",
@@ -191,10 +199,10 @@ function missionIdFromRunnerCall(args: readonly unknown[]): string | undefined {
   return undefined;
 }
 
-const createMissionRunner = (
-  options: Parameters<typeof createMissionRunnerImplementation>[0],
-): MissionRunner => {
-  const runner = createMissionRunnerImplementation({
+const createDesktopMissionTestApplication = (
+  options: Parameters<typeof createDesktopMissionTestApplicationImplementation>[0],
+): DesktopMissionTestApplication => {
+  const runner = createDesktopMissionTestApplicationImplementation({
     ...options,
     onExecutionTerminal: async (input) => {
       const completion = (async () => {
@@ -234,7 +242,7 @@ const createMissionRunner = (
 function createTestMissionControl(input: {
   readonly missionsPath: string;
   readonly missions: ReturnType<typeof createMissionStore>;
-  readonly runner: MissionRunner;
+  readonly runner: DesktopMissionTestApplication;
 }) {
   const controller = createMissionControllerStore({
     missionsPath: input.missionsPath,
@@ -321,9 +329,12 @@ afterEach(async () => {
   await Promise.all(temporaryPaths.splice(0).map(async (path) => await removeTemporaryPath(path)));
 });
 
-describe("MissionRunner", { timeout: 30_000 }, () => {
+// These cases exercise concrete Desktop resources (Knowledge drafts, capabilities,
+// private Runtime Contexts and Desktop project persistence) through the shared Host
+// application. Generic command receipt/outcome rules live in Local Host tests.
+describe("Desktop Mission resource adapter contracts", { timeout: 30_000 }, () => {
   it.each([false, true])(
-    "hands a real Node Mission to the Desktop factory and injected facade (controller-only=%s)",
+    "hands a real Node Mission to the shared factory with Desktop resources (controller-only=%s)",
     async (controllerOnly) => {
       const home = await mkdtemp(join(tmpdir(), "pragma-desktop-real-takeover-"));
       temporaryPaths.push(home);
@@ -386,22 +397,41 @@ describe("MissionRunner", { timeout: 30_000 }, () => {
         controller: lifecycle.controller,
         ownerScope: lifecycle.ownerScope,
       });
-      const runner = createMissionRunnerImplementation({
-        missions,
-        project,
-        capabilityStore: {} as CapabilityStore,
-        capabilityCredentials: {} as CapabilityCredentialStore,
-        capabilitiesPath: join(paths.dataRoot(), "capabilities"),
+      const compiler = createLocalHostNodeMissionCompiler({ pragmaHome: home, runtimes });
+      const catalog = createLocalHostProjectCatalogFromHome({
         pragmaHome: home,
         runtimes,
-        executionStore: executions,
-        ownerScope: lifecycle.ownerScope,
-        loggerProvider: createNoopLoggerProvider(),
-        commitExecutionTerminal: async (input) => {
-          expect(input.guard).toEqual(lifecycle.ownerScope.currentGuard(input.mission.id));
-          expect(input.guard).toBeDefined();
-          await terminalProjector.terminal(input);
-        },
+        compiler,
+      });
+      const reads = createLocalHostMissionReadPorts({
+        pragmaHome: home,
+        repository: missions,
+        controller: lifecycle.controller,
+        query: lifecycle.query,
+        watch: lifecycle.watch,
+      });
+      const runner = createLocalHostMissionApplication({
+        lifecycle,
+        client: { surface: "desktop", version: "test", instanceId: crypto.randomUUID() },
+        resolveExecutor: catalog.resolve,
+        assertMission: reads.assertMission,
+        execution: createDesktopMissionExecutionResources({
+          missions,
+          project,
+          capabilityStore: {} as CapabilityStore,
+          capabilityCredentials: {} as CapabilityCredentialStore,
+          capabilitiesPath: join(paths.dataRoot(), "capabilities"),
+          pragmaHome: home,
+          runtimes,
+          executionStore: executions,
+          ownerScope: lifecycle.ownerScope,
+          loggerProvider: createNoopLoggerProvider(),
+          commitExecutionTerminal: async (input) => {
+            expect(input.guard).toEqual(lifecycle.ownerScope.currentGuard(input.mission.id));
+            expect(input.guard).toBeDefined();
+            await terminalProjector.terminal(input);
+          },
+        }),
       });
       const sessions = runner.controllerFactSessionStore;
       const association = createMissionSessionAssociationResolver({
@@ -413,12 +443,6 @@ describe("MissionRunner", { timeout: 30_000 }, () => {
       });
       const before = (await sessions.get(original.execution!.sessionId!))!;
       const beforeRoot = before.contexts[before.rootContextId]!;
-      const compiler = createLocalHostNodeMissionCompiler({ pragmaHome: home, runtimes });
-      const catalog = createLocalHostProjectCatalogFromHome({
-        pragmaHome: home,
-        runtimes,
-        compiler,
-      });
       let unblockMemory = (): void => undefined;
       const blockedMemory = new Promise<void>((resolve) => {
         unblockMemory = resolve;
@@ -440,34 +464,10 @@ describe("MissionRunner", { timeout: 30_000 }, () => {
           terminal: memoryTerminal,
         },
       });
-      const desktop = createLocalHostNodeApplication({
-        pragmaHome: home,
-        runtimes,
-        workspace: workspacePort,
-        client: { surface: "desktop", version: "test", instanceId: crypto.randomUUID() },
-        application: {
-          executionService: runner,
-          executorResolver: catalog.resolve,
-          missionLifecycle: lifecycle,
-          catalog: {
-            listProjects: node.listProjects,
-            getProjectRevision: node.getProjectRevision,
-            listExecutors: node.listExecutors,
-          },
-          missions: {
-            get: node.getMission,
-            list: node.listMissions,
-            query: lifecycle.query.queryMission,
-          },
-          board: {
-            list: ({ missionId }) => node.listSharedBoard(missionId),
-            read: ({ missionId, id, start, maxBytes }) =>
-              node.readSharedBoard(missionId, id, start, maxBytes),
-            search: ({ missionId, query, maxResults }) =>
-              node.searchSharedBoard(missionId, query, maxResults),
-          },
-        },
-      });
+      const desktop = {
+        resumeMission: runner.integration.missionControl.resume,
+        missionControl: runner.integration.missionControl.commands,
+      };
       try {
         await desktop.resumeMission!({
           missionId: first.missionId,
@@ -540,149 +540,11 @@ describe("MissionRunner", { timeout: 30_000 }, () => {
       } finally {
         unblockMemory();
         await lifecycle.ownerScope.release(first.missionId);
-        await runner.missionControl.release(first.missionId);
+        await runner.stopLocalController(first.missionId);
         await executions.close();
       }
     },
   );
-  it.each(["expired", "failed", "rejected", "applied"] as const)(
-    "forwards a durable %s command outcome without reporting false success",
-    async (state) => {
-      const root = await mkdtemp(join(tmpdir(), "pragma-mission-command-outcome-"));
-      temporaryPaths.push(root);
-      const project = createPragmaProjectStore({ projectsPath: join(root, "projects") });
-      const expert = expertFixture();
-      const snapshot = await project.publish({
-        expectedRevision: 0,
-        resources: [runtimeFixture(), expert],
-      });
-      const missions = createMissionStore({ missionsPath: join(root, "missions") });
-      const mission = await missions.create({
-        workspace: { path: root, basename: "workspace" },
-        goal: "Preserve command outcomes",
-        project: { id: snapshot.projectId, revision: snapshot.revision },
-        executor: missionExecutorSnapshot(expert),
-      });
-      const startTurn = vi.fn(() => ({ outputText: "unused", runtimeSessionId: "runtime" }));
-      const runtime = defineRuntimeTestDriver<never, { id: string }>({
-        descriptor: { id: "fake", kind: "fake", displayName: "Fake" },
-        createSession: () => ({ id: "runtime" }),
-        readSession: (session) => ({ runtimeSessionId: session.id }),
-        startTurn,
-        mapEvent: () => ({ events: [] }),
-      });
-      const controller = createMissionControllerStore({
-        missionsPath: join(root, "missions"),
-        missionPath: missions.storagePath,
-      });
-      const ownerScope = createMissionOwnerScope({ controller });
-      const runner = createMissionRunner({
-        missions,
-        project,
-        capabilityStore: {} as CapabilityStore,
-        capabilityCredentials: {} as CapabilityCredentialStore,
-        capabilitiesPath: join(root, "capabilities"),
-        pragmaHome: join(root, "state"),
-        runtimes: createStaticRuntimeResolver({ runtimes: [runtime], defaultRuntimeId: "fake" }),
-      });
-      const failure = {
-        message: "Durable command did not apply.",
-        details: { missionId: mission.id, reason: "outcome-regression" },
-      };
-      const error =
-        state === "failed"
-          ? createIntegrationError({
-              ...failure,
-              code: "EXECUTION_FAILED",
-              category: "execution",
-              retryable: false,
-            })
-          : createIntegrationError({ ...failure, code: "COMMAND_REJECTED", category: "conflict" });
-      const result = { requestedMode: "enqueue", effectiveMode: "enqueue" };
-      const apply = vi.fn(async () => {
-        if (state === "rejected") throw error;
-        return { result };
-      });
-      const control = createMissionControlApplication({
-        controller,
-        ownerScope,
-        consumer: { apply },
-        assertMission: async (missionId) => {
-          await missions.get(missionId);
-        },
-      });
-      runner.missionControl.bindApplication(control);
-      try {
-        const requestId = crypto.randomUUID();
-        const content = "Retry this durable command";
-        const payload = { kind: "send" as const, input: { prompt: content, attachments: [] } };
-        const input = { missionId: mission.id, requestId, kind: "send" as const, payload };
-        if (state === "failed") {
-          // Persist the terminal operation through the real Controller API;
-          // command consumers normally produce applied/rejected outcomes.
-          const payloadHash = hashMissionCommandPayload(input);
-          await controller.appendCommand({
-            missionId: mission.id,
-            kind: "send",
-            payload,
-            request: {
-              schemaVersion: "pragma.integration-request/v1",
-              requestId,
-              payloadHash,
-              requestedAt: new Date().toISOString(),
-              client: { surface: "desktop", version: "test", instanceId: crypto.randomUUID() },
-            },
-          });
-          await control.completeOperation({
-            missionId: mission.id,
-            requestId,
-            payloadHash,
-            state: "failed",
-            error,
-          });
-        } else {
-          await control.submit({
-            ...input,
-            ...(state === "expired" ? { expiresAt: "2000-01-01T00:00:00.000Z" } : {}),
-          });
-        }
-        const operation = await control.waitForTerminal({ missionId: mission.id, requestId });
-        expect(operation.state).toBe(state);
-        const retry = runner.sendMessage({ id: mission.id, content, requestId });
-        if (state === "applied") {
-          await expect(retry).resolves.toMatchObject(result);
-        } else {
-          await expect(retry).rejects.toMatchObject(operation.error!);
-          // Fault-inject a missing error at the application return boundary.
-          // The durable outcome remains unchanged; the fallback must be valid.
-          const { error: persistedError, ...withoutError } = operation;
-          expect(persistedError).toBeDefined();
-          vi.spyOn(control, "waitForTerminal").mockResolvedValueOnce(withoutError);
-          await expect(
-            runner.sendMessage({ id: mission.id, content, requestId }),
-          ).rejects.toMatchObject({
-            code:
-              state === "expired"
-                ? "COMMAND_EXPIRED"
-                : state === "failed"
-                  ? "EXECUTION_FAILED"
-                  : "COMMAND_REJECTED",
-            retryable: false,
-            message: `Mission command ${state}.`,
-            details: { missionId: mission.id, requestId },
-          });
-        }
-        expect(apply).toHaveBeenCalledTimes(state === "applied" || state === "rejected" ? 1 : 0);
-        expect(startTurn).not.toHaveBeenCalled();
-        await expect(
-          controller.getOperation({ missionId: mission.id, requestId }),
-        ).resolves.toEqual(operation);
-      } finally {
-        await control.stopOwner(mission.id);
-      }
-    },
-  );
-
   it("removes an inactive Mission Knowledge mount through the guarded update path", async () => {
     const root = await mkdtemp(join(tmpdir(), "pragma-mission-idle-knowledge-mount-"));
     temporaryPaths.push(root);
@@ -709,7 +571,7 @@ describe("MissionRunner", { timeout: 30_000 }, () => {
       startTurn: () => ({ outputText: "unused", runtimeSessionId: "runtime" }),
       mapEvent: () => ({ events: [] }),
     });
-    const runner = createMissionRunner({
+    const runner = createDesktopMissionTestApplication({
       missions,
       project,
       contextStores,
@@ -766,7 +628,7 @@ describe("MissionRunner", { timeout: 30_000 }, () => {
         startTurn: () => ({ outputText: "unused", runtimeSessionId: "runtime" }),
         mapEvent: () => ({ events: [] }),
       });
-      const runner = createMissionRunner({
+      const runner = createDesktopMissionTestApplication({
         missions,
         project,
         contextStores,
@@ -797,7 +659,7 @@ describe("MissionRunner", { timeout: 30_000 }, () => {
       resources: [runtimeFixture(), expert],
     });
     const missions = createMissionStore({ missionsPath: join(root, "missions") });
-    const runnerRef: { current?: MissionRunner } = {};
+    const runnerRef: { current?: DesktopMissionTestApplication } = {};
     let signalUnmountRequested!: () => void;
     const unmountRequested = new Promise<void>((resolve) => {
       signalUnmountRequested = resolve;
@@ -808,7 +670,7 @@ describe("MissionRunner", { timeout: 30_000 }, () => {
         for (const reference of await missions.listContextStoreReferences(storeId)) {
           signalUnmountRequested();
           const runner = runnerRef.current;
-          if (runner === undefined) throw new Error("Mission runner is unavailable.");
+          if (runner === undefined) throw new Error("Mission application is unavailable.");
           await runner.removeContextStoreMount({ id: reference.id, storeId });
         }
       },
@@ -847,7 +709,7 @@ describe("MissionRunner", { timeout: 30_000 }, () => {
       startTurn: () => ({ outputText: "unused", runtimeSessionId: "runtime" }),
       mapEvent: () => ({ events: [] }),
     });
-    const runner = createMissionRunner({
+    const runner = createDesktopMissionTestApplication({
       missions,
       project,
       contextStores: runnerContextStores,
@@ -876,390 +738,6 @@ describe("MissionRunner", { timeout: 30_000 }, () => {
     await expect(contextStores.resolve(store.id)).rejects.toMatchObject({
       code: "store_not_found",
     });
-  });
-
-  it("normalizes an archived legacy projection without rewriting it from a read", async () => {
-    const root = await mkdtemp(join(tmpdir(), "pragma-mission-order-repair-"));
-    temporaryPaths.push(root);
-    const pragmaHome = join(root, "state");
-    const project = createPragmaProjectStore({ projectsPath: join(root, "projects") });
-    const expert = expertFixture();
-    const snapshot = await project.publish({
-      expectedRevision: 0,
-      resources: [runtimeFixture(), expert],
-    });
-    const missions = createMissionStore({ missionsPath: join(root, "missions") });
-    const mission = await missions.create({
-      workspace: { path: root, basename: "workspace" },
-      goal: "Repair old conversation",
-      project: { id: snapshot.projectId, revision: snapshot.revision },
-      executor: missionExecutorSnapshot(expert),
-    });
-    const executions = createSqliteExecutionStore({ pragmaHome });
-    const executionId = "00000000-0000-4000-8000-000000000121";
-    const timestamp = new Date("2026-08-24T00:00:00.000Z").getTime();
-    const createdAt = new Date(timestamp).toISOString();
-    const definition = { id: expert.metadata.id, kind: "expert" as const };
-    await executions.create(
-      {
-        schemaVersion: "pragma.execution/v12",
-        executionId,
-        version: 0,
-        kind: "expert-turn",
-        definition,
-        rootInvocationId: executionId,
-        status: "running",
-        input: { text: mission.goal, attachments: [] },
-        state: {},
-        lastAppliedSequence: 0,
-        createdAt,
-        updatedAt: createdAt,
-      },
-      {
-        invocationId: executionId,
-        rootInvocationId: executionId,
-        definition,
-        executorId: expert.metadata.id,
-        contextId: "00000000-0000-4000-8000-000000000122",
-        status: "running",
-        pendingExpertMessages: [],
-        input: { text: mission.goal, attachments: [] },
-        createdAt,
-        updatedAt: createdAt,
-      },
-    );
-    await appendExecutionEvent(
-      executions,
-      executionId,
-      executionId,
-      "invocation.message.appended",
-      {
-        runId: "run-a",
-        source: { kind: "runtime", runId: "run-a", path: [] },
-        message: {
-          role: "assistant",
-          content: [
-            { type: "thinking", thinking: "Reasoning" },
-            { type: "text", text: "Answer" },
-          ],
-          api: "test",
-          provider: "test",
-          model: "test-model",
-          usage: {
-            measurement: "reported",
-            input: 0,
-            output: 0,
-            cacheRead: 0,
-            cacheWrite: 0,
-            totalTokens: 0,
-            cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
-          },
-          stopReason: "stop",
-          timestamp,
-        },
-      },
-    );
-    await executions.commit({
-      commitId: "complete-old-execution",
-      executionId,
-      executionPatch: { status: "succeeded" },
-    });
-    await executions.archive(executionId);
-    await missions.appendExecutionReference({
-      missionId: mission.id,
-      inputMessageId: mission.initialMessageId,
-      executionId,
-      createdAt,
-    });
-    const projectionDirectory = join(missions.storagePath!(mission.id), "execution-projections");
-    const projectionPath = join(projectionDirectory, `${executionId}.jsonl`);
-    // Written by the pre-repair writer at d48a414d839d, before orderingVersion existed.
-    const historicalProjection = new URL(
-      "../../../../../../packages/local-host/test/mission-repository/fixtures/mission-execution-projection-pre-order-repair.jsonl",
-      import.meta.url,
-    );
-    await mkdir(projectionDirectory, { recursive: true });
-    await copyFile(historicalProjection, projectionPath);
-    const runtime = defineRuntimeTestDriver<never, { id: string }>({
-      descriptor: { id: "fake", kind: "fake", displayName: "Fake" },
-      createSession: () => ({ id: "runtime" }),
-      readSession: (session) => ({ runtimeSessionId: session.id }),
-      startTurn: () => ({ outputText: "unused", runtimeSessionId: "runtime" }),
-      mapEvent: () => ({ events: [] }),
-    });
-    const runner = createMissionRunner({
-      missions,
-      project,
-      capabilityStore: {} as CapabilityStore,
-      capabilityCredentials: {} as CapabilityCredentialStore,
-      capabilitiesPath: join(root, "capabilities"),
-      pragmaHome,
-      runtimes: createStaticRuntimeResolver({ runtimes: [runtime], defaultRuntimeId: "fake" }),
-    });
-
-    const projectionBefore = await readFile(projectionPath, "utf8");
-    const chat = await runner.getChatPage({ id: mission.id, limit: 50 });
-    expect(chat.entries.map((entry) => entry.kind)).toEqual(["user", "thinking", "assistant"]);
-    expect(chat.syncIssues).toBeUndefined();
-    expect(await readFile(projectionPath, "utf8")).toBe(projectionBefore);
-  });
-
-  it("pages a normalized legacy projection without background repair", async () => {
-    const root = await mkdtemp(join(tmpdir(), "pragma-mission-final-boundary-repair-"));
-    temporaryPaths.push(root);
-    const project = createPragmaProjectStore({ projectsPath: join(root, "projects") });
-    const expert = expertFixture();
-    const snapshot = await project.publish({
-      expectedRevision: 0,
-      resources: [runtimeFixture(), expert],
-    });
-    const missions = createMissionStore({ missionsPath: join(root, "missions") });
-    const mission = await missions.create({
-      workspace: { path: root, basename: "workspace" },
-      goal: "Repair late teammate output",
-      project: { id: snapshot.projectId, revision: snapshot.revision },
-      executor: missionExecutorSnapshot(expert),
-    });
-    const executionId = "00000000-0000-4000-8000-000000000123";
-    await missions.appendExecutionReference({
-      missionId: mission.id,
-      inputMessageId: mission.initialMessageId,
-      executionId,
-      createdAt: "2026-08-24T00:00:00.000Z",
-    });
-    const projectionDirectory = join(missions.storagePath!(mission.id), "execution-projections");
-    const projectionPath = join(projectionDirectory, `${executionId}.jsonl`);
-    await writeMissionExecutionProjection(
-      projectionPath,
-      executionId,
-      [
-        {
-          id: "coordinator-intermediate",
-          executionId,
-          invocationId: "coordinator-root",
-          executorId: "0000000000pragma",
-          eventSequence: 1,
-          kind: "assistant",
-          content: "I will delegate this work",
-          streaming: false,
-          createdAt: "2026-08-24T00:00:00.000Z",
-        },
-        {
-          id: "coordinator-final",
-          executionId,
-          invocationId: "coordinator-root",
-          executorId: "0000000000pragma",
-          eventSequence: 2,
-          kind: "assistant",
-          content: "Final answer",
-          streaming: false,
-          finalAnswer: true,
-          createdAt: "2026-08-24T00:00:01.000Z",
-        },
-        {
-          id: "teammate-late-thinking",
-          executionId,
-          invocationId: "teammate",
-          executorId: expert.metadata.id,
-          eventSequence: 3,
-          kind: "thinking",
-          content: "Late diagnostic reasoning",
-          streaming: false,
-          createdAt: "2026-08-24T00:00:02.000Z",
-        },
-      ],
-      2,
-    );
-    const runtime = defineRuntimeTestDriver<never, { id: string }>({
-      descriptor: { id: "fake", kind: "fake", displayName: "Fake" },
-      createSession: () => ({ id: "runtime" }),
-      readSession: (session) => ({ runtimeSessionId: session.id }),
-      startTurn: () => ({ outputText: "unused", runtimeSessionId: "runtime" }),
-      mapEvent: () => ({ events: [] }),
-    });
-    const runner = createMissionRunner({
-      missions,
-      project,
-      capabilityStore: {} as CapabilityStore,
-      capabilityCredentials: {} as CapabilityCredentialStore,
-      capabilitiesPath: join(root, "capabilities"),
-      pragmaHome: join(root, "state"),
-      runtimes: createStaticRuntimeResolver({ runtimes: [runtime], defaultRuntimeId: "fake" }),
-      getSystemExecutorMetadata: () => [
-        {
-          id: "0000000000pragma",
-          name: "Pragma",
-          avatarId: "pragma.avatar.expert.default",
-        },
-      ],
-    });
-
-    const projectionBefore = await readFile(projectionPath, "utf8");
-    const latest = await runner.getChatPage({ id: mission.id, limit: 2 });
-    expect(latest.entries.map((entry) => entry.id)).toEqual([
-      "teammate-late-thinking",
-      "coordinator-final",
-    ]);
-    expect(latest.entries).toMatchObject([
-      { executorId: expert.metadata.id, executorName: "Writer" },
-      {
-        executorId: "0000000000pragma",
-        executorName: "Pragma",
-        executorAvatarId: "pragma.avatar.expert.default",
-      },
-    ]);
-    const earlier = await runner.getChatPage({
-      id: mission.id,
-      beforeCursor: latest.page.nextBeforeCursor,
-      limit: 2,
-    });
-    expect(earlier.entries.map((entry) => entry.id)).toEqual([
-      mission.initialMessageId,
-      "coordinator-intermediate",
-    ]);
-    expect(await readFile(projectionPath, "utf8")).toBe(projectionBefore);
-  });
-
-  it("projects initial Mission attachments onto the durable user chat entry", async () => {
-    const root = await mkdtemp(join(tmpdir(), "pragma-mission-chat-attachments-"));
-    temporaryPaths.push(root);
-    const sourceImage = join(root, "screen.png");
-    await writeFile(sourceImage, "image-bytes");
-    const project = createPragmaProjectStore({ projectsPath: join(root, "projects") });
-    const snapshot = await project.publish({
-      expectedRevision: 0,
-      resources: [runtimeFixture(), expertFixture()],
-    });
-    const missions = createMissionStore({ missionsPath: join(root, "missions") });
-    const mission = await missions.create({
-      workspace: { path: root, basename: "workspace" },
-      goal: "Summarize the image",
-      project: { id: snapshot.projectId, revision: snapshot.revision },
-      executor: missionExecutorSnapshot(
-        snapshot.resources.find((resource) => resource.kind === "Expert")!,
-      ),
-      attachments: [
-        {
-          id: "00000000-0000-4000-8000-000000000002",
-          kind: "image",
-          name: "screen.png",
-          path: sourceImage,
-          mimeType: "image/png",
-        },
-      ],
-    });
-    const runtime = defineRuntimeTestDriver<never, { id: string }>({
-      descriptor: { id: "fake", kind: "fake", displayName: "Fake" },
-      createSession: () => ({ id: "runtime" }),
-      readSession: (session) => ({ runtimeSessionId: session.id }),
-      startTurn: () => ({ outputText: "done", runtimeSessionId: "runtime" }),
-      mapEvent: () => ({ events: [] }),
-    });
-    const runner = createMissionRunner({
-      missions,
-      project,
-      capabilityStore: {} as CapabilityStore,
-      capabilityCredentials: {} as CapabilityCredentialStore,
-      capabilitiesPath: join(root, "capabilities"),
-      pragmaHome: join(root, "state"),
-      runtimes: createStaticRuntimeResolver({ runtimes: [runtime], defaultRuntimeId: "fake" }),
-    });
-
-    const chat = await runner.getChatPage({ id: mission.id, limit: 50 });
-    expect(chat.entries).toEqual([
-      expect.objectContaining({
-        id: mission.initialMessageId,
-        kind: "user",
-        content: "Summarize the image",
-        attachments: [
-          expect.objectContaining({
-            id: "00000000-0000-4000-8000-000000000002",
-            kind: "image",
-            name: "screen.png",
-            mimeType: "image/png",
-          }),
-        ],
-      }),
-    ]);
-  });
-
-  it("paginates a single long Mission turn by visible entries", async () => {
-    const root = await mkdtemp(join(tmpdir(), "pragma-mission-long-turn-page-"));
-    temporaryPaths.push(root);
-    const project = createPragmaProjectStore({ projectsPath: join(root, "projects") });
-    const snapshot = await project.publish({
-      expectedRevision: 0,
-      resources: [runtimeFixture(), expertFixture()],
-    });
-    const missions = createMissionStore({ missionsPath: join(root, "missions") });
-    const mission = await missions.create({
-      workspace: { path: root, basename: "workspace" },
-      goal: "Run one very long turn",
-      project: { id: snapshot.projectId, revision: snapshot.revision },
-      executor: missionExecutorSnapshot(
-        snapshot.resources.find((resource) => resource.kind === "Expert")!,
-      ),
-    });
-    const executionId = "00000000-0000-4000-8000-000000000077";
-    await missions.appendExecutionReference({
-      missionId: mission.id,
-      inputMessageId: mission.initialMessageId,
-      executionId,
-      createdAt: "2026-08-25T00:00:00.000Z",
-    });
-    await missions.writeExecutionProjection(
-      mission.id,
-      executionId,
-      Array.from({ length: 45 }, (_, index) => ({
-        id: `assistant:${index + 1}`,
-        timelineSequence: 1,
-        executionId,
-        kind: "assistant" as const,
-        content: `answer ${index + 1}`,
-        streaming: false,
-        createdAt: new Date(Date.UTC(2026, 7, 25, 0, 0, index + 1)).toISOString(),
-      })),
-    );
-    const runtime = defineRuntimeTestDriver<never, { id: string }>({
-      descriptor: { id: "fake", kind: "fake", displayName: "Fake" },
-      createSession: () => ({ id: "runtime" }),
-      readSession: (session) => ({ runtimeSessionId: session.id }),
-      startTurn: () => ({ outputText: "unused", runtimeSessionId: "runtime" }),
-      mapEvent: () => ({ events: [] }),
-    });
-    const runner = createMissionRunner({
-      missions,
-      project,
-      capabilityStore: {} as CapabilityStore,
-      capabilityCredentials: {} as CapabilityCredentialStore,
-      capabilitiesPath: join(root, "capabilities"),
-      pragmaHome: join(root, "state"),
-      runtimes: createStaticRuntimeResolver({ runtimes: [runtime], defaultRuntimeId: "fake" }),
-    });
-
-    const latest = await runner.getChatPage({ id: mission.id, limit: 20 });
-    expect(latest.entries.map((entry) => entry.id)).toEqual(
-      Array.from({ length: 20 }, (_, index) => `assistant:${index + 26}`),
-    );
-    expect(latest.page.nextBeforeCursor).toBeTypeOf("string");
-    const middle = await runner.getChatPage({
-      id: mission.id,
-      beforeCursor: latest.page.nextBeforeCursor,
-      limit: 20,
-    });
-    expect(middle.entries.map((entry) => entry.id)).toEqual(
-      Array.from({ length: 20 }, (_, index) => `assistant:${index + 6}`),
-    );
-    const earliest = await runner.getChatPage({
-      id: mission.id,
-      beforeCursor: middle.page.nextBeforeCursor,
-      limit: 20,
-    });
-    expect(earliest.entries.map((entry) => entry.id)).toEqual([
-      mission.initialMessageId,
-      ...Array.from({ length: 5 }, (_, index) => `assistant:${index + 1}`),
-    ]);
-    expect(earliest.page.nextBeforeCursor).toBeUndefined();
   });
 
   it("marks system Mission chat and work notifications as internal", async () => {
@@ -1299,7 +777,7 @@ describe("MissionRunner", { timeout: 30_000 }, () => {
       },
       mapEvent: () => ({ events: [] }),
     });
-    const runner = createMissionRunner({
+    const runner = createDesktopMissionTestApplication({
       missions,
       project,
       capabilityStore: {} as CapabilityStore,
@@ -1313,7 +791,7 @@ describe("MissionRunner", { timeout: 30_000 }, () => {
     const unsubscribeChat = runner.subscribeChat(chatNotifications);
     const unsubscribeWork = runner.subscribeWork(workNotifications);
 
-    await runner.run(mission.id);
+    await runner.startRun(mission.id);
     await vi.waitFor(
       async () => expect((await missions.get(mission.id)).execution?.status).toBe("succeeded"),
       { timeout: settlementTimeoutMs },
@@ -1442,7 +920,7 @@ describe("MissionRunner", { timeout: 30_000 }, () => {
           throw new Error("One rejected send");
         }
       });
-      const runner = createMissionRunner({
+      const runner = createDesktopMissionTestApplication({
         missions,
         project,
         capabilityStore: {} as CapabilityStore,
@@ -1472,7 +950,7 @@ describe("MissionRunner", { timeout: 30_000 }, () => {
       const earlySend = entry === "before-run" ? runner.sendMessage(messages[0]!) : undefined;
       // In before-run, the followup reaches the Host before Desktop finishes
       // resolving and starting the attached initial run.
-      const initialRun = entry === "before-run" ? undefined : runner.run(mission.id);
+      const initialRun = entry === "before-run" ? undefined : runner.startRun(mission.id);
       await admissionStarted;
       if (entry === "direct") {
         // Preparing work is busy even before a warm Session exists.
@@ -1481,7 +959,7 @@ describe("MissionRunner", { timeout: 30_000 }, () => {
           busyMissionCount: 1,
         });
       }
-      const initial = initialRun ?? runner.run(mission.id);
+      const initial = initialRun ?? runner.startRun(mission.id);
       const submissions = messages.map(async (message, index) => {
         if (index === 0 && earlySend !== undefined) return await earlySend;
         if (entry !== "inbox") return await runner.sendMessage(message);
@@ -1621,7 +1099,7 @@ describe("MissionRunner", { timeout: 30_000 }, () => {
     const onExecutionContextLinked = vi.fn(async () => undefined);
     const onMissionActivity = vi.fn(async () => undefined);
     const onExecutionTerminal = vi.fn(async () => undefined);
-    const runner = createMissionRunner({
+    const runner = createDesktopMissionTestApplication({
       missions,
       project,
       capabilityStore: {} as CapabilityStore,
@@ -1640,7 +1118,7 @@ describe("MissionRunner", { timeout: 30_000 }, () => {
       onExecutionTerminal,
     });
 
-    await runner.run(mission.id);
+    await runner.startRun(mission.id);
     await vi.waitFor(
       async () => expect((await missions.get(mission.id)).execution?.status).toBe("succeeded"),
       { timeout: settlementTimeoutMs },
@@ -1727,7 +1205,7 @@ describe("MissionRunner", { timeout: 30_000 }, () => {
       mapEvent: () => ({ events: [] }),
       closeSession: () => undefined,
     });
-    const runner = createMissionRunner({
+    const runner = createDesktopMissionTestApplication({
       missions,
       project,
       capabilityStore: {} as CapabilityStore,
@@ -1740,7 +1218,7 @@ describe("MissionRunner", { timeout: 30_000 }, () => {
       assertExecutorReady: async () => undefined,
     });
 
-    await runner.run(mission.id);
+    await runner.startRun(mission.id);
     await vi.waitFor(
       async () => expect((await missions.get(mission.id)).execution?.status).toBe("succeeded"),
       { timeout: settlementTimeoutMs },
@@ -1825,7 +1303,7 @@ describe("MissionRunner", { timeout: 30_000 }, () => {
       mapEvent: () => ({ events: [] }),
       closeSession: () => undefined,
     });
-    const runner = createMissionRunner({
+    const runner = createDesktopMissionTestApplication({
       missions,
       project,
       capabilityStore: {} as CapabilityStore,
@@ -1838,7 +1316,7 @@ describe("MissionRunner", { timeout: 30_000 }, () => {
       assertExecutorReady: async () => undefined,
     });
 
-    await runner.run(mission.id);
+    await runner.startRun(mission.id);
     await firstTurnStarted;
     const followupRequestId = "00000000-0000-4000-8000-000000000101";
     await expect(
@@ -1925,7 +1403,7 @@ describe("MissionRunner", { timeout: 30_000 }, () => {
       },
       mapEvent: () => ({ events: [] }),
     });
-    const runner = createMissionRunner({
+    const runner = createDesktopMissionTestApplication({
       missions,
       project,
       contextStores,
@@ -1937,7 +1415,7 @@ describe("MissionRunner", { timeout: 30_000 }, () => {
       assertExecutorReady: async () => undefined,
     });
 
-    await runner.run(mission.id);
+    await runner.startRun(mission.id);
     await vi.waitFor(
       async () => expect((await missions.get(mission.id)).execution?.status).toBe("succeeded"),
       { timeout: settlementTimeoutMs },
@@ -2085,7 +1563,7 @@ describe("MissionRunner", { timeout: 30_000 }, () => {
       mapEvent: () => ({ events: [] }),
       closeSession: () => undefined,
     });
-    const runner = createMissionRunner({
+    const runner = createDesktopMissionTestApplication({
       missions,
       project,
       contextStores,
@@ -2097,7 +1575,7 @@ describe("MissionRunner", { timeout: 30_000 }, () => {
       assertExecutorReady: async () => undefined,
     });
 
-    await runner.run(mission.id);
+    await runner.startRun(mission.id);
     await vi.waitFor(
       async () => expect((await missions.get(mission.id)).execution?.status).toBe("succeeded"),
       { timeout: settlementTimeoutMs },
@@ -2308,7 +1786,7 @@ describe("MissionRunner", { timeout: 30_000 }, () => {
         runtimes: [runtime],
         defaultRuntimeId: "fake",
       });
-      const runner = createMissionRunner({
+      const runner = createDesktopMissionTestApplication({
         missions,
         project,
         contextStores,
@@ -2372,7 +1850,7 @@ describe("MissionRunner", { timeout: 30_000 }, () => {
           };
         }),
       });
-      await runner.run(caller.id);
+      await runner.startRun(caller.id);
       await vi.waitFor(
         async () =>
           expect(["succeeded", "failed", "cancelled"]).toContain(
@@ -2506,7 +1984,7 @@ describe("MissionRunner", { timeout: 30_000 }, () => {
       mapEvent: () => ({ events: [] }),
       closeSession: () => undefined,
     });
-    const runner = createMissionRunner({
+    const runner = createDesktopMissionTestApplication({
       missions,
       project,
       contextStores,
@@ -2552,7 +2030,7 @@ describe("MissionRunner", { timeout: 30_000 }, () => {
       ),
     });
 
-    await runner.run(mission.id);
+    await runner.startRun(mission.id);
     await vi.waitFor(
       async () => {
         const current = await missions.get(mission.id);
@@ -2703,7 +2181,7 @@ describe("MissionRunner", { timeout: 30_000 }, () => {
       mapEvent: () => ({ events: [] }),
       closeSession: () => undefined,
     });
-    const runner = createMissionRunner({
+    const runner = createDesktopMissionTestApplication({
       missions,
       project,
       contextStores,
@@ -2748,7 +2226,7 @@ describe("MissionRunner", { timeout: 30_000 }, () => {
       ),
     });
 
-    await runner.run(mission.id);
+    await runner.startRun(mission.id);
     await vi.waitFor(
       async () => expect((await missions.get(mission.id)).execution?.status).toBe("succeeded"),
       { timeout: settlementTimeoutMs },
@@ -2829,7 +2307,7 @@ describe("MissionRunner", { timeout: 30_000 }, () => {
       },
       contextMounts: [{ kind: "context-store", storeId: firstStore.id }],
     });
-    await runner.run(continuedMission.id);
+    await runner.startRun(continuedMission.id);
     await vi.waitFor(
       async () =>
         expect((await missions.get(continuedMission.id)).execution?.status).toBe("succeeded"),
@@ -2948,7 +2426,7 @@ describe("MissionRunner", { timeout: 30_000 }, () => {
     const fencedExecutions: string[] = [];
     const deletionStore = createSqliteExecutionStore({ pragmaHome: join(root, "state") });
     const createRunner = (missionStore = missions) =>
-      createMissionRunner({
+      createDesktopMissionTestApplication({
         missions: missionStore,
         project,
         capabilityStore: {} as CapabilityStore,
@@ -2984,7 +2462,7 @@ describe("MissionRunner", { timeout: 30_000 }, () => {
     let activeMissions = missions;
     let runner = createRunner();
 
-    await runner.run(mission.id);
+    await runner.startRun(mission.id);
     await vi.waitFor(
       async () => expect((await missions.get(mission.id)).execution?.status).toBe("succeeded"),
       { timeout: settlementTimeoutMs },
@@ -3090,7 +2568,7 @@ describe("MissionRunner", { timeout: 30_000 }, () => {
       mapEvent: () => ({ events: [] }),
       closeSession: () => undefined,
     });
-    const runner = createMissionRunner({
+    const runner = createDesktopMissionTestApplication({
       missions,
       project,
       capabilityStore: {} as CapabilityStore,
@@ -3170,7 +2648,7 @@ describe("MissionRunner", { timeout: 30_000 }, () => {
       mapEvent: () => ({ events: [] }),
       closeSession: () => undefined,
     });
-    const runner = createMissionRunner({
+    const runner = createDesktopMissionTestApplication({
       missions,
       project,
       contextStores,
@@ -3248,7 +2726,7 @@ describe("MissionRunner", { timeout: 30_000 }, () => {
       mapEvent: () => ({ events: [] }),
       closeSession: () => undefined,
     });
-    const runner = createMissionRunner({
+    const runner = createDesktopMissionTestApplication({
       missions,
       project,
       contextStores,
@@ -3343,7 +2821,7 @@ describe("MissionRunner", { timeout: 30_000 }, () => {
     const runtimes = createStaticRuntimeResolver({ runtimes: [runtime], defaultRuntimeId: "fake" });
     const hostContextStores = vi.fn(async () => []);
     const createRunner = () =>
-      createMissionRunner({
+      createDesktopMissionTestApplication({
         missions,
         project,
         capabilityStore: {} as CapabilityStore,
@@ -3357,7 +2835,7 @@ describe("MissionRunner", { timeout: 30_000 }, () => {
     const chatUpdates: MissionChatUpdate[] = [];
     const unsubscribe = runner.subscribeChat(({ update }) => chatUpdates.push(update));
 
-    await runner.run(mission.id);
+    await runner.startRun(mission.id);
     await vi.waitFor(() => expect(runtimeStarted).toBe(true), { timeout: settlementTimeoutMs });
     expect(
       chatUpdates.some(
@@ -3439,7 +2917,7 @@ describe("MissionRunner", { timeout: 30_000 }, () => {
         throw new Error("Runtime is unavailable.");
       },
     };
-    const unavailableRunner = createMissionRunner({
+    const unavailableRunner = createDesktopMissionTestApplication({
       missions,
       project,
       capabilityStore: {} as CapabilityStore,
@@ -3527,7 +3005,7 @@ describe("MissionRunner", { timeout: 30_000 }, () => {
       defaultRuntimeId: "fake",
     });
     const runtimesForToolPermissionMode = vi.fn(() => runtimeResolver);
-    const runner = createMissionRunner({
+    const runner = createDesktopMissionTestApplication({
       missions,
       project,
       capabilityStore: {} as CapabilityStore,
@@ -3540,7 +3018,7 @@ describe("MissionRunner", { timeout: 30_000 }, () => {
     const updates = vi.fn();
     const unsubscribe = runner.subscribeChat(updates);
 
-    await runner.run(mission.id);
+    await runner.startRun(mission.id);
     expect(runtimesForToolPermissionMode).toHaveBeenCalledWith("full-access");
     await vi.waitFor(
       async () => {
@@ -3620,7 +3098,7 @@ describe("MissionRunner", { timeout: 30_000 }, () => {
     );
 
     await runner.stopLocalController(mission.id);
-    const restartedAfterLeaseLoss = await runner.run(mission.id);
+    const restartedAfterLeaseLoss = await runner.startRun(mission.id);
     expect(restartedAfterLeaseLoss.execution).toMatchObject({ status: "running" });
     await expect(
       runner.forceInterrupt(mission.id, "00000000-0000-4000-8000-000000000099"),
@@ -3638,7 +3116,7 @@ describe("MissionRunner", { timeout: 30_000 }, () => {
         snapshot.resources.find((resource) => resource.kind === "Expert")!,
       ),
     });
-    await runner.run(doomed.id);
+    await runner.startRun(doomed.id);
     await vi.waitFor(
       async () => {
         const chat = await readMissionConversationSnapshot(runner, doomed.id);
@@ -3650,7 +3128,7 @@ describe("MissionRunner", { timeout: 30_000 }, () => {
     await expect(readMissionConversationSnapshot(runner, doomed.id)).resolves.toMatchObject({
       controlHealth: { state: "deletion_pending", availableActions: ["force_remove"] },
     });
-    await expect(runner.run(doomed.id)).rejects.toMatchObject({ code: "COMMAND_REJECTED" });
+    await expect(runner.startRun(doomed.id)).rejects.toMatchObject({ code: "COMMAND_REJECTED" });
     await expect(runner.delete(doomed.id)).resolves.toBeUndefined();
     await expect(missions.get(doomed.id)).rejects.toThrow();
     expect(cancelTurn.mock.calls.length).toBeGreaterThan(cancellationCalls);
@@ -3726,7 +3204,7 @@ describe("MissionRunner", { timeout: 30_000 }, () => {
       mapEvent: () => ({ events: [] }),
       closeSession: () => undefined,
     });
-    const runner = createMissionRunner({
+    const runner = createDesktopMissionTestApplication({
       missions,
       project,
       capabilityStore: {} as CapabilityStore,
@@ -3738,7 +3216,7 @@ describe("MissionRunner", { timeout: 30_000 }, () => {
     const updates: unknown[] = [];
     const unsubscribe = runner.subscribeChat(({ update }) => updates.push(update));
 
-    await runner.run(mission.id);
+    await runner.startRun(mission.id);
     await outputWasWritten;
     await vi.waitFor(
       async () => {
@@ -3916,9 +3394,9 @@ describe("MissionRunner", { timeout: 30_000 }, () => {
         pragmaHome: join(root, "state"),
         runtimes: createStaticRuntimeResolver({ runtimes: [runtime], defaultRuntimeId: "fake" }),
       };
-      const runner = createMissionRunner(runnerOptions);
+      const runner = createDesktopMissionTestApplication(runnerOptions);
 
-      await runner.run(mission.id);
+      await runner.startRun(mission.id);
       await finalAnswerStreamed;
       let streamingChat: Awaited<ReturnType<typeof runner.getChatPage>>;
       try {
@@ -3962,7 +3440,7 @@ describe("MissionRunner", { timeout: 30_000 }, () => {
       // Both the terminal projection and reconstruction from canonical events must
       // preserve the streamed segments, thoughts, tool ordering, and stable IDs.
       const restart = () =>
-        createMissionRunner({
+        createDesktopMissionTestApplication({
           ...runnerOptions,
           missions: createMissionStore({ missionsPath: join(root, "missions") }),
           project: createPragmaProjectStore({ projectsPath: join(root, "projects") }),
@@ -4006,7 +3484,7 @@ describe("MissionRunner", { timeout: 30_000 }, () => {
       );
       const canonicalMissions = createMissionStore({ missionsPath: join(root, "missions") });
       vi.spyOn(canonicalMissions, "readExecutionProjectionPage").mockResolvedValue(undefined);
-      const canonicalRunner = createMissionRunner({
+      const canonicalRunner = createDesktopMissionTestApplication({
         ...runnerOptions,
         missions: canonicalMissions,
         project: createPragmaProjectStore({ projectsPath: join(root, "projects") }),
@@ -4246,7 +3724,7 @@ describe("MissionRunner", { timeout: 30_000 }, () => {
       const before = await readFile(projectionPath, "utf8");
       const restartedExecutions = createSqliteExecutionStore({ pragmaHome });
       const reads = vi.spyOn(restartedExecutions, "readEvents");
-      const restarted = createMissionRunner({
+      const restarted = createDesktopMissionTestApplication({
         missions: createMissionStore({ missionsPath: join(root, "missions") }),
         project: createPragmaProjectStore({ projectsPath: join(root, "projects") }),
         capabilityStore: {} as CapabilityStore,
@@ -4297,7 +3775,7 @@ describe("MissionRunner", { timeout: 30_000 }, () => {
       closeSession: () => undefined,
     });
     const executionStore = createSqliteExecutionStore({ pragmaHome });
-    const runner = createMissionRunner({
+    const runner = createDesktopMissionTestApplication({
       missions,
       project,
       capabilityStore: {} as CapabilityStore,
@@ -4308,7 +3786,7 @@ describe("MissionRunner", { timeout: 30_000 }, () => {
       runtimes: createStaticRuntimeResolver({ runtimes: [runtime], defaultRuntimeId: "fake" }),
     });
 
-    await runner.run(mission.id);
+    await runner.startRun(mission.id);
     await vi.waitFor(
       async () => expect((await missions.get(mission.id)).execution?.status).toBe("succeeded"),
       { timeout: settlementTimeoutMs },
@@ -4397,7 +3875,7 @@ describe("MissionRunner", { timeout: 30_000 }, () => {
       mapEvent: () => ({ events: [] }),
       closeSession: () => undefined,
     });
-    const runner = createMissionRunner({
+    const runner = createDesktopMissionTestApplication({
       missions,
       project,
       capabilityStore: {} as CapabilityStore,
@@ -4406,7 +3884,7 @@ describe("MissionRunner", { timeout: 30_000 }, () => {
       pragmaHome: join(root, "state"),
       runtimes: createStaticRuntimeResolver({ runtimes: [runtime], defaultRuntimeId: "fake" }),
     });
-    await runner.run(mission.id);
+    await runner.startRun(mission.id);
     await childDeltaWritten;
     await vi.waitFor(
       async () => {
@@ -4572,7 +4050,7 @@ describe("MissionRunner", { timeout: 30_000 }, () => {
       closeSession: () => undefined,
     });
     const executionStore = createSqliteExecutionStore({ pragmaHome: join(root, "state") });
-    const runner = createMissionRunner({
+    const runner = createDesktopMissionTestApplication({
       missions,
       project,
       capabilityStore: {} as CapabilityStore,
@@ -4585,7 +4063,7 @@ describe("MissionRunner", { timeout: 30_000 }, () => {
     const revisions: number[] = [];
     const unsubscribe = runner.subscribeWork(({ update }) => revisions.push(update.revision));
 
-    await runner.run(mission.id);
+    await runner.startRun(mission.id);
     await rootReady;
     await vi.waitFor(async () => {
       expect((await runner.getWork(mission.id)).records).toHaveLength(1);
@@ -4834,7 +4312,7 @@ describe("MissionRunner", { timeout: 30_000 }, () => {
       mapEvent: () => ({ events: [] }),
       closeSession: () => undefined,
     });
-    const runner = createMissionRunner({
+    const runner = createDesktopMissionTestApplication({
       missions,
       project,
       capabilityStore: {} as CapabilityStore,
@@ -4848,7 +4326,7 @@ describe("MissionRunner", { timeout: 30_000 }, () => {
 
     await Promise.all(
       [expertMission, teamMission, flowMission].map(async (mission) => {
-        await runner.run(mission.id);
+        await runner.startRun(mission.id);
         await vi.waitFor(
           async () => expect((await missions.get(mission.id)).execution?.status).toBe("succeeded"),
           { timeout: memoryBindingReopenTimeoutMs },
@@ -5006,7 +4484,7 @@ describe("MissionRunner", { timeout: 30_000 }, () => {
       mapEvent: () => ({ events: [] }),
       closeSession: () => undefined,
     });
-    const runner = createMissionRunner({
+    const runner = createDesktopMissionTestApplication({
       missions,
       project,
       capabilityStore: {} as CapabilityStore,
@@ -5016,7 +4494,7 @@ describe("MissionRunner", { timeout: 30_000 }, () => {
       runtimes: createStaticRuntimeResolver({ runtimes: [runtime], defaultRuntimeId: "fake" }),
     });
 
-    await runner.run(mission.id);
+    await runner.startRun(mission.id);
     await vi.waitFor(
       async () => expect((await missions.get(mission.id)).execution?.status).toBe("succeeded"),
       { timeout: settlementTimeoutMs },
@@ -5129,7 +4607,7 @@ describe("MissionRunner", { timeout: 30_000 }, () => {
         throw new Error("Runtime is unavailable.");
       },
     };
-    const runner = createMissionRunner({
+    const runner = createDesktopMissionTestApplication({
       missions,
       project,
       capabilityStore: {} as CapabilityStore,
@@ -5211,7 +4689,7 @@ describe("MissionRunner", { timeout: 30_000 }, () => {
       runtimes: [runtime],
       defaultRuntimeId: "fake",
     });
-    const runner = createMissionRunner({
+    const runner = createDesktopMissionTestApplication({
       missions,
       project,
       capabilityStore: {} as CapabilityStore,
@@ -5221,7 +4699,7 @@ describe("MissionRunner", { timeout: 30_000 }, () => {
       runtimes: runtimeResolver,
     });
 
-    await runner.run(mission.id);
+    await runner.startRun(mission.id);
     await deltaWritten;
 
     const getMission = missions.get.bind(missions);
@@ -5319,7 +4797,7 @@ describe("MissionRunner", { timeout: 30_000 }, () => {
       .spyOn(executions, "archive")
       .mockRejectedValueOnce(new Error("archive unavailable"))
       .mockImplementation(async (executionId) => await archive(executionId));
-    const runner = createMissionRunner({
+    const runner = createDesktopMissionTestApplication({
       missions,
       project,
       capabilityStore: {} as CapabilityStore,
@@ -5333,7 +4811,7 @@ describe("MissionRunner", { timeout: 30_000 }, () => {
     const statusNotifications: unknown[] = [];
     runner.subscribeStatus((notification) => statusNotifications.push(notification));
 
-    await runner.run(mission.id);
+    await runner.startRun(mission.id);
     await vi.waitFor(
       async () => expect((await missions.get(mission.id)).execution?.status).toBe("succeeded"),
       { timeout: settlementTimeoutMs },
@@ -5398,7 +4876,7 @@ describe("MissionRunner", { timeout: 30_000 }, () => {
     const projectionStart = new Promise<void>((resolve) => {
       projectionStarted = resolve;
     });
-    const runner = createMissionRunner({
+    const runner = createDesktopMissionTestApplication({
       missions,
       project,
       capabilityStore: {} as CapabilityStore,
@@ -5415,7 +4893,7 @@ describe("MissionRunner", { timeout: 30_000 }, () => {
     const notifications: unknown[] = [];
     runner.subscribeStatus((notification) => notifications.push(notification));
 
-    await runner.run(mission.id);
+    await runner.startRun(mission.id);
     await projectionStart;
     try {
       expect(notifications).toEqual(
@@ -5506,7 +4984,7 @@ describe("MissionRunner", { timeout: 30_000 }, () => {
       return await originalUpdateExecution(...args);
     });
     const executionStore = createSqliteExecutionStore({ pragmaHome: join(root, "state") });
-    const runner = createMissionRunner({
+    const runner = createDesktopMissionTestApplication({
       missions,
       project,
       capabilityStore: {} as CapabilityStore,
@@ -5519,7 +4997,7 @@ describe("MissionRunner", { timeout: 30_000 }, () => {
     const chatUpdates: MissionChatUpdate[] = [];
     runner.subscribeChat(({ update }) => chatUpdates.push(update));
 
-    await runner.run(mission.id);
+    await runner.startRun(mission.id);
     releaseTurn();
     await terminalUpdateStarted;
     try {
@@ -5657,7 +5135,7 @@ describe("MissionRunner", { timeout: 30_000 }, () => {
         await archive(id);
         if (id === firstExecutionId) firstArchiveCompleted();
       });
-      const runner = createMissionRunner({
+      const runner = createDesktopMissionTestApplication({
         missions,
         project,
         capabilityStore: {} as CapabilityStore,
@@ -5680,7 +5158,7 @@ describe("MissionRunner", { timeout: 30_000 }, () => {
       });
       let releasePage = (): void => undefined;
       try {
-        await runner.run(mission.id);
+        await runner.startRun(mission.id);
         firstExecutionId = (await missions.get(mission.id)).execution!.id;
         await vi.waitFor(() => expect(started).toEqual(["First turn"]), {
           timeout: settlementTimeoutMs,
@@ -5845,7 +5323,7 @@ describe("MissionRunner", { timeout: 30_000 }, () => {
       return await originalUpdateExecution(...args);
     });
     const onExecutionLinked = vi.fn(async () => undefined);
-    const runner = createMissionRunner({
+    const runner = createDesktopMissionTestApplication({
       missions,
       project,
       capabilityStore: {} as CapabilityStore,
@@ -5856,7 +5334,7 @@ describe("MissionRunner", { timeout: 30_000 }, () => {
       onExecutionLinked,
     });
 
-    await runner.run(mission.id);
+    await runner.startRun(mission.id);
     const followupRequestId = "00000000-0000-4000-8000-000000000099";
     await expect(
       runner.sendMessage({
@@ -5935,7 +5413,7 @@ describe("MissionRunner", { timeout: 30_000 }, () => {
         mapEvent: () => ({ events: [] }),
         closeSession: () => undefined,
       });
-      const runner = createMissionRunner({
+      const runner = createDesktopMissionTestApplication({
         missions,
         project,
         capabilityStore: {} as CapabilityStore,
@@ -5945,7 +5423,7 @@ describe("MissionRunner", { timeout: 30_000 }, () => {
         runtimes: createStaticRuntimeResolver({ runtimes: [runtime], defaultRuntimeId: "fake" }),
       });
       try {
-        await runner.run(mission.id);
+        await runner.startRun(mission.id);
         await vi.waitFor(() => expect(startTurn).toHaveBeenCalledOnce(), {
           timeout: settlementTimeoutMs,
         });
@@ -6133,7 +5611,7 @@ describe("MissionRunner", { timeout: 30_000 }, () => {
         },
       });
       const readinessCheck = vi.fn(async () => undefined);
-      const runner = createMissionRunner({
+      const runner = createDesktopMissionTestApplication({
         missions,
         project,
         assertExecutorReady: readinessCheck,
@@ -6145,7 +5623,7 @@ describe("MissionRunner", { timeout: 30_000 }, () => {
         runtimes: createStaticRuntimeResolver({ runtimes: [runtime], defaultRuntimeId: "fake" }),
       });
 
-      await runner.run(mission.id);
+      await runner.startRun(mission.id);
       await firstTurnStarted;
       const activeExecutionId = (await missions.get(mission.id)).execution!.id;
       const requestId = "00000000-0000-4000-8000-000000000109";
@@ -6375,7 +5853,7 @@ describe("MissionRunner", { timeout: 30_000 }, () => {
       mapEvent: () => ({ events: [] }),
       closeSession,
     });
-    const runner = createMissionRunner({
+    const runner = createDesktopMissionTestApplication({
       missions,
       project,
       capabilityStore: {} as CapabilityStore,
@@ -6385,7 +5863,7 @@ describe("MissionRunner", { timeout: 30_000 }, () => {
       runtimes: createStaticRuntimeResolver({ runtimes: [runtime], defaultRuntimeId: "fake" }),
     });
     try {
-      await runner.run(mission.id);
+      await runner.startRun(mission.id);
       await vi.waitFor(() => expect(startTurn).toHaveBeenCalledOnce(), {
         timeout: settlementTimeoutMs,
       });
@@ -6481,7 +5959,7 @@ describe("MissionRunner", { timeout: 30_000 }, () => {
   }, 60_000);
 
   it("compiles and runs the resource pinned by a Mission", async () => {
-    const root = await mkdtemp(join(tmpdir(), "pragma-mission-runner-"));
+    const root = await mkdtemp(join(tmpdir(), "pragma-mission-adapter-"));
     temporaryPaths.push(root);
     const project = createPragmaProjectStore({ projectsPath: join(root, "projects") });
     const snapshot = await project.publish({
@@ -6568,7 +6046,7 @@ describe("MissionRunner", { timeout: 30_000 }, () => {
     const runtimesForToolPermissionMode = vi.fn((mode: DesktopToolPermissionMode) =>
       runtimeResolvers.get(mode)!,
     );
-    const runner = createMissionRunner({
+    const runner = createDesktopMissionTestApplication({
       missions,
       project,
       capabilityStore: {} as CapabilityStore,
@@ -6581,8 +6059,8 @@ describe("MissionRunner", { timeout: 30_000 }, () => {
     const chatRevisions: number[] = [];
     runner.subscribeChat(({ update }) => chatRevisions.push(update.revision));
 
-    const firstRunPromise = runner.run(mission.id);
-    const duplicateRunPromise = runner.run(mission.id);
+    const firstRunPromise = runner.startRun(mission.id);
+    const duplicateRunPromise = runner.startRun(mission.id);
     const [firstRun, duplicateRun] = await Promise.all([firstRunPromise, duplicateRunPromise]);
     const revisionAfterRun = chatRevisions.at(-1);
     expect(revisionAfterRun).toBeGreaterThan(0);
@@ -7169,7 +6647,7 @@ describe("MissionRunner", { timeout: 30_000 }, () => {
       resolve: async (request) =>
         await validate(await registered.resolve(request), request.modelSelection),
     };
-    const runner = createMissionRunner({
+    const runner = createDesktopMissionTestApplication({
       missions,
       project,
       capabilityStore: {} as CapabilityStore,
@@ -7209,7 +6687,7 @@ describe("MissionRunner", { timeout: 30_000 }, () => {
       }),
     });
 
-    const first = await runner.run(mission.id);
+    const first = await runner.startRun(mission.id);
     await vi.waitFor(
       async () => expect((await missions.get(mission.id)).execution?.status).toBe("succeeded"),
       { timeout: settlementTimeoutMs },
@@ -7437,7 +6915,7 @@ describe("MissionRunner", { timeout: 30_000 }, () => {
       resolvedCapabilities: [],
       startedAt,
     });
-    const runner = createMissionRunner({
+    const runner = createDesktopMissionTestApplication({
       missions,
       project,
       capabilityStore: {} as CapabilityStore,
@@ -7462,7 +6940,7 @@ describe("MissionRunner", { timeout: 30_000 }, () => {
       })),
     });
 
-    const resumed = await runner.run(mission.id);
+    const resumed = await runner.startRun(mission.id);
     expect(resumed.execution).toMatchObject({ id: executionId, status: "waiting", sessionId });
     expect(runtimeStarts).toBe(0);
     await expect(readMissionConversationSnapshot(runner, mission.id)).resolves.toMatchObject({
@@ -7592,7 +7070,7 @@ describe("MissionRunner", { timeout: 30_000 }, () => {
       startTurn,
       mapEvent: () => ({ events: [] }),
     });
-    const runner = createMissionRunner({
+    const runner = createDesktopMissionTestApplication({
       missions,
       project,
       capabilityStore: {} as CapabilityStore,
@@ -7823,7 +7301,7 @@ describe("MissionRunner", { timeout: 30_000 }, () => {
       mapEvent: () => ({ events: [] }),
       closeSession: () => undefined,
     });
-    const runner = createMissionRunner({
+    const runner = createDesktopMissionTestApplication({
       missions,
       project,
       capabilityStore: {} as CapabilityStore,
@@ -7971,7 +7449,7 @@ describe("MissionRunner", { timeout: 30_000 }, () => {
       project: { id: snapshot.projectId, revision: snapshot.revision },
       executor: missionExecutorSnapshot(expertResource),
     });
-    await runner.run(interruptedMission.id);
+    await runner.startRun(interruptedMission.id);
     await vi.waitFor(
       async () =>
         expect((await missions.get(interruptedMission.id)).execution?.status).toBe("waiting"),
@@ -8046,7 +7524,7 @@ describe("MissionRunner", { timeout: 30_000 }, () => {
       mapEvent: () => ({ events: [] }),
       closeSession: () => undefined,
     });
-    const runner = createMissionRunner({
+    const runner = createDesktopMissionTestApplication({
       missions,
       project,
       capabilityStore: {} as CapabilityStore,
@@ -8056,7 +7534,7 @@ describe("MissionRunner", { timeout: 30_000 }, () => {
       runtimes: createStaticRuntimeResolver({ runtimes: [runtime], defaultRuntimeId: "fake" }),
     });
 
-    await runner.run(mission.id);
+    await runner.startRun(mission.id);
     await vi.waitFor(
       async () => expect((await missions.get(mission.id)).execution?.status).toBe("waiting"),
       { timeout: settlementTimeoutMs },
@@ -8225,7 +7703,7 @@ describe("MissionRunner", { timeout: 30_000 }, () => {
       await eventSubscriptionCanStart;
       return await originalSubscribeEvents.call(this, options);
     });
-    const runner = createMissionRunner({
+    const runner = createDesktopMissionTestApplication({
       missions,
       project,
       capabilityStore: {} as CapabilityStore,
@@ -8241,7 +7719,7 @@ describe("MissionRunner", { timeout: 30_000 }, () => {
       if (update.missionId === mission.id && update.kind === "invalidate") invalidations += 1;
     });
 
-    await runner.run(mission.id);
+    await runner.startRun(mission.id);
     await initialSeedComplete;
     releasePreparation();
     await vi.waitFor(
@@ -8351,9 +7829,11 @@ describe("MissionRunner", { timeout: 30_000 }, () => {
       closeSession,
     });
     const adapterHostForMission = vi.fn<
-      NonNullable<Parameters<typeof createMissionRunner>[0]["adapterHostForMission"]>
+      NonNullable<
+        Parameters<typeof createDesktopMissionTestApplication>[0]["adapterHostForMission"]
+      >
     >((_mission, fallback) => fallback);
-    const runnerOptions: Parameters<typeof createMissionRunner>[0] = {
+    const runnerOptions: Parameters<typeof createDesktopMissionTestApplication>[0] = {
       missions,
       project,
       assertExecutorReady: readiness,
@@ -8364,8 +7844,8 @@ describe("MissionRunner", { timeout: 30_000 }, () => {
       runtimes: createStaticRuntimeResolver({ runtimes: [runtime], defaultRuntimeId: "fake" }),
       adapterHostForMission,
     };
-    const runner = createMissionRunner(runnerOptions);
-    await runner.run(mission.id);
+    const runner = createDesktopMissionTestApplication(runnerOptions);
+    await runner.startRun(mission.id);
     await vi.waitFor(
       async () => expect((await missions.get(mission.id)).execution?.status).toBe("waiting"),
       { timeout: settlementTimeoutMs },
@@ -8417,7 +7897,10 @@ describe("MissionRunner", { timeout: 30_000 }, () => {
     adapterHostForMission.mockClear();
     readiness.mockClear();
     canUse.mockClear();
-    const restarted = createMissionRunner({ ...runnerOptions, executionStore: cold });
+    const restarted = createDesktopMissionTestApplication({
+      ...runnerOptions,
+      executionStore: cold,
+    });
     createTestMissionControl({ missionsPath: join(root, "missions"), missions, runner: restarted });
     await expect(
       restarted.missionControl.assertAcquisitionAllowed(mission.id, "execute"),
@@ -8482,7 +7965,7 @@ describe("MissionRunner", { timeout: 30_000 }, () => {
       mapEvent: () => ({ events: [] }),
       closeSession: () => undefined,
     });
-    const runner = createMissionRunner({
+    const runner = createDesktopMissionTestApplication({
       missions,
       project,
       capabilityStore: {} as CapabilityStore,
@@ -8492,7 +7975,7 @@ describe("MissionRunner", { timeout: 30_000 }, () => {
       runtimes: createStaticRuntimeResolver({ runtimes: [runtime], defaultRuntimeId: "fake" }),
     });
 
-    await runner.run(mission.id);
+    await runner.startRun(mission.id);
     await vi.waitFor(
       async () => expect((await missions.get(mission.id)).execution?.status).toBe("waiting"),
       { timeout: settlementTimeoutMs },
@@ -8514,7 +7997,7 @@ describe("MissionRunner", { timeout: 30_000 }, () => {
         },
       },
     });
-    const restartingRunner = createMissionRunner({
+    const restartingRunner = createDesktopMissionTestApplication({
       missions,
       project,
       capabilityStore: {} as CapabilityStore,
@@ -8568,7 +8051,7 @@ describe("MissionRunner", { timeout: 30_000 }, () => {
       () => expect(restartingRunner.getResourceDiagnostics().busyMissionCount).toBe(0),
       { timeout: settlementTimeoutMs },
     );
-    await restartingRunner.run(mission.id);
+    await restartingRunner.startRun(mission.id);
     await vi.waitFor(
       async () => {
         const rerun = await missions.get(mission.id);
@@ -8681,7 +8164,7 @@ describe("MissionRunner", { timeout: 30_000 }, () => {
       startedAt: now,
       finishedAt: now,
     });
-    const runner = createMissionRunner({
+    const runner = createDesktopMissionTestApplication({
       missions,
       project,
       capabilityStore: {} as CapabilityStore,
@@ -8811,7 +8294,7 @@ describe("MissionRunner", { timeout: 30_000 }, () => {
       status: "running",
       startedAt: now,
     });
-    const runner = createMissionRunner({
+    const runner = createDesktopMissionTestApplication({
       missions,
       project,
       capabilityStore: {} as CapabilityStore,
@@ -8940,7 +8423,7 @@ describe("MissionRunner", { timeout: 30_000 }, () => {
         mapEvent: () => ({ events: [] }),
         closeSession: () => undefined,
       });
-      const runner = createMissionRunner({
+      const runner = createDesktopMissionTestApplication({
         missions,
         project,
         capabilityStore: {} as CapabilityStore,
@@ -8966,7 +8449,7 @@ describe("MissionRunner", { timeout: 30_000 }, () => {
         })),
       });
       try {
-        await runner.run(mission.id);
+        await runner.startRun(mission.id);
         await vi.waitFor(
           async () => expect((await missions.get(mission.id)).execution?.status).toBe("failed"),
           { timeout: settlementTimeoutMs },
@@ -9139,7 +8622,7 @@ describe("MissionRunner", { timeout: 30_000 }, () => {
       closeSession: () => undefined,
     });
     const runtimes = createStaticRuntimeResolver({ runtimes: [runtime], defaultRuntimeId: "fake" });
-    const runner = createMissionRunner({
+    const runner = createDesktopMissionTestApplication({
       missions,
       project,
       capabilityStore: {} as CapabilityStore,
@@ -9149,7 +8632,7 @@ describe("MissionRunner", { timeout: 30_000 }, () => {
       runtimes,
     });
 
-    await runner.run(mission.id);
+    await runner.startRun(mission.id);
     await vi.waitFor(
       async () => expect((await missions.get(mission.id)).execution?.status).toBe("succeeded"),
       { timeout: settlementTimeoutMs },
@@ -9180,7 +8663,7 @@ describe("MissionRunner", { timeout: 30_000 }, () => {
     }));
     await expect(expertSessions.get(sessionId)).resolves.toMatchObject({ status: "closed" });
 
-    const restartingRunner = createMissionRunner({
+    const restartingRunner = createDesktopMissionTestApplication({
       missions,
       project,
       capabilityStore: {} as CapabilityStore,
@@ -9317,7 +8800,7 @@ describe("MissionRunner", { timeout: 30_000 }, () => {
       },
       resolve: async (request) => await availableRuntimes.resolve(request),
     };
-    const runner = createMissionRunner({
+    const runner = createDesktopMissionTestApplication({
       missions,
       project,
       capabilityStore: {} as CapabilityStore,
@@ -9390,7 +8873,7 @@ describe("MissionRunner", { timeout: 30_000 }, () => {
       mapEvent: () => ({ events: [] }),
       closeSession: () => undefined,
     });
-    const runner = createMissionRunner({
+    const runner = createDesktopMissionTestApplication({
       missions,
       project,
       capabilityStore: {} as CapabilityStore,
@@ -9400,7 +8883,7 @@ describe("MissionRunner", { timeout: 30_000 }, () => {
       executionStore,
       runtimes: createStaticRuntimeResolver({ runtimes: [runtime], defaultRuntimeId: "fake" }),
     });
-    await runner.run(source.id);
+    await runner.startRun(source.id);
     await vi.waitFor(
       async () => expect((await missions.get(source.id)).execution?.status).toBe("succeeded"),
       { timeout: settlementTimeoutMs },
@@ -9434,7 +8917,7 @@ describe("MissionRunner", { timeout: 30_000 }, () => {
         }),
       ]),
     );
-    await expect(runner.run(branch.id)).rejects.toThrow(
+    await expect(runner.startRun(branch.id)).rejects.toThrow(
       "Continue a branched Mission by sending a new message.",
     );
     await runner.sendMessage({
@@ -9504,7 +8987,7 @@ describe("MissionRunner", { timeout: 30_000 }, () => {
       mapEvent: () => ({ events: [] }),
       closeSession: () => undefined,
     });
-    const runner = createMissionRunner({
+    const runner = createDesktopMissionTestApplication({
       missions: storedMissions,
       project,
       capabilityStore: {} as CapabilityStore,
@@ -9513,7 +8996,7 @@ describe("MissionRunner", { timeout: 30_000 }, () => {
       pragmaHome: join(root, "state"),
       runtimes: createStaticRuntimeResolver({ runtimes: [runtime], defaultRuntimeId: "fake" }),
     });
-    await runner.run(mission.id);
+    await runner.startRun(mission.id);
     await vi.waitFor(
       async () =>
         expect((await storedMissions.get(mission.id)).execution?.status).toBe("succeeded"),

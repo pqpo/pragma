@@ -22,6 +22,8 @@ export type LocalHostMissionMemoryPorts<TBinding> = {
   stopMission(missionId: string): Promise<void>;
   flushDelivery?(): Promise<void>;
   pause?(): Promise<void>;
+  /** Settle independent consumers outside the Memory state lock before closing their durable source. */
+  beforeClose?: (() => Promise<void>) | undefined;
   close?(): Promise<void>;
 };
 
@@ -248,7 +250,15 @@ export function createLocalHostMissionMemoryLifecycle<TBinding>(options: {
     reconcile: async (missionId, executionId, waiting = false) =>
       await settle(missionId, executionId, waiting, true),
     pause: async () => await idle(options.ports.pause),
-    close: async () => await idle(options.ports.close),
+    close: async () => {
+      const eligible = await serialize(
+        async () => owners.size === 0 && pendingCompletions.size === 0,
+      );
+      if (!eligible) return;
+      await options.ports.beforeClose?.();
+      // A new binding admitted during settlement keeps its source open.
+      await idle(options.ports.close);
+    },
   };
   return api;
 }

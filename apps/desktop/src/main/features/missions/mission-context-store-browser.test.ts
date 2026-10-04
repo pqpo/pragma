@@ -11,8 +11,8 @@ import { MissionSchema } from "../../../shared/contracts/index.ts";
 import type { DesktopMemoryPlane } from "../memory/desktop-memory-plane.ts";
 import type { PragmaProjectStore } from "../projects/pragma-project-store.ts";
 import type { DesktopSystemExpertRegistry } from "../experts/system-expert-registry.ts";
-import type { MissionRunner } from "./mission-runner.ts";
-import type { MissionStore } from "./mission-store.ts";
+import type { LocalHostMissionApplication } from "@pragma/local-host";
+import type { MissionStore } from "@pragma/local-host";
 import { createMissionContextStoreBrowserService } from "./mission-context-store-browser.ts";
 
 const writer = expert("1xddvess309a6gme", "Writer");
@@ -98,9 +98,9 @@ describe("MissionContextStoreBrowserService", () => {
         getContextStoreViewStatus: vi.fn(async () => "available" as const),
         createContextStoreView: vi.fn(async () => new StaticContextStore()),
       } as unknown as DesktopMemoryPlane,
-      runner: {
+      application: {
         getWork: vi.fn(async () => ({ missionId: mission.id, revision: 0, records: [] })),
-      } as unknown as Pick<MissionRunner, "getWork">,
+      } as unknown as Pick<LocalHostMissionApplication, "getWork">,
     });
 
     try {
@@ -253,7 +253,7 @@ describe("MissionContextStoreBrowserService", () => {
         getContextStoreViewStatus,
         createContextStoreView,
       } as unknown as DesktopMemoryPlane,
-      runner: {
+      application: {
         getWork: vi.fn(async () => ({
           missionId: mission.id,
           revision: 1,
@@ -273,7 +273,7 @@ describe("MissionContextStoreBrowserService", () => {
             },
           ],
         })),
-      } as unknown as Pick<MissionRunner, "getWork">,
+      } as unknown as Pick<LocalHostMissionApplication, "getWork">,
     });
 
     const descriptor = await service.get({ missionId: mission.id, storeId: "memory" });
@@ -341,9 +341,9 @@ describe("MissionContextStoreBrowserService", () => {
         getContextStoreViewStatus: vi.fn(async () => "available" as const),
         createContextStoreView: vi.fn(async () => new StaticContextStore()),
       } as unknown as DesktopMemoryPlane,
-      runner: {
+      application: {
         getWork: vi.fn(async () => ({ missionId: mission.id, revision: 0, records: [] })),
-      } as unknown as Pick<MissionRunner, "getWork">,
+      } as unknown as Pick<LocalHostMissionApplication, "getWork">,
     });
 
     await expect(
@@ -372,11 +372,11 @@ describe("MissionContextStoreBrowserService", () => {
         getContextStoreViewStatus: vi.fn(async () => "available" as const),
         createContextStoreView: vi.fn(async () => new StaticContextStore()),
       } as unknown as DesktopMemoryPlane,
-      runner: {
+      application: {
         getWork: vi.fn(async () => {
           throw new Error("work history is corrupt");
         }),
-      } as unknown as Pick<MissionRunner, "getWork">,
+      } as unknown as Pick<LocalHostMissionApplication, "getWork">,
     });
 
     await expect(service.get({ missionId: mission.id, storeId: "memory" })).rejects.toThrow(
@@ -405,9 +405,9 @@ describe("MissionContextStoreBrowserService", () => {
         getContextStoreViewStatus: vi.fn(async () => "available" as const),
         createContextStoreView: vi.fn(async () => new StaticContextStore()),
       } as unknown as DesktopMemoryPlane,
-      runner: {
+      application: {
         getWork: vi.fn(async () => ({ missionId: mission.id, revision: 0, records: [] })),
-      } as unknown as Pick<MissionRunner, "getWork">,
+      } as unknown as Pick<LocalHostMissionApplication, "getWork">,
     });
 
     await expect(service.get({ missionId: mission.id, storeId: "memory" })).rejects.toMatchObject({

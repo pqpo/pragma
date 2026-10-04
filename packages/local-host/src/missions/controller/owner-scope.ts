@@ -12,6 +12,7 @@ import type {
 } from "./mission-controller-store.ts";
 
 export interface MissionOwnerScope {
+  ownedMissionIds(): readonly string[];
   diagnostics(): {
     activeMissionOwnerCount: number;
     activeInboxPollerCount: number;
@@ -29,6 +30,8 @@ export interface MissionOwnerScope {
     guard: MissionControllerGuard,
     operation: () => Promise<T>,
   ): Promise<T>;
+  /** Durable receipt custody starts an independent fenced claim, rather than inheriting its producer's lease. */
+  runWithoutGuard<T>(operation: () => Promise<T>): Promise<T>;
   currentGuard(missionId: string): MissionControllerGuard | undefined;
   assertOwnership(missionId: string, guard: MissionControllerGuard): Promise<void>;
   /** Wake this process's owner after a command is durable; never bypasses the Inbox. */
@@ -376,6 +379,9 @@ export function createMissionOwnerScope(options: {
   };
 
   const scope: MissionOwnerScope = {
+    ownedMissionIds: () => [
+      ...new Set([...active.keys(), ...acquiring.keys(), ...background.keys()]),
+    ],
     diagnostics() {
       return {
         activeMissionOwnerCount: active.size,
@@ -410,6 +416,9 @@ export function createMissionOwnerScope(options: {
     currentGuard(missionId) {
       const current = active.get(missionId);
       return current === undefined || current.stopped ? undefined : current.guard;
+    },
+    async runWithoutGuard(operation) {
+      return await operationGuard.exit(operation);
     },
     async runWithGuard(missionId, guard, operation) {
       return await operationGuard.run({ missionId, guard }, operation);

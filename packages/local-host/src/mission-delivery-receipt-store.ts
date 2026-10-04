@@ -82,6 +82,9 @@ export async function createMissionDeliveryReceiptStore(input: {
     },
     acknowledge: async (id: string, claim: string, missionId: string) =>
       await call<boolean>("acknowledge", [id, claim, missionId]),
+    defer: async (id: string, claim: string) => {
+      await call("defer", [id, claim]);
+    },
     fail: async (id: string, claim: string, invalid: boolean, attempts: number) => {
       await call("fail", [id, claim, invalid, attempts]);
     },

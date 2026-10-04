@@ -35,8 +35,11 @@ import type { CapabilityStore } from "../capabilities/capability-store.ts";
 import type { CapabilityCredentialStore } from "../capabilities/capability-credential-store.ts";
 import type { PluginStore } from "../plugins/plugin-store.ts";
 import { createPragmaProjectStore } from "../projects/pragma-project-store.ts";
-import { createMissionRunner, type MissionRunner } from "./mission-runner.ts";
-import { createMissionStore } from "./mission-store.ts";
+import {
+  createDesktopMissionTestApplication,
+  type DesktopMissionTestApplication,
+} from "./fixtures/desktop-mission-test-application.ts";
+import { createMissionStore } from "@pragma/local-host";
 
 it.each(["expert", "team"] as const)(
   "cold-stops a real %s checkpoint without execute resources and resumes healthy sends",
@@ -203,7 +206,7 @@ it.each(["expert", "team"] as const)(
     });
     const executionStore = createSqliteExecutionStore({ pragmaHome: home });
     const coldStore = createSqliteExecutionStore({ pragmaHome: coldHome });
-    const common: Parameters<typeof createMissionRunner>[0] = {
+    const common: Parameters<typeof createDesktopMissionTestApplication>[0] = {
       missions,
       project,
       loggerProvider,
@@ -217,8 +220,8 @@ it.each(["expert", "team"] as const)(
       resolveSecret: secret,
       runtimes: createStaticRuntimeResolver({ runtimes: [runtime], defaultRuntimeId: "fake" }),
     };
-    const original = createMissionRunner(common);
-    let restarted: MissionRunner | undefined;
+    const original = createDesktopMissionTestApplication(common);
+    let restarted: DesktopMissionTestApplication | undefined;
     const originalResume = ExpertSessionManager.prototype.resumeSession;
     let controlSession: ExpertSession | undefined;
     const resume = vi
@@ -229,7 +232,7 @@ it.each(["expert", "team"] as const)(
         return session;
       });
     try {
-      await original.run(mission.id);
+      await original.startRun(mission.id);
       await started;
       await vi.waitFor(
         async () => expect((await missions.get(mission.id)).execution?.status).toBe("running"),
@@ -322,7 +325,7 @@ it.each(["expert", "team"] as const)(
       resolve.mockClear();
       secret.mockClear();
       startTurn.mockClear();
-      restarted = createMissionRunner({
+      restarted = createDesktopMissionTestApplication({
         ...common,
         pragmaHome: coldHome,
         executionStore: coldStore,

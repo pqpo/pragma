@@ -12,13 +12,13 @@ import {
   consumeLiveChatOutput,
   isRootMissionRuntimeOutput,
   type LiveMissionChat,
-} from "./mission-chat-live.ts";
+} from "@pragma/local-host";
 import {
   finalizeHistoricalChatEntries,
   ensureTerminalExecutionResultEntry,
   mergeMissionChatEntriesWithLive,
   messageRecordsToChatEntries,
-} from "./mission-chat-history.ts";
+} from "@pragma/local-host";
 
 describe("Mission chat projection", () => {
   it.each(["OpenCode", "Antigravity"] as const)(

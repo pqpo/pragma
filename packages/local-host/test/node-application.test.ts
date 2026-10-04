@@ -5,24 +5,14 @@ import { join } from "node:path";
 import type { RuntimeResolver } from "@pragma/core";
 import { describe, expect, it, vi } from "vitest";
 
-import { createLocalHostMissionController, type MissionCommandConsumer } from "../src/index.ts";
-import {
-  createLocalHostNodeApplication,
-  type LocalHostNodeApplicationPorts,
-} from "../src/node-application.ts";
+import { createLocalHostNodeApplication } from "../src/node-application.ts";
 import { createLocalHostMissionExecutionRunPort } from "../src/missions/execution-run-port.ts";
 import type { LocalHostMissionExecutionService } from "../src/missions/execution-service.ts";
 
 describe("Local Host Node application composition", () => {
-  it("composes injected Mission control without accepting a surface-owned run implementation", async () => {
+  it("composes the default Mission kernel for both surfaces without a service override", async () => {
     const home = await mkdtemp(join(tmpdir(), "pragma-local-host-node-"));
     try {
-      const lifecycle = createLocalHostMissionController({
-        missionsPath: join(home, "data", "missions"),
-      });
-      const consumer: MissionCommandConsumer = {
-        apply: async () => ({ result: {} }),
-      };
       const resolver = {} as RuntimeResolver;
       const application = createLocalHostNodeApplication({
         pragmaHome: home,
@@ -33,12 +23,12 @@ describe("Local Host Node application composition", () => {
           access: async () => undefined,
           realpath: async (path) => path,
         },
-        application: createPorts({ lifecycle, consumer }),
       });
 
       expect(application.runtimeResolver()).toBe(resolver);
       expect(application.missionControl).toBeDefined();
-      expect(application.run).toBeUndefined();
+      expect(application.run?.start).toEqual(expect.any(Function));
+      await expect(application.listMissions()).resolves.toEqual([]);
     } finally {
       await rm(home, { recursive: true, force: true });
     }
@@ -55,28 +45,3 @@ describe("Local Host Node application composition", () => {
     expect(foreignService.startLocalHostRun).not.toHaveBeenCalled();
   });
 });
-
-function createPorts(input: {
-  readonly lifecycle: ReturnType<typeof createLocalHostMissionController>;
-  readonly consumer: MissionCommandConsumer;
-}): LocalHostNodeApplicationPorts {
-  return {
-    catalog: {
-      listProjects: async () => [],
-      getProjectRevision: async () => undefined,
-      listExecutors: async () => [],
-    },
-    missions: {
-      get: async (id) => ({ id }),
-      list: async () => [],
-      query: async () => ({ items: [], nextCursor: undefined }),
-    },
-    missionLifecycle: input.lifecycle,
-    missionControlAdapter: { consumer: input.consumer, bindApplication: vi.fn() },
-    board: {
-      list: async () => ({ items: [] }),
-      read: async () => ({ id: "missing" }),
-      search: async () => ({ matches: [] }),
-    },
-  };
-}

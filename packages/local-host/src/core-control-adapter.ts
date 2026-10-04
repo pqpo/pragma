@@ -579,6 +579,16 @@ export function createLocalHostCoreMissionControlAdapter(options: {
     // Mission lease if no newer command or ordinary live owner needs it.
     await unrefDelay(25);
     await owners.admit(missionId, async () => {
+      // A deliberate Host close or successor claim can retire this optional delayed task.
+      // It must never reclaim a released owner or report healthy shutdown as degraded.
+      const currentGuard = options.currentMissionGuard?.(missionId);
+      if (
+        options.currentMissionGuard !== undefined &&
+        (currentGuard === undefined ||
+          currentGuard.claimId !== guard.claimId ||
+          currentGuard.fencingToken !== guard.fencingToken)
+      )
+        return;
       await options.assertMissionOwnership?.(missionId, guard);
       if (recoveredOwner(missionId) !== undefined) return;
       if (options.resolveActiveOwner !== undefined) {

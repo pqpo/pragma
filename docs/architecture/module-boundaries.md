@@ -34,8 +34,8 @@ examples    -> runtime-* / plugin-* / core -> shared
 
 | Source                     | Allowed dependencies                                                                                                                                                                                       |
 | -------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `apps/cli`                 | `@pragma/local-host`, `@pragma/shared/integration`, concrete `@pragma/runtime-*` at its composition root                                                                                                   |
-| `apps/desktop`             | `@pragma/shared`, `@pragma/core`, `@pragma/evaluation`, `@pragma/interpreter`, `@pragma/built-in-agents`, concrete `@pragma/runtime-*` packages                                                            |
+| `apps/cli`                 | `@pragma/local-host`, browser-safe wire Schemas/DTOs from `@pragma/shared` (including `/integration`), concrete `@pragma/runtime-*` at its composition root                                                                                                   |
+| `apps/desktop`             | `@pragma/local-host` (Main only), `@pragma/shared`, `@pragma/core`, `@pragma/evaluation`, `@pragma/interpreter`, `@pragma/built-in-agents`, concrete `@pragma/runtime-*` packages                                                            |
 | `packages/local-host`      | `@pragma/shared`, `@pragma/core`, `@pragma/interpreter`, `@pragma/evaluation`, `@pragma/built-in-agents`, `@pragma/memory`, `@pragma/context-filesystem`; Node built-ins and runtime-neutral third parties |
 | `plugins/*`                | `@pragma/shared`, `@pragma/core`; no app, server, client, or concrete runtime dependencies                                                                                                                 |
 | `examples`                 | `@pragma/core`, concrete `@pragma/runtime-*`, and concrete `@pragma/plugin-*` packages                                                                                                                     |
@@ -53,17 +53,16 @@ Cross-package imports must use `@pragma/*` names, not relative paths.
 owner lifecycle, query/watch, catalog, Board and Core run wiring). It may not depend on any `apps/*`,
 Electron, React/Next, or `@pragma/runtime-*`. Runtime factories
 or a Host-owned `RuntimeResolver` are injected by `apps/desktop` Main or `apps/cli` composition. A
-richer Host currently supplies first-run/lifecycle dependencies pending issue #348 R3. Mission
+richer Host supplies concrete resource, interaction and platform ports to the same application factory. Mission
 commands use the factory-created Local Host Core control adapter and shared MissionExecutionOwner;
 Desktop must not implement another command consumer or strict-target resolver. R2's Local Host
 compile service owns pinned Revision reuse, executor resolution, binding/fingerprint identity,
 stability retries, owner compilation cache and target readiness. Desktop, CLI and built-in sources
 provide resource ports; Interpreter retains the actual DSL compiler. `@pragma/local-host/resources`
 provides Node resource readers and credential access; OS interaction, mutation and approval remain
-Host adapters. Full run/session/recovery migration remains R3; remaining Node application overrides
-and Runner forwarding removal remain R4. R1 is merged through #353 with engineering and actual
-Native Mission smoke evidence, but full performance/product acceptance remains open. See
-[R2 implementation status](local-host-kernel-r2-implementation.md).
+Host adapters. R1–R3 are merged through #353/#354/#355. R4 removes full-kernel overrides,
+Runner forwarding and internal execution bypasses. Real model, OS credential and full product
+performance acceptance remain open; see [R4 implementation status](local-host-kernel-r4-implementation.md).
 `@pragma/shared`, Core, Interpreter, Evaluation, Built-in Agents, Memory,
 Context Filesystem, Runtime packages, plugins, and examples may not depend on
 `@pragma/local-host` or `@pqpo/pragma`. Desktop preload/renderer/shared code remains browser-safe and
@@ -166,3 +165,15 @@ apps/server/src/runtime-gateway
 ## ACP transport
 
 Core's `defineAcpRuntimeDriver()` composes the existing private Session factory with the vendor-neutral ACP SDK. Concrete `runtime-*` adapters provide agent executables, session metadata and provider extensions. Claude-specific ACP code and its bundled worker stay in `@pragma/runtime-claude-code`; Core does not import `claude-agent-acp`. See [ADR 059](../adr/059-acp-runtime-driver.md).
+
+## Issue #348 R4：共享 Mission application
+
+Desktop Main 与 CLI 通过 Local Host 同一 Mission application factory 构造控制、编译与执行内核。
+Automation、Pragma、Memory Curator、Store/Skill Revision、Evaluation 与 IPC mutation 使用共享用例。
+Desktop 保留平台资源、审批、展示、Electron 与 IPC adapter；CLI 保留 argv、TTY、presentation 和 Runtime composition。
+不得注入完整 command/run/execution service 恢复双内核。通用耐久投递编排归 Local Host，产品 payload 与通知归 Desktop。
+
+CLI 测试入口执行完整 Local Host 业务门禁；Desktop/CLI composition 验证证明实际接入该实现。
+Desktop 的 UI、IPC、平台和打包测试继续独立。
+[ADR 066](../adr/066-unified-local-host-mission-application.md) 与 [R4 验证报告](local-host-kernel-r4-implementation.md)
+区分代码收敛、工程门禁与仍需真实模型/OS 凭据/完整产品场景的验收。

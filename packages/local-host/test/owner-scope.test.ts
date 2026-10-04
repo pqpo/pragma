@@ -2,7 +2,10 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
-import { FileLockTimeoutError } from "@pragma/core";
+import { FileLockTimeoutError, type DurableExecutionStore } from "@pragma/core";
+import type { Mission } from "@pragma/shared";
+import { createMissionTerminalMaterializer } from "../src/missions/mission-terminal-materializer.ts";
+import type { MissionStore } from "../src/missions/repository/mission-store.ts";
 
 import {
   createMissionOwnerScope,
@@ -36,6 +39,54 @@ describe("Mission owner scope", () => {
     });
   };
 
+  it("gives durable receipt custody an independent lease while late callbacks retain their stale fence", async () => {
+    const root = await mkdtemp(join(tmpdir(), "pragma-owner-receipt-scope-"));
+    const controller = createMissionControllerStore({ missionsPath: root });
+    const scope = createMissionOwnerScope({ controller });
+    try {
+      const producerGuard = await scope.acquire(missionId);
+      await scope.runWithGuard(missionId, producerGuard, async () => {
+        await scope.release(missionId, producerGuard);
+        // Ordinary delayed producer work must never silently reacquire authority.
+        expect(await scope.acquire(missionId)).toEqual(producerGuard);
+        await expect(scope.assertOwnership(missionId, producerGuard)).rejects.toMatchObject({
+          code: "MISSION_FENCING_REJECTED",
+        });
+        const mission = { id: missionId } as Mission;
+        const terminal = vi.fn(
+          async ({
+            guard,
+          }: {
+            guard?: Parameters<typeof scope.assertOwnership>[1] | undefined;
+          }) => {
+            expect(guard!.fencingToken).not.toBe(producerGuard.fencingToken);
+            await scope.assertOwnership(missionId, guard!);
+          },
+        );
+        const materialize = createMissionTerminalMaterializer({
+          ownerScope: scope,
+          ownerLifetime: "host",
+          withAdmission: async (_id, operation) => await operation(),
+          missions: { get: async () => mission } as unknown as MissionStore,
+          executions: {
+            get: async () => ({ output: { type: "inline", value: "answer" } }),
+          } as unknown as DurableExecutionStore,
+          projector: { terminal, link: async () => undefined },
+          memory: async () => undefined,
+        });
+        await materialize(mission, "execution", "request", "succeeded", "terminal");
+        expect(terminal).toHaveBeenCalledOnce();
+        await scope.runWithoutGuard(async () => await scope.release(missionId));
+        expect(scope.currentGuard(missionId)).toBeUndefined();
+        await expect(scope.assertOwnership(missionId, producerGuard)).rejects.toMatchObject({
+          code: "MISSION_FENCING_REJECTED",
+        });
+      });
+    } finally {
+      await scope.stop(missionId);
+      await rm(root, { recursive: true, force: true });
+    }
+  });
   it("drains an idle recovery read before stop returns and prevents reacquisition", async () => {
     const root = await mkdtemp(join(tmpdir(), "pragma-owner-recovery-stop-"));
     const controller = createMissionControllerStore({ missionsPath: root });

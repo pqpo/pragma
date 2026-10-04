@@ -5,7 +5,6 @@ import { join } from "node:path";
 import type { RuntimeResolver } from "@pragma/core";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { createLocalHostMissionReadPorts } from "../../src/missions/read-ports.ts";
 import { createMissionControllerStore } from "../../src/missions/controller/mission-controller-store.ts";
 import { createMissionStore } from "../../src/missions/repository/mission-store.ts";
 import { createLocalHostNodeApplication } from "../../src/node-application.ts";
@@ -18,7 +17,7 @@ afterEach(async () => {
   );
 });
 
-describe("Shared Mission read ports in the injected Desktop facade", () => {
+describe("Shared Mission read ports in the Node application", () => {
   it("reads controller-only history through get/list/query/watch/Board without inventing a full Mission", async () => {
     const home = await mkdtemp(join(tmpdir(), "pragma-desktop-sparse-read-"));
     roots.push(home);
@@ -48,7 +47,6 @@ describe("Shared Mission read ports in the injected Desktop facade", () => {
       missionsPath,
       missionPath: repository.storagePath,
     });
-    const read = createLocalHostMissionReadPorts({ pragmaHome: home, repository, controller });
     const runtimeAccess = vi.fn(async () => {
       throw new Error("Read ports must not dispatch a Runtime");
     });
@@ -65,17 +63,7 @@ describe("Shared Mission read ports in the injected Desktop facade", () => {
         access: async () => undefined,
         realpath: async (path) => path,
       },
-      application: {
-        catalog: {
-          listProjects: async () => [],
-          getProjectRevision: async () => undefined,
-          listExecutors: async () => [],
-        },
-        missions: read.missions,
-        board: read.board,
-        watch: read.watch,
-        assertMission: read.assertMission,
-      },
+      client: { surface: "desktop", version: "test", instanceId: "read-ports-test" },
     });
     expect(
       ((await host.getMission(missionId)) as Awaited<ReturnType<typeof controller.readSnapshot>>)

@@ -67,6 +67,36 @@ beforeEach(() => {
 });
 
 describe("shared Host Mission Memory lifecycle", () => {
+  it("settles background receipt pause outside the Memory state lock", async () => {
+    const onPause = vi.fn(async () => await memory.complete("released", "execution"));
+    const memory: ReturnType<typeof createLocalHostRunMemory> = createLocalHostRunMemory({
+      pragmaHome: "/unused-memory-lifetime-fixture",
+      onPause,
+    });
+    await memory.pause();
+    expect(onPause).toHaveBeenCalledOnce();
+    await memory.close();
+  });
+  it("settles explicit shutdown receipts outside the Memory state lock before closing the source", async () => {
+    let sourceWasOpen = false;
+    const beforeFeedClose = vi.fn(async () => {
+      await memory.complete("released", "execution");
+      expect(await memory.canonical.inspect()).toBeDefined();
+      sourceWasOpen = true;
+    });
+    const home = await mkdtemp(join(tmpdir(), "pragma-receipt-shutdown-"));
+    const memory: ReturnType<typeof createLocalHostRunMemory> = createLocalHostRunMemory({
+      pragmaHome: home,
+      beforeFeedClose,
+    });
+    try {
+      await memory.close();
+      expect(sourceWasOpen).toBe(true);
+      expect(beforeFeedClose).toHaveBeenCalledOnce();
+    } finally {
+      await rm(home, { recursive: true, force: true });
+    }
+  });
   it("opens the real canonical worker with logger and close callbacks kept in the Host", async () => {
     const home = await mkdtemp(join(tmpdir(), "pragma-run-memory-worker-"));
     const beforeFeedClose = vi.fn(async () => undefined);

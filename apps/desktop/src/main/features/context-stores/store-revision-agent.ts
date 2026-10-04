@@ -1,3 +1,4 @@
+import { waitForInternalMissionTerminal } from "@pragma/local-host";
 import type { LocalHostSystemExecutorSource } from "@pragma/local-host";
 import { createHash } from "node:crypto";
 import { mkdir } from "node:fs/promises";
@@ -14,8 +15,8 @@ import type {
 
 import type { ContextStoreRevisionProfile } from "../../../shared/contracts/index.ts";
 import { resolveSystemExpertRuntimeDefaults } from "../experts/system-expert-runtime.ts";
-import type { MissionRunner } from "../missions/mission-runner.ts";
-import type { MissionStore } from "../missions/mission-store.ts";
+import type { LocalHostMissionApplication } from "@pragma/local-host";
+import type { MissionStore } from "@pragma/local-host";
 import type { PragmaProjectStore } from "../projects/pragma-project-store.ts";
 import type { ContextStoreRevisionGenerator } from "./context-store-revision-service.ts";
 
@@ -34,7 +35,7 @@ export interface DesktopStoreRevisionAgent {
 
 export function createDesktopStoreRevisionAgent(options: {
   readonly missions: MissionStore;
-  readonly runner: MissionRunner;
+  readonly application: LocalHostMissionApplication;
   readonly project: PragmaProjectStore;
   readonly runtimes: RuntimeResolver;
   readonly pragmaHome: string;
@@ -93,8 +94,12 @@ export function createDesktopStoreRevisionAgent(options: {
         ],
       });
       await options.onMissionCreated?.({ jobId: input.jobId, missionId: mission.id });
-      await options.runner.run(mission.id);
-      await waitForMission(options.missions, mission.id);
+      await options.application.startRun(mission.id);
+      await waitForInternalMissionTerminal({
+        getMission: (id) => options.missions.get(id),
+        missionId: mission.id,
+        timeoutMessage: "store_revision_agent_timeout",
+      });
       const finished = await options.missions.get(mission.id);
       if (finished.execution?.status !== "succeeded") {
         throw new Error(`store_revision_agent_failed:${finished.execution?.error ?? "unknown"}`);
@@ -168,19 +173,4 @@ export function createDesktopStoreRevisionAgent(options: {
     generator,
   };
   return agent;
-}
-
-async function waitForMission(missions: MissionStore, id: string): Promise<void> {
-  const deadline = Date.now() + 10 * 60_000;
-  while (Date.now() < deadline) {
-    const mission = await missions.get(id);
-    if (
-      mission.execution !== undefined &&
-      ["succeeded", "failed", "cancelled"].includes(mission.execution.status)
-    ) {
-      return;
-    }
-    await new Promise<void>((resolve) => setTimeout(resolve, 200));
-  }
-  throw new Error("store_revision_agent_timeout");
 }

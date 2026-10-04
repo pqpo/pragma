@@ -67,7 +67,7 @@ export interface MissionCommandOutcomeNotification {
   readonly error?: IntegrationError | undefined;
 }
 
-export interface MissionRunner {
+export interface MissionExecutionUseCases {
   notifyProjectionChanged?(missionId: string): void;
   markDeliveryDegraded?(missionId: string): void;
   markDeliveryRecovered?(missionId: string): void;
@@ -76,8 +76,8 @@ export interface MissionRunner {
   invalidateEstimatedContextWindows(): Promise<void>;
   refreshMemoryContextBindings(): Promise<void>;
   get(id: string): Promise<Mission>;
-  run(id: string): Promise<Mission>;
-  recover(id: string, expectedExecutionId?: string): Promise<Mission>;
+  startRun(id: string): Promise<Mission>;
+  recoverMission(id: string, expectedExecutionId?: string): Promise<Mission>;
   startLocalHostRun(input: {
     readonly request: LocalHostRunRequest;
     readonly executor: ResolvedRunExecutor;
@@ -186,7 +186,10 @@ export interface MissionRunner {
 }
 
 export async function readMissionConversationSnapshot(
-  runner: Pick<MissionRunner, "getChatPage" | "getConversationState" | "getContextWindow">,
+  runner: Pick<
+    MissionExecutionUseCases,
+    "getChatPage" | "getConversationState" | "getContextWindow"
+  >,
   id: string,
 ): Promise<MissionConversationSnapshot> {
   const page = await runner.getChatPage({ id, limit: 50 });

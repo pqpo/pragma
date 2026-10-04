@@ -12,13 +12,13 @@ import {
 
 import type { Mission } from "../../../shared/contracts/index.ts";
 import type { MissionCreator } from "../missions/mission-creator.ts";
-import type { MissionRunner } from "../missions/mission-runner.ts";
-import type { MissionStore } from "../missions/mission-store.ts";
+import type { LocalHostMissionApplication } from "@pragma/local-host";
+import type { MissionStore } from "@pragma/local-host";
 import { paginateManagementItems } from "./management-pagination.ts";
 
 export function createDesktopPragmaAgentMissionPort(options: {
   readonly missions: MissionStore;
-  readonly runner: MissionRunner;
+  readonly application: LocalHostMissionApplication;
   readonly creator: MissionCreator;
   readonly stateRoot: string;
 }): PragmaAgentMissionPort {
@@ -76,7 +76,7 @@ export function createDesktopPragmaAgentMissionPort(options: {
         if (storedId !== undefined) {
           const stored = await options.missions.get(storedId);
           return toMission(
-            stored.execution === undefined ? await options.runner.run(stored.id) : stored,
+            stored.execution === undefined ? await options.application.startRun(stored.id) : stored,
           );
         }
         const contextStoreIds = input.contextStoreIds ?? [];
@@ -90,13 +90,13 @@ export function createDesktopPragmaAgentMissionPort(options: {
           })),
         });
         await writeOperation(path, mission.id);
-        return toMission(await options.runner.run(mission.id));
+        return toMission(await options.application.startRun(mission.id));
       });
     },
     async sendMessage(input) {
       return toMission(
         (
-          await options.runner.sendMessage({
+          await options.application.sendMessage({
             id: input.missionId,
             content: input.content,
             requestId: deterministicUuid(input.operationId),
@@ -108,7 +108,7 @@ export function createDesktopPragmaAgentMissionPort(options: {
       const query = input.query?.trim().toLocaleLowerCase();
       const kinds = input.kinds === undefined ? undefined : new Set(input.kinds);
       const statuses = input.statuses === undefined ? undefined : new Set(input.statuses);
-      const all = (await options.runner.getWork(input.missionId)).records
+      const all = (await options.application.getWork(input.missionId)).records
         .map((record): PragmaAgentMissionWorkItem => ({
           workItemId: record.recordId,
           kind: record.kind,
@@ -142,7 +142,7 @@ export function createDesktopPragmaAgentMissionPort(options: {
       });
     },
     async getWorkItem(missionId, workItemId) {
-      const record = (await options.runner.getWork(missionId)).records.find(
+      const record = (await options.application.getWork(missionId)).records.find(
         (candidate) => candidate.recordId === workItemId,
       );
       if (record === undefined) throw new Error(`Mission work item not found: ${workItemId}`);
@@ -159,7 +159,7 @@ export function createDesktopPragmaAgentMissionPort(options: {
       };
     },
     async interrupt(id) {
-      return toMission(await options.runner.interrupt(id));
+      return toMission(await options.application.interrupt(id));
     },
   };
 }

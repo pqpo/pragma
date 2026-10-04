@@ -1,3 +1,6 @@
+import { waitForInternalMissionRetry } from "@pragma/local-host";
+import { cleanupInternalMission } from "@pragma/local-host";
+import { waitForInternalMissionTerminal } from "@pragma/local-host";
 import type { LocalHostSystemExecutorSource } from "@pragma/local-host";
 import { createHash, randomUUID } from "node:crypto";
 import { mkdir, readFile, readdir, rename, rm, stat, writeFile } from "node:fs/promises";
@@ -28,8 +31,8 @@ import {
 } from "@pragma/memory";
 import type { MemoryExtractionFailureDiagnostic } from "@pragma/shared";
 
-import { type MissionRunner } from "../missions/mission-runner.ts";
-import { MissionStoreError, type MissionStore } from "../missions/mission-store.ts";
+import type { LocalHostMissionApplication } from "@pragma/local-host";
+import { MissionStoreError, type MissionStore } from "@pragma/local-host";
 import type { PragmaProjectStore } from "../projects/pragma-project-store.ts";
 import { z } from "zod";
 import type {
@@ -78,7 +81,7 @@ export interface DesktopMemoryCurator {
 export function createDesktopMemoryCurator(options: {
   readonly profiles: MemoryExtractorProfileStore;
   readonly missions: MissionStore;
-  readonly runner: MissionRunner;
+  readonly application: LocalHostMissionApplication;
   readonly project: PragmaProjectStore;
   readonly runtimes: RuntimeResolver;
   readonly workspace: string;
@@ -101,7 +104,7 @@ export function createDesktopMemoryCurator(options: {
   });
   const activeRuns = new Map<string, DesktopMemoryExtractionRun>();
   const runChatListeners = new Set<(update: DesktopMemoryExtractionRunChatUpdate) => void>();
-  options.runner.subscribeChat(({ update }) => {
+  options.application.subscribeChat(({ update }) => {
     const run = activeRuns.get(update.missionId);
     if (run === undefined) return;
     const wrapped = { module: run.module, jobId: run.jobId, runId: run.runId, update };
@@ -217,14 +220,14 @@ export function createDesktopMemoryCurator(options: {
     async getRunChat(runId) {
       const active = [...activeRuns.values()].find((run) => run.runId === runId);
       if (active !== undefined) {
-        return await options.runner.getInternalConversationSnapshot(active.missionId);
+        return await options.application.getInternalConversationSnapshot(active.missionId);
       }
       const archived = await runArchive.get(runId);
       if (archived === undefined) return undefined;
       if (archived.status === "succeeded" && archived.chat !== undefined) return archived.chat;
       // Failed reads can recover later. Prefer the retained execution over an incomplete archive.
       try {
-        return await options.runner.getInternalConversationSnapshot(archived.missionId);
+        return await options.application.getInternalConversationSnapshot(archived.missionId);
       } catch (error) {
         if (archived.chat === undefined) throw error;
         return archived.chat;
@@ -278,7 +281,13 @@ export function createDesktopMemoryCurator(options: {
         )
           continue;
 
-        if (await cleanupCuratorMission(options.runner, entry.missionId)) {
+        if (
+          await cleanupInternalMission({
+            missionId: entry.missionId,
+            deleteMission: (id) => options.application.delete(id),
+            interruptMission: (id) => options.application.interrupt(id),
+          })
+        ) {
           await unregisterCuratorMission(options.pragmaHome, entry.missionId);
           recovered += 1;
         }
@@ -296,7 +305,7 @@ export function createDesktopMemoryCurator(options: {
 async function runCuratorMission(input: {
   readonly options: Pick<
     Parameters<typeof createDesktopMemoryCurator>[0],
-    "project" | "missions" | "runner" | "workspace" | "pragmaHome" | "loggerProvider"
+    "project" | "missions" | "application" | "workspace" | "pragmaHome" | "loggerProvider"
   >;
   readonly runtime: {
     readonly runtimeId: string;
@@ -369,7 +378,7 @@ async function runCuratorMission(input: {
   let resultReadRequested = false;
   let resultChat: MissionConversationSnapshot | undefined;
   const interrupt = (): void => {
-    void input.options.runner.interrupt(mission.id).catch(() => undefined);
+    void input.options.application.interrupt(mission.id).catch(() => undefined);
   };
   input.signal?.addEventListener("abort", interrupt, { once: true });
   try {
@@ -377,11 +386,16 @@ async function runCuratorMission(input: {
     input.signal?.throwIfAborted();
     // Once admitted, provider execution/billing may have happened even if a later read fails.
     executionRequested = true;
-    await input.options.runner.run(mission.id);
-    await waitForMission(input.options.missions, mission.id, input.signal);
+    await input.options.application.startRun(mission.id);
+    await waitForInternalMissionTerminal({
+      getMission: (id) => input.options.missions.get(id),
+      missionId: mission.id,
+      timeoutMessage: "memory_curator_timeout",
+      signal: input.signal,
+    });
     const finished = await input.options.missions.get(mission.id);
     if (finished.execution?.status !== "succeeded") {
-      const runtimeFailure = await input.options.runner.getTerminalRuntimeFailure(mission.id);
+      const runtimeFailure = await input.options.application.getTerminalRuntimeFailure(mission.id);
       const message =
         runtimeFailure?.message ?? finished.execution?.error ?? "Memory Curator failed.";
       const error = Object.assign(new Error(message), {
@@ -402,7 +416,7 @@ async function runCuratorMission(input: {
     }
     resultReadRequested = true;
     const { content, runtimeOutput } = await readCuratorResultWithRetry(
-      input.options.runner,
+      input.options.application,
       mission.id,
       (snapshot) => {
         resultChat = snapshot;
@@ -445,7 +459,7 @@ async function runCuratorMission(input: {
     input.signal?.removeEventListener("abort", interrupt);
     const chat = resultReadRequested
       ? resultChat
-      : await input.options.runner
+      : await input.options.application
           .getInternalConversationSnapshot(mission.id)
           .catch(() => undefined);
     let archived = false;
@@ -472,7 +486,11 @@ async function runCuratorMission(input: {
       archived &&
       chat !== undefined &&
       finalStatus === "succeeded" &&
-      (await cleanupCuratorMission(input.options.runner, mission.id))
+      (await cleanupInternalMission({
+        missionId: mission.id,
+        deleteMission: (id) => input.options.application.delete(id),
+        interruptMission: (id) => input.options.application.interrupt(id),
+      }))
     ) {
       await unregisterCuratorMission(pragmaHome, mission.id).catch((error: unknown) => {
         logger.warn(
@@ -528,7 +546,7 @@ function redactCuratorDiagnosticText(value: string): string {
 
 /** Retry only reads of the completed execution; never rerun the model for a read failure. */
 async function readCuratorResultWithRetry(
-  runner: MissionRunner,
+  application: LocalHostMissionApplication,
   missionId: string,
   onSnapshot: (snapshot: MissionConversationSnapshot) => void,
   signal?: AbortSignal,
@@ -536,61 +554,21 @@ async function readCuratorResultWithRetry(
   for (let attempt = 0; ; attempt += 1) {
     signal?.throwIfAborted();
     try {
-      const chat = await runner.getInternalConversationSnapshot(missionId);
+      const chat = await application.getInternalConversationSnapshot(missionId);
       onSnapshot(chat);
       const content = chat.entries
         .filter((entry) => entry.kind === "assistant")
         .map((entry) => entry.content)
         .at(-1);
       if (content === undefined) throw new Error("memory_curator_output_missing");
-      const runtimeOutput = await runner.getTerminalRuntimeOutputDiagnostic(missionId);
+      const runtimeOutput = await application.getTerminalRuntimeOutputDiagnostic(missionId);
       return { content, runtimeOutput };
     } catch (error) {
       signal?.throwIfAborted();
       if (attempt >= 3) throw error;
-      await new Promise<void>((resolve, reject) => {
-        const abort = (): void => {
-          clearTimeout(timer);
-          reject(signal?.reason ?? new DOMException("Aborted", "AbortError"));
-        };
-        const timer = setTimeout(() => {
-          signal?.removeEventListener("abort", abort);
-          resolve();
-        }, 5_000);
-        signal?.addEventListener("abort", abort, { once: true });
-      });
+      await waitForInternalMissionRetry(5_000, signal);
     }
   }
-}
-
-async function waitForMission(
-  missions: MissionStore,
-  id: string,
-  signal?: AbortSignal,
-): Promise<void> {
-  const deadline = Date.now() + 10 * 60_000;
-  while (Date.now() < deadline) {
-    signal?.throwIfAborted();
-    const mission = await missions.get(id);
-    if (
-      mission.execution !== undefined &&
-      ["succeeded", "failed", "cancelled"].includes(mission.execution.status)
-    ) {
-      return;
-    }
-    await new Promise<void>((resolve, reject) => {
-      const timer = setTimeout(() => {
-        signal?.removeEventListener("abort", abort);
-        resolve();
-      }, 200);
-      const abort = (): void => {
-        clearTimeout(timer);
-        reject(signal?.reason ?? new DOMException("Aborted", "AbortError"));
-      };
-      signal?.addEventListener("abort", abort, { once: true });
-    });
-  }
-  throw new Error("memory_curator_timeout");
 }
 
 async function createFingerprint(profile: MemoryExtractorProfile): Promise<string> {
@@ -604,19 +582,6 @@ async function createFingerprint(profile: MemoryExtractorProfile): Promise<strin
       }),
     )
     .digest("hex");
-}
-
-async function cleanupCuratorMission(runner: MissionRunner, missionId: string): Promise<boolean> {
-  try {
-    await runner.delete(missionId);
-    return true;
-  } catch {
-    await runner.interrupt(missionId).catch(() => undefined);
-    return await runner
-      .delete(missionId)
-      .then(() => true)
-      .catch(() => false);
-  }
 }
 
 async function registerCuratorMission(

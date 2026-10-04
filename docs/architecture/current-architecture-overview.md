@@ -86,9 +86,10 @@ R1 已经 PR #353 合入 main，工程验证与真实 Native Mission smoke 已�
 仍缺验收证据，不能标记 R1 全部完成。R2 实施与逐项验证见
 [R2 报告](local-host-kernel-r2-implementation.md)，阶段退出以该报告的实测结果和剩余缺口为准。
 
-Desktop 仍通过 `runExecutor` 注入首轮执行；完整 run/session/recovery 归 R3，内部调用和旧 Runner
-出口清理归 R4。它们继续通过 R1 的同一个 `MissionExecutionOwner` 访问 Session、generation 和
-admission。Desktop metadata cache 属于展示层；本次 R2 未扩大到 R3/R4。
+R1–R3 已通过 #353/#354/#355 合入。Desktop 与 Node/CLI 使用 Local Host 同一 Mission application
+factory 和 `MissionExecutionOwner`，共用首轮执行、Session、恢复与 admission；内部调用也依赖共享用例。
+已删除 `runExecutor`、完整 application override、旧 Runner 和纯业务转发出口。Desktop metadata cache
+属于展示层。工程验证与真实模型、OS 凭据、完整产品性能验收分别记录在 [R4 报告](local-host-kernel-r4-implementation.md)。
 
 同一 Mission 的 mutation 由持久 `MissionControllerLease` 和单调 fencing token 协调。非 owner 的
 `send`、`steer`、`respond`、`interrupt` 与 queue mutation 写入持久 `MissionCommandInbox`；提交使用
@@ -185,3 +186,15 @@ stable journal、备份与原子替换保证恢复。业务 parser 只接受当�
 - [Mission Board](../articles/03-mission-board.md)
 - [Memory](../usage/memory.md)
 - [Execution SDK](../Execution-SDK-Design.md)
+
+## Issue #348 R4：共享 Mission application
+
+Desktop Main 与 CLI 通过 Local Host 同一 Mission application factory 构造控制、编译与执行内核。
+Automation、Pragma、Memory Curator、Store/Skill Revision、Evaluation 与 IPC mutation 使用共享用例。
+Desktop 保留平台资源、审批、展示、Electron 与 IPC adapter；CLI 保留 argv、TTY、presentation 和 Runtime composition。
+不得注入完整 command/run/execution service 恢复双内核。通用耐久投递编排归 Local Host，产品 payload 与通知归 Desktop。
+
+CLI 测试入口执行完整 Local Host 业务门禁；Desktop/CLI composition 验证证明实际接入该实现。
+Desktop 的 UI、IPC、平台和打包测试继续独立。
+[ADR 066](../adr/066-unified-local-host-mission-application.md) 与 [R4 验证报告](local-host-kernel-r4-implementation.md)
+区分代码收敛、工程门禁与仍需真实模型/OS 凭据/完整产品场景的验收。
