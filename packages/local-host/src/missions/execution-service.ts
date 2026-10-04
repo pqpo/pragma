@@ -1023,7 +1023,12 @@ export function createLocalHostMissionExecutionService(
           if (projectedIndex >= 0) {
             nextPrompt = queue
               .slice(projectedIndex + 1)
-              .find((prompt) => prompt.mode === "enqueue" && isFinalExecutionStatus(prompt.status));
+              .find(
+                (prompt) =>
+                  prompt.mode === "enqueue" &&
+                  prompt.deliveryAttempt?.kind !== "queue_steer" &&
+                  isFinalExecutionStatus(prompt.status),
+              );
           }
         }
       }
@@ -1687,10 +1692,21 @@ export function createLocalHostMissionExecutionService(
         enabled: true,
         admit: (operation) => withMissionPromptAdmission(missionId, operation),
         isCurrent: async () => {
+          const current = lifecycleService.active(missionId);
           if (
-            lifecycleService.active(missionId) !== activeExecution ||
+            (current !== undefined && current !== activeExecution) ||
             sessionService.session(missionId) !== requestSession ||
             sessionService.executionContext(missionId) !== requestContext
+          )
+            return false;
+          // Observer detachment is independent of native/lease release. It can
+          // finish while this callback waits for admission, so absence is safe
+          // only while the latest durable execution still belongs to this turn.
+          const latest = await options.missions.get(missionId);
+          if (latest.execution?.id !== input.handle.executionId) return false;
+          if (
+            requestSession !== undefined &&
+            (await requestSession.getState()).executionIds.at(-1) !== input.handle.executionId
           )
             return false;
           // Explicit resume owns its receipt and lease release. A recovered
@@ -1737,6 +1753,8 @@ export function createLocalHostMissionExecutionService(
           }
         },
         releaseSession: async () => {
+          if (requestGuard !== undefined)
+            await options.ownerScope!.assertOwnership(missionId, requestGuard);
           if (requestSession !== undefined)
             await executionKernel.release({ kind: "session", session: requestSession }, "idle");
           else if (input.mission.executor.kind === "flow")
@@ -2599,8 +2617,7 @@ export function createLocalHostMissionExecutionService(
       assertReady: async (mission, scope) => {
         await options.assertExecutorReady?.(mission.executor.ref, scope);
       },
-      startInitialRun: (mission) =>
-        runMission(mission.id, lifecycleService.runGeneration(mission.id)),
+      startInitialRun: (mission) => startMission(mission.id),
       prepare: prepareMissionMessage,
       forgetSession: (id) => {
         sessionService.deleteSession(id);

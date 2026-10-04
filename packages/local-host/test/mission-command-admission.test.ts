@@ -78,6 +78,58 @@ function fixture() {
   };
 }
 describe("Local Host message admission", () => {
+  it("leaves admission before coalescing the initial run and rereads before dispatch", async () => {
+    const f = fixture();
+    let reservationOwned = false;
+    let initialized = false;
+    let initialRuns = 0;
+    let missionReads = 0;
+    const mission = {
+      id: missionId,
+      lifecycleStatus: "active",
+      executor: { kind: "expert" },
+    };
+    const options = {
+      ...f.options,
+      getMission: async () => {
+        missionReads += 1;
+        return initialized ? { ...mission, execution: { id: "initial-execution" } } : mission;
+      },
+      admit: <T>(id: string, operation: () => Promise<T>) =>
+        f.owner.admit(id, async () => {
+          reservationOwned = true;
+          try {
+            return await operation();
+          } finally {
+            reservationOwned = false;
+          }
+        }),
+      startInitialRun: async () => {
+        expect(reservationOwned).toBe(false);
+        const start = () =>
+          f.owner.startRun(
+            missionId,
+            async () =>
+              await f.owner.admit(missionId, async () => {
+                initialRuns += 1;
+                initialized = true;
+              }),
+          );
+        // A simultaneously attached initial run must share the same start.
+        await Promise.all([start(), start()]);
+      },
+    };
+    await createLocalHostMissionCommandAdmission(options)({
+      id: missionId,
+      requestId,
+      content: "Followup before initial run",
+    });
+    expect(initialRuns).toBe(1);
+    expect(missionReads).toBe(2);
+    expect(f.dispatch).toHaveBeenCalledOnce();
+    expect(f.project).toHaveBeenCalledOnce();
+  });
+
   it("rolls back optional resources when Core rejects without masking the original error", async () => {
     const f = fixture();
     const coreFailure = new Error("Core rejected the prompt");

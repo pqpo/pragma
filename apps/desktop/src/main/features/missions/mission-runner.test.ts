@@ -20,6 +20,7 @@ import { orderMissionChatEntries } from "../../../shared/mission-conversation-or
 import {
   createFileExpertSessionStore,
   createNoopLoggerProvider,
+  createLoggerProvider,
   createStaticRuntimeResolver,
   defineExpert,
   defineExpertTeam,
@@ -6078,11 +6079,32 @@ describe("MissionRunner", { timeout: 30_000 }, () => {
         mapEvent: () => ({ events: [] }),
         closeSession: () => undefined,
       });
+      let capturedSession: ExpertSession | undefined;
+      if (mode === "queued") {
+        const create = ExpertSessionManager.prototype.createSession;
+        vi.spyOn(ExpertSessionManager.prototype, "createSession").mockImplementation(
+          async function (this: ExpertSessionManager, expert, options) {
+            capturedSession = await create.call(this, expert, options);
+            return capturedSession;
+          },
+        );
+      }
+      const settledExecutions = new Set<string>();
+      const loggerProvider = createLoggerProvider({
+        handler: {
+          write(record) {
+            const executionId = record.attributes?.["executionId"];
+            if (record.event === "mission.observer_settled" && typeof executionId === "string")
+              settledExecutions.add(executionId);
+          },
+        },
+      });
       const readinessCheck = vi.fn(async () => undefined);
       const runner = createMissionRunner({
         missions,
         project,
         assertExecutorReady: readinessCheck,
+        loggerProvider,
         capabilityStore: {} as CapabilityStore,
         capabilityCredentials: {} as CapabilityCredentialStore,
         capabilitiesPath: join(root, "capabilities"),
@@ -6218,11 +6240,61 @@ describe("MissionRunner", { timeout: 30_000 }, () => {
           );
         }
 
+        if (mode === "queued") {
+          const updateExecution = missions.updateExecution.bind(missions);
+          vi.spyOn(missions, "updateExecution").mockImplementation(
+            async (id, execution, options) => {
+              if (execution.id === activeExecutionId && execution.status === "succeeded") {
+                // Real storage can finish after Core clears its active turn. Force
+                // that ordering so terminal queue catch-up must inspect receipts.
+                await capturedSession!.waitForPromptProcessing();
+                expect((await capturedSession!.getState()).activeExecutionId).toBeUndefined();
+              }
+              return await updateExecution(id, execution, options);
+            },
+          );
+        }
         finishFirstTurn();
+        if (mode === "queued") {
+          await vi.waitFor(() => expect(settledExecutions.has(activeExecutionId)).toBe(true), {
+            timeout: settlementTimeoutMs,
+          });
+          await expect(missions.get(mission.id)).resolves.toMatchObject({
+            execution: { id: activeExecutionId, status: "succeeded" },
+          });
+        }
         await vi.waitFor(
           async () => expect((await missions.get(mission.id)).execution?.status).toBe("succeeded"),
           { timeout: settlementTimeoutMs },
         );
+        if (mode === "queued") {
+          await capturedSession!.waitForPromptProcessing();
+          const receipt = (await capturedSession!.getPromptQueue()).find(
+            (prompt) => prompt.requestId === requestId,
+          )!;
+          expect(receipt).toMatchObject({
+            status: "succeeded",
+            deliveryAttempt: {
+              kind: "queue_steer",
+              state: "confirmed",
+              targetExecutionId: activeExecutionId,
+            },
+          });
+          const executionStore = createSqliteExecutionStore({ pragmaHome: join(root, "state") });
+          try {
+            await expect(executionStore.get(activeExecutionId)).resolves.toMatchObject({
+              status: "succeeded",
+            });
+            await expect(
+              executionStore.get(receipt.deliveryAttempt!.sourceExecutionId!),
+            ).resolves.toMatchObject({ status: "cancelled" });
+          } finally {
+            await executionStore.close();
+          }
+          await expect(missions.get(mission.id)).resolves.toMatchObject({
+            execution: { id: activeExecutionId, status: "succeeded" },
+          });
+        }
         const settled = await readMissionConversationSnapshot(runner, mission.id);
         expect(settled.entries.find((entry) => entry.id === requestId)?.createdAt).toBe(
           steerEntry.createdAt,

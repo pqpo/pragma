@@ -41,10 +41,7 @@
       "exitCode": 1,
       "elapsedSeconds": 6.709,
       "logSha256": "29e492d9e2619fc62d8cf50a2a85878540da7b28e8c9979e87e812bfdda1f352",
-      "testSummary": [
-        "Test Files  1 passed (1)",
-        "Tests  2 passed | 17 skipped (19)"
-      ],
+      "testSummary": ["Test Files  1 passed (1)", "Tests  2 passed | 17 skipped (19)"],
       "unhandledErrorCount": 2
     },
     {
@@ -64,10 +61,7 @@
       "exitCode": 0,
       "elapsedSeconds": 23.109,
       "logSha256": "d786f91a863d71ce2c804d40fe99fda39a9e5ba201b9c473ea5d2d144c8889fc",
-      "testSummary": [
-        "Test Files  1 passed (1)",
-        "Tests  19 passed (19)"
-      ],
+      "testSummary": ["Test Files  1 passed (1)", "Tests  19 passed (19)"],
       "unhandledErrorCount": 0
     },
     {
@@ -89,18 +83,12 @@
       "exitCode": 0,
       "elapsedSeconds": 39.426,
       "logSha256": "dda85625b91645107aa4b3839bb14a7249ae9715055f47e92ba38d15851c9a0b",
-      "testSummary": [
-        "Test Files  1 passed (1)",
-        "Tests  1 passed | 19 skipped (20)"
-      ],
+      "testSummary": ["Test Files  1 passed (1)", "Tests  1 passed | 19 skipped (20)"],
       "unhandledErrorCount": 0
     },
     {
       "label": "pr355-flow-rejection-check",
-      "command": [
-        "pnpm",
-        "check"
-      ],
+      "command": ["pnpm", "check"],
       "exitCode": 0,
       "elapsedSeconds": 161.416,
       "logSha256": "913b2891c2bd535274ef228874ac8ff0a9ac2b56fc06c68faa799a26aff934ba",
@@ -132,10 +120,7 @@
     },
     {
       "label": "pr355-flow-rejection-build",
-      "command": [
-        "pnpm",
-        "build"
-      ],
+      "command": ["pnpm", "build"],
       "exitCode": 0,
       "elapsedSeconds": 93.109,
       "logSha256": "c03fb461b40d64d5be1569b04fd13e630c85be18f156c800ecd7a3b12b35321c",
@@ -184,10 +169,7 @@
         "exitCode": 1,
         "elapsedSeconds": 6.712,
         "logSha256": "8b0bb4910d679c910a48610b1e7689b1544b0c990618eb18e5bbcbd86b080d6e",
-        "testSummary": [
-          "Test Files  1 passed (1)",
-          "Tests  2 passed | 17 skipped (19)"
-        ],
+        "testSummary": ["Test Files  1 passed (1)", "Tests  2 passed | 17 skipped (19)"],
         "unhandledErrorCount": 2
       },
       {
@@ -207,20 +189,12 @@
         "exitCode": 0,
         "elapsedSeconds": 23.675,
         "logSha256": "82863afa5a9a83a2ba8dc90f957e53f6b87d1488e5f2d56da22ece6815291750",
-        "testSummary": [
-          "Test Files  1 passed (1)",
-          "Tests  19 passed (19)"
-        ],
+        "testSummary": ["Test Files  1 passed (1)", "Tests  19 passed (19)"],
         "unhandledErrorCount": 0
       },
       {
         "label": "pr355-flow-rejection-barrier-lint",
-        "command": [
-          "pnpm",
-          "--filter",
-          "@pragma/local-host",
-          "lint"
-        ],
+        "command": ["pnpm", "--filter", "@pragma/local-host", "lint"],
         "exitCode": 0,
         "elapsedSeconds": 6.976,
         "logSha256": "936063115685f2a10a2aa36b4b868c5c18ebf6188a2052f0fef95c1299b5f2e4",
@@ -229,12 +203,7 @@
       },
       {
         "label": "pr355-flow-rejection-barrier-typecheck",
-        "command": [
-          "pnpm",
-          "--filter",
-          "@pragma/local-host",
-          "typecheck"
-        ],
+        "command": ["pnpm", "--filter", "@pragma/local-host", "typecheck"],
         "exitCode": 0,
         "elapsedSeconds": 10.228,
         "logSha256": "ba1e06f0cdbfdac5182aaba557117e30b62b08cd5ee796fb68d723fa5efa6f17",
@@ -243,13 +212,7 @@
       },
       {
         "label": "pr355-flow-rejection-lifecycle",
-        "command": [
-          "env",
-          "CI=true",
-          "PRAGMA_LOG_LEVEL=error",
-          "pnpm",
-          "test:mission-lifecycle"
-        ],
+        "command": ["env", "CI=true", "PRAGMA_LOG_LEVEL=error", "pnpm", "test:mission-lifecycle"],
         "exitCode": 0,
         "elapsedSeconds": 404.377,
         "logSha256": "50e14ee0b0ad4b7bc0b62443786d394ea65dea6831db6ab8203c2b32f47c9b7d",
@@ -263,13 +226,7 @@
       },
       {
         "label": "pr355-flow-rejection-revision",
-        "command": [
-          "env",
-          "CI=true",
-          "PRAGMA_LOG_LEVEL=error",
-          "pnpm",
-          "test:revision"
-        ],
+        "command": ["env", "CI=true", "PRAGMA_LOG_LEVEL=error", "pnpm", "test:revision"],
         "exitCode": 0,
         "elapsedSeconds": 27.483,
         "logSha256": "1be9bfc66c4206faceb54df738a953d1b887385316a1dfdb1d87c3b1ff6b8a54",
@@ -284,5 +241,315 @@
         "unhandledErrorCount": 0
       }
     ]
+  },
+  "successorObserverFollowup": {
+    "head": "0453ca0ca693f5d069d3588bc57842b7259123bf",
+    "run": 37180056543,
+    "attempt": 1,
+    "conclusion": "failure",
+    "hostAssertions": {
+      "passed": 197,
+      "failed": 1
+    },
+    "unhandledReported": false,
+    "failedTest": "changed-authority successor (controller-only=false)",
+    "diagnostic": "COMMAND_RESULT_TIMEOUT",
+    "logSha256": "517aa230d833b1a4cda35ef8c5c466168430b354263daab1abd79deeb9862b4f",
+    "events": [
+      {
+        "occurredAt": "2026-10-04T05:41:56.098Z",
+        "event": "mission.terminal_status_published",
+        "attributes": {
+          "missionId": "54e96645-3228-49b8-82ac-8eb5882a8c45",
+          "executionId": "54e888a0-9118-496a-890e-eeab5f50616f",
+          "requestId": "a5f5333e-c329-4b6a-8f03-7d968fc47138",
+          "status": "succeeded"
+        }
+      },
+      {
+        "occurredAt": "2026-10-04T05:41:56.168Z",
+        "event": "mission.observer_settled",
+        "attributes": {
+          "missionId": "54e96645-3228-49b8-82ac-8eb5882a8c45",
+          "executionId": "54e888a0-9118-496a-890e-eeab5f50616f",
+          "requestId": "a5f5333e-c329-4b6a-8f03-7d968fc47138",
+          "elapsedMs": 69.58109599999443
+        }
+      },
+      {
+        "occurredAt": "2026-10-04T05:41:56.199Z",
+        "event": "mission.control_request_entered",
+        "attributes": {
+          "missionId": "54e96645-3228-49b8-82ac-8eb5882a8c45",
+          "requestId": "a4fc779b-fa82-483c-934a-c14d13a057b4",
+          "kind": "send"
+        }
+      },
+      {
+        "occurredAt": "2026-10-04T05:41:56.274Z",
+        "event": "mission.inbox_durable",
+        "attributes": {
+          "missionId": "54e96645-3228-49b8-82ac-8eb5882a8c45",
+          "requestId": "a4fc779b-fa82-483c-934a-c14d13a057b4",
+          "commandId": "07de0a56-fe44-42a1-aa92-507da3a4b8e6",
+          "appendMs": 6.157013000003644,
+          "elapsedMs": 75.066513999991
+        }
+      },
+      {
+        "occurredAt": "2026-10-04T05:41:56.359Z",
+        "event": "mission.owner_ready",
+        "attributes": {
+          "missionId": "54e96645-3228-49b8-82ac-8eb5882a8c45",
+          "requestId": "a4fc779b-fa82-483c-934a-c14d13a057b4",
+          "outcome": "acquired",
+          "elapsedMs": 84.40069799999765
+        }
+      },
+      {
+        "occurredAt": "2026-10-04T05:41:56.700Z",
+        "event": "mission.terminal_status_published",
+        "attributes": {
+          "missionId": "54e96645-3228-49b8-82ac-8eb5882a8c45",
+          "executionId": "14db09cf-885d-4868-ba64-ddfc2d8c1544",
+          "requestId": "a4fc779b-fa82-483c-934a-c14d13a057b4",
+          "status": "succeeded"
+        }
+      },
+      {
+        "occurredAt": "2026-10-04T05:41:56.758Z",
+        "event": "mission.observer_settled",
+        "attributes": {
+          "missionId": "54e96645-3228-49b8-82ac-8eb5882a8c45",
+          "executionId": "14db09cf-885d-4868-ba64-ddfc2d8c1544",
+          "requestId": "a4fc779b-fa82-483c-934a-c14d13a057b4",
+          "elapsedMs": 58.655217000006814
+        }
+      },
+      {
+        "occurredAt": "2026-10-04T05:41:56.770Z",
+        "event": "mission.control_request_entered",
+        "attributes": {
+          "missionId": "54e96645-3228-49b8-82ac-8eb5882a8c45",
+          "requestId": "3d7b526f-af2f-4843-a54f-cd7852ed98a9",
+          "kind": "send"
+        }
+      },
+      {
+        "occurredAt": "2026-10-04T05:41:56.788Z",
+        "event": "mission.inbox_durable",
+        "attributes": {
+          "missionId": "54e96645-3228-49b8-82ac-8eb5882a8c45",
+          "requestId": "3d7b526f-af2f-4843-a54f-cd7852ed98a9",
+          "commandId": "0561b326-62b7-4cec-bbe2-823f31e0bb01",
+          "appendMs": 6.999479999998584,
+          "elapsedMs": 17.625863000008394
+        }
+      },
+      {
+        "occurredAt": "2026-10-04T05:41:56.793Z",
+        "event": "mission.owner_ready",
+        "attributes": {
+          "missionId": "54e96645-3228-49b8-82ac-8eb5882a8c45",
+          "requestId": "3d7b526f-af2f-4843-a54f-cd7852ed98a9",
+          "outcome": "live",
+          "elapsedMs": 5.166655999986688
+        }
+      }
+    ],
+    "ciUrl": "https://github.com/pqpo/pragma/actions/runs/37180056543/attempts/1",
+    "rootCause": "terminal observer detached before request release identity check; old check skipped native/lease release",
+    "productionBeforeValidation": {
+      "commit": "0453ca0ca693f5d069d3588bc57842b7259123bf",
+      "productionFiles": 1181,
+      "sourceSha256": "ccff3efa55c58dc4500caf7cf6d41210453f1d693000f4b95f5ead345bfd2dd9"
+    },
+    "deterministicValidation": [
+      {
+        "phase": "before",
+        "command": [
+          "env",
+          "CI=true",
+          "pnpm",
+          "--filter",
+          "@pragma/local-host",
+          "exec",
+          "vitest",
+          "run",
+          "test/node-compilation-execution.test.ts",
+          "-t",
+          "persists a changed-authority successor"
+        ],
+        "exitCode": 1,
+        "summary": "1 failed / 1 passed: lease retained",
+        "logSha256": "1f5d6aac5405b4e81da17c1b45c1bfd1785cd9f293816bc18b4b119694e8efd6"
+      },
+      {
+        "phase": "after",
+        "command": [
+          "env",
+          "CI=true",
+          "pnpm",
+          "--filter",
+          "@pragma/local-host",
+          "exec",
+          "vitest",
+          "run",
+          "test/node-compilation-execution.test.ts",
+          "-t",
+          "persists a changed-authority successor"
+        ],
+        "exitCode": 0,
+        "summary": "2 passed before final dispatch assertion placement",
+        "logSha256": "a74f46913c4905df28ee1ad3b4851a43b37e9fca49aaddb7b9554a6ecb72ab1f"
+      }
+    ],
+    "finalAssertions": "full lifecycle gate covers final test; original 5 second wait unchanged; lease cleared and exactly 3 native dispatches required",
+    "validation": [
+      {
+        "label": "pr355-successor-check",
+        "command": ["pnpm", "check"],
+        "exitCode": 0,
+        "elapsedSeconds": 160.568,
+        "logSha256": "91fe9f44e9a7b6b1d59e6f4af712891650390ca4a5e06e1b0a462738735f2aae",
+        "testSummary": [
+          "Test Files  13 passed (13)",
+          "Tests  64 passed (64)",
+          "Test Files  15 passed (15)",
+          "Tests  87 passed (87)",
+          "Test Files  2 passed (2)",
+          "Tests  6 passed (6)",
+          "Test Files  1 passed (1)",
+          "Tests  3 passed (3)",
+          "Test Files  2 passed (2)",
+          "Tests  7 passed (7)",
+          "Test Files  7 passed (7)",
+          "Tests  135 passed (135)",
+          "Test Files  5 passed (5)",
+          "Test Files  2 passed (2)",
+          "Tests  10 passed (10)",
+          "Tests  30 passed (30)",
+          "Test Files  10 passed (10)",
+          "Tests  117 passed (117)",
+          "Test Files  2 passed (2)",
+          "Tests  17 passed (17)",
+          "Test Files  2 passed (2)",
+          "Tests  5 passed (5)"
+        ]
+      },
+      {
+        "label": "pr355-successor-build",
+        "command": ["pnpm", "build"],
+        "exitCode": 0,
+        "elapsedSeconds": 92.786,
+        "logSha256": "66076fa2d51a7da4a547104fa7dc13dd304413778b0ad4a6ef6be953c8edcef6",
+        "testSummary": []
+      },
+      {
+        "label": "pr355-successor-lifecycle",
+        "command": ["env", "CI=true", "PRAGMA_LOG_LEVEL=error", "pnpm", "test:mission-lifecycle"],
+        "exitCode": 0,
+        "elapsedSeconds": 400.404,
+        "logSha256": "824d984594a558be0d3218e5425513adcbc3ed338b502f63667d85caff4b2219",
+        "testSummary": [
+          "Test Files  24 passed (24)",
+          "Tests  198 passed (198)",
+          "Test Files  3 passed (3)",
+          "Tests  87 passed | 2 skipped (89)"
+        ]
+      },
+      {
+        "label": "pr355-successor-revision",
+        "command": ["env", "CI=true", "PRAGMA_LOG_LEVEL=error", "pnpm", "test:revision"],
+        "exitCode": 0,
+        "elapsedSeconds": 27.681,
+        "logSha256": "b173cd6ee36d9bb97473a2aab947ea523483ae888409ecd1d1f5f7eecce4c9e9",
+        "testSummary": [
+          "Test Files  1 passed (1)",
+          "Tests  13 passed (13)",
+          "Test Files  2 passed (2)",
+          "Tests  69 passed (69)",
+          "Test Files  1 passed (1)",
+          "Tests  6 passed | 75 skipped (81)"
+        ]
+      }
+    ],
+    "performance": "not remeasured; new directed identity/guard reads are not covered by historical samples",
+    "productionAfterValidation": {
+      "commit": "0453ca0ca693f5d069d3588bc57842b7259123bf",
+      "productionFiles": 1181,
+      "sourceSha256": "ccff3efa55c58dc4500caf7cf6d41210453f1d693000f4b95f5ead345bfd2dd9"
+    },
+    "sourceUnchanged": true
+  },
+  "initialQueueFollowup": {
+    "ci": {
+      "head": "0453ca0ca693f5d069d3588bc57842b7259123bf",
+      "url": "https://github.com/pqpo/pragma/actions/runs/37180056543/attempts/2",
+      "conclusion": "failure",
+      "hostPassed": 198,
+      "desktopPassed": 85,
+      "desktopFailed": 2,
+      "desktopDefaultSkipped": 2,
+      "revisionBuild": "skipped",
+      "logSha256": "772d86b518139dfff8883dd958421935472970b936c8e75b32090fdfa467e689"
+    },
+    "fixes": [
+      "initial-start handoff outside admission to unique startMission/startRun then authoritative reread",
+      "exclude confirmed queue_steer receipts from subsequent Execution projection"
+    ],
+    "validation": [
+      {
+        "label": "initial-before",
+        "exitCode": 1,
+        "summary": "1 failed; 9 filtered",
+        "logSha256": "0b46c72b0418a0d69f9aee84db3313cf602e30f6731236b18baf275807e290b3"
+      },
+      {
+        "label": "initial-after",
+        "exitCode": 0,
+        "summary": "10 passed",
+        "logSha256": "e31b6f262af594bbe2a77657e965bf18fc2f63a0cd737786e7ff21cee4830256"
+      },
+      {
+        "label": "queue-before",
+        "exitCode": 1,
+        "summary": "1 failed; 80 filtered; only compiled fallback filter reverted",
+        "logSha256": "2e79ce41ce8008d56ad61633783fd0828f67efca1f45dff29cc0a5f3d1484c40"
+      },
+      {
+        "label": "desktop-after",
+        "exitCode": 0,
+        "summary": "8 passed; other cases filtered",
+        "logSha256": "1d159170b5efda70dfe2d3a9e8cfe14b77b1ef665d988c45f079452b8ec93d08"
+      },
+      {
+        "label": "host-build",
+        "exitCode": 0,
+        "summary": "build passed",
+        "logSha256": "35be542b73c9041ff49a85305bdba0e12a83f34c96a9fb98b9b1cf5b815f1776"
+      },
+      {
+        "label": "host-types",
+        "exitCode": 0,
+        "summary": "typecheck passed",
+        "logSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      {
+        "label": "desktop-types",
+        "exitCode": 0,
+        "summary": "typecheck passed",
+        "logSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      {
+        "label": "lint",
+        "exitCode": 0,
+        "summary": "lint passed",
+        "logSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      }
+    ],
+    "distRestored": true,
+    "fullFinalGates": "see latest PR checks; earlier snapshot full gates are separately source-bound",
+    "performance": "no new measurement; warm admission retains one read"
   }
 }

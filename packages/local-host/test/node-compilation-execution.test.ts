@@ -37,6 +37,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { createLocalHostNodeApplication } from "../src/node-application.ts";
 import * as nodeCompiler from "../src/node-mission-compiler.ts";
 import * as runMemoryModule from "../src/run-memory.ts";
+import * as requestReleaseModule from "../src/missions/request-resource-release.ts";
 import { createSqliteExecutionStore } from "../src/execution/sqlite-execution-store.ts";
 import { createLocalHostProjectCatalogFromHome } from "../src/project-catalog.ts";
 import { createLocalHostResourceResolvers } from "../src/resources/resolvers.ts";
@@ -493,6 +494,42 @@ describe("default Node compilation reaches persisted Execution", { timeout: 15_0
         join(capabilityRoot, "health.json"),
         JSON.stringify({ revision: 4, status: "ready", checkedAt: date }),
       );
+      // Force the terminal observer to detach before the queued native/lease
+      // release checks its identity; an absent observer is not a successor.
+      let signalObserverDetached!: () => void;
+      const observerDetached = new Promise<void>((resolve) => {
+        signalObserverDetached = resolve;
+      });
+      let detachedExecutionId: string | undefined;
+      const deleteActive = MissionExecutionOwner.prototype.deleteActive;
+      const originalRelease = requestReleaseModule.createMissionRequestResourceRelease;
+      const detachSpy = controllerOnly
+        ? undefined
+        : vi.spyOn(MissionExecutionOwner.prototype, "deleteActive").mockImplementation(function (
+            this: MissionExecutionOwner,
+            id,
+          ) {
+            const active = this.active(id) as { handle?: { executionId?: string } } | undefined;
+            deleteActive.call(this, id);
+            if (id === started.missionId && active?.handle?.executionId !== started.executionId) {
+              detachedExecutionId = active?.handle?.executionId;
+              signalObserverDetached();
+            }
+          });
+      const releaseSpy = controllerOnly
+        ? undefined
+        : vi
+            .spyOn(requestReleaseModule, "createMissionRequestResourceRelease")
+            .mockImplementation((options) =>
+              originalRelease({
+                ...options,
+                admit: (operation) =>
+                  options.admit(async () => {
+                    await observerDetached;
+                    await operation();
+                  }),
+              }),
+            );
       const requestId = randomUUID();
       await f.app.missionControl!.submit({
         missionId: started.missionId,
@@ -508,7 +545,15 @@ describe("default Node compilation reaches persisted Execution", { timeout: 15_0
       expect(accepted, JSON.stringify(accepted.error)).toMatchObject({ state: "applied" });
       const executionId = accepted.result!["executionId"] as string;
       await f.app.missionControl!.waitExecution!({ missionId: started.missionId, executionId });
+      if (!controllerOnly) expect(detachedExecutionId).toBe(executionId);
       await f.app.missionControl!.stopOwner(started.missionId);
+      detachSpy?.mockRestore();
+      releaseSpy?.mockRestore();
+      const released = await createMissionControllerStore({
+        missionsPath: paths.missionsRoot(),
+        missionPath: missions.storagePath,
+      }).readSnapshot({ missionId: started.missionId });
+      expect(released.snapshot.lease).toBeUndefined();
       const executions = createSqliteExecutionStore({ pragmaHome: f.home });
       const sessions = createFileExpertSessionStore({ pragmaHome: f.home, executions });
       const resolveSession = createMissionSessionAssociationResolver({
@@ -591,6 +636,7 @@ describe("default Node compilation reaches persisted Execution", { timeout: 15_0
         expect(after.rootContextId).toBe(before.rootContextId);
         expect(after.contexts[after.rootContextId]?.snapshot).toEqual(beforeRoot.snapshot);
         expect(await resolveSession(started.missionId)).toBe(successorSessionId);
+        expect(f.startTurn).toHaveBeenCalledTimes(3);
         if (controllerOnly) await expect(missions.get(started.missionId)).rejects.toThrow();
       } finally {
         await cold.missionControl!.stopOwner(started.missionId);

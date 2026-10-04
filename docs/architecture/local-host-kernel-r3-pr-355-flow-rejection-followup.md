@@ -27,8 +27,32 @@ durable failed 后跨事件循环才让下游观察 result；不安装全局 unh
 
 同步调整后再次用原生产 helper 跑新测试：仍复现 2 个 unhandled、退出 1；恢复修复后完整 kernel 19 项、Host lint/typecheck 均通过。独立复核确认没有遮蔽原操作错误或削弱任何断言。生产源码 SHA-256 保持 `b099fd7588578a628d8a972cca0e314c5bbc9acff9c84f8cb7baa10982cfc6a2`。本地完整生命周期（Host 198、Desktop 87）和 Revision（13 + 69 + 6）在同一生产源码下通过；同步调整只改测试。
 
+## 完整门禁发现的 successor 收尾竞态
+
+提交 `0453ca0c` 的 [CI 首次运行](https://github.com/pqpo/pragma/actions/runs/37180056543/attempts/1) 已通过聊天门禁，Host 生命周期 197 通过、1 失败，没有 unhandled 报告；Revision / Build 仍跳过。失败的完整 envelope successor 已成功执行，但新 Host 提交 continuation 时仍读到旧活跃 Mission lease，最终收到 `COMMAND_RESULT_TIMEOUT`。这不是仅凭延长 5 秒等待预算可以关闭的问题。
+
+确认的交错：terminal observer 的 `forgetActive` 先移除 live output 标记，request resource release 随后取得 admission；其严格 `active === captured` 检查把 observer 已脱离误判成 successor，跳过 Native / lease release。`stopOwner` 只停止本机 poller，因此不能补上持久 lease 收尾。
+
+共用 request release 允许 observer 已脱离，但保留原 Session / Context 对象身份，并核对 Mission 最新 Execution 与 Session 最后 Execution 均仍属于原 turn。不同 active、较新 Execution 或较新 Session 仍拒绝迟到释放；Native 释放前和持久 lease 释放时均验证原 guard。live output、durable terminal 和 Session release 继续独立。
+
+增强既有两格式 successor 用例，完整 envelope 用 gate 强制 observer detach 先于 release 身份检查；原 5 秒预算、Context snapshots、Session 关联与冷 Desktop 接管断言保留，新增真实持久 lease 已清除和三次 Native dispatch（首轮、successor、冷 continuation 各一次）。旧实现确定性得到 1 失败 / 1 通过（lease 残留），修复后两格式曾 2/2 通过；最终门禁还验证移动至冷 continuation 之后的新增 dispatch 断言。独立 CR 未发现确认问题。
+
+此修复增加定向身份读取和 guard 检查；本轮未重新测量 fixture 或完整产品性能，历史性能记录不覆盖该改动。
+
+## 远程复跑发现的初轮入口与 queued steer 投影
+
+`0453ca0c` 的 [CI 第二次运行](https://github.com/pqpo/pragma/actions/runs/37180056543/attempts/2) Host 198 通过；Desktop 85 通过、2 失败、2 默认跳过，Revision / Build 仍跳过。两项不能靠调整成功断言取得通过。
+
+before-run send 原本在已持有 admission 内直接 `runMission`，显式 Run 则登记共用 `startRun`。初轮 readiness 被阻塞时，另一个入口可能绕过该 gate；日志本身不证明重复 Native dispatch。修复让权威读取发现首次运行需求后退出 reservation，调用唯一 `startMission` / `startRun`，再重入 admission 读取实际状态并接受原 request。这样并发入口共用同一 Promise，不嵌套 admission；普通 warm 路径不增加读取，controller-only 的初轮 no-op 不会无限重试。
+
+queued steer 的源排队 Execution 会由 Core 取消，但 receipt 成功。旧 `attachNextSessionTurn` fallback 未排除已转换的 `queue_steer` prompt，可能把取消的源 Execution 当下一轮投影，误将成功的原活跃轮展示为 cancelled。该 fallback 现在与既有 queued observer 一样排除 `queue_steer`；不改变 Core receipt、原 Execution 或成功语义。
+
+初轮回归使用真实 `MissionExecutionOwner.startRun/admit`，明确验证 startup 在 reservation 之外，并发 send / Run 只执行一次启动；旧实现 1 项失败，修复后 Host admission 10/10。增强既有 Desktop queued 用例，持久 terminal 写入等待 Core processing idle，并等真实 `mission.observer_settled` 后再核对最终 Mission；旧 fallback 确定性错误关联取消的源 ID，1 项失败。还原修复后 Desktop 初轮 / steer 8/8，Host / Desktop typecheck、Host build、相关 ESLint 均退出 0；未放宽超时或成功断言。
+
+successor 修复快照 `ccff3efa…` 下已重新通过 check、build（19/19）、Host 生命周期 198、Desktop 87、Revision 13+69+6，前后摘要一致。最终初轮 / queue 修复的完整门禁以最新提交 CI 为准，不把前一源码快照的结果当作新源码证明。
+
 ## 工程门禁与边界
 
 本轮 `pnpm check` 和 `pnpm build`（19/19 tasks）均退出 0，生产源码前后摘要一致。命令、退出码、unhandled 数量、日志摘要及源码摘要见 [验证记录](../performance/local-host-kernel-r3-pr-355/flow-rejection-verification.json)。完整远程 CI（聊天、控制、编译、生命周期、Revision 和 Build）以 [PR #355 checks](https://github.com/pqpo/pragma/pull/355/checks) 的最新提交结果为准；不能把通过断言数单独当作门禁通过。
 
-本次未重测 fixture 性能；没有增加等待、I/O 或持久事务。[上一轮性能](./local-host-kernel-r3-pr-355-followup.md)仅对应其记录的冻结源码，不扩大为新提交的完整产品性能证据。真实 Runtime、OS 凭据、完整 Electron/背景负载性能缺口继续保留；R3 验收未完成，不关闭 #348。
+本次未重测 fixture 性能；Flow 拒绝观察本身没有增加等待或 I/O，successor 收尾修复的新增定向读取尚无新性能测量证据。[上一轮性能](./local-host-kernel-r3-pr-355-followup.md)仅对应其记录的冻结源码，不扩大为新提交的完整产品性能证据。真实 Runtime、OS 凭据、完整 Electron/背景负载性能缺口继续保留；R3 验收未完成，不关闭 #348。
