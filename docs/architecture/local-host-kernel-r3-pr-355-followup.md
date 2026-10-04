@@ -48,7 +48,7 @@ Desktop 后续门禁另通过 86 项、失败 1 项：不兼容定义创建 succ
 
 ## 冻结源码验证
 
-工程提交 `c73619ea9114716ff5c49deb3c9b735f7a16408c`；生产源码 SHA-256 `53eb31ea467868bd2be424d8492bb7c2bd1eb0fc27d28d073ff68ce8a2d3dc17`，完整工程门禁前后相同。命令、退出码、耗时、日志摘要及早期失败证据见 [verification.json](../performance/local-host-kernel-r3-pr-355/verification.json)。
+工程提交 `c73619ea9114716ff5c49deb3c9b735f7a16408c`；生产源码 SHA-256 `53eb31ea467868bd2be424d8492bb7c2bd1eb0fc27d28d073ff68ce8a2d3dc17`，完整工程门禁前后相同。工程验证的核心结果与限制见下表。
 
 | 门禁                                                | 最终结果                                                                                |
 | --------------------------------------------------- | --------------------------------------------------------------------------------------- |
@@ -74,6 +74,6 @@ Desktop 后续门禁另通过 86 项、失败 1 项：不兼容定义创建 succ
 | cold（2）                    | fixture completion → Core terminal | 29.06 / 62.19            | 22.80 / 22.96；26.55 / 22.57，均未触发     |
 | capability invalidation（2） | preparation                        | 680.29 / 809.41          | 666.45 / 674.43；729.32 / 697.03，均未触发 |
 
-追加场景中全部可比较指标均未触发；初始 storage/preparation 指标均未触发。结论仅为该 fixture/本机串行条件下未观察到持续阈值回归，不能确定初始波动原因，也不证明完整产品性能。保留所有异常和追加样本，见 [原始数据与命令](../performance/local-host-kernel-r3-pr-355/)及 [复算结果](../performance/local-host-kernel-r3-pr-355/comparison.json)。复算命令：`python3 docs/performance/local-host-kernel-r3-cr-analyze.py local-host-kernel-r3-pr-355`。
+追加场景中全部可比较指标均未触发；初始 storage/preparation 指标均未触发。结论仅为该 fixture/本机串行条件下未观察到持续阈值回归，不能确定初始波动原因，也不证明完整产品性能。初始异常及追加结果如上记录；原始采样 JSON 不随 PR 提交。重新采集时将输出放在仓库外，复算命令：`python3 docs/performance/local-host-kernel-r3-cr-analyze.py <外部采样目录>`。
 
 真实 provider、OS 凭据、完整 Electron 产品与正常后台负载性能缺口继续保留；不标记 R3 阶段完成，不关闭 issue #348。

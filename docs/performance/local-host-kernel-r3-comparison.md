@@ -2,7 +2,7 @@
 
 2026-10-03；macOS x64，Intel i7-9750H 2.60GHz，Node 24.18.0，pnpm 10.12.1。
 
-main `921376a446d9da878b8d9fa5c9f1df69ab323272`；R3 工程提交 `dba3405a94edc22fc6042c7297f0fdcb04025f8a`。测量时所有 Agent、测试及构建已停止，两组依次 main→R3；生产源码前后摘要一致。命令、时间、退出码与源码摘要见 [原始证据目录](./local-host-kernel-r3/) 和 [完整指标 JSON](./local-host-kernel-r3/comparison.json)。
+main `921376a446d9da878b8d9fa5c9f1df69ab323272`；R3 工程提交 `dba3405a94edc22fc6042c7297f0fdcb04025f8a`。测量时所有 Agent、测试及构建已停止，两组依次 main→R3；生产源码前后摘要一致。仓库仅保留核心指标与结论，原始采样 JSON 不随 PR 提交。
 
 实际 Desktop factory、Project/Mission/Capability/ContextStore/SQLite/Interpreter；Runtime、凭据验证与 health 使用 fixture。没有真实模型、renderer、正常 Memory/Automation 负载。下面的 Host 状态通知不等于 UI 显示，Core active-binding 释放不等于 Native 进程或 Mission lease 释放。
 
@@ -31,7 +31,7 @@ main `921376a446d9da878b8d9fa5c9f1df69ab323272`；R3 工程提交 `dba3405a94edc
 
 ## 生命周期
 
-下表汇总每组 160 次；每场景的独立指标和阈值在 comparison.json，不能用汇总掩盖单场景异常。相同 Mission 的后续 dispatch 各 140 次；不同 Mission 的 cold 不计算下一轮。
+下表汇总每组 160 次；单场景触发及追加复测见下文，不能用汇总掩盖单场景异常。相同 Mission 的后续 dispatch 各 140 次；不同 Mission 的 cold 不计算下一轮。
 
 | 组  | 边界                               | main            | R3              | 样本数/侧 |
 | --- | ---------------------------------- | --------------- | --------------- | --------- |
@@ -42,7 +42,7 @@ main `921376a446d9da878b8d9fa5c9f1df69ab323272`；R3 工程提交 `dba3405a94edc
 | 2   | coreTerminalToHostStatus           | 1.73 / 19.46    | 1.74 / 20.36    | 160 / 160 |
 | 2   | activeBindingReleaseToNextDispatch | 552.59 / 734.19 | 544.14 / 754.51 | 140 / 140 |
 
-阈值为 R3 P95 同时比 main 增加 >10% 且 >20ms。初始触发：组 1 cold 准备 267.20→309.14ms；组 2 model-invalidation fixture 完成→Core terminal 121.21→144.83ms。两项均追加两组、每侧每场景 40 次，原异常数据保留。
+阈值为 R3 P95 同时比 main 增加 >10% 且 >20ms。初始触发：组 1 cold 准备 267.20→309.14ms；组 2 model-invalidation fixture 完成→Core terminal 121.21→144.83ms。两项均追加两组、每侧每场景 40 次，原异常结论保留。
 
 cold 组 1 的 P95 样本定位到 expert_session_open（main 样本 4 为 12.27ms，R3 样本 6 为 91.15ms），而 compile/prompt 未同步变慢；第一个样本两侧均约 1055ms，不作为 R3 特有差异。模型失效异常样本伴随 terminal 提交与 active-binding 释放延迟（样本 14：terminal commit 36.24ms、active release 120.08ms）。观测只定位到这些阶段，不能证明具体 OS/worker 抖动原因；Core/Runtime 生产源码未改。复测未再触发，未宣称消除完整产品退化风险。
 
@@ -55,7 +55,7 @@ cold 组 1 的 P95 样本定位到 expert_session_open（main 样本 4 为 12.27
 
 ## SQLite 与首次准备
 
-WAL/FULL、真实 storage worker；每项 20 次。各项提交/读取 P50/P95、锁/队列、序列化 payload、数据库增长及 macOS 进程 I/O 原始值均保留。进程 I/O 含 worker 和后台 delivery，不作单事务归因。下表为各存储 case 的 P95 范围，不替代逐项 JSON。
+WAL/FULL、真实 storage worker；每项 20 次。保留提交/读取与首次准备的核心结果。进程 I/O 含 worker 和后台 delivery，不作单事务归因。下表为各存储 case 的 P95 范围；阈值判断按逐项比较计算。
 
 | 组  | 指标            | main 范围  | R3 范围    | 阈值触发 |
 | --- | --------------- | ---------- | ---------- | -------- |
@@ -75,8 +75,10 @@ WAL/FULL、真实 storage worker；每项 20 次。各项提交/读取 P50/P95�
 | 2   | 5000   | 631.84 → 614.50   | 6.93 / 69.53 → 6.88 / 84.26 | 24 / 24          |
 | 2   | 50000  | 1776.65 → 1785.87 | 6.34 / 47.63 → 6.37 / 47.21 | 138 / 136        |
 
-转换后的 owner 读取各 20 次，逐项 P50/P95 见 JSON；存储与准备可比较分位数未触发阈值。少样本和单次转换继续作为证据限制。
+转换后的 owner 读取各 20 次；存储与准备可比较分位数未触发阈值。少样本和单次转换继续作为证据限制。
 
 ## 结论与限制
 
 两组测量、两项触发后的两组复测均完成；复测范围内没有持续触发阈值的退化。fixture 性能证据不能关闭 R1/R2 或 R3 的真实模型、OS 凭据、原生 SDK 全链路、Electron UI 与正常后台负载验收缺口。首次基线启动因缺 Runtime 构建产物失败，补建后重新开始，失败未计入样本。
+
+复算脚本：`python3 docs/performance/local-host-kernel-r3-analyze.py <外部采样目录>`。脚本只读取显式指定的采样目录，统计与生成的报告也写入该目录；采样与验证日志不提交到仓库。

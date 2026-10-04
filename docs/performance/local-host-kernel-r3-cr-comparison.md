@@ -37,20 +37,22 @@
 | model-invalidation / 1      | coreTerminalToHostStatus           | 2.24     | 2.46     | 否         |
 | model-invalidation / 2      | coreTerminalToHostStatus           | 2.39     | 2.32     | 否         |
 
-Capability 追加第一组 `fixtureCompletionToCoreTerminal` P95 为 82.33 / 104.60ms，触发阈值；第二组 90.71 / 100.49ms，未触发。初始与追加原始样本完整保留，不能写成所有单组指标均通过。
+Capability 追加第一组 `fixtureCompletionToCoreTerminal` P95 为 82.33 / 104.60ms，触发阈值；第二组 90.71 / 100.49ms，未触发。初始与追加的异常结论均在本文记录，不能写成所有单组指标均通过。
 
 next dispatch 区间含 fixture 的配置写入；cold 每次创建不同 Mission，无前一轮 release→dispatch 的可比样本。模型结束标记来自 fixture Runtime，API 读取计数不等于文件或 SQLite I/O 次数。不能把这些数字推广为真实模型或完整 Desktop 性能。
 
 ## 证据与复算
 
-[原始数据目录](./local-host-kernel-r3-cr/)包含 4 个完整编译探针、12 个定向追加探针、8 个存储/准备基准及串行命令记录。[比较 JSON](./local-host-kernel-r3-cr/comparison.json)保存所有单项 P50/P95、触发与两组追加交集；[源码前后摘要](./local-host-kernel-r3-cr/r3-source-after.json)确认生产源码未变。main 与候选整体源码 hash 分别为 `b10e9b3415a3f4d849ce3e2607681f1965d7da64959e269173d4583b18ccc387` / `87f2b50df48cdbfa482440aacc2d295667867b4ace5ea1615769cd147d66d91d`。各探针自身的 completeProbePassed/sourceUnchanged 也通过。
+原始采样 JSON 不随 PR 提交，本文保留关键指标、异常与复测结论。main 与候选整体源码 hash 分别为 `b10e9b3415a3f4d849ce3e2607681f1965d7da64959e269173d4583b18ccc387` / `87f2b50df48cdbfa482440aacc2d295667867b4ace5ea1615769cd147d66d91d`。各探针自身的 completeProbePassed/sourceUnchanged 也通过。
 
 复算已保存数据：
 
 ```sh
-python3 docs/performance/local-host-kernel-r3-cr-analyze.py
+python3 docs/performance/local-host-kernel-r3-cr-analyze.py <外部采样目录>
 ```
 
-重新采集时，将 main 与候选置于独立 checkout，以 Node 24.18.0 分别安装同一 lockfile 并构建依赖；源码前后使用 `local-host-kernel-r3-source-digest.mjs <checkout>`。按 [串行命令记录](./local-host-kernel-r3-cr/serial-commands.json)的顺序执行 `local-host-kernel-r2-compilation-probe.mjs --checkout <checkout> --samples 20 --lifecycle true --output <file>`，再分别运行该 checkout 的 `benchmark-execution-storage.mjs` 与 `benchmark-storage-preparation.mjs`。定向追加用 `--samples 40 --scenario <场景>`，每场景两组，所有命令串行；路径按实际 checkout 替换。
+重新采集时，将 main 与候选置于独立 checkout，以 Node 24.18.0 分别安装同一 lockfile 并构建依赖；源码前后使用 `local-host-kernel-r3-source-digest.mjs <checkout>`。串行执行 `local-host-kernel-r2-compilation-probe.mjs --checkout <checkout> --samples 20 --lifecycle true --output <file>`，再分别运行该 checkout 的 `benchmark-execution-storage.mjs` 与 `benchmark-storage-preparation.mjs`。定向追加用 `--samples 40 --scenario <场景>`，每场景两组，所有命令串行；路径按实际 checkout 替换。
 
 完整工程门禁见 [CR 报告](../architecture/local-host-kernel-r3-code-review.md)。本报告不将 R3 阶段标记为完成。
+
+所有输出路径均使用仓库外目录；复算结果写入传入的采样目录。

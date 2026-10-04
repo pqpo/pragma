@@ -61,6 +61,6 @@ before-run 用例的 `mockImplementationOnce` 把 owner acquisition 的 readines
 
 ## 工程门禁与边界
 
-本轮 `pnpm check` 和 `pnpm build`（19/19 tasks）均退出 0，生产源码前后摘要一致。命令、退出码、unhandled 数量、日志摘要及源码摘要见 [验证记录](../performance/local-host-kernel-r3-pr-355/flow-rejection-verification.json)。完整远程 CI（聊天、控制、编译、生命周期、Revision 和 Build）以 [PR #355 checks](https://github.com/pqpo/pragma/pull/355/checks) 的最新提交结果为准；不能把通过断言数单独当作门禁通过。
+本轮 `pnpm check` 和 `pnpm build`（19/19 tasks）均退出 0，生产源码前后摘要一致。业务与测试提交 `a59f0067956357f82f7ddffc7ca5331d812d85ae` 的[完整 CI](https://github.com/pqpo/pragma/actions/runs/37183690211) 与 [CLI package verification](https://github.com/pqpo/pragma/actions/runs/37183690275) 均通过；后续性能数据清理只修改文档和复算脚本。完整远程 CI（聊天、控制、编译、生命周期、Revision 和 Build）以 [PR #355 checks](https://github.com/pqpo/pragma/pull/355/checks) 的最新提交结果为准；不能把通过断言数单独当作门禁通过。
 
 本次未重测 fixture 性能；Flow 拒绝观察本身没有增加等待或 I/O，successor 收尾修复的新增定向读取尚无新性能测量证据。[上一轮性能](./local-host-kernel-r3-pr-355-followup.md)仅对应其记录的冻结源码，不扩大为新提交的完整产品性能证据。真实 Runtime、OS 凭据、完整 Electron/背景负载性能缺口继续保留；R3 验收未完成，不关闭 #348。

@@ -1,10 +1,14 @@
-"""Rebuild R3 comparison statistics from retained serial measurements."""
+"""Rebuild R3 comparison statistics from an external serial-measurement archive."""
 import json
 import math
+import sys
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parent
-DATA = ROOT / 'local-host-kernel-r3'
+if len(sys.argv) != 2:
+    raise SystemExit('Usage: python3 ' + Path(__file__).name + ' <external-sample-directory>')
+DATA = Path(sys.argv[1]).expanduser().resolve()
+if DATA.is_relative_to(Path(__file__).resolve().parents[2]):
+    raise SystemExit('Use a sample directory outside the repository.')
 
 def read(name):
     return json.loads((DATA / name).read_text())
@@ -77,7 +81,7 @@ assert not summary['remainingMeasuredTriggers']
 pair = lambda x: '—' if x['p50'] is None else f"{x['p50']:.2f} / {x['p95']:.2f}"
 lines = ['# Local Host Kernel R3 串行性能对照', '',
          '2026-10-03；macOS x64，Intel i7-9750H 2.60GHz，Node 24.18.0，pnpm 10.12.1。', '',
-         f"main `{summary['baseCommit']}`；R3 工程提交 `{summary['candidateCodeCommit']}`。测量时所有 Agent、测试及构建已停止，两组依次 main→R3；生产源码前后摘要一致。命令、时间、退出码与源码摘要见 [原始证据目录](./local-host-kernel-r3/) 和 [完整指标 JSON](./local-host-kernel-r3/comparison.json)。", '',
+         f"main `{summary['baseCommit']}`；R3 工程提交 `{summary['candidateCodeCommit']}`。测量时所有 Agent、测试及构建已停止，两组依次 main→R3；生产源码前后摘要一致。命令、时间、退出码与源码摘要见 [外部采样目录](./) 和 [完整指标 JSON](./comparison.json)。", '',
          '实际 Desktop factory、Project/Mission/Capability/ContextStore/SQLite/Interpreter；Runtime、凭据验证与 health 使用 fixture。没有真实模型、renderer、正常 Memory/Automation 负载。下面的 Host 状态通知不等于 UI 显示，Core active-binding 释放不等于 Native 进程或 Mission lease 释放。', '',
          '## 准备耗时', '', '每场景每侧每组 20 次；单位 ms，单元格为 P50 / P95。暖调用 DSL compiler 为零，失效场景重新编译；每请求一次 pinned Revision 读取、零 head 读取的断言均通过。计数是 API 调用，不是物理 I/O。', '',
          '| 组 | 场景 | main | R3 | 触发阈值 |', '| --- | --- | --- | --- | --- |']
@@ -105,5 +109,5 @@ for r in summary['groups']:
         lines.append(f"| {r['repeat']} | {x['history']} | {a['preparationMs']:.2f} → {b['preparationMs']:.2f} | {pair(a[k])} → {pair(b[k])} | {a[k]['samples']} / {b[k]['samples']} |")
 lines += ['', '转换后的 owner 读取各 20 次，逐项 P50/P95 见 JSON；存储与准备可比较分位数未触发阈值。少样本和单次转换继续作为证据限制。', '',
           '## 结论与限制', '', '两组测量、两项触发后的两组复测均完成；复测范围内没有持续触发阈值的退化。fixture 性能证据不能关闭 R1/R2 或 R3 的真实模型、OS 凭据、原生 SDK 全链路、Electron UI 与正常后台负载验收缺口。首次基线启动因缺 Runtime 构建产物失败，补建后重新开始，失败未计入样本。', '']
-(ROOT / 'local-host-kernel-r3-comparison.md').write_text('\n'.join(lines))
+(DATA / 'local-host-kernel-r3-comparison.md').write_text('\n'.join(lines))
 print(json.dumps({'initialTriggers': [{ 'repeat': r['repeat'], 'scenario': x['scenario'], 'metrics': x['triggered']} for r in summary['groups'] for x in r['scenarios'] if x['triggered']], 'remainingMeasuredTriggers': summary['remainingMeasuredTriggers'], 'sourceUnchanged': True}, indent=2))

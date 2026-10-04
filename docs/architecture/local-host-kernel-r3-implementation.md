@@ -29,7 +29,7 @@ R4 的系统/内置内部调用全面收敛不在本轮范围；P01–P17 与四
 
 后续 CR 与修复复核见 [CR 报告](./local-host-kernel-r3-code-review.md)。以下计数与性能对应首次冻结工程提交；修复后的证据由 CR 报告独立记录，保留历史结果以便对照。
 
-工程提交：`dba3405a94edc22fc6042c7297f0fdcb04025f8a`。最终命令、退出码、耗时及日志摘要见 [验证 JSON](../performance/local-host-kernel-r3/verification.json)。早期失败与修复记录保留，不能将测试启动或局部通过写成验收通过。已完成真实文件/SQLite/进程 SIGKILL 的 Expert、Team、Flow 恢复；逐一核对原 Context、systemSessionId、RuntimeSessionRef 和 dispatch 次数。Flow 中断后安全失败并保留关联，不宣称模型继续执行成功。实际 Desktop factory 与 Node facade 互接管覆盖完整和 controller-only Mission，永久挂起的 Memory 后处理不阻止必要释放。
+工程提交：`dba3405a94edc22fc6042c7297f0fdcb04025f8a`。工程验证的核心结果与限制见下表。早期失败与修复记录保留，不能将测试启动或局部通过写成验收通过。已完成真实文件/SQLite/进程 SIGKILL 的 Expert、Team、Flow 恢复；逐一核对原 Context、systemSessionId、RuntimeSessionRef 和 dispatch 次数。Flow 中断后安全失败并保留关联，不宣称模型继续执行成功。实际 Desktop factory 与 Node facade 互接管覆盖完整和 controller-only Mission，永久挂起的 Memory 后处理不阻止必要释放。
 
 真实 Codex suspended-process 删除专项通过：未确认停止时保留 owner 数据，恢复进程后确认退出并重试完成。该专项不等于真实模型成功或全产品性能验收。
 
@@ -49,7 +49,7 @@ R4 的系统/内置内部调用全面收敛不在本轮范围；P01–P17 与四
 
 默认 lifecycle 跳过的是 Native Codex 删除（已单独执行）与五样本删除 benchmark（未执行）。跨进程崩溃测试采用测试 Runtime driver；不能替代真实 SDK 全类验收。
 
-[串行性能报告](../performance/local-host-kernel-r3-comparison.md)保存两组每场景 20 次与完整源码前后摘要。cold 准备、model-invalidation terminal 各曾触发一次阈值，分别追加两组每侧 40 次，未持续触发；保留异常样本与定位限制。存储/准备对照可比较指标未触发阈值；少样本不填 P95。完整产品性能仍未验收。
+[串行性能报告](../performance/local-host-kernel-r3-comparison.md)记录两组每场景 20 次的核心结果与冻结工程提交。cold 准备、model-invalidation terminal 各曾触发一次阈值，分别追加两组每侧 40 次，未持续触发；保留异常结论与定位限制。存储/准备对照可比较指标未触发阈值；少样本不填 P95。完整产品性能仍未验收。
 
 ## P01–P17
 

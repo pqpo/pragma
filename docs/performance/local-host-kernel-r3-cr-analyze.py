@@ -1,9 +1,12 @@
-"""Recompute R3 review performance statistics from the committed raw samples."""
+"""Recompute R3 review performance statistics from an external raw-sample archive."""
 
 import json, math, sys
 from pathlib import Path
-ROOT = Path(__file__).resolve().parent
-DATA = ROOT / (sys.argv[1] if len(sys.argv) > 1 else 'local-host-kernel-r3-cr')
+if len(sys.argv) != 2:
+    raise SystemExit('Usage: python3 ' + Path(__file__).name + ' <external-sample-directory>')
+DATA = Path(sys.argv[1]).expanduser().resolve()
+if DATA.is_relative_to(Path(__file__).resolve().parents[2]):
+    raise SystemExit('Use a sample directory outside the repository.')
 
 def read(name):
     return json.loads((DATA / name).read_text())
