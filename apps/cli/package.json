@@ -28,7 +28,7 @@
     "typecheck": "tsc --noEmit",
     "test": "pnpm test:shared-kernel && pnpm test:adapters",
     "clean": "rm -rf dist .release",
-    "test:shared-kernel": "pnpm --filter \"@pqpo/pragma...\" build && pnpm --filter @pragma/local-host test:business",
+    "test:shared-kernel": "pnpm --filter \"@pqpo/pragma...\" build && pnpm --filter @pragma/core exec vitest run test/file-lock.test.ts && pnpm --filter @pragma/local-host test:business",
     "test:adapters": "vitest run --passWithNoTests"
   },
   "dependencies": {

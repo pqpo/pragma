@@ -38,6 +38,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { createLocalHostNodeApplication as createNodeApplication } from "../src/node-application.ts";
 import * as nodeCompiler from "../src/node-mission-compiler.ts";
 import * as runMemoryModule from "../src/run-memory.ts";
+import * as controllerComposition from "../src/missions/controller/composition.ts";
 import * as requestReleaseModule from "../src/missions/request-resource-release.ts";
 import { createSqliteExecutionStore } from "../src/execution/sqlite-execution-store.ts";
 import { createLocalHostProjectCatalogFromHome } from "../src/project-catalog.ts";
@@ -1366,6 +1367,58 @@ it(
   "cold-stops a waiting Flow with unavailable mounted Knowledge without touching executable resources",
   { timeout: 20_000 },
   async () => {
+    const stages: { phase: string; missionId: string; requestId: string }[] = [];
+    const mark = (phase: string, missionId: string, requestId: string) => {
+      stages.push({ phase, missionId, requestId });
+      if (stages.length > 40) stages.shift();
+    };
+    const createMemory = runMemoryModule.createLocalHostRunMemory;
+    vi.spyOn(runMemoryModule, "createLocalHostRunMemory").mockImplementation((options) => {
+      const memory = createMemory(options);
+      const beginPrompt = memory.beginPrompt;
+      vi.spyOn(memory, "beginPrompt").mockImplementation(async (missionId, requestId) => {
+        mark("memory.prompt.begin", missionId, requestId);
+        const rollback = await beginPrompt(missionId, requestId);
+        mark("memory.prompt.admitted", missionId, requestId);
+        return async () => {
+          mark("memory.prompt.rollback.enter", missionId, requestId);
+          await rollback();
+          mark("memory.prompt.rollback.exit", missionId, requestId);
+        };
+      });
+      return memory;
+    });
+    const createController = controllerComposition.createLocalHostMissionController;
+    let lifecycle: ReturnType<typeof createController> | undefined;
+    vi.spyOn(controllerComposition, "createLocalHostMissionController").mockImplementation(
+      (options) => {
+        const current = createController(options);
+        lifecycle = current;
+        const startPolling = current.controller.startPolling.bind(current.controller);
+        vi.spyOn(current.controller, "startPolling").mockImplementation((input) =>
+          startPolling({
+            ...input,
+            consumer: {
+              ...input.consumer,
+              apply: async (request) => {
+                const { missionId } = request.command;
+                const { requestId } = request.command.request;
+                mark("inbox.consumer.apply.enter", missionId, requestId);
+                try {
+                  const result = await input.consumer.apply(request);
+                  mark("inbox.consumer.apply.exit", missionId, requestId);
+                  return result;
+                } catch (error) {
+                  mark("inbox.consumer.apply.rejected", missionId, requestId);
+                  throw error;
+                }
+              },
+            },
+          }),
+        );
+        return current;
+      },
+    );
     const f = await fixture(false, true);
     const storeId = randomUUID();
     const knowledge = await writePublishedKnowledgeFixture(f.home, storeId);
@@ -1425,6 +1478,70 @@ it(
         realpath: async (path) => path,
       },
     });
+    const waitForCommand = async (kind: "interrupt" | "send", requestId: string) => {
+      try {
+        return await cold.missionControl!.waitForTerminal({
+          missionId: mission.id,
+          requestId,
+          timeoutMs: 5_000,
+        });
+      } catch (error) {
+        const controller = lifecycle!.controller;
+        // Await every read so diagnostics cannot outlive owned Host cleanup.
+        // Failed reads remain visible without replacing the command failure.
+        const [stateRead, operationRead] = await Promise.allSettled([
+          controller.readSnapshot({ missionId: mission.id }),
+          controller.listOperations({ missionId: mission.id }),
+        ]);
+        const state = stateRead.status === "fulfilled" ? stateRead.value : undefined;
+        const operations = operationRead.status === "fulfilled" ? operationRead.value : [];
+        const executions = createSqliteExecutionStore({ pragmaHome: f.home });
+        try {
+          throw new Error(
+            `Cold Flow ${kind} command did not settle: ${JSON.stringify({
+              kind,
+              missionId: mission.id,
+              requestId,
+              operation: operations
+                .filter((operation) => operation.requestId === requestId)
+                .map(({ state, kind, commandId, createdAt, updatedAt, error }) => ({
+                  state,
+                  kind,
+                  commandId,
+                  createdAt,
+                  updatedAt,
+                  errorCode: error?.["code"],
+                })),
+              lease: state?.snapshot.lease,
+              diagnosticReadFailures: [stateRead, operationRead]
+                .map((result, index) =>
+                  result.status === "rejected"
+                    ? {
+                        source: index === 0 ? "controller-state" : "controller-operation",
+                        error: result.reason instanceof Error ? result.reason.name : "unknown",
+                      }
+                    : undefined,
+                )
+                .filter((failure) => failure !== undefined),
+              guard: lifecycle!.ownerScope.currentGuard(mission.id),
+              inboxConsumer: lifecycle!.ownerScope.diagnostics(),
+              stages: stages.filter((stage) => stage.missionId === mission.id),
+              eventTypes: state?.events
+                .slice(-12)
+                .map(({ type, occurredAt }) => ({ type, occurredAt })),
+              ...(await executionDiagnostic(executions, started.executionId!).catch(
+                (readError: unknown) => ({
+                  executionDiagnosticError: readError instanceof Error ? readError.name : "unknown",
+                }),
+              )),
+            })}`,
+            { cause: error },
+          );
+        } finally {
+          await executions.close();
+        }
+      }
+    };
     try {
       const interruptRequestId = randomUUID();
       await cold.missionControl!.submit({
@@ -1433,13 +1550,9 @@ it(
         kind: "interrupt",
         payload: { kind: "interrupt", reason: "Stop with unavailable Knowledge" },
       });
-      expect(
-        await cold.missionControl!.waitForTerminal({
-          missionId: mission.id,
-          requestId: interruptRequestId,
-          timeoutMs: 5_000,
-        }),
-      ).toMatchObject({ state: "applied" });
+      expect(await waitForCommand("interrupt", interruptRequestId)).toMatchObject({
+        state: "applied",
+      });
       expect(f.canUse).not.toHaveBeenCalled();
       expect(f.restore).toHaveBeenCalledWith(
         expect.objectContaining({ systemSessionId: originalNative[0]!.systemSessionId }),
@@ -1477,13 +1590,17 @@ it(
         kind: "send",
         payload: { kind: "send", input: { prompt: "Normal execution still requires Knowledge" } },
       });
-      expect(
-        await cold.missionControl!.waitForTerminal({
-          missionId: mission.id,
-          requestId: normalRequestId,
-          timeoutMs: 5_000,
-        }),
-      ).toMatchObject({ state: "rejected" });
+      expect(await waitForCommand("send", normalRequestId)).toMatchObject({ state: "rejected" });
+      expect(stages).toContainEqual({
+        phase: "memory.prompt.rollback.exit",
+        missionId: mission.id,
+        requestId: normalRequestId,
+      });
+      expect(stages).toContainEqual({
+        phase: "inbox.consumer.apply.rejected",
+        missionId: mission.id,
+        requestId: normalRequestId,
+      });
       expect(f.restore).toHaveBeenCalledTimes(1);
       expect(await readRuntimeSessionsForOwners(paths, [started.executionId!])).toHaveLength(1);
     } finally {

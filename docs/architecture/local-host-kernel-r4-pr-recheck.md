@@ -1,5 +1,7 @@
 # Issue #348 R4：PR #356 最新评论复查
 
+完整组合与 Core 文件锁竞争最新证据见 [file-lock followup](local-host-kernel-r4-file-lock-followup.md)。
+
 2026-10-05；读取全部普通评论、行内评论和 review，新增意见为 [6e22f019 复查评论](https://github.com/pqpo/pragma/pull/356#issuecomment-5987818567)。评论明确没有将两项测试失败认定为确定性源码缺陷，本次也不作该推断。
 
 | 意见                                      | 核对与处理                                                                                                                                                                                                                           |

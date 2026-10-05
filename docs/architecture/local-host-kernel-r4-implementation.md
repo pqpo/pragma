@@ -1,5 +1,7 @@
 # Issue #348 R4 实施与验收
 
+完整组合与 Core 文件锁竞争最新证据见 [file-lock followup](local-host-kernel-r4-file-lock-followup.md)。
+
 最新评论复查与遗留稳定性缺口见 [PR recheck](local-host-kernel-r4-pr-recheck.md)。
 
 2026-10-04；基线 `origin/main`：`cc1103ecae55c5ec28d98f7e4e54f1165c4bfc8a`（#353/#354/#355 已合入）。独立 worktree 实施。
