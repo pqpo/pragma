@@ -1064,6 +1064,7 @@ export function createLocalHostMissionExecutionService(
           trackExecution({
             mission,
             handle: turn,
+            publishRunningStatus: true,
             executorMetadata: await getExecutorMetadataOrFallback(mission, "live"),
             startedAt,
             inputMessageId: nextPrompt.requestId,
@@ -1265,6 +1266,7 @@ export function createLocalHostMissionExecutionService(
     readonly sessionId?: string | undefined;
     readonly executorMetadata: ExecutorMetadata;
     readonly acceptedAt?: number | undefined;
+    readonly publishRunningStatus?: boolean | undefined;
     readonly onFinished?: (() => void | Promise<void>) | undefined;
   }): void => {
     const missionId = input.mission.id;
@@ -1702,6 +1704,14 @@ export function createLocalHostMissionExecutionService(
       void live.close().catch(() => undefined);
       return;
     }
+    // Queued turns can be attached by either the start observer or the previous
+    // turn's cleanup. Only the path that installs the observer publishes status.
+    if (input.publishRunningStatus) {
+      statusService.publish(missionId, audience, {
+        id: input.handle.executionId,
+        status: "running",
+      });
+    }
     if (options.ownerLifetime === "request" && input.mission.execution !== undefined) {
       const requestSession = sessionService.session(missionId);
       const requestContext = sessionService.executionContext(missionId);
@@ -1907,15 +1917,12 @@ export function createLocalHostMissionExecutionService(
           trackExecution({
             mission: current,
             handle: turn,
+            publishRunningStatus: true,
             executorMetadata,
             startedAt,
             inputMessageId: prompt.requestId,
             sessionId: session.sessionId,
             onFinished: async () => await turn.settled,
-          });
-          statusService.publish(mission.id, missionSurfaceAudience(current), {
-            id: turn.executionId,
-            status: "running",
           });
         });
       },
