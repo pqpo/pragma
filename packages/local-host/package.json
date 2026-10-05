@@ -43,6 +43,6 @@
     "@types/node": "latest",
     "typescript": "latest",
     "vitest": "latest",
-    "@modelcontextprotocol/client": "2.1.0"
+    "@modelcontextprotocol/client": "2.2.0"
   }
 }
