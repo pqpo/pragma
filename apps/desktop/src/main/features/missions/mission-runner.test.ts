@@ -5674,6 +5674,7 @@ describe("MissionRunner", { timeout: 30_000 }, () => {
       });
       const updates: MissionChatUpdate[] = [];
       const statuses: { id: string; status: string }[] = [];
+      const queuedExecutionIds: string[] = [];
       runner.subscribeChat(({ update }) => updates.push(update));
       runner.subscribeStatus(({ execution }) => {
         if (execution !== undefined) statuses.push(execution);
@@ -5737,6 +5738,7 @@ describe("MissionRunner", { timeout: 30_000 }, () => {
             execution: { status: "running", interruptible: true },
           });
           const id = (await missions.get(mission.id)).execution!.id;
+          queuedExecutionIds.push(id);
           expect(statuses).toContainEqual({ id, status: "running" });
           if (content === "Second turn") {
             releasePage();
@@ -5795,6 +5797,11 @@ describe("MissionRunner", { timeout: 30_000 }, () => {
           { timeout: settlementTimeoutMs },
         );
         expect((await missions.get(mission.id)).execution?.inputMessageId).toBe(thirdId);
+        for (const id of queuedExecutionIds) {
+          expect(
+            statuses.filter((status) => status.id === id && status.status === "running"),
+          ).toHaveLength(1);
+        }
       } finally {
         releasePage();
         releaseProjection();
