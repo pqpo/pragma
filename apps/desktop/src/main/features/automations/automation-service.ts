@@ -33,8 +33,8 @@ import {
 } from "./automation-store.ts";
 import { nextScheduleOccurrence, previewScheduleOccurrences } from "./automation-schedule.ts";
 import type { MissionCreator } from "../missions/mission-creator.ts";
-import type { MissionRunner } from "../missions/mission-runner.ts";
-import { MissionStoreError, type MissionStore } from "../missions/mission-store.ts";
+import type { LocalHostMissionApplication } from "@pragma/local-host";
+import { MissionStoreError, type MissionStore } from "@pragma/local-host";
 import type { PragmaProjectStore } from "../projects/pragma-project-store.ts";
 import { validateWorkspace } from "../workspaces/workspace-scope.ts";
 
@@ -62,7 +62,7 @@ export function createAutomationService(options: {
   readonly store: AutomationStore;
   readonly missions: MissionStore;
   readonly creator: MissionCreator;
-  readonly runner: MissionRunner;
+  readonly application: LocalHostMissionApplication;
   readonly loggerProvider?: PragmaLoggerProvider | undefined;
   readonly onStorageTrashed?: (() => void) | undefined;
   readonly now?: (() => Date) | undefined;
@@ -227,7 +227,7 @@ export function createAutomationService(options: {
       const mission = await ensureMission(resource, binding, event.missionId);
       await markDispatched(ref, binding.generation, event, event.missionId);
       if (mission.execution === undefined) {
-        void options.runner.run(event.missionId).catch(async (error: unknown) => {
+        void options.application.startRun(event.missionId).catch(async (error: unknown) => {
           await markRunOnlyFailed(ref, binding.generation, event, event.missionId, error).catch(
             () => undefined,
           );
@@ -271,13 +271,13 @@ export function createAutomationService(options: {
       const dispatchMissionId = missionId;
       const operation = startsMission
         ? mission.execution === undefined
-          ? options.runner.run(dispatchMissionId)
+          ? options.application.startRun(dispatchMissionId)
           : TERMINAL_EXECUTION_STATUSES.has(mission.execution.status)
             ? Promise.resolve(mission)
             : waitForMissionExecution(dispatchMissionId).then(
                 async () => await options.missions.get(dispatchMissionId),
               )
-        : options.runner.sendMessage({
+        : options.application.sendMessage({
             id: dispatchMissionId,
             content: promptFor(resource),
             requestId: deterministicUuid(`automation-message:${event.eventId}`),

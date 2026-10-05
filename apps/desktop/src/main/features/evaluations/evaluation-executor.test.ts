@@ -8,8 +8,8 @@ import { EVALUATION_JUDGE_EXPERT_REF } from "@pragma/built-in-agents";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { AgentEvaluationRunSchema, type Mission } from "../../../shared/contracts/index.ts";
-import type { MissionRunner } from "../missions/mission-runner.ts";
-import type { MissionStore } from "../missions/mission-store.ts";
+import type { LocalHostMissionApplication } from "@pragma/local-host";
+import type { MissionStore } from "@pragma/local-host";
 import type { PragmaProjectStore } from "../projects/pragma-project-store.ts";
 import type { EvaluationStore } from "./evaluation-store.ts";
 import type { CapabilityStore } from "../capabilities/capability-store.ts";
@@ -95,7 +95,7 @@ describe("Mission agent evaluation executor", () => {
     const run = runFixture();
     const executor = createMissionAgentEvaluationExecutor({
       missions: harness.missions,
-      runner: harness.runner,
+      application: harness.application,
       project: projectFixture(),
       store: settingsStore(),
       mocks: {
@@ -126,7 +126,7 @@ describe("Mission agent evaluation executor", () => {
     const controller = new AbortController();
     const executor = createMissionAgentEvaluationExecutor({
       missions: harness.missions,
-      runner: harness.runner,
+      application: harness.application,
       project: projectFixture(),
       store: settingsStore(),
       mocks: {
@@ -153,7 +153,7 @@ describe("Mission agent evaluation executor", () => {
 
 function missionHarness(completeImmediately: boolean): {
   readonly missions: MissionStore;
-  readonly runner: MissionRunner;
+  readonly application: LocalHostMissionApplication;
   readonly created: Parameters<MissionStore["create"]>[0][];
   readonly interrupted: number;
 } {
@@ -183,8 +183,8 @@ function missionHarness(completeImmediately: boolean): {
       return records.get(id)!;
     },
   } as unknown as MissionStore;
-  const runner = {
-    async run(id: string) {
+  const application = {
+    async startRun(id: string) {
       const mission = records.get(id)!;
       if (!completeImmediately) return mission;
       const now = new Date().toISOString();
@@ -201,7 +201,7 @@ function missionHarness(completeImmediately: boolean): {
       records.set(id, finished);
       return finished;
     },
-    async getChatPage(input: Parameters<MissionRunner["getChatPage"]>[0]) {
+    async getChatPage(input: Parameters<LocalHostMissionApplication["getChatPage"]>[0]) {
       const mission = records.get(input.id)!;
       const output =
         mission.origin.type === "system-evaluation" && mission.origin.phase === "judge"
@@ -248,10 +248,10 @@ function missionHarness(completeImmediately: boolean): {
     async delete(id: string) {
       records.delete(id);
     },
-  } as unknown as MissionRunner;
+  } as unknown as LocalHostMissionApplication;
   return {
     missions,
-    runner,
+    application,
     created,
     get interrupted() {
       return interrupted;

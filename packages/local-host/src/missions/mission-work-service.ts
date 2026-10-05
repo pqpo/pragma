@@ -2,7 +2,7 @@ import type { MissionChatEntry, MissionWorkSnapshot } from "@pragma/shared";
 import type {
   MissionSurfaceAudience,
   MissionWorkNotification,
-} from "./mission-runner-contracts.ts";
+} from "./mission-execution-use-cases.ts";
 
 export interface MissionWorkProjection {
   readonly revision: number;

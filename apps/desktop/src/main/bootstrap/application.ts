@@ -12,6 +12,7 @@ import { configureDesktopApplicationIdentity } from "./application-identity.ts";
 import { createDesktopApplicationContainer } from "./application-container.ts";
 import { createDesktopPragmaPaths } from "./desktop-paths.ts";
 import { enforceDesktopSingleInstance } from "./single-instance.ts";
+import { installDesktopShutdown } from "./shutdown-sequence.ts";
 import { startDesktopWindowWithServices } from "./startup-sequence.ts";
 import { registerMissionAttachmentScheme } from "../features/missions/mission-attachment-protocol.ts";
 
@@ -106,7 +107,16 @@ export function startDesktopApplication(): void {
         }),
       createWindow: windows.createWindow,
       onContainerReady: (created) => {
-        app.once("before-quit", () => created.dispose());
+        installDesktopShutdown({
+          app,
+          dispose: created.dispose,
+          reportFailure: (error) =>
+            logging.mainLogger.error(
+              "desktop.shutdown_failed",
+              "Desktop shutdown is pending; retry quitting after the Runtime stops.",
+              error,
+            ),
+        });
       },
       onContainerError: (error) => {
         startupStatus = {

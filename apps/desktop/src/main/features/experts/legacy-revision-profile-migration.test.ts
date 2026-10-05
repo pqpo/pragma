@@ -72,7 +72,7 @@ describe("legacy revision profile retirement", () => {
       runtimes,
       pragmaHome: f.root,
       missions: {} as Parameters<typeof createDesktopSkillAgents>[0]["missions"],
-      runner: {} as Parameters<typeof createDesktopSkillAgents>[0]["runner"],
+      application: {} as Parameters<typeof createDesktopSkillAgents>[0]["application"],
       project: {} as Parameters<typeof createDesktopSkillAgents>[0]["project"],
       resolveDraftWorkspace: async () => f.root,
     });

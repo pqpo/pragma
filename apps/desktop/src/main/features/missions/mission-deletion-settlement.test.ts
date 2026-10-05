@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { trackMissionDeletionSettlement } from "./mission-deletion-settlement.ts";
+import { trackMissionDeletionSettlement } from "@pragma/local-host";
 
 describe("Mission deletion observer settlement", () => {
   it("releases idle Mission observers after success and failure", async () => {

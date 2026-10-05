@@ -88,6 +88,8 @@ ADR 的数字来自项目演进历史，早期曾出现同号记录。链接文�
 - [Long-running Mission heartbeats and ownership fencing](./062-long-running-mission-heartbeats.md)
 - [Idle Mission resource release](./063-idle-mission-resource-release.md)
 
+- [Unified Local Host Mission application](./066-unified-local-host-mission-application.md)
+
 ## 维护规则
 
 - 新决策使用下一个未使用编号，不复用既有编号；

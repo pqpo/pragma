@@ -1,3 +1,4 @@
+import { waitForInternalMissionTerminal } from "@pragma/local-host";
 import { mkdir, readdir, rm, writeFile } from "node:fs/promises";
 import { basename, join } from "node:path";
 
@@ -14,8 +15,8 @@ import {
 } from "@pragma/memory";
 import type { KnowledgeSourceSnapshot, SkillSourceSnapshot } from "@pragma/shared";
 
-import type { MissionRunner } from "../missions/mission-runner.ts";
-import { MissionStoreError, type MissionStore } from "../missions/mission-store.ts";
+import type { LocalHostMissionApplication } from "@pragma/local-host";
+import { MissionStoreError, type MissionStore } from "@pragma/local-host";
 import type { PragmaProjectStore } from "../projects/pragma-project-store.ts";
 
 const MAX_SOURCE_BYTES = 40_000;
@@ -23,7 +24,7 @@ const MAX_SOURCE_BYTES = 40_000;
 export function createMemoryRevisionLearningPlanners(options: {
   readonly pragmaHome: string;
   readonly missions: MissionStore;
-  readonly runner: MissionRunner;
+  readonly application: LocalHostMissionApplication;
   readonly project: PragmaProjectStore;
 }): {
   readonly knowledge: KnowledgeLearningPlanner;
@@ -62,62 +63,54 @@ export function createMemoryRevisionLearningPlanners(options: {
       await writeFile(join(registry, mission.id), "", { flag: "wx", mode: 0o600 });
       active.add(mission.id);
     } catch (error) {
-      await options.runner.delete(mission.id).catch(() => undefined);
+      await options.application.delete(mission.id).catch(() => undefined);
       throw error;
     }
     const interrupt = (): void => {
-      void options.runner.interrupt(mission.id).catch(() => undefined);
+      void options.application.interrupt(mission.id).catch(() => undefined);
     };
     input.signal.addEventListener("abort", interrupt, { once: true });
     try {
-      await options.runner.run(mission.id);
-      const deadline = Date.now() + 10 * 60_000;
-      while (Date.now() < deadline) {
-        input.signal.throwIfAborted();
-        const current = await options.missions.get(mission.id);
-        if (
-          current.execution !== undefined &&
-          ["succeeded", "failed", "cancelled"].includes(current.execution.status)
-        ) {
-          if (current.execution.status !== "succeeded") {
-            const runtimeFailure = await options.runner.getTerminalRuntimeFailure(mission.id);
-            throw Object.assign(
-              new Error(
-                runtimeFailure?.message ??
-                  current.execution.error ??
-                  "memory_revision_planning_failed",
-              ),
-              {
-                code: runtimeFailure?.code ?? "memory_revision_planning_failed",
-                retryable: runtimeFailure?.retryable ?? true,
-                ...(runtimeFailure?.httpStatus === undefined
-                  ? {}
-                  : { httpStatus: runtimeFailure.httpStatus }),
-                ...(runtimeFailure?.requestId === undefined
-                  ? {}
-                  : { requestId: runtimeFailure.requestId }),
-                ...(runtimeFailure?.endpoint === undefined
-                  ? {}
-                  : { endpoint: runtimeFailure.endpoint }),
-              },
-            );
-          }
-          const chat = await options.runner.getChatPage({ id: mission.id, limit: 50 });
-          const content = chat.entries
-            .filter((entry) => entry.kind === "assistant")
-            .at(-1)?.content;
-          if (content === undefined) throw new Error("memory_revision_plan_missing");
-          return JSON.parse(extractStructuredJson(content));
-        }
-        await new Promise<void>((resolve) => setTimeout(resolve, 200));
+      await options.application.startRun(mission.id);
+      const current = await waitForInternalMissionTerminal({
+        getMission: (id) => options.missions.get(id),
+        missionId: mission.id,
+        signal: input.signal,
+        timeoutMessage: "memory_revision_planning_timeout",
+      });
+      if (current.execution!.status !== "succeeded") {
+        const runtimeFailure = await options.application.getTerminalRuntimeFailure(mission.id);
+        throw Object.assign(
+          new Error(
+            runtimeFailure?.message ??
+              current.execution!.error ??
+              "memory_revision_planning_failed",
+          ),
+          {
+            code: runtimeFailure?.code ?? "memory_revision_planning_failed",
+            retryable: runtimeFailure?.retryable ?? true,
+            ...(runtimeFailure?.httpStatus === undefined
+              ? {}
+              : { httpStatus: runtimeFailure.httpStatus }),
+            ...(runtimeFailure?.requestId === undefined
+              ? {}
+              : { requestId: runtimeFailure.requestId }),
+            ...(runtimeFailure?.endpoint === undefined
+              ? {}
+              : { endpoint: runtimeFailure.endpoint }),
+          },
+        );
       }
-      throw new Error("memory_revision_planning_timeout");
+      const chat = await options.application.getChatPage({ id: mission.id, limit: 50 });
+      const content = chat.entries.filter((entry) => entry.kind === "assistant").at(-1)?.content;
+      if (content === undefined) throw new Error("memory_revision_plan_missing");
+      return JSON.parse(extractStructuredJson(content));
     } finally {
       input.signal.removeEventListener("abort", interrupt);
       active.delete(mission.id);
       let deleted = false;
       try {
-        await options.runner.delete(mission.id);
+        await options.application.delete(mission.id);
         deleted = true;
       } catch {
         // The marker keeps an interrupted Mission available for targeted recovery.
@@ -136,7 +129,7 @@ export function createMemoryRevisionLearningPlanners(options: {
         if (!/^[0-9a-f-]{36}$/u.test(missionId)) continue;
         if (active.has(missionId)) continue;
         try {
-          await options.runner.delete(missionId);
+          await options.application.delete(missionId);
         } catch (error) {
           if (!(error instanceof MissionStoreError) || error.code !== "mission_not_found") {
             throw error;

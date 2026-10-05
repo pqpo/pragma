@@ -10,7 +10,12 @@ import { createMissionStore } from "../../src/missions/repository/mission-store.
 import { createLocalHostNodeApplication } from "../../src/node-application.ts";
 
 const roots: string[] = [];
+const hosts: ReturnType<typeof createLocalHostNodeApplication>[] = [];
 afterEach(async () => {
+  // Explicit queries can admit bounded receipt recovery after the read returns.
+  // The fixture owns its facade, just as production CLI does: settle that work
+  // before removing the storage tree rather than racing its live aggregate locks.
+  await Promise.all(hosts.splice(0).map(async (host) => await host.dispose?.()));
   await Promise.all(
     roots.splice(0).map(async (root) => await rm(root, { recursive: true, force: true })),
   );
@@ -61,6 +66,7 @@ async function fixture() {
     },
     client: { surface: "cli", version: "test", instanceId: "44444444-4444-4444-8444-444444444444" },
   });
+  hosts.push(host);
   return { home, missionsPath, store, legacy, missionId, guard, host, dispatch };
 }
 

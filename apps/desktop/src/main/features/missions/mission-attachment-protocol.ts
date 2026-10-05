@@ -3,7 +3,7 @@ import { pathToFileURL } from "node:url";
 import { net, protocol } from "electron";
 
 import { MISSION_ATTACHMENT_PREVIEW_SCHEME } from "../../../shared/contracts/index.ts";
-import type { MissionStore } from "./mission-store.ts";
+import type { MissionStore } from "@pragma/local-host";
 import type { MissionImageDraftStore } from "./mission-image-drafts.ts";
 import {
   parseMissionAttachmentPreviewUrl,

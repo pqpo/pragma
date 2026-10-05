@@ -38,7 +38,7 @@ import {
   MissionConversationSnapshotSchema,
 } from "../../../shared/contracts/index.ts";
 import type { DesktopMemoryPlane } from "./desktop-memory-plane.ts";
-import type { MissionStore } from "../missions/mission-store.ts";
+import type { MissionStore } from "@pragma/local-host";
 import type { PragmaProjectStore } from "../projects/pragma-project-store.ts";
 import type { DesktopSystemExpertRegistry } from "../experts/system-expert-registry.ts";
 import {

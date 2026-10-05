@@ -12,6 +12,11 @@ import type {
 } from "./mission-controller-store.ts";
 
 export interface MissionOwnerScope {
+  /** Seal acquisition and drain consumers/claims while retaining guards for confirmed Runtime teardown. */
+  quiesce(prepareShutdown?: () => Promise<void>): Promise<void>;
+  /** Claim only terminal receipt custody; never start an Inbox consumer. */
+  acquireForRecovery(missionId: string): Promise<MissionControllerGuard>;
+  ownedMissionIds(): readonly string[];
   diagnostics(): {
     activeMissionOwnerCount: number;
     activeInboxPollerCount: number;
@@ -29,6 +34,8 @@ export interface MissionOwnerScope {
     guard: MissionControllerGuard,
     operation: () => Promise<T>,
   ): Promise<T>;
+  /** Durable receipt custody starts an independent fenced claim, rather than inheriting its producer's lease. */
+  runWithoutGuard<T>(operation: () => Promise<T>): Promise<T>;
   currentGuard(missionId: string): MissionControllerGuard | undefined;
   assertOwnership(missionId: string, guard: MissionControllerGuard): Promise<void>;
   /** Wake this process's owner after a command is durable; never bypasses the Inbox. */
@@ -112,6 +119,7 @@ export function createMissionOwnerScope(options: {
   >();
   const pollers = new Map<string, { stop(): Promise<void>; wake(): void }>();
   const acquiring = new Map<string, Promise<MissionControllerGuard>>();
+  const pendingReleaseGuards = new Map<string, MissionControllerGuard>();
   const recoveryTimers = new Map<string, ReturnType<typeof setTimeout>>();
   const recoveryGeneration = new Map<string, number>();
   const background = new Map<string, Set<Promise<unknown>>>();
@@ -131,6 +139,15 @@ export function createMissionOwnerScope(options: {
     readonly guard: MissionControllerGuard;
   }>();
   let boundConsumer: MissionCommandConsumer | undefined;
+  let quiescing: Promise<void> | undefined;
+  let shutdown = false;
+  let drainingRecovery = false;
+  const shutdownError = () =>
+    createIntegrationError({
+      code: "DEPENDENCY_UNAVAILABLE",
+      category: "dependency",
+      message: "Mission owner scope is shutting down.",
+    });
 
   const cancelRecovery = (missionId: string): void => {
     const timer = recoveryTimers.get(missionId);
@@ -148,13 +165,14 @@ export function createMissionOwnerScope(options: {
     );
 
   const scheduleRecovery = (missionId: string, delayMs = leaseMs): void => {
-    if (boundConsumer === undefined || recoveryTimers.has(missionId)) return;
+    if (shutdown || boundConsumer === undefined || recoveryTimers.has(missionId)) return;
     const generation = recoveryGeneration.get(missionId) ?? 0;
     const timer = setTimeout(
       () => {
         recoveryTimers.delete(missionId);
         const task = (async () => {
           if (
+            shutdown ||
             generation !== (recoveryGeneration.get(missionId) ?? 0) ||
             active.has(missionId) ||
             !(await hasPendingOperation(missionId))
@@ -375,7 +393,113 @@ export function createMissionOwnerScope(options: {
     return poller;
   };
 
+  const acquireOwner = async (
+    missionId: string,
+    claimId: string | undefined,
+    polling: boolean,
+  ): Promise<MissionControllerGuard> => {
+    const scoped = operationGuard.getStore();
+    if (scoped?.missionId === missionId) return scoped.guard;
+    if (shutdown && (polling || !drainingRecovery)) throw shutdownError();
+    cancelRecovery(missionId);
+    const existing = active.get(missionId);
+    if (existing !== undefined && !existing.stopped) {
+      if (polling && boundConsumer !== undefined) {
+        await startPolling({ missionId, consumer: boundConsumer });
+      }
+      return existing.guard;
+    }
+    const inFlight = acquiring.get(missionId);
+    if (inFlight !== undefined) {
+      const guard = await inFlight;
+      if (shutdown && (polling || !drainingRecovery)) throw shutdownError();
+      if (polling && boundConsumer !== undefined)
+        await startPolling({ missionId, consumer: boundConsumer });
+      return guard;
+    }
+    const acquisition = (async (): Promise<MissionControllerGuard> => {
+      const grant = await options.controller.claim({
+        missionId,
+        claimId: claimId ?? randomUUID(),
+        leaseMs,
+      });
+      const guard = { claimId: grant.claimId, fencingToken: grant.fencingToken };
+      try {
+        await options.recoverSemanticWrite?.({ missionId, guard });
+      } catch (error) {
+        await options.controller.release({ missionId, guard }).catch(() => undefined);
+        throw error;
+      }
+      const current = {
+        guard,
+        stopped: false,
+        leaseLossNotified: false,
+      };
+      active.set(missionId, current);
+      scheduleRenewal(missionId);
+      // The claim's durable guard belongs to shutdown now. Retain it for
+      // release, but prevent the interrupted caller from starting a Runtime.
+      if (shutdown && (polling || !drainingRecovery)) throw shutdownError();
+      if (polling && boundConsumer !== undefined) {
+        try {
+          await startPolling({ missionId, consumer: boundConsumer });
+        } catch (error) {
+          await stopWithoutCallback(missionId, true);
+          await options.controller.release({ missionId, guard }).catch(() => undefined);
+          throw error;
+        }
+      }
+      return current.guard;
+    })();
+    acquiring.set(missionId, acquisition);
+    try {
+      return await acquisition;
+    } catch (error) {
+      // Acquisition can fail after a command is already durable (for
+      // example while starting its Inbox poller). Keep that queued work on
+      // the same bounded recovery path used after lease loss.
+      if (polling) scheduleRecovery(missionId, Math.min(5_000, leaseMs));
+      throw error;
+    } finally {
+      acquiring.delete(missionId);
+    }
+  };
+
   const scope: MissionOwnerScope = {
+    quiesce(prepareShutdown) {
+      shutdown = true;
+      for (const id of recoveryTimers.keys()) cancelRecovery(id);
+      return (quiescing ??= (async () => {
+        drainingRecovery = true;
+        try {
+          // The resource hook seals read recovery synchronously. Stop Inbox
+          // consumers concurrently so its drain cannot admit fresh commands.
+          const preparing = prepareShutdown?.();
+          void preparing?.catch(() => undefined);
+          await Promise.all([...pollers.keys()].map(stopPolling));
+          await preparing;
+        } finally {
+          drainingRecovery = false;
+        }
+        await Promise.allSettled([
+          ...acquiring.values(),
+          ...[...background.values()].flatMap((tasks) => [...tasks]),
+        ]);
+        // A claim already inside persistence can finish after the first snapshot.
+        await Promise.all([...pollers.keys()].map(stopPolling));
+      })().catch((error: unknown) => {
+        quiescing = undefined;
+        throw error;
+      }));
+    },
+    ownedMissionIds: () => [
+      ...new Set([
+        ...active.keys(),
+        ...acquiring.keys(),
+        ...background.keys(),
+        ...pendingReleaseGuards.keys(),
+      ]),
+    ],
     diagnostics() {
       return {
         activeMissionOwnerCount: active.size,
@@ -411,73 +535,22 @@ export function createMissionOwnerScope(options: {
       const current = active.get(missionId);
       return current === undefined || current.stopped ? undefined : current.guard;
     },
+    async runWithoutGuard(operation) {
+      return await operationGuard.exit(operation);
+    },
     async runWithGuard(missionId, guard, operation) {
       return await operationGuard.run({ missionId, guard }, operation);
     },
-    async acquire(missionId, claimId) {
-      const scoped = operationGuard.getStore();
-      if (scoped?.missionId === missionId) return scoped.guard;
-      cancelRecovery(missionId);
-      const existing = active.get(missionId);
-      if (existing !== undefined && !existing.stopped) {
-        if (boundConsumer !== undefined) {
-          await startPolling({ missionId, consumer: boundConsumer });
-        }
-        return existing.guard;
-      }
-      const inFlight = acquiring.get(missionId);
-      if (inFlight !== undefined) return await inFlight;
-      const acquisition = (async (): Promise<MissionControllerGuard> => {
-        const grant = await options.controller.claim({
-          missionId,
-          claimId: claimId ?? randomUUID(),
-          leaseMs,
-        });
-        const guard = { claimId: grant.claimId, fencingToken: grant.fencingToken };
-        try {
-          await options.recoverSemanticWrite?.({ missionId, guard });
-        } catch (error) {
-          await options.controller.release({ missionId, guard }).catch(() => undefined);
-          throw error;
-        }
-        const current = {
-          guard,
-          stopped: false,
-          leaseLossNotified: false,
-        };
-        active.set(missionId, current);
-        scheduleRenewal(missionId);
-        if (boundConsumer !== undefined) {
-          try {
-            await startPolling({ missionId, consumer: boundConsumer });
-          } catch (error) {
-            await stopWithoutCallback(missionId, true);
-            await options.controller.release({ missionId, guard }).catch(() => undefined);
-            throw error;
-          }
-        }
-        return current.guard;
-      })();
-      acquiring.set(missionId, acquisition);
-      try {
-        return await acquisition;
-      } catch (error) {
-        // Acquisition can fail after a command is already durable (for
-        // example while starting its Inbox poller). Keep that queued work on
-        // the same bounded recovery path used after lease loss.
-        scheduleRecovery(missionId, Math.min(5_000, leaseMs));
-        throw error;
-      } finally {
-        acquiring.delete(missionId);
-      }
-    },
+    acquire: (missionId, claimId) => acquireOwner(missionId, claimId, true),
+    acquireForRecovery: (missionId) => acquireOwner(missionId, undefined, false),
     async release(missionId, expectedGuard) {
       const current = active.get(missionId);
-      if (current === undefined) return;
+      const guard = current?.guard ?? pendingReleaseGuards.get(missionId);
+      if (guard === undefined) return;
       if (
         expectedGuard !== undefined &&
-        (current.guard.claimId !== expectedGuard.claimId ||
-          current.guard.fencingToken !== expectedGuard.fencingToken)
+        (guard.claimId !== expectedGuard.claimId ||
+          guard.fencingToken !== expectedGuard.fencingToken)
       )
         throw createIntegrationError({
           code: "MISSION_FENCING_REJECTED",
@@ -486,11 +559,27 @@ export function createMissionOwnerScope(options: {
           details: { missionId },
         });
       cancelRecovery(missionId);
-      current.stopped = true;
-      if (current.timer !== undefined) clearTimeout(current.timer);
-      await stopPolling(missionId);
+      pendingReleaseGuards.set(missionId, guard);
+      if (current !== undefined) {
+        current.stopped = true;
+        if (current.timer !== undefined) clearTimeout(current.timer);
+      }
       try {
-        await options.controller.release({ missionId, guard: current.guard });
+        await stopPolling(missionId);
+        await options.controller.release({ missionId, guard });
+        pendingReleaseGuards.delete(missionId);
+      } catch (error) {
+        if (
+          typeof error === "object" &&
+          error !== null &&
+          "code" in error &&
+          error.code === "MISSION_FENCING_REJECTED"
+        ) {
+          pendingReleaseGuards.delete(missionId);
+          // An old pending release has already lost custody to a successor.
+          if (current === undefined) return;
+        }
+        throw error;
       } finally {
         if (active.get(missionId) === current) active.delete(missionId);
       }
@@ -519,11 +608,7 @@ export function createMissionOwnerScope(options: {
       // Poller shutdown yields; a revoked/reacquired owner must not be released
       // by the predecessor's late cleanup. Renewal may replace only its guard.
       if (active.get(missionId) !== current) return;
-      try {
-        await options.controller.release({ missionId, guard: current.guard });
-      } finally {
-        if (active.get(missionId) === current) active.delete(missionId);
-      }
+      await scope.release(missionId, current.guard);
     },
     async terminalDelete(missionId, deleteOwner) {
       cancelRecovery(missionId);

@@ -1,6 +1,6 @@
 import { createHash, randomUUID } from "node:crypto";
 import { execFileSync } from "node:child_process";
-import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, readFile, rm, writeFile, access } from "node:fs/promises";
 import { cpus, tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { pathToFileURL, URL } from "node:url";
@@ -11,7 +11,7 @@ import { setTimeout } from "node:timers";
 // Run serially, after building the selected checkout:
 // pnpm exec tsx docs/performance/local-host-kernel-r2-compilation-probe.mjs \
 //   --checkout /path/to/checkout --samples 20 --output /tmp/r2-compile.json
-// The same script runs against main and R2. It uses isolated real Host stores
+// Reused for R1–R4 comparisons against frozen historical checkouts. It uses isolated real Host stores
 // and a fake Runtime; it does not measure models, renderer, or product acceptance.
 const argumentsByName = new Map();
 for (let index = 2; index < process.argv.length; index += 2)
@@ -65,16 +65,39 @@ const { createRuntimeEnvironmentStore } = await load(
 const { createPragmaProjectStore } = await load(
   "apps/desktop/src/main/features/projects/pragma-project-store.ts",
 );
-const { createMissionStore } = await load(
-  "apps/desktop/src/main/features/missions/mission-store.ts",
+const { createMissionStore } = host;
+// Both sides receive the same real controller/lease composition. Baseline uses its
+// historical Desktop facade; candidate uses the production shared factory.
+const resourcePath =
+  "apps/desktop/src/main/features/missions/desktop-mission-execution-resources.ts";
+const unified = await access(join(checkout, resourcePath)).then(
+  () => true,
+  () => false,
 );
-const { createMissionRunner } = await load(
-  "apps/desktop/src/main/features/missions/mission-runner.ts",
-);
+const desktopFactory = unified
+  ? (await load(resourcePath)).createDesktopMissionExecutionResources
+  : (await load("apps/desktop/src/main/features/missions/mission-runner.ts")).createMissionRunner;
+const createMissionRunner = (options) => {
+  const lifecycle = host.createLocalHostMissionController({
+    missionsPath: join(options.pragmaHome, "data", "missions"),
+    missionPath: options.missions.storagePath,
+    recoverSemanticWrite: async () => undefined,
+  });
+  if (!unified) return desktopFactory({ ...options, ownerScope: lifecycle.ownerScope });
+  const application = host.createLocalHostMissionApplication({
+    execution: desktopFactory(options),
+    lifecycle,
+    client: { surface: "desktop", version: "r4-probe", instanceId: randomUUID() },
+    resolveExecutor: async () => undefined,
+  });
+  return { ...application, run: application.startRun };
+};
 const { missionExecutorSnapshot } = await load("apps/desktop/src/shared/contracts/index.ts");
 const root = await mkdtemp(join(tmpdir(), "pragma-r2-compilation-"));
 const sourcePaths = [
   "apps/desktop/src/main/features/missions/mission-runner-composition.ts",
+  resourcePath,
+  "packages/local-host/src/missions/application.ts",
   "packages/local-host/src/missions/execution-service.ts",
   "packages/local-host/src/missions/session-lifecycle.ts",
   "packages/local-host/src/missions/flow-lifecycle.ts",

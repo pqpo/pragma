@@ -14,6 +14,10 @@ import type { MissionControlApplication } from "./missions/controller/mission-co
 import type { MissionWatchPort } from "./missions/controller/watch.ts";
 import type { MissionQueryPort } from "./missions/query.ts";
 import type { LocalHostRunApplication } from "./run.ts";
+import {
+  isLocalHostMissionApplication,
+  type LocalHostMissionApplication,
+} from "./missions/application.ts";
 
 export {
   CliResultSchema,
@@ -127,6 +131,7 @@ export interface LocalHostApplicationPort<
   TQueue = unknown,
 > {
   readonly protocol: typeof LOCAL_HOST_APPLICATION_PROTOCOL;
+  readonly dispose?: (() => Promise<void>) | undefined;
   integrationCapability(): Promise<IntegrationCapability>;
   listProjects(): Promise<readonly TProject[]>;
   getProjectRevision(projectId: string, revision: number): Promise<TRevision | undefined>;
@@ -198,13 +203,9 @@ export interface LocalHostApplicationPorts<
   readonly queue?: { readonly list: (missionId: string) => Promise<TQueue> };
   /** Read-only Mission event watcher; this port never claims a controller lease. */
   readonly watch?: MissionWatchPort;
-  readonly missionControl?: {
-    /** Optional Host recovery command; Desktop exposes commands without CLI resume. */
-    readonly resume?: ((input: LocalHostMissionResumeRequest) => Promise<unknown>) | undefined;
-    readonly commands?: MissionControlApplication;
-  };
+  /** Execution and command entry points must originate from the shared kernel factory. */
+  readonly missionApplication?: LocalHostMissionApplication | undefined;
   readonly runtime: { readonly resolver: RuntimeResolver };
-  readonly run?: LocalHostRunApplication | undefined;
 }
 
 export function createLocalHostApplication<
@@ -240,6 +241,12 @@ export function createLocalHostApplication<
   TBoardSearch,
   TQueue
 > {
+  const missionApplication = ports.missionApplication;
+  if (missionApplication !== undefined && !isLocalHostMissionApplication(missionApplication)) {
+    throw new Error(
+      "Mission application must be created by the shared Local Host application factory.",
+    );
+  }
   return {
     protocol: LOCAL_HOST_APPLICATION_PROTOCOL,
     integrationCapability: ports.integrationCapability,
@@ -287,16 +294,15 @@ export function createLocalHostApplication<
       return await ports.queue.list(missionId);
     },
     ...(ports.watch === undefined ? {} : { watchMission: ports.watch.watch }),
-    ...(ports.missionControl?.resume === undefined
-      ? {}
-      : { resumeMission: ports.missionControl.resume }),
-    ...(ports.missionControl?.commands === undefined
+    runtimeResolver: () => ports.runtime.resolver,
+    ...(missionApplication === undefined
       ? {}
       : {
-          missionControl: ports.missionControl.commands,
+          dispose: missionApplication.dispose,
+          resumeMission: missionApplication.integration.missionControl.resume,
+          missionControl: missionApplication.integration.missionControl.commands,
+          run: missionApplication.integration.run,
         }),
-    runtimeResolver: () => ports.runtime.resolver,
-    ...(ports.run === undefined ? {} : { run: ports.run }),
   };
 }
 
@@ -418,7 +424,7 @@ export * from "./missions/repository/mission-execution-projection.ts";
 export * from "./missions/repository/mission-deletion-intent.ts";
 
 export * from "./missions/execution-service.ts";
-export * from "./missions/mission-runner-contracts.ts";
+export * from "./missions/mission-execution-use-cases.ts";
 export * from "./missions/mission-chat-history.ts";
 export * from "./missions/mission-chat-live.ts";
 export * from "./missions/mission-chat-projection-common.ts";
@@ -441,3 +447,11 @@ export {
 } from "./missions/mission-execution-event-projector.ts";
 
 export { createMissionSessionAssociationResolver } from "./missions/session-association.ts";
+
+export * from "./missions/mission-delivery.ts";
+export * from "./missions/mission-delivery-recovery.ts";
+export * from "./missions/mission-terminal-materializer.ts";
+
+export * from "./missions/internal-mission-use-cases.ts";
+
+export * from "./missions/application.ts";

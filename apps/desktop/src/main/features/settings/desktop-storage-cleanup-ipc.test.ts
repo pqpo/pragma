@@ -9,7 +9,7 @@ describe("completed conversation cleanup", () => {
     const remove = vi.fn(async () => {});
     const claimCompletedTaskDeletion = vi.fn(async () => {});
     await deleteCompletedTaskMission(
-      { missions: { claimCompletedTaskDeletion }, runner: { delete: remove } },
+      { missions: { claimCompletedTaskDeletion }, application: { delete: remove } },
       "mission-id",
     );
     expect(claimCompletedTaskDeletion).toHaveBeenCalledWith("mission-id");
@@ -23,7 +23,7 @@ describe("completed conversation cleanup", () => {
     });
     await expect(
       deleteCompletedTaskMission(
-        { missions: { claimCompletedTaskDeletion }, runner: { delete: remove } },
+        { missions: { claimCompletedTaskDeletion }, application: { delete: remove } },
         "mission-id",
       ),
     ).rejects.toThrow("Mission is active");

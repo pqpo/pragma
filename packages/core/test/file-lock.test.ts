@@ -1,8 +1,9 @@
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
-import { mkdir, mkdtemp, readdir, rm, stat, utimes } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, readdir, rm, stat, utimes, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { Worker } from "node:worker_threads";
 
 import { afterEach, describe, expect, it } from "vitest";
 
@@ -23,6 +24,128 @@ afterEach(async () => {
 });
 
 describe("withFileLock", { timeout: 30_000 }, () => {
+  it("does not reclaim a live worker's lock when its process-start estimate differs", async () => {
+    const root = await createTemporaryRoot("pragma-lock-worker-");
+    const lockDir = join(root, "execution", ".lock");
+    const holder = new Worker(new URL("./fixtures/file-lock-worker.ts", import.meta.url), {
+      execArgv: ["--experimental-strip-types"],
+      workerData: { lockDir, clockOffsetMs: 1_000 },
+    });
+    try {
+      await new Promise<void>((resolve, reject) => {
+        holder.once("message", () => resolve());
+        holder.once("error", reject);
+      });
+      await expect(
+        withFileLock(lockDir, async () => "overlapped", { timeoutMs: 40, staleMs: 30 }),
+      ).rejects.toMatchObject({ contention: "active" });
+      const exited = new Promise<void>((resolve, reject) => {
+        holder.once("exit", (code) =>
+          code === 0 ? resolve() : reject(new Error(`Worker exited: ${code}`)),
+        );
+        holder.once("error", reject);
+      });
+      holder.postMessage("release");
+      await exited;
+      await expect(withFileLock(lockDir, async () => "continued")).resolves.toBe("continued");
+      await expect(stat(lockDir)).rejects.toMatchObject({ code: "ENOENT" });
+    } finally {
+      await holder.terminate();
+    }
+  });
+
+  it("rechecks acquisition when an orphan retires while its reclaim marker is initialized", async () => {
+    const root = await createTemporaryRoot("pragma-lock-marker-retire-");
+    const lockDir = join(root, "execution", ".lock");
+    await mkdir(lockDir, { recursive: true });
+    const staleTime = new Date(Date.now() - 1_000);
+    await utimes(lockDir, staleTime, staleTime);
+    let retired = false;
+    await expect(
+      withFileLock(lockDir, async () => "acquired", {
+        staleMs: 100,
+        onPhase: async (phase) => {
+          if (phase === "reclaim-marker-created") {
+            retired = true;
+            await rm(lockDir, { recursive: true });
+          }
+        },
+      }),
+    ).resolves.toBe("acquired");
+    expect(retired).toBe(true);
+    await expect(stat(lockDir)).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
+  it("cleans its own empty marker after initialization fails so the same process can retry", async () => {
+    const root = await createTemporaryRoot("pragma-lock-marker-retry-");
+    const lockDir = join(root, "execution", ".lock");
+    await mkdir(lockDir, { recursive: true });
+    const staleTime = new Date(Date.now() - 1_000);
+    await utimes(lockDir, staleTime, staleTime);
+    const failure = new Error("marker initialization failed");
+    await expect(
+      withFileLock(lockDir, async () => "unexpected", {
+        staleMs: 100,
+        onPhase: (phase) => {
+          if (phase === "reclaim-marker-created") throw failure;
+        },
+      }),
+    ).rejects.toBe(failure);
+    await expect(stat(join(lockDir, ".reclaim"))).rejects.toMatchObject({ code: "ENOENT" });
+    await expect(withFileLock(lockDir, async () => "retried", { staleMs: 100 })).resolves.toBe(
+      "retried",
+    );
+  });
+
+  it.each(["reclaim-marker-created", "reclaim-marker-claimed"] as const)(
+    "preserves a successor worker and its reclaim marker when the directory retires at %s",
+    async (replacementPhase) => {
+      const root = await createTemporaryRoot("pragma-lock-marker-successor-");
+      const lockDir = join(root, "execution", ".lock");
+      await mkdir(lockDir, { recursive: true });
+      const staleTime = new Date(Date.now() - 1_000);
+      await utimes(lockDir, staleTime, staleTime);
+      const markerPath = join(lockDir, ".reclaim", "owner.json");
+      let holder: Worker | undefined;
+      let successorMarker = "";
+      try {
+        await expect(
+          withFileLock(lockDir, async () => "overlapped", {
+            staleMs: 100,
+            timeoutMs: 500,
+            onPhase: async (phase) => {
+              if (phase !== replacementPhase) return;
+              await rm(lockDir, { recursive: true });
+              holder = new Worker(new URL("./fixtures/file-lock-worker.ts", import.meta.url), {
+                execArgv: ["--experimental-strip-types"],
+                workerData: { lockDir, clockOffsetMs: 1_000 },
+              });
+              await new Promise<void>((resolve, reject) => {
+                holder!.once("message", () => resolve());
+                holder!.once("error", reject);
+              });
+              successorMarker = await readFile(join(lockDir, "owner.json"), "utf8");
+              await mkdir(join(lockDir, ".reclaim"));
+              await writeFile(markerPath, successorMarker);
+            },
+          }),
+        ).rejects.toMatchObject({ contention: "active" });
+        expect(await readFile(markerPath, "utf8")).toBe(successorMarker);
+        const exited = new Promise<void>((resolve, reject) => {
+          holder!.once("exit", (code) =>
+            code === 0 ? resolve() : reject(new Error(`Worker exited: ${code}`)),
+          );
+          holder!.once("error", reject);
+        });
+        holder!.postMessage("release");
+        await exited;
+        await expect(withFileLock(lockDir, async () => "continued")).resolves.toBe("continued");
+      } finally {
+        await holder?.terminate();
+      }
+    },
+  );
+
   it("serializes heavily contended lock directory creation and removal", async () => {
     const root = await createTemporaryRoot("pragma-lock-");
     const lockDir = join(root, "execution", ".lock");
