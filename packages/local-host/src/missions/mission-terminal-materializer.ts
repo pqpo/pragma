@@ -34,7 +34,10 @@ export function createMissionTerminalMaterializer(input: {
       // A one-shot request must not rebuild its released owner for product enrichment.
       // The durable receipt remains available to the next explicit access or host consumer.
       if (input.ownerLifetime === "request" && existingGuard === undefined) return "deferred";
-      const guard = await input.ownerScope.acquire(registered.id);
+      const guard =
+        input.ownerLifetime === "request"
+          ? existingGuard!
+          : await input.ownerScope.acquire(registered.id);
       await input.ownerScope.runWithGuard(registered.id, guard, async () => {
         const mission = await input.missions.get(registered.id);
         const execution = await input.executions.get(executionId);

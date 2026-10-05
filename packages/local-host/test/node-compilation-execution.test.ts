@@ -10,6 +10,7 @@ import { readFileSync } from "node:fs";
 import { cp, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { DatabaseSync } from "node:sqlite";
 
 import {
   createFileExpertSessionStore,
@@ -34,7 +35,7 @@ import {
 } from "@pragma/shared";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { createLocalHostNodeApplication } from "../src/node-application.ts";
+import { createLocalHostNodeApplication as createNodeApplication } from "../src/node-application.ts";
 import * as nodeCompiler from "../src/node-mission-compiler.ts";
 import * as runMemoryModule from "../src/run-memory.ts";
 import * as requestReleaseModule from "../src/missions/request-resource-release.ts";
@@ -52,7 +53,18 @@ import {
 } from "./fixtures/published-project.ts";
 
 const roots: string[] = [];
+const hosts: ReturnType<typeof createNodeApplication>[] = [];
+function createLocalHostNodeApplication(
+  options: Parameters<typeof createNodeApplication>[0],
+): ReturnType<typeof createNodeApplication> {
+  const host = createNodeApplication(options);
+  hosts.push(host);
+  return host;
+}
 afterEach(async () => {
+  // Test bodies stop their child producers first; then drain Host custody
+  // before removing its durable root or restoring the Runtime mocks it uses.
+  for (const host of hosts.splice(0).reverse()) await host.dispose?.();
   vi.restoreAllMocks();
   await Promise.all(
     roots.splice(0).map((root) => rm(root, { recursive: true, force: true, maxRetries: 5 })),
@@ -203,6 +215,94 @@ async function fixture(
 }
 
 describe("default Node compilation reaches persisted Execution", { timeout: 15_000 }, () => {
+  it.each(["show", "query", "owned-show"] as const)(
+    "recovers terminal receipt custody on explicit %s before immediate facade disposal without another Native turn",
+    async (access) => {
+      const f = await fixture();
+      const started = await f.app.run!.start({
+        requestId: randomUUID(),
+        command: "expert.run",
+        executor: { kind: "expert", id: f.expertId },
+        project: { projectId: "studio", revision: 1 },
+        workspace: f.workspace,
+        prompt: "initial",
+        detach: false,
+      });
+      expect((await started.outcome).status).toBe("succeeded");
+      await f.app.dispose!();
+      const paths = new PragmaPaths({ pragmaHome: f.home });
+      const receipts = new DatabaseSync(paths.missionDelivery());
+      try {
+        // Rewind only the rebuildable consumer cursor to replay the actual Native
+        // terminal fact, as after a consumer was unavailable. Keep its real link.
+        receipts.exec("DELETE FROM delivery_tasks");
+        receipts.prepare("UPDATE delivery_metadata SET value='0' WHERE key='cursor'").run();
+      } finally {
+        receipts.close();
+      }
+      const missions = createMissionStore({ missionsPath: join(paths.dataRoot(), "missions") });
+      const mission = await missions.get(started.missionId);
+      await missions.updateExecution(mission.id, { ...mission.execution!, status: "running" });
+      await rm(join(missions.storagePath!(mission.id), "execution-projections"), {
+        recursive: true,
+        force: true,
+      });
+      const controller = createMissionControllerStore({ missionsPath: paths.missionsRoot() });
+      const foreign =
+        access === "owned-show"
+          ? await controller.claim({
+              missionId: mission.id,
+              claimId: randomUUID(),
+              leaseMs: 30_000,
+            })
+          : undefined;
+      const readonly = createLocalHostNodeApplication({
+        pragmaHome: f.home,
+        runtimes: f.runtimes,
+        client: { surface: "cli", version: "test", instanceId: randomUUID() },
+        workspace: {
+          stat: async () => ({ isDirectory: () => true }),
+          access: async () => undefined,
+          realpath: async (path) => path,
+        },
+      });
+      try {
+        if (access !== "query") await readonly.getMission(mission.id);
+        else await readonly.queryMission({ missionId: mission.id, view: "result", limit: 50 });
+        // CLI exits immediately after presenting the read; shutdown must retain
+        // this accepted recovery's guard until its finite receipt work settles.
+        await readonly.dispose!();
+        expect(f.startTurn).toHaveBeenCalledOnce();
+        if (foreign !== undefined) {
+          expect(
+            (await controller.readSnapshot({ missionId: mission.id })).snapshot.lease?.claimId,
+          ).toBe(foreign.claimId);
+          expect((await missions.get(mission.id)).execution?.status).toBe("running");
+          return;
+        }
+        expect((await missions.get(mission.id)).execution?.status).toBe("succeeded");
+        const projection = await missions.readExecutionProjection(mission.id, started.executionId);
+        expect(
+          projection?.some((entry) => entry.kind === "assistant" && entry.content === "done"),
+        ).toBe(true);
+        const restored = new DatabaseSync(paths.missionDelivery());
+        try {
+          expect(restored.prepare("SELECT COUNT(*) AS count FROM delivery_tasks").get()).toEqual({
+            count: 0,
+          });
+        } finally {
+          restored.close();
+        }
+        expect(
+          (await controller.readSnapshot({ missionId: mission.id })).snapshot.lease,
+        ).toBeUndefined();
+      } finally {
+        await readonly.dispose!();
+        if (foreign !== undefined)
+          await controller.release({ missionId: mission.id, guard: foreign });
+      }
+    },
+  );
   it.each(["expert", "team"] as const)(
     "rejects a live %s process lease and resumes the same Session after SIGKILL without redelivering its Native turn",
     async (kind) => {
@@ -731,6 +831,10 @@ describe("default Node compilation reaches persisted Execution", { timeout: 15_0
         );
       } finally {
         await cold.dispose?.();
+        expect(completions[1]!.mock.calls.map((call) => call.slice(0, 2))).toContainEqual([
+          started.missionId,
+          started.executionId,
+        ]);
         store.close();
       }
     },
@@ -1329,6 +1433,87 @@ it(
       expect(await readRuntimeSessionsForOwners(paths, [started.executionId!])).toHaveLength(1);
     } finally {
       await cold.dispose?.();
+    }
+  },
+);
+
+it.each([false, true])(
+  "preserves an externally awaited Human checkpoint when a detached Node run shuts down (envelope=%s)",
+  { timeout: 30_000 },
+  async (envelope) => {
+    const f = await fixture(false, true);
+    const requestId = randomUUID();
+    const request = {
+      requestId,
+      command: "flow.run" as const,
+      executor: { kind: "flow" as const, id: PUBLISHED_FLOW_ID },
+      project: { projectId: "studio", revision: 1 },
+      workspace: f.workspace,
+      input: {},
+      detach: true,
+    };
+    const presentation = {
+      onHumanInteraction: async () => ({ kind: "await_external_response" as const }),
+    };
+    let attachedId: string | undefined;
+    if (envelope) {
+      const missions = createMissionStore({
+        missionsPath: new PragmaPaths({ pragmaHome: f.home }).missionsRoot(),
+      });
+      attachedId = (
+        await missions.create({
+          initialMessageId: requestId,
+          workspace: { path: f.home, basename: "workspace" },
+          goal: "Await external approval",
+          project: { id: "studio", revision: 1 },
+          executor: { kind: "flow", ref: `flow:${PUBLISHED_FLOW_ID}`, name: "Flow" },
+          flowInput: {},
+        })
+      ).id;
+    }
+    const started =
+      attachedId === undefined
+        ? await f.app.run!.start(request, presentation)
+        : await f.app.run!.startAttached({ missionId: attachedId, request }, presentation);
+    expect((await started.outcome).status).toBe("accepted");
+    const executions = createSqliteExecutionStore({ pragmaHome: f.home });
+    try {
+      await vi.waitFor(async () =>
+        expect(
+          (await executions.listInvocations(started.executionId!)).some(
+            (invocation) =>
+              invocation.status === "waiting" && invocation.waitReason === "human_input",
+          ),
+        ).toBe(true),
+      );
+      const before = await executions.listContexts(started.executionId!);
+      await f.app.dispose!();
+      expect((await executions.get(started.executionId!))?.status).toBe("waiting");
+      expect(
+        (await executions.listInvocations(started.executionId!)).some(
+          (invocation) =>
+            invocation.status === "waiting" && invocation.waitReason === "human_input",
+        ),
+      ).toBe(true);
+      const identities = (contexts: typeof before) =>
+        contexts.map(({ contextId, snapshot, expert, runtime, owner }) => ({
+          contextId,
+          snapshot,
+          expert,
+          runtime,
+          owner,
+        }));
+      expect(identities(await executions.listContexts(started.executionId!))).toEqual(
+        identities(before),
+      );
+      const snapshot = await createMissionControllerStore({
+        missionsPath: new PragmaPaths({ pragmaHome: f.home }).missionsRoot(),
+      }).readSnapshot({ missionId: started.missionId });
+      expect(snapshot.snapshot.lease).toBeUndefined();
+      expect(f.startTurn).toHaveBeenCalledOnce();
+    } finally {
+      await executions.close();
+      await f.app.dispose!();
     }
   },
 );

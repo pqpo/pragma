@@ -31,6 +31,141 @@ import {
 // Real controller-only execution exercises the kernel independently of a
 // Desktop envelope, product resource store or application override.
 describe("shared Mission application composition", () => {
+  it("retains a failed read-repair lease release for shared shutdown retry", async () => {
+    const f = await createShutdownFixture();
+    const missionId = randomUUID();
+    try {
+      const guard = await f.lifecycle.ownerScope.acquireForRecovery(missionId);
+      vi.spyOn(f.lifecycle.controller, "release").mockRejectedValueOnce(
+        new Error("read-repair release failed"),
+      );
+      await expect(f.lifecycle.ownerScope.release(missionId, guard)).rejects.toThrow(
+        "read-repair release failed",
+      );
+      expect(f.lifecycle.ownerScope.currentGuard(missionId)).toBeUndefined();
+      expect(f.lifecycle.ownerScope.ownedMissionIds()).toContain(missionId);
+      expect(
+        (await f.lifecycle.controller.readSnapshot({ missionId })).snapshot.lease?.claimId,
+      ).toBe(guard.claimId);
+      await f.app.dispose();
+      expect(
+        (await f.lifecycle.controller.readSnapshot({ missionId })).snapshot.lease,
+      ).toBeUndefined();
+      expect(f.lifecycle.ownerScope.ownedMissionIds()).toEqual([]);
+      expect(f.closeResources).toHaveBeenCalledOnce();
+    } finally {
+      await f.cleanup();
+    }
+  });
+  it("retries a failed consumer drain without closing resources or reopening acquisition", async () => {
+    const f = await createShutdownFixture();
+    const missionId = randomUUID();
+    const startPolling = f.lifecycle.controller.startPolling.bind(f.lifecycle.controller);
+    vi.spyOn(f.lifecycle.controller, "startPolling").mockImplementation((input) => {
+      const poller = startPolling(input);
+      return {
+        ...poller,
+        stop: async () => {
+          await poller.stop();
+          throw new Error("consumer drain failed");
+        },
+      };
+    });
+    try {
+      const guard = await f.lifecycle.ownerScope.acquire(missionId);
+      await expect(f.app.dispose()).rejects.toThrow("consumer drain failed");
+      expect(f.closeResources).not.toHaveBeenCalled();
+      expect(f.lifecycle.ownerScope.currentGuard(missionId)).toEqual(guard);
+      await expect(f.lifecycle.ownerScope.acquire(randomUUID())).rejects.toThrow(
+        "Mission owner scope is shutting down",
+      );
+      await f.app.dispose();
+      expect(
+        (await f.lifecycle.controller.readSnapshot({ missionId })).snapshot.lease,
+      ).toBeUndefined();
+      expect(f.closeResources).toHaveBeenCalledOnce();
+    } finally {
+      await f.cleanup();
+    }
+  });
+  it("drains an in-flight durable claim before releasing its final guard and closing resources", async () => {
+    const f = await createShutdownFixture();
+    const missionId = randomUUID();
+    let enter!: () => void;
+    let finish!: () => void;
+    const entered = new Promise<void>((resolve) => (enter = resolve));
+    const gated = new Promise<void>((resolve) => (finish = resolve));
+    const claim = f.lifecycle.controller.claim.bind(f.lifecycle.controller);
+    vi.spyOn(f.lifecycle.controller, "claim").mockImplementation(async (input) => {
+      enter();
+      await gated;
+      return await claim(input);
+    });
+    try {
+      const acquiring = f.lifecycle.ownerScope.acquire(missionId);
+      const refused = expect(acquiring).rejects.toThrow("Mission owner scope is shutting down");
+      await entered;
+      const disposing = f.app.dispose();
+      await expect(f.lifecycle.ownerScope.acquire(randomUUID())).rejects.toThrow(
+        "Mission owner scope is shutting down",
+      );
+      expect(f.closeResources).not.toHaveBeenCalled();
+      finish();
+      await refused;
+      await disposing;
+      expect(f.lifecycle.ownerScope.ownedMissionIds()).toEqual([]);
+      expect(
+        (await f.lifecycle.controller.readSnapshot({ missionId })).snapshot.lease,
+      ).toBeUndefined();
+      expect(f.closeResources).toHaveBeenCalledOnce();
+    } finally {
+      finish();
+      await f.cleanup();
+    }
+  });
+  it("drains admitted Runtime construction before stopping its exact owner", async () => {
+    const f = await createShutdownFixture();
+    const missionId = randomUUID();
+    let enter!: () => void;
+    let finish!: () => void;
+    const entered = new Promise<void>((resolve) => (enter = resolve));
+    const gated = new Promise<void>((resolve) => (finish = resolve));
+    const stopForDeletion = vi.fn(async () => f.markNativeStopped("admitted-native"));
+    try {
+      await f.lifecycle.ownerScope.acquire(missionId);
+      const constructing = f.owners.admit(missionId, async () => {
+        enter();
+        await gated;
+        f.owners.setControlOwner(
+          missionId,
+          {
+            kind: "flow",
+            execution: {
+              executionId: "admitted-native",
+              stopForDeletion,
+              getState: async () => ({ status: "cancelled" }),
+            },
+          } as unknown as LocalHostCoreActiveOwner,
+          "live",
+        );
+      });
+      await entered;
+      const disposing = f.app.dispose();
+      expect(f.closeResources).not.toHaveBeenCalled();
+      finish();
+      await constructing;
+      await disposing;
+      expect(stopForDeletion).toHaveBeenCalledOnce();
+      expect(f.owners.controlOwner(missionId)).toBeUndefined();
+      expect(
+        (await f.lifecycle.controller.readSnapshot({ missionId })).snapshot.lease,
+      ).toBeUndefined();
+      expect(f.closeResources).toHaveBeenCalledOnce();
+    } finally {
+      finish();
+      await f.cleanup();
+    }
+  });
   it("continues independent owner shutdown after a lease write failure and permits retry", async () => {
     const f = await createShutdownFixture();
     const first = randomUUID();
@@ -44,7 +179,7 @@ describe("shared Mission application composition", () => {
       expect(f.app.dispose()).toBe(attempt);
       await expect(attempt).rejects.toThrow("Mission application shutdown failed.");
       expect(release.mock.calls.map(([input]) => input.missionId)).toEqual([first, second]);
-      expect(f.lifecycle.ownerScope.ownedMissionIds()).toEqual([]);
+      expect(f.lifecycle.ownerScope.ownedMissionIds()).toEqual([first]);
       expect(
         (await f.lifecycle.controller.readSnapshot({ missionId: first })).snapshot.lease,
       ).toBeDefined();
@@ -72,7 +207,11 @@ describe("shared Mission application composition", () => {
     });
     const owner = {
       kind: "flow",
-      execution: { executionId: "native-execution", stopForDeletion },
+      execution: {
+        executionId: "native-execution",
+        stopForDeletion,
+        getState: async () => ({ status: "cancelled" }),
+      },
     } as unknown as LocalHostCoreActiveOwner;
     try {
       const original = await f.lifecycle.ownerScope.acquire(retained);
@@ -89,7 +228,7 @@ describe("shared Mission application composition", () => {
         (await f.lifecycle.controller.readSnapshot({ missionId: other })).snapshot.lease,
       ).toBeUndefined();
       expect(f.closeResources).not.toHaveBeenCalled();
-      stopForDeletion.mockImplementation(async () => undefined);
+      stopForDeletion.mockImplementation(async () => f.markNativeStopped("native-execution"));
       await f.app.dispose();
       expect(f.owners.controlOwner(retained)).toBeUndefined();
       expect(
@@ -97,7 +236,7 @@ describe("shared Mission application composition", () => {
       ).toBeUndefined();
       expect(f.closeResources).toHaveBeenCalledOnce();
     } finally {
-      stopForDeletion.mockImplementation(async () => undefined);
+      stopForDeletion.mockImplementation(async () => f.markNativeStopped("native-execution"));
       await f.cleanup();
     }
   });
@@ -114,7 +253,12 @@ describe("shared Mission application composition", () => {
           ? Promise.reject(new Error("Native settlement unconfirmed"))
           : Promise.resolve();
       void settlement.catch(() => undefined);
-      const handle = { executionId: "active-native", stopForDeletion, cancel: vi.fn() };
+      const handle = {
+        executionId: "active-native",
+        stopForDeletion,
+        cancel: vi.fn(),
+        getState: async () => ({ status: "cancelled" }),
+      };
       const active = { handle, settlement };
       const owner = { kind: "flow", execution: handle } as unknown as LocalHostCoreActiveOwner;
       try {
@@ -386,6 +530,14 @@ async function createShutdownFixture() {
   const runtimes = createStaticRuntimeResolver({ runtimes: [runtime], defaultRuntimeId: "codex" });
   const missions = createMissionStore({ missionsPath: paths.missionsRoot() });
   const executions = createSqliteExecutionStore({ pragmaHome: home });
+  // These shutdown fixtures model a running Native Flow, not a terminal receipt.
+  const runningNativeIds = new Set(["admitted-native", "native-execution", "active-native"]);
+  const getExecution = executions.get.bind(executions);
+  vi.spyOn(executions, "get").mockImplementation(async (executionId) => {
+    if (runningNativeIds.has(executionId))
+      return { executionId, status: "running" } as Awaited<ReturnType<typeof executions.get>>;
+    return await getExecution(executionId);
+  });
   const memory = createLocalHostRunMemory({ pragmaHome: home });
   const lifecycle = createLocalHostMissionController({ missionsPath: paths.missionsRoot() });
   const owners = new MissionExecutionOwner();
@@ -418,6 +570,9 @@ async function createShutdownFixture() {
     lifecycle,
     owners,
     closeResources,
+    markNativeStopped: (executionId: string) => {
+      runningNativeIds.delete(executionId);
+    },
     cleanup: async () => {
       await app.dispose();
       await memory.close();

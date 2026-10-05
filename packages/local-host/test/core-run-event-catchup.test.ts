@@ -129,48 +129,66 @@ it.each([false, true])(
   },
 );
 
-it("reports a failed durable Human catch-up instead of closing its event stream successfully", async () => {
-  const home = await mkdtemp(join(tmpdir(), "pragma-run-catchup-error-"));
-  const store = createSqliteExecutionStore({ pragmaHome: home });
-  try {
-    const fixture = JSON.parse(
-      await readFile(new URL("./fixtures/execution-file-v12.json", import.meta.url), "utf8"),
-    ) as { execution: unknown; invocations: unknown[] };
-    const record = ExecutionRecordSchema.parse(fixture.execution);
-    await store.create(record, InvocationSchema.parse(fixture.invocations[0]));
-    vi.spyOn(store, "readEvents").mockRejectedValueOnce(new Error("durable history read failed"));
-    const subscriptionClose = vi.fn();
-    const view = new StoredExecutionView(record.executionId, store);
-    const subscribe = view.subscribeEvents.bind(view);
-    vi.spyOn(view, "subscribeEvents").mockImplementation(async (options) => {
-      const subscription = await subscribe(options);
-      return {
-        [Symbol.asyncIterator]: () => subscription[Symbol.asyncIterator](),
-        close: async () => {
-          subscriptionClose();
-          await subscription.close();
-        },
-      };
-    });
-    const state = createLocalHostRunHandleState({
-      coreHandle: Object.assign(view, {
-        result: Promise.resolve("done"),
-        cancel: async () => undefined,
-        stopForDeletion: async () => undefined,
-        respondToHumanInteraction: async () => undefined,
-        checkpointWaitingHuman: async () => undefined,
-      }),
-      executions: store,
-      missionId: randomUUID(),
-      release: async () => undefined,
-    });
-    await state.pump;
-    await expect(Array.fromAsync(state.handle.events!)).rejects.toThrow(
-      "durable history read failed",
-    );
-    expect(subscriptionClose).toHaveBeenCalledOnce();
-  } finally {
-    await store.close();
-    await rm(home, { recursive: true, force: true });
-  }
-});
+it.each(["completed", "waiting"] as const)(
+  "fails the result and event stream promptly when durable Human catch-up fails (Native=%s)",
+  async (native) => {
+    const home = await mkdtemp(join(tmpdir(), "pragma-run-catchup-error-"));
+    const store = createSqliteExecutionStore({ pragmaHome: home });
+    try {
+      const fixture = JSON.parse(
+        await readFile(new URL("./fixtures/execution-file-v12.json", import.meta.url), "utf8"),
+      ) as { execution: unknown; invocations: unknown[] };
+      const record = ExecutionRecordSchema.parse(fixture.execution);
+      const invocation = InvocationSchema.parse(fixture.invocations[0]);
+      if (native === "waiting") {
+        record.status = "waiting";
+        invocation.status = "waiting";
+        invocation.waitReason = "human_input";
+      }
+      await store.create(record, invocation);
+      vi.spyOn(store, "readEvents").mockRejectedValueOnce(new Error("durable history read failed"));
+      const subscriptionClose = vi.fn();
+      const view = new StoredExecutionView(record.executionId, store);
+      const subscribe = view.subscribeEvents.bind(view);
+      vi.spyOn(view, "subscribeEvents").mockImplementation(async (options) => {
+        const subscription = await subscribe(options);
+        return {
+          [Symbol.asyncIterator]: () => subscription[Symbol.asyncIterator](),
+          close: async () => {
+            subscriptionClose();
+            await subscription.close();
+          },
+        };
+      });
+      const state = createLocalHostRunHandleState({
+        coreHandle: Object.assign(view, {
+          result: native === "completed" ? Promise.resolve("done") : new Promise(() => undefined),
+          cancel: async () => undefined,
+          stopForDeletion: async () => undefined,
+          respondToHumanInteraction: async () => undefined,
+          checkpointWaitingHuman: async () => undefined,
+        }),
+        executions: store,
+        missionId: randomUUID(),
+        release: async () => undefined,
+      });
+      const outcome = expect(
+        Promise.race([
+          state.handle.result,
+          new Promise((_, reject) =>
+            setTimeout(() => reject(new Error("result remained pending")), 250),
+          ),
+        ]),
+      ).rejects.toThrow("durable history read failed");
+      await outcome;
+      await expect(state.pump).rejects.toThrow("durable history read failed");
+      await expect(Array.fromAsync(state.handle.events!)).rejects.toThrow(
+        "durable history read failed",
+      );
+      expect(subscriptionClose).toHaveBeenCalledOnce();
+    } finally {
+      await store.close();
+      await rm(home, { recursive: true, force: true });
+    }
+  },
+);

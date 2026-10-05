@@ -67,6 +67,7 @@ export async function createMissionDelivery(input: {
     const page = await input.feed.read({ after: { sequence: receipts.safeThrough() }, limit: 64 });
     if (page.items.length > 0) await receipts.stagePage(page);
     if (page.items.length === 64) dirty = true;
+    return page.items.length;
   };
   const deliver = async (row: MissionReceiptRow, claim: string) => {
     let renewal: Promise<void> | undefined;
@@ -232,6 +233,49 @@ export async function createMissionDelivery(input: {
       wake();
     },
     safeThrough: receipts.safeThrough,
+    /** Transfer committed facts to durable receipts without awaiting any product observer. */
+    async takeCustody() {
+      while ((await ingest()) === 64) {
+        // Each page advances the durable cursor; no Mission claim or Runtime is acquired here.
+      }
+      diagnostic = await receipts.inspect();
+    },
+    /** Explicit owner access recovers only its already durable work under its recovery guard. */
+    async settleMission(missionId: string, timeoutMs = 3000) {
+      await this.takeCustody();
+      await receipts.resumeDeferred(missionId);
+      const deadline = Date.now() + timeoutMs;
+      while (Date.now() < deadline) {
+        const claimed = await receipts.claim(missionId);
+        if (claimed === undefined) {
+          if ((await receipts.pendingMission(missionId)) === 0) return;
+          // A failed/quarantined task keeps its retry policy; access is not an explicit retry.
+          if (![...activeOwners.values()].includes(missionId)) return;
+          await new Promise<void>((resolve) => setTimeout(resolve, 10));
+          continue;
+        }
+        const operation = deliver(claimed.row, claimed.claim);
+        active.set(claimed.row.id, operation);
+        activeOwners.set(claimed.row.id, missionId);
+        void operation
+          .finally(() => {
+            active.delete(claimed.row.id);
+            activeOwners.delete(claimed.row.id);
+          })
+          .catch(() => undefined);
+        let timer: ReturnType<typeof setTimeout> | undefined;
+        try {
+          await Promise.race([
+            operation,
+            new Promise<void>((resolve) => {
+              timer = setTimeout(resolve, Math.max(0, deadline - Date.now()));
+            }),
+          ]);
+        } finally {
+          if (timer !== undefined) clearTimeout(timer);
+        }
+      }
+    },
     wake,
     start() {
       stopped = false;

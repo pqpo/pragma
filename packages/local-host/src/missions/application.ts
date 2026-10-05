@@ -15,13 +15,14 @@ import {
 } from "./execution-service.ts";
 import { createLocalHostMissionExecutionRunPort } from "./execution-run-port.ts";
 import type { LocalHostMissionControllerComposition } from "./controller/composition.ts";
-import type { MissionControllerGuard } from "./controller/mission-controller-store.ts";
 import { MissionExecutionOwner } from "./execution-owner.ts";
 import type { MissionExecutionUseCases } from "./mission-execution-use-cases.ts";
 
 /** Concrete resources may vary by Host; command and execution policy cannot. */
 export interface LocalHostMissionApplicationOptions {
   readonly execution: LocalHostMissionExecutionServiceOptions;
+  /** Drain already accepted resource recovery after ordinary acquisition is sealed. */
+  readonly prepareShutdown?: (() => Promise<void>) | undefined;
   readonly closeResources?: (() => Promise<void>) | undefined;
   readonly lifecycle: LocalHostMissionControllerComposition;
   readonly client: MissionControlClient;
@@ -36,6 +37,7 @@ export interface LocalHostMissionApplicationOptions {
 
 export type LocalHostMissionApplication = Omit<
   LocalHostMissionExecutionService,
+  | "drainReleasedOwnerResources"
   | "missionControl"
   | "startLocalHostRun"
   | "assertLocalHostRunAllowed"
@@ -97,21 +99,20 @@ export function createLocalHostMissionApplication(
     commandConsumer: control.consumer,
   });
   control.bindApplication(commands);
-  const pendingLeaseReleases = new Map<string, MissionControllerGuard>();
   let disposing: Promise<void> | undefined;
   const dispose = (): Promise<void> => {
     if (disposing !== undefined) return disposing;
     disposing = (async () => {
       const errors: unknown[] = [];
       let retainedRuntimeOwner = false;
-      const ids = new Set([
-        ...executionOwner.missionIds(),
-        ...ownerScope.ownedMissionIds(),
-        ...pendingLeaseReleases.keys(),
-      ]);
+      await ownerScope.quiesce(options.prepareShutdown);
+      const ids = new Set([...executionOwner.missionIds(), ...ownerScope.ownedMissionIds()]);
       for (const id of ids) {
         try {
-          await service.stopLocalController(id);
+          // Drain work already admitted before acquisition was sealed. Do not
+          // hold admission during stop: terminal cleanup also uses this queue.
+          await executionOwner.admit(id, async () => undefined);
+          await service.stopLocalController(id, "shutdown");
         } catch (error) {
           errors.push(error);
         }
@@ -126,28 +127,12 @@ export function createLocalHostMissionApplication(
           errors.push(new Error(`Mission ${id} retained its Runtime owner during shutdown.`));
           continue;
         }
-        const retryGuard = pendingLeaseReleases.get(id);
-        const guard = retryGuard ?? ownerScope.currentGuard(id);
         try {
-          if (retryGuard !== undefined)
-            await controller.release({ missionId: id, guard: retryGuard });
-          else await ownerScope.release(id, guard);
-          pendingLeaseReleases.delete(id);
+          // Scope custody retains failed release guards from both shutdown and
+          // explicit read repair; retries cannot revoke a successor claim.
+          await ownerScope.release(id, ownerScope.currentGuard(id));
         } catch (error) {
-          // A successor may already own an expired/previously released claim.
-          // Never revoke it while retrying this application's old release.
-          if (
-            retryGuard !== undefined &&
-            typeof error === "object" &&
-            error !== null &&
-            "code" in error &&
-            error.code === "MISSION_FENCING_REJECTED"
-          )
-            pendingLeaseReleases.delete(id);
-          else {
-            if (guard !== undefined) pendingLeaseReleases.set(id, guard);
-            errors.push(error);
-          }
+          errors.push(error);
         }
         try {
           await commands.stopOwner(id);
@@ -157,6 +142,7 @@ export function createLocalHostMissionApplication(
       }
       if (!retainedRuntimeOwner) {
         try {
+          await service.drainReleasedOwnerResources();
           await options.closeResources?.();
         } catch (error) {
           errors.push(error);

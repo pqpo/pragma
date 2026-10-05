@@ -103,6 +103,39 @@ async function publish(feed: CanonicalEventFeed, kind: "usage" | "terminal") {
   ]);
 }
 describe("Mission durable delivery", { timeout: 15000 }, () => {
+  it("takes terminal custody while paused without waiting for a product observer", async () => {
+    const target = await fixture(async () => await new Promise<void>(() => undefined));
+    await target.delivery.register(target.mission, executionId, target.mission.initialMessageId);
+    await publish(target.feed, "terminal");
+    await target.delivery.takeCustody();
+    expect(target.delivery.safeThrough()).toBe(1);
+    expect(target.delivery.inspect()).toMatchObject({ pending: 5, state: "healthy" });
+    expect(target.terminal).not.toHaveBeenCalled();
+  });
+  it("settles explicit Mission access without starting global dispatch or resetting failures", async () => {
+    const target = await fixture();
+    await target.delivery.register(target.mission, executionId, target.mission.initialMessageId);
+    await publish(target.feed, "terminal");
+    await target.delivery.takeCustody();
+    const db = new DatabaseSync(target.path);
+    try {
+      db.prepare(
+        "UPDATE delivery_tasks SET next_at=?,attempts=3,error_code='MISSION_DELIVERY_RETRY_PENDING' WHERE step=2",
+      ).run(Date.now() + 60_000);
+    } finally {
+      db.close();
+    }
+    await target.delivery.settleMission(target.mission.id);
+    expect(target.terminal).toHaveBeenCalledTimes(4);
+    const recovered = new DatabaseSync(target.path);
+    try {
+      expect(
+        recovered.prepare("SELECT step,attempts,error_code FROM delivery_tasks").all(),
+      ).toEqual([{ step: 2, attempts: 3, error_code: "MISSION_DELIVERY_RETRY_PENDING" }]);
+    } finally {
+      recovered.close();
+    }
+  });
   it("defers released request custody without failure and resumes from the same step", async () => {
     let released = true;
     const target = await fixture(async () => (released ? "deferred" : undefined));
@@ -228,7 +261,11 @@ describe("Mission durable delivery", { timeout: 15000 }, () => {
         );
         sourceUnavailable = false;
         restored.wake();
-        await vi.waitFor(() => expect(restored.inspect().state).toBe("healthy"));
+        // Intake uses a bounded backoff independently of replay. Recovery need not
+        // finish within Vitest's default one-second assertion window under CI load.
+        await vi.waitFor(() => expect(restored.inspect().state).toBe("healthy"), {
+          timeout: 7000,
+        });
         expect(restored.safeThrough()).toBe(1);
         expect(terminal).toHaveBeenCalledTimes(5);
       }

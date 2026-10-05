@@ -119,6 +119,8 @@ export function createLocalHostRunMemory(options: {
     }
   };
   let deliveryPause: Promise<void> | undefined;
+  let resourcesClosed = false;
+  let resourceCloseFailure: unknown;
   const lifecycle = createLocalHostMissionMemoryLifecycle({
     onError: degraded,
     ports: {
@@ -145,24 +147,47 @@ export function createLocalHostRunMemory(options: {
       beforeClose: options.beforeFeedClose,
       close: async () => {
         await stopIdleMemory();
-
+        const errors: unknown[] = [];
         try {
           await executionStore.close();
-        } catch {
+        } catch (error) {
           degraded();
+          errors.push(error);
         }
         try {
           await canonical.close();
-        } catch {
+        } catch (error) {
           degraded();
+          errors.push(error);
         }
+        if (errors.length > 0) {
+          resourceCloseFailure = new AggregateError(
+            errors,
+            "Mission Memory resource close failed.",
+          );
+          throw resourceCloseFailure;
+        }
+        resourceCloseFailure = undefined;
+        resourcesClosed = true;
       },
     },
   });
   return {
     canonical,
+    hasCanonicalSource: () => feed !== undefined,
     executionStore,
     ...lifecycle,
+    dispose: async () => {
+      if (resourcesClosed) return;
+      const deadline = Date.now() + 5000;
+      do {
+        await lifecycle.close();
+        if (resourceCloseFailure !== undefined) throw resourceCloseFailure;
+        if (resourcesClosed) return;
+        await new Promise<void>((resolve) => setTimeout(resolve, 10));
+      } while (Date.now() < deadline);
+      throw new Error("MISSION_MEMORY_SHUTDOWN_PENDING");
+    },
     pause: async () => {
       await lifecycle.pause();
       const pending = deliveryPause;

@@ -516,9 +516,33 @@ export function createLocalHostRunHandleState(options: {
   let settled = false;
   let resolveCheckpoint: ((terminal: LocalHostRunTerminal) => void) | undefined;
   let pump: Promise<void> = Promise.resolve();
+  let rejectEventFailure!: (error: unknown) => void;
+  const eventFailure = new Promise<never>((_resolve, reject) => {
+    rejectEventFailure = reject;
+  });
   const checkpoint = new Promise<LocalHostRunTerminal>((resolve) => {
     resolveCheckpoint = resolve;
   });
+  let finalizingCheckpoint: Promise<void> | undefined;
+  const finalizeCheckpoint = (): Promise<void> =>
+    (finalizingCheckpoint ??= (async () => {
+      const interaction = await readPendingInteraction(
+        options.executions,
+        options.coreHandle.executionId,
+        options.missionId,
+        pending,
+      );
+      if (interaction === undefined)
+        throw new Error("Human interaction checkpoint has no pending request.");
+      await pump;
+      await options.onCheckpointed?.();
+      resolveCheckpoint?.({
+        status: "input_required",
+        executionId: options.coreHandle.executionId,
+        interaction,
+        ...(await readUsage(options.executions, options.coreHandle.executionId)),
+      });
+    })());
   const complete = options.coreHandle.result.then(
     async (result): Promise<LocalHostRunTerminal> => {
       settled = true;
@@ -534,9 +558,9 @@ export function createLocalHostRunHandleState(options: {
     async (error): Promise<LocalHostRunTerminal> => {
       settled = true;
       if (isHumanInteractionCheckpointError(error)) {
-        // The checkpoint path owns the durable pending result.  Do not issue
-        // another Execution read here: the result race may already have
-        // resolved and a late read can outlive the Host lease cleanup.
+        // Shutdown can checkpoint Core without going through the foreground
+        // handle. Both paths finalize the same Host checkpoint exactly once.
+        await finalizeCheckpoint();
         return await checkpoint;
       }
       return await terminalFromExecution(
@@ -550,29 +574,13 @@ export function createLocalHostRunHandleState(options: {
   );
   const handle: LocalHostRunHandle = {
     executionId: options.coreHandle.executionId,
-    result: Promise.race([complete, checkpoint]),
+    result: Promise.race([complete, checkpoint, eventFailure]),
     release: options.release,
     cancel: async (reason) => await options.coreHandle.cancel(reason),
     checkpointWaitingHuman: async () => {
       if (settled) return;
       await options.coreHandle.checkpointWaitingHuman();
-      const interaction = await readPendingInteraction(
-        options.executions,
-        options.coreHandle.executionId,
-        options.missionId,
-        pending,
-      );
-      if (interaction === undefined) {
-        throw new Error(`Human interaction checkpoint has no pending request.`);
-      }
-      await pump;
-      await options.onCheckpointed?.();
-      resolveCheckpoint?.({
-        status: "input_required",
-        executionId: options.coreHandle.executionId,
-        interaction,
-        ...(await readUsage(options.executions, options.coreHandle.executionId)),
-      });
+      await finalizeCheckpoint();
     },
     respondToHumanInteraction: async (interactionId, response, requestId) => {
       const envelope =
@@ -670,7 +678,13 @@ export function createLocalHostRunHandleState(options: {
     }
   })().catch((error) => {
     queue.fail(error);
+    rejectEventFailure(error);
+    throw error;
   });
+  // Callers can consume result/onEvent or the iterator independently.
+  // Observe rejected promises without changing the failures they expose.
+  void pump.catch(() => undefined);
+  void handle.result.catch(() => undefined);
   return {
     handle: { ...handle, events: queue },
     pump,

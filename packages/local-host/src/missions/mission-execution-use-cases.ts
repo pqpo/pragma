@@ -154,7 +154,8 @@ export interface MissionExecutionUseCases {
   ): () => void;
   interrupt(id: string, expectedExecutionId?: string): Promise<Mission>;
   forceInterrupt(id: string, expectedExecutionId?: string): Promise<Mission>;
-  stopLocalController(id: string): Promise<void>;
+  /** Shutdown preserves durable Human checkpoints; lease loss keeps forced teardown semantics. */
+  stopLocalController(id: string, boundary?: "shutdown"): Promise<void>;
   releaseIdleSession(
     id: string,
     idleTimeoutMs: number,

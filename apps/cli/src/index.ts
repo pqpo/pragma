@@ -52,6 +52,7 @@ export type CliDependencies = Readonly<
     readonly readStdin?: (() => Promise<Uint8Array>) | undefined;
     readonly terminal?: TerminalPort | undefined;
     readonly signals?: SignalPort | undefined;
+    readonly onBeforeExit?: ((shutdown: () => Promise<void>) => void) | undefined;
   }
 >;
 
@@ -97,6 +98,38 @@ export async function runCli(
     format: parsed.options.format,
     interactive: parsed.options.interactive,
     terminal: dependencies.terminal ?? createSystemTerminalPort(),
+  };
+  // Injected Hosts remain owned by their caller; the process owns its default
+  // composition and must settle it before publishing a terminal result.
+  let cleanupAttempted = false;
+  const closeLocalHost = async (): Promise<void> => {
+    if (cleanupAttempted) return;
+    cleanupAttempted = true;
+    if (dependencies.localHost === undefined) await context.localHost.dispose?.();
+  };
+  const detachLocalHostCleanup = (): void => {
+    if (cleanupAttempted) return;
+    cleanupAttempted = true;
+    if (dependencies.localHost !== undefined) return;
+    const shutdown = async (): Promise<void> => {
+      await context.localHost.dispose?.();
+    };
+    if (dependencies.onBeforeExit !== undefined) {
+      dependencies.onBeforeExit(shutdown);
+      return;
+    }
+    // Acknowledgement does not cancel the in-process Native run. Once its
+    // referenced work has ended, keep Node alive only while Host shutdown runs.
+    process.once("beforeExit", () => {
+      const keepAlive = setInterval(() => undefined, 1_000);
+      void shutdown()
+        .catch((error: unknown) => {
+          const failure = toIntegrationError(error);
+          io.writeStderr(`${failure.code}: ${failure.message}\n`);
+          process.exitCode = integrationErrorExitCode(failure.code);
+        })
+        .finally(() => clearInterval(keepAlive));
+    });
   };
   const command = commandName(parsed.command);
   let runStreamPresenter: ReturnType<typeof createV2StreamPresenter> | undefined;
@@ -187,6 +220,8 @@ export async function runCli(
               ...(rawOutcome.usage === undefined ? {} : { usage: rawOutcome.usage }),
             }
           : rawOutcome;
+        if (outcome.status === "accepted") detachLocalHostCleanup();
+        else await closeLocalHost();
         const presentation = normalizeRunOutcome(outcome, handle.request);
         if (runStreamPresenter === undefined) {
           presentRunOutcome(
@@ -218,7 +253,9 @@ export async function runCli(
       continuationCommand: (cursor: string) => continuationCommandFor(parsed.command, cursor),
     } as const;
     if (isSourceCommand(parsed.command)) {
-      presentSuccess(presentationInput, await executeSourceCommand(parsed.command, context));
+      const result = await executeSourceCommand(parsed.command, context);
+      await closeLocalHost();
+      presentSuccess(presentationInput, result);
       return 0;
     }
     if (parsed.command.kind === "mission-watch") {
@@ -266,6 +303,7 @@ export async function runCli(
           },
         });
         streamCommitted = true;
+        await closeLocalHost();
         if (result.status === "detached") {
           const detachedEvent = {
             missionId: result.missionId,
@@ -308,6 +346,8 @@ export async function runCli(
         context,
         dependencies.readStdin ?? readProcessStdin,
       );
+      if (mutation.detached) detachLocalHostCleanup();
+      else await closeLocalHost();
       if (mutation.status === "input_required") {
         presentInputRequired(presentationInput, mutation.result);
         return 3;
@@ -319,6 +359,13 @@ export async function runCli(
         parsed.command.kind === "doctor"
           ? await runDoctorCommand(dependencies)
           : await executeReadOnlyCommand(parsed.command, context);
+      if (
+        parsed.command.kind === "mission-resume" &&
+        parsed.command.detach &&
+        !isInputRequiredResult(result)
+      )
+        detachLocalHostCleanup();
+      else await closeLocalHost();
       if (parsed.command.kind === "mission-resume" && isInputRequiredResult(result)) {
         presentInputRequired(presentationInput, result);
         return 3;
@@ -331,19 +378,25 @@ export async function runCli(
     }
     return 0;
   } catch (error) {
+    let failure = error;
+    try {
+      await closeLocalHost();
+    } catch (shutdownError) {
+      failure = new AggregateError([error, shutdownError], "Command and Host shutdown failed.");
+    }
     const integrationError =
-      error instanceof DoctorFailure
-        ? error.error
-        : error instanceof CliInputError
+      failure instanceof DoctorFailure
+        ? failure.error
+        : failure instanceof CliInputError
           ? createIntegrationError({
               code:
                 parsed.command.kind === "executor-run" && parsed.command.executorKind === "flow"
                   ? "INPUT_SCHEMA_INVALID"
                   : "INVALID_ARGUMENT",
               category: "usage",
-              message: error.message,
+              message: failure.message,
             })
-          : toIntegrationError(error);
+          : toIntegrationError(failure);
     const presentationInput = {
       io,
       format: parsed.options.format,

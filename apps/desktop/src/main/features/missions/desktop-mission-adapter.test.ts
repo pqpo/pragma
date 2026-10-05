@@ -384,6 +384,7 @@ describe("Desktop Mission resource adapter contracts", { timeout: 30_000 }, () =
         detach: false,
       });
       expect((await first.outcome).status).toBe("succeeded");
+      await node.dispose?.();
       const missions = createMissionStore({ missionsPath: paths.missionsRoot() });
       const original = await missions.get(first.missionId);
       if (controllerOnly) await rm(join(missions.storagePath!(first.missionId), "mission.yaml"));
@@ -410,8 +411,13 @@ describe("Desktop Mission resource adapter contracts", { timeout: 30_000 }, () =
         query: lifecycle.query,
         watch: lifecycle.watch,
       });
+      let memoryCompleted = false;
+      const closeResources = vi.fn(async () => {
+        if (controllerOnly) expect(memoryCompleted).toBe(true);
+      });
       const runner = createLocalHostMissionApplication({
         lifecycle,
+        closeResources,
         client: { surface: "desktop", version: "test", instanceId: crypto.randomUUID() },
         resolveExecutor: catalog.resolve,
         assertMission: reads.assertMission,
@@ -447,7 +453,10 @@ describe("Desktop Mission resource adapter contracts", { timeout: 30_000 }, () =
       const blockedMemory = new Promise<void>((resolve) => {
         unblockMemory = resolve;
       });
-      const memoryTerminal = vi.fn(async () => await blockedMemory);
+      const memoryTerminal = vi.fn(async () => {
+        await blockedMemory;
+        memoryCompleted = true;
+      });
       runner.bindControllerFacts({
         controller: lifecycle.controller,
         hasEnvelope: async () => !controllerOnly,
@@ -468,6 +477,7 @@ describe("Desktop Mission resource adapter contracts", { timeout: 30_000 }, () =
         resumeMission: runner.integration.missionControl.resume,
         missionControl: runner.integration.missionControl.commands,
       };
+      let reopened: ReturnType<typeof createLocalHostNodeApplication> | undefined;
       try {
         await desktop.resumeMission!({
           missionId: first.missionId,
@@ -507,7 +517,7 @@ describe("Desktop Mission resource adapter contracts", { timeout: 30_000 }, () =
           beforeRoot.snapshot,
         );
         await desktop.missionControl!.stopOwner(first.missionId);
-        const reopened = createLocalHostNodeApplication({
+        reopened = createLocalHostNodeApplication({
           pragmaHome: home,
           runtimes,
           workspace: workspacePort,
@@ -539,8 +549,10 @@ describe("Desktop Mission resource adapter contracts", { timeout: 30_000 }, () =
         await reopened.missionControl!.stopOwner(first.missionId);
       } finally {
         unblockMemory();
-        await lifecycle.ownerScope.release(first.missionId);
-        await runner.stopLocalController(first.missionId);
+        await reopened?.dispose?.();
+        await runner.dispose();
+        expect(closeResources).toHaveBeenCalledOnce();
+        await node.dispose?.();
         await executions.close();
       }
     },

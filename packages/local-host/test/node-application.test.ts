@@ -29,6 +29,7 @@ describe("Local Host Node application composition", () => {
       expect(application.missionControl).toBeDefined();
       expect(application.run?.start).toEqual(expect.any(Function));
       await expect(application.listMissions()).resolves.toEqual([]);
+      await application.dispose!();
     } finally {
       await rm(home, { recursive: true, force: true });
     }

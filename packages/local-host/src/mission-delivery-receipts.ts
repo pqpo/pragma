@@ -248,12 +248,19 @@ CREATE TABLE IF NOT EXISTS delivery_metadata (key TEXT PRIMARY KEY, value TEXT N
     AND NOT (json_extract(t.payload,'$.kind')='terminal' AND t.step=4 AND EXISTS(SELECT 1 FROM delivery_tasks h WHERE h.execution_id=t.execution_id AND h.step=3 AND json_extract(h.payload,'$.kind')='terminal'))
     AND NOT EXISTS(SELECT 1 FROM deleted_missions d WHERE d.mission_id=t.mission_id)
     AND EXISTS(SELECT 1 FROM execution_links l WHERE l.execution_id=t.execution_id)`;
-  function claim() {
+  function claim(missionId?: string) {
     const select = db.prepare(`SELECT t.* FROM delivery_tasks t INDEXED BY delivery_linked_pending
       WHERE ${eligibility} AND t.next_at<=? AND t.expires_at<=?
+      ${missionId === undefined ? "" : "AND t.mission_id=?"}
       AND NOT EXISTS(SELECT 1 FROM delivery_tasks busy WHERE busy.mission_id=t.mission_id AND busy.expires_at>?)
       ORDER BY t.sequence LIMIT 1`);
-    const candidate = () => select.get(Date.now(), Date.now(), Date.now()) as Row | undefined;
+    const candidate = () =>
+      select.get(
+        Date.now(),
+        Date.now(),
+        ...(missionId === undefined ? [] : [missionId]),
+        Date.now(),
+      ) as Row | undefined;
     // Idle consumers do not acquire a write lock. Recheck under the transaction for competing owners.
     if (candidate() === undefined) return undefined;
     return transaction(() => {
@@ -344,7 +351,17 @@ CREATE TABLE IF NOT EXISTS delivery_metadata (key TEXT PRIMARY KEY, value TEXT N
         break;
       }
       case "claim":
-        value = claim();
+        value = claim(args[0] as string | undefined);
+        break;
+      case "resumeDeferred":
+        db.prepare(
+          "UPDATE delivery_tasks SET next_at=0 WHERE mission_id=? AND claim IS NULL AND error_code IS NULL AND state='pending'",
+        ).run(args[0] as string);
+        break;
+      case "pendingMission":
+        value = db
+          .prepare("SELECT COUNT(*) AS count FROM delivery_tasks WHERE mission_id=?")
+          .get(args[0] as string);
         break;
       case "link":
         value = db

@@ -210,7 +210,7 @@ import { toContextStoreMissionDeletionError } from "./context-store-mission-dele
 
 export interface DesktopApplicationContainer {
   readonly startBackgroundTasks: () => void;
-  readonly dispose: () => void;
+  readonly dispose: () => Promise<void>;
 }
 
 export interface DesktopApplicationContainerOptions {
@@ -1307,7 +1307,40 @@ export async function createDesktopApplicationContainer(
     executors: missionExecutors,
     project: pragmaProjectStore,
   });
+  const closedResources = new Set<number>();
   const missionApplication = createLocalHostMissionApplication({
+    closeResources: async () => {
+      const errors: unknown[] = [];
+      for (const [index, operation] of [
+        async () => await missionDeliveryRecovery.close(),
+        async () => {
+          try {
+            await localHostUsageRef.current?.drain();
+          } finally {
+            await localHostUsageRef.current?.close();
+          }
+        },
+        async () => await memoryPlane.stop(),
+        async () => await usageStore.close(),
+        async () => {
+          powerMonitor.removeListener("user-did-become-active", cancelCapacityInspection);
+          powerMonitor.removeListener("resume", cancelCapacityInspection);
+          storageCapacityInspection.close();
+          tokenCounter.dispose();
+        },
+        async () => await mcpToolRegistryPool.close(),
+      ].entries()) {
+        if (closedResources.has(index)) continue;
+        try {
+          await operation();
+          closedResources.add(index);
+        } catch (error) {
+          errors.push(error);
+        }
+      }
+      if (errors.length > 0)
+        throw new AggregateError(errors, "Desktop Host resource shutdown failed.");
+    },
     lifecycle: missionLifecycle,
     client: { surface: "desktop", version: "desktop", instanceId: randomUUID() },
     logger: mainLogger,
@@ -2355,55 +2388,16 @@ export async function createDesktopApplicationContainer(
       });
       memoryPlane.start();
     },
-    dispose: () => {
+    dispose: async () => {
+      // Stop producers before the shared kernel seals admission. Runtime owners
+      // and platform resources remain installed if Native stop is unconfirmed.
       missionDeletion.close();
       assetSync.stop();
       evaluationService.dispose();
+      automationService.stop();
+      await missionApplication.dispose();
       unsubscribeUsageUpdates();
       unsubscribeTokenCounter();
-      automationService.stop();
-      const deliveryClosing = missionDeliveryRecovery.close();
-      void deliveryClosing.catch(() => undefined);
-      void (async () => {
-        const errors: unknown[] = [];
-        for (const operation of [
-          async () => await deliveryClosing,
-          async () => {
-            try {
-              await localHostUsageRef.current?.drain();
-            } finally {
-              await localHostUsageRef.current?.close();
-            }
-          },
-          async () => await memoryPlane.stop(),
-          async () => usageStore.close(),
-        ]) {
-          try {
-            await operation();
-          } catch (error) {
-            errors.push(error);
-          }
-        }
-        if (errors.length > 0)
-          throw new AggregateError(errors, "Desktop delivery shutdown failed.");
-      })().catch((error: unknown) => {
-        mainLogger.warn(
-          "desktop.memory_shutdown_failed",
-          "The Memory pipeline could not be stopped cleanly.",
-          { error },
-        );
-      });
-      powerMonitor.removeListener("user-did-become-active", cancelCapacityInspection);
-      powerMonitor.removeListener("resume", cancelCapacityInspection);
-      storageCapacityInspection.close();
-      tokenCounter.dispose();
-      void mcpToolRegistryPool.close().catch((error: unknown) => {
-        mainLogger.warn(
-          "desktop.mcp_pool_close_failed",
-          "Desktop MCP connections could not be closed cleanly.",
-          { error },
-        );
-      });
     },
   };
 }

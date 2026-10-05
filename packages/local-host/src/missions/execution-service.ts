@@ -222,6 +222,7 @@ interface ActiveMissionExecution {
   readonly audience: MissionSurfaceAudience;
   readonly live: LiveMissionChat;
   readonly releaseAfterHumanCheckpoint: () => Promise<void>;
+  readonly releaseObserverAfterNativeRelease?: (() => Promise<void>) | undefined;
 }
 
 type MissionExecutionHandle = MutableExecution & {
@@ -455,6 +456,7 @@ const canonicalMissionExecutionServices = new WeakSet<object>();
 declare const missionExecutionServiceBrand: unique symbol;
 export type LocalHostMissionExecutionService = MissionExecutionUseCases & {
   readonly [missionExecutionServiceBrand]: true;
+  drainReleasedOwnerResources(): Promise<void>;
 };
 export function isLocalHostMissionExecutionService(
   value: unknown,
@@ -468,6 +470,7 @@ export function createLocalHostMissionExecutionService(
 ): LocalHostMissionExecutionService {
   let controllerFactResources = options.controllerFacts;
   const requestResourceReleases = new Map<string, Promise<void>>();
+  const releasedOwnerResources = new Set<Promise<void>>();
   const logger = createPragmaLogger(options.loggerProvider, {
     component: "local-host.mission-execution",
   });
@@ -1411,6 +1414,11 @@ export function createLocalHostMissionExecutionService(
     const checkpoint = new Promise<void>((resolve) => {
       releaseCheckpoint = resolve;
     });
+    let nativeReleaseConfirmed = false;
+    let confirmNativeRelease = (): void => undefined;
+    const nativeReleased = new Promise<void>((resolve) => {
+      confirmNativeRelease = resolve;
+    });
     let durableTerminalResolve = (): void => undefined;
     let durableTerminalReject: (error: unknown) => void = () => undefined;
     const durableTerminal = new Promise<void>((resolve, reject) => {
@@ -1438,7 +1446,7 @@ export function createLocalHostMissionExecutionService(
       input.inputMessageId,
       async () => {
         await humanWaitingObserver.drain();
-        await input.onFinished?.();
+        await Promise.race([input.onFinished?.() ?? Promise.resolve(), nativeReleased]);
       },
       input.sessionId,
       async (terminal) => {
@@ -1636,7 +1644,7 @@ export function createLocalHostMissionExecutionService(
             input.handle,
             live,
             audience,
-            settlementKind !== "checkpointed",
+            settlementKind !== "checkpointed" && !nativeReleaseConfirmed,
             terminalInvalidationHasUserVisibleOutput,
             () => resolveAdmission(),
           );
@@ -1671,6 +1679,16 @@ export function createLocalHostMissionExecutionService(
       audience,
       live,
       releaseAfterHumanCheckpoint: async () => {
+        releaseCheckpoint();
+        await settlement;
+      },
+      releaseObserverAfterNativeRelease: async () => {
+        // Another Core Session instance can settle this durable turn without
+        // resolving this instance's in-memory turn promises. Only the real
+        // Native owner's completed Kernel release admits this detach signal.
+        nativeReleaseConfirmed = true;
+        humanWaitingObserver.stop();
+        confirmNativeRelease();
         releaseCheckpoint();
         await settlement;
       },
@@ -4697,6 +4715,43 @@ export function createLocalHostMissionExecutionService(
     assertMissionOwnership: async (id, guard) =>
       await options.ownerScope?.assertOwnership(id, guard),
     currentMissionGuard: (id) => options.ownerScope?.currentGuard(id),
+    onOwnerReleased: async (id, executionId, waiting) => {
+      const active = lifecycleService.active(id);
+      if (active?.handle.executionId === executionId)
+        await active.releaseObserverAfterNativeRelease?.();
+      // Optional Memory drains independently of Native/observer custody.
+      // Register before returning custody so disposal also sees work still
+      // resolving its product envelope, before Memory registers completion.
+      const completion = (async () => {
+        if (await hasMissionEnvelope(id)) {
+          const mission = await options.missions.get(id);
+          if (waiting) await options.onExecutionCheckpointed?.({ mission, executionId });
+          else {
+            const execution = await executionStore.get(executionId);
+            if (execution !== undefined && isMissionTerminalExecutionStatus(execution.status))
+              await options.onExecutionTerminal?.({
+                mission,
+                executionId,
+                status:
+                  execution.status === "interrupted"
+                    ? "cancelled"
+                    : (execution.status as "succeeded" | "failed" | "cancelled"),
+              });
+          }
+        } else {
+          await controllerFactResources?.memory?.terminal(id, executionId, waiting);
+          await controllerFactResources?.memory?.release?.();
+        }
+      })().catch((error: unknown) =>
+        logger.warn(
+          "mission.receipt_resource_reconciliation_failed",
+          "Optional released-owner resources need recovery.",
+          { error, missionId: id, executionId },
+        ),
+      );
+      releasedOwnerResources.add(completion);
+      void completion.finally(() => releasedOwnerResources.delete(completion));
+    },
     releaseMissionOwner: async (id, guard) => {
       if (options.ownerLifetime !== "request") return;
       await options.ownerScope?.assertOwnership(id, guard);
@@ -4718,8 +4773,6 @@ export function createLocalHostMissionExecutionService(
       const executionId = session?.executionIds.at(-1) ?? mission?.execution?.id ?? id;
       const execution = await executionStore.get(executionId);
       const waiting = session?.lastStatus === "waiting" || execution?.status === "waiting";
-      if (mission !== undefined && waiting)
-        await options.onExecutionCheckpointed?.({ mission, executionId });
       const active = lifecycleService.active(id);
       if (mission !== undefined && active?.handle.executionId === executionId) {
         if (waiting) {
@@ -4759,9 +4812,6 @@ export function createLocalHostMissionExecutionService(
           sessionService.deleteSessionIfCurrent(id, warm);
         sessionService.clearCompilation(id);
         sessionService.deleteExecutionContext(id);
-      } else {
-        await controllerFactResources?.memory?.terminal(id, executionId, waiting);
-        await controllerFactResources?.memory?.release?.();
       }
       await options.ownerScope?.assertOwnership(id, guard);
       await options.ownerScope?.release(id, guard);
@@ -5851,7 +5901,7 @@ export function createLocalHostMissionExecutionService(
     async forceInterrupt(id, expectedExecutionId) {
       return await forceInterruptMission(id, expectedExecutionId);
     },
-    async stopLocalController(id) {
+    async stopLocalController(id, boundary) {
       const standaloneScope = standaloneOwnerScope;
       const standaloneGuard = standaloneScope?.currentGuard(id);
       const releaseStandaloneOwner = async (): Promise<void> => {
@@ -5868,10 +5918,91 @@ export function createLocalHostMissionExecutionService(
         }
       };
       chatService.clearReads(id);
-      lifecycleService.markLeaseLost(id);
       const current = lifecycleService.active(id);
       const session = sessionService.session(id);
       const executionContext = sessionService.executionContext(id);
+      if (boundary === "shutdown") {
+        const registered = executionOwner.controlOwner(id);
+        const owner =
+          session !== undefined
+            ? { kind: "session" as const, session }
+            : current !== undefined
+              ? { kind: "flow" as const, execution: current.handle }
+              : registered;
+        if (owner !== undefined) {
+          const settlement = await executionKernel.settlement(owner);
+          let waitingHuman = false;
+          for (const executionId of settlement.executionIds) {
+            const record = await executionStore.get(executionId);
+            if (
+              record !== undefined &&
+              !isMissionTerminalExecutionStatus(record.status) &&
+              (await executionStore.listInvocations(executionId)).some(
+                (invocation) =>
+                  invocation.status === "waiting" && invocation.waitReason === "human_input",
+              )
+            ) {
+              waitingHuman = true;
+              break;
+            }
+          }
+          const preserveCheckpoint =
+            waitingHuman || (settlement.ready && settlement.boundary === "checkpoint");
+          if (preserveCheckpoint || (settlement.ready && settlement.boundary === "terminal")) {
+            if (
+              waitingHuman &&
+              owner.kind === "session" &&
+              (await owner.session.getState()).activeExecutionId !== undefined
+            )
+              await owner.session.checkpointWaitingHuman();
+            await executionKernel.release(owner, preserveCheckpoint ? "checkpoint" : "terminal");
+            if (current !== undefined) {
+              if (preserveCheckpoint) {
+                current.markCheckpointDurable();
+                await current.releaseAfterHumanCheckpoint();
+              } else if (
+                current.releaseObserverAfterNativeRelease !== undefined &&
+                (owner.kind === "session" || "releaseRuntimeResources" in owner.execution)
+              )
+                await current.releaseObserverAfterNativeRelease();
+              else await current.settlement;
+              lifecycleService.deleteActiveIfCurrent(id, current);
+              forgetFlowControlOwner(id, current.handle);
+            }
+            if (
+              waitingHuman &&
+              options.onExecutionCheckpointed !== undefined &&
+              (await hasMissionEnvelope(id))
+            ) {
+              const executionId = settlement.executionIds.at(-1);
+              if (executionId !== undefined)
+                await options.onExecutionCheckpointed?.({
+                  mission: await options.missions.get(id),
+                  executionId,
+                });
+            }
+            if (!(await hasMissionEnvelope(id))) {
+              const executionId = settlement.executionIds.at(-1);
+              if (executionId !== undefined)
+                await controllerFactResources?.memory?.terminal(
+                  id,
+                  executionId,
+                  preserveCheckpoint,
+                );
+              await controllerFactResources?.memory?.release?.();
+            }
+            if (registered !== undefined)
+              executionOwner.deleteControlOwnerIfCurrent(id, registered);
+            if (session !== undefined) sessionService.deleteSessionIfCurrent(id, session);
+            sessionService.clearCompilation(id);
+            if (executionContext !== undefined)
+              sessionService.deleteExecutionContextIfCurrent(id, executionContext);
+            await releaseStandaloneOwner();
+            return;
+          }
+        }
+      }
+      lifecycleService.markLeaseLost(id);
       const pendingSettlement: Promise<unknown>[] = [];
       if (current !== undefined && session !== undefined) {
         // Session.releaseAfterTerminal owns Native teardown and lease custody.
@@ -6177,8 +6308,13 @@ export function createLocalHostMissionExecutionService(
     },
   };
 
-  canonicalMissionExecutionServices.add(service);
-  return service as LocalHostMissionExecutionService;
+  const canonicalService = Object.assign(service, {
+    async drainReleasedOwnerResources(): Promise<void> {
+      while (releasedOwnerResources.size > 0) await Promise.all([...releasedOwnerResources]);
+    },
+  });
+  canonicalMissionExecutionServices.add(canonicalService);
+  return canonicalService as LocalHostMissionExecutionService;
 
   async function listMissionPendingHumanInteractions(
     mission: Mission,

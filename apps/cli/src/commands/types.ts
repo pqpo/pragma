@@ -15,6 +15,7 @@ export type CliLocalHost = Pick<
     unknown,
     unknown
   >,
+  | "dispose"
   | "integrationCapability"
   | "resolveWorkspace"
   | "listExecutors"

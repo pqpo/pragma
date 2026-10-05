@@ -242,6 +242,9 @@ export function createLocalHostCoreMissionControlAdapter(options: {
   /** Release the Mission lease after a recovered lower-level owner settles. */
   readonly releaseMissionOwner?:
     ((missionId: string, guard: MissionControllerGuard) => Promise<void>) | undefined;
+  /** Complete resource custody after the exact Native owner has released. */
+  readonly onOwnerReleased?:
+    ((missionId: string, executionId: string, waiting: boolean) => Promise<void>) | undefined;
   readonly assertMissionOwnership?:
     ((missionId: string, guard: MissionControllerGuard) => Promise<void>) | undefined;
   readonly currentMissionGuard?:
@@ -523,6 +526,13 @@ export function createLocalHostCoreMissionControlAdapter(options: {
           redactor,
         });
         await kernel.release(owner, current.boundary);
+        const executionId = current.executionIds.at(-1);
+        if (executionId !== undefined)
+          await options.onOwnerReleased?.(
+            missionId,
+            executionId,
+            current.boundary === "checkpoint",
+          );
         await options.assertMissionOwnership?.(missionId, guard);
         if (
           recoveredOwner(missionId) !== owner ||
@@ -1150,7 +1160,15 @@ export function createLocalHostCoreMissionControlAdapter(options: {
         await options.assertMissionOwnership?.(missionId, capturedGuard);
       const owner = recoveredOwner(missionId);
       if (owner === undefined) return;
+      const settlement = await kernel.settlement(owner);
       await kernel.release(owner, "control");
+      const executionId = settlement.executionIds.at(-1);
+      if (executionId !== undefined)
+        await options.onOwnerReleased?.(
+          missionId,
+          executionId,
+          settlement.boundary === "checkpoint",
+        );
       if (capturedGuard !== undefined)
         await options.assertMissionOwnership?.(missionId, capturedGuard);
       owners.deleteControlOwnerIfCurrent(missionId, owner);
@@ -1171,7 +1189,15 @@ export function createLocalHostCoreMissionControlAdapter(options: {
         mission: options.mission!,
         redactor,
       });
+      const settlement = await kernel.settlement(owner);
       await kernel.release(owner, "checkpoint");
+      const executionId = settlement.executionIds.at(-1);
+      if (executionId !== undefined)
+        await options.onOwnerReleased?.(
+          missionId,
+          executionId,
+          settlement.boundary === "checkpoint",
+        );
       await options.assertMissionOwnership?.(missionId, guard);
       owners.deleteControlOwnerIfCurrent(missionId, owner);
     },

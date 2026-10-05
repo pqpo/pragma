@@ -1,5 +1,7 @@
 # Issue #348 R4 CR 与修复复审
 
+后续 PR 评论修复与最新验收见 [2026-10-05 followup](local-host-kernel-r4-pr-review-followup.md)；本文为前轮源码证据。
+
 2026-10-04；基线与工作树见 [R4 实施报告](local-host-kernel-r4-implementation.md)。
 本次审查共享 application/control/run、Desktop/CLI composition、内部调用、投递、terminal、Memory/Usage 与 CI 门禁。审核候选发现后，仅把可达且可复现的问题列为缺陷；修复后再次独立复审。
 

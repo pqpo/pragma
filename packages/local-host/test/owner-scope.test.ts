@@ -24,6 +24,68 @@ describe("Mission owner scope", () => {
     });
     return { promise, resolve };
   };
+  it("allows accepted shutdown recovery claims without consuming a queued command", async () => {
+    const root = await mkdtemp(join(tmpdir(), "pragma-owner-recovery-drain-"));
+    const controller = createMissionControllerStore({ missionsPath: root });
+    const scope = createMissionOwnerScope({ controller });
+    const consumer = vi.fn(async () => ({ result: {} }));
+    scope.bindConsumer({ apply: consumer });
+    const prepared = deferred();
+    const finish = deferred();
+    try {
+      await appendCommand(controller);
+      const closing = scope.quiesce(async () => {
+        const guard = await scope.acquireForRecovery(missionId);
+        await scope.assertOwnership(missionId, guard);
+        prepared.resolve();
+        await finish.promise;
+      });
+      await prepared.promise;
+      await expect(scope.acquire(missionId)).rejects.toThrow(
+        "Mission owner scope is shutting down",
+      );
+      expect(consumer).not.toHaveBeenCalled();
+      expect(scope.diagnostics().activeInboxPollerCount).toBe(0);
+      finish.resolve();
+      await closing;
+      await expect(scope.acquireForRecovery(missionId)).rejects.toThrow(
+        "Mission owner scope is shutting down",
+      );
+      await scope.release(missionId);
+      expect((await controller.readSnapshot({ missionId })).snapshot.lease).toBeUndefined();
+      expect((await controller.getOperation({ missionId, requestId }))?.state).toBe("queued");
+    } finally {
+      finish.resolve();
+      await scope.stop(missionId);
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+  it("quiesces acquisition while retaining renewal and guarded Native custody", async () => {
+    const root = await mkdtemp(join(tmpdir(), "pragma-owner-quiesce-"));
+    const controller = createMissionControllerStore({ missionsPath: root });
+    const renew = vi.spyOn(controller, "renew");
+    const scope = createMissionOwnerScope({ controller, leaseMs: 500 });
+    try {
+      const guard = await scope.acquire(missionId);
+      await scope.quiesce();
+      await expect(scope.acquire(missionId)).rejects.toThrow(
+        "Mission owner scope is shutting down",
+      );
+      await expect(
+        scope.runWithGuard(missionId, guard, () => scope.acquire(missionId)),
+      ).resolves.toEqual(guard);
+      await vi.waitFor(() => expect(renew).toHaveBeenCalled(), { timeout: 2_000 });
+      expect(scope.currentGuard(missionId)).toEqual(guard);
+      expect((await controller.readSnapshot({ missionId })).snapshot.lease?.claimId).toBe(
+        guard.claimId,
+      );
+      await scope.release(missionId, guard);
+      expect((await controller.readSnapshot({ missionId })).snapshot.lease).toBeUndefined();
+    } finally {
+      await scope.stop(missionId);
+      await rm(root, { recursive: true, force: true });
+    }
+  });
   const appendCommand = async (controller: MissionControllerStore) => {
     await controller.appendCommand({
       missionId,

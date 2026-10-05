@@ -10,7 +10,11 @@ import {
 } from "@pragma/core";
 import { createLocalHostNodeMissionCompiler } from "./node-mission-compiler.ts";
 import { createLocalHostRunMemory } from "./run-memory.ts";
-import { createIntegrationError, type IntegrationCapability } from "@pragma/shared/integration";
+import {
+  createIntegrationError,
+  IntegrationErrorSchema,
+  type IntegrationCapability,
+} from "@pragma/shared/integration";
 
 import {
   createExpertSessionPromptQueueProjection,
@@ -205,15 +209,24 @@ export function createLocalHostNodeApplication(
     },
   });
   let missionDelivery: Promise<Awaited<ReturnType<typeof createMissionDelivery>>> | undefined;
+  let resourcesClosing = false;
+  const receiptRecovery = new Set<Promise<void>>();
+  const recoveringMissions = new Set<string>();
   const runMemory = createLocalHostRunMemory({
     pragmaHome: options.pragmaHome,
     loggerProvider,
-    onPause: async () => {
-      if (missionDelivery !== undefined) await (await missionDelivery).pause();
-    },
     beforeFeedClose: async () => {
-      if (missionDelivery !== undefined) await (await missionDelivery).close();
-      await usageSink.drain();
+      await Promise.all(receiptRecovery);
+      // Native settlement can have committed its terminal after the last scheduler tick.
+      // Shutdown hands off those facts before closing the feed, without waiting for enrichment.
+      await executionStore.drainCanonicalEvents();
+      if (missionDelivery !== undefined) {
+        const delivery = await missionDelivery;
+        delivery.pause();
+        await delivery.takeCustody();
+        await delivery.close();
+      }
+      if (runMemory.hasCanonicalSource()) await usageSink.drain();
       await usageSink.close();
     },
   });
@@ -293,7 +306,7 @@ export function createLocalHostNodeApplication(
         missions: missionRepository,
         executions: executionStore,
         projector: executionProjector,
-        memory: async (mission, executionId) => await runMemory.complete(mission.id, executionId),
+        memory: async (mission, executionId) => await runMemory.reconcile(mission.id, executionId),
       }),
     }).catch((error: unknown) => {
       missionDelivery = undefined;
@@ -301,9 +314,49 @@ export function createLocalHostNodeApplication(
     }));
   const hasEnvelope = async (id: string): Promise<boolean> =>
     (await readMissionEnvelope(id)) !== undefined;
+  const wakeReceiptRecovery = (missionId: string): void => {
+    if (resourcesClosing || recoveringMissions.has(missionId)) return;
+    recoveringMissions.add(missionId);
+    const recovery = (async () => {
+      const mission = await readMissionEnvelope(missionId);
+      if (mission?.execution === undefined) return;
+      const delivery = await getMissionDelivery();
+      await delivery.register(mission, mission.execution.id, mission.execution.inputMessageId);
+      const existing = ownerScope.currentGuard(missionId);
+      const guard = existing ?? (await ownerScope.acquireForRecovery(missionId));
+      try {
+        await delivery.settleMission(missionId);
+      } finally {
+        // Once disposal owns cleanup, leave this exact claim in the shared
+        // owner inventory so its normal release retry/fencing rules apply.
+        if (existing === undefined && !resourcesClosing) await ownerScope.release(missionId, guard);
+      }
+    })().catch((error: unknown) => {
+      // Reading an owner held by another Host is normal; its consumer retains
+      // custody. Leave the tasks untouched rather than marking this Module down.
+      if (IntegrationErrorSchema.safeParse(error).data?.code === "MISSION_LEASE_HELD") return;
+      missionLogger.warn("mission.delivery_degraded", "Mission receipt recovery needs attention", {
+        missionId,
+        moduleId: "pragma.mission-delivery",
+        errorCode: "MISSION_DELIVERY_UNAVAILABLE",
+        error,
+      });
+    });
+    receiptRecovery.add(recovery);
+    void recovery.finally(() => {
+      receiptRecovery.delete(recovery);
+      recoveringMissions.delete(missionId);
+    });
+  };
   const executionService = createLocalHostMissionApplication({
     lifecycle: missionLifecycle,
-    closeResources: () => runMemory.close(),
+    prepareShutdown: async () => {
+      // New accesses cannot enqueue recovery after this snapshot. Quiesce permits
+      // only already accepted recovery claims while their bounded work settles.
+      resourcesClosing = true;
+      await Promise.all(receiptRecovery);
+    },
+    closeResources: () => runMemory.dispose(),
     client: options.client,
     logger: missionLogger,
     resolveExecutor,
@@ -440,7 +493,19 @@ export function createLocalHostNodeApplication(
           ...(await projectCatalog.listExecutors()),
         ],
     },
-    missions: readPorts.missions,
+    missions: {
+      ...readPorts.missions,
+      get: async (id) => {
+        const mission = await readPorts.missions.get(id);
+        wakeReceiptRecovery(id);
+        return mission;
+      },
+      query: async (input) => {
+        const result = await readPorts.missions.query(input);
+        wakeReceiptRecovery(input.missionId);
+        return result;
+      },
+    },
     workspace: options.workspace,
     board: readPorts.board,
     queue: { list: async (missionId) => await promptQueueProjection.list(missionId) },
