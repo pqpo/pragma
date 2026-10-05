@@ -1,5 +1,7 @@
 # Issue #348 R4 实施与验收
 
+最新评论复查与遗留稳定性缺口见 [PR recheck](local-host-kernel-r4-pr-recheck.md)。
+
 2026-10-04；基线 `origin/main`：`cc1103ecae55c5ec28d98f7e4e54f1165c4bfc8a`（#353/#354/#355 已合入）。独立 worktree 实施。
 **状态：工程实现与共享门禁已交付；产品验收仍有缺口，R4 与整体重构尚未标记完成，issue #348 保持开放。**
 

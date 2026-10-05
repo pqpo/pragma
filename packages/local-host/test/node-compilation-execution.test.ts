@@ -71,6 +71,32 @@ afterEach(async () => {
   );
 });
 
+async function executionDiagnostic(
+  executions: ReturnType<typeof createSqliteExecutionStore>,
+  executionId: string,
+) {
+  const execution = await executions.get(executionId);
+  const invocations = await executions.listInvocations(executionId);
+  return {
+    execution:
+      execution === undefined
+        ? undefined
+        : {
+            executionId,
+            status: execution.status,
+            version: execution.version,
+            error: execution.error,
+          },
+    invocations: invocations.map(({ invocationId, nodeId, status, waitReason, error }) => ({
+      invocationId,
+      nodeId,
+      status,
+      waitReason,
+      error,
+    })),
+  };
+}
+
 async function fixture(
   fail = false,
   checkpoint = false,
@@ -1174,6 +1200,23 @@ describe("default Node compilation reaches persisted Execution", { timeout: 15_0
     };
     const first = await f.app.run!.start({ ...request, requestId: randomUUID() });
     expect((await first.outcome).status).toBe("failed");
+    const executions = createSqliteExecutionStore({ pragmaHome: f.home });
+    try {
+      // Failure diagnostics must retain the real Runtime cause at both levels,
+      // rather than reporting only that a Human wait was never observed.
+      const diagnostic = await executionDiagnostic(executions, first.executionId!);
+      expect(diagnostic.execution).toMatchObject({ status: "failed" });
+      expect(JSON.stringify(diagnostic.execution?.error)).toContain("fixture execution failure");
+      expect(
+        diagnostic.invocations.some(
+          (invocation) =>
+            invocation.status === "failed" &&
+            JSON.stringify(invocation.error)?.includes("fixture execution failure"),
+        ),
+      ).toBe(true);
+    } finally {
+      await executions.close();
+    }
     expect(invalidate).toHaveBeenCalledOnce();
     const probes = f.canUse.mock.calls.length;
     if (compiler === undefined) throw new Error("Default Node compiler was not created.");
@@ -1350,7 +1393,19 @@ it(
         detach: false,
       },
     });
-    expect((await started.outcome).status).toBe("input_required");
+    const outcome = await started.outcome;
+    const initialExecutions = createSqliteExecutionStore({ pragmaHome: f.home });
+    try {
+      expect(
+        outcome,
+        JSON.stringify({
+          outcome,
+          ...(await executionDiagnostic(initialExecutions, started.executionId!)),
+        }),
+      ).toMatchObject({ status: "input_required" });
+    } finally {
+      await initialExecutions.close();
+    }
     await f.app.dispose?.();
     await rm(knowledge.storePath(storeId), { recursive: true });
     f.canUse.mockReturnValue({ usable: false, reason: "Unavailable readiness" });
@@ -1478,14 +1533,34 @@ it.each([false, true])(
     expect((await started.outcome).status).toBe("accepted");
     const executions = createSqliteExecutionStore({ pragmaHome: f.home });
     try {
-      await vi.waitFor(async () =>
+      await vi.waitFor(async () => {
+        const execution = await executions.get(started.executionId!);
+        const invocations = await executions.listInvocations(started.executionId!);
         expect(
-          (await executions.listInvocations(started.executionId!)).some(
+          invocations.some(
             (invocation) =>
               invocation.status === "waiting" && invocation.waitReason === "human_input",
           ),
-        ).toBe(true),
-      );
+          JSON.stringify({
+            execution:
+              execution === undefined
+                ? undefined
+                : {
+                    executionId: execution.executionId,
+                    status: execution.status,
+                    version: execution.version,
+                    error: execution.error,
+                  },
+            invocations: invocations.map(({ invocationId, nodeId, status, waitReason, error }) => ({
+              invocationId,
+              nodeId,
+              status,
+              waitReason,
+              error,
+            })),
+          }),
+        ).toBe(true);
+      });
       const before = await executions.listContexts(started.executionId!);
       await f.app.dispose!();
       expect((await executions.get(started.executionId!))?.status).toBe("waiting");
