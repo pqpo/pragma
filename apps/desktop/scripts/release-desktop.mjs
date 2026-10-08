@@ -213,7 +213,7 @@ function runCommand(command, argumentsList, cwd) {
 }
 
 function captureCommand(command, argumentsList, cwd, { allowFailure = false } = {}) {
-  const actualCommand = executable(command);
+  const actualCommand = command;
 
   try {
     const stdout = execFileSync(actualCommand, argumentsList, {
