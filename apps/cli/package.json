@@ -1,6 +1,6 @@
 {
   "name": "@pqpo/pragma",
-  "version": "0.1.0-next.18",
+  "version": "0.1.0-next.19",
   "description": "Pragma command-line interface",
   "license": "AGPL-3.0-only",
   "type": "module",

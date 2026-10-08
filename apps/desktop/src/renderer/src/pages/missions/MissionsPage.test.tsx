@@ -2356,6 +2356,7 @@ describe("Mission work conversation", () => {
     };
     const html = renderToStaticMarkup(
       <MissionWorkDrawer
+        missionId="mission-1"
         record={record}
         inputSenderName="Coordinator"
         entries={[
@@ -2363,6 +2364,27 @@ describe("Mission work conversation", () => {
             id: "input-1",
             kind: "user",
             content: "Inspect the repository",
+            attachments: [
+              {
+                id: "00000000-0000-4000-8000-000000000001",
+                kind: "image",
+                name: "screen.png",
+                path: "/screen.png",
+                mimeType: "image/png",
+              },
+              {
+                id: "00000000-0000-4000-8000-000000000002",
+                kind: "file",
+                name: "notes.txt",
+                path: "/notes.txt",
+              },
+              {
+                id: "00000000-0000-4000-8000-000000000003",
+                kind: "directory",
+                name: "src",
+                path: "/src",
+              },
+            ],
             createdAt: "2026-07-21T00:00:00.000Z",
           },
           {
@@ -2384,6 +2406,13 @@ describe("Mission work conversation", () => {
     expect(html).toContain("Coordinator");
     expect(html).toContain("Inspect the repository");
     expect(html).toContain("The architecture is sound.");
+    expect(html).toContain(
+      "pragma-mission-attachment://preview/mission-1/00000000-0000-4000-8000-000000000001",
+    );
+    expect(html).toContain('aria-label="View original screen.png"');
+    expect(html).toContain("notes.txt");
+    expect(html).toContain("Folder");
+    expect(html).not.toContain("&quot;attachments&quot;");
     expect(html).not.toContain("Session tasks");
     expect(html).not.toContain("Live output");
     expect(html).not.toContain("mission-work-tasks");
@@ -2405,6 +2434,7 @@ describe("Mission work conversation", () => {
     };
     const html = renderToStaticMarkup(
       <MissionWorkDrawer
+        missionId="mission-1"
         record={record}
         inputSenderName="Coordinator"
         entries={[
@@ -3268,6 +3298,7 @@ describe("Mission Expert output labels", () => {
     );
     const work = renderToStaticMarkup(
       <MissionWorkDrawer
+        missionId="mission-1"
         record={{
           recordId: "runtime-agent:researcher",
           kind: "runtime-agent",
