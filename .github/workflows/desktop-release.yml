@@ -25,7 +25,7 @@ jobs:
   verify:
     name: Verify release source
     runs-on: ubuntu-24.04
-    timeout-minutes: 20
+    timeout-minutes: 45
     outputs:
       version: ${{ steps.app-version.outputs.version }}
       tag: ${{ steps.app-version.outputs.tag }}
