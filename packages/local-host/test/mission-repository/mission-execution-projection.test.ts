@@ -4,6 +4,9 @@ import { join } from "node:path";
 
 import { afterEach, describe, expect, it } from "vitest";
 
+import { ContextSystem, InMemoryContextStore, createContextTools } from "@pragma/core";
+import { preview } from "../../src/missions/mission-chat-projection-common.ts";
+
 import type { MissionChatEntry } from "@pragma/shared";
 import {
   MISSION_EXECUTION_PROJECTION_MAX_BYTES,
@@ -26,6 +29,118 @@ afterEach(async () => {
 });
 
 describe("mission execution projection", () => {
+  it("preserves emoji at the preview boundary without archiving a broken surrogate", async () => {
+    const value = preview(`${"x".repeat(798)}😀suffix`);
+    expect(value).toBe(`${"x".repeat(798)}…`);
+    const { path } = await temporaryProjectionPath();
+    await writeMissionExecutionProjection(path, "unicode-preview", [
+      {
+        id: "unicode-tool",
+        executionId: "unicode-preview",
+        createdAt: "2026-10-08T09:50:00.000Z",
+        kind: "tool",
+        toolCallId: "unicode-call",
+        toolName: "context",
+        status: "succeeded",
+        outputPreview: value,
+      },
+    ]);
+    const page = await readMissionExecutionProjectionPage(path, "unicode-preview", { limit: 10 });
+    expect(page).toMatchObject({ truncatedFields: 0, entries: [{ outputPreview: value }] });
+  });
+  it("archives compact Context tool results without duplicate payloads or false truncation", async () => {
+    const system = new ContextSystem();
+    system.register({
+      namespace: "mission-board",
+      store: new InMemoryContextStore({
+        context: [
+          {
+            id: "GUIDE.md",
+            content: "guide",
+            metadata: {
+              description: "Mission Board usage guide and whiteboard conventions.",
+              trigger: "always_on",
+              priority: "critical",
+            },
+          },
+        ],
+      }),
+    });
+    system.register({ namespace: "mission-board-private", store: new InMemoryContextStore() });
+    const tools = createContextTools({
+      listContext: (input) => system.index(input),
+      readContext: (input) => system.read(input),
+      searchContext: (input) => system.search(input),
+      addContext: (input) => system.add(input),
+      editContext: (input) => system.edit(input),
+      deleteContext: (input) => system.delete(input),
+    });
+    const call = async (name: string, args: unknown) =>
+      await tools.find((tool) => tool.name === name)!.call(args, undefined);
+    const identity = { namespace: "mission-board-private", id: "tool-test/roundtrip.md" };
+    await call("add_expert_context", {
+      ...identity,
+      content: "# Context tool test\n\nalpha: 111\nbeta: 222\nTest content\ngamma: 333\n",
+      description: "Temporary roundtrip test item for Context store tooling.",
+      trigger: "manual",
+      priority: "low",
+    });
+    const results = [
+      await call("list_expert_context", { namespace: "mission-board", limit: 20 }),
+      await call("list_expert_context", { namespace: identity.namespace, limit: 20 }),
+      await call("read_expert_context", { ...identity, start: 20, offset: 15 }),
+      await call("edit_expert_context", {
+        ...identity,
+        mode: "search_replace",
+        search: "beta: 222",
+        replace: "beta: 222-edited",
+      }),
+      await call("read_expert_context", { ...identity, start: 20, offset: 30 }),
+    ];
+    await call("edit_expert_context", {
+      ...identity,
+      mode: "append",
+      content: "delta: 444 (appended)",
+      separator: "blank_line",
+    });
+    results.push(await call("read_expert_context", { ...identity, start: 65, offset: 25 }));
+    expect(results[0]!.text).toContain("revision:");
+    expect(results[0]!.text).not.toContain("etag:");
+    expect(JSON.parse(results[3]!.text)).not.toHaveProperty("sha256");
+    expect(JSON.parse(results[3]!.text)).not.toHaveProperty("etag");
+    const { path } = await temporaryProjectionPath();
+    const executionId = "compact-context";
+    const entries: MissionChatEntry[] = results.map((result, index) => {
+      expect(result.isError).not.toBe(true);
+      expect(result.details).toBeUndefined();
+      // Match the runtime's text-result envelope, including JSON escaping.
+      const serialized = JSON.stringify({
+        content: [{ type: "text", text: result.text }],
+        isError: false,
+      });
+      expect(serialized.length).toBeLessThanOrEqual(800);
+      return {
+        id: `tool-${index}`,
+        executionId,
+        createdAt: "2026-10-08T09:50:00.000Z",
+        kind: "tool",
+        toolCallId: `call-${index}`,
+        toolName: "context",
+        status: "succeeded",
+        outputPreview: preview(serialized),
+      };
+    });
+    entries.push({
+      ...entries[0]!,
+      id: "long-preview",
+      toolCallId: "long-call",
+      outputPreview: preview("x".repeat(2_000)),
+    });
+    await writeMissionExecutionProjection(path, executionId, entries);
+    const page = await readMissionExecutionProjectionPage(path, executionId, { limit: 20 });
+    expect(page).toMatchObject({ omittedEntries: 0, truncatedFields: 0 });
+    expect(page?.entries).toEqual(entries);
+  });
   it("reads the actual v3 fixture without rewriting it and rejects future ordering versions", async () => {
     const { path } = await temporaryProjectionPath();
     const executionId = "20000000-0000-4000-8000-000000000325";

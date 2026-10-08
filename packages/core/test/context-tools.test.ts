@@ -1,5 +1,3 @@
-import { createHash } from "node:crypto";
-
 import { describe, expect, it, vi } from "vitest";
 
 import {
@@ -13,6 +11,58 @@ import {
 } from "../src/index.ts";
 
 describe("Expert context tools", () => {
+  it("keeps trust labels, pagination and diagnostics in the sole bounded result", async () => {
+    const unused = vi.fn(async () => {
+      throw new Error("unused");
+    });
+    const tools = createContextTools(
+      {
+        listContext: async () => ({
+          ok: true,
+          value: {
+            items: ["a.md", "b.md", "c.md"].map((id) => ({
+              id,
+              namespace: "memory",
+              metadata: {
+                trigger: "manual" as const,
+                priority: "normal" as const,
+                trustLevel: "external" as const,
+                sensitivity: "restricted" as const,
+                description: "d".repeat(200),
+              },
+            })),
+            stores: [0, 1, 2, 3].map((i) => ({
+              namespace: `store-${i}`,
+              storeName: "s".repeat(120),
+              itemCount: 1,
+            })),
+            issues: [0, 1, 2].map((i) => ({
+              namespace: `failed-${i}`,
+              operation: "list" as const,
+              error: { code: "store_error" as const, message: "e".repeat(256) },
+            })),
+          },
+        }),
+        readContext: unused,
+        searchContext: unused,
+        addContext: unused,
+        editContext: unused,
+        deleteContext: unused,
+      },
+      { resultByteBudget: 1_024 },
+    );
+    const tool = tools.find((tool) => tool.name === "list_expert_context")!;
+    const first = await tool.call({ limit: 1 }, undefined);
+    expect(Buffer.byteLength(first.text)).toBeLessThanOrEqual(1_024);
+    expect(first.text).toContain("trustLevel: external");
+    expect(first.text).toContain("sensitivity: restricted");
+    expect(first.text).toContain("store_error");
+    expect(first.text).toContain("additional issue(s) omitted");
+    const cursor = readNextCursor(first.text);
+    const second = await tool.call({ limit: 1, cursor }, undefined);
+    expect(readItemIds(first.text)).toEqual(["a.md"]);
+    expect(readItemIds(second.text)).toEqual(["b.md"]);
+  });
   it("resolves a Host-owned namespace allocated during an Invocation", async () => {
     const system = new ContextSystem();
     const store = new InMemoryContextStore();
@@ -179,20 +229,7 @@ describe("Expert context tools", () => {
 
     const result = await tool.call(input, undefined);
     const persistedContent = `${sentinel}\n持久化后附加的内容。`;
-    const receipt = (
-      result.details as {
-        readonly context: {
-          readonly status: string;
-          readonly namespace: string;
-          readonly id: string;
-          readonly revision?: string | undefined;
-          readonly etag?: string | undefined;
-          readonly sizeBytes: number;
-          readonly sha256: string;
-          readonly content?: unknown;
-        };
-      }
-    ).context;
+    const receipt = JSON.parse(result.text);
 
     expect(addContext).toHaveBeenCalledWith({
       namespace: input.namespace,
@@ -215,13 +252,11 @@ describe("Expert context tools", () => {
       revision: "store-revision-with-metadata",
       etag: "store-etag",
       sizeBytes: Buffer.byteLength(persistedContent, "utf8"),
-      sha256: createHash("sha256").update(persistedContent, "utf8").digest("hex"),
     });
     expect(receipt).not.toHaveProperty("content");
     expect(JSON.parse(result.text)).toEqual(receipt);
     expect(result.text).not.toContain(sentinel);
-    expect(JSON.stringify(result.details)).not.toContain(sentinel);
-    expect(JSON.stringify(result.details)).not.toContain("持久化后附加的内容。");
+    expect(result.details).toBeUndefined();
   });
 
   it("rejects blank required identifiers while preserving empty content semantics", async () => {
@@ -254,11 +289,11 @@ describe("Expert context tools", () => {
     ).rejects.toThrow('Context tool parameter "namespace" must be a non-empty string.');
     expect(addContext).not.toHaveBeenCalled();
 
-    await expect(
-      tool.call({ namespace: "mission-board", id: "notes.md", content: "" }, undefined),
-    ).resolves.toMatchObject({
-      details: { context: { committed: true, id: "notes.md", sizeBytes: 0 } },
-    });
+    const empty = await tool.call(
+      { namespace: "mission-board", id: "notes.md", content: "" },
+      undefined,
+    );
+    expect(JSON.parse(empty.text)).toMatchObject({ committed: true, id: "notes.md", sizeBytes: 0 });
     expect(addContext).toHaveBeenCalledWith(
       expect.objectContaining({ namespace: "mission-board", id: "notes.md", content: "" }),
     );
@@ -289,11 +324,12 @@ describe("Expert context tools", () => {
       undefined,
     );
 
-    expect(result).toMatchObject({
-      isError: true,
-      details: { error: { code: "store_error", message: "Store unavailable" } },
+    expect(result.isError).toBe(true);
+    expect(JSON.parse(result.text)).toMatchObject({
+      committed: false,
+      error: { code: "store_error", message: "Store unavailable" },
     });
-    expect(result.details).not.toHaveProperty("context");
+    expect(result.details).toBeUndefined();
   });
 
   it("maps append and prepend edits with an explicit separator", async () => {
@@ -373,7 +409,7 @@ describe("Expert context tools", () => {
       expectedEtag: "etag-before-tail",
       context: expect.any(Object),
     });
-    expect(result).toMatchObject({ details: { mode: "append" } });
+    expect(result.details).toBeUndefined();
     expect(JSON.parse(result.text)).toMatchObject({
       committed: true,
       status: "updated",
@@ -521,7 +557,7 @@ describe("Expert context tools", () => {
         currentEtag: "etag-current",
       },
     });
-    expect(result.details).toEqual(JSON.parse(result.text));
+    expect(result.details).toBeUndefined();
   });
 
   it("returns explicit update and delete persistence receipts without content", async () => {
@@ -658,13 +694,10 @@ describe("Expert context tools", () => {
     )!;
 
     const first = await tool.call({ limit: 2 }, undefined);
-    const firstDetails = first.details as {
-      readonly context: readonly { readonly id: string }[];
-      readonly page: { readonly nextCursor: string };
-    };
-    expect(firstDetails.context.map((item) => item.id)).toEqual(["a.md", "b.md"]);
+    const nextCursor = readNextCursor(first.text);
+    expect(readItemIds(first.text)).toEqual(["a.md", "b.md"]);
     expect(first.text).toContain("More items are available");
-    expect(firstDetails.page.nextCursor).toMatch(/^p1\.[A-Za-z0-9_-]{40}$/u);
+    expect(nextCursor).toMatch(/^p1\.[A-Za-z0-9_-]{40}$/u);
 
     await expect(tool.call({ cursor: "" }, undefined)).resolves.not.toMatchObject({
       isError: true,
@@ -673,22 +706,14 @@ describe("Expert context tools", () => {
       isError: true,
     });
 
-    const second = await tool.call({ cursor: firstDetails.page.nextCursor, limit: 2 }, undefined);
-    expect(
-      (second.details as { readonly context: readonly { readonly id: string }[] }).context.map(
-        (item) => item.id,
-      ),
-    ).toEqual(["c.md"]);
+    const second = await tool.call({ cursor: nextCursor, limit: 2 }, undefined);
+    expect(readItemIds(second.text)).toEqual(["c.md"]);
     const legacyCursor = Buffer.from(JSON.stringify([2, 2, null])).toString("base64url");
     const legacyPage = await tool.call({ cursor: legacyCursor, limit: 2 }, undefined);
-    expect(
-      (legacyPage.details as { readonly context: readonly { readonly id: string }[] }).context.map(
-        (item) => item.id,
-      ),
-    ).toEqual(["c.md"]);
+    expect(readItemIds(legacyPage.text)).toEqual(["c.md"]);
     await expect(tool.call({ cursor: "not-a-cursor" }, undefined)).resolves.toMatchObject({
       isError: true,
-      details: { error: { code: "invalid_input" } },
+      text: expect.stringContaining("invalid_input"),
     });
   });
 
@@ -724,27 +749,22 @@ describe("Expert context tools", () => {
     )!;
 
     const first = await tool.call({ namespace: "memory", limit: 2 }, undefined);
-    const details = first.details as { readonly page: { readonly nextCursor: string } };
+    const nextCursor = readNextCursor(first.text);
     expect(listContext).toHaveBeenCalledWith({ namespace: "memory", context: expect.any(Object) });
     expect(first.text).toContain("Showing 2 of 3");
 
-    await expect(
-      tool.call({ cursor: details.page.nextCursor, limit: 2 }, undefined),
-    ).resolves.toMatchObject({
+    await expect(tool.call({ cursor: nextCursor, limit: 2 }, undefined)).resolves.toMatchObject({
       isError: true,
-      details: { error: { code: "invalid_input", message: expect.stringContaining("namespace") } },
+      text: expect.stringContaining("namespace"),
     });
     await expect(
-      tool.call(
-        { namespace: "mission-board", cursor: details.page.nextCursor, limit: 2 },
-        undefined,
-      ),
+      tool.call({ namespace: "mission-board", cursor: nextCursor, limit: 2 }, undefined),
     ).resolves.toMatchObject({
       isError: true,
-      details: { error: { code: "invalid_input", message: expect.stringContaining("namespace") } },
+      text: expect.stringContaining("namespace"),
     });
     await expect(
-      tool.call({ namespace: "memory", cursor: details.page.nextCursor, limit: 2 }, undefined),
+      tool.call({ namespace: "memory", cursor: nextCursor, limit: 2 }, undefined),
     ).resolves.toMatchObject({ text: expect.stringContaining("Showing 1 of 3") });
   });
 
@@ -780,20 +800,11 @@ describe("Expert context tools", () => {
 
     const page = await tool.call({ namespace, cursor: legacyCursor, limit: 1 }, undefined);
     expect(page.isError).not.toBe(true);
-    expect(
-      (page.details as { readonly context: readonly { readonly id: string }[] }).context.map(
-        (item) => item.id,
-      ),
-    ).toEqual(["b.md"]);
-    const nextCursor = (page.details as { readonly page: { readonly nextCursor: string } }).page
-      .nextCursor;
+    expect(readItemIds(page.text)).toEqual(["b.md"]);
+    const nextCursor = readNextCursor(page.text);
     expect(nextCursor).toMatch(/^p1\.[A-Za-z0-9_-]{40}$/u);
     const nextPage = await tool.call({ namespace, cursor: nextCursor, limit: 1 }, undefined);
-    expect(
-      (nextPage.details as { readonly context: readonly { readonly id: string }[] }).context.map(
-        (item) => item.id,
-      ),
-    ).toEqual(["c.md"]);
+    expect(readItemIds(nextPage.text)).toEqual(["c.md"]);
   });
 
   it("lists display metadata without changing Context addressing", async () => {
@@ -839,16 +850,7 @@ describe("Expert context tools", () => {
     expect(result.text).toContain("itemCount: 16");
     expect(result.text).toContain("revision: 1723640000000000000:128");
     expect(result.text).toContain("etag: sha256:context-etag");
-    expect(result.details).toMatchObject({
-      context: [
-        {
-          id: "guide.md",
-          revision: "1723640000000000000:128",
-          etag: "sha256:context-etag",
-        },
-      ],
-      stores: [{ namespace: "4jtrtegfka94yzgg", storeName: "Memory · 00pragma", itemCount: 16 }],
-    });
+    expect(result.details).toBeUndefined();
   });
 
   it("advances pagination past context identifiers that cannot fit in the result budget", async () => {
@@ -886,21 +888,14 @@ describe("Expert context tools", () => {
     )!;
 
     const first = await tool.call({ limit: 1 }, undefined);
-    const firstDetails = first.details as {
-      readonly context: readonly unknown[];
-      readonly page: { readonly nextCursor: string; readonly skippedOversized: number };
-    };
+    const nextCursor = readNextCursor(first.text);
     expect(Buffer.byteLength(first.text, "utf8")).toBeLessThanOrEqual(1_024);
-    expect(firstDetails.context).toEqual([]);
-    expect(firstDetails.page.skippedOversized).toBe(1);
+    expect(readItemIds(first.text)).toEqual([]);
+    expect(first.text).toContain("1 context item(s) were skipped");
     expect(first.text).toContain("More items are available");
 
-    const second = await tool.call({ cursor: firstDetails.page.nextCursor, limit: 1 }, undefined);
-    expect(
-      (second.details as { readonly context: readonly { readonly id: string }[] }).context.map(
-        (item) => item.id,
-      ),
-    ).toEqual(["guide.md"]);
+    const second = await tool.call({ cursor: nextCursor, limit: 1 }, undefined);
+    expect(readItemIds(second.text)).toEqual(["guide.md"]);
   });
 
   it("bounds search snippets and defensively truncates oversized reads", async () => {
@@ -949,38 +944,31 @@ describe("Expert context tools", () => {
     const searchResult = await search.call({ query: "汉" }, undefined);
     expect(Buffer.byteLength(searchResult.text, "utf8")).toBeLessThanOrEqual(1_024);
     expect(searchResult.text).toContain("read_expert_context");
-    expect(searchResult.details).toMatchObject({ truncated: true });
+    expect(searchResult.details).toBeUndefined();
 
     const read = tools.find((candidate) => candidate.name === "read_expert_context")!;
     const readResult = await read.call(
       { namespace: "memory", id: "semantic/items/fact.md" },
       undefined,
     );
-    const context = (
-      readResult.details as {
-        readonly context: {
-          readonly content: string;
-          readonly contentRange: { readonly startLine: number; readonly endLine: number };
-        };
-      }
-    ).context;
-    expect(Buffer.byteLength(context.content, "utf8")).toBeLessThanOrEqual(128);
-    expect(context.contentRange).toMatchObject({ startLine: 4, endLine: 4 });
+    const body = readResult.text.split("  content:\n")[1]!;
+    expect(Buffer.byteLength(body.replace(/^ {4}/gm, ""), "utf8")).toBeLessThanOrEqual(128);
+    expect(readResult.text).toContain("lines 4-4");
     expect(readResult.text).toContain("truncationNotice");
     expect(readResult.text).toContain("nextStart=126");
     expect(readResult.text).toContain(
       '"tool":"read_expert_context","arguments":{"namespace":"memory","id":"semantic/items/fact.md","start":126,"offset":128}',
     );
-    expect(readResult.details).toMatchObject({
-      continuation: {
-        tool: "read_expert_context",
-        arguments: {
-          namespace: "memory",
-          id: "semantic/items/fact.md",
-          start: 126,
-          offset: 128,
-        },
-      },
-    });
+    expect(readResult.details).toBeUndefined();
   });
 });
+
+function readNextCursor(text: string): string {
+  const cursor = /cursor=("[^"\n]+")/.exec(text)?.[1];
+  expect(cursor).toBeDefined();
+  return JSON.parse(cursor!) as string;
+}
+
+function readItemIds(text: string): string[] {
+  return [...text.matchAll(/^- id: (.+)$/gm)].map((match) => match[1]!);
+}

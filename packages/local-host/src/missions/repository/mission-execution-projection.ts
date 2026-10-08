@@ -13,6 +13,7 @@ export const MISSION_EXECUTION_PROJECTION_MAX_ENTRIES = 1_000;
 export const MISSION_EXECUTION_PROJECTION_MAX_BYTES = 4 * 1024 * 1024;
 export const MISSION_EXECUTION_PROJECTION_MAX_CONTENT_LENGTH = 32_000;
 export const MISSION_EXECUTION_PROJECTION_MAX_ERROR_LENGTH = 4_000;
+export const MISSION_EXECUTION_PROJECTION_MAX_TOOL_PREVIEW_LENGTH = 800;
 
 const DEFAULT_SYNCHRONOUS_BUILD_BUDGET_MS = 4;
 const PROJECTION_WRITE_BATCH_BYTES = 256 * 1024;
@@ -680,7 +681,7 @@ async function boundEntry(
     if (bounded.inputPreview !== undefined) {
       bounded.inputPreview = await truncateField(
         bounded.inputPreview,
-        800,
+        MISSION_EXECUTION_PROJECTION_MAX_TOOL_PREVIEW_LENGTH,
         "inputPreview",
         fields,
         budget,
@@ -689,7 +690,7 @@ async function boundEntry(
     if (bounded.outputPreview !== undefined) {
       bounded.outputPreview = await truncateField(
         bounded.outputPreview,
-        800,
+        MISSION_EXECUTION_PROJECTION_MAX_TOOL_PREVIEW_LENGTH,
         "outputPreview",
         fields,
         budget,
