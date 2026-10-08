@@ -1,3 +1,4 @@
+import { builtInSkill } from "@pragma/built-in-agents";
 export { CapabilityStoreError } from "@pragma/local-host/resources";
 import {
   createLocalHostCapabilityReader,
@@ -173,7 +174,7 @@ export function createCapabilityStore(options: {
   readonly onSkillCreated?: ((capability: Capability) => void) | undefined;
 }): CapabilityStore {
   const {
-    capabilityPath,
+    capabilityPath: userCapabilityPath,
     manifestPath,
     healthPath,
     deletionJournalPath,
@@ -184,6 +185,10 @@ export function createCapabilityStore(options: {
     readCapability,
     resolveActive,
   } = createLocalHostCapabilityReader(options);
+  const capabilityPath = (id: string): string => {
+    assertUserSkill(id);
+    return userCapabilityPath(id);
+  };
   const credentialsDiffer = async (
     id: string,
     credentials: Readonly<Record<string, string>>,
@@ -297,6 +302,7 @@ export function createCapabilityStore(options: {
   };
   return {
     async ensureActiveRevision(id, revision) {
+      assertUserSkill(id);
       const manifest = await readManifest(id);
       if (manifest.latestRevision !== revision) {
         throw new CapabilityStoreError(
@@ -359,6 +365,16 @@ export function createCapabilityStore(options: {
     },
     get: readCapability,
     async getSkillDocument(input) {
+      const builtin = builtInSkill(input.id);
+      if (builtin !== undefined) {
+        assertBuiltInRevision(input.revision, builtin.version);
+        return SkillDocumentSchema.parse({
+          capabilityId: input.id,
+          revision: builtin.version,
+          entryPath: "SKILL.md",
+          content: builtin.files["SKILL.md"],
+        });
+      }
       const capability = await readCapability(input.id, input.revision);
       if (capability.definition.kind !== "skill") {
         throw new CapabilityStoreError(
@@ -386,6 +402,15 @@ export function createCapabilityStore(options: {
       }
     },
     async listSkillFiles(input) {
+      const builtin = builtInSkill(input.id);
+      if (builtin !== undefined) {
+        assertBuiltInRevision(input.revision, builtin.version);
+        return SkillFileEntrySchema.array().parse(
+          Object.entries(builtin.files)
+            .slice(0, MAX_SKILL_FILES)
+            .map(([path, content]) => ({ path, size: Buffer.byteLength(content) })),
+        );
+      }
       const capability = await readCapability(input.id, input.revision);
       if (capability.definition.kind !== "skill") {
         throw new CapabilityStoreError(
@@ -406,6 +431,24 @@ export function createCapabilityStore(options: {
       }
     },
     async getSkillFile(input) {
+      const builtin = builtInSkill(input.id);
+      if (builtin !== undefined) {
+        assertBuiltInRevision(input.revision, builtin.version);
+        const source = builtin.files[input.path];
+        if (source === undefined)
+          throw new CapabilityStoreError(
+            "config_invalid",
+            "The built-in Skill file does not exist.",
+          );
+        const size = Buffer.byteLength(source);
+        return SkillFileContentSchema.parse({
+          capabilityId: input.id,
+          revision: builtin.version,
+          path: input.path,
+          size,
+          content: size > MAX_SKILL_BYTES ? null : source,
+        });
+      }
       const capability = await readCapability(input.id, input.revision);
       if (capability.definition.kind !== "skill") {
         throw new CapabilityStoreError(
@@ -839,6 +882,7 @@ export function createCapabilityStore(options: {
     },
     async update(rawInput, updateOptions) {
       const input = UpdateCapabilitySchema.parse(rawInput);
+      assertUserSkill(input.id);
       const current = await readManifest(input.id);
       if (current.latestRevision !== input.baseRevision) {
         throw new CapabilityStoreError(
@@ -917,6 +961,7 @@ export function createCapabilityStore(options: {
       });
     },
     async retry(id, expectedRevision) {
+      assertUserSkill(id);
       const current = await readCapability(id);
       if (current.manifest.latestRevision !== expectedRevision) {
         throw new CapabilityStoreError(
@@ -1232,6 +1277,7 @@ export function createCapabilityStore(options: {
       };
     },
     async remove(id, expectedRevision) {
+      assertUserSkill(id);
       const revision = expectedRevision ?? (await readManifest(id)).latestRevision;
       await options.mutations.mutate({
         id,
@@ -1250,6 +1296,7 @@ export function createCapabilityStore(options: {
     },
     completeRemoval,
     async discardUnpublishedRevision(id, revision, previousHealth) {
+      assertUserSkill(id);
       const manifest = await readManifest(id);
       if (manifest.latestRevision >= revision) return false;
       for (
@@ -1650,4 +1697,16 @@ function preserveTransferredDefinition(
       },
     },
   };
+}
+
+function assertUserSkill(id: string): void {
+  if (builtInSkill(id) !== undefined)
+    throw new CapabilityStoreError("config_invalid", "Built-in Skills are read-only.");
+}
+function assertBuiltInRevision(requested: number | undefined, installed: number): void {
+  if (requested !== undefined && requested !== installed)
+    throw new CapabilityStoreError(
+      "capability_not_found",
+      "This built-in Skill version is not installed.",
+    );
 }

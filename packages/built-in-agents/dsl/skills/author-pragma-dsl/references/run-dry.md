@@ -72,7 +72,7 @@ never creates an Evaluation implicitly.
 6. Pass the returned `changeSetId` to `commit_dsl_changes`. This is the submit-and-save operation
    for the test set and commits only the canonical `evaluation:<id>` resource.
 
-Never put Evaluation YAML in `prepare_flow_draft.additionalSources`. Never create a test set against
+Never put Evaluation YAML in the Flow CLI prepare command’s `additionalSources`. Never create a test set against
 an uncommitted Flow draft. Never report test-set success until `commit_dsl_changes` returns a
 committed revision containing the canonical Evaluation ref.
 

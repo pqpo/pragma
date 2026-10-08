@@ -1,0 +1,774 @@
+{
+  "runtime": "codex",
+  "scenario": "smoke",
+  "variant": "after",
+  "succeeded": true,
+  "tools": 38,
+  "observations": [
+    {
+      "observationId": "d50d62845e1598fd8e0ed347124d10debfcf0a8c9e3241d7344e87ea8160f1ef",
+      "occurredAt": "2026-10-08T16:58:17.026Z",
+      "executionId": "e6c91f70-8a44-4300-9162-478231486ef6",
+      "invocationId": "e6c91f70-8a44-4300-9162-478231486ef6",
+      "contextId": "fa063fb8-d787-4ae1-82c2-226b51abc279",
+      "runId": "e6c91f70-8a44-4300-9162-478231486ef6",
+      "runtimeId": "codex-local",
+      "executor": {
+        "id": "0000000000pragma",
+        "name": "Pragma"
+      },
+      "usage": {
+        "measurement": "reported",
+        "input": 460,
+        "output": 221,
+        "cacheRead": 15360,
+        "cacheWrite": 0,
+        "totalTokens": 16041,
+        "cost": {
+          "input": 0,
+          "output": 0,
+          "cacheRead": 0,
+          "cacheWrite": 0,
+          "total": 0
+        }
+      }
+    }
+  ],
+  "events": [
+    {
+      "type": "run.started"
+    },
+    {
+      "type": "progress"
+    },
+    {
+      "type": "message.delta"
+    },
+    {
+      "type": "message.delta"
+    },
+    {
+      "type": "message.delta"
+    },
+    {
+      "type": "message.delta"
+    },
+    {
+      "type": "message.delta"
+    },
+    {
+      "type": "message.delta"
+    },
+    {
+      "type": "message.delta"
+    },
+    {
+      "type": "message.delta"
+    },
+    {
+      "type": "message.delta"
+    },
+    {
+      "type": "message.delta"
+    },
+    {
+      "type": "message.delta"
+    },
+    {
+      "type": "message.delta"
+    },
+    {
+      "type": "message.completed"
+    },
+    {
+      "type": "tool.started",
+      "toolName": "exec_command"
+    },
+    {
+      "type": "tool.completed",
+      "toolName": "exec_command"
+    },
+    {
+      "type": "message.delta"
+    },
+    {
+      "type": "message.delta"
+    },
+    {
+      "type": "message.delta"
+    },
+    {
+      "type": "message.delta"
+    },
+    {
+      "type": "message.delta"
+    },
+    {
+      "type": "message.delta"
+    },
+    {
+      "type": "message.delta"
+    },
+    {
+      "type": "message.delta"
+    },
+    {
+      "type": "message.delta"
+    },
+    {
+      "type": "message.delta"
+    },
+    {
+      "type": "message.delta"
+    },
+    {
+      "type": "message.delta"
+    },
+    {
+      "type": "message.delta"
+    },
+    {
+      "type": "message.delta"
+    },
+    {
+      "type": "message.delta"
+    },
+    {
+      "type": "message.delta"
+    },
+    {
+      "type": "message.delta"
+    },
+    {
+      "type": "message.delta"
+    },
+    {
+      "type": "message.delta"
+    },
+    {
+      "type": "message.delta"
+    },
+    {
+      "type": "message.delta"
+    },
+    {
+      "type": "message.delta"
+    },
+    {
+      "type": "message.delta"
+    },
+    {
+      "type": "message.delta"
+    },
+    {
+      "type": "message.delta"
+    },
+    {
+      "type": "message.delta"
+    },
+    {
+      "type": "message.delta"
+    },
+    {
+      "type": "message.delta"
+    },
+    {
+      "type": "message.delta"
+    },
+    {
+      "type": "message.delta"
+    },
+    {
+      "type": "message.delta"
+    },
+    {
+      "type": "message.delta"
+    },
+    {
+      "type": "message.delta"
+    },
+    {
+      "type": "message.delta"
+    },
+    {
+      "type": "message.delta"
+    },
+    {
+      "type": "message.delta"
+    },
+    {
+      "type": "message.delta"
+    },
+    {
+      "type": "message.delta"
+    },
+    {
+      "type": "message.delta"
+    },
+    {
+      "type": "message.delta"
+    },
+    {
+      "type": "message.delta"
+    },
+    {
+      "type": "message.delta"
+    },
+    {
+      "type": "message.delta"
+    },
+    {
+      "type": "message.delta"
+    },
+    {
+      "type": "message.delta"
+    },
+    {
+      "type": "message.delta"
+    },
+    {
+      "type": "message.delta"
+    },
+    {
+      "type": "message.delta"
+    },
+    {
+      "type": "message.delta"
+    },
+    {
+      "type": "message.delta"
+    },
+    {
+      "type": "message.delta"
+    },
+    {
+      "type": "message.delta"
+    },
+    {
+      "type": "message.delta"
+    },
+    {
+      "type": "message.delta"
+    },
+    {
+      "type": "message.delta"
+    },
+    {
+      "type": "message.delta"
+    },
+    {
+      "type": "message.delta"
+    },
+    {
+      "type": "message.delta"
+    },
+    {
+      "type": "message.delta"
+    },
+    {
+      "type": "message.delta"
+    },
+    {
+      "type": "message.delta"
+    },
+    {
+      "type": "message.delta"
+    },
+    {
+      "type": "message.delta"
+    },
+    {
+      "type": "message.delta"
+    },
+    {
+      "type": "message.delta"
+    },
+    {
+      "type": "message.delta"
+    },
+    {
+      "type": "message.delta"
+    },
+    {
+      "type": "message.delta"
+    },
+    {
+      "type": "message.delta"
+    },
+    {
+      "type": "message.delta"
+    },
+    {
+      "type": "message.delta"
+    },
+    {
+      "type": "message.delta"
+    },
+    {
+      "type": "message.delta"
+    },
+    {
+      "type": "message.delta"
+    },
+    {
+      "type": "message.delta"
+    },
+    {
+      "type": "message.delta"
+    },
+    {
+      "type": "message.delta"
+    },
+    {
+      "type": "message.delta"
+    },
+    {
+      "type": "message.delta"
+    },
+    {
+      "type": "message.delta"
+    },
+    {
+      "type": "message.delta"
+    },
+    {
+      "type": "message.delta"
+    },
+    {
+      "type": "message.delta"
+    },
+    {
+      "type": "message.delta"
+    },
+    {
+      "type": "message.delta"
+    },
+    {
+      "type": "message.delta"
+    },
+    {
+      "type": "message.delta"
+    },
+    {
+      "type": "message.delta"
+    },
+    {
+      "type": "message.delta"
+    },
+    {
+      "type": "message.delta"
+    },
+    {
+      "type": "message.delta"
+    },
+    {
+      "type": "message.delta"
+    },
+    {
+      "type": "message.delta"
+    },
+    {
+      "type": "message.delta"
+    },
+    {
+      "type": "message.delta"
+    },
+    {
+      "type": "message.delta"
+    },
+    {
+      "type": "message.delta"
+    },
+    {
+      "type": "message.delta"
+    },
+    {
+      "type": "message.delta"
+    },
+    {
+      "type": "message.delta"
+    },
+    {
+      "type": "message.delta"
+    },
+    {
+      "type": "message.delta"
+    },
+    {
+      "type": "message.delta"
+    },
+    {
+      "type": "message.delta"
+    },
+    {
+      "type": "message.delta"
+    },
+    {
+      "type": "message.delta"
+    },
+    {
+      "type": "message.delta"
+    },
+    {
+      "type": "message.delta"
+    },
+    {
+      "type": "message.delta"
+    },
+    {
+      "type": "message.delta"
+    },
+    {
+      "type": "message.delta"
+    },
+    {
+      "type": "message.delta"
+    },
+    {
+      "type": "message.delta"
+    },
+    {
+      "type": "message.delta"
+    },
+    {
+      "type": "message.delta"
+    },
+    {
+      "type": "message.delta"
+    },
+    {
+      "type": "message.delta"
+    },
+    {
+      "type": "message.delta"
+    },
+    {
+      "type": "message.delta"
+    },
+    {
+      "type": "message.delta"
+    },
+    {
+      "type": "message.delta"
+    },
+    {
+      "type": "message.delta"
+    },
+    {
+      "type": "message.delta"
+    },
+    {
+      "type": "message.delta"
+    },
+    {
+      "type": "message.delta"
+    },
+    {
+      "type": "message.delta"
+    },
+    {
+      "type": "message.delta"
+    },
+    {
+      "type": "message.delta"
+    },
+    {
+      "type": "message.delta"
+    },
+    {
+      "type": "message.delta"
+    },
+    {
+      "type": "message.delta"
+    },
+    {
+      "type": "message.delta"
+    },
+    {
+      "type": "message.delta"
+    },
+    {
+      "type": "message.delta"
+    },
+    {
+      "type": "message.delta"
+    },
+    {
+      "type": "message.delta"
+    },
+    {
+      "type": "message.delta"
+    },
+    {
+      "type": "message.delta"
+    },
+    {
+      "type": "message.delta"
+    },
+    {
+      "type": "message.delta"
+    },
+    {
+      "type": "message.delta"
+    },
+    {
+      "type": "message.delta"
+    },
+    {
+      "type": "message.delta"
+    },
+    {
+      "type": "message.delta"
+    },
+    {
+      "type": "message.delta"
+    },
+    {
+      "type": "message.delta"
+    },
+    {
+      "type": "message.delta"
+    },
+    {
+      "type": "message.delta"
+    },
+    {
+      "type": "message.delta"
+    },
+    {
+      "type": "message.delta"
+    },
+    {
+      "type": "message.delta"
+    },
+    {
+      "type": "message.delta"
+    },
+    {
+      "type": "message.delta"
+    },
+    {
+      "type": "message.delta"
+    },
+    {
+      "type": "message.delta"
+    },
+    {
+      "type": "message.delta"
+    },
+    {
+      "type": "message.delta"
+    },
+    {
+      "type": "message.delta"
+    },
+    {
+      "type": "message.delta"
+    },
+    {
+      "type": "message.delta"
+    },
+    {
+      "type": "message.delta"
+    },
+    {
+      "type": "message.delta"
+    },
+    {
+      "type": "message.delta"
+    },
+    {
+      "type": "message.delta"
+    },
+    {
+      "type": "message.delta"
+    },
+    {
+      "type": "message.delta"
+    },
+    {
+      "type": "message.delta"
+    },
+    {
+      "type": "message.delta"
+    },
+    {
+      "type": "message.delta"
+    },
+    {
+      "type": "message.delta"
+    },
+    {
+      "type": "message.delta"
+    },
+    {
+      "type": "message.delta"
+    },
+    {
+      "type": "message.delta"
+    },
+    {
+      "type": "message.delta"
+    },
+    {
+      "type": "message.delta"
+    },
+    {
+      "type": "message.delta"
+    },
+    {
+      "type": "message.delta"
+    },
+    {
+      "type": "message.delta"
+    },
+    {
+      "type": "message.delta"
+    },
+    {
+      "type": "message.delta"
+    },
+    {
+      "type": "message.delta"
+    },
+    {
+      "type": "message.delta"
+    },
+    {
+      "type": "message.delta"
+    },
+    {
+      "type": "message.delta"
+    },
+    {
+      "type": "message.delta"
+    },
+    {
+      "type": "message.delta"
+    },
+    {
+      "type": "message.delta"
+    },
+    {
+      "type": "message.delta"
+    },
+    {
+      "type": "message.delta"
+    },
+    {
+      "type": "message.delta"
+    },
+    {
+      "type": "message.delta"
+    },
+    {
+      "type": "message.delta"
+    },
+    {
+      "type": "message.delta"
+    },
+    {
+      "type": "message.delta"
+    },
+    {
+      "type": "message.delta"
+    },
+    {
+      "type": "message.delta"
+    },
+    {
+      "type": "message.delta"
+    },
+    {
+      "type": "message.delta"
+    },
+    {
+      "type": "message.delta"
+    },
+    {
+      "type": "message.delta"
+    },
+    {
+      "type": "message.delta"
+    },
+    {
+      "type": "message.delta"
+    },
+    {
+      "type": "message.delta"
+    },
+    {
+      "type": "message.delta"
+    },
+    {
+      "type": "message.delta"
+    },
+    {
+      "type": "message.delta"
+    },
+    {
+      "type": "message.delta"
+    },
+    {
+      "type": "message.delta"
+    },
+    {
+      "type": "message.delta"
+    },
+    {
+      "type": "message.delta"
+    },
+    {
+      "type": "message.delta"
+    },
+    {
+      "type": "message.delta"
+    },
+    {
+      "type": "message.delta"
+    },
+    {
+      "type": "message.delta"
+    },
+    {
+      "type": "message.delta"
+    },
+    {
+      "type": "message.delta"
+    },
+    {
+      "type": "message.delta"
+    },
+    {
+      "type": "message.completed"
+    },
+    {
+      "type": "usage.updated"
+    },
+    {
+      "type": "context-window.updated"
+    },
+    {
+      "type": "run.completed"
+    }
+  ],
+  "approvals": [],
+  "project": {
+    "revision": 0,
+    "resources": []
+  },
+  "commandReceipts": [
+    {
+      "requestId": "9a1cced8-fc13-4b88-bddf-35166d6c74c7",
+      "command": "dsl.resources.list",
+      "status": "succeeded",
+      "exitCode": 0,
+      "origin": {
+        "missionId": "4936b61a-00e2-43d4-9862-4650b529fe42",
+        "executionId": "e6c91f70-8a44-4300-9162-478231486ef6",
+        "invocationId": "e6c91f70-8a44-4300-9162-478231486ef6",
+        "contextId": "fa063fb8-d787-4ae1-82c2-226b51abc279"
+      }
+    }
+  ]
+}

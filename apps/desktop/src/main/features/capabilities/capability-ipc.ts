@@ -39,7 +39,7 @@ export function installCapabilityHandlers(
   ipcMain.handle("capabilities:list", () => listCapabilitiesWithBuiltIns(store));
   ipcMain.handle("capabilities:get", (_event, id: unknown, revision: unknown) => {
     const parsedId = CapabilityIdSchema.parse(id);
-    return isBuiltInCapabilityId(parsedId)
+    return parsedId === BUILT_IN_PRAGMA_MANAGEMENT_CAPABILITY.manifest.id
       ? BUILT_IN_PRAGMA_MANAGEMENT_CAPABILITY
       : store.get(parsedId, revision === undefined ? undefined : Number(revision));
   });
@@ -57,6 +57,7 @@ export function installCapabilityHandlers(
   );
   ipcMain.handle("capabilities:submit-skill-revision", (_event, input: unknown) => {
     const parsed = SubmitSkillRevisionSchema.parse(input);
+    assertUserCapability(parsed.capabilityId);
     return skillRevisions.submit({
       schemaVersion: "pragma.skill-revision-submission/v1",
       capabilityId: parsed.capabilityId,
@@ -67,6 +68,7 @@ export function installCapabilityHandlers(
   });
   ipcMain.handle("capabilities:import-skill-revision", (_event, input: unknown) => {
     const parsed = ImportSkillRevisionSchema.parse(input);
+    assertUserCapability(parsed.capabilityId);
     return skillRevisions.importSource(parsed);
   });
   ipcMain.handle("capabilities:create", (_event, input: unknown) =>
@@ -77,9 +79,8 @@ export function installCapabilityHandlers(
   );
   ipcMain.handle("capabilities:retry", (_event, input: unknown) => {
     const parsed = CapabilityRevisionActionSchema.parse(input);
-    return isBuiltInCapabilityId(parsed.id)
-      ? BUILT_IN_PRAGMA_MANAGEMENT_CAPABILITY
-      : store.retry(parsed.id, parsed.expectedRevision);
+    assertUserCapability(parsed.id);
+    return store.retry(parsed.id, parsed.expectedRevision);
   });
   ipcMain.handle("capabilities:test", async (_event, input: unknown) => {
     const parsed = CapabilityTestRequestSchema.parse(input);
@@ -107,7 +108,9 @@ export function installCapabilityHandlers(
   );
   ipcMain.handle("capabilities:delete", async (_event, input: unknown) => {
     try {
-      await store.remove(CapabilityActionSchema.parse(input).id);
+      const id = CapabilityActionSchema.parse(input).id;
+      assertUserCapability(id);
+      await store.remove(id);
       return { ok: true as const };
     } catch (error) {
       if (error instanceof CapabilityStoreError && error.code === "capability_referenced") {
@@ -184,4 +187,9 @@ function managementApprovalDetail(reason: string, input: unknown): string {
       ? serialized
       : `${serialized.slice(0, maxInputLength)}\n… input truncated`;
   return `${reason}\n\nInput:\n${visibleInput}`;
+}
+
+function assertUserCapability(id: string): void {
+  if (isBuiltInCapabilityId(id))
+    throw new CapabilityStoreError("config_invalid", "Built-in capabilities are read-only.");
 }

@@ -102,6 +102,8 @@ export interface PragmaAgentDslProjectPort {
     readonly sources: readonly string[];
   }): Promise<PragmaAgentPrepareResult>;
   createFlowDraft(input: {
+    /** Trusted Host command identity, never accepted from model arguments. */
+    readonly operationId?: string | undefined;
     readonly expectedProjectRevision: number;
     readonly metadata: PragmaAgentFlowDraft["resource"]["metadata"];
     readonly input?: PragmaAgentFlowDraft["resource"]["spec"]["input"] | undefined;
@@ -110,6 +112,9 @@ export interface PragmaAgentDslProjectPort {
   }): Promise<PragmaAgentFlowDraft>;
   getFlowDraft(draftId: string): Promise<PragmaAgentFlowDraft>;
   updateFlowDraft(input: {
+    /** Trusted Host command identity, never accepted from model arguments. */
+    readonly operationId?: string | undefined;
+    readonly commandResultsRoot?: string | undefined;
     readonly draftId: string;
     readonly expectedDraftRevision: number;
     readonly operations: readonly PragmaAgentFlowDraftOperation[];
@@ -145,6 +150,8 @@ export interface PragmaAgentDslProjectPort {
   }): Promise<PragmaAgentPrepareResult>;
   discardEvaluationDraft(draftId: string): Promise<void>;
   prepareFlowDraft(input: {
+    /** Trusted Host command identity, never accepted from model arguments. */
+    readonly operationId?: string | undefined;
     readonly draftId: string;
     readonly expectedDraftRevision: number;
     readonly additionalSources?: readonly string[] | undefined;

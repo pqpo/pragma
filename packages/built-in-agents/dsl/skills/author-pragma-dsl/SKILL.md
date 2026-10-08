@@ -36,17 +36,9 @@ source of truth and use only the Pragma DSL tools to inspect, validate, and save
 5. `start_dsl_draft` allocates IDs and creates intentionally incomplete skeleton files for new
    Experts and ExpertTeams. Fill every required field in those files and use the returned refs for
    links between new resources. Preserve IDs, kinds, and apiVersion values; never rename draft files.
-6. For a new or non-trivial Flow change, create a Flow draft and build it in small batches with
-   `update_flow_draft`: contracts, steps, start, transitions, and loops. Read diagnostics after every
-   batch. Pass `operations` as a native JSON array, never as a string containing serialized JSON;
-   string parsing is only a recovery path. The update response is a compact revision summary. Call
-   `get_flow_draft` with `includeResource: true` only when the complete current resource is needed.
-   Its default response is compact. Flow drafts never contain Run
-   Dry cases and never require an Evaluation draft.
-7. Call `validate_flow_draft`, then `prepare_flow_draft` when the Flow is structurally complete.
-   `prepare_flow_draft` prepares the Flow and optional non-Evaluation dependencies only. Fix every
-   diagnostic, explain the normalized diff, and call `commit_dsl_changes` with the returned
-   change-set ID. Do not create, prepare, or commit an Evaluation in this Flow transaction.
+6. For Flow creation or editing, discover and read the `author-pragma-flow` Skill. Its references
+   and CLI subcommand help own the Flow workflow; do not use the former Flow managed tools.
+7. Use that Skill's prepare and commit workflow. Flow and Evaluation remain independent transactions.
 8. After the Flow commit succeeds, ask whether the user wants to create a test set and run it. The
    user may skip. If they skip, report the committed Flow and stop. Do not allocate an Evaluation
    ID or create an Evaluation draft before the user confirms, unless their original request already
@@ -60,7 +52,7 @@ source of truth and use only the Pragma DSL tools to inspect, validate, and save
    YAML document.
 10. Save the test set independently: call `prepare_evaluation_draft` with its exact draft revision,
     then pass the returned `changeSetId` to `commit_dsl_changes`. This commit changes only the
-    Evaluation; it is never part of `prepare_flow_draft` or `additionalSources`.
+    Evaluation; it is never part of `pragma flow draft prepare` or `additionalSources`.
     For Expert and ExpertTeam drafts, call `inspect_dsl_draft` after editing. Review its compact
     summary, diagnostics, omitted-field effects, and Host dependencies; explain material removals
     and automatically created dependencies before preparing. Treat `preserved_unknown` as retained
@@ -104,10 +96,9 @@ Before preparing or saving, enforce the Automation metadata and prompt limits do
 - Expert avatar personas: read [references/avatars.md](references/avatars.md) before selecting or
   changing an Expert avatar.
 - ExpertTeam resources: read [references/expert-team.md](references/expert-team.md).
-- Flow resources: read [references/flow.md](references/flow.md).
+- Flow authoring: discover and read `author-pragma-flow`.
 - Flow run dry cases: read [references/run-dry.md](references/run-dry.md).
 - Automation resources: read [references/automation.md](references/automation.md).
-- Tested Flow patterns: read [references/flow-patterns.md](references/flow-patterns.md).
 - Exact refs, shared resources, and versioning: read
   [references/resources-and-references.md](references/resources-and-references.md).
 

@@ -132,6 +132,8 @@ export interface IExpertAgent {
   readonly tools?: readonly ExpertAgentManagedTool<string, ExpertAgentToolCallResult>[] | undefined;
   /** Execution-time policy applied to both default and managed tools. */
   readonly toolPolicy?: ToolPolicy | undefined;
+  /** Approval policy remains available when a tool is invoked through a private command channel. */
+  readonly executionToolApprovals?: Readonly<Record<string, ExpertAgentToolApproval>> | undefined;
   readonly hooks?: ExpertAgentPluginHooks | undefined;
   readonly pluginLoadIssues?: readonly ExpertAgentPluginLoadIssue[] | undefined;
   readonly loggerProvider?: PragmaLoggerProvider | undefined;
@@ -174,6 +176,7 @@ export class Expert implements IExpertAgent {
   readonly workspace: string;
   readonly tools: readonly ExpertAgentManagedTool<string, ExpertAgentToolCallResult>[] | undefined;
   readonly toolPolicy: ToolPolicy | undefined;
+  readonly executionToolApprovals: Readonly<Record<string, ExpertAgentToolApproval>>;
   readonly hooks: ExpertAgentPluginHooks | undefined;
   readonly pluginLoadIssues: readonly ExpertAgentPluginLoadIssue[] | undefined;
   readonly loggerProvider: PragmaLoggerProvider;
@@ -281,7 +284,21 @@ export class Expert implements IExpertAgent {
     this.models = resolved.models;
     this.contextSystem = contextSystem;
     this.workspace = options.workspace;
-    this.tools = applyToolApprovals(resolved.tools, resolved.toolApprovals);
+    const executionToolApprovals = { ...options.executionToolApprovals };
+    for (const { toolName, approval } of resolved.toolApprovals ?? []) {
+      executionToolApprovals[toolName] = mergeExpertAgentToolApprovals(
+        executionToolApprovals[toolName],
+        approval,
+      )!;
+    }
+    this.executionToolApprovals = executionToolApprovals;
+    this.tools = applyToolApprovals(
+      resolved.tools,
+      Object.entries(executionToolApprovals).map(([toolName, approval]) => ({
+        toolName,
+        approval,
+      })),
+    );
     this.toolPolicy = options.toolPolicy;
     this.hooks = resolved.hooks;
     this.pluginLoadIssues = options.pluginLoadIssues;

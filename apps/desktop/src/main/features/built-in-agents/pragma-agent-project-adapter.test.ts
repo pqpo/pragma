@@ -1536,7 +1536,7 @@ describe("Desktop PragmaAgent DSL project adapter", { timeout: 30_000 }, () => {
         isDefault: true,
       }),
     ]);
-    expect(capabilities.items).toHaveLength(3);
+    expect(capabilities.items).toHaveLength(5);
     expect(capabilities.items).toEqual(
       expect.arrayContaining([
         expect.objectContaining({

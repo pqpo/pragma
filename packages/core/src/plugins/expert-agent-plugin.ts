@@ -23,11 +23,16 @@ import type { RuntimeStreamEvent } from "../runtime/stream-events.ts";
 import type { PragmaLogger, PragmaLoggerProvider } from "../logging/logger.ts";
 import { createPragmaLogger, defaultPragmaLoggerProvider } from "../logging/logger.ts";
 import type {
+  ExpertAgentHumanInteractionHandler,
+  ExpertToolExecutionContext,
   ExpertAgentManagedTool,
   ExpertAgentToolApproval,
   ExpertAgentToolCallResult,
 } from "../tools/managed-tool.ts";
 import { mergeExpertAgentToolApprovals } from "../tools/managed-tool.ts";
+
+import type { RuntimeResourceRegistrar } from "../runtime/resource-scope.ts";
+import type { ExecutionToolRuntimeState } from "../tools/execution-tools.ts";
 
 type MaybePromise<TValue> = TValue | Promise<TValue>;
 const PLUGIN_CONFIGURATION_SCHEMA_KEYWORDS = new Set([
@@ -178,6 +183,12 @@ export interface ExpertAgentPluginSessionCreateContext {
   readonly systemSessionId: string;
   readonly runtimeSession?: RuntimeSessionRef | undefined;
   readonly processEnvironment: Readonly<NodeJS.ProcessEnv>;
+  /** Trusted live execution bindings for Host-owned private command channels. */
+  readonly executionContext?: ExpertToolExecutionContext | undefined;
+  readonly humanInteractionHandler?: ExpertAgentHumanInteractionHandler | undefined;
+  readonly resources?: RuntimeResourceRegistrar | undefined;
+  /** Owned by the Runtime Context and included in owner-graph deletion. */
+  readonly privateStateDirectory?: string | undefined;
   readonly logger?: PragmaLogger | undefined;
 }
 
@@ -201,6 +212,9 @@ export interface ExpertAgentPluginTaskSubmitContext<TOutput = unknown> {
   readonly session: RuntimeSessionInfo;
   readonly runId: string;
   readonly submission: RuntimeTaskSubmission<TOutput>;
+  readonly executionContext?: ExpertToolExecutionContext | undefined;
+  readonly signal?: AbortSignal | undefined;
+  readonly toolState?: ExecutionToolRuntimeState | undefined;
   readonly context?: ExpertAgentRunContext | undefined;
   readonly logger?: PragmaLogger | undefined;
 }
@@ -258,8 +272,7 @@ export interface ExpertAgentPluginHooks {
       ) => MaybePromise<ExpertAgentPluginSessionPreparation | void>)
     | undefined;
   readonly afterSessionCreate?:
-    | ((context: ExpertAgentPluginSessionContext) => MaybePromise<void>)
-    | undefined;
+    ((context: ExpertAgentPluginSessionContext) => MaybePromise<void>) | undefined;
   readonly beforeTaskSubmit?:
     | (<TOutput = unknown>(
         context: ExpertAgentPluginTaskSubmitContext<TOutput>,
@@ -271,20 +284,15 @@ export interface ExpertAgentPluginHooks {
       ) => MaybePromise<void>)
     | undefined;
   readonly beforeSessionDestroy?:
-    | ((context: ExpertAgentPluginSessionContext) => MaybePromise<void>)
-    | undefined;
+    ((context: ExpertAgentPluginSessionContext) => MaybePromise<void>) | undefined;
   readonly afterSessionDestroy?:
-    | ((context: ExpertAgentPluginSessionContext) => MaybePromise<void>)
-    | undefined;
+    ((context: ExpertAgentPluginSessionContext) => MaybePromise<void>) | undefined;
   readonly beforeToolCall?:
-    | ((context: ExpertAgentPluginToolCallContext) => MaybePromise<void>)
-    | undefined;
+    ((context: ExpertAgentPluginToolCallContext) => MaybePromise<void>) | undefined;
   readonly afterToolCall?:
-    | ((context: ExpertAgentPluginToolCalledContext) => MaybePromise<void>)
-    | undefined;
+    ((context: ExpertAgentPluginToolCalledContext) => MaybePromise<void>) | undefined;
   readonly onStreamEvent?:
-    | ((context: ExpertAgentPluginStreamEventContext) => MaybePromise<void>)
-    | undefined;
+    ((context: ExpertAgentPluginStreamEventContext) => MaybePromise<void>) | undefined;
 }
 
 export interface ExpertAgentPluginContributions {
@@ -341,8 +349,7 @@ export interface ResolveExpertAgentPluginsOptions {
   readonly host?: ExpertAgentPluginContributions | undefined;
   readonly contextSystem?: ContextSystem | undefined;
   readonly pluginEntries?:
-    | readonly (ExpertAgentPluginEntry | ExpertAgentPluginRegistration)[]
-    | undefined;
+    readonly (ExpertAgentPluginEntry | ExpertAgentPluginRegistration)[] | undefined;
   readonly workspaceRoot?: string | undefined;
   readonly loggerProvider?: PragmaLoggerProvider | undefined;
   readonly agentId?: string | undefined;
@@ -431,7 +438,7 @@ export function resolveExpertAgentPlugins(
     toolApprovals: mergeToolApprovals(
       contributions.map(({ contribution }) => contribution.toolApprovals),
     ),
-    hooks: mergePluginHooks(
+    hooks: mergeExpertAgentPluginHooks(
       contributions.map(({ source, contribution }) => ({ source, hooks: contribution.hooks })),
     ),
   };
@@ -632,8 +639,7 @@ function mergeMcpConfigs(
   configs: readonly (IExpertAgentMcpConfig | undefined)[],
 ): IExpertAgentMcpConfig | undefined {
   const mcpServers = Object.assign({}, ...configs.map((config) => config?.mcpServers ?? {})) as
-    | IExpertAgentMcpConfig["mcpServers"]
-    | undefined;
+    IExpertAgentMcpConfig["mcpServers"] | undefined;
 
   if (mcpServers === undefined || Object.keys(mcpServers).length === 0) {
     return undefined;
@@ -666,8 +672,7 @@ function mergeModelsConfigs(
 
 function mergeManagedTools(
   toolGroups: readonly (
-    | readonly ExpertAgentManagedTool<string, ExpertAgentToolCallResult>[]
-    | undefined
+    readonly ExpertAgentManagedTool<string, ExpertAgentToolCallResult>[] | undefined
   )[],
 ): readonly ExpertAgentManagedTool<string, ExpertAgentToolCallResult>[] | undefined {
   const tools = dedupeBy(
@@ -729,7 +734,7 @@ function mergeToolApprovals(
   return approvals.length === 0 ? undefined : approvals;
 }
 
-function mergePluginHooks(
+export function mergeExpertAgentPluginHooks(
   hookGroups: readonly {
     readonly source: string;
     readonly hooks: ExpertAgentPluginHooks | undefined;

@@ -14,7 +14,8 @@ spec:
     Runtime, authorized workspace, and available capabilities to deliver a complete, verifiable
     result. Work directly when no specialized Expert is needed. Creating and operating Experts,
     ExpertTeams, Flows, and Missions is one of your capabilities, not the limit of your role. When
-    creating or updating Pragma DSL, use the author-pragma-dsl skill, inspect current resources,
+    creating or updating a Flow, use author-pragma-flow and its authorized CLI workflow. For other
+    Pragma DSL, use author-pragma-dsl. Inspect current resources,
     prepare and validate a complete candidate, explain diagnostics and diffs, and commit only the
     prepared change-set. Before delegating work to a Mission, discover workspace paths and knowledge
     store IDs with list_workspaces and list_knowledge_stores. Use list_home_projects and
@@ -24,6 +25,8 @@ spec:
     ambiguous actions and respect workspace and approval boundaries.
   capabilities:
     - ref: capability:1h2j3k4m5n6p7q8r
+      kind: skill
+    - ref: capability:000000000000f10w
       kind: skill
     - ref: capability:0000000000manage
       kind: tools
@@ -41,10 +44,6 @@ spec:
         - discard_dsl_draft
         - prepare_dsl_changes
         - read_prepared_dsl_change
-        - create_flow_draft
-        - get_flow_draft
-        - update_flow_draft
-        - validate_flow_draft
         - create_evaluation_draft
         - get_evaluation_draft
         - get_evaluation_cases
@@ -52,8 +51,6 @@ spec:
         - run_evaluation_draft
         - prepare_evaluation_draft
         - discard_evaluation_draft
-        - prepare_flow_draft
-        - discard_flow_draft
         - commit_dsl_changes
         - list_workspaces
         - list_home_projects

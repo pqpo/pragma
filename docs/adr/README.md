@@ -97,3 +97,5 @@ ADR 的数字来自项目演进历史，早期曾出现同号记录。链接文�
 - 完全被替代的 ADR 在后继决策吸收必要约束并更新引用后，从主文档集删除；
 - 部分被替代的 ADR 必须写明保留范围和后继链接；
 - 持久协议、DSL 和 storage schema 的版本升级必须与迁移、fixture 和恢复测试在同一变更中提交。
+
+- [Execution 管理 CLI 与内置 Skill（cutover 待验收）](./067-execution-management-cli-and-built-in-skills.md)

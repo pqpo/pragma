@@ -199,6 +199,8 @@ Commands:
   team discover [SELECTOR] | describe <REF>
   expert discover [SELECTOR] | describe <REF>
   flow discover [SELECTOR] | describe <REF>
+  flow draft create|get|update|validate|prepare|discard --input <FILE|->
+  dsl resources list|read | options list | ids allocate | changes read|commit --input <FILE|->
   team run|expert run <REF> --workspace <ABSOLUTE_PATH> (--prompt <TEXT> | --input <FILE|->) [--request-id UUID]
   flow run <REF> --workspace <ABSOLUTE_PATH> --input-json <FILE|->
   mission list

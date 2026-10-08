@@ -4,6 +4,7 @@ asar: true
 afterPack: ./scripts/audit-packaged-app.mjs
 asarUnpack:
   - out/main/claude-acp-worker.js
+  - out/main/pragma-command-client.js
 
 directories:
   buildResources: build

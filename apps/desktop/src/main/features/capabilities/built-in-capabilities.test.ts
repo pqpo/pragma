@@ -1,3 +1,4 @@
+import { BUILT_IN_SKILLS, builtInSkillCapability } from "@pragma/built-in-agents";
 import { describe, expect, it, vi } from "vitest";
 import {
   PRAGMA_MANAGEMENT_CAPABILITY_REVISION,
@@ -29,7 +30,11 @@ describe("built-in capabilities", () => {
 
     await expect(
       listCapabilitiesWithBuiltIns({ list: async () => [userCapability] }),
-    ).resolves.toEqual([BUILT_IN_PRAGMA_MANAGEMENT_CAPABILITY, userCapability]);
+    ).resolves.toEqual([
+      BUILT_IN_PRAGMA_MANAGEMENT_CAPABILITY,
+      ...BUILT_IN_SKILLS.map((skill) => builtInSkillCapability(skill.id)),
+      userCapability,
+    ]);
   });
 
   it("publishes the authoritative input schema for every management tool", () => {
@@ -100,21 +105,20 @@ describe("built-in capabilities", () => {
     expect(list).toHaveBeenCalledOnce();
   });
 
-  it("requires approval before a test creates a revision request", async () => {
-    const start = vi.fn();
+  it("requires approval before a test commits a prepared change", async () => {
+    const commit = vi.fn();
     const result = await testBuiltInCapability(
       {
         id: BUILT_IN_PRAGMA_MANAGEMENT_CAPABILITY.manifest.id,
         expectedRevision: BUILT_IN_PRAGMA_MANAGEMENT_CAPABILITY.manifest.latestRevision,
-        toolName: "knowledge_revision_start",
-        input: { targetRef: "context:test", prompt: "Revise this knowledge." },
+        toolName: "commit_dsl_changes",
+        input: { changeSetId: "8b8b6be2-0bc7-407f-9d50-4d40c8f5b211" },
       },
-      { knowledgeRevisions: revisionPort({ start }) },
+      { project: { commit } as never, missions: {} as never },
       async () => false,
     );
-
     expect(result).toMatchObject({ ok: false, code: "approval_denied" });
-    expect(start).not.toHaveBeenCalled();
+    expect(commit).not.toHaveBeenCalled();
   });
 });
 

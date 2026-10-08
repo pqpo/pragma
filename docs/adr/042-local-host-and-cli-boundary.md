@@ -58,3 +58,11 @@ execution service is outside the composition contract. Internal Mission callers 
 application use cases. See [ADR 066](066-unified-local-host-mission-application.md) for lifetime,
 delivery and validation boundaries. Engineering implementation and full product acceptance remain
 separate; [R4 report](../architecture/local-host-kernel-r4-implementation.md) records outstanding gates.
+
+## Issue #368 execution client (2026-10-08)
+
+[ADR 067](067-execution-management-cli-and-built-in-skills.md) adds a Desktop-bundled, private
+Execution command client for built-in Skills. It uses Electron's Node mode and a Runtime-local
+process PATH; Desktop still does not install the public CLI or change user shell configuration.
+This client is not a daemon or a model-visible MCP surface. Native Flow Schema removal remains
+subject to the stage acceptance gates recorded in the implementation report.

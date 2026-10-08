@@ -51,11 +51,12 @@ test("audits real ASAR, unpacked files and extra resources; keeps worker and SDK
     await mkdir(join(source, "out/main"), { recursive: true });
     await mkdir(resources);
     await writeFile(join(source, "out/main/claude-acp-worker.js"), "console.log('worker')");
+    await writeFile(join(source, "out/main/pragma-command-client.js"), "console.log('client')");
     const sdk = join(source, "node_modules/@anthropic-ai/claude-agent-sdk");
     await mkdir(sdk, { recursive: true });
     await writeFile(join(sdk, "sdk.mjs"), "export const query = () => {};");
     await createPackageWithOptions(source, join(resources, "app.asar"), {
-      unpack: "**/claude-acp-worker.js",
+      unpack: "**/{claude-acp-worker,pragma-command-client}.js",
     });
     const clean = await auditPackagedResources(resources);
     assert.deepEqual(clean.failures, []);
@@ -67,7 +68,7 @@ test("audits real ASAR, unpacked files and extra resources; keeps worker and SDK
     // This packed SDK payload must be inspected by content, not filename.
     await writeFile(join(sdk, "opaque"), Buffer.from("4d5a0000", "hex"));
     await createPackageWithOptions(source, join(resources, "app.asar"), {
-      unpack: "**/claude-acp-worker.js",
+      unpack: "**/{claude-acp-worker,pragma-command-client}.js",
     });
     await writeFile(join(resources, "claude.exe"), "MZ");
     const unpackedSdk = join(
@@ -90,6 +91,24 @@ test("audits real ASAR, unpacked files and extra resources; keeps worker and SDK
     assert.ok(report.failures.some(({ path }) => path.startsWith("app.asar/")));
     assert.ok(report.failures.some(({ path }) => path.startsWith("app.asar.unpacked/")));
     assert.ok(report.failures.some(({ path }) => path === "claude.exe"));
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("rejects a command client left inside ASAR", async () => {
+  const root = await mkdtemp(join(tmpdir(), "pragma-command-package-audit-"));
+  try {
+    const source = join(root, "source");
+    const resources = join(root, "resources");
+    await mkdir(join(source, "out/main"), { recursive: true });
+    await mkdir(resources);
+    await writeFile(join(source, "out/main/claude-acp-worker.js"), "console.log('worker')");
+    await writeFile(join(source, "out/main/pragma-command-client.js"), "console.log('client')");
+    await createPackageWithOptions(source, join(resources, "app.asar"), {
+      unpack: "**/claude-acp-worker.js",
+    });
+    await assert.rejects(auditPackagedResources(resources), /Pragma command client.*outside ASAR/);
   } finally {
     await rm(root, { recursive: true, force: true });
   }
