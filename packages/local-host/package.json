@@ -5,11 +5,11 @@
   "type": "module",
   "exports": {
     ".": {
-      "types": "./dist/index.d.ts",
+      "types": "./src/index.ts",
       "default": "./dist/index.js"
     },
     "./node-application": {
-      "types": "./dist/node-application.d.ts",
+      "types": "./src/node-application.ts",
       "default": "./dist/node-application.js"
     },
     "./resources": {
