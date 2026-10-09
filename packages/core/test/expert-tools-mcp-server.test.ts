@@ -104,6 +104,28 @@ describe("Expert tools MCP Gateway", { concurrent: false }, () => {
     await expect(fetch(unknownTokenUrl)).resolves.toMatchObject({ status: 404 });
   });
 
+  it("serves independent clients and reconnects on one Session URL", async () => {
+    const registration = await registerTestSession("shared");
+    const first = await connectClient(registration.url, "shared-first");
+    const second = await connectClient(registration.url, "shared-second");
+    const results = await Promise.all(
+      [first, second].map(
+        async (client) => await client.callTool({ name: "read_shared", arguments: {} }),
+      ),
+    );
+    for (const result of results) {
+      expect(result).toMatchObject({ content: [{ type: "text", text: "shared" }] });
+    }
+    await first.close();
+    clients.delete(first);
+    const reconnected = await connectClient(registration.url, "shared-reconnected");
+    await expect(
+      reconnected.callTool({ name: "read_shared", arguments: {} }),
+    ).resolves.toMatchObject({
+      content: [{ type: "text", text: "shared" }],
+    });
+  });
+
   it("revokes one Session without affecting others and stops when idle", async () => {
     const first = await registerTestSession("first");
     const second = await registerTestSession("second");

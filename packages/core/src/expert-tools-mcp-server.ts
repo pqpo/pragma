@@ -73,13 +73,9 @@ const MCP_LOCAL_TOOL_NAME_LIMIT = MCP_QUALIFIED_TOOL_NAME_LIMIT - MCP_QUALIFIED_
 
 type ExpertToolsMcpGatewayEntry = {
   readonly logger: PragmaLogger;
-} & (
-  | { readonly server: McpServer; readonly transport: WebStandardStreamableHTTPServerTransport }
-  | {
-      readonly createServer: (signal: AbortSignal) => McpServer;
-      readonly activeServers: Map<McpServer, AbortController>;
-    }
-);
+  readonly createServer: (signal: AbortSignal) => McpServer;
+  readonly activeServers: Map<McpServer, AbortController>;
+};
 
 class ExpertToolsMcpGateway {
   private readonly entries = new Map<string, ExpertToolsMcpGatewayEntry>();
@@ -91,38 +87,24 @@ class ExpertToolsMcpGateway {
     options: RegisterExpertToolsMcpSessionOptions,
   ): Promise<ExpertToolsMcpSessionRegistration> {
     const name = `Pragma tools for ${options.agent.name}`;
-    const { server, toolCatalog } = createSessionMcpServer(name, options);
-    return await this.registerServer(name, server, toolCatalog, options.logger);
-  }
-
-  async registerServer(
-    name: string,
-    server: McpServer,
-    toolCatalog: readonly ExpertToolsMcpToolDefinition[],
-    logger: PragmaLogger,
-  ): Promise<ExpertToolsMcpSessionRegistration> {
-    const transport = new WebStandardStreamableHTTPServerTransport();
-
-    try {
-      await server.connect(transport);
-    } catch (error) {
-      await server.close().catch(() => undefined);
-      throw error;
-    }
-
-    return await this.registerEntry(name, { server, transport, logger }, toolCatalog);
+    const { createServer, toolCatalog } = createSessionMcpServerFactory(name, options);
+    return await this.registerRequestServer(name, createServer, options.logger, toolCatalog);
   }
 
   async registerRequestServer(
     name: string,
     createServer: (signal: AbortSignal) => McpServer,
     logger: PragmaLogger,
+    toolCatalog: readonly ExpertToolsMcpToolDefinition[] = [],
   ): Promise<ExpertToolsMcpSessionRegistration> {
-    return await this.registerEntry(name, { createServer, activeServers: new Map(), logger }, []);
+    return await this.registerEntry(
+      name,
+      { createServer, activeServers: new Map(), logger },
+      toolCatalog,
+    );
   }
 
   private async closeEntry(entry: ExpertToolsMcpGatewayEntry): Promise<void> {
-    if ("server" in entry) return await entry.server.close();
     const servers = [...entry.activeServers.keys()];
     for (const controller of entry.activeServers.values()) controller.abort();
     entry.activeServers.clear();
@@ -130,8 +112,7 @@ class ExpertToolsMcpGateway {
     const errors = results.flatMap((result) =>
       result.status === "rejected" ? [result.reason as unknown] : [],
     );
-    if (errors.length)
-      throw new AggregateError(errors, "Execution command transport cleanup failed.");
+    if (errors.length) throw new AggregateError(errors, "Execution MCP transport cleanup failed.");
   }
 
   private async registerEntry(
@@ -235,40 +216,36 @@ class ExpertToolsMcpGateway {
     }
 
     try {
-      if ("transport" in entry) {
-        await handleMcpHttpRequest(entry.transport, request, response);
-      } else {
-        // Independent CLI processes reuse JSON-RPC sequence IDs. A stateless transport must
-        // be owned by one HTTP request so its response/cancellation maps cannot collide.
-        const controller = new AbortController();
-        const server = entry.createServer(controller.signal);
-        entry.activeServers.set(server, controller);
-        const dispose = async () => {
-          if (!entry.activeServers.delete(server)) return;
-          controller.abort();
-          await server.close();
-        };
-        response.once("close", () => {
-          void dispose().catch((error) => {
-            entry.logger.error(
-              "tool.command_transport_close_failed",
-              "Execution command transport cleanup failed",
-              error,
-            );
-          });
+      // Independent CLI processes reuse JSON-RPC sequence IDs. A stateless transport must
+      // be owned by one HTTP request so its response/cancellation maps cannot collide.
+      const controller = new AbortController();
+      const server = entry.createServer(controller.signal);
+      entry.activeServers.set(server, controller);
+      const dispose = async () => {
+        if (!entry.activeServers.delete(server)) return;
+        controller.abort();
+        await server.close();
+      };
+      response.once("close", () => {
+        void dispose().catch((error) => {
+          entry.logger.error(
+            "tool.mcp_transport_close_failed",
+            "Execution MCP transport cleanup failed",
+            error,
+          );
         });
-        try {
-          const transport = new WebStandardStreamableHTTPServerTransport();
-          await server.connect(transport);
-          if (response.destroyed) {
-            await dispose();
-            return;
-          }
-          await handleMcpHttpRequest(transport, request, response);
-        } catch (error) {
+      });
+      try {
+        const transport = new WebStandardStreamableHTTPServerTransport();
+        await server.connect(transport);
+        if (response.destroyed) {
           await dispose();
-          throw error;
+          return;
         }
+        await handleMcpHttpRequest(transport, request, response);
+      } catch (error) {
+        await dispose();
+        throw error;
       }
     } catch (error) {
       entry.logger.error("tool.mcp_request_failed", "Execution MCP Session request failed", error);
@@ -345,34 +322,45 @@ export async function registerExpertToolsMcpSession(
   return await expertToolsMcpGateway.register(options);
 }
 
-function createSessionMcpServer(
+function createSessionMcpServerFactory(
   name: string,
   options: RegisterExpertToolsMcpSessionOptions,
-): { readonly server: McpServer; readonly toolCatalog: readonly ExpertToolsMcpToolDefinition[] } {
-  const server = new McpServer(
-    {
-      name,
-      version: "0.0.0",
-    },
-    {
-      instructions:
-        "Execution-scoped Pragma tools. These tools are isolated to the current runtime session.",
-    },
-  );
-  const tools = createExecutionLocalTools(options);
+): {
+  readonly createServer: (signal: AbortSignal) => McpServer;
+  readonly toolCatalog: readonly ExpertToolsMcpToolDefinition[];
+} {
   const runtimeNames = new Set<string>();
-  const toolCatalog: ExpertToolsMcpToolDefinition[] = [];
-
-  for (const resolvedTool of tools) {
+  const tools = createExecutionLocalTools(options).map((resolvedTool) => {
     const runtimeName = createRuntimeToolName(resolvedTool.name, options.maxToolNameLength);
     if (runtimeNames.has(runtimeName)) {
       throw new Error(`Execution MCP tool name collision: ${runtimeName}.`);
     }
     runtimeNames.add(runtimeName);
-    toolCatalog.push(registerLocalTool(server, runtimeName, resolvedTool.tool, options));
-  }
-
-  return { server, toolCatalog };
+    return { runtimeName, tool: resolvedTool.tool };
+  });
+  const toolCatalog = tools.map(({ runtimeName, tool }) => ({
+    name: runtimeName,
+    description: tool.description,
+    inputSchema:
+      toMcpInputSchema(tool.inputSchema)?.["~standard"].jsonSchema.input({ target: "draft-07" }) ??
+      defaultObjectJsonSchema(),
+  }));
+  return {
+    toolCatalog,
+    createServer(signal) {
+      const server = new McpServer(
+        { name, version: "0.0.0" },
+        {
+          instructions:
+            "Execution-scoped Pragma tools. These tools are isolated to the current runtime session.",
+        },
+      );
+      for (const { runtimeName, tool } of tools) {
+        registerLocalTool(server, runtimeName, tool, options, signal);
+      }
+      return server;
+    },
+  };
 }
 
 function createExecutionLocalTools(
@@ -552,7 +540,8 @@ function registerLocalTool(
   runtimeName: string,
   tool: LocalTool,
   options: RegisterExpertToolsMcpSessionOptions,
-): ExpertToolsMcpToolDefinition {
+  signal: AbortSignal,
+): void {
   const inputSchema = toMcpInputSchema(tool.inputSchema);
   const outputSchema =
     tool.outputSchema === undefined ? undefined : toMcpInputSchema(tool.outputSchema);
@@ -572,7 +561,7 @@ function registerLocalTool(
           tool,
           toolCallId,
           args: input,
-          signal: context.mcpReq.signal,
+          signal: AbortSignal.any([signal, context.mcpReq.signal]),
           humanInteractionHandler: options.humanInteractionHandler,
           runContext: options.getContext(),
           executionContext: options.executionContext,
@@ -602,13 +591,6 @@ function registerLocalTool(
       }
     },
   );
-  return {
-    name: runtimeName,
-    description: tool.description,
-    inputSchema:
-      inputSchema?.["~standard"].jsonSchema.input({ target: "draft-07" }) ??
-      defaultObjectJsonSchema(),
-  };
 }
 
 function toMcpInputSchema(schema: unknown): StandardSchemaWithJSON | undefined {
