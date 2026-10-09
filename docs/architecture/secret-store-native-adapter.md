@@ -1,6 +1,6 @@
 # SecretStore native adapter selection
 
-`@pragma/local-host` uses `@napi-rs/keyring@1.3.0` as the OS keychain adapter. The package is a
+`@pragma/local-host` uses `@napi-rs/keyring@2.1.0` as the OS keychain adapter. The package is a
 N-API binding to keyring-rs and exposes binary secret reads/writes without invoking `security`,
 `cmdkey`, PowerShell, or a shell. It maps Darwin to the Login Keychain and Windows to Credential
 Manager. Unsupported platforms, a locked keychain, and user denial remain explicit errors; there
@@ -24,7 +24,7 @@ the release SBOM must include the package and its platform packages.
 
 ## M5 supply-chain audit (2026-08-24)
 
-- Direct production dependency: `@napi-rs/keyring@1.3.0` (exact version; no range) in
+- Direct production dependency: `@napi-rs/keyring@2.1.0` (exact version; no range) in
   `@pragma/local-host`.
 - License: `MIT`, verified from the installed package manifest.
 - `pnpm-lock.yaml` pins the package and each optional native binary with immutable SHA-512 integrity.

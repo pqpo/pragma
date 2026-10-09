@@ -4,13 +4,10 @@ import { PragmaCapabilityRefSchema, PragmaCapabilityResourceSchema } from "@prag
 import { CapabilitySchema, SkillFilePathSchema } from "@pragma/shared";
 import { BUILT_IN_AGENT_FILES } from "./builtin.generated.ts";
 
-/** Single static authority used by Runtime materialization, the Agent index and Host read-only views. */
-const BUILT_IN_SKILL_REFS = [
-  PragmaCapabilityRefSchema.parse("capability:1h2j3k4m5n6p7q8r"),
-  PragmaCapabilityRefSchema.parse("capability:000000000000f10w"),
-] as const;
+const MANAGE_PRAGMA_SKILL_REF = PragmaCapabilityRefSchema.parse("capability:1h2j3k4m5n6p7q8r");
 
-export const BUILT_IN_SKILLS = BUILT_IN_SKILL_REFS.map((ref) => {
+/** Static authority shared by Runtime materialization and Host read-only views. */
+export const BUILT_IN_SKILLS = [MANAGE_PRAGMA_SKILL_REF].map((ref) => {
   const id = ref.slice("capability:".length);
   const resource = PragmaCapabilityResourceSchema.parse(
     parsePragmaYaml(BUILT_IN_AGENT_FILES[`capabilities/${id}.pragma.yaml`]!),

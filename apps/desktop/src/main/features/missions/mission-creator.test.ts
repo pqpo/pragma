@@ -10,7 +10,7 @@ import {
 } from "@pragma/built-in-agents";
 
 import type { MissionExecutor, PragmaProjectSnapshot } from "../../../shared/contracts/index.ts";
-import { createDesktopPragmaAgentMissionPort } from "../built-in-agents/pragma-agent-task-adapter.ts";
+import { createLocalHostPragmaMissionPort } from "@pragma/local-host";
 import { createMissionCreator } from "./mission-creator.ts";
 import type { MissionExecutorCatalog } from "./mission-executor-catalog.ts";
 import type { LocalHostMissionApplication } from "@pragma/local-host";
@@ -120,7 +120,7 @@ describe("MissionCreator", () => {
     const application = {
       startRun: run,
     } as unknown as LocalHostMissionApplication;
-    const missionPort = createDesktopPragmaAgentMissionPort({
+    const missionPort = createLocalHostPragmaMissionPort({
       missions,
       application,
       creator,

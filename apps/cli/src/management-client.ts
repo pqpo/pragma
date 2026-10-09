@@ -35,7 +35,7 @@ export function isManagementCliArgv(argv: readonly string[]): boolean {
     else if (["--json", "--stream-json"].includes(option!)) index += 1;
     else return false;
   }
-  return argv[index] === "dsl" || (argv[index] === "flow" && argv[index + 1] === "draft");
+  return argv[index] === "manage";
 }
 
 export async function runManagementCli(
@@ -72,20 +72,24 @@ export async function runManagementCli(
     .on("option:json", () => {
       outputFormat = "json";
     });
+  const management = parser
+    .command("manage")
+    .description("Manage Pragma resources in the owning Execution");
   const groups = new Map<string, Command>();
   let resultCode = 0;
   for (const name of ManagementCommandSchema.options) {
-    const [groupName, areaName, actionName] = name.split(".") as [string, string, string];
-    let group = groups.get(groupName);
-    if (group === undefined) {
-      group = parser.command(groupName);
-      groups.set(groupName, group);
-    }
-    const key = `${groupName}.${areaName}`;
-    let area = groups.get(key);
-    if (area === undefined) {
-      area = group.command(areaName);
-      groups.set(key, area);
+    const parts = name.split(".");
+    const actionName = parts.pop()!;
+    let area = management;
+    let key = "manage";
+    for (const part of parts) {
+      key += `.${part}`;
+      let child = groups.get(key);
+      if (child === undefined) {
+        child = area.command(part);
+        groups.set(key, child);
+      }
+      area = child;
     }
     const info = describeManagementCommand(name);
     area
@@ -108,7 +112,7 @@ export async function runManagementCli(
       .addHelpText(
         "after",
         () =>
-          `\nInput Schema (loaded only by this help):\n${JSON.stringify(info.inputSchema, null, 2)}\n\nExample:\n  pragma ${name.replaceAll(".", " ")} --input request.json --format json\n`,
+          `\nInput Schema (loaded only by this help):\n${JSON.stringify(info.inputSchema, null, 2)}\n\nExample:\n  pragma manage ${name.replaceAll(".", " ")} --input request.json --format json\n`,
       )
       .action(async (_localArgs, command: Command) => {
         const args = command.optsWithGlobals() as {
