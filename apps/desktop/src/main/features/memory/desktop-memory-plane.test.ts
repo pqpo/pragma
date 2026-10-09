@@ -1,4 +1,4 @@
-import { resolveMemoryRecallScope } from "@pragma/local-host";
+import { resolveMemoryRecallScope, type SecretStore } from "@pragma/local-host";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -35,6 +35,47 @@ afterEach(async () => {
 });
 
 describe("DesktopMemoryPlane", { timeout: 30_000 }, () => {
+  it("keeps Memory healthy without optional embedding configuration and diagnoses incomplete opt-in", async () => {
+    const pragmaHome = await temporaryRoot("pragma-desktop-memory-optional-retrieval-");
+    const unexpectedSecretAccess = vi.fn(async (): Promise<never> => {
+      throw new Error("Unconfigured retrieval must not access secrets");
+    });
+    const secrets: SecretStore = {
+      inspect: unexpectedSecretAccess,
+      get: unexpectedSecretAccess,
+      put: unexpectedSecretAccess,
+      delete: unexpectedSecretAccess,
+      listMetadata: unexpectedSecretAccess,
+    };
+    const plane = await createDesktopMemoryPlane({
+      pragmaHome,
+      secrets,
+      logger: createPragmaLogger(undefined, { component: "desktop.memory-test" }),
+    });
+    try {
+      plane.start();
+      const initial = await plane.getStatus();
+      expect(initial.state).toBe("running");
+      expect(initial.lastError).toBeUndefined();
+      expect(initial.modules.some((module) => module.moduleId === "pragma.memory.retrieval")).toBe(
+        false,
+      );
+
+      await plane.retrieval!.settings.update({ expectedRevision: 0, enabled: true });
+      await expect(plane.getStatus()).resolves.toMatchObject({
+        state: "degraded",
+        lastError: { code: "embedding_model_unavailable" },
+      });
+
+      await plane.retrieval!.settings.update({ expectedRevision: 1, enabled: false });
+      const disabled = await plane.getStatus();
+      expect(disabled.state).toBe("running");
+      expect(disabled.lastError).toBeUndefined();
+      expect(unexpectedSecretAccess).not.toHaveBeenCalled();
+    } finally {
+      await plane.stop();
+    }
+  });
   it.each(["knowledge", "canonical"] as const)(
     "retries a partial %s shutdown without closing successful real SQLite stores twice",
     async (failure) => {

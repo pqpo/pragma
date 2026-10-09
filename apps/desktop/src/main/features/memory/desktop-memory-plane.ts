@@ -743,7 +743,7 @@ export async function createDesktopMemoryPlane(options: {
           : { code: attentionStatus.errorCode, occurredAt: new Date().toISOString() };
       const retrievalStatus = await attention?.retrieval.status();
       const retrievalError =
-        retrievalStatus?.errorCode === undefined
+        !retrievalStatus?.settings.enabled || retrievalStatus.errorCode === undefined
           ? undefined
           : { code: retrievalStatus.errorCode, occurredAt: new Date().toISOString() };
       if (retrievalStatus?.settings.enabled)
