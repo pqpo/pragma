@@ -26,8 +26,8 @@
     "clean": "rm -rf dist"
   },
   "dependencies": {
-    "@agentclientprotocol/claude-agent-acp": "0.81.2",
-    "@agentclientprotocol/sdk": "1.5.0",
+    "@agentclientprotocol/claude-agent-acp": "0.86.0",
+    "@agentclientprotocol/sdk": "1.7.0",
     "@pragma/core": "workspace:*",
     "@pragma/shared": "workspace:*",
     "zod": "4.6.5"
