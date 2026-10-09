@@ -1,5 +1,5 @@
 import { ContextStoreStoreError } from "../features/context-stores/context-store-store.ts";
-import { MissionStoreError } from "../features/missions/mission-store-error.ts";
+import { MissionStoreError } from "@pragma/local-host";
 
 export function toContextStoreMissionDeletionError(
   error: unknown,

@@ -113,6 +113,22 @@ async function fixture() {
   };
 }
 describe("Memory retrieval across Hosts", () => {
+  it("reports disabled optional retrieval without a missing-model error or provider requests", async () => {
+    const f = await fixture();
+    try {
+      await f.desktop.settings.update({ expectedRevision: 1, enabled: false });
+      const status = await f.desktop.status();
+      expect(status.state).toBe("disabled");
+      expect(status.errorCode).toBeUndefined();
+      await f.desktop.tick();
+      expect(f.fetcher).not.toHaveBeenCalled();
+      await expect(access(f.paths.memoryVectorIndex())).rejects.toMatchObject({ code: "ENOENT" });
+    } finally {
+      await f.desktop.stop();
+      f.episodic.close();
+      f.semantic.close();
+    }
+  });
   it("reports an enabled setting awaiting model selection without requests or a vector cache", async () => {
     const f = await fixture();
     try {

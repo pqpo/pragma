@@ -1810,6 +1810,20 @@ export const studio = {
   bundleDiscardDraft: "Discard setup",
   publishToSource: "Publish to source",
   bundlePublish: {
+    targetChangedTitle: "Review changed publishing targets",
+    targetChangedDescription:
+      "The source configuration changed after your previous confirmation. Review the repository and branch below before continuing publication.",
+    confirmTarget: "Confirm targets and continue",
+
+    upgradeTitle: "Upgrade publishing sources",
+    upgradeDescription:
+      "These sources use an older protocol. Upgrading updates the source manifest and every item configuration to support knowledge bases and Skills. Older Pragma clients may no longer read these sources.",
+    upgradeRecovery:
+      "Desktop creates and pushes a separate upgrade commit, preserving the previous files in Git history, then publishes your resource. If publication fails after the upgrade, retry continues from the upgraded source.",
+    upgradeAndPublish: "Upgrade sources and continue",
+    upgrading: "Upgrading and publishing…",
+    upgradeBack: "Back",
+
     title: "Publish to source",
     loading: "Loading source configuration…",
     description: "Publish {{name}} as a versioned Bundle source.",

@@ -1,3 +1,5 @@
+import { cleanupInternalMission } from "@pragma/local-host";
+import { waitForInternalMissionTerminal } from "@pragma/local-host";
 import { createHash } from "node:crypto";
 import { mkdir } from "node:fs/promises";
 import { basename, join } from "node:path";
@@ -22,8 +24,8 @@ import {
   parseLegacyDesktopCapabilityBindingRef,
 } from "../../platform/bindings/desktop-binding-ref.ts";
 import type { CapabilityStore } from "../capabilities/capability-store.ts";
-import type { MissionRunner } from "../missions/mission-runner.ts";
-import type { MissionStore } from "../missions/mission-store.ts";
+import type { LocalHostMissionApplication } from "@pragma/local-host";
+import type { MissionStore } from "@pragma/local-host";
 import type { PragmaProjectStore } from "../projects/pragma-project-store.ts";
 import type { EvaluationStore } from "./evaluation-store.ts";
 import type { AgentEvaluationCaseExecutor } from "./evaluation-service.ts";
@@ -147,7 +149,7 @@ export function createEvaluationMockAdapterRegistry(
 
 export function createMissionAgentEvaluationExecutor(options: {
   readonly missions: MissionStore;
-  readonly runner: MissionRunner;
+  readonly application: LocalHostMissionApplication;
   readonly project: PragmaProjectStore;
   readonly store: EvaluationStore;
   readonly mocks: EvaluationMockAdapterRegistry;
@@ -179,7 +181,7 @@ export function createMissionAgentEvaluationExecutor(options: {
       try {
         subject = await runMission({
           missions: options.missions,
-          runner: options.runner,
+          application: options.application,
           workspace,
           run,
           caseId: evaluationCase.id,
@@ -210,7 +212,7 @@ export function createMissionAgentEvaluationExecutor(options: {
       const settings = await options.store.getSettings();
       const judge = await runMission({
         missions: options.missions,
-        runner: options.runner,
+        application: options.application,
         workspace,
         run,
         caseId: evaluationCase.id,
@@ -246,7 +248,7 @@ export function createMissionAgentEvaluationExecutor(options: {
 
 async function runMission(input: {
   readonly missions: MissionStore;
-  readonly runner: MissionRunner;
+  readonly application: LocalHostMissionApplication;
   readonly workspace: string;
   readonly run: AgentEvaluationRun;
   readonly caseId: string;
@@ -263,7 +265,7 @@ async function runMission(input: {
   readonly signal: AbortSignal;
 }): Promise<{
   readonly output: string;
-  readonly entries: Awaited<ReturnType<MissionRunner["getChatPage"]>>["entries"];
+  readonly entries: Awaited<ReturnType<LocalHostMissionApplication["getChatPage"]>>["entries"];
 }> {
   throwIfCancelled(input.signal);
   const mission = await input.missions.create({
@@ -282,19 +284,27 @@ async function runMission(input: {
     ...(input.modelOverride === undefined ? {} : { modelOverride: input.modelOverride }),
   });
   const interrupt = (): void => {
-    void input.runner.interrupt(mission.id).catch(() => undefined);
+    void input.application.interrupt(mission.id).catch(() => undefined);
   };
   input.signal.addEventListener("abort", interrupt, { once: true });
   try {
-    if (input.signal.aborted) await input.runner.interrupt(mission.id).catch(() => undefined);
+    if (input.signal.aborted) await input.application.interrupt(mission.id).catch(() => undefined);
     throwIfCancelled(input.signal);
-    await input.runner.run(mission.id);
-    await waitForMission(input.missions, mission.id, input.signal);
+    await input.application.startRun(mission.id);
+    await waitForInternalMissionTerminal({
+      getMission: (id) => input.missions.get(id),
+      missionId: mission.id,
+      timeoutMessage: "Evaluation execution timed out.",
+      signal: input.signal,
+    }).catch((error: unknown) => {
+      throwIfCancelled(input.signal);
+      throw error;
+    });
     const finished = await input.missions.get(mission.id);
     if (finished.execution?.status !== "succeeded") {
       throw new Error(finished.execution?.error ?? `${input.phase} execution failed.`);
     }
-    const chat = await input.runner.getChatPage({ id: mission.id, limit: 50 });
+    const chat = await input.application.getChatPage({ id: mission.id, limit: 50 });
     const output = chat.entries
       .filter((entry) => entry.kind === "assistant")
       .map((entry) => entry.content)
@@ -303,30 +313,12 @@ async function runMission(input: {
     return { output, entries: chat.entries };
   } finally {
     input.signal.removeEventListener("abort", interrupt);
-    await input.runner.delete(mission.id).catch(async () => {
-      await input.runner.interrupt(mission.id).catch(() => undefined);
-      await input.runner.delete(mission.id).catch(() => undefined);
+    await cleanupInternalMission({
+      missionId: mission.id,
+      deleteMission: (id) => input.application.delete(id),
+      interruptMission: (id) => input.application.interrupt(id),
     });
   }
-}
-
-async function waitForMission(
-  missions: MissionStore,
-  id: string,
-  signal: AbortSignal,
-): Promise<void> {
-  const deadline = Date.now() + 10 * 60_000;
-  while (Date.now() < deadline) {
-    throwIfCancelled(signal);
-    const mission = await missions.get(id);
-    if (
-      mission.execution !== undefined &&
-      ["succeeded", "failed", "cancelled"].includes(mission.execution.status)
-    )
-      return;
-    await new Promise((resolve) => setTimeout(resolve, 200));
-  }
-  throw new Error("Evaluation execution timed out.");
 }
 
 function throwIfCancelled(signal: AbortSignal): void {
@@ -334,7 +326,7 @@ function throwIfCancelled(signal: AbortSignal): void {
 }
 
 function traceFromMission(
-  entries: Awaited<ReturnType<MissionRunner["getChatPage"]>>["entries"],
+  entries: Awaited<ReturnType<LocalHostMissionApplication["getChatPage"]>>["entries"],
 ): AgentEvaluationToolTrace[] {
   return entries.flatMap((entry) =>
     entry.kind !== "tool" || (entry.status !== "succeeded" && entry.status !== "failed")

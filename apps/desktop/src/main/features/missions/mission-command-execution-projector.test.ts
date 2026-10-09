@@ -3,7 +3,7 @@ import { describe, expect, it, vi } from "vitest";
 import type { MissionControllerStore } from "@pragma/local-host";
 
 import { MissionSchema } from "../../../shared/contracts/index.ts";
-import { createMissionExecutionEventProjector } from "./mission-command-execution-projector.ts";
+import { createMissionExecutionEventProjector } from "@pragma/local-host";
 
 const missionId = "22222222-2222-4222-8222-222222222222";
 const requestId = "33333333-3333-4333-8333-333333333333";

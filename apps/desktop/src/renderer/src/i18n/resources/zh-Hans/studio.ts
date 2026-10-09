@@ -1718,6 +1718,20 @@ export const studio = {
   bundleDiscardDraft: "放弃设置",
   publishToSource: "发布到源",
   bundlePublish: {
+    targetChangedTitle: "确认变更后的发布目标",
+    targetChangedDescription:
+      "发布源配置在上次确认后发生了变化。请检查下方的仓库地址和分支，再继续发布。",
+    confirmTarget: "确认目标并继续",
+
+    upgradeTitle: "升级发布源",
+    upgradeDescription:
+      "以下发布源使用旧版协议。升级将更新源清单和所有条目配置，以支持知识库与技能。旧版 Pragma 客户端可能无法继续读取这些源。",
+    upgradeRecovery:
+      "Desktop 会创建并推送独立的升级提交，在 Git 历史中保留升级前的文件，再发布当前资源。如果升级成功后发布失败，重试将从已升级的源继续。",
+    upgradeAndPublish: "升级发布源并继续",
+    upgrading: "正在升级并发布…",
+    upgradeBack: "返回",
+
     title: "发布到源",
     loading: "正在加载源配置…",
     description: "将 {{name}} 作为版本化 Bundle 发布源。",

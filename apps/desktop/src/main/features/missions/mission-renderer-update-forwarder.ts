@@ -3,8 +3,8 @@ import type {
   MissionStatusUpdate,
   MissionWorkUpdate,
 } from "../../../shared/contracts/index.ts";
-import type { MissionChatNotification, MissionWorkNotification } from "./mission-runner.ts";
-import type { MissionStatusNotification } from "./mission-status-service.ts";
+import type { MissionChatNotification, MissionWorkNotification } from "@pragma/local-host";
+import type { MissionStatusNotification } from "@pragma/local-host";
 
 export interface MissionRendererUpdateSender {
   send(

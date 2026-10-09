@@ -1,6 +1,6 @@
 {
   "name": "@pqpo/pragma",
-  "version": "0.1.0-next.18",
+  "version": "0.1.0-next.19",
   "description": "Pragma command-line interface",
   "license": "AGPL-3.0-only",
   "type": "module",
@@ -26,8 +26,10 @@
     "ci:smoke": "node scripts/smoke-package.mjs",
     "lint": "eslint src test vitest.config.ts",
     "typecheck": "tsc --noEmit",
-    "test": "vitest run --passWithNoTests",
-    "clean": "rm -rf dist .release"
+    "test": "pnpm test:shared-kernel && pnpm test:adapters",
+    "clean": "rm -rf dist .release",
+    "test:shared-kernel": "pnpm --filter \"@pqpo/pragma...\" build && pnpm --filter @pragma/core exec vitest run test/file-lock.test.ts && pnpm --filter @pragma/local-host test:business",
+    "test:adapters": "vitest run --passWithNoTests"
   },
   "dependencies": {
     "@napi-rs/keyring": "1.3.0",

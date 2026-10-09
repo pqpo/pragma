@@ -17,6 +17,7 @@ export function createLocalHostRunMemory(options: {
   pragmaHome: string;
   loggerProvider?: PragmaLoggerProvider;
   beforeFeedClose?: () => Promise<void>;
+  onPause?: () => Promise<void>;
 }) {
   let feed: Promise<CanonicalEventFeed> | undefined;
   const getFeed = () => (feed ??= createFileCanonicalEventFeed({ pragmaHome: options.pragmaHome }));
@@ -26,6 +27,26 @@ export function createLocalHostRunMemory(options: {
     inspect: async () => await (await getFeed()).inspect(),
     maintain: async (input) => await (await getFeed()).maintain(input),
     forgetCorrelation: async (id) => await (await getFeed()).forgetCorrelation(id),
+    subscribeChanges: (listener) => {
+      let cancelled = false;
+      let unsubscribe: (() => void) | undefined;
+      void getFeed().then(
+        (source) => {
+          if (!cancelled) unsubscribe = source.subscribeChanges?.(listener);
+        },
+        (error: unknown) => {
+          logger.warn("canonical.subscription_degraded", "Canonical delivery wake needs recovery", {
+            moduleId: "pragma.mission-delivery",
+            errorCode: "MISSION_DELIVERY_RECEIVE_FAILED",
+            error,
+          });
+        },
+      );
+      return () => {
+        cancelled = true;
+        unsubscribe?.();
+      };
+    },
     close: async () => {
       if (feed !== undefined) {
         await (await feed).close();
@@ -97,6 +118,9 @@ export function createLocalHostRunMemory(options: {
       memory = undefined;
     }
   };
+  let deliveryPause: Promise<void> | undefined;
+  let resourcesClosed = false;
+  let resourceCloseFailure: unknown;
   const lifecycle = createLocalHostMissionMemoryLifecycle({
     onError: degraded,
     ports: {
@@ -114,28 +138,61 @@ export function createLocalHostRunMemory(options: {
         if (memory !== undefined) await (await memory).data.flushDelivery();
       },
       pause: async () => {
+        deliveryPause = options.onPause?.();
+        // Receipt materialization may itself complete Memory; do not wait under its state lock.
+        void deliveryPause?.catch(degraded);
         await stopIdleMemory();
         await executionStore.drainCanonicalEvents();
       },
+      beforeClose: options.beforeFeedClose,
       close: async () => {
         await stopIdleMemory();
+        const errors: unknown[] = [];
         try {
           await executionStore.close();
-        } catch {
+        } catch (error) {
           degraded();
-        }
-        try {
-          await options.beforeFeedClose?.();
-        } catch {
-          degraded();
+          errors.push(error);
         }
         try {
           await canonical.close();
-        } catch {
+        } catch (error) {
           degraded();
+          errors.push(error);
         }
+        if (errors.length > 0) {
+          resourceCloseFailure = new AggregateError(
+            errors,
+            "Mission Memory resource close failed.",
+          );
+          throw resourceCloseFailure;
+        }
+        resourceCloseFailure = undefined;
+        resourcesClosed = true;
       },
     },
   });
-  return { canonical, executionStore, ...lifecycle };
+  return {
+    canonical,
+    hasCanonicalSource: () => feed !== undefined,
+    executionStore,
+    ...lifecycle,
+    dispose: async () => {
+      if (resourcesClosed) return;
+      const deadline = Date.now() + 5000;
+      do {
+        await lifecycle.close();
+        if (resourceCloseFailure !== undefined) throw resourceCloseFailure;
+        if (resourcesClosed) return;
+        await new Promise<void>((resolve) => setTimeout(resolve, 10));
+      } while (Date.now() < deadline);
+      throw new Error("MISSION_MEMORY_SHUTDOWN_PENDING");
+    },
+    pause: async () => {
+      await lifecycle.pause();
+      const pending = deliveryPause;
+      await pending;
+      if (deliveryPause === pending) deliveryPause = undefined;
+    },
+  };
 }

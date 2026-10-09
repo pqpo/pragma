@@ -1,4 +1,4 @@
-import { resolveMemoryRecallScope } from "@pragma/local-host";
+import { resolveMemoryRecallScope, type SecretStore } from "@pragma/local-host";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -35,6 +35,81 @@ afterEach(async () => {
 });
 
 describe("DesktopMemoryPlane", { timeout: 30_000 }, () => {
+  it("keeps Memory healthy without optional embedding configuration and diagnoses incomplete opt-in", async () => {
+    const pragmaHome = await temporaryRoot("pragma-desktop-memory-optional-retrieval-");
+    const unexpectedSecretAccess = vi.fn(async (): Promise<never> => {
+      throw new Error("Unconfigured retrieval must not access secrets");
+    });
+    const secrets: SecretStore = {
+      inspect: unexpectedSecretAccess,
+      get: unexpectedSecretAccess,
+      put: unexpectedSecretAccess,
+      delete: unexpectedSecretAccess,
+      listMetadata: unexpectedSecretAccess,
+    };
+    const plane = await createDesktopMemoryPlane({
+      pragmaHome,
+      secrets,
+      logger: createPragmaLogger(undefined, { component: "desktop.memory-test" }),
+    });
+    try {
+      plane.start();
+      const initial = await plane.getStatus();
+      expect(initial.state).toBe("running");
+      expect(initial.lastError).toBeUndefined();
+      expect(initial.modules.some((module) => module.moduleId === "pragma.memory.retrieval")).toBe(
+        false,
+      );
+
+      await plane.retrieval!.settings.update({ expectedRevision: 0, enabled: true });
+      await expect(plane.getStatus()).resolves.toMatchObject({
+        state: "degraded",
+        lastError: { code: "embedding_model_unavailable" },
+      });
+
+      await plane.retrieval!.settings.update({ expectedRevision: 1, enabled: false });
+      const disabled = await plane.getStatus();
+      expect(disabled.state).toBe("running");
+      expect(disabled.lastError).toBeUndefined();
+      expect(unexpectedSecretAccess).not.toHaveBeenCalled();
+    } finally {
+      await plane.stop();
+    }
+  });
+  it.each(["knowledge", "canonical"] as const)(
+    "retries a partial %s shutdown without closing successful real SQLite stores twice",
+    async (failure) => {
+      const pragmaHome = await temporaryRoot("pragma-desktop-memory-stop-retry-");
+      const plane = await createDesktopMemoryPlane({
+        pragmaHome,
+        logger: createPragmaLogger(undefined, { component: "desktop.memory-test" }),
+      });
+      const episodic = vi.spyOn(plane.episodicStore, "close");
+      const knowledge = vi.spyOn(plane.knowledgeLearningStore, "close");
+      const skill = vi.spyOn(plane.skillLearningStore, "close");
+      const semantic = vi.spyOn(plane.semanticStore, "close");
+      const canonical = vi.spyOn(plane.canonical, "close");
+      if (failure === "knowledge")
+        knowledge.mockImplementationOnce(() => {
+          throw new Error("SQLite close interrupted");
+        });
+      else canonical.mockRejectedValueOnce(new Error("Canonical close interrupted"));
+      try {
+        const first = plane.stop();
+        expect(plane.stop()).toBe(first);
+        await expect(first).rejects.toThrow("Memory resource shutdown failed.");
+        await plane.stop();
+        await plane.stop();
+        expect(episodic).toHaveBeenCalledOnce();
+        expect(skill).toHaveBeenCalledOnce();
+        expect(semantic).toHaveBeenCalledOnce();
+        expect(knowledge).toHaveBeenCalledTimes(failure === "knowledge" ? 2 : 1);
+        expect(canonical).toHaveBeenCalledTimes(failure === "canonical" ? 2 : 1);
+      } finally {
+        await plane.stop();
+      }
+    },
+  );
   it("is an always-available host service whose background loop starts explicitly", async () => {
     const pragmaHome = await temporaryRoot("pragma-desktop-memory-");
     const plane = await createDesktopMemoryPlane({

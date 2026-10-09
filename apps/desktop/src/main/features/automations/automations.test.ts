@@ -16,8 +16,8 @@ import {
   type AutomationStore,
 } from "./automation-store.ts";
 import type { MissionCreator } from "../missions/mission-creator.ts";
-import type { MissionRunner } from "../missions/mission-runner.ts";
-import type { MissionStore } from "../missions/mission-store.ts";
+import type { LocalHostMissionApplication } from "@pragma/local-host";
+import type { MissionStore } from "@pragma/local-host";
 import type { PragmaProjectStore } from "../projects/pragma-project-store.ts";
 
 afterEach(() => {
@@ -162,7 +162,7 @@ describe("Automation Service", () => {
       store: {} as AutomationStore,
       missions: {} as MissionStore,
       creator: {} as MissionCreator,
-      runner: {} as MissionRunner,
+      application: {} as LocalHostMissionApplication,
     });
 
     await expect(service.start()).rejects.toThrow("revision unavailable");
@@ -286,7 +286,7 @@ describe("Automation Service", () => {
       } as unknown as AutomationStore,
       missions: { backfillAutomationOrigin } as unknown as MissionStore,
       creator: {} as MissionCreator,
-      runner: {} as MissionRunner,
+      application: {} as LocalHostMissionApplication,
     });
 
     await expect(service.listMissionSources()).resolves.toEqual(
@@ -369,7 +369,7 @@ describe("Automation Service", () => {
         get: vi.fn(async () => await new Promise<never>(() => undefined)),
       } as unknown as MissionStore,
       creator: {} as MissionCreator,
-      runner: {} as MissionRunner,
+      application: {} as LocalHostMissionApplication,
       now: () => now,
     });
 

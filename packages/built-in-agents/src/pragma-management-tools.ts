@@ -1026,3 +1026,5 @@ function managementErrorResult(error: unknown, toolName: string): ExpertAgentToo
   });
   return { text: JSON.stringify(payload), details: payload, isError: true };
 }
+
+export type { PragmaManagementHostScope } from "./pragma-host-management-tools.ts";

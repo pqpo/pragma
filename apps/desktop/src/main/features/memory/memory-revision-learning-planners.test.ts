@@ -5,9 +5,9 @@ import { join } from "node:path";
 
 import { afterEach, expect, it, vi } from "vitest";
 
-import type { MissionRunner } from "../missions/mission-runner.ts";
-import type { MissionStore } from "../missions/mission-store.ts";
-import { MissionStoreError } from "../missions/mission-store.ts";
+import type { LocalHostMissionApplication } from "@pragma/local-host";
+import type { MissionStore } from "@pragma/local-host";
+import { MissionStoreError } from "@pragma/local-host";
 import type { PragmaProjectStore } from "../projects/pragma-project-store.ts";
 import { createMemoryRevisionLearningPlanners } from "./memory-revision-learning-planners.ts";
 
@@ -34,7 +34,7 @@ it("cleans only registered orphan planning Missions and replays a missing-Missio
   const planners = createMemoryRevisionLearningPlanners({
     pragmaHome: root,
     missions: {} as MissionStore,
-    runner: { delete: deleteMission } as unknown as MissionRunner,
+    application: { delete: deleteMission } as unknown as LocalHostMissionApplication,
     project: {} as PragmaProjectStore,
   });
   expect(await planners.recoverOrphans()).toBe(2);
@@ -54,11 +54,11 @@ it("uses the Store Revision Agent for a read-only plan and removes its Mission",
       create,
       get: async () => ({ execution: { status: "succeeded" } }),
     } as unknown as MissionStore,
-    runner: {
-      run: async () => undefined,
+    application: {
+      startRun: async () => undefined,
       getChatPage: async () => ({ entries: [{ kind: "assistant", content: '{"action":"skip"}' }] }),
       delete: remove,
-    } as unknown as MissionRunner,
+    } as unknown as LocalHostMissionApplication,
     project: {
       ensurePublished: async () => ({ projectId: "project", revision: 1 }),
     } as unknown as PragmaProjectStore,
@@ -91,8 +91,8 @@ it("preserves Runtime failure codes so configuration jobs can be woken", async (
       create: async () => ({ id: randomUUID() }),
       get: async () => ({ execution: { status: "failed", error: "Runtime failed" } }),
     } as unknown as MissionStore,
-    runner: {
-      run: async () => undefined,
+    application: {
+      startRun: async () => undefined,
       getTerminalRuntimeFailure: async () => ({
         code: "runtime_unavailable",
         message: "No Runtime is configured.",
@@ -100,7 +100,7 @@ it("preserves Runtime failure codes so configuration jobs can be woken", async (
         failedAt: new Date().toISOString(),
       }),
       delete: async () => undefined,
-    } as unknown as MissionRunner,
+    } as unknown as LocalHostMissionApplication,
     project: {
       ensurePublished: async () => ({ projectId: "project", revision: 1 }),
     } as unknown as PragmaProjectStore,

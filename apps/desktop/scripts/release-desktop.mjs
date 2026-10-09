@@ -151,8 +151,22 @@ function parseArguments(argumentsList) {
   return options;
 }
 
-function executable(command) {
-  return process.platform === "win32" && command === "pnpm" ? "pnpm.cmd" : command;
+function commandInvocation(command, argumentsList) {
+  if (process.platform === "win32" && command === "pnpm") {
+    const pnpmEntryPoint = process.env.npm_execpath;
+    if (pnpmEntryPoint === undefined || !/\.(?:cjs|mjs|js)$/i.test(pnpmEntryPoint)) {
+      throw new Error(
+        "Windows release commands require npm_execpath to point to pnpm's JavaScript entry point.",
+      );
+    }
+
+    return {
+      command: process.execPath,
+      argumentsList: [pnpmEntryPoint, ...argumentsList],
+    };
+  }
+
+  return { command, argumentsList };
 }
 
 function formatCommand(command, argumentsList) {
@@ -162,11 +176,11 @@ function formatCommand(command, argumentsList) {
 }
 
 function runCommand(command, argumentsList, cwd) {
-  const actualCommand = executable(command);
-  console.log(`\n$ ${formatCommand(actualCommand, argumentsList)}`);
+  const invocation = commandInvocation(command, argumentsList);
+  console.log(`\n$ ${formatCommand(invocation.command, invocation.argumentsList)}`);
 
   return new Promise((resolveCommand, rejectCommand) => {
-    const child = spawn(actualCommand, argumentsList, {
+    const child = spawn(invocation.command, invocation.argumentsList, {
       cwd,
       shell: false,
       stdio: "inherit",
@@ -191,7 +205,7 @@ function runCommand(command, argumentsList, cwd) {
       }
       rejectCommand(
         new Error(
-          `${actualCommand} exited with ${signal === null ? `code ${code}` : `signal ${signal}`}.`,
+          `${invocation.command} exited with ${signal === null ? `code ${code}` : `signal ${signal}`}.`,
         ),
       );
     });
@@ -199,7 +213,7 @@ function runCommand(command, argumentsList, cwd) {
 }
 
 function captureCommand(command, argumentsList, cwd, { allowFailure = false } = {}) {
-  const actualCommand = executable(command);
+  const actualCommand = command;
 
   try {
     const stdout = execFileSync(actualCommand, argumentsList, {

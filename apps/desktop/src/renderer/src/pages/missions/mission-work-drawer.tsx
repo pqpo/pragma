@@ -15,6 +15,7 @@ import {
 } from "./mission-page-utils.ts";
 
 export function MissionWorkDrawer(props: {
+  readonly missionId: string;
   readonly record: MissionWorkRecord;
   readonly inputSenderName: string;
   readonly mentionCandidates?: readonly ExpertMentionCandidate[] | undefined;
@@ -164,6 +165,7 @@ export function MissionWorkDrawer(props: {
                   return block.item.type === "durable" ? (
                     <MissionChatEntryView
                       entry={block.item.entry}
+                      missionId={props.missionId}
                       key={block.item.entry.id}
                       mentionCandidates={props.mentionCandidates}
                       userLabel={props.inputSenderName}

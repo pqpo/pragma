@@ -27,8 +27,8 @@ import {
 import { createPragmaLogger } from "@pragma/core";
 import { missionExecutorSnapshot } from "../../../shared/contracts/index.ts";
 import { createPragmaProjectStore } from "../projects/pragma-project-store.ts";
-import { createMissionStore } from "./mission-store.ts";
-import { createMissionRunner } from "./mission-runner.ts";
+import { createMissionStore } from "@pragma/local-host";
+import { createDesktopMissionTestApplication } from "./fixtures/desktop-mission-test-application.ts";
 import type { CapabilityStore } from "../capabilities/capability-store.ts";
 import type { CapabilityCredentialStore } from "../capabilities/capability-credential-store.ts";
 const roots: string[] = [];
@@ -99,7 +99,7 @@ async function fixture(
     });
   const executions = createSqliteExecutionStore({ pragmaHome: paths.root });
   stores.push(executions);
-  const runner = createMissionRunner({
+  const runner = createDesktopMissionTestApplication({
     missions,
     project,
     executionStore: executions,
@@ -120,7 +120,7 @@ async function fixture(
 describe("Mission deletion integration", () => {
   it("retains owners with an additional unconfirmed Runtime and retries after confirmation", async () => {
     const target = await fixture();
-    await target.runner.run(target.mission.id);
+    await target.runner.startRun(target.mission.id);
     await vi.waitFor(
       async () =>
         expect((await target.missions.get(target.mission.id)).execution?.status).toBe("succeeded"),
@@ -153,7 +153,7 @@ describe("Mission deletion integration", () => {
       })
       .mockImplementation(async () => undefined);
     const target = await fixture(close);
-    await target.runner.run(target.mission.id);
+    await target.runner.startRun(target.mission.id);
     await vi.waitFor(
       async () =>
         expect((await target.missions.get(target.mission.id)).execution?.status).toBe("succeeded"),
@@ -211,7 +211,7 @@ describe("Mission deletion integration", () => {
       await gate;
     };
     const target = await fixture(close);
-    await target.runner.run(target.mission.id);
+    await target.runner.startRun(target.mission.id);
     await vi.waitFor(
       async () =>
         expect((await target.missions.get(target.mission.id)).execution?.status).toBe("succeeded"),
@@ -269,7 +269,7 @@ describe("Mission deletion integration", () => {
         },
       });
       const target = await fixture(undefined, runtime);
-      const running = target.runner.run(target.mission.id);
+      const running = target.runner.startRun(target.mission.id);
       void running.catch(() => undefined);
       let suspended = false;
       try {

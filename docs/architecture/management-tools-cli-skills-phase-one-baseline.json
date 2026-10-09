@@ -1,0 +1,343 @@
+{
+  "commit": "a32bdedb",
+  "serialization": "JSON.stringify({name,description,parameters}, null, 2)",
+  "counter": "Core createRuntimeTokenCounter; await load(); o200k_base",
+  "tools": [
+    {
+      "name": "start_dsl_draft",
+      "schemaBytes": 939,
+      "count": {
+        "tokens": 502,
+        "source": "tokenizer"
+      }
+    },
+    {
+      "name": "list_dsl_drafts",
+      "schemaBytes": 429,
+      "count": {
+        "tokens": 193,
+        "source": "tokenizer"
+      }
+    },
+    {
+      "name": "inspect_dsl_draft",
+      "schemaBytes": 364,
+      "count": {
+        "tokens": 232,
+        "source": "tokenizer"
+      }
+    },
+    {
+      "name": "read_dsl_draft_review",
+      "schemaBytes": 818,
+      "count": {
+        "tokens": 448,
+        "source": "tokenizer"
+      }
+    },
+    {
+      "name": "prepare_dsl_draft",
+      "schemaBytes": 364,
+      "count": {
+        "tokens": 227,
+        "source": "tokenizer"
+      }
+    },
+    {
+      "name": "restart_dsl_draft",
+      "schemaBytes": 364,
+      "count": {
+        "tokens": 223,
+        "source": "tokenizer"
+      }
+    },
+    {
+      "name": "discard_dsl_draft",
+      "schemaBytes": 364,
+      "count": {
+        "tokens": 211,
+        "source": "tokenizer"
+      }
+    },
+    {
+      "name": "list_dsl_resources",
+      "schemaBytes": 658,
+      "count": {
+        "tokens": 304,
+        "source": "tokenizer"
+      }
+    },
+    {
+      "name": "read_dsl_resource",
+      "schemaBytes": 560,
+      "count": {
+        "tokens": 252,
+        "source": "tokenizer"
+      }
+    },
+    {
+      "name": "list_expert_options",
+      "schemaBytes": 654,
+      "count": {
+        "tokens": 305,
+        "source": "tokenizer"
+      }
+    },
+    {
+      "name": "allocate_dsl_resource_ids",
+      "schemaBytes": 477,
+      "count": {
+        "tokens": 250,
+        "source": "tokenizer"
+      }
+    },
+    {
+      "name": "prepare_dsl_changes",
+      "schemaBytes": 247,
+      "count": {
+        "tokens": 164,
+        "source": "tokenizer"
+      }
+    },
+    {
+      "name": "read_prepared_dsl_change",
+      "schemaBytes": 733,
+      "count": {
+        "tokens": 367,
+        "source": "tokenizer"
+      }
+    },
+    {
+      "name": "create_flow_draft",
+      "schemaBytes": 5763,
+      "count": {
+        "tokens": 2678,
+        "source": "tokenizer"
+      }
+    },
+    {
+      "name": "get_flow_draft",
+      "schemaBytes": 510,
+      "count": {
+        "tokens": 258,
+        "source": "tokenizer"
+      }
+    },
+    {
+      "name": "update_flow_draft",
+      "schemaBytes": 19453,
+      "count": {
+        "tokens": 9388,
+        "source": "tokenizer"
+      }
+    },
+    {
+      "name": "validate_flow_draft",
+      "schemaBytes": 364,
+      "count": {
+        "tokens": 211,
+        "source": "tokenizer"
+      }
+    },
+    {
+      "name": "create_evaluation_draft",
+      "schemaBytes": 1132,
+      "count": {
+        "tokens": 501,
+        "source": "tokenizer"
+      }
+    },
+    {
+      "name": "get_evaluation_draft",
+      "schemaBytes": 718,
+      "count": {
+        "tokens": 348,
+        "source": "tokenizer"
+      }
+    },
+    {
+      "name": "get_evaluation_cases",
+      "schemaBytes": 524,
+      "count": {
+        "tokens": 300,
+        "source": "tokenizer"
+      }
+    },
+    {
+      "name": "update_evaluation_draft",
+      "schemaBytes": 2770,
+      "count": {
+        "tokens": 1374,
+        "source": "tokenizer"
+      }
+    },
+    {
+      "name": "run_evaluation_draft",
+      "schemaBytes": 524,
+      "count": {
+        "tokens": 313,
+        "source": "tokenizer"
+      }
+    },
+    {
+      "name": "prepare_evaluation_draft",
+      "schemaBytes": 470,
+      "count": {
+        "tokens": 271,
+        "source": "tokenizer"
+      }
+    },
+    {
+      "name": "discard_evaluation_draft",
+      "schemaBytes": 364,
+      "count": {
+        "tokens": 205,
+        "source": "tokenizer"
+      }
+    },
+    {
+      "name": "prepare_flow_draft",
+      "schemaBytes": 581,
+      "count": {
+        "tokens": 326,
+        "source": "tokenizer"
+      }
+    },
+    {
+      "name": "discard_flow_draft",
+      "schemaBytes": 364,
+      "count": {
+        "tokens": 204,
+        "source": "tokenizer"
+      }
+    },
+    {
+      "name": "commit_dsl_changes",
+      "schemaBytes": 136,
+      "count": {
+        "tokens": 93,
+        "source": "tokenizer"
+      }
+    },
+    {
+      "name": "list_workspaces",
+      "schemaBytes": 485,
+      "count": {
+        "tokens": 238,
+        "source": "tokenizer"
+      }
+    },
+    {
+      "name": "list_home_projects",
+      "schemaBytes": 485,
+      "count": {
+        "tokens": 231,
+        "source": "tokenizer"
+      }
+    },
+    {
+      "name": "get_home_project",
+      "schemaBytes": 368,
+      "count": {
+        "tokens": 211,
+        "source": "tokenizer"
+      }
+    },
+    {
+      "name": "list_knowledge_stores",
+      "schemaBytes": 485,
+      "count": {
+        "tokens": 240,
+        "source": "tokenizer"
+      }
+    },
+    {
+      "name": "list_missions",
+      "schemaBytes": 951,
+      "count": {
+        "tokens": 483,
+        "source": "tokenizer"
+      }
+    },
+    {
+      "name": "get_mission",
+      "schemaBytes": 368,
+      "count": {
+        "tokens": 208,
+        "source": "tokenizer"
+      }
+    },
+    {
+      "name": "create_mission",
+      "schemaBytes": 937,
+      "count": {
+        "tokens": 397,
+        "source": "tokenizer"
+      }
+    },
+    {
+      "name": "send_mission_message",
+      "schemaBytes": 439,
+      "count": {
+        "tokens": 242,
+        "source": "tokenizer"
+      }
+    },
+    {
+      "name": "list_mission_work_items",
+      "schemaBytes": 883,
+      "count": {
+        "tokens": 436,
+        "source": "tokenizer"
+      }
+    },
+    {
+      "name": "get_mission_work_item",
+      "schemaBytes": 426,
+      "count": {
+        "tokens": 241,
+        "source": "tokenizer"
+      }
+    },
+    {
+      "name": "interrupt_mission",
+      "schemaBytes": 368,
+      "count": {
+        "tokens": 204,
+        "source": "tokenizer"
+      }
+    },
+    {
+      "name": "list_automations",
+      "schemaBytes": 687,
+      "count": {
+        "tokens": 322,
+        "source": "tokenizer"
+      }
+    },
+    {
+      "name": "save_automation",
+      "schemaBytes": 488,
+      "count": {
+        "tokens": 242,
+        "source": "tokenizer"
+      }
+    },
+    {
+      "name": "delete_automation",
+      "schemaBytes": 285,
+      "count": {
+        "tokens": 149,
+        "source": "tokenizer"
+      }
+    },
+    {
+      "name": "reset_automation_session",
+      "schemaBytes": 243,
+      "count": {
+        "tokens": 128,
+        "source": "tokenizer"
+      }
+    }
+  ]
+}

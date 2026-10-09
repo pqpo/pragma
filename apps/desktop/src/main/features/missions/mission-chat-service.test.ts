@@ -1,6 +1,6 @@
 import { expect, it } from "vitest";
 
-import { MissionChatService } from "./mission-chat-service.ts";
+import { MissionChatService } from "@pragma/local-host";
 
 it("tracks history invalidations separately from live text patches and clears both watermarks", async () => {
   const service = new MissionChatService(() => undefined);

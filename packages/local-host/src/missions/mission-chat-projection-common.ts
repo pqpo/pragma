@@ -2,6 +2,8 @@ import { InvocationOutputSchema } from "@pragma/shared";
 import { isFinalExecutionStatus } from "@pragma/shared";
 import type { ExecutionOutputItem } from "@pragma/core";
 
+import { MISSION_EXECUTION_PROJECTION_MAX_TOOL_PREVIEW_LENGTH } from "./repository/mission-execution-projection.ts";
+
 export const MISSION_CHAT_ERROR_MAX_LENGTH = 10_000;
 
 export type ExecutorNameResolver = (executorId: string) => string | undefined;
@@ -43,7 +45,7 @@ export function readString(record: Record<string, unknown>, key: string): string
 
 export function preview(value: unknown): string | undefined {
   if (value === undefined || value === null || value === "") return undefined;
-  const formatted = formatValue(value, 801);
+  const formatted = formatValue(value, MISSION_EXECUTION_PROJECTION_MAX_TOOL_PREVIEW_LENGTH);
   return formatted === "" ? undefined : formatted;
 }
 
@@ -114,7 +116,12 @@ export function formatValue(value: unknown, maxLength: number): string {
       content = String(value);
     }
   }
-  return content.length <= maxLength
-    ? content
-    : `${content.slice(0, Math.max(0, maxLength - 1)).trimEnd()}…`;
+  if (content.length <= maxLength) return content;
+  let end = Math.max(0, maxLength - 1);
+  const preceding = content.charCodeAt(end - 1);
+  const following = content.charCodeAt(end);
+  if (preceding >= 0xd800 && preceding <= 0xdbff && following >= 0xdc00 && following <= 0xdfff) {
+    end -= 1;
+  }
+  return `${content.slice(0, end).trimEnd()}…`;
 }

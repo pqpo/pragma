@@ -1,6 +1,6 @@
 {
   "name": "@pragma/desktop",
-  "version": "0.2.49",
+  "version": "0.2.52",
   "private": true,
   "type": "module",
   "productName": "Pragma",
@@ -40,7 +40,7 @@
     "clean": "rm -rf out dist .plugin-bundles",
     "test:packaging": "node --test ./scripts/audit-packaged-app.test.mjs",
     "test:claude-worker": "node --test ./scripts/claude-worker-boundary.test.mjs",
-    "test:mission-chat": "vitest run src/test/mission-queued-chat-refresh.test.tsx src/renderer/src/pages/missions/mission-conversation-model.test.ts && vitest run src/main/features/missions/mission-runner.test.ts -t \"streams every queued turn|keeps the captured live answer|projects an already-finished queued turn|projects oversized replies\""
+    "test:mission-chat": "vitest run src/test/mission-queued-chat-refresh.test.tsx src/renderer/src/pages/missions/mission-conversation-model.test.ts && vitest run src/main/features/missions/desktop-mission-adapter.test.ts -t \"streams every queued turn|keeps the captured live answer|projects an already-finished queued turn|projects oversized replies\""
   },
   "dependencies": {
     "@codemirror/commands": "^6.11.1",
@@ -96,7 +96,7 @@
     "electron-builder": "^26.15.3",
     "electron-vite": "latest",
     "esbuild": "^0.28.2",
-    "postcss": "^8.5.28",
+    "postcss": "^8.5.29",
     "typescript": "latest",
     "vite": "^7.3.6",
     "vitest": "latest"

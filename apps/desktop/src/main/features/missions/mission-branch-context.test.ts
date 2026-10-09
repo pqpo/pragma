@@ -7,13 +7,10 @@ import {
   MissionBranchHistorySchema,
   type MissionChatEntry,
 } from "../../../shared/contracts/index.ts";
-import {
-  createMissionBranchContext,
-  prepareMissionBranchHistory,
-} from "./mission-branch-context.ts";
-import { createMissionStore } from "./mission-store.ts";
+import { createMissionBranchContext, prepareMissionBranchHistory } from "@pragma/local-host";
+import { createMissionStore } from "@pragma/local-host";
 import { createNoopLoggerProvider } from "@pragma/core";
-import { createMissionRunner } from "./mission-runner.ts";
+import { createDesktopMissionTestApplication } from "./fixtures/desktop-mission-test-application.ts";
 import { createPragmaProjectStore } from "../projects/pragma-project-store.ts";
 import type { CapabilityStore } from "../capabilities/capability-store.ts";
 import type { CapabilityCredentialStore } from "../capabilities/capability-credential-store.ts";
@@ -114,7 +111,7 @@ describe("createMissionBranchContext", () => {
       expect.soft(recent.indexOf("Keep the change small")).toBeLessThan(recent.indexOf("Done"));
       // Reopen storage and read the Branch's own page without a source session.
       const reopened = createMissionStore({ missionsPath: join(root, "missions") });
-      const runner = createMissionRunner({
+      const runner = createDesktopMissionTestApplication({
         missions: reopened,
         project,
         capabilityStore: {} as CapabilityStore,

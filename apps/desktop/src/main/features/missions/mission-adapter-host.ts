@@ -2,11 +2,13 @@ import { createHash } from "node:crypto";
 
 import {
   PRAGMA_MANAGEMENT_BINDING_REF,
+  BUILT_IN_PRAGMA_ID,
   PRAGMA_MANAGEMENT_CAPABILITY_REVISION,
   createPragmaManagementTools,
   type PragmaManagementToolPorts,
 } from "@pragma/built-in-agents";
-import type { McpToolRegistryPool } from "@pragma/core";
+import { createManagementCommandHooks, MANAGEMENT_COMMAND_TOOLS } from "@pragma/local-host";
+import { PragmaPaths, type McpToolRegistryPool } from "@pragma/core";
 import { FileSystemContextStore } from "@pragma/context-filesystem";
 import type { PragmaAdapterHost, PragmaBindingRecord } from "@pragma/interpreter";
 import { LocalHostResourceUnavailableError } from "@pragma/local-host/resources";
@@ -26,12 +28,15 @@ export function createDesktopAdapterHost(
     readonly capabilityStore: CapabilityStore;
     readonly capabilityCredentials: CapabilityCredentialStore;
     readonly capabilitiesPath: string;
+    readonly pragmaHome?: string | undefined;
     /** Stop definitions preserve identity metadata and must never be executed. */
     readonly purpose?: "execute" | "stop" | undefined;
     readonly mcpToolRegistryPool?: McpToolRegistryPool | undefined;
     readonly contextStores?: ContextStoreStore | undefined;
     readonly resolveSecret?: ((ref: string) => Promise<string | undefined>) | undefined;
     readonly pragmaManagement?: PragmaManagementToolPorts | undefined;
+    readonly pragmaCommandDistribution?:
+      (() => Promise<{ readonly directory: string }>) | undefined;
     readonly pragmaManagementScope?:
       { readonly missionId: string; readonly workspacePath: string } | undefined;
   },
@@ -74,11 +79,30 @@ export function createDesktopAdapterHost(
             }),
           )
           .digest("hex");
+        const distribution = await options.pragmaCommandDistribution?.();
+        const hooks =
+          distribution === undefined || options.pragmaManagementScope === undefined
+            ? undefined
+            : createManagementCommandHooks({
+                ports: options.pragmaManagement!,
+                scope: options.pragmaManagementScope,
+                commandDirectory: distribution.directory,
+                pragmaHome: options.pragmaHome ?? new PragmaPaths().root,
+                allowedCommands: Object.keys(
+                  MANAGEMENT_COMMAND_TOOLS,
+                ) as (keyof typeof MANAGEMENT_COMMAND_TOOLS)[],
+                commandsForAgent: (agent) =>
+                  agent.id === BUILT_IN_PRAGMA_ID
+                    ? (Object.keys(
+                        MANAGEMENT_COMMAND_TOOLS,
+                      ) as (keyof typeof MANAGEMENT_COMMAND_TOOLS)[])
+                    : [],
+              });
         return {
           ref,
           revision: String(PRAGMA_MANAGEMENT_CAPABILITY_REVISION),
           fingerprint,
-          value: { contribution: { tools } },
+          value: { contribution: { tools, ...(hooks === undefined ? {} : { hooks }) } },
         };
       }
       const capabilityRef =

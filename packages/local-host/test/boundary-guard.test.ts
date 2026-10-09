@@ -21,7 +21,9 @@ const localHostInternalDependencyAllowlist: InternalDependencyAllowlist = {
     "@pragma/built-in-agents",
     "@pragma/context-filesystem",
     "@pragma/core",
+    "@pragma/evaluation",
     "@pragma/interpreter",
+    "@pragma/memory",
     "@pragma/shared",
   ],
   devDependencies: ["@pragma/tsconfig"],
@@ -36,6 +38,7 @@ const cliInternalDependencyAllowlist: InternalDependencyAllowlist = {
     "@pragma/runtime-antigravity",
     "@pragma/runtime-claude-code",
     "@pragma/runtime-codex",
+    "@pragma/runtime-opencode",
     "@pragma/runtime-pi",
     "@pragma/runtime-qodercli",
   ],
@@ -116,6 +119,24 @@ describe("Local Host boundary guards", () => {
     expect(lintStdin('import "@pragma/local-host";\n', "apps/desktop/src/main/legal.ts")).toBe("");
   }, 15_000);
 
+  it("rejects surface-owned command and execution kernels", () => {
+    expect(
+      lintStdin(
+        'import { ExpertSessionManager } from "@pragma/core";\nvoid ExpertSessionManager;\n',
+        "apps/desktop/src/main/features/automations/illegal.ts",
+      ),
+    ).toContain("Desktop features must use Local Host Mission use cases");
+    expect(
+      lintStdin(
+        'import { createMissionControlApplication } from "@pragma/local-host";\nvoid createMissionControlApplication;\n',
+        "apps/desktop/src/main/features/missions/illegal.ts",
+      ),
+    ).toContain("Mission command and execution kernels may only be composed by Local Host");
+    expect(lintStdin('import "@pragma/core";\n', "apps/cli/src/commands/illegal.ts")).toContain(
+      "CLI business operations must use the Local Host application boundary",
+    );
+  }, 15_000);
+
   it("keeps Local Host and CLI manifests within their internal dependency partitions", async () => {
     const [localHostManifest, cliManifest] = (
       await Promise.all([
@@ -148,6 +169,7 @@ describe("Local Host boundary guards", () => {
             "@pragma/runtime-antigravity": "workspace:*",
             "@pragma/runtime-claude-code": "workspace:*",
             "@pragma/runtime-codex": "workspace:*",
+            "@pragma/runtime-opencode": "workspace:*",
             "@pragma/runtime-pi": "workspace:*",
             "@pragma/runtime-qodercli": "workspace:*",
           },
@@ -166,6 +188,7 @@ describe("Local Host boundary guards", () => {
             "@pragma/runtime-antigravity": "workspace:*",
             "@pragma/runtime-claude-code": "workspace:*",
             "@pragma/runtime-codex": "workspace:*",
+            "@pragma/runtime-opencode": "workspace:*",
             "@pragma/runtime-pi": "workspace:*",
             "@pragma/runtime-qodercli": "workspace:*",
           },

@@ -1,7 +1,7 @@
 import type { MissionActivityReader } from "@pragma/local-host";
 
 import type { Mission, MissionSummary } from "../../../shared/contracts/index.ts";
-import type { MissionStore } from "./mission-store.ts";
+import type { MissionStore } from "@pragma/local-host";
 
 /**
  * Adapts the Local Host-owned Mission activity projection to Desktop metadata.

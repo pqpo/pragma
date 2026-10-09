@@ -46,6 +46,8 @@ export type FileLockPhase =
   | "release-before-retire"
   | "release-after-retire"
   | "reclaim-before-retire"
+  | "reclaim-marker-created"
+  | "reclaim-marker-claimed"
   | "reclaim-after-retire"
   | "retired-cleanup";
 
@@ -503,10 +505,12 @@ async function reclaimLock(
   options: FileLockOptions,
 ): Promise<boolean> {
   await options.onPhase?.("reclaim-before-retire");
-  if (!(await claimReclaimMarker(lockDir, staleMsFor(options)))) return false;
+  if (!(await claimReclaimMarker(lockDir, staleMsFor(options), options.onPhase))) return false;
+  await options.onPhase?.("reclaim-marker-claimed");
 
   if (!(await lockGenerationMatches(lockDir, expected))) {
-    await removeReclaimMarker(lockDir);
+    // The claimed marker belongs to the assessed directory. After replacement,
+    // its canonical path belongs to the successor and must never be cleaned.
     return false;
   }
 
@@ -520,7 +524,8 @@ async function reclaimLock(
     );
   } catch (error) {
     if (isNotFound(error)) {
-      await removeReclaimMarker(lockDir);
+      // The old namespace has already retired; no marker at the current path
+      // can establish custody of the one we claimed.
       return false;
     }
     throw error;
@@ -535,18 +540,37 @@ function staleMsFor(options: FileLockOptions): number {
   return options.staleMs ?? 30_000;
 }
 
-async function claimReclaimMarker(lockDir: string, staleMs: number): Promise<boolean> {
+async function claimReclaimMarker(
+  lockDir: string,
+  staleMs: number,
+  onPhase: FileLockOptions["onPhase"],
+): Promise<boolean> {
   const reclaimDir = join(lockDir, RECLAIM_DIRECTORY_NAME);
+  const parentGeneration = await readDirectoryGeneration(lockDir);
+  if (parentGeneration === undefined) return false;
   try {
     await mkdir(reclaimDir, { mode: 0o700 });
   } catch (error) {
     if (isNotFound(error) || isRetryableLockContention(error)) {
       if (!isAlreadyExists(error)) return false;
+      const markerGeneration = await readDirectoryGeneration(reclaimDir);
       const marker = await readLockOwner(join(reclaimDir, OWNER_FILE_NAME));
       if (marker !== undefined && processStatus(marker) !== "dead") return false;
       if (marker === undefined && (await pathStaleness(reclaimDir, staleMs)) !== "stale") {
         return false;
       }
+      const currentParent = await readDirectoryGeneration(lockDir);
+      const currentGeneration = await readDirectoryGeneration(reclaimDir);
+      const currentMarker = await readLockOwner(join(reclaimDir, OWNER_FILE_NAME));
+      if (
+        currentParent?.device !== parentGeneration.device ||
+        currentParent.inode !== parentGeneration.inode ||
+        markerGeneration === undefined ||
+        currentGeneration?.device !== markerGeneration.device ||
+        currentGeneration.inode !== markerGeneration.inode ||
+        currentMarker?.ownerToken !== marker?.ownerToken
+      )
+        return false;
       await rm(reclaimDir, {
         recursive: true,
         force: true,
@@ -567,8 +591,20 @@ async function claimReclaimMarker(lockDir: string, staleMs: number): Promise<boo
     operation: "file-lock.reclaim",
   };
   const markerPath = join(reclaimDir, OWNER_FILE_NAME);
+  const markerGeneration = await readDirectoryGeneration(reclaimDir);
   let markerFile: Awaited<ReturnType<typeof open>> | undefined;
   try {
+    await onPhase?.("reclaim-marker-created");
+    const currentParent = await readDirectoryGeneration(lockDir);
+    const currentMarkerDirectory = await readDirectoryGeneration(reclaimDir);
+    if (
+      currentParent?.device !== parentGeneration.device ||
+      currentParent.inode !== parentGeneration.inode ||
+      markerGeneration === undefined ||
+      currentMarkerDirectory?.device !== markerGeneration.device ||
+      currentMarkerDirectory.inode !== markerGeneration.inode
+    )
+      return false;
     markerFile = await open(markerPath, "wx", 0o600);
     await writeStorageHandle(markerFile, `${JSON.stringify(marker)}\n`);
     await markerFile.sync();
@@ -576,26 +612,28 @@ async function claimReclaimMarker(lockDir: string, staleMs: number): Promise<boo
     return true;
   } catch (error) {
     await markerFile?.close().catch(() => undefined);
-    await rm(reclaimDir, {
-      recursive: true,
-      force: true,
-      maxRetries: 5,
-      retryDelay: 50,
-    }).catch(() => undefined);
+    // The assessed owner can retire its directory while we initialize the
+    // marker. Retry acquisition without touching a replacement lock's marker.
+    if (isNotFound(error) || isAlreadyExists(error)) return false;
+    const currentMarker = await readLockOwner(markerPath);
+    const currentGeneration = await readDirectoryGeneration(reclaimDir);
+    const currentParent = await readDirectoryGeneration(lockDir);
+    if (
+      currentParent?.device === parentGeneration.device &&
+      currentParent.inode === parentGeneration.inode &&
+      markerGeneration !== undefined &&
+      currentGeneration?.device === markerGeneration.device &&
+      currentGeneration.inode === markerGeneration.inode &&
+      (currentMarker?.ownerToken === marker.ownerToken || currentMarker === undefined)
+    )
+      await rm(reclaimDir, {
+        recursive: true,
+        force: true,
+        maxRetries: 5,
+        retryDelay: 50,
+      }).catch(() => undefined);
     throw error;
   }
-}
-
-async function removeReclaimMarker(lockDir: string): Promise<void> {
-  await rm(join(lockDir, RECLAIM_DIRECTORY_NAME), {
-    recursive: true,
-    force: true,
-    maxRetries: 5,
-    retryDelay: 50,
-  }).catch((error: unknown) => {
-    if (isNotFound(error) || isRetryableLockContention(error)) return;
-    throw error;
-  });
 }
 
 async function lockGenerationMatches(lockDir: string, expected: LockGeneration): Promise<boolean> {
@@ -648,7 +686,10 @@ async function readLockOwner(ownerPath: string): Promise<FileLockOwner | undefin
 
 function processStatus(owner: FileLockOwner): "alive" | "dead" | "unknown" {
   if (owner.processId === process.pid) {
-    return owner.processStartedAt === CURRENT_PROCESS_STARTED_AT ? "alive" : "dead";
+    // Worker isolates share a PID but independently estimate process start from
+    // Date.now()/uptime(). Their millisecond estimates are not an identity check.
+    // A live PID must remain protected, as it is for owners in other processes.
+    return "alive";
   }
   try {
     process.kill(owner.processId, 0);

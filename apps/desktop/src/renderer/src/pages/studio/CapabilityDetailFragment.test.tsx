@@ -45,6 +45,17 @@ const capability: Capability = {
 };
 
 describe("CapabilityDetailFragment", () => {
+  it("shows a built-in Skill version and suppresses every mutation action", () => {
+    const html = renderToStaticMarkup(<CapabilityDetailFragment capability={{
+      ...capability, managedBy: "system", manifest: { ...capability.manifest, name: "Author Pragma Flow", kind: "skill" },
+      definition: { kind: "skill", name: "Author Pragma Flow", description: "Flow authoring", entryPath: "SKILL.md", contentHash: "0".repeat(64) },
+    }} onBack={() => undefined} onChanged={() => undefined} />);
+    expect(html).toContain("Built-in");
+    expect(html).toContain("Author Pragma Flow");
+    expect(html).toContain("Revision 2");
+    for (const action of ["Update from package", "Submit revision", "Delete", "Git settings", "Publish"]) expect(html).not.toContain(`>${action}<`);
+  });
+
   it("shows capability metadata, tool details, and a JSON test panel", () => {
     const html = renderToStaticMarkup(
       <CapabilityDetailFragment

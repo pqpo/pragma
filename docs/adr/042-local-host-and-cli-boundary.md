@@ -49,3 +49,27 @@ execution retain narrow temporary dependencies for R2/R3, so this note does not 
 application-kernel migration. Persistent Schema/wire versions, transaction fencing and historical
 migration chains are unchanged. The [implementation report](../architecture/local-host-kernel-r1-implementation.md)
 records correctness and performance exit status independently.
+
+## R4 application kernel (2026-10-04)
+
+Desktop and CLI now compose the same Local Host Mission application factory. Surfaces supply
+resource, persistence, interaction and presentation adapters; replacing a complete command or
+execution service is outside the composition contract. Internal Mission callers use shared
+application use cases. See [ADR 066](066-unified-local-host-mission-application.md) for lifetime,
+delivery and validation boundaries. Engineering implementation and full product acceptance remain
+separate; [R4 report](../architecture/local-host-kernel-r4-implementation.md) records outstanding gates.
+
+## Issue #368 execution client (2026-10-08)
+
+[ADR 067](067-execution-management-cli-and-built-in-skills.md) adds a Desktop-bundled, private
+Execution command client for built-in Skills. It uses Electron's Node mode and a Runtime-local
+process PATH; Desktop still does not install the public CLI or change user shell configuration.
+This client is not a daemon or a model-visible MCP surface. Native Flow Schema removal remains
+subject to the stage acceptance gates recorded in the implementation report.
+
+## Issue #368 第三阶段命名空间（2026-10-09）
+
+管理入口统一为 `pragma manage …`；原用户 `pragma mission …`、executor run 与其他入口保留。
+Desktop 随应用提供的受控 client 和公共 CLI 共用这一语法及 wire 协议。用户已明确将缺少
+Execution endpoint 时的独立管理 composition 延后；本阶段缺少 endpoint 仍返回权限诊断，
+不启动 daemon、不替换用户 CLI Host，也不让 Skill 本身成为授权凭据。详见 ADR 067。

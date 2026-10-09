@@ -516,9 +516,33 @@ export function createLocalHostRunHandleState(options: {
   let settled = false;
   let resolveCheckpoint: ((terminal: LocalHostRunTerminal) => void) | undefined;
   let pump: Promise<void> = Promise.resolve();
+  let rejectEventFailure!: (error: unknown) => void;
+  const eventFailure = new Promise<never>((_resolve, reject) => {
+    rejectEventFailure = reject;
+  });
   const checkpoint = new Promise<LocalHostRunTerminal>((resolve) => {
     resolveCheckpoint = resolve;
   });
+  let finalizingCheckpoint: Promise<void> | undefined;
+  const finalizeCheckpoint = (): Promise<void> =>
+    (finalizingCheckpoint ??= (async () => {
+      const interaction = await readPendingInteraction(
+        options.executions,
+        options.coreHandle.executionId,
+        options.missionId,
+        pending,
+      );
+      if (interaction === undefined)
+        throw new Error("Human interaction checkpoint has no pending request.");
+      await pump;
+      await options.onCheckpointed?.();
+      resolveCheckpoint?.({
+        status: "input_required",
+        executionId: options.coreHandle.executionId,
+        interaction,
+        ...(await readUsage(options.executions, options.coreHandle.executionId)),
+      });
+    })());
   const complete = options.coreHandle.result.then(
     async (result): Promise<LocalHostRunTerminal> => {
       settled = true;
@@ -534,9 +558,9 @@ export function createLocalHostRunHandleState(options: {
     async (error): Promise<LocalHostRunTerminal> => {
       settled = true;
       if (isHumanInteractionCheckpointError(error)) {
-        // The checkpoint path owns the durable pending result.  Do not issue
-        // another Execution read here: the result race may already have
-        // resolved and a late read can outlive the Host lease cleanup.
+        // Shutdown can checkpoint Core without going through the foreground
+        // handle. Both paths finalize the same Host checkpoint exactly once.
+        await finalizeCheckpoint();
         return await checkpoint;
       }
       return await terminalFromExecution(
@@ -550,29 +574,13 @@ export function createLocalHostRunHandleState(options: {
   );
   const handle: LocalHostRunHandle = {
     executionId: options.coreHandle.executionId,
-    result: Promise.race([complete, checkpoint]),
+    result: Promise.race([complete, checkpoint, eventFailure]),
     release: options.release,
     cancel: async (reason) => await options.coreHandle.cancel(reason),
     checkpointWaitingHuman: async () => {
       if (settled) return;
       await options.coreHandle.checkpointWaitingHuman();
-      const interaction = await readPendingInteraction(
-        options.executions,
-        options.coreHandle.executionId,
-        options.missionId,
-        pending,
-      );
-      if (interaction === undefined) {
-        throw new Error(`Human interaction checkpoint has no pending request.`);
-      }
-      await pump;
-      await options.onCheckpointed?.();
-      resolveCheckpoint?.({
-        status: "input_required",
-        executionId: options.coreHandle.executionId,
-        interaction,
-        ...(await readUsage(options.executions, options.coreHandle.executionId)),
-      });
+      await finalizeCheckpoint();
     },
     respondToHumanInteraction: async (interactionId, response, requestId) => {
       const envelope =
@@ -602,7 +610,10 @@ export function createLocalHostRunHandleState(options: {
   pump = (async () => {
     const subscription = await options.coreHandle.subscribeEvents({ scope: { kind: "all" } });
     try {
-      for await (const event of subscription) {
+      const seen = new Set<string>();
+      const publish = (event: ExecutionEvent): void => {
+        if (seen.has(event.eventId)) return;
+        seen.add(event.eventId);
         const mapped = mapExecutionEvent(
           event,
           options.missionId,
@@ -611,14 +622,69 @@ export function createLocalHostRunHandleState(options: {
         );
         options.onEvent?.(mapped);
         queue.push(mapped);
+      };
+      // Native execution can reach a human wait before Host registration finishes.
+      // Reconstruct only pending interactions from bounded durable pages. Historical
+      // output and already answered interactions must not be presented again.
+      const requests = new Map<string, ExecutionEvent>();
+      let after: ExecutionEvent["cursor"] | undefined;
+      while (true) {
+        const page = await options.executions.readEvents(
+          options.coreHandle.executionId,
+          after,
+          200,
+        );
+        for (const event of page) {
+          if (event.type === "human.requested" || event.type === "human.responded") {
+            const mapped = mapExecutionEvent(
+              event,
+              options.missionId,
+              options.coreHandle.executionId,
+              pending,
+            );
+            const envelope = HumanInteractionRequestEnvelopeSchema.safeParse(mapped.data);
+            if (envelope.success) requests.set(envelope.data.interactionId, event);
+            if (event.type === "human.responded") {
+              for (const interactionId of requests.keys()) {
+                if (!pending.has(interactionId)) requests.delete(interactionId);
+              }
+            }
+          }
+        }
+        after = page.at(-1)?.cursor ?? after;
+        if (page.length < 200) break;
       }
+      for (const [interactionId, event] of requests) {
+        if (pending.has(interactionId)) publish(event);
+      }
+      for await (const event of subscription) {
+        // Only Human facts were reconstructed by the scan. Other buffered live
+        // events must still reach callers even when they also entered that page.
+        if (
+          (event.type === "human.requested" || event.type === "human.responded") &&
+          after !== undefined &&
+          event.cursor.sequence <= after.sequence
+        )
+          continue;
+        publish(event);
+      }
+    } catch (error) {
+      // Closing first would mask a failed catch-up as successful end-of-stream.
+      queue.fail(error);
+      throw error;
     } finally {
       await subscription.close();
       queue.close();
     }
   })().catch((error) => {
     queue.fail(error);
+    rejectEventFailure(error);
+    throw error;
   });
+  // Callers can consume result/onEvent or the iterator independently.
+  // Observe rejected promises without changing the failures they expose.
+  void pump.catch(() => undefined);
+  void handle.result.catch(() => undefined);
   return {
     handle: { ...handle, events: queue },
     pump,

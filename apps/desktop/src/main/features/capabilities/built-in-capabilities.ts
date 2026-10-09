@@ -5,6 +5,8 @@ import {
   PRAGMA_MANAGEMENT_DESKTOP_CAPABILITY_ID,
   PRAGMA_MANAGEMENT_TOOL_DEFINITIONS,
   createPragmaManagementTools,
+  BUILT_IN_SKILLS,
+  builtInSkillCapability,
   type PragmaManagementToolPorts,
 } from "@pragma/built-in-agents";
 import {
@@ -68,11 +70,18 @@ export const BUILT_IN_PRAGMA_MANAGEMENT_CAPABILITY: Capability = CapabilitySchem
 export async function listCapabilitiesWithBuiltIns(
   store: Pick<CapabilityStore, "list">,
 ): Promise<readonly Capability[]> {
-  return [BUILT_IN_PRAGMA_MANAGEMENT_CAPABILITY, ...(await store.list())];
+  return [
+    BUILT_IN_PRAGMA_MANAGEMENT_CAPABILITY,
+    ...BUILT_IN_SKILLS.map((skill) => builtInSkillCapability(skill.id)!),
+    ...(await store.list()),
+  ];
 }
 
 export function isBuiltInCapabilityId(id: string): boolean {
-  return id === BUILT_IN_PRAGMA_MANAGEMENT_CAPABILITY.manifest.id;
+  return (
+    id === BUILT_IN_PRAGMA_MANAGEMENT_CAPABILITY.manifest.id ||
+    builtInSkillCapability(id) !== undefined
+  );
 }
 
 export async function testBuiltInCapability(

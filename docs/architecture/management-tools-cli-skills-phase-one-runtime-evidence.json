@@ -1,0 +1,706 @@
+[
+  {
+    "runtime": "codex",
+    "scenario": "chat",
+    "variant": "before",
+    "tools": 44,
+    "succeeded": true,
+    "failure": null,
+    "elapsedMs": 15415,
+    "runtimeUsage": [
+      {
+        "measurement": "reported",
+        "input": 5651,
+        "output": 5,
+        "cacheRead": 12288,
+        "cacheWrite": 0,
+        "totalTokens": 17944,
+        "cost": {
+          "input": 0,
+          "output": 0,
+          "cacheRead": 0,
+          "cacheWrite": 0,
+          "total": 0
+        }
+      }
+    ],
+    "nativeToolCalls": 0,
+    "project": {
+      "revision": 0,
+      "resources": []
+    },
+    "approvals": [],
+    "commandReceipts": []
+  },
+  {
+    "runtime": "codex",
+    "scenario": "chat",
+    "variant": "after",
+    "tools": 38,
+    "succeeded": true,
+    "failure": null,
+    "elapsedMs": 15343,
+    "runtimeUsage": [
+      {
+        "measurement": "reported",
+        "input": 5649,
+        "output": 5,
+        "cacheRead": 12288,
+        "cacheWrite": 0,
+        "totalTokens": 17942,
+        "cost": {
+          "input": 0,
+          "output": 0,
+          "cacheRead": 0,
+          "cacheWrite": 0,
+          "total": 0
+        }
+      }
+    ],
+    "nativeToolCalls": 0,
+    "project": {
+      "revision": 0,
+      "resources": []
+    },
+    "approvals": [],
+    "commandReceipts": []
+  },
+  {
+    "runtime": "codex",
+    "scenario": "smoke",
+    "variant": "after",
+    "tools": 38,
+    "succeeded": true,
+    "failure": null,
+    "elapsedMs": 22046,
+    "runtimeUsage": [
+      {
+        "measurement": "reported",
+        "input": 414,
+        "output": 97,
+        "cacheRead": 17792,
+        "cacheWrite": 0,
+        "totalTokens": 18303,
+        "cost": {
+          "input": 0,
+          "output": 0,
+          "cacheRead": 0,
+          "cacheWrite": 0,
+          "total": 0
+        }
+      }
+    ],
+    "nativeToolCalls": 1,
+    "project": {
+      "revision": 0,
+      "resources": []
+    },
+    "approvals": [],
+    "commandReceipts": [
+      {
+        "command": "dsl.resources.list",
+        "exitCode": 0,
+        "errorCode": null
+      }
+    ]
+  },
+  {
+    "runtime": "codex",
+    "scenario": "flow",
+    "variant": "before",
+    "tools": 44,
+    "succeeded": true,
+    "failure": null,
+    "elapsedMs": 197099,
+    "runtimeUsage": [
+      {
+        "measurement": "reported",
+        "input": 304,
+        "output": 104,
+        "cacheRead": 31872,
+        "cacheWrite": 0,
+        "totalTokens": 32280,
+        "cost": {
+          "input": 0,
+          "output": 0,
+          "cacheRead": 0,
+          "cacheWrite": 0,
+          "total": 0
+        }
+      },
+      {
+        "measurement": "reported",
+        "input": 351,
+        "output": 72,
+        "cacheRead": 37248,
+        "cacheWrite": 0,
+        "totalTokens": 37671,
+        "cost": {
+          "input": 0,
+          "output": 0,
+          "cacheRead": 0,
+          "cacheWrite": 0,
+          "total": 0
+        }
+      },
+      {
+        "measurement": "reported",
+        "input": 637,
+        "output": 56,
+        "cacheRead": 39936,
+        "cacheWrite": 0,
+        "totalTokens": 40629,
+        "cost": {
+          "input": 0,
+          "output": 0,
+          "cacheRead": 0,
+          "cacheWrite": 0,
+          "total": 0
+        }
+      }
+    ],
+    "nativeToolCalls": 37,
+    "project": {
+      "revision": 2,
+      "resources": [
+        {
+          "kind": "Flow",
+          "metadata": {
+            "id": "3kvata8nye1r958d",
+            "name": "Release Approval",
+            "description": "Modified by native Runtime",
+            "tags": []
+          }
+        }
+      ]
+    },
+    "approvals": [
+      {
+        "tool": "commit_dsl_changes",
+        "approved": true
+      },
+      {
+        "tool": "commit_dsl_changes",
+        "approved": true
+      },
+      {
+        "tool": "commit_dsl_changes",
+        "approved": false
+      }
+    ],
+    "commandReceipts": [
+      {
+        "command": "flow.draft.update",
+        "exitCode": 4,
+        "errorCode": "IDEMPOTENCY_CONFLICT"
+      },
+      {
+        "command": "dsl.changes.commit",
+        "exitCode": 6,
+        "errorCode": "PERMISSION_DENIED"
+      },
+      {
+        "command": "dsl.changes.commit",
+        "exitCode": 0,
+        "errorCode": null
+      },
+      {
+        "command": "dsl.resources.list",
+        "exitCode": 0,
+        "errorCode": null
+      },
+      {
+        "command": "flow.draft.prepare",
+        "exitCode": 0,
+        "errorCode": null
+      },
+      {
+        "command": "flow.draft.create",
+        "exitCode": 0,
+        "errorCode": null
+      },
+      {
+        "command": "flow.draft.validate",
+        "exitCode": 0,
+        "errorCode": null
+      },
+      {
+        "command": "dsl.resources.list",
+        "exitCode": 0,
+        "errorCode": null
+      },
+      {
+        "command": "dsl.ids.allocate",
+        "exitCode": 0,
+        "errorCode": null
+      },
+      {
+        "command": "flow.draft.prepare",
+        "exitCode": 0,
+        "errorCode": null
+      },
+      {
+        "command": "flow.draft.get",
+        "exitCode": 0,
+        "errorCode": null
+      },
+      {
+        "command": "flow.draft.update",
+        "exitCode": 0,
+        "errorCode": null
+      },
+      {
+        "command": "flow.draft.create",
+        "exitCode": 0,
+        "errorCode": null
+      },
+      {
+        "command": "dsl.resources.read",
+        "exitCode": 0,
+        "errorCode": null
+      },
+      {
+        "command": "flow.draft.create",
+        "exitCode": 0,
+        "errorCode": null
+      },
+      {
+        "command": "dsl.resources.list",
+        "exitCode": 0,
+        "errorCode": null
+      },
+      {
+        "command": "flow.draft.validate",
+        "exitCode": 0,
+        "errorCode": null
+      },
+      {
+        "command": "flow.draft.validate",
+        "exitCode": 10,
+        "errorCode": null
+      },
+      {
+        "command": "flow.draft.update",
+        "exitCode": 0,
+        "errorCode": null
+      },
+      {
+        "command": "dsl.changes.commit",
+        "exitCode": 0,
+        "errorCode": null
+      },
+      {
+        "command": "flow.draft.discard",
+        "exitCode": 0,
+        "errorCode": null
+      },
+      {
+        "command": "flow.draft.update",
+        "exitCode": 0,
+        "errorCode": null
+      },
+      {
+        "command": "flow.draft.validate",
+        "exitCode": 0,
+        "errorCode": null
+      },
+      {
+        "command": "dsl.ids.allocate",
+        "exitCode": 0,
+        "errorCode": null
+      },
+      {
+        "command": "flow.draft.update",
+        "exitCode": 0,
+        "errorCode": null
+      },
+      {
+        "command": "flow.draft.prepare",
+        "exitCode": 0,
+        "errorCode": null
+      }
+    ]
+  },
+  {
+    "runtime": "codex",
+    "scenario": "flow",
+    "variant": "after",
+    "tools": 38,
+    "succeeded": true,
+    "failure": null,
+    "elapsedMs": 213990,
+    "runtimeUsage": [
+      {
+        "measurement": "reported",
+        "input": 250,
+        "output": 107,
+        "cacheRead": 33920,
+        "cacheWrite": 0,
+        "totalTokens": 34277,
+        "cost": {
+          "input": 0,
+          "output": 0,
+          "cacheRead": 0,
+          "cacheWrite": 0,
+          "total": 0
+        }
+      },
+      {
+        "measurement": "reported",
+        "input": 399,
+        "output": 81,
+        "cacheRead": 39808,
+        "cacheWrite": 0,
+        "totalTokens": 40288,
+        "cost": {
+          "input": 0,
+          "output": 0,
+          "cacheRead": 0,
+          "cacheWrite": 0,
+          "total": 0
+        }
+      },
+      {
+        "measurement": "reported",
+        "input": 730,
+        "output": 63,
+        "cacheRead": 42624,
+        "cacheWrite": 0,
+        "totalTokens": 43417,
+        "cost": {
+          "input": 0,
+          "output": 0,
+          "cacheRead": 0,
+          "cacheWrite": 0,
+          "total": 0
+        }
+      }
+    ],
+    "nativeToolCalls": 41,
+    "project": {
+      "revision": 2,
+      "resources": [
+        {
+          "kind": "Flow",
+          "metadata": {
+            "id": "gbzgtp47mn5v64g6",
+            "name": "Release Approval",
+            "description": "Modified by native Runtime",
+            "tags": []
+          }
+        }
+      ]
+    },
+    "approvals": [
+      {
+        "tool": "commit_dsl_changes",
+        "approved": true
+      },
+      {
+        "tool": "commit_dsl_changes",
+        "approved": true
+      },
+      {
+        "tool": "commit_dsl_changes",
+        "approved": false
+      }
+    ],
+    "commandReceipts": [
+      {
+        "command": "flow.draft.update",
+        "exitCode": 0,
+        "errorCode": null
+      },
+      {
+        "command": "dsl.changes.read",
+        "exitCode": 0,
+        "errorCode": null
+      },
+      {
+        "command": "dsl.changes.read",
+        "exitCode": 0,
+        "errorCode": null
+      },
+      {
+        "command": "dsl.resources.read",
+        "exitCode": 0,
+        "errorCode": null
+      },
+      {
+        "command": "dsl.ids.allocate",
+        "exitCode": 0,
+        "errorCode": null
+      },
+      {
+        "command": "flow.draft.prepare",
+        "exitCode": 0,
+        "errorCode": null
+      },
+      {
+        "command": "dsl.changes.commit",
+        "exitCode": 0,
+        "errorCode": null
+      },
+      {
+        "command": "flow.draft.validate",
+        "exitCode": 0,
+        "errorCode": null
+      },
+      {
+        "command": "flow.draft.update",
+        "exitCode": 0,
+        "errorCode": null
+      },
+      {
+        "command": "dsl.resources.list",
+        "exitCode": 0,
+        "errorCode": null
+      },
+      {
+        "command": "flow.draft.validate",
+        "exitCode": 10,
+        "errorCode": null
+      },
+      {
+        "command": "flow.draft.update",
+        "exitCode": 0,
+        "errorCode": null
+      },
+      {
+        "command": "flow.draft.validate",
+        "exitCode": 0,
+        "errorCode": null
+      },
+      {
+        "command": "flow.draft.discard",
+        "exitCode": 0,
+        "errorCode": null
+      },
+      {
+        "command": "flow.draft.update",
+        "exitCode": 4,
+        "errorCode": "IDEMPOTENCY_CONFLICT"
+      },
+      {
+        "command": "flow.draft.create",
+        "exitCode": 0,
+        "errorCode": null
+      },
+      {
+        "command": "flow.draft.create",
+        "exitCode": 0,
+        "errorCode": null
+      },
+      {
+        "command": "flow.draft.validate",
+        "exitCode": 0,
+        "errorCode": null
+      },
+      {
+        "command": "flow.draft.prepare",
+        "exitCode": 0,
+        "errorCode": null
+      },
+      {
+        "command": "dsl.resources.list",
+        "exitCode": 0,
+        "errorCode": null
+      },
+      {
+        "command": "flow.draft.create",
+        "exitCode": 0,
+        "errorCode": null
+      },
+      {
+        "command": "dsl.ids.allocate",
+        "exitCode": 0,
+        "errorCode": null
+      },
+      {
+        "command": "dsl.changes.commit",
+        "exitCode": 6,
+        "errorCode": "PERMISSION_DENIED"
+      },
+      {
+        "command": "flow.draft.prepare",
+        "exitCode": 0,
+        "errorCode": null
+      },
+      {
+        "command": "flow.draft.update",
+        "exitCode": 0,
+        "errorCode": null
+      },
+      {
+        "command": "dsl.changes.commit",
+        "exitCode": 0,
+        "errorCode": null
+      },
+      {
+        "command": "dsl.resources.list",
+        "exitCode": 0,
+        "errorCode": null
+      },
+      {
+        "command": "dsl.resources.list",
+        "exitCode": 0,
+        "errorCode": null
+      },
+      {
+        "command": "flow.draft.get",
+        "exitCode": 0,
+        "errorCode": null
+      }
+    ]
+  },
+  {
+    "runtime": "claude-code",
+    "scenario": "smoke",
+    "variant": "after",
+    "tools": 38,
+    "succeeded": true,
+    "failure": null,
+    "elapsedMs": 9667,
+    "runtimeUsage": [
+      {
+        "measurement": "reported",
+        "input": 13723,
+        "output": 278,
+        "cacheRead": 13440,
+        "cacheWrite": 0,
+        "totalTokens": 27441,
+        "cost": {
+          "input": 0,
+          "output": 0,
+          "cacheRead": 0,
+          "cacheWrite": 0,
+          "total": 0
+        }
+      }
+    ],
+    "nativeToolCalls": 1,
+    "project": {
+      "revision": 0,
+      "resources": []
+    },
+    "approvals": [],
+    "commandReceipts": [
+      {
+        "command": "dsl.resources.list",
+        "exitCode": 0,
+        "errorCode": null
+      }
+    ]
+  },
+  {
+    "runtime": "opencode",
+    "scenario": "smoke",
+    "variant": "after",
+    "tools": 38,
+    "succeeded": true,
+    "failure": null,
+    "elapsedMs": 14825,
+    "runtimeUsage": [
+      {
+        "measurement": "reported",
+        "input": 0,
+        "output": 97,
+        "cacheRead": 22016,
+        "cacheWrite": 0,
+        "totalTokens": 22113,
+        "cost": {
+          "input": 0,
+          "output": 0,
+          "cacheRead": 0,
+          "cacheWrite": 0,
+          "total": 0
+        }
+      }
+    ],
+    "nativeToolCalls": 1,
+    "project": {
+      "revision": 0,
+      "resources": []
+    },
+    "approvals": [],
+    "commandReceipts": [
+      {
+        "command": "dsl.resources.list",
+        "exitCode": 0,
+        "errorCode": null
+      }
+    ]
+  },
+  {
+    "runtime": "antigravity",
+    "scenario": "smoke",
+    "variant": "after",
+    "tools": 38,
+    "succeeded": true,
+    "failure": null,
+    "elapsedMs": 36682,
+    "runtimeUsage": [
+      {
+        "measurement": "reported",
+        "input": 25357,
+        "output": 965,
+        "cacheRead": 0,
+        "cacheWrite": 0,
+        "totalTokens": 26322,
+        "cost": {
+          "input": 0,
+          "output": 0,
+          "cacheRead": 0,
+          "cacheWrite": 0,
+          "total": 0
+        }
+      }
+    ],
+    "nativeToolCalls": 1,
+    "project": {
+      "revision": 0,
+      "resources": []
+    },
+    "approvals": [],
+    "commandReceipts": [
+      {
+        "command": "dsl.resources.list",
+        "exitCode": 0,
+        "errorCode": null
+      }
+    ]
+  },
+  {
+    "runtime": "qodercli",
+    "scenario": "smoke",
+    "variant": "after",
+    "tools": 38,
+    "succeeded": false,
+    "failure": "You've reached your credit usage limit. Please upgrade your subscription plan to get more resources. Report Issue (input /feedback)",
+    "elapsedMs": 0,
+    "runtimeUsage": [
+      {
+        "measurement": "estimated",
+        "input": 443,
+        "output": 33,
+        "cacheRead": 0,
+        "cacheWrite": 0,
+        "totalTokens": 476,
+        "cost": {
+          "input": 0,
+          "output": 0,
+          "cacheRead": 0,
+          "cacheWrite": 0,
+          "total": 0
+        }
+      }
+    ],
+    "nativeToolCalls": 0,
+    "project": {
+      "revision": 0,
+      "resources": []
+    },
+    "approvals": [],
+    "commandReceipts": []
+  }
+]
