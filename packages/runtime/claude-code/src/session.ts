@@ -325,10 +325,33 @@ export async function answerClaudeAcpForm(
   const customFields = new Map<string, string>();
   for (const [key, field] of entries) {
     const metadata = record(record(field)?.["_meta"]);
-    const custom = record(metadata?.["_askUserQuestionCustomAnswer"]);
-    if (custom?.["isCustomAnswer"] === true && typeof custom["questionId"] === "string") {
-      if (customFields.has(custom["questionId"])) return { action: "cancel" };
-      customFields.set(custom["questionId"], key);
+    const air = record(record(metadata?.["jetbrains"])?.["air"]);
+    const custom = record(air?.["customAnswer"] ?? metadata?.["_askUserQuestionCustomAnswer"]);
+    // Non-AIR clients receive unmarked indexed companions from Claude ACP.
+    // Recognize only a string companion of an actual indexed choice field.
+    const indexedQuestionKey = /^question_\d+_custom$/.test(key)
+      ? key.slice(0, -"_custom".length)
+      : undefined;
+    const indexedQuestion = record(
+      indexedQuestionKey === undefined
+        ? undefined
+        : params.requestedSchema.properties?.[indexedQuestionKey],
+    );
+    const indexedChoice =
+      Array.isArray(indexedQuestion?.["oneOf"]) ||
+      Array.isArray(record(indexedQuestion?.["items"])?.["anyOf"]);
+    const questionKey =
+      custom?.["isCustomAnswer"] === true && typeof custom["questionId"] === "string"
+        ? custom["questionId"]
+        : "toolCallId" in params &&
+            typeof params.toolCallId === "string" &&
+            record(field)?.["type"] === "string" &&
+            indexedChoice
+          ? indexedQuestionKey
+          : undefined;
+    if (questionKey !== undefined) {
+      if (customFields.has(questionKey)) return { action: "cancel" };
+      customFields.set(questionKey, key);
     }
   }
   const questions: { key: string; question: ExpertAgentUserQuestion; customKey?: string }[] = [];

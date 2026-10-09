@@ -100,62 +100,65 @@ describe("Claude ACP interactions and isolation", () => {
       }),
     );
   });
-  it("round trips upstream native questions with scoped custom answers", async () => {
-    const nativeQuestions: Parameters<typeof askUserQuestionsToCreateRequest>[0] = [
-      {
-        question: "Which storage?",
-        header: "Storage",
-        multiSelect: false,
-        options: [
-          { label: "SQLite", description: "Local" },
-          { label: "Postgres", description: "Remote" },
+  it.each([false, true])(
+    "round trips upstream native questions with scoped custom answers (AIR: %s)",
+    async (airClient) => {
+      const nativeQuestions: Parameters<typeof askUserQuestionsToCreateRequest>[0] = [
+        {
+          question: "Which storage?",
+          header: "Storage",
+          multiSelect: false,
+          options: [
+            { label: "SQLite", description: "Local" },
+            { label: "Postgres", description: "Remote" },
+          ],
+        },
+        {
+          question: "Which features?",
+          header: "Features",
+          multiSelect: true,
+          options: [
+            { label: "Search", description: "Search" },
+            { label: "Sync", description: "Sync" },
+          ],
+        },
+      ];
+      const params = askUserQuestionsToCreateRequest(nativeQuestions, "owned", "ask-1", airClient);
+      const handler = vi
+        .fn<import("@pragma/core").ExpertAgentHumanInteractionHandler>()
+        .mockResolvedValue({
+          kind: "user_question" as const,
+          answered: true,
+          answers: {
+            "Which storage?": "Redis",
+            "Which features?": ["Search", "Offline"],
+          },
+        });
+      const response = await answerClaudeAcpForm(params, handler, new AbortController().signal);
+      expect(handler.mock.calls[0]?.[0]).toMatchObject({
+        questions: [
+          { question: "Which storage?", kind: "single_choice" },
+          { question: "Which features?", kind: "multiple_choice" },
         ],
-      },
-      {
-        question: "Which features?",
-        header: "Features",
-        multiSelect: true,
-        options: [
-          { label: "Search", description: "Search" },
-          { label: "Sync", description: "Sync" },
-        ],
-      },
-    ];
-    const params = askUserQuestionsToCreateRequest(nativeQuestions, "owned", "ask-1");
-    const handler = vi
-      .fn<import("@pragma/core").ExpertAgentHumanInteractionHandler>()
-      .mockResolvedValue({
-        kind: "user_question" as const,
-        answered: true,
-        answers: {
-          "Which storage?": "Redis",
-          "Which features?": ["Search", "Offline"],
+      });
+      expect(response).toEqual({
+        action: "accept",
+        content: {
+          question_0_custom: "Redis",
+          question_1: ["Search"],
+          question_1_custom: "Offline",
         },
       });
-    const response = await answerClaudeAcpForm(params, handler, new AbortController().signal);
-    expect(handler.mock.calls[0]?.[0]).toMatchObject({
-      questions: [
-        { question: "Which storage?", kind: "single_choice" },
-        { question: "Which features?", kind: "multiple_choice" },
-      ],
-    });
-    expect(response).toEqual({
-      action: "accept",
-      content: {
-        question_0_custom: "Redis",
-        question_1: ["Search"],
-        question_1_custom: "Offline",
-      },
-    });
-    expect(
-      applyAskElicitationResponse(response, { questions: nativeQuestions }, nativeQuestions),
-    ).toMatchObject({
-      action: "answered",
-      updatedInput: {
-        answers: { "Which storage?": "Redis", "Which features?": "Search, Offline" },
-      },
-    });
-  });
+      expect(
+        applyAskElicitationResponse(response, { questions: nativeQuestions }, nativeQuestions),
+      ).toMatchObject({
+        action: "answered",
+        updatedInput: {
+          answers: { "Which storage?": "Redis", "Which features?": "Search, Offline" },
+        },
+      });
+    },
+  );
   it("preserves native selected answers with Host notes", async () => {
     const nativeQuestions: Parameters<typeof askUserQuestionsToCreateRequest>[0] = [
       {
