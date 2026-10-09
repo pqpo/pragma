@@ -18540,5 +18540,47 @@
     ],
     "screenshots": "Kept outside the repository; all three new detail pages visually inspected.",
     "editableButtonsPresent": false
+  },
+  "implementationCommit": "0e56ab7b4333458c76e99a5ca7126a74cb280ff5",
+  "distribution": {
+    "desktop": {
+      "platform": "darwin",
+      "arch": "x64",
+      "electron": "43.7.6",
+      "unpackedAppAudit": "passed",
+      "electronDistribution": "same-version local dist after default download certificate failure",
+      "packagedClientHelp": "manage mission work get --help: exit 0",
+      "signed": false
+    },
+    "publicCli": {
+      "packAndAudit": "passed",
+      "artifactManifest": {
+        "package": "@pqpo/pragma",
+        "version": "0.1.0-next.19",
+        "buildIdentity": {
+          "version": "0.1.0-next.19",
+          "commit": "0e56ab7b4333458c76e99a5ca7126a74cb280ff5",
+          "cliSha256": "47c53e4e356dfa770825a5db742a1300a0858262310e82c8ec336e44e111cacc"
+        },
+        "tarball": "pragma-cli.tgz",
+        "sha256": "9e50acfe016385b5d3b76add40270943f32e205f483b220c48eb14664a45af5a",
+        "tarballBytes": 6377399,
+        "unpackedBytes": 30033995,
+        "files": [
+          "LICENSE",
+          "README.md",
+          "THIRD_PARTY_NOTICES.txt",
+          "dist/canonical-event-feed-worker.js",
+          "dist/claude-acp-worker.js",
+          "dist/cli.js",
+          "dist/code-service-worker.js",
+          "dist/pragma.js",
+          "dist/vector-worker.js",
+          "package.json"
+        ]
+      },
+      "positiveInstallSmoke": "blocked: npm registry issuer certificate validation failed; system CA option did not resolve the isolated npm install",
+      "tlsVerificationDisabled": false
+    }
   }
 }

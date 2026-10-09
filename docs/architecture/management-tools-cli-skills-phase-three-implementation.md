@@ -163,3 +163,18 @@ help/Skill 和 shell 包装。没有普通聊天下降证据，第三阶段父�
   `pragma manage mission work get --help` 返回 0，含原权威输入 Schema。
 - 公共 CLI pack 与 audit 已通过。canonical artifact smoke 与最终检查结果继续在后面补记；
   不将初次缺少 smoke 参数的 usage error 记为成功运行。
+
+最终源码提交：`0e56ab7b4333458c76e99a5ca7126a74cb280ff5`。最终再次完整
+`pnpm check` 通过（19 package lint/typecheck、11 task test:core）；格式与 diff whitespace
+检查通过。此前独立的共享 Host/CLI 和 Desktop 全套失败继续保留，没有被 check 覆盖。
+
+公共 CLI 在该提交上重新顺序 pack/audit、生成 canonical artifact/SBOM/license/checksum。
+6,377,399 字节 tarball SHA-256 为
+`9e50acfe016385b5d3b76add40270943f32e205f483b220c48eb14664a45af5a`。
+正向安装 smoke 已实际执行，但隔离 npm install 在下载 `@napi-rs/keyring` 时返回
+`UNABLE_TO_GET_ISSUER_CERT_LOCALLY`；系统 CA 选项重试仍失败，未关闭 TLS 校验或改变
+用户 npm 配置。此门禁标记受阻，不能把 pack/audit 当作安装验证通过。Windows、签名/
+公证/安装器与 Node 20/Linux 负向发行矩阵本轮未验证。
+
+真实 Electron 的隔离窗口已关闭；未停止用户原有应用。原 main 工作区保持干净。
+新默认工具目录使用新建会话验证，历史 Session 的编译快照和数据没有被批量改写。
