@@ -47,6 +47,21 @@ import {
 } from "./management-command-ownership.ts";
 
 export const MANAGEMENT_COMMAND_TOOLS = {
+  "mission.list": "list_missions",
+  "mission.get": "get_mission",
+  "mission.create": "create_mission",
+  "mission.send": "send_mission_message",
+  "mission.interrupt": "interrupt_mission",
+  "mission.work.list": "list_mission_work_items",
+  "mission.work.get": "get_mission_work_item",
+  "workspace.list": "list_workspaces",
+  "home-project.list": "list_home_projects",
+  "home-project.get": "get_home_project",
+  "knowledge-store.list": "list_knowledge_stores",
+  "automation.list": "list_automations",
+  "automation.save": "save_automation",
+  "automation.delete": "delete_automation",
+  "automation.reset-session": "reset_automation_session",
   "flow.draft.create": "create_flow_draft",
   "flow.draft.get": "get_flow_draft",
   "flow.draft.update": "update_flow_draft",
@@ -58,12 +73,41 @@ export const MANAGEMENT_COMMAND_TOOLS = {
   "dsl.resources.read": "read_dsl_resource",
   "dsl.options.list": "list_expert_options",
   "dsl.ids.allocate": "allocate_dsl_resource_ids",
+  "dsl.draft.start": "start_dsl_draft",
+  "dsl.draft.list": "list_dsl_drafts",
+  "dsl.draft.inspect": "inspect_dsl_draft",
+  "dsl.draft.review": "read_dsl_draft_review",
+  "dsl.draft.prepare": "prepare_dsl_draft",
+  "dsl.draft.restart": "restart_dsl_draft",
+  "dsl.draft.discard": "discard_dsl_draft",
+  "dsl.draft.recover": "recover_dsl_draft",
+  "dsl.changes.prepare": "prepare_dsl_changes",
+  "evaluation.draft.create": "create_evaluation_draft",
+  "evaluation.draft.get": "get_evaluation_draft",
+  "evaluation.draft.cases": "get_evaluation_cases",
+  "evaluation.draft.update": "update_evaluation_draft",
+  "evaluation.draft.run": "run_evaluation_draft",
+  "evaluation.draft.prepare": "prepare_evaluation_draft",
+  "evaluation.draft.discard": "discard_evaluation_draft",
+  "evaluation.draft.recover": "recover_evaluation_draft",
   "dsl.changes.read": "read_prepared_dsl_change",
   "dsl.changes.commit": "commit_dsl_changes",
   "dsl.changes.recover": "recover_dsl_change",
 } as const satisfies Record<ManagementCommand, string>;
 
 const recoveryDefinitions = {
+  "dsl.draft.recover": {
+    name: "recover_dsl_draft",
+    description:
+      "Recover a legacy Mission-owned DSL file draft into the current Context after approval. Preserves its files and submission.",
+    schema: ManagementFlowRecoveryInputSchema,
+  },
+  "evaluation.draft.recover": {
+    name: "recover_evaluation_draft",
+    description:
+      "Recover an unowned legacy Evaluation draft after approval. Commit requires separate approval.",
+    schema: ManagementFlowRecoveryInputSchema,
+  },
   "flow.draft.recover": {
     name: "recover_flow_draft",
     description:
@@ -78,7 +122,7 @@ const recoveryDefinitions = {
   },
 } as const;
 export function describeManagementCommand(command: ManagementCommand) {
-  if (command === "flow.draft.recover" || command === "dsl.changes.recover") {
+  if (isRecoveryCommand(command)) {
     const definition = recoveryDefinitions[command];
     return {
       command,
@@ -91,6 +135,13 @@ export function describeManagementCommand(command: ManagementCommand) {
   )!;
   return { command, description: tool.description, inputSchema: tool.inputSchema };
 }
+
+const ApprovedInputSchema = z
+  .object({
+    schemaVersion: z.literal("pragma.management-approved-input/v1"),
+    payloadHash: z.string().regex(/^[a-f0-9]{64}$/u),
+  })
+  .strict();
 
 const ReceiptSchema = z
   .object({
@@ -150,8 +201,7 @@ export function createManagementCommandApplication(options: {
         if (typeof contextId !== "string" || contextId.length === 0)
           return fail("PERMISSION_DENIED", "A command requires a trusted Runtime Context.");
         const owner = { missionId: options.scope.missionId, contextId };
-        const recovery =
-          request.command === "flow.draft.recover" || request.command === "dsl.changes.recover";
+        const recovery = isRecoveryCommand(request.command);
         const sameOwner = (record: CommandOwner) =>
           record.missionId === owner.missionId && record.contextId === owner.contextId;
         const findOwner = async (id: string) => {
@@ -162,7 +212,15 @@ export function createManagementCommandApplication(options: {
           if (typeof input !== "object" || input === null) return;
           const data = input as Record<string, unknown>;
           const targetKey =
-            request.command.startsWith("flow.draft.") && request.command !== "flow.draft.create"
+            ["flow.draft.", "evaluation.draft.", "dsl.draft."].some((prefix) =>
+              request.command.startsWith(prefix),
+            ) &&
+            ![
+              "flow.draft.create",
+              "evaluation.draft.create",
+              "dsl.draft.start",
+              "dsl.draft.list",
+            ].includes(request.command)
               ? "draftId"
               : request.command.startsWith("dsl.changes.")
                 ? "changeSetId"
@@ -182,7 +240,10 @@ export function createManagementCommandApplication(options: {
               {
                 reason: "unowned_target",
                 recovery: {
-                  command: targetKey === "draftId" ? "flow.draft.recover" : "dsl.changes.recover",
+                  command:
+                    targetKey === "draftId"
+                      ? `${request.command.split(".")[0]}.draft.recover`
+                      : "dsl.changes.recover",
                   targetId: id,
                 },
               },
@@ -215,6 +276,17 @@ export function createManagementCommandApplication(options: {
         const identity = JSON.stringify([options.scope.missionId, contextId, request.requestId]);
         const operationId = createHash("sha256").update(identity).digest("hex");
         const project = options.ports.project;
+        // Private command-state failures must bypass the legacy model-tool error normalizer.
+        let commandStateError: z.infer<typeof IntegrationErrorSchema> | undefined;
+        const preserveCommandStateError = async <T>(action: () => Promise<T>): Promise<T> => {
+          try {
+            return await action();
+          } catch (error) {
+            const known = IntegrationErrorSchema.safeParse(error);
+            if (known.success) commandStateError = known.data;
+            throw error;
+          }
+        };
         const ports =
           project === undefined
             ? options.ports
@@ -222,6 +294,65 @@ export function createManagementCommandApplication(options: {
                 ...options.ports,
                 project: {
                   ...project,
+                  listDslDrafts: (input: Parameters<typeof project.listDslDrafts>[0]) =>
+                    preserveCommandStateError(() =>
+                      project.listDslDrafts({
+                        ...input,
+                        isDraftVisible: async (draftId) => {
+                          const existing = await findOwner(draftId);
+                          return existing !== undefined && sameOwner(existing);
+                        },
+                      }),
+                    ),
+                  inspectDslDraft: (input: Parameters<typeof project.inspectDslDraft>[0]) =>
+                    preserveCommandStateError(() => project.inspectDslDraft(input)),
+                  readDslDraftReview: (input: Parameters<typeof project.readDslDraftReview>[0]) =>
+                    preserveCommandStateError(() => project.readDslDraftReview(input)),
+                  discardDslDraft: (input: Parameters<typeof project.discardDslDraft>[0]) =>
+                    preserveCommandStateError(() => project.discardDslDraft(input)),
+                  startDslDraft: async (input: Parameters<typeof project.startDslDraft>[0]) => {
+                    await claimOwner(managementCommandTargetId(operationId));
+                    return await project.startDslDraft({ ...input, operationId });
+                  },
+                  prepareDslDraft: async (input: Parameters<typeof project.prepareDslDraft>[0]) => {
+                    await claimOwner(managementCommandTargetId(operationId));
+                    return await preserveCommandStateError(() =>
+                      project.prepareDslDraft({ ...input, operationId }),
+                    );
+                  },
+                  restartDslDraft: async (input: Parameters<typeof project.restartDslDraft>[0]) => {
+                    await claimOwner(managementCommandTargetId(operationId));
+                    return await preserveCommandStateError(() =>
+                      project.restartDslDraft({ ...input, operationId }),
+                    );
+                  },
+                  prepare: async (input: Parameters<typeof project.prepare>[0]) => {
+                    await claimOwner(managementCommandTargetId(operationId));
+                    return await project.prepare({ ...input, operationId });
+                  },
+                  createEvaluationDraft: async (
+                    input: Parameters<typeof project.createEvaluationDraft>[0],
+                  ) => {
+                    await claimOwner(managementCommandTargetId(operationId));
+                    return await project.createEvaluationDraft({ ...input, operationId });
+                  },
+                  updateEvaluationDraft: async (
+                    input: Parameters<typeof project.updateEvaluationDraft>[0],
+                  ) => {
+                    return await preserveCommandStateError(() =>
+                      project.updateEvaluationDraft({
+                        ...input,
+                        operationId,
+                        commandResultsRoot: join(options.receiptsRoot, "mutations"),
+                      }),
+                    );
+                  },
+                  prepareEvaluationDraft: async (
+                    input: Parameters<typeof project.prepareEvaluationDraft>[0],
+                  ) => {
+                    await claimOwner(managementCommandTargetId(operationId));
+                    return await project.prepareEvaluationDraft({ ...input, operationId });
+                  },
                   createFlowDraft: async (input: Parameters<typeof project.createFlowDraft>[0]) => {
                     await claimOwner(managementCommandTargetId(operationId));
                     return await project.createFlowDraft({ ...input, operationId });
@@ -240,7 +371,46 @@ export function createManagementCommandApplication(options: {
                   },
                 },
               };
-        const tools = [...createPragmaManagementTools(ports, options.scope)];
+        const commandPorts = {
+          ...ports,
+          ...(ports.missions === undefined
+            ? {}
+            : {
+                missions: {
+                  list: (input: Parameters<NonNullable<typeof ports.missions>["list"]>[0]) =>
+                    ports.missions!.list(input),
+                  get: (id: string) => ports.missions!.get(id),
+                  sendMessage: (
+                    input: Parameters<NonNullable<typeof ports.missions>["sendMessage"]>[0],
+                  ) => ports.missions!.sendMessage(input),
+                  listWorkItems: (
+                    input: Parameters<NonNullable<typeof ports.missions>["listWorkItems"]>[0],
+                  ) => ports.missions!.listWorkItems(input),
+                  getWorkItem: (id: string, workId: string) =>
+                    ports.missions!.getWorkItem(id, workId),
+                  submit: (input: Parameters<NonNullable<typeof ports.missions>["submit"]>[0]) =>
+                    preserveCommandStateError(() => ports.missions!.submit(input)),
+                  interrupt: (id: string, identity?: string) =>
+                    preserveCommandStateError(() => ports.missions!.interrupt(id, identity)),
+                },
+              }),
+          ...(ports.automations === undefined
+            ? {}
+            : {
+                automations: {
+                  list: (input: Parameters<NonNullable<typeof ports.automations>["list"]>[0]) =>
+                    ports.automations!.list(input),
+                  save: (input: Parameters<NonNullable<typeof ports.automations>["save"]>[0]) =>
+                    preserveCommandStateError(() => ports.automations!.save(input)),
+                  delete: (input: Parameters<NonNullable<typeof ports.automations>["delete"]>[0]) =>
+                    preserveCommandStateError(() => ports.automations!.delete(input)),
+                  resetSession: (
+                    input: Parameters<NonNullable<typeof ports.automations>["resetSession"]>[0],
+                  ) => preserveCommandStateError(() => ports.automations!.resetSession(input)),
+                },
+              }),
+        };
+        const tools = [...createPragmaManagementTools(commandPorts, options.scope)];
         for (const [command, definition] of Object.entries(recoveryDefinitions)) {
           tools.push({
             name: definition.name,
@@ -258,11 +428,21 @@ export function createManagementCommandApplication(options: {
               const id = "draftId" in input ? input.draftId : input.changeSetId;
               // Existing parser/business reads validate historical data without rewriting it.
               try {
-                if ("draftId" in input) await project.getFlowDraft(input.draftId);
+                if (command === "dsl.draft.recover" && "draftId" in input) {
+                  await project.inspectDslDraft({
+                    missionId: options.scope.missionId,
+                    draftId: input.draftId,
+                  });
+                } else if (command === "evaluation.draft.recover" && "draftId" in input)
+                  await project.getEvaluationDraft(input.draftId);
+                else if ("draftId" in input) await project.getFlowDraft(input.draftId);
                 else await project.getChangeSet(input.changeSetId, options.scope.missionId);
               } catch (error) {
                 if (error instanceof z.ZodError) {
-                  const future = error.issues.some((issue) => issue.path.at(-1) === "apiVersion");
+                  const future = error.issues.some(
+                    (issue) =>
+                      issue.path.at(-1) === "apiVersion" || issue.path.at(-1) === "schemaVersion",
+                  );
                   throw managementCommandError(
                     future ? "STORAGE_VERSION_UNSUPPORTED" : "STORAGE_CORRUPTED",
                     "The legacy target cannot be safely read. Its original data was preserved.",
@@ -351,7 +531,35 @@ export function createManagementCommandApplication(options: {
               call: async (args, signal, callContext) => {
                 // Revalidate any input changed by the approval handler before touching a target.
                 await assertTarget(args, recovery);
-                return await tool.call(args, signal, callContext);
+                // A pending operation must not replay a different approval-edited payload.
+                const approvedPath = join(
+                  options.receiptsRoot,
+                  "approved-inputs",
+                  `${operationId}.json`,
+                );
+                const approvedHash = createHash("sha256").update(canonicalJson(args)).digest("hex");
+                const approvedInput = await readCommandState(
+                  approvedPath,
+                  ApprovedInputSchema,
+                  "pragma.management-approved-input/v1",
+                );
+                if (approvedInput !== undefined && approvedInput.payloadHash !== approvedHash)
+                  throw managementCommandError(
+                    "IDEMPOTENCY_CONFLICT",
+                    "The recovered operation has different approved input. Inspect its original result before issuing a new request.",
+                  );
+                if (approvedInput === undefined)
+                  await save(
+                    approvedPath,
+                    {
+                      schemaVersion: "pragma.management-approved-input/v1",
+                      payloadHash: approvedHash,
+                    },
+                    ApprovedInputSchema,
+                  );
+                const result = await tool.call(args, signal, callContext);
+                if (commandStateError !== undefined) throw commandStateError;
+                return result;
               },
               approval: mergeExpertAgentToolApprovals(
                 mergeExpertAgentToolApprovals(
@@ -434,6 +642,11 @@ export function createManagementCommandApplication(options: {
     },
   };
 }
+function isRecoveryCommand(
+  command: ManagementCommand,
+): command is keyof typeof recoveryDefinitions {
+  return Object.hasOwn(recoveryDefinitions, command);
+}
 function replaySafe(command: ManagementCommand): boolean {
   return command !== "dsl.ids.allocate";
 }
@@ -442,6 +655,11 @@ function isInvalidResult(value: unknown, command: ManagementCommand): boolean {
   const result = value as Record<string, unknown>;
   return (
     result["status"] === "invalid" ||
+    (command === "evaluation.draft.run" &&
+      typeof result["suite"] === "object" &&
+      result["suite"] !== null &&
+      "passed" in result["suite"] &&
+      result["suite"].passed === false) ||
     ((command === "flow.draft.validate" || command === "flow.draft.prepare") &&
       Array.isArray(result["diagnostics"]) &&
       result["diagnostics"].some(
@@ -490,9 +708,13 @@ function canonicalJson(value: unknown): string {
     );
   return JSON.stringify(value);
 }
-async function save(path: string, value: unknown): Promise<void> {
+async function save(
+  path: string,
+  value: unknown,
+  schema: z.ZodType = ReceiptSchema,
+): Promise<void> {
   await mkdir(dirname(path), { recursive: true, mode: 0o700 });
-  await writeFile(`${path}.tmp`, `${JSON.stringify(ReceiptSchema.parse(value))}\n`, {
+  await writeFile(`${path}.tmp`, `${JSON.stringify(schema.parse(value))}\n`, {
     mode: 0o600,
   });
   await rename(`${path}.tmp`, path);

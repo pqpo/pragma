@@ -1,0 +1,15 @@
+apiVersion: pragma/v5
+kind: Expert
+metadata:
+  id: d1gsrmjmw5t2ca0s
+  name: "Legacy Writer"
+  description: "Historical file draft"
+  tags: []
+spec:
+  scope: "" # REQUIRED: describe the Expert boundary.
+  instructions: "" # REQUIRED: describe the Expert behavior.
+  capabilities: []
+  toolApprovals: {}
+  contextStores: []
+  plugins: []
+  tools: []

@@ -1,0 +1,23 @@
+{
+  "schemaVersion": "pragma.dsl-draft/v1",
+  "draftId": "5760e74a-210a-426f-b3ed-181d5f16611b",
+  "missionId": "ed1bcbb5-b1e6-4aa5-9357-7853ce745f6b",
+  "baseProjectRevision": 0,
+  "state": "editing",
+  "resources": [
+    {
+      "mode": "create",
+      "ref": "expert:d1gsrmjmw5t2ca0s",
+      "kind": "Expert",
+      "name": "Legacy Writer",
+      "relativePath": "experts/d1gsrmjmw5t2ca0s.pragma.yaml",
+      "filePath": "/private__FIXTURE_ROOT__/.pragma/dsl-drafts/5760e74a-210a-426f-b3ed-181d5f16611b/worktree/experts/d1gsrmjmw5t2ca0s.pragma.yaml",
+      "key": "writer",
+      "initialSha256": "812aa1b106819439921091d74102eb63095b71b4faa12fb70c65a0dd650f9621",
+      "creationDescription": "Historical file draft"
+    }
+  ],
+  "createdAt": "2026-10-09T05:05:15.873Z",
+  "updatedAt": "2026-10-09T05:05:15.873Z",
+  "workspacePath": "/private__FIXTURE_ROOT__"
+}

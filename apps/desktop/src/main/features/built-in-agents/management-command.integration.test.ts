@@ -1,12 +1,19 @@
+import { compileBuiltInAgent, BUILT_IN_PRAGMA_REF } from "@pragma/built-in-agents";
+import { createDesktopAdapterHost } from "../missions/mission-adapter-host.ts";
+import {
+  PRAGMA_DSL_WRITE_API_VERSION,
+  PragmaAutomationResourceSchema,
+} from "@pragma/interpreter/ast";
 import { randomUUID, createHash } from "node:crypto";
 import { execFile } from "node:child_process";
-import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { cp, mkdtemp, mkdir, readFile, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { promisify } from "node:util";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { z } from "zod";
 import {
+  createStaticRuntimeResolver,
   createPragmaLogger,
   HumanInteractionCheckpointError,
   defineExpert,
@@ -17,6 +24,7 @@ import {
   definePluginEntry,
   registerExecutionCommandSession,
   registerExpertToolsMcpSession,
+  type ExpertAgentHumanInteractionHandler,
 } from "@pragma/core";
 import {
   createManagementCommandApplication,
@@ -30,7 +38,12 @@ import {
   ManagementCommandRequestSchema,
   type ManagementCommand,
 } from "@pragma/shared/integration";
-import { createManagementCommandTestFixture } from "./management-command-test-fixture.ts";
+import {
+  createManagementCommandTestFixture,
+  PROBE_AUTHORING_RUNTIME_REF,
+} from "./management-command-test-fixture.ts";
+
+import { createPhaseThreeCommandTestFixture } from "./phase-three-command-test-fixture.ts";
 
 import { openRuntimeSession, createRuntimeTestFeatures } from "@pragma/core/testing";
 
@@ -59,10 +72,15 @@ const operations = [
   { type: "set_transition", stepId: "approve", transition: { end: true } },
 ];
 
-async function fixture(requireCreateApproval: false | "definition" | "plugin" = false) {
+async function fixture(
+  requireCreateApproval: false | "definition" | "plugin" = false,
+  approvalTool = "create_flow_draft",
+  phaseThree = false,
+  onStorageTrashed?: () => void,
+) {
   const root = await mkdtemp(join(tmpdir(), "pragma-command-boundary-"));
   cleanup.push(() => rm(root, { force: true, recursive: true }));
-  const { project, port } = createManagementCommandTestFixture(root);
+  const { project, port } = createManagementCommandTestFixture(root, true);
   const expert = await defineExpert({
     id: "command-test",
     name: "Command test",
@@ -71,7 +89,7 @@ async function fixture(requireCreateApproval: false | "definition" | "plugin" = 
     scope: "test",
     workspace: root,
     ...(requireCreateApproval === "definition"
-      ? { executionToolApprovals: { create_flow_draft: { mode: "required" as const } } }
+      ? { executionToolApprovals: { [approvalTool]: { mode: "required" as const } } }
       : {}),
     ...(requireCreateApproval === "plugin"
       ? {
@@ -105,7 +123,10 @@ async function fixture(requireCreateApproval: false | "definition" | "plugin" = 
         }
       : {}),
   });
-  const scope = { missionId: randomUUID(), workspacePath: root };
+  const scope: { missionId: string; workspacePath: string } = {
+    missionId: randomUUID(),
+    workspacePath: root,
+  };
   const executionId = randomUUID();
   const invocationId = randomUUID();
   const controller = new AbortController();
@@ -120,7 +141,10 @@ async function fixture(requireCreateApproval: false | "definition" | "plugin" = 
         controller.signal.throwIfAborted();
       },
     },
-    humanInteractionHandler: async () => ({ kind: "tool_approval" as const, approved }),
+    humanInteractionHandler: (async () => ({
+      kind: "tool_approval" as const,
+      approved,
+    })) as ExpertAgentHumanInteractionHandler,
     runContext: {
       attributes: {
         "execution.executionId": executionId,
@@ -133,8 +157,44 @@ async function fixture(requireCreateApproval: false | "definition" | "plugin" = 
     signal: controller.signal,
   };
   const receiptsRoot = join(root, "command-receipts");
+  const runtime = defineRuntimeDriver<never, { id: string }>({
+    descriptor: {
+      id: "command-host-test",
+      kind: "command-host-test",
+      displayName: "Command Host test",
+    },
+    features: createRuntimeTestFeatures(),
+    createSession: ({ systemSessionId }) => ({ id: systemSessionId }),
+    restoreSession: ({ systemSessionId }) => ({ id: systemSessionId }),
+    readSession: (native) => ({ runtimeSessionId: native.id }),
+    mapEvent: () => ({ events: [] }),
+    startTurn: async (_native, turn) => {
+      if (turn.rawQuery.includes("wait forever"))
+        await new Promise<void>((resolve) => {
+          if (turn.signal.aborted) resolve();
+          else turn.signal.addEventListener("abort", () => resolve(), { once: true });
+        });
+      return { outputText: "ok" };
+    },
+  });
+  const host = phaseThree
+    ? await createPhaseThreeCommandTestFixture(
+        root,
+        createStaticRuntimeResolver({
+          runtimes: [runtime],
+          defaultRuntimeId: runtime.descriptor.id,
+        }),
+        root,
+        onStorageTrashed,
+      )
+    : undefined;
+  if (host !== undefined) cleanup.push(host.dispose);
   const app = createManagementCommandApplication({
-    ports: { project: port, missions: {} as never },
+    ports: {
+      project: port,
+      missions: host?.missionPort ?? ({} as never),
+      ...(host === undefined ? {} : { automations: host.automations, resources: host.resources }),
+    },
     scope,
     receiptsRoot,
     findOwner: createManagementCommandOwnerLookup(root),
@@ -156,6 +216,7 @@ async function fixture(requireCreateApproval: false | "definition" | "plugin" = 
     await writeFile(inputPath, JSON.stringify(input));
     const args = [
       clientPath,
+      "manage",
       ...command.split("."),
       "--input",
       inputPath,
@@ -179,6 +240,10 @@ async function fixture(requireCreateApproval: false | "definition" | "plugin" = 
     } catch (error) {
       stdout = (error as { stdout: string }).stdout;
     }
+    if (!stdout)
+      throw new Error(
+        "Command client returned no structured stdout; rebuild Desktop command client before this suite.",
+      );
     return JSON.parse(stdout) as {
       status: string;
       exitCode: number;
@@ -188,6 +253,7 @@ async function fixture(requireCreateApproval: false | "definition" | "plugin" = 
   };
   return {
     root,
+    host,
     project,
     port,
     scope,
@@ -961,3 +1027,902 @@ it(
     expect((await f.project.get()).revision).toBe(0);
   },
 );
+
+describe("DSL and Evaluation CLI real process", { timeout: 60_000 }, () => {
+  it("authors related files, freezes one submission, fences owners and commits atomically", async () => {
+    const f = await fixture();
+    const requestId = randomUUID();
+    const input = {
+      targets: [
+        {
+          mode: "create",
+          key: "writer",
+          kind: "Expert",
+          name: "Writer",
+          description: "Write copy",
+        },
+        {
+          mode: "create",
+          key: "team",
+          kind: "ExpertTeam",
+          name: "Writing Team",
+          description: "Coordinate copy",
+        },
+      ],
+    };
+    const started = await f.invoke("dsl.draft.start", input, requestId);
+    expect(started.exitCode).toBe(0);
+    expect(await f.invoke("dsl.draft.start", input, requestId)).toEqual(started);
+    const draftId = started.result["draftId"] as string;
+    const resources = started.result["resources"] as {
+      key: string;
+      ref: string;
+      filePath: string;
+    }[];
+    const writer = resources.find((r) => r.key === "writer")!;
+    const team = resources.find((r) => r.key === "team")!;
+    expect((await f.invoke("dsl.draft.prepare", { draftId })).exitCode).toBe(10);
+    await writeFile(writer.filePath, cliExpert(writer.ref.slice(7)));
+    await writeFile(team.filePath, cliTeam(team.ref.slice(5), writer.ref));
+    expect((await f.invoke("dsl.draft.inspect", { draftId })).exitCode).toBe(0);
+    const listed = await f.invoke("dsl.draft.list", { limit: 1 });
+    expect(listed.result["items"]).toEqual([expect.objectContaining({ draftId })]);
+    const prepareId = randomUUID();
+    const prepared = await f.invoke("dsl.draft.prepare", { draftId }, prepareId);
+    expect(prepared.exitCode).toBe(0);
+    const changeSetId = (prepared.result["changeSet"] as Record<string, unknown>)[
+      "changeSetId"
+    ] as string;
+    expect(await f.invoke("dsl.draft.prepare", { draftId }, prepareId)).toEqual(prepared);
+    // Crash after candidate publication but before the final draft/outer receipt replacement.
+    const recordPath = join(
+      f.root,
+      "state",
+      "pragma",
+      "dsl-resource-drafts",
+      encodePragmaPathSegment(draftId),
+      "draft.json",
+    );
+    const record = JSON.parse(await readFile(recordPath, "utf8"));
+    record.state = "editing";
+    delete record.submissionHash;
+    delete record.preparedChangeSetId;
+    await writeFile(recordPath, JSON.stringify(record));
+    const operation = createHash("sha256")
+      .update(JSON.stringify([f.scope.missionId, "root-context", prepareId]))
+      .digest("hex");
+    const receiptPath = join(f.receiptsRoot, `${operation}.json`);
+    const receipt = JSON.parse(await readFile(receiptPath, "utf8"));
+    receipt.state = "pending";
+    delete receipt.result;
+    await writeFile(receiptPath, JSON.stringify(receipt));
+    const prepareJournalPath = join(recordPath, "..", "command-prepare.json");
+    const prepareJournal = await readFile(prepareJournalPath, "utf8");
+    await writeFile(
+      prepareJournalPath,
+      JSON.stringify({
+        ...JSON.parse(prepareJournal),
+        schemaVersion: "pragma.dsl-command-prepare/v99",
+      }),
+    );
+    expect((await f.invoke("dsl.draft.inspect", { draftId })).error?.code).toBe(
+      "STORAGE_VERSION_UNSUPPORTED",
+    );
+    expect(await readFile(recordPath, "utf8")).toBe(JSON.stringify(record));
+    await writeFile(prepareJournalPath, prepareJournal);
+    const ownContext = f.context.runContext.attributes["execution.contextId"];
+    f.context.runContext.attributes["execution.contextId"] = "foreign-list-context";
+    expect((await f.invoke("dsl.draft.list", { limit: 1 })).result["items"]).toEqual([]);
+    expect(await readFile(recordPath, "utf8")).toBe(JSON.stringify(record));
+    expect((await f.invoke("dsl.draft.inspect", { draftId })).exitCode).toBe(6);
+    const ownerPath = join(recordPath, "..", "owner.json");
+    const ownerBytes = await readFile(ownerPath, "utf8");
+    const initializingOwner = JSON.stringify({ ...JSON.parse(ownerBytes), state: "initializing" });
+    await writeFile(ownerPath, initializingOwner);
+    expect((await f.invoke("dsl.draft.list", { limit: 1 })).result["items"]).toEqual([]);
+    expect(await readFile(ownerPath, "utf8")).toBe(initializingOwner);
+    expect(await readFile(recordPath, "utf8")).toBe(JSON.stringify(record));
+    await writeFile(ownerPath, ownerBytes);
+    f.context.runContext.attributes["execution.contextId"] = ownContext;
+    expect((await f.invoke("dsl.draft.inspect", { draftId })).exitCode).toBe(0);
+    expect((await f.invoke("dsl.draft.list", { limit: 1 })).result["items"]).toEqual([
+      expect.objectContaining({ draftId, state: "prepared" }),
+    ]);
+    expect((await f.invoke("dsl.draft.prepare", { draftId }, prepareId)).result).toEqual(
+      prepared.result,
+    );
+    expect(JSON.parse(await readFile(recordPath, "utf8")).state).toBe("prepared");
+    const oldContext = f.context.runContext.attributes["execution.contextId"];
+    f.context.runContext.attributes["execution.contextId"] = "foreign";
+    expect((await f.invoke("dsl.draft.inspect", { draftId })).exitCode).toBe(6);
+    expect((await f.invoke("dsl.changes.commit", { changeSetId })).exitCode).toBe(6);
+    f.context.runContext.attributes["execution.contextId"] = oldContext;
+    expect((await f.invoke("dsl.changes.commit", { changeSetId })).exitCode).toBe(6);
+    expect((await f.project.get()).revision).toBe(0);
+    f.approve();
+    expect((await f.invoke("dsl.changes.commit", { changeSetId })).exitCode).toBe(0);
+    expect((await f.project.get()).resources.map((r) => r.kind).sort()).toEqual([
+      "Expert",
+      "ExpertTeam",
+      "RuntimeProfile",
+    ]);
+    expect(
+      (
+        await f.invoke("dsl.changes.prepare", {
+          expectedProjectRevision: 1,
+          sources: [cliExpert(writer.ref.slice(7))],
+        })
+      ).exitCode,
+    ).toBe(10);
+    const discarded = await f.invoke("dsl.draft.start", {
+      targets: [{ mode: "edit", ref: writer.ref }],
+    });
+    expect(
+      (await f.invoke("dsl.draft.discard", { draftId: discarded.result["draftId"] })).exitCode,
+    ).toBe(0);
+  });
+
+  it("recovers actual historical file and Evaluation drafts only after approval, preserving their bytes", async () => {
+    const f = await fixture();
+    const source = new URL("./__fixtures__/legacy-authoring-a69bd99d/", import.meta.url);
+    const provenance = JSON.parse(await readFile(new URL("provenance.json", source), "utf8")) as {
+      missionId: string;
+      dslDraftId: string;
+      evaluationDraftId: string;
+    };
+    f.scope.missionId = provenance.missionId;
+    const target = join(f.root, "state", "pragma", "dsl-resource-drafts");
+    await cp(new URL("dsl-resource-drafts/", source), target, { recursive: true });
+    await cp(new URL("workspace-files/", source), join(f.root, ".pragma"), { recursive: true });
+    const directory = join(target, encodePragmaPathSegment(provenance.dslDraftId));
+    const fixtureWorkspaceRoot = await realpath(f.root);
+    for (const name of ["draft.json", "owner.json"]) {
+      const path = join(directory, name);
+      await writeFile(
+        path,
+        relocateHistoricalDraftFixture(await readFile(path, "utf8"), fixtureWorkspaceRoot),
+      );
+    }
+    const before = await readFile(join(directory, "draft.json"), "utf8");
+    expect((await f.invoke("dsl.draft.list", { limit: 1 })).result["items"]).toEqual([]);
+    expect(await readFile(join(directory, "draft.json"), "utf8")).toBe(before);
+    expect((await f.invoke("dsl.draft.inspect", { draftId: provenance.dslDraftId })).exitCode).toBe(
+      6,
+    );
+    expect((await f.invoke("dsl.draft.recover", { draftId: provenance.dslDraftId })).exitCode).toBe(
+      6,
+    );
+    f.approve();
+    await writeFile(
+      join(directory, "draft.json"),
+      JSON.stringify({ ...JSON.parse(before), schemaVersion: "pragma.dsl-draft/v99" }),
+    );
+    expect(
+      (await f.invoke("dsl.draft.recover", { draftId: provenance.dslDraftId })).error?.code,
+    ).toBe("STORAGE_VERSION_UNSUPPORTED");
+    await writeFile(join(directory, "draft.json"), before);
+
+    expect((await f.invoke("dsl.draft.recover", { draftId: provenance.dslDraftId })).exitCode).toBe(
+      0,
+    );
+    expect(await readFile(join(directory, "draft.json"), "utf8")).toBe(before);
+    expect((await f.invoke("dsl.draft.inspect", { draftId: provenance.dslDraftId })).exitCode).toBe(
+      0,
+    );
+    const evaluationPath = join(
+      f.root,
+      "state",
+      "pragma",
+      "evaluation-drafts",
+      `${encodePragmaPathSegment(provenance.evaluationDraftId)}.json`,
+    );
+    const evaluationBytes = await readFile(new URL("evaluation.json", source));
+    await mkdir(join(f.root, "state", "pragma", "evaluation-drafts"), { recursive: true });
+    await writeFile(evaluationPath, evaluationBytes);
+    expect(
+      (await f.invoke("evaluation.draft.get", { draftId: provenance.evaluationDraftId })).exitCode,
+    ).toBe(6);
+    expect(
+      (await f.invoke("evaluation.draft.recover", { draftId: provenance.evaluationDraftId }))
+        .exitCode,
+    ).toBe(0);
+    expect(await readFile(evaluationPath)).toEqual(evaluationBytes);
+    f.context.runContext.attributes["execution.contextId"] = "other";
+    expect(
+      (await f.invoke("evaluation.draft.recover", { draftId: provenance.evaluationDraftId }))
+        .exitCode,
+    ).toBe(6);
+  });
+
+  it("refuses a changed approved payload when recovering a pending DSL start", async () => {
+    const f = await fixture("definition", "start_dsl_draft");
+    f.approve();
+    const requestId = randomUUID();
+    const input = {
+      targets: [
+        { mode: "create", key: "writer", kind: "Expert", name: "Writer", description: "Original" },
+      ],
+    };
+    const created = await f.invoke("dsl.draft.start", input, requestId);
+    expect(created.exitCode).toBe(0);
+    const op = createHash("sha256")
+      .update(JSON.stringify([f.scope.missionId, "root-context", requestId]))
+      .digest("hex");
+    const receiptPath = join(f.receiptsRoot, `${op}.json`);
+    const receipt = JSON.parse(await readFile(receiptPath, "utf8"));
+    receipt.state = "pending";
+    delete receipt.result;
+    await writeFile(receiptPath, JSON.stringify(receipt));
+    f.context.humanInteractionHandler = async () => ({
+      kind: "tool_approval",
+      approved: true,
+      updatedInput: { targets: [{ ...input.targets[0]!, description: "Changed approval" }] },
+    });
+    const result = await f.invoke("dsl.draft.start", input, requestId);
+    expect(result.error?.code).toBe("IDEMPOTENCY_CONFLICT");
+    expect(
+      (await f.port.listDslDrafts({ missionId: f.scope.missionId, limit: 25 })).items,
+    ).toHaveLength(1);
+  });
+
+  it("runs, repairs, rebases and independently publishes Evaluation with durable mutation retries", async () => {
+    const f = await fixture();
+    f.approve();
+    const flow = await f.invoke("flow.draft.create", {
+      expectedProjectRevision: 0,
+      metadata: { id: "8h9j0k1m2n3p4q5r", name: "Approval", description: "Boundary", tags: [] },
+    });
+    const flowId = flow.result["draftId"] as string;
+    expect(
+      (
+        await f.invoke("flow.draft.update", {
+          draftId: flowId,
+          expectedDraftRevision: 0,
+          operations,
+        })
+      ).exitCode,
+    ).toBe(0);
+    const fp = await f.invoke("flow.draft.prepare", { draftId: flowId, expectedDraftRevision: 1 });
+    expect(
+      (
+        await f.invoke("dsl.changes.commit", {
+          changeSetId: (fp.result["changeSet"] as Record<string, unknown>)["changeSetId"],
+        })
+      ).exitCode,
+    ).toBe(0);
+    const input = {
+      mode: "create",
+      expectedProjectRevision: 1,
+      targetRef: "flow:8h9j0k1m2n3p4q5r",
+      metadata: { id: "7h8j9k0m1n2p3q4r", name: "审批测评", description: "Independent", tags: [] },
+    };
+    const createId = randomUUID();
+    const created = await f.invoke("evaluation.draft.create", input, createId);
+    expect(created.exitCode).toBe(0);
+    expect(await f.invoke("evaluation.draft.create", input, createId)).toEqual(created);
+    const draftId = created.result["draftId"] as string;
+    const testCase = {
+      id: "yes",
+      name: "Approve",
+      input: {},
+      mocks: {
+        approve: {
+          expectInput: {},
+          expectPrompt: "wrong",
+          output: { selection: "yes" },
+        },
+      },
+      expect: { status: "succeeded", path: ["approve"], output: { selection: "yes" } },
+    };
+    const update = {
+      draftId,
+      expectedDraftRevision: 0,
+      operations: [{ type: "upsert_case", case: testCase }],
+    };
+    const updateId = randomUUID();
+    expect((await f.invoke("evaluation.draft.update", update, updateId)).exitCode).toBe(0);
+    expect((await f.invoke("evaluation.draft.run", { draftId, caseIds: ["yes"] })).exitCode).toBe(
+      10,
+    );
+    expect((await f.invoke("evaluation.draft.cases", { draftId, caseIds: ["yes"] })).exitCode).toBe(
+      0,
+    );
+    expect(
+      (await f.invoke("evaluation.draft.prepare", { draftId, expectedDraftRevision: 1 })).exitCode,
+    ).toBe(10);
+    // A pending outer receipt recovers the original aggregate mutation, not a second revision increment.
+    const op = createHash("sha256")
+      .update(JSON.stringify([f.scope.missionId, "root-context", updateId]))
+      .digest("hex");
+    const path = join(f.receiptsRoot, `${op}.json`);
+    const receipt = JSON.parse(await readFile(path, "utf8"));
+    delete receipt.result;
+    receipt.state = "pending";
+    await writeFile(path, JSON.stringify(receipt));
+    const mutationPath = join(f.receiptsRoot, "mutations", `${encodePragmaPathSegment(op)}.json`);
+    const mutationBytes = await readFile(mutationPath, "utf8");
+    await writeFile(
+      mutationPath,
+      JSON.stringify({
+        ...JSON.parse(mutationBytes),
+        schemaVersion: "pragma.evaluation-command-mutation/v99",
+      }),
+    );
+    expect((await f.invoke("evaluation.draft.update", update, updateId)).error?.code).toBe(
+      "STORAGE_VERSION_UNSUPPORTED",
+    );
+    await writeFile(mutationPath, mutationBytes);
+    expect((await f.invoke("evaluation.draft.update", update, updateId)).exitCode).toBe(0);
+    expect((await f.port.getEvaluationDraft(draftId)).draftRevision).toBe(1);
+    const fixed = {
+      ...testCase,
+      mocks: { approve: { ...testCase.mocks.approve, expectPrompt: "发布？" } },
+    };
+    expect(
+      (
+        await f.invoke("evaluation.draft.update", {
+          draftId,
+          expectedDraftRevision: 0,
+          operations: [{ type: "upsert_case", case: fixed }],
+        })
+      ).exitCode,
+    ).not.toBe(0);
+    expect(
+      (
+        await f.invoke("evaluation.draft.update", {
+          draftId,
+          expectedDraftRevision: 1,
+          operations: [{ type: "upsert_case", case: fixed }],
+        })
+      ).exitCode,
+    ).toBe(0);
+    const run = await f.invoke("evaluation.draft.run", { draftId, caseIds: ["yes"] });
+    expect(run.result["coverage"]).toMatchObject({ missing: [] });
+    expect(run.exitCode).toBe(0);
+    const prepareId = randomUUID();
+    const prepared = await f.invoke(
+      "evaluation.draft.prepare",
+      { draftId, expectedDraftRevision: 2 },
+      prepareId,
+    );
+    expect(prepared.exitCode).toBe(0);
+    expect(
+      await f.invoke("evaluation.draft.prepare", { draftId, expectedDraftRevision: 2 }, prepareId),
+    ).toEqual(prepared);
+    expect(
+      (
+        await f.invoke("dsl.changes.commit", {
+          changeSetId: (prepared.result["changeSet"] as Record<string, unknown>)["changeSetId"],
+        })
+      ).exitCode,
+    ).toBe(0);
+    const snapshot = await f.project.get();
+    expect(snapshot.revision).toBe(2);
+    expect(snapshot.resources.map((r) => r.kind).sort()).toEqual(["Evaluation", "Flow"]);
+    expect((await f.invoke("evaluation.draft.discard", { draftId })).exitCode).toBe(0);
+  });
+});
+
+function cliExpert(id: string) {
+  return `apiVersion: ${PRAGMA_DSL_WRITE_API_VERSION}\nkind: Expert\nmetadata:\n  id: ${id}\n  name: Writer\n  description: Write copy\n  tags: []\nspec:\n  scope: Write.\n  instructions: Write concise text.\n  runtime:\n    ref: ${PROBE_AUTHORING_RUNTIME_REF}\n  capabilities: []\n  toolApprovals: {}\n  contextStores: []\n  plugins: []\n  tools: []\n`;
+}
+function cliTeam(id: string, ref: string) {
+  return `apiVersion: ${PRAGMA_DSL_WRITE_API_VERSION}\nkind: ExpertTeam\nmetadata:\n  id: ${id}\n  name: Team\n  description: Coordinate copy\n  tags: []\nspec:\n  coordinator:\n    ref: ${ref}\n  members:\n    - ref: ${ref}\n  instructions: Collaborate.\n  contextStores: []\n  delegation:\n    permissions:\n      interact: {}\n    maxConcurrency: 2\n    maxDepth: 2\n    runtimes: {}\n`;
+}
+
+function relocateHistoricalDraftFixture(source: string, workspaceRoot: string): string {
+  return JSON.stringify(
+    JSON.parse(source, (_key, value: unknown) => {
+      if (typeof value !== "string") return value;
+      const prefix = ["/private__FIXTURE_ROOT__", "__FIXTURE_ROOT__"].find((marker) =>
+        value.startsWith(marker),
+      );
+      return prefix === undefined
+        ? value
+        : join(workspaceRoot, ...value.slice(prefix.length).split("/"));
+    }),
+  );
+}
+
+it("relocates the entire historical workspace alias without changing protocol fields", () => {
+  const source = JSON.stringify({
+    schemaVersion: "pragma.dsl-draft/v1",
+    workspacePath: "/private__FIXTURE_ROOT__",
+    resources: [
+      {
+        filePath: "/private__FIXTURE_ROOT__/.pragma/dsl-drafts/example/worktree/expert.yaml",
+        ref: "expert:d1gsrmjmw5t2ca0s",
+      },
+    ],
+    ordinaryMarkerPath: "__FIXTURE_ROOT__/plain.yaml",
+  });
+  const target = join(tmpdir(), 'historical-fixture-"quoted"');
+  expect(JSON.parse(relocateHistoricalDraftFixture(source, target))).toEqual({
+    schemaVersion: "pragma.dsl-draft/v1",
+    workspacePath: target,
+    resources: [
+      {
+        filePath: join(target, ".pragma", "dsl-drafts", "example", "worktree", "expert.yaml"),
+        ref: "expert:d1gsrmjmw5t2ca0s",
+      },
+    ],
+    ordinaryMarkerPath: join(target, "plain.yaml"),
+  });
+});
+
+async function markCommandPending(f: Awaited<ReturnType<typeof fixture>>, requestId: string) {
+  const operationId = createHash("sha256")
+    .update(JSON.stringify([f.scope.missionId, "root-context", requestId]))
+    .digest("hex");
+  const path = join(f.receiptsRoot, `${operationId}.json`);
+  const receipt = JSON.parse(await readFile(path, "utf8"));
+  await writeFile(path, JSON.stringify({ ...receipt, state: "pending", result: undefined }));
+  return operationId;
+}
+
+function recoveryAutomation(executorRef: string) {
+  return PragmaAutomationResourceSchema.parse({
+    apiVersion: PRAGMA_DSL_WRITE_API_VERSION,
+    kind: "Automation",
+    metadata: { id: "000000000000a222", name: "Recovery schedule", description: "Test", tags: [] },
+    spec: {
+      adapter: "pragma.automation.schedule@v1",
+      binding: "binding:desktop-automation",
+      config: { trigger: { kind: "calendar", frequency: "daily", time: "09:00", timezone: "UTC" } },
+      enabled: true,
+      route: { executor: { ref: executorRef }, input: { kind: "prompt", value: "ok" } },
+      interaction: { mode: "reuse-session" },
+      delivery: { adapter: "pragma.automation.delivery.local@v1" },
+    },
+  });
+}
+
+describe(
+  "phase-three management commands through real CLI and shared Host",
+  { timeout: 60_000 },
+  () => {
+    it.each(["deleted", "modified", "unrelated"] as const)(
+      "checks the current resource when resuming a published save: %s",
+      async (change) => {
+        const f = await fixture(false, "create_flow_draft", true);
+        const h = f.host!;
+        const resource = recoveryAutomation(h.executor.ref);
+        const ref = `automation:${resource.metadata.id}`;
+        const input = {
+          expectedProjectRevision: 1,
+          source: JSON.stringify(resource),
+          workspaceId: f.root,
+          toolPermissionMode: "request-approval" as const,
+          operationId: randomUUID(),
+        };
+        const saveBinding = h.store.saveBinding.bind(h.store);
+        vi.spyOn(h.store, "saveBinding").mockImplementationOnce(async () => {
+          throw new Error("Crash before binding");
+        });
+        await expect(h.automations.save(input)).rejects.toThrow("Crash before binding");
+        expect((await h.project.get()).revision).toBe(2);
+        expect(await h.store.getBinding(ref)).toBeUndefined();
+        if (change === "deleted") await h.service.delete({ ref, expectedProjectRevision: 2 });
+        else if (change === "modified")
+          await h.project.upsert({
+            baseRevision: 2,
+            resource: {
+              ...resource,
+              metadata: { ...resource.metadata, description: "Changed after publication" },
+            },
+          });
+        else {
+          const expert = (await h.project.get()).resources.find((r) => r.kind === "Expert")!;
+          await h.project.upsert({
+            baseRevision: 2,
+            resource: {
+              ...expert,
+              metadata: { ...expert.metadata, description: "Unrelated update" },
+            },
+          });
+        }
+        const writes = vi.spyOn(h.store, "saveBinding").mockImplementation(saveBinding);
+        writes.mockClear();
+        if (change === "unrelated") {
+          expect(await h.automations.save(input)).toMatchObject({ ref, enabled: true });
+          expect(writes).toHaveBeenCalledOnce();
+        } else {
+          await expect(h.automations.save(input)).rejects.toMatchObject({
+            code: "COMMAND_REJECTED",
+          });
+          expect(writes).not.toHaveBeenCalled();
+          expect(await h.store.getBinding(ref)).toBeUndefined();
+        }
+        expect((await h.project.get()).revision).toBe(3);
+      },
+    );
+
+    it.each(["disabled", "deleted"] as const)(
+      "resumes reset against the current resource: %s",
+      async (change) => {
+        const f = await fixture(false, "create_flow_draft", true);
+        const h = f.host!;
+        const resource = recoveryAutomation(h.executor.ref);
+        const ref = `automation:${resource.metadata.id}`;
+        await h.automations.save({
+          expectedProjectRevision: 1,
+          source: JSON.stringify(resource),
+          workspaceId: f.root,
+          toolPermissionMode: "request-approval",
+          operationId: randomUUID(),
+        });
+        const operationId = randomUUID();
+        const saveBinding = h.store.saveBinding.bind(h.store);
+        vi.spyOn(h.store, "saveBinding").mockImplementationOnce(async (binding) => {
+          await saveBinding(binding);
+          throw new Error("Crash after reset binding");
+        });
+        await expect(h.automations.resetSession({ ref, operationId })).rejects.toThrow(
+          "Crash after reset binding",
+        );
+        const generation = (await h.store.getBinding(ref))!.generation;
+        if (change === "disabled")
+          await h.project.upsert({
+            baseRevision: 2,
+            resource: { ...resource, spec: { ...resource.spec, enabled: false } },
+          });
+        else await h.project.remove({ baseRevision: 2, ref });
+        h.service.stop();
+        await h.service.start();
+        const before = await h.store.getState(ref, generation);
+        const statePath = new PragmaPaths({ pragmaHome: f.root }).automationState(ref);
+        const beforeSource = await readFile(statePath, "utf8");
+        expect(before.nextRunAt).toBeUndefined();
+        const writes = vi.spyOn(h.store, "saveBinding");
+        writes.mockClear();
+        if (change === "disabled") {
+          expect(await h.automations.resetSession({ ref, operationId })).toMatchObject({
+            enabled: false,
+            status: "disabled",
+          });
+          expect((await h.store.getState(ref, generation)).nextRunAt).toBeUndefined();
+          expect((await h.store.getBinding(ref))!.generation).toBe(generation);
+        } else {
+          await expect(h.automations.resetSession({ ref, operationId })).rejects.toMatchObject({
+            code: "COMMAND_REJECTED",
+          });
+          expect(writes).not.toHaveBeenCalled();
+          expect(await readFile(statePath, "utf8")).toBe(beforeSource);
+        }
+      },
+    );
+
+    it("preserves inherited Mission and Automation port methods and their receiver", async () => {
+      const f = await fixture(false, "create_flow_draft", true);
+      const h = f.host!;
+      const missionList = h.missionPort.list;
+      const automationList = h.automations.list;
+      Object.defineProperty(h.missionPort, "list", {
+        configurable: true,
+        enumerable: true,
+        value: function (this: typeof h.missionPort, input: Parameters<typeof missionList>[0]) {
+          expect(this).toBe(h.missionPort);
+          return missionList.call(this, input);
+        },
+      });
+      Object.defineProperty(h.automations, "list", {
+        configurable: true,
+        enumerable: true,
+        value: function (this: typeof h.automations, input: Parameters<typeof automationList>[0]) {
+          expect(this).toBe(h.automations);
+          return automationList.call(this, input);
+        },
+      });
+      for (const port of [h.missionPort, h.automations]) {
+        Object.setPrototypeOf(port, { ...port });
+        for (const key of Object.keys(port)) Reflect.deleteProperty(port, key);
+      }
+      expect((await f.invoke("mission.list", {})).status).toBe("succeeded");
+      expect((await f.invoke("automation.list", {})).status).toBe("succeeded");
+    });
+
+    it("discovers resources, starts one owner, queries work, sends and interrupts", async () => {
+      const f = await fixture(false, "create_flow_draft", true);
+      const h = f.host!;
+      expect((await f.invoke("workspace.list", {})).result).toMatchObject({
+        items: [expect.objectContaining({ workspaceId: await realpath(f.root) })],
+      });
+      expect((await f.invoke("home-project.list", {})).result).toMatchObject({
+        items: [expect.objectContaining({ projectId: h.preset.id })],
+      });
+      expect((await f.invoke("home-project.get", { projectId: h.preset.id })).result).toMatchObject(
+        { contextStoreIds: [h.contextStore.id] },
+      );
+      expect((await f.invoke("knowledge-store.list", {})).result).toMatchObject({
+        items: [expect.objectContaining({ storeId: h.contextStore.id })],
+      });
+      const input = {
+        goal: "Reply ok",
+        executorRef: h.executor.ref,
+        workspaceId: f.root,
+        contextStoreIds: [h.contextStore.id],
+      };
+      expect((await f.invoke("mission.create", input)).status).toBe("failed");
+      expect(await h.missions.list()).toEqual([]);
+      f.approve();
+      const requestId = randomUUID();
+      const created = await f.invoke("mission.create", input, requestId);
+      expect(created, JSON.stringify(created)).toMatchObject({
+        status: "succeeded",
+        result: { executorRef: h.executor.ref, contextStoreIds: [h.contextStore.id] },
+      });
+      const missionId = String(created.result["missionId"]);
+      expect((await f.invoke("mission.create", input, requestId)).result["missionId"]).toBe(
+        missionId,
+      );
+      expect(await h.missions.list()).toHaveLength(1);
+      const identity = await markCommandPending(f, requestId);
+      await rm(
+        join(
+          f.root,
+          "state",
+          "pragma",
+          "operations",
+          `${encodePragmaPathSegment(identity)}.task.json`,
+        ),
+      );
+      expect((await f.invoke("mission.create", input, requestId)).result["missionId"]).toBe(
+        missionId,
+      );
+      expect(await h.missions.list()).toHaveLength(1);
+      await vi.waitFor(
+        async () => expect((await h.missions.get(missionId)).execution?.status).toBe("succeeded"),
+        { timeout: 15_000 },
+      );
+      expect((await f.invoke("mission.list", {})).result).toMatchObject({
+        items: [expect.objectContaining({ missionId })],
+      });
+      expect((await f.invoke("mission.get", { missionId })).result).toMatchObject({ missionId });
+      const work = await f.invoke("mission.work.list", { missionId });
+      expect(work, JSON.stringify(work)).toMatchObject({ status: "succeeded" });
+      const items = work.result["items"] as { workItemId: string }[];
+      expect(items.length).toBeGreaterThan(0);
+      expect(
+        (await f.invoke("mission.work.get", { missionId, workItemId: items[0]!.workItemId }))
+          .result,
+      ).toMatchObject({ workItemId: items[0]!.workItemId });
+      expect((await f.invoke("mission.send", { missionId, content: "wait forever" })).status).toBe(
+        "succeeded",
+      );
+      await vi.waitFor(
+        async () => expect((await h.missions.get(missionId)).execution?.status).toBe("running"),
+        { timeout: 15_000 },
+      );
+      expect((await f.invoke("mission.interrupt", { missionId })).status).toBe("succeeded");
+      await vi.waitFor(
+        async () => expect((await h.missions.get(missionId)).execution?.status).toBe("cancelled"),
+        { timeout: 15_000 },
+      );
+    });
+
+    it("saves, changes, disables, resets and deletes Automations without deleting Missions", async () => {
+      let failAfterCleanup = false;
+      const f = await fixture(false, "create_flow_draft", true, () => {
+        if (failAfterCleanup) {
+          failAfterCleanup = false;
+          throw new Error("Crash after cleanup before progress");
+        }
+      });
+      const h = f.host!;
+      const resource = {
+        apiVersion: PRAGMA_DSL_WRITE_API_VERSION,
+        kind: "Automation",
+        metadata: {
+          id: "000000000000a111",
+          name: "Command schedule",
+          description: "Test",
+          tags: [],
+        },
+        spec: {
+          adapter: "pragma.automation.schedule@v1",
+          binding: "binding:desktop-automation",
+          config: {
+            trigger: { kind: "calendar", frequency: "daily", time: "09:00", timezone: "UTC" },
+          },
+          enabled: true,
+          route: { executor: { ref: h.executor.ref }, input: { kind: "prompt", value: "ok" } },
+          interaction: { mode: "reuse-session" },
+          delivery: { adapter: "pragma.automation.delivery.local@v1" },
+        },
+      };
+      const input = () => ({
+        expectedProjectRevision: 1,
+        source: JSON.stringify(resource),
+        workspaceId: f.root,
+        toolPermissionMode: "request-approval",
+      });
+      expect((await f.invoke("automation.save", input())).status).toBe("failed");
+      expect((await h.project.get()).revision).toBe(1);
+      f.approve();
+      const requestId = randomUUID();
+      const apply = h.project.applyTransactional.bind(h.project);
+      vi.spyOn(h.project, "applyTransactional").mockImplementationOnce(async (...args) => {
+        await apply(...args);
+        throw new Error("Crash after publication before binding");
+      });
+      expect((await f.invoke("automation.save", input(), requestId)).status).toBe("failed");
+      expect((await h.project.get()).revision).toBe(2);
+      await markCommandPending(f, requestId);
+      const saved = await f.invoke("automation.save", input(), requestId);
+      expect(saved, JSON.stringify(saved)).toMatchObject({
+        status: "succeeded",
+        result: { enabled: true },
+      });
+      const ref = String(saved.result["ref"]);
+      const binding = await h.store.getBinding(ref);
+      expect((await f.invoke("automation.save", input(), requestId)).result).toEqual(saved.result);
+      expect((await h.project.get()).revision).toBe(2);
+      expect((await f.invoke("automation.list", {})).result).toMatchObject({
+        items: [expect.objectContaining({ ref })],
+      });
+      const historical = await h.creator.create({
+        workspace: f.root,
+        missionInput: { kind: "prompt", value: "history" },
+        executorRef: h.executor.ref,
+      });
+      await h.store.updateState(ref, binding!.generation, (state) => ({
+        ...state,
+        missionId: historical.id,
+      }));
+      resource.spec.enabled = false;
+      expect(
+        (await f.invoke("automation.save", { ...input(), expectedProjectRevision: 1 })).status,
+      ).toBe("failed");
+      expect(
+        (await f.invoke("automation.save", { ...input(), expectedProjectRevision: 2 })).result,
+      ).toMatchObject({ enabled: false });
+      const resetRequest = randomUUID();
+      const saveBinding = h.store.saveBinding.bind(h.store);
+      vi.spyOn(h.store, "saveBinding").mockImplementationOnce(async (value) => {
+        await saveBinding(value);
+        throw new Error("Crash after binding");
+      });
+      expect((await f.invoke("automation.reset-session", { ref }, resetRequest)).status).toBe(
+        "failed",
+      );
+      const pendingGeneration = (await h.store.getBinding(ref))!.generation;
+      await markCommandPending(f, resetRequest);
+      failAfterCleanup = true;
+      expect((await f.invoke("automation.reset-session", { ref }, resetRequest)).status).toBe(
+        "failed",
+      );
+      const event = {
+        eventId: "accepted-after-cleanup",
+        scheduledFor: new Date().toISOString(),
+        missionId: randomUUID(),
+        createdAt: new Date().toISOString(),
+      };
+      await h.store.updateState(ref, pendingGeneration, (state) => ({ ...state, queue: [event] }));
+      await markCommandPending(f, resetRequest);
+      expect((await f.invoke("automation.reset-session", { ref }, resetRequest)).status).toBe(
+        "succeeded",
+      );
+      expect((await h.store.getState(ref, pendingGeneration)).queue).toEqual([event]);
+      const reset = await h.store.getBinding(ref);
+      expect(reset?.generation).not.toBe(binding?.generation);
+      expect(reset?.generation).toBe(pendingGeneration);
+      expect((await f.invoke("automation.reset-session", { ref }, resetRequest)).status).toBe(
+        "succeeded",
+      );
+      expect((await h.store.getBinding(ref))?.generation).toBe(reset?.generation);
+      expect(
+        (await f.invoke("automation.delete", { ref, expectedProjectRevision: 3 })).result,
+      ).toMatchObject({ deleted: true });
+      expect(await h.store.getBinding(ref)).toBeUndefined();
+      expect((await h.missions.get(historical.id)).id).toBe(historical.id);
+    });
+  },
+);
+
+it("assembles the production CLI grants and hooks with no selected management tools", async () => {
+  const f = await fixture();
+  let result: unknown;
+  let endpoint: string | undefined;
+  const runtime = defineRuntimeDriver<never, { context: RuntimeNativeSessionContext }>({
+    descriptor: {
+      id: "empty-management-test",
+      kind: "empty-management-test",
+      displayName: "Empty management test",
+    },
+    features: createRuntimeTestFeatures(),
+    createSession: (context) => ({ context }),
+    mapEvent: () => ({ events: [] }),
+    startTurn: async (native) => {
+      endpoint = native.context.processEnvironment["PRAGMA_EXECUTION_COMMAND_ENDPOINT"];
+      result = await callManagementCommand({
+        endpoint,
+        request: {
+          protocol: MANAGEMENT_COMMAND_PROTOCOL,
+          requestId: randomUUID(),
+          command: "dsl.resources.list",
+          input: {},
+        },
+      });
+      return { outputText: "ok" };
+    },
+  });
+  const compiled = await compileBuiltInAgent({
+    ref: BUILT_IN_PRAGMA_REF,
+    environmentId: "desktop",
+    definitionStateRoot: join(f.root, "definitions"),
+    workspace: f.root,
+    pragmaHome: f.root,
+    runtimes: createStaticRuntimeResolver({
+      runtimes: [runtime],
+      defaultRuntimeId: runtime.descriptor.id,
+    }),
+    adapterHost: createDesktopAdapterHost(
+      {
+        capabilityStore: {} as never,
+        capabilityCredentials: {} as never,
+        capabilitiesPath: f.root,
+        pragmaHome: f.root,
+        pragmaManagement: { project: f.port, missions: {} as never },
+        pragmaManagementScope: f.scope,
+        pragmaCommandDistribution: async () => ({ directory: f.root }),
+      },
+      f.root,
+    ),
+    resolveExternalInvocable: async (ref) => ({
+      resource: {
+        apiVersion: PRAGMA_DSL_WRITE_API_VERSION,
+        kind: "Expert",
+        metadata: {
+          id: ref.slice("expert:".length),
+          avatarId: "pragma.avatar.expert.default",
+          name: "Delegate",
+          description: "Test",
+          tags: [],
+        },
+        spec: {
+          scope: "test",
+          instructions: "test",
+          tools: [],
+          capabilities: [],
+          plugins: [],
+          contextStores: [],
+          toolApprovals: {},
+        },
+      },
+      value: f.context.agent,
+    }),
+  });
+  expect(compiled.value.tools?.map((tool) => tool.name)).toEqual([
+    "call_store_revision_agent",
+    "call_skill_revision_agent",
+  ]);
+  expect(compiled.value.skills?.skills).toHaveLength(1);
+  const session = await openRuntimeSession(runtime, {
+    agent: compiled.value,
+    pragmaHome: f.root,
+    systemSessionId: "empty-management-session",
+    owner: {
+      type: "expert-session",
+      ownerId: "empty-management-owner",
+      contextId: "empty-context",
+    },
+    context: { attributes: { "execution.contextId": "empty-context" } },
+    executionContext: f.context.executionContext,
+  });
+  await session.submit({ query: "check", execution: { context: f.context.executionContext } })
+    .result;
+  expect(endpoint).toBeTruthy();
+  expect(result).toMatchObject({ status: "succeeded", origin: { missionId: f.scope.missionId } });
+  await session.close();
+  await expect(
+    callManagementCommand({
+      endpoint,
+      request: {
+        protocol: MANAGEMENT_COMMAND_PROTOCOL,
+        requestId: randomUUID(),
+        command: "dsl.resources.list",
+        input: {},
+      },
+    }),
+  ).rejects.toMatchObject({ code: "DEPENDENCY_UNAVAILABLE" });
+});

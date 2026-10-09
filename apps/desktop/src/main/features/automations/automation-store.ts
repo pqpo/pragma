@@ -7,6 +7,7 @@ import {
   PragmaPaths,
   recoverAtomicStateMigration,
   withFileLock,
+  moveOwnedStorageToTrash,
 } from "@pragma/core";
 import { z } from "zod";
 
@@ -53,6 +54,7 @@ export interface AutomationStore {
     update: (state: AutomationState) => AutomationState,
   ): Promise<AutomationState>;
   remove(ref: string): Promise<void>;
+  retireGeneration(ref: string, generation: string): Promise<boolean>;
 }
 
 export class AutomationGenerationChangedError extends Error {
@@ -114,6 +116,21 @@ export function createAutomationStore(paths: PragmaPaths, projectId: string): Au
         });
         await writeJsonAtomic(paths.automationState(ref), next);
         return next;
+      });
+    },
+    async retireGeneration(ref, generation) {
+      await ensureMigrated();
+      return await withFileLock(paths.automationLock(ref), async () => {
+        const state = await readOptional(paths.automationState(ref), AutomationStateSchema);
+        if (state?.generation !== generation) return false;
+        // Keep the aggregate lock in place and retire only the frozen generation's payload.
+        // A retry after the rename must never remove state accepted by the new generation.
+        await moveOwnedStorageToTrash({
+          paths,
+          owner: { type: "automation-generation", id: ref },
+          sources: [{ label: "state.json", path: paths.automationState(ref) }],
+        });
+        return true;
       });
     },
     async remove(ref) {
