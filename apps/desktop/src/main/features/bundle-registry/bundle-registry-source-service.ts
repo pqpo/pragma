@@ -14,12 +14,15 @@ import {
   addBundleSourceVersion,
   defaultBundleSourceCategories,
   initializeBundleSource,
+  upgradeBundleSource,
   validateBundleSourceDirectory,
 } from "@pragma/local-host";
 import {
   BUNDLE_SOURCE_KIND_DIRECTORIES,
   BundleSourceItemSummarySchema,
   BundleSourceManifestSchema,
+  BundleSourceV1ManifestSchema,
+  BundleSourceV2ManifestSchema,
   bundleSourceItemDirectory,
   bundleSourceRootPrefix,
   parseBundleSourceItem,
@@ -531,15 +534,54 @@ export function createDesktopBundleRegistrySourceService(options: {
           const existingItem = snapshot?.items.find(
             (item) => item.kind === kind && item.rootRef === rootRef,
           );
-          const selectable = source.enabled && status.status !== "error";
+          let selectable = source.enabled && status.status !== "error";
+          let upgradeRequired = false;
+          let resolvedBranch = status.resolvedBranch;
+          let preparationError: string | undefined;
+          if (selectable && snapshot !== undefined && !isEmptySnapshot(snapshot)) {
+            try {
+              upgradeRequired = requiresSourceUpgrade(
+                parse(
+                  await readGitBlob(
+                    join(repositoriesRoot, source.id),
+                    snapshot.commit,
+                    "pragma-source.yaml",
+                    CONFIG_BLOB_LIMIT,
+                  ),
+                ),
+              );
+              if (upgradeRequired && resolvedBranch === undefined) {
+                resolvedBranch = (
+                  await resolveRemoteBranch(join(repositoriesRoot, source.id), source.branch)
+                ).branch;
+              }
+            } catch (error) {
+              selectable = false;
+              preparationError = boundedErrorMessage(
+                error,
+                "Bundle Source publication preparation failed. Refresh this source and try again.",
+              );
+            }
+          }
           return {
-            source: status,
+            source: {
+              ...status,
+              ...(resolvedBranch === undefined ? {} : { resolvedBranch }),
+              ...(preparationError === undefined
+                ? {}
+                : {
+                    status: "error" as const,
+                    errorCode: "source_publication_prepare_failed",
+                    errorMessage: preparationError,
+                  }),
+            },
             selectable,
+            upgradeRequired,
             ...(selectable
               ? {}
               : {
                   unavailableReason: source.enabled
-                    ? (status.errorMessage ?? "Bundle Source is unavailable.")
+                    ? (preparationError ?? status.errorMessage ?? "Bundle Source is unavailable.")
                     : "Bundle Source is disabled.",
                 }),
             categories,
@@ -584,6 +626,17 @@ export function createDesktopBundleRegistrySourceService(options: {
           const repositoryPath = join(repositoriesRoot, source.id);
           await ensureRepository(repositoryPath, source.remote);
           const resolved = await resolveRemoteBranch(repositoryPath, source.branch);
+          if (
+            input.target.upgradeSource !== undefined &&
+            (input.target.upgradeSource.remote !== source.remote ||
+              input.target.upgradeSource.branch !== resolved.branch)
+          ) {
+            await refresh(source);
+            throw new Error(
+              "Bundle Source upgrade target changed. Review the source and confirm the upgrade again.",
+            );
+          }
+
           const temporaryRoot = join(options.cacheRoot, "publications");
           await mkdir(temporaryRoot, { recursive: true, mode: 0o700 });
           const worktree = await mkdtemp(join(temporaryRoot, `${source.id}-`));
@@ -623,7 +676,7 @@ export function createDesktopBundleRegistrySourceService(options: {
                   status: "already_published" as const,
                   version: input.target.version,
                   ...(!resolved.empty
-                    ? { commit: (await runGit(worktree, ["rev-parse", "FETCH_HEAD"])).trim() }
+                    ? { commit: (await runGit(worktree, ["rev-parse", "HEAD"])).trim() }
                     : {}),
                 };
               }
@@ -632,6 +685,33 @@ export function createDesktopBundleRegistrySourceService(options: {
               );
             } catch (error) {
               if (!isNodeError(error, "ENOENT")) throw error;
+            }
+
+            const rawManifest = parse(await readFile(join(worktree, "pragma-source.yaml"), "utf8"));
+            if (requiresSourceUpgrade(rawManifest)) {
+              if (input.target.upgradeSource === undefined) {
+                await refresh(source);
+                throw new Error("Bundle Source upgrade requires explicit confirmation in Desktop.");
+              }
+              await upgradeBundleSource(worktree);
+              await validateBundleSourceDirectory(worktree);
+              // Stage only tracked protocol files; migration backups and journals stay local.
+              const protocolFiles = (await readGitTree(worktree, "HEAD"))
+                .filter((entry) => parseBundleSourceRepositoryEntry(entry.path)?.kind === "config")
+                .map((entry) => entry.path);
+              await runGit(worktree, ["add", "--", "pragma-source.yaml", ...protocolFiles]);
+              const upgradeCommit = await commitSourceTree(
+                worktree,
+                "Upgrade Bundle Source protocol to v3",
+                (await runGit(worktree, ["rev-parse", "HEAD"])).trim(),
+              );
+              await runGit(worktree, [
+                "push",
+                "origin",
+                `${upgradeCommit}:refs/heads/${resolved.branch}`,
+              ]);
+              await runGit(worktree, ["update-ref", "HEAD", upgradeCommit]);
+              await refresh(source);
             }
 
             await addBundleSourceVersion({
@@ -659,30 +739,22 @@ export function createDesktopBundleRegistrySourceService(options: {
                 : { avatarId: input.metadata.avatarId }),
             });
             await validateBundleSourceDirectory(worktree);
-            const identity = await readSystemGitIdentity();
-            await runGit(worktree, ["add", "--all"]);
-            const tree = (await runGit(worktree, ["write-tree"])).trim();
-            const parent = resolved.empty
-              ? undefined
-              : (await runGit(worktree, ["rev-parse", "FETCH_HEAD"])).trim();
-            const commit = (
-              await runGit(
-                worktree,
-                [
-                  "commit-tree",
-                  tree,
-                  ...(parent === undefined ? [] : ["-p", parent]),
-                  "-m",
-                  `Publish ${input.kind}:${input.metadata.itemId}@${input.target.version}`,
-                ],
-                {
-                  GIT_AUTHOR_NAME: identity.name,
-                  GIT_AUTHOR_EMAIL: identity.email,
-                  GIT_COMMITTER_NAME: identity.name,
-                  GIT_COMMITTER_EMAIL: identity.email,
-                },
-              )
-            ).trim();
+            await runGit(worktree, [
+              "add",
+              "--",
+              "pragma-source.yaml",
+              `${bundleSourceItemDirectory({
+                kind: input.kind,
+                categoryId: input.target.categoryId,
+                itemId: input.metadata.itemId,
+              })}/config.yaml`,
+              bundleRelativePath,
+            ]);
+            const commit = await commitSourceTree(
+              worktree,
+              `Publish ${input.kind}:${input.metadata.itemId}@${input.target.version}`,
+              resolved.empty ? undefined : (await runGit(worktree, ["rev-parse", "HEAD"])).trim(),
+            );
             await runGit(worktree, ["push", "origin", `${commit}:refs/heads/${resolved.branch}`]);
             await refresh(source);
             return {
@@ -1034,6 +1106,8 @@ function truncateErrorMessage(message: string): string {
 
 function publicationErrorCode(error: unknown): string {
   const message = error instanceof Error ? error.message.toLowerCase() : "";
+  if (message.includes("upgrade target changed")) return "source_upgrade_target_changed";
+  if (message.includes("upgrade requires explicit confirmation")) return "source_upgrade_required";
   if (message.includes("different content")) return "source_version_conflict";
   if (message.includes("user.name") || message.includes("user.email"))
     return "git_identity_missing";
@@ -1291,4 +1365,32 @@ function sourceErrorCode(error: unknown): string {
 
 function isNodeError(error: unknown, code: string): boolean {
   return error instanceof Error && "code" in error && error.code === code;
+}
+
+function requiresSourceUpgrade(manifest: unknown): boolean {
+  return (
+    BundleSourceV1ManifestSchema.safeParse(manifest).success ||
+    BundleSourceV2ManifestSchema.safeParse(manifest).success
+  );
+}
+
+async function commitSourceTree(
+  worktree: string,
+  message: string,
+  parent?: string,
+): Promise<string> {
+  const identity = await readSystemGitIdentity();
+  const tree = (await runGit(worktree, ["write-tree"])).trim();
+  return (
+    await runGit(
+      worktree,
+      ["commit-tree", tree, ...(parent === undefined ? [] : ["-p", parent]), "-m", message],
+      {
+        GIT_AUTHOR_NAME: identity.name,
+        GIT_AUTHOR_EMAIL: identity.email,
+        GIT_COMMITTER_NAME: identity.name,
+        GIT_COMMITTER_EMAIL: identity.email,
+      },
+    )
+  ).trim();
 }

@@ -44,6 +44,11 @@ export function BundleSourcePublishDialog(props: {
   const [tagInput, setTagInput] = useState("");
   const [fieldErrors, setFieldErrors] = useState<PublicationFieldErrors>({});
   const [results, setResults] = useState<BundleSourcePublicationResult["results"] | null>(null);
+  const [pendingUpgrade, setPendingUpgrade] = useState<{
+    request: PublishBundleSource;
+    retryFailed: boolean;
+    requiresUpgrade: boolean;
+  } | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const formRef = useRef<HTMLFormElement>(null);
@@ -152,11 +157,86 @@ export function BundleSourcePublishDialog(props: {
       setError(t("bundlePublish.validation.form"));
       return;
     }
+    const upgradeTargets = publicationTargetsRequiringUpgrade(
+      requestedTargets,
+      preparation.sources,
+      results ?? [],
+    );
+    if (upgradeTargets.length > 0) {
+      setBusy(true);
+      setError(null);
+      try {
+        const refreshed = await window.pragmaDesktop.prepareBundleSourcePublication({
+          rootRef: props.rootRef,
+          projectRevision: props.projectRevision,
+        });
+        setPreparation(refreshed);
+        const upgradeIds = new Set(
+          publicationTargetsRequiringUpgrade(requestedTargets, refreshed.sources, []).map(
+            (target) => target.sourceId,
+          ),
+        );
+        const confirmationIds = new Set(
+          publicationTargetsRequiringUpgrade(
+            requestedTargets,
+            refreshed.sources,
+            (results ?? []).filter(
+              (result) => result.errorCode === "source_upgrade_target_changed",
+            ),
+          ).map((target) => target.sourceId),
+        );
+        if (confirmationIds.size === 0) {
+          await executePublication(request.data, retryFailed);
+          return;
+        }
+        const confirmedRequest = PublishBundleSourceSchema.parse({
+          ...request.data,
+          targets: request.data.targets.map((target) => {
+            if (!confirmationIds.has(target.sourceId)) return target;
+            const preparedSource = refreshed.sources.find(
+              (source) => source.source.id === target.sourceId,
+            );
+            if (!preparedSource?.selectable || preparedSource.source.resolvedBranch === undefined) {
+              throw new Error(
+                preparedSource?.unavailableReason ?? t("bundlePublish.validation.form"),
+              );
+            }
+            return {
+              ...target,
+              upgradeSource: {
+                remote: preparedSource.source.remote,
+                branch: preparedSource.source.resolvedBranch,
+              },
+            };
+          }),
+        });
+        setPendingUpgrade({
+          request: confirmedRequest,
+          retryFailed,
+          requiresUpgrade: upgradeIds.size > 0,
+        });
+      } catch (cause) {
+        setError(
+          publicationErrorMessage(
+            cause,
+            t("bundlePublish.validation.form"),
+            t("bundlePluginsUnavailable"),
+          ),
+        );
+      } finally {
+        setBusy(false);
+      }
+      return;
+    }
+    await executePublication(request.data, retryFailed);
+  };
+
+  const executePublication = async (request: PublishBundleSource, retryFailed: boolean) => {
     setBusy(true);
     setError(null);
     setFieldErrors({});
     try {
-      const published = await window.pragmaDesktop.publishBundleSource(request.data);
+      const published = await window.pragmaDesktop.publishBundleSource(request);
       setResults((current) => {
         if (current === null || !retryFailed) return published.results;
         const replacements = new Map(published.results.map((result) => [result.sourceId, result]));
@@ -171,6 +251,7 @@ export function BundleSourcePublishDialog(props: {
         ),
       );
     } finally {
+      setPendingUpgrade(null);
       setBusy(false);
     }
   };
@@ -202,18 +283,40 @@ export function BundleSourcePublishDialog(props: {
           : t("bundlePublish.description", { name: preparation.root.name })
       }
       busy={busy}
-      onCancel={props.onClose}
+      onCancel={() => (pendingUpgrade === null ? props.onClose() : setPendingUpgrade(null))}
       footer={
         <>
           <button
             className="secondary-button"
             type="button"
             disabled={busy}
-            onClick={props.onClose}
+            onClick={() => (pendingUpgrade === null ? props.onClose() : setPendingUpgrade(null))}
           >
-            {results === null ? t("cancel") : t("close")}
+            {pendingUpgrade !== null
+              ? t("bundlePublish.upgradeBack")
+              : results === null
+                ? t("cancel")
+                : t("close")}
           </button>
-          {results === null ? (
+          {pendingUpgrade !== null ? (
+            <button
+              className="primary-button"
+              type="button"
+              disabled={busy}
+              onClick={() =>
+                void executePublication(pendingUpgrade.request, pendingUpgrade.retryFailed)
+              }
+            >
+              {busy ? <SpinnerGap className="spin" size={17} /> : null}
+              {busy
+                ? t("bundlePublish.upgrading")
+                : t(
+                    pendingUpgrade.requiresUpgrade
+                      ? "bundlePublish.upgradeAndPublish"
+                      : "bundlePublish.confirmTarget",
+                  )}
+            </button>
+          ) : results === null ? (
             <button
               className="primary-button"
               type="submit"
@@ -237,7 +340,41 @@ export function BundleSourcePublishDialog(props: {
         </>
       }
     >
-      {results === null ? (
+      {pendingUpgrade !== null ? (
+        <div className="bundle-publish-form" role="status">
+          <h3>
+            {t(
+              pendingUpgrade.requiresUpgrade
+                ? "bundlePublish.upgradeTitle"
+                : "bundlePublish.targetChangedTitle",
+            )}
+          </h3>
+          <p>
+            {t(
+              pendingUpgrade.requiresUpgrade
+                ? "bundlePublish.upgradeDescription"
+                : "bundlePublish.targetChangedDescription",
+            )}
+          </p>
+          <ul>
+            {pendingUpgrade.request.targets
+              .filter((target) => target.upgradeSource)
+              .map((target) => (
+                <li key={target.sourceId}>
+                  {
+                    preparation?.sources.find((source) => source.source.id === target.sourceId)
+                      ?.source.name
+                  }
+                  <br />
+                  <small>
+                    {target.upgradeSource?.remote} · {target.upgradeSource?.branch}
+                  </small>
+                </li>
+              ))}
+          </ul>
+          {pendingUpgrade.requiresUpgrade ? <p>{t("bundlePublish.upgradeRecovery")}</p> : null}
+        </div>
+      ) : results === null ? (
         <form
           ref={formRef}
           id="bundle-publish-form"
@@ -841,3 +978,23 @@ export function publicationVersionsForSelection(
 }
 
 export { nextPatchVersion };
+
+export function publicationTargetsRequiringUpgrade(
+  targets: PublishBundleSource["targets"],
+  sources: readonly {
+    readonly source: { readonly id: string };
+    readonly upgradeRequired?: boolean | undefined;
+  }[],
+  results: readonly { readonly sourceId: string; readonly errorCode?: string | undefined }[],
+): PublishBundleSource["targets"] {
+  return targets.filter(
+    (target) =>
+      sources.some((source) => source.source.id === target.sourceId && source.upgradeRequired) ||
+      results.some(
+        (result) =>
+          result.sourceId === target.sourceId &&
+          (result.errorCode === "source_upgrade_required" ||
+            result.errorCode === "source_upgrade_target_changed"),
+      ),
+  );
+}

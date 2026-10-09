@@ -1,11 +1,21 @@
 import { execFile } from "node:child_process";
-import { copyFile, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
+import {
+  chmod,
+  copyFile,
+  mkdir,
+  mkdtemp,
+  readFile,
+  rm,
+  symlink,
+  writeFile,
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
 
 import { afterEach, describe, expect, it } from "vitest";
 import { decodePragmaBundle, formatPragmaYaml, loadPragmaProject } from "@pragma/interpreter";
+import { upgradeBundleSource } from "@pragma/local-host";
 import { PRAGMA_DSL_WRITE_API_VERSION } from "@pragma/interpreter/ast";
 
 import {
@@ -428,6 +438,307 @@ describe("Desktop Bundle Registry sources", () => {
       restoreEnvironment("GIT_CONFIG_VALUE_0", previous[2]);
     }
   });
+
+  it("requires confirmation, upgrades a historical source, and resumes publication after failure", async () => {
+    const root = await mkdtemp(join(tmpdir(), "pragma-desktop-source-upgrade-"));
+    temporaryRoots.push(root);
+    const seed = join(root, "seed");
+    const remote = join(root, "remote.git");
+    await mkdir(seed);
+    await execFileAsync("git", ["init", "--initial-branch=main", seed]);
+    await writeFile(join(seed, "pragma-source.yaml"), sourceManifest());
+    const itemDirectory = join(seed, "experts/general/reviewer");
+    await mkdir(join(itemDirectory, "versions/1.0.0"), { recursive: true });
+    const bundlePath = await createExpertBundle(root);
+    await copyFile(bundlePath, join(itemDirectory, "versions/1.0.0/bundle.pragma"));
+    const historicalConfig = sourceItemConfig().replace(
+      "expert:1234567890abcdef",
+      "expert:1xddvess309a6gme",
+    );
+    await writeFile(join(itemDirectory, "config.yaml"), historicalConfig);
+    await commitAll(seed, "Historical v2 Source");
+    await execFileAsync("git", ["clone", "--bare", seed, remote]);
+    const previous = { ...process.env };
+    process.env.GIT_CONFIG_COUNT = "3";
+    process.env.GIT_CONFIG_KEY_0 = "url.file:///.insteadOf";
+    process.env.GIT_CONFIG_VALUE_0 = "https://pragma-upgrade.test/";
+    process.env.GIT_CONFIG_KEY_1 = "user.name";
+    process.env.GIT_CONFIG_VALUE_1 = "Pragma Publisher";
+    process.env.GIT_CONFIG_KEY_2 = "user.email";
+    process.env.GIT_CONFIG_VALUE_2 = "publisher@pragma.invalid";
+    try {
+      const service = createDesktopBundleRegistrySourceService({
+        sourcesPath: join(root, "data/sources.json"),
+        cacheRoot: join(root, "cache"),
+      });
+      const source = await service.addSource({
+        name: "Legacy Source",
+        remote: `https://pragma-upgrade.test${remote}`,
+      });
+      await expect(
+        service.preparePublicationSources("expert", "expert:1xddvess309a6gme"),
+      ).resolves.toEqual([
+        expect.objectContaining({
+          upgradeRequired: true,
+          existingItem: expect.objectContaining({ id: "reviewer" }),
+        }),
+      ]);
+      // A missing cache must not block other publishing sources.
+      const healthy = await service.addSource({
+        name: "Healthy Source",
+        remote: `https://pragma-upgrade.test${seed}`,
+      });
+      await rm(join(root, "cache/repositories", source.id), { recursive: true, force: true });
+      const preparationWithMissingCache = await service.preparePublicationSources(
+        "expert",
+        "expert:1xddvess309a6gme",
+      );
+      expect(preparationWithMissingCache).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            source: expect.objectContaining({
+              id: source.id,
+              errorCode: "source_publication_prepare_failed",
+            }),
+            selectable: false,
+          }),
+          expect.objectContaining({
+            source: expect.objectContaining({ id: healthy.id }),
+            selectable: true,
+            upgradeRequired: true,
+          }),
+        ]),
+      );
+      await expect(service.refreshSource(source.id)).resolves.toMatchObject({ status: "ready" });
+      await service.removeSource(healthy.id);
+      const restarted = createDesktopBundleRegistrySourceService({
+        sourcesPath: join(root, "data/sources.json"),
+        cacheRoot: join(root, "cache"),
+      });
+      await expect(
+        restarted.preparePublicationSources("expert", "expert:1xddvess309a6gme"),
+      ).resolves.toEqual([
+        expect.objectContaining({
+          upgradeRequired: true,
+          source: expect.objectContaining({ resolvedBranch: "main" }),
+        }),
+      ]);
+
+      const decoded = await decodePragmaBundle({ kind: "file", path: bundlePath });
+      const request = {
+        bundlePath,
+        bundleFingerprint: decoded.manifest.bundleFingerprint,
+        rootRef: "expert:1xddvess309a6gme",
+        kind: "expert" as const,
+        metadata: {
+          itemId: "reviewer",
+          name: "Reviewer",
+          summary: "Reviews code",
+          description: "Reviews code.",
+          authorName: "Pragma",
+          license: "MIT",
+          tags: [],
+        },
+        target: { sourceId: source.id, categoryId: "general", version: "1.0.1" },
+      };
+      const originalHead = (
+        await execFileAsync("git", ["--git-dir", remote, "rev-parse", "main"])
+      ).stdout.trim();
+      await expect(service.publishBundleToSource(request)).resolves.toMatchObject({
+        status: "failed",
+        errorCode: "source_upgrade_required",
+      });
+      expect(
+        (await execFileAsync("git", ["--git-dir", remote, "rev-parse", "main"])).stdout.trim(),
+      ).toBe(originalHead);
+
+      // Idempotent retries of a legacy version do not require or perform an upgrade.
+      await expect(
+        service.publishBundleToSource({
+          ...request,
+          target: { ...request.target, version: "1.0.0" },
+        }),
+      ).resolves.toMatchObject({ status: "already_published" });
+      expect(
+        (await execFileAsync("git", ["--git-dir", remote, "rev-parse", "main"])).stdout.trim(),
+      ).toBe(originalHead);
+      // An accepted confirmation cannot follow a subsequently edited source remote.
+      const alternateRemote = join(root, "alternate.git");
+      const currentSource = join(root, "current-source");
+      await execFileAsync("git", ["clone", seed, currentSource]);
+      await upgradeBundleSource(currentSource);
+      await execFileAsync("git", [
+        "-C",
+        currentSource,
+        "-c",
+        "user.name=Pragma Test",
+        "-c",
+        "user.email=test@pragma.invalid",
+        "commit",
+        "-am",
+        "Upgrade alternate source",
+      ]);
+      await execFileAsync("git", ["clone", "--bare", currentSource, alternateRemote]);
+      const alternateHead = (
+        await execFileAsync("git", ["--git-dir", alternateRemote, "rev-parse", "main"])
+      ).stdout.trim();
+      await service.updateSource({
+        sourceId: source.id,
+        remote: `https://pragma-upgrade.test${alternateRemote}`,
+      });
+      await expect(
+        service.publishBundleToSource({
+          ...request,
+          target: { ...request.target, upgradeSource: { remote: source.remote, branch: "main" } },
+        }),
+      ).resolves.toMatchObject({ status: "failed", errorCode: "source_upgrade_target_changed" });
+      expect(
+        (
+          await execFileAsync("git", ["--git-dir", alternateRemote, "rev-parse", "main"])
+        ).stdout.trim(),
+      ).toBe(alternateHead);
+      expect(
+        (await execFileAsync("git", ["--git-dir", remote, "rev-parse", "main"])).stdout.trim(),
+      ).toBe(originalHead);
+      await service.updateSource({ sourceId: source.id, remote: source.remote });
+      // Default-branch changes are checked against the actual branch, not a cached name.
+      await execFileAsync("git", ["--git-dir", remote, "branch", "release", "main"]);
+      await execFileAsync("git", [
+        "--git-dir",
+        remote,
+        "symbolic-ref",
+        "HEAD",
+        "refs/heads/release",
+      ]);
+      await expect(
+        service.publishBundleToSource({
+          ...request,
+          target: { ...request.target, upgradeSource: { remote: source.remote, branch: "main" } },
+        }),
+      ).resolves.toMatchObject({ status: "failed", errorCode: "source_upgrade_target_changed" });
+      expect(
+        (await execFileAsync("git", ["--git-dir", remote, "rev-parse", "release"])).stdout.trim(),
+      ).toBe(originalHead);
+      await execFileAsync("git", ["--git-dir", remote, "symbolic-ref", "HEAD", "refs/heads/main"]);
+
+      // A rejected non-force push leaves the historical source untouched and retryable.
+      const hook = join(remote, "hooks/pre-receive");
+      await writeFile(hook, "#!/bin/sh\nexit 1\n");
+      await chmod(hook, 0o700);
+      await expect(
+        service.publishBundleToSource({
+          ...request,
+          target: { ...request.target, upgradeSource: { remote: source.remote, branch: "main" } },
+        }),
+      ).resolves.toMatchObject({ status: "failed" });
+      expect(
+        (await execFileAsync("git", ["--git-dir", remote, "rev-parse", "main"])).stdout.trim(),
+      ).toBe(originalHead);
+      await rm(hook);
+
+      // The upgrade is independently durable even if the subsequent publication fails.
+      await expect(
+        service.publishBundleToSource({
+          ...request,
+          metadata: { ...request.metadata, license: "" },
+          target: { ...request.target, upgradeSource: { remote: source.remote, branch: "main" } },
+        }),
+      ).resolves.toMatchObject({ status: "failed" });
+      const upgradedHead = (
+        await execFileAsync("git", ["--git-dir", remote, "rev-parse", "main"])
+      ).stdout.trim();
+      expect(upgradedHead).not.toBe(originalHead);
+      expect(
+        (await execFileAsync("git", ["--git-dir", remote, "rev-parse", "main^"])).stdout.trim(),
+      ).toBe(originalHead);
+      expect(
+        (await execFileAsync("git", ["--git-dir", remote, "show", "main:pragma-source.yaml"]))
+          .stdout,
+      ).toContain("pragma.bundle-source/v3");
+      expect(
+        (
+          await execFileAsync("git", [
+            "--git-dir",
+            remote,
+            "show",
+            `${originalHead}:experts/general/reviewer/config.yaml`,
+          ])
+        ).stdout,
+      ).toBe(historicalConfig);
+      await expect(service.preparePublicationSources("expert", request.rootRef)).resolves.toEqual([
+        expect.objectContaining({ upgradeRequired: false }),
+      ]);
+      await expect(service.publishBundleToSource(request)).resolves.toMatchObject({
+        status: "published",
+      });
+      await expect(
+        service.publishBundleToSource({
+          ...request,
+          target: { ...request.target, upgradeSource: { remote: source.remote, branch: "main" } },
+        }),
+      ).resolves.toMatchObject({
+        status: "already_published",
+      });
+      const files = (
+        await execFileAsync("git", ["--git-dir", remote, "ls-tree", "-r", "--name-only", "main"])
+      ).stdout;
+      expect(files).not.toContain("backup");
+      expect(files).not.toContain("upgrade-v3.json");
+      expect(
+        (await execFileAsync("git", ["--git-dir", remote, "rev-parse", "main^"])).stdout.trim(),
+      ).toBe(upgradedHead);
+      expect(
+        (
+          await execFileAsync(
+            "git",
+            [
+              "--git-dir",
+              remote,
+              "show",
+              "main:experts/general/reviewer/versions/1.0.0/bundle.pragma",
+            ],
+            { encoding: "buffer" },
+          )
+        ).stdout,
+      ).toEqual(await readFile(bundlePath));
+
+      const checkout = join(root, "checkout");
+      await execFileAsync("git", ["clone", remote, checkout]);
+      await writeFile(
+        join(checkout, "pragma-source.yaml"),
+        "schemaVersion: pragma.bundle-source/v99\n",
+      );
+      await commitAll(checkout, "Unsupported future protocol");
+      await execFileAsync("git", ["-C", checkout, "push", "origin", "main"]);
+      const futureHead = (
+        await execFileAsync("git", ["--git-dir", remote, "rev-parse", "main"])
+      ).stdout.trim();
+      await expect(
+        service.publishBundleToSource({
+          ...request,
+          target: {
+            ...request.target,
+            version: "1.0.2",
+            upgradeSource: { remote: source.remote, branch: "main" },
+          },
+        }),
+      ).resolves.toMatchObject({ status: "failed" });
+      expect(
+        (await execFileAsync("git", ["--git-dir", remote, "rev-parse", "main"])).stdout.trim(),
+      ).toBe(futureHead);
+    } finally {
+      for (const name of [
+        "GIT_CONFIG_COUNT",
+        "GIT_CONFIG_KEY_0",
+        "GIT_CONFIG_VALUE_0",
+        "GIT_CONFIG_KEY_1",
+        "GIT_CONFIG_VALUE_1",
+        "GIT_CONFIG_KEY_2",
+        "GIT_CONFIG_VALUE_2",
+      ])
+        restoreEnvironment(name, previous[name]);
+    }
+  }, 30_000);
 
   it("initializes an empty source, commits with the system identity, pushes, and is idempotent", async () => {
     const root = await mkdtemp(join(tmpdir(), "pragma-desktop-source-publish-"));
