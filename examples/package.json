@@ -27,7 +27,7 @@
     "clean": "rm -rf dist"
   },
   "dependencies": {
-    "@earendil-works/pi-tui": "0.87.1",
+    "@earendil-works/pi-tui": "1.0.0",
     "@pragma/core": "workspace:*",
     "@pragma/context-filesystem": "workspace:*",
     "@pragma/interpreter": "workspace:*",

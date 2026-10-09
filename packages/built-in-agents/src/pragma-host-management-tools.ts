@@ -870,7 +870,8 @@ function buildPragmaManagementHostTools(options: {
       "interrupt_mission",
       "Interrupt the currently running execution of a Mission.",
       z.toJSONSchema(MissionIdInput),
-      async (args) => ok(await missions().interrupt(MissionIdInput.parse(args).missionId)),
+      async (args, context) =>
+        ok(await missions().interrupt(MissionIdInput.parse(args).missionId, operationId(context))),
     ),
     ...automationTools,
   ];

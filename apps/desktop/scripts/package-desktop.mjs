@@ -11,8 +11,22 @@ const distDirectory = resolve(packageDirectory, "dist");
 const installerPattern = /\.(?:dmg|zip|exe)$/i;
 const auditReportPattern = /^packaging-audit-[a-z0-9-]+\.json$/i;
 
-function executable(command) {
-  return process.platform === "win32" && command === "pnpm" ? "pnpm.cmd" : command;
+function commandInvocation(command, argumentsList) {
+  if (process.platform === "win32" && command === "pnpm") {
+    const pnpmEntryPoint = process.env.npm_execpath;
+    if (pnpmEntryPoint === undefined || !/\.(?:cjs|mjs|js)$/i.test(pnpmEntryPoint)) {
+      throw new Error(
+        "Windows packaging requires npm_execpath to point to pnpm's JavaScript entry point.",
+      );
+    }
+
+    return {
+      command: process.execPath,
+      argumentsList: [pnpmEntryPoint, ...argumentsList],
+    };
+  }
+
+  return { command, argumentsList };
 }
 
 function formatCommand(command, argumentsList) {
@@ -116,11 +130,11 @@ async function trimDist({ keepInstallers }) {
 }
 
 function runCommand(command, argumentsList) {
-  const actualCommand = executable(command);
-  console.log(`\n$ ${formatCommand(actualCommand, argumentsList)}`);
+  const invocation = commandInvocation(command, argumentsList);
+  console.log(`\n$ ${formatCommand(invocation.command, invocation.argumentsList)}`);
 
   return new Promise((resolveCommand, rejectCommand) => {
-    const child = spawn(actualCommand, argumentsList, {
+    const child = spawn(invocation.command, invocation.argumentsList, {
       cwd: packageDirectory,
       shell: false,
       stdio: "inherit",
@@ -134,7 +148,7 @@ function runCommand(command, argumentsList) {
       }
       rejectCommand(
         new Error(
-          `${actualCommand} exited with ${signal === null ? `code ${code}` : `signal ${signal}`}.`,
+          `${invocation.command} exited with ${signal === null ? `code ${code}` : `signal ${signal}`}.`,
         ),
       );
     });

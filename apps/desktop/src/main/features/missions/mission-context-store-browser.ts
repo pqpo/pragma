@@ -39,8 +39,8 @@ import {
   withOpenPragmaProjectRevision,
   type PragmaProjectStore,
 } from "../projects/pragma-project-store.ts";
-import type { MissionRunner } from "./mission-runner.ts";
-import type { MissionStore } from "./mission-store.ts";
+import type { LocalHostMissionApplication } from "@pragma/local-host";
+import type { MissionStore } from "@pragma/local-host";
 
 const MEMORY_STORE_ID = "memory";
 const MISSION_BOARD_STORE_ID = MISSION_BOARD_SHARED_NAMESPACE;
@@ -98,7 +98,7 @@ export function createMissionContextStoreBrowserService(options: {
   readonly project: PragmaProjectStore;
   readonly systemExperts: DesktopSystemExpertRegistry;
   readonly memory: DesktopMemoryPlane;
-  readonly runner: Pick<MissionRunner, "getWork">;
+  readonly application: Pick<LocalHostMissionApplication, "getWork">;
 }): MissionContextStoreBrowserService {
   const resolveMemoryScopes = async (mission: Mission) => {
     const { candidates, participated } = await collectScopeCandidates(mission, options);
@@ -545,7 +545,7 @@ async function collectScopeCandidates(
   options: {
     readonly project: PragmaProjectStore;
     readonly systemExperts: DesktopSystemExpertRegistry;
-    readonly runner: Pick<MissionRunner, "getWork">;
+    readonly application: Pick<LocalHostMissionApplication, "getWork">;
   },
 ): Promise<{
   readonly candidates: readonly ScopeCandidate[];
@@ -625,7 +625,7 @@ async function collectScopeCandidates(
         : "flow-step",
   );
 
-  const work = await options.runner.getWork(mission.id);
+  const work = await options.application.getWork(mission.id);
   const participated = new Set(
     (work?.records ?? []).flatMap((record) =>
       record.executorId === undefined ? [] : [record.executorId],

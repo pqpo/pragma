@@ -90,6 +90,10 @@ export class MissionExecutionOwner<
     return record;
   }
 
+  missionIds(): readonly string[] {
+    return [...this.#owners.keys()];
+  }
+
   executionContext(missionId: string): Promise<TExecutionContext> | undefined {
     return this.#owners.get(missionId)?.executionContext;
   }

@@ -1493,6 +1493,8 @@ export function createSkillRevisionService(options: {
     },
     async start(rawRequest, startOptions = {}) {
       const request = SkillRevisionRequestV4Schema.parse(rawRequest);
+      if (request.operation === "revise" && (await options.capabilities.get(request.capabilityId)).managedBy === "system")
+        throw coded("skill_revision_target_readonly");
       return await withFileLock(lockPath, async () => {
         const existing = (await readAllJobs()).find(
           (job) =>

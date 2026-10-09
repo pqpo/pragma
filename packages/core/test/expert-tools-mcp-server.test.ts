@@ -64,12 +64,18 @@ describe("Expert tools MCP Gateway", { concurrent: false }, () => {
     await expect(
       alphaClient.callTool({ name: "read_alpha", arguments: {} }),
     ).resolves.toMatchObject({ content: [{ type: "text", text: "alpha" }] });
-    await expect(
-      alphaClient.callTool({
-        name: "list_expert_context",
-        arguments: { namespace: " ", cursor: "  " },
-      }),
-    ).resolves.not.toMatchObject({ isError: true });
+    const contextResult = await alphaClient.callTool({
+      name: "list_expert_context",
+      arguments: { namespace: " ", cursor: "  " },
+    });
+    expect(contextResult).not.toMatchObject({ isError: true });
+    expect(contextResult).not.toHaveProperty("structuredContent");
+    expect(contextResult).not.toHaveProperty("details");
+    expect(contextResult.content).toHaveLength(1);
+    expect(contextResult.content[0]).toMatchObject({
+      type: "text",
+      text: expect.stringContaining("Expert context items"),
+    });
     await expect(
       alphaClient.callTool({
         name: "read_expert_context",

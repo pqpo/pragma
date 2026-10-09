@@ -6,7 +6,7 @@ import type { MissionChatPatch, MissionChatUpdate } from "@pragma/shared";
 import type {
   MissionChatNotification,
   MissionSurfaceAudience,
-} from "./mission-runner-contracts.ts";
+} from "./mission-execution-use-cases.ts";
 
 export interface MissionLiveChatProjection {
   close: () => Promise<void>;

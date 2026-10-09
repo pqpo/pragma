@@ -1,4 +1,3 @@
-import { createHash } from "node:crypto";
 import {
   decodeShortPageCursor,
   encodeShortPageCursor,
@@ -132,19 +131,6 @@ export function createContextTools(
 
         return {
           text: formatContextIndexPage(page.value),
-          details: {
-            context: page.value.items,
-            stores: page.value.stores,
-            issues: page.value.issues,
-            page: {
-              total: page.value.total,
-              returned: page.value.items.length,
-              hasMore: page.value.nextCursor !== undefined,
-              skippedOversized: page.value.skippedOversized,
-              omittedIssues: page.value.omittedIssues,
-              ...(page.value.nextCursor === undefined ? {} : { nextCursor: page.value.nextCursor }),
-            },
-          },
         };
       },
     },
@@ -178,13 +164,8 @@ export function createContextTools(
         }
 
         const bounded = boundReadContext(result.value, offset);
-        const continuation = createReadContinuation(bounded);
         return {
           text: formatContext(bounded),
-          details: {
-            context: bounded,
-            ...(continuation === undefined ? {} : { continuation }),
-          },
         };
       },
     },
@@ -223,13 +204,8 @@ export function createContextTools(
           return errorResult(result.error);
         }
 
-        const bounded = boundSearchMatches(result.value, normalizeResultByteBudget(options));
         return {
-          text: bounded.text,
-          details: {
-            matches: bounded.matches,
-            truncated: bounded.truncated,
-          },
+          text: boundSearchMatches(result.value, normalizeResultByteBudget(options)),
         };
       },
     },
@@ -282,13 +258,6 @@ export function createContextTools(
         const receipt = createContextWriteReceipt(result.value, namespace, "created");
         return {
           text: JSON.stringify(receipt),
-          details: {
-            context: receipt,
-            committed: receipt.committed,
-            status: receipt.status,
-            namespace: receipt.namespace,
-            id: receipt.id,
-          },
         };
       },
     },
@@ -398,13 +367,6 @@ export function createContextTools(
         });
         return {
           text: JSON.stringify(receipt),
-          details: {
-            context: receipt,
-            committed: receipt.committed,
-            status: receipt.status,
-            mode: result.value.mode,
-            replacementCount: result.value.replacementCount,
-          },
         };
       },
     },
@@ -448,15 +410,6 @@ export function createContextTools(
         };
         return {
           text: JSON.stringify(receipt),
-          details: {
-            context: receipt,
-            committed: receipt.committed,
-            status: receipt.status,
-            namespace: receipt.namespace,
-            id: receipt.id,
-            ...(receipt.effect === undefined ? {} : { effect: receipt.effect }),
-            ...(receipt.message === undefined ? {} : { message: receipt.message }),
-          },
         };
       },
     },
@@ -471,7 +424,6 @@ interface ContextWriteReceipt {
   readonly revision?: string | undefined;
   readonly etag?: string | undefined;
   readonly sizeBytes: number;
-  readonly sha256: string;
   readonly mode?: ExpertAgentContextItemEditResult["mode"] | undefined;
   readonly replacementCount?: number | undefined;
 }
@@ -502,9 +454,10 @@ function createContextWriteReceipt(
     namespace: context.namespace ?? requestedNamespace,
     id: context.id,
     ...(context.revision === undefined ? {} : { revision: context.revision }),
-    ...(context.etag === undefined ? {} : { etag: context.etag }),
+    ...(context.etag === undefined || context.etag === context.revision
+      ? {}
+      : { etag: context.etag }),
     sizeBytes: Buffer.byteLength(content, "utf8"),
-    sha256: createHash("sha256").update(content, "utf8").digest("hex"),
     ...extra,
   };
 }
@@ -1020,6 +973,7 @@ interface ContextIndexPage {
   readonly byteBudget: number;
   readonly skippedOversized: number;
   readonly omittedIssues: number;
+  readonly omittedStores: number;
   readonly nextCursor?: string | undefined;
 }
 
@@ -1048,24 +1002,37 @@ function paginateContextIndex(
     };
   }
   const sorted = [...index.items].sort(compareContextSummary);
-  const stores = boundContextStoreSummaries(index.stores, 512);
-  const storeHeaderBytes =
-    stores.length === 0
-      ? 0
-      : Buffer.byteLength(
-          ["Context stores:", ...stores.map(formatContextStoreSummary)].join("\n"),
-          "utf8",
-        ) + 1;
+  const stores = boundContextStoreSummaries(
+    index.stores,
+    Math.min(512, Math.floor(byteBudget / 8)),
+  );
+  const boundedIssues = boundContextIssues(index.issues, Math.min(384, Math.floor(byteBudget / 8)));
   const startOffset = Math.min(cursor.value?.[1] ?? 0, sorted.length);
   const selected: ExpertAgentContextItemSummary[] = [];
   let usedBytes = 0;
   let consumed = 0;
   let skippedOversized = 0;
-  const reservedBytes = 512 + storeHeaderBytes;
-  const maximumItemBytes = Math.max(256, byteBudget - reservedBytes);
+  // Reserve the actual headers, diagnostics and longest possible continuation
+  // before selecting items. The text is now the sole result, so none may be clipped.
+  const reservedBytes =
+    Buffer.byteLength(
+      formatContextIndexPage({
+        items: [],
+        stores,
+        issues: boundedIssues.issues,
+        total: sorted.length,
+        byteBudget: Number.MAX_SAFE_INTEGER,
+        skippedOversized: limit,
+        omittedIssues: boundedIssues.omitted,
+        omittedStores: index.stores.length - stores.length,
+        nextCursor: encodeShortPageCursor(contextCursorBinding(namespace), sorted.length),
+      }),
+      "utf8",
+    ) + 16;
+  const maximumItemBytes = Math.max(0, byteBudget - reservedBytes);
   for (const item of sorted.slice(startOffset)) {
     if (consumed >= limit) break;
-    const available = Math.max(256, byteBudget - usedBytes - reservedBytes);
+    const available = Math.max(0, byteBudget - usedBytes - reservedBytes);
     const bounded = boundContextSummary(item, available);
     const blockBytes = Buffer.byteLength(formatContextSummary(bounded), "utf8") + 1;
     if (blockBytes > available) {
@@ -1083,7 +1050,6 @@ function paginateContextIndex(
   }
   const nextOffset = startOffset + consumed;
   const hasMore = nextOffset < sorted.length;
-  const boundedIssues = boundContextIssues(index.issues, 384);
   return {
     ok: true,
     value: {
@@ -1094,6 +1060,7 @@ function paginateContextIndex(
       byteBudget,
       skippedOversized,
       omittedIssues: boundedIssues.omitted,
+      omittedStores: index.stores.length - stores.length,
       ...(hasMore
         ? { nextCursor: encodeShortPageCursor(contextCursorBinding(namespace), nextOffset) }
         : {}),
@@ -1108,6 +1075,9 @@ function formatContextIndexPage(page: ContextIndexPage): string {
     ...(page.stores.length === 0
       ? []
       : ["Context stores:", ...page.stores.map(formatContextStoreSummary)]),
+    ...(page.omittedStores === 0
+      ? []
+      : [`${page.omittedStores} additional context store(s) omitted.`]),
     summaries,
     ...(page.nextCursor === undefined
       ? []
@@ -1122,7 +1092,7 @@ function formatContextIndexPage(page: ContextIndexPage): string {
   ];
 
   const output =
-    page.issues.length === 0
+    page.issues.length === 0 && page.omittedIssues === 0
       ? pageLines.join("\n")
       : [
           ...pageLines,
@@ -1240,14 +1210,23 @@ function boundContextIssues(
       operation: issue.operation,
       error: {
         code: issue.error.code,
-        message: truncateUtf8(issue.error.message, 256),
+        message: truncateUtf8(
+          issue.error.message,
+          Math.max(
+            16,
+            byteBudget -
+              Buffer.byteLength(truncateUtf8(issue.namespace, 128)) -
+              Buffer.byteLength(issue.error.code) -
+              8,
+          ),
+        ),
       },
     };
     const issueBytes = Buffer.byteLength(
-      `${bounded.namespace}:${bounded.error.code}:${bounded.error.message}`,
+      `- ${bounded.namespace}: ${bounded.error.code}: ${bounded.error.message}\n`,
       "utf8",
     );
-    if (included.length > 0 && usedBytes + issueBytes > byteBudget) break;
+    if (usedBytes + issueBytes > byteBudget) break;
     included.push(bounded);
     usedBytes += issueBytes;
   }
@@ -1299,8 +1278,16 @@ function formatContextSummary(context: ExpertAgentContextItemSummary): string {
       : `  description: ${context.metadata.description}`,
     `  trigger: ${context.metadata.trigger}`,
     `  priority: ${context.metadata.priority}`,
+    context.metadata.trustLevel === undefined
+      ? undefined
+      : `  trustLevel: ${context.metadata.trustLevel}`,
+    context.metadata.sensitivity === undefined
+      ? undefined
+      : `  sensitivity: ${context.metadata.sensitivity}`,
     context.revision === undefined ? undefined : `  revision: ${context.revision}`,
-    context.etag === undefined ? undefined : `  etag: ${context.etag}`,
+    context.etag === undefined || context.etag === context.revision
+      ? undefined
+      : `  etag: ${context.etag}`,
   ]
     .filter((line) => line !== undefined)
     .join("\n");
@@ -1318,8 +1305,19 @@ function boundContextStoreSummaries(
       ...(store.storeName === undefined ? {} : { storeName: truncateUtf8(store.storeName, 120) }),
       ...(store.itemCount === undefined ? {} : { itemCount: store.itemCount }),
     };
-    const size = Buffer.byteLength(formatContextStoreSummary(bounded), "utf8") + 1;
-    if (selected.length > 0 && usedBytes + size > byteBudget) break;
+    let size = Buffer.byteLength(formatContextStoreSummary(bounded), "utf8") + 1;
+    if (usedBytes + size > byteBudget && bounded.storeName !== undefined) {
+      const identity: ContextStoreIndexSummary = {
+        namespace: bounded.namespace,
+        ...(bounded.itemCount === undefined ? {} : { itemCount: bounded.itemCount }),
+      };
+      size = Buffer.byteLength(formatContextStoreSummary(identity), "utf8") + 1;
+      if (usedBytes + size > byteBudget) break;
+      selected.push(identity);
+      usedBytes += size;
+      continue;
+    }
+    if (usedBytes + size > byteBudget) break;
     selected.push(bounded);
     usedBytes += size;
   }
@@ -1464,13 +1462,9 @@ function formatContextSearchMatches(matches: readonly ExpertAgentContextItemSear
 function boundSearchMatches(
   matches: readonly ExpertAgentContextItemSearchMatch[],
   byteBudget: number,
-): {
-  readonly text: string;
-  readonly matches: readonly ExpertAgentContextItemSearchMatch[];
-  readonly truncated: boolean;
-} {
+): string {
   if (matches.length === 0) {
-    return { text: "No Expert context matches found.", matches: [], truncated: false };
+    return "No Expert context matches found.";
   }
   const included: ExpertAgentContextItemSearchMatch[] = [];
   let snippetTruncated = false;
@@ -1500,11 +1494,7 @@ function boundSearchMatches(
       : []),
   ];
   const text = [formatContextSearchMatches(included), ...notices].join("\n\n");
-  return {
-    text: truncateUtf8(text, byteBudget, ""),
-    matches: included,
-    truncated: snippetTruncated || omitted,
-  };
+  return truncateUtf8(text, byteBudget, "");
 }
 
 function boundSearchMatch(match: ExpertAgentContextItemSearchMatch): {
@@ -1624,7 +1614,6 @@ function errorResult(error: ExpertAgentContextError): ExpertAgentDefaultToolCall
   return {
     text: JSON.stringify(payload),
     isError: true,
-    details: payload,
   };
 }
 

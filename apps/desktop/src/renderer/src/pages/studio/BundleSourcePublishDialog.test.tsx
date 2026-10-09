@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   BundleSourcePublicationMetadataSchema,
   bundleSourcePublicationSummary,
+  BundleSourcePublicationTargetSchema,
 } from "../../../../shared/contracts/index.ts";
 
 import {
@@ -14,6 +15,7 @@ import {
   publicationModuleDisabled,
   publicationModuleKeys,
   publicationVersionsForSelection,
+  publicationTargetsRequiringUpgrade,
   validatePublicationFields,
 } from "./BundleSourcePublishDialog.tsx";
 
@@ -29,6 +31,70 @@ describe("Bundle Source publication selection", () => {
         { selectable: true, source: { id: "two" } },
       ]),
     ]).toEqual([]);
+  });
+
+  it("requires consent only for selected legacy sources and newly detected legacy retries", () => {
+    const targets = ["legacy", "current", "changed"].map((sourceId) => ({
+      sourceId,
+      categoryId: "general",
+      version: "1.0.1",
+    }));
+    const sources = [
+      { source: { id: "legacy" }, upgradeRequired: true },
+      { source: { id: "current" }, upgradeRequired: false },
+      { source: { id: "unselected" }, upgradeRequired: true },
+    ];
+    expect(publicationTargetsRequiringUpgrade(targets, sources, [])).toEqual([targets[0]]);
+    expect(
+      publicationTargetsRequiringUpgrade(targets, sources, [
+        { sourceId: "changed", errorCode: "source_upgrade_required" },
+        { sourceId: "current", errorCode: "source_push_conflict" },
+      ]),
+    ).toEqual([targets[0], targets[2]]);
+    expect(publicationTargetsRequiringUpgrade([targets[1]!], sources, [])).toEqual([]);
+    expect(
+      publicationTargetsRequiringUpgrade(targets, sources, [
+        { sourceId: "changed", errorCode: "source_upgrade_target_changed" },
+      ]),
+    ).toEqual([targets[0], targets[2]]);
+    // A changed destination still needs confirmation even when its protocol is current.
+    expect(
+      publicationTargetsRequiringUpgrade(
+        targets,
+        [],
+        [{ sourceId: "current", errorCode: "source_upgrade_target_changed" }],
+      ),
+    ).toEqual([targets[1]]);
+    const request = BundleSourcePublicationTargetSchema.parse({
+      sourceId: "11111111-1111-4111-8111-111111111111",
+      categoryId: "general",
+      version: "1.0.1",
+    });
+    expect(request.upgradeSource).toBeUndefined();
+    expect(
+      BundleSourcePublicationTargetSchema.parse({
+        ...request,
+        upgradeSource: { remote: "https://example.test/source.git", branch: "main" },
+      }).upgradeSource,
+    ).toEqual({ remote: "https://example.test/source.git", branch: "main" });
+  });
+
+  it("rejects unbound or malformed upgrade consent at the IPC boundary", () => {
+    const target = {
+      sourceId: "11111111-1111-4111-8111-111111111111",
+      categoryId: "general",
+      version: "1.0.1",
+    };
+    for (const upgradeSource of [
+      true,
+      {},
+      { remote: "https://example.test/source.git" },
+      { remote: "https://example.test/source.git", branch: "../unsafe" },
+    ]) {
+      expect(
+        BundleSourcePublicationTargetSchema.safeParse({ ...target, upgradeSource }).success,
+      ).toBe(false);
+    }
   });
 
   it("suggests the next patch version", () => {

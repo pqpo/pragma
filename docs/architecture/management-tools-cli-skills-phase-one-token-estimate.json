@@ -1,0 +1,79 @@
+{
+  "counter": "Core createRuntimeTokenCounter; await load(); o200k_base",
+  "perTool": [
+    {
+      "name": "create_flow_draft",
+      "pretty": {
+        "tokens": 2678,
+        "source": "tokenizer"
+      },
+      "compact": {
+        "tokens": 1473,
+        "source": "heuristic"
+      }
+    },
+    {
+      "name": "get_flow_draft",
+      "pretty": {
+        "tokens": 258,
+        "source": "tokenizer"
+      },
+      "compact": {
+        "tokens": 202,
+        "source": "tokenizer"
+      }
+    },
+    {
+      "name": "update_flow_draft",
+      "pretty": {
+        "tokens": 9388,
+        "source": "tokenizer"
+      },
+      "compact": {
+        "tokens": 4917,
+        "source": "heuristic"
+      }
+    },
+    {
+      "name": "validate_flow_draft",
+      "pretty": {
+        "tokens": 211,
+        "source": "tokenizer"
+      },
+      "compact": {
+        "tokens": 169,
+        "source": "tokenizer"
+      }
+    },
+    {
+      "name": "prepare_flow_draft",
+      "pretty": {
+        "tokens": 326,
+        "source": "tokenizer"
+      },
+      "compact": {
+        "tokens": 244,
+        "source": "tokenizer"
+      }
+    },
+    {
+      "name": "discard_flow_draft",
+      "pretty": {
+        "tokens": 204,
+        "source": "tokenizer"
+      },
+      "compact": {
+        "tokens": 162,
+        "source": "tokenizer"
+      }
+    }
+  ],
+  "prettySum": 13065,
+  "compactSum": 7167,
+  "skillIndexDescriptor": {
+    "serialization": "JSON.stringify({name,description,path}) only; excludes Runtime index framing/private path prefix",
+    "tokens": 29,
+    "source": "tokenizer"
+  },
+  "note": "prettySum uses tokenizer for all six; compactSum mixes heuristic for long unbroken JSON and tokenizer for short definitions. Estimates are not provider Usage."
+}

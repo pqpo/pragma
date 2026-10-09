@@ -3,7 +3,9 @@ import {
   ContextStoreSchema,
   ContextStoreSnapshotSchema,
   SkillCapabilityDefinitionSchema,
+  type ContextStoreSnapshot,
 } from "../../../shared/contracts/index.ts";
+import { isGitMetadataPath } from "../../../shared/git-metadata-path.ts";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { validatePortableSkillPackage } from "@pragma/built-in-agents";
@@ -135,20 +137,52 @@ export async function appendTransferredKnowledge(
   input: Parameters<ContextStoreStore["appendSnapshot"]>[0],
   author: Parameters<ContextStoreStore["appendSnapshot"]>[1],
 ) {
+  if (hashSnapshotContent(input.files, [...input.directories]) !== input.snapshotHash)
+    throw new Error("The imported knowledge-base snapshot does not match its declared hash.");
   const current = (await store.list()).find((entry) => entry.id === input.storeId);
   if (current !== undefined) {
-    const snapshot = await store.getSnapshot(input.storeId);
+    const { snapshot, files, directories } = await readTransferredKnowledge(store, input.storeId);
     if (
-      hashSnapshotContent(snapshot.files, snapshot.directories) === input.snapshotHash &&
+      hashSnapshotContent(files, directories) === input.snapshotHash &&
       (input.name === undefined || input.name === current.name) &&
       (input.description === undefined || input.description === current.description)
     )
       return current;
+    // Git metadata belongs to local storage, not the portable transfer. Preserve it
+    // when applying remote edits without changing the immutable source snapshot.
+    const retainedDirectories = snapshot.directories.filter(isGitMetadataPath);
+    const retainedFiles = snapshot.files.filter((file) => isGitMetadataPath(file.id));
+    const mergedDirectories = new Set([...input.directories, ...retainedDirectories]);
+    for (const path of [...retainedDirectories, ...retainedFiles.map((file) => file.id)]) {
+      const parts = path.split("/");
+      for (let i = 1; i < parts.length; i++) mergedDirectories.add(parts.slice(0, i).join("/"));
+    }
+    const mergedFiles = [...input.files, ...retainedFiles];
+    const directoriesToWrite = [...mergedDirectories].sort();
+    return await store.appendSnapshot(
+      {
+        ...input,
+        directories: directoriesToWrite,
+        files: mergedFiles,
+        snapshotHash: hashSnapshotContent(mergedFiles, directoriesToWrite),
+      },
+      author,
+    );
   }
   return await store.appendSnapshot(input, author);
 }
 
 export async function readTransferredKnowledge(store: ContextStoreStore, id: string) {
   const snapshot = await store.getSnapshot(id);
-  return { snapshot, files: snapshot.files, directories: snapshot.directories };
+  return { snapshot, ...portableKnowledgeContent(snapshot) };
+}
+
+/** Keep historical Git metadata in authority snapshots, outside portable assets. */
+export function portableKnowledgeContent(
+  snapshot: Pick<ContextStoreSnapshot, "files" | "directories">,
+) {
+  return {
+    files: snapshot.files.filter((file) => !isGitMetadataPath(file.id)),
+    directories: snapshot.directories.filter((path) => !isGitMetadataPath(path)),
+  };
 }

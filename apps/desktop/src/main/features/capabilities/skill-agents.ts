@@ -1,3 +1,5 @@
+import { cleanupInternalMission } from "@pragma/local-host";
+import { waitForInternalMissionTerminal } from "@pragma/local-host";
 import type { LocalHostSystemExecutorSource } from "@pragma/local-host";
 import { createHash, randomUUID } from "node:crypto";
 import { mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
@@ -14,8 +16,8 @@ import { z } from "zod";
 
 import type { DesktopSystemExpertRegistry } from "../experts/system-expert-registry.ts";
 import { resolveSystemExpertRuntimeDefaults } from "../experts/system-expert-runtime.ts";
-import type { MissionRunner } from "../missions/mission-runner.ts";
-import { MissionStoreError, type MissionStore } from "../missions/mission-store.ts";
+import type { LocalHostMissionApplication } from "@pragma/local-host";
+import { MissionStoreError, type MissionStore } from "@pragma/local-host";
 import type { PragmaProjectStore } from "../projects/pragma-project-store.ts";
 import type { SkillRevisionGenerator } from "./skill-revision-service.ts";
 
@@ -36,7 +38,7 @@ export interface DesktopSkillAgents {
 export function createDesktopSkillAgents(options: {
   readonly systemExperts: DesktopSystemExpertRegistry;
   readonly missions: MissionStore;
-  readonly runner: MissionRunner;
+  readonly application: LocalHostMissionApplication;
   readonly project: PragmaProjectStore;
   readonly runtimes: RuntimeResolver;
   readonly pragmaHome: string;
@@ -99,8 +101,12 @@ export function createDesktopSkillAgents(options: {
       ],
     });
     await options.onMissionCreated?.({ jobId: input.jobId, missionId: mission.id });
-    await options.runner.run(mission.id);
-    await waitForMission(options.missions, mission.id);
+    await options.application.startRun(mission.id);
+    await waitForInternalMissionTerminal({
+      getMission: (id) => options.missions.get(id),
+      missionId: mission.id,
+      timeoutMessage: "skill_agent_timeout",
+    });
     const finished = await options.missions.get(mission.id);
     if (finished.execution?.status !== "succeeded") {
       throw new Error(`skill_agent_failed:${finished.execution?.error ?? "unknown"}`);
@@ -178,7 +184,13 @@ export function createDesktopSkillAgents(options: {
             await unregisterMission(registryPath, entry.missionId);
           continue;
         }
-        if (await cleanupMission(options.runner, entry.missionId)) {
+        if (
+          await cleanupInternalMission({
+            missionId: entry.missionId,
+            deleteMission: (id) => options.application.delete(id),
+            interruptMission: (id) => options.application.interrupt(id),
+          })
+        ) {
           await unregisterMission(registryPath, entry.missionId);
           recovered += 1;
         }
@@ -189,19 +201,6 @@ export function createDesktopSkillAgents(options: {
   return api;
 }
 
-async function waitForMission(missions: MissionStore, id: string): Promise<void> {
-  const deadline = Date.now() + 10 * 60_000;
-  while (Date.now() < deadline) {
-    const mission = await missions.get(id);
-    if (
-      mission.execution !== undefined &&
-      ["succeeded", "failed", "cancelled"].includes(mission.execution.status)
-    )
-      return;
-    await new Promise((resolve) => setTimeout(resolve, 200));
-  }
-  throw new Error("skill_agent_timeout");
-}
 async function writeJsonAtomic(path: string, value: unknown): Promise<void> {
   await mkdir(dirname(path), { recursive: true, mode: 0o700 });
   const temporary = `${path}.${randomUUID()}.tmp`;
@@ -259,16 +258,4 @@ async function unregisterMission(path: string, missionId: string): Promise<void>
   await updateMissionRegistry(path, (entries) =>
     entries.filter((entry) => entry.missionId !== missionId),
   );
-}
-async function cleanupMission(runner: MissionRunner, missionId: string): Promise<boolean> {
-  try {
-    await runner.delete(missionId);
-    return true;
-  } catch {
-    await runner.interrupt(missionId).catch(() => undefined);
-    return await runner
-      .delete(missionId)
-      .then(() => true)
-      .catch(() => false);
-  }
 }

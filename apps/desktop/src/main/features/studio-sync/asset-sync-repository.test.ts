@@ -163,6 +163,25 @@ describe("structured sync repository", () => {
     );
     expect(() => decodeSyncRepository(files)).toThrow();
   });
+  it("continues to reject Git metadata in incoming sync paths and Knowledge metadata", () => {
+    const files = encode(knowledge());
+    files.set(`knowledge-bases/${storeId}/files/.git/config`, file("Unsafe metadata"));
+    expect(() => decodeSyncRepository(files)).toThrow("Unsafe sync path");
+    files.delete(`knowledge-bases/${storeId}/files/.git/config`);
+    files.set(
+      `knowledge-bases/${storeId}/metadata.yaml`,
+      file(
+        formatPragmaYaml({
+          id: storeId,
+          name: "Docs",
+          description: "",
+          directories: [".GIT"],
+          files: [],
+        }),
+      ),
+    );
+    expect(() => decodeSyncRepository(files)).toThrow("Unsafe sync path");
+  });
   it("validates RuntimeProfile configuration and never exports an embedded key", () => {
     const id = "01h0000000000001";
     const data = {

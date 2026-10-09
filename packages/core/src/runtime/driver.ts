@@ -602,6 +602,10 @@ async function createManagedRuntimeSession<
       systemSessionId,
       runtimeSession: request.runtimeSession,
       processEnvironment: baseProcessEnvironment,
+      executionContext: request.executionContext,
+      humanInteractionHandler: request.humanInteractionHandler,
+      resources,
+      privateStateDirectory: paths.systemSessionDir,
       logger,
     });
     prepareContext = {
@@ -1402,6 +1406,10 @@ class ManagedRuntimeSession<TNativeEvent, TNativeSession> {
           session: this.info(),
           runId,
           submission: taskSubmission,
+          executionContext: submission.execution.context,
+          humanInteractionHandler: submission.execution.humanInteractionHandler,
+          signal,
+          toolState: { runId, source: controller.source, emitter: controller.emitter },
           context: this.options.runContext,
           logger: this.options.logger,
         });

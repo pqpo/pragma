@@ -28,6 +28,7 @@ import {
   type PragmaResource,
 } from "@pragma/interpreter/ast";
 
+import { BUILT_IN_SKILLS } from "./builtin-skills.ts";
 import { BUILT_IN_AGENT_FILES } from "./builtin.generated.ts";
 
 export const BUILT_IN_PRAGMA_ID = PragmaExpertIdSchema.parse(
@@ -96,13 +97,15 @@ const BUILT_IN_AGENT_PATHS: Readonly<Record<BuiltInAgentRef, string>> = {
   [SKILL_REVISION_EXPERT_REF]: "experts/0000000000sk1rev.pragma.yaml",
   [EVALUATION_JUDGE_EXPERT_REF]: "experts/00000000000j0dg3.pragma.yaml",
 };
-const PRAGMA_SKILL_PREFIX = "skills/author-pragma-dsl/";
+const PRAGMA_SKILL_PREFIXES = BUILT_IN_SKILLS.map((skill) => `${skill.path}/`);
 const BUILT_IN_AGENT_DEPENDENCY_PATHS: Readonly<Record<BuiltInAgentRef, readonly string[]>> = {
   [BUILT_IN_PRAGMA_REF]: [
     BUILT_IN_AGENT_PATHS[BUILT_IN_PRAGMA_REF],
-    "capabilities/1h2j3k4m5n6p7q8r.pragma.yaml",
+    ...BUILT_IN_SKILLS.map((skill) => `capabilities/${skill.id}.pragma.yaml`),
     "capabilities/0000000000manage.pragma.yaml",
-    ...Object.keys(BUILT_IN_AGENT_FILES).filter((path) => path.startsWith(PRAGMA_SKILL_PREFIX)),
+    ...Object.keys(BUILT_IN_AGENT_FILES).filter((path) =>
+      PRAGMA_SKILL_PREFIXES.some((prefix) => path.startsWith(prefix)),
+    ),
   ],
   [MEMORY_CURATOR_REF]: [BUILT_IN_AGENT_PATHS[MEMORY_CURATOR_REF]],
   [STORE_REVISION_EXPERT_REF]: [

@@ -5,7 +5,7 @@ import {
   MISSION_ATTACHMENT_PREVIEW_SCHEME,
   MissionIdSchema,
 } from "../../../shared/contracts/index.ts";
-import type { MissionStore } from "./mission-store.ts";
+import type { MissionStore } from "@pragma/local-host";
 
 const SUPPORTED_IMAGE_TYPES = new Set(["image/gif", "image/jpeg", "image/png", "image/webp"]);
 const MAX_IMAGE_ATTACHMENT_BYTES = 20 * 1024 * 1024;

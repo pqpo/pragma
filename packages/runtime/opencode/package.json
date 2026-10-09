@@ -28,6 +28,6 @@
     "@pragma/tsconfig": "workspace:*",
     "@types/node": "latest",
     "typescript": "latest",
-    "vitest": "4.1.11"
+    "vitest": "5.0.3"
   }
 }

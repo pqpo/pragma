@@ -68,23 +68,17 @@ jobs:
           CI: "true"
         run: pnpm test:mission-chat
 
-      - name: Mission control regression tests
+      - name: Shared Local Host business gate through CLI
         env:
           PRAGMA_LOG_LEVEL: error
           CI: "true"
-        run: pnpm test:mission-control
+        run: pnpm test:local-host-kernel
 
-      - name: Mission compilation regression tests
+      - name: Desktop Mission resource and composition adapters
         env:
           PRAGMA_LOG_LEVEL: error
           CI: "true"
-        run: pnpm test:mission-compilation
-
-      - name: Mission lifecycle regression tests
-        env:
-          PRAGMA_LOG_LEVEL: error
-          CI: "true"
-        run: pnpm test:mission-lifecycle
+        run: pnpm test:desktop-mission-adapters
 
       - name: Knowledge revision regression tests
         env:
