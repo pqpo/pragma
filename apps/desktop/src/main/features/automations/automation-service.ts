@@ -1,4 +1,6 @@
 import { join } from "node:path";
+import { isDeepStrictEqual } from "node:util";
+import { managementCommandError } from "@pragma/shared/integration";
 import { z } from "zod";
 import { executeManagementMutation } from "@pragma/local-host";
 import { createHash, randomUUID } from "node:crypto";
@@ -598,12 +600,24 @@ export function createAutomationService(options: {
         },
         apply: async (plan, publicationId, progress) => {
           await assertMutationBinding(ref, plan.previousBinding, plan.binding);
-          if ((await options.project.findRevisionByPublicationId(publicationId)) === undefined) {
-            await options.project.applyTransactional(
+          const publication =
+            (await options.project.findRevisionByPublicationId(publicationId)) ??
+            (await options.project.applyTransactional(
               { baseRevision: plan.baseRevision, upserts: [plan.resource] },
               publicationId,
+            ));
+          const publishedResource = publication.resources.find(
+            (candidate) => canonicalPragmaResourceRef(candidate) === ref,
+          );
+          const currentResource = await findAutomation(ref);
+          if (
+            currentResource === undefined ||
+            !isDeepStrictEqual(currentResource, publishedResource)
+          )
+            throw managementCommandError(
+              "COMMAND_REJECTED",
+              "The Automation was deleted or changed after this publication; inspect its current resource before retrying.",
             );
-          }
           await options.store.saveBinding(plan.binding);
           if (!progress.completed("cleaned")) {
             if (plan.rotateGeneration && plan.previousBinding !== undefined) {
@@ -612,9 +626,9 @@ export function createAutomationService(options: {
             }
             await progress.complete("cleaned");
           }
-          await scheduleResource(plan.resource, plan.binding);
+          await scheduleResource(currentResource, plan.binding);
           void processQueue(ref);
-          return await summaryFor(plan.resource);
+          return await summaryFor(currentResource);
         },
       });
     },
@@ -716,6 +730,12 @@ export function createAutomationService(options: {
           return { resource, previousBinding, binding };
         },
         apply: async (plan, _publicationId, progress) => {
+          const currentResource = await findAutomation(ref);
+          if (currentResource === undefined)
+            throw managementCommandError(
+              "COMMAND_REJECTED",
+              "The Automation was deleted before reset recovery; inspect its current resource before retrying.",
+            );
           await assertMutationBinding(ref, plan.previousBinding, plan.binding);
           await options.store.saveBinding(plan.binding);
           if (!progress.completed("cleaned")) {
@@ -723,8 +743,8 @@ export function createAutomationService(options: {
               options.onStorageTrashed?.();
             await progress.complete("cleaned");
           }
-          await scheduleResource(plan.resource, plan.binding);
-          return await summaryFor(plan.resource);
+          await scheduleResource(currentResource, plan.binding);
+          return await summaryFor(currentResource);
         },
       });
     },

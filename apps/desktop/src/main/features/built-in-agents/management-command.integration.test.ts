@@ -1,6 +1,9 @@
 import { compileBuiltInAgent, BUILT_IN_PRAGMA_REF } from "@pragma/built-in-agents";
 import { createDesktopAdapterHost } from "../missions/mission-adapter-host.ts";
-import { PRAGMA_DSL_WRITE_API_VERSION } from "@pragma/interpreter/ast";
+import {
+  PRAGMA_DSL_WRITE_API_VERSION,
+  PragmaAutomationResourceSchema,
+} from "@pragma/interpreter/ast";
 import { randomUUID, createHash } from "node:crypto";
 import { execFile } from "node:child_process";
 import { cp, mkdtemp, mkdir, readFile, realpath, rm, writeFile } from "node:fs/promises";
@@ -1457,10 +1460,138 @@ async function markCommandPending(f: Awaited<ReturnType<typeof fixture>>, reques
   return operationId;
 }
 
+function recoveryAutomation(executorRef: string) {
+  return PragmaAutomationResourceSchema.parse({
+    apiVersion: PRAGMA_DSL_WRITE_API_VERSION,
+    kind: "Automation",
+    metadata: { id: "000000000000a222", name: "Recovery schedule", description: "Test", tags: [] },
+    spec: {
+      adapter: "pragma.automation.schedule@v1",
+      binding: "binding:desktop-automation",
+      config: { trigger: { kind: "calendar", frequency: "daily", time: "09:00", timezone: "UTC" } },
+      enabled: true,
+      route: { executor: { ref: executorRef }, input: { kind: "prompt", value: "ok" } },
+      interaction: { mode: "reuse-session" },
+      delivery: { adapter: "pragma.automation.delivery.local@v1" },
+    },
+  });
+}
+
 describe(
   "phase-three management commands through real CLI and shared Host",
   { timeout: 60_000 },
   () => {
+    it.each(["deleted", "modified", "unrelated"] as const)(
+      "checks the current resource when resuming a published save: %s",
+      async (change) => {
+        const f = await fixture(false, "create_flow_draft", true);
+        const h = f.host!;
+        const resource = recoveryAutomation(h.executor.ref);
+        const ref = `automation:${resource.metadata.id}`;
+        const input = {
+          expectedProjectRevision: 1,
+          source: JSON.stringify(resource),
+          workspaceId: f.root,
+          toolPermissionMode: "request-approval" as const,
+          operationId: randomUUID(),
+        };
+        const saveBinding = h.store.saveBinding.bind(h.store);
+        vi.spyOn(h.store, "saveBinding").mockImplementationOnce(async () => {
+          throw new Error("Crash before binding");
+        });
+        await expect(h.automations.save(input)).rejects.toThrow("Crash before binding");
+        expect((await h.project.get()).revision).toBe(2);
+        expect(await h.store.getBinding(ref)).toBeUndefined();
+        if (change === "deleted") await h.service.delete({ ref, expectedProjectRevision: 2 });
+        else if (change === "modified")
+          await h.project.upsert({
+            baseRevision: 2,
+            resource: {
+              ...resource,
+              metadata: { ...resource.metadata, description: "Changed after publication" },
+            },
+          });
+        else {
+          const expert = (await h.project.get()).resources.find((r) => r.kind === "Expert")!;
+          await h.project.upsert({
+            baseRevision: 2,
+            resource: {
+              ...expert,
+              metadata: { ...expert.metadata, description: "Unrelated update" },
+            },
+          });
+        }
+        const writes = vi.spyOn(h.store, "saveBinding").mockImplementation(saveBinding);
+        writes.mockClear();
+        if (change === "unrelated") {
+          expect(await h.automations.save(input)).toMatchObject({ ref, enabled: true });
+          expect(writes).toHaveBeenCalledOnce();
+        } else {
+          await expect(h.automations.save(input)).rejects.toMatchObject({
+            code: "COMMAND_REJECTED",
+          });
+          expect(writes).not.toHaveBeenCalled();
+          expect(await h.store.getBinding(ref)).toBeUndefined();
+        }
+        expect((await h.project.get()).revision).toBe(3);
+      },
+    );
+
+    it.each(["disabled", "deleted"] as const)(
+      "resumes reset against the current resource: %s",
+      async (change) => {
+        const f = await fixture(false, "create_flow_draft", true);
+        const h = f.host!;
+        const resource = recoveryAutomation(h.executor.ref);
+        const ref = `automation:${resource.metadata.id}`;
+        await h.automations.save({
+          expectedProjectRevision: 1,
+          source: JSON.stringify(resource),
+          workspaceId: f.root,
+          toolPermissionMode: "request-approval",
+          operationId: randomUUID(),
+        });
+        const operationId = randomUUID();
+        const saveBinding = h.store.saveBinding.bind(h.store);
+        vi.spyOn(h.store, "saveBinding").mockImplementationOnce(async (binding) => {
+          await saveBinding(binding);
+          throw new Error("Crash after reset binding");
+        });
+        await expect(h.automations.resetSession({ ref, operationId })).rejects.toThrow(
+          "Crash after reset binding",
+        );
+        const generation = (await h.store.getBinding(ref))!.generation;
+        if (change === "disabled")
+          await h.project.upsert({
+            baseRevision: 2,
+            resource: { ...resource, spec: { ...resource.spec, enabled: false } },
+          });
+        else await h.project.remove({ baseRevision: 2, ref });
+        h.service.stop();
+        await h.service.start();
+        const before = await h.store.getState(ref, generation);
+        const statePath = new PragmaPaths({ pragmaHome: f.root }).automationState(ref);
+        const beforeSource = await readFile(statePath, "utf8");
+        expect(before.nextRunAt).toBeUndefined();
+        const writes = vi.spyOn(h.store, "saveBinding");
+        writes.mockClear();
+        if (change === "disabled") {
+          expect(await h.automations.resetSession({ ref, operationId })).toMatchObject({
+            enabled: false,
+            status: "disabled",
+          });
+          expect((await h.store.getState(ref, generation)).nextRunAt).toBeUndefined();
+          expect((await h.store.getBinding(ref))!.generation).toBe(generation);
+        } else {
+          await expect(h.automations.resetSession({ ref, operationId })).rejects.toMatchObject({
+            code: "COMMAND_REJECTED",
+          });
+          expect(writes).not.toHaveBeenCalled();
+          expect(await readFile(statePath, "utf8")).toBe(beforeSource);
+        }
+      },
+    );
+
     it("preserves inherited Mission and Automation port methods and their receiver", async () => {
       const f = await fixture(false, "create_flow_draft", true);
       const h = f.host!;
