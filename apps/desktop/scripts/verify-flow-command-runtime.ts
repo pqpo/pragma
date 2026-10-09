@@ -109,7 +109,10 @@ const runtimes = createStaticRuntimeResolver({
   runtimes: [runtime],
   defaultRuntimeId: runtime.descriptor.id,
 });
-const { project, port } = createManagementCommandTestFixture(root);
+const { project, port } = createManagementCommandTestFixture(
+  root,
+  scenario === "dsl" || scenario === "dsl-conflict",
+);
 const scope = { missionId: randomUUID(), workspacePath: workspace };
 const ports = {
   project: port,
@@ -138,11 +141,44 @@ const hooks = {
   },
 };
 const resource = structuredClone(builtInAgentResource(BUILT_IN_PRAGMA_REF));
+const phaseTwoNames = new Set(
+  Object.entries(MANAGEMENT_COMMAND_TOOLS)
+    .filter(
+      ([command]) =>
+        (command.startsWith("dsl.") || command.startsWith("evaluation.")) &&
+        !command.endsWith(".recover"),
+    )
+    .map(([, name]) => name),
+);
+// Compare current phase-two defaults with the historical catalog containing these 21 tools.
+if (
+  [
+    "dsl",
+    "dsl-conflict",
+    "evaluation",
+    "phase-two-smoke",
+    "phase-two-chat",
+    "phase-two-flow",
+  ].includes(scenario)
+)
+  for (const capability of resource.spec.capabilities)
+    if (capability.kind === "tools" && capability.ref === "capability:0000000000manage") {
+      if (variant === "after")
+        capability.tools = capability.tools.filter((name) => !phaseTwoNames.has(name));
+      else
+        for (const name of phaseTwoNames)
+          if (!capability.tools.includes(name)) capability.tools.push(name);
+    }
+
 const flowNames = new Set(
   Object.values(MANAGEMENT_COMMAND_TOOLS).filter((name) => name.includes("flow_draft")),
 );
 // Production defaults now omit Flow tools. Restore them only for the historical comparison probe.
-if (variant === "before")
+if (
+  variant === "before" &&
+  !scenario.startsWith("phase-two") &&
+  !["dsl", "dsl-conflict", "evaluation"].includes(scenario)
+)
   for (const capability of resource.spec.capabilities)
     if (capability.kind === "tools" && capability.ref === "capability:0000000000manage")
       capability.tools.push(...(Array.from(flowNames) as typeof capability.tools));
@@ -256,8 +292,92 @@ try {
     for (const tool of ["recover_flow_draft", "commit_dsl_changes"])
       if (!approvals.some((item) => item.tool === tool && item.approved))
         throw new Error(`Runtime did not exercise approval for ${tool}.`);
-  } else if (scenario === "chat") await prompt("只回复ok，不读取技能，不调用工具。");
-  else if (scenario === "smoke") {
+  } else if (scenario === "dsl-conflict") {
+    await prompt(
+      "Read author-pragma-dsl. In this temporary Project use only CLI and native file editing to create and COMMIT a Writer Expert with the listed Probe Runtime option. No avatar/capabilities are requested. Then start an edit file draft for that Expert, set instructions to Replayed after conflict., inspect and prepare it WITHOUT committing. Write the exact draftId and changeSetId as a JSON object to conflict.json in the workspace. All temporary approvals must go through Host; never call the old DSL tools or edit Project storage.",
+    );
+    const first = await project.get();
+    const writer = first.resources.find((r) => r.kind === "Expert");
+    if (first.revision !== 1 || writer?.kind !== "Expert")
+      throw new Error("Runtime did not create the Writer and prepare its edit.");
+    const concurrent = structuredClone(writer);
+    concurrent.spec.instructions = "Concurrent external change.";
+    await project.publish({
+      expectedRevision: first.revision,
+      resources: first.resources.map((r) => (r === writer ? concurrent : r)),
+    });
+    await prompt(
+      "A concurrent external actor changed the Writer. Read conflict.json and attempt its prepared commit once to observe the real conflict. Use pragma dsl draft restart on that draft; compare the previous read-only reference with the replacement files, explicitly replay instructions Replayed after conflict. while preserving the concurrent resource's other fields. Inspect, query one bounded review detail page, prepare and COMMIT the replacement. Use only author-pragma-dsl CLI and native workspace editing.",
+    );
+    const final = await project.get();
+    if (
+      final.revision !== 3 ||
+      !final.resources.some(
+        (r) => r.kind === "Expert" && r.spec.instructions === "Replayed after conflict.",
+      )
+    )
+      throw new Error(
+        "Runtime did not restart the conflicted draft and publish explicit edit replay.",
+      );
+  } else if (scenario === "dsl") {
+    await prompt(
+      "Read author-pragma-dsl. Use only CLI management commands and native file editing in this temporary Project. Create and atomically COMMIT a Writer Expert and a Writing Team using that Expert as coordinator and member. Use the listed Probe Runtime option; it is authorized for authoring only and you do not execute the new Expert. No avatar or capabilities are requested. Start one file draft with both targets, inspect the incomplete skeletons and observe invalid prepare, complete the returned files with all required fields, inspect/review, prepare, then commit through Host approval. Do not edit Project storage or call the old DSL managed tools. Write the exact Expert ref to writer-ref.txt.",
+    );
+    const first = await project.get();
+    if (
+      first.revision !== 1 ||
+      !first.resources.some((r) => r.kind === "ExpertTeam") ||
+      !first.resources.some((r) => r.kind === "Expert")
+    )
+      throw new Error("Runtime did not atomically publish Expert and Team through file drafts.");
+    await prompt(
+      "Use only author-pragma-dsl CLI. Start a file draft editing the just-created Writer; make a precise local change to instructions: Write concise Chinese copy. Inspect and prepare/commit. Preserve all other fields and IDs. Then start another edit draft and discard it with Host approval. Report actual revisions.",
+    );
+    const second = await project.get();
+    if (
+      second.revision !== 2 ||
+      !second.resources.some(
+        (r) => r.kind === "Expert" && r.spec.instructions === "Write concise Chinese copy.",
+      )
+    )
+      throw new Error("Runtime did not publish the local Expert modification.");
+    rejectCommit = true;
+    await prompt(
+      "Edit the Writer description in a new file draft, prepare and attempt commit. Host will reject it; observe the rejection, do not bypass it, discard the draft with approval and finish. Use only CLI.",
+    );
+    if (
+      (await project.get()).revision !== second.revision ||
+      !approvals.some((a) => a.tool === "commit_dsl_changes" && !a.approved)
+    )
+      throw new Error("Runtime did not preserve publication approval rejection.");
+  } else if (scenario === "evaluation") {
+    await prompt(
+      "Read author-pragma-flow and author-pragma-evaluation. Use only CLI in this temporary Project to create and COMMIT a Flow named Approval with one Human step approve, prompt Release?, options ship/hold, start approve and end transition. Then independently create an Evaluation for the committed Flow. Allocate the ID through CLI. Upsert one ship case with an intentionally wrong expectPrompt, run it and observe failure, then fix expectPrompt to Release? and rerun. Query exact case definitions and coverage; prepare with the exact draft revision and COMMIT the passing Evaluation through separate approval. All temporary commits are authorized but still need the Host gate. Never pass complete Evaluation YAML or edit storage.",
+    );
+    const first = await project.get();
+    if (
+      first.revision !== 2 ||
+      !first.resources.some((r) => r.kind === "Flow") ||
+      !first.resources.some((r) => r.kind === "Evaluation")
+    )
+      throw new Error("Runtime did not independently publish Flow and Evaluation.");
+    await prompt(
+      "Use author-pragma-evaluation CLI to edit the committed Evaluation. First deliberately update with a stale expectedDraftRevision and observe the conflict. Get the current revision, add a passing hold case, run both ship and hold cases as an explicitly requested two-case batch, query cumulative coverage, prepare with exact revision and independently COMMIT. Preserve the Flow and its revision contents.",
+    );
+    const second = await project.get();
+    if (
+      second.revision !== 3 ||
+      !second.resources.some(
+        (r) =>
+          r.kind === "Evaluation" &&
+          r.spec.method.type === "flow-run-dry" &&
+          r.spec.method.cases.length === 2,
+      )
+    )
+      throw new Error("Runtime did not publish the Evaluation batch modification.");
+  } else if (scenario === "chat" || scenario === "phase-two-chat")
+    await prompt("只回复ok，不读取技能，不调用工具。");
+  else if (scenario === "smoke" || scenario === "phase-two-smoke") {
     await prompt(
       "This is a real CLI channel probe in a temporary workspace. Use your process/shell tool to run exactly `pragma dsl resources list --format json`. Do not print environment variables. Report the structured result and finish.",
     );

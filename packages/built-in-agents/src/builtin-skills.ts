@@ -8,6 +8,7 @@ import { BUILT_IN_AGENT_FILES } from "./builtin.generated.ts";
 const BUILT_IN_SKILL_REFS = [
   PragmaCapabilityRefSchema.parse("capability:1h2j3k4m5n6p7q8r"),
   PragmaCapabilityRefSchema.parse("capability:000000000000f10w"),
+  PragmaCapabilityRefSchema.parse("capability:000000000000eva1"),
 ] as const;
 
 export const BUILT_IN_SKILLS = BUILT_IN_SKILL_REFS.map((ref) => {

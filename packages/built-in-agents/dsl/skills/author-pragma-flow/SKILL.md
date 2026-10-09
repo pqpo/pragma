@@ -28,8 +28,8 @@ Load only the relevant subcommand's `--help` when its parameters are needed.
    Call `pragma dsl changes commit` with the returned changeSetId. The Host requests approval in the
    original Mission; process execution permission does not approve this commit.
 7. Report the actual commit result, Project revision and changed refs. Flow drafts never contain
-   Evaluation cases. Offer tests after the Flow commit; use author-pragma-dsl's existing Evaluation
-   instructions only when the user asks for them.
+   Evaluation cases. Offer tests after the Flow commit; discover `author-pragma-evaluation` and use its
+   independent CLI workflow only when the user asks for tests.
 
 Use `--format json`. Preserve a stable `--request-id` UUID for identical retries. A transport failure
 is not proof that nothing committed. Inspect receipts/draft state before a new mutation. On revision

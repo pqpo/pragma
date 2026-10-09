@@ -43,6 +43,30 @@ import {
   createPragmaManagementTools,
 } from "../src/pragma-management-tools.ts";
 
+const CLI_MIGRATED_AUTHORING_TOOLS = [
+  "list_dsl_resources",
+  "read_dsl_resource",
+  "list_expert_options",
+  "allocate_dsl_resource_ids",
+  "start_dsl_draft",
+  "list_dsl_drafts",
+  "inspect_dsl_draft",
+  "read_dsl_draft_review",
+  "prepare_dsl_draft",
+  "restart_dsl_draft",
+  "discard_dsl_draft",
+  "prepare_dsl_changes",
+  "read_prepared_dsl_change",
+  "commit_dsl_changes",
+  "create_evaluation_draft",
+  "get_evaluation_draft",
+  "get_evaluation_cases",
+  "update_evaluation_draft",
+  "run_evaluation_draft",
+  "prepare_evaluation_draft",
+  "discard_evaluation_draft",
+] as const;
+
 describe("built-in Pragma Agent DSL", () => {
   it("defines all five built-in Agents as canonical DSL Experts", () => {
     expect(BUILT_IN_AGENT_REFS).toHaveLength(5);
@@ -64,6 +88,7 @@ describe("built-in Pragma Agent DSL", () => {
         .map((resource) => resource.kind)
         .toSorted(),
     ).toEqual([
+      "Capability",
       "Capability",
       "Capability",
       "Capability",
@@ -150,7 +175,7 @@ describe("built-in Pragma Agent DSL", () => {
         },
       },
     });
-    expect(compiled.value.tools?.map((tool) => tool.name)).toHaveLength(38);
+    expect(compiled.value.tools?.map((tool) => tool.name)).toHaveLength(17);
     expect(compiled.value.tools?.map((tool) => tool.name)).toEqual(
       expect.arrayContaining([
         "list_workspaces",
@@ -161,11 +186,8 @@ describe("built-in Pragma Agent DSL", () => {
     );
     expect(compiled.value.tools?.map((tool) => tool.name)).toContain("call_store_revision_agent");
     expect(compiled.value.tools?.map((tool) => tool.name)).toContain("call_skill_revision_agent");
-    expect(compiled.value.tools?.map((tool) => tool.name)).toContain("list_expert_options");
-    expect(compiled.value.tools?.map((tool) => tool.name)).toContain("start_dsl_draft");
-    expect(compiled.value.tools?.map((tool) => tool.name)).toContain("read_dsl_draft_review");
-    expect(compiled.value.tools?.map((tool) => tool.name)).toContain("prepare_dsl_draft");
     for (const name of [
+      ...CLI_MIGRATED_AUTHORING_TOOLS,
       "create_flow_draft",
       "get_flow_draft",
       "update_flow_draft",
@@ -175,7 +197,6 @@ describe("built-in Pragma Agent DSL", () => {
     ]) {
       expect(compiled.value.tools?.map((tool) => tool.name)).not.toContain(name);
     }
-    expect(compiled.value.tools?.map((tool) => tool.name)).toContain("run_evaluation_draft");
     expect(compiled.value.tools?.map((tool) => tool.name)).not.toContain("run_evaluation");
     expect(compiled.value.skills?.skills[0]?.path).toMatch(/author-pragma-dsl[\\/]SKILL\.md$/);
     expect(compiled.value).toMatchObject({
@@ -241,6 +262,7 @@ describe("built-in Pragma Agent DSL", () => {
       await client.connect(new StreamableHTTPClientTransport(new URL(registration.url)));
       const catalog = await client.listTools();
       for (const name of [
+        ...CLI_MIGRATED_AUTHORING_TOOLS,
         "create_flow_draft",
         "get_flow_draft",
         "update_flow_draft",
@@ -248,7 +270,9 @@ describe("built-in Pragma Agent DSL", () => {
         "prepare_flow_draft",
         "discard_flow_draft",
       ]) {
-        expect(catalog.tools.map((tool) => tool.name)).not.toContain(name);
+        expect(
+          catalog.tools.some((tool) => tool.name === name || tool.name.endsWith(`_${name}`)),
+        ).toBe(false);
       }
       expect(tools.find((tool) => tool.name === "update_flow_draft")?.inputSchema).toMatchObject({
         properties: {
@@ -259,7 +283,7 @@ describe("built-in Pragma Agent DSL", () => {
         },
       });
       expect(
-        catalog.tools.find((tool) => tool.name === "create_evaluation_draft")?.inputSchema,
+        tools.find((tool) => tool.name === "create_evaluation_draft")?.inputSchema,
       ).toMatchObject({
         type: "object",
         properties: {
@@ -337,16 +361,16 @@ describe("built-in Pragma Agent DSL", () => {
     const resourceReference =
       BUILT_IN_AGENT_FILES["skills/author-pragma-dsl/references/resources-and-references.md"] ?? "";
 
-    expect(skill).toContain("call `start_dsl_draft` once with all related resources");
-    expect(skill).toContain("call `prepare_dsl_draft` with only the draft ID");
-    expect(skill).toContain("`read_dsl_draft_review` with the relevant section");
+    expect(skill).toContain("`pragma dsl draft start` creates one Mission-owned file draft");
+    expect(skill).toContain("pass only\n   `draftId`");
+    expect(skill).toContain("use `pragma dsl draft review`");
     expect(expertReference).toContain("namespace: project_docs");
     expect(expertReference).toContain(
       "It is not derived from the ContextStore ID, binding, or `config.key`.",
     );
     expect(resourceReference).toContain("Otherwise use the Host");
     expect(resourceReference).toContain(
-      "option's `runtimeProfileRef`; `prepare_dsl_draft` adds that dependency automatically for Expert",
+      "option's `runtimeProfileRef`; `pragma dsl draft prepare` adds that dependency automatically for Expert",
     );
   });
 
@@ -362,27 +386,31 @@ describe("built-in Pragma Agent DSL", () => {
     expect(dsl).not.toContain("update_flow_draft");
   });
 
-  it("teaches incremental Run Dry authoring with bounded explicit batches", () => {
-    const skill = BUILT_IN_AGENT_FILES["skills/author-pragma-dsl/SKILL.md"] ?? "";
-    const reference = BUILT_IN_AGENT_FILES["skills/author-pragma-dsl/references/run-dry.md"] ?? "";
-
-    expect(skill).toContain("generate and upsert exactly one case");
-    expect(skill).toContain("ask whether the user wants to create a test set and run it");
-    expect(skill).toContain("user may skip");
-    expect(skill).toContain("prepare_evaluation_draft");
-    expect(skill).toContain("commit changes only the");
-    expect(skill).toContain("Evaluation; it is never part of `pragma flow draft prepare`");
-    expect(skill).not.toContain("without waiting for the user");
-    expect(skill).toContain("Never emit or pass a complete Evaluation");
-    expect(reference).toContain("run_evaluation_draft");
+  it("routes independent Evaluation CLI authoring with bounded cases and retains the DSL identity", () => {
+    const dsl = BUILT_IN_AGENT_FILES["skills/author-pragma-dsl/SKILL.md"]!;
+    const skill = BUILT_IN_AGENT_FILES["skills/author-pragma-evaluation/SKILL.md"]!;
+    const reference =
+      BUILT_IN_AGENT_FILES["skills/author-pragma-evaluation/references/run-dry.md"]!;
+    expect(dsl).toContain("author-pragma-evaluation");
+    expect(BUILT_IN_AGENT_FILES["skills/author-pragma-dsl/references/run-dry.md"]).toBeUndefined();
+    const flow = BUILT_IN_AGENT_FILES["skills/author-pragma-flow/SKILL.md"]!;
+    const flowReference = BUILT_IN_AGENT_FILES["skills/author-pragma-flow/references/flow.md"]!;
+    expect(flow).toContain("discover `author-pragma-evaluation`");
+    expect(flowReference).toContain("Discover `author-pragma-evaluation` and read its");
+    expect(flow).not.toContain("author-pragma-dsl");
+    expect(flowReference).not.toContain("author-pragma-dsl");
+    expect(skill).toContain("Default to one `upsert_case`");
+    expect(skill).toContain("Do not create a test set implicitly");
+    expect(skill).toContain("pragma evaluation draft prepare");
+    expect(skill).toContain("pragma dsl changes commit");
+    expect(skill).toContain("transaction saves only the Evaluation");
     expect(reference).toContain("2–10 `upsert_case` operations");
-    expect(reference).toContain("This is the submit-and-save operation");
     expect(reference).toContain("commits only the canonical `evaluation:<id>` resource");
-    expect(reference).toContain("never creates an Evaluation implicitly");
-    expect(reference).toContain("Never build, resend, or request the complete Evaluation YAML");
     expect(reference).not.toContain("targetFlowDraftId");
-    expect(reference).not.toContain("created atomically");
-    expect(reference).not.toContain("run_evaluation`");
+    for (const content of [dsl, skill, reference])
+      expect(content).not.toMatch(
+        /(?:create|get|update|run|prepare|discard)_evaluation_draft|(?:start|inspect|prepare|restart)_dsl_draft/u,
+      );
   });
 
   it("materializes an overridden built-in Expert while preserving its bundled dependencies", async () => {
@@ -419,7 +447,7 @@ describe("built-in Pragma Agent DSL", () => {
     );
     expect(
       project.listResources().filter((candidate) => candidate.kind === "Capability"),
-    ).toHaveLength(4);
+    ).toHaveLength(5);
     expect(await project.validate()).toEqual([]);
   });
 

@@ -1,106 +1,67 @@
 ---
 name: author-pragma-dsl
-description: Create and update validated pragma/v5 Expert, ExpertTeam, Flow, Evaluation, and Automation resources. Use when a user asks Pragma to create, change, configure, test, evaluate, or repair an Expert, team, Flow, Run Dry suite, schedule, trigger, or Automation in the current Pragma project.
+description: Create, update, configure, or repair Pragma Expert and ExpertTeam resources and their dependencies through authorized CLI file drafts. Flow and Evaluation authoring use their own skills.
 ---
 
 # Author Pragma DSL
 
-Translate the user's intent into the smallest complete DSL change. Treat the interpreter as the
-source of truth and use only the Pragma DSL tools to inspect, validate, and save resources.
+Use the interpreter's diagnostics as the source of truth. The authorized `pragma` command is
+provided by the current Runtime; it inherits the current Mission, Context and Execution. Run
+commands with `--input request.json` or `--input -` for a bounded JSON object. Read only the needed
+subcommand `--help`; do not print credentials or edit authoritative Project storage.
 
 ## Workflow
 
-1. Discuss missing intent before changing definitions.
-2. Call `list_dsl_resources` to find exact refs. For every Expert or ExpertTeam creation or update,
-   call `start_dsl_draft` once with all related resources. Use the returned workspace files and
-   Runtime-native search, read, and edit tools to make precise changes; never copy a complete prompt
-   through a management-tool argument. A draft may contain a Team and all Experts changed with it.
-   Read reusable system Experts listed in
-   the `builtin-experts` category of `list_expert_options` through `read_dsl_resource`; they are valid read-only Team
-   coordinators or members and must not be recreated. A Host Runtime or Capability option that is
-   not yet a project resource cannot be read and is the only exception.
-3. Before creating or changing an Expert, call `list_expert_options` once per needed category:
-   `runtime-models`, `capabilities`, `avatars`, or `builtin-experts`. Use `query` and follow
-   `nextCursor` instead of requesting a full catalog. Confirm a listed Runtime model, recommend only
-   listed capabilities that match the user's intent, and select only a listed avatar persona. When
-   the user has not specified an avatar, either recommend the persona whose
-   traits best match the Expert's role or present a concise choice of relevant personas. Preserve an
-   existing avatar when editing unless the user asks to change it. Ask whether to use the
-   recommendation, customize it, or enable no capabilities. Reuse an existing project
-   RuntimeProfile when its Runtime, provider, model, and thinking level match the selection;
-   otherwise use the option's `runtimeProfileRef`. Never author a duplicate RuntimeProfile.
-   Before creating an Expert for a Team role, reuse a matching `builtinExperts` entry when one
-   already provides the requested behavior. Do not ask for model, avatar, or capability choices for
-   that read-only system Expert.
-4. Read the relevant reference file below before drafting YAML.
-5. `start_dsl_draft` allocates IDs and creates intentionally incomplete skeleton files for new
-   Experts and ExpertTeams. Fill every required field in those files and use the returned refs for
-   links between new resources. Preserve IDs, kinds, and apiVersion values; never rename draft files.
-6. For Flow creation or editing, discover and read the `author-pragma-flow` Skill. Its references
-   and CLI subcommand help own the Flow workflow; do not use the former Flow managed tools.
-7. Use that Skill's prepare and commit workflow. Flow and Evaluation remain independent transactions.
-8. After the Flow commit succeeds, ask whether the user wants to create a test set and run it. The
-   user may skip. If they skip, report the committed Flow and stop. Do not allocate an Evaluation
-   ID or create an Evaluation draft before the user confirms, unless their original request already
-   explicitly asked for the test set.
-9. When the user confirms, or when they ask to test an existing committed Flow, read
-   [references/run-dry.md](references/run-dry.md). Target the exact committed Flow ref. By default,
-   generate and upsert exactly one case, immediately run that case, and fix it until it passes
-   before creating another. Use cumulative `coverage.missing` as the next-case backlog. Only use
-   batches when the user explicitly requests them; update, read, or run 2–10 cases per call, and fix
-   every failure in the current batch before adding more. Never emit or pass a complete Evaluation
-   YAML document.
-10. Save the test set independently: call `prepare_evaluation_draft` with its exact draft revision,
-    then pass the returned `changeSetId` to `commit_dsl_changes`. This commit changes only the
-    Evaluation; it is never part of `pragma flow draft prepare` or `additionalSources`.
-    For Expert and ExpertTeam drafts, call `inspect_dsl_draft` after editing. Review its compact
-    summary, diagnostics, omitted-field effects, and Host dependencies; explain material removals
-    and automatically created dependencies before preparing. Treat `preserved_unknown` as retained
-    compatibility data, not a deletion. When truncation reports omitted details, use
-    `read_dsl_draft_review` with the relevant section and optional ref, following `nextCursor` while
-    preserving the same filters. An unavailable effective preview means field changes describe the
-    authored delta only; resolve the reported target conflict before relying on final effects. Then
-    call `prepare_dsl_draft` with only the draft ID.
-    Never ask for or reproduce a full textual diff. Read a prepared resource in bounded chunks only
-    when the compact review is insufficient. Fix every prepare diagnostic by editing the same files
-    and prepare that same draft ID again. Commit its returned
-    change-set. If a target changed concurrently, including when commit reports a conflict, call
-    `restart_dsl_draft`, compare the old read-only reference with the new files, and explicitly
-    replay still-valid edits. Use `prepare_dsl_changes` directly only for
-    complete non-Flow resource kinds without a dedicated draft workflow. Prepare calls return compact
-    receipts; use `read_prepared_dsl_change` only when a bounded part of the normalized source is
-    genuinely needed.
-11. Fix every diagnostic. Never bypass validation or hand-edit project files. If the project
-    revision changed, reread affected resources and explicitly rebase the draft before retrying.
-12. After each commit tool returns, always report success or failure, the committed project
-    revision, and
-    the changed canonical refs.
+1. Resolve missing intent. Use `pragma dsl resources list` to find exact refs and
+   `pragma dsl resources read` for bounded current YAML. Query `pragma dsl options list` by category
+   and follow `nextCursor`: `runtime-models`, `capabilities`, `avatars`, `builtin-experts`.
+   Recommend only listed models, capabilities and avatar personas; preserve an existing avatar
+   unless asked to change it. Ask whether to use the recommended capabilities, customize them,
+   or use none. Reuse an existing matching RuntimeProfile rather than authoring a duplicate.
+   Read-only system Experts can be Team coordinators/members; reuse matching entries rather than
+   recreating them or asking for their model/avatar/capability choices. Unmaterialized Host options
+   are the only refs that cannot yet be read as project resources.
+2. Read the relevant reference below. `pragma dsl draft start` creates one Mission-owned file draft
+   containing all related new or existing Experts/Teams. It allocates IDs and returns intentionally
+   incomplete skeletons plus workspace paths. Complete required fields with native read/edit tools;
+   preserve each ID, kind, apiVersion and filename. Link new resources using returned refs.
+3. `pragma dsl draft inspect` returns compact diagnostics, omitted-field effects, dependencies and
+   hashes. Explain material removals and automatically created dependencies. `preserved_unknown`
+   means retained compatibility data. When details are omitted, use `pragma dsl draft review`,
+   preserving section/ref filters while following `nextCursor`. Resolve target conflicts before
+   relying on an unavailable effective preview. Do not request a full textual diff.
+4. `pragma dsl draft prepare` freezes the files and validates an immutable submission; pass only
+   `draftId`. Fix diagnostics in the same editable files and prepare again. Read prepared YAML
+   chunks with `pragma dsl changes read` only when compact review is insufficient.
+5. `pragma dsl changes commit` submits the prepared `changeSetId` through Host approval. Shell
+   approval does not approve publication. Report success/failure, committed revision and changed refs.
+   On concurrent target changes, use `pragma dsl draft restart`, compare the old read-only reference
+   with the new workspace files, and explicitly replay still-valid edits. Do not blindly retry edits.
+6. Use `pragma dsl draft list` to locate this Mission's drafts and `pragma dsl draft discard` for
+   approved cleanup. An `unowned_target` requires explicit `pragma dsl draft recover`; historical
+   prepared changes use `pragma dsl changes recover`. Recovery preserves data and requires separate
+   approval; known foreign owners cannot be taken over. Publication still needs its own approval.
 
-Before preparing, verify that every new ID came from a Host draft or
-`allocate_dsl_resource_ids`, every Evaluation
-targets an exact Flow ref, every project ref
-was read, every ContextStore mount declares `ref`, `namespace`, and `required`, and no existing
-RuntimeProfile, Capability, or ContextStore is repeated in `sources`. Follow diagnostic `source` and
-`path` values literally; never invent a field derivation rule to work around validation.
+Use `pragma dsl changes prepare` only for complete resources without a dedicated authoring workflow;
+Expert/Team require file drafts, Flow uses `author-pragma-flow`, and Evaluation uses
+`author-pragma-evaluation`. Flow and Evaluation are independent transactions. After a Flow commit,
+offer Evaluation authoring only if not already requested; do not create an Evaluation implicitly.
 
-For Automation work, use `list_automations` before editing. Use `save_automation` instead of the
-generic prepare/commit pair because the host workspace and permission binding must be saved with the
-portable DSL. Use the same tool to enable or disable an Automation. `delete_automation` retains
-existing Missions; `reset_automation_session` only changes which Mission the next event continues.
-Before preparing or saving, enforce the Automation metadata and prompt limits documented in
-`references/automation.md`; never rely on the host to truncate authored values.
+Before preparing, ensure IDs came from Host draft allocation or `pragma dsl ids allocate`, project
+refs were read, ContextStore mounts declare `ref`, `namespace`, `required`, and dependencies do not
+duplicate existing RuntimeProfile, Capability or ContextStore resources. Preserve unknown fields;
+follow diagnostic source/path values literally. Stable request UUIDs are reused only with identical
+command/input to retrieve the original receipt. Cancellation never undoes a published revision.
+`input_required` returns control to the owning Execution; the CLI cannot approve for the user.
+
+Automation remains on its existing managed-tool workflow in this migration stage. Read
+[references/automation.md](references/automation.md); use `save_automation` to retain Host workspace
+and permission binding, rather than generic prepare/commit.
 
 ## References
 
-- Expert resources: read [references/expert.md](references/expert.md).
-- Expert avatar personas: read [references/avatars.md](references/avatars.md) before selecting or
-  changing an Expert avatar.
-- ExpertTeam resources: read [references/expert-team.md](references/expert-team.md).
-- Flow authoring: discover and read `author-pragma-flow`.
-- Flow run dry cases: read [references/run-dry.md](references/run-dry.md).
-- Automation resources: read [references/automation.md](references/automation.md).
-- Exact refs, shared resources, and versioning: read
-  [references/resources-and-references.md](references/resources-and-references.md).
-
-Do not invent fields from memory. If validation disagrees with a reference example, follow the
-diagnostic and the current interpreter schema.
+- [Expert](references/expert.md) and [ExpertTeam](references/expert-team.md): read for that resource kind.
+- [Avatars](references/avatars.md): read before selecting/changing an Expert persona.
+- [Resources and refs](references/resources-and-references.md): dependencies and versioning.
+- [CLI examples](references/commands.md): file drafts, review and recovery.
+- Flow: discover `author-pragma-flow`; Flow Run Dry: discover `author-pragma-evaluation`.

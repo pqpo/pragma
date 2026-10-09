@@ -1,14 +1,14 @@
 apiVersion: pragma/v5
 kind: Capability
 metadata:
-  id: 1h2j3k4m5n6p7q8r
-  name: Author Pragma DSL
-  description: Expert and ExpertTeam authoring through authorized CLI file drafts.
+  id: 000000000000eva1
+  name: Author Pragma Evaluation
+  description: Independent Flow Run Dry Evaluation authoring through authorized CLI commands.
   tags: [builtin, pragma, default-agent, skill]
 spec:
   adapter: pragma.capability.skill@v1
   config:
     source:
       type: project
-      path: skills/author-pragma-dsl
+      path: skills/author-pragma-evaluation
     entry: SKILL.md

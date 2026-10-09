@@ -66,4 +66,4 @@ Mission continuity:
 
 The workspace, tool permission mode, model override, credentials, and future IM connection secrets
 are host bindings. Never place them in DSL. Call `save_automation` with an explicit `workspaceId` and
-`toolPermissionMode`; do not use generic `commit_dsl_changes` for an Automation.
+`toolPermissionMode`; do not use generic `pragma dsl changes commit` for an Automation.

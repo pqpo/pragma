@@ -1,6 +1,7 @@
+import { PRAGMA_DSL_WRITE_API_VERSION } from "@pragma/interpreter/ast";
 import { randomUUID, createHash } from "node:crypto";
 import { execFile } from "node:child_process";
-import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { cp, mkdtemp, mkdir, readFile, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { promisify } from "node:util";
@@ -17,6 +18,7 @@ import {
   definePluginEntry,
   registerExecutionCommandSession,
   registerExpertToolsMcpSession,
+  type ExpertAgentHumanInteractionHandler,
 } from "@pragma/core";
 import {
   createManagementCommandApplication,
@@ -30,7 +32,10 @@ import {
   ManagementCommandRequestSchema,
   type ManagementCommand,
 } from "@pragma/shared/integration";
-import { createManagementCommandTestFixture } from "./management-command-test-fixture.ts";
+import {
+  createManagementCommandTestFixture,
+  PROBE_AUTHORING_RUNTIME_REF,
+} from "./management-command-test-fixture.ts";
 
 import { openRuntimeSession, createRuntimeTestFeatures } from "@pragma/core/testing";
 
@@ -59,10 +64,13 @@ const operations = [
   { type: "set_transition", stepId: "approve", transition: { end: true } },
 ];
 
-async function fixture(requireCreateApproval: false | "definition" | "plugin" = false) {
+async function fixture(
+  requireCreateApproval: false | "definition" | "plugin" = false,
+  approvalTool = "create_flow_draft",
+) {
   const root = await mkdtemp(join(tmpdir(), "pragma-command-boundary-"));
   cleanup.push(() => rm(root, { force: true, recursive: true }));
-  const { project, port } = createManagementCommandTestFixture(root);
+  const { project, port } = createManagementCommandTestFixture(root, true);
   const expert = await defineExpert({
     id: "command-test",
     name: "Command test",
@@ -71,7 +79,7 @@ async function fixture(requireCreateApproval: false | "definition" | "plugin" = 
     scope: "test",
     workspace: root,
     ...(requireCreateApproval === "definition"
-      ? { executionToolApprovals: { create_flow_draft: { mode: "required" as const } } }
+      ? { executionToolApprovals: { [approvalTool]: { mode: "required" as const } } }
       : {}),
     ...(requireCreateApproval === "plugin"
       ? {
@@ -105,7 +113,10 @@ async function fixture(requireCreateApproval: false | "definition" | "plugin" = 
         }
       : {}),
   });
-  const scope = { missionId: randomUUID(), workspacePath: root };
+  const scope: { missionId: string; workspacePath: string } = {
+    missionId: randomUUID(),
+    workspacePath: root,
+  };
   const executionId = randomUUID();
   const invocationId = randomUUID();
   const controller = new AbortController();
@@ -120,7 +131,10 @@ async function fixture(requireCreateApproval: false | "definition" | "plugin" = 
         controller.signal.throwIfAborted();
       },
     },
-    humanInteractionHandler: async () => ({ kind: "tool_approval" as const, approved }),
+    humanInteractionHandler: (async () => ({
+      kind: "tool_approval" as const,
+      approved,
+    })) as ExpertAgentHumanInteractionHandler,
     runContext: {
       attributes: {
         "execution.executionId": executionId,
@@ -179,6 +193,10 @@ async function fixture(requireCreateApproval: false | "definition" | "plugin" = 
     } catch (error) {
       stdout = (error as { stdout: string }).stdout;
     }
+    if (!stdout)
+      throw new Error(
+        "Command client returned no structured stdout; rebuild Desktop command client before this suite.",
+      );
     return JSON.parse(stdout) as {
       status: string;
       exitCode: number;
@@ -961,3 +979,425 @@ it(
     expect((await f.project.get()).revision).toBe(0);
   },
 );
+
+describe("DSL and Evaluation CLI real process", { timeout: 60_000 }, () => {
+  it("authors related files, freezes one submission, fences owners and commits atomically", async () => {
+    const f = await fixture();
+    const requestId = randomUUID();
+    const input = {
+      targets: [
+        {
+          mode: "create",
+          key: "writer",
+          kind: "Expert",
+          name: "Writer",
+          description: "Write copy",
+        },
+        {
+          mode: "create",
+          key: "team",
+          kind: "ExpertTeam",
+          name: "Writing Team",
+          description: "Coordinate copy",
+        },
+      ],
+    };
+    const started = await f.invoke("dsl.draft.start", input, requestId);
+    expect(started.exitCode).toBe(0);
+    expect(await f.invoke("dsl.draft.start", input, requestId)).toEqual(started);
+    const draftId = started.result["draftId"] as string;
+    const resources = started.result["resources"] as {
+      key: string;
+      ref: string;
+      filePath: string;
+    }[];
+    const writer = resources.find((r) => r.key === "writer")!;
+    const team = resources.find((r) => r.key === "team")!;
+    expect((await f.invoke("dsl.draft.prepare", { draftId })).exitCode).toBe(10);
+    await writeFile(writer.filePath, cliExpert(writer.ref.slice(7)));
+    await writeFile(team.filePath, cliTeam(team.ref.slice(5), writer.ref));
+    expect((await f.invoke("dsl.draft.inspect", { draftId })).exitCode).toBe(0);
+    const listed = await f.invoke("dsl.draft.list", { limit: 1 });
+    expect(listed.result["items"]).toEqual([expect.objectContaining({ draftId })]);
+    const prepareId = randomUUID();
+    const prepared = await f.invoke("dsl.draft.prepare", { draftId }, prepareId);
+    expect(prepared.exitCode).toBe(0);
+    const changeSetId = (prepared.result["changeSet"] as Record<string, unknown>)[
+      "changeSetId"
+    ] as string;
+    expect(await f.invoke("dsl.draft.prepare", { draftId }, prepareId)).toEqual(prepared);
+    // Crash after candidate publication but before the final draft/outer receipt replacement.
+    const recordPath = join(
+      f.root,
+      "state",
+      "pragma",
+      "dsl-resource-drafts",
+      encodePragmaPathSegment(draftId),
+      "draft.json",
+    );
+    const record = JSON.parse(await readFile(recordPath, "utf8"));
+    record.state = "editing";
+    delete record.submissionHash;
+    delete record.preparedChangeSetId;
+    await writeFile(recordPath, JSON.stringify(record));
+    const operation = createHash("sha256")
+      .update(JSON.stringify([f.scope.missionId, "root-context", prepareId]))
+      .digest("hex");
+    const receiptPath = join(f.receiptsRoot, `${operation}.json`);
+    const receipt = JSON.parse(await readFile(receiptPath, "utf8"));
+    receipt.state = "pending";
+    delete receipt.result;
+    await writeFile(receiptPath, JSON.stringify(receipt));
+    const prepareJournalPath = join(recordPath, "..", "command-prepare.json");
+    const prepareJournal = await readFile(prepareJournalPath, "utf8");
+    await writeFile(
+      prepareJournalPath,
+      JSON.stringify({
+        ...JSON.parse(prepareJournal),
+        schemaVersion: "pragma.dsl-command-prepare/v99",
+      }),
+    );
+    expect((await f.invoke("dsl.draft.inspect", { draftId })).error?.code).toBe(
+      "STORAGE_VERSION_UNSUPPORTED",
+    );
+    expect(await readFile(recordPath, "utf8")).toBe(JSON.stringify(record));
+    await writeFile(prepareJournalPath, prepareJournal);
+    const ownContext = f.context.runContext.attributes["execution.contextId"];
+    f.context.runContext.attributes["execution.contextId"] = "foreign-list-context";
+    expect((await f.invoke("dsl.draft.list", { limit: 1 })).result["items"]).toEqual([]);
+    expect(await readFile(recordPath, "utf8")).toBe(JSON.stringify(record));
+    expect((await f.invoke("dsl.draft.inspect", { draftId })).exitCode).toBe(6);
+    const ownerPath = join(recordPath, "..", "owner.json");
+    const ownerBytes = await readFile(ownerPath, "utf8");
+    const initializingOwner = JSON.stringify({ ...JSON.parse(ownerBytes), state: "initializing" });
+    await writeFile(ownerPath, initializingOwner);
+    expect((await f.invoke("dsl.draft.list", { limit: 1 })).result["items"]).toEqual([]);
+    expect(await readFile(ownerPath, "utf8")).toBe(initializingOwner);
+    expect(await readFile(recordPath, "utf8")).toBe(JSON.stringify(record));
+    await writeFile(ownerPath, ownerBytes);
+    f.context.runContext.attributes["execution.contextId"] = ownContext;
+    expect((await f.invoke("dsl.draft.inspect", { draftId })).exitCode).toBe(0);
+    expect((await f.invoke("dsl.draft.list", { limit: 1 })).result["items"]).toEqual([
+      expect.objectContaining({ draftId, state: "prepared" }),
+    ]);
+    expect((await f.invoke("dsl.draft.prepare", { draftId }, prepareId)).result).toEqual(
+      prepared.result,
+    );
+    expect(JSON.parse(await readFile(recordPath, "utf8")).state).toBe("prepared");
+    const oldContext = f.context.runContext.attributes["execution.contextId"];
+    f.context.runContext.attributes["execution.contextId"] = "foreign";
+    expect((await f.invoke("dsl.draft.inspect", { draftId })).exitCode).toBe(6);
+    expect((await f.invoke("dsl.changes.commit", { changeSetId })).exitCode).toBe(6);
+    f.context.runContext.attributes["execution.contextId"] = oldContext;
+    expect((await f.invoke("dsl.changes.commit", { changeSetId })).exitCode).toBe(6);
+    expect((await f.project.get()).revision).toBe(0);
+    f.approve();
+    expect((await f.invoke("dsl.changes.commit", { changeSetId })).exitCode).toBe(0);
+    expect((await f.project.get()).resources.map((r) => r.kind).sort()).toEqual([
+      "Expert",
+      "ExpertTeam",
+      "RuntimeProfile",
+    ]);
+    expect(
+      (
+        await f.invoke("dsl.changes.prepare", {
+          expectedProjectRevision: 1,
+          sources: [cliExpert(writer.ref.slice(7))],
+        })
+      ).exitCode,
+    ).toBe(10);
+    const discarded = await f.invoke("dsl.draft.start", {
+      targets: [{ mode: "edit", ref: writer.ref }],
+    });
+    expect(
+      (await f.invoke("dsl.draft.discard", { draftId: discarded.result["draftId"] })).exitCode,
+    ).toBe(0);
+  });
+
+  it("recovers actual historical file and Evaluation drafts only after approval, preserving their bytes", async () => {
+    const f = await fixture();
+    const source = new URL("./__fixtures__/legacy-authoring-a69bd99d/", import.meta.url);
+    const provenance = JSON.parse(await readFile(new URL("provenance.json", source), "utf8")) as {
+      missionId: string;
+      dslDraftId: string;
+      evaluationDraftId: string;
+    };
+    f.scope.missionId = provenance.missionId;
+    const target = join(f.root, "state", "pragma", "dsl-resource-drafts");
+    await cp(new URL("dsl-resource-drafts/", source), target, { recursive: true });
+    await cp(new URL("workspace-files/", source), join(f.root, ".pragma"), { recursive: true });
+    const directory = join(target, encodePragmaPathSegment(provenance.dslDraftId));
+    const fixtureWorkspaceRoot = await realpath(f.root);
+    for (const name of ["draft.json", "owner.json"]) {
+      const path = join(directory, name);
+      await writeFile(
+        path,
+        relocateHistoricalDraftFixture(await readFile(path, "utf8"), fixtureWorkspaceRoot),
+      );
+    }
+    const before = await readFile(join(directory, "draft.json"), "utf8");
+    expect((await f.invoke("dsl.draft.list", { limit: 1 })).result["items"]).toEqual([]);
+    expect(await readFile(join(directory, "draft.json"), "utf8")).toBe(before);
+    expect((await f.invoke("dsl.draft.inspect", { draftId: provenance.dslDraftId })).exitCode).toBe(
+      6,
+    );
+    expect((await f.invoke("dsl.draft.recover", { draftId: provenance.dslDraftId })).exitCode).toBe(
+      6,
+    );
+    f.approve();
+    await writeFile(
+      join(directory, "draft.json"),
+      JSON.stringify({ ...JSON.parse(before), schemaVersion: "pragma.dsl-draft/v99" }),
+    );
+    expect(
+      (await f.invoke("dsl.draft.recover", { draftId: provenance.dslDraftId })).error?.code,
+    ).toBe("STORAGE_VERSION_UNSUPPORTED");
+    await writeFile(join(directory, "draft.json"), before);
+
+    expect((await f.invoke("dsl.draft.recover", { draftId: provenance.dslDraftId })).exitCode).toBe(
+      0,
+    );
+    expect(await readFile(join(directory, "draft.json"), "utf8")).toBe(before);
+    expect((await f.invoke("dsl.draft.inspect", { draftId: provenance.dslDraftId })).exitCode).toBe(
+      0,
+    );
+    const evaluationPath = join(
+      f.root,
+      "state",
+      "pragma",
+      "evaluation-drafts",
+      `${encodePragmaPathSegment(provenance.evaluationDraftId)}.json`,
+    );
+    const evaluationBytes = await readFile(new URL("evaluation.json", source));
+    await mkdir(join(f.root, "state", "pragma", "evaluation-drafts"), { recursive: true });
+    await writeFile(evaluationPath, evaluationBytes);
+    expect(
+      (await f.invoke("evaluation.draft.get", { draftId: provenance.evaluationDraftId })).exitCode,
+    ).toBe(6);
+    expect(
+      (await f.invoke("evaluation.draft.recover", { draftId: provenance.evaluationDraftId }))
+        .exitCode,
+    ).toBe(0);
+    expect(await readFile(evaluationPath)).toEqual(evaluationBytes);
+    f.context.runContext.attributes["execution.contextId"] = "other";
+    expect(
+      (await f.invoke("evaluation.draft.recover", { draftId: provenance.evaluationDraftId }))
+        .exitCode,
+    ).toBe(6);
+  });
+
+  it("refuses a changed approved payload when recovering a pending DSL start", async () => {
+    const f = await fixture("definition", "start_dsl_draft");
+    f.approve();
+    const requestId = randomUUID();
+    const input = {
+      targets: [
+        { mode: "create", key: "writer", kind: "Expert", name: "Writer", description: "Original" },
+      ],
+    };
+    const created = await f.invoke("dsl.draft.start", input, requestId);
+    expect(created.exitCode).toBe(0);
+    const op = createHash("sha256")
+      .update(JSON.stringify([f.scope.missionId, "root-context", requestId]))
+      .digest("hex");
+    const receiptPath = join(f.receiptsRoot, `${op}.json`);
+    const receipt = JSON.parse(await readFile(receiptPath, "utf8"));
+    receipt.state = "pending";
+    delete receipt.result;
+    await writeFile(receiptPath, JSON.stringify(receipt));
+    f.context.humanInteractionHandler = async () => ({
+      kind: "tool_approval",
+      approved: true,
+      updatedInput: { targets: [{ ...input.targets[0]!, description: "Changed approval" }] },
+    });
+    const result = await f.invoke("dsl.draft.start", input, requestId);
+    expect(result.error?.code).toBe("IDEMPOTENCY_CONFLICT");
+    expect(
+      (await f.port.listDslDrafts({ missionId: f.scope.missionId, limit: 25 })).items,
+    ).toHaveLength(1);
+  });
+
+  it("runs, repairs, rebases and independently publishes Evaluation with durable mutation retries", async () => {
+    const f = await fixture();
+    f.approve();
+    const flow = await f.invoke("flow.draft.create", {
+      expectedProjectRevision: 0,
+      metadata: { id: "8h9j0k1m2n3p4q5r", name: "Approval", description: "Boundary", tags: [] },
+    });
+    const flowId = flow.result["draftId"] as string;
+    expect(
+      (
+        await f.invoke("flow.draft.update", {
+          draftId: flowId,
+          expectedDraftRevision: 0,
+          operations,
+        })
+      ).exitCode,
+    ).toBe(0);
+    const fp = await f.invoke("flow.draft.prepare", { draftId: flowId, expectedDraftRevision: 1 });
+    expect(
+      (
+        await f.invoke("dsl.changes.commit", {
+          changeSetId: (fp.result["changeSet"] as Record<string, unknown>)["changeSetId"],
+        })
+      ).exitCode,
+    ).toBe(0);
+    const input = {
+      mode: "create",
+      expectedProjectRevision: 1,
+      targetRef: "flow:8h9j0k1m2n3p4q5r",
+      metadata: { id: "7h8j9k0m1n2p3q4r", name: "审批测评", description: "Independent", tags: [] },
+    };
+    const createId = randomUUID();
+    const created = await f.invoke("evaluation.draft.create", input, createId);
+    expect(created.exitCode).toBe(0);
+    expect(await f.invoke("evaluation.draft.create", input, createId)).toEqual(created);
+    const draftId = created.result["draftId"] as string;
+    const testCase = {
+      id: "yes",
+      name: "Approve",
+      input: {},
+      mocks: {
+        approve: {
+          expectInput: {},
+          expectPrompt: "wrong",
+          output: { selection: "yes" },
+        },
+      },
+      expect: { status: "succeeded", path: ["approve"], output: { selection: "yes" } },
+    };
+    const update = {
+      draftId,
+      expectedDraftRevision: 0,
+      operations: [{ type: "upsert_case", case: testCase }],
+    };
+    const updateId = randomUUID();
+    expect((await f.invoke("evaluation.draft.update", update, updateId)).exitCode).toBe(0);
+    expect((await f.invoke("evaluation.draft.run", { draftId, caseIds: ["yes"] })).exitCode).toBe(
+      10,
+    );
+    expect((await f.invoke("evaluation.draft.cases", { draftId, caseIds: ["yes"] })).exitCode).toBe(
+      0,
+    );
+    expect(
+      (await f.invoke("evaluation.draft.prepare", { draftId, expectedDraftRevision: 1 })).exitCode,
+    ).toBe(10);
+    // A pending outer receipt recovers the original aggregate mutation, not a second revision increment.
+    const op = createHash("sha256")
+      .update(JSON.stringify([f.scope.missionId, "root-context", updateId]))
+      .digest("hex");
+    const path = join(f.receiptsRoot, `${op}.json`);
+    const receipt = JSON.parse(await readFile(path, "utf8"));
+    delete receipt.result;
+    receipt.state = "pending";
+    await writeFile(path, JSON.stringify(receipt));
+    const mutationPath = join(f.receiptsRoot, "mutations", `${encodePragmaPathSegment(op)}.json`);
+    const mutationBytes = await readFile(mutationPath, "utf8");
+    await writeFile(
+      mutationPath,
+      JSON.stringify({
+        ...JSON.parse(mutationBytes),
+        schemaVersion: "pragma.evaluation-command-mutation/v99",
+      }),
+    );
+    expect((await f.invoke("evaluation.draft.update", update, updateId)).error?.code).toBe(
+      "STORAGE_VERSION_UNSUPPORTED",
+    );
+    await writeFile(mutationPath, mutationBytes);
+    expect((await f.invoke("evaluation.draft.update", update, updateId)).exitCode).toBe(0);
+    expect((await f.port.getEvaluationDraft(draftId)).draftRevision).toBe(1);
+    const fixed = {
+      ...testCase,
+      mocks: { approve: { ...testCase.mocks.approve, expectPrompt: "发布？" } },
+    };
+    expect(
+      (
+        await f.invoke("evaluation.draft.update", {
+          draftId,
+          expectedDraftRevision: 0,
+          operations: [{ type: "upsert_case", case: fixed }],
+        })
+      ).exitCode,
+    ).not.toBe(0);
+    expect(
+      (
+        await f.invoke("evaluation.draft.update", {
+          draftId,
+          expectedDraftRevision: 1,
+          operations: [{ type: "upsert_case", case: fixed }],
+        })
+      ).exitCode,
+    ).toBe(0);
+    const run = await f.invoke("evaluation.draft.run", { draftId, caseIds: ["yes"] });
+    expect(run.result["coverage"]).toMatchObject({ missing: [] });
+    expect(run.exitCode).toBe(0);
+    const prepareId = randomUUID();
+    const prepared = await f.invoke(
+      "evaluation.draft.prepare",
+      { draftId, expectedDraftRevision: 2 },
+      prepareId,
+    );
+    expect(prepared.exitCode).toBe(0);
+    expect(
+      await f.invoke("evaluation.draft.prepare", { draftId, expectedDraftRevision: 2 }, prepareId),
+    ).toEqual(prepared);
+    expect(
+      (
+        await f.invoke("dsl.changes.commit", {
+          changeSetId: (prepared.result["changeSet"] as Record<string, unknown>)["changeSetId"],
+        })
+      ).exitCode,
+    ).toBe(0);
+    const snapshot = await f.project.get();
+    expect(snapshot.revision).toBe(2);
+    expect(snapshot.resources.map((r) => r.kind).sort()).toEqual(["Evaluation", "Flow"]);
+    expect((await f.invoke("evaluation.draft.discard", { draftId })).exitCode).toBe(0);
+  });
+});
+
+function cliExpert(id: string) {
+  return `apiVersion: ${PRAGMA_DSL_WRITE_API_VERSION}\nkind: Expert\nmetadata:\n  id: ${id}\n  name: Writer\n  description: Write copy\n  tags: []\nspec:\n  scope: Write.\n  instructions: Write concise text.\n  runtime:\n    ref: ${PROBE_AUTHORING_RUNTIME_REF}\n  capabilities: []\n  toolApprovals: {}\n  contextStores: []\n  plugins: []\n  tools: []\n`;
+}
+function cliTeam(id: string, ref: string) {
+  return `apiVersion: ${PRAGMA_DSL_WRITE_API_VERSION}\nkind: ExpertTeam\nmetadata:\n  id: ${id}\n  name: Team\n  description: Coordinate copy\n  tags: []\nspec:\n  coordinator:\n    ref: ${ref}\n  members:\n    - ref: ${ref}\n  instructions: Collaborate.\n  contextStores: []\n  delegation:\n    permissions:\n      interact: {}\n    maxConcurrency: 2\n    maxDepth: 2\n    runtimes: {}\n`;
+}
+
+function relocateHistoricalDraftFixture(source: string, workspaceRoot: string): string {
+  return JSON.stringify(
+    JSON.parse(source, (_key, value: unknown) => {
+      if (typeof value !== "string") return value;
+      const prefix = ["/private__FIXTURE_ROOT__", "__FIXTURE_ROOT__"].find((marker) =>
+        value.startsWith(marker),
+      );
+      return prefix === undefined
+        ? value
+        : join(workspaceRoot, ...value.slice(prefix.length).split("/"));
+    }),
+  );
+}
+
+it("relocates the entire historical workspace alias without changing protocol fields", () => {
+  const source = JSON.stringify({
+    schemaVersion: "pragma.dsl-draft/v1",
+    workspacePath: "/private__FIXTURE_ROOT__",
+    resources: [
+      {
+        filePath: "/private__FIXTURE_ROOT__/.pragma/dsl-drafts/example/worktree/expert.yaml",
+        ref: "expert:d1gsrmjmw5t2ca0s",
+      },
+    ],
+    ordinaryMarkerPath: "__FIXTURE_ROOT__/plain.yaml",
+  });
+  const target = join(tmpdir(), 'historical-fixture-"quoted"');
+  expect(JSON.parse(relocateHistoricalDraftFixture(source, target))).toEqual({
+    schemaVersion: "pragma.dsl-draft/v1",
+    workspacePath: target,
+    resources: [
+      {
+        filePath: join(target, ".pragma", "dsl-drafts", "example", "worktree", "expert.yaml"),
+        ref: "expert:d1gsrmjmw5t2ca0s",
+      },
+    ],
+    ordinaryMarkerPath: join(target, "plain.yaml"),
+  });
+});

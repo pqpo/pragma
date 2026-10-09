@@ -35,7 +35,10 @@ export function isManagementCliArgv(argv: readonly string[]): boolean {
     else if (["--json", "--stream-json"].includes(option!)) index += 1;
     else return false;
   }
-  return argv[index] === "dsl" || (argv[index] === "flow" && argv[index + 1] === "draft");
+  return (
+    argv[index] === "dsl" ||
+    ((argv[index] === "flow" || argv[index] === "evaluation") && argv[index + 1] === "draft")
+  );
 }
 
 export async function runManagementCli(

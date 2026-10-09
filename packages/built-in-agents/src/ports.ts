@@ -28,11 +28,15 @@ import type {
 
 export interface PragmaAgentDslProjectPort {
   startDslDraft(input: {
+    /** Trusted Host command identity; never read from model arguments. */
+    readonly operationId?: string | undefined;
     readonly missionId: string;
     readonly workspacePath: string;
     readonly targets: readonly PragmaAgentDslDraftTargetInput[];
   }): Promise<PragmaAgentDslDraft>;
   listDslDrafts(input: {
+    /** Trusted Host visibility guard, applied before any draft read, recovery or cleanup. */
+    readonly isDraftVisible?: ((draftId: string) => Promise<boolean>) | undefined;
     readonly missionId: string;
     readonly cursor?: string | undefined;
     readonly limit: number;
@@ -53,10 +57,14 @@ export interface PragmaAgentDslProjectPort {
     readonly limit: number;
   }): Promise<PragmaAgentDslDraftReviewPage>;
   prepareDslDraft(input: {
+    /** Trusted Host command identity; never read from model arguments. */
+    readonly operationId?: string | undefined;
     readonly missionId: string;
     readonly draftId: string;
   }): Promise<PragmaAgentPrepareResult>;
   restartDslDraft(input: {
+    /** Trusted Host command identity; never read from model arguments. */
+    readonly operationId?: string | undefined;
     readonly missionId: string;
     readonly draftId: string;
   }): Promise<PragmaAgentDslDraft>;
@@ -98,6 +106,8 @@ export interface PragmaAgentDslProjectPort {
   }>;
   read(ref: string): Promise<PragmaAgentDslDocument>;
   prepare(input: {
+    /** Trusted Host command identity; never read from model arguments. */
+    readonly operationId?: string | undefined;
     readonly expectedProjectRevision: number;
     readonly sources: readonly string[];
   }): Promise<PragmaAgentPrepareResult>;
@@ -121,7 +131,7 @@ export interface PragmaAgentDslProjectPort {
   }): Promise<PragmaAgentFlowDraft>;
   validateFlowDraft(draftId: string): Promise<PragmaAgentFlowDraft>;
   createEvaluationDraft(
-    input:
+    input: { readonly operationId?: string | undefined } & (
       | {
           readonly mode: "create";
           readonly expectedProjectRevision: number;
@@ -132,10 +142,14 @@ export interface PragmaAgentDslProjectPort {
           readonly mode: "edit";
           readonly expectedProjectRevision: number;
           readonly evaluationRef: string;
-        },
+        }
+    ),
   ): Promise<PragmaAgentEvaluationDraft>;
   getEvaluationDraft(draftId: string): Promise<PragmaAgentEvaluationDraft>;
   updateEvaluationDraft(input: {
+    readonly commandResultsRoot?: string | undefined;
+    /** Trusted Host command identity; never read from model arguments. */
+    readonly operationId?: string | undefined;
     readonly draftId: string;
     readonly expectedDraftRevision: number;
     readonly operations: readonly PragmaAgentEvaluationDraftOperation[];
@@ -145,6 +159,8 @@ export interface PragmaAgentDslProjectPort {
     readonly caseIds: readonly string[];
   }): Promise<PragmaAgentEvaluationDraftRunResult>;
   prepareEvaluationDraft(input: {
+    /** Trusted Host command identity; never read from model arguments. */
+    readonly operationId?: string | undefined;
     readonly draftId: string;
     readonly expectedDraftRevision: number;
   }): Promise<PragmaAgentPrepareResult>;

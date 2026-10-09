@@ -1,0 +1,324 @@
+{
+  "counter": "Core createRuntimeTokenCounter; await load(); o200k_base; pretty JSON",
+  "count": 21,
+  "totalTokens": 7083,
+  "perTool": [
+    {
+      "name": "start_dsl_draft",
+      "schemaBytes": 939,
+      "tokens": 502,
+      "source": "tokenizer"
+    },
+    {
+      "name": "list_dsl_drafts",
+      "schemaBytes": 429,
+      "tokens": 193,
+      "source": "tokenizer"
+    },
+    {
+      "name": "inspect_dsl_draft",
+      "schemaBytes": 364,
+      "tokens": 232,
+      "source": "tokenizer"
+    },
+    {
+      "name": "read_dsl_draft_review",
+      "schemaBytes": 818,
+      "tokens": 448,
+      "source": "tokenizer"
+    },
+    {
+      "name": "prepare_dsl_draft",
+      "schemaBytes": 364,
+      "tokens": 227,
+      "source": "tokenizer"
+    },
+    {
+      "name": "restart_dsl_draft",
+      "schemaBytes": 364,
+      "tokens": 223,
+      "source": "tokenizer"
+    },
+    {
+      "name": "discard_dsl_draft",
+      "schemaBytes": 364,
+      "tokens": 211,
+      "source": "tokenizer"
+    },
+    {
+      "name": "list_dsl_resources",
+      "schemaBytes": 658,
+      "tokens": 304,
+      "source": "tokenizer"
+    },
+    {
+      "name": "read_dsl_resource",
+      "schemaBytes": 560,
+      "tokens": 252,
+      "source": "tokenizer"
+    },
+    {
+      "name": "list_expert_options",
+      "schemaBytes": 654,
+      "tokens": 305,
+      "source": "tokenizer"
+    },
+    {
+      "name": "allocate_dsl_resource_ids",
+      "schemaBytes": 477,
+      "tokens": 250,
+      "source": "tokenizer"
+    },
+    {
+      "name": "prepare_dsl_changes",
+      "schemaBytes": 247,
+      "tokens": 164,
+      "source": "tokenizer"
+    },
+    {
+      "name": "read_prepared_dsl_change",
+      "schemaBytes": 733,
+      "tokens": 367,
+      "source": "tokenizer"
+    },
+    {
+      "name": "create_evaluation_draft",
+      "schemaBytes": 1132,
+      "tokens": 501,
+      "source": "tokenizer"
+    },
+    {
+      "name": "get_evaluation_draft",
+      "schemaBytes": 718,
+      "tokens": 348,
+      "source": "tokenizer"
+    },
+    {
+      "name": "get_evaluation_cases",
+      "schemaBytes": 524,
+      "tokens": 300,
+      "source": "tokenizer"
+    },
+    {
+      "name": "update_evaluation_draft",
+      "schemaBytes": 2770,
+      "tokens": 1374,
+      "source": "tokenizer"
+    },
+    {
+      "name": "run_evaluation_draft",
+      "schemaBytes": 524,
+      "tokens": 313,
+      "source": "tokenizer"
+    },
+    {
+      "name": "prepare_evaluation_draft",
+      "schemaBytes": 470,
+      "tokens": 271,
+      "source": "tokenizer"
+    },
+    {
+      "name": "discard_evaluation_draft",
+      "schemaBytes": 364,
+      "tokens": 205,
+      "source": "tokenizer"
+    },
+    {
+      "name": "commit_dsl_changes",
+      "schemaBytes": 136,
+      "tokens": 93,
+      "source": "tokenizer"
+    }
+  ],
+  "skills": [
+    {
+      "name": "Author Pragma DSL",
+      "index": {
+        "tokens": 32,
+        "source": "tokenizer"
+      },
+      "body": {
+        "tokens": 1033,
+        "source": "tokenizer"
+      },
+      "bodyBytes": 5084,
+      "referenceBytes": 16431
+    },
+    {
+      "name": "Author Pragma Flow",
+      "index": {
+        "tokens": 29,
+        "source": "tokenizer"
+      },
+      "body": {
+        "tokens": 699,
+        "source": "tokenizer"
+      },
+      "bodyBytes": 3407,
+      "referenceBytes": 8097
+    },
+    {
+      "name": "Author Pragma Evaluation",
+      "index": {
+        "tokens": 32,
+        "source": "tokenizer"
+      },
+      "body": {
+        "tokens": 648,
+        "source": "tokenizer"
+      },
+      "bodyBytes": 3159,
+      "referenceBytes": 4075
+    }
+  ],
+  "help": [
+    {
+      "command": "dsl.resources.list",
+      "inputSchema": {
+        "tokens": 266,
+        "source": "tokenizer"
+      }
+    },
+    {
+      "command": "dsl.resources.read",
+      "inputSchema": {
+        "tokens": 213,
+        "source": "tokenizer"
+      }
+    },
+    {
+      "command": "dsl.options.list",
+      "inputSchema": {
+        "tokens": 264,
+        "source": "tokenizer"
+      }
+    },
+    {
+      "command": "dsl.ids.allocate",
+      "inputSchema": {
+        "tokens": 212,
+        "source": "tokenizer"
+      }
+    },
+    {
+      "command": "dsl.draft.start",
+      "inputSchema": {
+        "tokens": 450,
+        "source": "tokenizer"
+      }
+    },
+    {
+      "command": "dsl.draft.list",
+      "inputSchema": {
+        "tokens": 157,
+        "source": "tokenizer"
+      }
+    },
+    {
+      "command": "dsl.draft.inspect",
+      "inputSchema": {
+        "tokens": 174,
+        "source": "tokenizer"
+      }
+    },
+    {
+      "command": "dsl.draft.review",
+      "inputSchema": {
+        "tokens": 388,
+        "source": "tokenizer"
+      }
+    },
+    {
+      "command": "dsl.draft.prepare",
+      "inputSchema": {
+        "tokens": 174,
+        "source": "tokenizer"
+      }
+    },
+    {
+      "command": "dsl.draft.restart",
+      "inputSchema": {
+        "tokens": 174,
+        "source": "tokenizer"
+      }
+    },
+    {
+      "command": "dsl.draft.discard",
+      "inputSchema": {
+        "tokens": 174,
+        "source": "tokenizer"
+      }
+    },
+    {
+      "command": "dsl.changes.prepare",
+      "inputSchema": {
+        "tokens": 107,
+        "source": "tokenizer"
+      }
+    },
+    {
+      "command": "evaluation.draft.create",
+      "inputSchema": {
+        "tokens": 460,
+        "source": "tokenizer"
+      }
+    },
+    {
+      "command": "evaluation.draft.get",
+      "inputSchema": {
+        "tokens": 312,
+        "source": "tokenizer"
+      }
+    },
+    {
+      "command": "evaluation.draft.cases",
+      "inputSchema": {
+        "tokens": 263,
+        "source": "tokenizer"
+      }
+    },
+    {
+      "command": "evaluation.draft.update",
+      "inputSchema": {
+        "tokens": 1328,
+        "source": "tokenizer"
+      }
+    },
+    {
+      "command": "evaluation.draft.run",
+      "inputSchema": {
+        "tokens": 263,
+        "source": "tokenizer"
+      }
+    },
+    {
+      "command": "evaluation.draft.prepare",
+      "inputSchema": {
+        "tokens": 215,
+        "source": "tokenizer"
+      }
+    },
+    {
+      "command": "evaluation.draft.discard",
+      "inputSchema": {
+        "tokens": 174,
+        "source": "tokenizer"
+      }
+    },
+    {
+      "command": "dsl.changes.read",
+      "inputSchema": {
+        "tokens": 324,
+        "source": "tokenizer"
+      }
+    },
+    {
+      "command": "dsl.changes.commit",
+      "inputSchema": {
+        "tokens": 59,
+        "source": "tokenizer"
+      }
+    }
+  ],
+  "note": "Static reference counts; help excludes Commander formatting. Neither body nor help is default-injected. Actual provider input savings are not inferred from these counts."
+}

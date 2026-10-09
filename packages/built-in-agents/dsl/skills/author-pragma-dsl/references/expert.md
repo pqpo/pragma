@@ -35,8 +35,8 @@ spec:
 - Text limits use Unicode characters after trimming: name 50, description 500, scope 1,000, and
   instructions 5,000. Each tag is at most 20 characters and an Expert has at most 10 tags.
 - Reuse an existing project RuntimeProfile when its Runtime, provider, model, and thinking level
-  match the selected `list_expert_options` model. Otherwise use that option's `runtimeProfileRef`;
-  `inspect_dsl_draft` previews and `prepare_dsl_draft` materializes the Host dependency, so do not
+  match the selected `pragma dsl options list` model. Otherwise use that option's `runtimeProfileRef`;
+  `pragma dsl draft inspect` previews and `pragma dsl draft prepare` materializes the Host dependency, so do not
   author a RuntimeProfile. Disclose every dependency listed by the compact review before commit.
 - For `kind: tools`, list the exact allowed tool names. For `kind: skill`, omit `tools`.
 - A ContextStore mount always declares `ref`, `namespace`, and `required`. Choose a stable,
@@ -45,6 +45,6 @@ spec:
   Preserve the namespace when editing an existing mount. Use `contextStores: []` when none apply.
 - Put behavioral rules in `scope` and `instructions`; never put credentials or machine paths in DSL.
 - `avatarId` is a portable system-avatar identifier. Select an exact `avatars[].avatarId` returned
-  by `list_expert_options`; never use a path, URL, or embedded image. Read
+  by `pragma dsl options list`; never use a path, URL, or embedded image. Read
   [avatars.md](avatars.md) for the stable persona catalog and selection rules.
 - Expose another resource as a tool only through a named, versioned tool adapter.
