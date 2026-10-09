@@ -13,7 +13,7 @@ import type { HomeProjectStore } from "../missions/home-project-store.ts";
 import type { HomeExecutorPreferenceStore } from "../missions/home-executor-preference-store.ts";
 import type { MissionExecutorCatalog } from "../missions/mission-executor-catalog.ts";
 import type { WorkspaceHistoryStore } from "../workspaces/workspace-history-store.ts";
-import { validateWorkspace } from "../workspaces/workspace-scope.ts";
+import { validateHostWorkspace as validateWorkspace } from "@pragma/local-host";
 import { paginateManagementItems } from "./management-pagination.ts";
 
 export function createDesktopPragmaAgentResourceCatalogPort(options: {

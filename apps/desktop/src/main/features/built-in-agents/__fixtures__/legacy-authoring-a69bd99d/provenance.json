@@ -1,0 +1,9 @@
+{
+  "commit": "a69bd99d0591aef773cd126332ae3eecaa37e41a",
+  "writer": "packages/local-host/src/pragma-project-port.ts",
+  "writerSha256": "4967a7fefae28b7e65a30a316bfebb1fbacdc719354951a7b8c02acef0f7566e",
+  "missionId": "ed1bcbb5-b1e6-4aa5-9357-7853ce745f6b",
+  "dslDraftId": "5760e74a-210a-426f-b3ed-181d5f16611b",
+  "evaluationDraftId": "7b10cde1-3849-475e-9213-111364f6deb5",
+  "normalization": "Only historical absolute workspace root is replaced with __FIXTURE_ROOT__; the test relocates it. No schema/version changes."
+}
