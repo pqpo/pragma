@@ -8,6 +8,8 @@ import {
   defineExpertTeam,
   defineFlow,
   mergeExpertAgentToolApprovals,
+  mergeExpertAgentPluginHooks,
+  type ExpertAgentPluginHooks,
   sanitizeExecutionToolName,
   type Expert,
   type ExpertAgentManagedTool,
@@ -516,10 +518,15 @@ export async function compileExpert(
       })),
     ),
   ]);
+  const hookGroups: {
+    readonly source: string;
+    readonly hooks: ExpertAgentPluginHooks | undefined;
+  }[] = [];
   const capabilityTools: ExpertAgentManagedTool<string, ExpertAgentToolCallResult>[] = [];
   const skillConfigs: IExpertAgentSkillsConfig[] = [];
   const mcpConfigs: IExpertAgentMcpConfig[] = [];
   for (const { binding, contribution } of capabilities) {
+    hookGroups.push({ source: binding.ref, hooks: contribution.hooks });
     if (binding.kind === "skill") {
       if (contribution.skills === undefined) {
         throw new PragmaDslError(`${binding.ref} does not provide a Skill.`);
@@ -555,6 +562,9 @@ export async function compileExpert(
     ...(host.pragmaHome === undefined ? {} : { pragmaHome: host.pragmaHome }),
     ...(host.loggerProvider === undefined ? {} : { loggerProvider: host.loggerProvider }),
     tools: [...tools, ...capabilityTools],
+    executionToolApprovals: Object.fromEntries(
+      Object.entries(resource.spec.toolApprovals).map(([name, mode]) => [name, { mode }]),
+    ),
     ...(resource.spec.toolPolicy === undefined
       ? {}
       : {
@@ -568,6 +578,7 @@ export async function compileExpert(
               : { deniedTools: resource.spec.toolPolicy.deniedTools }),
           },
         }),
+    hooks: mergeExpertAgentPluginHooks(hookGroups),
     skills: mergeSkills(skillConfigs),
     mcp: mergeMcp(mcpConfigs),
     ...(executionOverride?.modelSelection !== undefined

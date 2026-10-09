@@ -1,0 +1,8 @@
+{
+  "writerCommit": "a32bdedb",
+  "writerPath": "apps/desktop/src/main/features/built-in-agents/pragma-agent-project-adapter.ts",
+  "writerSha256": "b24778f57bf112fbc1d01c9933b44d20fb24fb3ce99f3786de7d99620fc95ab7",
+  "generation": "Executed the unmodified git-show historical adapter; dependencies retain the same pragma/v5 and Flow draft Schema. No current object was relabeled as historical.",
+  "draftId": "84904139-54f0-45c6-8d8d-aec4f9767cdf",
+  "changeSetId": "b863c88e-f298-40fe-a1b5-1aeeb0cb3d61"
+}

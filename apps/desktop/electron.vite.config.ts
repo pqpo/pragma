@@ -28,6 +28,12 @@ export default defineConfig({
           // A self-contained worker requires only this file outside ASAR, without
           // changing the packaging policy for main or its shared chunks.
           await build({
+            entryPoints: [fileURLToPath(new URL("../cli/src/managed-pragma.ts", import.meta.url))],
+            outfile: join(output.dir, "pragma-command-client.js"),
+            bundle: true, platform: "node", target: "node22", format: "esm",
+            banner: { js: 'import { createRequire as __pragmaCreateRequire } from "node:module"; const require = __pragmaCreateRequire(import.meta.url);' },
+          });
+          await build({
             entryPoints: [
               fileURLToPath(
                 new URL(

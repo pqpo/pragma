@@ -1,0 +1,38 @@
+{
+  "runtime": "codex",
+  "scenario": "legacy",
+  "variant": "after",
+  "tools": 38,
+  "succeeded": true,
+  "approvals": [
+    {
+      "tool": "recover_flow_draft",
+      "approved": true
+    },
+    {
+      "tool": "commit_dsl_changes",
+      "approved": true
+    }
+  ],
+  "project": {
+    "revision": 1,
+    "resources": [
+      {
+        "kind": "Flow",
+        "metadata": {
+          "id": "8h9j0k1m2n3p4q5r",
+          "name": "历史发布审批",
+          "description": "Legacy Flow recovery fixture",
+          "tags": []
+        }
+      }
+    ]
+  },
+  "recordedAt": "2026-10-09",
+  "fixture": "legacy-flow-a32bdedb",
+  "elapsedMs": 77227,
+  "verifiedFlowLimits": {
+    "maxNodeVisits": 2000
+  },
+  "verification": "Probe asserts the actual persisted Project revision and Flow limits, plus separate recovery and commit Host approvals."
+}

@@ -1,3 +1,4 @@
+import { builtInSkillCapability } from "@pragma/built-in-agents";
 import type { CapabilityCredentialStore } from "./capability-credential-store.ts";
 import {
   readStorageFile as readFile,
@@ -389,6 +390,8 @@ export function createLocalHostCapabilityReader(options: {
     });
 
   const readManifest = async (id: string): Promise<CapabilityManifest> => {
+    const builtin = builtInSkillCapability(id);
+    if (builtin !== undefined) return builtin.manifest;
     await recoverCreation(id);
     await recoverRemoval(id);
     try {
@@ -415,6 +418,15 @@ export function createLocalHostCapabilityReader(options: {
   };
 
   const readCapability = async (id: string, requestedRevision?: number): Promise<Capability> => {
+    const builtin = builtInSkillCapability(id);
+    if (builtin !== undefined) {
+      if (requestedRevision !== undefined && requestedRevision !== builtin.manifest.latestRevision)
+        throw new CapabilityStoreError(
+          "capability_not_found",
+          "This built-in Skill revision is not installed.",
+        );
+      return builtin;
+    }
     const manifest = await readManifest(id);
     const revision = requestedRevision ?? manifest.latestRevision;
     try {
@@ -454,6 +466,8 @@ export function createLocalHostCapabilityReader(options: {
     }
   };
   const resolveActive = async (id: string) => {
+    const builtin = builtInSkillCapability(id);
+    if (builtin !== undefined) return builtin;
     const manifest = await readManifest(id);
     if ((await options.credentials.pending(id)) !== undefined) {
       throw new CapabilityStoreError(

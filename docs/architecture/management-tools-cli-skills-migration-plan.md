@@ -4,7 +4,7 @@
 
 关联：[Issue #368](https://github.com/pqpo/pragma/issues/368)。
 
-状态：待分阶段安排实施。本文件是实施计划，不表示功能已交付，也不替代实施阶段的 ADR。
+状态：第一阶段实现已进入独立 worktree；2026-10-09 用户授权先移除六个默认 Flow 工具并继续手动测试，默认 Schema 已切换，部分验收尚未完成。详见[实施报告](management-tools-cli-skills-phase-one-implementation.md)。本文件仍是分阶段计划，不表示阶段已完成。
 
 ## 1. 目标与范围
 

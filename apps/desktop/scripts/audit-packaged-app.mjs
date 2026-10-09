@@ -42,10 +42,21 @@ export async function auditPackagedResources(resourcesDirectory) {
   const inventory = [];
   const failures = [];
   const archive = join(resourcesDirectory, "app.asar");
-  const worker = join("out", "main", "claude-acp-worker.js");
-  const workerEntry = statFile(archive, worker);
-  if (!workerEntry.unpacked || !(await stat(join(`${archive}.unpacked`, worker))).isFile())
-    throw new Error("Packaged Claude ACP worker must exist outside ASAR.");
+  for (const [filename, label] of [
+    ["claude-acp-worker.js", "Claude ACP worker"],
+    ["pragma-command-client.js", "Pragma command client"],
+  ]) {
+    const path = join("out", "main", filename);
+    let unpacked = false;
+    try {
+      unpacked =
+        statFile(archive, path).unpacked &&
+        (await stat(join(`${archive}.unpacked`, path))).isFile();
+    } catch {
+      /* Report missing archive entries and unpacked files as the same actionable failure. */
+    }
+    if (!unpacked) throw new Error(`Packaged ${label} must exist outside ASAR.`);
+  }
 
   for (const entry of listPackage(archive)) {
     // ASAR queries use host separators; policy matching and reports use '/'.

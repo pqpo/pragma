@@ -71,11 +71,15 @@ const MCP_QUALIFIED_TOOL_NAME_LIMIT = 64;
 const MCP_QUALIFIED_TOOL_PREFIX = `mcp__${MCP_CONFIG_ID}__`;
 const MCP_LOCAL_TOOL_NAME_LIMIT = MCP_QUALIFIED_TOOL_NAME_LIMIT - MCP_QUALIFIED_TOOL_PREFIX.length;
 
-interface ExpertToolsMcpGatewayEntry {
-  readonly server: McpServer;
-  readonly transport: WebStandardStreamableHTTPServerTransport;
+type ExpertToolsMcpGatewayEntry = {
   readonly logger: PragmaLogger;
-}
+} & (
+  | { readonly server: McpServer; readonly transport: WebStandardStreamableHTTPServerTransport }
+  | {
+      readonly createServer: (signal: AbortSignal) => McpServer;
+      readonly activeServers: Map<McpServer, AbortController>;
+    }
+);
 
 class ExpertToolsMcpGateway {
   private readonly entries = new Map<string, ExpertToolsMcpGatewayEntry>();
@@ -86,9 +90,17 @@ class ExpertToolsMcpGateway {
   async register(
     options: RegisterExpertToolsMcpSessionOptions,
   ): Promise<ExpertToolsMcpSessionRegistration> {
-    const id = MCP_CONFIG_ID;
     const name = `Pragma tools for ${options.agent.name}`;
     const { server, toolCatalog } = createSessionMcpServer(name, options);
+    return await this.registerServer(name, server, toolCatalog, options.logger);
+  }
+
+  async registerServer(
+    name: string,
+    server: McpServer,
+    toolCatalog: readonly ExpertToolsMcpToolDefinition[],
+    logger: PragmaLogger,
+  ): Promise<ExpertToolsMcpSessionRegistration> {
     const transport = new WebStandardStreamableHTTPServerTransport();
 
     try {
@@ -98,7 +110,36 @@ class ExpertToolsMcpGateway {
       throw error;
     }
 
-    const entry: ExpertToolsMcpGatewayEntry = { server, transport, logger: options.logger };
+    return await this.registerEntry(name, { server, transport, logger }, toolCatalog);
+  }
+
+  async registerRequestServer(
+    name: string,
+    createServer: (signal: AbortSignal) => McpServer,
+    logger: PragmaLogger,
+  ): Promise<ExpertToolsMcpSessionRegistration> {
+    return await this.registerEntry(name, { createServer, activeServers: new Map(), logger }, []);
+  }
+
+  private async closeEntry(entry: ExpertToolsMcpGatewayEntry): Promise<void> {
+    if ("server" in entry) return await entry.server.close();
+    const servers = [...entry.activeServers.keys()];
+    for (const controller of entry.activeServers.values()) controller.abort();
+    entry.activeServers.clear();
+    const results = await Promise.allSettled(servers.map(async (server) => await server.close()));
+    const errors = results.flatMap((result) =>
+      result.status === "rejected" ? [result.reason as unknown] : [],
+    );
+    if (errors.length)
+      throw new AggregateError(errors, "Execution command transport cleanup failed.");
+  }
+
+  private async registerEntry(
+    name: string,
+    entry: ExpertToolsMcpGatewayEntry,
+    toolCatalog: readonly ExpertToolsMcpToolDefinition[],
+  ): Promise<ExpertToolsMcpSessionRegistration> {
+    const id = MCP_CONFIG_ID;
     let token: string;
     let url: string;
 
@@ -117,7 +158,7 @@ class ExpertToolsMcpGateway {
         };
       }));
     } catch (error) {
-      await server.close().catch(() => undefined);
+      await this.closeEntry(entry).catch(() => undefined);
       throw error;
     }
 
@@ -141,7 +182,7 @@ class ExpertToolsMcpGateway {
 
       this.entries.delete(token);
       const closeResults = await Promise.allSettled([
-        entry.server.close(),
+        this.closeEntry(entry),
         ...(this.entries.size === 0 && this.httpServer !== undefined ? [this.stopListening()] : []),
       ]);
       const errors = closeResults.flatMap((result) =>
@@ -194,7 +235,41 @@ class ExpertToolsMcpGateway {
     }
 
     try {
-      await handleMcpHttpRequest(entry.transport, request, response);
+      if ("transport" in entry) {
+        await handleMcpHttpRequest(entry.transport, request, response);
+      } else {
+        // Independent CLI processes reuse JSON-RPC sequence IDs. A stateless transport must
+        // be owned by one HTTP request so its response/cancellation maps cannot collide.
+        const controller = new AbortController();
+        const server = entry.createServer(controller.signal);
+        entry.activeServers.set(server, controller);
+        const dispose = async () => {
+          if (!entry.activeServers.delete(server)) return;
+          controller.abort();
+          await server.close();
+        };
+        response.once("close", () => {
+          void dispose().catch((error) => {
+            entry.logger.error(
+              "tool.command_transport_close_failed",
+              "Execution command transport cleanup failed",
+              error,
+            );
+          });
+        });
+        try {
+          const transport = new WebStandardStreamableHTTPServerTransport();
+          await server.connect(transport);
+          if (response.destroyed) {
+            await dispose();
+            return;
+          }
+          await handleMcpHttpRequest(transport, request, response);
+        } catch (error) {
+          await dispose();
+          throw error;
+        }
+      }
     } catch (error) {
       entry.logger.error("tool.mcp_request_failed", "Execution MCP Session request failed", error);
       if (!response.headersSent) {
@@ -226,6 +301,43 @@ class ExpertToolsMcpGateway {
 }
 
 const expertToolsMcpGateway = new ExpertToolsMcpGateway();
+
+/** A private Host command transport. Never attach this registration to a Runtime MCP config. */
+export async function registerExecutionCommandSession(options: {
+  readonly protocolVersion?: string | undefined;
+  readonly logger: PragmaLogger;
+  readonly inputSchema: Record<string, unknown>;
+  readonly execute: (input: unknown, signal: AbortSignal) => Promise<Record<string, unknown>>;
+}): Promise<ExpertToolsMcpSessionRegistration> {
+  return await expertToolsMcpGateway.registerRequestServer(
+    "Pragma private execution commands",
+    (signal) => {
+      const server = new McpServer({
+        name: "Pragma private execution commands",
+        version: options.protocolVersion ?? "1",
+      });
+      server.registerTool(
+        "execute_command",
+        {
+          description: "Host-authorized execution command",
+          inputSchema: toMcpInputSchema(options.inputSchema),
+        },
+        async (input, context) => {
+          const result = await options.execute(
+            input,
+            AbortSignal.any([signal, context.mcpReq.signal]),
+          );
+          return {
+            content: [{ type: "text", text: JSON.stringify(result) }],
+            structuredContent: result,
+          };
+        },
+      );
+      return server;
+    },
+    options.logger,
+  );
+}
 
 export async function registerExpertToolsMcpSession(
   options: RegisterExpertToolsMcpSessionOptions,

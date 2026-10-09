@@ -21,6 +21,7 @@ const localHostInternalDependencyAllowlist: InternalDependencyAllowlist = {
     "@pragma/built-in-agents",
     "@pragma/context-filesystem",
     "@pragma/core",
+    "@pragma/evaluation",
     "@pragma/interpreter",
     "@pragma/memory",
     "@pragma/shared",

@@ -1,3 +1,5 @@
+import { builtInSkill, materializeBuiltInAgentBundle } from "@pragma/built-in-agents";
+import { dirname } from "node:path";
 import { join } from "node:path";
 import {
   createCodeServiceMcpServer,
@@ -94,18 +96,30 @@ export async function resolveExpertCapabilities(options: {
           `${capability.manifest.name} is not a Skill.`,
         );
       }
+      const builtin = builtInSkill(reference.capabilityId);
+      const builtinRoot =
+        builtin === undefined
+          ? undefined
+          : dirname(
+              await materializeBuiltInAgentBundle(
+                join(options.capabilitiesPath, "..", "..", "cache", "built-in-agents"),
+              ),
+            );
       skills.push({
         type: "local",
         name: capability.definition.name,
         description: capability.definition.description,
-        path: join(
-          options.capabilitiesPath,
-          capability.manifest.id,
-          "revisions",
-          revisionDirectory(resolvedRevision),
-          "payload",
-          capability.definition.entryPath,
-        ),
+        path:
+          builtinRoot !== undefined && builtin !== undefined
+            ? join(builtinRoot, builtin.path, "SKILL.md")
+            : join(
+                options.capabilitiesPath,
+                capability.manifest.id,
+                "revisions",
+                revisionDirectory(resolvedRevision),
+                "payload",
+                capability.definition.entryPath,
+              ),
       });
       continue;
     }

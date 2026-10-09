@@ -1,3 +1,4 @@
+import { BUILT_IN_SKILLS, builtInSkillCapability } from "@pragma/built-in-agents";
 import { createHash, randomUUID } from "node:crypto";
 import { chmod, mkdtemp, mkdir, readFile, rm, stat, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -222,6 +223,23 @@ const codeDefinition = {
 };
 
 describe("capability store", () => {
+  it("projects static built-in Skills without editable payload copies and rejects mutations", async () => {
+    const { store, directory } = await createStore();
+    for (const skill of BUILT_IN_SKILLS) {
+      expect(await store.resolveActive(skill.id)).toEqual(builtInSkillCapability(skill.id));
+      expect((await store.getSkillDocument({ id: skill.id })).content).toBe(skill.files["SKILL.md"]);
+      const files = await store.listSkillFiles({ id: skill.id });
+      expect(files.map((file) => file.path)).toContain("SKILL.md");
+      const reference = files.find((file) => file.path.startsWith("references/"))!;
+      expect((await store.getSkillFile({ id: skill.id, path: reference.path })).content).toBe(skill.files[reference.path]);
+      await expect(store.remove(skill.id)).rejects.toThrow("read-only");
+      await expect(store.retry(skill.id, 1)).rejects.toThrow("read-only");
+      await expect(store.ensureActiveRevision(skill.id, 1)).rejects.toThrow("read-only");
+      await expect(store.getSkillDocument({ id: skill.id, revision: 99 })).rejects.toThrow("not installed");
+      await expect(stat(join(directory, "capabilities", skill.id))).rejects.toMatchObject({ code: "ENOENT" });
+    }
+  });
+
   it("upgrades a valid v1 manifest through v3 and keeps a recovery backup", async () => {
     const { directory, store } = await createStore();
     const created = await store.create({ definition: httpDefinition, credentials: {} });

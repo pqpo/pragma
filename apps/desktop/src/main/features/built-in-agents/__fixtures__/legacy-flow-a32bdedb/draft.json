@@ -1,0 +1,56 @@
+{
+  "draftId": "84904139-54f0-45c6-8d8d-aec4f9767cdf",
+  "baseProjectRevision": 0,
+  "draftRevision": 1,
+  "resource": {
+    "apiVersion": "pragma/v5",
+    "kind": "Flow",
+    "metadata": {
+      "id": "8h9j0k1m2n3p4q5r",
+      "name": "历史发布审批",
+      "description": "Legacy Flow recovery fixture",
+      "tags": []
+    },
+    "spec": {
+      "limits": {
+        "maxNodeVisits": 1000
+      },
+      "graph": {
+        "start": "approve",
+        "steps": {
+          "approve": {
+            "human": {
+              "selectionMode": "single",
+              "prompt": {
+                "segments": [
+                  {
+                    "text": "发布？"
+                  }
+                ]
+              },
+              "options": [
+                {
+                  "value": "yes",
+                  "label": "同意"
+                },
+                {
+                  "value": "no",
+                  "label": "拒绝"
+                }
+              ]
+            }
+          }
+        },
+        "transitions": {
+          "approve": {
+            "end": true
+          }
+        },
+        "loops": {}
+      }
+    }
+  },
+  "diagnostics": [],
+  "createdAt": "2026-10-09T02:51:43.273Z",
+  "updatedAt": "2026-10-09T02:51:43.283Z"
+}

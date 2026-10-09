@@ -1,3 +1,4 @@
+import { isManagementCliArgv, runManagementCli } from "./management-client.ts";
 import {
   createIntegrationError,
   integrationErrorExitCode,
@@ -61,6 +62,8 @@ export async function runCli(
   io: CliIo,
   dependencies: CliDependencies = {},
 ): Promise<number> {
+  if (isManagementCliArgv(argv))
+    return await runManagementCli(argv, io, { readStdin: dependencies.readStdin });
   const startedAt = new Date();
   let requestId: string = globalThis.crypto.randomUUID();
   let parsed;
