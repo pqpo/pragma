@@ -1,3 +1,5 @@
+import { PragmaPaths } from "@pragma/core";
+import { createManagementCommandOwnerLookup } from "./management-command-ownership.ts";
 import { join } from "node:path";
 import { z } from "zod";
 import {
@@ -21,6 +23,7 @@ export function createManagementCommandHooks(options: {
   readonly scope: PragmaManagementHostScope;
   readonly allowedCommands: readonly ManagementCommand[];
   readonly commandDirectory: string;
+  readonly pragmaHome: string;
   readonly commandsForAgent?:
     ((agent: import("@pragma/core").Expert) => readonly ManagementCommand[]) | undefined;
   readonly authorize?: Parameters<typeof createManagementCommandApplication>[0]["authorize"];
@@ -39,6 +42,12 @@ export function createManagementCommandHooks(options: {
         ...options,
         allowedCommands,
         receiptsRoot: join(context.privateStateDirectory, "management-commands", "v1"),
+        findOwner: createManagementCommandOwnerLookup(options.pragmaHome),
+        ownershipLockRoot: join(
+          new PragmaPaths({ pragmaHome: options.pragmaHome }).stateRoot(),
+          "pragma",
+          "command-owner-locks",
+        ),
       });
       const sessionId = context.systemSessionId;
       const registration = await context.resources.acquire(
@@ -63,7 +72,7 @@ export function createManagementCommandHooks(options: {
                   exitCode: 6,
                   error: managementCommandError("PERMISSION_DENIED", "No active owning Execution."),
                 };
-              const original = context.context;
+              const original = current.context;
               const runContext = {
                 ...original,
                 attributes: {
@@ -75,7 +84,7 @@ export function createManagementCommandHooks(options: {
               return await app.execute(request, {
                 agent: context.agent,
                 executionContext: current.executionContext,
-                humanInteractionHandler: context.humanInteractionHandler,
+                humanInteractionHandler: current.humanInteractionHandler,
                 runContext,
                 logger: current.logger ?? logger,
                 state: current.toolState ?? { runId: current.runId },

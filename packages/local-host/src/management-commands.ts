@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
+import { mkdir, rename, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { z } from "zod";
 import {
@@ -33,7 +33,18 @@ import {
   type ManagementCommandResult,
   type IntegrationErrorCode,
   IntegrationErrorSchema,
+  ManagementFlowRecoveryInputSchema,
+  ManagementChangesRecoveryInputSchema,
 } from "@pragma/shared/integration";
+
+import { managementCommandTargetId } from "./pragma-project-port.ts";
+import {
+  CommandOwnerSchema,
+  commandOwnerPath,
+  readCommandOwner as readOwner,
+  readCommandState,
+  type CommandOwner,
+} from "./management-command-ownership.ts";
 
 export const MANAGEMENT_COMMAND_TOOLS = {
   "flow.draft.create": "create_flow_draft",
@@ -42,15 +53,39 @@ export const MANAGEMENT_COMMAND_TOOLS = {
   "flow.draft.validate": "validate_flow_draft",
   "flow.draft.prepare": "prepare_flow_draft",
   "flow.draft.discard": "discard_flow_draft",
+  "flow.draft.recover": "recover_flow_draft",
   "dsl.resources.list": "list_dsl_resources",
   "dsl.resources.read": "read_dsl_resource",
   "dsl.options.list": "list_expert_options",
   "dsl.ids.allocate": "allocate_dsl_resource_ids",
   "dsl.changes.read": "read_prepared_dsl_change",
   "dsl.changes.commit": "commit_dsl_changes",
+  "dsl.changes.recover": "recover_dsl_change",
 } as const satisfies Record<ManagementCommand, string>;
 
+const recoveryDefinitions = {
+  "flow.draft.recover": {
+    name: "recover_flow_draft",
+    description:
+      "Recover an unowned legacy Flow draft into the current Mission/Context after explicit approval. Preserves the original draft.",
+    schema: ManagementFlowRecoveryInputSchema,
+  },
+  "dsl.changes.recover": {
+    name: "recover_dsl_change",
+    description:
+      "Recover an unowned legacy prepared change into the current Mission/Context after explicit approval. Publication still needs separate commit approval.",
+    schema: ManagementChangesRecoveryInputSchema,
+  },
+} as const;
 export function describeManagementCommand(command: ManagementCommand) {
+  if (command === "flow.draft.recover" || command === "dsl.changes.recover") {
+    const definition = recoveryDefinitions[command];
+    return {
+      command,
+      description: definition.description,
+      inputSchema: z.toJSONSchema(definition.schema),
+    };
+  }
   const tool = PRAGMA_MANAGEMENT_TOOL_DEFINITIONS.find(
     (item) => item.name === MANAGEMENT_COMMAND_TOOLS[command],
   )!;
@@ -74,6 +109,10 @@ export function createManagementCommandApplication(options: {
   readonly scope: PragmaManagementHostScope;
   readonly receiptsRoot: string;
   readonly allowedCommands: readonly ManagementCommand[];
+  readonly ownershipLockRoot?: string | undefined;
+  /** Trusted Host lookup of existing private owner records, including other Runtime Sessions. */
+  readonly findOwner?:
+    ((id: string, signal: AbortSignal) => Promise<CommandOwner | undefined>) | undefined;
   readonly authorize?: ((request: ManagementCommandRequest) => Promise<void>) | undefined;
 }) {
   return {
@@ -111,19 +150,61 @@ export function createManagementCommandApplication(options: {
         if (typeof contextId !== "string" || contextId.length === 0)
           return fail("PERMISSION_DENIED", "A command requires a trusted Runtime Context.");
         const owner = { missionId: options.scope.missionId, contextId };
-        const targetId = request.input["draftId"] ?? request.input["changeSetId"];
-        if (typeof targetId === "string") {
-          const record = await readOwner(options.receiptsRoot, targetId);
-          if (
-            record === undefined ||
-            record.missionId !== owner.missionId ||
-            record.contextId !== owner.contextId
-          )
-            return fail(
+        const recovery =
+          request.command === "flow.draft.recover" || request.command === "dsl.changes.recover";
+        const sameOwner = (record: CommandOwner) =>
+          record.missionId === owner.missionId && record.contextId === owner.contextId;
+        const findOwner = async (id: string) => {
+          const local = await readOwner(options.receiptsRoot, id);
+          return local ?? (await options.findOwner?.(id, context.signal));
+        };
+        const assertTarget = async (input: unknown, allowUnowned = false) => {
+          if (typeof input !== "object" || input === null) return;
+          const data = input as Record<string, unknown>;
+          const targetKey =
+            request.command.startsWith("flow.draft.") && request.command !== "flow.draft.create"
+              ? "draftId"
+              : request.command.startsWith("dsl.changes.")
+                ? "changeSetId"
+                : undefined;
+          const id = targetKey === undefined ? undefined : data[targetKey];
+          if (typeof id !== "string") return;
+          const record = await findOwner(id);
+          if (record !== undefined && !sameOwner(record))
+            throw managementCommandError(
               "PERMISSION_DENIED",
               "The draft or prepared change is owned by another Mission or Runtime Context.",
             );
-        }
+          if (record === undefined && !allowUnowned)
+            throw managementCommandError(
+              "PERMISSION_DENIED",
+              "This target has no command ownership record. Recover legacy data explicitly before continuing.",
+              {
+                reason: "unowned_target",
+                recovery: {
+                  command: targetKey === "draftId" ? "flow.draft.recover" : "dsl.changes.recover",
+                  targetId: id,
+                },
+              },
+            );
+        };
+        const claimOwner = async (id: string) => {
+          const lock = join(
+            options.ownershipLockRoot ?? join(options.receiptsRoot, "ownership-locks"),
+            `${createHash("sha256").update(id).digest("hex")}.lock`,
+          );
+          await withFileLock(lock, async () => {
+            context.signal.throwIfAborted();
+            await context.executionContext.assertOwnership?.();
+            const existing = await findOwner(id);
+            if (existing !== undefined && !sameOwner(existing))
+              throw managementCommandError(
+                "PERMISSION_DENIED",
+                "The command target is already owned by another Mission or Runtime Context.",
+              );
+            await writeOwner(options.receiptsRoot, id, owner);
+          });
+        };
         if (!options.allowedCommands.includes(request.command))
           return fail(
             "PERMISSION_DENIED",
@@ -141,19 +222,65 @@ export function createManagementCommandApplication(options: {
                 ...options.ports,
                 project: {
                   ...project,
-                  createFlowDraft: (input: Parameters<typeof project.createFlowDraft>[0]) =>
-                    project.createFlowDraft({ ...input, operationId }),
+                  createFlowDraft: async (input: Parameters<typeof project.createFlowDraft>[0]) => {
+                    await claimOwner(managementCommandTargetId(operationId));
+                    return await project.createFlowDraft({ ...input, operationId });
+                  },
                   updateFlowDraft: (input: Parameters<typeof project.updateFlowDraft>[0]) =>
                     project.updateFlowDraft({
                       ...input,
                       operationId,
                       commandResultsRoot: join(options.receiptsRoot, "mutations"),
                     }),
-                  prepareFlowDraft: (input: Parameters<typeof project.prepareFlowDraft>[0]) =>
-                    project.prepareFlowDraft({ ...input, operationId }),
+                  prepareFlowDraft: async (
+                    input: Parameters<typeof project.prepareFlowDraft>[0],
+                  ) => {
+                    await claimOwner(managementCommandTargetId(operationId));
+                    return await project.prepareFlowDraft({ ...input, operationId });
+                  },
                 },
               };
-        const tools = createPragmaManagementTools(ports, options.scope);
+        const tools = [...createPragmaManagementTools(ports, options.scope)];
+        for (const [command, definition] of Object.entries(recoveryDefinitions)) {
+          tools.push({
+            name: definition.name,
+            description: definition.description,
+            inputSchema: z.toJSONSchema(definition.schema),
+            approval: { mode: "required", reason: definition.description },
+            call: async (args) => {
+              const input = definition.schema.parse(args);
+              if (project === undefined)
+                throw managementCommandError(
+                  "DEPENDENCY_UNAVAILABLE",
+                  "The Project recovery port is unavailable.",
+                );
+              await assertTarget(input, true);
+              const id = "draftId" in input ? input.draftId : input.changeSetId;
+              // Existing parser/business reads validate historical data without rewriting it.
+              try {
+                if ("draftId" in input) await project.getFlowDraft(input.draftId);
+                else await project.getChangeSet(input.changeSetId, options.scope.missionId);
+              } catch (error) {
+                if (error instanceof z.ZodError) {
+                  const future = error.issues.some((issue) => issue.path.at(-1) === "apiVersion");
+                  throw managementCommandError(
+                    future ? "STORAGE_VERSION_UNSUPPORTED" : "STORAGE_CORRUPTED",
+                    "The legacy target cannot be safely read. Its original data was preserved.",
+                  );
+                }
+                if (error instanceof SyntaxError)
+                  throw managementCommandError(
+                    "STORAGE_CORRUPTED",
+                    "The legacy target is not valid JSON. Its original data was preserved.",
+                  );
+                throw error;
+              }
+              await claimOwner(id);
+              const details = { command, recovered: true, ...input };
+              return { text: JSON.stringify(details), details };
+            },
+          });
+        }
         const effective = resolveToolPolicy({
           tools: tools.map((tool) => ({ name: tool.name, source: "managed" as const, tool })),
           context: context.runContext,
@@ -162,6 +289,19 @@ export function createManagementCommandApplication(options: {
         const tool = effective.tools.find((item) => item.name === name)?.tool;
         if (tool === undefined)
           return fail("PERMISSION_DENIED", "The effective tool policy denies this command.");
+        if (
+          recovery &&
+          (options.findOwner === undefined || options.ownershipLockRoot === undefined)
+        )
+          return fail(
+            "DEPENDENCY_UNAVAILABLE",
+            "This Host has not configured the trusted legacy ownership recovery boundary.",
+          );
+        if (recovery)
+          recoveryDefinitions[request.command as keyof typeof recoveryDefinitions].schema.parse(
+            request.input,
+          );
+        await assertTarget(request.input, recovery);
         const path = join(options.receiptsRoot, `${operationId}.json`);
         const payloadHash = createHash("sha256")
           .update(canonicalJson({ command: request.command, input: request.input }))
@@ -208,6 +348,11 @@ export function createManagementCommandApplication(options: {
             tool: {
               ...tool,
               label: tool.name,
+              call: async (args, signal, callContext) => {
+                // Revalidate any input changed by the approval handler before touching a target.
+                await assertTarget(args, recovery);
+                return await tool.call(args, signal, callContext);
+              },
               approval: mergeExpertAgentToolApprovals(
                 mergeExpertAgentToolApprovals(
                   tool.approval,
@@ -229,7 +374,7 @@ export function createManagementCommandApplication(options: {
               (typeof changeSet === "object" && changeSet !== null && "changeSetId" in changeSet
                 ? changeSet.changeSetId
                 : undefined);
-            if (typeof id === "string") await writeOwner(options.receiptsRoot, id, owner);
+            if (typeof id === "string") await claimOwner(id);
           }
           const error = PragmaManagementErrorSchema.safeParse(payload);
           const invalid = isInvalidResult(payload, request.command);
@@ -353,60 +498,6 @@ async function save(path: string, value: unknown): Promise<void> {
   await rename(`${path}.tmp`, path);
 }
 
-const CommandOwnerSchema = z
-  .object({
-    schemaVersion: z.literal("pragma.management-command-owner/v1"),
-    missionId: z.string().uuid(),
-    contextId: z.string().min(1),
-  })
-  .strict();
-function commandOwnerPath(root: string, id: string): string {
-  return join(root, "owners", `${createHash("sha256").update(id).digest("hex")}.json`);
-}
-async function readCommandState<T>(
-  path: string,
-  schema: z.ZodType<T>,
-  version: string,
-): Promise<T | undefined> {
-  let source: string;
-  try {
-    source = await readFile(path, "utf8");
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
-    throw error;
-  }
-  let value: unknown;
-  try {
-    value = JSON.parse(source);
-  } catch {
-    throw managementCommandError(
-      "STORAGE_CORRUPTED",
-      "The management command state is not valid JSON.",
-    );
-  }
-  if (
-    typeof value === "object" &&
-    value !== null &&
-    "schemaVersion" in value &&
-    typeof value.schemaVersion === "string" &&
-    value.schemaVersion !== version
-  )
-    throw managementCommandError(
-      "STORAGE_VERSION_UNSUPPORTED",
-      "This management command state version is not supported.",
-    );
-  const parsed = schema.safeParse(value);
-  if (!parsed.success)
-    throw managementCommandError("STORAGE_CORRUPTED", "The management command state is invalid.");
-  return parsed.data;
-}
-async function readOwner(root: string, id: string) {
-  return await readCommandState(
-    commandOwnerPath(root, id),
-    CommandOwnerSchema,
-    "pragma.management-command-owner/v1",
-  );
-}
 async function writeOwner(
   root: string,
   id: string,

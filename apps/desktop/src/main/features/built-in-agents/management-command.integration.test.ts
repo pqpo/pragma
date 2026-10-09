@@ -4,18 +4,24 @@ import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { promisify } from "node:util";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { z } from "zod";
 import {
   createPragmaLogger,
   HumanInteractionCheckpointError,
   defineExpert,
+  defineRuntimeDriver,
+  PragmaPaths,
+  encodePragmaPathSegment,
+  type RuntimeNativeSessionContext,
   definePluginEntry,
   registerExecutionCommandSession,
   registerExpertToolsMcpSession,
 } from "@pragma/core";
 import {
   createManagementCommandApplication,
+  createManagementCommandHooks,
+  createManagementCommandOwnerLookup,
   MANAGEMENT_COMMAND_TOOLS,
   callManagementCommand,
 } from "@pragma/local-host/management";
@@ -25,6 +31,8 @@ import {
   type ManagementCommand,
 } from "@pragma/shared/integration";
 import { createManagementCommandTestFixture } from "./management-command-test-fixture.ts";
+
+import { openRuntimeSession, createRuntimeTestFeatures } from "@pragma/core/testing";
 
 const cleanup: (() => Promise<void>)[] = [];
 afterEach(async () => {
@@ -129,6 +137,8 @@ async function fixture(requireCreateApproval: false | "definition" | "plugin" = 
     ports: { project: port, missions: {} as never },
     scope,
     receiptsRoot,
+    findOwner: createManagementCommandOwnerLookup(root),
+    ownershipLockRoot: join(root, "state", "pragma", "owner-locks"),
     allowedCommands: Object.keys(MANAGEMENT_COMMAND_TOOLS) as ManagementCommand[],
   });
   const registration = await registerExecutionCommandSession({
@@ -555,5 +565,399 @@ it(
     await registration.dispose();
     await rejected;
     expect(transportAborted).toBe(true);
+  },
+);
+
+it.each([true, false])(
+  "binds checkpoint and approval to the current Execution on a warm Session (initial handler: %s)",
+  { timeout: 15_000 },
+  async (withInitialHandler) => {
+    const f = await fixture();
+    const initial = vi.fn(async () => ({ kind: "tool_approval" as const, approved: false }));
+    const checkpoint = vi.fn(async () => {
+      throw new HumanInteractionCheckpointError("second-execution");
+    });
+    const approve = vi.fn(async () => ({ kind: "tool_approval" as const, approved: true }));
+    let changeSetId: string;
+    const commitRequestId = randomUUID();
+    const hooks = createManagementCommandHooks({
+      pragmaHome: f.root,
+      ports: { project: f.port, missions: {} as never },
+      scope: f.scope,
+      commandDirectory: f.root,
+      allowedCommands: Object.keys(MANAGEMENT_COMMAND_TOOLS) as ManagementCommand[],
+    });
+    const agent = await defineExpert({
+      id: "warm-command",
+      name: "Warm command",
+      description: "Current approval",
+      tags: [],
+      scope: "test",
+      workspace: f.root,
+      pragmaHome: f.root,
+      hooks,
+    });
+    const runtime = defineRuntimeDriver<never, { context: RuntimeNativeSessionContext }>({
+      descriptor: {
+        id: "warm-command-test",
+        kind: "warm-command-test",
+        displayName: "Warm command",
+      },
+      features: createRuntimeTestFeatures(),
+      createSession: (context) => ({ context }),
+      mapEvent: () => ({ events: [] }),
+      startTurn: async (native, turn) => {
+        const call = async (
+          command: ManagementCommand,
+          input: Record<string, unknown>,
+          requestId = randomUUID(),
+        ) =>
+          await callManagementCommand({
+            endpoint: native.context.processEnvironment["PRAGMA_EXECUTION_COMMAND_ENDPOINT"],
+            request: ManagementCommandRequestSchema.parse({
+              protocol: MANAGEMENT_COMMAND_PROTOCOL,
+              command,
+              input,
+              requestId,
+            }),
+          });
+        if (turn.rawQuery === "prepare") {
+          const created = await call("flow.draft.create", {
+            expectedProjectRevision: 0,
+            metadata: { id: "8h9j0k1m2n3p4q5r", name: "Warm Flow", description: "Warm", tags: [] },
+          });
+          expect(created, JSON.stringify(created)).toMatchObject({
+            status: "succeeded",
+            exitCode: 0,
+          });
+          const draftId = (created.result as Record<string, unknown>)["draftId"];
+          await call("flow.draft.update", { draftId, expectedDraftRevision: 0, operations });
+          const prepared = await call("flow.draft.prepare", { draftId, expectedDraftRevision: 1 });
+          changeSetId = String(
+            ((prepared.result as Record<string, unknown>)["changeSet"] as Record<string, unknown>)[
+              "changeSetId"
+            ],
+          );
+          return { outputText: "prepared" };
+        }
+        return {
+          outputText: JSON.stringify(
+            await call("dsl.changes.commit", { changeSetId }, commitRequestId),
+          ),
+        };
+      },
+    });
+    const execution = {
+      executionId: "first-execution",
+      invocationId: "first-invocation",
+      depth: 0,
+      assertOwnership: async () => {},
+    };
+    const session = await openRuntimeSession(runtime, {
+      agent,
+      pragmaHome: f.root,
+      systemSessionId: "warm-session",
+      owner: { type: "expert-session", ownerId: "warm-owner", contextId: "warm-context" },
+      context: { attributes: { "execution.contextId": "warm-context" } },
+      executionContext: execution,
+      ...(withInitialHandler ? { humanInteractionHandler: initial } : {}),
+    });
+    cleanup.push(() => session.close());
+    await session.submit({ query: "prepare", execution: { context: execution } }).result;
+    const waiting = JSON.parse(
+      String(
+        (
+          await session.submit({
+            query: "commit",
+            execution: {
+              context: {
+                ...execution,
+                executionId: "second-execution",
+                invocationId: "second-invocation",
+              },
+              humanInteractionHandler: checkpoint,
+            },
+          }).result
+        ).result.output,
+      ),
+    );
+    expect(waiting).toMatchObject({
+      status: "input_required",
+      result: { executionId: "second-execution" },
+    });
+    const committed = JSON.parse(
+      String(
+        (
+          await session.submit({
+            query: "commit",
+            execution: {
+              context: {
+                ...execution,
+                executionId: "third-execution",
+                invocationId: "third-invocation",
+              },
+              humanInteractionHandler: approve,
+            },
+          }).result
+        ).result.output,
+      ),
+    );
+    expect(committed.exitCode).toBe(0);
+    expect(initial).not.toHaveBeenCalled();
+    expect(checkpoint).toHaveBeenCalledOnce();
+    expect(approve).toHaveBeenCalledOnce();
+    expect((await f.project.get()).revision).toBe(1);
+  },
+);
+
+async function installHistoricalFlow(f: Awaited<ReturnType<typeof fixture>>) {
+  const draftBytes = await readFile(
+    new URL("./__fixtures__/legacy-flow-a32bdedb/draft.json", import.meta.url),
+  );
+  const changeBytes = await readFile(
+    new URL("./__fixtures__/legacy-flow-a32bdedb/prepared-change.json", import.meta.url),
+  );
+  const draft = JSON.parse(draftBytes.toString()) as { draftId: string; draftRevision: number };
+  const change = JSON.parse(changeBytes.toString()) as { changeSet: { changeSetId: string } };
+  const draftPath = join(
+    f.root,
+    "state",
+    "pragma",
+    "dsl-drafts",
+    `${encodePragmaPathSegment(draft.draftId)}.json`,
+  );
+  const changePath = join(
+    f.root,
+    "state",
+    "pragma",
+    "change-sets",
+    `${encodePragmaPathSegment(change.changeSet.changeSetId)}.json`,
+  );
+  await mkdir(join(f.root, "state", "pragma", "dsl-drafts"), { recursive: true });
+  await mkdir(join(f.root, "state", "pragma", "change-sets"), { recursive: true });
+  await writeFile(draftPath, draftBytes);
+  await writeFile(changePath, changeBytes);
+  return {
+    draft,
+    changeSetId: change.changeSet.changeSetId,
+    draftPath,
+    changePath,
+    draftBytes,
+    changeBytes,
+  };
+}
+it(
+  "recovers a historically written Flow only after approval, preserves data and resumes editing",
+  { timeout: 60_000 },
+  async () => {
+    const f = await fixture();
+    const old = await installHistoricalFlow(f);
+    expect((await f.port.getFlowDraft(old.draft.draftId)).draftRevision).toBe(1);
+    const missing = await f.invoke("flow.draft.get", { draftId: old.draft.draftId });
+    expect(missing.error?.code).toBe("PERMISSION_DENIED");
+    expect(missing.error).toMatchObject({
+      details: { reason: "unowned_target", recovery: { command: "flow.draft.recover" } },
+    });
+    expect((await f.invoke("flow.draft.recover", { draftId: old.draft.draftId })).exitCode).toBe(6);
+    expect(await readFile(old.draftPath)).toEqual(old.draftBytes);
+    const request = ManagementCommandRequestSchema.parse({
+      protocol: MANAGEMENT_COMMAND_PROTOCOL,
+      requestId: randomUUID(),
+      command: "flow.draft.recover",
+      input: { draftId: old.draft.draftId },
+    });
+    const pending = await f.app.execute(request, {
+      ...f.context,
+      humanInteractionHandler: async () => {
+        throw new HumanInteractionCheckpointError(f.context.executionContext.executionId);
+      },
+    });
+    expect(pending.status).toBe("input_required");
+    f.approve();
+    const recovered = await f.app.execute(request, f.context);
+    expect(recovered).toMatchObject({
+      exitCode: 0,
+      result: { draftId: old.draft.draftId, recovered: true },
+    });
+    expect(await f.app.execute(request, f.context)).toEqual(recovered);
+    expect(await readFile(old.draftPath)).toEqual(old.draftBytes);
+    expect((await f.invoke("flow.draft.get", { draftId: old.draft.draftId })).exitCode).toBe(0);
+    const updated = await f.invoke("flow.draft.update", {
+      draftId: old.draft.draftId,
+      expectedDraftRevision: 1,
+      operations: [{ type: "set_contracts", limits: { maxNodeVisits: 2000 } }],
+    });
+    expect(updated.exitCode).toBe(0);
+    expect((await f.port.getFlowDraft(old.draft.draftId)).draftRevision).toBe(2);
+  },
+);
+it(
+  "recovers a historical prepared change without publishing until separate commit approval",
+  { timeout: 60_000 },
+  async () => {
+    const f = await fixture();
+    const old = await installHistoricalFlow(f);
+    expect(
+      (
+        await f.invoke("dsl.changes.read", {
+          changeSetId: old.changeSetId,
+          ref: "flow:8h9j0k1m2n3p4q5r",
+        })
+      ).exitCode,
+    ).toBe(6);
+    f.approve();
+    expect((await f.invoke("dsl.changes.recover", { changeSetId: old.changeSetId })).exitCode).toBe(
+      0,
+    );
+    expect(await readFile(old.changePath)).toEqual(old.changeBytes);
+    expect((await f.project.get()).revision).toBe(0);
+    expect(
+      (
+        await f.invoke("dsl.changes.read", {
+          changeSetId: old.changeSetId,
+          ref: "flow:8h9j0k1m2n3p4q5r",
+        })
+      ).exitCode,
+    ).toBe(0);
+    const commitRequest = ManagementCommandRequestSchema.parse({
+      protocol: MANAGEMENT_COMMAND_PROTOCOL,
+      command: "dsl.changes.commit",
+      requestId: randomUUID(),
+      input: { changeSetId: old.changeSetId },
+    });
+    expect(
+      (
+        await f.app.execute(commitRequest, {
+          ...f.context,
+          humanInteractionHandler: async () => ({ kind: "tool_approval", approved: false }),
+        })
+      ).exitCode,
+    ).toBe(6);
+    expect((await f.project.get()).revision).toBe(0);
+    expect((await f.invoke("dsl.changes.commit", { changeSetId: old.changeSetId })).exitCode).toBe(
+      0,
+    );
+    expect((await f.project.get()).revision).toBe(1);
+  },
+);
+it(
+  "rejects another Context's private owner and restores the same Context across Runtime Sessions",
+  { timeout: 60_000 },
+  async () => {
+    const f = await fixture();
+    const old = await installHistoricalFlow(f);
+    const paths = new PragmaPaths({ pragmaHome: f.root });
+    const ownerRoot = join(
+      paths.ownedSystemSessionRoot("previous-owner", "previous-session"),
+      "management-commands",
+      "v1",
+      "owners",
+    );
+    const ownerPath = join(
+      ownerRoot,
+      `${createHash("sha256").update(old.draft.draftId).digest("hex")}.json`,
+    );
+    await mkdir(ownerRoot, { recursive: true });
+    await writeFile(
+      ownerPath,
+      JSON.stringify({
+        schemaVersion: "pragma.management-command-owner/v1",
+        missionId: randomUUID(),
+        contextId: "foreign-context",
+      }),
+    );
+    f.approve();
+    expect((await f.invoke("flow.draft.recover", { draftId: old.draft.draftId })).exitCode).toBe(6);
+    expect((await f.invoke("flow.draft.get", { draftId: old.draft.draftId })).exitCode).toBe(6);
+    expect(await readFile(old.draftPath)).toEqual(old.draftBytes);
+    await writeFile(
+      ownerPath,
+      JSON.stringify({
+        schemaVersion: "pragma.management-command-owner/v1",
+        missionId: f.scope.missionId,
+        contextId: "root-context",
+      }),
+    );
+    expect((await f.invoke("flow.draft.get", { draftId: old.draft.draftId })).exitCode).toBe(0);
+    expect(await readFile(old.draftPath)).toEqual(old.draftBytes);
+  },
+);
+
+it("rejects unsafe legacy data without claiming or rewriting it", { timeout: 60_000 }, async () => {
+  const f = await fixture();
+  const old = await installHistoricalFlow(f);
+  f.approve();
+  const future = JSON.parse(old.draftBytes.toString());
+  future.resource.apiVersion = "pragma/v999";
+  const source = JSON.stringify(future);
+  await writeFile(old.draftPath, source);
+  expect((await f.invoke("flow.draft.recover", { draftId: old.draft.draftId })).error?.code).toBe(
+    "STORAGE_VERSION_UNSUPPORTED",
+  );
+  expect(await readFile(old.draftPath, "utf8")).toBe(source);
+  await writeFile(old.draftPath, "{");
+  expect((await f.invoke("flow.draft.recover", { draftId: old.draft.draftId })).error?.code).toBe(
+    "STORAGE_CORRUPTED",
+  );
+  expect(await readFile(old.draftPath, "utf8")).toBe("{");
+  const ownerFile = join(
+    f.receiptsRoot,
+    "owners",
+    `${createHash("sha256").update(old.draft.draftId).digest("hex")}.json`,
+  );
+  await expect(readFile(ownerFile)).rejects.toMatchObject({ code: "ENOENT" });
+});
+
+it(
+  "fences the command's real target even when unused fields or approval edits supply a distractor ID",
+  { timeout: 60_000 },
+  async () => {
+    const f = await fixture();
+    const old = await installHistoricalFlow(f);
+    const paths = new PragmaPaths({ pragmaHome: f.root });
+    const foreign = join(
+      paths.ownedSystemSessionRoot("foreign-owner", "foreign-session"),
+      "management-commands",
+      "v1",
+      "owners",
+    );
+    await mkdir(foreign, { recursive: true });
+    await writeFile(
+      join(foreign, `${createHash("sha256").update(old.changeSetId).digest("hex")}.json`),
+      JSON.stringify({
+        schemaVersion: "pragma.management-command-owner/v1",
+        missionId: randomUUID(),
+        contextId: "foreign-context",
+      }),
+    );
+    const own = await f.invoke("flow.draft.create", {
+      expectedProjectRevision: 0,
+      metadata: { id: "8h9j0k1m2n3p4q5r", name: "Own", description: "Own", tags: [] },
+    });
+    const draftId = own.result["draftId"];
+    f.approve();
+    expect(
+      (await f.invoke("dsl.changes.commit", { changeSetId: old.changeSetId, draftId })).exitCode,
+    ).toBe(6);
+    // Also fence the input actually chosen by an approval handler, not only the initial proposal.
+    await f.invoke("flow.draft.update", { draftId, expectedDraftRevision: 0, operations });
+    const prepared = await f.invoke("flow.draft.prepare", { draftId, expectedDraftRevision: 1 });
+    const ownedChange = (prepared.result["changeSet"] as Record<string, unknown>)["changeSetId"];
+    const request = ManagementCommandRequestSchema.parse({
+      protocol: MANAGEMENT_COMMAND_PROTOCOL,
+      requestId: randomUUID(),
+      command: "dsl.changes.commit",
+      input: { changeSetId: ownedChange },
+    });
+    const changed = await f.app.execute(request, {
+      ...f.context,
+      humanInteractionHandler: async () => ({
+        kind: "tool_approval",
+        approved: true,
+        updatedInput: { draftId, changeSetId: old.changeSetId },
+      }),
+    });
+    expect(changed.exitCode).toBe(6);
+    expect((await f.project.get()).revision).toBe(0);
   },
 );

@@ -8,6 +8,7 @@ import {
   defineExpert,
   createLoggerProvider,
   PragmaPaths,
+  encodePragmaPathSegment,
   type RuntimeAdapter,
   type RuntimeModelSelection,
   type RuntimeUsageObservation,
@@ -119,6 +120,7 @@ const ports = {
 const tools = createPragmaManagementTools(ports, scope);
 const hooks = {
   ...createManagementCommandHooks({
+    pragmaHome: home,
     ports,
     scope,
     commandDirectory,
@@ -229,7 +231,32 @@ try {
   if (availability !== undefined && !availability.usable)
     throw new Error(availability.reason ?? "Runtime unavailable");
   session = await app.experts.createSession(expert, { runtime: runtime.descriptor.id });
-  if (scenario === "chat") await prompt("只回复ok，不读取技能，不调用工具。");
+  if (scenario === "legacy") {
+    const bytes = await readFile(
+      new URL(
+        "../src/main/features/built-in-agents/__fixtures__/legacy-flow-a32bdedb/draft.json",
+        import.meta.url,
+      ),
+    );
+    const legacy = JSON.parse(bytes.toString()) as { draftId: string };
+    const directory = join(root, "state", "pragma", "dsl-drafts");
+    await mkdir(directory, { recursive: true });
+    await writeFile(join(directory, `${encodePragmaPathSegment(legacy.draftId)}.json`), bytes);
+    await prompt(
+      `This temporary Project has a historical unowned Flow draft ${legacy.draftId} written by the old handler. Read author-pragma-flow and use only CLI: first get the draft and observe unowned_target, explicitly recover it through the Host approval gate, get it again, update maxNodeVisits to 2000 at the exact draft revision, validate, prepare and commit. No Evaluation. All temporary recovery and commit approvals are authorized but must go through the Host. Do not edit storage or print environment variables.`,
+    );
+    const snapshot = await project.get();
+    if (
+      snapshot.revision !== 1 ||
+      !snapshot.resources.some(
+        (item) => item.kind === "Flow" && item.spec.limits.maxNodeVisits === 2000,
+      )
+    )
+      throw new Error("Runtime did not recover, edit and publish the historical Flow.");
+    for (const tool of ["recover_flow_draft", "commit_dsl_changes"])
+      if (!approvals.some((item) => item.tool === tool && item.approved))
+        throw new Error(`Runtime did not exercise approval for ${tool}.`);
+  } else if (scenario === "chat") await prompt("只回复ok，不读取技能，不调用工具。");
   else if (scenario === "smoke") {
     await prompt(
       "This is a real CLI channel probe in a temporary workspace. Use your process/shell tool to run exactly `pragma dsl resources list --format json`. Do not print environment variables. Report the structured result and finish.",

@@ -213,6 +213,7 @@ export interface ExpertAgentPluginTaskSubmitContext<TOutput = unknown> {
   readonly runId: string;
   readonly submission: RuntimeTaskSubmission<TOutput>;
   readonly executionContext?: ExpertToolExecutionContext | undefined;
+  readonly humanInteractionHandler?: ExpertAgentHumanInteractionHandler | undefined;
   readonly signal?: AbortSignal | undefined;
   readonly toolState?: ExecutionToolRuntimeState | undefined;
   readonly context?: ExpertAgentRunContext | undefined;

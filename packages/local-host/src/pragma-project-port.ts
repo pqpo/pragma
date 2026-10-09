@@ -303,7 +303,7 @@ export function createLocalHostPragmaProjectPort(options: {
       | undefined;
   }): Promise<PragmaAgentPrepareResult> => {
     if (input.operationId !== undefined) {
-      const previous = await readJson(candidatePath(commandUuid(input.operationId)));
+      const previous = await readJson(candidatePath(managementCommandTargetId(input.operationId)));
       if (previous !== undefined)
         return PragmaAgentPrepareResultSchema.parse({
           status: "prepared",
@@ -359,7 +359,9 @@ export function createLocalHostPragmaProjectPort(options: {
             );
       const changeSet = PragmaAgentChangeSetSchema.parse({
         changeSetId:
-          input.operationId === undefined ? randomUUID() : commandUuid(input.operationId),
+          input.operationId === undefined
+            ? randomUUID()
+            : managementCommandTargetId(input.operationId),
         projectRevision: input.expectedProjectRevision,
         diagnostics,
         changes: resources.map((resource) => ({
@@ -1682,7 +1684,9 @@ export function createLocalHostPragmaProjectPort(options: {
     },
     async createFlowDraft(input) {
       const draftId =
-        input.operationId === undefined ? randomUUID() : commandUuid(input.operationId);
+        input.operationId === undefined
+          ? randomUUID()
+          : managementCommandTargetId(input.operationId);
       const recovered =
         input.operationId === undefined ? undefined : await readJson(draftPath(draftId));
       if (recovered !== undefined) return PragmaAgentFlowDraftSchema.parse(recovered);
@@ -1948,7 +1952,9 @@ export function createLocalHostPragmaProjectPort(options: {
     },
     async prepareFlowDraft(input) {
       if (input.operationId !== undefined) {
-        const previous = await readJson(candidatePath(commandUuid(input.operationId)));
+        const previous = await readJson(
+          candidatePath(managementCommandTargetId(input.operationId)),
+        );
         if (previous !== undefined)
           return PragmaAgentPrepareResultSchema.parse({
             status: "prepared",
@@ -3460,7 +3466,8 @@ const FlowCommandMutationSchema = z
   })
   .strict();
 
-function commandUuid(operationId: string): string {
+/** Stable draft/change-set UUID, separate from semantic DSL resource IDs. */
+export function managementCommandTargetId(operationId: string): string {
   const digest = createHash("sha256").update(operationId).digest("hex");
   return `${digest.slice(0, 8)}-${digest.slice(8, 12)}-4${digest.slice(13, 16)}-a${digest.slice(17, 20)}-${digest.slice(20, 32)}`;
 }

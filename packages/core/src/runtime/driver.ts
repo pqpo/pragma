@@ -1407,6 +1407,7 @@ class ManagedRuntimeSession<TNativeEvent, TNativeSession> {
           runId,
           submission: taskSubmission,
           executionContext: submission.execution.context,
+          humanInteractionHandler: submission.execution.humanInteractionHandler,
           signal,
           toolState: { runId, source: controller.source, emitter: controller.emitter },
           context: this.options.runContext,

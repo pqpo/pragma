@@ -8,7 +8,7 @@ import {
   type PragmaManagementToolPorts,
 } from "@pragma/built-in-agents";
 import { createManagementCommandHooks, MANAGEMENT_COMMAND_TOOLS } from "@pragma/local-host";
-import type { McpToolRegistryPool } from "@pragma/core";
+import { PragmaPaths, type McpToolRegistryPool } from "@pragma/core";
 import { FileSystemContextStore } from "@pragma/context-filesystem";
 import type { PragmaAdapterHost, PragmaBindingRecord } from "@pragma/interpreter";
 import { LocalHostResourceUnavailableError } from "@pragma/local-host/resources";
@@ -28,6 +28,7 @@ export function createDesktopAdapterHost(
     readonly capabilityStore: CapabilityStore;
     readonly capabilityCredentials: CapabilityCredentialStore;
     readonly capabilitiesPath: string;
+    readonly pragmaHome?: string | undefined;
     /** Stop definitions preserve identity metadata and must never be executed. */
     readonly purpose?: "execute" | "stop" | undefined;
     readonly mcpToolRegistryPool?: McpToolRegistryPool | undefined;
@@ -86,6 +87,7 @@ export function createDesktopAdapterHost(
                 ports: options.pragmaManagement!,
                 scope: options.pragmaManagementScope,
                 commandDirectory: distribution.directory,
+                pragmaHome: options.pragmaHome ?? new PragmaPaths().root,
                 allowedCommands: Object.keys(
                   MANAGEMENT_COMMAND_TOOLS,
                 ) as (keyof typeof MANAGEMENT_COMMAND_TOOLS)[],

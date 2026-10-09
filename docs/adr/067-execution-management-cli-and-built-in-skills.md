@@ -21,7 +21,7 @@ Core 保留独立的 executionToolApprovals，合并 Expert 声明、插件及�
 错误编码不变。Human checkpoint 返回独立 `input_required` 控制状态，原 Execution controller
 继续负责等待和停止 Runtime。CLI 不等待子进程 TTY，也不能自行批准提交。
 
-Desktop 为内置 Pragma 显式配置本阶段十二个 CLI command grants，与模型可见目录分离；
+Desktop 为内置 Pragma 显式配置本阶段十四个 CLI command grants（含两个历史 ownership 恢复命令），与模型可见目录分离；
 Core 的 allow/deny policy 继续约束这些 grants。System Expert customization 按既有规则继承
 默认产品能力；普通 Expert 不因绑定 Skill 或声明同名工具获得 grant。默认 Schema 切换后
 仍须补齐历史配置及显式 allow/deny policy 的验收，不删除它们引用的旧 handler 定义。
@@ -72,3 +72,11 @@ DSL apiVersion、compilerVersion、Core storage major 或已有持久 Schema，�
 不将用户授权切换等同于所有验收已通过。
 
 验收与未完成项见[第一阶段实施报告](../architecture/management-tools-cli-skills-phase-one-implementation.md)。
+
+## PR 评论后的历史交接
+
+旧 Flow 工具写出的未归属草稿不能推断 owner。用 CLI-only recover 命令请求当前 Execution
+required 审批，校验原数据并写独立 owner sidecar，保留原文件。已知其他 Mission/Context 的
+owner 不允许交接；同 Context 的其他 Session metadata 可定向读取恢复。无业务数据格式转换，
+原 DTO/DSL/owner v1 均不改版本。新目标在创建前预留 owner；所有 claim 共用目标锁。
+审批来自当前 task submission，包含首次无 handler、后续才提供的 warm Session 场景。

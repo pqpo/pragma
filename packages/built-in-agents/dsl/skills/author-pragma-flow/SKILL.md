@@ -38,3 +38,9 @@ makes no publication. Use `pragma flow draft discard` when abandoning the draft.
 
 Validation failures can have structured diagnostics with exit code 10. Permission errors are 6,
 conflicts 4, unavailable command channels 5, protocol mismatch 7, and interruption 130.
+
+For an existing legacy draft or prepared change that reports `unowned_target`, use the explicit
+`pragma flow draft recover` or `pragma dsl changes recover` command with its original target ID.
+Recovery requests approval in the current Execution and preserves the original resource file.
+It cannot take over a target owned by another Mission/Context. Recovery of a prepared change does
+not publish it; commit still requires its own approval. Do not edit owner metadata or stored drafts.

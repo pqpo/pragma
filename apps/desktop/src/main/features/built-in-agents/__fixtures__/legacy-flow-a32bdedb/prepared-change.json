@@ -1,0 +1,65 @@
+{
+  "changeSet": {
+    "changeSetId": "b863c88e-f298-40fe-a1b5-1aeeb0cb3d61",
+    "projectRevision": 0,
+    "diagnostics": [],
+    "changes": [
+      {
+        "ref": "flow:8h9j0k1m2n3p4q5r",
+        "kind": "created",
+        "source": "apiVersion: pragma/v5\nkind: Flow\nmetadata:\n  id: 8h9j0k1m2n3p4q5r\n  name: 历史发布审批\n  description: Legacy Flow recovery fixture\n  tags: []\nspec:\n  limits:\n    maxNodeVisits: 1000\n  graph:\n    start: approve\n    steps:\n      approve:\n        human:\n          selectionMode: single\n          prompt:\n            segments:\n              - text: 发布？\n          options:\n            - value: yes\n              label: 同意\n            - value: no\n              label: 拒绝\n    loops: {}\n    transitions:\n      approve:\n        end: true\n"
+      }
+    ],
+    "createdAt": "2026-10-09T02:51:43.333Z"
+  },
+  "resources": [
+    {
+      "apiVersion": "pragma/v5",
+      "kind": "Flow",
+      "metadata": {
+        "id": "8h9j0k1m2n3p4q5r",
+        "name": "历史发布审批",
+        "description": "Legacy Flow recovery fixture",
+        "tags": []
+      },
+      "spec": {
+        "limits": {
+          "maxNodeVisits": 1000
+        },
+        "graph": {
+          "start": "approve",
+          "steps": {
+            "approve": {
+              "human": {
+                "selectionMode": "single",
+                "prompt": {
+                  "segments": [
+                    {
+                      "text": "发布？"
+                    }
+                  ]
+                },
+                "options": [
+                  {
+                    "value": "yes",
+                    "label": "同意"
+                  },
+                  {
+                    "value": "no",
+                    "label": "拒绝"
+                  }
+                ]
+              }
+            }
+          },
+          "loops": {},
+          "transitions": {
+            "approve": {
+              "end": true
+            }
+          }
+        }
+      }
+    }
+  ]
+}

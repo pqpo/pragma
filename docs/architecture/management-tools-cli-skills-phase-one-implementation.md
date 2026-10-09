@@ -183,3 +183,6 @@ compact JSON 的大 Schema 触发 Core 长无空白串保护、回落 heuristic�
 
 发布准备检查：`pnpm check` 全部通过，`pnpm build` 19 packages 全部通过；工作改动保存在
 `codex/issue-368-flow-cli-skills` 分支。未将 Runtime/平台验收缺口改写为已完成。
+
+PR 评论处理与历史受控恢复见[后续复核记录](management-tools-cli-skills-phase-one-pr-review-follow-up.md)。
+新增两个 CLI-only recovery 命令保留原文件、强制审批并拒绝已知 foreign owner；默认工具数不增加。

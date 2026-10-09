@@ -11,12 +11,14 @@ export const ManagementCommandSchema = z.enum([
   "flow.draft.validate",
   "flow.draft.prepare",
   "flow.draft.discard",
+  "flow.draft.recover",
   "dsl.resources.list",
   "dsl.resources.read",
   "dsl.options.list",
   "dsl.ids.allocate",
   "dsl.changes.read",
   "dsl.changes.commit",
+  "dsl.changes.recover",
 ]);
 export const ManagementCommandRequestSchema = z
   .object({
@@ -85,3 +87,9 @@ export function managementCommandError(
     ...(details === undefined ? {} : { details }),
   });
 }
+
+/** Explicit legacy ownership handoff; the Host requires approval, never inferred from a missing sidecar. */
+export const ManagementFlowRecoveryInputSchema = z.object({ draftId: z.string().uuid() }).strict();
+export const ManagementChangesRecoveryInputSchema = z
+  .object({ changeSetId: z.string().uuid() })
+  .strict();
