@@ -41,7 +41,7 @@
     "@pragma/runtime-opencode": "workspace:*",
     "@pragma/runtime-pi": "workspace:*",
     "@pragma/runtime-qodercli": "workspace:*",
-    "commander": "14.0.3"
+    "commander": "15.0.0"
   },
   "devDependencies": {
     "@pragma/tsconfig": "workspace:*",
