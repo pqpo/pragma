@@ -22,9 +22,14 @@ Release gate: verify native loading in Node >=22 and Electron Main on macOS x64/
 x64 from the packaged application before publishing. The dependency is pinned in `pnpm-lock.yaml`;
 the release SBOM must include the package and its platform packages.
 
+The 2.x adapter distinguishes missing entries from provider failures: a missing entry returns
+`null`/`false`, while locked, denied, or unavailable providers throw. Local Host classifies those
+errors into its existing health codes. This upgrade keeps the service/account identity and binary
+secret representation unchanged, so existing Desktop and CLI credentials remain shared.
+
 ## M5 supply-chain audit (2026-08-24)
 
-- Direct production dependency: `@napi-rs/keyring@2.1.0` (exact version; no range) in
+- Direct production dependency: `@napi-rs/keyring@1.3.0` (exact version; no range) in
   `@pragma/local-host`.
 - License: `MIT`, verified from the installed package manifest.
 - `pnpm-lock.yaml` pins the package and each optional native binary with immutable SHA-512 integrity.
