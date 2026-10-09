@@ -44,6 +44,21 @@ import {
 } from "../src/pragma-management-tools.ts";
 
 const CLI_MIGRATED_AUTHORING_TOOLS = [
+  "list_workspaces",
+  "list_home_projects",
+  "get_home_project",
+  "list_knowledge_stores",
+  "list_missions",
+  "get_mission",
+  "create_mission",
+  "send_mission_message",
+  "list_mission_work_items",
+  "get_mission_work_item",
+  "interrupt_mission",
+  "list_automations",
+  "save_automation",
+  "delete_automation",
+  "reset_automation_session",
   "list_dsl_resources",
   "read_dsl_resource",
   "list_expert_options",
@@ -87,17 +102,7 @@ describe("built-in Pragma Agent DSL", () => {
         .listResources()
         .map((resource) => resource.kind)
         .toSorted(),
-    ).toEqual([
-      "Capability",
-      "Capability",
-      "Capability",
-      "Capability",
-      "Expert",
-      "Expert",
-      "Expert",
-      "Expert",
-      "Expert",
-    ]);
+    ).toEqual(["Capability", "Capability", "Expert", "Expert", "Expert", "Expert", "Expert"]);
 
     const unavailable = async (): Promise<never> => {
       throw new Error("This compile-only test does not execute Pragma tools.");
@@ -175,15 +180,7 @@ describe("built-in Pragma Agent DSL", () => {
         },
       },
     });
-    expect(compiled.value.tools?.map((tool) => tool.name)).toHaveLength(17);
-    expect(compiled.value.tools?.map((tool) => tool.name)).toEqual(
-      expect.arrayContaining([
-        "list_workspaces",
-        "list_home_projects",
-        "get_home_project",
-        "list_knowledge_stores",
-      ]),
-    );
+    expect(compiled.value.tools?.map((tool) => tool.name)).toHaveLength(2);
     expect(compiled.value.tools?.map((tool) => tool.name)).toContain("call_store_revision_agent");
     expect(compiled.value.tools?.map((tool) => tool.name)).toContain("call_skill_revision_agent");
     for (const name of [
@@ -198,7 +195,8 @@ describe("built-in Pragma Agent DSL", () => {
       expect(compiled.value.tools?.map((tool) => tool.name)).not.toContain(name);
     }
     expect(compiled.value.tools?.map((tool) => tool.name)).not.toContain("run_evaluation");
-    expect(compiled.value.skills?.skills[0]?.path).toMatch(/author-pragma-dsl[\\/]SKILL\.md$/);
+    expect(compiled.value.skills?.skills).toHaveLength(1);
+    expect(compiled.value.skills?.skills[0]?.path).toMatch(/manage-pragma[\\/]SKILL\.md$/);
     expect(compiled.value).toMatchObject({
       id: "0000000000pragma",
       name: "Pragma",
@@ -341,7 +339,7 @@ describe("built-in Pragma Agent DSL", () => {
 
   it("teaches the default Agent the Automation field and Flow input limits", () => {
     const reference =
-      BUILT_IN_AGENT_FILES["skills/author-pragma-dsl/references/automation.md"] ?? "";
+      BUILT_IN_AGENT_FILES["skills/manage-pragma/references/automations/automation.md"] ?? "";
 
     expect(reference).toContain(
       "`metadata.id`: host-allocated 16-character lowercase Crockford Base32.",
@@ -355,54 +353,54 @@ describe("built-in Pragma Agent DSL", () => {
   });
 
   it("teaches the default Agent file drafts and Runtime reference selection", () => {
-    const skill = BUILT_IN_AGENT_FILES["skills/author-pragma-dsl/SKILL.md"] ?? "";
+    const skill = BUILT_IN_AGENT_FILES["skills/manage-pragma/references/dsl.md"] ?? "";
     const expertReference =
-      BUILT_IN_AGENT_FILES["skills/author-pragma-dsl/references/expert.md"] ?? "";
+      BUILT_IN_AGENT_FILES["skills/manage-pragma/references/dsl/expert.md"] ?? "";
     const resourceReference =
-      BUILT_IN_AGENT_FILES["skills/author-pragma-dsl/references/resources-and-references.md"] ?? "";
+      BUILT_IN_AGENT_FILES["skills/manage-pragma/references/dsl/resources-and-references.md"] ?? "";
 
-    expect(skill).toContain("`pragma dsl draft start` creates one Mission-owned file draft");
+    expect(skill).toContain("`pragma manage dsl draft start` creates one Mission-owned file draft");
     expect(skill).toContain("pass only\n   `draftId`");
-    expect(skill).toContain("use `pragma dsl draft review`");
+    expect(skill).toContain("use `pragma manage dsl draft review`");
     expect(expertReference).toContain("namespace: project_docs");
     expect(expertReference).toContain(
       "It is not derived from the ContextStore ID, binding, or `config.key`.",
     );
     expect(resourceReference).toContain("Otherwise use the Host");
     expect(resourceReference).toContain(
-      "option's `runtimeProfileRef`; `pragma dsl draft prepare` adds that dependency automatically for Expert",
+      "option's `runtimeProfileRef`; `pragma manage dsl draft prepare` adds that dependency automatically for Expert",
     );
   });
 
   it("teaches Flow commands without duplicating the old Flow tool instructions", () => {
-    const skill = BUILT_IN_AGENT_FILES["skills/author-pragma-flow/SKILL.md"] ?? "";
-    expect(skill).toContain("pragma flow draft update");
-    expect(skill).toContain("pragma dsl changes commit");
+    const skill = BUILT_IN_AGENT_FILES["skills/manage-pragma/references/flow.md"] ?? "";
+    expect(skill).toContain("pragma manage flow draft update");
+    expect(skill).toContain("pragma manage dsl changes commit");
     expect(skill).toContain("--input -");
     expect(skill).toContain("original Mission");
     expect(skill).not.toMatch(/(?:create|get|update|validate|prepare|discard)_flow_draft/u);
-    const dsl = BUILT_IN_AGENT_FILES["skills/author-pragma-dsl/SKILL.md"] ?? "";
-    expect(dsl).toContain("author-pragma-flow");
+    const dsl = BUILT_IN_AGENT_FILES["skills/manage-pragma/references/dsl.md"] ?? "";
+    expect(dsl).toContain("the flow reference");
     expect(dsl).not.toContain("update_flow_draft");
   });
 
   it("routes independent Evaluation CLI authoring with bounded cases and retains the DSL identity", () => {
-    const dsl = BUILT_IN_AGENT_FILES["skills/author-pragma-dsl/SKILL.md"]!;
-    const skill = BUILT_IN_AGENT_FILES["skills/author-pragma-evaluation/SKILL.md"]!;
+    const dsl = BUILT_IN_AGENT_FILES["skills/manage-pragma/references/dsl.md"]!;
+    const skill = BUILT_IN_AGENT_FILES["skills/manage-pragma/references/evaluation.md"]!;
     const reference =
-      BUILT_IN_AGENT_FILES["skills/author-pragma-evaluation/references/run-dry.md"]!;
-    expect(dsl).toContain("author-pragma-evaluation");
-    expect(BUILT_IN_AGENT_FILES["skills/author-pragma-dsl/references/run-dry.md"]).toBeUndefined();
-    const flow = BUILT_IN_AGENT_FILES["skills/author-pragma-flow/SKILL.md"]!;
-    const flowReference = BUILT_IN_AGENT_FILES["skills/author-pragma-flow/references/flow.md"]!;
-    expect(flow).toContain("discover `author-pragma-evaluation`");
-    expect(flowReference).toContain("Discover `author-pragma-evaluation` and read its");
+      BUILT_IN_AGENT_FILES["skills/manage-pragma/references/evaluation/run-dry.md"]!;
+    expect(dsl).toContain("the evaluation reference");
+    expect(BUILT_IN_AGENT_FILES["skills/manage-pragma/references/dsl/run-dry.md"]).toBeUndefined();
+    const flow = BUILT_IN_AGENT_FILES["skills/manage-pragma/references/flow.md"]!;
+    const flowReference = BUILT_IN_AGENT_FILES["skills/manage-pragma/references/flow/flow.md"]!;
+    expect(flow).toContain("read [Evaluation](evaluation.md)");
+    expect(flowReference).toContain("Read [Evaluation](../evaluation.md)");
     expect(flow).not.toContain("author-pragma-dsl");
     expect(flowReference).not.toContain("author-pragma-dsl");
     expect(skill).toContain("Default to one `upsert_case`");
     expect(skill).toContain("Do not create a test set implicitly");
-    expect(skill).toContain("pragma evaluation draft prepare");
-    expect(skill).toContain("pragma dsl changes commit");
+    expect(skill).toContain("pragma manage evaluation draft prepare");
+    expect(skill).toContain("pragma manage dsl changes commit");
     expect(skill).toContain("transaction saves only the Evaluation");
     expect(reference).toContain("2–10 `upsert_case` operations");
     expect(reference).toContain("commits only the canonical `evaluation:<id>` resource");
@@ -447,7 +445,7 @@ describe("built-in Pragma Agent DSL", () => {
     );
     expect(
       project.listResources().filter((candidate) => candidate.kind === "Capability"),
-    ).toHaveLength(5);
+    ).toHaveLength(3);
     expect(await project.validate()).toEqual([]);
   });
 
@@ -749,7 +747,7 @@ describe("built-in Pragma Agent DSL", () => {
 
   it("keeps every YAML example in the Skill structurally valid", async () => {
     const dslRoot = join(dirname(fileURLToPath(import.meta.url)), "../dsl");
-    const references = (await filesAt(join(dslRoot, "skills/author-pragma-dsl/references"))).filter(
+    const references = (await filesAt(join(dslRoot, "skills/manage-pragma/references/dsl"))).filter(
       (path) => path.endsWith(".md"),
     );
     for (const path of references) {
@@ -835,3 +833,67 @@ function flowDraft() {
     updatedAt: "2026-08-03T00:00:01.000Z",
   });
 }
+
+it("preserves explicit bindings for all migrated groups after the default cutover", async () => {
+  const root = await mkdtemp(join(tmpdir(), "pragma-explicit-management-"));
+  const resource = builtInAgentResource(BUILT_IN_PRAGMA_REF);
+  const selected = [
+    "list_workspaces",
+    "list_missions",
+    "save_automation",
+    "create_flow_draft",
+    "start_dsl_draft",
+    "create_evaluation_draft",
+  ];
+  const capability = resource.spec.capabilities.find((entry) => entry.kind === "tools")!;
+  capability.tools = selected;
+  const tools = createPragmaManagementTools({
+    project: {} as never,
+    missions: {} as never,
+    resources: {} as never,
+    automations: {} as never,
+  });
+  const delegated = await defineExpert({
+    id: "explicit-delegate",
+    name: "Delegate",
+    description: "Test",
+    scope: "Test",
+    tags: [],
+    workspace: root,
+  });
+  const compiled = await compileBuiltInAgent({
+    ref: BUILT_IN_PRAGMA_REF,
+    expertResource: resource,
+    environmentId: "explicit-management",
+    definitionStateRoot: root,
+    workspace: root,
+    pragmaHome: root,
+    adapterHost: {
+      environmentId: "explicit-management",
+      projectRoot: root,
+      resolveBinding: async (ref) =>
+        ref === "binding:pragma.management"
+          ? {
+              ref,
+              revision: "explicit",
+              fingerprint: "a".repeat(64),
+              value: { contribution: { tools } },
+            }
+          : undefined,
+      resolveArtifact: async () => {
+        throw new Error("Unexpected artifact");
+      },
+      resolveSecret: async () => undefined,
+    },
+    resolveExternalInvocable: async (ref) => ({
+      resource: {
+        ...resource,
+        metadata: { ...resource.metadata, id: ref.slice("expert:".length) },
+      },
+      value: delegated,
+    }),
+  });
+  expect(compiled.value.tools?.map((tool) => tool.name)).toEqual(
+    expect.arrayContaining([...selected, "call_store_revision_agent", "call_skill_revision_agent"]),
+  );
+});

@@ -1,3 +1,4 @@
+import { BUILT_IN_SKILLS } from "@pragma/built-in-agents";
 import { PRAGMA_DSL_WRITE_API_VERSION } from "@pragma/interpreter/ast";
 import {
   chmod,
@@ -1586,7 +1587,7 @@ describe("Desktop PragmaAgent DSL project adapter", { timeout: 30_000 }, () => {
         isDefault: true,
       }),
     ]);
-    expect(capabilities.items).toHaveLength(6);
+    expect(capabilities.items).toHaveLength(BUILT_IN_SKILLS.length + 3);
     expect(capabilities.items).toEqual(
       expect.arrayContaining([
         expect.objectContaining({

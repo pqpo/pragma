@@ -199,11 +199,14 @@ Commands:
   team discover [SELECTOR] | describe <REF>
   expert discover [SELECTOR] | describe <REF>
   flow discover [SELECTOR] | describe <REF>
-  flow draft create|get|update|validate|prepare|discard|recover --input <FILE|->
-  dsl resources list|read | options list | ids allocate --input <FILE|->
-  dsl draft start|list|inspect|review|prepare|restart|discard|recover --input <FILE|->
-  dsl changes prepare|read|commit|recover --input <FILE|->
-  evaluation draft create|get|cases|update|run|prepare|discard|recover --input <FILE|->
+  manage flow draft create|get|update|validate|prepare|discard|recover --input <FILE|->
+  manage dsl resources list|read | options list | ids allocate --input <FILE|->
+  manage dsl draft start|list|inspect|review|prepare|restart|discard|recover --input <FILE|->
+  manage dsl changes prepare|read|commit|recover --input <FILE|->
+  manage evaluation draft create|get|cases|update|run|prepare|discard|recover --input <FILE|->
+  manage mission list|get|create|send|interrupt | work list|get --input <FILE|->
+  manage workspace list | home-project list|get | knowledge-store list --input <FILE|->
+  manage automation list|save|delete|reset-session --input <FILE|->
   team run|expert run <REF> --workspace <ABSOLUTE_PATH> (--prompt <TEXT> | --input <FILE|->) [--request-id UUID]
   flow run <REF> --workspace <ABSOLUTE_PATH> --input-json <FILE|->
   mission list

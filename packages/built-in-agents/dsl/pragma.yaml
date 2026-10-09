@@ -3,8 +3,6 @@ kind: Bundle
 imports:
   - ./capabilities/0000000000manage.pragma.yaml
   - ./capabilities/1h2j3k4m5n6p7q8r.pragma.yaml
-  - ./capabilities/000000000000f10w.pragma.yaml
-  - ./capabilities/000000000000eva1.pragma.yaml
   - ./experts/0000000000mem0ry.pragma.yaml
   - ./experts/00000000000j0dg3.pragma.yaml
   - ./experts/0000000000pragma.pragma.yaml

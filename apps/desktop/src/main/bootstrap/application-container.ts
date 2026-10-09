@@ -80,10 +80,10 @@ import { createStorageCapacityInspection } from "../platform/storage/storage-cap
 import { installAutomationHandlers } from "../features/automations/automation-ipc.ts";
 import { createAutomationService } from "../features/automations/automation-service.ts";
 import { createAutomationStore } from "../features/automations/automation-store.ts";
-import { createDesktopPragmaAgentAutomationPort } from "../features/built-in-agents/pragma-agent-automation-adapter.ts";
+import { createLocalHostPragmaAutomationPort } from "@pragma/local-host";
 import { createDesktopPragmaAgentProjectPort } from "../features/built-in-agents/pragma-agent-project-adapter.ts";
 import { createDesktopPragmaAgentResourceCatalogPort } from "../features/built-in-agents/pragma-agent-resource-adapter.ts";
-import { createDesktopPragmaAgentMissionPort } from "../features/built-in-agents/pragma-agent-task-adapter.ts";
+import { createLocalHostPragmaMissionPort } from "@pragma/local-host";
 import { installBundleRegistryHandlers } from "../features/bundle-registry/bundle-registry-ipc.ts";
 import { createDesktopBundleRegistrySourceService } from "../features/bundle-registry/bundle-registry-source-service.ts";
 import { createBundleSourcePublishingService } from "../features/bundle-registry/bundle-source-publishing-service.ts";
@@ -2086,7 +2086,7 @@ export async function createDesktopApplicationContainer(
   });
   installAutomationHandlers(automationService);
   const homeProjects = createHomeProjectStore(join(pragmaPaths.dataRoot(), "home-projects.json"));
-  const pragmaAgentMissions = createDesktopPragmaAgentMissionPort({
+  const pragmaAgentMissions = createLocalHostPragmaMissionPort({
     missions: missionStore,
     application: missionApplication,
     creator: missionCreator,
@@ -2105,7 +2105,7 @@ export async function createDesktopApplicationContainer(
         (await desktopSettings.getSnapshot(options.getPreferredSystemLanguages())).defaultWorkspace,
     }),
     skillRevisions: pragmaManagementSkillRevisions,
-    automations: createDesktopPragmaAgentAutomationPort({
+    automations: createLocalHostPragmaAutomationPort({
       service: automationService,
       project: pragmaProjectStore,
       stateRoot: defaultAgentStateRoot,

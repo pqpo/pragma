@@ -5,6 +5,21 @@ import { JsonObjectSchema, JsonValueSchema, RequestIdSchema } from "./primitives
 /** Independent, additive protocol; does not change native Runtime MCP results. */
 export const MANAGEMENT_COMMAND_PROTOCOL = "pragma.management-command/v1" as const;
 export const ManagementCommandSchema = z.enum([
+  "mission.list",
+  "mission.get",
+  "mission.create",
+  "mission.send",
+  "mission.interrupt",
+  "mission.work.list",
+  "mission.work.get",
+  "workspace.list",
+  "home-project.list",
+  "home-project.get",
+  "knowledge-store.list",
+  "automation.list",
+  "automation.save",
+  "automation.delete",
+  "automation.reset-session",
   "flow.draft.create",
   "flow.draft.get",
   "flow.draft.update",
