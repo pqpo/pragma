@@ -1,3 +1,5 @@
+import { createPhaseThreeCommandTestFixture } from "../src/main/features/built-in-agents/phase-three-command-test-fixture.ts";
+import { createLocalHostPragmaProjectPort } from "@pragma/local-host";
 import { randomUUID } from "node:crypto";
 import { cp, mkdir, mkdtemp, readFile, readdir, writeFile } from "node:fs/promises";
 import { tmpdir, homedir } from "node:os";
@@ -109,16 +111,32 @@ const runtimes = createStaticRuntimeResolver({
   runtimes: [runtime],
   defaultRuntimeId: runtime.descriptor.id,
 });
-const { project, port } = createManagementCommandTestFixture(
+let { project, port } = createManagementCommandTestFixture(
   root,
   scenario === "dsl" || scenario === "dsl-conflict",
 );
+const phaseThree = ["phase-three", "phase-three-catalog"].includes(scenario)
+  ? await createPhaseThreeCommandTestFixture(home, runtimes, workspace)
+  : undefined;
+if (phaseThree !== undefined) {
+  project = phaseThree.project;
+  port = createLocalHostPragmaProjectPort({
+    project,
+    stateRoot: join(home, "state", "pragma"),
+    catalog: async () => ({
+      options: { runtimeModels: [], capabilities: [], avatars: [], builtinExperts: [] },
+      resources: new Map(),
+      availableModels: new Set(),
+      isCapabilityAvailable: () => true,
+    }),
+  });
+}
 const scope = { missionId: randomUUID(), workspacePath: workspace };
 const ports = {
   project: port,
-  missions: {} as never,
-  resources: {} as never,
-  automations: {} as never,
+  missions: phaseThree?.missionPort ?? ({} as never),
+  resources: phaseThree?.resources ?? ({} as never),
+  automations: phaseThree?.automations ?? ({} as never),
 };
 const tools = createPragmaManagementTools(ports, scope);
 const hooks = {
@@ -170,6 +188,23 @@ if (
           if (!capability.tools.includes(name)) capability.tools.push(name);
     }
 
+const phaseThreeNames = new Set(
+  Object.entries(MANAGEMENT_COMMAND_TOOLS)
+    .filter(([command]) =>
+      ["mission", "workspace", "home-project", "knowledge-store", "automation"].includes(
+        command.split(".")[0]!,
+      ),
+    )
+    .map(([, name]) => name),
+);
+if (scenario.startsWith("phase-three"))
+  for (const capability of resource.spec.capabilities) {
+    if (capability.kind !== "tools" || capability.ref !== "capability:0000000000manage") continue;
+    capability.tools =
+      variant === "after"
+        ? capability.tools.filter((name) => !phaseThreeNames.has(name))
+        : [...new Set([...capability.tools, ...phaseThreeNames])];
+  }
 const flowNames = new Set(
   Object.values(MANAGEMENT_COMMAND_TOOLS).filter((name) => name.includes("flow_draft")),
 );
@@ -177,6 +212,7 @@ const flowNames = new Set(
 if (
   variant === "before" &&
   !scenario.startsWith("phase-two") &&
+  !scenario.startsWith("phase-three") &&
   !["dsl", "dsl-conflict", "evaluation"].includes(scenario)
 )
   for (const capability of resource.spec.capabilities)
@@ -307,7 +343,7 @@ try {
       resources: first.resources.map((r) => (r === writer ? concurrent : r)),
     });
     await prompt(
-      "A concurrent external actor changed the Writer. Read conflict.json and attempt its prepared commit once to observe the real conflict. Use pragma dsl draft restart on that draft; compare the previous read-only reference with the replacement files, explicitly replay instructions Replayed after conflict. while preserving the concurrent resource's other fields. Inspect, query one bounded review detail page, prepare and COMMIT the replacement. Use only author-pragma-dsl CLI and native workspace editing.",
+      "A concurrent external actor changed the Writer. Read conflict.json and attempt its prepared commit once to observe the real conflict. Use pragma manage dsl draft restart on that draft; compare the previous read-only reference with the replacement files, explicitly replay instructions Replayed after conflict. while preserving the concurrent resource's other fields. Inspect, query one bounded review detail page, prepare and COMMIT the replacement. Use only author-pragma-dsl CLI and native workspace editing.",
     );
     const final = await project.get();
     if (
@@ -375,11 +411,49 @@ try {
       )
     )
       throw new Error("Runtime did not publish the Evaluation batch modification.");
-  } else if (scenario === "chat" || scenario === "phase-two-chat")
-    await prompt("只回复ok，不读取技能，不调用工具。");
-  else if (scenario === "smoke" || scenario === "phase-two-smoke") {
+  } else if (scenario === "phase-three") {
     await prompt(
-      "This is a real CLI channel probe in a temporary workspace. Use your process/shell tool to run exactly `pragma dsl resources list --format json`. Do not print environment variables. Report the structured result and finish.",
+      "Read manage-pragma-missions and discover-pragma-resources. Use only pragma manage CLI for management, never old managed tools. In this isolated Host discover workspace, home presets, and knowledge stores; get the Probe preset. Create one Mission for its exact executor with goal Reply ok and its workspace and ready knowledge IDs. Query the Mission, list its work and get a work item after it finishes; send a follow-up Reply ok, then interrupt through the CLI. Write its missionId to mission-id.txt in your workspace. All probe mutations are explicitly authorized, but retain Host approval. Do not read credentials or managed storage.",
+    );
+    const missionId = (await readFile(join(workspace, "mission-id.txt"), "utf8")).trim();
+    const mission = await phaseThree!.missions.get(missionId);
+    if ((await phaseThree!.missions.list()).length !== 1 || mission.contextMounts.length === 0)
+      throw new Error("Mission creation/knowledge binding failed.");
+    await prompt(
+      "Read manage-pragma-automations. Use pragma manage CLI to allocate an Automation ID and create a daily UTC 09:00 schedule named Probe Automation for the same exact executor/workspace, enabled, reuse-session, with prompt Reply ok and request-approval permission mode. Save it; list and inspect current YAML. Modify its prompt to Reply done, disable it by saving, reset continuity, then delete it using current Project revisions. Write its exact ref to automation-ref.txt. Do not use generic DSL commit or old managed tools. All isolated mutations are explicitly authorized through Host approval.",
+    );
+    const ref = (await readFile(join(workspace, "automation-ref.txt"), "utf8")).trim();
+    if (
+      (await project.get()).resources.some((r) => r.kind === "Automation") ||
+      (await phaseThree!.store.getBinding(ref)) !== undefined
+    )
+      throw new Error("Automation deletion incomplete.");
+    if ((await phaseThree!.missions.get(missionId)).id !== missionId)
+      throw new Error("Automation management deleted a Mission.");
+    for (const name of [
+      "create_mission",
+      "send_mission_message",
+      "save_automation",
+      "reset_automation_session",
+      "delete_automation",
+    ])
+      if (!approvals.some((item) => item.tool === name && item.approved))
+        throw new Error(`Missing actual approval for ${name}`);
+  } else if (
+    scenario === "chat" ||
+    scenario === "phase-two-chat" ||
+    scenario === "phase-three-chat"
+  )
+    await prompt("只回复ok，不读取技能，不调用工具。");
+  else if (
+    scenario === "smoke" ||
+    scenario === "phase-two-smoke" ||
+    scenario === "phase-three-smoke" ||
+    scenario === "phase-three-catalog"
+  ) {
+    const smokeCommand = scenario === "phase-three-catalog" ? "mission.list" : "dsl.resources.list";
+    await prompt(
+      `This is a real CLI channel probe in a temporary workspace. Use your process/shell tool to run exactly \`pragma manage ${smokeCommand.replaceAll(".", " ")} --format json\`. Do not print environment variables. Report the structured result and finish.`,
     );
     const receiptRoots: string[] = [];
     const collect = async (directory: string) => {
@@ -398,8 +472,7 @@ try {
           receipts.push(JSON.parse(await readFile(join(directory, name), "utf8")));
     if (
       !receipts.some(
-        (receipt) =>
-          receipt.result?.command === "dsl.resources.list" && receipt.result?.exitCode === 0,
+        (receipt) => receipt.result?.command === smokeCommand && receipt.result?.exitCode === 0,
       )
     )
       throw new Error(
@@ -437,6 +510,7 @@ try {
   failure = error instanceof Error ? error.message : String(error);
 } finally {
   await session?.close().catch(() => undefined);
+  await phaseThree?.dispose();
   await store.close();
   const snapshot = await project.get();
   await writeFile(

@@ -10,4 +10,7 @@ imports:
   - ./experts/0000000000pragma.pragma.yaml
   - ./experts/0000000000sk1rev.pragma.yaml
   - ./experts/0000000000st0rev.pragma.yaml
+  - ./capabilities/000000000000m155.pragma.yaml
+  - ./capabilities/000000000000d15c.pragma.yaml
+  - ./capabilities/000000000000a070.pragma.yaml
 resources: []

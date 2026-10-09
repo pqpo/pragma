@@ -5,11 +5,11 @@ for current fields and limits. JSON files are inside the authorized workspace; s
 same JSON object. Returned draft paths are the editable files, not Project storage.
 
 ```sh
-pragma dsl draft start --input start.json --format json
-pragma dsl draft inspect --input draft.json --format json
-pragma dsl draft review --input review.json --format json
-pragma dsl draft prepare --input draft.json --format json
-pragma dsl changes commit --input commit.json --format json
+pragma manage dsl draft start --input start.json --format json
+pragma manage dsl draft inspect --input draft.json --format json
+pragma manage dsl draft review --input review.json --format json
+pragma manage dsl draft prepare --input draft.json --format json
+pragma manage dsl changes commit --input commit.json --format json
 ```
 
 `start.json` uses `targets`, for example an existing Expert:

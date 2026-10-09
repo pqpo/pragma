@@ -83,9 +83,9 @@ spec:
   `{ selection: string }` or `{ selection: string[] }`, using stable option values rather than labels.
 - Human prompts use the same typed variable segments as Expert and Team prompts.
 - Build Flow resources with the Flow CLI draft commands. Missing nodes or edges are allowed only while a draft
-  is incomplete; `pragma flow draft prepare` requires a complete, valid graph.
-- Pass the `operations` field of `pragma flow draft update` as a native JSON array. Its normal response is a compact
-  summary of the applied operations, current counts, and diagnostics; use `pragma flow draft get` when the
+  is incomplete; `pragma manage flow draft prepare` requires a complete, valid graph.
+- Pass the `operations` field of `pragma manage flow draft update` as a native JSON array. Its normal response is a compact
+  summary of the applied operations, current counts, and diagnostics; use `pragma manage flow draft get` when the
   complete resource is required.
 - Never add `spec.runDry`. Run Dry cases belong to a separate `Evaluation` resource. Discover `author-pragma-evaluation` and read its
   `references/run-dry.md` before creating or changing that resource.

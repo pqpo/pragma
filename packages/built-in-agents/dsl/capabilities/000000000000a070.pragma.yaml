@@ -1,0 +1,14 @@
+apiVersion: pragma/v5
+kind: Capability
+metadata:
+  id: 000000000000a070
+  name: Manage Pragma Automations
+  description: Save, enable, disable, delete and reset scheduled Automations with host bindings.
+  tags: [builtin, pragma, default-agent, skill]
+spec:
+  adapter: pragma.capability.skill@v1
+  config:
+    source:
+      type: project
+      path: skills/manage-pragma-automations
+    entry: SKILL.md

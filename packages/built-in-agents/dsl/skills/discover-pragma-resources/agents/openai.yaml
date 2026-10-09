@@ -1,0 +1,3 @@
+interface:
+  display_name: "Discover Pragma Resources"
+  short_description: "Discover Pragma Resources through authorized CLI commands"

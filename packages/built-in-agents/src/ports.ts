@@ -236,7 +236,7 @@ export interface PragmaAgentMissionPort {
     readonly nextCursor?: string | undefined;
   }>;
   getWorkItem(missionId: string, workItemId: string): Promise<PragmaAgentMissionWorkItemDetail>;
-  interrupt(missionId: string): Promise<PragmaAgentMission>;
+  interrupt(missionId: string, operationId?: string): Promise<PragmaAgentMission>;
 }
 
 export interface PragmaAgentAutomationPort {

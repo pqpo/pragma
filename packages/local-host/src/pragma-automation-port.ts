@@ -12,9 +12,40 @@ import { parsePragmaYaml } from "@pragma/interpreter";
 import { PragmaAutomationResourceSchema } from "@pragma/interpreter/ast";
 import { z } from "zod";
 
-import type { AutomationSummary } from "../../../shared/contracts/index.ts";
-import type { AutomationService } from "../automations/automation-service.ts";
-import type { PragmaProjectStore } from "../projects/pragma-project-store.ts";
+import type { PragmaAutomationResource } from "@pragma/interpreter/ast";
+
+export interface PragmaAutomationHostSummary {
+  readonly ref: string;
+  readonly resource: PragmaAutomationResource;
+  readonly binding?: { readonly workspace: { readonly path: string } } | undefined;
+  readonly status: PragmaAgentAutomationSummary["status"];
+  readonly nextRunAt?: string | undefined;
+  readonly missionId?: string | undefined;
+  readonly queueDepth: number;
+  readonly diagnostic?: string | undefined;
+}
+
+/** Platform scheduling/storage resources; shared command logic owns no scheduler. */
+export interface PragmaAutomationHostPort {
+  list(): Promise<PragmaAutomationHostSummary[]>;
+  save(
+    input: {
+      expectedProjectRevision: number;
+      resource: PragmaAutomationResource;
+      binding: {
+        workspace: string;
+        toolPermissionMode: "request-approval" | "auto-approve" | "full-access";
+        contextMounts: [];
+      };
+    },
+    operationId?: string,
+  ): Promise<PragmaAutomationHostSummary>;
+  delete(
+    input: { expectedProjectRevision: number; ref: string },
+    operationId?: string,
+  ): Promise<void>;
+  resetSession(ref: string, operationId?: string): Promise<PragmaAutomationHostSummary>;
+}
 import { paginateManagementItems } from "./management-pagination.ts";
 
 const DeleteResultSchema = z.object({
@@ -22,9 +53,9 @@ const DeleteResultSchema = z.object({
   ref: z.string().min(1),
 });
 
-export function createDesktopPragmaAgentAutomationPort(options: {
-  readonly service: AutomationService;
-  readonly project: PragmaProjectStore;
+export function createLocalHostPragmaAutomationPort(options: {
+  readonly service: PragmaAutomationHostPort;
+  readonly project: { get(): Promise<{ readonly revision: number }> };
   readonly stateRoot: string;
 }): PragmaAgentAutomationPort {
   const operationPath = (operationId: string) =>
@@ -81,15 +112,18 @@ export function createDesktopPragmaAgentAutomationPort(options: {
         async () => {
           const resource = PragmaAutomationResourceSchema.parse(parsePragmaYaml(input.source));
           return toPragmaAgentSummary(
-            await options.service.save({
-              expectedProjectRevision: input.expectedProjectRevision,
-              resource,
-              binding: {
-                workspace: input.workspaceId,
-                toolPermissionMode: input.toolPermissionMode,
-                contextMounts: [],
+            await options.service.save(
+              {
+                expectedProjectRevision: input.expectedProjectRevision,
+                resource,
+                binding: {
+                  workspace: input.workspaceId,
+                  toolPermissionMode: input.toolPermissionMode,
+                  contextMounts: [],
+                },
               },
-            }),
+              input.operationId,
+            ),
           );
         },
       );
@@ -99,10 +133,13 @@ export function createDesktopPragmaAgentAutomationPort(options: {
         operationPath(input.operationId),
         DeleteResultSchema,
         async () => {
-          await options.service.delete({
-            expectedProjectRevision: input.expectedProjectRevision,
-            ref: input.ref,
-          });
+          await options.service.delete(
+            {
+              expectedProjectRevision: input.expectedProjectRevision,
+              ref: input.ref,
+            },
+            input.operationId,
+          );
           return { deleted: true as const, ref: input.ref };
         },
       );
@@ -111,13 +148,14 @@ export function createDesktopPragmaAgentAutomationPort(options: {
       return await idempotentOperation(
         operationPath(input.operationId),
         PragmaAgentAutomationSummarySchema,
-        async () => toPragmaAgentSummary(await options.service.resetSession(input.ref)),
+        async () =>
+          toPragmaAgentSummary(await options.service.resetSession(input.ref, input.operationId)),
       );
     },
   };
 }
 
-function toPragmaAgentSummary(summary: AutomationSummary): PragmaAgentAutomationSummary {
+function toPragmaAgentSummary(summary: PragmaAutomationHostSummary): PragmaAgentAutomationSummary {
   return PragmaAgentAutomationSummarySchema.parse({
     ref: summary.ref,
     name: summary.resource.metadata.name,

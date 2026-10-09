@@ -104,3 +104,38 @@ Automation 等第三阶段内容仍保留原入口。
 继续用于 CLI、显式 binding 与 Revision Agent。CLI grants、审批和 owner/receipt 独立于模型目录。
 此前 prospective probe 数据保留；Pi Keychain、Qoder 额度、性能与平台等门禁继续未完成，
 不以此次授权切换宣称验收通过。详见[第二阶段实施记录](../architecture/management-tools-cli-skills-phase-two-implementation.md)。
+
+## 第三阶段与统一 manage 命名空间（2026-10-09）
+
+用户在实施期间明确选择所有管理命令使用 `pragma manage <group> …`，包括前两阶段的
+DSL、Flow 和 Evaluation。CLI 使用一套静态路由、输入对象和结果协议；不按 Execution
+环境抢占原 `pragma mission …`、`flow run` 等用户命令。旧管理命令的 argv 改为 manage
+前缀；历史实施记录保留原入口事实。command wire 的 operation 名、v1 协议和 receipt
+不变。公共 CLI 的独立管理 Host composition 由用户明确留待第四阶段或后续需求；本阶段
+`pragma manage` 缺少 Execution endpoint 时继续拒绝，不自动借用用户 Host 权限。
+Desktop 内置 client 与公共 CLI 共用 parser，仍不修改用户 PATH。
+
+Local Host 静态命令增加 Mission 7 项、Host 发现 4 项、Automation 4 项，总计 46 项
+（包含四个既有受控恢复命令）。原 Schema/handler、grants、allow/deny、审批、approved-input、
+receipt、取消与 Execution hooks 共用；Mission 查询/管理与 Automation 端口从 Desktop
+移入 Local Host，Desktop 只提供具体资源。workspace 校验的 Node 实现同样共享。
+Mission 使用原 application factory 和 controller/owner；不新增 consumer。
+
+Mission 创建从可信 operation identity 派生稳定 Mission ID，在创建成功但 operation receipt
+尚未落盘时找回原 Mission。中断用独立 `pragma.mission-command-interrupt/v1` journal 保存
+原 Execution 目标，恢复不影响之后的 Execution。原 Mission/operation 文件格式未改。
+
+Automation mutation 使用 Local Host 的 `pragma.management-mutation/v1` journal，在
+operation 与目标锁下冻结 binding/generation 和 publication identity，复用 Project 的
+transactional publication 查询；再完成 binding、分阶段清理和调度。失败重放不重复发布、
+旋转 generation 或删除新状态。既有 completed operation result 继续读取，未改写其 Schema。
+两种 journal 都是本阶段首次引入的独立 family；未知版本拒绝。没有修改现有持久状态、
+DSL apiVersion、compilerVersion 或 receipt 版本，也没有使用实验协议迁移豁免。
+
+三个新 Skill 与已有三项共用静态注册、Bundle、Runtime 物化和工作台只读投影。Automation
+reference 从 DSL Skill 移走；原六组 handler 定义仍用于 CLI、显式 binding 与 Revision Agent。
+默认 Pragma management binding 保留 `tools: []`，Interpreter 已有 contribution hooks 仍能
+装配私有通道；不以删除整个 binding 的方式移除 Schema。默认 managed tools 为两个 Revision
+调用，Pi 默认口径为 13。真实 Runtime、发行与性能结果分别见
+[第三阶段实施报告](../architecture/management-tools-cli-skills-phase-three-implementation.md)，
+未通过门禁不因默认目录切换而关闭。

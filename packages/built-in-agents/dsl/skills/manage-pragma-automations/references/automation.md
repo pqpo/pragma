@@ -65,5 +65,5 @@ Mission continuity:
   wants the next event to start a fresh Mission.
 
 The workspace, tool permission mode, model override, credentials, and future IM connection secrets
-are host bindings. Never place them in DSL. Call `save_automation` with an explicit `workspaceId` and
-`toolPermissionMode`; do not use generic `pragma dsl changes commit` for an Automation.
+are host bindings. Never place them in DSL. Call `pragma manage automation save` with an explicit `workspaceId` and
+`toolPermissionMode`; do not use generic `pragma manage dsl changes commit` for an Automation.

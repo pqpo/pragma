@@ -1,3 +1,6 @@
+import { join } from "node:path";
+import { z } from "zod";
+import { executeManagementMutation } from "@pragma/local-host";
 import { createHash, randomUUID } from "node:crypto";
 
 import {
@@ -14,6 +17,7 @@ import {
 } from "@pragma/interpreter/ast";
 
 import {
+  AutomationBindingSchema,
   AutomationAdapterOptionSchema,
   AutomationSummarySchema,
   type AutomationAdapterOption,
@@ -36,7 +40,7 @@ import type { MissionCreator } from "../missions/mission-creator.ts";
 import type { LocalHostMissionApplication } from "@pragma/local-host";
 import { MissionStoreError, type MissionStore } from "@pragma/local-host";
 import type { PragmaProjectStore } from "../projects/pragma-project-store.ts";
-import { validateWorkspace } from "../workspaces/workspace-scope.ts";
+import { validateHostWorkspace as validateWorkspace } from "@pragma/local-host";
 
 const SCHEDULE_ADAPTER = "pragma.automation.schedule@v1";
 const MAX_TIMER_DELAY_MS = 2_147_000_000;
@@ -49,10 +53,10 @@ export interface AutomationService {
   listAdapters(): readonly AutomationAdapterOption[];
   list(): Promise<AutomationSummary[]>;
   listMissionSources(): Promise<ReadonlyMap<string, string>>;
-  save(input: SaveAutomation): Promise<AutomationSummary>;
-  delete(input: DeleteAutomation): Promise<void>;
+  save(input: SaveAutomation, operationId?: string): Promise<AutomationSummary>;
+  delete(input: DeleteAutomation, operationId?: string): Promise<void>;
   trigger(ref: string): Promise<AutomationSummary>;
-  resetSession(ref: string): Promise<AutomationSummary>;
+  resetSession(ref: string, operationId?: string): Promise<AutomationSummary>;
   preview(input: PreviewAutomationSchedule): { readonly occurrences: readonly string[] };
 }
 
@@ -477,6 +481,20 @@ export function createAutomationService(options: {
     return sources;
   };
 
+  const assertMutationBinding = async (
+    ref: string,
+    previous: AutomationBinding | undefined,
+    planned: AutomationBinding | undefined,
+  ) => {
+    const current = await options.store.getBinding(ref);
+    const same = (binding: AutomationBinding | undefined) =>
+      JSON.stringify(current) === JSON.stringify(binding);
+    if (!same(previous) && !same(planned))
+      throw new Error(
+        "Automation binding revision conflict; inspect current state before retrying.",
+      );
+  };
+
   return {
     async start() {
       if (running) return;
@@ -516,87 +534,137 @@ export function createAutomationService(options: {
     async listMissionSources() {
       return await listMissionSources();
     },
-    async save(input) {
+    async save(input, operationId = randomUUID()) {
       const resource = PragmaAutomationResourceSchema.parse(input.resource);
-      if (resource.spec.adapter !== SCHEDULE_ADAPTER) {
-        throw new Error(`Automation adapter is not installed: ${resource.spec.adapter}.`);
-      }
-      const validation = await validateWorkspace(input.binding.workspace);
-      if (!validation.ok) {
-        throw new Error("The Automation workspace must be an accessible, writable directory.");
-      }
       const ref = canonicalPragmaResourceRef(resource);
-      const previousResource = await findAutomation(ref);
-      const previousBinding = await options.store.getBinding(ref);
-      const workspace = {
-        path: input.binding.workspace,
-        basename:
-          input.binding.workspace.split(/[\\/]/).filter(Boolean).at(-1) ?? input.binding.workspace,
-      };
-      const rotateGeneration =
-        previousResource === undefined ||
-        previousBinding === undefined ||
-        executionIdentity(previousResource, previousBinding) !==
-          executionIdentity(resource, {
-            ...previousBinding,
+      return await executeManagementMutation({
+        root: join(options.paths.storageStateRoot(), "pragma", "automation-mutations", "v1"),
+        operationId,
+        target: ref,
+        input: { action: "save", ...input },
+        stateSchema: z
+          .object({
+            resource: PragmaAutomationResourceSchema,
+            binding: AutomationBindingSchema,
+            previousBinding: AutomationBindingSchema.optional(),
+            rotateGeneration: z.boolean(),
+            baseRevision: z.number().int().nonnegative(),
+          })
+          .strict(),
+        resultSchema: AutomationSummarySchema,
+        prepare: async () => {
+          if (resource.spec.adapter !== SCHEDULE_ADAPTER)
+            throw new Error(`Automation adapter is not installed: ${resource.spec.adapter}.`);
+          const validation = await validateWorkspace(input.binding.workspace);
+          if (!validation.ok)
+            throw new Error("The Automation workspace must be an accessible, writable directory.");
+          const previousResource = await findAutomation(ref);
+          const previousBinding = await options.store.getBinding(ref);
+          const workspace = {
+            path: input.binding.workspace,
+            basename:
+              input.binding.workspace.split(/[\\/]/).filter(Boolean).at(-1) ??
+              input.binding.workspace,
+          };
+          const rotateGeneration =
+            previousResource === undefined ||
+            previousBinding === undefined ||
+            executionIdentity(previousResource, previousBinding) !==
+              executionIdentity(resource, {
+                ...previousBinding,
+                workspace,
+                toolPermissionMode: input.binding.toolPermissionMode,
+                modelOverride: input.binding.modelOverride,
+                contextMounts: input.binding.contextMounts,
+              });
+          if (rotateGeneration && previousBinding !== undefined)
+            await backfillMissionSourcesForBinding(ref, previousBinding);
+          const binding = createAutomationBinding({
+            automationRef: ref,
+            previous: previousBinding,
+            rotateGeneration,
             workspace,
             toolPermissionMode: input.binding.toolPermissionMode,
-            ...(input.binding.modelOverride === undefined
-              ? { modelOverride: undefined }
-              : { modelOverride: input.binding.modelOverride }),
+            modelOverride: input.binding.modelOverride,
             contextMounts: input.binding.contextMounts,
           });
-      if (rotateGeneration && previousBinding !== undefined) {
-        await backfillMissionSourcesForBinding(ref, previousBinding);
-      }
-      const snapshot = await options.project.upsert({
-        baseRevision: input.expectedProjectRevision,
-        resource,
+          return {
+            resource,
+            binding,
+            previousBinding,
+            rotateGeneration,
+            baseRevision: input.expectedProjectRevision,
+          };
+        },
+        apply: async (plan, publicationId, progress) => {
+          await assertMutationBinding(ref, plan.previousBinding, plan.binding);
+          if ((await options.project.findRevisionByPublicationId(publicationId)) === undefined) {
+            await options.project.applyTransactional(
+              { baseRevision: plan.baseRevision, upserts: [plan.resource] },
+              publicationId,
+            );
+          }
+          await options.store.saveBinding(plan.binding);
+          if (!progress.completed("cleaned")) {
+            if (plan.rotateGeneration && plan.previousBinding !== undefined) {
+              await moveOwnedStorageToTrash({
+                paths: options.paths,
+                owner: { type: "automation-generation", id: ref },
+                sources: [{ label: "state", path: options.paths.automationStateRoot(ref) }],
+              });
+              options.onStorageTrashed?.();
+            }
+            await progress.complete("cleaned");
+          }
+          await scheduleResource(plan.resource, plan.binding);
+          void processQueue(ref);
+          return await summaryFor(plan.resource);
+        },
       });
-      const binding = createAutomationBinding({
-        automationRef: ref,
-        previous: previousBinding,
-        rotateGeneration,
-        workspace,
-        toolPermissionMode: input.binding.toolPermissionMode,
-        ...(input.binding.modelOverride === undefined
-          ? {}
-          : { modelOverride: input.binding.modelOverride }),
-        contextMounts: input.binding.contextMounts,
-      });
-      await options.store.saveBinding(binding);
-      if (rotateGeneration && previousBinding !== undefined) {
-        await moveOwnedStorageToTrash({
-          paths: options.paths,
-          owner: { type: "automation-generation", id: ref },
-          sources: [{ label: "state", path: options.paths.automationStateRoot(ref) }],
-        });
-        options.onStorageTrashed?.();
-      }
-      if (snapshot.resources.every((candidate) => canonicalPragmaResourceRef(candidate) !== ref)) {
-        throw new Error(`Automation was not published: ${ref}.`);
-      }
-      await scheduleResource(resource, binding);
-      void processQueue(ref);
-      return await summaryFor(resource);
     },
-    async delete(input) {
-      clearTimer(input.ref);
-      const binding = await options.store.getBinding(input.ref);
-      if (binding !== undefined) await backfillMissionSourcesForBinding(input.ref, binding);
-      await options.project.remove({
-        baseRevision: input.expectedProjectRevision,
-        ref: input.ref,
+    async delete(input, operationId = randomUUID()) {
+      await executeManagementMutation({
+        root: join(options.paths.storageStateRoot(), "pragma", "automation-mutations", "v1"),
+        operationId,
+        target: input.ref,
+        input: { action: "delete", ...input },
+        stateSchema: z
+          .object({
+            previousBinding: AutomationBindingSchema.optional(),
+            baseRevision: z.number().int().nonnegative(),
+          })
+          .strict(),
+        resultSchema: z.object({ deleted: z.literal(true) }).strict(),
+        prepare: async () => {
+          const previousBinding = await options.store.getBinding(input.ref);
+          if (previousBinding !== undefined)
+            await backfillMissionSourcesForBinding(input.ref, previousBinding);
+          return { previousBinding, baseRevision: input.expectedProjectRevision };
+        },
+        apply: async (plan, publicationId, progress) => {
+          await assertMutationBinding(input.ref, plan.previousBinding, undefined);
+          clearTimer(input.ref);
+          if ((await options.project.findRevisionByPublicationId(publicationId)) === undefined) {
+            await options.project.applyTransactional(
+              { baseRevision: plan.baseRevision, upserts: [], removals: [input.ref] },
+              publicationId,
+            );
+          }
+          if (!progress.completed("cleaned")) {
+            await moveOwnedStorageToTrash({
+              paths: options.paths,
+              owner: { type: "automation", id: input.ref },
+              sources: [
+                { label: "binding.json", path: options.paths.automationBinding(input.ref) },
+                { label: "state", path: options.paths.automationStateRoot(input.ref) },
+              ],
+            });
+            options.onStorageTrashed?.();
+            await progress.complete("cleaned");
+          }
+          return { deleted: true as const };
+        },
       });
-      await moveOwnedStorageToTrash({
-        paths: options.paths,
-        owner: { type: "automation", id: input.ref },
-        sources: [
-          { label: "binding.json", path: options.paths.automationBinding(input.ref) },
-          { label: "state", path: options.paths.automationStateRoot(input.ref) },
-        ],
-      });
-      options.onStorageTrashed?.();
     },
     async trigger(ref) {
       if (!running) throw new Error("Automation service is not running.");
@@ -619,30 +687,54 @@ export function createAutomationService(options: {
       void processQueue(ref);
       return await summaryFor(resource);
     },
-    async resetSession(ref) {
-      const resource = await findAutomation(ref);
-      if (resource === undefined) throw new Error(`Automation not found: ${ref}.`);
-      const previous = await options.store.getBinding(ref);
-      if (previous === undefined) throw new Error(`Automation binding not found: ${ref}.`);
-      await backfillMissionSourcesForBinding(ref, previous);
-      const binding = createAutomationBinding({
-        automationRef: ref,
-        previous,
-        rotateGeneration: true,
-        workspace: previous.workspace,
-        toolPermissionMode: previous.toolPermissionMode,
-        ...(previous.modelOverride === undefined ? {} : { modelOverride: previous.modelOverride }),
-        contextMounts: previous.contextMounts,
+    async resetSession(ref, operationId = randomUUID()) {
+      return await executeManagementMutation({
+        root: join(options.paths.storageStateRoot(), "pragma", "automation-mutations", "v1"),
+        operationId,
+        target: ref,
+        input: { action: "reset", ref },
+        stateSchema: z
+          .object({
+            resource: PragmaAutomationResourceSchema,
+            previousBinding: AutomationBindingSchema,
+            binding: AutomationBindingSchema,
+          })
+          .strict(),
+        resultSchema: AutomationSummarySchema,
+        prepare: async () => {
+          const resource = await findAutomation(ref);
+          if (resource === undefined) throw new Error(`Automation not found: ${ref}.`);
+          const previousBinding = await options.store.getBinding(ref);
+          if (previousBinding === undefined)
+            throw new Error(`Automation binding not found: ${ref}.`);
+          await backfillMissionSourcesForBinding(ref, previousBinding);
+          const binding = createAutomationBinding({
+            automationRef: ref,
+            previous: previousBinding,
+            rotateGeneration: true,
+            workspace: previousBinding.workspace,
+            toolPermissionMode: previousBinding.toolPermissionMode,
+            modelOverride: previousBinding.modelOverride,
+            contextMounts: previousBinding.contextMounts,
+          });
+          return { resource, previousBinding, binding };
+        },
+        apply: async (plan, _publicationId, progress) => {
+          await assertMutationBinding(ref, plan.previousBinding, plan.binding);
+          await options.store.saveBinding(plan.binding);
+          if (!progress.completed("cleaned")) {
+            await moveOwnedStorageToTrash({
+              paths: options.paths,
+              owner: { type: "automation-generation", id: ref },
+              sources: [{ label: "state", path: options.paths.automationStateRoot(ref) }],
+            });
+            options.onStorageTrashed?.();
+            await progress.complete("cleaned");
+          }
+          await scheduleResource(plan.resource, plan.binding);
+          return await summaryFor(plan.resource);
+        },
       });
-      await options.store.saveBinding(binding);
-      await moveOwnedStorageToTrash({
-        paths: options.paths,
-        owner: { type: "automation-generation", id: ref },
-        sources: [{ label: "state", path: options.paths.automationStateRoot(ref) }],
-      });
-      options.onStorageTrashed?.();
-      await scheduleResource(resource, binding);
-      return await summaryFor(resource);
     },
     preview(input) {
       return {

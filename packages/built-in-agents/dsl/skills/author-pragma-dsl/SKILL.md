@@ -12,8 +12,8 @@ subcommand `--help`; do not print credentials or edit authoritative Project stor
 
 ## Workflow
 
-1. Resolve missing intent. Use `pragma dsl resources list` to find exact refs and
-   `pragma dsl resources read` for bounded current YAML. Query `pragma dsl options list` by category
+1. Resolve missing intent. Use `pragma manage dsl resources list` to find exact refs and
+   `pragma manage dsl resources read` for bounded current YAML. Query `pragma manage dsl options list` by category
    and follow `nextCursor`: `runtime-models`, `capabilities`, `avatars`, `builtin-experts`.
    Recommend only listed models, capabilities and avatar personas; preserve an existing avatar
    unless asked to change it. Ask whether to use the recommended capabilities, customize them,
@@ -21,42 +21,40 @@ subcommand `--help`; do not print credentials or edit authoritative Project stor
    Read-only system Experts can be Team coordinators/members; reuse matching entries rather than
    recreating them or asking for their model/avatar/capability choices. Unmaterialized Host options
    are the only refs that cannot yet be read as project resources.
-2. Read the relevant reference below. `pragma dsl draft start` creates one Mission-owned file draft
+2. Read the relevant reference below. `pragma manage dsl draft start` creates one Mission-owned file draft
    containing all related new or existing Experts/Teams. It allocates IDs and returns intentionally
    incomplete skeletons plus workspace paths. Complete required fields with native read/edit tools;
    preserve each ID, kind, apiVersion and filename. Link new resources using returned refs.
-3. `pragma dsl draft inspect` returns compact diagnostics, omitted-field effects, dependencies and
+3. `pragma manage dsl draft inspect` returns compact diagnostics, omitted-field effects, dependencies and
    hashes. Explain material removals and automatically created dependencies. `preserved_unknown`
-   means retained compatibility data. When details are omitted, use `pragma dsl draft review`,
+   means retained compatibility data. When details are omitted, use `pragma manage dsl draft review`,
    preserving section/ref filters while following `nextCursor`. Resolve target conflicts before
    relying on an unavailable effective preview. Do not request a full textual diff.
-4. `pragma dsl draft prepare` freezes the files and validates an immutable submission; pass only
+4. `pragma manage dsl draft prepare` freezes the files and validates an immutable submission; pass only
    `draftId`. Fix diagnostics in the same editable files and prepare again. Read prepared YAML
-   chunks with `pragma dsl changes read` only when compact review is insufficient.
-5. `pragma dsl changes commit` submits the prepared `changeSetId` through Host approval. Shell
+   chunks with `pragma manage dsl changes read` only when compact review is insufficient.
+5. `pragma manage dsl changes commit` submits the prepared `changeSetId` through Host approval. Shell
    approval does not approve publication. Report success/failure, committed revision and changed refs.
-   On concurrent target changes, use `pragma dsl draft restart`, compare the old read-only reference
+   On concurrent target changes, use `pragma manage dsl draft restart`, compare the old read-only reference
    with the new workspace files, and explicitly replay still-valid edits. Do not blindly retry edits.
-6. Use `pragma dsl draft list` to locate this Mission's drafts and `pragma dsl draft discard` for
-   approved cleanup. An `unowned_target` requires explicit `pragma dsl draft recover`; historical
-   prepared changes use `pragma dsl changes recover`. Recovery preserves data and requires separate
+6. Use `pragma manage dsl draft list` to locate this Mission's drafts and `pragma manage dsl draft discard` for
+   approved cleanup. An `unowned_target` requires explicit `pragma manage dsl draft recover`; historical
+   prepared changes use `pragma manage dsl changes recover`. Recovery preserves data and requires separate
    approval; known foreign owners cannot be taken over. Publication still needs its own approval.
 
-Use `pragma dsl changes prepare` only for complete resources without a dedicated authoring workflow;
+Use `pragma manage dsl changes prepare` only for complete resources without a dedicated authoring workflow;
 Expert/Team require file drafts, Flow uses `author-pragma-flow`, and Evaluation uses
 `author-pragma-evaluation`. Flow and Evaluation are independent transactions. After a Flow commit,
 offer Evaluation authoring only if not already requested; do not create an Evaluation implicitly.
 
-Before preparing, ensure IDs came from Host draft allocation or `pragma dsl ids allocate`, project
+Before preparing, ensure IDs came from Host draft allocation or `pragma manage dsl ids allocate`, project
 refs were read, ContextStore mounts declare `ref`, `namespace`, `required`, and dependencies do not
 duplicate existing RuntimeProfile, Capability or ContextStore resources. Preserve unknown fields;
 follow diagnostic source/path values literally. Stable request UUIDs are reused only with identical
 command/input to retrieve the original receipt. Cancellation never undoes a published revision.
 `input_required` returns control to the owning Execution; the CLI cannot approve for the user.
 
-Automation remains on its existing managed-tool workflow in this migration stage. Read
-[references/automation.md](references/automation.md); use `save_automation` to retain Host workspace
-and permission binding, rather than generic prepare/commit.
+For Automation resources and Host bindings, discover `manage-pragma-automations`.
 
 ## References
 

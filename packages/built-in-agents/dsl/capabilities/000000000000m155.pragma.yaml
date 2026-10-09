@@ -1,0 +1,14 @@
+apiVersion: pragma/v5
+kind: Capability
+metadata:
+  id: 000000000000m155
+  name: Manage Pragma Missions
+  description: Discover, create, query and control persistent Missions through authorized management commands.
+  tags: [builtin, pragma, default-agent, skill]
+spec:
+  adapter: pragma.capability.skill@v1
+  config:
+    source:
+      type: project
+      path: skills/manage-pragma-missions
+    entry: SKILL.md

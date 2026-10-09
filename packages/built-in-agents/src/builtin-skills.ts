@@ -9,6 +9,9 @@ const BUILT_IN_SKILL_REFS = [
   PragmaCapabilityRefSchema.parse("capability:1h2j3k4m5n6p7q8r"),
   PragmaCapabilityRefSchema.parse("capability:000000000000f10w"),
   PragmaCapabilityRefSchema.parse("capability:000000000000eva1"),
+  PragmaCapabilityRefSchema.parse("capability:000000000000m155"),
+  PragmaCapabilityRefSchema.parse("capability:000000000000d15c"),
+  PragmaCapabilityRefSchema.parse("capability:000000000000a070"),
 ] as const;
 
 export const BUILT_IN_SKILLS = BUILT_IN_SKILL_REFS.map((ref) => {

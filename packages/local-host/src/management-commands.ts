@@ -47,6 +47,21 @@ import {
 } from "./management-command-ownership.ts";
 
 export const MANAGEMENT_COMMAND_TOOLS = {
+  "mission.list": "list_missions",
+  "mission.get": "get_mission",
+  "mission.create": "create_mission",
+  "mission.send": "send_mission_message",
+  "mission.interrupt": "interrupt_mission",
+  "mission.work.list": "list_mission_work_items",
+  "mission.work.get": "get_mission_work_item",
+  "workspace.list": "list_workspaces",
+  "home-project.list": "list_home_projects",
+  "home-project.get": "get_home_project",
+  "knowledge-store.list": "list_knowledge_stores",
+  "automation.list": "list_automations",
+  "automation.save": "save_automation",
+  "automation.delete": "delete_automation",
+  "automation.reset-session": "reset_automation_session",
   "flow.draft.create": "create_flow_draft",
   "flow.draft.get": "get_flow_draft",
   "flow.draft.update": "update_flow_draft",
@@ -356,7 +371,35 @@ export function createManagementCommandApplication(options: {
                   },
                 },
               };
-        const tools = [...createPragmaManagementTools(ports, options.scope)];
+        const commandPorts = {
+          ...ports,
+          ...(ports.missions === undefined
+            ? {}
+            : {
+                missions: {
+                  ...ports.missions,
+                  submit: (input: Parameters<NonNullable<typeof ports.missions>["submit"]>[0]) =>
+                    preserveCommandStateError(() => ports.missions!.submit(input)),
+                  interrupt: (id: string, identity?: string) =>
+                    preserveCommandStateError(() => ports.missions!.interrupt(id, identity)),
+                },
+              }),
+          ...(ports.automations === undefined
+            ? {}
+            : {
+                automations: {
+                  ...ports.automations,
+                  save: (input: Parameters<NonNullable<typeof ports.automations>["save"]>[0]) =>
+                    preserveCommandStateError(() => ports.automations!.save(input)),
+                  delete: (input: Parameters<NonNullable<typeof ports.automations>["delete"]>[0]) =>
+                    preserveCommandStateError(() => ports.automations!.delete(input)),
+                  resetSession: (
+                    input: Parameters<NonNullable<typeof ports.automations>["resetSession"]>[0],
+                  ) => preserveCommandStateError(() => ports.automations!.resetSession(input)),
+                },
+              }),
+        };
+        const tools = [...createPragmaManagementTools(commandPorts, options.scope)];
         for (const [command, definition] of Object.entries(recoveryDefinitions)) {
           tools.push({
             name: definition.name,

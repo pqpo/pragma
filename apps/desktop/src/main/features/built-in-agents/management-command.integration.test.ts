@@ -1,3 +1,5 @@
+import { compileBuiltInAgent, BUILT_IN_PRAGMA_REF } from "@pragma/built-in-agents";
+import { createDesktopAdapterHost } from "../missions/mission-adapter-host.ts";
 import { PRAGMA_DSL_WRITE_API_VERSION } from "@pragma/interpreter/ast";
 import { randomUUID, createHash } from "node:crypto";
 import { execFile } from "node:child_process";
@@ -8,6 +10,7 @@ import { promisify } from "node:util";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { z } from "zod";
 import {
+  createStaticRuntimeResolver,
   createPragmaLogger,
   HumanInteractionCheckpointError,
   defineExpert,
@@ -36,6 +39,8 @@ import {
   createManagementCommandTestFixture,
   PROBE_AUTHORING_RUNTIME_REF,
 } from "./management-command-test-fixture.ts";
+
+import { createPhaseThreeCommandTestFixture } from "./phase-three-command-test-fixture.ts";
 
 import { openRuntimeSession, createRuntimeTestFeatures } from "@pragma/core/testing";
 
@@ -67,6 +72,7 @@ const operations = [
 async function fixture(
   requireCreateApproval: false | "definition" | "plugin" = false,
   approvalTool = "create_flow_draft",
+  phaseThree = false,
 ) {
   const root = await mkdtemp(join(tmpdir(), "pragma-command-boundary-"));
   cleanup.push(() => rm(root, { force: true, recursive: true }));
@@ -147,8 +153,42 @@ async function fixture(
     signal: controller.signal,
   };
   const receiptsRoot = join(root, "command-receipts");
+  const runtime = defineRuntimeDriver<never, { id: string }>({
+    descriptor: {
+      id: "command-host-test",
+      kind: "command-host-test",
+      displayName: "Command Host test",
+    },
+    features: createRuntimeTestFeatures(),
+    createSession: ({ systemSessionId }) => ({ id: systemSessionId }),
+    restoreSession: ({ systemSessionId }) => ({ id: systemSessionId }),
+    readSession: (native) => ({ runtimeSessionId: native.id }),
+    mapEvent: () => ({ events: [] }),
+    startTurn: async (_native, turn) => {
+      if (turn.rawQuery.includes("wait forever"))
+        await new Promise<void>((resolve) => {
+          if (turn.signal.aborted) resolve();
+          else turn.signal.addEventListener("abort", () => resolve(), { once: true });
+        });
+      return { outputText: "ok" };
+    },
+  });
+  const host = phaseThree
+    ? await createPhaseThreeCommandTestFixture(
+        root,
+        createStaticRuntimeResolver({
+          runtimes: [runtime],
+          defaultRuntimeId: runtime.descriptor.id,
+        }),
+      )
+    : undefined;
+  if (host !== undefined) cleanup.push(host.dispose);
   const app = createManagementCommandApplication({
-    ports: { project: port, missions: {} as never },
+    ports: {
+      project: port,
+      missions: host?.missionPort ?? ({} as never),
+      ...(host === undefined ? {} : { automations: host.automations, resources: host.resources }),
+    },
     scope,
     receiptsRoot,
     findOwner: createManagementCommandOwnerLookup(root),
@@ -170,6 +210,7 @@ async function fixture(
     await writeFile(inputPath, JSON.stringify(input));
     const args = [
       clientPath,
+      "manage",
       ...command.split("."),
       "--input",
       inputPath,
@@ -206,6 +247,7 @@ async function fixture(
   };
   return {
     root,
+    host,
     project,
     port,
     scope,
@@ -1400,4 +1442,305 @@ it("relocates the entire historical workspace alias without changing protocol fi
     ],
     ordinaryMarkerPath: join(target, "plain.yaml"),
   });
+});
+
+async function markCommandPending(f: Awaited<ReturnType<typeof fixture>>, requestId: string) {
+  const operationId = createHash("sha256")
+    .update(JSON.stringify([f.scope.missionId, "root-context", requestId]))
+    .digest("hex");
+  const path = join(f.receiptsRoot, `${operationId}.json`);
+  const receipt = JSON.parse(await readFile(path, "utf8"));
+  await writeFile(path, JSON.stringify({ ...receipt, state: "pending", result: undefined }));
+  return operationId;
+}
+
+describe(
+  "phase-three management commands through real CLI and shared Host",
+  { timeout: 60_000 },
+  () => {
+    it("discovers resources, starts one owner, queries work, sends and interrupts", async () => {
+      const f = await fixture(false, "create_flow_draft", true);
+      const h = f.host!;
+      expect((await f.invoke("workspace.list", {})).result).toMatchObject({
+        items: [expect.objectContaining({ workspaceId: await realpath(f.root) })],
+      });
+      expect((await f.invoke("home-project.list", {})).result).toMatchObject({
+        items: [expect.objectContaining({ projectId: h.preset.id })],
+      });
+      expect((await f.invoke("home-project.get", { projectId: h.preset.id })).result).toMatchObject(
+        { contextStoreIds: [h.contextStore.id] },
+      );
+      expect((await f.invoke("knowledge-store.list", {})).result).toMatchObject({
+        items: [expect.objectContaining({ storeId: h.contextStore.id })],
+      });
+      const input = {
+        goal: "Reply ok",
+        executorRef: h.executor.ref,
+        workspaceId: f.root,
+        contextStoreIds: [h.contextStore.id],
+      };
+      expect((await f.invoke("mission.create", input)).status).toBe("failed");
+      expect(await h.missions.list()).toEqual([]);
+      f.approve();
+      const requestId = randomUUID();
+      const created = await f.invoke("mission.create", input, requestId);
+      expect(created, JSON.stringify(created)).toMatchObject({
+        status: "succeeded",
+        result: { executorRef: h.executor.ref, contextStoreIds: [h.contextStore.id] },
+      });
+      const missionId = String(created.result["missionId"]);
+      expect((await f.invoke("mission.create", input, requestId)).result["missionId"]).toBe(
+        missionId,
+      );
+      expect(await h.missions.list()).toHaveLength(1);
+      const identity = await markCommandPending(f, requestId);
+      await rm(
+        join(
+          f.root,
+          "state",
+          "pragma",
+          "operations",
+          `${encodePragmaPathSegment(identity)}.task.json`,
+        ),
+      );
+      expect((await f.invoke("mission.create", input, requestId)).result["missionId"]).toBe(
+        missionId,
+      );
+      expect(await h.missions.list()).toHaveLength(1);
+      await vi.waitFor(
+        async () => expect((await h.missions.get(missionId)).execution?.status).toBe("succeeded"),
+        { timeout: 15_000 },
+      );
+      expect((await f.invoke("mission.list", {})).result).toMatchObject({
+        items: [expect.objectContaining({ missionId })],
+      });
+      expect((await f.invoke("mission.get", { missionId })).result).toMatchObject({ missionId });
+      const work = await f.invoke("mission.work.list", { missionId });
+      expect(work, JSON.stringify(work)).toMatchObject({ status: "succeeded" });
+      const items = work.result["items"] as { workItemId: string }[];
+      expect(items.length).toBeGreaterThan(0);
+      expect(
+        (await f.invoke("mission.work.get", { missionId, workItemId: items[0]!.workItemId }))
+          .result,
+      ).toMatchObject({ workItemId: items[0]!.workItemId });
+      expect((await f.invoke("mission.send", { missionId, content: "wait forever" })).status).toBe(
+        "succeeded",
+      );
+      await vi.waitFor(
+        async () => expect((await h.missions.get(missionId)).execution?.status).toBe("running"),
+        { timeout: 15_000 },
+      );
+      expect((await f.invoke("mission.interrupt", { missionId })).status).toBe("succeeded");
+      await vi.waitFor(
+        async () => expect((await h.missions.get(missionId)).execution?.status).toBe("cancelled"),
+        { timeout: 15_000 },
+      );
+    });
+
+    it("saves, changes, disables, resets and deletes Automations without deleting Missions", async () => {
+      const f = await fixture(false, "create_flow_draft", true);
+      const h = f.host!;
+      const resource = {
+        apiVersion: PRAGMA_DSL_WRITE_API_VERSION,
+        kind: "Automation",
+        metadata: {
+          id: "000000000000a111",
+          name: "Command schedule",
+          description: "Test",
+          tags: [],
+        },
+        spec: {
+          adapter: "pragma.automation.schedule@v1",
+          binding: "binding:desktop-automation",
+          config: {
+            trigger: { kind: "calendar", frequency: "daily", time: "09:00", timezone: "UTC" },
+          },
+          enabled: true,
+          route: { executor: { ref: h.executor.ref }, input: { kind: "prompt", value: "ok" } },
+          interaction: { mode: "reuse-session" },
+          delivery: { adapter: "pragma.automation.delivery.local@v1" },
+        },
+      };
+      const input = () => ({
+        expectedProjectRevision: 1,
+        source: JSON.stringify(resource),
+        workspaceId: f.root,
+        toolPermissionMode: "request-approval",
+      });
+      expect((await f.invoke("automation.save", input())).status).toBe("failed");
+      expect((await h.project.get()).revision).toBe(1);
+      f.approve();
+      const requestId = randomUUID();
+      const apply = h.project.applyTransactional.bind(h.project);
+      vi.spyOn(h.project, "applyTransactional").mockImplementationOnce(async (...args) => {
+        await apply(...args);
+        throw new Error("Crash after publication before binding");
+      });
+      expect((await f.invoke("automation.save", input(), requestId)).status).toBe("failed");
+      expect((await h.project.get()).revision).toBe(2);
+      await markCommandPending(f, requestId);
+      const saved = await f.invoke("automation.save", input(), requestId);
+      expect(saved, JSON.stringify(saved)).toMatchObject({
+        status: "succeeded",
+        result: { enabled: true },
+      });
+      const ref = String(saved.result["ref"]);
+      const binding = await h.store.getBinding(ref);
+      expect((await f.invoke("automation.save", input(), requestId)).result).toEqual(saved.result);
+      expect((await h.project.get()).revision).toBe(2);
+      expect((await f.invoke("automation.list", {})).result).toMatchObject({
+        items: [expect.objectContaining({ ref })],
+      });
+      const historical = await h.creator.create({
+        workspace: f.root,
+        missionInput: { kind: "prompt", value: "history" },
+        executorRef: h.executor.ref,
+      });
+      await h.store.updateState(ref, binding!.generation, (state) => ({
+        ...state,
+        missionId: historical.id,
+      }));
+      resource.spec.enabled = false;
+      expect(
+        (await f.invoke("automation.save", { ...input(), expectedProjectRevision: 1 })).status,
+      ).toBe("failed");
+      expect(
+        (await f.invoke("automation.save", { ...input(), expectedProjectRevision: 2 })).result,
+      ).toMatchObject({ enabled: false });
+      const resetRequest = randomUUID();
+      const saveBinding = h.store.saveBinding.bind(h.store);
+      vi.spyOn(h.store, "saveBinding").mockImplementationOnce(async (value) => {
+        await saveBinding(value);
+        throw new Error("Crash after binding");
+      });
+      expect((await f.invoke("automation.reset-session", { ref }, resetRequest)).status).toBe(
+        "failed",
+      );
+      const pendingGeneration = (await h.store.getBinding(ref))!.generation;
+      await markCommandPending(f, resetRequest);
+      expect((await f.invoke("automation.reset-session", { ref }, resetRequest)).status).toBe(
+        "succeeded",
+      );
+      const reset = await h.store.getBinding(ref);
+      expect(reset?.generation).not.toBe(binding?.generation);
+      expect(reset?.generation).toBe(pendingGeneration);
+      expect((await f.invoke("automation.reset-session", { ref }, resetRequest)).status).toBe(
+        "succeeded",
+      );
+      expect((await h.store.getBinding(ref))?.generation).toBe(reset?.generation);
+      expect(
+        (await f.invoke("automation.delete", { ref, expectedProjectRevision: 3 })).result,
+      ).toMatchObject({ deleted: true });
+      expect(await h.store.getBinding(ref)).toBeUndefined();
+      expect((await h.missions.get(historical.id)).id).toBe(historical.id);
+    });
+  },
+);
+
+it("assembles the production CLI grants and hooks with no selected management tools", async () => {
+  const f = await fixture();
+  let result: unknown;
+  let endpoint: string | undefined;
+  const runtime = defineRuntimeDriver<never, { context: RuntimeNativeSessionContext }>({
+    descriptor: {
+      id: "empty-management-test",
+      kind: "empty-management-test",
+      displayName: "Empty management test",
+    },
+    features: createRuntimeTestFeatures(),
+    createSession: (context) => ({ context }),
+    mapEvent: () => ({ events: [] }),
+    startTurn: async (native) => {
+      endpoint = native.context.processEnvironment["PRAGMA_EXECUTION_COMMAND_ENDPOINT"];
+      result = await callManagementCommand({
+        endpoint,
+        request: {
+          protocol: MANAGEMENT_COMMAND_PROTOCOL,
+          requestId: randomUUID(),
+          command: "dsl.resources.list",
+          input: {},
+        },
+      });
+      return { outputText: "ok" };
+    },
+  });
+  const compiled = await compileBuiltInAgent({
+    ref: BUILT_IN_PRAGMA_REF,
+    environmentId: "desktop",
+    definitionStateRoot: join(f.root, "definitions"),
+    workspace: f.root,
+    pragmaHome: f.root,
+    runtimes: createStaticRuntimeResolver({
+      runtimes: [runtime],
+      defaultRuntimeId: runtime.descriptor.id,
+    }),
+    adapterHost: createDesktopAdapterHost(
+      {
+        capabilityStore: {} as never,
+        capabilityCredentials: {} as never,
+        capabilitiesPath: f.root,
+        pragmaHome: f.root,
+        pragmaManagement: { project: f.port, missions: {} as never },
+        pragmaManagementScope: f.scope,
+        pragmaCommandDistribution: async () => ({ directory: f.root }),
+      },
+      f.root,
+    ),
+    resolveExternalInvocable: async (ref) => ({
+      resource: {
+        apiVersion: PRAGMA_DSL_WRITE_API_VERSION,
+        kind: "Expert",
+        metadata: {
+          id: ref.slice("expert:".length),
+          avatarId: "pragma.avatar.expert.default",
+          name: "Delegate",
+          description: "Test",
+          tags: [],
+        },
+        spec: {
+          scope: "test",
+          instructions: "test",
+          tools: [],
+          capabilities: [],
+          plugins: [],
+          contextStores: [],
+          toolApprovals: {},
+        },
+      },
+      value: f.context.agent,
+    }),
+  });
+  expect(compiled.value.tools?.map((tool) => tool.name)).toEqual([
+    "call_store_revision_agent",
+    "call_skill_revision_agent",
+  ]);
+  expect(compiled.value.skills?.skills).toHaveLength(6);
+  const session = await openRuntimeSession(runtime, {
+    agent: compiled.value,
+    pragmaHome: f.root,
+    systemSessionId: "empty-management-session",
+    owner: {
+      type: "expert-session",
+      ownerId: "empty-management-owner",
+      contextId: "empty-context",
+    },
+    context: { attributes: { "execution.contextId": "empty-context" } },
+    executionContext: f.context.executionContext,
+  });
+  await session.submit({ query: "check", execution: { context: f.context.executionContext } })
+    .result;
+  expect(endpoint).toBeTruthy();
+  expect(result).toMatchObject({ status: "succeeded", origin: { missionId: f.scope.missionId } });
+  await session.close();
+  await expect(
+    callManagementCommand({
+      endpoint,
+      request: {
+        protocol: MANAGEMENT_COMMAND_PROTOCOL,
+        requestId: randomUUID(),
+        command: "dsl.resources.list",
+        input: {},
+      },
+    }),
+  ).rejects.toMatchObject({ code: "DEPENDENCY_UNAVAILABLE" });
 });

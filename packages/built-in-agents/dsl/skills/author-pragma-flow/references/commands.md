@@ -1,17 +1,17 @@
 # Commands and requests
 
 The CLI accepts the existing handler parameter objects and authoritative validation. Read one
-command's help for its current Schema, for example `pragma flow draft update --help`.
+command's help for its current Schema, for example `pragma manage flow draft update --help`.
 
 ```sh
-pragma dsl resources list --input list.json --format json
-pragma flow draft create --input create.json --request-id <uuid> --format json
-pragma flow draft update --input update.json --request-id <uuid> --format json
-pragma flow draft validate --input draft.json --format json
-pragma flow draft prepare --input prepare.json --request-id <uuid> --format json
-pragma dsl changes read --input review.json --format json
-pragma dsl changes commit --input commit.json --request-id <uuid> --format json
-pragma flow draft discard --input draft.json --request-id <uuid> --format json
+pragma manage dsl resources list --input list.json --format json
+pragma manage flow draft create --input create.json --request-id <uuid> --format json
+pragma manage flow draft update --input update.json --request-id <uuid> --format json
+pragma manage flow draft validate --input draft.json --format json
+pragma manage flow draft prepare --input prepare.json --request-id <uuid> --format json
+pragma manage dsl changes read --input review.json --format json
+pragma manage dsl changes commit --input commit.json --request-id <uuid> --format json
+pragma manage flow draft discard --input draft.json --request-id <uuid> --format json
 ```
 
 A draft request is `{ "draftId": "<returned UUID>" }`. An update object contains `draftId`,
@@ -38,8 +38,8 @@ Older Flow tools produced drafts and prepared changes without command ownership 
 A missing record reports `details.reason: "unowned_target"` and names a recovery command:
 
 ```sh
-pragma flow draft recover --input draft.json --request-id <uuid> --format json
-pragma dsl changes recover --input commit.json --request-id <uuid> --format json
+pragma manage flow draft recover --input draft.json --request-id <uuid> --format json
+pragma manage dsl changes recover --input commit.json --request-id <uuid> --format json
 ```
 
 The inputs retain the original `{ "draftId": "..." }` / `{ "changeSetId": "..." }` shapes.

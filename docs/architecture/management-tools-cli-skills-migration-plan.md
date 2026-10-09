@@ -6,6 +6,11 @@
 
 状态：第一阶段实现已进入独立 worktree；2026-10-09 用户授权先移除六个默认 Flow 工具并继续手动测试，默认 Schema 已切换，部分验收尚未完成。详见[实施报告](management-tools-cli-skills-phase-one-implementation.md)。第二阶段 CLI 与 Skill 已实现，2026-10-09 用户授权移除 21 个默认工具（49 → 28），其余验收仍待补齐，见[第二阶段记录](management-tools-cli-skills-phase-two-implementation.md)。本文件仍是分阶段计划，不表示阶段已完成。
 
+第三阶段实施期间，用户进一步确定全部管理命令统一使用 `pragma manage` 前缀，保留原
+用户 CLI 入口，独立管理 Host composition 延后。第三阶段的最终实现、命令映射、成本与
+未完成门禁见[第三阶段实施报告](management-tools-cli-skills-phase-three-implementation.md)。
+当前管理命令以六个内置 Skill 和 `pragma manage … --help` 为准；原用户 Mission 入口保持独立。
+
 ## 1. 目标与范围
 
 按预期上下文收益，分三个阶段将内置 Pragma 默认选择的 42 个管理工具迁移到 CLI，通过内置 Skill 按需发现和加载操作说明。每阶段提供完整可用工作流，再移除对应默认工具注入。
@@ -130,8 +135,8 @@ Flow 的主要收益来自 `update_flow_draft`（9,388 参考 tokens、19,453 Sc
 - [ ] 记录逐工具基线、真实“只回复 ok”新 Mission 基线，以及 Flow 新建/修改场景的任务累计输入与调用次数。
 - [ ] 提交调用身份、授权/审批、CLI 分发和内置 Skill 只读投影 ADR，落实第 3 节公共基础。
 - [ ] 优先复用现有管理工具 factory、handler 和 Host 端口；按第 10 节机械提取必要的 Host 实现，保留 draft revision、诊断、事务和恢复，不重写 Flow 业务。
-- [ ] 提供 `pragma flow draft create|get|update|validate|prepare|discard`，大 operations 走文件/stdin。
-- [ ] 同时提供 Flow 所需公共依赖：资源 list/read、options/ID 分配（按需要）、prepared change 读取、`pragma dsl changes commit`。这些是 CLI 能力依赖，第一阶段不移除仍被其他工具工作流使用的公共默认工具。
+- [ ] 提供 `pragma manage flow draft create|get|update|validate|prepare|discard`，大 operations 走文件/stdin。
+- [ ] 同时提供 Flow 所需公共依赖：资源 list/read、options/ID 分配（按需要）、prepared change 读取、`pragma manage dsl changes commit`。这些是 CLI 能力依赖，第一阶段不移除仍被其他工具工作流使用的公共默认工具。
 - [ ] 内置 `author-pragma-flow` Skill，说明草稿→增量修改→校验→prepare→审批/commit→冲突/取消恢复；references 按主题拆分。
 - [ ] 将现有 `author-pragma-dsl` 的 Flow 指引改为发现新 Skill，消除旧 Flow 工具调用指令，保留尚未迁移的其他工作流。
 - [ ] 在工作台展示新 Flow Skill 和现有 author-pragma-dsl Skill，并落实 UI 与 Host 双层只读验证。
@@ -197,10 +202,10 @@ Flow 的主要收益来自 `update_flow_draft`（9,388 参考 tokens、19,453 Sc
 ### 实施清单
 
 - [x] 按第 10 节复用剩余 DSL file draft 与 Evaluation 工具 handler，必要 Host 实现连同原测试机械迁入 Local Host，Desktop 与 CLI 使用同一权威实现。
-- [x] 提供 `pragma dsl resources list|read`、`pragma dsl options list`、`pragma dsl ids allocate`、`pragma dsl draft start|list|inspect|review|prepare|restart|discard` 和 `pragma dsl changes prepare|read|commit`。
+- [x] 提供 `pragma manage dsl resources list|read`、`pragma manage dsl options list`、`pragma manage dsl ids allocate`、`pragma manage dsl draft start|list|inspect|review|prepare|restart|discard` 和 `pragma manage dsl changes prepare|read|commit`。
 - [x] 保持 Expert/Team 必须走 Mission-owned 文件草稿；泛化 prepare 不得绕过文件草稿要求。
 - [x] 复用 `author-pragma-dsl` 作为 Expert/ExpertTeam 与其依赖资源的 CLI 编写入口，保留现有 Skill identity 并更新用途；Flow 与 Evaluation 的详细工作流移至独立 Skill，避免重复和相互矛盾的正文。
-- [x] 提供 `pragma evaluation draft create|get|cases|update|run|prepare|discard`，cases 和 operations 走文件/stdin，正文和诊断有界。
+- [x] 提供 `pragma manage evaluation draft create|get|cases|update|run|prepare|discard`，cases 和 operations 走文件/stdin，正文和诊断有界。
 - [x] 新增内置 `author-pragma-evaluation` Skill，保持当前工具支持的 Flow Run Dry 范围，不顺带扩展测评领域。
 - [x] Flow 与 Evaluation 独立提交：先保存 Flow，Evaluation 绑定已提交 Flow；prepare Evaluation 仍执行必要复验，不用 Skill 约定代替 Host 检查。
 - [x] 将本阶段 Skill 接入工作台只读目录和 Pragma 精简索引，更新内置 DSL、生成文件、调用方、文档和 tests。
@@ -231,11 +236,11 @@ Flow 的主要收益来自 `update_flow_draft`（9,388 参考 tokens、19,453 Sc
 
 - [ ] 复用现有 `pragma mission list|get|send|interrupt` 和 executor run 入口，补齐管理工具需要的语义，不另建 command consumer 或 active owner。
 - [ ] 明确 executor run 创建 Mission 与当前 `create_mission` 的等价条件，补知识绑定、工作区、精确 executor ref、结构化创建 receipt 和原调用审批归属。
-- [ ] 补充 `pragma mission work list|get`；当前 CLI 尚无对应 work 查询，不能用 event 原文假称等价替代。
-- [ ] 提供 `pragma workspace list`、`pragma home-project list|get`、`pragma knowledge-store list`；保留 Home Project 与 DSL Project、知识库 UUID 与 DSL ref 的区别。
+- [ ] 补充 `pragma manage mission work list|get`；当前 CLI 尚无对应 work 查询，不能用 event 原文假称等价替代。
+- [ ] 提供 `pragma manage workspace list`、`pragma manage home-project list|get`、`pragma manage knowledge-store list`；保留 Home Project 与 DSL Project、知识库 UUID 与 DSL ref 的区别。
 - [ ] 新增内置 `discover-pragma-resources` Skill，独立承接这四个 Host 资源发现工具；Mission Skill 通过简短链接按需发现它，不复制整个资源发现教程。
 - [ ] 新增内置 `manage-pragma-missions` Skill，覆盖发现资源→创建 Mission→查询工作→发送后续消息→中断；说明持久 Mission 与当前 Execution 子 Agent 的区别。
-- [ ] 提取 Automation 共享 Host 用例，提供 `pragma automation list|save|delete|reset-session`；save 使用文件/stdin 中的完整 DSL，同时提交 workspace 和 permission binding。
+- [ ] 提取 Automation 共享 Host 用例，提供 `pragma manage automation list|save|delete|reset-session`；save 使用文件/stdin 中的完整 DSL，同时提交 workspace 和 permission binding。
 - [ ] 新增内置 `manage-pragma-automations` Skill，覆盖创建/修改、启停、删除和 continuity reset；不通过泛化 DSL commit 绕过 Host binding。
 - [ ] 更新 Pragma 默认指令，不再要求直接调用已移除的 list/create/send 等工具；Host 资源发现说明归独立 Skill，默认索引保持简短。
 - [ ] 接入新 Skill 的工作台只读展示，并移除剩余 15 个默认工具。
@@ -355,7 +360,7 @@ management.execute({ group, action, input, requestId });
 
 身份、批准状态、runContext、executionContext、scope 和 Host ports 由可信 Host composition 提供，不是上述业务 input 的自报字段。入口只支持本计划中的静态管理命令，不提供任意工具代理、任意 Host service 查找或新插件 registry。
 
-CLI 输入适配优先保持现有参数对象结构：例如 `pragma flow draft update --input operations-request.json --format json` 的文件承载完整 `draftId + expectedDraftRevision + operations` 对象，由原 handler 校验；少量标量可提供 flags。不要为全部嵌套字段发明第二套命令语法。每个子命令展示自己的帮助与例子。
+CLI 输入适配优先保持现有参数对象结构：例如 `pragma manage flow draft update --input operations-request.json --format json` 的文件承载完整 `draftId + expectedDraftRevision + operations` 对象，由原 handler 校验；少量标量可提供 flags。不要为全部嵌套字段发明第二套命令语法。每个子命令展示自己的帮助与例子。
 
 ### 10.4 MCP 可以复用，但要拆开模型可见目录与 CLI 调用通道
 
@@ -411,7 +416,7 @@ Host 业务提取采取“原语义搬移”，不顺便调整 Schema、文件�
 | Host 资源发现            |      4 | discover-pragma-resources                     | 三       |
 | Automation               |      4 | manage-pragma-automations                     | 三       |
 
-共 42 个工具、6 个 Skill。共享 CLI 命令可以被多个工作流调用，但只有一个实现和一份权威帮助。例如 Flow Skill直接调用公共 `pragma dsl changes commit`，无需加载整个 DSL Skill；不复制另一个 Flow 专用 commit handler，也不重复默认注入公共命令 Schema。
+共 42 个工具、6 个 Skill。共享 CLI 命令可以被多个工作流调用，但只有一个实现和一份权威帮助。例如 Flow Skill直接调用公共 `pragma manage dsl changes commit`，无需加载整个 DSL Skill；不复制另一个 Flow 专用 commit handler，也不重复默认注入公共命令 Schema。
 
 一个 Skill 是一组能力的操作入口，不是一个工具一份 Skill。每个 Skill 的 SKILL.md 保留发现、最小完整流程和关键治理规则；具体参数/例子放在该组 references 和子命令 help。
 

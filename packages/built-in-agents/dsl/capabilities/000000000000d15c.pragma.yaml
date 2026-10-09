@@ -1,0 +1,14 @@
+apiVersion: pragma/v5
+kind: Capability
+metadata:
+  id: 000000000000d15c
+  name: Discover Pragma Resources
+  description: Find host workspaces, home task presets and ready knowledge stores.
+  tags: [builtin, pragma, default-agent, skill]
+spec:
+  adapter: pragma.capability.skill@v1
+  config:
+    source:
+      type: project
+      path: skills/discover-pragma-resources
+    entry: SKILL.md

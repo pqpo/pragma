@@ -10,16 +10,26 @@ import {
   type PragmaAgentMissionWorkItem,
 } from "@pragma/built-in-agents";
 
-import type { Mission } from "../../../shared/contracts/index.ts";
-import type { MissionCreator } from "../missions/mission-creator.ts";
-import type { LocalHostMissionApplication } from "@pragma/local-host";
-import type { MissionStore } from "@pragma/local-host";
+import { z } from "zod";
+import { readCommandState } from "./management-command-ownership.ts";
+import type { Mission, MissionContextMount } from "@pragma/shared";
+
+import type { LocalHostMissionApplication } from "./missions/application.ts";
+import { MissionStoreError, type MissionStore } from "./missions/repository/mission-store.ts";
 import { paginateManagementItems } from "./management-pagination.ts";
 
-export function createDesktopPragmaAgentMissionPort(options: {
+export function createLocalHostPragmaMissionPort(options: {
   readonly missions: MissionStore;
   readonly application: LocalHostMissionApplication;
-  readonly creator: MissionCreator;
+  readonly creator: {
+    create(input: {
+      readonly id?: string | undefined;
+      readonly workspace: string;
+      readonly missionInput: { readonly kind: "auto"; readonly value: string };
+      readonly executorRef: string;
+      readonly contextMounts: readonly MissionContextMount[];
+    }): Promise<Mission>;
+  };
   readonly stateRoot: string;
 }): PragmaAgentMissionPort {
   const operationPath = (id: string) =>
@@ -79,8 +89,27 @@ export function createDesktopPragmaAgentMissionPort(options: {
             stored.execution === undefined ? await options.application.startRun(stored.id) : stored,
           );
         }
+        // Reserve the business target before creation; a crash before the operation receipt must
+        // find the same Mission instead of creating another owner.
+        const missionId = deterministicUuid(`pragma-management-mission:${input.operationId}`);
+        let recovered: Mission | undefined;
+        try {
+          recovered = await options.missions.get(missionId);
+        } catch (error) {
+          if (!(error instanceof MissionStoreError) || error.code !== "mission_not_found")
+            throw error;
+        }
+        if (recovered !== undefined) {
+          await writeOperation(path, missionId);
+          return toMission(
+            recovered.execution === undefined
+              ? await options.application.startRun(missionId)
+              : recovered,
+          );
+        }
         const contextStoreIds = input.contextStoreIds ?? [];
         const mission = await options.creator.create({
+          id: missionId,
           workspace: input.workspaceId,
           missionInput: { kind: "auto", value: input.goal },
           executorRef: input.executorRef,
@@ -158,8 +187,40 @@ export function createDesktopPragmaAgentMissionPort(options: {
         tasks: record.tasks,
       };
     },
-    async interrupt(id) {
-      return toMission(await options.application.interrupt(id));
+    async interrupt(id, operationId) {
+      if (operationId === undefined) return toMission(await options.application.interrupt(id));
+      const path = join(
+        options.stateRoot,
+        "interrupt-operations",
+        `${encodePragmaPathSegment(operationId)}.json`,
+      );
+      return await withFileLock(`${path}.lock`, async () => {
+        const schema = z
+          .object({
+            schemaVersion: z.literal("pragma.mission-command-interrupt/v1"),
+            missionId: z.string().uuid(),
+            executionId: z.string().nullable(),
+          })
+          .strict();
+        let target = await readCommandState(path, schema, "pragma.mission-command-interrupt/v1");
+        const mission = await options.missions.get(id);
+        if (target === undefined) {
+          target = schema.parse({
+            schemaVersion: "pragma.mission-command-interrupt/v1",
+            missionId: id,
+            executionId: mission.execution?.id ?? null,
+          });
+          await writeOperationValue(path, target);
+        }
+        if (target.missionId !== id) throw new Error("Interrupt operation target conflict.");
+        if (
+          target.executionId === null ||
+          mission.execution?.id !== target.executionId ||
+          ["succeeded", "failed", "cancelled"].includes(mission.execution.status)
+        )
+          return toMission(mission);
+        return toMission(await options.application.interrupt(id, target.executionId));
+      });
     },
   };
 }
@@ -197,8 +258,11 @@ async function readOperation(path: string): Promise<string | undefined> {
 }
 
 async function writeOperation(path: string, missionId: string): Promise<void> {
+  await writeOperationValue(path, { missionId });
+}
+async function writeOperationValue(path: string, value: unknown): Promise<void> {
   await mkdir(dirname(path), { recursive: true, mode: 0o700 });
   const temporary = `${path}.${process.pid}.tmp`;
-  await writeFile(temporary, `${JSON.stringify({ missionId })}\n`, { mode: 0o600 });
+  await writeFile(temporary, `${JSON.stringify(value)}\n`, { mode: 0o600 });
   await rename(temporary, path);
 }

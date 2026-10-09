@@ -66,3 +66,10 @@ Execution command client for built-in Skills. It uses Electron's Node mode and a
 process PATH; Desktop still does not install the public CLI or change user shell configuration.
 This client is not a daemon or a model-visible MCP surface. Native Flow Schema removal remains
 subject to the stage acceptance gates recorded in the implementation report.
+
+## Issue #368 第三阶段命名空间（2026-10-09）
+
+管理入口统一为 `pragma manage …`；原用户 `pragma mission …`、executor run 与其他入口保留。
+Desktop 随应用提供的受控 client 和公共 CLI 共用这一语法及 wire 协议。用户已明确将缺少
+Execution endpoint 时的独立管理 composition 延后；本阶段缺少 endpoint 仍返回权限诊断，
+不启动 daemon、不替换用户 CLI Host，也不让 Skill 本身成为授权凭据。详见 ADR 067。

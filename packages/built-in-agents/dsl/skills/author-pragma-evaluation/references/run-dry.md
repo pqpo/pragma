@@ -49,7 +49,7 @@ case:
 ## Coverage
 
 Cover every ordinary transition, route case, array branch, fallback, repeat, loop exit, and loop
-limit. `pragma evaluation draft run` reruns the complete draft internally even when it returns details for
+limit. `pragma manage evaluation draft run` reruns the complete draft internally even when it returns details for
 only the requested cases. Use its cumulative `coverage.missing` as the exact backlog.
 
 ## Incremental sequence
@@ -58,24 +58,24 @@ This workflow starts only after the target Flow has been committed. Creating or 
 never creates an Evaluation implicitly.
 
 1. Read the existing committed Flow. For a new test set, allocate one Evaluation ID, then call
-   `pragma evaluation draft create` in `create` mode with that metadata and the exact committed Flow ref.
+   `pragma manage evaluation draft create` in `create` mode with that metadata and the exact committed Flow ref.
    To change an existing test set, call it in `edit` mode with the exact Evaluation ref.
-2. Choose one uncovered path. Call `pragma evaluation draft update` with one `upsert_case`, then call
-   `pragma evaluation draft run` with only that case ID.
+2. Choose one uncovered path. Call `pragma manage evaluation draft update` with one `upsert_case`, then call
+   `pragma manage evaluation draft run` with only that case ID.
 3. If the case fails, read only that case, replace it, and rerun it. Do not author the next case
    until it passes.
 4. Repeat from cumulative `coverage.missing` until it is empty. If the user explicitly requests
    batch authoring, use 2–10 `upsert_case` operations and run those same 2–10 IDs; resolve all
    failures in that batch before continuing.
-5. Call `pragma evaluation draft prepare` with the Evaluation draft ID and exact draft revision. The Host
+5. Call `pragma manage evaluation draft prepare` with the Evaluation draft ID and exact draft revision. The Host
    reruns every case and rejects assertion or coverage gaps.
-6. Pass the returned `changeSetId` to `pragma dsl changes commit`. This is the submit-and-save operation
+6. Pass the returned `changeSetId` to `pragma manage dsl changes commit`. This is the submit-and-save operation
    for the test set and commits only the canonical `evaluation:<id>` resource.
 
 Never put Evaluation YAML in the Flow CLI prepare command’s `additionalSources`. Never create a test set against
-an uncommitted Flow draft. Never report test-set success until `pragma dsl changes commit` returns a
+an uncommitted Flow draft. Never report test-set success until `pragma manage dsl changes commit` returns a
 committed revision containing the canonical Evaluation ref.
 
 Never build, resend, or request the complete Evaluation YAML during conversational authoring.
-`pragma evaluation draft get` returns a paged case summary; call `pragma evaluation draft cases` with at most 10
+`pragma manage evaluation draft get` returns a paged case summary; call `pragma manage evaluation draft cases` with at most 10
 exact case IDs only when their full definitions are needed.

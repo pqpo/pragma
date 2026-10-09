@@ -5,7 +5,7 @@ import { MANAGEMENT_COMMAND_PROTOCOL } from "@pragma/shared/integration";
 describe("management CLI adapter", () => {
   it("loads one command help without opening a Host or exposing the full catalog", async () => {
     let stdout = "";
-    const code = await runManagementCli(["flow", "draft", "get", "--help"], {
+    const code = await runManagementCli(["manage", "flow", "draft", "get", "--help"], {
       writeStdout: (text) => {
         stdout += text;
       },
@@ -18,7 +18,7 @@ describe("management CLI adapter", () => {
   it("passes a bounded Unicode stdin object to the existing handler interface", async () => {
     let stdout = "";
     const code = await runManagementCli(
-      ["flow", "draft", "update", "--input", "-"],
+      ["manage", "flow", "draft", "update", "--input", "-"],
       {
         writeStdout: (text) => {
           stdout += text;
@@ -59,7 +59,7 @@ it("preserves the requested identity and command when stdin parsing fails", asyn
   let stdout = "";
   const requestId = "645e2c45-5761-4af0-ac54-9fc0a6a24512";
   const code = await runManagementCli(
-    ["flow", "draft", "update", "--request-id", requestId, "--input", "-"],
+    ["manage", "flow", "draft", "update", "--request-id", requestId, "--input", "-"],
     {
       writeStdout: (text) => {
         stdout += text;
@@ -76,10 +76,10 @@ it("preserves the requested identity and command when stdin parsing fails", asyn
   });
 });
 it("routes management commands with a leading global format option", async () => {
-  expect(isManagementCliArgv(["--format", "json", "flow", "draft", "get"])).toBe(true);
+  expect(isManagementCliArgv(["--format", "json", "manage", "flow", "draft", "get"])).toBe(true);
   let stdout = "";
   const code = await runManagementCli(
-    ["--format", "text", "dsl", "resources", "list"],
+    ["--format", "text", "manage", "dsl", "resources", "list"],
     {
       writeStdout: (text) => {
         stdout += text;
@@ -105,12 +105,15 @@ it("preserves a parsed request identity when Commander rejects an unknown option
   let stdout = "";
   const requestId = "645e2c45-5761-4af0-ac54-9fc0a6a24512";
   expect(
-    await runManagementCli(["flow", "draft", "get", "--request-id", requestId, "--unknown"], {
-      writeStdout: (text) => {
-        stdout += text;
+    await runManagementCli(
+      ["manage", "flow", "draft", "get", "--request-id", requestId, "--unknown"],
+      {
+        writeStdout: (text) => {
+          stdout += text;
+        },
+        writeStderr: () => undefined,
       },
-      writeStderr: () => undefined,
-    }),
+    ),
   ).toBe(2);
   expect(JSON.parse(stdout)).toMatchObject({
     requestId,
@@ -120,10 +123,10 @@ it("preserves a parsed request identity when Commander rejects an unknown option
 });
 
 it("routes Evaluation and preserves suite failure results from Unicode stdin", async () => {
-  expect(isManagementCliArgv(["--json", "evaluation", "draft", "run"])).toBe(true);
+  expect(isManagementCliArgv(["--json", "manage", "evaluation", "draft", "run"])).toBe(true);
   let stdout = "";
   const code = await runManagementCli(
-    ["evaluation", "draft", "run", "--input", "-"],
+    ["manage", "evaluation", "draft", "run", "--input", "-"],
     {
       writeStdout: (text) => {
         stdout += text;
@@ -155,4 +158,37 @@ it("routes Evaluation and preserves suite failure results from Unicode stdin", a
   );
   expect(code).toBe(10);
   expect(JSON.parse(stdout).result.coverage.missing).toEqual(["transition"]);
+});
+
+it("uses an explicit manage namespace and leaves user Mission/Flow entrypoints intact", async () => {
+  for (const argv of [
+    ["mission", "list"],
+    ["mission", "get", "id"],
+    ["flow", "run", "ref"],
+    ["dsl", "resources", "list"],
+  ])
+    expect(isManagementCliArgv(argv)).toBe(false);
+  for (const argv of [
+    ["manage", "mission", "list"],
+    ["--json", "manage", "flow", "draft", "get"],
+    ["manage", "automation", "save"],
+  ])
+    expect(isManagementCliArgv(argv)).toBe(true);
+  for (const command of [
+    ["mission", "work", "get"],
+    ["workspace", "list"],
+    ["automation", "save"],
+  ]) {
+    let output = "";
+    expect(
+      await runManagementCli(["manage", ...command, "--help"], {
+        writeStdout: (text) => {
+          output += text;
+        },
+        writeStderr: () => undefined,
+      }),
+    ).toBe(0);
+    expect(output).toContain(`pragma manage ${command.join(" ")}`);
+    expect(output).toContain("Input Schema");
+  }
 });
