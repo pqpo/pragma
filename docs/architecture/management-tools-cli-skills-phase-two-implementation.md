@@ -207,3 +207,9 @@ main/preload/styles/storage worker 四项检查通过；`git diff --check` 通�
 在最终 17 managed tools 下再次成功发布 revision 2，并验证提交拒绝与丢弃；新 receipt 与
 prepare journal 见 Runtime evidence 的 `crFollowUp`，不覆盖原成本对照。CR 没有已确认而未修复
 的代码问题；上面的遗留 Runtime/发行/成本门禁仍未完成。
+
+PR #374 后续评论核实发现列表 Context 隔离、Flow Skill 交接与历史 fixture 重定位三项
+此前 CR 未覆盖的问题，已修复；详细复现、边界及回归见 CR 记录的“PR #374 评论跟进”。
+CLI 列表现在只读取当前 owner 可见草稿，检查发生于任何草稿恢复/初始化清理之前。
+历史 fixture 的 macOS `/private` 根别名按完整标记重定位，不改变真实历史协议或来源。
+既有 Runtime/性能/发行门禁仍按原记录保留。

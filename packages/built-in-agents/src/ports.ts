@@ -35,6 +35,8 @@ export interface PragmaAgentDslProjectPort {
     readonly targets: readonly PragmaAgentDslDraftTargetInput[];
   }): Promise<PragmaAgentDslDraft>;
   listDslDrafts(input: {
+    /** Trusted Host visibility guard, applied before any draft read, recovery or cleanup. */
+    readonly isDraftVisible?: ((draftId: string) => Promise<boolean>) | undefined;
     readonly missionId: string;
     readonly cursor?: string | undefined;
     readonly limit: number;

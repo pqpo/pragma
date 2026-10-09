@@ -64,3 +64,40 @@ Evaluation candidate 重放的 operation identity 来自 Mission、Context、req
 
 提交 PR 前补跑 `pnpm install --frozen-lockfile` 与完整根 `pnpm build` 均通过；
 根构建 19 task 成功，其中 16 task 使用缓存。未扩大既有 Runtime 验收结论。
+
+## PR #374 评论跟进
+
+读取了截至本轮开始的全部公开讨论：2 条 issue comments、1 条 inline review comment、1 条
+review summary。自动评审与维护者评论中的 Skill 断链属于同一项问题；汇总/通知没有新增
+技术发现。依据：
+[维护者审查](https://github.com/pqpo/pragma/pull/374#issuecomment-6079691245)、
+[自动评审](https://github.com/pqpo/pragma/pull/374#discussion_r4229242229)。
+
+三个修复意见均成立，前一轮 CR 没有覆盖这些边界：
+
+1. **列表 Context 隔离：** 真实 CLI 子进程复现同 Mission foreign Context 的 list 返回其他
+   owner 草稿，并把 pending prepare 的 editing 状态恢复成 prepared。修复在可信 Project port
+   参数中注入 owner 可见性 guard，业务层在读取 owner/draft、恢复和初始化清理之前调用；
+   不是结果返回后过滤。模型 Schema 不暴露 guard。无 owner 历史草稿先显式 recover，已知
+   foreign owner 不接管；原显式 native 端口的 Mission 列表语义保留。
+   回归验证 foreign list 返回空、拒绝 inspect、draft 字节不变，foreign initializing owner
+   不清理、owner 字节不变，以及当前 Context 正常分页/inspect/重放/提交。
+2. **Flow → Evaluation 交接：** 两个 Flow 文档都改为发现 `author-pragma-evaluation` 并阅读其
+   `references/run-dry.md`，同步生成 Bundle；默认 catalog 回归检查两个入口和目标文件存在。
+3. **历史 fixture 重定位：** JSON 解析后按完整 `/private__FIXTURE_ROOT__` 或普通 root 标记
+   重定位到 `realpath(testRoot)`，使用当前平台 path join，再重新序列化，避免保留 macOS
+   `/private` 别名及 Windows 反斜杠/引号的 JSON 转义问题。协议字段、源 fixture 和 writer
+   SHA 不变。回归覆盖完整前缀去除、嵌套文件路径、含引号目标及真实历史恢复原断言。
+
+性能与剩余验收评论与现有实施记录一致，不需要改写为通过；Issue #368 仍只完成阶段性
+迁移，普通聊天/DSL/Flow 成本样本没有证明整体收益。此前 CI 的 verify 和 CLI package
+smoke 均成功，但不将包 smoke 等同于完整 Windows Runtime authoring/历史配置验收。
+
+本轮验证：command/Project adapter 2 文件 **53 项通过**；Built-in catalog/management/host
+handler 3 文件 **48 项通过**。完整 `pnpm check`（19 package lint、19 package typecheck、
+11 task test:core）及根 `pnpm build`（19 task，16 cached）通过，Desktop 四项产物检查通过。
+Prettier 与 diff whitespace 检查通过。使用原超时和断言；未在本机重跑 Linux/Windows Host
+或真实供应商 Runtime，不把平台无关路径回归当作该平台的发行验收。
+
+三个需要修复的评论已全部处理；其余性能/发行/Runtime 验收意见保留。未代用户发送评论
+或关闭 review thread。

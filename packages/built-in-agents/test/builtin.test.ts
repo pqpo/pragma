@@ -393,6 +393,12 @@ describe("built-in Pragma Agent DSL", () => {
       BUILT_IN_AGENT_FILES["skills/author-pragma-evaluation/references/run-dry.md"]!;
     expect(dsl).toContain("author-pragma-evaluation");
     expect(BUILT_IN_AGENT_FILES["skills/author-pragma-dsl/references/run-dry.md"]).toBeUndefined();
+    const flow = BUILT_IN_AGENT_FILES["skills/author-pragma-flow/SKILL.md"]!;
+    const flowReference = BUILT_IN_AGENT_FILES["skills/author-pragma-flow/references/flow.md"]!;
+    expect(flow).toContain("discover `author-pragma-evaluation`");
+    expect(flowReference).toContain("Discover `author-pragma-evaluation` and read its");
+    expect(flow).not.toContain("author-pragma-dsl");
+    expect(flowReference).not.toContain("author-pragma-dsl");
     expect(skill).toContain("Default to one `upsert_case`");
     expect(skill).toContain("Do not create a test set implicitly");
     expect(skill).toContain("pragma evaluation draft prepare");

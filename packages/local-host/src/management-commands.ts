@@ -280,7 +280,15 @@ export function createManagementCommandApplication(options: {
                 project: {
                   ...project,
                   listDslDrafts: (input: Parameters<typeof project.listDslDrafts>[0]) =>
-                    preserveCommandStateError(() => project.listDslDrafts(input)),
+                    preserveCommandStateError(() =>
+                      project.listDslDrafts({
+                        ...input,
+                        isDraftVisible: async (draftId) => {
+                          const existing = await findOwner(draftId);
+                          return existing !== undefined && sameOwner(existing);
+                        },
+                      }),
+                    ),
                   inspectDslDraft: (input: Parameters<typeof project.inspectDslDraft>[0]) =>
                     preserveCommandStateError(() => project.inspectDslDraft(input)),
                   readDslDraftReview: (input: Parameters<typeof project.readDslDraftReview>[0]) =>

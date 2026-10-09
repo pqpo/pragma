@@ -1321,6 +1321,7 @@ export function createLocalHostPragmaProjectPort(options: {
       });
       const ownedDraftIds: string[] = [];
       for (const draftId of draftIds) {
+        if (input.isDraftVisible !== undefined && !(await input.isDraftVisible(draftId))) continue;
         let owner: DslDraftOwner;
         try {
           owner = DslDraftOwnerSchema.parse(

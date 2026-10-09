@@ -1,7 +1,7 @@
 import { PRAGMA_DSL_WRITE_API_VERSION } from "@pragma/interpreter/ast";
 import { randomUUID, createHash } from "node:crypto";
 import { execFile } from "node:child_process";
-import { cp, mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { cp, mkdtemp, mkdir, readFile, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { promisify } from "node:util";
@@ -1062,6 +1062,20 @@ describe("DSL and Evaluation CLI real process", { timeout: 60_000 }, () => {
     );
     expect(await readFile(recordPath, "utf8")).toBe(JSON.stringify(record));
     await writeFile(prepareJournalPath, prepareJournal);
+    const ownContext = f.context.runContext.attributes["execution.contextId"];
+    f.context.runContext.attributes["execution.contextId"] = "foreign-list-context";
+    expect((await f.invoke("dsl.draft.list", { limit: 1 })).result["items"]).toEqual([]);
+    expect(await readFile(recordPath, "utf8")).toBe(JSON.stringify(record));
+    expect((await f.invoke("dsl.draft.inspect", { draftId })).exitCode).toBe(6);
+    const ownerPath = join(recordPath, "..", "owner.json");
+    const ownerBytes = await readFile(ownerPath, "utf8");
+    const initializingOwner = JSON.stringify({ ...JSON.parse(ownerBytes), state: "initializing" });
+    await writeFile(ownerPath, initializingOwner);
+    expect((await f.invoke("dsl.draft.list", { limit: 1 })).result["items"]).toEqual([]);
+    expect(await readFile(ownerPath, "utf8")).toBe(initializingOwner);
+    expect(await readFile(recordPath, "utf8")).toBe(JSON.stringify(record));
+    await writeFile(ownerPath, ownerBytes);
+    f.context.runContext.attributes["execution.contextId"] = ownContext;
     expect((await f.invoke("dsl.draft.inspect", { draftId })).exitCode).toBe(0);
     expect((await f.invoke("dsl.draft.list", { limit: 1 })).result["items"]).toEqual([
       expect.objectContaining({ draftId, state: "prepared" }),
@@ -1113,11 +1127,17 @@ describe("DSL and Evaluation CLI real process", { timeout: 60_000 }, () => {
     await cp(new URL("dsl-resource-drafts/", source), target, { recursive: true });
     await cp(new URL("workspace-files/", source), join(f.root, ".pragma"), { recursive: true });
     const directory = join(target, encodePragmaPathSegment(provenance.dslDraftId));
+    const fixtureWorkspaceRoot = await realpath(f.root);
     for (const name of ["draft.json", "owner.json"]) {
       const path = join(directory, name);
-      await writeFile(path, (await readFile(path, "utf8")).replaceAll("__FIXTURE_ROOT__", f.root));
+      await writeFile(
+        path,
+        relocateHistoricalDraftFixture(await readFile(path, "utf8"), fixtureWorkspaceRoot),
+      );
     }
     const before = await readFile(join(directory, "draft.json"), "utf8");
+    expect((await f.invoke("dsl.draft.list", { limit: 1 })).result["items"]).toEqual([]);
+    expect(await readFile(join(directory, "draft.json"), "utf8")).toBe(before);
     expect((await f.invoke("dsl.draft.inspect", { draftId: provenance.dslDraftId })).exitCode).toBe(
       6,
     );
@@ -1341,3 +1361,43 @@ function cliExpert(id: string) {
 function cliTeam(id: string, ref: string) {
   return `apiVersion: ${PRAGMA_DSL_WRITE_API_VERSION}\nkind: ExpertTeam\nmetadata:\n  id: ${id}\n  name: Team\n  description: Coordinate copy\n  tags: []\nspec:\n  coordinator:\n    ref: ${ref}\n  members:\n    - ref: ${ref}\n  instructions: Collaborate.\n  contextStores: []\n  delegation:\n    permissions:\n      interact: {}\n    maxConcurrency: 2\n    maxDepth: 2\n    runtimes: {}\n`;
 }
+
+function relocateHistoricalDraftFixture(source: string, workspaceRoot: string): string {
+  return JSON.stringify(
+    JSON.parse(source, (_key, value: unknown) => {
+      if (typeof value !== "string") return value;
+      const prefix = ["/private__FIXTURE_ROOT__", "__FIXTURE_ROOT__"].find((marker) =>
+        value.startsWith(marker),
+      );
+      return prefix === undefined
+        ? value
+        : join(workspaceRoot, ...value.slice(prefix.length).split("/"));
+    }),
+  );
+}
+
+it("relocates the entire historical workspace alias without changing protocol fields", () => {
+  const source = JSON.stringify({
+    schemaVersion: "pragma.dsl-draft/v1",
+    workspacePath: "/private__FIXTURE_ROOT__",
+    resources: [
+      {
+        filePath: "/private__FIXTURE_ROOT__/.pragma/dsl-drafts/example/worktree/expert.yaml",
+        ref: "expert:d1gsrmjmw5t2ca0s",
+      },
+    ],
+    ordinaryMarkerPath: "__FIXTURE_ROOT__/plain.yaml",
+  });
+  const target = join(tmpdir(), 'historical-fixture-"quoted"');
+  expect(JSON.parse(relocateHistoricalDraftFixture(source, target))).toEqual({
+    schemaVersion: "pragma.dsl-draft/v1",
+    workspacePath: target,
+    resources: [
+      {
+        filePath: join(target, ".pragma", "dsl-drafts", "example", "worktree", "expert.yaml"),
+        ref: "expert:d1gsrmjmw5t2ca0s",
+      },
+    ],
+    ordinaryMarkerPath: join(target, "plain.yaml"),
+  });
+});
