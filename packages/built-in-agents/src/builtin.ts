@@ -28,7 +28,7 @@ import {
   type PragmaResource,
 } from "@pragma/interpreter/ast";
 
-import { BUILT_IN_SKILLS, BUILT_IN_SKILL_REFS } from "./builtin-skills.ts";
+import { BUILT_IN_SKILLS } from "./builtin-skills.ts";
 import { BUILT_IN_AGENT_FILES } from "./builtin.generated.ts";
 
 export const BUILT_IN_PRAGMA_ID = PragmaExpertIdSchema.parse(
@@ -101,9 +101,7 @@ const PRAGMA_SKILL_PREFIXES = BUILT_IN_SKILLS.map((skill) => `${skill.path}/`);
 const BUILT_IN_AGENT_DEPENDENCY_PATHS: Readonly<Record<BuiltInAgentRef, readonly string[]>> = {
   [BUILT_IN_PRAGMA_REF]: [
     BUILT_IN_AGENT_PATHS[BUILT_IN_PRAGMA_REF],
-    ...BUILT_IN_SKILL_REFS.map(
-      (ref) => `capabilities/${ref.slice("capability:".length)}.pragma.yaml`,
-    ),
+    ...BUILT_IN_SKILLS.map((skill) => `capabilities/${skill.id}.pragma.yaml`),
     "capabilities/0000000000manage.pragma.yaml",
     ...Object.keys(BUILT_IN_AGENT_FILES).filter((path) =>
       PRAGMA_SKILL_PREFIXES.some((prefix) => path.startsWith(prefix)),
@@ -380,16 +378,7 @@ function customizedBuiltInSource(
   additionalResources: readonly PragmaResource[],
 ): string {
   if (path === "experts/0000000000pragma.pragma.yaml" && expertResource !== undefined) {
-    const resource = PragmaExpertResourceSchema.parse(expertResource);
-    const skillRefs = new Set<string>(BUILT_IN_SKILL_REFS);
-    let includedManagementSkill = false;
-    resource.spec.capabilities = resource.spec.capabilities.flatMap((binding) => {
-      if (binding.kind !== "skill" || !skillRefs.has(binding.ref)) return [binding];
-      if (includedManagementSkill) return [];
-      includedManagementSkill = true;
-      return [{ ...binding, ref: BUILT_IN_SKILLS[0]!.ref }];
-    });
-    return formatPragmaYaml(resource);
+    return formatPragmaYaml(PragmaExpertResourceSchema.parse(expertResource));
   }
   if (path === "pragma.yaml" && additionalResources.length > 0) {
     const bundle = PragmaBundleSchema.parse(parsePragmaYaml(source));

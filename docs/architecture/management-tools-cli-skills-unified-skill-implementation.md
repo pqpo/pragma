@@ -11,27 +11,26 @@ DSL、Flow、Evaluation、Mission、资源发现、Automation 的详细流程进
 目录和旧 UI metadata 删除，不维护第二份正文。默认 Agent 只绑定统一入口；工作台目录
 只展示 Manage Pragma，文件阅读与 mutation 拒绝继续使用已有静态源和 Host 边界。
 
-## 历史身份
+## 单一身份
 
-统一入口沿用原 DSL Capability ID `1h2j3k4m5n6p7q8r`。其余五个既有 Capability ID
-保留在静态权威 ref 表中，供历史 Project/Revision、定制 Expert 和显式 binding 解析，
-全部指向同一份 `skills/manage-pragma`。旧名称仅保留在这些身份的资源 metadata，避免
-Bundle 的名称唯一性冲突；它们不会作为额外入口出现在默认 Skill 或工作台列表中。
+统一入口使用 `capability:1h2j3k4m5n6p7q8r`。用户明确确认该版本尚未发布、不需要兼容，
+因此删除其他五个 Capability 定义、旧 ID 解析和历史多绑定去重。注册、Bundle 和目录
+只有一个 Skill 身份，不保留迁移期别名或适配分支。
 
-没有变更存储或 wire Schema，也不扫描、重写或删除历史 Project。内容 hash 与编译
-fingerprint 随静态文件改变，原不可变物化缓存继续按 hash 隔离。定制 Pragma 的历史六 Skill binding 在编译物化副本中
-归一到一个入口，调用方对象和持久化 Project 不改写，避免重复注入同一内容。历史绑定的物化、真实
-CapabilityStore 读取及只读拒绝均有回归覆盖。命令 handler、受控通道、grants/hooks、
-授权、审批、幂等恢复与原用户 CLI 均复用三阶段实现。
+没有改变存储或 wire Schema，也没有增加升级脚本或自动清理本地实验数据。旧 ID 不再由
+内置注册表解析。内容 hash 与编译 fingerprint 随静态文件改变，原物化缓存仍按 hash
+隔离。命令 handler、受控通道、grants/hooks、授权、审批、幂等恢复与原用户 CLI 均复用
+三阶段实现。
 
 ## 验证
 
-- Built-in Agents 完整测试：8 文件、70 项通过；包括唯一默认 Skill、历史身份物化、六绑定去重、显式
+- Built-in Agents 完整测试：8 文件、68 项通过；包括唯一默认 Skill、物化、显式
   工具绑定、领域规则与 YAML 示例。
-- Desktop 定向测试：3 文件、64 项通过；包括目录、文件读取、禁止编辑、历史身份读取、
+- Desktop 定向测试：3 文件、63 项通过；包括目录、文件读取、禁止编辑、
   所有管理命令集成和默认零管理工具时的真实授权通道装配/撤销。
-- `pnpm check` 与完整 `pnpm build` 通过，Desktop main/preload/storage-worker/样式验证通过；
-  最后补充的历史多绑定归一逻辑另通过 Built-in Agents 的 lint、typecheck、build 和完整测试。
+- 合并入口时 `pnpm check` 与完整 `pnpm build` 通过，Desktop main/preload/storage-worker/
+  样式验证通过。随后移除未发布版本兼容，再次通过 Built-in Agents 的 lint、typecheck、
+  build、完整测试及上述 Desktop 定向回归；未重复整个发行矩阵。
 - Skill Creator validator 通过；所有 Markdown reference 链接均指向存在的文件。
 - 真实 Codex Runtime：读取 manage-pragma 与 Missions reference，执行
   `pragma manage mission list --format json`，Host receipt 为 succeeded，模型可见 managed

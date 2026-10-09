@@ -6,17 +6,8 @@ import { BUILT_IN_AGENT_FILES } from "./builtin.generated.ts";
 
 const MANAGE_PRAGMA_SKILL_REF = PragmaCapabilityRefSchema.parse("capability:1h2j3k4m5n6p7q8r");
 
-/** Stable Capability identities retained for existing Project and Expert bindings. */
-export const BUILT_IN_SKILL_REFS = [
-  MANAGE_PRAGMA_SKILL_REF,
-  PragmaCapabilityRefSchema.parse("capability:000000000000f10w"),
-  PragmaCapabilityRefSchema.parse("capability:000000000000eva1"),
-  PragmaCapabilityRefSchema.parse("capability:000000000000m155"),
-  PragmaCapabilityRefSchema.parse("capability:000000000000d15c"),
-  PragmaCapabilityRefSchema.parse("capability:000000000000a070"),
-] as const;
-
-const BUILT_IN_SKILL_BINDINGS = BUILT_IN_SKILL_REFS.map((ref) => {
+/** Static authority shared by Runtime materialization and Host read-only views. */
+export const BUILT_IN_SKILLS = [MANAGE_PRAGMA_SKILL_REF].map((ref) => {
   const id = ref.slice("capability:".length);
   const resource = PragmaCapabilityResourceSchema.parse(
     parsePragmaYaml(BUILT_IN_AGENT_FILES[`capabilities/${id}.pragma.yaml`]!),
@@ -43,13 +34,8 @@ const BUILT_IN_SKILL_BINDINGS = BUILT_IN_SKILL_REFS.map((ref) => {
     files,
   };
 });
-/** One discoverable Skill; the other stable refs resolve historical persisted bindings only. */
-export const BUILT_IN_SKILLS = BUILT_IN_SKILL_BINDINGS.filter(
-  ({ ref }) => ref === MANAGE_PRAGMA_SKILL_REF,
-);
-
 export function builtInSkill(id: string) {
-  return BUILT_IN_SKILL_BINDINGS.find((skill) => skill.id === id);
+  return BUILT_IN_SKILLS.find((skill) => skill.id === id);
 }
 
 export function builtInSkillCapability(id: string) {

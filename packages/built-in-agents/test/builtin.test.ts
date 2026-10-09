@@ -37,7 +37,6 @@ import {
   compileBuiltInAgent,
   materializeBuiltInAgentBundle,
 } from "../src/builtin.ts";
-import { BUILT_IN_SKILL_REFS } from "../src/builtin-skills.ts";
 import { PragmaAgentFlowDraftSchema } from "../src/contracts.ts";
 import {
   PRAGMA_MANAGEMENT_TOOL_DEFINITIONS,
@@ -103,20 +102,7 @@ describe("built-in Pragma Agent DSL", () => {
         .listResources()
         .map((resource) => resource.kind)
         .toSorted(),
-    ).toEqual([
-      "Capability",
-      "Capability",
-      "Capability",
-      "Capability",
-      "Capability",
-      "Capability",
-      "Capability",
-      "Expert",
-      "Expert",
-      "Expert",
-      "Expert",
-      "Expert",
-    ]);
+    ).toEqual(["Capability", "Capability", "Expert", "Expert", "Expert", "Expert", "Expert"]);
 
     const unavailable = async (): Promise<never> => {
       throw new Error("This compile-only test does not execute Pragma tools.");
@@ -459,61 +445,8 @@ describe("built-in Pragma Agent DSL", () => {
     );
     expect(
       project.listResources().filter((candidate) => candidate.kind === "Capability"),
-    ).toHaveLength(8);
+    ).toHaveLength(3);
     expect(await project.validate()).toEqual([]);
-  });
-
-  it("materializes historical Skill bindings using the unified source", async () => {
-    const root = await mkdtemp(join(tmpdir(), "pragma-historical-skill-binding-"));
-    for (const ref of BUILT_IN_SKILL_REFS) {
-      const resource = builtInAgentResource(BUILT_IN_PRAGMA_REF);
-      resource.spec.capabilities = [{ ref, kind: "skill" }];
-      const entry = await materializeBuiltInAgentBundle(root, resource);
-      const project = await loadPragmaProject(entry, { rootDir: dirname(entry) });
-      expect(await project.validate()).toEqual([]);
-      const expert = project
-        .listResources()
-        .find(
-          (candidate) =>
-            candidate.kind === "Expert" && candidate.metadata.id === "0000000000pragma",
-        );
-      expect(expert).toMatchObject({
-        spec: { capabilities: [{ ref: BUILT_IN_SKILL_REFS[0], kind: "skill" }] },
-      });
-      expect(resource.spec.capabilities).toEqual([{ ref, kind: "skill" }]);
-
-      const capability = project
-        .listResources()
-        .find(
-          (candidate) =>
-            candidate.kind === "Capability" && `capability:${candidate.metadata.id}` === ref,
-        );
-      expect(capability).toMatchObject({
-        kind: "Capability",
-        spec: { config: { source: { path: "skills/manage-pragma" } } },
-      });
-      await expect(
-        readFile(join(dirname(entry), "skills/manage-pragma/SKILL.md"), "utf8"),
-      ).resolves.toContain("name: manage-pragma");
-    }
-  });
-
-  it("deduplicates historical management Skill bindings in the compiled source only", async () => {
-    const root = await mkdtemp(join(tmpdir(), "pragma-historical-six-skills-"));
-    const resource = builtInAgentResource(BUILT_IN_PRAGMA_REF);
-    resource.spec.capabilities = BUILT_IN_SKILL_REFS.map((ref) => ({ ref, kind: "skill" }));
-    const entry = await materializeBuiltInAgentBundle(root, resource);
-    const project = await loadPragmaProject(entry, { rootDir: dirname(entry) });
-    expect(await project.validate()).toEqual([]);
-    const expert = project
-      .listResources()
-      .find(
-        (candidate) => candidate.kind === "Expert" && candidate.metadata.id === "0000000000pragma",
-      );
-    expect(expert).toMatchObject({
-      spec: { capabilities: [{ ref: BUILT_IN_SKILL_REFS[0], kind: "skill" }] },
-    });
-    expect(resource.spec.capabilities).toHaveLength(6);
   });
 
   it("isolates each Agent fingerprint from unrelated Expert customizations", () => {

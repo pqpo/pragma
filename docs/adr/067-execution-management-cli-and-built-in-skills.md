@@ -146,12 +146,11 @@ reference 从 DSL Skill 移走；原六组 handler 定义仍用于 CLI、显式 
 授权、审批、幂等恢复规则；原领域流程和示例移到按需读取的 references。工作台目录与
 默认 Runtime 索引只展示该入口，继续由同一静态源生成、物化并提供只读视图。
 
-沿用 `capability:1h2j3k4m5n6p7q8r` 作为统一入口，其他五个已存在的 Capability ID
-仍可解析历史绑定，但指向相同 `skills/manage-pragma` 内容，不保留五套实现或旧 Skill
-目录。既有名称保留在这些历史资源描述中，满足 Bundle 的名称唯一性约束。历史身份
-解析保护已持久化 Project、显式配置和 Revision；定制 Pragma 的历史多 Skill 绑定仅在
-编译物化副本中归一到一个入口，不改写调用方对象。此处理不改变 wire/storage Schema，不扫描、
-重写或删除用户数据。静态内容 hash 与编译 fingerprint 随文件更新重建。
+统一入口使用 `capability:1h2j3k4m5n6p7q8r`。用户明确确认该版本尚未发布，不需要兼容
+六 Skill 中间版本；删除其余五个 Capability 定义、旧身份解析与多绑定归一逻辑，只保留
+一个静态 Skill 身份。没有为未发布中间版本提供自动迁移，也不自动扫描或删除本地实验
+数据。旧 ID 不再由内置注册表解析；当前单入口正常物化、读取与执行。此调整不修改
+wire/storage Schema 或版本号，静态 content hash 与编译 fingerprint 随源文件重建。
 
 命令仍为 46 项、默认 Pi 工具仍为 13 项，授权与审批不因 Skill 合并扩张。阶段成本数据
 保留原测试时的六 Skill 配置；合并后的静态估算单独记录，不作为真实任务成本下降证明。

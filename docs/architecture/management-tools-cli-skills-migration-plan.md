@@ -472,9 +472,9 @@ Host 业务提取采取“原语义搬移”，不顺便调整 Schema、文件�
 分别进入 `references/dsl.md`、`flow.md`、`evaluation.md`、`missions.md`、`resources.md`、
 `automations.md`，领域示例继续放在相应子目录，不默认加载全部正文。
 
-原 DSL Capability ID 作为统一入口身份；其余既有 Capability ID 保留为历史 binding 解析身份，
-全部读取同一份文件，不作为额外 Skill 注入目录。这样无需改写历史 Project/Revision、
-改动持久化 Schema 或丢弃用户原有绑定。默认管理工具、命令 grants、hooks、审批、恢复、
+统一入口使用原 DSL Capability ID。用户确认该版本尚未发布，不需要保留中间版本兼容，
+其余五个 Capability 定义、旧身份解析和多绑定归一逻辑全部删除，只保留一个入口和一份
+权威内容。不新增历史绑定迁移或自动删除本地实验数据。命令 grants、hooks、审批、恢复、
 Revision Agent 与用户 CLI 路由不变：46 条命令，Pi 默认 13 个工具。
 
 详见[统一 Skill 实施记录](management-tools-cli-skills-unified-skill-implementation.md)。
