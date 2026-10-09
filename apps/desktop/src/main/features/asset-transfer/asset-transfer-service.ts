@@ -40,6 +40,7 @@ import { PragmaRuntimeProfileConfigSchema } from "@pragma/interpreter/ast";
 import {
   readTransferredSkill,
   readTransferredKnowledge,
+  portableKnowledgeContent,
   validateTransferredSkill,
   publishTransferredSkill,
   appendTransferredKnowledge,
@@ -550,20 +551,20 @@ export function createAssetTransferService(options: {
         const data = KnowledgeDataSchema.parse(remote.data);
         if (localStore !== undefined) {
           const snapshot = await options.stores.getSnapshot(id);
+          const portable = portableKnowledgeContent(snapshot);
           assertExpected(
             item.key,
             {
               name: localStore.name,
               description: localStore.description,
-              files: snapshot.files,
-              directories: snapshot.directories,
+              ...portable,
             },
             localStore.contentRevision,
           );
           if (
             localStore.name === data.name &&
             localStore.description === data.description &&
-            hashSnapshotContent(snapshot.files, snapshot.directories) === hashKnowledge(data)
+            hashSnapshotContent(portable.files, portable.directories) === hashKnowledge(data)
           )
             continue;
         }
@@ -764,8 +765,7 @@ export function createAssetTransferService(options: {
             {
               name: store.name,
               description: store.description,
-              directories: snapshot.directories,
-              files: snapshot.files,
+              ...portableKnowledgeContent(snapshot),
             },
             store.contentRevision,
           );
