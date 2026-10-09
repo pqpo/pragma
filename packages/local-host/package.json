@@ -34,7 +34,7 @@
     "test:platform": "vitest run test/native-keychain-cross-host.test.ts"
   },
   "dependencies": {
-    "@napi-rs/keyring": "1.3.0",
+    "@napi-rs/keyring": "2.1.0",
     "@pragma/built-in-agents": "workspace:*",
     "@pragma/context-filesystem": "workspace:*",
     "@pragma/core": "workspace:*",
