@@ -25,7 +25,12 @@ import { createWorkspaceHistoryStore } from "../workspaces/workspace-history-sto
 import { createDesktopPragmaAgentResourceCatalogPort } from "./pragma-agent-resource-adapter.ts";
 
 /** Real Host repositories/application/scheduler ports for subprocess tests and native probes. */
-export async function createPhaseThreeCommandTestFixture(root: string, runtimes: RuntimeResolver, workspace = root) {
+export async function createPhaseThreeCommandTestFixture(
+  root: string,
+  runtimes: RuntimeResolver,
+  workspace = root,
+  onStorageTrashed?: () => void,
+) {
   const paths = new PragmaPaths({ pragmaHome: root });
   const project = createPragmaProjectStore({ projectsPath: paths.projectsRoot() });
   const resolved = await runtimes.bind();
@@ -138,6 +143,7 @@ export async function createPhaseThreeCommandTestFixture(root: string, runtimes:
     missions,
     creator,
     application,
+    onStorageTrashed,
   });
   const missionPort = createLocalHostPragmaMissionPort({
     missions,

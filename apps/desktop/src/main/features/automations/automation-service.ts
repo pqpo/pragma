@@ -607,12 +607,8 @@ export function createAutomationService(options: {
           await options.store.saveBinding(plan.binding);
           if (!progress.completed("cleaned")) {
             if (plan.rotateGeneration && plan.previousBinding !== undefined) {
-              await moveOwnedStorageToTrash({
-                paths: options.paths,
-                owner: { type: "automation-generation", id: ref },
-                sources: [{ label: "state", path: options.paths.automationStateRoot(ref) }],
-              });
-              options.onStorageTrashed?.();
+              if (await options.store.retireGeneration(ref, plan.previousBinding.generation))
+                options.onStorageTrashed?.();
             }
             await progress.complete("cleaned");
           }
@@ -723,12 +719,8 @@ export function createAutomationService(options: {
           await assertMutationBinding(ref, plan.previousBinding, plan.binding);
           await options.store.saveBinding(plan.binding);
           if (!progress.completed("cleaned")) {
-            await moveOwnedStorageToTrash({
-              paths: options.paths,
-              owner: { type: "automation-generation", id: ref },
-              sources: [{ label: "state", path: options.paths.automationStateRoot(ref) }],
-            });
-            options.onStorageTrashed?.();
+            if (await options.store.retireGeneration(ref, plan.previousBinding.generation))
+              options.onStorageTrashed?.();
             await progress.complete("cleaned");
           }
           await scheduleResource(plan.resource, plan.binding);

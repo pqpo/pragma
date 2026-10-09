@@ -185,3 +185,12 @@ help/Skill 和 shell 包装。没有普通聊天下降证据，第三阶段父�
 `manage-pragma`，现已将六组详细工作流移到一个 Skill 的 references；当前默认与工作台
 索引为 1 个 Skill，46 条 CLI 命令和 Pi 默认 13 个工具不变。历史证据文件未改写。
 合并的验证与兼容身份处理见[后续记录](management-tools-cli-skills-unified-skill-implementation.md)。
+
+## Code Review 后续修复（2026-10-09）
+
+对截至 `f70b816b` 的第三阶段与 Skill 合并实现进行 CR，复现并修复两项问题：
+Automation 清理后的恢复重放误删新 generation 队列，以及命令端口包装丢失原型方法。
+修复使用既有 Automation aggregate lock、generation 和存储事务，命令继续调用原端口；
+未增加 owner/consumer、兼容分支或持久化 Schema。具体复现、修复与复核见
+[第三阶段 CR 报告](management-tools-cli-skills-phase-three-code-review.md)。原 Runtime/发行
+验收缺口继续保留。

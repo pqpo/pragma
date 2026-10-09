@@ -377,7 +377,17 @@ export function createManagementCommandApplication(options: {
             ? {}
             : {
                 missions: {
-                  ...ports.missions,
+                  list: (input: Parameters<NonNullable<typeof ports.missions>["list"]>[0]) =>
+                    ports.missions!.list(input),
+                  get: (id: string) => ports.missions!.get(id),
+                  sendMessage: (
+                    input: Parameters<NonNullable<typeof ports.missions>["sendMessage"]>[0],
+                  ) => ports.missions!.sendMessage(input),
+                  listWorkItems: (
+                    input: Parameters<NonNullable<typeof ports.missions>["listWorkItems"]>[0],
+                  ) => ports.missions!.listWorkItems(input),
+                  getWorkItem: (id: string, workId: string) =>
+                    ports.missions!.getWorkItem(id, workId),
                   submit: (input: Parameters<NonNullable<typeof ports.missions>["submit"]>[0]) =>
                     preserveCommandStateError(() => ports.missions!.submit(input)),
                   interrupt: (id: string, identity?: string) =>
@@ -388,7 +398,8 @@ export function createManagementCommandApplication(options: {
             ? {}
             : {
                 automations: {
-                  ...ports.automations,
+                  list: (input: Parameters<NonNullable<typeof ports.automations>["list"]>[0]) =>
+                    ports.automations!.list(input),
                   save: (input: Parameters<NonNullable<typeof ports.automations>["save"]>[0]) =>
                     preserveCommandStateError(() => ports.automations!.save(input)),
                   delete: (input: Parameters<NonNullable<typeof ports.automations>["delete"]>[0]) =>

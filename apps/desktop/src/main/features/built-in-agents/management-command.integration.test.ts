@@ -73,6 +73,7 @@ async function fixture(
   requireCreateApproval: false | "definition" | "plugin" = false,
   approvalTool = "create_flow_draft",
   phaseThree = false,
+  onStorageTrashed?: () => void,
 ) {
   const root = await mkdtemp(join(tmpdir(), "pragma-command-boundary-"));
   cleanup.push(() => rm(root, { force: true, recursive: true }));
@@ -180,6 +181,8 @@ async function fixture(
           runtimes: [runtime],
           defaultRuntimeId: runtime.descriptor.id,
         }),
+        root,
+        onStorageTrashed,
       )
     : undefined;
   if (host !== undefined) cleanup.push(host.dispose);
@@ -1458,6 +1461,35 @@ describe(
   "phase-three management commands through real CLI and shared Host",
   { timeout: 60_000 },
   () => {
+    it("preserves inherited Mission and Automation port methods and their receiver", async () => {
+      const f = await fixture(false, "create_flow_draft", true);
+      const h = f.host!;
+      const missionList = h.missionPort.list;
+      const automationList = h.automations.list;
+      Object.defineProperty(h.missionPort, "list", {
+        configurable: true,
+        enumerable: true,
+        value: function (this: typeof h.missionPort, input: Parameters<typeof missionList>[0]) {
+          expect(this).toBe(h.missionPort);
+          return missionList.call(this, input);
+        },
+      });
+      Object.defineProperty(h.automations, "list", {
+        configurable: true,
+        enumerable: true,
+        value: function (this: typeof h.automations, input: Parameters<typeof automationList>[0]) {
+          expect(this).toBe(h.automations);
+          return automationList.call(this, input);
+        },
+      });
+      for (const port of [h.missionPort, h.automations]) {
+        Object.setPrototypeOf(port, { ...port });
+        for (const key of Object.keys(port)) Reflect.deleteProperty(port, key);
+      }
+      expect((await f.invoke("mission.list", {})).status).toBe("succeeded");
+      expect((await f.invoke("automation.list", {})).status).toBe("succeeded");
+    });
+
     it("discovers resources, starts one owner, queries work, sends and interrupts", async () => {
       const f = await fixture(false, "create_flow_draft", true);
       const h = f.host!;
@@ -1538,7 +1570,13 @@ describe(
     });
 
     it("saves, changes, disables, resets and deletes Automations without deleting Missions", async () => {
-      const f = await fixture(false, "create_flow_draft", true);
+      let failAfterCleanup = false;
+      const f = await fixture(false, "create_flow_draft", true, () => {
+        if (failAfterCleanup) {
+          failAfterCleanup = false;
+          throw new Error("Crash after cleanup before progress");
+        }
+      });
       const h = f.host!;
       const resource = {
         apiVersion: PRAGMA_DSL_WRITE_API_VERSION,
@@ -1618,9 +1656,22 @@ describe(
       );
       const pendingGeneration = (await h.store.getBinding(ref))!.generation;
       await markCommandPending(f, resetRequest);
+      failAfterCleanup = true;
+      expect((await f.invoke("automation.reset-session", { ref }, resetRequest)).status).toBe(
+        "failed",
+      );
+      const event = {
+        eventId: "accepted-after-cleanup",
+        scheduledFor: new Date().toISOString(),
+        missionId: randomUUID(),
+        createdAt: new Date().toISOString(),
+      };
+      await h.store.updateState(ref, pendingGeneration, (state) => ({ ...state, queue: [event] }));
+      await markCommandPending(f, resetRequest);
       expect((await f.invoke("automation.reset-session", { ref }, resetRequest)).status).toBe(
         "succeeded",
       );
+      expect((await h.store.getState(ref, pendingGeneration)).queue).toEqual([event]);
       const reset = await h.store.getBinding(ref);
       expect(reset?.generation).not.toBe(binding?.generation);
       expect(reset?.generation).toBe(pendingGeneration);
