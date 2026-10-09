@@ -124,7 +124,7 @@ lib
 - `built-in-agents` 是五个内置 Agent（Pragma、Memory Curator、Store Revision、Skill Revision、Evaluation Judge）的跨 Host 产品能力包。所有 Agent 均由静态 DSL 定义；包内拥有 descriptor/compiler、独立宿主端口、提示词、结构化输出解析、修订规则与纯状态机。Host 负责 Runtime 执行、权限、持久化、Mission 和 UI 适配，不要求五个 Agent 使用统一调用接口。
 - `memory` 是 Host 内置 Memory Plane，拥有 Evidence adapter、Module SPI、独立消费状态和联邦只读 Context；只依赖 `core` 与 `shared`，不得反向进入 Core。
 - Mission Board 是 `local-host` 内的 Mission-scoped 通用白板能力；其通用 binding 只依赖 `core` Context 合约，Host composition 才选择文件系统 adapter。
-- Mission command handlers、strict target、queue recovery/rejection 和消息 admission 只允许由 Local Host 实现；Desktop/CLI 使用共用 control factory 和 `MissionExecutionOwner`，不得维护第二套 consumer 或 active owner 副本。Mission revision pin、binding/fingerprint、compilation identity、稳定性检查、编译缓存和目标 readiness 只允许由 Local Host compile service 实现，DSL compiler 仍归 Interpreter；Desktop/CLI/系统与内置 executor 仅提供具体资源端口。Issue #348 R2 保留请求内 Revision 复用、30 秒成功 readiness 缓存和暖 owner；首轮 start/完整 lifecycle 按 R3 迁移，剩余 Runner 薄转发出口按 R4 删除。
+- Mission command handlers、strict target、queue recovery/rejection 和消息 admission 只允许由 Local Host 实现；Desktop/CLI 使用共用 control factory 和 `MissionExecutionOwner`，不得维护第二套 consumer 或 active owner 副本。Mission revision pin、binding/fingerprint、compilation identity、稳定性检查、编译缓存和目标 readiness 只允许由 Local Host compile service 实现，DSL compiler 仍归 Interpreter；Desktop/CLI/系统与内置 executor 仅提供具体资源端口。Issue #348 保留请求内 Revision 复用、30 秒成功 readiness 缓存和暖 owner。Desktop/CLI 使用 Local Host 的同一 Mission application factory；Host 仅提供资源、存储、展示与平台端口，不得注入完整 execution service、command application 或 run 内核。内部 Automation、Pragma、Memory Curator、Revision 与 Evaluation 通过共享 Mission 用例执行；Desktop 不再提供 MissionRunner。
 - `context-filesystem` 是显式 Node/Host 文件系统 adapter 出口；Memory 不得依赖它。
 - `runtime-*` 是具体 Runtime Adapter 实现，依赖 `core`、`shared` 和该 runtime 自己的 SDK；不同 runtime 包相互独立。
 - `apps/desktop` 是本机 Agent 桥接入口，主动连接云端，承载本地权限闸门和本机 Agent 调用。
@@ -146,8 +146,8 @@ examples    -> runtime-* / plugin-* / core -> shared
 
 | 来源                       | 允许依赖                                                                                                                                                                                |
 | -------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `apps/cli`                 | `@pragma/local-host`、`@pragma/shared/integration`、composition root 所需的具体 `@pragma/runtime-*`                                                                                     |
-| `apps/desktop`             | `@pragma/shared`、`@pragma/core`、`@pragma/memory`、`@pragma/evaluation`、`@pragma/interpreter`、`@pragma/built-in-agents`、具体 `@pragma/runtime-*`                                    |
+| `apps/cli`                 | `@pragma/local-host`、`@pragma/shared` 的浏览器安全 wire Schema/DTO（含 `/integration`）、composition root 所需的具体 `@pragma/runtime-*`                                                                                     |
+| `apps/desktop`             | `@pragma/local-host`、`@pragma/shared`、`@pragma/core`、`@pragma/memory`、`@pragma/evaluation`、`@pragma/interpreter`、`@pragma/built-in-agents`、具体 `@pragma/runtime-*`              |
 | `packages/local-host`      | `@pragma/shared`、`@pragma/core`、`@pragma/interpreter`、`@pragma/evaluation`、`@pragma/built-in-agents`、`@pragma/memory`、`@pragma/context-filesystem`；Node 内置与运行时中立第三方库 |
 | `plugins/*`                | `@pragma/shared`、`@pragma/core`；不依赖 app、server、client 或具体 runtime                                                                                                             |
 | `examples`                 | `@pragma/core`、具体 `@pragma/runtime-*`、具体 `@pragma/plugin-*`                                                                                                                       |
@@ -899,7 +899,7 @@ docs/conventions/coding-conventions.md
 
 应用：
 
-- Desktop 与 CLI 使用共享 Local Host 能力。
+- Desktop 与 CLI 使用共享 Local Host Mission application factory；内部调用与 IPC mutation 不得绕过该用例边界。
 
 边界：
 
@@ -916,6 +916,8 @@ docs/conventions/coding-conventions.md
 - `pnpm test` 通过。
 - `pnpm build` 通过。
 - 非法 import 可被 ESLint 拦截。
+
+- CLI 的 `pnpm --filter @pqpo/pragma test` 执行完整共享底层门禁和 CLI adapter 测试。独立共享门禁为 `pnpm test:local-host-kernel`，覆盖 Local Host 控制、编译、运行、恢复、持久化和内部用例；不得以 adapter mocks 或快速 `test:core` 代替。Desktop 保留 IPC、Electron、UI、平台资源接线与打包验证。
 
 ### 用户能力回归保护
 

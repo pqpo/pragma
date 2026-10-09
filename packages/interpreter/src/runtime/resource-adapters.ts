@@ -7,6 +7,7 @@ import {
   StaticContextStore,
   createCodeServiceMcpServer,
   createHttpServiceMcpServer,
+  type ExpertAgentPluginHooks,
   type ExpertAgentManagedTool,
   type ExpertAgentToolCallResult,
   type ExpertAgentContextStore,
@@ -63,6 +64,8 @@ export interface PragmaAdapterHost {
 }
 
 export interface PragmaCapabilityContribution {
+  /** Host-owned lifecycle contribution; never serialized into DSL or tool schemas. */
+  readonly hooks?: ExpertAgentPluginHooks | undefined;
   readonly skills?: IExpertAgentSkillsConfig | undefined;
   readonly mcp?: IExpertAgentMcpConfig | undefined;
   readonly tools?: readonly ExpertAgentManagedTool<string, ExpertAgentToolCallResult>[] | undefined;
@@ -813,6 +816,14 @@ function isContextStore(value: unknown): value is ExpertAgentContextStore {
 function isCapabilityContribution(value: unknown): value is PragmaCapabilityContribution {
   const contribution = asRecord(value);
   if (contribution === undefined) return false;
+  if (contribution["hooks"] !== undefined) {
+    const hooks = asRecord(contribution["hooks"]);
+    if (
+      hooks === undefined ||
+      Object.values(hooks).some((hook) => hook !== undefined && typeof hook !== "function")
+    )
+      return false;
+  }
   if (contribution["skills"] !== undefined) {
     const skills = asRecord(contribution["skills"])?.["skills"];
     if (!Array.isArray(skills) || !skills.every(isSkill)) return false;

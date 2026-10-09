@@ -4,7 +4,7 @@
 
 大输出同步计数、关联 Memory 预算及真实 Mission 释放修复见[计数问题补充](local-host-kernel-r1-token-counter-followup.md)；依据维护者后续修复要求披露估算策略变化，R1 阶段验收仍未完成。
 
-日期：2026-10-03。状态：R1 已通过 PR #353 合入 main，工程验证与真实 Native Mission smoke 已通过；真实模型性能及完整产品场景验收仍有缺口，未标记全部完成。R2 已通过 PR #354 合入 main，编译编排实施已交付，阶段退出以 [R2 实施与验证报告](local-host-kernel-r2-implementation.md)的逐项结果及缺口为准；R3 工程实现已交付，本地门禁与串行 fixture 对照已完成，阶段验收未完成；退出以 [R3 实施与验证报告](local-host-kernel-r3-implementation.md)为准；R4 未开始。R1 历史证据见[实施与验证报告](local-host-kernel-r1-implementation.md)和[CR 与复核](local-host-kernel-r1-code-review.md)。
+日期：2026-10-04。状态：R1/R2/R3 已通过 PR #353/#354/#355 合入 main，工程实现已交付；真实模型、OS 凭据及完整产品性能验收仍有缺口。R4 已实施共享 application 构造、内部调用迁移与旧 Runner 清理，完整 CLI 共享门禁、两端 adapter、Desktop 构建、CLI 安装产物和 Native Codex 删除验证已通过；串行 fixture 对照未发现可复现的阈值回退，真实接线因 OS 凭据读取超时仍无有效产品样本；退出以 [R4 实施与验收报告](local-host-kernel-r4-implementation.md)为准。未标记 R4 或整体重构完成。前三阶段证据见 [R1](local-host-kernel-r1-implementation.md)、[R2](local-host-kernel-r2-implementation.md)、[R3](local-host-kernel-r3-implementation.md)及各自最新 followup。
 
 本方案对应 [issue #348](https://github.com/pqpo/pragma/issues/348)，基于拉取后的 `main`，代码基线为 `8fdbd4526d0f62d0b36891165539ed9ec47dc603`。目标是让 Desktop 与 CLI 的 Mission 控制、编译编排、运行、Session 与恢复共用 `@pragma/local-host` 的一套实现，同时保留最近四轮首 Token 优化。实施采用 R1 至 R4 四个阶段；基线测量与中立契约准备并入 R1 的前置工作；每阶段独立验证、合并，并删除该阶段已替代的业务路径。
 
@@ -27,7 +27,9 @@
 
 第三轮的全局容量计量 adapter、账本、启动校准和同步容量写入门禁已撤销，不能随“统一存储层”重新引入。第四轮也已替代第三轮的 Usage preview 和全量 Runtime readiness；应保留最终实现，而不是同时保留每轮旧方案。
 
-### 1.2 已共享与仍重复的部分
+### 1.2 设计基线中已共享与仍重复的部分
+
+下表保留首次方案的基线分析；R4 当前接线、删除范围与验收状态见 [最终阶段报告](local-host-kernel-r4-implementation.md)。
 
 | 当前入口                              | 实际实现                                                                                                           | 重构判断                                                                                            |
 | ------------------------------------- | ------------------------------------------------------------------------------------------------------------------ | --------------------------------------------------------------------------------------------------- |

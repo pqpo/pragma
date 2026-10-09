@@ -113,6 +113,42 @@ const config = tseslint.config(
     },
   },
   {
+    files: ["apps/cli/src/**/*.{ts,tsx}"],
+    rules: {
+      "no-restricted-syntax": [
+        "error",
+        {
+          selector:
+            "ImportDeclaration[source.value=/^@pragma\\/(?:core|interpreter|memory|evaluation|built-in-agents|context-filesystem)(?:\\/|$)/], ImportExpression[source.value=/^@pragma\\/(?:core|interpreter|memory|evaluation|built-in-agents|context-filesystem)(?:\\/|$)/]",
+          message: "CLI business operations must use the Local Host application boundary.",
+        },
+      ],
+    },
+  },
+  {
+    files: ["apps/desktop/src/main/features/**/*.{ts,tsx}"],
+    ignores: [
+      "apps/desktop/src/main/features/**/*.test.{ts,tsx}",
+      "apps/desktop/src/main/features/**/fixtures/**",
+    ],
+    rules: {
+      "no-restricted-syntax": [
+        "error",
+        {
+          selector:
+            "ImportDeclaration[source.value='@pragma/core'] > ImportSpecifier[importKind!='type'][imported.name=/^(?:ExpertSessionManager|createFlowExecution|createExpertSession|createPragma)$/]",
+          message:
+            "Desktop features must use Local Host Mission use cases instead of creating a Core execution kernel.",
+        },
+        {
+          selector:
+            "ImportDeclaration[source.value='@pragma/local-host'] > ImportSpecifier[importKind!='type'][imported.name=/^(?:createMissionControlApplication|createLocalHostCoreMissionControlAdapter|createLocalHostMissionExecutionService)$/]",
+          message: "Mission command and execution kernels may only be composed by Local Host.",
+        },
+      ],
+    },
+  },
+  {
     files: ["packages/local-host/**/*.{ts,tsx}"],
     languageOptions: {
       globals: {
@@ -139,7 +175,10 @@ const config = tseslint.config(
   },
   {
     files: ["apps/desktop/src/main/features/**/*.{ts,tsx}"],
-    ignores: ["apps/desktop/src/main/features/**/*.test.{ts,tsx}"],
+    ignores: [
+      "apps/desktop/src/main/features/**/*.test.{ts,tsx}",
+      "apps/desktop/src/main/features/**/fixtures/**",
+    ],
     rules: {
       "no-restricted-imports": [
         "error",

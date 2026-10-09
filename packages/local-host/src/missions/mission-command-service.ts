@@ -1,4 +1,4 @@
-import type { MissionCommandOutcomeNotification } from "./mission-runner-contracts.ts";
+import type { MissionCommandOutcomeNotification } from "./mission-execution-use-cases.ts";
 
 export class MissionCommandService {
   readonly #listeners = new Set<(notification: MissionCommandOutcomeNotification) => void>();

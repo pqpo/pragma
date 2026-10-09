@@ -265,6 +265,13 @@ export async function createDesktopMemoryPlane(options: {
   let lastError: { readonly code: string; readonly occurredAt: string } | undefined;
   let reportedExtractionIssues = new Set<string>();
   let maintenanceRunning: Promise<void> | undefined;
+  let stopping: Promise<void> | undefined;
+  const stoppedResources = new Set<string>();
+  const stopResource = async (id: string, operation: () => void | Promise<void>): Promise<void> => {
+    if (stoppedResources.has(id)) return;
+    await operation();
+    stoppedResources.add(id);
+  };
   let lastMaintenanceAtMs = 0;
   let safeThroughSequence = 0;
   let blockedBytes = 0;
@@ -736,7 +743,7 @@ export async function createDesktopMemoryPlane(options: {
           : { code: attentionStatus.errorCode, occurredAt: new Date().toISOString() };
       const retrievalStatus = await attention?.retrieval.status();
       const retrievalError =
-        retrievalStatus?.errorCode === undefined
+        !retrievalStatus?.settings.enabled || retrievalStatus.errorCode === undefined
           ? undefined
           : { code: retrievalStatus.errorCode, occurredAt: new Date().toISOString() };
       if (retrievalStatus?.settings.enabled)
@@ -787,24 +794,43 @@ export async function createDesktopMemoryPlane(options: {
       stopped = false;
       wakePipeline();
     },
-    async stop() {
+    stop() {
       stopped = true;
-      await attention?.stop();
       if (timer !== undefined) clearTimeout(timer);
       timer = undefined;
-      await running;
-      await maintenanceRunning;
-      await scheduler.stop();
-      episodic.close();
-      knowledge.close();
-      skill.close();
-      semantic.close();
-      try {
-        if (executionStore.close !== undefined) await executionStore.close();
-        else await executionStore.drainCanonicalEvents();
-      } finally {
-        await canonical.close();
-      }
+      return (stopping ??= (async () => {
+        // Producers must settle before their stores close. Remember successful
+        // closes: native SQLite stores cannot be closed twice on a failed quit retry.
+        await stopResource("attention", async () => await attention?.stop());
+        await running;
+        await maintenanceRunning;
+        await stopResource("scheduler", async () => await scheduler.stop());
+        const errors: unknown[] = [];
+        for (const [id, operation] of [
+          ["episodic", () => episodic.close()],
+          ["knowledge", () => knowledge.close()],
+          ["skill", () => skill.close()],
+          ["semantic", () => semantic.close()],
+          [
+            "executions",
+            async () => {
+              if (executionStore.close !== undefined) await executionStore.close();
+              else await executionStore.drainCanonicalEvents();
+            },
+          ],
+          ["canonical", async () => await canonical.close()],
+        ] satisfies [string, () => void | Promise<void>][]) {
+          try {
+            await stopResource(id, operation);
+          } catch (error) {
+            errors.push(error);
+          }
+        }
+        if (errors.length > 0) throw new AggregateError(errors, "Memory resource shutdown failed.");
+      })().catch((error: unknown) => {
+        stopping = undefined;
+        throw error;
+      }));
     },
   };
 }

@@ -2117,6 +2117,7 @@ export function MissionDetailFragment(props: {
       </div>
       {selectedWorkRecord === undefined ? null : (
         <MissionWorkDrawer
+          missionId={props.mission.id}
           record={selectedWorkRecord}
           inputSenderName={selectedWorkInputSenderName}
           mentionCandidates={mentionCandidates}

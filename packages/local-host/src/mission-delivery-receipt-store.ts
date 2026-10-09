@@ -72,7 +72,16 @@ export async function createMissionDeliveryReceiptStore(input: {
         await stagePage({ items: page.items.slice(midpoint), nextCursor: page.nextCursor });
       }
     },
-    claim: async () => await call<{ row: MissionReceiptRow; claim: string } | undefined>("claim"),
+    claim: async (missionId?: string) =>
+      await call<{ row: MissionReceiptRow; claim: string } | undefined>(
+        "claim",
+        missionId === undefined ? [] : [missionId],
+      ),
+    resumeDeferred: async (missionId: string) => {
+      await call("resumeDeferred", [missionId]);
+    },
+    pendingMission: async (missionId: string) =>
+      (await call<{ count: number }>("pendingMission", [missionId])).count,
     link: async (executionId: string) =>
       await call<{ payload: string } | undefined>("link", [executionId]),
     owned: async (id: string, claim: string) => await call<boolean>("owned", [id, claim]),
@@ -82,6 +91,9 @@ export async function createMissionDeliveryReceiptStore(input: {
     },
     acknowledge: async (id: string, claim: string, missionId: string) =>
       await call<boolean>("acknowledge", [id, claim, missionId]),
+    defer: async (id: string, claim: string) => {
+      await call("defer", [id, claim]);
+    },
     fail: async (id: string, claim: string, invalid: boolean, attempts: number) => {
       await call("fail", [id, claim, invalid, attempts]);
     },

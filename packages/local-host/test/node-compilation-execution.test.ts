@@ -10,6 +10,7 @@ import { readFileSync } from "node:fs";
 import { cp, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { DatabaseSync } from "node:sqlite";
 
 import {
   createFileExpertSessionStore,
@@ -34,9 +35,10 @@ import {
 } from "@pragma/shared";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { createLocalHostNodeApplication } from "../src/node-application.ts";
+import { createLocalHostNodeApplication as createNodeApplication } from "../src/node-application.ts";
 import * as nodeCompiler from "../src/node-mission-compiler.ts";
 import * as runMemoryModule from "../src/run-memory.ts";
+import * as controllerComposition from "../src/missions/controller/composition.ts";
 import * as requestReleaseModule from "../src/missions/request-resource-release.ts";
 import { createSqliteExecutionStore } from "../src/execution/sqlite-execution-store.ts";
 import { createLocalHostProjectCatalogFromHome } from "../src/project-catalog.ts";
@@ -52,12 +54,49 @@ import {
 } from "./fixtures/published-project.ts";
 
 const roots: string[] = [];
+const hosts: ReturnType<typeof createNodeApplication>[] = [];
+function createLocalHostNodeApplication(
+  options: Parameters<typeof createNodeApplication>[0],
+): ReturnType<typeof createNodeApplication> {
+  const host = createNodeApplication(options);
+  hosts.push(host);
+  return host;
+}
 afterEach(async () => {
+  // Test bodies stop their child producers first; then drain Host custody
+  // before removing its durable root or restoring the Runtime mocks it uses.
+  for (const host of hosts.splice(0).reverse()) await host.dispose?.();
   vi.restoreAllMocks();
   await Promise.all(
     roots.splice(0).map((root) => rm(root, { recursive: true, force: true, maxRetries: 5 })),
   );
 });
+
+async function executionDiagnostic(
+  executions: ReturnType<typeof createSqliteExecutionStore>,
+  executionId: string,
+) {
+  const execution = await executions.get(executionId);
+  const invocations = await executions.listInvocations(executionId);
+  return {
+    execution:
+      execution === undefined
+        ? undefined
+        : {
+            executionId,
+            status: execution.status,
+            version: execution.version,
+            error: execution.error,
+          },
+    invocations: invocations.map(({ invocationId, nodeId, status, waitReason, error }) => ({
+      invocationId,
+      nodeId,
+      status,
+      waitReason,
+      error,
+    })),
+  };
+}
 
 async function fixture(
   fail = false,
@@ -203,6 +242,94 @@ async function fixture(
 }
 
 describe("default Node compilation reaches persisted Execution", { timeout: 15_000 }, () => {
+  it.each(["show", "query", "owned-show"] as const)(
+    "recovers terminal receipt custody on explicit %s before immediate facade disposal without another Native turn",
+    async (access) => {
+      const f = await fixture();
+      const started = await f.app.run!.start({
+        requestId: randomUUID(),
+        command: "expert.run",
+        executor: { kind: "expert", id: f.expertId },
+        project: { projectId: "studio", revision: 1 },
+        workspace: f.workspace,
+        prompt: "initial",
+        detach: false,
+      });
+      expect((await started.outcome).status).toBe("succeeded");
+      await f.app.dispose!();
+      const paths = new PragmaPaths({ pragmaHome: f.home });
+      const receipts = new DatabaseSync(paths.missionDelivery());
+      try {
+        // Rewind only the rebuildable consumer cursor to replay the actual Native
+        // terminal fact, as after a consumer was unavailable. Keep its real link.
+        receipts.exec("DELETE FROM delivery_tasks");
+        receipts.prepare("UPDATE delivery_metadata SET value='0' WHERE key='cursor'").run();
+      } finally {
+        receipts.close();
+      }
+      const missions = createMissionStore({ missionsPath: join(paths.dataRoot(), "missions") });
+      const mission = await missions.get(started.missionId);
+      await missions.updateExecution(mission.id, { ...mission.execution!, status: "running" });
+      await rm(join(missions.storagePath!(mission.id), "execution-projections"), {
+        recursive: true,
+        force: true,
+      });
+      const controller = createMissionControllerStore({ missionsPath: paths.missionsRoot() });
+      const foreign =
+        access === "owned-show"
+          ? await controller.claim({
+              missionId: mission.id,
+              claimId: randomUUID(),
+              leaseMs: 30_000,
+            })
+          : undefined;
+      const readonly = createLocalHostNodeApplication({
+        pragmaHome: f.home,
+        runtimes: f.runtimes,
+        client: { surface: "cli", version: "test", instanceId: randomUUID() },
+        workspace: {
+          stat: async () => ({ isDirectory: () => true }),
+          access: async () => undefined,
+          realpath: async (path) => path,
+        },
+      });
+      try {
+        if (access !== "query") await readonly.getMission(mission.id);
+        else await readonly.queryMission({ missionId: mission.id, view: "result", limit: 50 });
+        // CLI exits immediately after presenting the read; shutdown must retain
+        // this accepted recovery's guard until its finite receipt work settles.
+        await readonly.dispose!();
+        expect(f.startTurn).toHaveBeenCalledOnce();
+        if (foreign !== undefined) {
+          expect(
+            (await controller.readSnapshot({ missionId: mission.id })).snapshot.lease?.claimId,
+          ).toBe(foreign.claimId);
+          expect((await missions.get(mission.id)).execution?.status).toBe("running");
+          return;
+        }
+        expect((await missions.get(mission.id)).execution?.status).toBe("succeeded");
+        const projection = await missions.readExecutionProjection(mission.id, started.executionId);
+        expect(
+          projection?.some((entry) => entry.kind === "assistant" && entry.content === "done"),
+        ).toBe(true);
+        const restored = new DatabaseSync(paths.missionDelivery());
+        try {
+          expect(restored.prepare("SELECT COUNT(*) AS count FROM delivery_tasks").get()).toEqual({
+            count: 0,
+          });
+        } finally {
+          restored.close();
+        }
+        expect(
+          (await controller.readSnapshot({ missionId: mission.id })).snapshot.lease,
+        ).toBeUndefined();
+      } finally {
+        await readonly.dispose!();
+        if (foreign !== undefined)
+          await controller.release({ missionId: mission.id, guard: foreign });
+      }
+    },
+  );
   it.each(["expert", "team"] as const)(
     "rejects a live %s process lease and resumes the same Session after SIGKILL without redelivering its Native turn",
     async (kind) => {
@@ -731,6 +858,10 @@ describe("default Node compilation reaches persisted Execution", { timeout: 15_0
         );
       } finally {
         await cold.dispose?.();
+        expect(completions[1]!.mock.calls.map((call) => call.slice(0, 2))).toContainEqual([
+          started.missionId,
+          started.executionId,
+        ]);
         store.close();
       }
     },
@@ -1070,6 +1201,23 @@ describe("default Node compilation reaches persisted Execution", { timeout: 15_0
     };
     const first = await f.app.run!.start({ ...request, requestId: randomUUID() });
     expect((await first.outcome).status).toBe("failed");
+    const executions = createSqliteExecutionStore({ pragmaHome: f.home });
+    try {
+      // Failure diagnostics must retain the real Runtime cause at both levels,
+      // rather than reporting only that a Human wait was never observed.
+      const diagnostic = await executionDiagnostic(executions, first.executionId!);
+      expect(diagnostic.execution).toMatchObject({ status: "failed" });
+      expect(JSON.stringify(diagnostic.execution?.error)).toContain("fixture execution failure");
+      expect(
+        diagnostic.invocations.some(
+          (invocation) =>
+            invocation.status === "failed" &&
+            JSON.stringify(invocation.error)?.includes("fixture execution failure"),
+        ),
+      ).toBe(true);
+    } finally {
+      await executions.close();
+    }
     expect(invalidate).toHaveBeenCalledOnce();
     const probes = f.canUse.mock.calls.length;
     if (compiler === undefined) throw new Error("Default Node compiler was not created.");
@@ -1219,6 +1367,58 @@ it(
   "cold-stops a waiting Flow with unavailable mounted Knowledge without touching executable resources",
   { timeout: 20_000 },
   async () => {
+    const stages: { phase: string; missionId: string; requestId: string }[] = [];
+    const mark = (phase: string, missionId: string, requestId: string) => {
+      stages.push({ phase, missionId, requestId });
+      if (stages.length > 40) stages.shift();
+    };
+    const createMemory = runMemoryModule.createLocalHostRunMemory;
+    vi.spyOn(runMemoryModule, "createLocalHostRunMemory").mockImplementation((options) => {
+      const memory = createMemory(options);
+      const beginPrompt = memory.beginPrompt;
+      vi.spyOn(memory, "beginPrompt").mockImplementation(async (missionId, requestId) => {
+        mark("memory.prompt.begin", missionId, requestId);
+        const rollback = await beginPrompt(missionId, requestId);
+        mark("memory.prompt.admitted", missionId, requestId);
+        return async () => {
+          mark("memory.prompt.rollback.enter", missionId, requestId);
+          await rollback();
+          mark("memory.prompt.rollback.exit", missionId, requestId);
+        };
+      });
+      return memory;
+    });
+    const createController = controllerComposition.createLocalHostMissionController;
+    let lifecycle: ReturnType<typeof createController> | undefined;
+    vi.spyOn(controllerComposition, "createLocalHostMissionController").mockImplementation(
+      (options) => {
+        const current = createController(options);
+        lifecycle = current;
+        const startPolling = current.controller.startPolling.bind(current.controller);
+        vi.spyOn(current.controller, "startPolling").mockImplementation((input) =>
+          startPolling({
+            ...input,
+            consumer: {
+              ...input.consumer,
+              apply: async (request) => {
+                const { missionId } = request.command;
+                const { requestId } = request.command.request;
+                mark("inbox.consumer.apply.enter", missionId, requestId);
+                try {
+                  const result = await input.consumer.apply(request);
+                  mark("inbox.consumer.apply.exit", missionId, requestId);
+                  return result;
+                } catch (error) {
+                  mark("inbox.consumer.apply.rejected", missionId, requestId);
+                  throw error;
+                }
+              },
+            },
+          }),
+        );
+        return current;
+      },
+    );
     const f = await fixture(false, true);
     const storeId = randomUUID();
     const knowledge = await writePublishedKnowledgeFixture(f.home, storeId);
@@ -1246,7 +1446,19 @@ it(
         detach: false,
       },
     });
-    expect((await started.outcome).status).toBe("input_required");
+    const outcome = await started.outcome;
+    const initialExecutions = createSqliteExecutionStore({ pragmaHome: f.home });
+    try {
+      expect(
+        outcome,
+        JSON.stringify({
+          outcome,
+          ...(await executionDiagnostic(initialExecutions, started.executionId!)),
+        }),
+      ).toMatchObject({ status: "input_required" });
+    } finally {
+      await initialExecutions.close();
+    }
     await f.app.dispose?.();
     await rm(knowledge.storePath(storeId), { recursive: true });
     f.canUse.mockReturnValue({ usable: false, reason: "Unavailable readiness" });
@@ -1266,6 +1478,70 @@ it(
         realpath: async (path) => path,
       },
     });
+    const waitForCommand = async (kind: "interrupt" | "send", requestId: string) => {
+      try {
+        return await cold.missionControl!.waitForTerminal({
+          missionId: mission.id,
+          requestId,
+          timeoutMs: 5_000,
+        });
+      } catch (error) {
+        const controller = lifecycle!.controller;
+        // Await every read so diagnostics cannot outlive owned Host cleanup.
+        // Failed reads remain visible without replacing the command failure.
+        const [stateRead, operationRead] = await Promise.allSettled([
+          controller.readSnapshot({ missionId: mission.id }),
+          controller.listOperations({ missionId: mission.id }),
+        ]);
+        const state = stateRead.status === "fulfilled" ? stateRead.value : undefined;
+        const operations = operationRead.status === "fulfilled" ? operationRead.value : [];
+        const executions = createSqliteExecutionStore({ pragmaHome: f.home });
+        try {
+          throw new Error(
+            `Cold Flow ${kind} command did not settle: ${JSON.stringify({
+              kind,
+              missionId: mission.id,
+              requestId,
+              operation: operations
+                .filter((operation) => operation.requestId === requestId)
+                .map(({ state, kind, commandId, createdAt, updatedAt, error }) => ({
+                  state,
+                  kind,
+                  commandId,
+                  createdAt,
+                  updatedAt,
+                  errorCode: error?.["code"],
+                })),
+              lease: state?.snapshot.lease,
+              diagnosticReadFailures: [stateRead, operationRead]
+                .map((result, index) =>
+                  result.status === "rejected"
+                    ? {
+                        source: index === 0 ? "controller-state" : "controller-operation",
+                        error: result.reason instanceof Error ? result.reason.name : "unknown",
+                      }
+                    : undefined,
+                )
+                .filter((failure) => failure !== undefined),
+              guard: lifecycle!.ownerScope.currentGuard(mission.id),
+              inboxConsumer: lifecycle!.ownerScope.diagnostics(),
+              stages: stages.filter((stage) => stage.missionId === mission.id),
+              eventTypes: state?.events
+                .slice(-12)
+                .map(({ type, occurredAt }) => ({ type, occurredAt })),
+              ...(await executionDiagnostic(executions, started.executionId!).catch(
+                (readError: unknown) => ({
+                  executionDiagnosticError: readError instanceof Error ? readError.name : "unknown",
+                }),
+              )),
+            })}`,
+            { cause: error },
+          );
+        } finally {
+          await executions.close();
+        }
+      }
+    };
     try {
       const interruptRequestId = randomUUID();
       await cold.missionControl!.submit({
@@ -1274,13 +1550,9 @@ it(
         kind: "interrupt",
         payload: { kind: "interrupt", reason: "Stop with unavailable Knowledge" },
       });
-      expect(
-        await cold.missionControl!.waitForTerminal({
-          missionId: mission.id,
-          requestId: interruptRequestId,
-          timeoutMs: 5_000,
-        }),
-      ).toMatchObject({ state: "applied" });
+      expect(await waitForCommand("interrupt", interruptRequestId)).toMatchObject({
+        state: "applied",
+      });
       expect(f.canUse).not.toHaveBeenCalled();
       expect(f.restore).toHaveBeenCalledWith(
         expect.objectContaining({ systemSessionId: originalNative[0]!.systemSessionId }),
@@ -1318,17 +1590,122 @@ it(
         kind: "send",
         payload: { kind: "send", input: { prompt: "Normal execution still requires Knowledge" } },
       });
-      expect(
-        await cold.missionControl!.waitForTerminal({
-          missionId: mission.id,
-          requestId: normalRequestId,
-          timeoutMs: 5_000,
-        }),
-      ).toMatchObject({ state: "rejected" });
+      expect(await waitForCommand("send", normalRequestId)).toMatchObject({ state: "rejected" });
+      expect(stages).toContainEqual({
+        phase: "memory.prompt.rollback.exit",
+        missionId: mission.id,
+        requestId: normalRequestId,
+      });
+      expect(stages).toContainEqual({
+        phase: "inbox.consumer.apply.rejected",
+        missionId: mission.id,
+        requestId: normalRequestId,
+      });
       expect(f.restore).toHaveBeenCalledTimes(1);
       expect(await readRuntimeSessionsForOwners(paths, [started.executionId!])).toHaveLength(1);
     } finally {
       await cold.dispose?.();
+    }
+  },
+);
+
+it.each([false, true])(
+  "preserves an externally awaited Human checkpoint when a detached Node run shuts down (envelope=%s)",
+  { timeout: 30_000 },
+  async (envelope) => {
+    const f = await fixture(false, true);
+    const requestId = randomUUID();
+    const request = {
+      requestId,
+      command: "flow.run" as const,
+      executor: { kind: "flow" as const, id: PUBLISHED_FLOW_ID },
+      project: { projectId: "studio", revision: 1 },
+      workspace: f.workspace,
+      input: {},
+      detach: true,
+    };
+    const presentation = {
+      onHumanInteraction: async () => ({ kind: "await_external_response" as const }),
+    };
+    let attachedId: string | undefined;
+    if (envelope) {
+      const missions = createMissionStore({
+        missionsPath: new PragmaPaths({ pragmaHome: f.home }).missionsRoot(),
+      });
+      attachedId = (
+        await missions.create({
+          initialMessageId: requestId,
+          workspace: { path: f.home, basename: "workspace" },
+          goal: "Await external approval",
+          project: { id: "studio", revision: 1 },
+          executor: { kind: "flow", ref: `flow:${PUBLISHED_FLOW_ID}`, name: "Flow" },
+          flowInput: {},
+        })
+      ).id;
+    }
+    const started =
+      attachedId === undefined
+        ? await f.app.run!.start(request, presentation)
+        : await f.app.run!.startAttached({ missionId: attachedId, request }, presentation);
+    expect((await started.outcome).status).toBe("accepted");
+    const executions = createSqliteExecutionStore({ pragmaHome: f.home });
+    try {
+      await vi.waitFor(async () => {
+        const execution = await executions.get(started.executionId!);
+        const invocations = await executions.listInvocations(started.executionId!);
+        expect(
+          invocations.some(
+            (invocation) =>
+              invocation.status === "waiting" && invocation.waitReason === "human_input",
+          ),
+          JSON.stringify({
+            execution:
+              execution === undefined
+                ? undefined
+                : {
+                    executionId: execution.executionId,
+                    status: execution.status,
+                    version: execution.version,
+                    error: execution.error,
+                  },
+            invocations: invocations.map(({ invocationId, nodeId, status, waitReason, error }) => ({
+              invocationId,
+              nodeId,
+              status,
+              waitReason,
+              error,
+            })),
+          }),
+        ).toBe(true);
+      });
+      const before = await executions.listContexts(started.executionId!);
+      await f.app.dispose!();
+      expect((await executions.get(started.executionId!))?.status).toBe("waiting");
+      expect(
+        (await executions.listInvocations(started.executionId!)).some(
+          (invocation) =>
+            invocation.status === "waiting" && invocation.waitReason === "human_input",
+        ),
+      ).toBe(true);
+      const identities = (contexts: typeof before) =>
+        contexts.map(({ contextId, snapshot, expert, runtime, owner }) => ({
+          contextId,
+          snapshot,
+          expert,
+          runtime,
+          owner,
+        }));
+      expect(identities(await executions.listContexts(started.executionId!))).toEqual(
+        identities(before),
+      );
+      const snapshot = await createMissionControllerStore({
+        missionsPath: new PragmaPaths({ pragmaHome: f.home }).missionsRoot(),
+      }).readSnapshot({ missionId: started.missionId });
+      expect(snapshot.snapshot.lease).toBeUndefined();
+      expect(f.startTurn).toHaveBeenCalledOnce();
+    } finally {
+      await executions.close();
+      await f.app.dispose!();
     }
   },
 );

@@ -9,7 +9,11 @@ import {
   type ExecutionWorkRecord,
 } from "@pragma/core";
 import type { ExpertAgentStreamEvent } from "@pragma/shared";
-import { ExpertAgentStreamEventSchema, InvocationOutputSchema } from "@pragma/shared";
+import {
+  ExpertAgentStreamEventSchema,
+  ExpertPromptInputSchema,
+  InvocationOutputSchema,
+} from "@pragma/shared";
 import { createHash } from "node:crypto";
 import { isDeepStrictEqual } from "node:util";
 import {
@@ -1001,7 +1005,10 @@ export function finalizeHistoricalChatEntries(
 
 export function workTaskInputEntries(record: ExecutionWorkRecord): MissionChatEntry[] {
   return record.tasks.flatMap((task) => {
-    const content = workTaskInputContent(task.input);
+    const prompt = ExpertPromptInputSchema.safeParse(task.input);
+    const content = prompt.success
+      ? truncate(prompt.data.text.trim(), 200_000)
+      : workTaskInputContent(task.input);
     if (content === "") return [];
     return [
       {
@@ -1010,6 +1017,7 @@ export function workTaskInputEntries(record: ExecutionWorkRecord): MissionChatEn
         invocationId: task.invocationId,
         kind: "user" as const,
         content,
+        ...(prompt.success ? { attachments: prompt.data.attachments } : {}),
         createdAt: task.createdAt,
       },
     ];

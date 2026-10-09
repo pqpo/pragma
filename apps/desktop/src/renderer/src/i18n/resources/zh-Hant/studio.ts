@@ -1721,6 +1721,20 @@ export const studio = {
   bundleDiscardDraft: "放棄設定",
   publishToSource: "發佈到來源",
   bundlePublish: {
+    targetChangedTitle: "確認變更後的發佈目標",
+    targetChangedDescription:
+      "發佈源設定在上次確認後發生了變化。請檢查下方的儲存庫位址和分支，再繼續發佈。",
+    confirmTarget: "確認目標並繼續",
+
+    upgradeTitle: "升級發佈源",
+    upgradeDescription:
+      "以下發佈源使用舊版協定。升級將更新源清單和所有項目設定，以支援知識庫與技能。舊版 Pragma 用戶端可能無法繼續讀取這些源。",
+    upgradeRecovery:
+      "Desktop 會建立並推送獨立的升級提交，在 Git 歷史中保留升級前的檔案，再發佈目前資源。如果升級成功後發佈失敗，重試將從已升級的源繼續。",
+    upgradeAndPublish: "升級發佈源並繼續",
+    upgrading: "正在升級並發佈…",
+    upgradeBack: "返回",
+
     title: "發佈到來源",
     loading: "正在載入來源設定…",
     description: "將 {{name}} 作為版本化 Bundle 發佈來源。",

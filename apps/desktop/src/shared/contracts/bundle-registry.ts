@@ -223,6 +223,13 @@ export const BundleSourcePublicationTargetSchema = z
     sourceId: z.string().uuid(),
     categoryId: BundleSourceSlugSchema,
     version: BundleSourceSemverSchema,
+    upgradeSource: z
+      .object({
+        remote: DesktopBundleRegistryRemoteSchema,
+        branch: DesktopBundleRegistryBranchSchema,
+      })
+      .strict()
+      .optional(),
   })
   .strict();
 
@@ -230,6 +237,7 @@ export const BundleSourcePublicationSourceSchema = z
   .object({
     source: DesktopBundleRegistrySourceStatusSchema,
     selectable: z.boolean(),
+    upgradeRequired: z.boolean().optional(),
     unavailableReason: z.string().trim().min(1).max(2_000).optional(),
     categories: z.array(BundleSourceCategorySchema),
     existingItem: BundleSourceItemSummarySchema.optional(),

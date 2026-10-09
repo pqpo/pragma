@@ -52,7 +52,7 @@
     "@modelcontextprotocol/client": "2.1.0",
     "@modelcontextprotocol/server": "2.1.0",
     "@pragma/shared": "workspace:*",
-    "gpt-tokenizer": "^3.4.0",
+    "gpt-tokenizer": "^4.0.0",
     "quickjs-emscripten-core": "^0.32.0",
     "zod": "latest"
   }

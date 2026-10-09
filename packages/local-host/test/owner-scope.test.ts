@@ -2,7 +2,10 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
-import { FileLockTimeoutError } from "@pragma/core";
+import { FileLockTimeoutError, type DurableExecutionStore } from "@pragma/core";
+import type { Mission } from "@pragma/shared";
+import { createMissionTerminalMaterializer } from "../src/missions/mission-terminal-materializer.ts";
+import type { MissionStore } from "../src/missions/repository/mission-store.ts";
 
 import {
   createMissionOwnerScope,
@@ -21,6 +24,68 @@ describe("Mission owner scope", () => {
     });
     return { promise, resolve };
   };
+  it("allows accepted shutdown recovery claims without consuming a queued command", async () => {
+    const root = await mkdtemp(join(tmpdir(), "pragma-owner-recovery-drain-"));
+    const controller = createMissionControllerStore({ missionsPath: root });
+    const scope = createMissionOwnerScope({ controller });
+    const consumer = vi.fn(async () => ({ result: {} }));
+    scope.bindConsumer({ apply: consumer });
+    const prepared = deferred();
+    const finish = deferred();
+    try {
+      await appendCommand(controller);
+      const closing = scope.quiesce(async () => {
+        const guard = await scope.acquireForRecovery(missionId);
+        await scope.assertOwnership(missionId, guard);
+        prepared.resolve();
+        await finish.promise;
+      });
+      await prepared.promise;
+      await expect(scope.acquire(missionId)).rejects.toThrow(
+        "Mission owner scope is shutting down",
+      );
+      expect(consumer).not.toHaveBeenCalled();
+      expect(scope.diagnostics().activeInboxPollerCount).toBe(0);
+      finish.resolve();
+      await closing;
+      await expect(scope.acquireForRecovery(missionId)).rejects.toThrow(
+        "Mission owner scope is shutting down",
+      );
+      await scope.release(missionId);
+      expect((await controller.readSnapshot({ missionId })).snapshot.lease).toBeUndefined();
+      expect((await controller.getOperation({ missionId, requestId }))?.state).toBe("queued");
+    } finally {
+      finish.resolve();
+      await scope.stop(missionId);
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+  it("quiesces acquisition while retaining renewal and guarded Native custody", async () => {
+    const root = await mkdtemp(join(tmpdir(), "pragma-owner-quiesce-"));
+    const controller = createMissionControllerStore({ missionsPath: root });
+    const renew = vi.spyOn(controller, "renew");
+    const scope = createMissionOwnerScope({ controller, leaseMs: 500 });
+    try {
+      const guard = await scope.acquire(missionId);
+      await scope.quiesce();
+      await expect(scope.acquire(missionId)).rejects.toThrow(
+        "Mission owner scope is shutting down",
+      );
+      await expect(
+        scope.runWithGuard(missionId, guard, () => scope.acquire(missionId)),
+      ).resolves.toEqual(guard);
+      await vi.waitFor(() => expect(renew).toHaveBeenCalled(), { timeout: 2_000 });
+      expect(scope.currentGuard(missionId)).toEqual(guard);
+      expect((await controller.readSnapshot({ missionId })).snapshot.lease?.claimId).toBe(
+        guard.claimId,
+      );
+      await scope.release(missionId, guard);
+      expect((await controller.readSnapshot({ missionId })).snapshot.lease).toBeUndefined();
+    } finally {
+      await scope.stop(missionId);
+      await rm(root, { recursive: true, force: true });
+    }
+  });
   const appendCommand = async (controller: MissionControllerStore) => {
     await controller.appendCommand({
       missionId,
@@ -36,6 +101,54 @@ describe("Mission owner scope", () => {
     });
   };
 
+  it("gives durable receipt custody an independent lease while late callbacks retain their stale fence", async () => {
+    const root = await mkdtemp(join(tmpdir(), "pragma-owner-receipt-scope-"));
+    const controller = createMissionControllerStore({ missionsPath: root });
+    const scope = createMissionOwnerScope({ controller });
+    try {
+      const producerGuard = await scope.acquire(missionId);
+      await scope.runWithGuard(missionId, producerGuard, async () => {
+        await scope.release(missionId, producerGuard);
+        // Ordinary delayed producer work must never silently reacquire authority.
+        expect(await scope.acquire(missionId)).toEqual(producerGuard);
+        await expect(scope.assertOwnership(missionId, producerGuard)).rejects.toMatchObject({
+          code: "MISSION_FENCING_REJECTED",
+        });
+        const mission = { id: missionId } as Mission;
+        const terminal = vi.fn(
+          async ({
+            guard,
+          }: {
+            guard?: Parameters<typeof scope.assertOwnership>[1] | undefined;
+          }) => {
+            expect(guard!.fencingToken).not.toBe(producerGuard.fencingToken);
+            await scope.assertOwnership(missionId, guard!);
+          },
+        );
+        const materialize = createMissionTerminalMaterializer({
+          ownerScope: scope,
+          ownerLifetime: "host",
+          withAdmission: async (_id, operation) => await operation(),
+          missions: { get: async () => mission } as unknown as MissionStore,
+          executions: {
+            get: async () => ({ output: { type: "inline", value: "answer" } }),
+          } as unknown as DurableExecutionStore,
+          projector: { terminal, link: async () => undefined },
+          memory: async () => undefined,
+        });
+        await materialize(mission, "execution", "request", "succeeded", "terminal");
+        expect(terminal).toHaveBeenCalledOnce();
+        await scope.runWithoutGuard(async () => await scope.release(missionId));
+        expect(scope.currentGuard(missionId)).toBeUndefined();
+        await expect(scope.assertOwnership(missionId, producerGuard)).rejects.toMatchObject({
+          code: "MISSION_FENCING_REJECTED",
+        });
+      });
+    } finally {
+      await scope.stop(missionId);
+      await rm(root, { recursive: true, force: true });
+    }
+  });
   it("drains an idle recovery read before stop returns and prevents reacquisition", async () => {
     const root = await mkdtemp(join(tmpdir(), "pragma-owner-recovery-stop-"));
     const controller = createMissionControllerStore({ missionsPath: root });

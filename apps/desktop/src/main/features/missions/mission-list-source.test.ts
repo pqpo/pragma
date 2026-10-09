@@ -5,7 +5,7 @@ import { afterEach, expect, it, vi } from "vitest";
 import { STORE_REVISION_EXPERT_REF } from "@pragma/built-in-agents";
 import { createContextStoreStore } from "../context-stores/context-store-store.ts";
 import { createContextStoreRevisionService } from "../context-stores/context-store-revision-service.ts";
-import { createMissionStore } from "./mission-store.ts";
+import { createMissionStore } from "@pragma/local-host";
 import { MissionUpdateSchema } from "../../../shared/contracts/index.ts";
 
 const roots: string[] = [];

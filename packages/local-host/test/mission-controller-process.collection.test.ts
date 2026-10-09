@@ -39,7 +39,8 @@ async function assertCollection(): Promise<void> {
   );
   const result = await invoke(
     vitest,
-    ["list", "test/mission-controller-process.integration.test.ts"],
+    // Registration must execute imports; static parsing leaves imported test names unresolved.
+    ["list", "--staticParse", "false", "test/mission-controller-process.integration.test.ts"],
     { cwd: packageRoot },
     collectionTimeoutMs,
   );

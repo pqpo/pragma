@@ -1,6 +1,6 @@
 import type { PragmaLogger } from "@pragma/core";
 import type { HomeProjectStore } from "./home-project-store.ts";
-import { prepareMissionBranchHistory } from "./mission-branch-context.ts";
+import { prepareMissionBranchHistory } from "@pragma/local-host";
 import {
   HomeProjectIdSchema,
   ReorderHomeProjectsSchema,
@@ -67,8 +67,11 @@ import {
   ContextStoreMissionMountCheckResultSchema,
 } from "../../../shared/contracts/context-stores.ts";
 import { canonicalPragmaResourceRef, type PragmaExpertTeamResource } from "@pragma/interpreter/ast";
-import type { MissionCommandOutcomeNotification, MissionRunner } from "./mission-runner.ts";
-import { MissionStoreError, type MissionStore } from "./mission-store.ts";
+import type {
+  MissionCommandOutcomeNotification,
+  LocalHostMissionApplication,
+} from "@pragma/local-host";
+import { MissionStoreError, type MissionStore } from "@pragma/local-host";
 import {
   withOpenPragmaProjectRevision,
   type PragmaProjectStore,
@@ -123,7 +126,7 @@ export function installMissionHandlers(options: {
   readonly homeExecutors: HomeExecutorCatalog;
   readonly project: PragmaProjectStore;
   readonly systemExperts: DesktopSystemExpertRegistry;
-  readonly runner: MissionRunner;
+  readonly application: LocalHostMissionApplication;
   readonly getAutomationMissionSources: () => Promise<ReadonlyMap<string, string>>;
   readonly getWindow: () => BrowserWindow | null;
   readonly getDefaultToolPermissionMode: () =>
@@ -277,7 +280,7 @@ export function installMissionHandlers(options: {
         );
       });
   };
-  options.runner.subscribeCommandOutcomes(forwardCommandOutcome);
+  options.application.subscribeCommandOutcomes(forwardCommandOutcome);
   ipcMain.handle("missions:list", async () => {
     await ensureLegacyAutomationMissionSources();
     return (await options.localHost.listMissions()).map((mission) => {
@@ -357,7 +360,7 @@ export function installMissionHandlers(options: {
     if (missionId === undefined) return await options.executors.getModelOptions(executorRef);
     const mission = await getManagedMission(missionId);
     const [runtimeBinding, resources] = await Promise.all([
-      options.runner.getRuntimeBinding(missionId, mission),
+      options.application.getRuntimeBinding(missionId, mission),
       withOpenPragmaProjectRevision(options.project, mission.project.revision, async (project) =>
         project.listResources(),
       ),
@@ -471,8 +474,8 @@ export function installMissionHandlers(options: {
         throw new Error("Flow missions cannot create conversation branches.");
       }
       const [newest, state] = await Promise.all([
-        options.runner.getChatPage({ id: source.id, limit: 50 }),
-        options.runner.getConversationState(source.id),
+        options.application.getChatPage({ id: source.id, limit: 50 }),
+        options.application.getConversationState(source.id),
       ]);
       if (
         (state.execution?.id ?? null) !== parsed.expectedExecutionId ||
@@ -490,7 +493,7 @@ export function installMissionHandlers(options: {
       const pages = [newest];
       let beforeCursor = newest.page.nextBeforeCursor;
       while (beforeCursor !== undefined) {
-        const page = await options.runner.getChatPage({
+        const page = await options.application.getChatPage({
           id: source.id,
           beforeCursor,
           limit: 50,
@@ -536,7 +539,7 @@ export function installMissionHandlers(options: {
         mission.execution !== undefined &&
         ["queued", "running", "waiting"].includes(mission.execution.status)
       ) {
-        const recovered = await options.runner.recover(missionId, mission.execution.id);
+        const recovered = await options.application.recoverMission(missionId, mission.execution.id);
         await publishMission(recovered);
         return recovered;
       }
@@ -574,7 +577,10 @@ export function installMissionHandlers(options: {
     runDesktopMutation(async () => {
       const parsed = MissionExecutionActionSchema.parse(input);
       const missionId = await assertManagedMission(parsed.id);
-      const recovered = await options.runner.recover(missionId, parsed.expectedExecutionId);
+      const recovered = await options.application.recoverMission(
+        missionId,
+        parsed.expectedExecutionId,
+      );
       await publishMission(recovered);
       return recovered;
     }),
@@ -583,7 +589,7 @@ export function installMissionHandlers(options: {
     runDesktopMutation(async () => {
       const parsed = UpdateMissionOptionsSchema.parse(input);
       await assertManagedMission(parsed.id);
-      const mission = await options.runner.updateOptions(parsed);
+      const mission = await options.application.updateOptions(parsed);
       await publishMission(mission);
       return mission;
     }),
@@ -592,7 +598,7 @@ export function installMissionHandlers(options: {
     runDesktopMutation(async () => {
       const parsed = UpdateMissionContextMountsSchema.parse(input);
       await assertManagedMission(parsed.id);
-      const mission = await options.runner.updateContextMounts(parsed);
+      const mission = await options.application.updateContextMounts(parsed);
       await publishMission(mission);
       return mission;
     }),
@@ -684,20 +690,20 @@ export function installMissionHandlers(options: {
     }),
   );
   ipcMain.handle("missions:chat:page:get", async (_event, input: unknown) => {
-    return await options.runner.getChatPage(GetMissionChatPageSchema.parse(input));
+    return await options.application.getChatPage(GetMissionChatPageSchema.parse(input));
   });
   ipcMain.handle("missions:conversation-state:get", async (_event, input: unknown) => {
     const parsed = MissionActionSchema.parse(input);
-    return await options.runner.getConversationState(parsed.id);
+    return await options.application.getConversationState(parsed.id);
   });
   ipcMain.handle("missions:context-window:get", async (_event, input: unknown) => {
     const parsed = MissionActionSchema.parse(input);
-    return await options.runner.getContextWindow(parsed.id);
+    return await options.application.getContextWindow(parsed.id);
   });
   ipcMain.handle("missions:context:compact", (_event, input: unknown) =>
     runDesktopMutation(
       async () =>
-        await options.runner.compactContext(
+        await options.application.compactContext(
           await assertManagedMission(MissionActionSchema.parse(input).id),
         ),
     ),
@@ -722,7 +728,7 @@ export function installMissionHandlers(options: {
     runDesktopMutation(async () => {
       const parsed = MissionExecutionActionSchema.parse(input);
       const missionId = await assertManagedMission(parsed.id);
-      const interrupted = await options.runner.forceInterrupt(
+      const interrupted = await options.application.forceInterrupt(
         missionId,
         parsed.expectedExecutionId,
       );
@@ -752,12 +758,14 @@ export function installMissionHandlers(options: {
   ipcMain.handle(
     "missions:work:get",
     async (_event, input: unknown) =>
-      await options.runner.getWork(await assertManagedMission(MissionActionSchema.parse(input).id)),
+      await options.application.getWork(
+        await assertManagedMission(MissionActionSchema.parse(input).id),
+      ),
   );
   ipcMain.handle("missions:work:conversation:get", async (_event, input: unknown) => {
     const parsed = GetMissionWorkConversationSchema.parse(input);
     await assertManagedMission(parsed.id);
-    return await options.runner.getWorkConversation(parsed);
+    return await options.application.getWorkConversation(parsed);
   });
   ipcMain.handle("missions:work:conversation:stream:open", async (event, input: unknown) => {
     const parsed = OpenMissionWorkConversationStreamSchema.parse(input);
@@ -767,15 +775,15 @@ export function installMissionHandlers(options: {
       sender: event.sender,
       onDestroyed: () => {
         if (!releaseWorkConversationStreamOwner(parsed.subscriptionId, owner)) return;
-        void options.runner.closeWorkConversationStream(parsed.subscriptionId);
+        void options.application.closeWorkConversationStream(parsed.subscriptionId);
       },
     };
     workConversationStreamOwners.set(parsed.subscriptionId, owner);
     event.sender.once("destroyed", owner.onDestroyed);
     try {
-      const opened = await options.runner.openWorkConversationStream(parsed);
+      const opened = await options.application.openWorkConversationStream(parsed);
       if (workConversationStreamOwners.get(parsed.subscriptionId) !== owner) {
-        await options.runner.closeWorkConversationStream(parsed.subscriptionId);
+        await options.application.closeWorkConversationStream(parsed.subscriptionId);
       }
       return opened;
     } catch (error) {
@@ -788,13 +796,13 @@ export function installMissionHandlers(options: {
     const owner = workConversationStreamOwners.get(parsed.subscriptionId);
     if (owner?.sender === event.sender) {
       releaseWorkConversationStreamOwner(parsed.subscriptionId, owner);
-      await options.runner.closeWorkConversationStream(parsed.subscriptionId);
+      await options.application.closeWorkConversationStream(parsed.subscriptionId);
     }
   });
   ipcMain.handle(
     "missions:human:list",
     async (_event, input: unknown) =>
-      await options.runner.listHumanInteractions(
+      await options.application.listHumanInteractions(
         await assertManagedMission(MissionActionSchema.parse(input).id),
       ),
   );
@@ -850,7 +858,7 @@ export function installMissionHandlers(options: {
       if (existing !== undefined) return await existing;
       const operation = (async () => {
         await assertManagedMission(missionId);
-        await options.runner.delete(missionId);
+        await options.application.delete(missionId);
         publishRemoval(missionId);
       })();
       deletions.set(missionId, operation);
@@ -861,25 +869,25 @@ export function installMissionHandlers(options: {
       }
     }),
   );
-  options.runner.subscribeChat((notification) => {
+  options.application.subscribeChat((notification) => {
     forwardMissionChatNotification({
       notification,
       getSender: () => options.getWindow()?.webContents ?? null,
     });
   });
-  options.runner.subscribeStatus((notification) => {
+  options.application.subscribeStatus((notification) => {
     forwardMissionStatusNotification({
       notification,
       getSender: () => options.getWindow()?.webContents ?? null,
     });
   });
-  options.runner.subscribeWork((notification) => {
+  options.application.subscribeWork((notification) => {
     forwardMissionWorkNotification({
       notification,
       getSender: () => options.getWindow()?.webContents ?? null,
     });
   });
-  options.runner.subscribeWorkConversationStreams(({ update }) => {
+  options.application.subscribeWorkConversationStreams(({ update }) => {
     const owner = workConversationStreamOwners.get(update.subscriptionId);
     const target = options.getWindow()?.webContents;
     if (target === undefined || owner?.sender !== target) return;

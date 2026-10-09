@@ -14,16 +14,13 @@ import {
 import { createAntigravityRuntime } from "@pragma/runtime-antigravity";
 import type { MissionConversationSnapshot } from "../shared/contracts/index.ts";
 import { applyMissionChatPatches } from "../renderer/src/pages/missions/mission-conversation-model.ts";
-import {
-  consumeLiveChatOutput,
-  type LiveMissionChat,
-} from "../main/features/missions/mission-chat-live.ts";
+import { consumeLiveChatOutput, type LiveMissionChat } from "@pragma/local-host";
 import {
   ensureTerminalExecutionResultEntry,
   finalizeHistoricalChatEntries,
   messageRecordsToChatEntries,
   mergeMissionChatEntriesWithLive,
-} from "../main/features/missions/mission-chat-history.ts";
+} from "@pragma/local-host";
 
 describe("Antigravity native stream through Core and Mission", () => {
   it.each([

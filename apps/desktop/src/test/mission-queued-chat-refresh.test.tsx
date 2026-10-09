@@ -27,8 +27,8 @@ import {
 import { conversationFromPage } from "../renderer/src/pages/missions/use-mission-conversation.ts";
 import { MissionChatEntryView } from "../renderer/src/pages/missions/mission-chat-presentation.tsx";
 import { createPragmaProjectStore } from "../main/features/projects/pragma-project-store.ts";
-import { createMissionRunner } from "../main/features/missions/mission-runner.ts";
-import { createMissionStore } from "../main/features/missions/mission-store.ts";
+import { createDesktopMissionTestApplication } from "../main/features/missions/fixtures/desktop-mission-test-application.ts";
+import { createMissionStore } from "@pragma/local-host";
 import { forwardMissionChatNotification } from "../main/features/missions/mission-renderer-update-forwarder.ts";
 import { createCodexQueuePeer } from "../main/features/missions/fixtures/codex-queue-peer.ts";
 
@@ -206,12 +206,16 @@ async function fixture(kind: "codex" | "qoder") {
   });
   const executionStore = createSqliteExecutionStore({ pragmaHome: join(root, "state") });
   cleanups.push(async () => await executionStore.close());
-  const runner = createMissionRunner({
+  const runner = createDesktopMissionTestApplication({
     executionStore,
     missions,
     project,
-    capabilityStore: {} as Parameters<typeof createMissionRunner>[0]["capabilityStore"],
-    capabilityCredentials: {} as Parameters<typeof createMissionRunner>[0]["capabilityCredentials"],
+    capabilityStore: {} as Parameters<
+      typeof createDesktopMissionTestApplication
+    >[0]["capabilityStore"],
+    capabilityCredentials: {} as Parameters<
+      typeof createDesktopMissionTestApplication
+    >[0]["capabilityCredentials"],
     capabilitiesPath: join(root, "capabilities"),
     pragmaHome: join(root, "state"),
     runtimes: createStaticRuntimeResolver({
@@ -285,7 +289,7 @@ async function fixture(kind: "codex" | "qoder") {
 
 it("bounds latest-page reads and leaves invalidations pending when every read races", async () => {
   const f = await fixture("codex");
-  await f.runner.run(f.mission.id);
+  await f.runner.startRun(f.mission.id);
   await vi.waitFor(() => expect(f.started).toEqual(["First turn"]), { timeout: 10_000 });
   const firstExecutionId = (await f.missions.get(f.mission.id)).execution!.id;
   const read = f.missions.readTimelinePage.bind(f.missions);
@@ -340,7 +344,7 @@ it("bounds latest-page reads and leaves invalidations pending when every read ra
 
 it("reads a historical page once even if the live turn changes during the read", async () => {
   const f = await fixture("codex");
-  await f.runner.run(f.mission.id);
+  await f.runner.startRun(f.mission.id);
   await vi.waitFor(() => expect(f.started).toEqual(["First turn"]), { timeout: 10_000 });
   await f.enqueue();
   const read = f.missions.readTimelinePage.bind(f.missions);
@@ -371,7 +375,7 @@ it.each(["codex", "qoder"] as const)(
     const read = f.pausePage();
     const superseded = expect(read.page).rejects.toThrow("superseded by resource release");
     await read.entered;
-    await f.runner.run(f.mission.id);
+    await f.runner.startRun(f.mission.id);
     await vi.waitFor(() => expect(f.started).toEqual(["First turn"]), { timeout: 10_000 });
     await f.enqueue();
     f.finishes.get("First turn")!();
@@ -407,7 +411,7 @@ it.each(["codex", "qoder"] as const)(
   "keeps rendering %s queued deltas after an in-flight refresh crosses the turn boundary",
   async (kind) => {
     const f = await fixture(kind);
-    await f.runner.run(f.mission.id);
+    await f.runner.startRun(f.mission.id);
     await vi.waitFor(() => expect(f.started).toEqual(["First turn"]), { timeout: 10_000 });
     await f.enqueue();
     const read = f.pausePage();

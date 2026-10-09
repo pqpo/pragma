@@ -13,7 +13,7 @@ import type {
   MissionChatEntry,
 } from "../../../shared/contracts/index.ts";
 import type { MissionExecutorCatalog } from "./mission-executor-catalog.ts";
-import type { MissionStore } from "./mission-store.ts";
+import type { MissionStore } from "@pragma/local-host";
 import {
   withContextStoreRevisionLocks,
   ContextStoreStoreError,
@@ -21,7 +21,7 @@ import {
 } from "../context-stores/context-store-store.ts";
 import type { ContextStoreRevisionService } from "../context-stores/context-store-revision-service.ts";
 import type { PragmaProjectStore } from "../projects/pragma-project-store.ts";
-import { validateWorkspace } from "../workspaces/workspace-scope.ts";
+import { validateHostWorkspace as validateWorkspace } from "@pragma/local-host";
 
 export interface MissionCreator {
   create(input: {

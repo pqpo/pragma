@@ -504,11 +504,13 @@ export function createLocalHostMemoryRetrieval(options: {
         indexedMemories: stats.memories,
         totalMemories: total,
         failed: stats.failed,
-        ...(diagnostic !== undefined
-          ? { errorCode: diagnostic }
-          : selected.providerId === undefined || selected.modelId === undefined
-            ? { errorCode: "embedding_model_unavailable" }
-            : {}),
+        ...(!selected.enabled
+          ? {}
+          : diagnostic !== undefined
+            ? { errorCode: diagnostic }
+            : selected.providerId === undefined || selected.modelId === undefined
+              ? { errorCode: "embedding_model_unavailable" }
+              : {}),
       });
     },
     cancel() {

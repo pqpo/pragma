@@ -1,4 +1,4 @@
-import type { DurableExecutionStore } from "@pragma/core";
+import type { DurableExecutionStore, ExecutionWorkRecord } from "@pragma/core";
 import type { MissionStore } from "../../src/missions/repository/mission-store.ts";
 import { createHash } from "node:crypto";
 import { describe, expect, it, vi } from "vitest";
@@ -9,9 +9,65 @@ import {
   encodeMissionChatPageCursor,
   orderMissionExecutionEntries,
   ensureTerminalExecutionResultEntry,
+  workTaskInputEntries,
 } from "../../src/missions/mission-chat-history.ts";
 
 describe("Mission chat history", () => {
+  it("projects structured work prompts as text and attachments while preserving other inputs", () => {
+    const timestamp = "2026-10-08T00:00:00.000Z";
+    const attachments = [
+      {
+        id: "00000000-0000-4000-8000-000000000001",
+        kind: "image",
+        name: "screen.png",
+        path: "/screen.png",
+        mimeType: "image/png",
+      },
+      {
+        id: "00000000-0000-4000-8000-000000000002",
+        kind: "file",
+        name: "notes.txt",
+        path: "/notes.txt",
+      },
+      { id: "00000000-0000-4000-8000-000000000003", kind: "directory", name: "src", path: "/src" },
+    ];
+    const inputs = [
+      { text: "只回复ok", attachments: [] },
+      { text: "Inspect attachments", attachments },
+      "Plain prompt",
+      { prompt: "Delegated prompt" },
+      { query: "Flow input" },
+    ];
+    const record: ExecutionWorkRecord = {
+      recordId: "root",
+      kind: "root",
+      sessionId: "session",
+      origin: "core",
+      status: "succeeded",
+      createdAt: timestamp,
+      updatedAt: timestamp,
+      tasks: inputs.map((input, index) => ({
+        taskId: String(index),
+        executionId: "execution",
+        invocationId: String(index),
+        runId: "run",
+        status: "succeeded",
+        input,
+        createdAt: timestamp,
+        updatedAt: timestamp,
+      })),
+    };
+    const entries = workTaskInputEntries(record);
+    expect(entries.map((entry) => entry.content)).toEqual([
+      "只回复ok",
+      "Inspect attachments",
+      "Plain prompt",
+      "Delegated prompt",
+      JSON.stringify({ query: "Flow input" }, null, 2),
+    ]);
+    expect(entries[0]).toMatchObject({ kind: "user", attachments: [] });
+    expect(entries[1]).toMatchObject({ kind: "user", attachments });
+  });
   it.each(["pending", "unavailable"] as const)(
     "shows a durable projection while source verification is %s",
     async (state) => {

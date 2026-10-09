@@ -10,11 +10,11 @@ import {
 } from "@pragma/built-in-agents";
 
 import type { MissionExecutor, PragmaProjectSnapshot } from "../../../shared/contracts/index.ts";
-import { createDesktopPragmaAgentMissionPort } from "../built-in-agents/pragma-agent-task-adapter.ts";
+import { createLocalHostPragmaMissionPort } from "@pragma/local-host";
 import { createMissionCreator } from "./mission-creator.ts";
 import type { MissionExecutorCatalog } from "./mission-executor-catalog.ts";
-import type { MissionRunner } from "./mission-runner.ts";
-import { createMissionStore } from "./mission-store.ts";
+import type { LocalHostMissionApplication } from "@pragma/local-host";
+import { createMissionStore } from "@pragma/local-host";
 import { createPragmaProjectStore } from "../projects/pragma-project-store.ts";
 import { createContextStoreStore } from "../context-stores/context-store-store.ts";
 
@@ -117,12 +117,12 @@ describe("MissionCreator", () => {
       getDefaultToolPermissionMode: () => "request-approval",
     });
     const run = vi.fn(async (id: string) => await missions.get(id));
-    const runner = {
-      run,
-    } as unknown as MissionRunner;
-    const missionPort = createDesktopPragmaAgentMissionPort({
+    const application = {
+      startRun: run,
+    } as unknown as LocalHostMissionApplication;
+    const missionPort = createLocalHostPragmaMissionPort({
       missions,
-      runner,
+      application,
       creator,
       stateRoot: join(root, "state"),
     });

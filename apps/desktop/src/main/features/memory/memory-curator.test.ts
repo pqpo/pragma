@@ -13,11 +13,11 @@ import { createStaticRuntimeResolver } from "@pragma/core";
 import { defineRuntimeTestDriver } from "@pragma/core/testing";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { createMissionStore } from "../missions/mission-store.ts";
+import { createMissionStore } from "@pragma/local-host";
 
 import { createDesktopMemoryCurator } from "./memory-curator.ts";
 import { createPragmaProjectStore } from "../projects/pragma-project-store.ts";
-import type { MissionRunner } from "../missions/mission-runner.ts";
+import type { LocalHostMissionApplication } from "@pragma/local-host";
 import { MissionConversationSnapshotSchema } from "../../../shared/contracts/index.ts";
 
 const roots: string[] = [];
@@ -96,8 +96,8 @@ describe("Desktop Memory Curator", () => {
       const deleteMission = vi.fn(async (id: string) => {
         await missions.get(id);
       });
-      const runner = {
-        run,
+      const application = {
+        startRun: run,
         getChatPage,
         getInternalConversationSnapshot,
         subscribeChat: () => () => undefined,
@@ -105,10 +105,10 @@ describe("Desktop Memory Curator", () => {
         getTerminalRuntimeFailure: async () => ({ message: "Cancelled", retryable: true }),
         delete: deleteMission,
         interrupt: vi.fn(async (id: string) => await missions.get(id)),
-      } as unknown as MissionRunner;
+      } as unknown as LocalHostMissionApplication;
       const curator = createDesktopMemoryCurator({
         missions,
-        runner,
+        application,
         project,
         pragmaHome: root,
         workspace: root,

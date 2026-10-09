@@ -15,7 +15,7 @@ import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   createContextStoreStore,
   hashSnapshotContent,
@@ -32,6 +32,7 @@ import {
 import { createDesktopSystemExpertRegistry } from "../experts/system-expert-registry.ts";
 import { createTestSecretStore } from "../credentials/test-secret-store.ts";
 import { createCoreAssetSyncService } from "./core-asset-sync-service.ts";
+import { appendTransferredKnowledge } from "../asset-transfer/asset-transfer-payloads.ts";
 
 const exec = promisify(execFile);
 const temporary: string[] = [];
@@ -296,6 +297,99 @@ async function addSkill(capabilities: CapabilityStore, root: string) {
 }
 
 describe("structured asset sync with real Git and domain stores", { timeout: 60_000 }, () => {
+  it.each([false, true])(
+    "synchronizes historical Knowledge Git metadata safely (interrupted restore: %s)",
+    async (interruptRestore) => {
+      const git = await fixture();
+      const a = device(join(git.root, "a"));
+      const knowledge = await addKnowledge(a.stores, "Historical docs");
+      const root = await a.stores.filesPath(knowledge.id);
+      await mkdir(join(root, ".git", "empty"), { recursive: true });
+      await writeFile(join(root, ".git", "internal.md"), "Private Git metadata\n");
+      await mkdir(join(root, "nested", ".GIT"), { recursive: true });
+      await writeFile(join(root, "nested", ".GIT", "internal.md"), "Nested metadata\n");
+      await mkdir(join(root, "linked"));
+      await writeFile(join(root, "linked", ".git"), "gitdir: /private/metadata\n");
+      await a.stores.createFile(knowledge.id, "visible.md", "Visible knowledge\n");
+      const historical = await a.stores.getSnapshot(knowledge.id);
+      await expect(
+        appendTransferredKnowledge(
+          a.stores,
+          {
+            storeId: knowledge.id,
+            baseRevision: historical.revision,
+            baseSnapshotHash: historical.snapshotHash,
+            snapshotHash: "0".repeat(64),
+            files: [],
+            directories: [],
+            summary: "Invalid hash",
+          },
+          "sync",
+        ),
+      ).rejects.toThrow("declared hash");
+      const configured = await a.service.configure(configuration);
+      expect(configured.status, configured.error).toBe("ready");
+      expect(await a.stores.getSnapshot(knowledge.id)).toEqual(historical);
+
+      const checkout = join(git.root, "edit");
+      await exec("git", ["clone", git.bare, checkout]);
+      const metadataPath = `pragma-sync/knowledge-bases/${knowledge.id}/metadata.yaml`;
+      const metadata = await readFile(join(checkout, metadataPath), "utf8");
+      expect(metadata.toLowerCase()).not.toContain(".git");
+      const tracked = (await exec("git", ["-C", checkout, "ls-files"])).stdout;
+      expect(tracked.toLowerCase()).not.toContain(".git");
+      const head = await git.head();
+      const unchanged = await a.service.sync();
+      expect(unchanged.status, unchanged.error).toBe("ready");
+      expect(await git.head()).toBe(head);
+      expect((await a.stores.getSnapshot(knowledge.id)).revision).toBe(historical.revision);
+
+      const b = device(join(git.root, "b"));
+      const imported = await b.service.configure(configuration);
+      expect(imported.status, imported.error).toBe("ready");
+      expect((await b.stores.getSnapshot(knowledge.id)).files.map((file) => file.id)).toEqual([
+        "guide.md",
+        "visible.md",
+      ]);
+
+      await writeFile(
+        join(checkout, `pragma-sync/knowledge-bases/${knowledge.id}/files/guide.md`),
+        "Remote edit\n",
+      );
+      await exec("git", ["-C", checkout, "commit", "-am", "Edit knowledge"]);
+      await exec("git", ["-C", checkout, "push"]);
+      if (interruptRestore) {
+        const append = a.stores.appendSnapshot.bind(a.stores);
+        vi.spyOn(a.stores, "appendSnapshot").mockImplementationOnce(async (...args) => {
+          await append(...args);
+          throw new Error("Interrupted after durable Knowledge update");
+        });
+        expect((await a.service.sync()).status).toBe("error");
+      }
+      const restored = await a.restart().sync();
+      expect(restored.status, restored.error).toBe("ready");
+      const updated = await a.stores.getSnapshot(knowledge.id);
+      expect(updated.revision).toBe(historical.revision + 1);
+      expect(updated.files.find((file) => file.id === "guide.md")?.content).toBe("Remote edit\n");
+      expect(updated.files.filter((file) => file.id.toLowerCase().includes(".git"))).toEqual(
+        historical.files.filter((file) => file.id.toLowerCase().includes(".git")),
+      );
+      expect(updated.directories).toEqual(historical.directories);
+      expect(await a.stores.getSnapshot(knowledge.id, historical.revision)).toEqual(historical);
+      const syncedHead = await git.head();
+      expect((await a.restart().sync()).status).toBe("ready");
+      expect(await git.head()).toBe(syncedHead);
+      expect((await a.stores.getSnapshot(knowledge.id)).revision).toBe(updated.revision);
+      if (!interruptRestore) {
+        await b.service.configure({ ...configuration, pushDeletions: true });
+        await b.stores.remove(knowledge.id);
+        expect((await b.service.sync()).status).toBe("ready");
+        const deleted = await a.restart().sync();
+        expect(deleted.status, deleted.error).toBe("ready");
+        expect(await a.stores.exists(knowledge.id)).toBe(false);
+      }
+    },
+  );
   it.each(["skill", "mcp_server"] as const)(
     "removes all %s bindings on deletion and synchronizes the deletion",
     async (kind) => {

@@ -3,7 +3,7 @@ import { createIntegrationError } from "@pragma/shared/integration";
 
 import { runDesktopMutation } from "./desktop-mutation-result.ts";
 import { BundleSetupRequiredError } from "../../features/bundles/pragma-bundle-errors.ts";
-import { MissionStoreError } from "../../features/missions/mission-store.ts";
+import { MissionStoreError } from "@pragma/local-host";
 import { ContextStoreStoreError } from "../../features/context-stores/context-store-store.ts";
 import {
   PragmaProjectRevisionUnavailableError,

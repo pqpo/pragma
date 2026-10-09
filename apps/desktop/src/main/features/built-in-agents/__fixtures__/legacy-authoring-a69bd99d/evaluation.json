@@ -1,0 +1,50 @@
+{
+  "draftId": "7b10cde1-3849-475e-9213-111364f6deb5",
+  "baseProjectRevision": 0,
+  "draftRevision": 0,
+  "resource": {
+    "apiVersion": "pragma/v5",
+    "kind": "Evaluation",
+    "metadata": {
+      "id": "7h8j9k0m1n2p3q4r",
+      "name": "Legacy Evaluation",
+      "description": "Historical Run Dry draft",
+      "tags": []
+    },
+    "spec": {
+      "target": {
+        "ref": "flow:8h9j0k1m2n3p4q5r"
+      },
+      "method": {
+        "type": "flow-run-dry",
+        "cases": []
+      }
+    }
+  },
+  "diagnostics": [
+    {
+      "severity": "incomplete",
+      "code": "evaluation.draft.cases_empty",
+      "message": "Add at least one Run Dry case before preparing the Evaluation.",
+      "path": [
+        "resource",
+        "spec",
+        "method",
+        "cases"
+      ]
+    },
+    {
+      "severity": "error",
+      "code": "evaluation.draft.target_missing",
+      "message": "Evaluation target committed Flow not found: flow:8h9j0k1m2n3p4q5r.",
+      "path": [
+        "resource",
+        "spec",
+        "target",
+        "ref"
+      ]
+    }
+  ],
+  "createdAt": "2026-10-09T05:05:15.885Z",
+  "updatedAt": "2026-10-09T05:05:15.885Z"
+}
