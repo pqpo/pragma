@@ -9,7 +9,7 @@
 第三阶段实施期间，用户进一步确定全部管理命令统一使用 `pragma manage` 前缀，保留原
 用户 CLI 入口，独立管理 Host composition 延后。第三阶段的最终实现、命令映射、成本与
 未完成门禁见[第三阶段实施报告](management-tools-cli-skills-phase-three-implementation.md)。
-当前管理命令以六个内置 Skill 和 `pragma manage … --help` 为准；原用户 Mission 入口保持独立。
+当前管理命令以统一内置 `manage-pragma` Skill 和 `pragma manage … --help` 为准；原用户 Mission 入口保持独立。
 
 ## 1. 目标与范围
 
@@ -17,7 +17,7 @@
 
 用户确认的产品要求：这些 Skill 必须出现在工作台的技能页面，标注为内置技能，可查看但不可编辑。默认 Mission 只注入精简 Skill 索引，用户在页面查看 Skill 不得导致其正文进入 Agent 初始上下文。
 
-补充要求：最终一组管理工具对应一个内置 Skill，共六组；现有 `author-pragma-dsl` 一起迁移并收窄用途，不保留覆盖全部管理能力的旧版大 Skill。低回归成本的实现架构与测试复用结论见第 10 节。
+最新补充要求（2026-10-09）：六组管理工作流合并为一个 `manage-pragma` Skill。主入口只保留导航和共享治理规则，六组详细操作按需读取 references；原分拆要求与阶段验收数据保留为历史记录。低回归成本的实现架构与测试复用结论见第 10 节。
 
 最终保留 13 个基础操作与当前 Execution 工具。工具数量按内置 Pragma 默认配置 + Pi Runtime 计算，其他 Runtime、用户定制 Capability、插件和 delegation 配置另行计数。
 
@@ -334,7 +334,7 @@ Flow 的主要收益来自 `update_flow_draft`（9,388 参考 tokens、19,453 Sc
 ### 10.3 建议的执行架构
 
 ```text
-Built-in Agents：六组 Skill + 现有管理工具 definitions/handler/Schema/ports
+Built-in Agents：manage-pragma Skill、六组 references + 现有管理工具 definitions/handler/Schema/ports
                          ↑ 允许的 package 依赖
 Local Host：静态命令映射、授权、scope、operation identity、Host composition
                          ↓ 通用执行能力
@@ -405,7 +405,7 @@ CLI 凭据只通过受控进程环境或私有启动配置交付；不写进 Ski
 
 Host 业务提取采取“原语义搬移”，不顺便调整 Schema、文件路径、状态机、锁粒度、journal 阶段、分页规则或错误码。先在受控 Agent CLI 通道复用当前端口，再在同阶段完成该组所需 Host 用例共享；用户直接运行 CLI 不得通过导入 Desktop 源码获得能力。通道复用是降低改动面的实施顺序，不是永久保留 Desktop 业务副本的理由。
 
-### 10.7 最终一组工具一个 Skill：六组映射
+### 10.7 三阶段原分拆映射（历史记录）
 
 | 工具组                   | 工具数 | 唯一内置 Skill                                | 实施阶段 |
 | ------------------------ | -----: | --------------------------------------------- | -------- |
@@ -464,3 +464,17 @@ Host 业务提取采取“原语义搬移”，不顺便调整 Schema、文件�
 - Host 业务按依赖提取，测试随业务移动；通用工具 handler 和 Skill保留在 Built-in Agents，不造成反向依赖。
 - 默认 Schema 移除前，必须证明 CLI 专用通道与模型可见目录分离，审批、operation identity、Human checkpoint 与诊断均保持完整。
 - 实施 ADR 需定稿受控 CLI 分发和专用通道接线；原默认能力切换只在这些门禁通过后进行。
+
+### 10.9 统一 Skill 入口（2026-10-09 后续用户决策）
+
+用户要求将已经实现的六个 Skill 合并为 `manage-pragma`，对应统一 `pragma manage …`
+命令入口。默认 Agent 和工作台只索引一个内置 Skill，仍然可查看、不可编辑；六组工作流
+分别进入 `references/dsl.md`、`flow.md`、`evaluation.md`、`missions.md`、`resources.md`、
+`automations.md`，领域示例继续放在相应子目录，不默认加载全部正文。
+
+原 DSL Capability ID 作为统一入口身份；其余既有 Capability ID 保留为历史 binding 解析身份，
+全部读取同一份文件，不作为额外 Skill 注入目录。这样无需改写历史 Project/Revision、
+改动持久化 Schema 或丢弃用户原有绑定。默认管理工具、命令 grants、hooks、审批、恢复、
+Revision Agent 与用户 CLI 路由不变：46 条命令，Pi 默认 13 个工具。
+
+详见[统一 Skill 实施记录](management-tools-cli-skills-unified-skill-implementation.md)。

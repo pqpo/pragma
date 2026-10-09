@@ -1,4 +1,0 @@
-interface:
-  display_name: "Author Pragma DSL"
-  short_description: "Author Expert and Team resources through CLI file drafts"
-  default_prompt: "Use $author-pragma-dsl to draft, review, validate and submit Expert or ExpertTeam changes through the authorized CLI."

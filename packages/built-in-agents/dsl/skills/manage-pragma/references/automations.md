@@ -1,13 +1,8 @@
----
-name: manage-pragma-automations
-description: Create or modify Pragma scheduled Automations, enable or disable them, delete them, or reset their Mission continuity through authorized CLI commands.
----
-
 # Manage Pragma Automations
 
 Use `pragma manage automation`; this version requires the current Execution command channel.
-Read [Automation resource rules](references/automation.md) when constructing or changing DSL.
-Discover `discover-pragma-resources` for host bindings and use `pragma manage dsl resources list|read`
+Read [Automation resource rules](automations/automation.md) when constructing or changing DSL.
+Read [Resources](resources.md) for host bindings and use `pragma manage dsl resources list|read`
 for current Automation YAML, executor refs and the Project revision. Allocate a new ID through
 `pragma manage dsl ids allocate`; do not invent one.
 

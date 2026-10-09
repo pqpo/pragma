@@ -37,6 +37,7 @@ import {
   compileBuiltInAgent,
   materializeBuiltInAgentBundle,
 } from "../src/builtin.ts";
+import { BUILT_IN_SKILL_REFS } from "../src/builtin-skills.ts";
 import { PragmaAgentFlowDraftSchema } from "../src/contracts.ts";
 import {
   PRAGMA_MANAGEMENT_TOOL_DEFINITIONS,
@@ -208,7 +209,8 @@ describe("built-in Pragma Agent DSL", () => {
       expect(compiled.value.tools?.map((tool) => tool.name)).not.toContain(name);
     }
     expect(compiled.value.tools?.map((tool) => tool.name)).not.toContain("run_evaluation");
-    expect(compiled.value.skills?.skills[0]?.path).toMatch(/author-pragma-dsl[\\/]SKILL\.md$/);
+    expect(compiled.value.skills?.skills).toHaveLength(1);
+    expect(compiled.value.skills?.skills[0]?.path).toMatch(/manage-pragma[\\/]SKILL\.md$/);
     expect(compiled.value).toMatchObject({
       id: "0000000000pragma",
       name: "Pragma",
@@ -351,7 +353,7 @@ describe("built-in Pragma Agent DSL", () => {
 
   it("teaches the default Agent the Automation field and Flow input limits", () => {
     const reference =
-      BUILT_IN_AGENT_FILES["skills/manage-pragma-automations/references/automation.md"] ?? "";
+      BUILT_IN_AGENT_FILES["skills/manage-pragma/references/automations/automation.md"] ?? "";
 
     expect(reference).toContain(
       "`metadata.id`: host-allocated 16-character lowercase Crockford Base32.",
@@ -365,11 +367,11 @@ describe("built-in Pragma Agent DSL", () => {
   });
 
   it("teaches the default Agent file drafts and Runtime reference selection", () => {
-    const skill = BUILT_IN_AGENT_FILES["skills/author-pragma-dsl/SKILL.md"] ?? "";
+    const skill = BUILT_IN_AGENT_FILES["skills/manage-pragma/references/dsl.md"] ?? "";
     const expertReference =
-      BUILT_IN_AGENT_FILES["skills/author-pragma-dsl/references/expert.md"] ?? "";
+      BUILT_IN_AGENT_FILES["skills/manage-pragma/references/dsl/expert.md"] ?? "";
     const resourceReference =
-      BUILT_IN_AGENT_FILES["skills/author-pragma-dsl/references/resources-and-references.md"] ?? "";
+      BUILT_IN_AGENT_FILES["skills/manage-pragma/references/dsl/resources-and-references.md"] ?? "";
 
     expect(skill).toContain("`pragma manage dsl draft start` creates one Mission-owned file draft");
     expect(skill).toContain("pass only\n   `draftId`");
@@ -385,28 +387,28 @@ describe("built-in Pragma Agent DSL", () => {
   });
 
   it("teaches Flow commands without duplicating the old Flow tool instructions", () => {
-    const skill = BUILT_IN_AGENT_FILES["skills/author-pragma-flow/SKILL.md"] ?? "";
+    const skill = BUILT_IN_AGENT_FILES["skills/manage-pragma/references/flow.md"] ?? "";
     expect(skill).toContain("pragma manage flow draft update");
     expect(skill).toContain("pragma manage dsl changes commit");
     expect(skill).toContain("--input -");
     expect(skill).toContain("original Mission");
     expect(skill).not.toMatch(/(?:create|get|update|validate|prepare|discard)_flow_draft/u);
-    const dsl = BUILT_IN_AGENT_FILES["skills/author-pragma-dsl/SKILL.md"] ?? "";
-    expect(dsl).toContain("author-pragma-flow");
+    const dsl = BUILT_IN_AGENT_FILES["skills/manage-pragma/references/dsl.md"] ?? "";
+    expect(dsl).toContain("the flow reference");
     expect(dsl).not.toContain("update_flow_draft");
   });
 
   it("routes independent Evaluation CLI authoring with bounded cases and retains the DSL identity", () => {
-    const dsl = BUILT_IN_AGENT_FILES["skills/author-pragma-dsl/SKILL.md"]!;
-    const skill = BUILT_IN_AGENT_FILES["skills/author-pragma-evaluation/SKILL.md"]!;
+    const dsl = BUILT_IN_AGENT_FILES["skills/manage-pragma/references/dsl.md"]!;
+    const skill = BUILT_IN_AGENT_FILES["skills/manage-pragma/references/evaluation.md"]!;
     const reference =
-      BUILT_IN_AGENT_FILES["skills/author-pragma-evaluation/references/run-dry.md"]!;
-    expect(dsl).toContain("author-pragma-evaluation");
-    expect(BUILT_IN_AGENT_FILES["skills/author-pragma-dsl/references/run-dry.md"]).toBeUndefined();
-    const flow = BUILT_IN_AGENT_FILES["skills/author-pragma-flow/SKILL.md"]!;
-    const flowReference = BUILT_IN_AGENT_FILES["skills/author-pragma-flow/references/flow.md"]!;
-    expect(flow).toContain("discover `author-pragma-evaluation`");
-    expect(flowReference).toContain("Discover `author-pragma-evaluation` and read its");
+      BUILT_IN_AGENT_FILES["skills/manage-pragma/references/evaluation/run-dry.md"]!;
+    expect(dsl).toContain("the evaluation reference");
+    expect(BUILT_IN_AGENT_FILES["skills/manage-pragma/references/dsl/run-dry.md"]).toBeUndefined();
+    const flow = BUILT_IN_AGENT_FILES["skills/manage-pragma/references/flow.md"]!;
+    const flowReference = BUILT_IN_AGENT_FILES["skills/manage-pragma/references/flow/flow.md"]!;
+    expect(flow).toContain("read [Evaluation](evaluation.md)");
+    expect(flowReference).toContain("Read [Evaluation](../evaluation.md)");
     expect(flow).not.toContain("author-pragma-dsl");
     expect(flowReference).not.toContain("author-pragma-dsl");
     expect(skill).toContain("Default to one `upsert_case`");
@@ -459,6 +461,59 @@ describe("built-in Pragma Agent DSL", () => {
       project.listResources().filter((candidate) => candidate.kind === "Capability"),
     ).toHaveLength(8);
     expect(await project.validate()).toEqual([]);
+  });
+
+  it("materializes historical Skill bindings using the unified source", async () => {
+    const root = await mkdtemp(join(tmpdir(), "pragma-historical-skill-binding-"));
+    for (const ref of BUILT_IN_SKILL_REFS) {
+      const resource = builtInAgentResource(BUILT_IN_PRAGMA_REF);
+      resource.spec.capabilities = [{ ref, kind: "skill" }];
+      const entry = await materializeBuiltInAgentBundle(root, resource);
+      const project = await loadPragmaProject(entry, { rootDir: dirname(entry) });
+      expect(await project.validate()).toEqual([]);
+      const expert = project
+        .listResources()
+        .find(
+          (candidate) =>
+            candidate.kind === "Expert" && candidate.metadata.id === "0000000000pragma",
+        );
+      expect(expert).toMatchObject({
+        spec: { capabilities: [{ ref: BUILT_IN_SKILL_REFS[0], kind: "skill" }] },
+      });
+      expect(resource.spec.capabilities).toEqual([{ ref, kind: "skill" }]);
+
+      const capability = project
+        .listResources()
+        .find(
+          (candidate) =>
+            candidate.kind === "Capability" && `capability:${candidate.metadata.id}` === ref,
+        );
+      expect(capability).toMatchObject({
+        kind: "Capability",
+        spec: { config: { source: { path: "skills/manage-pragma" } } },
+      });
+      await expect(
+        readFile(join(dirname(entry), "skills/manage-pragma/SKILL.md"), "utf8"),
+      ).resolves.toContain("name: manage-pragma");
+    }
+  });
+
+  it("deduplicates historical management Skill bindings in the compiled source only", async () => {
+    const root = await mkdtemp(join(tmpdir(), "pragma-historical-six-skills-"));
+    const resource = builtInAgentResource(BUILT_IN_PRAGMA_REF);
+    resource.spec.capabilities = BUILT_IN_SKILL_REFS.map((ref) => ({ ref, kind: "skill" }));
+    const entry = await materializeBuiltInAgentBundle(root, resource);
+    const project = await loadPragmaProject(entry, { rootDir: dirname(entry) });
+    expect(await project.validate()).toEqual([]);
+    const expert = project
+      .listResources()
+      .find(
+        (candidate) => candidate.kind === "Expert" && candidate.metadata.id === "0000000000pragma",
+      );
+    expect(expert).toMatchObject({
+      spec: { capabilities: [{ ref: BUILT_IN_SKILL_REFS[0], kind: "skill" }] },
+    });
+    expect(resource.spec.capabilities).toHaveLength(6);
   });
 
   it("isolates each Agent fingerprint from unrelated Expert customizations", () => {
@@ -759,7 +814,7 @@ describe("built-in Pragma Agent DSL", () => {
 
   it("keeps every YAML example in the Skill structurally valid", async () => {
     const dslRoot = join(dirname(fileURLToPath(import.meta.url)), "../dsl");
-    const references = (await filesAt(join(dslRoot, "skills/author-pragma-dsl/references"))).filter(
+    const references = (await filesAt(join(dslRoot, "skills/manage-pragma/references/dsl"))).filter(
       (path) => path.endsWith(".md"),
     );
     for (const path of references) {

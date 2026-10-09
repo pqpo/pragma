@@ -1,17 +1,12 @@
----
-name: manage-pragma-missions
-description: Create, inspect, send follow-up instructions to, or interrupt persistent Pragma Missions through authorized CLI commands.
----
-
 # Manage Pragma Missions
 
 Use `pragma manage mission` for persistent Missions. These are separate tasks; they are not the
 current Execution's subagents. Read only the needed subcommand `--help`. This version requires
 the current Execution's authorized command channel; a Skill does not grant permissions.
 
-For workspaces, home task presets or knowledge IDs, discover `discover-pragma-resources`.
+For workspaces, home task presets or knowledge IDs, read [Resources](resources.md).
 Find exact Expert/Team/Flow refs through `pragma manage dsl resources list`; inspect Flow input
-requirements before creating a Flow Mission. Read [Mission operations](references/commands.md)
+requirements before creating a Flow Mission. Read [Mission operations](missions/commands.md)
 for creation, work queries, follow-up and interruption.
 
 Pass bounded JSON using `--input request.json` or `--input -`. Keep request files in the authorized

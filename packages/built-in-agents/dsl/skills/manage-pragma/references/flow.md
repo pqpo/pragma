@@ -1,17 +1,12 @@
----
-name: author-pragma-flow
-description: Create, edit, validate, and save Pragma Flows with incremental drafts and execution-authorized CLI commands. Use for Flow graphs, contracts, transitions, loops, and repairing Flow diagnostics.
----
-
 # Author a Pragma Flow
 
 Use the bundled `pragma` command through the Runtime's existing process tool. It inherits the
 current Mission's authorization. Never edit formal Pragma storage. If the command is missing or
 its channel is unavailable, report the diagnostic; do not fall back to modifying storage.
 
-Read [references/flow.md](references/flow.md) for fields and
-[references/flow-patterns.md](references/flow-patterns.md) for graph patterns. Read
-[references/commands.md](references/commands.md) for lifecycle and recovery examples.
+Read [references/flow.md](flow/flow.md) for fields and
+[references/flow-patterns.md](flow/flow-patterns.md) for graph patterns. Read
+[references/commands.md](flow/commands.md) for lifecycle and recovery examples.
 Load only the relevant subcommand's `--help` when its parameters are needed.
 
 1. Discover exact resource refs and the current revision with `pragma manage dsl resources list|read`.
@@ -28,7 +23,7 @@ Load only the relevant subcommand's `--help` when its parameters are needed.
    Call `pragma manage dsl changes commit` with the returned changeSetId. The Host requests approval in the
    original Mission; process execution permission does not approve this commit.
 7. Report the actual commit result, Project revision and changed refs. Flow drafts never contain
-   Evaluation cases. Offer tests after the Flow commit; discover `author-pragma-evaluation` and use its
+   Evaluation cases. Offer tests after the Flow commit; read [Evaluation](evaluation.md) and use its
    independent CLI workflow only when the user asks for tests.
 
 Use `--format json`. Preserve a stable `--request-id` UUID for identical retries. A transport failure

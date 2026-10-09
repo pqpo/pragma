@@ -1,4 +1,8 @@
-import { BUILT_IN_SKILLS, builtInSkillCapability } from "@pragma/built-in-agents";
+import {
+  BUILT_IN_SKILL_REFS,
+  BUILT_IN_SKILLS,
+  builtInSkillCapability,
+} from "@pragma/built-in-agents";
 import { createHash, randomUUID } from "node:crypto";
 import { chmod, mkdtemp, mkdir, readFile, rm, stat, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -246,6 +250,26 @@ describe("capability store", () => {
       await expect(stat(join(directory, "capabilities", skill.id))).rejects.toMatchObject({
         code: "ENOENT",
       });
+    }
+  });
+
+  it("resolves historical Skill identities to the unified read-only content", async () => {
+    const { store } = await createStore();
+    expect(BUILT_IN_SKILLS).toHaveLength(1);
+    const unified = BUILT_IN_SKILLS[0]!;
+    for (const ref of BUILT_IN_SKILL_REFS) {
+      const id = ref.slice("capability:".length);
+      const capability = await store.resolveActive(id);
+      expect(capability?.manifest.id).toBe(id);
+      expect(capability?.definition).toMatchObject({
+        kind: "skill",
+        contentHash: unified.contentHash,
+      });
+      expect((await store.getSkillDocument({ id })).content).toBe(unified.files["SKILL.md"]);
+      expect((await store.getSkillFile({ id, path: "references/flow.md" })).content).toBe(
+        unified.files["references/flow.md"],
+      );
+      await expect(store.remove(id)).rejects.toThrow("read-only");
     }
   });
 

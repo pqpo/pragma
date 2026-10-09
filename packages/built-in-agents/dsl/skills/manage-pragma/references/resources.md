@@ -1,8 +1,3 @@
----
-name: discover-pragma-resources
-description: Find Pragma host workspace directories, home-page task presets, and available knowledge stores before configuring a Mission or Automation.
----
-
 # Discover Pragma Resources
 
 Use authorized `pragma manage` commands with bounded JSON via `--input FILE|-`.
@@ -16,6 +11,6 @@ This version requires an owning Execution command channel. A Skill is not an aut
   selected for contextStoreIds; these IDs are distinct from DSL ContextStore refs.
 
 Use `pragma manage dsl resources list|read` for DSL resources and exact executor refs.
-For performing tasks, discover `manage-pragma-missions`; for schedules, discover
-`manage-pragma-automations`. Inspect availability and retain actual IDs returned by the Host.
+For performing tasks, read [Missions](missions.md); for schedules, discover
+the automations reference. Inspect availability and retain actual IDs returned by the Host.
 Do not scan managed storage or infer a workspace path from its display label.

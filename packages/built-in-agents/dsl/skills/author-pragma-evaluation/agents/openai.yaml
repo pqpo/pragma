@@ -1,4 +1,0 @@
-interface:
-  display_name: "Author Pragma Evaluation"
-  short_description: "Author and repair independent Flow Run Dry evaluations"
-  default_prompt: "Use $author-pragma-evaluation to test a committed Flow incrementally and save its independently approved Evaluation."

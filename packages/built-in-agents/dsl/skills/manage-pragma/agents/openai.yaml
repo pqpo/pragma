@@ -1,0 +1,4 @@
+interface:
+  display_name: "Manage Pragma"
+  short_description: "Manage Pragma resources and tasks through its CLI"
+  default_prompt: "Use $manage-pragma to inspect the relevant resources and complete the requested management task through the authorized CLI."

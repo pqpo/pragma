@@ -1,4 +1,0 @@
-interface:
-  display_name: Author Pragma Flow
-  short_description: Incremental Flow authoring through authorized CLI commands
-  default_prompt: Use author-pragma-flow to create or edit a Flow, validate its draft, review and commit it through the current Mission.

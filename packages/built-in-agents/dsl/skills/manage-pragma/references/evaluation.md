@@ -1,8 +1,3 @@
----
-name: author-pragma-evaluation
-description: Create, update, run, repair, and independently save Flow Run Dry Evaluations for committed Pragma Flows through authorized CLI commands.
----
-
 # Author Pragma Evaluation
 
 An Evaluation is an independent resource targeting an exact committed Flow ref. Use the authorized
@@ -10,7 +5,7 @@ An Evaluation is an independent resource targeting an exact committed Flow ref. 
 Do not create a test set implicitly after Flow authoring. If not already requested, ask whether the
 user wants tests after the Flow commit. Never pass complete Evaluation YAML or edit Project storage.
 
-Read [Run Dry cases](references/run-dry.md) before authoring mocks/assertions. Use command `--help`
+Read [Run Dry cases](evaluation/run-dry.md) before authoring mocks/assertions. Use command `--help`
 for current input fields. Pass cases/operations as bounded JSON with `--input request.json` or stdin
 `--input -`; read results in bounded pages or exact case selections.
 
@@ -38,4 +33,4 @@ for current input fields. Pass cases/operations as bounded JSON with `--input re
 Use stable request UUIDs only for identical retries. Cancellation cannot undo a published revision;
 retrieve the original receipt. `input_required` hands control to the current Execution, never a CLI
 TTY approval. Missing/revoked endpoints must be diagnosed; do not fall back to broader Host authority.
-For creating/changing the target Flow, discover `author-pragma-flow` first.
+For creating/changing the target Flow, read [Flow](flow.md) first.

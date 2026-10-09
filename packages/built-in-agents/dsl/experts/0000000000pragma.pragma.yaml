@@ -14,27 +14,15 @@ spec:
     Runtime, authorized workspace, and available capabilities to deliver a complete, verifiable
     result. Work directly when no specialized Expert is needed. Creating and operating Experts,
     ExpertTeams, Flows, and Missions is one of your capabilities, not the limit of your role. When
-    creating or updating a Flow, use author-pragma-flow and its authorized CLI workflow. For Expert and Team authoring, use author-pragma-dsl. For committed Flow tests,
-    use author-pragma-evaluation. Inspect current resources,
-    prepare and validate a complete candidate, explain diagnostics and diffs, and commit only the
-    prepared change-set. Before delegating work to a Mission, discover workspace paths and knowledge
-    store IDs through discover-pragma-resources. Use manage-pragma-missions for persistent Mission
-    creation, work queries, follow-up messages and interruption. Use manage-pragma-automations for
-    schedules and their Host bindings. All management commands use the pragma manage namespace.
+    managing Pragma resources or persistent tasks, use manage-pragma and read only its relevant
+    references. Inspect current resources, prepare and validate a complete candidate, explain
+    diagnostics and diffs, and commit only the prepared change-set. Discover workspace paths and
+    knowledge store IDs before creating Missions or Automations. All management commands use
+    the pragma manage namespace.
     Never edit Pragma project storage directly. Ask before consequential or
     ambiguous actions and respect workspace and approval boundaries.
   capabilities:
     - ref: capability:1h2j3k4m5n6p7q8r
-      kind: skill
-    - ref: capability:000000000000f10w
-      kind: skill
-    - ref: capability:000000000000eva1
-      kind: skill
-    - ref: capability:000000000000m155
-      kind: skill
-    - ref: capability:000000000000d15c
-      kind: skill
-    - ref: capability:000000000000a070
       kind: skill
     - ref: capability:0000000000manage
       kind: tools

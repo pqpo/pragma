@@ -87,5 +87,4 @@ spec:
 - Pass the `operations` field of `pragma manage flow draft update` as a native JSON array. Its normal response is a compact
   summary of the applied operations, current counts, and diagnostics; use `pragma manage flow draft get` when the
   complete resource is required.
-- Never add `spec.runDry`. Run Dry cases belong to a separate `Evaluation` resource. Discover `author-pragma-evaluation` and read its
-  `references/run-dry.md` before creating or changing that resource.
+- Never add `spec.runDry`. Run Dry cases belong to a separate `Evaluation` resource. Read [Evaluation](../evaluation.md) and [Run Dry](../evaluation/run-dry.md) before creating or changing that resource.

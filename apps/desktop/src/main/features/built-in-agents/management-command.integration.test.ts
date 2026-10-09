@@ -1714,7 +1714,7 @@ it("assembles the production CLI grants and hooks with no selected management to
     "call_store_revision_agent",
     "call_skill_revision_agent",
   ]);
-  expect(compiled.value.skills?.skills).toHaveLength(6);
+  expect(compiled.value.skills?.skills).toHaveLength(1);
   const session = await openRuntimeSession(runtime, {
     agent: compiled.value,
     pragmaHome: f.root,

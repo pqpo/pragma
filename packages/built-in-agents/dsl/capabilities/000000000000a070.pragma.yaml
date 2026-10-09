@@ -3,12 +3,12 @@ kind: Capability
 metadata:
   id: 000000000000a070
   name: Manage Pragma Automations
-  description: Save, enable, disable, delete and reset scheduled Automations with host bindings.
+  description: Manage Pragma resources and persistent tasks through authorized CLI commands.
   tags: [builtin, pragma, default-agent, skill]
 spec:
   adapter: pragma.capability.skill@v1
   config:
     source:
       type: project
-      path: skills/manage-pragma-automations
+      path: skills/manage-pragma
     entry: SKILL.md

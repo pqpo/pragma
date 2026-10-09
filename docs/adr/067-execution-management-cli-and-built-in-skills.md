@@ -139,3 +139,20 @@ reference 从 DSL Skill 移走；原六组 handler 定义仍用于 CLI、显式 
 调用，Pi 默认口径为 13。真实 Runtime、发行与性能结果分别见
 [第三阶段实施报告](../architecture/management-tools-cli-skills-phase-three-implementation.md)，
 未通过门禁不因默认目录切换而关闭。
+
+## 合并为 manage-pragma（2026-10-09 后续用户决策）
+
+六个内置 Skill 合并为一个 `manage-pragma`。主 SKILL.md 提供六组工作流导航与通用
+授权、审批、幂等恢复规则；原领域流程和示例移到按需读取的 references。工作台目录与
+默认 Runtime 索引只展示该入口，继续由同一静态源生成、物化并提供只读视图。
+
+沿用 `capability:1h2j3k4m5n6p7q8r` 作为统一入口，其他五个已存在的 Capability ID
+仍可解析历史绑定，但指向相同 `skills/manage-pragma` 内容，不保留五套实现或旧 Skill
+目录。既有名称保留在这些历史资源描述中，满足 Bundle 的名称唯一性约束。历史身份
+解析保护已持久化 Project、显式配置和 Revision；定制 Pragma 的历史多 Skill 绑定仅在
+编译物化副本中归一到一个入口，不改写调用方对象。此处理不改变 wire/storage Schema，不扫描、
+重写或删除用户数据。静态内容 hash 与编译 fingerprint 随文件更新重建。
+
+命令仍为 46 项、默认 Pi 工具仍为 13 项，授权与审批不因 Skill 合并扩张。阶段成本数据
+保留原测试时的六 Skill 配置；合并后的静态估算单独记录，不作为真实任务成本下降证明。
+[实施与验证记录](../architecture/management-tools-cli-skills-unified-skill-implementation.md)。

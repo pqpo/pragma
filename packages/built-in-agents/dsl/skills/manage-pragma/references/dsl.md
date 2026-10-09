@@ -1,8 +1,3 @@
----
-name: author-pragma-dsl
-description: Create, update, configure, or repair Pragma Expert and ExpertTeam resources and their dependencies through authorized CLI file drafts. Flow and Evaluation authoring use their own skills.
----
-
 # Author Pragma DSL
 
 Use the interpreter's diagnostics as the source of truth. The authorized `pragma` command is
@@ -43,8 +38,8 @@ subcommand `--help`; do not print credentials or edit authoritative Project stor
    approval; known foreign owners cannot be taken over. Publication still needs its own approval.
 
 Use `pragma manage dsl changes prepare` only for complete resources without a dedicated authoring workflow;
-Expert/Team require file drafts, Flow uses `author-pragma-flow`, and Evaluation uses
-`author-pragma-evaluation`. Flow and Evaluation are independent transactions. After a Flow commit,
+Expert/Team require file drafts, Flow uses the flow reference, and Evaluation uses
+the evaluation reference. Flow and Evaluation are independent transactions. After a Flow commit,
 offer Evaluation authoring only if not already requested; do not create an Evaluation implicitly.
 
 Before preparing, ensure IDs came from Host draft allocation or `pragma manage dsl ids allocate`, project
@@ -54,12 +49,12 @@ follow diagnostic source/path values literally. Stable request UUIDs are reused 
 command/input to retrieve the original receipt. Cancellation never undoes a published revision.
 `input_required` returns control to the owning Execution; the CLI cannot approve for the user.
 
-For Automation resources and Host bindings, discover `manage-pragma-automations`.
+For Automation resources and Host bindings, read [Automations](automations.md).
 
 ## References
 
-- [Expert](references/expert.md) and [ExpertTeam](references/expert-team.md): read for that resource kind.
-- [Avatars](references/avatars.md): read before selecting/changing an Expert persona.
-- [Resources and refs](references/resources-and-references.md): dependencies and versioning.
-- [CLI examples](references/commands.md): file drafts, review and recovery.
-- Flow: discover `author-pragma-flow`; Flow Run Dry: discover `author-pragma-evaluation`.
+- [Expert](dsl/expert.md) and [ExpertTeam](dsl/expert-team.md): read for that resource kind.
+- [Avatars](dsl/avatars.md): read before selecting/changing an Expert persona.
+- [Resources and refs](dsl/resources-and-references.md): dependencies and versioning.
+- [CLI examples](dsl/commands.md): file drafts, review and recovery.
+- Flow: read [Flow](flow.md); Flow Run Dry: read [Evaluation](evaluation.md).

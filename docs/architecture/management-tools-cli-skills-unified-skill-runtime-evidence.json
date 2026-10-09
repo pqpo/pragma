@@ -1,0 +1,87 @@
+{
+  "runtime": "codex",
+  "scenario": "phase-three-catalog",
+  "variant": "after",
+  "tools": 2,
+  "succeeded": true,
+  "observations": [
+    {
+      "observationId": "f8251cb6b49d7d72dc15d3ab211ce63607d165eb347ec657a0041da45a1849a5",
+      "occurredAt": "2026-10-09T14:05:09.402Z",
+      "executionId": "75a887b0-e314-4f52-9555-ad0659c3486a",
+      "invocationId": "75a887b0-e314-4f52-9555-ad0659c3486a",
+      "contextId": "3bacb199-12ba-4f12-99cc-2aac22173995",
+      "runId": "75a887b0-e314-4f52-9555-ad0659c3486a",
+      "runtimeId": "codex-local",
+      "executor": {
+        "id": "0000000000pragma",
+        "name": "Pragma"
+      },
+      "usage": {
+        "measurement": "reported",
+        "input": 512,
+        "output": 209,
+        "cacheRead": 16256,
+        "cacheWrite": 0,
+        "totalTokens": 16977,
+        "cost": {
+          "input": 0,
+          "output": 0,
+          "cacheRead": 0,
+          "cacheWrite": 0,
+          "total": 0
+        }
+      }
+    }
+  ],
+  "messages": [
+    {
+      "prompt": "Read manage-pragma and its Missions reference. This is a real CLI channel probe in a temporary workspace. Use your process/shell tool to run exactly `pragma manage mission list --format json`. Do not print environment variables. Report the structured result and finish.",
+      "output": "```json\n{\n  \"protocol\": \"pragma.management-command/v1\",\n  \"requestId\": \"c74a0bf8-1738-4e1e-91ea-6ee8c17c7838\",\n  \"command\": \"mission.list\",\n  \"exitCode\": 0,\n  \"status\": \"succeeded\",\n  \"origin\": {\n    \"missionId\": \"4e0185a0-d015-4cc7-ad97-b57a68c17699\",\n    \"executionId\": \"75a887b0-e314-4f52-9555-ad0659c3486a\",\n    \"invocationId\": \"75a887b0-e314-4f52-9555-ad0659c3486a\",\n    \"contextId\": \"3bacb199-12ba-4f12-99cc-2aac22173995\"\n  },\n  \"result\": {\n    \"items\": []\n  }\n}\n```",
+      "elapsedMs": 46036
+    }
+  ],
+  "nativeToolCalls": [
+    {
+      "type": "tool.started",
+      "toolName": "exec_command"
+    },
+    {
+      "type": "tool.started",
+      "toolName": "exec_command"
+    },
+    {
+      "type": "tool.started",
+      "toolName": "exec_command"
+    }
+  ],
+  "receipts": [
+    {
+      "schemaVersion": "pragma.management-request/v1",
+      "payloadHash": "b046b2a4429bc52776c7dc53bb1d7456ee5cafb89989a5ac969f2e82b25846a5",
+      "origin": {
+        "missionId": "4e0185a0-d015-4cc7-ad97-b57a68c17699",
+        "executionId": "75a887b0-e314-4f52-9555-ad0659c3486a",
+        "invocationId": "75a887b0-e314-4f52-9555-ad0659c3486a",
+        "contextId": "3bacb199-12ba-4f12-99cc-2aac22173995"
+      },
+      "state": "completed",
+      "result": {
+        "protocol": "pragma.management-command/v1",
+        "requestId": "c74a0bf8-1738-4e1e-91ea-6ee8c17c7838",
+        "command": "mission.list",
+        "exitCode": 0,
+        "status": "succeeded",
+        "origin": {
+          "missionId": "4e0185a0-d015-4cc7-ad97-b57a68c17699",
+          "executionId": "75a887b0-e314-4f52-9555-ad0659c3486a",
+          "invocationId": "75a887b0-e314-4f52-9555-ad0659c3486a",
+          "contextId": "3bacb199-12ba-4f12-99cc-2aac22173995"
+        },
+        "result": {
+          "items": []
+        }
+      }
+    }
+  ]
+}

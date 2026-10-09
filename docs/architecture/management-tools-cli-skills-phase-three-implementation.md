@@ -178,3 +178,10 @@ help/Skill 和 shell 包装。没有普通聊天下降证据，第三阶段父�
 
 真实 Electron 的隔离窗口已关闭；未停止用户原有应用。原 main 工作区保持干净。
 新默认工具目录使用新建会话验证，历史 Session 的编译快照和数据没有被批量改写。
+
+## 后续合并 Skill（2026-10-09）
+
+本报告的三阶段成本、Runtime 与 UI 数据对应当时六个 Skill。用户随后要求统一为
+`manage-pragma`，现已将六组详细工作流移到一个 Skill 的 references；当前默认与工作台
+索引为 1 个 Skill，46 条 CLI 命令和 Pi 默认 13 个工具不变。历史证据文件未改写。
+合并的验证与兼容身份处理见[后续记录](management-tools-cli-skills-unified-skill-implementation.md)。
