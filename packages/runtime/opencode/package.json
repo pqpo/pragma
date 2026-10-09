@@ -19,8 +19,8 @@
   "dependencies": {
     "@pragma/core": "workspace:*",
     "@pragma/shared": "workspace:*",
-    "@opencode-ai/sdk": "1.18.32",
-    "@opencode/client": "2.0.18",
+    "@opencode-ai/sdk": "1.18.34",
+    "@opencode/client": "2.0.24",
     "json5": "2.2.3",
     "zod": "4.6.5"
   },
