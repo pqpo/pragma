@@ -1,6 +1,6 @@
 # ADR 067：Execution 管理 CLI 与内置 Skill
 
-日期：2026-10-08。关联：Issue #368。状态：默认 Flow Schema 已按 2026-10-09 用户授权切换，部分验收待手动测试。
+日期：2026-10-08。关联：Issue #368。状态：Flow、DSL 与 Evaluation 默认 Schema 已按 2026-10-09 用户授权切换，部分验收待补齐。
 
 ## 决策
 
@@ -80,3 +80,27 @@ required 审批，校验原数据并写独立 owner sidecar，保留原文件。
 owner 不允许交接；同 Context 的其他 Session metadata 可定向读取恢复。无业务数据格式转换，
 原 DTO/DSL/owner v1 均不改版本。新目标在创建前预留 owner；所有 claim 共用目标锁。
 审批来自当前 task submission，包含首次无 handler、后续才提供的 warm Session 场景。
+
+## 第二阶段：DSL 与 Evaluation CLI
+
+2026-10-09：沿用同一 factory、Execution 私有通道和 Local Host 业务，补齐文件草稿与
+Evaluation 命令。新增 DSL/Evaluation recover 继续 required 审批，保留原数据和已知 owner；
+prepared change 与发布独立审批。operationId/commandResultsRoot 是可信 Host 端口字段，不是
+模型可自报的授权。Evaluation suite 失败通过原结构化结果和 invalid/退出码 10 表达。
+
+新命令的稳定身份复用既有 request receipt。DSL start/restart/prepare 和 Evaluation create/prepare
+复用原目标，Evaluation update 在 aggregate lock 内写新私有
+`pragma.evaluation-command-mutation/v1` 后替换草稿；DSL prepare 重放既有 candidate/submission。
+`pragma.management-approved-input/v1` 私有 hash 记录使 pending 请求不能更换审批后输入再重放。
+这两个 family 首次引入，原 receipt/owner/draft/Project Schema、DSL 与 compiler 版本不变；
+不重写历史数据，不豁免既有迁移规则。
+
+保留 author-pragma-dsl identity 并更新为 CLI，Evaluation references 迁入独立
+author-pragma-evaluation；三个 Skill 共用静态注册、Runtime 物化和工作台只读投影。
+Automation 等第三阶段内容仍保留原入口。
+
+2026-10-09 用户明确要求“移除已经迁移到cli的工具”，授权第二阶段默认切换。
+据此移除 DSL 14 个与 Evaluation 7 个默认工具，Pi 默认数量 49 → 28；原定义和 handler
+继续用于 CLI、显式 binding 与 Revision Agent。CLI grants、审批和 owner/receipt 独立于模型目录。
+此前 prospective probe 数据保留；Pi Keychain、Qoder 额度、性能与平台等门禁继续未完成，
+不以此次授权切换宣称验收通过。详见[第二阶段实施记录](../architecture/management-tools-cli-skills-phase-two-implementation.md)。

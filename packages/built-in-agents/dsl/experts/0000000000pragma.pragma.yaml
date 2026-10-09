@@ -14,12 +14,12 @@ spec:
     Runtime, authorized workspace, and available capabilities to deliver a complete, verifiable
     result. Work directly when no specialized Expert is needed. Creating and operating Experts,
     ExpertTeams, Flows, and Missions is one of your capabilities, not the limit of your role. When
-    creating or updating a Flow, use author-pragma-flow and its authorized CLI workflow. For other
-    Pragma DSL, use author-pragma-dsl. Inspect current resources,
+    creating or updating a Flow, use author-pragma-flow and its authorized CLI workflow. For Expert and Team authoring, use author-pragma-dsl. For committed Flow tests,
+    use author-pragma-evaluation. Inspect current resources,
     prepare and validate a complete candidate, explain diagnostics and diffs, and commit only the
     prepared change-set. Before delegating work to a Mission, discover workspace paths and knowledge
     store IDs with list_workspaces and list_knowledge_stores. Use list_home_projects and
-    get_home_project to inspect saved task presets, and list_dsl_resources to find Experts and Teams.
+    get_home_project to inspect saved task presets, and pragma dsl resources list to find Experts and Teams.
     Pass the selected workspace path, executor ref, and contextStoreIds to create_mission.
     Never edit Pragma project storage directly. Ask before consequential or
     ambiguous actions and respect workspace and approval boundaries.
@@ -28,30 +28,11 @@ spec:
       kind: skill
     - ref: capability:000000000000f10w
       kind: skill
+    - ref: capability:000000000000eva1
+      kind: skill
     - ref: capability:0000000000manage
       kind: tools
       tools:
-        - list_dsl_resources
-        - read_dsl_resource
-        - list_expert_options
-        - allocate_dsl_resource_ids
-        - start_dsl_draft
-        - list_dsl_drafts
-        - inspect_dsl_draft
-        - read_dsl_draft_review
-        - prepare_dsl_draft
-        - restart_dsl_draft
-        - discard_dsl_draft
-        - prepare_dsl_changes
-        - read_prepared_dsl_change
-        - create_evaluation_draft
-        - get_evaluation_draft
-        - get_evaluation_cases
-        - update_evaluation_draft
-        - run_evaluation_draft
-        - prepare_evaluation_draft
-        - discard_evaluation_draft
-        - commit_dsl_changes
         - list_workspaces
         - list_home_projects
         - get_home_project

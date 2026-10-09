@@ -67,6 +67,56 @@ async function temporaryRoot(prefix: string): Promise<string> {
 }
 
 describe("Desktop PragmaAgent DSL project adapter", { timeout: 30_000 }, () => {
+  it("retains a CLI candidate submission when the final draft write fails, then recovers on inspect", async () => {
+    const root = await temporaryRoot("pragma-cli-prepare-write-failure-");
+    const project = createPragmaProjectStore({ projectsPath: join(root, "projects") });
+    let rejectWrite = false;
+    const adapter = createDesktopPragmaAgentProjectPort({
+      ...adapterOptions(project, join(root, "state")),
+      withMissionMutation: async (_id, action) => {
+        if (rejectWrite) throw new Error("Injected final draft write failure");
+        return await action();
+      },
+    });
+    const runtimeRef = (
+      (await adapter.listExpertOptions({ category: "runtime-models", limit: 25 })).items[0] as {
+        runtimeProfileRef: string;
+      }
+    ).runtimeProfileRef;
+    const missionId = "ed1bcbb5-b1e6-4aa5-9357-7853ce745f6b";
+    const draft = await adapter.startDslDraft({
+      missionId,
+      workspacePath: root,
+      targets: [
+        { mode: "create", key: "writer", kind: "Expert", name: "Writer", description: "Write" },
+      ],
+    });
+    await writeFile(
+      draft.resources[0]!.filePath!,
+      expert("Recovered", runtimeRef, draft.resources[0]!.ref.slice(7)),
+    );
+    const input = { missionId, draftId: draft.draftId, operationId: "failed-final-write" };
+    rejectWrite = true;
+    await expect(adapter.prepareDslDraft(input)).rejects.toThrow(
+      "Injected final draft write failure",
+    );
+    rejectWrite = false;
+    const inspection = await adapter.inspectDslDraft({ missionId, draftId: draft.draftId });
+    expect(inspection.state).toBe("prepared");
+    const prepared = requirePrepared(await adapter.prepareDslDraft(input));
+    expect(prepared.changeSetId).toBe(inspection.preparedChangeSetId);
+    const result = await adapter.commit({
+      missionId,
+      changeSetId: prepared.changeSetId,
+      operationId: "recovered-final-write",
+    });
+    expect(result.projectRevision).toBe(1);
+    expect(
+      (await project.get()).resources.find((resource) => resource.kind === "Expert")?.metadata
+        .description,
+    ).toBe("Recovered");
+  });
+
   it("rechecks deletion admission at final DSL publication", async () => {
     const root = await temporaryRoot("pragma-dsl-deletion-race-");
     const project = createPragmaProjectStore({ projectsPath: join(root, "projects") });
@@ -1536,7 +1586,7 @@ describe("Desktop PragmaAgent DSL project adapter", { timeout: 30_000 }, () => {
         isDefault: true,
       }),
     ]);
-    expect(capabilities.items).toHaveLength(5);
+    expect(capabilities.items).toHaveLength(6);
     expect(capabilities.items).toEqual(
       expect.arrayContaining([
         expect.objectContaining({

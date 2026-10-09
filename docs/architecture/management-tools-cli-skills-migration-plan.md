@@ -4,7 +4,7 @@
 
 关联：[Issue #368](https://github.com/pqpo/pragma/issues/368)。
 
-状态：第一阶段实现已进入独立 worktree；2026-10-09 用户授权先移除六个默认 Flow 工具并继续手动测试，默认 Schema 已切换，部分验收尚未完成。详见[实施报告](management-tools-cli-skills-phase-one-implementation.md)。本文件仍是分阶段计划，不表示阶段已完成。
+状态：第一阶段实现已进入独立 worktree；2026-10-09 用户授权先移除六个默认 Flow 工具并继续手动测试，默认 Schema 已切换，部分验收尚未完成。详见[实施报告](management-tools-cli-skills-phase-one-implementation.md)。第二阶段 CLI 与 Skill 已实现，2026-10-09 用户授权移除 21 个默认工具（49 → 28），其余验收仍待补齐，见[第二阶段记录](management-tools-cli-skills-phase-two-implementation.md)。本文件仍是分阶段计划，不表示阶段已完成。
 
 ## 1. 目标与范围
 
@@ -196,15 +196,15 @@ Flow 的主要收益来自 `update_flow_draft`（9,388 参考 tokens、19,453 Sc
 
 ### 实施清单
 
-- [ ] 按第 10 节复用剩余 DSL file draft 与 Evaluation 工具 handler，必要 Host 实现连同原测试机械迁入 Local Host，Desktop 与 CLI 使用同一权威实现。
-- [ ] 提供 `pragma dsl resources list|read`、`pragma dsl options list`、`pragma dsl ids allocate`、`pragma dsl draft start|list|inspect|review|prepare|restart|discard` 和 `pragma dsl changes prepare|read|commit`。
-- [ ] 保持 Expert/Team 必须走 Mission-owned 文件草稿；泛化 prepare 不得绕过文件草稿要求。
-- [ ] 复用 `author-pragma-dsl` 作为 Expert/ExpertTeam 与其依赖资源的 CLI 编写入口，保留现有 Skill identity 并更新用途；Flow 与 Evaluation 的详细工作流移至独立 Skill，避免重复和相互矛盾的正文。
-- [ ] 提供 `pragma evaluation draft create|get|cases|update|run|prepare|discard`，cases 和 operations 走文件/stdin，正文和诊断有界。
-- [ ] 新增内置 `author-pragma-evaluation` Skill，保持当前工具支持的 Flow Run Dry 范围，不顺带扩展测评领域。
-- [ ] Flow 与 Evaluation 独立提交：先保存 Flow，Evaluation 绑定已提交 Flow；prepare Evaluation 仍执行必要复验，不用 Skill 约定代替 Host 检查。
-- [ ] 将本阶段 Skill 接入工作台只读目录和 Pragma 精简索引，更新内置 DSL、生成文件、调用方、文档和 tests。
-- [ ] 真实验证完成后移除 21 个默认工具；已迁移工具不在启动时继续通过另一 Capability 或 MCP 名称注入。
+- [x] 按第 10 节复用剩余 DSL file draft 与 Evaluation 工具 handler，必要 Host 实现连同原测试机械迁入 Local Host，Desktop 与 CLI 使用同一权威实现。
+- [x] 提供 `pragma dsl resources list|read`、`pragma dsl options list`、`pragma dsl ids allocate`、`pragma dsl draft start|list|inspect|review|prepare|restart|discard` 和 `pragma dsl changes prepare|read|commit`。
+- [x] 保持 Expert/Team 必须走 Mission-owned 文件草稿；泛化 prepare 不得绕过文件草稿要求。
+- [x] 复用 `author-pragma-dsl` 作为 Expert/ExpertTeam 与其依赖资源的 CLI 编写入口，保留现有 Skill identity 并更新用途；Flow 与 Evaluation 的详细工作流移至独立 Skill，避免重复和相互矛盾的正文。
+- [x] 提供 `pragma evaluation draft create|get|cases|update|run|prepare|discard`，cases 和 operations 走文件/stdin，正文和诊断有界。
+- [x] 新增内置 `author-pragma-evaluation` Skill，保持当前工具支持的 Flow Run Dry 范围，不顺带扩展测评领域。
+- [x] Flow 与 Evaluation 独立提交：先保存 Flow，Evaluation 绑定已提交 Flow；prepare Evaluation 仍执行必要复验，不用 Skill 约定代替 Host 检查。
+- [x] 将本阶段 Skill 接入工作台只读目录和 Pragma 精简索引，更新内置 DSL、生成文件、调用方、文档和 tests。
+- [x] 2026-10-09 根据用户明确授权移除 21 个默认工具（49 → 28）；其余真实验证与性能门禁仍待补齐，已迁移工具不通过另一默认 Capability 或 MCP 名称注入。
 
 ### 完成门禁
 

@@ -118,3 +118,41 @@ it("preserves a parsed request identity when Commander rejects an unknown option
     status: "failed",
   });
 });
+
+it("routes Evaluation and preserves suite failure results from Unicode stdin", async () => {
+  expect(isManagementCliArgv(["--json", "evaluation", "draft", "run"])).toBe(true);
+  let stdout = "";
+  const code = await runManagementCli(
+    ["evaluation", "draft", "run", "--input", "-"],
+    {
+      writeStdout: (text) => {
+        stdout += text;
+      },
+      writeStderr: () => undefined,
+    },
+    {
+      readStdin: async () =>
+        new TextEncoder().encode(
+          JSON.stringify({ draftId: "645e2c45-5761-4af0-ac54-9fc0a6a24512", caseIds: ["审批"] }),
+        ),
+      execute: async (request) => {
+        expect(request.command).toBe("evaluation.draft.run");
+        expect(request.input["caseIds"]).toEqual(["审批"]);
+        return {
+          protocol: MANAGEMENT_COMMAND_PROTOCOL,
+          requestId: request.requestId,
+          command: request.command,
+          status: "invalid",
+          exitCode: 10,
+          result: {
+            suite: { passed: false },
+            requestedCases: [{ id: "审批", passed: false }],
+            coverage: { missing: ["transition"] },
+          },
+        };
+      },
+    },
+  );
+  expect(code).toBe(10);
+  expect(JSON.parse(stdout).result.coverage.missing).toEqual(["transition"]);
+});

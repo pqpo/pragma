@@ -1,4 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
+import { readCommandState } from "./management-command-ownership.ts";
 import {
   cp,
   chmod,
@@ -185,6 +186,14 @@ const DslDraftDiscardJournalSchema = z
     "DSL draft discard journal submission paths must be paired.",
   );
 type DslDraftDiscardJournal = z.infer<typeof DslDraftDiscardJournalSchema>;
+
+const DslDraftCommandPrepareSchema = z
+  .object({
+    schemaVersion: z.literal("pragma.dsl-command-prepare/v1"),
+    changeSetId: z.string().uuid(),
+    submissionHash: z.string().regex(/^[a-f0-9]{64}$/u),
+  })
+  .strict();
 
 const DslDraftCommitJournalSchema = z
   .object({
@@ -390,6 +399,7 @@ export function createLocalHostPragmaProjectPort(options: {
   };
 
   const prepareSources = async (input: {
+    readonly operationId?: string | undefined;
     readonly expectedProjectRevision: number;
     readonly sources: readonly string[];
   }): Promise<PragmaAgentPrepareResult> => {
@@ -409,6 +419,7 @@ export function createLocalHostPragmaProjectPort(options: {
     return await prepareResources({
       expectedProjectRevision: input.expectedProjectRevision,
       authoredResources: parsed.resources,
+      operationId: input.operationId,
     });
   };
 
@@ -697,6 +708,44 @@ export function createLocalHostPragmaProjectPort(options: {
     return journal;
   };
 
+  // Persist the candidate/submission association before publishing a CLI candidate. Reads and
+  // failed final state writes must recover that association before restoring editable files.
+  const recoverDslCommandPrepare = async (draft: StoredDslDraft): Promise<StoredDslDraft> => {
+    if (draft.state !== "editing") return draft;
+    const journalPath = join(dirname(dslDraftRecordPath(draft.draftId)), "command-prepare.json");
+    const journal = await readCommandState(
+      journalPath,
+      DslDraftCommandPrepareSchema,
+      "pragma.dsl-command-prepare/v1",
+    );
+    if (journal === undefined) return draft;
+    const previous = await readJson(candidatePath(journal.changeSetId));
+    if (previous === undefined) {
+      await rm(journalPath, { force: true });
+      return draft;
+    }
+    const candidate = CandidateRecordSchema.parse(previous);
+    if (
+      candidate.dslDraftId !== draft.draftId ||
+      candidate.dslDraftMissionId !== draft.missionId ||
+      candidate.changeSet.changeSetId !== journal.changeSetId
+    )
+      throw new Error("DSL command candidate has a different owner.");
+    await scanDslDraftSubmission(
+      { ...draft, submissionHash: journal.submissionHash },
+      dslDraftSubmissionsPath(draft.draftId),
+    );
+    const recovered = StoredDslDraftSchema.parse({
+      ...draft,
+      state: "prepared",
+      submissionHash: journal.submissionHash,
+      preparedChangeSetId: journal.changeSetId,
+      updatedAt: new Date().toISOString(),
+    });
+    await writeDslDraft(recovered);
+    return recovered;
+  };
+
   const readDslDraftLocked = async (draftId: string): Promise<StoredDslDraft> => {
     await replayDslDraftCommit(draftId);
     const owner = await readDslDraftRecord(draftId);
@@ -709,7 +758,7 @@ export function createLocalHostPragmaProjectPort(options: {
     }
     if (!deletionBlocked) await recoverDslDraftRestart(draftId);
     await recoverDslDraftDiscard(draftId);
-    const draft = await readDslDraftRecord(draftId);
+    const draft = await recoverDslCommandPrepare(await readDslDraftRecord(draftId));
     if (draft.state === "editing") {
       await recoverInterruptedDslDraftPrepare(draft, dslDraftSubmissionsPath(draftId));
     }
@@ -1244,7 +1293,15 @@ export function createLocalHostPragmaProjectPort(options: {
 
   return {
     async startDslDraft(input) {
-      return toPublicDslDraft(await startDslDraft(input));
+      return toPublicDslDraft(
+        await startDslDraft({
+          ...input,
+          draftId:
+            input.operationId === undefined
+              ? undefined
+              : managementCommandTargetId(input.operationId),
+        }),
+      );
     },
     async listDslDrafts(input) {
       let names: string[] = [];
@@ -1369,6 +1426,29 @@ export function createLocalHostPragmaProjectPort(options: {
     },
     async prepareDslDraft(input) {
       return await withFileLock(dslDraftMutationLockPath(input.draftId), async () => {
+        // Recover the candidate/submission pair before ordinary editing-state recovery can restore it.
+        if (input.operationId !== undefined) {
+          const previous = await readJson(
+            candidatePath(managementCommandTargetId(input.operationId)),
+          );
+          if (previous !== undefined) {
+            const candidate = CandidateRecordSchema.parse(previous);
+            const record = await readDslDraftRecord(input.draftId);
+            await requireDslDraftOwner(record, input.missionId);
+            if (
+              candidate.dslDraftId !== input.draftId ||
+              candidate.dslDraftMissionId !== input.missionId
+            )
+              throw new Error("DSL command candidate has a different owner.");
+            const recovered = await recoverDslCommandPrepare(record);
+            if (recovered.preparedChangeSetId !== candidate.changeSet.changeSetId)
+              throw new Error("DSL command candidate no longer matches this draft.");
+            return PragmaAgentPrepareResultSchema.parse({
+              status: "prepared",
+              changeSet: candidate.changeSet,
+            });
+          }
+        }
         const draft = await readDslDraftLocked(input.draftId);
         await requireDslDraftOwner(draft, input.missionId);
         if (draft.state !== "editing") throw new Error("DSL draft is not editable.");
@@ -1450,9 +1530,19 @@ export function createLocalHostPragmaProjectPort(options: {
               );
             }
           }
+          if (input.operationId !== undefined)
+            await writeJson(
+              join(dirname(dslDraftRecordPath(draft.draftId)), "command-prepare.json"),
+              DslDraftCommandPrepareSchema.parse({
+                schemaVersion: "pragma.dsl-command-prepare/v1",
+                changeSetId: managementCommandTargetId(input.operationId),
+                submissionHash: snapshot.hash,
+              }),
+            );
           const result = await prepareResources({
             expectedProjectRevision: draft.baseProjectRevision,
             authoredResources: parsed.resources,
+            operationId: input.operationId,
             dslDraftId: draft.draftId,
             dslDraftMissionId: draft.missionId,
             draftReview: {
@@ -1474,6 +1564,13 @@ export function createLocalHostPragmaProjectPort(options: {
           finalized = true;
           return result;
         } finally {
+          if (!finalized && input.operationId !== undefined) {
+            // A durable candidate must retain its frozen submission even if the final write fails.
+            const recovered = await recoverDslCommandPrepare(
+              await readDslDraftRecord(draft.draftId),
+            );
+            finalized = recovered.state === "prepared";
+          }
           if (!finalized) {
             if (detachedFromWorkspace && submission !== undefined) {
               await restoreDslDraftWorktreeFromSubmission(
@@ -1534,7 +1631,10 @@ export function createLocalHostPragmaProjectPort(options: {
         const journal = DslDraftRestartJournalSchema.parse({
           schemaVersion: "pragma.dsl-draft-restart/v1",
           sourceDraftId: current.draftId,
-          replacementDraftId: randomUUID(),
+          replacementDraftId:
+            input.operationId === undefined
+              ? randomUUID()
+              : managementCommandTargetId(input.operationId),
           missionId: current.missionId,
           sourceSubmissionHash: current.submissionHash,
           state: "initiated",
@@ -1798,6 +1898,13 @@ export function createLocalHostPragmaProjectPort(options: {
       );
     },
     async createEvaluationDraft(input) {
+      const draftId =
+        input.operationId === undefined
+          ? randomUUID()
+          : managementCommandTargetId(input.operationId);
+      const recovered =
+        input.operationId === undefined ? undefined : await readJson(evaluationDraftPath(draftId));
+      if (recovered !== undefined) return PragmaAgentEvaluationDraftSchema.parse(recovered);
       const snapshot = await options.project.get();
       if (snapshot.revision !== input.expectedProjectRevision) {
         throw new Error(
@@ -1805,7 +1912,6 @@ export function createLocalHostPragmaProjectPort(options: {
         );
       }
       const now = new Date().toISOString();
-      const draftId = randomUUID();
       let resource: PragmaAgentEvaluationDraft["resource"];
       let sourceEvaluationRef: string | undefined;
       if (input.mode === "create") {
@@ -1856,7 +1962,35 @@ export function createLocalHostPragmaProjectPort(options: {
       }
       const path = evaluationDraftPath(input.draftId);
       return await withFileLock(`${path}.lock`, async () => {
+        const commandPath =
+          input.operationId === undefined
+            ? undefined
+            : join(
+                input.commandResultsRoot ?? join(options.stateRoot, "evaluation-command-results"),
+                `${encodePragmaPathSegment(input.operationId)}.json`,
+              );
+        const replay =
+          commandPath === undefined
+            ? undefined
+            : await readCommandState(
+                commandPath,
+                EvaluationCommandMutationSchema,
+                "pragma.evaluation-command-mutation/v1",
+              );
         const current = await readEvaluationDraft(path);
+        if (replay !== undefined) {
+          const result = replay;
+          if (
+            result.draft.draftId !== input.draftId ||
+            result.expectedDraftRevision !== input.expectedDraftRevision
+          )
+            throw new Error("Evaluation command receipt has a different target.");
+          if (current.draftRevision === input.expectedDraftRevision)
+            await writeJson(path, result.draft);
+          else if (current.draftRevision < result.draft.draftRevision)
+            throw new Error("Evaluation command recovery has an unavailable base revision.");
+          return result.draft;
+        }
         if (current.draftRevision !== input.expectedDraftRevision) {
           throw new Error(
             `Evaluation draft revision changed from ${input.expectedDraftRevision} to ${current.draftRevision}.`,
@@ -1886,6 +2020,15 @@ export function createLocalHostPragmaProjectPort(options: {
           resource,
           updatedAt: new Date().toISOString(),
         });
+        if (commandPath !== undefined)
+          await writeJson(
+            commandPath,
+            EvaluationCommandMutationSchema.parse({
+              schemaVersion: "pragma.evaluation-command-mutation/v1",
+              expectedDraftRevision: input.expectedDraftRevision,
+              draft: updated,
+            }),
+          );
         await writeJson(path, updated);
         return updated;
       });
@@ -1928,6 +2071,16 @@ export function createLocalHostPragmaProjectPort(options: {
       });
     },
     async prepareEvaluationDraft(input) {
+      if (input.operationId !== undefined) {
+        const previous = await readJson(
+          candidatePath(managementCommandTargetId(input.operationId)),
+        );
+        if (previous !== undefined)
+          return PragmaAgentPrepareResultSchema.parse({
+            status: "prepared",
+            changeSet: CandidateRecordSchema.parse(previous).changeSet,
+          });
+      }
       const draft = await withCurrentEvaluationDraftDiagnostics(
         await readEvaluationDraft(evaluationDraftPath(input.draftId)),
       );
@@ -1944,6 +2097,7 @@ export function createLocalHostPragmaProjectPort(options: {
       return await prepareResources({
         expectedProjectRevision: draft.baseProjectRevision,
         authoredResources: [materializeEvaluationDraft(draft)],
+        operationId: input.operationId,
       });
     },
     async discardEvaluationDraft(draftId) {
@@ -3463,6 +3617,14 @@ const FlowCommandMutationSchema = z
     schemaVersion: z.literal("pragma.flow-command-mutation/v1"),
     expectedDraftRevision: z.number().int().nonnegative(),
     draft: PragmaAgentFlowDraftSchema,
+  })
+  .strict();
+
+const EvaluationCommandMutationSchema = z
+  .object({
+    schemaVersion: z.literal("pragma.evaluation-command-mutation/v1"),
+    expectedDraftRevision: z.number().int().nonnegative(),
+    draft: PragmaAgentEvaluationDraftSchema,
   })
   .strict();
 
