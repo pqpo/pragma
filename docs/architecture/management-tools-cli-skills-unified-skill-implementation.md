@@ -36,7 +36,6 @@ DSL、Flow、Evaluation、Mission、资源发现、Automation 的详细流程进
   `pragma manage mission list --format json`，Host receipt 为 succeeded，模型可见 managed
   tools 为两个 Revision 调用。三个 native exec_command 调用、46.036 秒；上报 input 512、
   cacheRead 16,256、output 209。此为读取/发现 smoke，没有重跑六组完整模型业务链路。
-  [原始结果与 receipt](management-tools-cli-skills-unified-skill-runtime-evidence.json)。
 
 ## 成本与门禁
 
@@ -44,8 +43,7 @@ DSL、Flow、Evaluation、Mission、资源发现、Automation 的详细流程进
 索引参考量从六 Skill 合计 206 tokens 降到一个 Skill 的 34 tokens；主 SKILL.md 含
 frontmatter 为 499 tokens。该口径不包含 Core 完整索引格式或供应商包装，不证明真实
 任务输入减少；按需读取 references 和模型行动仍影响实际成本。
-[合并后独立静态估算](management-tools-cli-skills-unified-skill-token-estimate.json)。
 
-原三阶段报告与成本/Runtime/UI 证据仍保留测试时的六 Skill 配置。本轮没有重跑真实
+三阶段成本与 Runtime 结论对应测试时的六 Skill 配置，完整证据与逐项估算不提交仓库。本轮没有重跑真实
 Electron UI、所有 Runtime、签名发行和平台矩阵；前一轮记录的发行、性能、真实审批/
 恢复及 Runtime 未通过门禁继续有效，不因 Skill 合并宣称 Issue #368 全部完成。

@@ -62,17 +62,17 @@ const result = {
   caveat:
     "Static reference estimates only. Provider reported input, cache conditions and extra turns determine task cost.",
 };
-await writeFile(
-  process.argv[2] ??
-    "docs/architecture/management-tools-cli-skills-phase-three-token-estimate.json",
-  `${JSON.stringify(result, null, 2)}\n`,
-);
+// Persist a detailed estimate only when the caller explicitly chooses an output file.
+if (process.argv[2] !== undefined)
+  await writeFile(process.argv[2], `${JSON.stringify(result, null, 2)}\n`);
 console.log(
   JSON.stringify({
     tools: tools.length,
     tokens: result.removedDefinitionTokens,
     commands: commands.length,
     skills: BUILT_IN_SKILLS.length,
+    skillIndexTokens: result.skills.reduce((sum, skill) => sum + skill.index.tokens, 0),
+    skillBodyTokens: result.skills.reduce((sum, skill) => sum + skill.body.tokens, 0),
   }),
 );
 counter.dispose();
