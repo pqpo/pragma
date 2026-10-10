@@ -5,6 +5,8 @@ import {
   DesktopRuntimeIdSchema,
   DesktopRuntimeProcessEnvironmentStatusSchema,
   GetDesktopRuntimeAvailabilityOptionsSchema,
+  RuntimeProcessEnvironmentSettingsSchema,
+  UpdateRuntimeProcessEnvironmentPolicySchema,
 } from "../../shared/contracts/runtime.ts";
 import type { PragmaDesktopAPI } from "../../shared/contracts/api.ts";
 export const runtimesApi = {
@@ -30,10 +32,23 @@ export const runtimesApi = {
     DesktopRuntimeProcessEnvironmentStatusSchema.parse(
       await ipcRenderer.invoke("runtimes:process-environment:refresh"),
     ),
+  getRuntimeProcessEnvironmentSettings: async () =>
+    RuntimeProcessEnvironmentSettingsSchema.parse(
+      await ipcRenderer.invoke("runtimes:process-environment:settings:get"),
+    ),
+  updateRuntimeProcessEnvironmentPolicy: async (input) =>
+    RuntimeProcessEnvironmentSettingsSchema.parse(
+      await ipcRenderer.invoke(
+        "runtimes:process-environment:settings:update",
+        UpdateRuntimeProcessEnvironmentPolicySchema.parse(input),
+      ),
+    ),
 } satisfies Pick<
   PragmaDesktopAPI,
   | "subscribeRuntimeModelCatalog"
   | "getRuntimeAvailability"
   | "getRuntimeProcessEnvironmentStatus"
   | "refreshRuntimeProcessEnvironment"
+  | "getRuntimeProcessEnvironmentSettings"
+  | "updateRuntimeProcessEnvironmentPolicy"
 >;

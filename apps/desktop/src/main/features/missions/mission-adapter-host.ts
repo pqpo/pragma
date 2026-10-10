@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { join } from "node:path";
 
 import {
   PRAGMA_MANAGEMENT_BINDING_REF,
@@ -12,6 +13,8 @@ import { PragmaPaths, type McpToolRegistryPool } from "@pragma/core";
 import { FileSystemContextStore } from "@pragma/context-filesystem";
 import type { PragmaAdapterHost, PragmaBindingRecord } from "@pragma/interpreter";
 import { LocalHostResourceUnavailableError } from "@pragma/local-host/resources";
+
+import { prepareDesktopPragmaCommand } from "../built-in-agents/pragma-command-distribution.ts";
 
 import type { CapabilityCredentialStore } from "../capabilities/capability-credential-store.ts";
 import type { CapabilityStore } from "../capabilities/capability-store.ts";
@@ -79,7 +82,17 @@ export function createDesktopAdapterHost(
             }),
           )
           .digest("hex");
-        const distribution = await options.pragmaCommandDistribution?.();
+        const pragmaHome = options.pragmaHome ?? new PragmaPaths().root;
+        const distribution =
+          options.pragmaManagementScope === undefined
+            ? undefined
+            : options.pragmaCommandDistribution === undefined
+              ? {
+                  directory: await prepareDesktopPragmaCommand({
+                    cacheRoot: join(pragmaHome, "cache"),
+                  }),
+                }
+              : await options.pragmaCommandDistribution();
         const hooks =
           distribution === undefined || options.pragmaManagementScope === undefined
             ? undefined
@@ -87,7 +100,7 @@ export function createDesktopAdapterHost(
                 ports: options.pragmaManagement!,
                 scope: options.pragmaManagementScope,
                 commandDirectory: distribution.directory,
-                pragmaHome: options.pragmaHome ?? new PragmaPaths().root,
+                pragmaHome,
                 allowedCommands: Object.keys(
                   MANAGEMENT_COMMAND_TOOLS,
                 ) as (keyof typeof MANAGEMENT_COMMAND_TOOLS)[],

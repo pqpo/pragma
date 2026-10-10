@@ -250,6 +250,9 @@ import {
   DesktopRuntimeAvailabilitySchema,
   DesktopRuntimeModelSchema,
   DesktopRuntimeProcessEnvironmentStatusSchema,
+  RuntimeProcessEnvironmentPolicySchema,
+  RuntimeProcessEnvironmentSettingsSchema,
+  UpdateRuntimeProcessEnvironmentPolicySchema,
   LocalRuntimeCapabilitySchema,
   RuntimeEnvironmentCatalogSchema,
   RuntimeEnvironmentCatalogEntrySchema,
@@ -370,6 +373,13 @@ export type DesktopRuntimeAvailability = z.infer<typeof DesktopRuntimeAvailabili
 export type DesktopRuntimeModel = z.infer<typeof DesktopRuntimeModelSchema>;
 export type DesktopRuntimeProcessEnvironmentStatus = z.infer<
   typeof DesktopRuntimeProcessEnvironmentStatusSchema
+>;
+export type RuntimeProcessEnvironmentPolicy = z.infer<typeof RuntimeProcessEnvironmentPolicySchema>;
+export type RuntimeProcessEnvironmentSettings = z.infer<
+  typeof RuntimeProcessEnvironmentSettingsSchema
+>;
+export type UpdateRuntimeProcessEnvironmentPolicy = z.infer<
+  typeof UpdateRuntimeProcessEnvironmentPolicySchema
 >;
 export type RuntimeEnvironmentDefinition = z.infer<typeof RuntimeEnvironmentDefinitionSchema>;
 export type RuntimeEnvironmentRevision = z.infer<typeof RuntimeEnvironmentRevisionSchema>;

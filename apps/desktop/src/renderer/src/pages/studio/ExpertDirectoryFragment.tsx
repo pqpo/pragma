@@ -34,7 +34,7 @@ import {
 } from "../../components/MemoryStoreBrowser.tsx";
 import { MarkdownContent } from "../../components/MarkdownContent.tsx";
 import { ProfiledExpertAvatar } from "../../components/ProfiledExpertAvatar.tsx";
-import { isBuiltInExpert, type ExpertRecord } from "./studio-model.ts";
+import { fixedSkillCapabilityIds, isBuiltInExpert, type ExpertRecord } from "./studio-model.ts";
 import { errorMessage } from "../../lib/errors.ts";
 import { runtimeDisplayName } from "../../lib/runtime-display.ts";
 import {
@@ -268,14 +268,24 @@ export function ExpertDetailFragment(props: {
     );
     return resource?.metadata.name ?? binding.target?.ref ?? t("notConfigured");
   });
-  const selectedSkills = props.expert.capabilities
-    .filter((reference) => reference.kind === "skill")
-    .map((reference) => {
-      const capability = props.capabilities.find(
-        (candidate) => candidate.manifest.id === reference.capabilityId,
-      );
-      return capability?.manifest.name ?? reference.capabilityId;
-    });
+  const fixedSkillIds = fixedSkillCapabilityIds(props.expert.persisted?.opaqueCapabilities);
+  const selectedSkills = [
+    ...fixedSkillIds.map((id) => {
+      const skill = props.capabilities.find((candidate) => candidate.manifest.id === id);
+      return `${skill?.manifest.name ?? t("unavailable")} · ${t("requiredSystemSkill")}`;
+    }),
+    ...props.expert.capabilities
+      .filter(
+        (reference) =>
+          reference.kind === "skill" && !fixedSkillIds.includes(reference.capabilityId),
+      )
+      .map((reference) => {
+        const capability = props.capabilities.find(
+          (candidate) => candidate.manifest.id === reference.capabilityId,
+        );
+        return capability?.manifest.name ?? t("unavailable");
+      }),
+  ];
   const selectedToolReferences = props.expert.capabilities.filter(
     (reference): reference is Extract<ExpertRecord["capabilities"][number], { kind: "tools" }> =>
       reference.kind === "tools",

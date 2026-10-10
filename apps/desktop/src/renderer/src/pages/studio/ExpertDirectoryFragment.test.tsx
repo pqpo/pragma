@@ -1,3 +1,4 @@
+import { ExpertDefinitionSchema } from "../../../../shared/contracts/index.ts";
 import { PRAGMA_DSL_WRITE_API_VERSION } from "@pragma/interpreter/ast";
 import { User } from "@phosphor-icons/react";
 import { renderToStaticMarkup } from "react-dom/server";
@@ -199,6 +200,44 @@ describe("ExpertDetailFragment", () => {
 
     expect(html).toContain("Thinking depth");
     expect(html).toContain(">High</strong>");
+  });
+
+  it("shows required Pragma Skills in the expert detail", () => {
+    const skill: Capability = {
+      ...skillCapability,
+      manifest: { ...skillCapability.manifest, id: "1h2j3k4m5n6p7q8r", name: "Manage Pragma" },
+    };
+    const html = renderToStaticMarkup(
+      <ExpertDetailFragment
+        expert={{
+          ...expert,
+          persisted: ExpertDefinitionSchema.parse({
+            ...expert,
+            schemaVersion: "pragma.desktop-expert-view/v1",
+            ref: "expert:0000000000pragma",
+            id: "0000000000pragma",
+            executionProfile: { mode: "system-default" },
+            revision: 1,
+            createdAt: "2026-10-10T00:00:00.000Z",
+            updatedAt: "2026-10-10T00:00:00.000Z",
+            opaqueCapabilities: [{ kind: "skill", ref: "capability:1h2j3k4m5n6p7q8r" }],
+          }),
+        }}
+        contextStores={[]}
+        capabilities={[skill]}
+        experts={[]}
+        resources={[]}
+        runtimes={[]}
+        onBack={() => undefined}
+        onEdit={() => undefined}
+        onOpenContextStore={() => undefined}
+        onTryInSession={() => undefined}
+        onDelete={async () => undefined}
+        onReset={async () => undefined}
+      />,
+    );
+    expect(html).toContain("Manage Pragma · required system skill");
+    expect(html).not.toContain(skill.manifest.id);
   });
 
   it("renders selected capability titles as plain comma-separated text", () => {

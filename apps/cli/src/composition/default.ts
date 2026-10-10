@@ -11,7 +11,8 @@ import { createOpenCodeRuntime } from "@pragma/runtime-opencode";
 import { createQoderCliRuntime } from "@pragma/runtime-qodercli";
 import {
   createRuntimeTokenCounter,
-  filterLocalHostRuntimeProcessEnvironment,
+  createRuntimeProcessEnvironmentSettingsStore,
+  resolveLocalHostRuntimeProcessEnvironment,
 } from "@pragma/local-host";
 import { createLocalHostNodeApplication } from "@pragma/local-host/node-application";
 
@@ -31,35 +32,44 @@ export function createCliLocalHost(
  */
 export function createProductionLocalHost(): CliLocalHost {
   const pragmaHome = process.env["PRAGMA_HOME"]?.trim() || join(homedir(), ".pragma");
-  const environment = filterLocalHostRuntimeProcessEnvironment(process.env);
+  const environmentSettings = createRuntimeProcessEnvironmentSettingsStore({
+    pragmaHome,
+  }).getSync();
+  const getRuntimeEnvironment = (runtimeAdapterId: string): NodeJS.ProcessEnv =>
+    resolveLocalHostRuntimeProcessEnvironment(
+      process.env,
+      runtimeAdapterId,
+      environmentSettings.policy,
+    );
   const tokenCounter = createRuntimeTokenCounter();
   const runtimes = [
     createCodexRuntime({
-      env: environment,
+      env: getRuntimeEnvironment("pragma.runtime.codex"),
       tokenCounter,
       sandboxMode: "workspace-write",
       approvalPolicy: "on-request",
     }),
     createOpenCodeRuntime({
-      env: {
-        ...environment,
-        ...(process.env["OPENCODE_CONFIG_CONTENT"] === undefined
-          ? {}
-          : {
-              OPENCODE_CONFIG_CONTENT: process.env["OPENCODE_CONFIG_CONTENT"],
-            }),
-      },
+      env: getRuntimeEnvironment("pragma.runtime.opencode"),
       permissionMode: "request-approval",
       tokenCounter,
     }),
-    createClaudeCodeRuntime({ env: environment, permissionMode: "default", tokenCounter }),
-    createQoderCliRuntime({ env: environment, permissionMode: "default", tokenCounter }),
+    createClaudeCodeRuntime({
+      env: getRuntimeEnvironment("pragma.runtime.claude-code"),
+      permissionMode: "default",
+      tokenCounter,
+    }),
+    createQoderCliRuntime({
+      env: getRuntimeEnvironment("pragma.runtime.qodercli"),
+      permissionMode: "default",
+      tokenCounter,
+    }),
     createAntigravityRuntime({
-      env: environment,
+      env: getRuntimeEnvironment("pragma.runtime.antigravity"),
       permissionMode: "request-approval",
       tokenCounter,
     }),
-    createPiRuntime({ env: environment, tokenCounter }),
+    createPiRuntime({ env: getRuntimeEnvironment("pragma.runtime.pi"), tokenCounter }),
   ];
 
   return createLocalHostNodeApplication({

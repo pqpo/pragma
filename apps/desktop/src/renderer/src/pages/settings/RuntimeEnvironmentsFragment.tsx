@@ -299,7 +299,9 @@ export function RuntimeEnvironmentsFragment(props: { readonly onNavigateToModels
               key={runtime.id}
               runtime={runtime}
               isProbing={probingIds.has(runtime.id)}
-              onOpen={() => setSelectedRuntimeId(runtime.id)}
+              onOpen={() => {
+                setSelectedRuntimeId(runtime.id);
+              }}
               onRefresh={() => void loadRuntimes(runtime.id, true)}
               onNavigateToModels={props.onNavigateToModels}
             />

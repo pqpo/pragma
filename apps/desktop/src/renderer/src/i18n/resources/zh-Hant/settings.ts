@@ -186,6 +186,27 @@ export const settings = {
     chooseWorkspace: "選擇資料夾",
     restoreDefaultWorkspace: "恢復內建預設工作區",
     saveError: "無法儲存一般設定。",
+    processEnvironmentTitle: "執行階段環境變數",
+    processEnvironmentDescription: "統一設定 Pragma 啟動所有本機執行階段時傳入的 Shell 環境變數。",
+    processEnvironmentLoading: "正在載入環境設定…",
+    processEnvironmentLoadFailed: "無法載入環境設定。",
+    processEnvironmentConflict:
+      "環境設定已在其他位置更新。已載入最新版，請再次儲存以套用目前編輯。",
+    processEnvironmentRetry: "重試",
+    processEnvironmentFullAccess: "完整環境存取",
+    processEnvironmentFullAccessDescription: "將擷取到的所有 Shell 環境變數傳入所有本機執行階段。",
+    processEnvironmentFullAccessWarning:
+      "這可能會向本機執行階段及其子程序暴露憑據和其他機密。黑名單變數仍會被移除。",
+    processEnvironmentAllowlist: "白名單",
+    processEnvironmentAllowlistDescription:
+      "在過濾模式下，於內建工具鏈變數之外新增變數。每行填寫一個變數名稱，例如 JAVA_HOME。",
+    processEnvironmentBlocklist: "黑名單",
+    processEnvironmentBlocklistDescription:
+      "始終移除這些變數，包括完整存取模式。每行填寫一個變數名稱。",
+    processEnvironmentInvalidVariable: "請輸入有效的環境變數名稱，只能包含字母、數字和底線。",
+    processEnvironmentSave: "儲存環境策略",
+    processEnvironmentSaving: "正在儲存…",
+    processEnvironmentSaved: "環境策略已儲存。",
   },
   evaluations: {
     navigation: "評測",

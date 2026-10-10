@@ -61,6 +61,7 @@ export * from "./redaction.ts";
 export * from "./run-payload.ts";
 export * from "./run.ts";
 export * from "./runtime-environment.ts";
+export * from "./runtime-process-environment-settings.ts";
 export * from "./runtime-resolver.ts";
 export * from "./secrets/index.ts";
 export * from "./usage.ts";

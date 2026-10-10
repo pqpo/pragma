@@ -1802,6 +1802,7 @@ export const studio = {
     },
   },
   done: "完成",
+  requiredSystemSkill: "系統必選技能",
   fixedSystemTool: "系統固定工具",
   skillRevisions: "技能修訂",
   submitSkillRevision: "提交修訂",

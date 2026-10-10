@@ -30,6 +30,8 @@ import type { GetDesktopRuntimeAvailabilityOptions } from "./runtime.ts";
 import type {
   DesktopRuntimeAvailability,
   DesktopRuntimeProcessEnvironmentStatus,
+  RuntimeProcessEnvironmentSettings,
+  UpdateRuntimeProcessEnvironmentPolicy,
   DesktopBridgeSnapshot,
   DesktopSettingsSnapshot,
   UpdateDesktopSettings,
@@ -670,4 +672,8 @@ export interface PragmaDesktopAPI {
   ) => Promise<DesktopRuntimeAvailability[]>;
   getRuntimeProcessEnvironmentStatus: () => Promise<DesktopRuntimeProcessEnvironmentStatus>;
   refreshRuntimeProcessEnvironment: () => Promise<DesktopRuntimeProcessEnvironmentStatus>;
+  getRuntimeProcessEnvironmentSettings: () => Promise<RuntimeProcessEnvironmentSettings>;
+  updateRuntimeProcessEnvironmentPolicy: (
+    input: UpdateRuntimeProcessEnvironmentPolicy,
+  ) => Promise<RuntimeProcessEnvironmentSettings>;
 }

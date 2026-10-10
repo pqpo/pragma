@@ -21,7 +21,12 @@ import {
   type DesktopRuntimeAvailability,
   type DesktopRuntimeModel,
 } from "../../../../shared/contracts/index.ts";
-import { isBuiltInExpert, type ExpertDraft, type ExpertRecord } from "./studio-model.ts";
+import {
+  expertCapabilityCounts,
+  isBuiltInExpert,
+  type ExpertDraft,
+  type ExpertRecord,
+} from "./studio-model.ts";
 import { ExpertCapabilityPicker } from "./ExpertCapabilityPicker.tsx";
 import { ExpertAvatarPicker } from "./ExpertAvatarPicker.tsx";
 import { StudioScreenFrame } from "./StudioScreenFrame.tsx";
@@ -131,11 +136,7 @@ export function ExpertEditorFragment(props: {
     setDraft((current) => ({
       ...current,
       capabilities,
-      skills: capabilities.filter((reference) => reference.kind === "skill").length,
-      tools: capabilities
-        .filter((reference) => reference.kind === "tools")
-        .reduce((total, reference) => total + reference.toolNames.length, 0),
-      mcpServers: capabilities.filter((reference) => reference.kind === "tools").length,
+      ...expertCapabilityCounts(capabilities, current.persisted?.opaqueCapabilities),
     }));
   };
   const submit = async () => {

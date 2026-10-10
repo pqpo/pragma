@@ -1,4 +1,3 @@
-import { prepareDesktopPragmaCommand } from "../built-in-agents/pragma-command-distribution.ts";
 import {
   collectMissionExecutionIds,
   type LocalHostMissionExecutionServiceOptions,
@@ -844,11 +843,6 @@ export function createDesktopMissionExecutionResources(
             {
               ...options,
               purpose,
-              pragmaCommandDistribution: async () => ({
-                directory: await prepareDesktopPragmaCommand({
-                  cacheRoot: join(options.pragmaHome, "cache"),
-                }),
-              }),
               pragmaManagementScope: {
                 missionId: mission.id,
                 workspacePath: mission.workspace.path,

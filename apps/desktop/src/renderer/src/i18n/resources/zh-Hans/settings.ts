@@ -186,6 +186,27 @@ export const settings = {
     chooseWorkspace: "选择文件夹",
     restoreDefaultWorkspace: "恢复内置默认工作区",
     saveError: "无法保存常规设置。",
+    processEnvironmentTitle: "运行时环境变量",
+    processEnvironmentDescription: "统一配置 Pragma 启动所有本地运行时时传入的 Shell 环境变量。",
+    processEnvironmentLoading: "正在加载环境设置…",
+    processEnvironmentLoadFailed: "无法加载环境设置。",
+    processEnvironmentConflict:
+      "环境设置已在其他位置更新。已加载最新版，请再次保存以应用当前编辑。",
+    processEnvironmentRetry: "重试",
+    processEnvironmentFullAccess: "全量环境访问",
+    processEnvironmentFullAccessDescription: "将捕获到的所有 Shell 环境变量传入所有本地运行时。",
+    processEnvironmentFullAccessWarning:
+      "这可能会向本地运行时及其子进程暴露凭据和其他机密。黑名单变量仍会被移除。",
+    processEnvironmentAllowlist: "白名单",
+    processEnvironmentAllowlistDescription:
+      "过滤模式下，在内置工具链变量之外添加变量。每行填写一个变量名，例如 JAVA_HOME。",
+    processEnvironmentBlocklist: "黑名单",
+    processEnvironmentBlocklistDescription:
+      "始终移除这些变量，包括全量访问模式。每行填写一个变量名。",
+    processEnvironmentInvalidVariable: "请输入有效的环境变量名，只能包含字母、数字和下划线。",
+    processEnvironmentSave: "保存环境策略",
+    processEnvironmentSaving: "正在保存…",
+    processEnvironmentSaved: "环境策略已保存。",
   },
   evaluations: {
     navigation: "测评",

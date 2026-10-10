@@ -64,6 +64,7 @@ import {
   createMissionActivityReader,
   createNativeOsKeychain,
   createSecretStore,
+  createRuntimeProcessEnvironmentSettingsStore,
   type MissionControllerStore,
 } from "@pragma/local-host";
 import { MEMORY_CURATOR_REF } from "@pragma/memory";
@@ -497,8 +498,12 @@ export async function createDesktopApplicationContainer(
   const runtimeEnvironments = createRuntimeEnvironmentStore({
     pragmaHome: pragmaPaths.root,
   });
+  const runtimeProcessEnvironmentSettings = createRuntimeProcessEnvironmentSettingsStore({
+    pragmaHome: pragmaPaths.root,
+  });
   const runtimeProcessEnvironment = createDesktopRuntimeProcessEnvironment({
     logger: mainLogger,
+    settings: runtimeProcessEnvironmentSettings,
   });
   const runtimes = createRuntimeEnvironmentService({
     store: runtimeEnvironments,
@@ -535,7 +540,7 @@ export async function createDesktopApplicationContainer(
     warn: (message, error) =>
       mainLogger.warn("desktop.home_executor_usage_failed", message, { error }),
   });
-  installRuntimeHandlers(runtimes, runtimeProcessEnvironment);
+  installRuntimeHandlers(runtimes, runtimeProcessEnvironment, runtimeProcessEnvironmentSettings);
   const memoryLearningRevisionsRef: { current?: ReturnType<typeof createMemoryLearningRevisions> } =
     {};
   const expertStore = createExpertDefinitionStore({
@@ -1761,6 +1766,7 @@ export async function createDesktopApplicationContainer(
               capabilityCredentials,
               resolveSecret: (ref) => pluginCredentials.get(ref),
               capabilitiesPath,
+              pragmaHome: pragmaPaths.root,
               mcpToolRegistryPool,
               contextStores,
               pragmaManagement: {

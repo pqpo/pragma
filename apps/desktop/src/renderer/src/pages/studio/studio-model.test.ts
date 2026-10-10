@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import type { ExpertDefinition } from "../../../../shared/contracts/index.ts";
 import {
   emptyDraft,
+  expertCapabilityCounts,
   isBuiltInExpert,
   studioSections,
   toCreateExpertInput,
@@ -112,5 +113,27 @@ describe("studioSections", () => {
       "context-stores",
       "square",
     ]);
+  });
+});
+
+describe("expertCapabilityCounts", () => {
+  it("counts a fixed Skill once and retains fixed capabilities after clearing editable selections", () => {
+    const definition: ExpertDefinition = {
+      ...persistedExpert,
+      capabilities: [
+        { kind: "skill", capabilityId: "1h2j3k4m5n6p7q8r" },
+        { kind: "skill", capabilityId: "optional-skill" },
+      ],
+      opaqueCapabilities: [
+        { kind: "skill", ref: "capability:1h2j3k4m5n6p7q8r" },
+        { kind: "tools", ref: "capability:0000000000manage", tools: ["fixed_tool"] },
+      ],
+    };
+    expect(toExpertRecord(definition)).toMatchObject({ skills: 2, tools: 1, mcpServers: 1 });
+    expect(expertCapabilityCounts([], definition.opaqueCapabilities)).toEqual({
+      skills: 1,
+      tools: 1,
+      mcpServers: 1,
+    });
   });
 });

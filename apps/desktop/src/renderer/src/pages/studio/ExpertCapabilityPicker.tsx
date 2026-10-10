@@ -18,7 +18,12 @@ import {
   type PragmaResourcePickerItem,
 } from "../../components/PragmaResourcePickerDialog.tsx";
 import { ContextStorePickerDialog } from "../../components/ContextStorePickerDialog.tsx";
-import type { ExpertDraft, ExpertRecord } from "./studio-model.ts";
+import {
+  expertCapabilityCounts,
+  fixedSkillCapabilityIds,
+  type ExpertDraft,
+  type ExpertRecord,
+} from "./studio-model.ts";
 
 type PickerKind = "resources" | "context-stores" | "skills" | "tools";
 const TOOL_SERVICE_PAGE_SIZE = 20;
@@ -213,6 +218,11 @@ export function ExpertCapabilityPicker(props: {
   const selectedSkillReferences = props.capabilityReferences.filter(
     (reference) => reference.kind === "skill",
   );
+  const fixedSkillIds = fixedSkillCapabilityIds(props.fixedCapabilities);
+  const selectedSkillCount = expertCapabilityCounts(
+    props.capabilityReferences,
+    props.fixedCapabilities,
+  ).skills;
   const selectedToolReferences = props.capabilityReferences.filter(
     (reference) => reference.kind === "tools",
   );
@@ -281,10 +291,18 @@ export function ExpertCapabilityPicker(props: {
     const store = props.contextStores.find((candidate) => candidate.id === mount.storeId);
     return store ? [store.name] : [];
   });
-  const selectedSkillNames = selectedSkillReferences.flatMap((reference) => {
-    const skill = skills.find((candidate) => candidate.manifest.id === reference.capabilityId);
-    return skill ? [skill.manifest.name] : [];
-  });
+  const selectedSkillNames = [
+    ...fixedSkillIds.map((id) => {
+      const skill = skills.find((candidate) => candidate.manifest.id === id);
+      return `${skill?.manifest.name ?? t("unavailable")} · ${t("requiredSystemSkill")}`;
+    }),
+    ...selectedSkillReferences
+      .filter((reference) => !fixedSkillIds.includes(reference.capabilityId))
+      .flatMap((reference) => {
+        const skill = skills.find((candidate) => candidate.manifest.id === reference.capabilityId);
+        return skill ? [skill.manifest.name] : [];
+      }),
+  ];
   const selectedToolNames = [
     ...fixedToolNames.map((name) => `${name} · ${t("fixedSystemTool")}`),
     ...selectedToolReferences.flatMap((reference) => reference.toolNames),
@@ -313,7 +331,7 @@ export function ExpertCapabilityPicker(props: {
     {
       id: "skills",
       icon: BookOpenText,
-      selected: selectedSkillReferences.length,
+      selected: selectedSkillCount,
       available: skills.length,
       names: selectedSkillNames,
     },
@@ -356,7 +374,7 @@ export function ExpertCapabilityPicker(props: {
       : activePicker === "context-stores"
         ? props.contextStoreMounts.length
         : activePicker === "skills"
-          ? selectedSkillReferences.length
+          ? selectedSkillCount
           : selectedToolCount;
 
   const updateToolReference = (capability: Capability, toolNames: readonly string[]) => {
@@ -383,7 +401,7 @@ export function ExpertCapabilityPicker(props: {
               count:
                 props.resourceTools.length +
                 props.contextStoreMounts.length +
-                selectedSkillReferences.length +
+                selectedSkillCount +
                 selectedToolCount,
             })}
           </span>
@@ -518,7 +536,8 @@ export function ExpertCapabilityPicker(props: {
             </label>
             <div className="expert-picker-toolbar">
               <span>{t("selectedCount", { count: activeSelectedCount })}</span>
-              {activeSelectedCount > 0 ? (
+              {(activePicker === "skills" ? selectedSkillReferences.length : activeSelectedCount) >
+              0 ? (
                 <button type="button" onClick={clearActivePicker}>
                   {t("clearSelection")}
                 </button>
@@ -528,6 +547,7 @@ export function ExpertCapabilityPicker(props: {
               {activePicker === "skills" ? (
                 <SkillResults
                   capabilities={skills}
+                  fixedSkillIds={fixedSkillIds}
                   query={search}
                   references={props.capabilityReferences}
                   onChange={props.onCapabilityReferencesChange}
@@ -574,7 +594,8 @@ function EmptyResults(props: { readonly hasQuery: boolean; readonly label: strin
   );
 }
 
-function SkillResults(props: {
+export function SkillResults(props: {
+  readonly fixedSkillIds?: readonly string[];
   readonly capabilities: readonly Capability[];
   readonly query: string;
   readonly references: ExpertDraft["capabilities"];
@@ -598,6 +619,7 @@ function SkillResults(props: {
           (reference) =>
             reference.kind === "skill" && reference.capabilityId === capability.manifest.id,
         );
+        const fixed = props.fixedSkillIds?.includes(capability.manifest.id) ?? false;
         const unavailable = capability.health.status !== "ready" && selected === undefined;
         return (
           <label
@@ -606,9 +628,10 @@ function SkillResults(props: {
           >
             <input
               type="checkbox"
-              disabled={unavailable}
-              checked={selected !== undefined}
-              onChange={() =>
+              disabled={fixed || unavailable}
+              checked={fixed || selected !== undefined}
+              onChange={() => {
+                if (fixed) return;
                 props.onChange(
                   selected === undefined
                     ? [
@@ -619,13 +642,14 @@ function SkillResults(props: {
                         },
                       ]
                     : props.references.filter((reference) => reference !== selected),
-                )
-              }
+                );
+              }}
             />
             <span>
               <strong>{capability.manifest.name}</strong>
               <small>
                 {capability.definition.description}
+                {fixed ? ` · ${t("requiredSystemSkill")}` : ""}
                 {unavailable ? ` · ${t("needsAttention")}` : ""}
               </small>
             </span>

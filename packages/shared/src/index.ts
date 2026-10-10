@@ -31,6 +31,7 @@ export {
   type RunStatus as ExecutionRunStatusValue,
 } from "./run-status.ts";
 export * from "./runtime-context-window.schema.ts";
+export * from "./runtime-process-environment.schema.ts";
 export * from "./skill-bundle.schema.ts";
 export * from "./stream-event.schema.ts";
 export * from "./tool-permission.schema.ts";

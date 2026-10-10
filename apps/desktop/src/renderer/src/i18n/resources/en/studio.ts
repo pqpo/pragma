@@ -1892,6 +1892,7 @@ export const studio = {
     },
   },
   done: "Done",
+  requiredSystemSkill: "required system skill",
   fixedSystemTool: "fixed system tool",
   skillRevisions: "Skill revisions",
   submitSkillRevision: "Submit revision",

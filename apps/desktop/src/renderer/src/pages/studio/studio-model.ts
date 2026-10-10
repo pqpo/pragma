@@ -105,21 +105,7 @@ export function toExpertRecord(definition: ExpertDefinition): ExpertRecord {
     model: definition.executionProfile.mode === "pinned" ? definition.executionProfile.model : null,
     capabilities: definition.capabilities,
     toolApprovals: definition.toolApprovals,
-    skills:
-      definition.capabilities.filter((reference) => reference.kind === "skill").length +
-      (definition.opaqueCapabilities ?? []).filter((reference) => reference.kind === "skill")
-        .length,
-    tools:
-      definition.capabilities
-        .filter((reference) => reference.kind === "tools")
-        .reduce((total, reference) => total + reference.toolNames.length, 0) +
-      (definition.opaqueCapabilities ?? [])
-        .filter((reference) => reference.kind === "tools")
-        .reduce((total, reference) => total + (reference.tools?.length ?? 0), 0),
-    mcpServers:
-      definition.capabilities.filter((reference) => reference.kind === "tools").length +
-      (definition.opaqueCapabilities ?? []).filter((reference) => reference.kind === "tools")
-        .length,
+    ...expertCapabilityCounts(definition.capabilities, definition.opaqueCapabilities),
     contextStoreMounts: definition.contextStoreMounts,
     resourceTools: definition.resourceTools,
     plugins: definition.plugins,
@@ -208,3 +194,36 @@ export const studioSections = [
   readonly labelKey: string;
   readonly icon: Icon;
 }[];
+
+export function fixedSkillCapabilityIds(
+  capabilities: ExpertDefinition["opaqueCapabilities"],
+): readonly string[] {
+  return [
+    ...new Set(
+      (capabilities ?? []).flatMap((reference) =>
+        reference.kind === "skill" ? [reference.ref.slice("capability:".length)] : [],
+      ),
+    ),
+  ];
+}
+
+export function expertCapabilityCounts(
+  capabilities: ExpertDefinition["capabilities"],
+  fixedCapabilities: ExpertDefinition["opaqueCapabilities"],
+): Pick<ExpertRecord, "skills" | "tools" | "mcpServers"> {
+  const skillIds = new Set([
+    ...fixedSkillCapabilityIds(fixedCapabilities),
+    ...capabilities.flatMap((reference) =>
+      reference.kind === "skill" ? [reference.capabilityId] : [],
+    ),
+  ]);
+  const selectedTools = capabilities.filter((reference) => reference.kind === "tools");
+  const fixedTools = (fixedCapabilities ?? []).filter((reference) => reference.kind === "tools");
+  return {
+    skills: skillIds.size,
+    tools:
+      selectedTools.reduce((total, reference) => total + reference.toolNames.length, 0) +
+      fixedTools.reduce((total, reference) => total + (reference.tools?.length ?? 0), 0),
+    mcpServers: selectedTools.length + fixedTools.length,
+  };
+}

@@ -173,6 +173,10 @@ export class PragmaPaths {
     return join(this.memoryDataRoot(), "retrieval-settings.json");
   }
 
+  runtimeProcessEnvironmentSettings(): string {
+    return join(this.stateRoot(), "runtime-process-environment-settings.json");
+  }
+
   memoryVectorIndex(): string {
     return join(this.memoryCacheRoot(), "retrieval", "vectors.sqlite");
   }

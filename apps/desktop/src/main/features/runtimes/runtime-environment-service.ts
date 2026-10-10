@@ -7,6 +7,7 @@ import type {
   RuntimeResolver,
   RuntimeTokenCounter,
 } from "@pragma/core";
+import { resolveLocalHostRuntimeProcessEnvironment } from "@pragma/local-host";
 import {
   createAntigravityRuntime,
   type AntigravityRuntimePermissionMode,
@@ -330,7 +331,8 @@ export interface CreateBuiltInRuntimeFactoriesOptions {
   readonly getAgentContextWindow?: (() => number | Promise<number>) | undefined;
   readonly getToolPermissionMode?:
     (() => DesktopToolPermissionMode | Promise<DesktopToolPermissionMode>) | undefined;
-  readonly getRuntimeProcessEnvironment?: (() => Promise<NodeJS.ProcessEnv>) | undefined;
+  readonly getRuntimeProcessEnvironment?:
+    ((runtimeAdapterId: string) => Promise<NodeJS.ProcessEnv>) | undefined;
   readonly onModelCatalogUpdated?: ((runtimeId: string) => void) | undefined;
   readonly tokenCounter?: RuntimeTokenCounter | undefined;
   readonly mcpToolRegistryPool?: McpToolRegistryPool | undefined;
@@ -341,7 +343,9 @@ export function createBuiltInRuntimeFactories(
 ): readonly RuntimeEnvironmentAdapterFactory[] {
   const getToolPermissionMode = options.getToolPermissionMode ?? (() => "request-approval");
   const getRuntimeProcessEnvironment =
-    options.getRuntimeProcessEnvironment ?? (async () => ({ ...process.env }));
+    options.getRuntimeProcessEnvironment ??
+    (async (runtimeAdapterId: string) =>
+      resolveLocalHostRuntimeProcessEnvironment(process.env, runtimeAdapterId));
   const onModelCatalogUpdated = options.onModelCatalogUpdated;
 
   async function createPiAdapter(
@@ -352,7 +356,7 @@ export function createBuiltInRuntimeFactories(
     return createPiRuntime({
       descriptor: { id: environment.id, displayName: BUILT_IN_RUNTIME_DISPLAY_NAME },
       modelProviders: options.modelProviders,
-      env: await getRuntimeProcessEnvironment(),
+      env: await getRuntimeProcessEnvironment("pragma.runtime.pi"),
       ...(agentContextWindow === undefined ? {} : { agentContextWindow }),
       tokenCounter: options.tokenCounter,
       ...(options.mcpToolRegistryPool === undefined
@@ -369,7 +373,7 @@ export function createBuiltInRuntimeFactories(
         assertEmptyRuntimeConfig(environment);
         const [permissionMode, env] = await Promise.all([
           context?.toolPermissionMode ?? getToolPermissionMode(),
-          getRuntimeProcessEnvironment(),
+          getRuntimeProcessEnvironment("pragma.runtime.opencode"),
         ]);
         return createOpenCodeRuntime({
           descriptor: { id: environment.id, displayName: environment.displayName },
@@ -377,14 +381,7 @@ export function createBuiltInRuntimeFactories(
             ? {}
             : { onModelCatalogUpdated: () => onModelCatalogUpdated(environment.id) }),
           permissionMode,
-          env: {
-            ...env,
-            ...(process.env["OPENCODE_CONFIG_CONTENT"] === undefined
-              ? {}
-              : {
-                  OPENCODE_CONFIG_CONTENT: process.env["OPENCODE_CONFIG_CONTENT"],
-                }),
-          },
+          env,
           modelCatalogCacheRoot: options.modelCatalogCacheRoot,
           tokenCounter: options.tokenCounter,
           ...(options.mcpToolRegistryPool === undefined
@@ -400,7 +397,7 @@ export function createBuiltInRuntimeFactories(
         assertEmptyRuntimeConfig(environment);
         const [permissionMode, env] = await Promise.all([
           context?.toolPermissionMode ?? getToolPermissionMode(),
-          getRuntimeProcessEnvironment(),
+          getRuntimeProcessEnvironment("pragma.runtime.codex"),
         ]);
         const permissions = codexRuntimePermissionsForMode(permissionMode);
         return createCodexRuntime({
@@ -425,7 +422,7 @@ export function createBuiltInRuntimeFactories(
         assertEmptyRuntimeConfig(environment);
         const [permissionMode, env] = await Promise.all([
           context?.toolPermissionMode ?? getToolPermissionMode(),
-          getRuntimeProcessEnvironment(),
+          getRuntimeProcessEnvironment("pragma.runtime.claude-code"),
         ]);
         return createClaudeCodeRuntime({
           descriptor: { id: environment.id, displayName: environment.displayName },
@@ -454,7 +451,7 @@ export function createBuiltInRuntimeFactories(
         assertEmptyRuntimeConfig(environment);
         const [permissionMode, env] = await Promise.all([
           context?.toolPermissionMode ?? getToolPermissionMode(),
-          getRuntimeProcessEnvironment(),
+          getRuntimeProcessEnvironment("pragma.runtime.antigravity"),
         ]);
         return createAntigravityRuntime({
           descriptor: { id: environment.id, displayName: environment.displayName },
@@ -479,7 +476,7 @@ export function createBuiltInRuntimeFactories(
         assertEmptyRuntimeConfig(environment);
         const [permissionMode, env] = await Promise.all([
           context?.toolPermissionMode ?? getToolPermissionMode(),
-          getRuntimeProcessEnvironment(),
+          getRuntimeProcessEnvironment("pragma.runtime.qodercli"),
         ]);
         return createQoderCliRuntime({
           descriptor: { id: environment.id, displayName: environment.displayName },

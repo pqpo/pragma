@@ -1,6 +1,10 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 import { createLocalHostNodeApplication } from "@pragma/local-host/node-application";
-import { createPragmaManagementTools, STORE_REVISION_EXPERT_REF } from "@pragma/built-in-agents";
+import {
+  createPragmaManagementTools,
+  pragmaManagementCapabilityResource,
+  STORE_REVISION_EXPERT_REF,
+} from "@pragma/built-in-agents";
 import { PRAGMA_DSL_WRITE_API_VERSION } from "@pragma/interpreter/ast";
 import {
   copyFile,
@@ -56,6 +60,7 @@ import {
   createLocalHostProjectCatalogFromHome,
   createLocalHostMissionController,
   createMissionSessionAssociationResolver,
+  createMissionPinnedBinding,
   createMissionExecutionEventProjector,
   findMissionPinnedBinding,
   createLocalHostRunApplication,
@@ -97,6 +102,7 @@ import {
 } from "./fixtures/desktop-mission-test-application.ts";
 import { createDesktopMissionExecutionResources } from "./desktop-mission-execution-resources.ts";
 import { createMissionStore } from "@pragma/local-host";
+import * as pragmaCommandDistribution from "../built-in-agents/pragma-command-distribution.ts";
 
 vi.mock("@pragma/built-in-agents", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@pragma/built-in-agents")>();
@@ -333,6 +339,171 @@ afterEach(async () => {
 // private Runtime Contexts and Desktop project persistence) through the shared Host
 // application. Generic command receipt/outcome rules live in Local Host tests.
 describe("Desktop Mission resource adapter contracts", { timeout: 30_000 }, () => {
+  it.each(["expert", "team"] as const)(
+    "sends management-capable %s Mission followups after idle release and Host restart",
+    async (kind) => {
+      const home = await mkdtemp(join(tmpdir(), "pragma-desktop-management-followup-"));
+      temporaryPaths.push(home);
+      // Packaging owns the command launcher; this test exercises real binding
+      // resolution, compilation, durable admission and Session recovery.
+      vi.spyOn(pragmaCommandDistribution, "prepareDesktopPragmaCommand").mockResolvedValue(home);
+      const paths = new PragmaPaths({ pragmaHome: home });
+      const project = createPragmaProjectStore({
+        projectsPath: paths.projectsRoot(),
+        objectsPath: paths.contentObjectsRoot(),
+        projectViewsPath: paths.projectViewsCacheRoot(),
+      });
+      const expert = expertFixture();
+      const executor = kind === "expert" ? expert : expertTeamFixture();
+      const management = pragmaManagementCapabilityResource();
+      expert.spec.capabilities = [{ ref: `capability:${management.metadata.id}`, kind: "tools" }];
+      const snapshot = await project.publish({
+        expectedRevision: 0,
+        resources: [
+          runtimeFixture(),
+          expert,
+          management,
+          ...(kind === "team" ? [executor, reviewerFixture()] : []),
+        ],
+      });
+      const missions = createMissionStore({ missionsPath: paths.missionsRoot() });
+      const mission = await missions.create({
+        workspace: { path: home, basename: "workspace" },
+        goal: "first",
+        project: { id: snapshot.projectId, revision: snapshot.revision },
+        executor: missionExecutorSnapshot(executor),
+      });
+      const startTurn = vi.fn(() => ({ outputText: "done" }));
+      const runtime = defineRuntimeTestDriver<never, { id: string }>({
+        descriptor: { id: "fake", kind: "fake", displayName: "Fake" },
+        createSession: ({ systemSessionId }) => ({ id: systemSessionId }),
+        restoreSession: ({ systemSessionId }) => ({ id: systemSessionId }),
+        readSession: (session) => ({ runtimeSessionId: session.id }),
+        startTurn,
+        mapEvent: () => ({ events: [] }),
+      });
+      const runtimes = createStaticRuntimeResolver({
+        runtimes: [runtime],
+        defaultRuntimeId: "fake",
+      });
+      const runnerOptions: Parameters<typeof createDesktopMissionTestApplication>[0] = {
+        missions,
+        project,
+        capabilityStore: {} as CapabilityStore,
+        capabilityCredentials: {} as CapabilityCredentialStore,
+        capabilitiesPath: join(paths.dataRoot(), "capabilities"),
+        pragmaHome: home,
+        runtimes,
+        pragmaManagementPorts: () => ({ project: {} as never, missions: {} as never }),
+        loggerProvider: createNoopLoggerProvider(),
+      };
+      const controller = createMissionControllerStore({ missionsPath: paths.missionsRoot() });
+      const compiler = createLocalHostNodeMissionCompiler({ pragmaHome: home, runtimes });
+      const catalog = createLocalHostProjectCatalogFromHome({
+        pragmaHome: home,
+        runtimes,
+        compiler,
+      });
+      const resolve = vi.fn(catalog.resolve);
+      const binding = createMissionPinnedBinding({
+        requestId: mission.initialMessageId,
+        payloadHash: `sha256:${"a".repeat(64)}`,
+        command: kind === "expert" ? "expert.run" : "team.run",
+        executor: {
+          source: "project",
+          ref: { kind, id: executor.metadata.id },
+          project: {
+            projectId: snapshot.projectId,
+            revision: snapshot.revision,
+            fingerprint: snapshot.projectFingerprint!,
+          },
+        },
+        workspace: { canonicalPath: home, identityHash: `sha256:${"a".repeat(64)}` },
+        provenance: "new_run",
+      });
+      const createHost = () => {
+        const runner = createDesktopMissionTestApplication(runnerOptions);
+        runner.bindControllerFacts({
+          controller,
+          hasEnvelope: async () => true,
+          resolveSessionId: async () => (await missions.get(mission.id)).execution?.sessionId,
+          resolveMissionBinding: async () => binding,
+          executors: resolve,
+          compiler,
+        });
+        const ownerScope = createMissionOwnerScope({
+          controller,
+          recoverSemanticWrite: async () => undefined,
+        });
+        const adapter = runner.missionControl;
+        const control = createMissionControlApplication({
+          controller,
+          ownerScope,
+          consumer: adapter.consumer,
+          assertMission: async (id) => {
+            await missions.get(id);
+          },
+          assertAcquisitionAllowed: adapter.assertAcquisitionAllowed,
+          resolveStrictTarget: adapter.resolveStrictTarget,
+          resolveExecutionTarget: adapter.resolveExecutionTarget,
+          waitExecution: adapter.waitExecution,
+          client: { surface: "desktop", version: "test", instanceId: crypto.randomUUID() },
+        });
+        adapter.bindApplication(control);
+        return { runner, control, ownerScope };
+      };
+      let host = createHost();
+      try {
+        await host.runner.startRun(mission.id);
+        for (const content of ["second", "third"]) {
+          await vi.waitFor(
+            async () =>
+              expect((await missions.get(mission.id)).execution?.status).toBe("succeeded"),
+            { timeout: settlementTimeoutMs },
+          );
+          await vi.waitFor(async () =>
+            expect(
+              await host.runner.releaseIdleSession(mission.id, 0, () =>
+                host.ownerScope.release(mission.id),
+              ),
+            ).toBe(true),
+          );
+          expect(host.runner.getResourceDiagnostics().warmSessionCount).toBe(0);
+          if (content === "third") {
+            await host.control.stopOwner(mission.id);
+            await host.runner.stopLocalController(mission.id);
+            host = createHost();
+          }
+          const requestId = crypto.randomUUID();
+          await host.control.submit({
+            missionId: mission.id,
+            requestId,
+            kind: "send",
+            payload: { kind: "send", input: { prompt: content, attachments: [] } },
+          });
+          const outcome = await host.control.waitForTerminal({ missionId: mission.id, requestId });
+          expect(outcome, JSON.stringify(outcome.error)).toMatchObject({ state: "applied" });
+          await host.control.waitExecution!({
+            missionId: mission.id,
+            executionId: outcome.result!["executionId"] as string,
+          });
+        }
+        expect(startTurn).toHaveBeenCalledTimes(3);
+        expect(resolve).not.toHaveBeenCalled();
+        const chat = await host.runner.getChatPage({ id: mission.id, limit: 50 });
+        expect(chat.entries).toEqual(
+          expect.arrayContaining([
+            expect.objectContaining({ kind: "user", content: "second" }),
+            expect.objectContaining({ kind: "user", content: "third" }),
+          ]),
+        );
+      } finally {
+        await host.control.stopOwner(mission.id);
+        await host.runner.stopLocalController(mission.id);
+      }
+    },
+  );
+
   it.each([false, true])(
     "hands a real Node Mission to the shared factory with Desktop resources (controller-only=%s)",
     async (controllerOnly) => {

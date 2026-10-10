@@ -1,4 +1,9 @@
-import { compileBuiltInAgent, BUILT_IN_PRAGMA_REF } from "@pragma/built-in-agents";
+import * as pragmaCommandDistribution from "./pragma-command-distribution.ts";
+import {
+  compileBuiltInAgent,
+  BUILT_IN_PRAGMA_REF,
+  BUILT_IN_PRAGMA_ID,
+} from "@pragma/built-in-agents";
 import { createDesktopAdapterHost } from "../missions/mission-adapter-host.ts";
 import {
   PRAGMA_DSL_WRITE_API_VERSION,
@@ -8,7 +13,7 @@ import { randomUUID, createHash } from "node:crypto";
 import { execFile } from "node:child_process";
 import { cp, mkdtemp, mkdir, readFile, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
+import { delimiter, join, resolve } from "node:path";
 import { promisify } from "node:util";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { z } from "zod";
@@ -1821,31 +1826,87 @@ describe(
 
 it("assembles the production CLI grants and hooks with no selected management tools", async () => {
   const f = await fixture();
+  const prepare = vi
+    .spyOn(pragmaCommandDistribution, "prepareDesktopPragmaCommand")
+    .mockResolvedValue(f.root);
+  cleanup.push(async () => {
+    prepare.mockRestore();
+  });
+  if (process.platform !== "win32") {
+    const quote = (value: string) => `'${value.replaceAll("'", "'\\''")}'`;
+    await writeFile(
+      join(f.root, "pragma"),
+      `#!/bin/sh\nexec ${quote(process.execPath)} ${quote(clientPath)} "$@"\n`,
+      { mode: 0o700 },
+    );
+    await mkdir(join(f.root, "global-cli"));
+    await writeFile(
+      join(f.root, "global-cli", "pragma"),
+      '#!/bin/sh\nprintf "Unknown command: manage\\n" >&2\nexit 42\n',
+      { mode: 0o700 },
+    );
+  }
+  const originalEnvironment = {
+    ...process.env,
+    PATH: `${join(f.root, "global-cli")}${delimiter}${process.env["PATH"] ?? ""}`,
+  };
+  if (process.platform !== "win32") {
+    await expect(
+      exec("/bin/bash", ["-c", "pragma manage dsl resources list --format json"], {
+        cwd: f.root,
+        env: originalEnvironment,
+      }),
+    ).rejects.toMatchObject({ code: 42, stderr: "Unknown command: manage\n" });
+  }
+  let shellResult: unknown;
   let result: unknown;
   let endpoint: string | undefined;
-  const runtime = defineRuntimeDriver<never, { context: RuntimeNativeSessionContext }>({
-    descriptor: {
-      id: "empty-management-test",
-      kind: "empty-management-test",
-      displayName: "Empty management test",
+  const runtime = defineRuntimeDriver<never, { context: RuntimeNativeSessionContext }>(
+    {
+      descriptor: {
+        id: "empty-management-test",
+        kind: "empty-management-test",
+        displayName: "Empty management test",
+      },
+      features: createRuntimeTestFeatures(),
+      createSession: (context) => ({ context }),
+      mapEvent: () => ({ events: [] }),
+      startTurn: async (native) => {
+        if (native.context.agent.id !== BUILT_IN_PRAGMA_ID) {
+          expect(
+            native.context.processEnvironment["PRAGMA_EXECUTION_COMMAND_ENDPOINT"],
+          ).toBeUndefined();
+          expect(native.context.processEnvironment["PATH"]).toBe(originalEnvironment.PATH);
+          return { outputText: "No management grant" };
+        }
+        endpoint = native.context.processEnvironment["PRAGMA_EXECUTION_COMMAND_ENDPOINT"];
+        if (process.platform !== "win32") {
+          const { stdout } = await exec(
+            "/bin/bash",
+            ["-c", "pragma manage dsl resources list --format json"],
+            {
+              cwd: f.root,
+              env: { ...native.context.processEnvironment },
+            },
+          );
+          shellResult = JSON.parse(stdout);
+        }
+        result = await callManagementCommand({
+          endpoint,
+          request: {
+            protocol: MANAGEMENT_COMMAND_PROTOCOL,
+            requestId: randomUUID(),
+            command: "dsl.resources.list",
+            input: {},
+          },
+        });
+        return { outputText: "ok" };
+      },
     },
-    features: createRuntimeTestFeatures(),
-    createSession: (context) => ({ context }),
-    mapEvent: () => ({ events: [] }),
-    startTurn: async (native) => {
-      endpoint = native.context.processEnvironment["PRAGMA_EXECUTION_COMMAND_ENDPOINT"];
-      result = await callManagementCommand({
-        endpoint,
-        request: {
-          protocol: MANAGEMENT_COMMAND_PROTOCOL,
-          requestId: randomUUID(),
-          command: "dsl.resources.list",
-          input: {},
-        },
-      });
-      return { outputText: "ok" };
+    {
+      createProcessEnvironment: () => originalEnvironment,
     },
-  });
+  );
   const compiled = await compileBuiltInAgent({
     ref: BUILT_IN_PRAGMA_REF,
     environmentId: "desktop",
@@ -1864,7 +1925,6 @@ it("assembles the production CLI grants and hooks with no selected management to
         pragmaHome: f.root,
         pragmaManagement: { project: f.port, missions: {} as never },
         pragmaManagementScope: f.scope,
-        pragmaCommandDistribution: async () => ({ directory: f.root }),
       },
       f.root,
     ),
@@ -1897,6 +1957,7 @@ it("assembles the production CLI grants and hooks with no selected management to
     "call_skill_revision_agent",
   ]);
   expect(compiled.value.skills?.skills).toHaveLength(1);
+  expect(prepare).toHaveBeenCalledWith({ cacheRoot: join(f.root, "cache") });
   const session = await openRuntimeSession(runtime, {
     agent: compiled.value,
     pragmaHome: f.root,
@@ -1912,6 +1973,12 @@ it("assembles the production CLI grants and hooks with no selected management to
   await session.submit({ query: "check", execution: { context: f.context.executionContext } })
     .result;
   expect(endpoint).toBeTruthy();
+  if (process.platform !== "win32") {
+    expect(shellResult).toMatchObject({
+      status: "succeeded",
+      origin: { missionId: f.scope.missionId },
+    });
+  }
   expect(result).toMatchObject({ status: "succeeded", origin: { missionId: f.scope.missionId } });
   await session.close();
   await expect(
@@ -1925,4 +1992,29 @@ it("assembles the production CLI grants and hooks with no selected management to
       },
     }),
   ).rejects.toMatchObject({ code: "DEPENDENCY_UNAVAILABLE" });
+  const ordinary = await defineExpert({
+    id: "ordinary-expert",
+    name: "Ordinary Expert",
+    description: "No Host management grant",
+    tags: [],
+    scope: "test",
+    workspace: f.root,
+    pragmaHome: f.root,
+    hooks: compiled.value.hooks,
+    loggerProvider: compiled.value.loggerProvider,
+  });
+  const ordinarySession = await openRuntimeSession(runtime, {
+    agent: ordinary,
+    pragmaHome: f.root,
+    systemSessionId: "ordinary-management-session",
+    owner: { type: "expert-session", ownerId: "ordinary-owner", contextId: "ordinary-context" },
+    executionContext: f.context.executionContext,
+  });
+  cleanup.push(async () => {
+    await ordinarySession.close();
+  });
+  await expect(
+    ordinarySession.submit({ query: "check", execution: { context: f.context.executionContext } })
+      .result,
+  ).resolves.toMatchObject({ result: { output: "No management grant" } });
 });

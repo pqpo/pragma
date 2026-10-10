@@ -10,6 +10,7 @@ import {
   ExpertCapabilityPicker,
   matchingToolNames,
   ToolResults,
+  SkillResults,
   updateToolSelection,
 } from "./ExpertCapabilityPicker.tsx";
 import type { ExpertRecord } from "./studio-model.ts";
@@ -110,6 +111,65 @@ const builtInExpert: ExpertRecord = {
 };
 
 describe("ExpertCapabilityPicker", () => {
+  it("shows the actual system Pragma Skill as selected and locks its checkbox", () => {
+    const skill: Capability = {
+      ...toolCapability,
+      managedBy: "system",
+      manifest: {
+        ...toolCapability.manifest,
+        id: "1h2j3k4m5n6p7q8r",
+        name: "Manage Pragma",
+        kind: "skill",
+      },
+      definition: {
+        kind: "skill",
+        name: "Manage Pragma",
+        description: "Manage resources.",
+        entryPath: "SKILL.md",
+        contentHash: "a".repeat(64),
+      },
+    };
+    const html = renderToStaticMarkup(
+      <ExpertCapabilityPicker
+        currentExpertId="0000000000pragma"
+        experts={[]}
+        resources={[]}
+        contextStores={[]}
+        capabilities={[skill]}
+        resourceTools={[]}
+        contextStoreMounts={[]}
+        capabilityReferences={[{ kind: "skill", capabilityId: skill.manifest.id }]}
+        fixedCapabilities={[{ kind: "skill", ref: "capability:1h2j3k4m5n6p7q8r" }]}
+        toolApprovals={{}}
+        onResourceToolsChange={() => undefined}
+        onContextStoreMountsChange={() => undefined}
+        onCapabilityReferencesChange={() => undefined}
+        onToolApprovalsChange={() => undefined}
+      />,
+    );
+    expect(html).toContain("Manage Pragma · required system skill");
+    expect(html).toContain("1 selected");
+    expect(html).not.toContain("2 selected");
+    expect(html.match(/Manage Pragma/g)).toHaveLength(1);
+    expect(html).not.toContain(skill.manifest.id);
+    const results = renderToStaticMarkup(
+      <SkillResults
+        capabilities={[skill]}
+        fixedSkillIds={[skill.manifest.id]}
+        references={[]}
+        query=""
+        onChange={() => undefined}
+      />,
+    );
+    expect(results).toMatch(/<input[^>]*disabled=""[^>]*checked=""/);
+    expect(results).toContain("required system skill");
+    const optional = renderToStaticMarkup(
+      <SkillResults capabilities={[skill]} references={[]} query="" onChange={() => undefined} />,
+    );
+    expect(optional).not.toContain('disabled=""');
+    expect(optional).not.toContain('checked=""');
+  });
+
   it("keeps large capability collections behind compact category summaries", () => {
     const html = renderToStaticMarkup(
       <ExpertCapabilityPicker

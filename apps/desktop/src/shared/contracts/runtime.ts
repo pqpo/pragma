@@ -1,5 +1,11 @@
 import { z } from "zod";
 
+export {
+  RuntimeProcessEnvironmentPolicySchema,
+  RuntimeProcessEnvironmentSettingsSchema,
+  UpdateRuntimeProcessEnvironmentPolicySchema,
+} from "@pragma/shared";
+
 export const DesktopAppInfoSchema = z.object({
   name: z.literal("Pragma"),
   version: z.string(),

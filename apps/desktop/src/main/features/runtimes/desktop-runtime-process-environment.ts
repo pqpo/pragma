@@ -5,6 +5,11 @@ import { homedir } from "node:os";
 import { basename, delimiter, isAbsolute, join } from "node:path";
 
 import type { PragmaLogger } from "@pragma/core";
+import {
+  resolveLocalHostRuntimeProcessEnvironment,
+  type RuntimeProcessEnvironmentSettingsStore,
+} from "@pragma/local-host";
+import { DEFAULT_RUNTIME_PROCESS_ENVIRONMENT_POLICY } from "@pragma/shared";
 
 const SUPPORTED_LOGIN_SHELLS = new Set(["bash", "dash", "ksh", "sh", "zsh"]);
 const DEFAULT_SHELL_TIMEOUT_MS = 10_000;
@@ -16,15 +21,15 @@ type RuntimeEnvironmentLogger = Pick<PragmaLogger, "info" | "warn">;
 
 export interface DesktopRuntimeProcessEnvironment {
   readonly getSnapshot: () => Promise<ShellEnvironmentSnapshot>;
-  readonly get: () => Promise<NodeJS.ProcessEnv>;
+  readonly get: (runtimeAdapterId?: string) => Promise<NodeJS.ProcessEnv>;
   readonly getCacheKey: () => Promise<string>;
   readonly refresh: () => Promise<ShellEnvironmentSnapshot>;
   readonly warmUp: () => void;
 }
 
 /**
- * The in-memory, filtered process environment used to launch local Runtimes.
- * It deliberately excludes credentials and other unrelated shell state.
+ * Public summary only. The complete captured environment stays private to the
+ * main process and is projected through the selected Runtime policy on demand.
  */
 export interface ShellEnvironmentSnapshot {
   readonly shell?: string | undefined;
@@ -37,6 +42,7 @@ export interface ShellEnvironmentSnapshot {
 
 export interface CreateDesktopRuntimeProcessEnvironmentOptions {
   readonly logger: RuntimeEnvironmentLogger;
+  readonly settings?: RuntimeProcessEnvironmentSettingsStore | undefined;
   readonly env?: NodeJS.ProcessEnv | undefined;
   readonly platform?: NodeJS.Platform | undefined;
   readonly homeDirectory?: string | undefined;
@@ -46,7 +52,14 @@ export interface CreateDesktopRuntimeProcessEnvironmentOptions {
   readonly retryDelaysMs?: readonly number[] | undefined;
 }
 
-type ResolvedShellEnvironmentSnapshot = Omit<ShellEnvironmentSnapshot, "generation">;
+type ResolvedShellEnvironmentSnapshot = Omit<ShellEnvironmentSnapshot, "env" | "generation"> & {
+  readonly capturedEnvironment: NodeJS.ProcessEnv;
+};
+
+interface CapturedShellEnvironment {
+  readonly snapshot: ShellEnvironmentSnapshot;
+  readonly environment: Readonly<NodeJS.ProcessEnv>;
+}
 
 interface RuntimeEnvironmentResolution {
   readonly environment: NodeJS.ProcessEnv;
@@ -63,67 +76,6 @@ interface ResolvedDesktopRuntimeProcessEnvironmentOptions extends CreateDesktopR
 type ShellPathFailureKind =
   "invalid-output" | "output-limit" | "spawn-failed" | "timeout" | "unsupported-shell";
 
-const UNIX_RUNTIME_ENVIRONMENT_VARIABLES = new Set([
-  "HOME",
-  "LANG",
-  "LC_ALL",
-  "LC_CTYPE",
-  "LOGNAME",
-  "PATH",
-  "SHELL",
-  "TEMP",
-  "TMP",
-  "TMPDIR",
-  "USER",
-  // Common language and package-manager roots. Their corresponding binaries
-  // are normally added to PATH by the login shell.
-  "ASDF_DATA_DIR",
-  "BUN_INSTALL",
-  "CARGO_HOME",
-  "DENO_INSTALL",
-  "FNM_DIR",
-  "GOPATH",
-  "GOROOT",
-  "JAVA_HOME",
-  "MISE_DATA_DIR",
-  "NVM_DIR",
-  "PNPM_HOME",
-  "PYENV_ROOT",
-  "RBENV_ROOT",
-  "RUSTUP_HOME",
-  "VOLTA_HOME",
-  "XDG_CACHE_HOME",
-  "XDG_CONFIG_HOME",
-  "XDG_DATA_HOME",
-  "OPENCODE_CONFIG",
-  "OPENCODE_CONFIG_DIR",
-]);
-
-const WINDOWS_RUNTIME_ENVIRONMENT_VARIABLES = new Set([
-  "APPDATA",
-  "COMSPEC",
-  "HOMEDRIVE",
-  "HOMEPATH",
-  "LOCALAPPDATA",
-  "PATH",
-  "PATHEXT",
-  "PROGRAMDATA",
-  "PROGRAMFILES",
-  "PROGRAMFILES(X86)",
-  "PROGRAMW6432",
-  "SHELL",
-  "SYSTEMDRIVE",
-  "SYSTEMROOT",
-  "TEMP",
-  "TMP",
-  "TMPDIR",
-  "USERDOMAIN",
-  "USERNAME",
-  "USERPROFILE",
-  "OPENCODE_CONFIG",
-  "OPENCODE_CONFIG_DIR",
-]);
-
 class ShellPathError extends Error {
   constructor(readonly kind: ShellPathFailureKind) {
     super(`Login shell PATH recovery failed: ${kind}.`);
@@ -137,7 +89,7 @@ export function createDesktopRuntimeProcessEnvironment(
   const platform = options.platform ?? process.platform;
   const homeDirectory = options.homeDirectory ?? sourceEnvironment["HOME"] ?? homedir();
   const retryDelaysMs = options.retryDelaysMs ?? DEFAULT_RETRY_DELAYS_MS;
-  let snapshotPromise: Promise<ShellEnvironmentSnapshot> | undefined;
+  let snapshotPromise: Promise<CapturedShellEnvironment> | undefined;
   let retryTimer: NodeJS.Timeout | undefined;
   let retryIndex = 0;
   let captureSequence = 0;
@@ -148,11 +100,11 @@ export function createDesktopRuntimeProcessEnvironment(
     clearTimeout(retryTimer);
     retryTimer = undefined;
   };
-  const startCapture = (resetRetrySchedule: boolean): Promise<ShellEnvironmentSnapshot> => {
+  const startCapture = (resetRetrySchedule: boolean): Promise<CapturedShellEnvironment> => {
     clearScheduledRetry();
     if (resetRetrySchedule) retryIndex = 0;
     const sequence = ++captureSequence;
-    const nextPromise = (async (): Promise<ShellEnvironmentSnapshot> => {
+    const nextPromise = (async (): Promise<CapturedShellEnvironment> => {
       const resolved = await resolveRuntimeProcessEnvironmentWithFallback({
         ...options,
         env: sourceEnvironment,
@@ -161,7 +113,26 @@ export function createDesktopRuntimeProcessEnvironment(
       });
       if (sequence !== captureSequence) return await snapshotPromise!;
 
-      const snapshot = Object.freeze({ ...resolved, generation: ++generation });
+      const safeEnvironment = Object.freeze(
+        resolveLocalHostRuntimeProcessEnvironment(
+          resolved.capturedEnvironment,
+          "",
+          DEFAULT_RUNTIME_PROCESS_ENVIRONMENT_POLICY,
+          platform,
+        ),
+      );
+      const snapshot = Object.freeze({
+        shell: resolved.shell,
+        env: safeEnvironment,
+        capturedAt: resolved.capturedAt,
+        source: resolved.source,
+        ...(resolved.failureKind === undefined ? {} : { failureKind: resolved.failureKind }),
+        generation: ++generation,
+      });
+      const captured = Object.freeze({
+        snapshot,
+        environment: Object.freeze(resolved.capturedEnvironment),
+      });
       if (snapshot.failureKind === undefined) {
         retryIndex = 0;
       } else {
@@ -185,23 +156,43 @@ export function createDesktopRuntimeProcessEnvironment(
           retryTimer.unref();
         }
       }
-      return snapshot;
+      return captured;
     })();
     snapshotPromise = nextPromise;
     return nextPromise;
   };
-  const getSnapshot = (): Promise<ShellEnvironmentSnapshot> => {
+  const getCaptured = (): Promise<CapturedShellEnvironment> => {
     snapshotPromise ??= startCapture(false);
     return snapshotPromise;
   };
-  const get = async (): Promise<NodeJS.ProcessEnv> => (await getSnapshot()).env;
+  const getSnapshot = async (): Promise<ShellEnvironmentSnapshot> => (await getCaptured()).snapshot;
+  const get = async (runtimeAdapterId = ""): Promise<NodeJS.ProcessEnv> => {
+    const captured = await getCaptured();
+    if (runtimeAdapterId === "") return captured.snapshot.env as NodeJS.ProcessEnv;
+    const policy =
+      (await options.settings?.getPolicy()) ??
+      DEFAULT_RUNTIME_PROCESS_ENVIRONMENT_POLICY;
+    return Object.freeze(
+      resolveLocalHostRuntimeProcessEnvironment(
+        captured.environment as NodeJS.ProcessEnv,
+        runtimeAdapterId,
+        policy,
+        platform,
+      ),
+    );
+  };
 
   return {
     getSnapshot,
     get,
-    getCacheKey: async () =>
-      `desktop-runtime-process-environment:${(await getSnapshot()).generation}`,
-    refresh: () => startCapture(true),
+    getCacheKey: async () => {
+      const [snapshot, settings] = await Promise.all([
+        getSnapshot(),
+        options.settings?.get() ?? Promise.resolve(undefined),
+      ]);
+      return `desktop-runtime-process-environment:${snapshot.generation}:${settings?.revision ?? 0}`;
+    },
+    refresh: async () => (await startCapture(true)).snapshot,
     warmUp: () => {
       void getSnapshot();
     },
@@ -215,9 +206,7 @@ async function resolveRuntimeProcessEnvironmentWithFallback(
   try {
     return await resolveRuntimeProcessEnvironment(options);
   } catch {
-    const environment = Object.freeze(
-      filterRuntimeProcessEnvironment(options.env, options.platform),
-    );
+    const environment = Object.freeze({ ...options.env });
     writeEnvironmentLog(options.logger, "warn", {
       event: "desktop.runtime_process_environment_emergency_fallback",
       message:
@@ -231,7 +220,7 @@ async function resolveRuntimeProcessEnvironmentWithFallback(
     });
     return {
       shell: options.env["SHELL"],
-      env: environment,
+      capturedEnvironment: environment,
       capturedAt: Date.now(),
       source: "original",
       failureKind: "unexpected-error",
@@ -252,14 +241,18 @@ async function resolveRuntimeProcessEnvironment(
     resolution = await resolvePosixRuntimeEnvironment(options);
   }
 
-  const environment = Object.freeze(
-    filterRuntimeProcessEnvironment(resolution.environment, options.platform),
+  const environment = Object.freeze({ ...resolution.environment });
+  const safeEnvironment = resolveLocalHostRuntimeProcessEnvironment(
+    environment,
+    "",
+    DEFAULT_RUNTIME_PROCESS_ENVIRONMENT_POLICY,
+    options.platform,
   );
 
   const attributes = {
     source: resolution.source,
     durationMs: elapsedMs(startedAt),
-    pathDirectoryCount: environment["PATH"]?.split(delimiter).filter(Boolean).length ?? 0,
+    pathDirectoryCount: safeEnvironment["PATH"]?.split(delimiter).filter(Boolean).length ?? 0,
   };
   if (resolution.failureKind === undefined) {
     writeEnvironmentLog(options.logger, "info", {
@@ -277,7 +270,7 @@ async function resolveRuntimeProcessEnvironment(
 
   return {
     shell: options.env["SHELL"],
-    env: environment,
+    capturedEnvironment: environment,
     capturedAt: Date.now(),
     source: resolution.source,
     ...(resolution.failureKind === undefined ? {} : { failureKind: resolution.failureKind }),
@@ -416,32 +409,6 @@ function parseMarkedEnvironment(
     environment[entry.slice(0, separator)] = entry.slice(separator + 1);
   }
   return environment;
-}
-
-/**
- * Mirrors Codex's "core" shell environment policy: retain only variables
- * required to identify the user, resolve executables, and locate supported
- * toolchains. The snapshot is intentionally not a secret transport.
- */
-export function filterRuntimeProcessEnvironment(
-  environment: NodeJS.ProcessEnv,
-  platform: NodeJS.Platform = process.platform,
-): NodeJS.ProcessEnv {
-  const allowed =
-    platform === "win32"
-      ? WINDOWS_RUNTIME_ENVIRONMENT_VARIABLES
-      : UNIX_RUNTIME_ENVIRONMENT_VARIABLES;
-  const filtered: NodeJS.ProcessEnv = {};
-  for (const [key, value] of Object.entries(environment)) {
-    const normalized = key.toUpperCase();
-    if (
-      value !== undefined &&
-      (allowed.has(normalized) || (platform !== "win32" && normalized.startsWith("LC_")))
-    ) {
-      filtered[key] = value;
-    }
-  }
-  return filtered;
 }
 
 async function normalizeExistingDirectories(candidates: readonly string[]): Promise<string[]> {

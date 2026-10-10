@@ -143,6 +143,21 @@ describe("Runtime Environment settings", () => {
     expect(html).toContain("Default only");
   });
 
+  it("keeps process environment policy controls in the shared settings section", () => {
+    const runtimeDetailHtml = renderToStaticMarkup(
+      <RuntimeEnvironmentDetail
+        runtime={runtime}
+        refreshing={false}
+        error={null}
+        onBack={() => undefined}
+        onRefresh={() => undefined}
+      />,
+    );
+
+    expect(runtimeDetailHtml).not.toContain("Full environment access");
+    expect(runtimeDetailHtml).not.toContain("Allowlist");
+  });
+
   it("guides the built-in Runtime to model settings when its catalog is empty", () => {
     const html = renderToStaticMarkup(
       <RuntimeEnvironmentDetail

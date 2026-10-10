@@ -365,6 +365,10 @@ export function createLocalHostCoreMissionControlAdapter(options: {
       (await options.resolveActiveOwner?.(missionId)) !== undefined
     )
       return;
+    // Projected Missions have their own readiness, admission and recovery
+    // resource authority. The controller-fact catalog cannot compile their
+    // Host bindings (for example Desktop's Pragma management capability).
+    if ((await options.messageFormat?.(missionId)) !== undefined) return;
     const binding = await options.resolveMissionBinding(missionId);
     if (binding !== undefined) await resolveExecutor(binding, purpose);
     else if (options.prepareRecoveryResources === undefined) await readBinding(missionId);

@@ -111,6 +111,133 @@
   border-top: 0;
 }
 
+.general-process-environment-settings {
+  margin-top: 22px;
+  padding-top: 22px;
+  border-top: 1px solid var(--ui-line);
+}
+
+.general-process-environment-settings > header h3 {
+  font-size: 16px;
+  font-weight: 600;
+  line-height: 1.4;
+}
+
+.general-process-environment-settings > header p,
+.general-process-environment-status {
+  margin-top: 4px;
+  color: var(--ui-text-secondary);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.general-process-environment-mode {
+  display: grid;
+  grid-template-columns: 16px minmax(0, 1fr);
+  align-items: start;
+  gap: 12px;
+  margin-top: 16px;
+  cursor: pointer;
+}
+
+.general-process-environment-mode > input {
+  width: 16px;
+  height: 16px;
+  margin: 2px 0 0;
+  accent-color: var(--ui-accent);
+}
+
+.general-process-environment-mode > input:focus-visible {
+  outline: 3px solid var(--ui-focus);
+  outline-offset: 2px;
+}
+
+.general-process-environment-mode > span,
+.general-process-environment-lists label {
+  display: grid;
+  gap: 4px;
+}
+
+.general-process-environment-mode strong,
+.general-process-environment-lists label > span {
+  color: var(--ui-text);
+  font-size: 14px;
+  font-weight: 500;
+  line-height: 1.45;
+}
+
+.general-process-environment-mode small,
+.general-process-environment-lists label > small {
+  color: var(--ui-text-secondary);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.general-process-environment-warning {
+  margin-top: 16px;
+  padding: 12px 16px;
+  border-left: 3px solid var(--ui-danger);
+  background: var(--ui-danger-subtle);
+  color: var(--ui-danger);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.general-process-environment-lists {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+  margin-top: 18px;
+}
+
+.general-process-environment-lists label > small {
+  min-height: 3em;
+}
+
+.general-process-environment-lists textarea {
+  width: 100%;
+  min-height: 128px;
+  margin-top: 4px;
+  padding: 12px;
+  border: 1px solid var(--ui-line-strong);
+  border-radius: var(--ui-radius-md);
+  background: var(--ui-surface);
+  color: var(--ui-text);
+  font-family: "SFMono-Regular", "Cascadia Code", Consolas, monospace;
+  font-size: 12px;
+  line-height: 1.55;
+  resize: vertical;
+}
+
+.general-process-environment-lists textarea:focus-visible {
+  border-color: var(--ui-accent);
+  outline: 0;
+  box-shadow: 0 0 0 3px var(--ui-focus);
+}
+
+.general-process-environment-lists textarea:disabled {
+  color: var(--ui-text-disabled);
+}
+
+.general-process-environment-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 16px;
+  margin-top: 12px;
+}
+
+.general-process-environment-saved {
+  margin-right: auto;
+  color: var(--ui-accent-strong);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.general-process-environment-status > .secondary-button {
+  margin-top: 10px;
+}
+
 .general-language-setting {
   display: flex;
   align-items: center;
@@ -658,6 +785,12 @@
 
   .evaluation-settings-select {
     width: 100%;
+  }
+}
+
+@media (max-width: 900px) {
+  .general-process-environment-lists {
+    grid-template-columns: minmax(0, 1fr);
   }
 }
 

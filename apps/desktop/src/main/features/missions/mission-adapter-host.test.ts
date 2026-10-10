@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import * as pragmaCommandDistribution from "../built-in-agents/pragma-command-distribution.ts";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -25,6 +26,7 @@ import { desktopContextBindingRef } from "../../platform/bindings/desktop-bindin
 const temporaryRoots: string[] = [];
 
 afterEach(async () => {
+  vi.restoreAllMocks();
   await Promise.all(
     temporaryRoots.splice(0).map(async (root) => {
       await rm(root, { recursive: true, force: true });
@@ -94,16 +96,46 @@ describe("Desktop Pragma adapter Host", () => {
     await expect(host.resolveBinding(PRAGMA_MANAGEMENT_BINDING_REF)).resolves.toBeUndefined();
   });
 
+  it.each(["unscoped", "stop"] as const)(
+    "does not prepare a command launcher for %s bindings",
+    async (mode) => {
+      const prepare = vi.spyOn(pragmaCommandDistribution, "prepareDesktopPragmaCommand");
+      const host = createDesktopAdapterHost(
+        {
+          capabilityStore: {} as never,
+          capabilityCredentials: {} as never,
+          capabilitiesPath: "/unused",
+          pragmaManagement: { knowledgeRevisions: {} as never },
+          ...(mode === "stop"
+            ? {
+                purpose: "stop" as const,
+                pragmaManagementScope: { missionId: "stop-mission", workspacePath: "/workspace" },
+              }
+            : {}),
+        },
+        "/workspace",
+      );
+      const binding = await host.resolveBinding(PRAGMA_MANAGEMENT_BINDING_REF);
+      expect(prepare).not.toHaveBeenCalled();
+      expect(binding?.value).not.toHaveProperty("contribution.hooks");
+    },
+  );
+
   it("fingerprints the complete management tool contract including approvals", async () => {
+    const prepare = vi
+      .spyOn(pragmaCommandDistribution, "prepareDesktopPragmaCommand")
+      .mockResolvedValue("/private/commands");
     const pragmaManagement = { knowledgeRevisions: {} as never };
     const pragmaManagementScope = {
       missionId: "ed1bcbb5-b1e6-4aa5-9357-7853ce745f6b",
       workspacePath: "/workspace/one",
     };
     const host = createDesktopAdapterHost(
-      { pragmaManagement, pragmaManagementScope } as unknown as Parameters<
-        typeof createDesktopAdapterHost
-      >[0],
+      {
+        pragmaManagement,
+        pragmaManagementScope,
+        pragmaHome: "/private/pragma",
+      } as unknown as Parameters<typeof createDesktopAdapterHost>[0],
       "/unused",
     );
     const tools = createPragmaManagementTools(pragmaManagement, pragmaManagementScope);
@@ -125,7 +157,9 @@ describe("Desktop Pragma adapter Host", () => {
     await expect(host.resolveBinding(PRAGMA_MANAGEMENT_BINDING_REF)).resolves.toMatchObject({
       revision: String(PRAGMA_MANAGEMENT_CAPABILITY_REVISION),
       fingerprint: expectedFingerprint,
+      value: { contribution: { hooks: { beforeSessionCreate: expect.any(Function) } } },
     });
+    expect(prepare).toHaveBeenCalledWith({ cacheRoot: "/private/pragma/cache" });
 
     const otherHost = createDesktopAdapterHost(
       {

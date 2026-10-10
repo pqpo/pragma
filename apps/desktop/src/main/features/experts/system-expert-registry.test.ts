@@ -181,7 +181,11 @@ describe("DesktopSystemExpertRegistry", () => {
       "User customization:\nPrefer concise plans",
     );
     expect(registry.getResource(BUILT_IN_PRAGMA_REF)?.spec.capabilities).toEqual(
-      expect.arrayContaining([expect.objectContaining({ tools: ["search_docs"] })]),
+      expect.arrayContaining([
+        expect.objectContaining({ tools: ["search_docs"] }),
+        { kind: "skill", ref: "capability:1h2j3k4m5n6p7q8r" },
+        { kind: "tools", ref: "capability:0000000000manage", tools: [] },
+      ]),
     );
     expect(registry.getAdditionalResources(BUILT_IN_PRAGMA_REF)).toHaveLength(2);
     expect(registry.fingerprint(BUILT_IN_PRAGMA_REF)).not.toBe(originalFingerprint);
@@ -209,6 +213,9 @@ describe("DesktopSystemExpertRegistry", () => {
 
     const reloaded = createDesktopSystemExpertRegistry({ configPath });
     await reloaded.initialize();
+    expect(reloaded.get(BUILT_IN_PRAGMA_REF)?.opaqueCapabilities).toEqual(
+      original.opaqueCapabilities,
+    );
     expect(reloaded.get(BUILT_IN_PRAGMA_REF)).toMatchObject({
       name: "My Pragma",
       avatarId: "pragma.avatar.expert.reviewer",

@@ -193,6 +193,30 @@ export const settings = {
     chooseWorkspace: "Choose folder",
     restoreDefaultWorkspace: "Restore built-in default workspace",
     saveError: "The general setting could not be saved.",
+    processEnvironmentTitle: "Runtime environment variables",
+    processEnvironmentDescription:
+      "Choose which captured shell variables are shared with every local runtime.",
+    processEnvironmentLoading: "Loading environment settings…",
+    processEnvironmentLoadFailed: "Environment settings could not be loaded.",
+    processEnvironmentConflict:
+      "Settings changed elsewhere. The latest version is loaded; save again to apply your edits.",
+    processEnvironmentRetry: "Try again",
+    processEnvironmentFullAccess: "Full environment access",
+    processEnvironmentFullAccessDescription:
+      "Pass all captured shell variables through to local runtimes.",
+    processEnvironmentFullAccessWarning:
+      "This can expose credentials and other secrets to local runtimes and their child processes. Blocklisted variables are still removed.",
+    processEnvironmentAllowlist: "Allowlist",
+    processEnvironmentAllowlistDescription:
+      "In filtered mode, add variables beyond the built-in toolchain list. Enter one variable name per line, such as JAVA_HOME.",
+    processEnvironmentBlocklist: "Blocklist",
+    processEnvironmentBlocklistDescription:
+      "Always remove these variables, including in full access mode. Enter one variable name per line.",
+    processEnvironmentInvalidVariable:
+      "Use valid environment variable names containing only letters, numbers, and underscores.",
+    processEnvironmentSave: "Save environment policy",
+    processEnvironmentSaving: "Saving…",
+    processEnvironmentSaved: "Environment policy saved.",
   },
   evaluations: {
     navigation: "Evaluations",

@@ -142,12 +142,14 @@ describe("RuntimeEnvironmentService", () => {
     ]);
     await service.resolve({ binding: first.binding, modelSelection: selection });
     await service.list();
+    await expect(
+      service.bind({ modelSelection: { model: { providerId: "provider", modelId: "missing" } } }),
+    ).rejects.toThrow("Runtime model is unavailable");
 
     expect(first.adapter).toBe(second.adapter);
     expect(createCount).toBe(1);
-    // Model selection remains validated on every boundary. The long-lived adapter owns the
-    // runtime-specific catalog cache, so external discovery is not reset by materialization.
-    expect(modelCatalogCallCount).toBe(3);
+    // Model selection is re-validated against the cached catalog at each boundary.
+    expect(modelCatalogCallCount).toBe(1);
     expect(liveDiscoveryCount).toBe(1);
 
     await service.forToolPermissionMode("full-access").bind();
@@ -411,7 +413,10 @@ describe("built-in Runtime process environments", () => {
         PATH: executableDirectory,
         MOCK_ENV_TEST: "true",
       });
-      const getRuntimeProcessEnvironment = vi.fn(async () => environment);
+      const getRuntimeProcessEnvironment = vi.fn(async (runtimeAdapterId: string) => ({
+        ...environment,
+        PRAGMA_RUNTIME_ADAPTER_ID: runtimeAdapterId,
+      }));
       const factories = createBuiltInRuntimeFactories({
         modelProviders: {} as ModelProviderStore,
         getRuntimeProcessEnvironment,
@@ -440,10 +445,20 @@ describe("built-in Runtime process environments", () => {
         expect.objectContaining({ usable: false }),
       ]);
       expect(getRuntimeProcessEnvironment).toHaveBeenCalledTimes(5);
+      expect(getRuntimeProcessEnvironment.mock.calls.map(([id]) => id).sort()).toEqual(
+        [
+          "pragma.runtime.antigravity",
+          "pragma.runtime.claude-code",
+          "pragma.runtime.codex",
+          "pragma.runtime.opencode",
+          "pragma.runtime.qodercli",
+        ].sort(),
+      );
 
       const piFactory = factories.find((candidate) => candidate.id === "pragma.runtime.pi")!;
       await piFactory.create(definition("pi", "PI", "pragma.runtime.pi"));
       expect(getRuntimeProcessEnvironment).toHaveBeenCalledTimes(6);
+      expect(getRuntimeProcessEnvironment).toHaveBeenLastCalledWith("pragma.runtime.pi");
     },
   );
 });

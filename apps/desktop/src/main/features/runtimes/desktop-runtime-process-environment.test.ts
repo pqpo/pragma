@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import { delimiter, join } from "node:path";
 
 import { describe, expect, it, vi } from "vitest";
+import type { RuntimeProcessEnvironmentSettingsStore } from "@pragma/local-host";
 
 import { createDesktopRuntimeProcessEnvironment } from "./desktop-runtime-process-environment.ts";
 
@@ -69,6 +70,69 @@ describe("DesktopRuntimeProcessEnvironment", () => {
     );
     expect(logger.warn).not.toHaveBeenCalled();
     await expect(readFile(invocationFile, "utf8")).resolves.toBe("x");
+  });
+
+  it("keeps captured shell values private and applies the selected Runtime policy", async () => {
+    const root = await mkdtemp(join(tmpdir(), "pragma-runtime-policy-projection-"));
+    const shell = join(root, "zsh");
+    await writeFile(
+      shell,
+      [
+        "#!/bin/sh",
+        `export JAVA_HOME='${root}/jdk'`,
+        "export CUSTOM_RUNTIME_VALUE='available'",
+        "export BLOCKED_RUNTIME_SECRET='must-not-reach-runtime'",
+        'exec /bin/sh -c "$2"',
+        "",
+      ].join("\n"),
+      { mode: 0o755 },
+    );
+    const settings: RuntimeProcessEnvironmentSettingsStore = {
+      get: async () => ({
+        schemaVersion: "pragma.runtime-process-environment-settings/v1",
+        revision: 3,
+        policy: { mode: "filtered", allowlist: [], blocklist: [] },
+      }),
+      getSync: () => ({
+        schemaVersion: "pragma.runtime-process-environment-settings/v1",
+        revision: 3,
+        policy: { mode: "filtered", allowlist: [], blocklist: [] },
+      }),
+      getPolicy: async () => ({
+        mode: "inherit-all",
+        allowlist: [],
+        blocklist: ["BLOCKED_RUNTIME_SECRET"],
+      }),
+      updatePolicy: async () => {
+        throw new Error("unused");
+      },
+    };
+    const service = createDesktopRuntimeProcessEnvironment({
+      logger: { info: vi.fn(), warn: vi.fn() },
+      settings,
+      env: { HOME: root, PATH: "/usr/bin:/bin", SHELL: shell },
+      homeDirectory: root,
+      platform: "linux",
+      retryDelaysMs: [],
+    });
+
+    const [defaultEnvironment, runtimeEnvironment, snapshot, cacheKey] = await Promise.all([
+      service.get(),
+      service.get("pragma.runtime.codex"),
+      service.getSnapshot(),
+      service.getCacheKey(),
+    ]);
+
+    expect(defaultEnvironment).toMatchObject({ JAVA_HOME: `${root}/jdk` });
+    expect(defaultEnvironment["CUSTOM_RUNTIME_VALUE"]).toBeUndefined();
+    expect(runtimeEnvironment).toMatchObject({
+      JAVA_HOME: `${root}/jdk`,
+      CUSTOM_RUNTIME_VALUE: "available",
+    });
+    expect(runtimeEnvironment["BLOCKED_RUNTIME_SECRET"]).toBeUndefined();
+    expect(snapshot.env["CUSTOM_RUNTIME_VALUE"]).toBeUndefined();
+    expect(JSON.stringify(snapshot)).not.toContain("must-not-reach-runtime");
+    expect(cacheKey).toBe(`desktop-runtime-process-environment:${snapshot.generation}:3`);
   });
 
   it("refreshes the in-memory shell snapshot without persisting it", async () => {
