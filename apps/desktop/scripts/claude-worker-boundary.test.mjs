@@ -68,7 +68,18 @@ test("worker requires an external CLI and preserves it across managed-policy ini
     };
     const version = await run(worker, ["--version"], env);
     assert.equal(version.code, 0);
-    assert.match(version.stdout, /^0\.81\.2\s*$/);
+    const runtimePackage = JSON.parse(
+      await readFile(
+        fileURLToPath(
+          new URL("../../../packages/runtime/claude-code/package.json", import.meta.url),
+        ),
+        "utf8",
+      ),
+    );
+    assert.equal(
+      version.stdout.trim(),
+      runtimePackage.dependencies["@agentclientprotocol/claude-agent-acp"],
+    );
     for (const value of ["", "   "]) {
       const result = await run(worker, [], { ...env, CLAUDE_CODE_EXECUTABLE: value });
       assert.equal(result.code, 1);
