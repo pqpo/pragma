@@ -111,9 +111,10 @@ export function GeneralProcessEnvironmentSettings() {
               type="checkbox"
               checked={policyDraft.mode === "inherit-all"}
               onChange={(event) => {
+                const checked = event.currentTarget.checked;
                 setPolicyDraft((current) => ({
                   ...current,
-                  mode: event.currentTarget.checked ? "inherit-all" : "filtered",
+                  mode: checked ? "inherit-all" : "filtered",
                 }));
                 setSaved(false);
               }}
@@ -138,9 +139,10 @@ export function GeneralProcessEnvironmentSettings() {
               <textarea
                 value={policyDraft.allowlist.join("\n")}
                 onChange={(event) => {
+                  const allowlist = parseEnvironmentVariableNames(event.currentTarget.value);
                   setPolicyDraft((current) => ({
                     ...current,
-                    allowlist: parseEnvironmentVariableNames(event.currentTarget.value),
+                    allowlist,
                   }));
                   setSaved(false);
                 }}
@@ -155,9 +157,10 @@ export function GeneralProcessEnvironmentSettings() {
               <textarea
                 value={policyDraft.blocklist.join("\n")}
                 onChange={(event) => {
+                  const blocklist = parseEnvironmentVariableNames(event.currentTarget.value);
                   setPolicyDraft((current) => ({
                     ...current,
-                    blocklist: parseEnvironmentVariableNames(event.currentTarget.value),
+                    blocklist,
                   }));
                   setSaved(false);
                 }}

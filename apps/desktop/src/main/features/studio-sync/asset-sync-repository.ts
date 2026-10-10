@@ -207,6 +207,7 @@ export function encodeSyncRepository(
         }
       } else if (item.kind === "skill") {
         const data = SkillDataSchema.parse(item.data);
+        validateTransferredSkill(data, { id });
         path = `skills/${id}/metadata.yaml`;
         addYaml(path, {
           id,
@@ -388,7 +389,7 @@ export function decodeSyncRepository(
           description: meta.description,
           files: entries,
         });
-        validateTransferredSkill(data);
+        validateTransferredSkill(data, { id: meta.id });
         add("skill", meta.id, meta.name, data);
       }
       consumed.add(path);

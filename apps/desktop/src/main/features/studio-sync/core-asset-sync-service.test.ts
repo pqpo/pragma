@@ -1149,7 +1149,8 @@ describe("core asset Git synchronization", { timeout: 30_000 }, () => {
     const second = device(join(root, "second"));
     const configuration = { remote, branch: "main", autoPush: true, pushDeletions: false };
     expect((await first.service.configure(configuration)).status).toBe("ready");
-    expect((await second.service.configure(configuration)).status).toBe("ready");
+    const restored = await second.service.configure(configuration);
+    expect(restored.status, restored.error).toBe("ready");
     expect(await readFile(join(second.skillRoot()!, "SKILL.md"), "utf8")).toContain("Review notes");
     expect(
       (await second.service.overview()).items.find((item) => item.key === `skill:${skillId}`)

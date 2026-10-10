@@ -27,6 +27,73 @@ describe("Skill package validation", () => {
     expect(validation.diagnostics).toEqual([]);
   });
 
+  it("parses quoted and folded YAML frontmatter values", () => {
+    const validation = validatePortableSkillPackage(
+      {
+        name: "team's-review",
+        description: "Review changes: include enough detail.",
+        files: [
+          {
+            path: "SKILL.md",
+            content: [
+              "---",
+              'name: "team\'s-review"',
+              "description: >-",
+              "  Review changes:",
+              "  include enough detail.",
+              "---",
+              "",
+              "Review the change.",
+            ].join("\n"),
+          },
+        ],
+      },
+      { executablePaths: new Set() },
+    );
+
+    expect(validation).toMatchObject({ passed: true, diagnostics: [] });
+  });
+
+  it("ignores spaces and line breaks when comparing Skill descriptions", () => {
+    const validation = validatePortableSkillPackage(
+      {
+        name: "whitespace-description",
+        description: "使用\n代码 审查\t流程",
+        files: [
+          {
+            path: "SKILL.md",
+            content:
+              "---\nname: whitespace-description\ndescription: 使用代码审查流程\n---\n",
+          },
+        ],
+      },
+      { executablePaths: new Set() },
+    );
+
+    expect(validation).toMatchObject({ passed: true, diagnostics: [] });
+  });
+
+  it("still rejects a description mismatch after whitespace normalization", () => {
+    const validation = validatePortableSkillPackage(
+      {
+        name: "different-description",
+        description: "Review\ncode",
+        files: [
+          {
+            path: "SKILL.md",
+            content:
+              "---\nname: different-description\ndescription: Review unrelated code.\n---\n",
+          },
+        ],
+      },
+      { executablePaths: new Set() },
+    );
+
+    expect(validation.diagnostics).toContainEqual(
+      expect.objectContaining({ path: "SKILL.md:description", code: "skill_metadata_mismatch" }),
+    );
+  });
+
   it("still scans generated scripts and tests while skipping reference examples", () => {
     const validation = validateSkillPackage(
       {

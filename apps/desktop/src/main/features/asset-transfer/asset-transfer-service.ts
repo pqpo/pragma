@@ -377,7 +377,9 @@ export function createAssetTransferService(options: {
           if (Buffer.byteLength(file.content) > 1_000_000)
             throw new Error(`Knowledge file exceeds 1 MB: ${file.id}`);
       } else if (change.remote?.kind === "skill")
-        validateTransferredSkill(SkillDataSchema.parse(change.remote.data));
+        validateTransferredSkill(SkillDataSchema.parse(change.remote.data), {
+          id: item.key.slice("skill:".length),
+        });
       else if (change.remote?.kind === "capability")
         definitions.set(
           item.key.slice("capability:".length),
@@ -635,7 +637,7 @@ export function createAssetTransferService(options: {
             continue;
         }
         if (localCapability === undefined) assertExpected(item.key, undefined);
-        validateTransferredSkill(data);
+        validateTransferredSkill(data, { id });
         const root = await mkdtemp(join(tmpdir(), "pragma-core-skill-"));
         try {
           for (const file of data.files) {

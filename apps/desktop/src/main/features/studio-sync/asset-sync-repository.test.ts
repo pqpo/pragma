@@ -92,6 +92,38 @@ describe("structured sync repository", () => {
     expect(restored[1]).toEqual(item("skill", skillId, "review", normalizedSkill));
     expect(encodeSyncRepository(decodeSyncRepository(files))).toEqual(files);
   });
+  it("identifies an invalid incoming Skill by ID and package path", () => {
+    const files = encode(skill());
+    files.set(
+      `skills/${skillId}/files/SKILL.md`,
+      file("---\nname: another-skill\ndescription: Review code\n---\n"),
+    );
+
+    let errorMessage = "";
+    try {
+      decodeSyncRepository(files);
+    } catch (error) {
+      errorMessage = error instanceof Error ? error.message : String(error);
+    }
+
+    expect(errorMessage).toContain(`ID ${skillId}`);
+    expect(errorMessage).toContain(`pragma-sync/skills/${skillId}`);
+    expect(errorMessage).toContain("SKILL.md:name");
+  });
+  it("round-trips metadata descriptions with YAML line breaks against single-line frontmatter", () => {
+    const original = skill();
+    const originalData = original.data as {
+      name: string;
+      description: string;
+      files: { path: string; content: string; executable: boolean }[];
+    };
+    const multilineData = { ...originalData, description: "Review\ncode" };
+    const files = encode(item("skill", skillId, "review", multilineData));
+
+    const restored = decodeSyncRepository(files).get(`skill:${skillId}`);
+
+    expect(restored?.data).toMatchObject({ description: "Review\ncode" });
+  });
   it("accepts edits, additions and deletions without a manually updated hash index", () => {
     const original = knowledge();
     const files = encode(original);

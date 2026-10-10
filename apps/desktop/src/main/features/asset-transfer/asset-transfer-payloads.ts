@@ -56,6 +56,9 @@ export const KnowledgeDataSchema = z
   })
   .strict();
 export type TransferredSkillFile = z.infer<typeof SkillFileSchema>;
+export interface TransferredSkillValidationContext {
+  readonly id: string;
+}
 export async function readTransferredSkill(root: string, executablePaths?: readonly string[]) {
   const tree = await scanSkillWorkingTree(
     root,
@@ -70,16 +73,21 @@ export async function readTransferredSkill(root: string, executablePaths?: reado
   );
   return { entries: tree.entries, files: files.sort((a, b) => a.path.localeCompare(b.path)) };
 }
-export function validateTransferredSkill(data: {
-  readonly name: string;
-  readonly description: string;
-  readonly files: readonly TransferredSkillFile[];
-}): void {
+export function validateTransferredSkill(
+  data: {
+    readonly name: string;
+    readonly description: string;
+    readonly files: readonly TransferredSkillFile[];
+  },
+  context: TransferredSkillValidationContext,
+): void {
+  const location = `pragma-sync/skills/${context.id}`;
+  const identity = `Skill ${JSON.stringify(data.name)} (ID ${context.id}, ${location})`;
   if (
     data.files.reduce((sum, file) => sum + Buffer.from(file.content, "base64").byteLength, 0) >
     MAX_SKILL_PACKAGE_BYTES
   )
-    throw new Error("Skill exceeds 25 MiB.");
+    throw new Error(`Invalid ${identity}: package exceeds 25 MiB.`);
   const validation = validatePortableSkillPackage(
     {
       name: data.name,
@@ -95,10 +103,14 @@ export function validateTransferredSkill(data: {
       ),
     },
   );
-  if (!validation.passed)
+  if (!validation.passed) {
+    const diagnostic = validation.diagnostics[0];
     throw new Error(
-      `Invalid incoming Skill: ${validation.diagnostics[0]?.message ?? "unknown error"}`,
+      `Invalid ${identity}${diagnostic?.path ? ` at ${diagnostic.path}` : ""}: ${
+        diagnostic?.message ?? "Unknown validation error."
+      }`,
     );
+  }
 }
 export async function publishTransferredSkill(
   store: CapabilityStore,
