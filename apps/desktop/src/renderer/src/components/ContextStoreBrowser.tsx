@@ -20,6 +20,7 @@ import type {
 } from "../../../shared/contracts/index.ts";
 import { errorMessage } from "../lib/errors.ts";
 import { MarkdownContent } from "./MarkdownContent.tsx";
+import { SelectMenu } from "./SelectMenu.tsx";
 
 export type ContextStoreBrowserDescriptor = Pick<
   MissionContextStoreDescriptor,
@@ -238,22 +239,18 @@ export function ContextStoreBrowser(props: {
           <small className="context-browser-board-scope">{t("missionBoardSharedScope")}</small>
         ) : (
           <>
-            <label>
-              {t("contextStoreViewingAs")}
-              <select value={scopeId} onChange={(event) => setScopeId(event.target.value)}>
-                {descriptor.scopes.map((scope) => (
-                  <option
-                    key={scope.id}
-                    value={scope.id}
-                    disabled={!isMemoryScopeSelectable(scope)}
-                  >
-                    {scope.name} · {t(`contextStoreRole.${scope.role}`)} ·{" "}
-                    {t(`contextStoreParticipation.${scope.participation}`)} ·{" "}
-                    {t(`contextStoreAvailability.${scope.availability}`)}
-                  </option>
-                ))}
-              </select>
-            </label>
+            <SelectMenu
+              ariaLabel={t("contextStoreViewingAs")}
+              value={scopeId}
+              onChange={setScopeId}
+              portal={false}
+              options={descriptor.scopes.map((scope) => ({
+                value: scope.id,
+                label: scope.name,
+                description: `${t(`contextStoreRole.${scope.role}`)} · ${t(`contextStoreParticipation.${scope.participation}`)} · ${t(`contextStoreAvailability.${scope.availability}`)}`,
+                disabled: !isMemoryScopeSelectable(scope),
+              }))}
+            />
             <small>{t(scopeDescriptionKey, { expert: selectedScope?.name ?? "" })}</small>
           </>
         )}
@@ -315,7 +312,7 @@ export function ContextStoreBrowser(props: {
                     >
                       <CaretRight size={13} aria-hidden="true" />
                       <Folder size={16} aria-hidden="true" />
-                      <span>{row.name}</span>
+                      <span>{variant === "memory" ? memoryFolderName(row.name, t) : row.name}</span>
                     </div>
                   ) : (
                     <button
@@ -332,7 +329,9 @@ export function ContextStoreBrowser(props: {
                       onClick={() => void readEntry(row.entry.id)}
                     >
                       <ContextEntryIcon entry={row.entry} />
-                      <span>{row.name}</span>
+                      <span>
+                        {variant === "memory" ? memoryEntryTitle(row.entry, t) : row.name}
+                      </span>
                       {row.entry.metadata.trigger === "always_on" ? (
                         <small>{t("contextStoreAlwaysOn")}</small>
                       ) : null}
@@ -350,7 +349,14 @@ export function ContextStoreBrowser(props: {
                     key={`${match.id}:${match.lineNumber ?? 0}:${index}`}
                     onClick={() => void readEntry(match.id)}
                   >
-                    <strong>{match.id}</strong>
+                    <strong>
+                      {variant === "memory"
+                        ? memoryEntryTitle(
+                            visibleEntries.find((entry) => entry.id === match.id) ?? match,
+                            t,
+                          )
+                        : match.id}
+                    </strong>
                     <span>{match.line}</span>
                     {match.lineNumber === undefined ? null : (
                       <small>{t("contextStoreLine", { line: match.lineNumber })}</small>
@@ -382,8 +388,10 @@ export function ContextStoreBrowser(props: {
               <>
                 <header className="context-browser-preview-header">
                   <div>
-                    <strong>{selected.id}</strong>
-                    {selected.metadata.description === undefined ? null : (
+                    <strong>
+                      {variant === "memory" ? memoryEntryTitle(selected, t) : selected.id}
+                    </strong>
+                    {variant === "memory" || selected.metadata.description === undefined ? null : (
                       <span>{selected.metadata.description}</span>
                     )}
                   </div>
@@ -413,7 +421,7 @@ export function ContextStoreBrowser(props: {
                     <p>{t("missionBoardPreviewUnsupportedDescription")}</p>
                   </div>
                 ) : (
-                  <div className="context-browser-markdown">
+                  <div className="context-browser-markdown markdown-preview">
                     {isMarkdownEntry(selected) ? (
                       <MarkdownContent
                         source={content}
@@ -588,4 +596,39 @@ function triggerLabel(
   t: (key: string) => string,
 ): string {
   return t(`contextStoreTrigger.${trigger}`);
+}
+
+function memoryEntryTitle(
+  entry: Pick<MissionContextStoreEntry, "id"> & { metadata?: MissionContextStoreEntry["metadata"] },
+  t: (key: string) => string,
+): string {
+  return (
+    memoryContextTitle(entry.id, t) ??
+    (entry.metadata?.description?.replace(/^(Semantic fact|Historical episode):\s*/, "").trim() ||
+      t("memoryRecordedSource"))
+  );
+}
+
+export function memoryContextTitle(id: string, t: (key: string) => string): string | undefined {
+  const titles: Record<string, string> = {
+    "guide.md": "memoryGuideContent",
+    "overview.md": "memoryOverviewContent",
+    "mission-attention.md": "memoryAttentionSourceTitle",
+    "semantic/summary.md": "memorySemanticSummary",
+    "semantic/index.md": "memorySemanticIndex",
+    "episodic/summary.md": "memoryEpisodicSummary",
+    "episodic/index.md": "memoryEpisodicIndex",
+  };
+  const key = titles[id.toLowerCase()];
+  return key === undefined ? undefined : t(key);
+}
+
+function memoryFolderName(name: string, t: (key: string) => string): string {
+  const keys: Record<string, string> = {
+    semantic: "memorySemanticType",
+    episodic: "memoryEpisodicType",
+    items: "memoryContentEntries",
+    evidence: "memorySupportingEvidence",
+  };
+  return keys[name] === undefined ? name : t(keys[name]!);
 }

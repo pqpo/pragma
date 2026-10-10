@@ -14,6 +14,41 @@ const electron = vi.hoisted(() => ({
 vi.mock("electron", () => ({ ipcMain: { handle: electron.handle } }));
 
 describe("Memory policy IPC", () => {
+  it("rejects recall content requests for another Mission's execution before reading sources", async () => {
+    electron.handlers.clear();
+    const listRecall = vi.fn();
+    const getMemorySourceReader = vi.fn();
+    installMemoryPolicyHandlers(
+      { activity: { listRecall } } as unknown as Parameters<typeof installMemoryPolicyHandlers>[0],
+      {
+        missions: {
+          get: vi.fn(async () => ({})),
+          readTimelinePage: vi.fn(async () => ({
+            turns: [
+              {
+                sequence: 1,
+                executionId: "own",
+                message: { content: "Task", createdAt: "2026-10-10T09:00:00.000Z" },
+              },
+            ],
+          })),
+        },
+        memoryBrowser: { getMemorySourceReader },
+        curator: { subscribeRunChat: vi.fn() },
+        getWindow: () => null,
+      } as unknown as Parameters<typeof installMemoryPolicyHandlers>[1],
+    );
+    await expect(
+      electron.handlers.get("memory-mission:recall")!(
+        {},
+        { missionId: "00000000-0000-4000-8000-000000000001", executionId: "other", limit: 30 },
+      ),
+    ).rejects.toThrow("memory_execution_not_in_mission");
+    expect(listRecall).not.toHaveBeenCalled();
+    expect(getMemorySourceReader).not.toHaveBeenCalled();
+    electron.handlers.clear();
+  });
+
   it("cancels retrieval before and after committing an asset recall change", async () => {
     const pragmaHome = await mkdtemp(join(tmpdir(), "pragma-memory-policy-ipc-"));
     electron.handlers.clear();

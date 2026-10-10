@@ -161,6 +161,12 @@ export function SelectMenu<Value extends string>(props: {
   };
 
   const handleTriggerKeyDown = (event: ReactKeyboardEvent<HTMLButtonElement>) => {
+    if (event.key === "Escape" && open) {
+      event.preventDefault();
+      event.stopPropagation();
+      closeMenu(true);
+      return;
+    }
     if (event.key === "ArrowDown" || event.key === "ArrowUp") {
       event.preventDefault();
       const direction = event.key === "ArrowDown" ? 1 : -1;
@@ -181,6 +187,7 @@ export function SelectMenu<Value extends string>(props: {
   const handleOptionKeyDown = (event: ReactKeyboardEvent<HTMLButtonElement>, index: number) => {
     if (event.key === "Escape") {
       event.preventDefault();
+      event.stopPropagation();
       closeMenu(true);
       return;
     }
@@ -236,6 +243,7 @@ export function SelectMenu<Value extends string>(props: {
             onKeyDown={(event) => {
               if (event.key === "Escape") {
                 event.preventDefault();
+                event.stopPropagation();
                 closeMenu(true);
               } else if (event.key === "ArrowDown") {
                 event.preventDefault();

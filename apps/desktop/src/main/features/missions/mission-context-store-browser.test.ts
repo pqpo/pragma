@@ -61,6 +61,48 @@ const mission = MissionSchema.parse({
 });
 
 describe("MissionContextStoreBrowserService", () => {
+  it("resolves current source access through the same Team and Expert views as the browser", async () => {
+    const source = { module: "semantic", record: { id: "fact" } };
+    const peek = vi.fn(
+      async (
+        view: Parameters<DesktopMemoryPlane["peekContextStoreViewSource"]>[0],
+        _module: "episodic" | "semantic",
+        id: string,
+      ) => (id === "fact" && view.expertRef?.id === reviewer.metadata.id ? source : undefined),
+    );
+    const service = createMissionContextStoreBrowserService({
+      missions: { get: vi.fn(async () => mission) } as unknown as MissionStore,
+      project: {
+        openRevision: vi.fn(async () => ({
+          listResources: () => [writer, reviewer, team],
+          dispose: async () => undefined,
+        })),
+      } as unknown as PragmaProjectStore,
+      systemExperts: {
+        getResource: () => undefined,
+        getAdditionalResources: () => [],
+      } as unknown as DesktopSystemExpertRegistry,
+      memory: { peekContextStoreViewSource: peek } as unknown as DesktopMemoryPlane,
+      application: {
+        getWork: vi.fn(async () => ({ missionId: mission.id, revision: 0, records: [] })),
+      } as unknown as Pick<LocalHostMissionApplication, "getWork">,
+    });
+    const read = await service.getMemorySourceReader(mission.id);
+    expect(await read("semantic", "fact")).toBe(source);
+    expect(peek.mock.calls.at(-1)?.[0]).toMatchObject({
+      rootRef: { type: "pragma.expert", id: reviewer.metadata.id },
+      policyScope: {
+        rootRef: { type: "pragma.expert-team", id: team.metadata.id },
+        producerRefs: [{ type: "pragma.expert", id: reviewer.metadata.id }],
+      },
+      projectId: mission.project.id,
+    });
+    const priorCalls = peek.mock.calls.length;
+    expect(await read("semantic", "fact")).toBe(source);
+    expect(peek).toHaveBeenCalledTimes(priorCalls);
+    expect(await read("semantic", "revoked")).toBeUndefined();
+  });
+
   it("browses shared Mission Board text, images, and unsupported files", async () => {
     const directory = await mkdtemp(join(tmpdir(), "pragma-mission-board-browser-"));
     const missionRoot = join(directory, mission.id);

@@ -53,7 +53,6 @@ export {
   missionWorkPageRecords,
 } from "./mission-participants-work.tsx";
 export {
-  MissionMemoryActivity,
   applyMissionUsageHintRevision,
   ContextWindowControl,
   CONTEXT_POPOVER_CLOSE_DELAY_MS,
@@ -80,3 +79,5 @@ export {
   applyMissionStatusUpdateToMission,
   upsertMissionSummary,
 } from "./mission-page-utils.ts";
+
+export { MissionMemoryActivity } from "./mission-memory-activity.tsx";

@@ -1,4 +1,7 @@
-import { MemoryAttentionContextSummarySchema } from "@pragma/shared";
+import {
+  MemoryAttentionContextSummarySchema,
+  MemoryAttentionSelectionSchema,
+} from "@pragma/shared";
 import {
   EffectiveMemoryPolicySchema,
   MemoryAssetPolicyOverrideSchema,
@@ -458,11 +461,22 @@ export const ReviewDesktopMemoryItemSchema = DesktopMemoryItemRefSchema.extend({
 export const DesktopMemoryEvidenceSchema = MemoryEvidenceEnvelopeSchema;
 
 export const DesktopMissionMemoryActivitySchema = z.object({
-  attention: z.array(MemoryAttentionContextSummarySchema).max(128).optional(),
+  attention: z
+    .array(
+      MemoryAttentionContextSummarySchema.extend({
+        entries: z
+          .array(MemoryAttentionSelectionSchema.extend({ title: z.string().optional() }))
+          .max(8),
+      }),
+    )
+    .max(128)
+    .optional(),
   missionId: z.string().uuid(),
   executions: z.array(
     z.object({
       executionId: z.string().min(1),
+      label: z.string().optional(),
+      occurredAt: z.string().datetime().optional(),
       capture: z.object({ published: z.number(), skipped: z.number(), failed: z.number() }),
       recall: z.object({
         list: z.number(),
@@ -476,3 +490,75 @@ export const DesktopMissionMemoryActivitySchema = z.object({
 });
 
 export const GetDesktopMissionMemoryActivitySchema = z.object({ missionId: z.string().uuid() });
+
+export const GetDesktopMissionMemoryAttentionSchema = z
+  .object({
+    missionId: z.string().uuid(),
+    contextId: z.string().min(1).max(2_000),
+  })
+  .strict();
+export const DesktopMissionMemoryAttentionContentSchema = z
+  .object({
+    contextId: z.string(),
+    entries: z
+      .array(
+        z.object({
+          module: z.enum(["episodic", "semantic"]),
+          memoryId: z.string(),
+          revision: z.number(),
+          title: z.string(),
+          decisionMode: z.enum(["provider", "vector_unassessed"]),
+          content: z.string(),
+        }),
+      )
+      .max(8),
+  })
+  .strict();
+export const DesktopMissionMemoryRecallCursorSchema = z
+  .object({
+    occurredAt: z.string().datetime(),
+    id: z.string().min(1),
+  })
+  .strict();
+export const ListDesktopMissionMemoryRecallSchema = z
+  .object({
+    missionId: z.string().uuid(),
+    executionId: z.string().min(1).max(2_000),
+    before: DesktopMissionMemoryRecallCursorSchema.optional(),
+    limit: z.number().int().min(1).max(50).default(30),
+  })
+  .strict();
+export const DesktopMissionMemoryRecallPageSchema = z
+  .object({
+    records: z
+      .array(
+        z.object({
+          id: z.string(),
+          operation: z.enum(["list", "search", "read"]),
+          target: z.string(),
+          outcome: z.enum(["allowed", "denied", "failed"]),
+          reason: z.string(),
+          occurredAt: z.string().datetime(),
+          sources: z.array(
+            z.object({
+              id: z.string(),
+              revision: z.string().optional(),
+              title: z.string().optional(),
+              available: z.boolean(),
+              currentRevision: z.string().optional(),
+            }),
+          ),
+        }),
+      )
+      .max(50),
+    nextBefore: DesktopMissionMemoryRecallCursorSchema.optional(),
+  })
+  .strict();
+export type GetDesktopMissionMemoryAttention = z.infer<
+  typeof GetDesktopMissionMemoryAttentionSchema
+>;
+export type DesktopMissionMemoryAttentionContent = z.infer<
+  typeof DesktopMissionMemoryAttentionContentSchema
+>;
+export type ListDesktopMissionMemoryRecall = z.infer<typeof ListDesktopMissionMemoryRecallSchema>;
+export type DesktopMissionMemoryRecallPage = z.infer<typeof DesktopMissionMemoryRecallPageSchema>;

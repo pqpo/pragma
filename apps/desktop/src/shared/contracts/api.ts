@@ -360,6 +360,12 @@ export interface PragmaDesktopAPI {
   invalidateMemoryItem: (input: ReviewDesktopMemoryItem) => Promise<DesktopMemoryItem>;
   forgetMemoryItem: (input: ReviewDesktopMemoryItem) => Promise<void>;
   getMissionMemoryActivity: (missionId: string) => Promise<DesktopMissionMemoryActivity>;
+  getMissionMemoryAttention: (
+    input: import("./memory.ts").GetDesktopMissionMemoryAttention,
+  ) => Promise<import("./memory.ts").DesktopMissionMemoryAttentionContent>;
+  listMissionMemoryRecall: (
+    input: import("./memory.ts").ListDesktopMissionMemoryRecall,
+  ) => Promise<import("./memory.ts").DesktopMissionMemoryRecallPage>;
   getMissionContextStore: (input: GetMissionContextStore) => Promise<MissionContextStoreDescriptor>;
   listMissionContextStoreEntries: (
     input: ListMissionContextStoreEntries,

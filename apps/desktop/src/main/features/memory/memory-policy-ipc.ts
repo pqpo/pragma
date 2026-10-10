@@ -29,6 +29,10 @@ import {
   ReviewDesktopMemoryItemSchema,
   DesktopMissionMemoryActivitySchema,
   GetDesktopMissionMemoryActivitySchema,
+  GetDesktopMissionMemoryAttentionSchema,
+  DesktopMissionMemoryAttentionContentSchema,
+  ListDesktopMissionMemoryRecallSchema,
+  DesktopMissionMemoryRecallPageSchema,
   ListDesktopMemoryExtractionJobsSchema,
   ManageDesktopMemoryExtractionTaskSchema,
   DesktopMemoryExtractionTaskRefSchema,
@@ -37,6 +41,11 @@ import {
   DesktopMemoryExtractionRunRefSchema,
   MissionConversationSnapshotSchema,
 } from "../../../shared/contracts/index.ts";
+import {
+  nameMissionAttention,
+  readMissionAttentionContent,
+  buildMissionRecallPage,
+} from "./mission-memory-content.ts";
 import type { DesktopMemoryPlane } from "./desktop-memory-plane.ts";
 import type { MissionStore } from "@pragma/local-host";
 import type { PragmaProjectStore } from "../projects/pragma-project-store.ts";
@@ -60,6 +69,10 @@ export function installMemoryPolicyHandlers(
     readonly missions: MissionStore;
     readonly project: PragmaProjectStore;
     readonly systemExperts: Pick<DesktopSystemExpertRegistry, "list">;
+    readonly memoryBrowser: Pick<
+      import("../missions/mission-context-store-browser.ts").MissionContextStoreBrowserService,
+      "getMemorySourceReader"
+    >;
     readonly curator: DesktopMemoryCurator;
     readonly getWindow: () => BrowserWindow | null;
     readonly onGlobalPolicyUpdated?: (() => void | Promise<void>) | undefined;
@@ -316,14 +329,48 @@ export function installMemoryPolicyHandlers(
   });
   ipcMain.handle("memory-mission:activity", async (_event, input: unknown) => {
     const parsed = GetDesktopMissionMemoryActivitySchema.parse(input);
-    const executionIds = await missionExecutionIds(options.missions, parsed.missionId);
+    const executions = await missionExecutions(options.missions, parsed.missionId);
+    const sources = await options.memoryBrowser.getMemorySourceReader(parsed.missionId);
     return DesktopMissionMemoryActivitySchema.parse({
       missionId: parsed.missionId,
-      attention: await plane.missionAttention(parsed.missionId),
+      attention: await nameMissionAttention(
+        sources,
+        await plane.missionAttention(parsed.missionId),
+      ),
       executions: await Promise.all(
-        executionIds.map(async (executionId) => await plane.activity.summarize(executionId)),
+        executions.map(async (execution) => ({
+          ...execution,
+          ...(await plane.activity.summarize(execution.executionId)),
+        })),
       ),
     });
+  });
+  ipcMain.handle("memory-mission:attention", async (_event, input: unknown) => {
+    const parsed = GetDesktopMissionMemoryAttentionSchema.parse(input);
+    await options.missions.get(parsed.missionId);
+    const context = (await plane.missionAttention(parsed.missionId)).find(
+      (entry) => entry.contextId === parsed.contextId,
+    );
+    if (context === undefined) throw new Error("memory_attention_context_unavailable");
+    const sources = await options.memoryBrowser.getMemorySourceReader(parsed.missionId);
+    return DesktopMissionMemoryAttentionContentSchema.parse(
+      await readMissionAttentionContent(sources, context),
+    );
+  });
+  ipcMain.handle("memory-mission:recall", async (_event, input: unknown) => {
+    const parsed = ListDesktopMissionMemoryRecallSchema.parse(input);
+    const executions = await missionExecutions(options.missions, parsed.missionId);
+    if (!executions.some((entry) => entry.executionId === parsed.executionId))
+      throw new Error("memory_execution_not_in_mission");
+    const sources = await options.memoryBrowser.getMemorySourceReader(parsed.missionId);
+    return DesktopMissionMemoryRecallPageSchema.parse(
+      await buildMissionRecallPage(
+        sources,
+        await plane.activity.listRecall(parsed.executionId),
+        parsed.before,
+        parsed.limit,
+      ),
+    );
   });
 }
 
@@ -409,16 +456,33 @@ function memoryItemSubjectNames(
   ]);
 }
 
-async function missionExecutionIds(store: MissionStore, missionId: string): Promise<string[]> {
-  const ids = new Set<string>();
+async function missionExecutions(
+  store: MissionStore,
+  missionId: string,
+): Promise<Array<{ executionId: string; label: string; occurredAt: string }>> {
+  await store.get(missionId);
+  const turns = new Map<
+    string,
+    { executionId: string; label: string; occurredAt: string; sequence: number }
+  >();
   let beforeSequence: number | undefined;
   do {
     const page = await store.readTimelinePage(missionId, {
       ...(beforeSequence === undefined ? {} : { beforeSequence }),
       limit: 200,
     });
-    for (const turn of page.turns) if (turn.executionId !== undefined) ids.add(turn.executionId);
+    for (const turn of page.turns) {
+      if (turn.executionId !== undefined && !turns.has(turn.executionId))
+        turns.set(turn.executionId, {
+          executionId: turn.executionId,
+          label: Array.from(turn.message.content.trim()).slice(0, 200).join(""),
+          occurredAt: turn.message.createdAt,
+          sequence: turn.sequence,
+        });
+    }
     beforeSequence = page.nextBeforeSequence;
   } while (beforeSequence !== undefined);
-  return [...ids];
+  return [...turns.values()]
+    .toSorted((left, right) => left.sequence - right.sequence)
+    .map(({ executionId, label, occurredAt }) => ({ executionId, label, occurredAt }));
 }

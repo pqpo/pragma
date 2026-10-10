@@ -30,6 +30,10 @@ import {
   TightenDesktopMemoryAccessSchema,
   ReviewDesktopMemoryItemSchema,
   DesktopMissionMemoryActivitySchema,
+  GetDesktopMissionMemoryAttentionSchema,
+  DesktopMissionMemoryAttentionContentSchema,
+  ListDesktopMissionMemoryRecallSchema,
+  DesktopMissionMemoryRecallPageSchema,
   DesktopMemoryExtractionBoardSchema,
   ListDesktopMemoryExtractionJobsSchema,
   ManageDesktopMemoryExtractionTaskSchema,
@@ -233,6 +237,20 @@ export const memoryApi = {
     DesktopMissionMemoryActivitySchema.parse(
       await ipcRenderer.invoke("memory-mission:activity", { missionId }),
     ),
+  getMissionMemoryAttention: async (input) =>
+    DesktopMissionMemoryAttentionContentSchema.parse(
+      await ipcRenderer.invoke(
+        "memory-mission:attention",
+        GetDesktopMissionMemoryAttentionSchema.parse(input),
+      ),
+    ),
+  listMissionMemoryRecall: async (input) =>
+    DesktopMissionMemoryRecallPageSchema.parse(
+      await ipcRenderer.invoke(
+        "memory-mission:recall",
+        ListDesktopMissionMemoryRecallSchema.parse(input),
+      ),
+    ),
   getExpertMemoryContextStore: async (input) =>
     ExpertMemoryContextStoreDescriptorSchema.parse(
       await ipcRenderer.invoke(
@@ -323,6 +341,8 @@ export const memoryApi = {
   | "invalidateMemoryItem"
   | "forgetMemoryItem"
   | "getMissionMemoryActivity"
+  | "getMissionMemoryAttention"
+  | "listMissionMemoryRecall"
   | "getExpertMemoryContextStore"
   | "listExpertMemoryContextStoreEntries"
   | "readExpertMemoryContextStoreEntry"

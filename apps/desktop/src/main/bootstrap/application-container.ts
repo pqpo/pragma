@@ -2232,6 +2232,7 @@ export async function createDesktopApplicationContainer(
   });
   installMemoryPolicyHandlers(memoryPlane, {
     missions: missionStore,
+    memoryBrowser: missionContextStoreBrowser,
     project: pragmaProjectStore,
     systemExperts,
     curator: memoryCurator,

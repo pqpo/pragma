@@ -4,7 +4,6 @@ import {
   CaretDown,
   CheckCircle,
   DotsThreeVertical,
-  Folder,
   FolderOpen,
   GitBranch,
   Play,
@@ -110,10 +109,11 @@ import {
   setHumanCustomAnswer,
   setHumanQuestionNote,
 } from "./mission-page-utils.ts";
+import { MissionWorkspaceStatus } from "./mission-workspace-status.tsx";
+import { MissionMemoryActivity } from "./mission-memory-activity.tsx";
 import {
   ContextWindowControl,
   MissionErrorBanner,
-  MissionMemoryActivity,
   MissionUsageHint,
   unavailableMcpToolName,
 } from "./mission-memory-usage.tsx";
@@ -226,6 +226,7 @@ export function MissionDetailFragment(props: {
   const [memoryActivity, setMemoryActivity] = useState<DesktopMissionMemoryActivity>();
   const [memoryActivityError, setMemoryActivityError] = useState<string>();
   const [memoryActivityLoading, setMemoryActivityLoading] = useState(false);
+  const [memoryActivityRevision, setMemoryActivityRevision] = useState(0);
   const [deliveryNotice, setDeliveryNotice] = useState<string>();
   const {
     state: clientOperation,
@@ -716,6 +717,13 @@ export function MissionDetailFragment(props: {
   }, [props.mission.id, setHumanQuestionIndex]);
 
   useEffect(() => {
+    setMemoryView("activity");
+    setMemoryInitialEntryId(undefined);
+    setMemoryActivity(undefined);
+    setMemoryActivityError(undefined);
+  }, [props.mission.id]);
+
+  useEffect(() => {
     if (memoryEnabled || tab !== "memory") return;
     setTab("chat");
     setMemoryView("activity");
@@ -730,6 +738,7 @@ export function MissionDetailFragment(props: {
       return;
     let cancelled = false;
     setMemoryActivityLoading(true);
+    setMemoryActivityError(undefined);
     void api
       .getMissionMemoryActivity(props.mission.id)
       .then((activity) => {
@@ -746,7 +755,14 @@ export function MissionDetailFragment(props: {
     return () => {
       cancelled = true;
     };
-  }, [activeTab, memoryEnabled, memoryView, props.mission.execution?.id, props.mission.id]);
+  }, [
+    activeTab,
+    memoryEnabled,
+    memoryView,
+    memoryActivityRevision,
+    props.mission.execution?.id,
+    props.mission.id,
+  ]);
 
   const beginQueuedMessageAction = (
     queueItemRequestId: string,
@@ -1395,11 +1411,10 @@ export function MissionDetailFragment(props: {
             (props.mission.execution === undefined && thinkingRequestId !== null),
         )}
         <span aria-hidden="true">·</span>
-        <Folder size={16} aria-hidden="true" />
-        {props.mission.workspace.basename}
-        {workspaceAvailable === false ? (
-          <strong>{t("workspaceUnavailableTitle", { ns: "missions" })}</strong>
-        ) : null}
+        <MissionWorkspaceStatus
+          name={props.mission.workspace.basename}
+          available={workspaceAvailable}
+        />
         <span aria-hidden="true">·</span>
         {isTeam ? (
           <UsersThree size={17} aria-hidden="true" />
@@ -2051,9 +2066,14 @@ export function MissionDetailFragment(props: {
               />
             ) : (
               <MissionMemoryActivity
-                activity={memoryActivity}
+                key={props.mission.id}
+                source={memoryStoreSource}
+                activity={
+                  memoryActivity?.missionId === props.mission.id ? memoryActivity : undefined
+                }
                 error={memoryActivityError}
                 loading={memoryActivityLoading}
+                onRefresh={() => setMemoryActivityRevision((revision) => revision + 1)}
                 onBrowseStore={() => {
                   setMemoryInitialEntryId(undefined);
                   setMemoryView("store");

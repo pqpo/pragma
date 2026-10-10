@@ -91,6 +91,9 @@ export interface MissionContextStoreBrowserService {
   list(input: ListMissionContextStoreEntries): Promise<readonly MissionContextStoreEntry[]>;
   read(input: ReadMissionContextStoreEntry): Promise<MissionContextStoreContent>;
   search(input: SearchMissionContextStore): Promise<readonly MissionContextStoreSearchMatch[]>;
+  getMemorySourceReader(
+    missionId: string,
+  ): Promise<import("../memory/mission-memory-content.ts").MissionMemorySourceReader>;
 }
 
 export function createMissionContextStoreBrowserService(options: {
@@ -171,6 +174,35 @@ export function createMissionContextStoreBrowserService(options: {
   };
 
   return {
+    async getMemorySourceReader(missionId) {
+      const mission = await userMission(options.missions, missionId);
+      const { candidates, rootRef, teamDefinition } = await resolveMemoryScopes(mission);
+      const views =
+        teamDefinition === undefined
+          ? candidates.map((candidate) => ({
+              rootRef,
+              expertRef: { type: "pragma.expert" as const, id: candidate.expertId },
+              projectId: mission.project.id,
+            }))
+          : [...teamDefinition.views.values()];
+      const cache = new Map<string, ReturnType<DesktopMemoryPlane["peekContextStoreViewSource"]>>();
+      const read = async (module: "episodic" | "semantic", id: string) => {
+        for (const view of views) {
+          const source = await options.memory.peekContextStoreViewSource(view, module, id);
+          if (source !== undefined) return source;
+        }
+        return undefined;
+      };
+      return (module, id) => {
+        const key = `${module}:${id}`;
+        let result = cache.get(key);
+        if (result === undefined) {
+          result = read(module, id);
+          cache.set(key, result);
+        }
+        return result;
+      };
+    },
     async get(input) {
       assertSupportedStore(input.storeId);
       if (input.storeId === MISSION_BOARD_STORE_ID) {

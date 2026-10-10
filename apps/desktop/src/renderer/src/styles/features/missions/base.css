@@ -279,9 +279,37 @@
   font: inherit;
 }
 
-.mission-detail-status-bar p strong {
-  color: #a5453c;
-  font-size: 12px;
+.mission-workspace-status {
+  position: relative;
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 6px;
+}
+
+.mission-workspace-folder {
+  position: relative;
+  display: inline-flex;
+  flex: 0 0 auto;
+}
+
+.mission-workspace-status.is-unavailable .mission-workspace-folder::after {
+  position: absolute;
+  top: -2px;
+  right: -2px;
+  width: 6px;
+  height: 6px;
+  border: 1px solid var(--ui-canvas);
+  border-radius: 50%;
+  background: var(--ui-danger);
+  content: "";
+}
+
+.mission-workspace-status:hover .mission-workspace-tooltip,
+.mission-workspace-status:focus-within .mission-workspace-tooltip {
+  opacity: 1;
+  visibility: visible;
+  transform: translateX(-50%) translateY(0);
 }
 
 .mission-detail-status-bar > p > svg,
@@ -880,10 +908,14 @@
   min-width: 0;
   overflow: hidden;
   font-size: 14px;
-  font-weight: 500;
+  font-weight: 400;
   line-height: 1.45;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.mission-row.is-pinned .mission-row-open strong {
+  font-weight: 500;
 }
 
 .mission-status-slot {

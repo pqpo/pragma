@@ -6,6 +6,7 @@ import {
   entryPreviewKind,
   isMemoryScopeSelectable,
   memoryScopeDescriptionKey,
+  memoryContextTitle,
   normalizeInternalContextId,
   summaryFromContent,
 } from "./ContextStoreBrowser.tsx";
@@ -13,6 +14,15 @@ import {
 const metadata = { trigger: "manual", priority: "normal" } as const;
 
 describe("ContextStoreBrowser tree", () => {
+  it("gives recalled indexes distinct readable names without exposing internal ids", () => {
+    const t = (key: string) => key;
+    expect(memoryContextTitle("semantic/summary.md", t)).toBe("memorySemanticSummary");
+    expect(memoryContextTitle("semantic/index.md", t)).toBe("memorySemanticIndex");
+    expect(memoryContextTitle("episodic/summary.md", t)).toBe("memoryEpisodicSummary");
+    expect(memoryContextTitle("episodic/index.md", t)).toBe("memoryEpisodicIndex");
+    expect(memoryContextTitle("GUIDE.md", t)).toBe("memoryGuideContent");
+    expect(memoryContextTitle("semantic/items/internal-id.md", t)).toBeUndefined();
+  });
   it("pins root documents and creates virtual module folders", () => {
     const entries: MissionContextStoreEntry[] = [
       { id: "semantic/index.md", metadata },

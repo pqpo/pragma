@@ -9,6 +9,7 @@ import type {
 } from "../../../../shared/contracts/index.ts";
 import { i18n } from "../../i18n/index.ts";
 import { expertAvatarSource } from "../../components/ExpertAvatar.tsx";
+import { MissionMemoryActivity } from "./mission-memory-activity.tsx";
 import {
   applyMissionUsageHintRevision,
   applyMissionStatusUpdateToMission,
@@ -32,7 +33,6 @@ import {
   MISSION_TEAM_PARTICIPANT_PREVIEW_HOVER_DELAY_MS,
   MissionDetailFragment,
   MissionDetailSkeleton,
-  MissionMemoryActivity,
   MissionRailRow,
   MissionThinkingEntry,
   MissionTeamParticipantList,
@@ -1410,7 +1410,7 @@ describe("MissionDetailFragment", () => {
     ).toBe("send");
   });
 
-  it("opens memory on activity and groups capture separately from recall", () => {
+  it("opens memory on a content overview with aggregate counts", () => {
     expect(DEFAULT_MISSION_MEMORY_VIEW).toBe("activity");
 
     const html = renderToStaticMarkup(
@@ -1431,8 +1431,12 @@ describe("MissionDetailFragment", () => {
     );
 
     expect(html).toContain("Browse memory store");
-    expect(html).toContain("Evidence capture");
-    expect(html).toContain("ContextStore recall");
+    expect(html).toContain("Attention Memory");
+    expect(html).toContain("Memory Store");
+    expect(html).toContain("Recall history");
+    expect(html).toContain("View recalled content");
+    expect(html).not.toContain("execution-1");
+    expect(html).not.toContain("mission-memory-groups");
     expect(html).toContain("Evidence entering memory processing, not memories created");
     expect(html).not.toContain("mission-memory-views");
   });

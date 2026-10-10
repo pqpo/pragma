@@ -14,6 +14,7 @@ import {
   type MemoryExtractorProfileStore,
   type MemoryPolicyStore,
   type MemoryRecallScope,
+  type RetrievalRecord,
   type SemanticMemoryExtractor,
   type SemanticMemoryStore,
   type SkillLearningPlanner,
@@ -83,6 +84,11 @@ export interface DesktopMemoryPlane {
   createContextStoreView(
     input: DesktopMemoryContextStoreViewInput,
   ): Promise<import("@pragma/core").ExpertAgentContextStore>;
+  peekContextStoreViewSource(
+    input: DesktopMemoryContextStoreViewInput,
+    module: "episodic" | "semantic",
+    id: string,
+  ): Promise<RetrievalRecord | undefined>;
   setEpisodicExtractor(extractor: EpisodicMemoryExtractor | undefined): Promise<void>;
   setSemanticExtractor(extractor: SemanticMemoryExtractor | undefined): Promise<void>;
   setKnowledgePlanner(planner: KnowledgeLearningPlanner | undefined): Promise<void>;
@@ -523,6 +529,16 @@ export async function createDesktopMemoryPlane(options: {
       return createFederatedMemoryContextStore(registry, {
         resolveRecallScope: () => resolved.scope,
       });
+    },
+    async peekContextStoreViewSource(input, module, id) {
+      const resolved = await resolveContextStoreViewScope(input);
+      if (!resolved.available) return undefined;
+      if (module === "episodic") {
+        const record = await episodic.store.peekForRecall(resolved.scope, id);
+        return record === undefined ? undefined : { module, record };
+      }
+      const record = await semantic.store.peekForRecall(resolved.scope, id, new Date());
+      return record === undefined ? undefined : { module, record };
     },
     async setEpisodicExtractor(extractor) {
       await episodic.setExtractor(extractor);
