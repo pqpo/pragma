@@ -28,6 +28,9 @@ export function installCoreAssetSyncHandlers(service: CoreAssetSyncService): voi
   ipcMain.handle("core-asset-sync:restore", (_event, input: unknown) =>
     runDesktopMutation(() => service.restore(zKey(input))),
   );
+  ipcMain.handle("core-asset-sync:delete-remote", (_event, input: unknown) =>
+    runDesktopMutation(() => service.deleteRemote(zKey(input))),
+  );
 }
 
 function zKey(input: unknown): string {

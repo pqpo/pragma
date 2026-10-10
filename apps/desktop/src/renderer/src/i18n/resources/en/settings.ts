@@ -64,6 +64,11 @@ export const settings = {
     title: "Sync",
     description:
       "Sync Experts, Teams, Flows, runtime profiles, context bindings, Knowledge Bases, and all user capabilities as YAML and native files in one Git repository.",
+    settings: "Sync settings",
+    settingsDescription: "Configure the Git repository, branch, and automatic sync policy.",
+    cancel: "Cancel",
+    assetType: "Asset type",
+    neverSynced: "Not synchronized yet",
     remote: "Git remote",
     branch: "Branch (optional)",
     autoPush: "Automatically upload published changes",
@@ -72,15 +77,23 @@ export const settings = {
     syncNow: "Sync now",
     remove: "Remove configuration",
     restore: "Restore from Git",
+    deleteRemote: "Delete from Git",
+    deletedLocally: "Deleted locally; still retained in Git.",
+    restoreDescription:
+      "Restoring only restores the configuration; models and other dependencies may still be unavailable.",
+    restoreAssetDescription:
+      "Restoring recovers the saved asset; its dependencies may still be unavailable.",
     keepLocal: "Keep local",
     keepRemote: "Keep Git",
     lastSync: "Last synchronized: {{date}}",
     overview: {
+      loading: "Loading sync status…",
+      loadFailed: "Unable to load sync status.",
+      unconfigured: "Configure a Git repository in sync settings.",
       title: "Asset status",
       synced: "All core assets are synchronized.",
       syncing: "Synchronizing core assets…",
-      syncError:
-        "Core asset synchronization failed. Pending assets have not been confirmed as uploaded. Review the error above and retry.",
+      syncError: "Synchronization failed. Review the error details and retry.",
       pending: "{{count}} core asset needs attention.",
       failed: "{{count}} core asset has a synchronization problem.",
     },
@@ -208,15 +221,20 @@ export const settings = {
       "This can expose credentials and other secrets to local runtimes and their child processes. Blocklisted variables are still removed.",
     processEnvironmentAllowlist: "Allowlist",
     processEnvironmentAllowlistDescription:
-      "In filtered mode, add variables beyond the built-in toolchain list. Enter one variable name per line, such as JAVA_HOME.",
+      "In filtered mode, add variables beyond the built-in toolchain list. For example, JAVA_HOME.",
     processEnvironmentBlocklist: "Blocklist",
     processEnvironmentBlocklistDescription:
-      "Always remove these variables, including in full access mode. Enter one variable name per line.",
+      "Always remove these variables, including in full access mode.",
     processEnvironmentInvalidVariable:
       "Use valid environment variable names containing only letters, numbers, and underscores.",
-    processEnvironmentSave: "Save environment policy",
+    processEnvironmentCount: "{{count}} configured",
+    processEnvironmentDone: "Confirm",
+    processEnvironmentVariableName: "Variable name",
+    processEnvironmentAdd: "Add",
+    processEnvironmentEmpty: "No variables configured yet.",
+    processEnvironmentRemove: "Remove {{name}}",
+    processEnvironmentDuplicateVariable: "This variable is already in the list.",
     processEnvironmentSaving: "Saving…",
-    processEnvironmentSaved: "Environment policy saved.",
   },
   evaluations: {
     navigation: "Evaluations",

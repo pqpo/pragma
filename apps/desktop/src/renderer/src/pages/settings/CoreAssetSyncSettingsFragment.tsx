@@ -1,9 +1,11 @@
+import { CaretRight, CheckCircle, Disc, Gear, WarningCircle } from "@phosphor-icons/react";
 import { useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 
 import type { CoreAssetSyncOverview } from "../../../../shared/contracts/index.ts";
 import { gitFailureDetails, gitFailureKey } from "../../lib/git-feedback.ts";
 import { aggregateCoreAssetSyncItems, coreAssetOverallHealth } from "./core-asset-sync-summary.ts";
+import { Dialog } from "../../components/Dialog.tsx";
 import { SettingsScreenFrame } from "./SettingsScreenFrame.tsx";
 
 export function CoreAssetSyncSettingsFragment() {
@@ -14,6 +16,7 @@ export function CoreAssetSyncSettingsFragment() {
   const [autoPush, setAutoPush] = useState(true);
   const [pushDeletions, setPushDeletions] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [configurationOpen, setConfigurationOpen] = useState(false);
   const [error, setError] = useState<unknown>();
   const failure = error ?? overview?.error;
   const summary = useMemo(() => aggregateCoreAssetSyncItems(overview?.items ?? []), [overview]);
@@ -21,12 +24,6 @@ export function CoreAssetSyncSettingsFragment() {
     overview === undefined ? "synced" : coreAssetOverallHealth(overview.status, summary);
   const apply = (next: CoreAssetSyncOverview) => {
     setOverview(next);
-    if (next.configuration) {
-      setRemote(next.configuration.remote);
-      setBranch(next.configuration.branch ?? "");
-      setAutoPush(next.configuration.autoPush);
-      setPushDeletions(next.configuration.pushDeletions);
-    }
   };
   useEffect(() => {
     void window.pragmaDesktop
@@ -38,93 +35,208 @@ export function CoreAssetSyncSettingsFragment() {
     setBusy(true);
     setError(undefined);
     try {
-      apply((await action()) ?? (await window.pragmaDesktop.getCoreAssetSyncOverview()));
+      const next = (await action()) ?? (await window.pragmaDesktop.getCoreAssetSyncOverview());
+      apply(next);
+      return next.error === undefined;
     } catch (cause) {
       setError(cause);
+      return false;
     } finally {
       setBusy(false);
     }
   };
+  useEffect(() => {
+    if (overview?.status !== "syncing" || busy || error) return;
+    let cancelled = false;
+    let timer: ReturnType<typeof setTimeout>;
+    const refresh = async () => {
+      try {
+        const next = await window.pragmaDesktop.getCoreAssetSyncOverview();
+        if (!cancelled) apply(next);
+      } catch (cause) {
+        if (!cancelled) setError(cause);
+      } finally {
+        if (!cancelled) timer = setTimeout(() => void refresh(), 2_000);
+      }
+    };
+    timer = setTimeout(() => void refresh(), 2_000);
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+    };
+  }, [overview?.status, busy, error]);
+  const openConfiguration = () => {
+    const config = overview?.configuration;
+    setRemote(config?.remote ?? "");
+    setBranch(config?.branch ?? "");
+    setAutoPush(config?.autoPush ?? true);
+    setPushDeletions(config?.pushDeletions ?? false);
+    setError(undefined);
+    setConfigurationOpen(true);
+  };
+  const syncStatus = busy ? "syncing" : failure ? "failed" : overallHealth;
+  const statusMessage = busy
+    ? t("coreAssetSync.overview.syncing")
+    : overview === undefined
+      ? failure
+        ? t("coreAssetSync.overview.loadFailed")
+        : t("coreAssetSync.overview.loading")
+      : overview.configuration === undefined
+        ? t("coreAssetSync.overview.unconfigured")
+        : syncStatus === "syncing"
+          ? t("coreAssetSync.overview.syncing")
+          : syncStatus === "failed"
+            ? summary.failed > 0
+              ? t("coreAssetSync.overview.failed", { count: summary.failed })
+              : t("coreAssetSync.overview.syncError")
+            : syncStatus === "pending"
+              ? t("coreAssetSync.overview.pending", { count: summary.pending })
+              : t("coreAssetSync.overview.synced");
   return (
     <SettingsScreenFrame
+      className="core-asset-sync-screen"
       id="core-asset-sync-panel"
       labelledBy="core-asset-sync-heading"
       header={
-        <header className="panel-heading">
-          <h2 id="core-asset-sync-heading">{t("coreAssetSync.title")}</h2>
-          <p>{t("coreAssetSync.description")}</p>
+        <header className="panel-heading core-asset-sync-heading">
+          <div>
+            <h2 id="core-asset-sync-heading">{t("coreAssetSync.title")}</h2>
+            <p>{t("coreAssetSync.description")}</p>
+          </div>
+          <button
+            className="secondary-button core-asset-sync-settings-button"
+            type="button"
+            aria-label={t("coreAssetSync.settings")}
+            title={t("coreAssetSync.settings")}
+            aria-haspopup="dialog"
+            disabled={busy}
+            onClick={openConfiguration}
+          >
+            <Gear size={20} aria-hidden="true" />
+          </button>
         </header>
       }
     >
-      <form
-        className="knowledge-sync-form"
-        onSubmit={(event) => {
-          event.preventDefault();
-          void run(() =>
-            window.pragmaDesktop.updateCoreAssetSyncConfiguration({
-              remote,
-              ...(branch.trim() ? { branch: branch.trim() } : {}),
-              autoPush,
-              pushDeletions,
-            }),
-          );
-        }}
-      >
-        <label>
-          {t("coreAssetSync.remote")}
-          <input value={remote} onChange={(event) => setRemote(event.target.value)} required />
-        </label>
-        <label>
-          {t("coreAssetSync.branch")}
-          <input value={branch} onChange={(event) => setBranch(event.target.value)} />
-        </label>
-        <label className="knowledge-sync-toggle">
-          <input
-            type="checkbox"
-            checked={autoPush}
-            onChange={(event) => setAutoPush(event.target.checked)}
-          />
-          {t("coreAssetSync.autoPush")}
-        </label>
-        <label className="knowledge-sync-toggle">
-          <input
-            type="checkbox"
-            checked={pushDeletions}
-            onChange={(event) => setPushDeletions(event.target.checked)}
-          />
-          {t("coreAssetSync.pushDeletions")}
-        </label>
-        <CoreAssetSyncActions
-          busy={busy}
-          configured={overview?.configuration !== undefined}
-          onSync={() => void run(() => window.pragmaDesktop.syncCoreAssets())}
-          onRemove={() => void run(() => window.pragmaDesktop.removeCoreAssetSyncConfiguration())}
-        />
-      </form>
-      {failure !== undefined && failure !== null && <CoreAssetSyncError error={failure} />}
-      {overview?.syncedAt && (
-        <p>{t("coreAssetSync.lastSync", { date: new Date(overview.syncedAt).toLocaleString() })}</p>
+      <CoreAssetSyncStatus
+        message={statusMessage}
+        status={syncStatus}
+        loading={overview === undefined && !failure}
+        configured={overview?.configuration !== undefined}
+        busy={busy}
+        syncedAt={overview?.syncedAt}
+        onSync={() => void run(() => window.pragmaDesktop.syncCoreAssets())}
+      />
+      {!configurationOpen && failure !== undefined && failure !== null && (
+        <CoreAssetSyncError error={failure} />
       )}
-      {overview?.configuration && (
-        <section
-          className="core-asset-sync-status"
-          aria-labelledby="core-asset-sync-status-heading"
+      {configurationOpen ? (
+        <Dialog
+          title={t("coreAssetSync.settings")}
+          description={t("coreAssetSync.settingsDescription")}
+          className="core-asset-sync-configuration-dialog"
+          busy={busy}
+          onCancel={() => setConfigurationOpen(false)}
+          footer={
+            <>
+              {overview?.configuration ? (
+                <button
+                  className="secondary-button core-asset-sync-remove"
+                  type="button"
+                  disabled={busy}
+                  onClick={() =>
+                    void run(() => window.pragmaDesktop.removeCoreAssetSyncConfiguration()).then(
+                      (success) => {
+                        if (success) setConfigurationOpen(false);
+                      },
+                    )
+                  }
+                >
+                  {t("coreAssetSync.remove")}
+                </button>
+              ) : null}
+              <button
+                className="secondary-button"
+                type="button"
+                disabled={busy}
+                onClick={() => setConfigurationOpen(false)}
+              >
+                {t("coreAssetSync.cancel")}
+              </button>
+              <button
+                className="primary-button"
+                type="submit"
+                form="core-asset-sync-configuration-form"
+                disabled={busy}
+              >
+                {t(busy ? "coreAssetSync.overview.syncing" : "coreAssetSync.saveAndSync")}
+              </button>
+            </>
+          }
         >
+          <form
+            id="core-asset-sync-configuration-form"
+            className="knowledge-sync-form"
+            onSubmit={(event) => {
+              event.preventDefault();
+              if (busy) return;
+              void run(() =>
+                window.pragmaDesktop.updateCoreAssetSyncConfiguration({
+                  remote: remote.trim(),
+                  ...(branch.trim() ? { branch: branch.trim() } : {}),
+                  autoPush,
+                  pushDeletions,
+                }),
+              ).then((success) => {
+                if (success) setConfigurationOpen(false);
+              });
+            }}
+          >
+            <label>
+              {t("coreAssetSync.remote")}
+              <input
+                data-dialog-initial-focus
+                value={remote}
+                onChange={(event) => setRemote(event.target.value)}
+                required
+                disabled={busy}
+              />
+            </label>
+            <label>
+              {t("coreAssetSync.branch")}
+              <input
+                value={branch}
+                onChange={(event) => setBranch(event.target.value)}
+                disabled={busy}
+              />
+            </label>
+            <label className="knowledge-sync-toggle">
+              <input
+                type="checkbox"
+                checked={autoPush}
+                onChange={(event) => setAutoPush(event.target.checked)}
+                disabled={busy}
+              />
+              {t("coreAssetSync.autoPush")}
+            </label>
+            <label className="knowledge-sync-toggle">
+              <input
+                type="checkbox"
+                checked={pushDeletions}
+                onChange={(event) => setPushDeletions(event.target.checked)}
+                disabled={busy}
+              />
+              {t("coreAssetSync.pushDeletions")}
+            </label>
+          </form>
+          {failure !== undefined && failure !== null ? (
+            <CoreAssetSyncError error={failure} />
+          ) : null}
+        </Dialog>
+      ) : null}
+
+      {overview?.configuration && (
+        <section className="core-asset-sync-status" aria-label={t("coreAssetSync.overview.title")}>
           <header>
-            <div>
-              <h3 id="core-asset-sync-status-heading">{t("coreAssetSync.overview.title")}</h3>
-              <p aria-live="polite">
-                {overallHealth === "syncing"
-                  ? t("coreAssetSync.overview.syncing")
-                  : overallHealth === "failed"
-                    ? summary.failed > 0
-                      ? t("coreAssetSync.overview.failed", { count: summary.failed })
-                      : t("coreAssetSync.overview.syncError")
-                    : overallHealth === "pending"
-                      ? t("coreAssetSync.overview.pending", { count: summary.pending })
-                      : t("coreAssetSync.overview.synced")}
-              </p>
-            </div>
             <dl>
               <div>
                 <dt>{t("coreAssetSync.counts.total")}</dt>
@@ -145,17 +257,38 @@ export function CoreAssetSyncSettingsFragment() {
             </dl>
           </header>
           <div className="core-asset-sync-groups">
+            <div className="core-asset-sync-columns" aria-hidden="true">
+              <span>{t("coreAssetSync.assetType")}</span>
+              {(["total", "synced", "pending", "failed"] as const).map((key) => (
+                <span key={key}>{t(`coreAssetSync.counts.${key}`)}</span>
+              ))}
+            </div>
             {summary.groups.map((group) => {
               const attention = group.assets.filter((asset) => asset.status !== "synced");
               const metrics = (
                 <span className="core-asset-sync-group-metrics">
-                  <span>{t("coreAssetSync.counts.totalWithCount", { count: group.total })}</span>
-                  <span>{t("coreAssetSync.counts.syncedWithCount", { count: group.synced })}</span>
-                  <span>
-                    {t("coreAssetSync.counts.pendingWithCount", { count: group.pending })}
+                  <span
+                    aria-label={t("coreAssetSync.counts.totalWithCount", { count: group.total })}
+                  >
+                    {group.total}
                   </span>
-                  <span className={group.failed > 0 ? "is-failed" : undefined}>
-                    {t("coreAssetSync.counts.failedWithCount", { count: group.failed })}
+                  <span
+                    aria-label={t("coreAssetSync.counts.syncedWithCount", { count: group.synced })}
+                  >
+                    {group.synced}
+                  </span>
+                  <span
+                    aria-label={t("coreAssetSync.counts.pendingWithCount", {
+                      count: group.pending,
+                    })}
+                  >
+                    {group.pending}
+                  </span>
+                  <span
+                    className={group.failed > 0 ? "is-failed" : undefined}
+                    aria-label={t("coreAssetSync.counts.failedWithCount", { count: group.failed })}
+                  >
+                    {group.failed}
                   </span>
                 </span>
               );
@@ -169,7 +302,10 @@ export function CoreAssetSyncSettingsFragment() {
               return (
                 <details className="core-asset-sync-group" key={group.kind}>
                   <summary>
-                    <strong>{t(`coreAssetSync.assetKinds.${group.kind}`)}</strong>
+                    <strong>
+                      {t(`coreAssetSync.assetKinds.${group.kind}`)}
+                      <CaretRight className="core-asset-sync-caret" size={16} aria-hidden="true" />
+                    </strong>
                     {metrics}
                   </summary>
                   <div className="core-asset-sync-attention-list">
@@ -178,6 +314,16 @@ export function CoreAssetSyncSettingsFragment() {
                         <div className="skill-sync-item-copy">
                           <strong>{asset.name}</strong>
                           <small>{t(`coreAssetSync.health.${asset.status}`)}</small>
+                          {asset.records.some((item) => item.status === "ignored_remote") ? (
+                            <p>
+                              {t("coreAssetSync.deletedLocally")}{" "}
+                              {t(
+                                asset.kind === "runtime-profile"
+                                  ? "coreAssetSync.restoreDescription"
+                                  : "coreAssetSync.restoreAssetDescription",
+                              )}
+                            </p>
+                          ) : null}
                           {asset.records.flatMap((item) =>
                             item.message ? [<p key={item.key}>{item.message}</p>] : [],
                           )}
@@ -219,7 +365,13 @@ export function CoreAssetSyncSettingsFragment() {
                                   {t("coreAssetSync.keepRemote")}
                                 </button>,
                               ];
-                            if (item.status === "ignored_remote")
+                            if (item.status === "ignored_remote") {
+                              if (
+                                item.key !==
+                                asset.records.find((record) => record.status === "ignored_remote")
+                                  ?.key
+                              )
+                                return [];
                               return [
                                 <button
                                   className="secondary-button"
@@ -234,7 +386,21 @@ export function CoreAssetSyncSettingsFragment() {
                                 >
                                   {t("coreAssetSync.restore")}
                                 </button>,
+                                <button
+                                  className="secondary-button"
+                                  disabled={busy}
+                                  key={`${item.key}:delete-remote`}
+                                  type="button"
+                                  onClick={() =>
+                                    void run(() =>
+                                      window.pragmaDesktop.deleteRemoteCoreAsset(item.key),
+                                    )
+                                  }
+                                >
+                                  {t("coreAssetSync.deleteRemote")}
+                                </button>,
                               ];
+                            }
                             return [];
                           })}
                         </div>
@@ -264,39 +430,46 @@ export function CoreAssetSyncError({ error }: { readonly error: unknown }) {
   );
 }
 
-export function CoreAssetSyncActions(props: {
+export function CoreAssetSyncStatus(props: {
+  readonly message: string;
+  readonly status: "synced" | "pending" | "failed" | "syncing";
+  readonly loading: boolean;
   readonly busy: boolean;
   readonly configured: boolean;
+  readonly syncedAt?: string | undefined;
   readonly onSync: () => void;
-  readonly onRemove: () => void;
 }) {
   const { t } = useTranslation("settings");
-
+  const spinning = props.loading || props.status === "syncing";
   return (
-    <div className="knowledge-sync-actions">
-      <button className="primary-button" type="submit" disabled={props.busy}>
-        {t("coreAssetSync.saveAndSync")}
+    <div className="core-asset-sync-toolbar" aria-busy={spinning}>
+      <div className={`core-asset-sync-indicator is-${props.status}`}>
+        {spinning ? (
+          <Disc className="core-asset-sync-disc" size={32} aria-hidden="true" />
+        ) : props.configured && props.status === "synced" ? (
+          <CheckCircle size={32} weight="fill" aria-hidden="true" />
+        ) : (
+          <WarningCircle size={32} aria-hidden="true" />
+        )}
+        <div>
+          <strong role="status" aria-live="polite">
+            {props.message}
+          </strong>
+          <span>
+            {props.syncedAt
+              ? t("coreAssetSync.lastSync", { date: new Date(props.syncedAt).toLocaleString() })
+              : t("coreAssetSync.neverSynced")}
+          </span>
+        </div>
+      </div>
+      <button
+        className="primary-button"
+        type="button"
+        disabled={props.busy || !props.configured || spinning}
+        onClick={props.onSync}
+      >
+        {t("coreAssetSync.syncNow")}
       </button>
-      {props.configured && (
-        <button
-          className="secondary-button"
-          type="button"
-          disabled={props.busy}
-          onClick={props.onSync}
-        >
-          {t("coreAssetSync.syncNow")}
-        </button>
-      )}
-      {props.configured && (
-        <button
-          className="danger-button"
-          type="button"
-          disabled={props.busy}
-          onClick={props.onRemove}
-        >
-          {t("coreAssetSync.remove")}
-        </button>
-      )}
     </div>
   );
 }

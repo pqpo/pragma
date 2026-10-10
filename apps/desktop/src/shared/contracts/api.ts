@@ -284,6 +284,7 @@ export interface PragmaDesktopAPI {
     input: ResolveCoreAssetSyncConflict,
   ) => Promise<CoreAssetSyncOverview>;
   restoreIgnoredCoreAsset: (key: string) => Promise<CoreAssetSyncOverview>;
+  deleteRemoteCoreAsset: (key: string) => Promise<CoreAssetSyncOverview>;
   getAssetGitStatus: (target: AssetGitTarget) => Promise<AssetGitStatus>;
   bindAssetGit: (input: {
     target: AssetGitTarget;

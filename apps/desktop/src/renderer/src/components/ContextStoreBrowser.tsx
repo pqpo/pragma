@@ -1,5 +1,6 @@
 import {
   ArrowClockwise,
+  CaretDown,
   CaretRight,
   File,
   FileText,
@@ -9,7 +10,7 @@ import {
   SpinnerGap,
   WarningCircle,
 } from "@phosphor-icons/react";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import { useTranslation } from "react-i18next";
 
 import type {
@@ -21,6 +22,11 @@ import type {
 import { errorMessage } from "../lib/errors.ts";
 import { MarkdownContent } from "./MarkdownContent.tsx";
 import { SelectMenu } from "./SelectMenu.tsx";
+import { SidebarResizeHandle } from "./SidebarResizeHandle.tsx";
+import {
+  SIDEBAR_WIDTH_PREFERENCES,
+  usePersistentSidebarWidth,
+} from "../lib/sidebar-width-preference.ts";
 
 export type ContextStoreBrowserDescriptor = Pick<
   MissionContextStoreDescriptor,
@@ -71,6 +77,12 @@ export function ContextStoreBrowser(props: {
   const [refreshRevision, setRefreshRevision] = useState(0);
   const [error, setError] = useState<string>();
   const requestRevision = useRef(0);
+  const [collapsedFolders, setCollapsedFolders] = useState<ReadonlySet<string>>(new Set());
+  const [filePanelWidth, setFilePanelWidth] = usePersistentSidebarWidth(
+    SIDEBAR_WIDTH_PREFERENCES.memoryFiles,
+  );
+
+  useEffect(() => setCollapsedFolders(new Set()), [props.source, scopeId]);
 
   const readEntry = useCallback(
     async (id: string, start = 0) => {
@@ -79,6 +91,9 @@ export function ContextStoreBrowser(props: {
       setContentLoading(true);
       if (start === 0) {
         setSelectedId(id);
+        setCollapsedFolders(
+          (current) => new Set([...current].filter((folder) => !id.startsWith(`${folder}/`))),
+        );
         setChunks([]);
       }
       try {
@@ -208,7 +223,10 @@ export function ContextStoreBrowser(props: {
     () => uniqueEntries([...entries, ...discovered]),
     [discovered, entries],
   );
-  const treeRows = useMemo(() => buildTreeRows(visibleEntries), [visibleEntries]);
+  const treeRows = useMemo(
+    () => buildTreeRows(visibleEntries, collapsedFolders),
+    [visibleEntries, collapsedFolders],
+  );
   const selected = chunks[0];
   const content = chunks.map((chunk) => chunk.content).join("");
   const lastChunk = chunks.at(-1);
@@ -284,8 +302,17 @@ export function ContextStoreBrowser(props: {
           </span>
         </div>
       ) : (
-        <div className="context-browser-workspace">
+        <div
+          className="context-browser-workspace"
+          style={{ "--context-file-list-width": `${filePanelWidth}px` } as CSSProperties}
+        >
           <aside className="context-browser-tree-panel">
+            <SidebarResizeHandle
+              label={t("memoryResizeFileList")}
+              width={filePanelWidth}
+              preference={SIDEBAR_WIDTH_PREFERENCES.memoryFiles}
+              onResize={setFilePanelWidth}
+            />
             <label className="context-browser-search">
               <MagnifyingGlass size={16} aria-hidden="true" />
               <span className="sr-only">
@@ -302,30 +329,43 @@ export function ContextStoreBrowser(props: {
               {searching ? <SpinnerGap className="spin" size={15} aria-hidden="true" /> : null}
             </label>
             {query.trim() === "" ? (
-              <div className="context-browser-tree" role="tree">
+              <div className="context-browser-tree">
                 {treeRows.map((row) =>
                   row.kind === "directory" ? (
-                    <div
+                    <button
+                      type="button"
+                      aria-expanded={!collapsedFolders.has(row.id)}
+                      onClick={() =>
+                        setCollapsedFolders((current) => {
+                          const next = new Set(current);
+                          if (next.has(row.id)) next.delete(row.id);
+                          else next.add(row.id);
+                          return next;
+                        })
+                      }
                       className="context-browser-folder"
                       key={`directory:${row.id}`}
-                      style={{ paddingInlineStart: 10 + row.depth * 16 }}
+                      style={{ paddingInlineStart: 8 + row.depth * 16 }}
                     >
-                      <CaretRight size={13} aria-hidden="true" />
+                      {collapsedFolders.has(row.id) ? (
+                        <CaretRight size={16} aria-hidden="true" />
+                      ) : (
+                        <CaretDown size={16} aria-hidden="true" />
+                      )}
                       <Folder size={16} aria-hidden="true" />
                       <span>{variant === "memory" ? memoryFolderName(row.name, t) : row.name}</span>
-                    </div>
+                    </button>
                   ) : (
                     <button
                       type="button"
-                      role="treeitem"
-                      aria-selected={selectedId === row.entry.id}
+                      aria-pressed={selectedId === row.entry.id}
                       className={
                         selectedId === row.entry.id
                           ? "context-browser-file is-selected"
                           : "context-browser-file"
                       }
                       key={`file:${row.entry.id}`}
-                      style={{ paddingInlineStart: 26 + row.depth * 16 }}
+                      style={{ paddingInlineStart: 24 + row.depth * 16 }}
                       onClick={() => void readEntry(row.entry.id)}
                     >
                       <ContextEntryIcon entry={row.entry} />
@@ -533,7 +573,10 @@ type TreeRow =
       readonly entry: MissionContextStoreEntry;
     };
 
-export function buildTreeRows(entries: readonly MissionContextStoreEntry[]): readonly TreeRow[] {
+export function buildTreeRows(
+  entries: readonly MissionContextStoreEntry[],
+  collapsedFolders: ReadonlySet<string> = new Set(),
+): readonly TreeRow[] {
   const rows: TreeRow[] = [];
   const directories = new Set<string>();
   for (const entry of entries.toSorted(compareEntries)) {
@@ -542,8 +585,11 @@ export function buildTreeRows(entries: readonly MissionContextStoreEntry[]): rea
       const id = parts.slice(0, index + 1).join("/");
       if (directories.has(id)) continue;
       directories.add(id);
-      rows.push({ kind: "directory", id, name: parts[index]!, depth: index });
+      if (![...collapsedFolders].some((parent) => id.startsWith(`${parent}/`))) {
+        rows.push({ kind: "directory", id, name: parts[index]!, depth: index });
+      }
     }
+    if ([...collapsedFolders].some((parent) => entry.id.startsWith(`${parent}/`))) continue;
     rows.push({
       kind: "file",
       name: parts.at(-1) ?? entry.id,

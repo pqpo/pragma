@@ -106,33 +106,47 @@
   display: grid;
   min-width: 0;
   min-height: 0;
-  grid-template-columns: minmax(220px, 29%) minmax(0, 1fr);
+  grid-template-columns: minmax(0, min(var(--context-file-list-width, 240px), 50%)) minmax(0, 1fr);
   overflow: hidden;
   border: 1px solid var(--border);
-  border-radius: 12px;
+  border-radius: 0;
   background: var(--surface);
 }
 
 .context-browser-tree-panel {
+  position: relative;
   display: grid;
   min-width: 0;
   min-height: 0;
   grid-template-rows: auto minmax(0, 1fr);
-  overflow: hidden;
-  border-right: 1px solid var(--border);
+  border-right: 1px solid var(--ui-line);
   background: var(--surface-soft);
+}
+
+.context-browser-tree-panel > .sidebar-resize-handle {
+  left: auto;
+  right: -4px;
 }
 
 .context-browser-search {
   display: flex;
   align-items: center;
-  gap: 7px;
-  margin: 10px;
-  padding: 7px 9px;
-  border: 1px solid var(--border);
-  border-radius: 8px;
+  gap: 8px;
+  margin: 8px;
+  padding: 8px;
+  border: 1px solid var(--ui-line-strong);
+  border-radius: var(--ui-radius-md);
   background: var(--surface);
   color: var(--muted);
+}
+
+.context-browser-search input:focus-visible {
+  outline: 0;
+  box-shadow: none;
+}
+
+.context-browser-search:focus-within {
+  box-shadow: 0 0 0 3px var(--ui-focus);
 }
 
 .context-browser-search input {
@@ -155,16 +169,22 @@
 
 .context-browser-folder,
 .context-browser-file {
-  min-height: 34px;
+  min-height: 36px;
   align-items: center;
-  gap: 7px;
-  color: #4c5850;
-  font-size: 12px;
+  gap: 8px;
+  color: var(--ui-text-secondary);
+  font-size: 13px;
 }
 
 .context-browser-folder {
   display: flex;
-  font-weight: 650;
+  width: 100%;
+  border: 0;
+  border-radius: var(--ui-radius-md);
+  background: transparent;
+  cursor: pointer;
+  text-align: left;
+  font-weight: 500;
 }
 
 .context-browser-file {
@@ -178,10 +198,11 @@
   text-align: left;
 }
 
+.context-browser-folder:hover,
 .context-browser-file:hover,
 .context-browser-file.is-selected {
-  background: #e2e8e3;
-  color: #1e2a22;
+  background: var(--ui-selection);
+  color: var(--ui-text);
 }
 
 .context-browser-file > span {
@@ -397,7 +418,13 @@
     grid-template-rows: minmax(180px, 35%) minmax(0, 1fr);
   }
 
+  .context-browser-tree-panel > .sidebar-resize-handle {
+    display: none;
+  }
+
   .context-browser-tree-panel {
+    width: auto;
+    max-width: 100%;
     border-right: 0;
     border-bottom: 1px solid var(--border);
   }

@@ -45,6 +45,30 @@ describe("ContextStoreBrowser tree", () => {
     ]);
   });
 
+  it("collapses whole folders while preserving siblings and nested collapse state", () => {
+    const entries = [
+      { id: "semantic/index.md", metadata },
+      { id: "semantic/items/fact.md", metadata },
+      { id: "episodic/index.md", metadata },
+    ];
+    const collapsed = new Set(["semantic", "semantic/items"]);
+    const ids = () =>
+      buildTreeRows(entries, collapsed).map((row) =>
+        row.kind === "directory" ? row.id : row.entry.id,
+      );
+    expect(ids()).toEqual(["episodic", "episodic/index.md", "semantic"]);
+    collapsed.delete("semantic");
+    expect(ids()).toEqual([
+      "episodic",
+      "episodic/index.md",
+      "semantic",
+      "semantic/index.md",
+      "semantic/items",
+    ]);
+    collapsed.clear();
+    expect(ids()).toContain("semantic/items/fact.md");
+  });
+
   it("accepts only store-relative internal context ids", () => {
     expect(normalizeInternalContextId("semantic/items/fact-a.md")).toBe("semantic/items/fact-a.md");
     expect(normalizeInternalContextId("../secret.md")).toBeUndefined();

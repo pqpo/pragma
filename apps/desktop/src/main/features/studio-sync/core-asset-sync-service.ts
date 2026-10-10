@@ -102,6 +102,7 @@ export interface CoreAssetSyncService {
   refresh(): Promise<CoreAssetSyncOverview>;
   resolve(key: string, choice: "local" | "remote"): Promise<CoreAssetSyncOverview>;
   restore(key: string): Promise<CoreAssetSyncOverview>;
+  deleteRemote(key: string): Promise<CoreAssetSyncOverview>;
 }
 
 export function createCoreAssetSyncService(options: {
@@ -428,7 +429,7 @@ export function createCoreAssetSyncService(options: {
 
   const run = async (
     intent: "full" | "pull" | "automatic",
-    resolution?: { key: string; choice: "local" | "remote" },
+    resolution?: { key: string; choice: "local" | "remote" | "delete" },
   ): Promise<CoreAssetSyncOverview> => {
     await mkdir(dirname(options.statePath), { recursive: true });
     return await withFileLock(`${options.statePath}.lock`, async () => {
@@ -476,6 +477,48 @@ export function createCoreAssetSyncService(options: {
               const group = item ? logicalAssetIdentity(item, local, remote).assetKey : key;
               groups.set(group, [...(groups.get(group) ?? []), key]);
             }
+            const deletionKeys =
+              resolution?.choice === "delete"
+                ? [...groups.values()].find((members) => members.includes(resolution.key))
+                : undefined;
+            if (resolution?.choice === "delete") {
+              if (!deletionKeys?.some((key) => remote.has(key)))
+                throw new Error("The Git asset no longer exists. Refresh synchronization status.");
+              if (deletionKeys.some((key) => local.has(key)))
+                throw new Error(
+                  "The asset exists locally again. Refresh synchronization status before deleting from Git.",
+                );
+              const removedRefs = new Set(
+                deletionKeys.flatMap((key) => {
+                  const parsed = PragmaForwardCompatibleResourceSchema.safeParse(
+                    remote.get(key)?.data,
+                  );
+                  return parsed.success ? [canonicalPragmaResourceRef(parsed.data)] : [];
+                }),
+              );
+              for (const item of remote.values()) {
+                if (deletionKeys.includes(item.key)) continue;
+                const parsed = PragmaForwardCompatibleResourceSchema.safeParse(item.data);
+                if (!parsed.success) continue;
+                const resource = parsed.data;
+                const capability = classifyDesktopCapabilityResource(resource);
+                const storeId = classifyDesktopContextResource(resource);
+                if (
+                  [...referencedPragmaResourceRefs([resource])].some((ref) =>
+                    removedRefs.has(ref),
+                  ) ||
+                  (capability &&
+                    deletionKeys.some(
+                      (key) =>
+                        key === `capability:${capability.id}` || key === `skill:${capability.id}`,
+                    )) ||
+                  (storeId && deletionKeys.includes(`knowledge:${storeId}`))
+                )
+                  throw new Error(
+                    `The Git asset is still referenced by ${resource.metadata.name}. Update or delete that reference first.`,
+                  );
+              }
+            }
             const groupChoices = new Map<string, "local" | "remote">();
             const groupedConflicts = new Set<string>();
             for (const members of groups.values()) {
@@ -498,7 +541,11 @@ export function createCoreAssetSyncService(options: {
                 (key) => local.get(key)?.fingerprint === remote.get(key)?.fingerprint,
               );
               if (resolution && members.includes(resolution.key))
-                for (const key of members) groupChoices.set(key, resolution.choice);
+                for (const key of members)
+                  groupChoices.set(
+                    key,
+                    resolution.choice === "delete" ? "local" : resolution.choice,
+                  );
               else if (
                 !equal &&
                 ((localChanged && remoteChanged) ||
@@ -564,6 +611,14 @@ export function createCoreAssetSyncService(options: {
               }
             }
             for (const key of keys) {
+              if (deletionKeys) {
+                if (!deletionKeys.includes(key)) continue;
+                nextRemote.delete(key);
+                ignored.delete(key);
+                delete bases[key];
+                pushNeeded = true;
+                continue;
+              }
               if (groupedConflicts.has(key)) {
                 conflicts.push(key);
                 continue;
@@ -610,6 +665,7 @@ export function createCoreAssetSyncService(options: {
                   pushNeeded = true;
                 } else if (choice === "local" || config.pushDeletions) {
                   nextRemote.delete(key);
+                  ignored.delete(key);
                   delete bases[key];
                   pushNeeded = true;
                 } else {
@@ -662,8 +718,12 @@ export function createCoreAssetSyncService(options: {
                 ]),
               ),
               ignoredRemote: [...ignored],
-              conflicts,
-              restoreConflicts: state.restoreConflicts.filter((key) => conflicts.includes(key)),
+              conflicts: deletionKeys
+                ? state.conflicts.filter((key) => !deletionKeys.includes(key))
+                : conflicts,
+              restoreConflicts: state.restoreConflicts.filter((key) =>
+                deletionKeys ? !deletionKeys.includes(key) : conflicts.includes(key),
+              ),
             });
             if (pushNeeded) encodeSyncRepository(nextRemote);
             if (changes.length > 0) {
@@ -787,6 +847,7 @@ export function createCoreAssetSyncService(options: {
     refresh: async () => await run("pull"),
     resolve: async (key, choice) => await run("full", { key, choice }),
     restore: async (key) => await run("pull", { key, choice: "remote" }),
+    deleteRemote: async (key) => await run("full", { key, choice: "delete" }),
   };
 }
 

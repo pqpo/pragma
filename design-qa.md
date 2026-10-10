@@ -1358,3 +1358,47 @@ No actionable P0/P1/P2 differences remain for the approved design plan.
 No P3 follow-up is required for this scope.
 
 final result: passed
+
+---
+
+# Sync settings redesign Design QA — 2026-10-10
+
+- Source visual truth: `/Users/linminqiu/.codex/generated_images/01a125df-6f88-7101-b08f-b59665d1d9a0/exec-3b6885b1-6317-402f-850d-b550652b6e1c.png` (selected option 1, duplicate settings icon removed).
+- Implementation: production `CoreAssetSyncSettingsFragment`, mounted with the existing Sidebar and SettingsPage in a local fixture preview at `http://127.0.0.1:5198/`.
+- Source and implementation comparison dimensions: 1668 × 943 pixels, 1668 × 943 CSS viewport, 1× density. Both images are displayed together in the comparison page; no density resampling was required.
+- Implementation evidence: `/tmp/pragma-sync-design-preview/implementation.png`; final 1440 × 900 capture: `/tmp/pragma-sync-design-preview/final.png`.
+- Full and focused comparison evidence: `/tmp/pragma-sync-design-preview/comparison.png` and `/tmp/pragma-sync-design-preview/comparison-final.png`. The comparison contains both full screens and enlarged status/metrics/column regions in one image.
+- State: Simplified Chinese, configured, 18 assets synchronized; Git settings modal closed. Additional checks: modal open/focused, cancel, save, removing configuration, synchronizing, failure, ignored remote asset actions, English at 1080 × 700. Very narrow viewports below the application's 1080px minimum retain the existing application-shell minimum width; this task does not change that shell contract.
+
+## Comparison history
+
+1. Initial comparison: P2, vertical rhythm was more compressed than the selected design and the numeric rows were undersized. Evidence: `comparison.png`. Adjusted toolbar padding to 24px, summary spacing to 48px/64px, rows to 56px, numeric data to the existing 14px body size.
+2. Post-fix comparison: `comparison-final.png`. Status, counts, column headings and rows now have the selected open, borderless hierarchy. No outstanding actionable P0/P1/P2 findings.
+
+## Required fidelity surfaces
+
+- Fonts/typography: existing application Inter/system Chinese fallback; 24px page title/counts, 16px status, 14px rows/data, 12px metadata. Native repository typography is retained instead of enlarging the entire app to match raster mock text.
+- Spacing/layout: one header settings icon, one manual-sync primary action, four counts, aligned asset columns, no section/row dividers. Existing draggable sidebar widths and production shell are intentional differences from the generated mock.
+- Colors/tokens: existing canvas, text, secondary text, accent and danger tokens; no new raw colors, card shadows or gradients.
+- Images/icons: existing application brand asset and Phosphor Gear/Disc/CheckCircle/WarningCircle/CaretRight icons. No bespoke raster assets were needed; the disc is animated only while loading/synchronizing and respects reduced motion.
+- Copy/content: full existing asset coverage is retained in the subtitle; accurate last-sync time and needs-attention counts; configuration restored from Git does not imply model availability. The extra duplicate settings icon is absent.
+
+## Interaction and verification
+
+- Exactly one sync-settings button and zero outside textboxes in the configured page.
+- Settings dialog exposes remote, optional branch and existing upload policies; cancel discards drafts; save uses the existing IPC use case; remove configuration remains available in the dialog.
+- Manual sync shows the disc animation and disables competing operations; completion restores controls. Failure stops the animation and exposes redacted, localized diagnostics with retry available. Background synchronization present on initial page load was also verified: its status refreshes every two seconds while active, then stops the disc and restores manual sync after completion.
+- Ignored remote assets retain Restore from Git / Delete from Git actions and explanatory copy.
+- Browser console errors checked: none.
+- Renderer tests: 8 passed; renderer typecheck, scoped ESLint and style ownership verification passed.
+- Preview uses synthetic data; no production Git configuration or remote data was changed during browser verification.
+
+## Implementation checklist
+
+- [x] Single settings icon and modal configuration.
+- [x] Status/time/manual sync and accurate loading/error states.
+- [x] Borderless statistics and aligned asset counts.
+- [x] Existing conflict/restore/delete actions retained.
+- [x] Keyboard focus and reduced-motion behavior supported.
+
+final result: passed

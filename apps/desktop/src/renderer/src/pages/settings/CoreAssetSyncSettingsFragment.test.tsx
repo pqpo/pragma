@@ -1,7 +1,7 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 
-import { CoreAssetSyncActions, CoreAssetSyncError } from "./CoreAssetSyncSettingsFragment.tsx";
+import { CoreAssetSyncStatus, CoreAssetSyncError } from "./CoreAssetSyncSettingsFragment.tsx";
 
 it("shows an actionable reason and expandable redacted diagnostics", () => {
   const html = renderToStaticMarkup(
@@ -32,37 +32,36 @@ it("retains structured error codes when rendering an IPC failure", () => {
   expect(html).toContain("YAML parse failed.");
 });
 
-describe("CoreAssetSyncActions", () => {
-  it("uses the shared action styles for every configured sync action", () => {
+describe("CoreAssetSyncStatus", () => {
+  const props = {
+    message: "All core assets are synchronized.",
+    status: "synced" as const,
+    loading: false,
+    busy: false,
+    configured: true,
+    onSync: () => undefined,
+  };
+  it("shows manual synchronization and last sync time without configuration fields", () => {
     const html = renderToStaticMarkup(
-      <CoreAssetSyncActions
-        busy={false}
-        configured
-        onSync={() => undefined}
-        onRemove={() => undefined}
-      />,
+      <CoreAssetSyncStatus {...props} syncedAt="2026-10-10T13:47:00Z" />,
     );
-
-    expect(html).toContain('class="primary-button"');
-    expect(html).toContain("Save and sync");
-    expect(html).toContain('class="secondary-button"');
     expect(html).toContain("Sync now");
-    expect(html).toContain('class="danger-button"');
-    expect(html).toContain("Remove configuration");
-  });
-
-  it("only shows save before sync has been configured", () => {
-    const html = renderToStaticMarkup(
-      <CoreAssetSyncActions
-        busy={false}
-        configured={false}
-        onSync={() => undefined}
-        onRemove={() => undefined}
-      />,
-    );
-
-    expect(html).toContain("Save and sync");
-    expect(html).not.toContain("Sync now");
+    expect(html).toContain("Last synchronized:");
+    expect(html).not.toContain("<input");
+    expect(html).not.toContain("Save and sync");
     expect(html).not.toContain("Remove configuration");
+  });
+  it("disables manual sync and uses a disc indicator while syncing", () => {
+    const html = renderToStaticMarkup(
+      <CoreAssetSyncStatus {...props} status="syncing" busy message="Synchronizing core assets…" />,
+    );
+    expect(html).toContain('aria-busy="true"');
+    expect(html).toContain('class="core-asset-sync-disc"');
+    expect(html).toContain("disabled");
+  });
+  it("does not allow manual synchronization before a repository is configured", () => {
+    const html = renderToStaticMarkup(<CoreAssetSyncStatus {...props} configured={false} />);
+    expect(html).toContain("Not synchronized yet");
+    expect(html).toContain("disabled");
   });
 });

@@ -8,6 +8,7 @@ import type {
 import { MemoryAttentionSettingsSection } from "./MemoryAttentionSettingsSection.tsx";
 import { MemoryRetrievalSettingsSection } from "./MemoryRetrievalSettingsSection.tsx";
 import { MemorySettingsFragment } from "./MemorySettingsFragment.tsx";
+import { CoreAssetSyncSettingsFragment } from "./CoreAssetSyncSettingsFragment.tsx";
 
 // These settings have no DOM dependencies. Drive their hook lifecycle and inspect the IPC boundary.
 const hooks = vi.hoisted(() => {
@@ -85,6 +86,7 @@ vi.mock("react", async (original) => ({
   useState: hooks.useState,
   useRef: hooks.useRef,
   useCallback: hooks.useCallback,
+  useMemo: (factory: () => unknown) => factory(),
   useEffect: hooks.useEffect,
 }));
 vi.mock("react-i18next", () => {
@@ -117,7 +119,11 @@ function renderer(component: () => ReactNode) {
           }
         } else if (isValidElement<Record<string, unknown>>(node)) {
           if (match(node.props, node.type)) return node.props;
-          return find(node.props.children as ReactNode);
+          return (
+            find(node.props.children as ReactNode) ??
+            find(node.props.header as ReactNode) ??
+            find(node.props.footer as ReactNode)
+          );
         }
         return undefined;
       };
@@ -139,6 +145,57 @@ beforeEach(() => {
 afterEach(() => {
   vi.useRealTimers();
   vi.unstubAllGlobals();
+});
+
+it("preserves the Git configuration draft across background sync refreshes", async () => {
+  const overview = {
+    status: "syncing",
+    configuration: {
+      schemaVersion: "pragma.asset-sync-settings/v1",
+      remote: "https://example.test/original.git",
+      branch: "main",
+      autoPush: true,
+      pushDeletions: false,
+    },
+    items: [],
+  };
+  const read = vi.fn().mockResolvedValue(overview);
+  const update = vi.fn().mockResolvedValue({ ...overview, status: "ready" });
+  vi.stubGlobal("window", {
+    pragmaDesktop: {
+      getCoreAssetSyncOverview: read,
+      updateCoreAssetSyncConfiguration: update,
+    },
+  });
+  const view = renderer(CoreAssetSyncSettingsFragment);
+  try {
+    await view.flush();
+    const open = view.props((props) => props["aria-label"] === "coreAssetSync.settings");
+    (open.onClick as () => void)();
+    await view.flush();
+    const remote = view.props((props, type) => type === "input" && props.required === true);
+    (remote.onChange as (event: unknown) => void)({
+      target: { value: "https://example.test/new.git" },
+    });
+    await view.flush();
+    await vi.advanceTimersByTimeAsync(2_000);
+    await view.flush();
+    expect(read).toHaveBeenCalledTimes(2);
+    expect(view.props((props, type) => type === "input" && props.required === true).value).toBe(
+      "https://example.test/new.git",
+    );
+    const form = view.props((props) => props.id === "core-asset-sync-configuration-form");
+    (form.onSubmit as (event: unknown) => void)({ preventDefault: vi.fn() });
+    await view.flush();
+    expect(update).toHaveBeenCalledWith({
+      remote: "https://example.test/new.git",
+      branch: "main",
+      autoPush: true,
+      pushDeletions: false,
+    });
+  } finally {
+    view.unmount();
+  }
 });
 
 function attentionFixture() {

@@ -1,9 +1,10 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useId, useMemo, useRef, useState } from "react";
 import {
   ArrowLeft,
   Brain,
   CaretRight,
   Database,
+  Question,
   SpinnerGap,
   WarningCircle,
   X,
@@ -23,6 +24,7 @@ import {
   type ContextStoreBrowserSource,
 } from "../../components/MemoryStoreBrowser.tsx";
 import { SelectMenu } from "../../components/SelectMenu.tsx";
+import { i18n } from "../../i18n/index.ts";
 import { errorMessage } from "../../lib/errors.ts";
 
 type MemoryContentApi = Pick<
@@ -179,9 +181,11 @@ export function MissionMemoryActivity(props: {
         {feedback}
         <dl className="mission-memory-summary" aria-label={t("memoryActivitySummary")}>
           <div>
-            <dt>{t("memoryCapturedShort")}</dt>
+            <dt>
+              {t("memoryCapturedShort")}
+              <MemoryEvidenceHint />
+            </dt>
             <dd>{props.activity === undefined ? "—" : totals.evidence}</dd>
-            <small>{t("memoryCapturedClarification")}</small>
           </div>
           <div>
             <dt>{t("memoryRecallOperations")}</dt>
@@ -318,6 +322,52 @@ export function MissionMemoryActivity(props: {
         </Dialog>
       ) : null}
     </div>
+  );
+}
+
+function MemoryEvidenceHint() {
+  const { t } = useTranslation("missions");
+  const [open, setOpen] = useState(false);
+  const tooltipId = useId();
+  const rootRef = useRef<HTMLSpanElement>(null);
+  useEffect(() => {
+    if (!open) return;
+    const dismiss = (event: PointerEvent) => {
+      if (event.target instanceof Node && !rootRef.current?.contains(event.target)) setOpen(false);
+    };
+    document.addEventListener("pointerdown", dismiss);
+    return () => document.removeEventListener("pointerdown", dismiss);
+  }, [open]);
+  return (
+    <span
+      className="mission-memory-evidence-hint"
+      ref={rootRef}
+      onBlur={(event) => {
+        if (!event.currentTarget.contains(event.relatedTarget)) setOpen(false);
+      }}
+      onKeyDown={(event) => {
+        if (event.key === "Escape" && open) {
+          event.stopPropagation();
+          setOpen(false);
+        }
+      }}
+    >
+      <button
+        type="button"
+        className="mission-memory-evidence-help"
+        aria-label={t("memoryEvidenceHelp")}
+        aria-expanded={open}
+        aria-describedby={open ? tooltipId : undefined}
+        onClick={() => setOpen((current) => !current)}
+      >
+        <Question size={16} aria-hidden="true" />
+      </button>
+      {open ? (
+        <span id={tooltipId} className="mission-memory-evidence-tooltip" role="tooltip">
+          {t("memoryCapturedClarification")}
+        </span>
+      ) : null}
+    </span>
   );
 }
 
@@ -542,7 +592,7 @@ function MissionRecallContent(props: {
         description={props.label}
         onBack={props.onBack}
       />
-      <p className="mission-memory-message">{t("memoryRecallCurrentContent")}</p>
+      <p className="mission-memory-message">{t("memoryRecallLogDescription")}</p>
       {error !== undefined ? (
         <div className="mission-memory-message is-warning" role="alert">
           <p>{error}</p>
@@ -555,54 +605,78 @@ function MissionRecallContent(props: {
           </button>
         </div>
       ) : null}
-      {page?.records.map((record) => (
-        <section className="mission-memory-recall-record" key={record.id}>
-          <header>
-            <h3>
-              {t(
-                record.operation === "read"
-                  ? "memoryRecallReadContent"
-                  : record.operation === "search"
-                    ? "memoryRecallSearchContent"
-                    : "memoryRecallListContent",
-              )}
-            </h3>
-            <time dateTime={record.occurredAt}>{formatMemoryTime(record.occurredAt)}</time>
-          </header>
-          {record.outcome !== "allowed" ? (
-            <p className="mission-memory-message is-warning" role="status">
-              {t(record.outcome === "denied" ? "memoryRecallDenied" : "memoryRecallFailed")} ·{" "}
-              <code>{record.reason}</code>
-            </p>
-          ) : null}
-          {record.sources.length === 0 && record.outcome === "allowed" ? (
-            <p className="mission-memory-message">{t("memoryRecallNoResults")}</p>
-          ) : null}
-          {record.sources.map((source, index) => (
-            <button
-              type="button"
-              className="mission-memory-content-row"
-              key={`${source.id}:${index}`}
-              disabled={!source.available}
-              onClick={() => props.onOpenSource(source.id)}
-            >
-              <span className="mission-memory-row-copy">
-                <span className="mission-memory-row-title">{sourceName(source)}</span>
-                <span className="mission-memory-row-meta">
-                  {!source.available
-                    ? t("memorySourceUnavailable")
-                    : source.revision !== undefined &&
-                        source.currentRevision !== undefined &&
-                        source.revision !== source.currentRevision
-                      ? t("memoryRecallSourceUpdated")
-                      : t("memoryViewSourceContent")}
-                </span>
+      <ol className="mission-memory-recall-list">
+        {page?.records.map((record) => (
+          <li className="mission-memory-recall-record" key={record.id}>
+            <header>
+              <span className="mission-memory-recall-action">
+                {t(
+                  record.operation === "read"
+                    ? "memoryRecallReadContent"
+                    : record.operation === "search"
+                      ? "memoryRecallSearchContent"
+                      : "memoryRecallListContent",
+                )}
               </span>
-              <CaretRight size={16} aria-hidden="true" />
-            </button>
-          ))}
-        </section>
-      ))}
+              <time dateTime={record.occurredAt}>{formatMemoryTime(record.occurredAt)}</time>
+            </header>
+            {record.operation === "search" ? (
+              <p className="mission-memory-recall-query">
+                {record.query === undefined
+                  ? t("memoryRecallQueryUnavailable")
+                  : t("memoryRecallQuery", { query: record.query })}
+              </p>
+            ) : null}
+            {record.operation === "list" ? (
+              <p className="mission-memory-row-meta">{t("memoryRecallDirectoryDescription")}</p>
+            ) : null}
+            {record.outcome !== "allowed" ? (
+              <p className="mission-memory-message is-warning" role="status">
+                {t(record.outcome === "denied" ? "memoryRecallDenied" : "memoryRecallFailed")} ·{" "}
+                <code>{record.reason}</code>
+              </p>
+            ) : record.sources.length === 0 ? (
+              <p className="mission-memory-row-meta">{t("memoryRecallNoResults")}</p>
+            ) : (
+              <div className="mission-memory-recall-results">
+                <span className="mission-memory-row-meta">
+                  {t(
+                    record.operation === "search"
+                      ? "memoryRecallMatchedCount"
+                      : record.operation === "list"
+                        ? "memoryRecallListedCount"
+                        : "memoryRecallReadCount",
+                    { count: record.sources.length },
+                  )}
+                </span>
+                {record.sources.map((source, index) => (
+                  <span className="mission-memory-recall-result" key={`${source.id}:${index}`}>
+                    <button
+                      type="button"
+                      className="mission-memory-recall-link"
+                      disabled={!source.available}
+                      onClick={() => props.onOpenSource(source.id)}
+                    >
+                      {sourceName(source)}
+                    </button>
+                    {!source.available ? (
+                      <span className="mission-memory-row-meta">
+                        {t("memorySourceUnavailable")}
+                      </span>
+                    ) : source.revision !== undefined &&
+                      source.currentRevision !== undefined &&
+                      source.revision !== source.currentRevision ? (
+                      <span className="mission-memory-row-meta">
+                        {t("memoryRecallSourceUpdated")}
+                      </span>
+                    ) : null}
+                  </span>
+                ))}
+              </div>
+            )}
+          </li>
+        ))}
+      </ol>
       {loading ? (
         <p className="mission-memory-message" role="status">
           {t("memoryContentLoading")}
@@ -625,7 +699,7 @@ function MissionRecallContent(props: {
   );
 }
 function formatMemoryTime(value: string): string {
-  return new Intl.DateTimeFormat(undefined, {
+  return new Intl.DateTimeFormat(i18n.language, {
     month: "short",
     day: "numeric",
     hour: "2-digit",

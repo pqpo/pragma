@@ -141,6 +141,10 @@
   gap: 4px;
 }
 .mission-memory-summary dt {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-height: 32px;
   color: var(--ui-text-secondary);
   font-size: 12px;
   line-height: 1.45;
@@ -152,8 +156,38 @@
   font-variant-numeric: tabular-nums;
   line-height: 1.25;
 }
-.mission-memory-summary small {
-  max-width: 240px;
+.mission-memory-evidence-hint {
+  position: relative;
+  display: inline-flex;
+}
+.mission-memory-evidence-help {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--ui-radius-md);
+  background: transparent;
+  color: var(--ui-text-secondary);
+  cursor: pointer;
+}
+.mission-memory-evidence-help:hover {
+  background: var(--ui-surface-subtle);
+  color: var(--ui-text);
+}
+.mission-memory-evidence-tooltip {
+  position: absolute;
+  z-index: 30;
+  top: calc(100% + 4px);
+  left: 0;
+  width: 240px;
+  max-width: calc(100vw - 64px);
+  padding: 8px 12px;
+  border: 1px solid var(--ui-line-strong);
+  border-radius: var(--ui-radius-md);
+  background: var(--ui-surface);
   color: var(--ui-text-secondary);
   font-size: 12px;
   line-height: 1.45;
@@ -260,8 +294,13 @@
   vertical-align: text-bottom;
   margin-right: 8px;
 }
+.mission-memory-recall-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
 .mission-memory-recall-record {
-  margin-top: 24px;
+  padding: 16px 0;
 }
 .mission-memory-recall-record > header {
   display: flex;
@@ -269,10 +308,47 @@
   justify-content: space-between;
   gap: 16px;
 }
-.mission-memory-recall-record h3 {
+.mission-memory-recall-record + .mission-memory-recall-record {
+  border-top: 1px solid var(--ui-line);
+}
+.mission-memory-recall-action {
   margin: 0;
   font-size: 14px;
   font-weight: 500;
+}
+.mission-memory-recall-query {
+  margin: 8px 0;
+  color: var(--ui-text);
+  font-size: 14px;
+  overflow-wrap: anywhere;
+}
+.mission-memory-recall-results {
+  display: grid;
+  gap: 8px;
+  margin-top: 8px;
+}
+.mission-memory-recall-result {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 8px;
+}
+.mission-memory-recall-link {
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--ui-accent-strong);
+  font-size: 14px;
+  text-align: left;
+  overflow-wrap: anywhere;
+  cursor: pointer;
+}
+.mission-memory-recall-link:hover {
+  text-decoration: underline;
+}
+.mission-memory-recall-link:disabled {
+  color: var(--ui-text-secondary);
+  cursor: default;
 }
 .mission-memory-recall-record time {
   color: var(--ui-text-secondary);

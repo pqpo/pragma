@@ -536,6 +536,7 @@ export const DesktopMissionMemoryRecallPageSchema = z
           id: z.string(),
           operation: z.enum(["list", "search", "read"]),
           target: z.string(),
+          query: z.string().optional(),
           outcome: z.enum(["allowed", "denied", "failed"]),
           reason: z.string(),
           occurredAt: z.string().datetime(),

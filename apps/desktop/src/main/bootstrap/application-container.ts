@@ -787,6 +787,8 @@ export async function createDesktopApplicationContainer(
     resolve: async (key, choice) =>
       await assetSync.run(async () => await coreAssetSync.resolve(key, choice)),
     restore: async (key) => await assetSync.run(async () => await coreAssetSync.restore(key)),
+    deleteRemote: async (key) =>
+      await assetSync.run(async () => await coreAssetSync.deleteRemote(key)),
   };
   const storeRevisionAgentRef: { current?: DesktopStoreRevisionAgent } = {};
   const revisionGenerator: ContextStoreRevisionGenerator = {

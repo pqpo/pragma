@@ -14,6 +14,63 @@ const electron = vi.hoisted(() => ({
 vi.mock("electron", () => ({ ipcMain: { handle: electron.handle } }));
 
 describe("Memory policy IPC", () => {
+  it("keeps authorized recall results available when execution search text cannot be loaded", async () => {
+    electron.handlers.clear();
+    const readEvents = vi.fn(async () => {
+      throw new Error("execution unavailable");
+    });
+    const listRecall = vi.fn(async () => [
+      {
+        schemaVersion: "pragma.memory-recall-activity/v1",
+        id: "recall",
+        executionId: "own",
+        invocationId: "invocation",
+        operation: "search",
+        target: "memory",
+        queryDigest: "digest",
+        resultRefs: [{ id: "overview.md" }],
+        outcome: "allowed",
+        reason: "matched",
+        occurredAt: "2026-10-10T09:00:00.000Z",
+      },
+    ]);
+    installMemoryPolicyHandlers(
+      { activity: { listRecall }, executionStore: { readEvents } } as unknown as Parameters<
+        typeof installMemoryPolicyHandlers
+      >[0],
+      {
+        missions: {
+          get: vi.fn(async () => ({})),
+          readTimelinePage: vi.fn(async () => ({
+            turns: [
+              {
+                sequence: 1,
+                executionId: "own",
+                message: { content: "Task", createdAt: "2026-10-10T09:00:00.000Z" },
+              },
+            ],
+          })),
+        },
+        memoryBrowser: { getMemorySourceReader: vi.fn(async () => async () => undefined) },
+        curator: { subscribeRunChat: vi.fn() },
+        getWindow: () => null,
+      } as unknown as Parameters<typeof installMemoryPolicyHandlers>[1],
+    );
+    const page = await electron.handlers.get("memory-mission:recall")!(
+      {},
+      {
+        missionId: "00000000-0000-4000-8000-000000000001",
+        executionId: "own",
+        limit: 30,
+      },
+    );
+    expect(readEvents).toHaveBeenCalledWith("own");
+    expect(page).toMatchObject({
+      records: [{ operation: "search", sources: [{ id: "overview.md", available: true }] }],
+    });
+    expect((page as { records: object[] }).records[0]).not.toHaveProperty("query");
+  });
+
   it("rejects recall content requests for another Mission's execution before reading sources", async () => {
     electron.handlers.clear();
     const listRecall = vi.fn();

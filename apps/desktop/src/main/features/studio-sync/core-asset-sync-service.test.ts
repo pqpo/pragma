@@ -699,6 +699,106 @@ describe("core asset Git synchronization", { timeout: 30_000 }, () => {
     expect(local.name()).toBe("Shared docs");
   });
 
+  it("deletes a locally removed runtime profile from Git without restoring it or uploading unrelated edits", async () => {
+    const root = await fixture();
+    const runtime: PragmaResource = {
+      apiVersion: PRAGMA_DSL_WRITE_API_VERSION,
+      kind: "RuntimeProfile",
+      metadata: {
+        id: "mwxac8be2zf72knf",
+        name: "Codex / GPT-5.5",
+        description: "Old model",
+        tags: [],
+      },
+      spec: {
+        adapter: "pragma.runtime.profile@v1",
+        config: { runtimeId: "codex", providerId: "openai", model: "gpt-5.5" },
+      },
+    };
+    const local = device(join(root, "local"), "Shared docs", undefined, [runtime]);
+    await local.service.configure({
+      remote,
+      branch: "main",
+      autoPush: false,
+      pushDeletions: false,
+    });
+    const key = `runtime-profile:${canonicalPragmaResourceRef(runtime)}`;
+    local.replaceResources([]);
+    expect((await local.service.refresh()).items.find((item) => item.key === key)?.status).toBe(
+      "ignored_remote",
+    );
+    const restored = await local.service.restore(key);
+    expect(local.resources()).toEqual([runtime]);
+    expect(restored.items.find((item) => item.key === key)?.status).toBe("needs_attention");
+    local.replaceResources([]);
+    await local.service.refresh();
+    local.rename("Unpublished local edit");
+    const removed = await local.service.deleteRemote(key);
+    expect(removed.status, removed.error).toBe("ready");
+    expect(removed.items.some((item) => item.key === key)).toBe(false);
+    expect(local.resources()).toEqual([]);
+    const check = join(root, "inspect-delete");
+    await exec("git", ["clone", barePath(root), check]);
+    const items = await readSyncRepository(check, true);
+    expect(items.has(key)).toBe(false);
+    expect(items.get(`knowledge:${storeId}`)?.name).toBe("Shared docs");
+    expect(await readFile(join(check, "README.md"), "utf8")).toContain("Core asset repository");
+    const state = JSON.parse(await readFile(join(root, "local", "state.json"), "utf8"));
+    expect(state.ignoredRemote).not.toContain(key);
+    expect(state.bases[key]).toBeUndefined();
+    expect((await local.service.refresh()).items.some((item) => item.key === key)).toBe(false);
+  });
+
+  it("retains the ignored asset and baseline after Git deletion push fails, then retries", async () => {
+    const root = await fixture();
+    const local = device(join(root, "local"), "Shared docs");
+    await local.service.configure({
+      remote,
+      branch: "main",
+      autoPush: false,
+      pushDeletions: false,
+    });
+    local.remove();
+    await local.service.refresh();
+    const statePath = join(root, "local", "state.json");
+    const before = JSON.parse(await readFile(statePath, "utf8"));
+    const hook = join(barePath(root), "hooks", "pre-receive");
+    await writeFile(hook, "#!/bin/sh\nexit 1\n", { mode: 0o700 });
+    const key = `knowledge:${storeId}`;
+    expect((await local.service.deleteRemote(key)).status).toBe("error");
+    const failed = JSON.parse(await readFile(statePath, "utf8"));
+    expect(failed.ignoredRemote).toEqual(before.ignoredRemote);
+    expect(failed.bases).toEqual(before.bases);
+    expect(local.name()).toBeUndefined();
+    await rm(hook);
+    expect((await local.service.deleteRemote(key)).status).toBe("ready");
+    expect((await local.service.overview()).items.some((item) => item.key === key)).toBe(false);
+  });
+
+  it("rejects Git deletion if the asset reappears locally or is still referenced in Git", async () => {
+    const root = await fixture();
+    const binding = createDesktopContextResource({ owner: "project-expert", storeId });
+    const local = device(join(root, "local"), "Shared docs", undefined, [binding]);
+    await local.service.configure({
+      remote,
+      branch: "main",
+      autoPush: false,
+      pushDeletions: false,
+    });
+    expect((await local.service.deleteRemote(`knowledge:${storeId}`)).error).toContain(
+      "exists locally again",
+    );
+    local.remove();
+    local.replaceResources([]);
+    await local.service.refresh();
+    expect((await local.service.deleteRemote(`knowledge:${storeId}`)).error).toContain(
+      "still referenced",
+    );
+    const check = join(root, "inspect-rejected-delete");
+    await exec("git", ["clone", barePath(root), check]);
+    expect((await readSyncRepository(check, true)).has(`knowledge:${storeId}`)).toBe(true);
+  });
+
   it("separates Context bindings from Knowledge while preserving the readable store name", async () => {
     const root = await fixture();
     const binding = createDesktopContextResource({ owner: "project-expert", storeId });

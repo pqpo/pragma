@@ -1,4 +1,5 @@
 import {
+  memoryQueryDigest,
   memoryProjectionFields,
   projectionHash,
   redactMemoryProjection,
@@ -6,6 +7,7 @@ import {
   type MemoryRecallActivity,
   type RetrievalRecord,
 } from "@pragma/memory";
+import { ExpertAgentToolStartedEventSchema, type ExecutionEvent } from "@pragma/shared";
 import type {
   DesktopMissionMemoryActivity,
   DesktopMissionMemoryAttentionContent,
@@ -99,6 +101,7 @@ export async function buildMissionRecallPage(
   records: readonly MemoryRecallActivity[],
   before: DesktopMissionMemoryRecallPage["nextBefore"],
   limit: number,
+  events: readonly ExecutionEvent[] = [],
 ): Promise<DesktopMissionMemoryRecallPage> {
   const compare = (
     left: { occurredAt: string; id: string },
@@ -112,37 +115,78 @@ export async function buildMissionRecallPage(
   const cache = new Map<string, Promise<RetrievalRecord | undefined>>();
   return {
     records: await Promise.all(
-      page.map(async (record) => ({
-        id: record.id,
-        operation: record.operation,
-        target: record.target,
-        outcome: record.outcome,
-        reason: record.reason,
-        occurredAt: record.occurredAt,
-        sources: await Promise.all(
-          record.resultRefs.map(async (ref) => {
-            if (record.outcome !== "allowed") return { ...ref, available: false };
-            const match = /^(episodic|semantic)\/items\/([^/]+)\.md$/.exec(ref.id);
-            if (match === null) return { ...ref, available: record.outcome === "allowed" };
-            let pending = cache.get(ref.id);
-            if (pending === undefined) {
-              pending = readSource(sources, match[1] as "episodic" | "semantic", match[2]!);
-              cache.set(ref.id, pending);
-            }
-            const source = await pending;
-            return {
-              ...ref,
-              available: source !== undefined,
-              ...(source === undefined
-                ? {}
-                : { title: sourceTitle(source), currentRevision: String(source.record.revision) }),
-            };
-          }),
-        ),
-      })),
+      page.map(async (record) => {
+        const query = recallSearchQuery(record, events);
+        return {
+          id: record.id,
+          operation: record.operation,
+          target: record.target,
+          ...(query === undefined ? {} : { query }),
+          outcome: record.outcome,
+          reason: record.reason,
+          occurredAt: record.occurredAt,
+          sources: await Promise.all(
+            record.resultRefs.map(async (ref) => {
+              if (record.outcome !== "allowed") return { ...ref, available: false };
+              const match = /^(episodic|semantic)\/items\/([^/]+)\.md$/.exec(ref.id);
+              if (match === null) return { ...ref, available: record.outcome === "allowed" };
+              let pending = cache.get(ref.id);
+              if (pending === undefined) {
+                pending = readSource(sources, match[1] as "episodic" | "semantic", match[2]!);
+                cache.set(ref.id, pending);
+              }
+              const source = await pending;
+              return {
+                ...ref,
+                available: source !== undefined,
+                ...(source === undefined
+                  ? {}
+                  : {
+                      title: sourceTitle(source),
+                      currentRevision: String(source.record.revision),
+                    }),
+              };
+            }),
+          ),
+        };
+      }),
     ),
     ...(remaining.length > limit && last !== undefined
       ? { nextBefore: { occurredAt: last.occurredAt, id: last.id } }
       : {}),
   };
+}
+
+export function recallSearchQuery(
+  record: MemoryRecallActivity,
+  events: readonly ExecutionEvent[],
+): string | undefined {
+  if (
+    record.operation !== "search" ||
+    record.outcome !== "allowed" ||
+    record.queryDigest === undefined
+  )
+    return undefined;
+  for (const event of events) {
+    if (
+      event.executionId !== record.executionId ||
+      event.invocationId !== record.invocationId ||
+      event.type !== "runtime.event"
+    )
+      continue;
+    const parsed = ExpertAgentToolStartedEventSchema.safeParse(event.data);
+    if (!parsed.success || !/(^|__)search_expert_context$/.test(parsed.data.payload.toolName))
+      continue;
+    const input = parsed.data.payload.inputPreview;
+    if (
+      typeof input !== "object" ||
+      input === null ||
+      !("query" in input) ||
+      typeof input.query !== "string"
+    )
+      continue;
+    const query = input.query.trim();
+    if (memoryQueryDigest(query) === record.queryDigest) return query;
+  }
+  return undefined;
 }

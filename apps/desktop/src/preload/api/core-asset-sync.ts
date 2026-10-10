@@ -34,6 +34,13 @@ export const coreAssetSyncApi = {
     ),
   restoreIgnoredCoreAsset: async (key) =>
     CoreAssetSyncOverviewSchema.parse(await invokeMutation("core-asset-sync:restore", key)),
+  deleteRemoteCoreAsset: async (key) =>
+    CoreAssetSyncOverviewSchema.parse(
+      await invokeMutation(
+        "core-asset-sync:delete-remote",
+        ResolveCoreAssetSyncConflictSchema.shape.key.parse(key),
+      ),
+    ),
 } satisfies Pick<
   PragmaDesktopAPI,
   | "getCoreAssetSyncOverview"
@@ -43,4 +50,5 @@ export const coreAssetSyncApi = {
   | "refreshCoreAssets"
   | "resolveCoreAssetSyncConflict"
   | "restoreIgnoredCoreAsset"
+  | "deleteRemoteCoreAsset"
 >;

@@ -1434,10 +1434,12 @@ describe("MissionDetailFragment", () => {
     expect(html).toContain("Attention Memory");
     expect(html).toContain("Memory Store");
     expect(html).toContain("Recall history");
-    expect(html).toContain("View recalled content");
+    expect(html).toContain("View memory activity");
     expect(html).not.toContain("execution-1");
     expect(html).not.toContain("mission-memory-groups");
-    expect(html).toContain("Evidence entering memory processing, not memories created");
+    expect(html).not.toContain("Evidence entering memory processing");
+    expect(html).toContain('aria-label="About published evidence"');
+    expect(html).toContain('aria-expanded="false"');
     expect(html).not.toContain("mission-memory-views");
   });
 

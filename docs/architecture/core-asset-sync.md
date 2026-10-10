@@ -113,7 +113,14 @@ the intent. Unpublished Flow draft layouts and immutable historical Project revi
 Future removal-journal versions are rejected without deleting a layout. Project access recovers
 only that owner's pending layout removals; application startup does not scan other Projects.
 
-Local deletion preserves remote data by default and supports explicit restore. Enabling deletion
+Local deletion preserves remote data by default. Ignored remote assets offer explicit restore or
+Git deletion. Restore recovers saved configuration/content, not model or dependency availability;
+unavailable RuntimeProfiles remain `needs_attention`. Explicit Git deletion commits only the
+selected logical asset's managed paths, regardless of `autoPush` or `pushDeletions`, and leaves
+unrelated pending changes untouched. The operation rechecks local absence under the sync lock,
+rejects remaining Git references, and clears its baseline and ignored state only after a successful
+push. Git history retains prior content. Remote-head competition rechecks the deletion against the
+new head through the existing retry loop. Enabling deletion
 upload only applies to subsequent local deletions. Git deletion uses domain deletion and reference
 checks. Only changed managed files are written; confirmed removals remove their managed paths.
 Push uses the system Git `user.name` and `user.email`, credential helper or SSH agent, with actionable

@@ -363,13 +363,15 @@ export function installMemoryPolicyHandlers(
     if (!executions.some((entry) => entry.executionId === parsed.executionId))
       throw new Error("memory_execution_not_in_mission");
     const sources = await options.memoryBrowser.getMemorySourceReader(parsed.missionId);
+    const records = await plane.activity.listRecall(parsed.executionId);
+    // Recover search text from existing execution facts, without changing memory retention.
+    const events = records.some(
+      (record) => record.operation === "search" && record.outcome === "allowed",
+    )
+      ? await plane.executionStore.readEvents(parsed.executionId).catch(() => [])
+      : [];
     return DesktopMissionMemoryRecallPageSchema.parse(
-      await buildMissionRecallPage(
-        sources,
-        await plane.activity.listRecall(parsed.executionId),
-        parsed.before,
-        parsed.limit,
-      ),
+      await buildMissionRecallPage(sources, records, parsed.before, parsed.limit, events),
     );
   });
 }

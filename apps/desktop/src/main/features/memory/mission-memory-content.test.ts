@@ -1,9 +1,15 @@
 import { readFile } from "node:fs/promises";
-import { SemanticFactSchema } from "@pragma/shared";
-import { projectionHash, memoryProjectionFields, type MemoryRecallActivity } from "@pragma/memory";
+import { SemanticFactSchema, ExecutionEventSchema } from "@pragma/shared";
+import {
+  projectionHash,
+  memoryQueryDigest,
+  memoryProjectionFields,
+  type MemoryRecallActivity,
+} from "@pragma/memory";
 import { describe, expect, it, vi } from "vitest";
 import {
   buildMissionRecallPage,
+  recallSearchQuery,
   nameMissionAttention,
   readMissionAttentionContent,
 } from "./mission-memory-content.ts";
@@ -52,6 +58,50 @@ const recall = (id: string, occurredAt = "2026-10-10T09:00:00.000Z"): MemoryReca
 });
 
 describe("Mission memory content", () => {
+  it("recovers search text only from the matching execution, invocation and query digest", async () => {
+    const record = {
+      ...recall("invocation"),
+      operation: "search" as const,
+      queryDigest: memoryQueryDigest("中文回答"),
+    };
+    const event = ExecutionEventSchema.parse({
+      schemaVersion: "pragma.execution-event/v5",
+      eventId: "event",
+      executionId: "execution",
+      cursor: { executionId: "execution", sequence: 1 },
+      invocationId: "invocation",
+      type: "runtime.event",
+      occurredAt: record.occurredAt,
+      data: {
+        schemaVersion: "pragma.stream/v1",
+        eventId: "tool",
+        sequence: 1,
+        runId: "run",
+        emittedAt: record.occurredAt,
+        source: { kind: "tool", runId: "run", path: [] },
+        type: "tool.started",
+        payload: {
+          toolCallId: "call",
+          toolName: "search_expert_context",
+          inputPreview: { query: "中文回答" },
+        },
+      },
+    });
+    expect(recallSearchQuery(record, [event])).toBe("中文回答");
+    expect(recallSearchQuery(record, [{ ...event, invocationId: "other" }])).toBeUndefined();
+    expect(recallSearchQuery(record, [{ ...event, executionId: "other" }])).toBeUndefined();
+    expect(
+      recallSearchQuery({ ...record, queryDigest: memoryQueryDigest("other") }, [event]),
+    ).toBeUndefined();
+    expect(recallSearchQuery({ ...record, outcome: "denied" }, [event])).toBeUndefined();
+    expect(recallSearchQuery(record, [])).toBeUndefined();
+    const page = await buildMissionRecallPage(async () => source, [record], undefined, 30, [event]);
+    expect(page.records[0]?.query).toBe("中文回答");
+    expect(
+      (await buildMissionRecallPage(async () => source, [record], undefined, 30)).records[0],
+    ).not.toHaveProperty("query");
+  });
+
   it("uses only current authorized sources and validates Unicode snippet hashes and revisions", async () => {
     const read = vi.fn(async () => source);
     expect((await nameMissionAttention(read, [context]))[0]?.entries[0]?.title).toBe(
