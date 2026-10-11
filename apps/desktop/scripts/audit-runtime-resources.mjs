@@ -128,7 +128,7 @@ export async function auditRuntimeResources(resources, executable) {
       },
     });
     // Worker and command-client policy is checked separately by the CLI auditor.
-    if (!statFile(archive, "out/main/desktop-cli/cli.js").unpacked)
+    if (!statFile(archive, join("out", "main", "desktop-cli", "cli.js")).unpacked)
       throw new Error("CLI probe directory must be outside ASAR.");
     const result = await execute(executable, [probe, resources], {
       env: {

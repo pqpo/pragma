@@ -24,7 +24,7 @@ export async function auditDesktopCli(resources, executable) {
     "distribution.json",
     ...Object.keys(CLI_WORKERS).map((name) => `${name}.js`),
   ]) {
-    const relativePath = `out/main/desktop-cli/${name}`;
+    const relativePath = join("out", "main", "desktop-cli", name);
     if (!statFile(archive, relativePath).unpacked || !(await stat(join(directory, name))).isFile())
       throw new Error(`Desktop CLI must unpack ${name}.`);
     if (name.endsWith(".js")) {
