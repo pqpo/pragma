@@ -34,18 +34,19 @@
   "dependencies": {
     "@napi-rs/keyring": "2.1.0",
     "@pragma/local-host": "workspace:*",
-    "@pragma/shared": "workspace:*",
     "@pragma/runtime-antigravity": "workspace:*",
     "@pragma/runtime-claude-code": "workspace:*",
     "@pragma/runtime-codex": "workspace:*",
     "@pragma/runtime-opencode": "workspace:*",
     "@pragma/runtime-pi": "workspace:*",
     "@pragma/runtime-qodercli": "workspace:*",
+    "@pragma/shared": "workspace:*",
     "commander": "14.0.3"
   },
   "devDependencies": {
     "@pragma/tsconfig": "workspace:*",
     "@types/node": "latest",
+    "acorn": "8.15.0",
     "esbuild": "0.28.2",
     "typescript": "latest",
     "vitest": "latest"

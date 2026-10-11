@@ -1,3 +1,4 @@
+import { findExternalWorkspaceImports } from "../../cli/scripts/package-audit-lib.mjs";
 import { readdir, readFile } from "node:fs/promises";
 import { extname, join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -18,22 +19,6 @@ async function collectJavaScriptFiles(directory) {
   );
 
   return files.flat();
-}
-
-function findExternalWorkspaceImports(source) {
-  const specifiers = new Set();
-  const patterns = [
-    /(?:^|\n)\s*(?:import|export)\s+(?:[^"'()\n;]*?\s+from\s+)?["'](@pragma\/[^"']+)["']/g,
-    /\bimport\s*\(\s*["'](@pragma\/[^"']+)["']/g,
-  ];
-
-  for (const pattern of patterns) {
-    for (const match of source.matchAll(pattern)) {
-      specifiers.add(match[1]);
-    }
-  }
-
-  return [...specifiers];
 }
 
 const failures = [];

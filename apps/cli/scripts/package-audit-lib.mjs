@@ -1,3 +1,4 @@
+import { parse } from "acorn";
 import { builtinModules } from "node:module";
 
 const nodeBuiltins = new Set([...builtinModules, ...builtinModules.map((name) => `node:${name}`)]);
@@ -12,19 +13,98 @@ export function isAllowedExternalSpecifier(specifier) {
   return nodeBuiltins.has(specifier) || allowedExternalSpecifiers.has(specifier);
 }
 
-export function findExternalWorkspaceImports(source) {
-  const specifiers = new Set();
-  const patterns = [
-    /(?:^|\n)\s*(?:import|export)\s+(?:[^"'()\n;]*?\s+from\s+)?["'](@pragma\/[^"']+)["']/gu,
-    /\bimport\s*\(\s*["'](@pragma\/[^"']+)["']/gu,
-    /\brequire\s*\(\s*["'](@pragma\/[^"']+)["']\s*\)/gu,
-  ];
-  for (const pattern of patterns) {
-    for (const match of source.matchAll(pattern)) {
-      specifiers.add(match[1]);
+/** Parse generated JS rather than relying on line boundaries or quote formatting. */
+export function inspectJavaScript(source) {
+  const tree = parse(source, { ecmaVersion: "latest", sourceType: "module", allowHashBang: true });
+  const requireNames = new Set(["require", "__require", "__pragmaRequire"]);
+  const factoryNames = new Set(["createRequire", "__pragmaCreateRequire"]);
+  const declarations = [];
+  function collect(node) {
+    if (!node || typeof node !== "object") return;
+    if (Array.isArray(node)) {
+      for (const child of node) collect(child);
+      return;
+    }
+    if (node.type === "ImportSpecifier" && node.imported.name === "createRequire")
+      factoryNames.add(node.local.name);
+    if (node.type === "VariableDeclarator") declarations.push(node);
+    for (const [key, child] of Object.entries(node))
+      if (key !== "start" && key !== "end") collect(child);
+  }
+  collect(tree);
+  let changed = true;
+  while (changed) {
+    changed = false;
+    for (const { id, init } of declarations) {
+      if (id.type !== "Identifier" || !init || requireNames.has(id.name)) continue;
+      const factory =
+        init.type === "CallExpression" &&
+        ((init.callee.type === "Identifier" && factoryNames.has(init.callee.name)) ||
+          (init.callee.type === "MemberExpression" &&
+            init.callee.property.name === "createRequire"));
+      const alias = init.type === "Identifier" && requireNames.has(init.name);
+      if (factory || alias) {
+        requireNames.add(id.name);
+        changed = true;
+      }
     }
   }
-  return [...specifiers];
+  const specifiers = new Set();
+  const literals = new Set();
+  let dynamicLoads = 0;
+  function literal(node) {
+    if (node?.type === "Literal" && typeof node.value === "string") return node.value;
+    if (node?.type === "TemplateLiteral" && node.expressions.length === 0)
+      return node.quasis[0].value.cooked;
+    return undefined;
+  }
+  function visit(node) {
+    if (!node || typeof node !== "object") return;
+    if (Array.isArray(node)) {
+      for (const child of node) visit(child);
+      return;
+    }
+    const value = literal(node);
+    if (value !== undefined) literals.add(value);
+    let argument;
+    let load = false;
+    if (
+      ["ImportDeclaration", "ExportNamedDeclaration", "ExportAllDeclaration"].includes(node.type)
+    ) {
+      argument = node.source;
+      load = argument !== null && argument !== undefined;
+    } else if (node.type === "ImportExpression") {
+      argument = node.source;
+      load = true;
+    } else if (node.type === "CallExpression") {
+      const callee = node.callee;
+      if (
+        (callee.type === "Identifier" && requireNames.has(callee.name)) ||
+        (callee.type === "MemberExpression" &&
+          callee.object.type === "Identifier" &&
+          requireNames.has(callee.object.name) &&
+          callee.property.name === "resolve")
+      ) {
+        argument = node.arguments[0];
+        load = true;
+      }
+    }
+    if (load) {
+      const specifier = literal(argument);
+      if (specifier === undefined) dynamicLoads++;
+      else specifiers.add(specifier);
+    }
+    for (const [key, child] of Object.entries(node))
+      if (key !== "start" && key !== "end") visit(child);
+  }
+  visit(tree);
+  return { specifiers: [...specifiers], literals: [...literals], dynamicLoads };
+}
+
+export function findExternalWorkspaceImports(source) {
+  return inspectJavaScript(source).specifiers.filter((specifier) =>
+    specifier.startsWith("@pragma/"),
+  );
 }
 
 export function findSecretPatterns(source) {
@@ -82,7 +162,15 @@ export function findBuildPathLeaks(
   { repositoryDirectory = "", buildDirectories = [] } = {},
 ) {
   const failures = new Set();
-  const normalizedSource = normalizePathText(source);
+  let decoded = "";
+  if (/\\(?:u|x)/u.test(source)) {
+    try {
+      decoded = "\n" + inspectJavaScript(source).literals.join("\n");
+    } catch {
+      /* Non-JavaScript diagnostic text is still checked verbatim. */
+    }
+  }
+  const normalizedSource = normalizePathText(source + decoded);
   const normalizedRepository = normalizePathValue(repositoryDirectory);
 
   if (
@@ -107,7 +195,7 @@ export function findBuildPathLeaks(
     /\b[A-Za-z]:[\\/][^\s"'`<>()[\],;]*/gu,
   ];
   for (const pattern of pathPatterns) {
-    for (const match of source.matchAll(pattern)) {
+    for (const match of (source + decoded).matchAll(pattern)) {
       if (isLikelyBuildSourcePath(match[0])) failures.add("build machine source path");
     }
   }

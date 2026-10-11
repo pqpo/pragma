@@ -19,6 +19,14 @@ describe("CLI package audit canaries", () => {
       "@pragma/secret",
     ]);
     expect(findExternalWorkspaceImports('require("node:fs");')).toEqual([]);
+    expect(
+      findExternalWorkspaceImports(
+        'import"node:fs";export*from"@pragma/shared";import("@pragma/core");require("@pragma/memory");',
+      ),
+    ).toEqual(["@pragma/shared", "@pragma/core", "@pragma/memory"]);
+    expect(
+      findExternalWorkspaceImports("const example=" + "'import \"@pragma/example\"'" + ";"),
+    ).toEqual([]);
     expect(() => assertNoExternalWorkspaceImports('import "@pragma/secret";', "canary.js")).toThrow(
       "external @pragma imports",
     );
