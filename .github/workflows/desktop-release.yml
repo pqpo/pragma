@@ -219,10 +219,13 @@ jobs:
           pnpm --filter @pragma/desktop exec vitest run src/main/features/terminal-integration/terminal-integration.test.ts
 
       - name: Upload packaging audit
+        if: always()
         uses: actions/upload-artifact@v7
         with:
           name: packaging-audit-${{ matrix.artifact }}
-          path: apps/desktop/dist/packaging-audit-*.json
+          path: |
+            apps/desktop/dist/packaging-audit-*.json
+            apps/desktop/dist/packaging-policy-*.json
           if-no-files-found: error
           retention-days: 7
 

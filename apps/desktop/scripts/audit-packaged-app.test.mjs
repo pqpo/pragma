@@ -113,3 +113,47 @@ test("rejects a command client left inside ASAR", async () => {
     await rm(root, { recursive: true, force: true });
   }
 });
+
+test("real ASAR rejects development files, maps, excluded copies and foreign native headers", async () => {
+  const root = await mkdtemp(join(tmpdir(), "pragma-package-policy-"));
+  try {
+    const source = join(root, "source"),
+      resources = join(root, "resources");
+    for (const dir of ["out/main", "src", "node_modules/react", "node_modules/native-sdk"])
+      await mkdir(join(source, dir), { recursive: true });
+    await mkdir(resources);
+    for (const file of [
+      "out/main/claude-acp-worker.js",
+      "out/main/pragma-command-client.js",
+      "src/index.ts",
+      "node_modules/react/index.js",
+      "node_modules/native-sdk/index.js.map",
+    ])
+      await writeFile(join(source, file), "// canary");
+    const foreign = Buffer.alloc(32);
+    foreign.writeUInt32BE(0xcffaedfe);
+    foreign.writeUInt32LE(0x100000c, 4);
+    await writeFile(join(source, "node_modules/native-sdk/native.node"), foreign);
+    await createPackageWithOptions(source, join(resources, "app.asar"), {
+      unpack: "**/{claude-acp-worker,pragma-command-client}.js",
+    });
+    const report = await auditPackagedResources(resources, {
+      platform: "darwin",
+      arch: "x64",
+      excludedPackages: ["react"],
+    });
+    for (const reason of [
+      "Application development files",
+      "Production source map",
+      "Bundled dependency copy",
+    ])
+      assert.ok(report.failures.some((failure) => failure.reason === reason));
+    assert.ok(
+      report.failures.some((failure) => failure.reason.includes("Native payload darwin/arm64")),
+    );
+    assert.equal(report.summary.categories["asar-metadata"] >= 0, true);
+    assert.ok(report.inventory.find((file) => file.path.endsWith("native.node")).sha256);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});

@@ -1,5 +1,10 @@
+import { auditRuntimeResources } from "./audit-runtime-resources.mjs";
+import { createHash } from "node:crypto";
+import { execFileSync } from "node:child_process";
+import { forbiddenPackageFile } from "./packaging-policy.mjs";
+import { applicationInventory, nativeBinaryTarget, summarizeInventory } from "./packaging-size.mjs";
 import { auditDesktopCli } from "./audit-desktop-cli.mjs";
-import { open, readdir, stat, writeFile } from "node:fs/promises";
+import { readFile, readdir, stat, writeFile } from "node:fs/promises";
 import { join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { extractFile, listPackage, statFile } from "@electron/asar";
@@ -39,7 +44,7 @@ export function forbiddenClaudePayload(path, size, prefix = Buffer.alloc(0)) {
   return undefined;
 }
 
-export async function auditPackagedResources(resourcesDirectory) {
+export async function auditPackagedResources(resourcesDirectory, options = {}) {
   const inventory = [];
   const failures = [];
   const archive = join(resourcesDirectory, "app.asar");
@@ -70,12 +75,8 @@ export async function auditPackagedResources(resourcesDirectory) {
       record(label, 0, Buffer.alloc(0), "asar-link");
       continue;
     }
-    // Read only SDK files for content inspection; names identify platform packages.
-    const prefix =
-      sdkDirectory.test(portablePath) && metadata.size <= 5 * 1024 * 1024
-        ? extractFile(archive, archivePath).subarray(0, 4)
-        : Buffer.alloc(0);
-    record(label, metadata.size, prefix, metadata.unpacked ? "unpacked-reference" : "asar");
+    const data = extractFile(archive, archivePath);
+    record(label, metadata.size, data, metadata.unpacked ? "unpacked-reference" : "asar");
   }
   let physicalBytes = 0;
   async function walk(directory) {
@@ -86,17 +87,9 @@ export async function auditPackagedResources(resourcesDirectory) {
         const { size } = await stat(path);
         physicalBytes += size;
         const label = relative(resourcesDirectory, path).replaceAll("\\", "/");
-        let prefix = Buffer.alloc(0);
-        if (sdkDirectory.test(label)) {
-          const file = await open(path, "r");
-          try {
-            prefix = Buffer.alloc(4);
-            await file.read(prefix, 0, 4, 0);
-          } finally {
-            await file.close();
-          }
-        }
-        record(label, size, prefix, "resources");
+        // The archive is a container, not a second copy of its logical files.
+        const data = label === "app.asar" ? Buffer.alloc(0) : await readFile(path);
+        record(label, size, data, "resources");
       } else if (entry.isSymbolicLink()) {
         // Packaged resources must be self-contained and fully auditable.
         failures.push({
@@ -107,13 +100,31 @@ export async function auditPackagedResources(resourcesDirectory) {
     }
   }
   await walk(resourcesDirectory);
-  function record(path, bytes, prefix, location) {
-    inventory.push({ path, bytes, location });
-    const reason = forbiddenClaudePayload(path, bytes, prefix);
+  function record(path, bytes, data, location) {
+    const nativeTarget = nativeBinaryTarget(data);
+    const entry = { path, bytes, location };
+    if (data.length) entry.sha256 = createHash("sha256").update(data).digest("hex");
+    if (nativeTarget) entry.nativeTarget = nativeTarget;
+    else if (/\.(?:node|dylib|dll|exe)$/.test(path))
+      entry.nativeWarning = "Unrecognized native payload";
+    inventory.push(entry);
+    const reason = forbiddenClaudePayload(path, bytes, data) ?? forbiddenPackageFile(path, options);
     if (reason) failures.push({ path, bytes, reason });
+    if (
+      options.platform &&
+      options.arch &&
+      nativeTarget &&
+      (nativeTarget.platform !== options.platform || !nativeTarget.arches.includes(options.arch))
+    )
+      failures.push({
+        path,
+        bytes,
+        reason: `Native payload ${nativeTarget.platform}/${nativeTarget.arches.join(",")}; expected ${options.platform}/${options.arch}`,
+      });
   }
   const report = {
     physicalBytes,
+    summary: summarizeInventory(inventory, (await stat(archive)).size),
     largestFiles: [...inventory].sort((a, b) => b.bytes - a.bytes).slice(0, 30),
     failures,
     inventory,
@@ -131,7 +142,60 @@ export default async function afterPack(context) {
           "Resources",
         )
       : join(context.appOutDir, "resources");
-  const report = await auditPackagedResources(resources);
+  const policy = JSON.parse(
+    await readFile(
+      join(context.outDir, `packaging-policy-${context.electronPlatformName}-${context.arch}.json`),
+      "utf8",
+    ),
+  );
+  const report = await auditPackagedResources(resources, policy);
+  const applicationRoot =
+    context.electronPlatformName === "darwin"
+      ? join(context.appOutDir, `${context.packager.appInfo.productFilename}.app`, "Contents")
+      : context.appOutDir;
+  const applicationFiles = await applicationInventory(applicationRoot, resources);
+  report.inventory.push(...applicationFiles);
+  for (const entry of applicationFiles)
+    if (
+      entry.nativeTarget &&
+      (entry.nativeTarget.platform !== policy.platform ||
+        !entry.nativeTarget.arches.includes(policy.arch))
+    )
+      report.failures.push({
+        path: entry.path,
+        bytes: entry.bytes,
+        reason: "Electron native payload target mismatch",
+      });
+  report.applicationBytes =
+    report.physicalBytes + applicationFiles.reduce((total, entry) => total + entry.bytes, 0);
+  report.summary = summarizeInventory(
+    report.inventory,
+    (await stat(join(resources, "app.asar"))).size,
+  );
+  report.largestFiles = report.summary.largestFiles;
+  report.identity = {
+    platform: policy.platform,
+    arch: policy.arch,
+    sourceCommit: execFileSync("git", ["rev-parse", "HEAD"], {
+      cwd: context.packager.projectDir,
+      encoding: "utf8",
+    }).trim(),
+    lockfileSha256: createHash("sha256")
+      .update(await readFile(new URL("../../../pnpm-lock.yaml", import.meta.url)))
+      .digest("hex"),
+    electronVersion: context.packager.info.framework.version,
+    appVersion: context.packager.appInfo.version,
+    compression: context.packager.config.compression ?? "normal",
+    signingIdentity: context.packager.platformSpecificBuildOptions.identity ?? null,
+    hardenedRuntime: context.packager.platformSpecificBuildOptions.hardenedRuntime ?? false,
+  };
+  report.policy = policy;
+  report.installers = {};
+  report.validation = {
+    cli: "pending",
+    runtimeExecution: "requires-native-authenticated-smoke",
+    desktopUI: "requires-native-visual-smoke",
+  };
   const reportPath = join(
     context.outDir,
     `packaging-audit-${context.electronPlatformName}-${context.arch}.json`,
@@ -149,6 +213,8 @@ export default async function afterPack(context) {
       : join(context.appOutDir, `${context.packager.appInfo.productFilename}.exe`);
   const cli = await auditDesktopCli(resources, executable);
   report.cli = cli;
+  report.validation.cli = "passed";
+  report.validation.resources = await auditRuntimeResources(resources, executable);
   await writeFile(reportPath, `${JSON.stringify(report, null, 2)}\n`);
   console.log(
     `Desktop packaging audit passed: ${report.physicalBytes} resource bytes. Report: ${reportPath}`,
@@ -158,7 +224,7 @@ export default async function afterPack(context) {
 function assertClean(report) {
   if (report.failures.length)
     throw new Error(
-      `Desktop must not bundle Claude Code CLI:\n${report.failures.map((failure) => `${failure.path}: ${failure.reason}`).join("\n")}`,
+      `Desktop packaging policy violations:\n${report.failures.map((failure) => `${failure.path}: ${failure.reason}`).join("\n")}`,
     );
 }
 

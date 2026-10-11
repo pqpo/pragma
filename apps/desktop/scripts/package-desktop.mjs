@@ -9,7 +9,7 @@ const scriptDirectory = dirname(fileURLToPath(import.meta.url));
 const packageDirectory = resolve(scriptDirectory, "..");
 const distDirectory = resolve(packageDirectory, "dist");
 const installerPattern = /\.(?:dmg|zip|exe)$/i;
-const auditReportPattern = /^packaging-audit-[a-z0-9-]+\.json$/i;
+const auditReportPattern = /^packaging-(?:audit|policy)-[a-z0-9-]+\.json$/i;
 
 function commandInvocation(command, argumentsList) {
   if (process.platform === "win32" && command === "pnpm") {

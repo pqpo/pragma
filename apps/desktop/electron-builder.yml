@@ -1,7 +1,9 @@
 appId: com.pqpo.pragma
 productName: Pragma
 asar: true
+beforePack: ./scripts/packaging-policy.mjs
 afterPack: ./scripts/audit-packaged-app.mjs
+artifactBuildCompleted: ./scripts/packaging-size.mjs
 asarUnpack:
   - out/main/claude-acp-worker.js
   - out/main/pragma-command-client.js
@@ -15,6 +17,7 @@ directories:
 files:
   - out/**/*
   - package.json
+  - "!**/*.map"
   # Claude Code is installed by the user, including on the target architecture.
   - "!**/node_modules/@anthropic-ai/claude-agent-sdk-*/**/*"
   - "!**/node_modules/@anthropic-ai/claude-code/**/*"
@@ -23,6 +26,8 @@ files:
   - "!**/node_modules/@anthropic-ai/claude-agent-sdk/vendor/**/*"
 
 extraResources:
+  - from: .packaging/third-party-notices
+    to: third-party-notices
   - from: build/terminal-integration.ps1
     to: terminal-integration.ps1
   - from: .plugin-bundles/plugins
@@ -38,6 +43,8 @@ mac:
   identity: null
   hardenedRuntime: false
   files:
+    - out/**/*
+    - package.json
     - "!**/node_modules/@mariozechner/clipboard-win32-*/**/*"
   target:
     - dmg
@@ -47,6 +54,8 @@ mac:
 win:
   icon: build/icon-windows.png
   files:
+    - out/**/*
+    - package.json
     - "!**/node_modules/@mariozechner/clipboard-darwin-*/**/*"
     - "!**/node_modules/@mariozechner/clipboard-win32-arm64-msvc/**/*"
   target:
