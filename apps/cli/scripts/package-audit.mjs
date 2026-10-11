@@ -1,3 +1,4 @@
+import { parse } from "acorn";
 import { mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { dirname, isAbsolute, join, normalize, resolve, sep } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -461,9 +462,64 @@ async function verifyVectorWorker(workerEntry) {
 }
 
 function assertBootstrapOrder(source) {
-  const guard = source.indexOf("nodeMajor < 22");
-  const dynamicImport = source.indexOf("import(mainBundle)");
-  if (guard < 0 || dynamicImport < 0 || dynamicImport < guard) {
+  const program = parse(source, {
+    ecmaVersion: "latest",
+    sourceType: "module",
+    allowHashBang: true,
+  });
+  const cliImports = [];
+  const nodeVersionGuards = [];
+
+  const containsNodeMajorGuard = (node) => {
+    if (node === null || typeof node !== "object") return false;
+    if (Array.isArray(node)) return node.some(containsNodeMajorGuard);
+    if (
+      node.type === "BinaryExpression" &&
+      node.operator === "<" &&
+      node.right.type === "Literal" &&
+      node.right.value === 22
+    ) {
+      return true;
+    }
+    return Object.entries(node).some(
+      ([key, value]) => key !== "start" && key !== "end" && containsNodeMajorGuard(value),
+    );
+  };
+
+  const containsTarget = (node, target) => {
+    if (node === target) return true;
+    if (node === null || typeof node !== "object") return false;
+    if (Array.isArray(node)) return node.some((child) => containsTarget(child, target));
+    return Object.entries(node).some(
+      ([key, value]) => key !== "start" && key !== "end" && containsTarget(value, target),
+    );
+  };
+
+  const visit = (node) => {
+    if (node === null || typeof node !== "object") return;
+    if (Array.isArray(node)) {
+      for (const child of node) visit(child);
+      return;
+    }
+    if (node.type === "ImportExpression" && node.source?.value === "./cli.js") {
+      cliImports.push(node);
+    }
+    if (node.type === "IfStatement" && containsNodeMajorGuard(node.test)) {
+      nodeVersionGuards.push(node);
+    }
+    for (const [key, value] of Object.entries(node)) {
+      if (key !== "start" && key !== "end") visit(value);
+    }
+  };
+
+  visit(program);
+  const [cliImport] = cliImports;
+  const guardedImport =
+    cliImports.length === 1 &&
+    nodeVersionGuards.some(
+      (guard) => guard.alternate !== null && containsTarget(guard.alternate, cliImport),
+    );
+  if (!guardedImport) {
     throw new Error("Bootstrap must validate Node.js before dynamically importing cli.js.");
   }
   if (/\b(?:import|export)\s+(?:[^"'()]+\s+from\s+)?["'][^"']*cli\.js["']/u.test(source)) {
