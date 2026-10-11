@@ -177,7 +177,7 @@ jobs:
       - publish
       - validate_cli_tag
     runs-on: ubuntu-24.04
-    timeout-minutes: 10
+    timeout-minutes: 20
     permissions:
       contents: read
 
@@ -201,7 +201,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          max_attempts=12
+          max_attempts=96
           verified=false
           for attempt in $(seq 1 "${max_attempts}"); do
             if npm view "@pqpo/pragma@${RELEASE_VERSION}" name version dist-tags engines os bin dist --json \
@@ -298,6 +298,7 @@ jobs:
     needs:
       - publish
       - validate_cli_tag
+      - post_publish_metadata
     runs-on: macos-15
     timeout-minutes: 15
     permissions:
