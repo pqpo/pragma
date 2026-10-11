@@ -120,9 +120,12 @@ jobs:
           pnpm typecheck
           pnpm test:core
           node --test --test-concurrency=1 scripts/*.test.mjs
+      - name: Desktop resource, IPC and UI regressions
+        if: matrix.lane == 'quality'
+        run: node scripts/run-business-tests.mjs --prepared --lane=desktop
       - name: Business regressions without duplicate selections
         if: matrix.lane == 'business'
-        run: node scripts/run-business-tests.mjs --prepared
+        run: node scripts/run-business-tests.mjs --prepared --lane=host
       - name: Pack the prepared canonical CLI and generate reports
         if: matrix.lane == 'business'
         run: |
@@ -135,6 +138,13 @@ jobs:
           name: pragma-cli-canonical
           path: apps/cli/.release/ci-artifact
           if-no-files-found: error
+          retention-days: 14
+      - name: Archive Desktop test results
+        if: always() && matrix.lane == 'quality'
+        uses: actions/upload-artifact@v7
+        with:
+          name: desktop-test-results
+          path: .test-results/*.json
           retention-days: 14
       - name: Archive business timings and test results
         if: always() && matrix.lane == 'business'

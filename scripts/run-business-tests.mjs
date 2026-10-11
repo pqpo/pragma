@@ -3,6 +3,8 @@ import { mkdir, writeFile } from "node:fs/promises";
 import { resolve } from "node:path";
 
 const prepared = process.argv.includes("--prepared");
+const lane = process.argv.find((argument) => argument.startsWith("--lane="))?.slice(7) ?? "all";
+if (!["all", "host", "desktop"].includes(lane)) throw new Error("Unknown business test lane");
 const resultsDirectory = resolve(".test-results");
 await mkdir(resultsDirectory, { recursive: true });
 const measurements = [];
@@ -54,62 +56,58 @@ async function vitest(pkg, files, extra = [], label = pkg) {
     label,
   );
 }
-if (!prepared)
-  await run(
-    [
-      "exec",
-      "turbo",
-      "run",
-      "build",
-      "--concurrency=2",
-      "--filter=@pragma/desktop^...",
-      "--filter=@pqpo/pragma...",
-    ],
-    "prepare",
+if (!prepared) await run(["build"], "prepare");
+if (lane !== "desktop") {
+  await vitest("@pragma/core", [
+    "test/file-lock.test.ts",
+    "test/runtime-stream-controller.test.ts",
+  ]);
+  await vitest(
+    "@pragma/local-host",
+    [],
+    ["--config=vitest.integration.config.ts", "--exclude=test/native-keychain-cross-host.test.ts"],
   );
-await vitest("@pragma/core", ["test/file-lock.test.ts", "test/runtime-stream-controller.test.ts"]);
-await vitest(
-  "@pragma/local-host",
-  [],
-  ["--config=vitest.integration.config.ts", "--exclude=test/native-keychain-cross-host.test.ts"],
-);
-await vitest(
-  "@pragma/local-host",
-  ["test/host-storage-pool.test.ts"],
-  ["-t", "loads the durable tracking cutoff"],
-  "local-host-source-worker",
-);
-await vitest("@pqpo/pragma", []);
-await vitest("@pragma/memory", [
-  "test/episodic-memory.test.ts",
-  "test/semantic-memory.test.ts",
-  "test/memory-plane.test.ts",
-  "test/memory-activity.test.ts",
-  "test/retrieval.test.ts",
-  "test/memory-attention.test.ts",
-  "test/jev-decision-provider.test.ts",
-]);
-await vitest("@pragma/built-in-agents", ["test/pragma-management-tools.test.ts"]);
-await vitest("@pragma/desktop", [
-  "src/test/mission-queued-chat-refresh.test.tsx",
-  "src/renderer/src/pages/missions/mission-conversation-model.test.ts",
-  "src/main/features/missions/desktop-mission-adapter.test.ts",
-  "src/main/features/missions/desktop-mission-system-resources.test.ts",
-  "src/main/features/missions/desktop-mission-cold-session.test.ts",
-  "src/main/features/missions/mission-deletion.test.ts",
-  "src/main/features/missions/mission-branch-context.test.ts",
-  "src/main/features/missions/mission-adapter-host.test.ts",
-  "src/main/features/runtimes/runtime-availability.test.ts",
-  "src/main/features/memory/desktop-memory-plane.test.ts",
-  "src/main/bootstrap/shutdown-sequence.test.ts",
-  "src/main/features/context-stores/knowledge-revision-capability.test.ts",
-  "src/main/features/context-stores/context-store-revision-service.test.ts",
-]);
-for (const runtime of ["pi", "codex", "opencode", "claude-code", "qodercli", "antigravity"])
-  await run(["--filter", `@pragma/runtime-${runtime}`, "test:core"], `runtime-${runtime}`);
-await vitest("@pragma/runtime-claude-code", [
-  "test/availability.test.ts",
-  "test/external-cli.test.ts",
-  "test/executable.test.ts",
-]);
-await run(["--filter", "@pragma/desktop", "test:claude-worker"], "claude-worker");
+  await vitest(
+    "@pragma/local-host",
+    ["test/host-storage-pool.test.ts"],
+    ["-t", "loads the durable tracking cutoff"],
+    "local-host-source-worker",
+  );
+  await vitest("@pqpo/pragma", []);
+  await vitest("@pragma/memory", [
+    "test/episodic-memory.test.ts",
+    "test/semantic-memory.test.ts",
+    "test/memory-plane.test.ts",
+    "test/memory-activity.test.ts",
+    "test/retrieval.test.ts",
+    "test/memory-attention.test.ts",
+    "test/jev-decision-provider.test.ts",
+  ]);
+  await vitest("@pragma/built-in-agents", ["test/pragma-management-tools.test.ts"]);
+
+  for (const runtime of ["pi", "codex", "opencode", "claude-code", "qodercli", "antigravity"])
+    await run(["--filter", `@pragma/runtime-${runtime}`, "test:core"], `runtime-${runtime}`);
+  await vitest("@pragma/runtime-claude-code", [
+    "test/availability.test.ts",
+    "test/external-cli.test.ts",
+    "test/executable.test.ts",
+  ]);
+}
+if (lane !== "host") {
+  await vitest("@pragma/desktop", [
+    "src/test/mission-queued-chat-refresh.test.tsx",
+    "src/renderer/src/pages/missions/mission-conversation-model.test.ts",
+    "src/main/features/missions/desktop-mission-adapter.test.ts",
+    "src/main/features/missions/desktop-mission-system-resources.test.ts",
+    "src/main/features/missions/desktop-mission-cold-session.test.ts",
+    "src/main/features/missions/mission-deletion.test.ts",
+    "src/main/features/missions/mission-branch-context.test.ts",
+    "src/main/features/missions/mission-adapter-host.test.ts",
+    "src/main/features/runtimes/runtime-availability.test.ts",
+    "src/main/features/memory/desktop-memory-plane.test.ts",
+    "src/main/bootstrap/shutdown-sequence.test.ts",
+    "src/main/features/context-stores/knowledge-revision-capability.test.ts",
+    "src/main/features/context-stores/context-store-revision-service.test.ts",
+  ]);
+  await run(["--filter", "@pragma/desktop", "test:claude-worker"], "claude-worker");
+}

@@ -4,12 +4,20 @@ import {
   assertNoBuildPathLeaks,
   assertNoExternalWorkspaceImports,
   assertSafeText,
+  isAllowedExternalSpecifier,
   findBuildPathLeaks,
   findExternalWorkspaceImports,
   findSecretPatterns,
 } from "../scripts/package-audit-lib.mjs";
 
 describe("CLI package audit canaries", () => {
+  it("recognizes prefix-only Node builtins without admitting unknown node modules", () => {
+    expect(isAllowedExternalSpecifier("node:sqlite")).toBe(true);
+    expect(isAllowedExternalSpecifier("node:fs")).toBe(true);
+    expect(isAllowedExternalSpecifier("node:not-a-real-builtin")).toBe(false);
+    expect(isAllowedExternalSpecifier("sqlite")).toBe(false);
+    expect(isAllowedExternalSpecifier("@pragma/core")).toBe(false);
+  });
   it("rejects external workspace imports", () => {
     expect(findExternalWorkspaceImports('import { value } from "@pragma/secret";')).toEqual([
       "@pragma/secret",

@@ -1,7 +1,5 @@
 import { parse } from "acorn";
-import { builtinModules } from "node:module";
-
-const nodeBuiltins = new Set([...builtinModules, ...builtinModules.map((name) => `node:${name}`)]);
+import { isBuiltin } from "node:module";
 
 export const allowedExternalSpecifiers = new Set([
   "@napi-rs/keyring",
@@ -10,7 +8,7 @@ export const allowedExternalSpecifiers = new Set([
 ]);
 
 export function isAllowedExternalSpecifier(specifier) {
-  return nodeBuiltins.has(specifier) || allowedExternalSpecifiers.has(specifier);
+  return isBuiltin(specifier) || allowedExternalSpecifiers.has(specifier);
 }
 
 /** Parse generated JS rather than relying on line boundaries or quote formatting. */
