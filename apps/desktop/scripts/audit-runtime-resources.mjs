@@ -22,7 +22,8 @@ export async function auditRuntimeResources(resources, executable) {
     .map((path) => path.replaceAll("\\", "/").replace(/^\//, ""))
     .find((path) => /^out\/main\/chunks\/o200k_base-[^/]+\.js$/.test(path));
   if (!tokenizerEntry) throw new Error("Shipped lazy tokenizer chunk is missing.");
-  const tokenizerSource = extractFile(archive, tokenizerEntry).toString("utf8");
+  const tokenizerArchivePath = join(...tokenizerEntry.split("/"));
+  const tokenizerSource = extractFile(archive, tokenizerArchivePath).toString("utf8");
   if (!tokenizerSource.includes("countTokens"))
     throw new Error("Tokenizer chunk lost its countTokens export.");
   const home = await mkdtemp(join(tmpdir(), "pragma-packaged-runtime-"));

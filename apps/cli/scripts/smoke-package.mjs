@@ -60,7 +60,7 @@ if (options.mode !== "linux" && process.platform !== "darwin" && process.platfor
 
 const smokeRoot = await mkdtemp(join(tmpdir(), "pragma-cli-smoke-"));
 try {
-  const environment = createIsolatedEnvironment(smokeRoot, options.npmCache);
+  const environment = createIsolatedEnvironment(smokeRoot, options.npmCache, options.mode);
   if (options.mode === "positive") {
     await runPositiveSmoke({
       smokeRoot,
@@ -122,8 +122,14 @@ function parseArguments(argv) {
   return { mode, artifactDirectory, npmCache: values.get("npm-cache") };
 }
 
-function createIsolatedEnvironment(smokeRoot, npmCacheOverride) {
-  const home = join(smokeRoot, "用户 home");
+function createIsolatedEnvironment(smokeRoot, npmCacheOverride, mode) {
+  const isolatedHome = join(smokeRoot, "用户 home");
+  // The native macOS keyring uses the user's login context to find its default keychain.
+  // Keep Pragma and npm state isolated while allowing the positive smoke to use its temporary CI keychain.
+  const home =
+    process.platform === "darwin" && mode === "positive"
+      ? (process.env.HOME ?? isolatedHome)
+      : isolatedHome;
   const pragmaHome = join(smokeRoot, "Pragma 数据根");
   const npmCache =
     npmCacheOverride === undefined ? join(smokeRoot, "npm cache") : resolve(npmCacheOverride);
