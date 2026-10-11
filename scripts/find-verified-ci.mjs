@@ -38,7 +38,12 @@ if (process.env.REUSE_CI === "true") {
     if (run.conclusion !== "success")
       throw new Error(`Trusted main CI ${run.id} concluded ${run.conclusion}; release blocked.`);
     const artifacts = api(`actions/runs/${run.id}/artifacts?per_page=100`).artifacts;
-    const required = ["source-verification", "desktop-common", "pragma-cli-canonical"];
+    const required = [
+      "source-verification",
+      "desktop-common",
+      "workspace-build",
+      "pragma-cli-canonical",
+    ];
     if (
       required.every((name) => artifacts.filter((a) => a.name === name && !a.expired).length === 1)
     )

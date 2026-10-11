@@ -64,7 +64,7 @@ jobs:
           name: workspace-build
           path: .test-results/workspace-build.tar.gz
           if-no-files-found: error
-          retention-days: 7
+          retention-days: 14
       - name: Upload Desktop common build
         uses: actions/upload-artifact@v7
         with:

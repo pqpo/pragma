@@ -141,13 +141,17 @@ jobs:
 
       - uses: ./.github/actions/setup
 
-      - name: Download verified common build
+      - name: Download verified workspace build
         uses: actions/download-artifact@v8
         with:
           github-token: ${{ github.token }}
           run-id: ${{ needs.source.outputs.run_id }}
-          name: desktop-common
-          path: apps/desktop
+          name: workspace-build
+          path: .test-results
+
+      - name: Restore neutral application and audit dependencies
+        shell: bash
+        run: tar -xzf .test-results/workspace-build.tar.gz
 
       - name: Test packaging audit on native host
         run: pnpm --filter @pragma/desktop test:packaging

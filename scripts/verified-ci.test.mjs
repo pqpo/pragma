@@ -45,9 +45,12 @@ test("release reuses only latest trusted main success with complete artifacts; f
       status: "completed",
       conclusion: "success",
     };
-    const artifacts = ["source-verification", "desktop-common", "pragma-cli-canonical"].map(
-      (name) => ({ name, expired: false }),
-    );
+    const artifacts = [
+      "source-verification",
+      "desktop-common",
+      "workspace-build",
+      "pragma-cli-canonical",
+    ].map((name) => ({ name, expired: false }));
     async function invoke(runs, items = artifacts, extra = {}) {
       await writeFile(statePath, JSON.stringify({ runs, artifacts: items }));
       await writeFile(output, "");
