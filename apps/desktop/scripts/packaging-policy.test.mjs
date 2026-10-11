@@ -175,3 +175,60 @@ test("concurrent DMG and ZIP completion retains both measurements", async () => 
     await rm(directory, { recursive: true, force: true });
   }
 });
+
+test("recognizes real esbuild minified require shims and their aliases", async () => {
+  const { build } = await import("esbuild");
+  const result = await build({
+    stdin: { contents: 'console.log(require("@pragma/core"));' },
+    write: false,
+    bundle: true,
+    minify: true,
+    keepNames: true,
+    platform: "node",
+    format: "esm",
+    external: ["@pragma/core"],
+  });
+  assert.deepEqual(findExternalWorkspaceImports(result.outputFiles[0].text), ["@pragma/core"]);
+});
+
+test("checks every dependency segment including nested installed packages", () => {
+  assert.equal(
+    forbiddenPackageFile("app.asar/node_modules/sdk/node_modules/react/index.js", {
+      excludedPackages: ["react"],
+    }),
+    "Bundled dependency copy",
+  );
+  assert.match(
+    forbiddenPackageFile(
+      "app.asar.unpacked/node_modules/sdk/node_modules/@esbuild/darwin-arm64/bin/esbuild",
+      {
+        platform: "darwin",
+        arch: "x64",
+      },
+    ),
+    /Native package target/,
+  );
+});
+
+test("failed packaging cleanup preserves diagnostics and removes incomplete installers", async () => {
+  const { mkdtemp, mkdir, writeFile, readdir, rm } = await import("node:fs/promises");
+  const { tmpdir } = await import("node:os");
+  const { join } = await import("node:path");
+  const { trimDist } = await import("./package-desktop.mjs");
+  const directory = await mkdtemp(join(tmpdir(), "pragma-failed-cleanup-"));
+  try {
+    const reports = ["packaging-audit-darwin-1.json", "packaging-policy-darwin-1.json"];
+    for (const name of [...reports, "Pragma-0.0.0-mac-x64.dmg"])
+      await writeFile(join(directory, name), "canary");
+    await mkdir(join(directory, "mac"));
+    await trimDist({ keepInstallers: false }, directory);
+    assert.deepEqual((await readdir(directory)).sort(), reports.sort());
+    await assert.rejects(
+      trimDist({ keepInstallers: true }, directory),
+      /without leaving any installer/,
+    );
+    assert.deepEqual((await readdir(directory)).sort(), reports.sort());
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});

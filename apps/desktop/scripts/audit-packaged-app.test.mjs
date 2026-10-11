@@ -157,3 +157,93 @@ test("real ASAR rejects development files, maps, excluded copies and foreign nat
     await rm(root, { recursive: true, force: true });
   }
 });
+
+test("isolated smoke cannot borrow a dependency from the build directory", async () => {
+  const { createRequire } = await import("node:module");
+  const { readFile, access } = await import("node:fs/promises");
+  const { withIsolatedPackagedApp } = await import("./audit-packaged-app.mjs");
+  const root = await mkdtemp(join(tmpdir(), "pragma-smoke-resolver-"));
+  const app = join(root, "dist/app");
+  let copiedResources;
+  try {
+    await mkdir(join(root, "node_modules/pragma-repository-canary"), { recursive: true });
+    await writeFile(
+      join(root, "node_modules/pragma-repository-canary/index.js"),
+      "module.exports=42;",
+    );
+    await mkdir(join(app, "resources"), { recursive: true });
+    await writeFile(join(app, "resources/probe.mjs"), "// shipped canary");
+    assert.ok(createRequire(join(app, "resources/probe.mjs")).resolve("pragma-repository-canary"));
+    await assert.rejects(
+      withIsolatedPackagedApp(
+        app,
+        join(app, "resources"),
+        join(app, "electron"),
+        async (resources) => {
+          copiedResources = resources;
+          assert.equal(await readFile(join(resources, "probe.mjs"), "utf8"), "// shipped canary");
+          assert.throws(
+            () => createRequire(join(resources, "probe.mjs")).resolve("pragma-repository-canary"),
+            { code: "MODULE_NOT_FOUND" },
+          );
+          throw new Error("smoke-canary");
+        },
+      ),
+      /smoke-canary/,
+    );
+    await assert.rejects(access(copiedResources), { code: "ENOENT" });
+    await access(join(app, "resources/probe.mjs"));
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("afterPack saves smoke failures before rejecting the package", async () => {
+  const { readFile } = await import("node:fs/promises");
+  const { fileURLToPath } = await import("node:url");
+  const { default: afterPack } = await import("./audit-packaged-app.mjs");
+  const root = await mkdtemp(join(tmpdir(), "pragma-smoke-report-"));
+  try {
+    const source = join(root, "source"),
+      outDir = join(root, "reports"),
+      appOutDir = join(root, "mac");
+    const resources = join(appOutDir, "Fake.app/Contents/Resources");
+    await mkdir(join(source, "out/main"), { recursive: true });
+    await mkdir(resources, { recursive: true });
+    await mkdir(outDir);
+    for (const name of ["claude-acp-worker.js", "pragma-command-client.js"])
+      await writeFile(join(source, "out/main", name), "// shipped worker");
+    await createPackageWithOptions(source, join(resources, "app.asar"), {
+      unpack: "**/{claude-acp-worker,pragma-command-client}.js",
+    });
+    await writeFile(
+      join(outDir, "packaging-policy-darwin-1.json"),
+      JSON.stringify({ platform: "darwin", arch: "x64", excludedPackages: [] }),
+    );
+    await assert.rejects(
+      afterPack({
+        appOutDir,
+        outDir,
+        electronPlatformName: "darwin",
+        arch: 1,
+        packager: {
+          projectDir: fileURLToPath(new URL("../../../", import.meta.url)),
+          appInfo: { productFilename: "Fake", version: "0.0.0" },
+          config: {},
+          platformSpecificBuildOptions: {},
+          info: { framework: { version: "43.7.6" } },
+        },
+      }),
+    );
+    const report = JSON.parse(
+      await readFile(join(outDir, "packaging-audit-darwin-1.json"), "utf8"),
+    );
+    assert.equal(report.validation.smoke, "failed");
+    assert.equal(report.validation.cli, "pending");
+    assert.ok(
+      report.failures.some(({ path, reason }) => path === "packaged-smoke" && reason.length > 0),
+    );
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});

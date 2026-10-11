@@ -42,8 +42,23 @@ export function inspectJavaScript(source) {
         ((init.callee.type === "Identifier" && factoryNames.has(init.callee.name)) ||
           (init.callee.type === "MemberExpression" &&
             init.callee.property.name === "createRequire"));
+      // esbuild renames its ESM require shim during minification. Recognize
+      // the conditional global-require branch structurally, not by helper name.
+      const body =
+        init.type === "CallExpression" && init.callee.type === "ArrowFunctionExpression"
+          ? init.callee.body
+          : undefined;
+      const shim =
+        body?.type === "ConditionalExpression" &&
+        body.consequent.type === "Identifier" &&
+        requireNames.has(body.consequent.name) &&
+        body.test.type === "BinaryExpression" &&
+        body.test.left.type === "UnaryExpression" &&
+        body.test.left.operator === "typeof" &&
+        body.test.left.argument.type === "Identifier" &&
+        requireNames.has(body.test.left.argument.name);
       const alias = init.type === "Identifier" && requireNames.has(init.name);
-      if (factory || alias) {
+      if (factory || alias || shim) {
         requireNames.add(id.name);
         changed = true;
       }

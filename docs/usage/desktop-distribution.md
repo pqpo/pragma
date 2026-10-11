@@ -288,9 +288,11 @@ Electron 语言资源保留英文、简体中文、繁体中文。macOS 的 unde
 ASAR unpacked 引用只计一次，框架符号链接不跟随。DMG/ZIP/EXE 完成后将实际字节数和 SHA-256
 写回同一报告；并发完成的安装包更新会串行处理，报告在临时 app 目录被清理前保存。
 
-`afterPack` 使用发行应用的 Electron Node 模式，在空 PATH、空 NODE_PATH 和临时 PRAGMA_HOME 下
+`afterPack` 将发行应用完整复制到仓库外临时目录，保留框架符号链接，避免 Node 向上查找时借用仓库依赖。
+使用副本的 Electron Node 模式，在空 PATH、空 NODE_PATH、空 NODE_OPTIONS 和临时 PRAGMA_HOME 下
 验证内置 CLI、Worker、keyring、sharp、真实 tokenizer chunk、QuickJS 执行/错误路径及自包含插件加载。
-探针文件和临时插件在结束时删除，不进入最终安装包。这些检查不替代需要认证的 Runtime 实际执行，
+探针文件、临时插件和应用副本在成功或失败后均删除，不进入最终安装包。
+打包失败清理只移除未完成的安装包与临时应用，保留审计和裁剪报告；smoke 异常写入报告后再抛出。这些检查不替代需要认证的 Runtime 实际执行，
 也不替代窗口、Bridge、原生菜单和语言回退的视觉验收；报告为这些项目保留待验收状态。
 
 发行流水线始终上传审计与裁剪报告，包括打包失败的诊断。新增/升级 SDK、Electron 或原生依赖后，需要

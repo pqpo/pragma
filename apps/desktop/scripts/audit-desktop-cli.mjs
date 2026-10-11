@@ -61,6 +61,8 @@ export async function auditDesktopCli(resources, executable) {
     ELECTRON_RUN_AS_NODE: "1",
     PRAGMA_HOME: temporary,
     PATH: "",
+    NODE_PATH: "",
+    NODE_OPTIONS: "",
     NODE_NO_WARNINGS: "1",
   };
   try {

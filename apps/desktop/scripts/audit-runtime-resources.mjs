@@ -27,40 +27,41 @@ export async function auditRuntimeResources(resources, executable) {
     throw new Error("Tokenizer chunk lost its countTokens export.");
   const home = await mkdtemp(join(tmpdir(), "pragma-packaged-runtime-"));
   const probe = join(`${archive}.unpacked`, "out/main/desktop-cli/packaging-runtime-probe.mjs");
-  const fixture = JSON.parse(
-    await readFile(
-      new URL(
-        "../../../packages/core/src/plugins/fixtures/context-plugin/plugin.json",
-        import.meta.url,
+  try {
+    const fixture = JSON.parse(
+      await readFile(
+        new URL(
+          "../../../packages/core/src/plugins/fixtures/context-plugin/plugin.json",
+          import.meta.url,
+        ),
+        "utf8",
       ),
-      "utf8",
-    ),
-  );
-  fixture.id = "packaging.smoke";
-  fixture.runtime.entry = "./plugin.mjs";
-  await mkdir(join(home, "plugin"));
-  await writeFile(
-    join(home, "plugin/package.json"),
-    JSON.stringify({ type: "module", name: "pragma-packaging-smoke", version: "0.0.0" }),
-  );
-  await writeFile(join(home, "plugin/plugin.json"), JSON.stringify(fixture));
-  await build({
-    stdin: {
-      contents: `import {definePluginEntry,readExpertAgentPluginManifest} from ${JSON.stringify(fileURLToPath(new URL("../../../packages/core/dist/plugins/expert-agent-plugin.js", import.meta.url)))}; export default definePluginEntry({manifest:readExpertAgentPluginManifest(new URL('./plugin.json',import.meta.url)),setup:()=>({})});`,
-      resolveDir: home,
-    },
-    outfile: join(home, "plugin/plugin.mjs"),
-    bundle: true,
-    platform: "node",
-    target: "node22",
-    format: "esm",
-    minify: true,
-    keepNames: true,
-    logLevel: "silent",
-  });
-  // The same lazy counter and plugin loader are compiled with the production settings.
-  // Importing the shipped chunk additionally verifies its real ASAR location and export.
-  const source = `
+    );
+    fixture.id = "packaging.smoke";
+    fixture.runtime.entry = "./plugin.mjs";
+    await mkdir(join(home, "plugin"));
+    await writeFile(
+      join(home, "plugin/package.json"),
+      JSON.stringify({ type: "module", name: "pragma-packaging-smoke", version: "0.0.0" }),
+    );
+    await writeFile(join(home, "plugin/plugin.json"), JSON.stringify(fixture));
+    await build({
+      stdin: {
+        contents: `import {definePluginEntry,readExpertAgentPluginManifest} from ${JSON.stringify(fileURLToPath(new URL("../../../packages/core/dist/plugins/expert-agent-plugin.js", import.meta.url)))}; export default definePluginEntry({manifest:readExpertAgentPluginManifest(new URL('./plugin.json',import.meta.url)),setup:()=>({})});`,
+        resolveDir: home,
+      },
+      outfile: join(home, "plugin/plugin.mjs"),
+      bundle: true,
+      platform: "node",
+      target: "node22",
+      format: "esm",
+      minify: true,
+      keepNames: true,
+      logLevel: "silent",
+    });
+    // The same lazy counter and plugin loader are compiled with the production settings.
+    // Importing the shipped chunk additionally verifies its real ASAR location and export.
+    const source = `
     import assert from 'node:assert/strict';
     import { createRequire } from 'node:module';
     import { pathToFileURL } from 'node:url';
@@ -112,7 +113,6 @@ export async function auditRuntimeResources(resources, executable) {
     await quickjs('function main(input) { throw new Error("packaging-canary"); }','runtime_error');
     process.stdout.write('packaged-runtime-resources-ok');
   `;
-  try {
     await build({
       stdin: { contents: source, resolveDir: fileURLToPath(new URL("../", import.meta.url)) },
       outfile: probe,
@@ -136,6 +136,7 @@ export async function auditRuntimeResources(resources, executable) {
         ELECTRON_RUN_AS_NODE: "1",
         PRAGMA_HOME: home,
         PATH: "",
+        NODE_OPTIONS: "",
         NODE_PATH: "",
         NODE_NO_WARNINGS: "1",
       },

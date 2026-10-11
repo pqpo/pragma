@@ -4,9 +4,10 @@ import { execFileSync } from "node:child_process";
 import { forbiddenPackageFile } from "./packaging-policy.mjs";
 import { applicationInventory, nativeBinaryTarget, summarizeInventory } from "./packaging-size.mjs";
 import { auditDesktopCli } from "./audit-desktop-cli.mjs";
-import { readFile, readdir, stat, writeFile } from "node:fs/promises";
+import { cp, mkdtemp, readFile, readdir, rm, stat, writeFile } from "node:fs/promises";
 import { join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { tmpdir } from "node:os";
 import { extractFile, listPackage, statFile } from "@electron/asar";
 
 const sdkDirectory = /(?:^|\/)@anthropic-ai\/claude-agent-sdk\//;
@@ -132,6 +133,21 @@ export async function auditPackagedResources(resourcesDirectory, options = {}) {
   return report;
 }
 
+/** Prevent Node's parent-directory resolver from borrowing repository dependencies. */
+export async function withIsolatedPackagedApp(appOutDir, resources, executable, action) {
+  const temporary = await mkdtemp(join(tmpdir(), "pragma-isolated-app-"));
+  const isolated = join(temporary, "app");
+  try {
+    await cp(appOutDir, isolated, { recursive: true, dereference: false, verbatimSymlinks: true });
+    return await action(
+      join(isolated, relative(appOutDir, resources)),
+      join(isolated, relative(appOutDir, executable)),
+    );
+  } finally {
+    await rm(temporary, { recursive: true, force: true });
+  }
+}
+
 export default async function afterPack(context) {
   const resources =
     context.electronPlatformName === "darwin"
@@ -211,10 +227,29 @@ export default async function afterPack(context) {
           context.packager.appInfo.productFilename,
         )
       : join(context.appOutDir, `${context.packager.appInfo.productFilename}.exe`);
-  const cli = await auditDesktopCli(resources, executable);
-  report.cli = cli;
-  report.validation.cli = "passed";
-  report.validation.resources = await auditRuntimeResources(resources, executable);
+  try {
+    await withIsolatedPackagedApp(
+      context.appOutDir,
+      resources,
+      executable,
+      async (isolatedResources, isolatedExecutable) => {
+        report.cli = await auditDesktopCli(isolatedResources, isolatedExecutable);
+        report.validation.cli = "passed";
+        report.validation.resources = await auditRuntimeResources(
+          isolatedResources,
+          isolatedExecutable,
+        );
+      },
+    );
+  } catch (error) {
+    report.failures.push({
+      path: "packaged-smoke",
+      reason: error instanceof Error ? error.message : String(error),
+    });
+    report.validation.smoke = "failed";
+    await writeFile(reportPath, `${JSON.stringify(report, null, 2)}\n`);
+    throw error;
+  }
   await writeFile(reportPath, `${JSON.stringify(report, null, 2)}\n`);
   console.log(
     `Desktop packaging audit passed: ${report.physicalBytes} resource bytes. Report: ${reportPath}`,

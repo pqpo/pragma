@@ -43,13 +43,13 @@ export function forbiddenPackageFile(path, { platform, arch, excludedPackages = 
   );
   if (platform && arch && embedded && (embedded[1] !== platform || embedded[2] !== arch))
     return "Embedded native prebuild target mismatch";
-  const match = normalized.match(/(?:^|\/)node_modules\/((?:@[^/]+\/)?[^/]+)/);
-  if (!match) return undefined;
-  const name = match[1];
-  if (excludedPackages.includes(name)) return "Bundled dependency copy";
-  const target = nativePackageTarget(name);
-  if (platform && arch && target && (target.platform !== platform || target.arch !== arch))
-    return `Native package target ${target.platform}/${target.arch}; expected ${platform}/${arch}`;
+  for (const match of normalized.matchAll(/(?:^|\/)node_modules\/((?:@[^/]+\/)?[^/]+)/g)) {
+    const name = match[1];
+    if (excludedPackages.includes(name)) return "Bundled dependency copy";
+    const target = nativePackageTarget(name);
+    if (platform && arch && target && (target.platform !== platform || target.arch !== arch))
+      return `Native package target ${target.platform}/${target.arch}; expected ${platform}/${arch}`;
+  }
   return undefined;
 }
 

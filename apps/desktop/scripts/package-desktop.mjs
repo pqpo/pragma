@@ -88,23 +88,27 @@ async function clearDist() {
   return bytesRemoved;
 }
 
-async function trimDist({ keepInstallers }) {
-  if ((await existingDistStats()) === undefined) {
-    return;
+export async function trimDist({ keepInstallers, keepReports = true }, directory = distDirectory) {
+  try {
+    const stats = await lstat(directory);
+    if (!stats.isDirectory() || stats.isSymbolicLink())
+      throw new Error(`Unexpected dist path: ${directory}`);
+  } catch (error) {
+    if (error.code === "ENOENT") return;
+    throw error;
   }
 
-  const entries = await readdir(distDirectory, { withFileTypes: true });
-  const keptEntries = keepInstallers
-    ? entries.filter(
-        (entry) =>
-          entry.isFile() &&
-          (installerPattern.test(entry.name) || auditReportPattern.test(entry.name)),
-      )
-    : [];
+  const entries = await readdir(directory, { withFileTypes: true });
+  const keptEntries = entries.filter(
+    (entry) =>
+      entry.isFile() &&
+      ((keepInstallers && installerPattern.test(entry.name)) ||
+        (keepReports && auditReportPattern.test(entry.name))),
+  );
   const installerCount = keptEntries.filter((entry) => installerPattern.test(entry.name)).length;
 
   if (keepInstallers && installerCount === 0) {
-    await clearDist();
+    await trimDist({ keepInstallers: false, keepReports }, directory);
     throw new Error("electron-builder completed without leaving any installer files in dist.");
   }
 
@@ -115,13 +119,13 @@ async function trimDist({ keepInstallers }) {
       continue;
     }
 
-    const entryPath = resolve(distDirectory, entry.name);
+    const entryPath = resolve(directory, entry.name);
     bytesRemoved += await pathSize(entryPath);
     await rm(entryPath, { recursive: true, force: true });
   }
 
   const retainedBytes = await Promise.all(
-    keptEntries.map(async (entry) => (await stat(resolve(distDirectory, entry.name))).size),
+    keptEntries.map(async (entry) => (await stat(resolve(directory, entry.name))).size),
   ).then((sizes) => sizes.reduce((total, size) => total + size, 0));
 
   console.log(
@@ -176,15 +180,17 @@ async function main() {
     } else if (packagingSucceeded) {
       await trimDist({ keepInstallers: true });
     } else {
-      await clearDist();
+      await trimDist({ keepInstallers: false });
     }
   }
 }
 
-try {
-  await main();
-} catch (error) {
-  const message = error instanceof Error ? error.message : String(error);
-  console.error(`\nDesktop packaging failed: ${message}`);
-  process.exitCode = 1;
+if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+  try {
+    await main();
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    console.error(`\nDesktop packaging failed: ${message}`);
+    process.exitCode = 1;
+  }
 }
