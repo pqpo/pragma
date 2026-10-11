@@ -19,21 +19,26 @@ const workspaceDependencies = Object.entries(desktopPackageManifest.dependencies
   .filter(([, version]) => version.startsWith("workspace:"))
   .map(([name]) => name);
 
-export default defineConfig({
+export default defineConfig(({ command }) => ({
   main: {
+    esbuild: { keepNames: true, legalComments: "eof" },
     plugins: [
       {
         name: "bundle-claude-acp-worker",
         async writeBundle(output) {
           if (output.dir === undefined)
             throw new Error("Desktop main output directory is missing.");
-          await buildDesktopCli(output.dir);
+          await buildDesktopCli(output.dir, {
+            minify: command === "build" && process.env.PRAGMA_BUILD_MINIFY !== "0",
+          });
           // A self-contained worker requires only this file outside ASAR, without
           // changing the packaging policy for main or its shared chunks.
           await build({
             entryPoints: [fileURLToPath(new URL("../cli/src/managed-pragma.ts", import.meta.url))],
             outfile: join(output.dir, "pragma-command-client.js"),
             bundle: true,
+            minify: command === "build" && process.env.PRAGMA_BUILD_MINIFY !== "0",
+            keepNames: true,
             platform: "node",
             target: "node22",
             format: "esm",
@@ -52,6 +57,8 @@ export default defineConfig({
             ],
             outfile: join(output.dir, "claude-acp-worker.js"),
             bundle: true,
+            minify: command === "build" && process.env.PRAGMA_BUILD_MINIFY !== "0",
+            keepNames: true,
             platform: "node",
             target: "node22",
             format: "esm",
@@ -64,6 +71,7 @@ export default defineConfig({
       },
     ],
     build: {
+      minify: command === "build" && process.env.PRAGMA_BUILD_MINIFY !== "0" ? "esbuild" : false,
       externalizeDeps: {
         exclude: workspaceDependencies,
       },
@@ -113,4 +121,4 @@ export default defineConfig({
     },
     plugins: [react()],
   },
-});
+}));

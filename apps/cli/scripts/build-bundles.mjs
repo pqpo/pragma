@@ -1,7 +1,7 @@
 import { build } from "esbuild";
 import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, URL } from "node:url";
 
 export const CLI_WORKERS = {
   "code-service-worker": "packages/core/src/code-service-worker.ts",
@@ -13,7 +13,7 @@ export const CLI_WORKERS = {
 const repositoryDirectory = fileURLToPath(new URL("../../../", import.meta.url));
 
 /** One artifact graph for npm and Desktop; native dependencies are supplied by the distributor. */
-export async function buildCliBundles({ outputDirectory, version }) {
+export async function buildCliBundles({ outputDirectory, version, minify = true }) {
   await mkdir(outputDirectory, { recursive: true });
   const common = {
     absWorkingDir: repositoryDirectory,
@@ -24,6 +24,8 @@ export async function buildCliBundles({ outputDirectory, version }) {
     legalComments: "eof",
     logLevel: "info",
     metafile: true,
+    minify,
+    keepNames: true,
     platform: "node",
     target: "node22",
     banner: {
