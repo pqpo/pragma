@@ -1,3 +1,4 @@
+import { verifyArtifact } from "../../../scripts/build-artifact.mjs";
 import { spawn } from "node:child_process";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -10,7 +11,8 @@ const stagingDirectory = join(releaseDirectory, "package");
 const buildScript = join(scriptDirectory, "build-package.mjs");
 const auditScript = join(scriptDirectory, "package-audit.mjs");
 
-await run(process.execPath, [buildScript], packageDirectory);
+if (process.argv.includes("--prepared")) await verifyArtifact("cli");
+else await run(process.execPath, [buildScript], packageDirectory);
 
 const dryRun = await run(
   "npm",

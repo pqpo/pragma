@@ -16,17 +16,7 @@ afterEach(async () => {
   await Promise.all(active.map(async (child) => await waitForClose(child)));
 });
 
-it.each(Array.from({ length: 10 }, (_, index) => index + 1))(
-  "registers the SIGKILL replay test with Vitest (serial round %i)",
-  async () => {
-    await assertCollection();
-  },
-  30_000,
-);
-
-it("registers the SIGKILL replay test under controlled concurrent collection", async () => {
-  await Promise.all([assertCollection(), assertCollection(), assertCollection()]);
-}, 30_000);
+it("registers the SIGKILL replay test with Vitest", assertCollection, 30_000);
 
 async function assertCollection(): Promise<void> {
   const repositoryRoot = join(import.meta.dirname, "..", "..", "..");

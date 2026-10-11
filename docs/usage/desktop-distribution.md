@@ -25,8 +25,8 @@ git push origin v0.2.2
 
 ### 执行流程
 
-1. **源码与契约验证 (`verify`)**：自动校验 Tag 格式与 `package.json` 版本一致性，运行类型检查、规范检查与核心测试 (`pnpm test:core`)。
-2. **多平台构建 (`package`)**：在独立的 GitHub Runner 上分别打出 `mac-arm64` (DMG, ZIP)、`mac-x64` (DMG, ZIP) 和 `win-x64` (EXE)。
+1. **源码与契约验证 (`verify` / `source`)**：校验 Tag 与版本；复用完全相同提交的可信 main CI 完整成功结果，否则调用共享验证流程。快速契约与完整业务回归分两条验证 job。
+2. **多平台构建 (`package`)**：下载已验证的通用 JS、内置 CLI 与插件构建，校验 source identity 和文件摘要，再在独立的原生 GitHub Runner 上分别打出 `mac-arm64` (DMG, ZIP)、`mac-x64` (DMG, ZIP) 和 `win-x64` (EXE)。
 3. **GitHub Release 发布 (`release`)**：计算 SHA-256 校验和，自动创建 GitHub Pre-release / Draft，上传产物资产并发布。
 
 发布前会将两个 macOS DMG 和对应校验和同步到阿里云 OSS。每个架构上传前独立获取有效期一小时的

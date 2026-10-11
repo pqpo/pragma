@@ -1,0 +1,182 @@
+name: Shared source verification
+on:
+  workflow_call:
+    inputs:
+      ref:
+        required: true
+        type: string
+      reuse_ci:
+        type: boolean
+        default: false
+    outputs:
+      run_id:
+        value: ${{ jobs.resolve.outputs.run_id }}
+      source_sha:
+        value: ${{ jobs.resolve.outputs.source_sha }}
+permissions:
+  contents: read
+  actions: read
+env:
+  CI: "true"
+  PRAGMA_LOG_LEVEL: error
+  GOMAXPROCS: "2"
+jobs:
+  resolve:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    outputs:
+      reuse_run_id: ${{ steps.resolve.outputs.reuse_run_id }}
+      run_id: ${{ steps.resolve.outputs.run_id }}
+      source_sha: ${{ steps.resolve.outputs.source_sha }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.ref }}
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22.19.0
+      - id: resolve
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REUSE_CI: ${{ inputs.reuse_ci }}
+        run: node scripts/find-verified-ci.mjs
+  prepare:
+    needs: resolve
+    if: needs.resolve.outputs.reuse_run_id == ''
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    env:
+      PRAGMA_SOURCE_COMMIT: ${{ needs.resolve.outputs.source_sha }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.resolve.outputs.source_sha }}
+      - uses: ./.github/actions/setup
+      - name: Build workspace once
+        run: |
+          pnpm build
+          node scripts/build-artifact.mjs create cli
+          node scripts/build-artifact.mjs create desktop
+          mkdir -p .test-results
+          node scripts/archive-workspace-build.mjs
+      - uses: actions/upload-artifact@v7
+        with:
+          name: workspace-build
+          path: .test-results/workspace-build.tar.gz
+          if-no-files-found: error
+          retention-days: 7
+      - name: Upload Desktop common build
+        uses: actions/upload-artifact@v7
+        with:
+          name: desktop-common
+          include-hidden-files: true
+          path: |
+            apps/desktop/out
+            apps/desktop/.plugin-bundles
+            apps/desktop/.packaging/cli-metafiles.json
+            apps/desktop/.packaging/prepared.json
+          if-no-files-found: error
+          retention-days: 14
+  verify:
+    name: Verify ${{ matrix.lane }}
+    needs: [resolve, prepare]
+    if: needs.resolve.outputs.reuse_run_id == ''
+    strategy:
+      fail-fast: false
+      max-parallel: 2
+      matrix:
+        lane: [quality, business]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    env:
+      PRAGMA_SOURCE_COMMIT: ${{ needs.resolve.outputs.source_sha }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.resolve.outputs.source_sha }}
+      - uses: ./.github/actions/setup
+      - uses: actions/cache@v4
+        if: matrix.lane == 'business'
+        with:
+          path: node_modules/.vitest-cache
+          key: vitest-${{ runner.os }}-${{ runner.arch }}-node22.19.0-${{ matrix.lane }}-${{ hashFiles('pnpm-lock.yaml') }}-${{ needs.resolve.outputs.source_sha }}
+          restore-keys: |
+            vitest-${{ runner.os }}-${{ runner.arch }}-node22.19.0-${{ matrix.lane }}-${{ hashFiles('pnpm-lock.yaml') }}-
+      - uses: actions/download-artifact@v8
+        with:
+          name: workspace-build
+          path: .test-results
+      - name: Restore and verify prepared workspace
+        run: |
+          tar -xzf .test-results/workspace-build.tar.gz
+          node scripts/build-artifact.mjs verify cli
+          node scripts/build-artifact.mjs verify desktop
+      - name: Quality and fast contracts
+        if: matrix.lane == 'quality'
+        run: |
+          pnpm runtime:features:check
+          pnpm dsl:versions:check
+          pnpm lint
+          pnpm typecheck
+          pnpm test:core
+          node --test --test-concurrency=1 scripts/*.test.mjs
+      - name: Business regressions without duplicate selections
+        if: matrix.lane == 'business'
+        run: node scripts/run-business-tests.mjs --prepared
+      - name: Pack the prepared canonical CLI and generate reports
+        if: matrix.lane == 'business'
+        run: |
+          pnpm --filter @pqpo/pragma package:pack --prepared
+          pnpm --filter @pqpo/pragma release:reports
+      - name: Upload canonical CLI
+        if: matrix.lane == 'business'
+        uses: actions/upload-artifact@v7
+        with:
+          name: pragma-cli-canonical
+          path: apps/cli/.release/ci-artifact
+          if-no-files-found: error
+          retention-days: 14
+      - name: Archive business timings and test results
+        if: always() && matrix.lane == 'business'
+        uses: actions/upload-artifact@v7
+        with:
+          name: business-test-results
+          include-hidden-files: true
+          path: .test-results/*.json
+          retention-days: 14
+  result:
+    needs: [resolve, prepare, verify]
+    if: always()
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Require complete verification
+        env:
+          RESOLVE_RESULT: ${{ needs.resolve.result }}
+          PREPARE_RESULT: ${{ needs.prepare.result }}
+          VERIFY_RESULT: ${{ needs.verify.result }}
+          REUSE_RUN_ID: ${{ needs.resolve.outputs.reuse_run_id }}
+        run: |
+          test "$RESOLVE_RESULT" = success
+          if [ -z "$REUSE_RUN_ID" ]; then test "$PREPARE_RESULT" = success; test "$VERIFY_RESULT" = success; fi
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.resolve.outputs.source_sha }}
+      - name: Download reused receipt
+        if: needs.resolve.outputs.reuse_run_id != ''
+        uses: actions/download-artifact@v8
+        with:
+          github-token: ${{ github.token }}
+          run-id: ${{ needs.resolve.outputs.reuse_run_id }}
+          name: source-verification
+      - name: Validate reused receipt
+        if: needs.resolve.outputs.reuse_run_id != ''
+        run: node scripts/verify-source-receipt.mjs
+      - name: Write verification receipt
+        run: |
+          node --input-type=module -e 'import fs from "node:fs";import cp from "node:child_process";import crypto from "node:crypto";fs.writeFileSync("verification.json",JSON.stringify({schemaVersion:1,commit:cp.execFileSync("git",["rev-parse","HEAD"],{encoding:"utf8"}).trim(),lockHash:crypto.createHash("sha256").update(fs.readFileSync("pnpm-lock.yaml")).digest("hex"),node:"22.19.0",pnpm:"10.12.1",lanes:["quality","business"]}))'
+      - uses: actions/upload-artifact@v7
+        if: needs.resolve.outputs.reuse_run_id == ''
+        with:
+          name: source-verification
+          path: verification.json
+          retention-days: 14

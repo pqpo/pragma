@@ -8,5 +8,5 @@ const oxcOptions = {
 
 export default defineConfig({
   oxc: oxcOptions as never,
-  test: { environment: "node" },
+  test: { maxWorkers: 2, environment: "node" },
 });

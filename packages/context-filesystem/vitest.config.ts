@@ -9,5 +9,5 @@ export default defineConfig({
       },
     },
   } as never,
-  test: { environment: "node" },
+  test: { maxWorkers: 2, environment: "node" },
 });

@@ -53,6 +53,26 @@ import {
   writePublishedProjectFixture,
 } from "./fixtures/published-project.ts";
 
+function advanceLeaseClock(expiredAt: number): void {
+  const RealDate = Date;
+  const offset = expiredAt - RealDate.now();
+  class LeaseDate extends RealDate {
+    constructor(value?: string | number | Date) {
+      super(
+        value === undefined
+          ? RealDate.now() + offset
+          : value instanceof RealDate
+            ? value.getTime()
+            : value,
+      );
+    }
+    static override now(): number {
+      return RealDate.now() + offset;
+    }
+  }
+  vi.stubGlobal("Date", LeaseDate);
+}
+
 const roots: string[] = [];
 const hosts: ReturnType<typeof createNodeApplication>[] = [];
 function createLocalHostNodeApplication(
@@ -66,6 +86,7 @@ afterEach(async () => {
   // Test bodies stop their child producers first; then drain Host custody
   // before removing its durable root or restoring the Runtime mocks it uses.
   for (const host of hosts.splice(0).reverse()) await host.dispose?.();
+  vi.unstubAllGlobals();
   vi.restoreAllMocks();
   await Promise.all(
     roots.splice(0).map((root) => rm(root, { recursive: true, force: true, maxRetries: 5 })),
@@ -421,10 +442,17 @@ describe("default Node compilation reaches persisted Execution", { timeout: 15_0
         const lease = JSON.parse(await readFile(paths.expertSessionLease(sessionId), "utf8")) as {
           expiresAt: string;
         };
-        // Wait for the actual persisted Session lease; no active database, WAL,
-        // Session tree or lock state is copied or patched by this test.
-        await new Promise<void>((resolve) =>
-          setTimeout(resolve, Math.max(0, Date.parse(lease.expiresAt) + 100 - Date.now())),
+        const controllerLease = (
+          await createMissionControllerStore({
+            missionsPath: paths.missionsRoot(),
+          }).readSnapshot({ missionId: started.missionId })
+        ).snapshot.lease;
+        // The old process is reaped. Advance Date only; I/O and heartbeats remain real.
+        advanceLeaseClock(
+          Math.max(
+            Date.parse(lease.expiresAt),
+            controllerLease === undefined ? 0 : Date.parse(controllerLease.expiresAt),
+          ) + 100,
         );
         await desktop.resumeMission!({ missionId: started.missionId, requestId: randomUUID() });
         const after = (await sessions.get(sessionId))!;
@@ -535,20 +563,7 @@ describe("default Node compilation reaches persisted Execution", { timeout: 15_0
       const claim = record.state[EXECUTION_RECOVERY_CLAIM_STATE_KEY] as { expiresAt: string };
       const lease = (await controller.readSnapshot({ missionId: target.missionId })).snapshot
         .lease!;
-      await new Promise<void>((resolve) =>
-        setTimeout(
-          resolve,
-          Math.max(
-            0,
-            Math.max(
-              Date.parse(claim.expiresAt),
-              lease === undefined ? 0 : Date.parse(lease.expiresAt),
-            ) +
-              100 -
-              Date.now(),
-          ),
-        ),
-      );
+      advanceLeaseClock(Math.max(Date.parse(claim.expiresAt), Date.parse(lease.expiresAt)) + 100);
       await expect(
         desktop.resumeMission!({ missionId: target.missionId, requestId: randomUUID() }),
       ).rejects.toMatchObject({ code: "EXECUTION_FAILED" });

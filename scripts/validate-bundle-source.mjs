@@ -2,7 +2,7 @@
 
 import { resolve } from "node:path";
 
-import { validateBundleSourceDirectory } from "../packages/local-host/dist/index.js";
+import { validateBundleSourceDirectory } from "@pragma/local-host";
 
 const directory = resolve(process.argv[2] ?? ".");
 const result = await validateBundleSourceDirectory(directory);

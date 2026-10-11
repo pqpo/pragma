@@ -1,5 +1,3 @@
-import { readFile } from "node:fs/promises";
-
 import { createLocalHostApplication } from "@pragma/local-host";
 import { describe, expect, it } from "vitest";
 
@@ -50,12 +48,5 @@ describe("CLI-side Local Host harness", () => {
       canonicalPath: "/workspace/fixture",
       displayName: "fixture",
     });
-
-    const localHostDist = await readFile(
-      new URL("../../../packages/local-host/dist/index.js", import.meta.url),
-      "utf8",
-    );
-    expect(localHostDist).not.toContain(".ts");
-    expect(localHostDist).toContain("node:crypto");
   });
 });

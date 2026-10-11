@@ -15,5 +15,5 @@ const oxcOptions: OxcTsconfigOptions = {
 
 export default defineConfig({
   oxc: oxcOptions as never,
-  test: { include: ["test/**/*.test.ts"], environment: "node" },
+  test: { maxWorkers: 2, include: ["test/**/*.test.ts"], environment: "node" },
 });

@@ -3,7 +3,7 @@ import { spawn } from "node:child_process";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { afterEach, beforeAll, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 
 import {
   PUBLISHED_FLOW_ID,
@@ -19,11 +19,6 @@ afterEach(async () => {
     roots.splice(0).map(async (root) => await rm(root, { recursive: true, force: true })),
   );
 });
-
-beforeAll(async () => {
-  const result = await invoke("pnpm", ["--filter", "@pqpo/pragma...", "build"], {});
-  expect(result.exitCode).toBe(0);
-}, 120_000);
 
 describe("CLI production project composition", () => {
   it("resolves published Team and Flow entries with exact revision pins", async () => {

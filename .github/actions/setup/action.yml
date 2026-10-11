@@ -1,0 +1,20 @@
+name: Prepare workspace
+description: Install the pinned toolchain and restore platform-specific build cache
+runs:
+  using: composite
+  steps:
+    - uses: pnpm/action-setup@v6
+      with:
+        version: 10.12.1
+    - uses: actions/setup-node@v7
+      with:
+        node-version: 22.19.0
+        cache: pnpm
+    - uses: actions/cache@v4
+      with:
+        path: .turbo/cache
+        key: turbo-${{ runner.os }}-${{ runner.arch }}-node22.19.0-pnpm10.12.1-${{ hashFiles('pnpm-lock.yaml') }}-${{ github.sha }}
+        restore-keys: |
+          turbo-${{ runner.os }}-${{ runner.arch }}-node22.19.0-pnpm10.12.1-${{ hashFiles('pnpm-lock.yaml') }}-
+    - shell: bash
+      run: pnpm install --frozen-lockfile

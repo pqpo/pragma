@@ -16,8 +16,7 @@
     "node": ">=22"
   },
   "scripts": {
-    "pretypecheck": "pnpm --filter \"@pqpo/pragma...\" build",
-    "pretest": "pnpm --filter \"@pqpo/pragma...\" build",
+    "pretypecheck": "pnpm exec turbo run build --concurrency=2 --filter=\"@pqpo/pragma...\"",
     "build": "node scripts/build-package.mjs",
     "package:pack": "node scripts/pack-package.mjs",
     "audit:pack": "node scripts/package-audit.mjs",
@@ -26,10 +25,11 @@
     "ci:smoke": "node scripts/smoke-package.mjs",
     "lint": "eslint src test vitest.config.ts",
     "typecheck": "tsc --noEmit",
-    "test": "pnpm test:shared-kernel && pnpm test:adapters",
+    "test": "pnpm test:shared-kernel && pnpm test:adapters:prepared",
     "clean": "rm -rf dist .release",
-    "test:shared-kernel": "pnpm --filter \"@pqpo/pragma...\" build && pnpm --filter @pragma/core exec vitest run test/file-lock.test.ts && pnpm --filter @pragma/local-host test:business",
-    "test:adapters": "vitest run --passWithNoTests"
+    "test:shared-kernel": "pnpm exec turbo run build --concurrency=2 --filter=\"@pqpo/pragma...\" && node ../../scripts/build-artifact.mjs create cli && pnpm --filter @pragma/core exec vitest run test/file-lock.test.ts && pnpm --filter @pragma/local-host test:business",
+    "test:adapters": "pnpm exec turbo run build --concurrency=2 --filter=\"@pqpo/pragma...\" && pnpm test:adapters:prepared",
+    "test:adapters:prepared": "vitest run --passWithNoTests"
   },
   "dependencies": {
     "@napi-rs/keyring": "2.1.0",

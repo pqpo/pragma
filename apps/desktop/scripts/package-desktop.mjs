@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { verifyArtifact } from "../../../scripts/build-artifact.mjs";
 
 import { lstat, readdir, rm, stat } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
@@ -160,7 +161,8 @@ function runCommand(command, argumentsList) {
 }
 
 async function main() {
-  const builderArguments = process.argv.slice(2);
+  const prepared = process.argv.includes("--prepared");
+  const builderArguments = process.argv.slice(2).filter((argument) => argument !== "--prepared");
   if (builderArguments.length === 1 && builderArguments[0] === "--clean-only") {
     await clearDist();
     return;
@@ -171,7 +173,16 @@ async function main() {
 
   let packagingSucceeded = false;
   try {
-    await runCommand("pnpm", ["run", "build"]);
+    if (prepared) {
+      await verifyArtifact("desktop");
+      for (const check of [
+        "verify:styles",
+        "verify:main",
+        "verify:preload",
+        "verify:storage-worker",
+      ])
+        await runCommand("pnpm", ["run", check]);
+    } else await runCommand("pnpm", ["run", "build"]);
     await runCommand("pnpm", ["exec", "electron-builder", ...builderArguments]);
     packagingSucceeded = true;
   } finally {

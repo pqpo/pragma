@@ -10,6 +10,7 @@ export default defineConfig({
     },
   } as never,
   test: {
+    maxWorkers: 1,
     environment: "node",
     // SQLite and child-process integration tests share host resources.
     fileParallelism: false,

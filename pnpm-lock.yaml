@@ -20,6 +20,9 @@ importers:
       '@eslint/js':
         specifier: latest
         version: 10.0.1(eslint@10.12.0(jiti@2.7.0))
+      '@pragma/local-host':
+        specifier: workspace:*
+        version: link:packages/local-host
       eslint:
         specifier: 10.12.0
         version: 10.12.0(jiti@2.7.0)
@@ -528,6 +531,9 @@ importers:
         specifier: latest
         version: 4.6.5
     devDependencies:
+      eslint:
+        specifier: 10.12.0
+        version: 10.12.0(jiti@2.7.0)
       '@pragma/tsconfig':
         specifier: workspace:*
         version: link:../tsconfig

@@ -5,7 +5,7 @@ export default defineConfig({
   plugins: [react()],
   test: {
     include: ["src/**/*.test.{ts,tsx}"],
-    maxWorkers: 4,
+    maxWorkers: 2,
     passWithNoTests: true,
     setupFiles: ["./src/renderer/src/test-setup.ts"],
   },

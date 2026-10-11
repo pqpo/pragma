@@ -2,7 +2,7 @@ import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { spawn } from "node:child_process";
-import { afterEach, beforeAll, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 
 const roots: string[] = [];
 
@@ -12,11 +12,6 @@ afterEach(
       roots.splice(0).map(async (root) => await rm(root, { recursive: true, force: true })),
     ),
 );
-
-beforeAll(async () => {
-  const result = await invoke("pnpm", ["--filter", "@pqpo/pragma...", "build"], {});
-  expect(result.exitCode).toBe(0);
-}, 120_000);
 
 describe("pragma doctor executable", () => {
   it("starts the built bin with ordinary Node for help and JSON version output", async () => {

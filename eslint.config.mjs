@@ -40,6 +40,10 @@ const config = tseslint.config(
       "node_modules/**",
     ],
   },
+  {
+    files: ["scripts/**/*.{js,mjs}"],
+    languageOptions: { globals: { ...globals.node, ...globals.es2023 } },
+  },
   js.configs.recommended,
   ...tseslint.configs.recommended,
   {

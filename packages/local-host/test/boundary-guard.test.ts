@@ -1,4 +1,4 @@
-import { execFileSync } from "node:child_process";
+import { ESLint } from "eslint";
 import { readFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 
@@ -78,63 +78,59 @@ function manifestDependencyNames(manifest: PackageManifest): string[] {
   return dependencyBuckets.flatMap((bucket) => Object.keys(manifest[bucket] ?? {}));
 }
 
-function lintStdin(source: string, filename: string): string {
-  try {
-    execFileSync("pnpm", ["exec", "eslint", "--stdin", "--stdin-filename", filename], {
-      cwd: workspaceRoot,
-      encoding: "utf8",
-      input: source,
-      stdio: ["pipe", "pipe", "pipe"],
-    });
-    return "";
-  } catch (error) {
-    const failure = error as { readonly stderr?: string; readonly stdout?: string };
-    return `${failure.stdout ?? ""}${failure.stderr ?? ""}`;
-  }
+const eslint = new ESLint({ cwd: workspaceRoot });
+async function lintStdin(source: string, filename: string): Promise<string> {
+  const results = await eslint.lintText(source, { filePath: filename });
+  return results.flatMap((result) => result.messages.map((message) => message.message)).join("\n");
 }
 
 describe("Local Host boundary guards", () => {
-  it("rejects a concrete Runtime import from Local Host", () => {
+  it("rejects a concrete Runtime import from Local Host", async () => {
     expect(
-      lintStdin('import "@pragma/runtime-codex";\n', "packages/local-host/src/illegal.ts"),
+      await lintStdin('import "@pragma/runtime-codex";\n', "packages/local-host/src/illegal.ts"),
     ).toContain("Local Host is a Node application layer");
   });
 
-  it("rejects Local Host and CLI imports that cross their composition boundaries", () => {
+  it("rejects Local Host and CLI imports that cross their composition boundaries", async () => {
     expect(
-      lintStdin('import "@pragma/local-host";\n', "packages/runtime/antigravity/src/illegal.ts"),
+      await lintStdin(
+        'import "@pragma/local-host";\n',
+        "packages/runtime/antigravity/src/illegal.ts",
+      ),
     ).toContain("Lower layers and adapters must not depend");
     expect(
-      lintStdin('import "@pqpo/pragma";\n', "packages/runtime/antigravity/src/illegal.ts"),
+      await lintStdin('import "@pqpo/pragma";\n', "packages/runtime/antigravity/src/illegal.ts"),
     ).toContain("Lower layers and adapters must not depend");
     expect(
-      lintStdin('import "@pqpo/pragma/internal";\n', "apps/desktop/src/main/illegal.ts"),
+      await lintStdin('import "@pqpo/pragma/internal";\n', "apps/desktop/src/main/illegal.ts"),
     ).toContain("Desktop Main must compose Local Host directly");
-    expect(lintStdin('import "@pqpo/pragma";\n', "apps/desktop/src/preload/illegal.ts")).toContain(
-      "Desktop preload, renderer, and shared code",
-    );
-    expect(lintStdin('import "@pqpo/pragma";\n', "apps/desktop/src/renderer/illegal.ts")).toContain(
-      "Desktop preload, renderer, and shared code",
-    );
-    expect(lintStdin('import "@pragma/local-host";\n', "apps/desktop/src/main/legal.ts")).toBe("");
+    expect(
+      await lintStdin('import "@pqpo/pragma";\n', "apps/desktop/src/preload/illegal.ts"),
+    ).toContain("Desktop preload, renderer, and shared code");
+    expect(
+      await lintStdin('import "@pqpo/pragma";\n', "apps/desktop/src/renderer/illegal.ts"),
+    ).toContain("Desktop preload, renderer, and shared code");
+    expect(
+      await lintStdin('import "@pragma/local-host";\n', "apps/desktop/src/main/legal.ts"),
+    ).toBe("");
   }, 15_000);
 
-  it("rejects surface-owned command and execution kernels", () => {
+  it("rejects surface-owned command and execution kernels", async () => {
     expect(
-      lintStdin(
+      await lintStdin(
         'import { ExpertSessionManager } from "@pragma/core";\nvoid ExpertSessionManager;\n',
         "apps/desktop/src/main/features/automations/illegal.ts",
       ),
     ).toContain("Desktop features must use Local Host Mission use cases");
     expect(
-      lintStdin(
+      await lintStdin(
         'import { createMissionControlApplication } from "@pragma/local-host";\nvoid createMissionControlApplication;\n',
         "apps/desktop/src/main/features/missions/illegal.ts",
       ),
     ).toContain("Mission command and execution kernels may only be composed by Local Host");
-    expect(lintStdin('import "@pragma/core";\n', "apps/cli/src/commands/illegal.ts")).toContain(
-      "CLI business operations must use the Local Host application boundary",
-    );
+    expect(
+      await lintStdin('import "@pragma/core";\n', "apps/cli/src/commands/illegal.ts"),
+    ).toContain("CLI business operations must use the Local Host application boundary");
   }, 15_000);
 
   it("keeps Local Host and CLI manifests within their internal dependency partitions", async () => {

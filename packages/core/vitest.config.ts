@@ -23,6 +23,6 @@ export default defineConfig({
   test: {
     environment: "node",
     // Core storage and runtime tests share file-system and child-process resources.
-    maxWorkers: 4,
+    maxWorkers: 2,
   },
 });

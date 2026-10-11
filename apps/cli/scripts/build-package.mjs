@@ -1,3 +1,4 @@
+import { recordArtifact } from "../../../scripts/build-artifact.mjs";
 import { chmod, cp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -50,6 +51,8 @@ await writeFile(
   `${JSON.stringify(createReleaseManifest(version), null, 2)}\n`,
   "utf8",
 );
+
+await recordArtifact("cli");
 
 console.log(`Built @pqpo/pragma ${version}.`);
 console.log(`Staging package: ${stagingDirectory}`);

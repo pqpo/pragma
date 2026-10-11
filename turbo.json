@@ -7,7 +7,17 @@
     },
     "build": {
       "dependsOn": ["^build"],
-      "outputs": ["dist/**", ".next/**", "!.next/cache/**", "out/**"]
+      "outputs": [
+        "dist/**",
+        ".next/**",
+        "!.next/cache/**",
+        "out/**",
+        ".plugin-bundles/**",
+        ".packaging/cli-metafiles.json",
+        ".release/package/**",
+        ".release/*.metafile.json"
+      ],
+      "env": ["PRAGMA_BUILD_MINIFY"]
     },
     "lint": {
       "dependsOn": ["^lint"],
@@ -19,14 +29,37 @@
     },
     "test": {
       "dependsOn": ["^test"],
-      "outputs": ["coverage/**"]
+      "outputs": ["coverage/**"],
+      "cache": false
     },
     "test:core": {
-      "dependsOn": ["^test:core"],
-      "outputs": ["coverage/**"]
+      "dependsOn": [],
+      "outputs": ["coverage/**"],
+      "cache": false
     },
     "clean": {
       "cache": false
+    },
+    "@pragma/desktop#build": {
+      "dependsOn": ["^build"],
+      "outputs": [
+        "dist/**",
+        ".next/**",
+        "!.next/cache/**",
+        "out/**",
+        ".plugin-bundles/**",
+        ".packaging/cli-metafiles.json",
+        ".release/package/**",
+        ".release/*.metafile.json"
+      ],
+      "env": ["PRAGMA_BUILD_MINIFY", "PRAGMA_SOURCE_COMMIT"]
     }
-  }
+  },
+  "globalDependencies": [
+    "scripts/build-artifact.mjs",
+    "apps/cli/scripts/build-bundles.mjs",
+    "tsconfig.base.json",
+    "scripts/build.mjs"
+  ],
+  "globalPassThroughEnv": ["GOMAXPROCS", "PRAGMA_LOG_LEVEL", "CI"]
 }

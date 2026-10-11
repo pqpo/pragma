@@ -84,8 +84,8 @@ Windows：
 
 ## CI 验证产物
 
-`.github/workflows/cli-package.yml` 负责验证，`.github/workflows/cli-publish.yml` 负责发布。
-前者只打包一次 canonical tarball，macOS arm64/x64、Windows x64 在 Node 22/24 上都下载
+main CI 调用共享源码验证与 `.github/workflows/cli-package.yml` 平台门禁；
+`.github/workflows/cli-publish.yml` 负责发布。源码验证只打包一次 canonical tarball，macOS arm64/x64、Windows x64 在 Node 22/24 上都下载
 并验证同一 tarball 的 SHA-256；同时覆盖 Node 20 负向、Linux `EBADPLATFORM` 负向、隔离
 global prefix、Unicode prefix、重复安装、PATH precedence、version/doctor/discover/mission
 只读命令以及卸载。
@@ -119,7 +119,7 @@ dry-run 的结果代替 package/platform matrix。
 新 package 尚不存在时，npm trusted publishing 无法直接替代首次 package 建立。首次
 bootstrap 只能由 npm package 管理员执行，开发者不应持有或创建长期 publish token。
 
-1. 在受保护的默认分支准备一个已通过 `cli-package.yml` 的 `cli-v<semver>` release commit，
+1. 在受保护的默认分支准备一个已通过完整 main CI 的 `cli-v<semver>` release commit，
    保存 canonical tarball、SHA-256、SBOM、license report 和 pack audit 结果。
 2. npm 管理员使用一次性、最小权限、短时有效的 granular credential，并按组织要求完成
    2FA。该凭据只用于首次公开创建 `@pqpo/pragma` 和对应的 `next` 或 `latest` 版本；不得
@@ -151,3 +151,9 @@ bootstrap 只能由 npm package 管理员执行，开发者不应持有或创建
 真实 npm scope ownership、trusted publisher allowlist 和首次 bootstrap 仍是外部 npm
 管理员前置条件；在确认前只运行 package verification、dry-run 和本地 smoke，不执行真实
 publish 或 dist-tag 变更。
+
+源码验证与发布共用完全相同提交的 canonical artifact。发布仍执行原生平台 smoke，
+不重复 Local Host 业务回归。平台矩阵同时最多两个 job；验证 job 单机最多两个测试 worker。
+发布后的公开元数据等待最多五分钟，单次 HTTP 请求最多十五秒；完整性不匹配立即失败。
+版本可见性超时后只重新运行失败的验证 job，不能重新发布同一 immutable 版本。
+完整测试分级与缓存规则见 [测试与发布性能约定](../conventions/testing-and-release-performance.md)。
