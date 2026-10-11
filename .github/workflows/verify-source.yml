@@ -144,6 +144,7 @@ jobs:
         uses: actions/upload-artifact@v7
         with:
           name: desktop-test-results
+          include-hidden-files: true
           path: .test-results/*.json
           retention-days: 14
       - name: Archive business timings and test results
