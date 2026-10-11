@@ -17,3 +17,6 @@ tsconfig.tsbuildinfo
 pnpm-debug.log*
 .DS_Store
 workspace
+
+# Desktop packaging evidence and generated license notices
+apps/desktop/.packaging/

@@ -38,9 +38,10 @@
     "test": "pnpm run test:packaging && pnpm run test:claude-worker && vitest run --passWithNoTests",
     "test:core": "pnpm run test:packaging && vitest run --passWithNoTests src/main/bootstrap/application-identity.test.ts src/main/bootstrap/startup-sequence.test.ts",
     "clean": "rm -rf out dist .plugin-bundles",
-    "test:packaging": "node --test ./scripts/audit-packaged-app.test.mjs",
+    "test:packaging": "node --test ./scripts/audit-packaged-app.test.mjs ./scripts/packaging-policy.test.mjs",
     "test:claude-worker": "node --test ./scripts/claude-worker-boundary.test.mjs",
-    "test:mission-chat": "vitest run src/test/mission-queued-chat-refresh.test.tsx src/renderer/src/pages/missions/mission-conversation-model.test.ts && vitest run src/main/features/missions/desktop-mission-adapter.test.ts -t \"streams every queued turn|keeps the captured live answer|projects an already-finished queued turn|projects oversized replies\""
+    "test:mission-chat": "vitest run src/test/mission-queued-chat-refresh.test.tsx src/renderer/src/pages/missions/mission-conversation-model.test.ts && vitest run src/main/features/missions/desktop-mission-adapter.test.ts -t \"streams every queued turn|keeps the captured live answer|projects an already-finished queued turn|projects oversized replies\"",
+    "size:baseline": "node ./scripts/record-size-baseline.mjs"
   },
   "dependencies": {
     "@codemirror/commands": "^6.11.1",

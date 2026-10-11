@@ -1,0 +1,31 @@
+{
+  "description": "Installer byte budgets measured on native release targets. Missing entries are reported as awaiting-native-measurement, never estimated as a baseline.",
+  "installers": {
+    "darwin-x64-dmg": {
+      "bytes": 196565766,
+      "explanation": "Measured native installer after packaging size optimization; full Runtime execution and visual release validation are tracked separately.",
+      "identity": {
+        "platform": "darwin",
+        "arch": "x64",
+        "sourceCommit": "68bb51b298797186a3b53dd6738e62484c448a82",
+        "lockfileSha256": "859c5414d2b0dc95a450ca9141684ecea68bacd7771a59998031f37dee5bff26",
+        "electronVersion": "43.7.6",
+        "appVersion": "0.2.55",
+        "compression": "normal"
+      }
+    },
+    "darwin-x64-zip": {
+      "bytes": 196433444,
+      "explanation": "Measured native installer after packaging size optimization; full Runtime execution and visual release validation are tracked separately.",
+      "identity": {
+        "platform": "darwin",
+        "arch": "x64",
+        "sourceCommit": "68bb51b298797186a3b53dd6738e62484c448a82",
+        "lockfileSha256": "859c5414d2b0dc95a450ca9141684ecea68bacd7771a59998031f37dee5bff26",
+        "electronVersion": "43.7.6",
+        "appVersion": "0.2.55",
+        "compression": "normal"
+      }
+    }
+  }
+}
