@@ -53,6 +53,7 @@ jobs:
   platform:
     name: ${{ matrix.mode }} ${{ matrix.os }} / Node ${{ matrix.node }}
     needs: build
+    if: always() && needs.build.result == 'success'
     runs-on: ${{ matrix.os }}
     timeout-minutes: 20
     strategy:
@@ -103,3 +104,14 @@ jobs:
         run: |
           keychain_path="${RUNNER_TEMP}/pragma-cli-smoke.keychain-db"
           if [[ -f "$keychain_path" ]]; then security delete-keychain "$keychain_path"; fi
+
+  result:
+    needs: [build, platform]
+    if: always()
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Require canonical identity and every supported/negative platform gate
+        env:
+          BUILD_RESULT: ${{ needs.build.result }}
+          PLATFORM_RESULT: ${{ needs.platform.result }}
+        run: test "$BUILD_RESULT" = success && test "$PLATFORM_RESULT" = success
