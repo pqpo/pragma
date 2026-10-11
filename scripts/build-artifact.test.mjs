@@ -14,7 +14,10 @@ test("prepared artifact rejects changed bytes, missing files, same-commit source
       new URL("./build-artifact.mjs", import.meta.url),
       join(root, "scripts/build-artifact.mjs"),
     );
-    await writeFile(join(root, ".gitignore"), "dist/\n.release/\n");
+    await writeFile(
+      join(root, ".gitignore"),
+      "dist/\n.release/\nout/\n.plugin-bundles/\n.packaging/\n",
+    );
     for (const app of ["cli", "desktop"]) {
       await mkdir(join(root, `apps/${app}`), { recursive: true });
       await writeFile(join(root, `apps/${app}/package.json`), JSON.stringify({ version: "1.0.0" }));
@@ -54,6 +57,18 @@ test("prepared artifact rejects changed bytes, missing files, same-commit source
     );
     await recordArtifact("cli");
     await verifyArtifact("cli");
+    await mkdir(join(root, "apps/desktop/out"), { recursive: true });
+    await mkdir(join(root, "apps/desktop/.packaging"), { recursive: true });
+    await mkdir(join(root, "apps/desktop/.plugin-bundles/plugins"), { recursive: true });
+    await writeFile(join(root, "apps/desktop/out/main.js"), "desktop");
+    await writeFile(join(root, "apps/desktop/.packaging/cli-metafiles.json"), "{}");
+    await recordArtifact("desktop");
+    await rm(join(root, "apps/desktop/.plugin-bundles"), { recursive: true });
+    await verifyArtifact("desktop");
+    await writeFile(join(root, "apps/desktop/.plugin-bundles/plugins/plugin.json"), "{}");
+    await recordArtifact("desktop");
+    await rm(join(root, "apps/desktop/.plugin-bundles"), { recursive: true });
+    await assert.rejects(verifyArtifact("desktop"), /ENOENT/);
     const bundle = join(root, "apps/cli/dist/cli.js");
     await writeFile(bundle, "corrupted");
     await assert.rejects(verifyArtifact("cli"), /digest mismatch/);

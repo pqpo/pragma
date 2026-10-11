@@ -99,6 +99,14 @@ export async function verifyArtifact(kind) {
   ).version;
   if (manifest.desktopVersion !== desktopVersion || manifest.cliVersion !== cliVersion)
     throw new Error("Prepared artifact version mismatch");
+  // GitHub's file artifact format omits empty directories. Restore only a
+  // directory whose producer manifest declares no plugin files.
+  if (
+    kind === "desktop" &&
+    !Object.keys(manifest.files).some((name) => name.startsWith("apps/desktop/.plugin-bundles/"))
+  ) {
+    await mkdir(resolve(root, "apps/desktop/.plugin-bundles/plugins"), { recursive: true });
+  }
   const paths = [];
   for (const entry of roots[kind]) paths.push(...(await filesAt(resolve(root, entry))));
   if (paths.length !== Object.keys(manifest.files).length)
