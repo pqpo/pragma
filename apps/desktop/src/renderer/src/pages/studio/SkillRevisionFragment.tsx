@@ -3,16 +3,13 @@ import {
   ArrowLeft,
   Check,
   ClockCounterClockwise,
-  FileText,
   FunnelSimple,
-  Plus,
   Trash,
   WarningCircle,
   X,
 } from "@phosphor-icons/react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
-import type { TFunction } from "i18next";
 import type {
   ManagedSkillRevisionJob,
   SkillRevisionDraft,
@@ -21,11 +18,15 @@ import type {
 import type {
   Capability,
   SkillRevisionReview,
-  SkillRevisionReviewFile,
+  SkillManualRevisionRecord,
 } from "../../../../shared/contracts/index.ts";
 import { SelectMenu } from "../../components/SelectMenu.tsx";
 import { errorMessage } from "../../lib/errors.ts";
-import { buildRevisionLineDiff, RevisionDiffCode } from "./ContextStoreRevisionFragment.tsx";
+import {
+  SkillManualRevisionDetailFragment,
+  SkillManualRevisionRow,
+} from "./SkillManualRevisionFragment.tsx";
+import { SkillRevisionChangeViewer } from "./SkillRevisionChangeViewer.tsx";
 import { StudioConfirmationDialog } from "./StudioDialog.tsx";
 import { StudioScreenFrame } from "./StudioScreenFrame.tsx";
 import { desktopApi } from "./studio-model.ts";
@@ -51,10 +52,33 @@ export function filterSkillRevisionEntries(
   });
 }
 
-type SkillRevisionDetailSelection =
-  | { readonly kind: "request" }
-  | { readonly kind: "summary" }
-  | { readonly kind: "operation"; readonly index: number };
+export type SkillRevisionHistoryEntry =
+  | { readonly kind: "task"; readonly entry: SkillRevisionEntry }
+  | { readonly kind: "manual"; readonly record: SkillManualRevisionRecord };
+export function skillRevisionHistoryEntries(
+  entries: readonly SkillRevisionEntry[],
+  records: readonly SkillManualRevisionRecord[],
+  stateFilter = "",
+  capabilityFilter = "",
+): readonly SkillRevisionHistoryEntry[] {
+  const tasks: SkillRevisionHistoryEntry[] = filterSkillRevisionEntries(
+    entries,
+    stateFilter,
+    capabilityFilter,
+  ).map((entry) => ({ kind: "task", entry }));
+  const manual: SkillRevisionHistoryEntry[] = records
+    .filter(
+      (record) =>
+        (capabilityFilter === "" || record.capabilityId === capabilityFilter) &&
+        (stateFilter === "" || stateFilter === "manual" || stateFilter === "completed"),
+    )
+    .map((record) => ({ kind: "manual", record }));
+  const timestamp = (entry: SkillRevisionHistoryEntry) =>
+    entry.kind === "manual" ? entry.record.createdAt : entry.entry.job.updatedAt;
+  return [...tasks, ...manual].toSorted((left, right) =>
+    timestamp(right).localeCompare(timestamp(left)),
+  );
+}
 
 export function activeSkillRevisionTaskCount(
   entries: readonly { readonly job: Pick<ManagedSkillRevisionJob, "state"> }[],
@@ -178,62 +202,34 @@ export function SkillRevisionDetailFragment(props: {
 }) {
   const { t, i18n } = useTranslation("studio");
   const { job, draft } = props.entry;
-  const [selection, setSelection] = useState<SkillRevisionDetailSelection>({ kind: "summary" });
   const [review, setReview] = useState<SkillRevisionReview>();
   const [reviewError, setReviewError] = useState<string>();
-  const [fileReview, setFileReview] = useState<SkillRevisionReviewFile>();
-  const [fileReviewError, setFileReviewError] = useState<string>();
   useEffect(() => {
     const api = desktopApi();
     let active = true;
     setReview(undefined);
     setReviewError(undefined);
-    setSelection({ kind: "summary" });
-    if (api === undefined) return () => undefined;
-    void api
-      .getSkillRevisionReview(job.id)
-      .then((value) => {
-        if (active) setReview(value);
-      })
-      .catch((cause) => {
-        if (active) setReviewError(errorMessage(cause));
-      });
+    if (api !== undefined)
+      void api
+        .getSkillRevisionReview(job.id)
+        .then((value) => {
+          if (active) setReview(value);
+        })
+        .catch((cause) => {
+          if (active) setReviewError(errorMessage(cause));
+        });
     return () => {
       active = false;
     };
   }, [job.id, job.revision]);
-  const operation =
-    selection.kind === "operation" ? review?.operations[selection.index] : undefined;
-  useEffect(() => {
-    const api = desktopApi();
-    let active = true;
-    setFileReview(undefined);
-    setFileReviewError(undefined);
-    if (api === undefined || operation === undefined) return () => undefined;
-    void api
-      .getSkillRevisionReviewFile({ jobId: job.id, path: operation.path })
-      .then((value) => {
-        if (active) setFileReview(value);
-      })
-      .catch((cause) => {
-        if (active) setFileReviewError(errorMessage(cause));
-      });
-    return () => {
-      active = false;
-    };
-  }, [job.id, job.revision, operation?.path]);
-  const previewUnavailable =
-    fileReview !== undefined &&
-    (fileReview.before?.content === null || fileReview.after?.content === null);
-  const diff = useMemo(
-    () =>
-      fileReview === undefined || previewUnavailable
-        ? []
-        : buildRevisionLineDiff(fileReview.before?.content ?? "", fileReview.after?.content ?? ""),
-    [fileReview, previewUnavailable],
+  const loadFile = useCallback(
+    async (path: string) => {
+      const api = desktopApi();
+      if (api === undefined) throw new Error(t("revisionDiffUnavailable"));
+      return await api.getSkillRevisionReviewFile({ jobId: job.id, path });
+    },
+    [job.id, t],
   );
-  const additions = diff.filter((line) => line.kind === "addition").length;
-  const deletions = diff.filter((line) => line.kind === "deletion").length;
   const attentionActions = skillRevisionAttentionActions(props.entry, props.canOpenMission);
   const needsRebase = job.state === "needs_rebase";
   const revisionMetadata = `${draft.name} · ${
@@ -354,139 +350,16 @@ export function SkillRevisionDetailFragment(props: {
         </header>
       }
     >
-      <div className="revision-diff-content">
-        <div className="revision-diff-workspace">
-          <aside className="revision-diff-files" aria-label={t("revisionReviewContents")}>
-            <div className="revision-diff-files-heading">
-              <span>{t("revisionReviewContents")}</span>
-            </div>
-            <nav>
-              <button
-                className={selection.kind === "summary" ? "is-active" : undefined}
-                type="button"
-                onClick={() => setSelection({ kind: "summary" })}
-              >
-                <FileText size={17} aria-hidden="true" />
-                <span>
-                  <strong>{t("revisionSummaryFile")}</strong>
-                  <small>{t("revisionSummaryFileLabel")}</small>
-                </span>
-              </button>
-              <button
-                className={selection.kind === "request" ? "is-active" : undefined}
-                type="button"
-                onClick={() => setSelection({ kind: "request" })}
-              >
-                <FileText size={17} aria-hidden="true" />
-                <span>
-                  <strong>{t("revisionRequestFile")}</strong>
-                  <small>{t("revisionRequestFileLabel")}</small>
-                </span>
-              </button>
-              <div className="revision-diff-file-group-label">
-                {t("filesChanged", { count: review?.operations.length ?? 0 })}
-              </div>
-              {(review?.operations ?? []).map((candidate, index) => (
-                <button
-                  className={
-                    selection.kind === "operation" && selection.index === index
-                      ? "is-active"
-                      : undefined
-                  }
-                  type="button"
-                  key={`${candidate.operation}:${candidate.path}`}
-                  onClick={() => setSelection({ kind: "operation", index })}
-                >
-                  {candidate.operation === "deleted" ? (
-                    <Trash size={15} aria-hidden="true" />
-                  ) : candidate.operation === "added" ? (
-                    <Plus size={15} aria-hidden="true" />
-                  ) : (
-                    <FileText size={15} aria-hidden="true" />
-                  )}
-                  <span>
-                    <strong>{candidate.path}</strong>
-                    <small>{t(`skillRevisionOperation.${candidate.operation}`)}</small>
-                  </span>
-                </button>
-              ))}
-            </nav>
-          </aside>
-          <section className="revision-diff-view" aria-label={t("revisionDiff")}>
-            <header>
-              <div className="revision-diff-view-heading">
-                <FileText size={16} aria-hidden="true" />
-                <span>
-                  <strong>
-                    {selection.kind === "request"
-                      ? t("revisionRequestFile")
-                      : selection.kind === "summary"
-                        ? t("revisionSummaryFile")
-                        : (operation?.path ?? "")}
-                  </strong>
-                  {selection.kind === "request" ? (
-                    <small>{t("skillRevisionRequestDocumentDescription")}</small>
-                  ) : selection.kind === "summary" ? (
-                    <small>{t("skillRevisionSummaryDocumentDescription")}</small>
-                  ) : null}
-                </span>
-              </div>
-              {operation === undefined ? null : (
-                <div className="skill-revision-file-stats">
-                  {fileReview ? (
-                    <span className="skill-revision-file-metadata">
-                      {formatSkillFileMetadata(fileReview, t)}
-                    </span>
-                  ) : null}
-                  <span className="revision-diff-stats">
-                    <b>+{additions}</b>
-                    <i>−{deletions}</i>
-                  </span>
-                </div>
-              )}
-            </header>
-            <div className="revision-diff-scroll-area">
-              {selection.kind === "request" ? (
-                <article className="revision-review-document">
-                  <p>{job.request.prompt}</p>
-                </article>
-              ) : selection.kind === "summary" ? (
-                <article className="revision-review-document">
-                  <p>{draft.summary ?? t("skillRevisionSummaryUnavailable")}</p>
-                  {job.error ? <p className="form-error">{job.error.message}</p> : null}
-                </article>
-              ) : operation === undefined ? (
-                <div className="revision-diff-unavailable">
-                  <p>
-                    {review === undefined
-                      ? t("loadingSkillRevisions")
-                      : t("revisionDiffUnavailable")}
-                  </p>
-                </div>
-              ) : fileReviewError ? (
-                <div className="revision-diff-unavailable">
-                  <p>{fileReviewError}</p>
-                </div>
-              ) : fileReview === undefined ? (
-                <div className="revision-diff-unavailable">
-                  <p>{t("loadingSkillRevisionFile")}</p>
-                </div>
-              ) : previewUnavailable ? (
-                <div className="revision-diff-unavailable">
-                  <p>{skillFileUnavailableMessage(fileReview, t)}</p>
-                </div>
-              ) : (
-                <RevisionDiffCode lines={diff} />
-              )}
-            </div>
-          </section>
-        </div>
-        {(props.error ?? reviewError) ? (
-          <p className="form-error" role="alert">
-            {props.error ?? reviewError}
-          </p>
-        ) : null}
-      </div>
+      <SkillRevisionChangeViewer
+        key={job.id}
+        operations={review?.operations ?? []}
+        loading={review === undefined}
+        request={job.request.prompt}
+        summary={draft.summary ?? t("skillRevisionSummaryUnavailable")}
+        summaryError={job.error?.message}
+        error={props.error ?? reviewError}
+        loadFile={loadFile}
+      />
     </StudioScreenFrame>
   );
 }
@@ -501,6 +374,8 @@ export function SkillRevisionFragment(props: {
 }) {
   const { t, i18n } = useTranslation("studio");
   const [entries, setEntries] = useState<readonly SkillRevisionEntry[]>([]);
+  const [manualRecords, setManualRecords] = useState<readonly SkillManualRevisionRecord[]>([]);
+  const [selectedRecordKey, setSelectedRecordKey] = useState<string>();
   const [loading, setLoading] = useState(true);
   const [busyId, setBusyId] = useState<string>();
   const [error, setError] = useState<string>();
@@ -515,10 +390,17 @@ export function SkillRevisionFragment(props: {
     if (api === undefined) return;
     setLoading(true);
     try {
-      const nextEntries = await api.listSkillRevisionJobs();
-      setEntries(nextEntries);
-      props.onCountChanged?.(activeSkillRevisionTaskCount(nextEntries));
-      setError(undefined);
+      const [jobsResult, recordsResult] = await Promise.allSettled([
+        api.listSkillRevisionJobs(),
+        api.listSkillManualRevisions(),
+      ]);
+      if (jobsResult.status === "fulfilled") {
+        setEntries(jobsResult.value);
+        props.onCountChanged?.(activeSkillRevisionTaskCount(jobsResult.value));
+      }
+      if (recordsResult.status === "fulfilled") setManualRecords(recordsResult.value);
+      const failed = [jobsResult, recordsResult].find((result) => result.status === "rejected");
+      setError(failed?.status === "rejected" ? errorMessage(failed.reason) : undefined);
     } catch (cause) {
       setError(errorMessage(cause));
     } finally {
@@ -536,8 +418,8 @@ export function SkillRevisionFragment(props: {
   );
 
   const filteredEntries = useMemo(
-    () => filterSkillRevisionEntries(entries, stateFilter, capabilityFilter),
-    [entries, stateFilter, capabilityFilter],
+    () => skillRevisionHistoryEntries(entries, manualRecords, stateFilter, capabilityFilter),
+    [entries, manualRecords, stateFilter, capabilityFilter],
   );
   const pageCount = Math.max(1, Math.ceil(filteredEntries.length / pageSize));
   const currentPage = Math.min(page, pageCount);
@@ -575,6 +457,20 @@ export function SkillRevisionFragment(props: {
     }
   };
 
+  const selectedRecord = manualRecords.find(
+    (record) => `${record.capabilityId}:${record.revision}` === selectedRecordKey,
+  );
+  if (selectedRecord !== undefined)
+    return (
+      <SkillManualRevisionDetailFragment
+        key={selectedRecordKey}
+        record={selectedRecord}
+        capability={props.capabilities.find(
+          (capability) => capability.manifest.id === selectedRecord.capabilityId,
+        )}
+        onBack={() => setSelectedRecordKey(undefined)}
+      />
+    );
   const selectedEntry = entries.find((entry) => entry.job.id === selectedJobId);
   if (selectedEntry !== undefined) {
     return (
@@ -613,7 +509,7 @@ export function SkillRevisionFragment(props: {
                 <p>{t("skillRevisionsDescription")}</p>
               </div>
               <span className="revision-task-count">
-                {t("revisionTaskCount", { count: entries.length })}
+                {t("skillRevisionHistoryCount", { count: entries.length + manualRecords.length })}
               </span>
             </div>
           </div>
@@ -636,7 +532,7 @@ export function SkillRevisionFragment(props: {
       }
     >
       <div className="revision-task-content">
-        {entries.length > 0 ? (
+        {entries.length + manualRecords.length > 0 ? (
           <div className="revision-task-toolbar">
             <SelectMenu
               ariaLabel={t("revisionStatusFilter")}
@@ -645,6 +541,7 @@ export function SkillRevisionFragment(props: {
               options={[
                 { value: "", label: t("revisionAllStates") },
                 { value: "actionable", label: t("revisionActionable") },
+                { value: "manual", label: t("skillManualRevisionTitle") },
                 ...[
                   "editing",
                   "running",
@@ -661,8 +558,10 @@ export function SkillRevisionFragment(props: {
           </div>
         ) : null}
         {loading ? <p className="directory-empty">{t("loadingSkillRevisions")}</p> : null}
-        {!loading && entries.length === 0 ? <SkillRevisionEmptyState /> : null}
-        {!loading && entries.length > 0 && filteredEntries.length === 0 ? (
+        {!loading && entries.length + manualRecords.length === 0 ? (
+          <SkillRevisionEmptyState />
+        ) : null}
+        {!loading && entries.length + manualRecords.length > 0 && filteredEntries.length === 0 ? (
           <div className="revision-task-empty">
             <ClockCounterClockwise size={28} aria-hidden="true" />
             <h3>{t("revisionNoMatches")}</h3>
@@ -681,7 +580,23 @@ export function SkillRevisionFragment(props: {
               <span>{t("actions")}</span>
             </div>
             <div className="revision-task-list" role="list" aria-label={t("skillRevisions")}>
-              {pageEntries.map((entry) => {
+              {pageEntries.map((historyEntry) => {
+                if (historyEntry.kind === "manual")
+                  return (
+                    <SkillManualRevisionRow
+                      key={`${historyEntry.record.capabilityId}:${historyEntry.record.revision}`}
+                      record={historyEntry.record}
+                      capability={props.capabilities.find(
+                        (capability) => capability.manifest.id === historyEntry.record.capabilityId,
+                      )}
+                      onOpen={() =>
+                        setSelectedRecordKey(
+                          `${historyEntry.record.capabilityId}:${historyEntry.record.revision}`,
+                        )
+                      }
+                    />
+                  );
+                const entry = historyEntry.entry;
                 const capability = props.capabilities.find(
                   (item) => item.manifest.id === entry.draft.capabilityId,
                 );
@@ -810,39 +725,4 @@ function formatRevisionTimestamp(value: string, locale: string): string {
     hour: "2-digit",
     minute: "2-digit",
   }).format(new Date(value));
-}
-
-export function formatSkillFileMetadata(
-  review: SkillRevisionReviewFile,
-  t: TFunction<"studio">,
-): string {
-  const formatSnapshot = (snapshot: SkillRevisionReviewFile["before"]): string =>
-    snapshot === null
-      ? t("skillRevisionFileMissing")
-      : t("skillRevisionFileMetadata", {
-          size: formatBytes(snapshot.sizeBytes),
-          hash: snapshot.sha256.slice(0, 8),
-          mode: t(snapshot.executable ? "skillRevisionExecutable" : "skillRevisionNotExecutable"),
-        });
-  return t("skillRevisionFileTransition", {
-    before: formatSnapshot(review.before),
-    after: formatSnapshot(review.after),
-  });
-}
-
-function skillFileUnavailableMessage(
-  review: SkillRevisionReviewFile,
-  t: TFunction<"studio">,
-): string {
-  const unavailable = [review.before, review.after].find((snapshot) => snapshot?.content === null);
-  return t(`skillRevisionPreviewUnavailable.${unavailable?.unavailableReason ?? "binary"}`, {
-    size: formatBytes(unavailable?.sizeBytes ?? 0),
-    hash: unavailable?.sha256.slice(0, 8) ?? "",
-  });
-}
-
-function formatBytes(value: number): string {
-  if (value < 1_024) return `${value} B`;
-  if (value < 1_048_576) return `${(value / 1_024).toFixed(1)} KiB`;
-  return `${(value / 1_048_576).toFixed(1)} MiB`;
 }

@@ -1,39 +1,29 @@
 import {
   ArrowLeft,
-  ArrowClockwise,
   CaretRight,
   Check,
   ClockCounterClockwise,
   Database,
   DownloadSimple,
-  Eye,
-  File,
-  FilePlus,
   FileText,
+  FilePlus,
+  FolderPlus,
   FloppyDisk,
   Folder,
-  FolderOpen,
-  FolderPlus,
   GearSix,
   GitBranch,
   MagnifyingGlass,
   PaperPlaneTilt,
-  PencilSimple,
   Plus,
+  Question,
   SpinnerGap,
-  TextAa,
   Trash,
   X,
 } from "@phosphor-icons/react";
-import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, useId } from "react";
 import { useTranslation } from "react-i18next";
 import type { ContextStoreRevisionJob } from "@pragma/built-in-agents/contracts";
-import {
-  PRAGMA_TEXT_LIMITS,
-  pragmaKnowledgeBaseEntryNameIssue,
-  truncatePragmaTrimmedUnicode,
-  type PragmaKnowledgeBaseEntryNameIssue,
-} from "@pragma/shared";
+import { PRAGMA_TEXT_LIMITS, truncatePragmaTrimmedUnicode } from "@pragma/shared";
 
 import type {
   ContextStore,
@@ -47,21 +37,18 @@ import type {
 } from "../../../../shared/contracts/index.ts";
 import { CharacterCount } from "../../components/CharacterCount.tsx";
 import { Dialog } from "../../components/Dialog.tsx";
-import { MarkdownContent } from "../../components/MarkdownContent.tsx";
+import { AssetFileWorkspace } from "./AssetFileWorkspace.tsx";
+import { fileName, rebaseEntryId } from "./asset-file-paths.ts";
 import { SelectMenu } from "../../components/SelectMenu.tsx";
-import { SidebarResizeHandle } from "../../components/SidebarResizeHandle.tsx";
 import { StudioActionButton } from "../../components/StudioActionButton.tsx";
 import { errorMessage } from "../../lib/errors.ts";
-import {
-  SIDEBAR_WIDTH_PREFERENCES,
-  usePersistentSidebarWidth,
-} from "../../lib/sidebar-width-preference.ts";
+import { SIDEBAR_WIDTH_PREFERENCES } from "../../lib/sidebar-width-preference.ts";
 import {
   flushContextStoreSaves,
   type ContextStoreSaveCoordinator,
 } from "./context-store-autosave.ts";
-import { StudioConfirmationDialog, StudioTextInputDialog } from "./StudioDialog.tsx";
-import { StudioScreenFrame } from "./StudioScreenFrame.tsx";
+import { StudioConfirmationDialog } from "./StudioDialog.tsx";
+import { StudioScreenFrame, type StudioLeaveGuard } from "./StudioScreenFrame.tsx";
 import { desktopApi } from "./studio-model.ts";
 import { AssetGitImportForm, AssetGitPanel } from "./AssetGitControls.tsx";
 import type { AssetGitTarget } from "../../../../shared/contracts/index.ts";
@@ -69,28 +56,6 @@ import type { AssetGitTarget } from "../../../../shared/contracts/index.ts";
 type CreateStep = "intro" | "configure" | "review";
 type CreateMode = CreateContextStore["mode"];
 type SaveStatus = "idle" | "saving" | "saved" | "published" | "error";
-type EntryTextOperation =
-  | {
-      readonly kind: "create-file" | "create-folder" | "save-copy";
-      readonly value: string;
-      readonly busy: boolean;
-      readonly error: string | null;
-    }
-  | {
-      readonly kind: "rename";
-      readonly entry: ContextStoreEntry;
-      readonly value: string;
-      readonly busy: boolean;
-      readonly error: string | null;
-    };
-type EntryConfirmation =
-  | { readonly kind: "delete"; readonly entry: ContextStoreEntry }
-  | {
-      readonly kind: "move";
-      readonly entry: ContextStoreEntry;
-      readonly destinationId: string;
-      readonly nextId: string;
-    };
 type EditorStateSnapshot = {
   readonly selectedEntry: ContextStoreEntry | null;
   readonly content: ContextStoreContent | null;
@@ -105,8 +70,6 @@ type LoadFileOptions = {
   readonly discardChanges?: boolean;
   readonly preservePreview?: boolean;
 };
-
-export type ContextStoreLeaveGuard = (action: () => void) => void;
 
 const DEFAULT_METADATA: ContextStoreContentMetadata = {
   trigger: "manual",
@@ -137,73 +100,10 @@ export function contextStoreDeleteCheckPending(
   return check?.storeId !== storeId || check.status === "checking";
 }
 
-function fileName(path: string): string {
-  return path.split(/[\\/]/).at(-1) ?? path;
-}
-
-function parentId(path: string): string {
-  const parts = path.split("/");
-  parts.pop();
-  return parts.join("/");
-}
-
-function joinEntry(parent: string, name: string): string {
-  return parent ? `${parent}/${name}` : name;
-}
-
-export function moveEntryTargetId(sourceId: string, destinationId: string): string {
-  return joinEntry(destinationId, fileName(sourceId));
-}
-
-export function canMoveEntryTo(
-  entry: Pick<ContextStoreEntry, "id" | "kind">,
-  destinationId: string,
-): boolean {
-  if (parentId(entry.id) === destinationId) return false;
-  if (
-    entry.kind === "directory" &&
-    (destinationId === entry.id || destinationId.startsWith(`${entry.id}/`))
-  ) {
-    return false;
-  }
-  return moveEntryTargetId(entry.id, destinationId) !== entry.id;
-}
-
-export function rebaseEntryId(
-  currentId: string,
-  sourceId: string,
-  nextId: string,
-): string | undefined {
-  if (currentId === sourceId) return nextId;
-  if (!currentId.startsWith(`${sourceId}/`)) return undefined;
-  return `${nextId}${currentId.slice(sourceId.length)}`;
-}
-
-function filterCollapsedContextStoreEntries(
-  entries: readonly ContextStoreEntry[],
-  collapsedDirectoryIds: ReadonlySet<string>,
-): readonly ContextStoreEntry[] {
-  if (collapsedDirectoryIds.size === 0) return entries;
-
-  return entries.filter((entry) => {
-    let ancestorId = parentId(entry.id);
-    while (ancestorId !== "") {
-      if (collapsedDirectoryIds.has(ancestorId)) return false;
-      ancestorId = parentId(ancestorId);
-    }
-    return true;
-  });
-}
-
 export function firstContextStoreFile(
   entries: readonly ContextStoreEntry[],
 ): ContextStoreEntry | undefined {
   return entries.find((entry) => entry.kind === "file");
-}
-
-function withMarkdownExtension(value: string): string {
-  const trimmed = value.trim();
-  return trimmed.toLowerCase().endsWith(".md") ? trimmed : `${trimmed}.md`;
 }
 
 export function contextStorePreviewAfterLoad(
@@ -211,14 +111,6 @@ export function contextStorePreviewAfterLoad(
   preservePreview: boolean,
 ): boolean {
   return preservePreview ? currentPreview : true;
-}
-
-function entryOperationName(operation: EntryTextOperation, value = operation.value): string {
-  const isFile =
-    operation.kind === "create-file" ||
-    operation.kind === "save-copy" ||
-    (operation.kind === "rename" && operation.entry.kind === "file");
-  return isFile ? value.replace(/\.md$/iu, "") : value;
 }
 
 export function ContextStoreDirectoryFragment(props: {
@@ -400,7 +292,7 @@ export function ContextStoreDetailFragment(props: {
   ) => Promise<ContextStore>;
   readonly onDiscardEditorDraft: (storeId: string, expectedRevision: number) => Promise<void>;
   readonly onStoreChanged: (store: ContextStore) => void;
-  readonly onLeaveGuardChange?: ((guard: ContextStoreLeaveGuard | null) => void) | undefined;
+  readonly onLeaveGuardChange?: ((guard: StudioLeaveGuard | null) => void) | undefined;
   readonly openGitSettingsRequest?: number | undefined;
 }) {
   const { t } = useTranslation("studio");
@@ -409,7 +301,6 @@ export function ContextStoreDetailFragment(props: {
     () => new Set(),
   );
   const [selectedEntry, setSelectedEntry] = useState<ContextStoreEntry | null>(null);
-  const [selectedDirectory, setSelectedDirectory] = useState("");
   const [content, setContent] = useState<ContextStoreContent | null>(null);
   const [draft, setDraft] = useState("");
   const [metadata, setMetadata] = useState<ContextStoreContentMetadata>(DEFAULT_METADATA);
@@ -443,17 +334,8 @@ export function ContextStoreDetailFragment(props: {
   const [revisionPrompt, setRevisionPrompt] = useState("");
   const [revisionSubmitting, setRevisionSubmitting] = useState(false);
   const [revisionError, setRevisionError] = useState<string | null>(null);
-  const [entryTextOperation, setEntryTextOperation] = useState<EntryTextOperation | null>(null);
-  const [entryConfirmation, setEntryConfirmation] = useState<EntryConfirmation | null>(null);
-  const [entryConfirmationBusy, setEntryConfirmationBusy] = useState(false);
-  const [refreshing, setRefreshing] = useState(false);
   const [leaveAction, setLeaveAction] = useState<(() => void) | null>(null);
   const [leaving, setLeaving] = useState(false);
-  const [draggedEntry, setDraggedEntry] = useState<ContextStoreEntry | null>(null);
-  const [dropTargetDirectory, setDropTargetDirectory] = useState<string | null>(null);
-  const [filePanelWidth, setFilePanelWidth] = usePersistentSidebarWidth(
-    SIDEBAR_WIDTH_PREFERENCES.knowledgeBaseFiles,
-  );
 
   useEffect(() => {
     if (props.openGitSettingsRequest !== undefined) setGitSettingsOpen(true);
@@ -490,10 +372,6 @@ export function ContextStoreDetailFragment(props: {
     };
   }, [confirmOpen, missionMountCheck, props.store.id]);
 
-  const visibleEntries = useMemo(
-    () => filterCollapsedContextStoreEntries(entries, collapsedDirectoryIds),
-    [collapsedDirectoryIds, entries],
-  );
   const [autosaveVersion, setAutosaveVersion] = useState(0);
   const editVersionRef = useRef(0);
   const documentVersionRef = useRef(0);
@@ -547,7 +425,6 @@ export function ContextStoreDetailFragment(props: {
           !next.some((entry) => entry.id === current.id && entry.kind === current.kind)
         ) {
           setSelectedEntry(null);
-          setSelectedDirectory("");
           setContent(null);
           setDraft("");
           setDirty(false);
@@ -590,7 +467,6 @@ export function ContextStoreDetailFragment(props: {
         };
         currentRef.current = nextState;
         setSelectedEntry(entry);
-        setSelectedDirectory(parentId(entry.id));
         setContent(loaded);
         setDraft(loaded.content);
         setMetadata(loaded.metadata);
@@ -740,7 +616,6 @@ export function ContextStoreDetailFragment(props: {
     if (entry.kind === "directory") {
       if (await save()) {
         setSelectedEntry(entry);
-        setSelectedDirectory(entry.id);
         setContent(null);
         setCollapsedDirectoryIds((current) => {
           const next = new Set(current);
@@ -847,176 +722,52 @@ export function ContextStoreDetailFragment(props: {
     setLeaving(false);
   };
 
-  const openEntryTextOperation = async (
-    operation: EntryTextOperation["kind"],
-    targetEntry?: ContextStoreEntry,
-  ): Promise<void> => {
-    if (!(await save())) return;
-    if (operation === "rename") {
-      const entry = targetEntry ?? selectedEntry;
-      if (entry === null) return;
-      setEntryTextOperation({
-        kind: "rename",
-        entry,
-        value:
-          entry.kind === "file" ? fileName(entry.id).replace(/\.md$/iu, "") : fileName(entry.id),
-        busy: false,
-        error: null,
-      });
-      return;
-    }
-    setEntryTextOperation({
-      kind: operation,
-      value: operation === "save-copy" ? "copy.md" : "",
-      busy: false,
-      error: null,
-    });
-  };
-
-  const submitEntryTextOperation = async (): Promise<void> => {
-    const operation = entryTextOperation;
-    if (operation === null || operation.busy || operation.value.trim() === "") return;
-    const validationIssue = pragmaKnowledgeBaseEntryNameIssue(entryOperationName(operation));
-    if (validationIssue !== undefined) {
-      setEntryTextOperation({
-        ...operation,
-        error: entryNameIssueMessage(validationIssue),
-      });
-      return;
-    }
-    setEntryTextOperation({ ...operation, busy: true, error: null });
-    try {
-      if (operation.kind === "create-folder") {
-        await props.onCreateFolder(
-          props.store.id,
-          joinEntry(selectedDirectory, operation.value.trim()),
-        );
-        await loadEntries();
-      } else if (operation.kind === "rename") {
-        const nextName =
-          operation.entry.kind === "file"
-            ? withMarkdownExtension(operation.value)
-            : operation.value.trim();
-        const nextId = joinEntry(parentId(operation.entry.id), nextName);
-        const currentSelection = currentRef.current.selectedEntry;
-        await props.onRenameEntry(props.store.id, operation.entry.id, nextId, operation.entry.kind);
-        const rebasedId =
-          currentSelection === null
-            ? undefined
-            : rebaseEntryId(currentSelection.id, operation.entry.id, nextId);
-        const nextSelection =
-          currentSelection !== null && rebasedId !== undefined
-            ? { ...currentSelection, id: rebasedId }
-            : currentSelection;
-        if (nextSelection !== null && rebasedId !== undefined) {
-          setSelectedEntry(nextSelection);
-          setSelectedDirectory(
-            nextSelection.kind === "directory" ? nextSelection.id : parentId(nextSelection.id),
-          );
-          if (nextSelection.kind === "directory") {
-            setContent(null);
-            setDraft("");
-            setDirty(false);
-          }
-        }
-        await loadEntries(nextSelection);
-        if (nextSelection?.kind === "file" && rebasedId !== undefined) {
-          await loadFile(nextSelection, { discardChanges: true });
-        }
-      } else {
-        const id = joinEntry(selectedDirectory, withMarkdownExtension(operation.value));
-        const created = await props.onCreateFile(
-          props.store.id,
-          id,
-          operation.kind === "save-copy" ? draft : "",
-          operation.kind === "save-copy"
-            ? metadata
-            : {
-                ...DEFAULT_METADATA,
-                description: fileName(id).replace(/\.md$/i, ""),
-              },
-        );
-        await loadEntries();
-        await loadFile({ id, kind: "file", revision: created.revision });
-      }
-      setDraftDirty(true);
-      setEntryTextOperation(null);
-      setError(null);
-    } catch (cause) {
-      setEntryTextOperation({ ...operation, busy: false, error: errorMessage(cause) });
-    }
-  };
-
-  const refreshEntries = async (): Promise<void> => {
-    if (refreshing) return;
-    setRefreshing(true);
+  const createFile = async (id: string, copy: boolean): Promise<void> => {
+    const created = await props.onCreateFile(
+      props.store.id,
+      id,
+      copy ? draft : "",
+      copy ? metadata : { ...DEFAULT_METADATA, description: fileName(id).replace(/\.md$/iu, "") },
+    );
     await loadEntries();
-    setRefreshing(false);
+    await loadFile({ id, kind: "file", revision: created.revision });
+    setDraftDirty(true);
   };
 
-  const proposeMove = (entry: ContextStoreEntry, destinationId: string): void => {
-    setDraggedEntry(null);
-    setDropTargetDirectory(null);
-    if (!canMoveEntryTo(entry, destinationId)) return;
-    setEntryConfirmation({
-      kind: "move",
-      entry,
-      destinationId,
-      nextId: moveEntryTargetId(entry.id, destinationId),
-    });
-  };
-
-  const confirmEntryOperation = async (): Promise<void> => {
-    const operation = entryConfirmation;
-    if (operation === null || entryConfirmationBusy) return;
-    setEntryConfirmationBusy(true);
-    try {
-      let expectedSelection: ContextStoreEntry | null | undefined;
-      if (operation.kind === "delete") {
-        await props.onDeleteEntry(props.store.id, operation.entry.id, operation.entry.kind);
-        const selectedId = currentRef.current.selectedEntry?.id;
-        if (
-          selectedId === operation.entry.id ||
-          selectedId?.startsWith(`${operation.entry.id}/`) === true
-        ) {
-          setSelectedEntry(null);
-          setSelectedDirectory("");
-          setContent(null);
-          setDraft("");
-          setDirty(false);
-          expectedSelection = null;
-        }
-      } else {
-        if (!(await save())) return;
-        await props.onRenameEntry(
-          props.store.id,
-          operation.entry.id,
-          operation.nextId,
-          operation.entry.kind,
-        );
-        const selected = currentRef.current.selectedEntry;
-        const rebasedId =
-          selected === null
-            ? undefined
-            : rebaseEntryId(selected.id, operation.entry.id, operation.nextId);
-        if (selected !== null && rebasedId !== undefined) {
-          const rebased = { ...selected, id: rebasedId };
-          expectedSelection = rebased;
-          setSelectedEntry(rebased);
-          setSelectedDirectory(selected.kind === "directory" ? rebasedId : parentId(rebasedId));
-          if (selected.kind === "file") await loadFile(rebased, { discardChanges: true });
-        }
-      }
-      await loadEntries(expectedSelection);
-      setDraftDirty(true);
-      setEntryConfirmation(null);
-      setError(null);
-    } catch (cause) {
-      setEntryConfirmation(null);
-      setError(errorMessage(cause));
-    } finally {
-      setEntryConfirmationBusy(false);
+  const renameEntry = async (entry: ContextStoreEntry, nextId: string): Promise<void> => {
+    await props.onRenameEntry(props.store.id, entry.id, nextId, entry.kind);
+    const selected = currentRef.current.selectedEntry;
+    const rebasedId = selected === null ? undefined : rebaseEntryId(selected.id, entry.id, nextId);
+    const nextSelection =
+      selected !== null && rebasedId !== undefined ? { ...selected, id: rebasedId } : selected;
+    if (nextSelection !== null && rebasedId !== undefined) {
+      setSelectedEntry(nextSelection);
+      if (nextSelection.kind === "file") await loadFile(nextSelection, { discardChanges: true });
     }
+    await loadEntries(nextSelection);
+    setDraftDirty(true);
+  };
+
+  const deleteEntry = async (entry: ContextStoreEntry): Promise<void> => {
+    await props.onDeleteEntry(props.store.id, entry.id, entry.kind);
+    const selectedId = currentRef.current.selectedEntry?.id;
+    const removed = selectedId === entry.id || selectedId?.startsWith(`${entry.id}/`) === true;
+    await loadEntries(removed ? null : undefined);
+    if (removed) {
+      loadRequestRef.current++;
+      currentRef.current = {
+        ...currentRef.current,
+        selectedEntry: null,
+        content: null,
+        draft: "",
+        dirty: false,
+      };
+      setSelectedEntry(null);
+      setContent(null);
+      setDraft("");
+      setDirty(false);
+    }
+    setDraftDirty(true);
   };
 
   const removeStore = async () => {
@@ -1057,28 +808,6 @@ export function ContextStoreDetailFragment(props: {
       setRevisionSubmitting(false);
     }
   };
-
-  const entryNameIssueMessage = (issue: PragmaKnowledgeBaseEntryNameIssue): string => {
-    switch (issue) {
-      case "empty":
-        return t("entryNameRequired");
-      case "too_long":
-        return t("entryNameTooLong", { max: PRAGMA_TEXT_LIMITS.contextStore.entryName });
-      case "whitespace":
-        return t("entryNameWhitespaceError");
-      case "invalid_character":
-        return t("entryNameInvalidCharacterError");
-      case "dot_name":
-        return t("entryNameDotError");
-      case "reserved_name":
-        return t("entryNameReservedError");
-    }
-  };
-
-  const entryNameIssue =
-    entryTextOperation === null
-      ? undefined
-      : pragmaKnowledgeBaseEntryNameIssue(entryOperationName(entryTextOperation));
 
   return (
     <StudioScreenFrame
@@ -1170,166 +899,40 @@ export function ContextStoreDetailFragment(props: {
         </div>
       }
     >
-      <div
-        className="knowledge-base-workspace"
-        style={{ "--sidebar-width": `${filePanelWidth}px` } as CSSProperties}
-      >
-        <aside className="knowledge-file-panel" aria-label={t("knowledgeBaseFiles")}>
-          <div className="knowledge-file-toolbar">
-            <div>
-              <button
-                type="button"
-                title={t("newFile")}
-                aria-label={t("newFile")}
-                onClick={() => void openEntryTextOperation("create-file")}
-              >
-                <FilePlus size={17} />
-              </button>
-              <button
-                type="button"
-                title={t("newFolder")}
-                aria-label={t("newFolder")}
-                onClick={() => void openEntryTextOperation("create-folder")}
-              >
-                <FolderPlus size={17} />
-              </button>
-              <button
-                type="button"
-                title={t("refresh")}
-                aria-label={t("refresh")}
-                disabled={refreshing}
-                onClick={() => void refreshEntries()}
-              >
-                {refreshing ? (
-                  <SpinnerGap className="spin" size={17} />
-                ) : (
-                  <ArrowClockwise size={17} />
-                )}
-              </button>
-            </div>
-          </div>
-          {loading ? <p className="knowledge-tree-state">{t("loadingContents")}</p> : null}
-          {!loading && entries.length === 0 ? (
-            <div className="knowledge-tree-empty">
-              <File size={23} />
-              <p>{t("emptyKnowledgeBase")}</p>
-              <button type="button" onClick={() => void openEntryTextOperation("create-file")}>
-                {t("createFirstFile")}
-              </button>
-            </div>
-          ) : null}
-          <div
-            className={
-              dropTargetDirectory === ""
-                ? "knowledge-file-tree is-root-drop-target"
-                : "knowledge-file-tree"
-            }
-            role="tree"
-            onDragOver={(event) => {
-              if (draggedEntry === null || !canMoveEntryTo(draggedEntry, "")) return;
-              event.preventDefault();
-              event.dataTransfer.dropEffect = "move";
-              setDropTargetDirectory("");
-            }}
-            onDragLeave={(event) => {
-              if (!event.currentTarget.contains(event.relatedTarget as Node | null)) {
-                setDropTargetDirectory(null);
-              }
-            }}
-            onDrop={(event) => {
-              event.preventDefault();
-              if (draggedEntry !== null) proposeMove(draggedEntry, "");
-            }}
-          >
-            {visibleEntries.map((entry) => {
-              const depth = entry.id.split("/").length - 1;
-              const isExpanded = entry.kind === "directory" && !collapsedDirectoryIds.has(entry.id);
-              const Icon =
-                entry.kind === "directory" ? (isExpanded ? FolderOpen : Folder) : FileText;
-              return (
-                <div
-                  key={`${entry.kind}:${entry.id}`}
-                  role="none"
-                  className={[
-                    "knowledge-file-row",
-                    selectedEntry?.id === entry.id ? "is-selected" : "",
-                    dropTargetDirectory === entry.id ? "is-drop-target" : "",
-                  ]
-                    .filter(Boolean)
-                    .join(" ")}
-                  style={{ paddingInlineStart: 12 + depth * 18 }}
-                  onDragOver={(event) => {
-                    if (
-                      entry.kind !== "directory" ||
-                      draggedEntry === null ||
-                      !canMoveEntryTo(draggedEntry, entry.id)
-                    ) {
-                      return;
-                    }
-                    event.preventDefault();
-                    event.stopPropagation();
-                    event.dataTransfer.dropEffect = "move";
-                    setDropTargetDirectory(entry.id);
-                  }}
-                  onDragLeave={() => {
-                    if (dropTargetDirectory === entry.id) setDropTargetDirectory(null);
-                  }}
-                  onDrop={(event) => {
-                    if (entry.kind !== "directory" || draggedEntry === null) return;
-                    event.preventDefault();
-                    event.stopPropagation();
-                    proposeMove(draggedEntry, entry.id);
-                  }}
-                >
-                  <button
-                    className="knowledge-file-open"
-                    type="button"
-                    role="treeitem"
-                    aria-selected={selectedEntry?.id === entry.id}
-                    aria-expanded={entry.kind === "directory" ? isExpanded : undefined}
-                    draggable
-                    onClick={() => void openEntry(entry)}
-                    onDragStart={(event) => {
-                      event.dataTransfer.effectAllowed = "move";
-                      event.dataTransfer.setData("text/plain", entry.id);
-                      setDraggedEntry(entry);
-                    }}
-                    onDragEnd={() => {
-                      setDraggedEntry(null);
-                      setDropTargetDirectory(null);
-                    }}
-                  >
-                    <Icon size={17} aria-hidden="true" />
-                    <span>{fileName(entry.id)}</span>
-                  </button>
-                  <button
-                    className="knowledge-file-rename"
-                    type="button"
-                    title={t("rename")}
-                    aria-label={t("renameEntryNamed", { name: fileName(entry.id) })}
-                    draggable={false}
-                    onClick={() => void openEntryTextOperation("rename", entry)}
-                  >
-                    <PencilSimple size={15} aria-hidden="true" />
-                  </button>
-                </div>
-              );
-            })}
-          </div>
-        </aside>
-        <SidebarResizeHandle
-          label={t("resizeKnowledgeFileList")}
-          width={filePanelWidth}
-          preference={SIDEBAR_WIDTH_PREFERENCES.knowledgeBaseFiles}
-          onResize={setFilePanelWidth}
-        />
-
-        <section className="knowledge-editor-panel">
-          {selectedEntry?.kind === "file" && content !== null ? (
-            <>
-              <header className="knowledge-editor-toolbar">
-                <div>
-                  <strong>{selectedEntry.id}</strong>
+      <AssetFileWorkspace
+        filesLabel={t("knowledgeBaseFiles")}
+        resizeLabel={t("resizeKnowledgeFileList")}
+        widthPreference={SIDEBAR_WIDTH_PREFERENCES.knowledgeBaseFiles}
+        entries={entries}
+        selectedEntry={selectedEntry}
+        collapsedDirectoryIds={collapsedDirectoryIds}
+        onOpenEntry={(entry) => void openEntry(entry)}
+        loading={loading}
+        onRefresh={() => loadEntries()}
+        markdownFileNames
+        operations={{
+          beforeOperation: save,
+          createFile,
+          createFolder: async (id) => {
+            await props.onCreateFolder(props.store.id, id);
+            await loadEntries();
+            setDraftDirty(true);
+          },
+          renameEntry,
+          deleteEntry,
+        }}
+        editor={
+          selectedEntry?.kind === "file" && content !== null
+            ? {
+                path: selectedEntry.id,
+                value: draft,
+                preview,
+                onPreviewChange: setPreview,
+                onChange: (nextDraft) => {
+                  setDraft(nextDraft);
+                  markEdited({ draft: nextDraft });
+                },
+                status: (
                   <span className={`knowledge-save-status is-${saveStatus}`}>
                     {saveStatus === "saving"
                       ? t("saving")
@@ -1341,228 +944,64 @@ export function ContextStoreDetailFragment(props: {
                             ? t("saveFailed")
                             : ""}
                   </span>
-                </div>
-                <div>
-                  <button
-                    className={!preview ? "is-active" : ""}
-                    type="button"
-                    title={t("edit")}
-                    aria-label={t("edit")}
-                    onClick={() => setPreview(false)}
-                  >
-                    <PencilSimple size={17} />
-                  </button>
-                  <button
-                    className={preview ? "is-active" : ""}
-                    type="button"
-                    title={t("preview")}
-                    aria-label={t("preview")}
-                    onClick={() => setPreview(true)}
-                  >
-                    <Eye size={17} />
-                  </button>
+                ),
+              }
+            : null
+        }
+        editorChildren={({ saveCopy }) =>
+          conflict ? (
+            <div className="knowledge-conflict" role="alert">
+              <p>{t("knowledgeConflict")}</p>
+              {draftDirty ? (
+                <button type="button" onClick={() => void commitDraft()}>
+                  {t("saveKnowledgeBase")}
+                </button>
+              ) : (
+                <>
                   <button
                     type="button"
-                    title={t("rename")}
-                    aria-label={t("rename")}
-                    onClick={() => void openEntryTextOperation("rename")}
-                  >
-                    <TextAa size={17} />
-                  </button>
-                  <button
-                    type="button"
-                    title={t("delete")}
-                    aria-label={t("delete")}
                     onClick={() =>
-                      selectedEntry &&
-                      setEntryConfirmation({ kind: "delete", entry: selectedEntry })
+                      selectedEntry && void loadFile(selectedEntry, { discardChanges: true })
                     }
                   >
-                    <Trash size={17} />
+                    {t("reload")}
                   </button>
-                </div>
-              </header>
-              {conflict ? (
-                <div className="knowledge-conflict" role="alert">
-                  <p>{t("knowledgeConflict")}</p>
-                  {draftDirty ? (
-                    <button type="button" onClick={() => void commitDraft()}>
-                      {t("saveKnowledgeBase")}
-                    </button>
-                  ) : (
-                    <>
-                      <button
-                        type="button"
-                        onClick={() =>
-                          selectedEntry && void loadFile(selectedEntry, { discardChanges: true })
-                        }
-                      >
-                        {t("reload")}
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => void openEntryTextOperation("save-copy")}
-                      >
-                        {t("saveCopy")}
-                      </button>
-                    </>
-                  )}
-                </div>
-              ) : null}
-              {preview ? (
-                <div className="knowledge-markdown-preview">
-                  <MarkdownContent source={draft} />
-                </div>
-              ) : (
-                <textarea
-                  className="knowledge-markdown-editor"
-                  value={draft}
-                  onChange={(event) => {
-                    const nextDraft = event.target.value;
-                    setDraft(nextDraft);
-                    markEdited({ draft: nextDraft });
-                  }}
-                  aria-label={t("markdownContent")}
-                />
+                  <button type="button" onClick={saveCopy}>
+                    {t("saveCopy")}
+                  </button>
+                </>
               )}
-            </>
-          ) : (
-            <div className="knowledge-editor-empty">
-              <FileText size={32} />
-              <h2>{t("selectKnowledgeFile")}</h2>
-              <p>{t("selectKnowledgeFileDescription")}</p>
             </div>
-          )}
-        </section>
-
-        <aside className="knowledge-metadata-panel" aria-label={t("loadingSettings")}>
-          <h2>{t("loadingSettings")}</h2>
-          {selectedEntry?.kind === "file" && content !== null ? (
-            <div className="knowledge-metadata-form">
-              <label>
-                {t("description")}
-                <textarea
-                  value={metadata.description ?? ""}
-                  onChange={(event) => {
-                    const nextMetadata = { ...metadata, description: event.target.value };
-                    setMetadata(nextMetadata);
-                    markEdited({ metadata: nextMetadata });
-                  }}
-                />
-              </label>
-              <div className="knowledge-metadata-field">
-                <span>{t("loadingBehavior")}</span>
-                <SelectMenu<ContextStoreContentMetadata["trigger"]>
-                  ariaLabel={t("loadingBehavior")}
-                  className="form-select"
-                  value={metadata.trigger}
-                  options={[
-                    { value: "manual", label: t("onDemand") },
-                    { value: "model_decision", label: t("modelDecides") },
-                    { value: "always_on", label: t("loadImmediately") },
-                  ]}
-                  onChange={(trigger) => {
-                    const nextMetadata = {
-                      ...metadata,
-                      trigger,
-                    };
-                    setMetadata(nextMetadata);
-                    markEdited({ metadata: nextMetadata });
-                  }}
-                />
-              </div>
-              <div className="knowledge-metadata-field">
-                <span>{t("priority")}</span>
-                <SelectMenu<ContextStoreContentMetadata["priority"]>
-                  ariaLabel={t("priority")}
-                  className="form-select"
-                  value={metadata.priority}
-                  options={[
-                    { value: "low", label: t("priorityLow") },
-                    { value: "normal", label: t("priorityNormal") },
-                    { value: "high", label: t("priorityHigh") },
-                    { value: "critical", label: t("priorityCritical") },
-                  ]}
-                  onChange={(priority) => {
-                    const nextMetadata = {
-                      ...metadata,
-                      priority,
-                    };
-                    setMetadata(nextMetadata);
-                    markEdited({ metadata: nextMetadata });
-                  }}
-                />
-              </div>
-              <p>{t("frontmatterManaged")}</p>
-            </div>
-          ) : (
-            <p className="knowledge-metadata-empty">{t("selectFileForSettings")}</p>
-          )}
-        </aside>
-      </div>
+          ) : null
+        }
+        emptyEditor={
+          <>
+            <FileText size={32} />
+            <h2>{t("selectKnowledgeFile")}</h2>
+            <p>{t("selectKnowledgeFileDescription")}</p>
+          </>
+        }
+        metadataPanel={
+          <aside className="knowledge-metadata-panel" aria-label={t("loadingSettings")}>
+            <h2>{t("loadingSettings")}</h2>
+            {selectedEntry?.kind === "file" && content !== null ? (
+              <KnowledgeLoadingSettings
+                metadata={metadata}
+                onChange={(nextMetadata) => {
+                  setMetadata(nextMetadata);
+                  markEdited({ metadata: nextMetadata });
+                }}
+              />
+            ) : (
+              <p className="knowledge-metadata-empty">{t("selectFileForSettings")}</p>
+            )}
+          </aside>
+        }
+      />
       {error ? (
         <p className="form-error knowledge-base-error" role="alert">
           {error}
         </p>
-      ) : null}
-      {entryTextOperation !== null ? (
-        <StudioTextInputDialog
-          title={
-            entryTextOperation.kind === "create-file"
-              ? t("newFile")
-              : entryTextOperation.kind === "create-folder"
-                ? t("newFolder")
-                : entryTextOperation.kind === "rename"
-                  ? t("rename")
-                  : t("saveCopy")
-          }
-          description={
-            entryTextOperation.kind === "create-file"
-              ? t("newMarkdownFilePrompt")
-              : entryTextOperation.kind === "create-folder"
-                ? t("newFolderPrompt")
-                : entryTextOperation.kind === "rename"
-                  ? t("renameEntryPrompt")
-                  : t("saveCopyPrompt")
-          }
-          label={t("entryName")}
-          value={entryTextOperation.value}
-          hint={t("entryNameRules")}
-          countValue={entryOperationName(entryTextOperation)}
-          maxLength={PRAGMA_TEXT_LIMITS.contextStore.entryName}
-          invalid={entryNameIssue !== undefined}
-          cancelLabel={t("cancel")}
-          confirmLabel={
-            entryTextOperation.kind === "create-file"
-              ? t("newFile")
-              : entryTextOperation.kind === "create-folder"
-                ? t("newFolder")
-                : entryTextOperation.kind === "rename"
-                  ? t("rename")
-                  : t("saveCopy")
-          }
-          busyLabel={
-            entryTextOperation.kind === "rename" || entryTextOperation.kind === "save-copy"
-              ? t("saving")
-              : t("creating")
-          }
-          busy={entryTextOperation.busy}
-          error={entryTextOperation.error}
-          onChange={(value) =>
-            setEntryTextOperation((current) => {
-              if (current === null) return null;
-              const issue = pragmaKnowledgeBaseEntryNameIssue(entryOperationName(current, value));
-              return {
-                ...current,
-                value,
-                error:
-                  issue === undefined || issue === "empty" ? null : entryNameIssueMessage(issue),
-              };
-            })
-          }
-          onCancel={() => setEntryTextOperation(null)}
-          onConfirm={() => void submitEntryTextOperation()}
-        />
       ) : null}
       {leaveAction !== null ? (
         <Dialog
@@ -1643,29 +1082,6 @@ export function ContextStoreDetailFragment(props: {
             }}
           />
         </Dialog>
-      ) : null}
-      {entryConfirmation !== null ? (
-        <StudioConfirmationDialog
-          title={entryConfirmation.kind === "delete" ? t("deleteEntryTitle") : t("moveEntryTitle")}
-          description={
-            entryConfirmation.kind === "delete"
-              ? t("deleteEntryConfirm", { name: entryConfirmation.entry.id })
-              : t("moveEntryDescription", {
-                  name: entryConfirmation.entry.id,
-                  destination:
-                    entryConfirmation.destinationId === ""
-                      ? t("knowledgeRoot")
-                      : entryConfirmation.destinationId,
-                })
-          }
-          cancelLabel={t("cancel")}
-          confirmLabel={entryConfirmation.kind === "delete" ? t("delete") : t("moveEntryAction")}
-          busyLabel={entryConfirmation.kind === "delete" ? t("deleting") : t("movingEntry")}
-          busy={entryConfirmationBusy}
-          action={entryConfirmation.kind === "move" ? "move" : "delete"}
-          onCancel={() => setEntryConfirmation(null)}
-          onConfirm={() => void confirmEntryOperation()}
-        />
       ) : null}
       {revisionDialogOpen ? (
         <Dialog
@@ -2258,6 +1674,125 @@ export function ExpertContextMountDrawer(props: {
           </button>
         </footer>
       </aside>
+    </div>
+  );
+}
+
+export function KnowledgeLoadingSettings(props: {
+  readonly metadata: ContextStoreContentMetadata;
+  readonly onChange: (metadata: ContextStoreContentMetadata) => void;
+}) {
+  const { t } = useTranslation("studio");
+  const descriptionId = useId();
+  return (
+    <div className="knowledge-metadata-form">
+      <div className="knowledge-metadata-field">
+        <KnowledgeMetadataHelp
+          label={t("description")}
+          labelFor={descriptionId}
+          tips={[
+            t("knowledgeLoadingHelp.descriptionPurpose"),
+            t("knowledgeLoadingHelp.descriptionCaution"),
+          ]}
+        />
+        <textarea
+          id={descriptionId}
+          value={props.metadata.description ?? ""}
+          onChange={(event) =>
+            props.onChange({ ...props.metadata, description: event.target.value })
+          }
+        />
+      </div>
+      <div className="knowledge-metadata-field">
+        <KnowledgeMetadataHelp
+          label={t("loadingBehavior")}
+          tips={[
+            t("knowledgeLoadingHelp.manual"),
+            t("knowledgeLoadingHelp.modelDecision"),
+            t("knowledgeLoadingHelp.alwaysOn"),
+            t("knowledgeLoadingHelp.triggerCaution"),
+          ]}
+        />
+        <SelectMenu<ContextStoreContentMetadata["trigger"]>
+          ariaLabel={t("loadingBehavior")}
+          className="form-select"
+          value={props.metadata.trigger}
+          options={[
+            { value: "manual", label: t("onDemand") },
+            { value: "model_decision", label: t("modelDecides") },
+            { value: "always_on", label: t("loadImmediately") },
+          ]}
+          onChange={(trigger) => props.onChange({ ...props.metadata, trigger })}
+        />
+      </div>
+      <div className="knowledge-metadata-field">
+        <KnowledgeMetadataHelp
+          label={t("priority")}
+          tips={[
+            t("knowledgeLoadingHelp.priorityPurpose"),
+            t("knowledgeLoadingHelp.priorityCaution"),
+          ]}
+        />
+        <SelectMenu<ContextStoreContentMetadata["priority"]>
+          ariaLabel={t("priority")}
+          className="form-select"
+          value={props.metadata.priority}
+          options={[
+            { value: "low", label: t("priorityLow") },
+            { value: "normal", label: t("priorityNormal") },
+            { value: "high", label: t("priorityHigh") },
+            { value: "critical", label: t("priorityCritical") },
+          ]}
+          onChange={(priority) => props.onChange({ ...props.metadata, priority })}
+        />
+      </div>
+      <p>{t("frontmatterManaged")}</p>
+    </div>
+  );
+}
+
+function KnowledgeMetadataHelp(props: {
+  readonly label: string;
+  readonly labelFor?: string | undefined;
+  readonly tips: readonly string[];
+}) {
+  const { t } = useTranslation("studio");
+  const [open, setOpen] = useState(false);
+  const tipId = useId();
+  const helpLabel = t("knowledgeLoadingHelp.button", { setting: props.label });
+  return (
+    <div className="knowledge-metadata-help">
+      <div className="knowledge-metadata-label">
+        {props.labelFor === undefined ? (
+          <span>{props.label}</span>
+        ) : (
+          <label htmlFor={props.labelFor}>{props.label}</label>
+        )}
+        <button
+          type="button"
+          className="knowledge-metadata-help-button"
+          aria-label={helpLabel}
+          title={helpLabel}
+          aria-expanded={open}
+          aria-controls={open ? tipId : undefined}
+          onClick={() => setOpen((current) => !current)}
+          onKeyDown={(event) => {
+            if (event.key === "Escape") {
+              event.stopPropagation();
+              setOpen(false);
+            }
+          }}
+        >
+          <Question size={16} aria-hidden="true" />
+        </button>
+      </div>
+      {open ? (
+        <div className="knowledge-metadata-tip" id={tipId}>
+          {props.tips.map((tip) => (
+            <p key={tip}>{tip}</p>
+          ))}
+        </div>
+      ) : null}
     </div>
   );
 }

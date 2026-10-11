@@ -12,7 +12,7 @@ import {
 import { SettingsPage, type SettingsView } from "./pages/settings/SettingsPage.tsx";
 import { MissionsPage, type MissionsPageMemoryState } from "./pages/missions/MissionsPage.tsx";
 import { StudioPage, type StudioPageMemoryState } from "./pages/studio/StudioPage.tsx";
-import type { ContextStoreLeaveGuard } from "./pages/studio/ContextStoreFragment.tsx";
+import type { StudioLeaveGuard } from "./pages/studio/StudioScreenFrame.tsx";
 import { EvaluationsPage } from "./pages/evaluations/EvaluationsPage.tsx";
 import { HomePage } from "./pages/home/HomePage.tsx";
 import { UsagePage } from "./pages/usage/UsagePage.tsx";
@@ -50,7 +50,7 @@ export function App() {
   const [memoryEnabled, setMemoryEnabled] = useState<boolean>();
   const [assetGitIssues, setAssetGitIssues] = useState<readonly AssetGitStatus[]>([]);
   const assetGitNavigationSequence = useRef(0);
-  const leaveGuardRef = useRef<ContextStoreLeaveGuard | null>(null);
+  const leaveGuardRef = useRef<StudioLeaveGuard | null>(null);
 
   useEffect(() => {
     const api = typeof window === "undefined" ? undefined : window.pragmaDesktop;
@@ -264,8 +264,8 @@ export function App() {
           onLeaveGuardChange={(guard) => {
             leaveGuardRef.current = guard;
           }}
-          onTryExpert={(expert) => {
-            setMissionExecutorRef(`expert:${expert.id}`);
+          onUseInSession={(executorRef) => {
+            setMissionExecutorRef(executorRef);
             setMissionToOpen(undefined);
             setMissionComposerDraftToOpen(undefined);
             setAutoRunMissionOnOpen(false);

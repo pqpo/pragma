@@ -1,13 +1,9 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 
+import { skillPreviewBody } from "./SkillFileWorkspace.tsx";
 import type { Capability } from "../../../../shared/contracts/index.ts";
-import {
-  CapabilityDetailFragment,
-  formatFileSize,
-  parseTestInput,
-  skillMarkdownBody,
-} from "./CapabilityDetailFragment.tsx";
+import { CapabilityDetailFragment, parseTestInput } from "./CapabilityDetailFragment.tsx";
 
 const capability: Capability = {
   manifest: {
@@ -46,17 +42,38 @@ const capability: Capability = {
 
 describe("CapabilityDetailFragment", () => {
   it("shows a built-in Skill version and suppresses every mutation action", () => {
-    const html = renderToStaticMarkup(<CapabilityDetailFragment capability={{
-      ...capability, managedBy: "system", manifest: { ...capability.manifest, name: "Author Pragma Flow", kind: "skill" },
-      definition: { kind: "skill", name: "Author Pragma Flow", description: "Flow authoring", entryPath: "SKILL.md", contentHash: "0".repeat(64) },
-    }} onBack={() => undefined} onChanged={() => undefined} />);
+    const html = renderToStaticMarkup(
+      <CapabilityDetailFragment
+        capability={{
+          ...capability,
+          managedBy: "system",
+          manifest: { ...capability.manifest, name: "Author Pragma Flow", kind: "skill" },
+          definition: {
+            kind: "skill",
+            name: "Author Pragma Flow",
+            description: "Flow authoring",
+            entryPath: "SKILL.md",
+            contentHash: "0".repeat(64),
+          },
+        }}
+        onBack={() => undefined}
+        onChanged={() => undefined}
+      />,
+    );
     expect(html).toContain("Built-in");
     expect(html).toContain("Author Pragma Flow");
     expect(html).toContain("Revision 2");
-    for (const action of ["Update from package", "Submit revision", "Delete", "Git settings", "Publish"]) expect(html).not.toContain(`>${action}<`);
+    for (const action of [
+      "Update from package",
+      "Submit revision",
+      "Delete",
+      "Git settings",
+      "Publish",
+    ])
+      expect(html).not.toContain(`>${action}<`);
   });
 
-  it("shows capability metadata, tool details, and a JSON test panel", () => {
+  it("shows connector tool details and a JSON test panel", () => {
     const html = renderToStaticMarkup(
       <CapabilityDetailFragment
         capability={capability}
@@ -67,6 +84,7 @@ describe("CapabilityDetailFragment", () => {
 
     expect(html).toContain("Back to Capabilities");
     expect(html).toContain("Revision 2");
+    expect(html).not.toContain('class="capability-detail-meta"');
     expect(html).toContain("get_customer");
     expect(html).toContain("/customers/{id}");
     expect(html).toContain("JSON input");
@@ -138,7 +156,11 @@ describe("CapabilityDetailFragment", () => {
       />,
     );
 
-    expect(html).toContain("SKILL.md");
+    expect(html).toContain("skill-file-workspace");
+    expect(html).not.toContain('class="capability-detail-meta"');
+    expect(html).not.toContain("Documentation bundled with this Skill revision.");
+    expect(html).not.toContain('class="skill-content-tabs"');
+    expect(html).not.toContain("View source");
     expect(html).toContain('aria-label="Submit revision"');
     expect(html).toContain('role="tooltip">Submit revision</span>');
     expect(html).toContain('aria-label="Update from package"');
@@ -158,6 +180,7 @@ describe("CapabilityDetailFragment", () => {
       "Publish to source",
       "Settings",
       "Delete",
+      "Save Skill",
     ]);
     expect(html).not.toContain("Update Skill");
     expect(html).not.toContain("Prepare revision");
@@ -236,13 +259,7 @@ describe("CapabilityDetailFragment", () => {
   it("strips Skill frontmatter only from the rendered Markdown body", () => {
     const source = "---\nname: review\ndescription: Review code.\n---\n\n# Review\n\nRun tests.";
 
-    expect(skillMarkdownBody(source)).toBe("# Review\n\nRun tests.");
-  });
-
-  it("formats Skill file sizes for the file browser", () => {
-    expect(formatFileSize(12)).toBe("12 B");
-    expect(formatFileSize(1536)).toBe("1.5 KiB");
-    expect(formatFileSize(2 * 1024 * 1024)).toBe("2.0 MiB");
+    expect(skillPreviewBody("SKILL.md", source)).toBe("# Review\n\nRun tests.");
   });
 
   it("requires test input to be a JSON object", () => {

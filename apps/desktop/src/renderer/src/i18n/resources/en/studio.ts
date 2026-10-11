@@ -874,6 +874,25 @@ export const studio = {
   markdownContent: "Markdown content",
   loadingSettings: "Loading settings",
   selectFileForSettings: "Select a file to configure how experts load it.",
+  knowledgeLoadingHelp: {
+    button: "About {{setting}}: purpose and precautions",
+    descriptionPurpose:
+      "The description is a file summary for the model. With “Model decides”, the model first sees the file name and description, then decides whether to read the content.",
+    descriptionCaution:
+      "State what the file covers, when it is useful, and where it does not apply. The description does not replace the content or guarantee that the model will read it.",
+    manual:
+      "On demand: does not preload the content or include it in the initial candidate index. Experts can still discover it with listing, search, or read tools.",
+    modelDecision:
+      "Model decides: includes the file name and description in the initial candidate index so the model can read the content when needed.",
+    alwaysOn:
+      "Load immediately: preloads content when applicable expert context is assembled. Use it for short rules or background needed for every task.",
+    triggerCaution:
+      "Immediate loading consumes context budget. Long files may load only their beginning, and files may be omitted when space runs out. Put key information first. Expert preload and exclusion rules also affect actual loading.",
+    priorityPurpose:
+      "Priority affects preload budget allocation and candidate ordering: critical, high, normal, then low. Higher priorities receive space first when the budget is limited.",
+    priorityCaution:
+      "Use normal by default, reserving high or critical for essential material. Priority does not change loading behavior or guarantee full loading or a model read. Marking every file critical removes the distinction.",
+  },
   frontmatterManaged: "Pragma stores these settings in the file frontmatter.",
   priorityLow: "Low",
   priorityNormal: "Normal",
@@ -885,6 +904,19 @@ export const studio = {
   saveCopyPrompt: "Enter a file name for the copy",
   saved: "Saved",
   draftBackedUp: "Draft backed up",
+  saveSkill: "Save Skill",
+  skillUnsavedChanges: "Unsaved changes",
+  deleteSkillEntryConfirm:
+    "Remove “{{name}}” from the next revision? Previous revisions retain the original files.",
+  newSkillFilePrompt: "Enter a file name, including its extension",
+  emptyFileWorkspace: "No files yet.",
+  fileEntryAlreadyExists: "A file or folder with this name already exists.",
+  saveSkillBeforeRefresh: "Save or discard your changes before refreshing.",
+  skillEditConflict:
+    "This Skill has a newer revision. Your changes have been kept; reopen the page after saving or discarding them.",
+  unsavedSkillChangesDescription: "This Skill contains unsaved file changes.",
+  resizeSkillFileList: "Resize Skill file list",
+  fileContent: "File content",
   saveKnowledgeBase: "Save",
   noKnowledgeChangesToSave: "No changes to save",
   unsavedKnowledgeChangesTitle: "Save changes before leaving?",
@@ -963,7 +995,7 @@ export const studio = {
   deleteExpertAction: "Delete expert",
   deleteExpertDescription:
     "“{{name}}” will be permanently removed. Teams, flows, and tools that use it must be updated first.",
-  trySession: "Try in session",
+  useInSession: "Use in session",
   instructions: "Instructions",
   noInstructions: "No instructions provided.",
   additionalInstructions: "Additional instructions",
@@ -1123,7 +1155,6 @@ export const studio = {
   fieldType: "Field type",
   fieldDescription: "Field description",
   capabilityIdentity: "Capability status and identity",
-  skillDocumentation: "Documentation bundled with this Skill revision.",
   loadingSkill: "Loading Skill documentation…",
   skillContent: "Skill content",
   skillFiles: "Skill package files",
@@ -1141,8 +1172,6 @@ export const studio = {
   refreshing: "Refreshing…",
   runtimeKey: "Runtime key",
   lastChecked: "Last checked",
-  viewRendered: "View rendered",
-  viewSource: "View source",
   running: "Running…",
   runTest: "Run test",
   jsonInput: "JSON input",
@@ -1899,10 +1928,21 @@ export const studio = {
   updateSkillFromPackage: "Update from package",
   submitSkillRevisionDescription:
     "Describe the changes Pragma should prepare for “{{name}}”. The revision will require approval before publishing.",
-  skillRevisionsDescription: "Review validated Skill candidates and approve or reject publishing.",
+  skillRevisionHistoryCount: "{{count}} revision records",
+  skillEntriesChanged: "{{count}} changed entries",
+  backSkillRevisionHistory: "Back to revision history",
+  skillManualRevisionContents: "Revision contents",
+  skillManualRevisionSummaryDescription: "Summarizes the changes already saved in this revision.",
+  skillManualRevisionTitle: "Manual edit",
+  skillManualRevisionSummary:
+    "Manual edit · {{added}} added, {{modified}} modified, {{deleted}} deleted",
+  skillRevisionFolderAdded: "Added folder: {{path}}",
+  skillRevisionFolderDeleted: "Deleted folder: {{path}}",
+  skillRevisionsDescription: "View saved edits and review validated Skill candidates.",
   loadingSkillRevisions: "Loading revisions…",
   noSkillRevisions: "No skill revisions yet.",
-  noSkillRevisionsDescription: "Submitted candidates and changes awaiting review will appear here.",
+  noSkillRevisionsDescription:
+    "Saved manual edits and submitted revision candidates will appear here.",
   approveAndPublish: "Approve and publish",
   deleteSkillRevisionTaskTitle: "Delete this Skill revision task?",
   deleteSkillRevisionTaskDescription:

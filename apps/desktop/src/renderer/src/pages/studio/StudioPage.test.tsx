@@ -37,7 +37,7 @@ describe("StudioPage", () => {
       <StudioPage
         memoryEnabled={true}
         initialMemoryState={{ activeView: "plugins" }}
-        onTryExpert={() => undefined}
+        onUseInSession={() => undefined}
       />,
     );
 
@@ -47,7 +47,7 @@ describe("StudioPage", () => {
 
   it("renders a resizable secondary navigation", () => {
     const html = renderToStaticMarkup(
-      <StudioPage memoryEnabled={true} onTryExpert={() => undefined} />,
+      <StudioPage memoryEnabled={true} onUseInSession={() => undefined} />,
     );
     const resourceIndex = html.indexOf("<span>Knowledge bases</span>");
     const capabilitiesIndex = html.indexOf("<span>Capabilities</span>");
@@ -98,7 +98,7 @@ describe("StudioPage", () => {
             },
           ],
         }}
-        onTryExpert={() => undefined}
+        onUseInSession={() => undefined}
       />,
     );
 

@@ -1,20 +1,19 @@
+import { canMoveEntryTo, moveEntryTargetId, rebaseEntryId } from "./asset-file-paths.ts";
 import { renderToStaticMarkup } from "react-dom/server";
 import { GitBranch, DownloadSimple } from "@phosphor-icons/react";
 import { describe, expect, it } from "vitest";
 
 import type { ContextStore } from "../../../../shared/contracts/index.ts";
 import {
-  canMoveEntryTo,
   contextStoreDeleteCheckPending,
   contextStoreDeleteError,
   contextStorePreviewAfterLoad,
   ContextStoreCreatorDrawer,
   ContextStoreDetailFragment,
+  KnowledgeLoadingSettings,
   ContextStoreDirectoryFragment,
   ExpertContextMountDrawer,
   firstContextStoreFile,
-  moveEntryTargetId,
-  rebaseEntryId,
 } from "./ContextStoreFragment.tsx";
 
 const store: ContextStore = {
@@ -259,5 +258,25 @@ describe("knowledge base UI", () => {
       "archive/guides/setup.md",
     );
     expect(rebaseEntryId("reference/api.md", "guides", "archive/guides")).toBeUndefined();
+  });
+});
+
+describe("KnowledgeLoadingSettings", () => {
+  it("offers three collapsed help buttons beside the file settings", () => {
+    const html = renderToStaticMarkup(
+      <KnowledgeLoadingSettings
+        metadata={{ description: "Task guidance", trigger: "model_decision", priority: "normal" }}
+        onChange={() => undefined}
+      />,
+    );
+    expect(html.match(/class="knowledge-metadata-help-button"/g)).toHaveLength(3);
+    expect(
+      html.match(/class="knowledge-metadata-help-button"[^>]*aria-expanded="false"/g),
+    ).toHaveLength(3);
+    expect(html).toContain("About Description: purpose and precautions");
+    expect(html).toContain("About Loading behavior: purpose and precautions");
+    expect(html).toContain("About Priority: purpose and precautions");
+    expect(html).not.toContain('class="knowledge-metadata-tip"');
+    expect(html).toContain("Task guidance");
   });
 });

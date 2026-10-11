@@ -208,7 +208,7 @@ export function ExpertDetailFragment(props: {
   readonly onBack: () => void;
   readonly onEdit: () => void;
   readonly onOpenContextStore: (store: ContextStore) => void;
-  readonly onTryInSession: () => void;
+  readonly onUseInSession: () => void;
   readonly onPublish?: (() => void) | undefined;
   readonly onDelete: () => Promise<void>;
   readonly onReset: () => Promise<void>;
@@ -428,9 +428,9 @@ export function ExpertDetailFragment(props: {
             />
           ) : null}
           <StudioActionButton
-            label={t("trySession")}
+            label={t("useInSession")}
             icon={<Play size={18} aria-hidden="true" />}
-            onClick={props.onTryInSession}
+            onClick={props.onUseInSession}
           />
           {props.onPublish === undefined ? null : (
             <StudioActionButton

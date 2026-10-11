@@ -1,6 +1,16 @@
 import { BUILT_IN_SKILLS, builtInSkillCapability } from "@pragma/built-in-agents";
 import { createHash, randomUUID } from "node:crypto";
-import { chmod, mkdtemp, mkdir, readFile, rm, stat, symlink, writeFile } from "node:fs/promises";
+import {
+  chmod,
+  mkdtemp,
+  mkdir,
+  readFile,
+  readdir,
+  rm,
+  stat,
+  symlink,
+  writeFile,
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -440,6 +450,361 @@ describe("capability store", () => {
     );
   });
 
+  it("saves manual text edits as one active immutable revision and preserves binary files and executable modes", async () => {
+    const { directory, store, credentials } = await createStore();
+    const source = join(directory, "editable-skill");
+    await mkdir(join(source, "references"), { recursive: true });
+    const document = "---\nname: review\ndescription: Review code.\n---\n\n# Review\n";
+    await writeFile(join(source, "SKILL.md"), document);
+    await writeFile(join(source, "references", "checklist.md"), "Before");
+    await writeFile(join(source, "image.bin"), Buffer.from([0, 255, 42]));
+    await writeFile(join(source, "legacy.sh"), "#!/bin/sh\necho review\n");
+    await chmod(join(source, "legacy.sh"), 0o700);
+    const initial = await store.importSkill({ sourcePath: source });
+    const saved = await store.saveSkillFiles({
+      id: initial.manifest.id,
+      baseRevision: 1,
+      files: [
+        { path: "SKILL.md", content: document + "Run all checks.\n" },
+        { path: "references/checklist.md", content: "After" },
+      ],
+    });
+    expect(saved.manifest).toMatchObject({ latestRevision: 2, activeRevision: 2 });
+    const history = await store.listSkillManualRevisions({ capabilityId: saved.manifest.id });
+    expect(history).toHaveLength(1);
+    expect(history[0]).toMatchObject({
+      schemaVersion: "pragma.skill-manual-revision/v1",
+      capabilityId: saved.manifest.id,
+      revision: 2,
+      baseRevision: 1,
+      source: "manual",
+      name: "review",
+    });
+    expect(
+      history[0]!.operations.map((operation) => [operation.path, operation.operation]),
+    ).toEqual([
+      ["SKILL.md", "modified"],
+      ["references/checklist.md", "modified"],
+    ]);
+    expect(
+      await store.getSkillManualRevisionFile({
+        capabilityId: saved.manifest.id,
+        revision: 2,
+        path: "references/checklist.md",
+      }),
+    ).toMatchObject({ before: { content: "Before" }, after: { content: "After" } });
+    const reopened = createCapabilityStore({
+      capabilitiesPath: join(directory, "capabilities"),
+      credentials,
+      mutations: {
+        publish: async () => {
+          throw new Error("unused");
+        },
+        publishHealth: async () => {
+          throw new Error("unused");
+        },
+        mutate: async () => {
+          throw new Error("unused");
+        },
+      },
+      verify: async (definition) => ({
+        definition,
+        health: { status: "ready", checkedAt: "2026-10-11T00:00:00.000Z" },
+      }),
+      isReferenced: async () => false,
+    });
+    expect(await reopened.listSkillManualRevisions({ capabilityId: saved.manifest.id })).toEqual(
+      history,
+    );
+
+    expect((await store.resolveActive(saved.manifest.id)).definition).toEqual(saved.definition);
+    const oldRoot = await store.skillFilesPath(saved.manifest.id, 1);
+    const newRoot = await store.skillFilesPath(saved.manifest.id, 2);
+    if (initial.definition.kind !== "skill") throw new Error("Expected a Skill capability.");
+    const replayed = await store.publishSkillRevisionCandidate({
+      id: initial.manifest.id,
+      baseRevision: 1,
+      baseContentHash: initial.definition.contentHash,
+      sourcePath: newRoot,
+      candidateContentHash: history[0]!.snapshotHash,
+      executablePaths: ["legacy.sh"],
+      manualChanges: history[0]!.operations,
+    });
+    expect(replayed.manifest.latestRevision).toBe(2);
+    expect(await store.listSkillManualRevisions()).toEqual(history);
+    expect(await readdir(join(directory, "capabilities", saved.manifest.id, "revisions"))).toEqual([
+      "000001",
+      "000002",
+    ]);
+    expect(await readFile(join(oldRoot, "SKILL.md"), "utf8")).toBe(document);
+    expect(await readFile(join(oldRoot, "references/checklist.md"), "utf8")).toBe("Before");
+    expect(await readFile(join(newRoot, "references/checklist.md"), "utf8")).toBe("After");
+    expect(await readFile(join(newRoot, "image.bin"))).toEqual(Buffer.from([0, 255, 42]));
+    expect((await stat(join(newRoot, "legacy.sh"))).mode & 0o111).not.toBe(0);
+    expect(saved.definition).toMatchObject({ executablePaths: ["legacy.sh"] });
+    await expect(
+      store.saveSkillFiles({
+        id: saved.manifest.id,
+        baseRevision: 1,
+        files: [{ path: "SKILL.md", content: document }],
+      }),
+    ).rejects.toMatchObject({ code: "revision_conflict" });
+    await expect(
+      store.saveSkillFiles({
+        id: saved.manifest.id,
+        baseRevision: 2,
+        files: [{ path: "references/checklist.md", content: "After" }],
+      }),
+    ).resolves.toMatchObject({ manifest: { latestRevision: 2 } });
+  });
+
+  it("keeps history absent for legacy imports and rejects failed saves and future manual-record schemas", async () => {
+    let failPublication = false;
+    const { directory, store } = await createStore({
+      mutations: {
+        publish: async (input) => {
+          if (failPublication) throw new Error("Publication failed");
+          await input.validateCurrent?.();
+          return await input.commit();
+        },
+        publishHealth: async (input) => await input.commit(),
+        mutate: async (input) => {
+          await input.commit();
+        },
+      },
+    });
+    const source = join(directory, "history-skill");
+    await mkdir(source);
+    await writeFile(
+      join(source, "SKILL.md"),
+      "---\nname: review\ndescription: Review code.\n---\n\n# Review\n",
+    );
+    const initial = await store.importSkill({ sourcePath: source });
+    expect(await store.listSkillManualRevisions()).toEqual([]);
+    failPublication = true;
+    await expect(
+      store.saveSkillFiles({
+        id: initial.manifest.id,
+        baseRevision: 1,
+        files: [{ path: "notes.md", content: "# Notes" }],
+      }),
+    ).rejects.toThrow("Publication failed");
+    expect(await store.listSkillManualRevisions()).toEqual([]);
+    expect((await store.get(initial.manifest.id)).manifest.latestRevision).toBe(1);
+    expect(
+      await readdir(join(directory, "capabilities", initial.manifest.id, "revisions")),
+    ).toEqual(["000001"]);
+    failPublication = false;
+    const saved = await store.saveSkillFiles({
+      id: initial.manifest.id,
+      baseRevision: 1,
+      files: [{ path: "notes.md", content: "# Notes" }],
+    });
+    const record = (await store.listSkillManualRevisions())[0]!;
+    expect(
+      await store.getSkillManualRevisionFile({
+        capabilityId: initial.manifest.id,
+        revision: 2,
+        path: "notes.md",
+      }),
+    ).toMatchObject({ before: null, after: { content: "# Notes" } });
+    await store.saveSkillFiles({
+      id: initial.manifest.id,
+      baseRevision: 2,
+      files: [{ path: "notes.md", content: "# Notes" }],
+    });
+    expect(await store.listSkillManualRevisions()).toHaveLength(1);
+    const recordPath = join(
+      directory,
+      "capabilities",
+      saved.manifest.id,
+      "revisions",
+      "000002",
+      "manual-revision.json",
+    );
+    await writeFile(
+      recordPath,
+      JSON.stringify({ ...record, schemaVersion: "pragma.skill-manual-revision/v99" }),
+    );
+    await expect(store.listSkillManualRevisions()).rejects.toMatchObject({
+      code: "config_invalid",
+    });
+    expect(await readFile(recordPath, "utf8")).toContain("pragma.skill-manual-revision/v99");
+    expect((await store.get(initial.manifest.id)).manifest.latestRevision).toBe(2);
+  });
+
+  it("creates, moves and deletes Skill entries together while preserving immutable revisions", async () => {
+    const { directory, store } = await createStore();
+    const source = join(directory, "file-operations-skill");
+    await mkdir(source);
+    await writeFile(
+      join(source, "SKILL.md"),
+      "---\nname: review\ndescription: Review code.\n---\n\n# Review\n",
+    );
+    await writeFile(join(source, "image.bin"), Buffer.from([0, 255, 42]));
+    await writeFile(join(source, "legacy.sh"), "#!/bin/sh\necho review\n");
+    await chmod(join(source, "legacy.sh"), 0o700);
+    const initial = await store.importSkill({ sourcePath: source });
+    const saved = await store.saveSkillFiles({
+      id: initial.manifest.id,
+      baseRevision: 1,
+      files: [{ path: "references/review.md", content: "# New reference" }],
+      operations: [
+        { kind: "create-directory", path: "notes" },
+        { kind: "create-file", path: "notes/checklist.md" },
+        { kind: "move", path: "notes", nextPath: "references" },
+        { kind: "move", path: "references/checklist.md", nextPath: "references/review.md" },
+        { kind: "move", path: "legacy.sh", nextPath: "references/legacy.sh" },
+        { kind: "delete", path: "image.bin" },
+        { kind: "create-directory", path: "empty" },
+      ],
+    });
+    expect(saved.manifest).toMatchObject({ latestRevision: 2, activeRevision: 2 });
+    const root = await store.skillFilesPath(initial.manifest.id, 2);
+    expect(await readFile(join(root, "references/review.md"), "utf8")).toBe("# New reference");
+    expect((await stat(join(root, "references/legacy.sh"))).mode & 0o111).not.toBe(0);
+    expect(saved.definition).toMatchObject({ executablePaths: ["references/legacy.sh"] });
+    const entries = await store.listSkillFiles({
+      id: initial.manifest.id,
+      includeDirectories: true,
+    });
+    expect(entries).toContainEqual({ path: "empty", kind: "directory", size: 0 });
+    expect(entries).toContainEqual({ path: "references", kind: "directory", size: 0 });
+    expect(entries.some((entry) => entry.path === "image.bin")).toBe(false);
+    const record = (
+      await store.listSkillManualRevisions({ capabilityId: initial.manifest.id })
+    )[0]!;
+    expect(record.operations).toContainEqual(
+      expect.objectContaining({ path: "empty", entryKind: "directory", operation: "added" }),
+    );
+    expect(record.operations).toContainEqual(
+      expect.objectContaining({ path: "image.bin", entryKind: "file", operation: "deleted" }),
+    );
+    expect(
+      await store.getSkillManualRevisionFile({
+        capabilityId: initial.manifest.id,
+        revision: 2,
+        path: "legacy.sh",
+      }),
+    ).toMatchObject({
+      before: { content: "#!/bin/sh\necho review\n", executable: true },
+      after: null,
+    });
+    expect(
+      await store.getSkillManualRevisionFile({
+        capabilityId: initial.manifest.id,
+        revision: 2,
+        path: "references/legacy.sh",
+      }),
+    ).toMatchObject({
+      before: null,
+      after: { content: "#!/bin/sh\necho review\n", executable: true },
+    });
+    expect(
+      await store.getSkillManualRevisionFile({
+        capabilityId: initial.manifest.id,
+        revision: 2,
+        path: "image.bin",
+      }),
+    ).toMatchObject({ before: { content: null, unavailableReason: "binary" }, after: null });
+    await expect(
+      store.getSkillManualRevisionFile({
+        capabilityId: initial.manifest.id,
+        revision: 2,
+        path: "empty",
+      }),
+    ).rejects.toMatchObject({ code: "config_invalid" });
+    const oldRoot = await store.skillFilesPath(initial.manifest.id, 1);
+    expect(await readFile(join(oldRoot, "image.bin"))).toEqual(Buffer.from([0, 255, 42]));
+    const withFolder = await store.saveSkillFiles({
+      id: initial.manifest.id,
+      baseRevision: 2,
+      files: [],
+      operations: [{ kind: "create-directory", path: "another-empty" }],
+    });
+    expect(withFolder.manifest.latestRevision).toBe(3);
+    expect(
+      await store.listSkillFiles({ id: initial.manifest.id, includeDirectories: true }),
+    ).toContainEqual({ path: "another-empty", kind: "directory", size: 0 });
+    await expect(
+      store.saveSkillFiles({
+        id: initial.manifest.id,
+        baseRevision: 2,
+        files: [],
+        operations: [{ kind: "delete", path: "empty" }],
+      }),
+    ).rejects.toMatchObject({ code: "revision_conflict" });
+  });
+
+  it("rejects protected, colliding and escaping Skill operations without publishing partial changes", async () => {
+    const { directory, store } = await createStore();
+    const source = join(directory, "protected-operations-skill");
+    await mkdir(source);
+    await writeFile(
+      join(source, "SKILL.md"),
+      "---\nname: review\ndescription: Review code.\n---\n\n# Review\n",
+    );
+    await writeFile(join(source, "reference.md"), "# Reference");
+    const initial = await store.importSkill({ sourcePath: source });
+    const input = { id: initial.manifest.id, baseRevision: 1, files: [] };
+    for (const operation of [
+      { kind: "delete" as const, path: "SKILL.md" },
+      { kind: "move" as const, path: "SKILL.md", nextPath: "entry.md" },
+      { kind: "move" as const, path: "reference.md", nextPath: "SKILL.md" },
+      { kind: "create-file" as const, path: "reference.md" },
+      { kind: "create-directory" as const, path: "../outside" },
+      { kind: "create-directory" as const, path: ".git" },
+    ])
+      await expect(
+        store.saveSkillFiles({
+          ...input,
+          operations: [{ kind: "create-directory", path: "staged" }, operation],
+        }),
+      ).rejects.toThrow();
+    expect((await store.get(initial.manifest.id)).manifest.latestRevision).toBe(1);
+    expect(
+      await store.listSkillFiles({ id: initial.manifest.id, includeDirectories: true }),
+    ).toHaveLength(2);
+  });
+
+  it("rejects invalid manual Skill edits without publishing or changing the previous payload", async () => {
+    const { directory, store } = await createStore();
+    const source = join(directory, "editable-skill");
+    await mkdir(source);
+    const document = "---\nname: review\ndescription: Review code.\n---\n\n# Review\n";
+    await writeFile(join(source, "SKILL.md"), document);
+    await writeFile(join(source, "image.bin"), Buffer.from([0, 255]));
+    const initial = await store.importSkill({ sourcePath: source });
+    const input = { id: initial.manifest.id, baseRevision: 1 };
+    await expect(
+      store.saveSkillFiles({ ...input, files: [{ path: "SKILL.md", content: "No frontmatter" }] }),
+    ).rejects.toMatchObject({ code: "config_invalid" });
+    await expect(
+      store.saveSkillFiles({ ...input, files: [{ path: "image.bin", content: "overwrite" }] }),
+    ).rejects.toMatchObject({ code: "config_invalid" });
+    await expect(
+      store.saveSkillFiles({ ...input, files: [{ path: "../outside.md", content: "escape" }] }),
+    ).rejects.toThrow();
+    await expect(
+      store.saveSkillFiles({
+        ...input,
+        files: [
+          { path: "SKILL.md", content: document },
+          { path: "SKILL.md", content: "duplicate" },
+        ],
+      }),
+    ).rejects.toThrow();
+    await expect(
+      store.saveSkillFiles({
+        id: BUILT_IN_SKILLS[0]!.id,
+        baseRevision: 1,
+        files: [{ path: "SKILL.md", content: document }],
+      }),
+    ).rejects.toThrow();
+    expect((await store.get(initial.manifest.id)).manifest.latestRevision).toBe(1);
+    expect((await store.getSkillDocument({ id: initial.manifest.id })).content).toBe(document);
+  });
+
   it("copies a Skill package into an immutable revision", async () => {
     const { directory, store } = await createStore();
     const source = join(directory, "source-skill");
@@ -579,6 +944,9 @@ describe("capability store", () => {
 
     expect(published.manifest.latestRevision).toBe(2);
     expect(replayed.manifest.latestRevision).toBe(2);
+    expect(
+      await readdir(join(directory, "capabilities", original.manifest.id, "revisions")),
+    ).toEqual(["000001", "000002"]);
     const executable = await stat(
       join(
         directory,

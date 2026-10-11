@@ -1,4 +1,4 @@
-import { SkillFilePathSchema } from "@pragma/shared";
+import { MAX_SKILL_PACKAGE_BYTES, SkillFilePathSchema } from "@pragma/shared";
 export {
   CapabilityIdSchema,
   CapabilityRuntimeKeySchema,
@@ -129,8 +129,11 @@ export const SkillDocumentSchema = z.object({
   entryPath: z.literal("SKILL.md"),
   content: z.string(),
 });
-export const ListSkillFilesSchema = GetSkillDocumentSchema;
+export const ListSkillFilesSchema = GetSkillDocumentSchema.extend({
+  includeDirectories: z.boolean().optional(),
+});
 export const SkillFileEntrySchema = z.object({
+  kind: z.enum(["file", "directory"]).optional(),
   path: SkillFilePathSchema,
   size: z.number().int().nonnegative(),
 });
@@ -142,26 +145,65 @@ export const SkillFileContentSchema = SkillFileEntrySchema.extend({
   revision: z.number().int().positive(),
   content: z.string().nullable(),
 });
+export const SkillFileOperationSchema = z.discriminatedUnion("kind", [
+  z.object({ kind: z.literal("create-file"), path: SkillFilePathSchema }).strict(),
+  z.object({ kind: z.literal("create-directory"), path: SkillFilePathSchema }).strict(),
+  z
+    .object({ kind: z.literal("move"), path: SkillFilePathSchema, nextPath: SkillFilePathSchema })
+    .strict(),
+  z.object({ kind: z.literal("delete"), path: SkillFilePathSchema }).strict(),
+]);
+export const SaveSkillFilesSchema = z
+  .object({
+    id: CapabilityIdSchema,
+    baseRevision: z.number().int().positive(),
+    files: z
+      .array(
+        z
+          .object({
+            path: SkillFilePathSchema,
+            content: z.string().max(MAX_SKILL_PACKAGE_BYTES),
+          })
+          .strict(),
+      )
+      .max(1000),
+    operations: z.array(SkillFileOperationSchema).max(1000).optional(),
+  })
+  .strict()
+  .superRefine((input, context) => {
+    if (input.files.length === 0 && (input.operations?.length ?? 0) === 0)
+      context.addIssue({ code: "custom", message: "No Skill changes were supplied." });
+    const encoder = new TextEncoder();
+    if (
+      input.files.reduce((total, file) => total + encoder.encode(file.content).byteLength, 0) >
+      MAX_SKILL_PACKAGE_BYTES
+    )
+      context.addIssue({
+        code: "custom",
+        path: ["files"],
+        message: "Skill edits exceed the package size limit.",
+      });
+    if (new Set(input.files.map((file) => file.path)).size !== input.files.length)
+      context.addIssue({ code: "custom", path: ["files"], message: "Duplicate Skill file paths." });
+  });
+
 export const SkillRevisionReviewFileMetadataSchema = z.object({
   sizeBytes: z.number().int().nonnegative(),
   sha256: z.string().regex(/^[a-f0-9]{64}$/u),
   executable: z.boolean(),
+});
+export const SkillRevisionFileChangeSchema = z.object({
+  path: SkillFilePathSchema,
+  operation: z.enum(["added", "modified", "deleted"]),
+  before: SkillRevisionReviewFileMetadataSchema.nullable(),
+  after: SkillRevisionReviewFileMetadataSchema.nullable(),
 });
 export const SkillRevisionReviewSchema = z.object({
   jobId: z.string().uuid(),
   draftId: z.string().uuid(),
   baseSnapshotHash: z.string().regex(/^[a-f0-9]{64}$/u),
   candidateSnapshotHash: z.string().regex(/^[a-f0-9]{64}$/u),
-  operations: z
-    .array(
-      z.object({
-        path: SkillFilePathSchema,
-        operation: z.enum(["added", "modified", "deleted"]),
-        before: SkillRevisionReviewFileMetadataSchema.nullable(),
-        after: SkillRevisionReviewFileMetadataSchema.nullable(),
-      }),
-    )
-    .max(2000),
+  operations: z.array(SkillRevisionFileChangeSchema).max(2000),
 });
 export const GetSkillRevisionReviewFileSchema = z.object({
   jobId: z.string().uuid(),
@@ -173,6 +215,44 @@ export const SkillRevisionReviewFileSnapshotSchema = SkillRevisionReviewFileMeta
 });
 export const SkillRevisionReviewFileSchema = z.object({
   jobId: z.string().uuid(),
+  path: SkillFilePathSchema,
+  before: SkillRevisionReviewFileSnapshotSchema.nullable(),
+  after: SkillRevisionReviewFileSnapshotSchema.nullable(),
+});
+export const SkillManualRevisionRecordSchema = z
+  .object({
+    schemaVersion: z.literal("pragma.skill-manual-revision/v1"),
+    capabilityId: CapabilityIdSchema,
+    revision: z.number().int().min(2),
+    baseRevision: z.number().int().positive(),
+    name: z.string().min(1),
+    source: z.literal("manual"),
+    createdAt: z.string().datetime(),
+    contentHash: z.string().regex(/^[a-f0-9]{64}$/u),
+    baseSnapshotHash: z.string().regex(/^[a-f0-9]{64}$/u),
+    snapshotHash: z.string().regex(/^[a-f0-9]{64}$/u),
+    operations: z.array(
+      SkillRevisionFileChangeSchema.extend({ entryKind: z.enum(["file", "directory"]) }),
+    ),
+  })
+  .strict()
+  .refine(
+    (record) => record.revision === record.baseRevision + 1,
+    "Skill revision parent mismatch.",
+  );
+export const ListSkillManualRevisionsSchema = z
+  .object({ capabilityId: CapabilityIdSchema.optional() })
+  .strict();
+export const GetSkillManualRevisionFileSchema = z
+  .object({
+    capabilityId: CapabilityIdSchema,
+    revision: z.number().int().min(2),
+    path: SkillFilePathSchema,
+  })
+  .strict();
+export const SkillManualRevisionFileSchema = z.object({
+  capabilityId: CapabilityIdSchema,
+  revision: z.number().int().min(2),
   path: SkillFilePathSchema,
   before: SkillRevisionReviewFileSnapshotSchema.nullable(),
   after: SkillRevisionReviewFileSnapshotSchema.nullable(),

@@ -1,3 +1,4 @@
+import type { StudioLeaveGuard } from "./StudioScreenFrame.tsx";
 import { useCallback, useEffect, useRef, useState, type CSSProperties } from "react";
 import { useTranslation } from "react-i18next";
 import {
@@ -35,7 +36,6 @@ import {
   ContextStoreDetailFragment,
   ContextStoreDirectoryFragment,
   ExpertContextMountDrawer,
-  type ContextStoreLeaveGuard,
 } from "./ContextStoreFragment.tsx";
 import { ExpertDetailFragment, ExpertDirectoryFragment } from "./ExpertDirectoryFragment.tsx";
 import {
@@ -135,15 +135,15 @@ export function StudioPage(props: {
   readonly initialMemoryState?: StudioPageMemoryState | undefined;
   readonly memoryEnabled: boolean;
   readonly onMemoryStateChange?: ((state: StudioPageMemoryState) => void) | undefined;
-  readonly onTryExpert: (expert: ExpertRecord) => void;
+  readonly onUseInSession: (executorRef: string) => void;
   readonly onOpenMission?: ((missionId: string, composerDraft?: string) => void) | undefined;
-  readonly onLeaveGuardChange?: ((guard: ContextStoreLeaveGuard | null) => void) | undefined;
+  readonly onLeaveGuardChange?: ((guard: StudioLeaveGuard | null) => void) | undefined;
 }) {
   const { t } = useTranslation("studio");
   const [navigationWidth, setNavigationWidth] = usePersistentSidebarWidth(
     SIDEBAR_WIDTH_PREFERENCES.studio,
   );
-  const contextStoreLeaveGuardRef = useRef<ContextStoreLeaveGuard | null>(null);
+  const studioLeaveGuardRef = useRef<StudioLeaveGuard | null>(null);
   const [activeView, setActiveView] = useState<StudioView>(
     props.initialMemoryState?.activeView === "plugins"
       ? "experts"
@@ -779,7 +779,7 @@ export function StudioPage(props: {
       setResourceEditor(null);
       resourceSaveCompletedRef.current = false;
     };
-    const guard = contextStoreLeaveGuardRef.current;
+    const guard = studioLeaveGuardRef.current;
     if (guard === null) navigate();
     else guard(navigate);
   };
@@ -884,7 +884,7 @@ export function StudioPage(props: {
               setActiveView("context-stores");
               setScreen("context-store-detail");
             }}
-            onTryInSession={() => props.onTryExpert(selectedExpert)}
+            onUseInSession={() => props.onUseInSession(`expert:${selectedExpert.id}`)}
             onPublish={
               selectedExpert.ref !== undefined &&
               project?.resources.some(
@@ -1090,7 +1090,7 @@ export function StudioPage(props: {
               );
             }}
             onLeaveGuardChange={(guard) => {
-              contextStoreLeaveGuardRef.current = guard;
+              studioLeaveGuardRef.current = guard;
               props.onLeaveGuardChange?.(guard);
             }}
             onDelete={async () => {
@@ -1145,6 +1145,10 @@ export function StudioPage(props: {
             }
             onBack={() => setScreen("directory")}
             onChanged={updateCapability}
+            onLeaveGuardChange={(guard) => {
+              studioLeaveGuardRef.current = guard;
+              props.onLeaveGuardChange?.(guard);
+            }}
             onOpenMission={props.onOpenMission}
             onDeleted={(id) => {
               setCapabilities((current) => current.filter((item) => item.manifest.id !== id));
@@ -1219,6 +1223,9 @@ export function StudioPage(props: {
         (selectedResource?.kind === "ExpertTeam" || selectedResource?.kind === "Flow") ? (
           <PragmaResourceDetailFragment
             resource={selectedResource}
+            onUseInSession={() =>
+              props.onUseInSession(canonicalPragmaResourceRef(selectedResource))
+            }
             project={project}
             experts={experts}
             runtimes={runtimes}

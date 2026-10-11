@@ -1,3 +1,4 @@
+import { formatSkillFileMetadata } from "./SkillRevisionChangeViewer.tsx";
 import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, describe, expect, it } from "vitest";
 
@@ -6,7 +7,6 @@ import {
   activeSkillRevisionTaskCount,
   canDeleteSkillRevisionJob,
   canRetrySkillRevisionJob,
-  formatSkillFileMetadata,
   filterSkillRevisionEntries,
   skillRevisionAttentionActions,
   SkillRevisionDetailFragment,
@@ -97,7 +97,6 @@ describe("SkillRevisionEmptyState", () => {
     const t = i18n.getFixedT("en", "studio");
     const metadata = formatSkillFileMetadata(
       {
-        jobId: "00000000-0000-4000-8000-000000000001",
         path: "scripts/run.mjs",
         before: {
           sizeBytes: 20,
@@ -206,7 +205,7 @@ describe("SkillRevisionEmptyState", () => {
 
     expect(html).toContain('class="revision-task-empty"');
     expect(html).toContain("暂无技能修订");
-    expect(html).toContain("已提交的候选以及等待审批的变更会显示在这里");
+    expect(html).toContain("手动编辑保存记录和已提交的修订候选会显示在这里");
   });
 
   it("retries publication failures even when the job retains its Mission", () => {

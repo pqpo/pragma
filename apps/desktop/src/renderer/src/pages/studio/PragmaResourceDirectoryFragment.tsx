@@ -347,6 +347,7 @@ export function PragmaResourceDetailFragment(props: {
     ((resource: PragmaExpertTeamResource | PragmaFlowResource) => void) | undefined;
   readonly onBack: () => void;
   readonly onEdit: () => void;
+  readonly onUseInSession?: (() => void) | undefined;
   readonly onPublish?: (() => void) | undefined;
   readonly onDelete: () => Promise<void>;
 }) {
@@ -470,6 +471,13 @@ export function PragmaResourceDetailFragment(props: {
             icon={<PencilSimple size={18} aria-hidden="true" />}
             onClick={props.onEdit}
           />
+          {isTeam && props.onUseInSession !== undefined ? (
+            <StudioActionButton
+              label={t("useInSession")}
+              icon={<Play size={18} aria-hidden="true" />}
+              onClick={props.onUseInSession}
+            />
+          ) : null}
           {props.onPublish === undefined ? null : (
             <StudioActionButton
               label={t("publishToSource")}

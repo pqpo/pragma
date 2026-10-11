@@ -672,38 +672,6 @@
   line-height: 1.65;
 }
 
-.capability-detail-meta {
-  display: grid;
-  grid-template-columns: 0.8fr 1.2fr 1.6fr 1fr;
-  gap: 18px;
-  padding: 16px 0;
-}
-
-.capability-detail-meta > div {
-  min-width: 0;
-}
-
-.capability-detail-meta h2 {
-  margin-bottom: 7px;
-  color: var(--muted);
-  font-size: 10px;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
-}
-
-.capability-detail-meta p {
-  overflow: hidden;
-  color: var(--text);
-  font-size: 12px;
-  line-height: 1.45;
-  text-overflow: ellipsis;
-}
-
-.capability-detail-meta code {
-  font-family: "SFMono-Regular", Consolas, monospace;
-  font-size: 11px;
-}
-
 .capability-diagnostic {
   display: grid;
   gap: 4px;
@@ -717,267 +685,30 @@
   line-height: 1.5;
 }
 
-.skill-document {
-  display: grid;
-  grid-template-rows: auto minmax(0, 1fr);
-  min-height: 0;
-  margin-top: 16px;
-  border: 1px solid var(--border);
-  border-radius: 12px;
-  background: #fff;
-  box-shadow: var(--shadow-soft);
-  overflow: hidden;
-}
-
-.skill-content-tabs {
-  display: flex;
-  gap: 4px;
-  padding: 8px 12px 0;
-  border-bottom: 1px solid var(--border);
-  background: var(--surface-muted);
-}
-
-.skill-content-tabs button {
-  display: inline-flex;
-  align-items: center;
-  gap: 7px;
-  padding: 9px 12px;
-  border: 0;
-  border-bottom: 2px solid transparent;
-  background: transparent;
-  color: var(--muted);
-  font-size: 12px;
-  font-weight: 650;
-}
-
-.skill-content-tabs button.is-active {
-  border-bottom-color: var(--green);
-  color: var(--text);
-}
-
-.skill-content-tabs button span {
-  min-width: 18px;
-  padding: 1px 5px;
-  border-radius: 999px;
-  background: #e4e9e5;
-  font-size: 10px;
-  text-align: center;
-}
-
-.skill-document-content {
-  display: grid;
-  grid-template-rows: auto minmax(0, 1fr);
-  min-height: 0;
-  overflow: hidden;
-}
-
-.skill-document-content > header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 18px;
-  padding: 17px 20px;
-  border-bottom: 1px solid var(--border);
-}
-
-.skill-document h2,
 .capability-tool-list h2,
 .tool-definition h2,
 .capability-test-panel h2 {
   font-size: 16px;
 }
 
-.skill-document header p,
 .capability-test-panel header p {
   margin-top: 4px;
   color: var(--muted);
   font-size: 11px;
 }
 
-.skill-markdown,
-.skill-document-source {
-  min-height: 0;
-  overflow: auto;
-  padding: 28px 32px;
-}
-
-.skill-file-browser {
+.skill-workspace {
   display: grid;
-  min-height: 0;
-  height: 100%;
-  grid-template-columns: minmax(190px, 0.32fr) minmax(0, 1fr);
-}
-
-.skill-file-browser > aside {
-  overflow: auto;
-  border-right: 1px solid var(--border);
-  background: var(--surface-muted);
-}
-
-.skill-file-browser > aside button {
-  display: grid;
-  width: 100%;
-  gap: 3px;
-  padding: 11px 14px;
-  border: 0;
-  border-bottom: 1px solid var(--border);
-  background: transparent;
-  color: var(--text);
-  text-align: left;
-}
-
-.skill-file-browser > aside button:hover,
-.skill-file-browser > aside button.is-active {
-  background: #fff;
-}
-
-.skill-file-browser > aside button.is-active {
-  box-shadow: inset 3px 0 0 var(--green);
-}
-
-.skill-file-browser > aside button span {
-  overflow-wrap: anywhere;
-  font-family: "SFMono-Regular", Consolas, monospace;
-  font-size: 11px;
-}
-
-.skill-file-browser > aside button small,
-.skill-file-browser > section > header span {
-  color: var(--muted);
-  font-size: 10px;
-}
-
-.skill-file-browser > aside > p {
-  padding: 18px 14px;
-  color: var(--muted);
-  font-size: 12px;
-}
-
-.skill-file-browser > section {
+  grid-template-rows: minmax(0, 1fr) auto;
   min-width: 0;
   min-height: 0;
-  overflow: auto;
 }
 
-.skill-file-browser > section > header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 16px;
-  padding: 15px 18px;
-  border-bottom: 1px solid var(--border);
-}
-
-.skill-file-browser > section > header h2 {
-  overflow: hidden;
-  font-family: "SFMono-Regular", Consolas, monospace;
-  font-size: 12px;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.skill-file-content {
-  overflow: auto;
-  min-height: 340px;
-  max-height: 65vh;
-  margin: 0;
-  padding: 20px;
-  background: #f3f5f4;
-  font-family: "SFMono-Regular", Consolas, monospace;
-  font-size: 11px;
-  line-height: 1.6;
-  white-space: pre;
-}
-
-.skill-markdown {
-  color: #26312a;
-  font-size: 13px;
-  line-height: 1.75;
-}
-
-.skill-markdown > :first-child {
-  margin-top: 0;
-}
-
-.skill-markdown h1,
-.skill-markdown h2,
-.skill-markdown h3 {
-  margin: 1.5em 0 0.55em;
-  color: var(--text);
-  line-height: 1.3;
-}
-
-.skill-markdown h1 {
-  font-size: 25px;
-}
-
-.skill-markdown h2 {
-  padding-bottom: 7px;
-  border-bottom: 1px solid var(--border);
-  font-size: 19px;
-}
-
-.skill-markdown h3 {
-  font-size: 16px;
-}
-
-.skill-markdown p,
-.skill-markdown ul,
-.skill-markdown ol,
-.skill-markdown blockquote,
-.skill-markdown pre,
-.skill-markdown table {
-  margin: 0.85em 0;
-}
-
-.skill-markdown ul,
-.skill-markdown ol {
-  padding-left: 24px;
-}
-
-.skill-markdown code,
-.skill-document-source,
-.tool-schema-block pre,
-.capability-test-input,
-.capability-test-result pre {
-  font-family: "SFMono-Regular", Consolas, monospace;
-}
-
-.skill-markdown :not(pre) > code {
-  padding: 2px 5px;
-  border-radius: 5px;
-  background: var(--surface-muted);
-  font-size: 0.9em;
-}
-
-.skill-markdown pre,
-.skill-document-source {
-  overflow: auto;
-  border-radius: 8px;
-  background: #f3f5f4;
-  white-space: pre-wrap;
-}
-
-.skill-markdown pre {
-  padding: 13px;
-}
-
-.skill-markdown blockquote {
-  padding-left: 14px;
-  border-left: 3px solid #b9c8bd;
-  color: var(--muted);
-}
-
-.skill-markdown table {
-  width: 100%;
-  border-collapse: collapse;
-}
-
-.skill-markdown th,
-.skill-markdown td {
-  padding: 7px 9px;
-  border: 1px solid var(--border);
-  text-align: left;
+.knowledge-base-workspace.skill-file-workspace {
+  grid-template-columns: var(--sidebar-width, 240px) minmax(0, 1fr);
+  margin-top: 16px;
+  border: 1px solid var(--ui-line);
+  border-radius: 0;
 }
 
 .capability-tool-workspace {
@@ -1186,10 +917,6 @@
 }
 
 @media (max-width: 1180px) {
-  .capability-detail-meta {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
-
   .capability-tool-workspace {
     grid-template-columns: minmax(0, 1fr) 210px;
   }

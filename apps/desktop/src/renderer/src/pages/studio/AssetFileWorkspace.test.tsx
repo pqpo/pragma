@@ -1,0 +1,96 @@
+import { renderToStaticMarkup } from "react-dom/server";
+import { describe, expect, it } from "vitest";
+import "../../i18n/index.ts";
+import { SIDEBAR_WIDTH_PREFERENCES } from "../../lib/sidebar-width-preference.ts";
+import { AssetFileWorkspace, type AssetFileOperations } from "./AssetFileWorkspace.tsx";
+import { skillFileTreeEntries } from "./SkillFileWorkspace.tsx";
+
+const entries = [
+  { id: "SKILL.md", kind: "file" as const },
+  { id: "references", kind: "directory" as const },
+  { id: "references/checklist.md", kind: "file" as const },
+];
+const operations: AssetFileOperations = {
+  createFile: async () => undefined,
+  createFolder: async () => undefined,
+  renameEntry: async () => undefined,
+  deleteEntry: async () => undefined,
+  canModifyEntry: (entry) => entry.id !== "SKILL.md",
+};
+const props = {
+  filesLabel: "Skill files",
+  resizeLabel: "Resize files",
+  widthPreference: SIDEBAR_WIDTH_PREFERENCES.skillFiles,
+  entries,
+  selectedEntry: entries[0]!,
+  collapsedDirectoryIds: new Set<string>(),
+  onOpenEntry: () => undefined,
+  loading: false,
+  onRefresh: async () => undefined,
+  editor: {
+    path: "SKILL.md",
+    value: "# Review",
+    preview: true,
+    onPreviewChange: () => undefined,
+    onChange: () => undefined,
+  },
+};
+
+describe("shared asset file workspace", () => {
+  it("exposes complete file operations while protecting the Skill entry document", () => {
+    const html = renderToStaticMarkup(<AssetFileWorkspace {...props} operations={operations} />);
+    expect(html).toContain('aria-label="New file"');
+    expect(html).toContain('aria-label="New folder"');
+    expect(html).toContain('aria-label="Refresh"');
+    expect(html).toContain('aria-label="Rename “checklist.md”"');
+    expect(html).not.toContain('aria-label="Rename “SKILL.md”"');
+    expect(html).not.toContain('aria-label="Delete"');
+    expect(html).toContain('draggable="false"');
+    expect(html).toContain('draggable="true"');
+  });
+
+  it("offers the same rename and delete actions for selected files and folders", () => {
+    for (const selectedEntry of entries.slice(1)) {
+      const html = renderToStaticMarkup(
+        <AssetFileWorkspace
+          {...props}
+          operations={operations}
+          selectedEntry={selectedEntry}
+          editor={
+            selectedEntry.kind === "directory" ? null : { ...props.editor, path: selectedEntry.id }
+          }
+        />,
+      );
+      expect(html.includes(">Rename</button>") || html.includes('aria-label="Rename"')).toBe(true);
+      expect(html.includes(">Delete</button>") || html.includes('aria-label="Delete"')).toBe(true);
+    }
+  });
+
+  it("keeps built-in browsing read-only and includes empty Skill directories", () => {
+    const html = renderToStaticMarkup(
+      <AssetFileWorkspace {...props} editor={{ ...props.editor, readOnly: true }} />,
+    );
+    for (const action of ["New file", "New folder", "Rename", "Delete", "Edit"])
+      expect(html).not.toContain(`aria-label="${action}"`);
+    expect(html).toContain('aria-label="Refresh"');
+    expect(
+      skillFileTreeEntries([
+        { path: "empty", kind: "directory", size: 0 },
+        { path: "references/checklist.md", size: 10 },
+      ]),
+    ).toEqual([
+      { id: "empty", kind: "directory" },
+      { id: "references", kind: "directory" },
+      { id: "references/checklist.md", kind: "file" },
+    ]);
+  });
+
+  it("blocks file selection, dragging and rename while an adapter is saving", () => {
+    const html = renderToStaticMarkup(
+      <AssetFileWorkspace {...props} operations={operations} disabled />,
+    );
+    expect(html).not.toContain('draggable="true"');
+    expect(html).toMatch(/role="treeitem"[^>]*disabled=""/u);
+    expect(html).toMatch(/aria-label="Rename “checklist.md”"[^>]*disabled=""/u);
+  });
+});

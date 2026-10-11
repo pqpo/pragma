@@ -44,6 +44,12 @@ export const SIDEBAR_WIDTH_PREFERENCES = {
     minWidth: 180,
     maxWidth: 420,
   },
+  skillFiles: {
+    storageKey: "pragma.desktop.sidebar.width.skill-files",
+    defaultWidth: 240,
+    minWidth: 180,
+    maxWidth: 360,
+  },
   knowledgeBaseFiles: {
     storageKey: "pragma.desktop.sidebar.width.knowledge-base-files",
     defaultWidth: 240,

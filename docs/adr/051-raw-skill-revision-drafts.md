@@ -46,3 +46,24 @@ draft is claimed.
 - Submitted editable trees do not remain in the user's Workspace; immutable review history remains
   in authoritative Desktop storage.
 - Draft cleanup uses Host Trash; published revisions and completed history are never draft-deleted.
+
+## Desktop manual edits and revision history
+
+The Desktop file editor publishes a validated immutable Skill revision directly through the existing
+Capability mutation coordinator. It does not create a revision Agent Job or a pending-review Draft.
+The revision includes `manual-revision.json`, with schema `pragma.skill-manual-revision/v1`, in the
+same staged revision directory as its definition and payload. The existing publication transaction
+therefore commits the file snapshot and its history record together. Identical saves create neither
+a revision nor an additional record; conflicts and failed publication do not create visible history.
+
+This new metadata family does not change the Capability manifest, existing snapshot hashes, or the
+Job/Draft schemas. Published revisions that predate the metadata remain readable and are not labeled
+as manual edits without evidence. No historical manual records existed before v1, so no prior-version
+migration applies. Readers reject unknown record versions or identity/hash mismatches while keeping
+the Skill payload available through its ordinary resource API.
+
+The revision screen combines Agent Jobs with immutable manual records and filters them by Skill and
+status. Manual records expose the saved revision, its parent, timestamp, and changed file/directory
+entries. File previews use the same metadata, size/line limits, binary handling, and line-diff view as
+Agent reviews; bytes are loaded from the two published immutable revisions. Directory-only edits are
+recorded even when the existing file-content snapshot hash is unchanged.

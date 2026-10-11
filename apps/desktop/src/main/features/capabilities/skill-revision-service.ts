@@ -1,3 +1,4 @@
+import { skillRevisionFileChanges, readSkillReviewFile } from "./skill-revision-files.ts";
 import { createHash, randomUUID } from "node:crypto";
 import {
   access,
@@ -45,8 +46,8 @@ import {
   createStableSkillSubmission,
   emptySkillWorkingTreeSnapshot,
   scanSkillWorkingTree,
-  type SkillWorkingTreeEntry,
   type SkillWorkingTreeSnapshot,
+  type SkillWorkingTreeEntry,
 } from "./skill-revision-draft-store.ts";
 import {
   SkillRevisionDraftV1Schema,
@@ -1493,7 +1494,10 @@ export function createSkillRevisionService(options: {
     },
     async start(rawRequest, startOptions = {}) {
       const request = SkillRevisionRequestV4Schema.parse(rawRequest);
-      if (request.operation === "revise" && (await options.capabilities.get(request.capabilityId)).managedBy === "system")
+      if (
+        request.operation === "revise" &&
+        (await options.capabilities.get(request.capabilityId)).managedBy === "system"
+      )
         throw coded("skill_revision_target_readonly");
       return await withFileLock(lockPath, async () => {
         const existing = (await readAllJobs()).find(
@@ -1673,38 +1677,7 @@ export function createSkillRevisionService(options: {
     },
     async getReview(jobId) {
       const { job, draft, candidate, base } = await resolveReviewState(jobId);
-      const operations: SkillRevisionReview["operations"][number][] = [];
-      const baseByPath = new Map(base.entries.map((entry) => [entry.path, entry]));
-      const candidateByPath = new Map(candidate.entries.map((entry) => [entry.path, entry]));
-      for (const path of [
-        ...new Set([...baseByPath.keys(), ...candidateByPath.keys()]),
-      ].toSorted()) {
-        const previous = baseByPath.get(path);
-        const next = candidateByPath.get(path);
-        if (
-          previous !== undefined &&
-          next !== undefined &&
-          previous.sha256 === next.sha256 &&
-          previous.executable === next.executable
-        ) {
-          continue;
-        }
-        if (next === undefined) {
-          operations.push({
-            path,
-            operation: "deleted",
-            before: previous === undefined ? null : reviewFileMetadata(previous),
-            after: null,
-          });
-          continue;
-        }
-        operations.push({
-          path,
-          operation: previous === undefined ? "added" : "modified",
-          before: previous === undefined ? null : reviewFileMetadata(previous),
-          after: reviewFileMetadata(next),
-        });
-      }
+      const operations = skillRevisionFileChanges(base, candidate);
       return SkillRevisionReviewSchema.parse({
         jobId: job.id,
         draftId: draft.id,
@@ -1732,8 +1705,8 @@ export function createSkillRevisionService(options: {
         before:
           previous === undefined || baseRoot === undefined
             ? null
-            : await readReviewFile(baseRoot, previous),
-        after: next === undefined ? null : await readReviewFile(candidateRoot, next),
+            : await readSkillReviewFile(baseRoot, previous),
+        after: next === undefined ? null : await readSkillReviewFile(candidateRoot, next),
       });
     },
     async inspectDraft(id, missionId) {
@@ -2356,37 +2329,6 @@ function diffSnapshots(
     }
   }
   return changes;
-}
-
-function reviewFileMetadata(entry: SkillWorkingTreeEntry) {
-  return {
-    sizeBytes: entry.sizeBytes,
-    sha256: entry.sha256,
-    executable: entry.executable,
-  };
-}
-
-async function readReviewFile(
-  root: string,
-  entry: SkillWorkingTreeEntry,
-): Promise<NonNullable<SkillRevisionReviewFile["before"]>> {
-  const metadata = reviewFileMetadata(entry);
-  if (entry.sizeBytes > 1_000_000) {
-    return { ...metadata, content: null, unavailableReason: "size_limit" };
-  }
-  const bytes = await readFile(join(root, ...entry.path.split("/")));
-  const content = bytes.toString("utf8");
-  if (!Buffer.from(content, "utf8").equals(bytes)) {
-    return { ...metadata, content: null, unavailableReason: "binary" };
-  }
-  let lineCount = 1;
-  for (const character of content) {
-    if (character === "\n") lineCount += 1;
-    if (lineCount > 5_000) {
-      return { ...metadata, content: null, unavailableReason: "line_limit" };
-    }
-  }
-  return { ...metadata, content, unavailableReason: null };
 }
 
 async function readSkillPackage(

@@ -1,5 +1,7 @@
 import type { ReactNode } from "react";
 
+export type StudioLeaveGuard = (action: () => void) => void;
+
 export function StudioScreenFrame(props: {
   readonly className?: string | undefined;
   readonly labelledBy?: string | undefined;

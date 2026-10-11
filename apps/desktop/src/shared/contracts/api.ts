@@ -172,8 +172,13 @@ import type {
   ListSkillFiles,
   SkillFileEntry,
   GetSkillFile,
+  SaveSkillFiles,
   SkillFileContent,
   SkillRevisionReview,
+  SkillManualRevisionRecord,
+  ListSkillManualRevisions,
+  GetSkillManualRevisionFile,
+  SkillManualRevisionFile,
   GetSkillRevisionReviewFile,
   SkillRevisionReviewFile,
   CapabilityTestRequest,
@@ -643,6 +648,7 @@ export interface PragmaDesktopAPI {
   submitSkillRevision: (input: SubmitSkillRevision) => Promise<ManagedSkillRevisionJob>;
   importSkillRevision: (input: ImportSkillRevision) => Promise<ManagedSkillRevisionJob>;
   listSkillFiles: (input: ListSkillFiles) => Promise<SkillFileEntry[]>;
+  saveSkillFiles: (input: SaveSkillFiles) => Promise<Capability>;
   getSkillFile: (input: GetSkillFile) => Promise<SkillFileContent>;
   createCapability: (input: CreateCapability) => Promise<Capability>;
   updateCapability: (input: UpdateCapability) => Promise<Capability>;
@@ -654,6 +660,12 @@ export interface PragmaDesktopAPI {
   listSkillRevisionJobs: (
     capabilityId?: string,
   ) => Promise<{ readonly job: ManagedSkillRevisionJob; readonly draft: SkillRevisionDraft }[]>;
+  listSkillManualRevisions: (
+    input?: ListSkillManualRevisions,
+  ) => Promise<SkillManualRevisionRecord[]>;
+  getSkillManualRevisionFile: (
+    input: GetSkillManualRevisionFile,
+  ) => Promise<SkillManualRevisionFile>;
   getSkillRevisionReview: (jobId: string) => Promise<SkillRevisionReview>;
   getSkillRevisionReviewFile: (
     input: GetSkillRevisionReviewFile,

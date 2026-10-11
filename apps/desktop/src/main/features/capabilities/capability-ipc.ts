@@ -11,6 +11,9 @@ import {
   CapabilityTestRequestSchema,
   CreateCapabilitySchema,
   GetSkillFileSchema,
+  SaveSkillFilesSchema,
+  ListSkillManualRevisionsSchema,
+  GetSkillManualRevisionFileSchema,
   GetSkillRevisionReviewFileSchema,
   GetSkillDocumentSchema,
   ImportSkillCapabilitySchema,
@@ -52,6 +55,11 @@ export function installCapabilityHandlers(
   ipcMain.handle("capabilities:get-skill-file", (_event, input: unknown) =>
     store.getSkillFile(GetSkillFileSchema.parse(input)),
   );
+  ipcMain.handle("capabilities:save-skill-files", (_event, input: unknown) => {
+    const parsed = SaveSkillFilesSchema.parse(input);
+    assertUserCapability(parsed.id);
+    return store.saveSkillFiles(parsed);
+  });
   ipcMain.handle("capabilities:import-skill", (_event, input: unknown) =>
     store.importSkill(ImportSkillCapabilitySchema.parse(input)),
   );
@@ -139,6 +147,12 @@ export function installCapabilityHandlers(
       };
     }
   });
+  ipcMain.handle("capabilities:list-skill-manual-revisions", (_event, input: unknown) =>
+    store.listSkillManualRevisions(ListSkillManualRevisionsSchema.parse(input ?? {})),
+  );
+  ipcMain.handle("capabilities:get-skill-manual-revision-file", (_event, input: unknown) =>
+    store.getSkillManualRevisionFile(GetSkillManualRevisionFileSchema.parse(input)),
+  );
   ipcMain.handle("capabilities:list-skill-revisions", async (_event, capabilityId: unknown) => {
     const id = capabilityId === undefined ? undefined : CapabilityIdSchema.parse(capabilityId);
     const jobs = await skillRevisions.list(id === undefined ? {} : { capabilityId: id });

@@ -1,4 +1,4 @@
-import { builtInSkill } from "@pragma/built-in-agents";
+import { builtInSkill, validatePortableSkillPackage } from "@pragma/built-in-agents";
 export { CapabilityStoreError } from "@pragma/local-host/resources";
 import {
   createLocalHostCapabilityReader,
@@ -42,6 +42,11 @@ import {
   CreateCapabilitySchema,
   ImportSkillCapabilitySchema,
   SkillFileContentSchema,
+  SaveSkillFilesSchema,
+  SkillManualRevisionRecordSchema,
+  ListSkillManualRevisionsSchema,
+  GetSkillManualRevisionFileSchema,
+  SkillManualRevisionFileSchema,
   SkillFileEntrySchema,
   UpdateCapabilitySchema,
   type Capability,
@@ -53,6 +58,11 @@ import {
   type CreateCapability,
   type ImportSkillCapability,
   type GetSkillFile,
+  type SaveSkillFiles,
+  type SkillManualRevisionRecord,
+  type ListSkillManualRevisions,
+  type GetSkillManualRevisionFile,
+  type SkillManualRevisionFile,
   type GetSkillDocument,
   type ListSkillFiles,
   type SkillDocument,
@@ -69,6 +79,7 @@ import type {
 } from "./capability-credential-store.ts";
 import { classifyMcpError, toCoreMcpServer } from "./capability-verifier.ts";
 import type { CapabilityVerifier, CapabilityVerifierResult } from "./capability-verification.ts";
+import { skillRevisionFileChanges, readSkillReviewFile } from "./skill-revision-files.ts";
 import { copySkillTree, scanSkillWorkingTree } from "./skill-revision-draft-store.ts";
 const MAX_SKILL_BYTES = MAX_SKILL_PACKAGE_BYTES;
 const MAX_SKILL_FILES = 1000;
@@ -89,6 +100,9 @@ export interface CapabilityStore extends CapabilityRepository {
   exists(id: string): Promise<boolean>;
   getSkillDocument(input: GetSkillDocument): Promise<SkillDocument>;
   listSkillFiles(input: ListSkillFiles): Promise<SkillFileEntry[]>;
+  saveSkillFiles(input: SaveSkillFiles): Promise<Capability>;
+  listSkillManualRevisions(input?: ListSkillManualRevisions): Promise<SkillManualRevisionRecord[]>;
+  getSkillManualRevisionFile(input: GetSkillManualRevisionFile): Promise<SkillManualRevisionFile>;
   getSkillFile(input: GetSkillFile): Promise<SkillFileContent>;
   skillFilesPath(id: string, revision: number): Promise<string>;
   importSkill(
@@ -104,6 +118,7 @@ export interface CapabilityStore extends CapabilityRepository {
     readonly sourcePath: string;
     readonly candidateContentHash: string;
     readonly executablePaths?: readonly string[];
+    readonly manualChanges?: SkillManualRevisionRecord["operations"] | undefined;
   }): Promise<Capability>;
   publishNewSkillRevisionCandidate(input: {
     readonly id: string;
@@ -300,7 +315,46 @@ export function createCapabilityStore(options: {
       targetHealth: health,
     });
   };
-  return {
+  const readManualRecord = async (
+    id: string,
+    revision: number,
+  ): Promise<SkillManualRevisionRecord | undefined> => {
+    const latest = await readManifest(id);
+    if (revision > latest.latestRevision) return undefined;
+    let source: string;
+    try {
+      source = await readFile(join(revisionPath(id, revision), "manual-revision.json"), "utf8");
+    } catch (cause) {
+      if ((cause as NodeJS.ErrnoException).code === "ENOENT") return undefined;
+      throw cause;
+    }
+    let value: unknown;
+    try {
+      value = JSON.parse(source);
+    } catch {
+      throw new CapabilityStoreError(
+        "config_invalid",
+        "The Skill manual revision record is not valid JSON.",
+      );
+    }
+    const parsed = SkillManualRevisionRecordSchema.safeParse(value);
+    if (!parsed.success || parsed.data.capabilityId !== id || parsed.data.revision !== revision)
+      throw new CapabilityStoreError(
+        "config_invalid",
+        "The Skill manual revision record is invalid or uses an unsupported version.",
+      );
+    const capability = await readCapability(id, revision);
+    if (
+      capability.definition.kind !== "skill" ||
+      capability.definition.contentHash !== parsed.data.contentHash
+    )
+      throw new CapabilityStoreError(
+        "config_invalid",
+        "The Skill manual revision record does not match the published revision.",
+      );
+    return parsed.data;
+  };
+  const store: CapabilityStore = {
     async ensureActiveRevision(id, revision) {
       assertUserSkill(id);
       const manifest = await readManifest(id);
@@ -421,7 +475,9 @@ export function createCapabilityStore(options: {
       try {
         const revision = capability.manifest.latestRevision;
         const payloadPath = join(revisionPath(capability.manifest.id, revision), "payload");
-        return SkillFileEntrySchema.array().parse(await listSkillFileEntries(payloadPath));
+        return SkillFileEntrySchema.array().parse(
+          await listSkillFileEntries(payloadPath, input.includeDirectories),
+        );
       } catch (error) {
         if (error instanceof CapabilityStoreError) throw error;
         throw new CapabilityStoreError(
@@ -486,6 +542,246 @@ export function createCapabilityStore(options: {
             ? "The Skill file no longer exists."
             : "The Skill file is not readable.",
         );
+      }
+    },
+    async listSkillManualRevisions(rawInput = {}) {
+      const input = ListSkillManualRevisionsSchema.parse(rawInput);
+      const capabilities =
+        input.capabilityId === undefined
+          ? await store.list()
+          : [await readCapability(input.capabilityId)];
+      const records: SkillManualRevisionRecord[] = [];
+      for (const capability of capabilities) {
+        if (capability.definition.kind !== "skill") continue;
+        for (let revision = capability.manifest.latestRevision; revision >= 2; revision--) {
+          const record = await readManualRecord(capability.manifest.id, revision);
+          if (record !== undefined) records.push(record);
+        }
+      }
+      return records.toSorted(
+        (left, right) =>
+          right.createdAt.localeCompare(left.createdAt) || right.revision - left.revision,
+      );
+    },
+    async getSkillManualRevisionFile(rawInput) {
+      const input = GetSkillManualRevisionFileSchema.parse(rawInput);
+      const record = await readManualRecord(input.capabilityId, input.revision);
+      const operation = record?.operations.find(
+        (operation) => operation.path === input.path && operation.entryKind === "file",
+      );
+      if (record === undefined || operation === undefined)
+        throw new CapabilityStoreError(
+          "config_invalid",
+          "The changed Skill file was not found in this manual revision.",
+        );
+      const base = await readCapability(input.capabilityId, record.baseRevision);
+      const current = await readCapability(input.capabilityId, record.revision);
+      const baseRoot = join(revisionPath(input.capabilityId, record.baseRevision), "payload");
+      const currentRoot = join(revisionPath(input.capabilityId, record.revision), "payload");
+      const scan = (root: string, capability: Capability) =>
+        scanSkillWorkingTree(
+          root,
+          capability.definition.kind === "skill" &&
+            capability.definition.executablePaths !== undefined
+            ? { executablePaths: new Set(capability.definition.executablePaths) }
+            : {},
+        );
+      const [before, after] = await Promise.all([scan(baseRoot, base), scan(currentRoot, current)]);
+      if (before.hash !== record.baseSnapshotHash || after.hash !== record.snapshotHash)
+        throw new CapabilityStoreError(
+          "config_invalid",
+          "The Skill revision files no longer match their recorded snapshots.",
+        );
+      const previous = before.entries.find((entry) => entry.path === input.path);
+      const next = after.entries.find((entry) => entry.path === input.path);
+      return SkillManualRevisionFileSchema.parse({
+        ...input,
+        before: previous === undefined ? null : await readSkillReviewFile(baseRoot, previous),
+        after: next === undefined ? null : await readSkillReviewFile(currentRoot, next),
+      });
+    },
+    async saveSkillFiles(rawInput) {
+      const input = SaveSkillFilesSchema.parse(rawInput);
+      assertUserSkill(input.id);
+      const current = await readCapability(input.id);
+      if (current.definition.kind !== "skill")
+        throw new CapabilityStoreError("config_invalid", "Only Skill capabilities can be edited.");
+      if (current.manifest.latestRevision !== input.baseRevision)
+        throw new CapabilityStoreError(
+          "revision_conflict",
+          "The Skill changed. Reload before saving.",
+        );
+      const source = join(revisionPath(input.id, input.baseRevision), "payload");
+      const temporary = join(capabilityPath(input.id), `.${randomUUID()}.edit.tmp`);
+      try {
+        await copySkillTree(source, temporary);
+        const safePath = (logical: string) => {
+          const path = resolve(temporary, ...logical.split("/"));
+          if (isGitMetadataPath(logical) || !isPathInside(temporary, path))
+            throw new CapabilityStoreError("config_invalid", "The Skill file path is invalid.");
+          return path;
+        };
+        const originalExecutables = current.definition.executablePaths;
+        const original = await scanSkillWorkingTree(
+          source,
+          originalExecutables === undefined
+            ? {}
+            : { executablePaths: new Set(originalExecutables) },
+        );
+        const executableOrigins = new Map(
+          original.entries
+            .filter((entry) => entry.executable)
+            .map((entry) => [entry.path, entry.path]),
+        );
+        for (const operation of input.operations ?? []) {
+          const path = safePath(operation.path);
+          if (operation.kind === "create-file") {
+            await writeFile(path, "", { flag: "wx" });
+            continue;
+          }
+          if (operation.kind === "create-directory") {
+            await mkdir(path, { mode: 0o700 });
+            continue;
+          }
+          if (operation.path === "SKILL.md")
+            throw new CapabilityStoreError(
+              "config_invalid",
+              "SKILL.md cannot be moved or deleted.",
+            );
+          const info = await lstat(path);
+          if (!info.isFile() && !info.isDirectory())
+            throw new CapabilityStoreError(
+              "config_invalid",
+              "Only regular Skill entries can be changed.",
+            );
+          if (operation.kind === "delete") {
+            await rm(path, { recursive: info.isDirectory() });
+          } else {
+            const next = safePath(operation.nextPath);
+            if (
+              operation.nextPath === "SKILL.md" ||
+              operation.nextPath.startsWith(`${operation.path}/`)
+            )
+              throw new CapabilityStoreError("config_invalid", "The Skill move target is invalid.");
+            const existing = await lstat(next).catch((error) => {
+              if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
+              throw error;
+            });
+            if (existing !== undefined)
+              throw new CapabilityStoreError(
+                "config_invalid",
+                "The Skill move target already exists.",
+              );
+            await rename(path, next);
+          }
+          for (const [entry, origin] of [...executableOrigins]) {
+            if (entry !== operation.path && !entry.startsWith(`${operation.path}/`)) continue;
+            executableOrigins.delete(entry);
+            if (operation.kind === "move")
+              executableOrigins.set(
+                `${operation.nextPath}${entry.slice(operation.path.length)}`,
+                origin,
+              );
+          }
+        }
+        for (const file of input.files) {
+          const path = safePath(file.path);
+          const info = await lstat(path).catch((error) => {
+            if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
+            throw error;
+          });
+          if (
+            info !== undefined &&
+            (!info.isFile() || decodeTextFile(await readFile(path)) === null)
+          )
+            throw new CapabilityStoreError("config_invalid", "Only text files can be edited.");
+          if (info === undefined)
+            await mkdir(resolve(path, ".."), { recursive: true, mode: 0o700 });
+          await writeFile(path, file.content);
+        }
+        const scanOptions =
+          originalExecutables === undefined
+            ? {}
+            : { executablePaths: new Set(executableOrigins.keys()) };
+        const snapshot = await scanSkillWorkingTree(temporary, scanOptions);
+        const sourceEntries = await listSkillFileEntries(source, true);
+        const nextEntries = await listSkillFileEntries(temporary, true);
+        if (
+          snapshot.hash === original.hash &&
+          JSON.stringify(sourceEntries) === JSON.stringify(nextEntries)
+        )
+          return current;
+        const files: { path: string; content: string }[] = [];
+        for (const entry of snapshot.entries) {
+          const content = decodeTextFile(await readFile(join(temporary, ...entry.path.split("/"))));
+          if (content !== null) files.push({ path: entry.path, content });
+        }
+        const metadata = readSkillMetadata(
+          files.find((file) => file.path === "SKILL.md")?.content ?? "",
+        );
+        const executablePaths = new Set(
+          snapshot.entries.filter((entry) => entry.executable).map((entry) => entry.path),
+        );
+        const unchangedExecutables = new Set(
+          snapshot.entries
+            .filter(
+              (next) =>
+                next.executable &&
+                original.entries.some(
+                  (entry) =>
+                    entry.executable &&
+                    entry.path === (executableOrigins.get(next.path) ?? next.path) &&
+                    entry.sha256 === next.sha256,
+                ),
+            )
+            .map((entry) => entry.path),
+        );
+        const validation = validatePortableSkillPackage(
+          {
+            name: metadata.name ?? current.definition.name,
+            description: metadata.description ?? current.definition.description,
+            files,
+          },
+          { executablePaths, allowUnscannedExecutablePaths: unchangedExecutables },
+        );
+        if (!validation.passed)
+          throw new CapabilityStoreError(
+            "config_invalid",
+            validation.diagnostics
+              .map((item) => `${item.path}: ${item.code}: ${item.message}`)
+              .join("\n"),
+          );
+        const changes: SkillManualRevisionRecord["operations"] = skillRevisionFileChanges(
+          original,
+          snapshot,
+        ).map((change) => ({ ...change, entryKind: "file" }));
+        const previousDirectories = new Set(
+          sourceEntries.filter((entry) => entry.kind === "directory").map((entry) => entry.path),
+        );
+        const nextDirectories = new Set(
+          nextEntries.filter((entry) => entry.kind === "directory").map((entry) => entry.path),
+        );
+        for (const path of [...new Set([...previousDirectories, ...nextDirectories])].toSorted()) {
+          if (previousDirectories.has(path) === nextDirectories.has(path)) continue;
+          changes.push({
+            path,
+            operation: nextDirectories.has(path) ? "added" : "deleted",
+            entryKind: "directory",
+            before: null,
+            after: null,
+          });
+        }
+        return await store.publishSkillRevisionCandidate({
+          id: input.id,
+          baseRevision: input.baseRevision,
+          baseContentHash: current.definition.contentHash,
+          sourcePath: temporary,
+          candidateContentHash: snapshot.hash,
+          executablePaths: [...executablePaths],
+          manualChanges: changes,
+        });
+      } finally {
+        await rm(temporary, { recursive: true, force: true });
       }
     },
     async skillFilesPath(id, revision) {
@@ -620,6 +916,7 @@ export function createCapabilityStore(options: {
           .regex(/^[a-f0-9]{64}$/u)
           .parse(rawInput.candidateContentHash),
         executablePaths: rawInput.executablePaths,
+        manualChanges: rawInput.manualChanges,
       };
       const current = await readCapability(input.id);
       if (current.definition.kind !== "skill") {
@@ -656,7 +953,32 @@ export function createCapabilityStore(options: {
               ? { executablePaths: new Set(current.definition.executablePaths) }
               : {},
           );
-          if (publishedSnapshot.hash === input.candidateContentHash) return current;
+          if (
+            publishedSnapshot.hash === input.candidateContentHash &&
+            JSON.stringify(await listSkillFileEntries(payloadPath, true)) ===
+              JSON.stringify(
+                await listSkillFileEntries(
+                  join(revisionPath(input.id, current.manifest.latestRevision), "payload"),
+                  true,
+                ),
+              )
+          ) {
+            if (input.manualChanges !== undefined) {
+              const existingRecord = await readManualRecord(
+                input.id,
+                current.manifest.latestRevision,
+              );
+              if (
+                existingRecord === undefined ||
+                JSON.stringify(existingRecord.operations) !== JSON.stringify(input.manualChanges)
+              )
+                throw new CapabilityStoreError(
+                  "revision_conflict",
+                  "The Skill revision was published by another change.",
+                );
+            }
+            return current;
+          }
           throw new CapabilityStoreError(
             "revision_conflict",
             "The published Skill revision has different file metadata from this candidate.",
@@ -697,6 +1019,32 @@ export function createCapabilityStore(options: {
         });
         const candidate = CapabilitySchema.parse({ manifest, definition, health });
         await writeJson(join(stagedRoot, "definition.json"), definition);
+        if (input.manualChanges !== undefined) {
+          const baseRoot = join(revisionPath(input.id, input.baseRevision), "payload");
+          const baseSnapshot = await scanSkillWorkingTree(
+            baseRoot,
+            current.definition.executablePaths === undefined
+              ? {}
+              : { executablePaths: new Set(current.definition.executablePaths) },
+          );
+          await writeJson(
+            join(stagedRoot, "manual-revision.json"),
+            SkillManualRevisionRecordSchema.parse({
+              schemaVersion: "pragma.skill-manual-revision/v1",
+              capabilityId: input.id,
+              revision,
+              baseRevision: input.baseRevision,
+              name,
+              source: "manual",
+              createdAt: timestamp,
+              contentHash,
+              baseSnapshotHash: baseSnapshot.hash,
+              snapshotHash: candidateSnapshot.hash,
+              operations: input.manualChanges,
+            }),
+          );
+        }
+
         return await publishRevision({
           current,
           candidate,
@@ -708,9 +1056,8 @@ export function createCapabilityStore(options: {
             return await readCapability(input.id);
           },
         });
-      } catch (error) {
+      } finally {
         await rm(stagedRoot, { recursive: true, force: true });
-        throw error;
       }
     },
     async publishNewSkillRevisionCandidate(rawInput) {
@@ -1316,6 +1663,7 @@ export function createCapabilityStore(options: {
       return true;
     },
   };
+  return store;
 }
 function assertCodeServiceReady(
   definition: CapabilityDefinition,
@@ -1554,16 +1902,26 @@ async function listFiles(path: string): Promise<string[]> {
   }
   return output;
 }
-async function listSkillFileEntries(path: string): Promise<SkillFileEntry[]> {
+async function listSkillFileEntries(
+  path: string,
+  includeDirectories = false,
+): Promise<SkillFileEntry[]> {
   const output: SkillFileEntry[] = [];
-  for (const file of await listFiles(path)) {
-    if (isGitMetadataPath(relative(path, file).split(sep).join("/"))) continue;
-    const info = await lstat(file);
-    output.push({
-      path: relative(path, file).split(sep).join("/"),
-      size: info.size,
-    });
-  }
+  const visit = async (directory: string): Promise<void> => {
+    for (const entry of await readdir(directory, { withFileTypes: true })) {
+      const target = join(directory, entry.name);
+      const logical = relative(path, target).split(sep).join("/");
+      if (isGitMetadataPath(logical)) continue;
+      if (entry.isDirectory()) {
+        if (includeDirectories) output.push({ path: logical, kind: "directory", size: 0 });
+        await visit(target);
+      } else if (entry.isFile()) {
+        const info = await lstat(target);
+        output.push({ path: logical, size: info.size });
+      }
+    }
+  };
+  await visit(path);
   return output.toSorted((left, right) => left.path.localeCompare(right.path));
 }
 function decodeTextFile(bytes: Uint8Array): string | null {

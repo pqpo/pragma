@@ -192,7 +192,7 @@ describe("ExpertDetailFragment", () => {
         onBack={() => undefined}
         onEdit={() => undefined}
         onOpenContextStore={() => undefined}
-        onTryInSession={() => undefined}
+        onUseInSession={() => undefined}
         onDelete={async () => undefined}
         onReset={async () => undefined}
       />,
@@ -231,7 +231,7 @@ describe("ExpertDetailFragment", () => {
         onBack={() => undefined}
         onEdit={() => undefined}
         onOpenContextStore={() => undefined}
-        onTryInSession={() => undefined}
+        onUseInSession={() => undefined}
         onDelete={async () => undefined}
         onReset={async () => undefined}
       />,
@@ -268,7 +268,7 @@ describe("ExpertDetailFragment", () => {
         onBack={() => undefined}
         onEdit={() => undefined}
         onOpenContextStore={() => undefined}
-        onTryInSession={() => undefined}
+        onUseInSession={() => undefined}
         onDelete={async () => undefined}
         onReset={async () => undefined}
       />,
@@ -310,7 +310,7 @@ describe("ExpertDetailFragment", () => {
         onBack={() => undefined}
         onEdit={() => undefined}
         onOpenContextStore={() => undefined}
-        onTryInSession={() => undefined}
+        onUseInSession={() => undefined}
         onDelete={async () => undefined}
         onReset={async () => undefined}
       />,
@@ -363,7 +363,7 @@ describe("ExpertDetailFragment", () => {
         onBack={() => undefined}
         onEdit={() => undefined}
         onOpenContextStore={() => undefined}
-        onTryInSession={() => undefined}
+        onUseInSession={() => undefined}
         onDelete={async () => undefined}
         onReset={async () => undefined}
       />,
@@ -374,7 +374,7 @@ describe("ExpertDetailFragment", () => {
     expect(html).not.toContain("Use as template");
     expect(html).toContain("Reset to default");
     expect(html).not.toContain("Configure knowledge");
-    expect(html).toContain("Try in session");
+    expect(html).toContain("Use in session");
   });
 
   it("renders localized metadata for the uncustomized built-in Pragma expert", async () => {
@@ -401,7 +401,7 @@ describe("ExpertDetailFragment", () => {
         onBack={() => undefined}
         onEdit={() => undefined}
         onOpenContextStore={() => undefined}
-        onTryInSession={() => undefined}
+        onUseInSession={() => undefined}
         onDelete={async () => undefined}
         onReset={async () => undefined}
       />,

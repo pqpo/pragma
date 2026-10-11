@@ -643,14 +643,16 @@ const complete = true;
         onOpenExpert={() => undefined}
         onBack={() => undefined}
         onEdit={() => undefined}
+        onUseInSession={() => undefined}
         onDelete={async () => undefined}
       />,
     );
 
     expect(html).toContain("Back to teams");
     expect(html).toContain("Edit expert team");
-    expect(html.match(/class="studio-action-button"/g)).toHaveLength(2);
-    expect(html.match(/role="tooltip"/g)).toHaveLength(2);
+    expect(html).toContain('aria-label="Use in session"');
+    expect(html.match(/class="studio-action-button"/g)).toHaveLength(3);
+    expect(html.match(/role="tooltip"/g)).toHaveLength(3);
     expect(html).toContain("Quality team");
     expect(html.match(/data-avatar-profile="pragma.avatar.expert.11"/g)).toHaveLength(3);
     expect(html).toContain("Expert 001");
@@ -770,12 +772,14 @@ const complete = true;
         project={project}
         onBack={() => undefined}
         onEdit={() => undefined}
+        onUseInSession={() => undefined}
         onDelete={async () => undefined}
       />,
     );
 
     expect(html).toContain("Back to flows");
     expect(html).toContain("Edit flow");
+    expect(html).not.toContain('aria-label="Use in session"');
     expect(html.match(/class="studio-action-button"/g)).toHaveLength(2);
     expect(html.match(/role="tooltip"/g)).toHaveLength(2);
     expect(html).toContain("Approval flow");

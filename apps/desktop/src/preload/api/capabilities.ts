@@ -15,6 +15,11 @@ import {
   CapabilityTestResultSchema,
   CreateCapabilitySchema,
   GetSkillFileSchema,
+  SaveSkillFilesSchema,
+  SkillManualRevisionRecordSchema,
+  ListSkillManualRevisionsSchema,
+  GetSkillManualRevisionFileSchema,
+  SkillManualRevisionFileSchema,
   GetSkillRevisionReviewFileSchema,
   GetSkillDocumentSchema,
   ImportSkillCapabilitySchema,
@@ -49,6 +54,10 @@ export const capabilitiesApi = {
   listSkillFiles: async (input) =>
     SkillFileEntrySchema.array().parse(
       await ipcRenderer.invoke("capabilities:list-skill-files", ListSkillFilesSchema.parse(input)),
+    ),
+  saveSkillFiles: async (input) =>
+    CapabilitySchema.parse(
+      await ipcRenderer.invoke("capabilities:save-skill-files", SaveSkillFilesSchema.parse(input)),
     ),
   getSkillFile: async (input) =>
     SkillFileContentSchema.parse(
@@ -108,6 +117,20 @@ export const capabilitiesApi = {
     z
       .array(z.object({ job: ManagedSkillRevisionJobSchema, draft: SkillRevisionDraftSchema }))
       .parse(await ipcRenderer.invoke("capabilities:list-skill-revisions", capabilityId)),
+  listSkillManualRevisions: async (input = {}) =>
+    SkillManualRevisionRecordSchema.array().parse(
+      await ipcRenderer.invoke(
+        "capabilities:list-skill-manual-revisions",
+        ListSkillManualRevisionsSchema.parse(input),
+      ),
+    ),
+  getSkillManualRevisionFile: async (input) =>
+    SkillManualRevisionFileSchema.parse(
+      await ipcRenderer.invoke(
+        "capabilities:get-skill-manual-revision-file",
+        GetSkillManualRevisionFileSchema.parse(input),
+      ),
+    ),
   getSkillRevisionReview: async (jobId) =>
     SkillRevisionReviewSchema.parse(
       await ipcRenderer.invoke("capabilities:get-skill-revision-review", jobId),
@@ -141,6 +164,7 @@ export const capabilitiesApi = {
   | "getSkillDocument"
   | "listSkillFiles"
   | "getSkillFile"
+  | "saveSkillFiles"
   | "importSkillCapability"
   | "submitSkillRevision"
   | "importSkillRevision"
@@ -152,6 +176,8 @@ export const capabilitiesApi = {
   | "deleteCapability"
   | "pickSkillSource"
   | "listSkillRevisionJobs"
+  | "listSkillManualRevisions"
+  | "getSkillManualRevisionFile"
   | "getSkillRevisionReview"
   | "getSkillRevisionReviewFile"
   | "approveSkillRevision"

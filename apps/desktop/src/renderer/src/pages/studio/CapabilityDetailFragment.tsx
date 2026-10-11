@@ -12,24 +12,17 @@ import {
   Plug,
   Trash,
 } from "@phosphor-icons/react";
-import { useEffect, useMemo, useRef, useState } from "react";
-import type { ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 
-import type {
-  Capability,
-  CapabilityTestResult,
-  SkillDocument,
-  SkillFileContent,
-  SkillFileEntry,
-} from "../../../../shared/contracts/index.ts";
+import type { Capability, CapabilityTestResult } from "../../../../shared/contracts/index.ts";
 import { errorMessage } from "../../lib/errors.ts";
 import { CharacterCount } from "../../components/CharacterCount.tsx";
 import { Dialog } from "../../components/Dialog.tsx";
-import { MarkdownContent } from "../../components/MarkdownContent.tsx";
+import { SkillFileWorkspace } from "./SkillFileWorkspace.tsx";
 import { StudioActionButton } from "../../components/StudioActionButton.tsx";
 import { StudioConfirmationDialog } from "./StudioDialog.tsx";
-import { StudioScreenFrame } from "./StudioScreenFrame.tsx";
+import { StudioScreenFrame, type StudioLeaveGuard } from "./StudioScreenFrame.tsx";
 import { desktopApi } from "./studio-model.ts";
 import { AssetGitPanel } from "./AssetGitControls.tsx";
 
@@ -42,19 +35,25 @@ export function CapabilityDetailFragment(props: {
   readonly onDeleted?: (capabilityId: string) => void;
   readonly onExport?: (() => Promise<void>) | undefined;
   readonly onPublish?: (() => Promise<void>) | undefined;
+  readonly onLeaveGuardChange?: ((guard: StudioLeaveGuard | null) => void) | undefined;
   readonly openGitSettingsRequest?: number | undefined;
 }) {
   const { t } = useTranslation("studio");
   const { capability } = props;
   const isBuiltIn = capability.managedBy === "system";
   const definition = capability.definition;
-  const [skillDocument, setSkillDocument] = useState<SkillDocument | null>(null);
-  const [skillFiles, setSkillFiles] = useState<readonly SkillFileEntry[]>([]);
-  const [skillTab, setSkillTab] = useState<"document" | "files">("document");
-  const [selectedSkillFile, setSelectedSkillFile] = useState<string | null>(null);
-  const [skillFileContent, setSkillFileContent] = useState<SkillFileContent | null>(null);
-  const skillFileRequest = useRef(0);
-  const [documentSourceVisible, setDocumentSourceVisible] = useState(false);
+  const leaveGuardRef = useRef<StudioLeaveGuard | null>(null);
+  const onSkillLeaveGuardChange = useCallback(
+    (guard: StudioLeaveGuard | null) => {
+      leaveGuardRef.current = guard;
+      props.onLeaveGuardChange?.(guard);
+    },
+    [props.onLeaveGuardChange],
+  );
+  const requestLeave = (action: () => void) => {
+    if (leaveGuardRef.current === null) action();
+    else leaveGuardRef.current(action);
+  };
   const [selectedToolName, setSelectedToolName] = useState(() => firstToolName(capability));
   const [testInput, setTestInput] = useState("{}");
   const [testResult, setTestResult] = useState<CapabilityTestResult | null>(null);
@@ -73,39 +72,6 @@ export function CapabilityDetailFragment(props: {
   useEffect(() => {
     if (props.openGitSettingsRequest !== undefined) setGitSettingsOpen(true);
   }, [props.openGitSettingsRequest]);
-
-  useEffect(() => {
-    if (definition.kind !== "skill") {
-      setSkillDocument(null);
-      return;
-    }
-    const api = desktopApi();
-    if (api === undefined) return;
-    let cancelled = false;
-    setError(null);
-    setSkillDocument(null);
-    setSkillFiles([]);
-    setSelectedSkillFile(null);
-    setSkillFileContent(null);
-    skillFileRequest.current += 1;
-    const input = {
-      id: capability.manifest.id,
-      revision: capability.manifest.latestRevision,
-    };
-    void Promise.all([api.getSkillDocument(input), api.listSkillFiles(input)])
-      .then(([document, files]) => {
-        if (!cancelled) {
-          setSkillDocument(document);
-          setSkillFiles(files);
-        }
-      })
-      .catch((cause: unknown) => {
-        if (!cancelled) setError(errorMessage(cause));
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [capability.manifest.id, capability.manifest.latestRevision, definition.kind]);
 
   useEffect(() => {
     if (tools.some((tool) => tool.name === selectedToolName)) return;
@@ -163,26 +129,6 @@ export function CapabilityDetailFragment(props: {
       setError(errorMessage(cause));
     } finally {
       setBusy(false);
-    }
-  };
-
-  const selectSkillFile = async (path: string) => {
-    const api = desktopApi();
-    if (api === undefined) return;
-    setSelectedSkillFile(path);
-    setSkillFileContent(null);
-    setError(null);
-    const request = skillFileRequest.current + 1;
-    skillFileRequest.current = request;
-    try {
-      const content = await api.getSkillFile({
-        id: capability.manifest.id,
-        revision: capability.manifest.latestRevision,
-        path,
-      });
-      if (skillFileRequest.current === request) setSkillFileContent(content);
-    } catch (cause) {
-      if (skillFileRequest.current === request) setError(errorMessage(cause));
     }
   };
 
@@ -280,7 +226,7 @@ export function CapabilityDetailFragment(props: {
       }
       labelledBy="capability-detail-name"
       header={
-        <button className="back-link" type="button" onClick={props.onBack}>
+        <button className="back-link" type="button" onClick={() => requestLeave(props.onBack)}>
           <ArrowLeft size={18} aria-hidden="true" />
           {t("backCapabilities")}
         </button>
@@ -312,14 +258,16 @@ export function CapabilityDetailFragment(props: {
                 label={t("updateSkillFromPackage")}
                 icon={<Archive size={18} aria-hidden="true" />}
                 disabled={busy || deleting}
-                onClick={() => void importSkillRevision()}
+                onClick={() => requestLeave(() => void importSkillRevision())}
               />
               <StudioActionButton
                 label={t("submitSkillRevision")}
                 icon={<PaperPlaneTilt size={18} aria-hidden="true" />}
                 onClick={() => {
-                  setRevisionError(null);
-                  setRevisionDialogOpen(true);
+                  requestLeave(() => {
+                    setRevisionError(null);
+                    setRevisionDialogOpen(true);
+                  });
                 }}
               />
               {props.onExport === undefined ? null : (
@@ -335,14 +283,14 @@ export function CapabilityDetailFragment(props: {
                   label={t("publishToSource")}
                   icon={<GitBranch size={18} aria-hidden="true" />}
                   disabled={busy || deleting}
-                  onClick={() => void runTransferAction(props.onPublish)}
+                  onClick={() => requestLeave(() => void runTransferAction(props.onPublish))}
                 />
               )}
               <StudioActionButton
                 label={t("assetGit.settings")}
                 icon={<GearSix size={18} aria-hidden="true" />}
                 disabled={busy || deleting}
-                onClick={() => setGitSettingsOpen(true)}
+                onClick={() => requestLeave(() => setGitSettingsOpen(true))}
               />
               <StudioActionButton
                 label={t("delete")}
@@ -350,8 +298,10 @@ export function CapabilityDetailFragment(props: {
                 tone="danger"
                 disabled={busy || deleting}
                 onClick={() => {
-                  setDeleteError(null);
-                  setDeleteDialogOpen(true);
+                  requestLeave(() => {
+                    setDeleteError(null);
+                    setDeleteDialogOpen(true);
+                  });
                 }}
               />
             </div>
@@ -367,24 +317,6 @@ export function CapabilityDetailFragment(props: {
           ) : null}
         </header>
 
-        <section className="capability-detail-meta" aria-label={t("capabilityIdentity")}>
-          <DetailFact label={t("status")}>
-            <span className="capability-status">
-              <i className={capability.health.status === "ready" ? "is-ready" : "is-warning"} />
-              {capability.health.status === "ready" ? t("ready") : t("needsAttention")}
-            </span>
-          </DetailFact>
-          <DetailFact label={t("runtimeKey")}>
-            <code>{capability.manifest.runtimeKey}</code>
-          </DetailFact>
-          <DetailFact label={t("sourceConnection")}>
-            {capabilitySource(capability, t("builtInHost"))}
-          </DetailFact>
-          <DetailFact label={t("lastChecked")}>
-            {new Date(capability.health.checkedAt).toLocaleString()}
-          </DetailFact>
-        </section>
-
         {capability.health.diagnostic ? (
           <p className="capability-diagnostic" role="status">
             <strong>{capability.health.diagnostic.code}</strong>
@@ -399,98 +331,12 @@ export function CapabilityDetailFragment(props: {
       </div>
 
       {definition.kind === "skill" ? (
-        <>
-          <section className="skill-document" aria-label={t("skillContent")}>
-            <nav className="skill-content-tabs" aria-label={t("skillContent")}>
-              <button
-                className={skillTab === "document" ? "is-active" : ""}
-                type="button"
-                aria-pressed={skillTab === "document"}
-                onClick={() => setSkillTab("document")}
-              >
-                SKILL.md
-              </button>
-              <button
-                className={skillTab === "files" ? "is-active" : ""}
-                type="button"
-                aria-pressed={skillTab === "files"}
-                onClick={() => {
-                  setSkillTab("files");
-                  const firstPath = selectedSkillFile ?? skillFiles[0]?.path;
-                  if (firstPath !== undefined && skillFileContent?.path !== firstPath) {
-                    void selectSkillFile(firstPath);
-                  }
-                }}
-              >
-                {t("files")} <span>{skillFiles.length}</span>
-              </button>
-            </nav>
-            {skillTab === "document" ? (
-              <div className="skill-document-content">
-                <header>
-                  <div>
-                    <h2>SKILL.md</h2>
-                    <p>{t("skillDocumentation")}</p>
-                  </div>
-                  <button
-                    className="secondary-button"
-                    type="button"
-                    aria-pressed={documentSourceVisible}
-                    onClick={() => setDocumentSourceVisible((visible) => !visible)}
-                  >
-                    {documentSourceVisible ? t("viewRendered") : t("viewSource")}
-                  </button>
-                </header>
-                {skillDocument === null ? (
-                  <p className="capability-empty">{t("loadingSkill")}</p>
-                ) : documentSourceVisible ? (
-                  <pre className="skill-document-source">{skillDocument.content}</pre>
-                ) : (
-                  <article className="skill-markdown">
-                    <MarkdownContent source={skillMarkdownBody(skillDocument.content)} />
-                  </article>
-                )}
-              </div>
-            ) : (
-              <div className="skill-file-browser">
-                <aside aria-label={t("skillFiles")}>
-                  {skillFiles.map((file) => (
-                    <button
-                      key={file.path}
-                      className={selectedSkillFile === file.path ? "is-active" : ""}
-                      type="button"
-                      aria-pressed={selectedSkillFile === file.path}
-                      onClick={() => void selectSkillFile(file.path)}
-                    >
-                      <span>{file.path}</span>
-                      <small>{formatFileSize(file.size)}</small>
-                    </button>
-                  ))}
-                  {skillFiles.length === 0 ? <p>{t("noSkillFiles")}</p> : null}
-                </aside>
-                <section aria-live="polite">
-                  {selectedSkillFile === null || skillFileContent === null ? (
-                    <p className="capability-empty">
-                      {selectedSkillFile === null ? t("selectSkillFile") : t("loadingSkillFile")}
-                    </p>
-                  ) : (
-                    <>
-                      <header>
-                        <h2>{skillFileContent.path}</h2>
-                        <span>{formatFileSize(skillFileContent.size)}</span>
-                      </header>
-                      {skillFileContent.content === null ? (
-                        <p className="capability-empty">{t("binaryFilePreviewUnavailable")}</p>
-                      ) : (
-                        <pre className="skill-file-content">{skillFileContent.content}</pre>
-                      )}
-                    </>
-                  )}
-                </section>
-              </div>
-            )}
-          </section>
-        </>
+        <SkillFileWorkspace
+          key={capability.manifest.id}
+          capability={capability}
+          onChanged={props.onChanged}
+          onLeaveGuardChange={onSkillLeaveGuardChange}
+        />
       ) : (
         <section className="capability-tool-workspace" aria-label={t("capabilityToolsPanel")}>
           <div className="capability-tool-detail">
@@ -663,21 +509,6 @@ export function CapabilityDetailFragment(props: {
   );
 }
 
-export function formatFileSize(size: number): string {
-  if (size < 1024) return `${size} B`;
-  if (size < 1024 * 1024) return `${(size / 1024).toFixed(1)} KiB`;
-  return `${(size / (1024 * 1024)).toFixed(1)} MiB`;
-}
-
-function DetailFact(props: { readonly label: string; readonly children: ReactNode }) {
-  return (
-    <div>
-      <h2>{props.label}</h2>
-      <p>{props.children}</p>
-    </div>
-  );
-}
-
 type ToolSummary = { readonly name: string; readonly summary: string };
 
 function capabilityTools(capability: Capability): readonly ToolSummary[] {
@@ -777,13 +608,6 @@ export function parseTestInput(source: string): Record<string, unknown> {
   return value as Record<string, unknown>;
 }
 
-export function skillMarkdownBody(source: string): string {
-  const normalized = source.replace(/\r\n/g, "\n");
-  if (!normalized.startsWith("---\n")) return normalized;
-  const end = normalized.indexOf("\n---\n", 4);
-  return end < 0 ? normalized : normalized.slice(end + 5).trimStart();
-}
-
 function formatTestOutput(output: unknown): string {
   return typeof output === "string" ? output : JSON.stringify(output, null, 2);
 }
@@ -812,17 +636,4 @@ function capabilityIcon(capability: Capability) {
     case "code_service":
       return Code;
   }
-}
-
-function capabilitySource(capability: Capability, builtInHostLabel: string): string {
-  if (capability.managedBy === "system") return builtInHostLabel;
-  const definition = capability.definition;
-  if (definition.kind === "skill") return "Uploaded package · SKILL.md";
-  if (definition.kind === "http_service") {
-    return `${definition.baseUrl} · ${definition.auth.type.replaceAll("_", " ")}`;
-  }
-  if (definition.kind === "code_service") return `JavaScript · ${definition.timeoutMs} ms timeout`;
-  return definition.connection.transport === "stdio"
-    ? `stdio · ${definition.connection.command} ${definition.connection.args.join(" ")}`.trim()
-    : `${definition.connection.transport} · ${definition.connection.url}`;
 }
