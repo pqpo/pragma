@@ -19,11 +19,14 @@ describe("startDesktopWindowWithServices", () => {
           events.push("window");
         },
         onContainerReady: () => events.push("ready"),
+        afterWindowCreated: async () => {
+          events.push("cli");
+        },
         onContainerError: vi.fn(),
       }),
     ).resolves.toBe(container);
 
-    expect(events).toEqual(["container", "ready", "window", "background"]);
+    expect(events).toEqual(["container", "ready", "window", "cli", "background"]);
     expect(container.startBackgroundTasks).toHaveBeenCalledOnce();
   });
 

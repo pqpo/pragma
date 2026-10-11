@@ -1,4 +1,21 @@
 export const settings = {
+  terminal: {
+    title: "Terminal CLI",
+    description:
+      "Use the bundled CLI with pragma or pragma-desktop. Desktop takes priority; other installed versions remain available by their full path or an explicit npx version.",
+    ready: "Registered",
+    removed: "Removed",
+    unavailable: "Available after opening an installed Desktop",
+    failed: "Needs repair",
+    loading: "Checking terminal integration…",
+    restart:
+      "Open a new terminal after changes. Windows changes require administrator approval and affect all users.",
+    repair: "Repair integration",
+    remove: "Remove integration",
+    removeDescription:
+      "Remove Desktop CLI commands from PATH. Other CLI installations and Pragma data are preserved. Windows removal affects all users.",
+    removing: "Removing…",
+  },
   storage: {
     navigation: "Storage",
     title: "Storage",

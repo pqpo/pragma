@@ -1,3 +1,5 @@
+// @ts-expect-error Build-only JavaScript helper shared with npm packaging.
+import { buildDesktopCli } from "./scripts/build-desktop-cli.mjs";
 import { build } from "esbuild";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
@@ -25,13 +27,19 @@ export default defineConfig({
         async writeBundle(output) {
           if (output.dir === undefined)
             throw new Error("Desktop main output directory is missing.");
+          await buildDesktopCli(output.dir);
           // A self-contained worker requires only this file outside ASAR, without
           // changing the packaging policy for main or its shared chunks.
           await build({
             entryPoints: [fileURLToPath(new URL("../cli/src/managed-pragma.ts", import.meta.url))],
             outfile: join(output.dir, "pragma-command-client.js"),
-            bundle: true, platform: "node", target: "node22", format: "esm",
-            banner: { js: 'import { createRequire as __pragmaCreateRequire } from "node:module"; const require = __pragmaCreateRequire(import.meta.url);' },
+            bundle: true,
+            platform: "node",
+            target: "node22",
+            format: "esm",
+            banner: {
+              js: 'import { createRequire as __pragmaCreateRequire } from "node:module"; const require = __pragmaCreateRequire(import.meta.url);',
+            },
           });
           await build({
             entryPoints: [

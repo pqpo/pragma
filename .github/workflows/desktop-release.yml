@@ -207,6 +207,17 @@ jobs:
       - name: Build installer
         run: pnpm --filter @pragma/desktop run ${{ matrix.script }}
 
+      - name: Verify Windows CLI installation and coexistence
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: ./apps/desktop/scripts/verify-windows-cli-installation.ps1
+
+      - name: Verify macOS terminal registration with native shells
+        if: runner.os == 'macOS'
+        run: |
+          brew install fish
+          pnpm --filter @pragma/desktop exec vitest run src/main/features/terminal-integration/terminal-integration.test.ts
+
       - name: Upload packaging audit
         uses: actions/upload-artifact@v7
         with:

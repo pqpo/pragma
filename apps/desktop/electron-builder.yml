@@ -5,6 +5,8 @@ afterPack: ./scripts/audit-packaged-app.mjs
 asarUnpack:
   - out/main/claude-acp-worker.js
   - out/main/pragma-command-client.js
+  - out/main/desktop-cli/**/*
+  - node_modules/@napi-rs/keyring*/**/*
 
 directories:
   buildResources: build
@@ -21,6 +23,8 @@ files:
   - "!**/node_modules/@anthropic-ai/claude-agent-sdk/vendor/**/*"
 
 extraResources:
+  - from: build/terminal-integration.ps1
+    to: terminal-integration.ps1
   - from: .plugin-bundles/plugins
     to: plugins
   - from: build/icon-mac.png
@@ -51,6 +55,9 @@ win:
 
 nsis:
   oneClick: false
+  perMachine: true
+  allowElevation: true
+  include: build/installer.nsh
   allowToChangeInstallationDirectory: true
   createDesktopShortcut: true
   createStartMenuShortcut: true

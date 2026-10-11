@@ -28,7 +28,7 @@ Test: Vitest
 ```text
 apps/
   desktop/   Electron Desktop App，本地 Agent 桥接入口
-  cli/       用户手动安装的 Node CLI，argv/TTY/presenter 与 Host composition 入口
+  cli/       npm 独立安装或 Desktop 随包提供的 CLI，argv/TTY/presenter 与 Host composition 入口
 
 packages/
   shared/         跨进程、跨端协议、领域模型和值对象、跨端纯函数工具
@@ -146,7 +146,7 @@ examples    -> runtime-* / plugin-* / core -> shared
 
 | 来源                       | 允许依赖                                                                                                                                                                                |
 | -------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `apps/cli`                 | `@pragma/local-host`、`@pragma/shared` 的浏览器安全 wire Schema/DTO（含 `/integration`）、composition root 所需的具体 `@pragma/runtime-*`                                                                                     |
+| `apps/cli`                 | `@pragma/local-host`、`@pragma/shared` 的浏览器安全 wire Schema/DTO（含 `/integration`）、composition root 所需的具体 `@pragma/runtime-*`                                               |
 | `apps/desktop`             | `@pragma/local-host`、`@pragma/shared`、`@pragma/core`、`@pragma/memory`、`@pragma/evaluation`、`@pragma/interpreter`、`@pragma/built-in-agents`、具体 `@pragma/runtime-*`              |
 | `packages/local-host`      | `@pragma/shared`、`@pragma/core`、`@pragma/interpreter`、`@pragma/evaluation`、`@pragma/built-in-agents`、`@pragma/memory`、`@pragma/context-filesystem`；Node 内置与运行时中立第三方库 |
 | `plugins/*`                | `@pragma/shared`、`@pragma/core`；不依赖 app、server、client 或具体 runtime                                                                                                             |
@@ -474,6 +474,11 @@ apps/desktop
   `externalizeDeps.exclude` 必须从 `apps/desktop/package.json` 的 `workspace:` 依赖自动派生，不得维护手工
   package 名单；新增内部依赖后，构建产物中不得残留任何外部 `@pragma/*` import，避免 Electron 在运行时
   直接解析 workspace package 导出的 TypeScript 源码。
+- Desktop 完整 CLI 与 npm CLI 共用 `apps/cli/scripts/build-bundles.mjs` 的入口和 Worker 清单，随包 CLI
+  位于 `resources/app.asar.unpacked/out/main/desktop-cli/`，通过应用内 Electron Node 模式运行。
+  用户终端默认优先使用 Desktop 版 `pragma`，`pragma-desktop` 显式指向内置版；不得覆盖其他包管理器的入口。
+  Agent 的管理客户端继续使用 Execution 私有 PATH 和授权通道，不依赖公共终端注册。
+  CLI 注册在首个窗口创建后执行；macOS 移除状态不在应用重启时自动恢复，Windows 整机注册由提权安装器负责。
 - Desktop build 必须验证 preload 产物和 `pragmaDesktop` Bridge 注入；Bridge 或 renderer 启动失败时必须记录
   主进程日志并显示可操作的错误页，不得静默白屏。
 - Desktop 本地 Capability、ContextStore 与 RuntimeProfile 的 Host 绑定资源统一通过

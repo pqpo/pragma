@@ -90,6 +90,8 @@ ADR 的数字来自项目演进历史，早期曾出现同号记录。链接文�
 
 - [Unified Local Host Mission application](./066-unified-local-host-mission-application.md)
 
+- [Desktop bundled CLI and terminal registration](./068-desktop-bundled-cli-and-terminal-registration.md)
+
 ## 维护规则
 
 - 新决策使用下一个未使用编号，不复用既有编号；

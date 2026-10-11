@@ -1,4 +1,5 @@
-import { ipcRenderer } from "electron";
+import { DesktopTerminalIntegrationSchema } from "../../shared/contracts/terminal-integration.ts";
+import { ipcRenderer, type IpcRendererEvent } from "electron";
 
 import {
   DesktopSettingsSnapshotSchema,
@@ -11,6 +12,20 @@ import {
 } from "../../shared/contracts/storage-cleanup.ts";
 import type { PragmaDesktopAPI } from "../../shared/contracts/api.ts";
 export const settingsApi = {
+  subscribeTerminalIntegration: (listener) => {
+    const handler = (_event: IpcRendererEvent, value: unknown) =>
+      listener(DesktopTerminalIntegrationSchema.parse(value));
+    ipcRenderer.on("terminal-integration:changed", handler);
+    return () => ipcRenderer.removeListener("terminal-integration:changed", handler);
+  },
+  inspectTerminalIntegration: async () =>
+    DesktopTerminalIntegrationSchema.parse(
+      await ipcRenderer.invoke("terminal-integration:inspect"),
+    ),
+  repairTerminalIntegration: async () =>
+    DesktopTerminalIntegrationSchema.parse(await ipcRenderer.invoke("terminal-integration:repair")),
+  removeTerminalIntegration: async () =>
+    DesktopTerminalIntegrationSchema.parse(await ipcRenderer.invoke("terminal-integration:remove")),
   getDesktopSettings: async () =>
     DesktopSettingsSnapshotSchema.parse(await ipcRenderer.invoke("desktop-settings:get")),
   updateDesktopSettings: async (input) =>
@@ -31,6 +46,10 @@ export const settingsApi = {
   },
 } satisfies Pick<
   PragmaDesktopAPI,
+  | "subscribeTerminalIntegration"
+  | "inspectTerminalIntegration"
+  | "repairTerminalIntegration"
+  | "removeTerminalIntegration"
   | "getDesktopSettings"
   | "updateDesktopSettings"
   | "inspectStorageCleanup"

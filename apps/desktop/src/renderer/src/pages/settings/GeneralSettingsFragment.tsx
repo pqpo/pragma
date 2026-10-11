@@ -11,6 +11,7 @@ import { localeDisplayNames, setDesktopLocale } from "../../i18n/index.ts";
 import { SelectMenu, type SelectMenuOption } from "../../components/SelectMenu.tsx";
 import { desktopSettingsErrorKey } from "../../lib/desktop-settings-errors.ts";
 import { GeneralProcessEnvironmentSettings } from "./GeneralProcessEnvironmentSettings.tsx";
+import { TerminalIntegrationSettings } from "./TerminalIntegrationSettings.tsx";
 import { SettingsScreenFrame } from "./SettingsScreenFrame.tsx";
 
 // UI editing limit; existing persisted settings remain readable.
@@ -325,6 +326,7 @@ export function GeneralSettingsFragment() {
             ) : null}
           </span>
         </div>
+        <TerminalIntegrationSettings />
         <GeneralProcessEnvironmentSettings />
         {error ? (
           <p className="form-error" role="alert">

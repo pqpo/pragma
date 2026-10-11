@@ -226,3 +226,35 @@ Gatekeeper 显示安全提示，请在“系统设置 → 隐私与安全性”�
 
 - [electron-builder architecture](https://www.electron.build/docs/architecture/)
 - [electron-builder macOS](https://www.electron.build/docs/mac/)
+
+## 随包 CLI 与终端集成
+
+Desktop 携带同一源码提交构建的完整 CLI，使用应用内 Electron 的 Node 模式执行，无需另装 Node。
+CLI 使用自身版本号，随 Desktop 安装包更新，不独立跟踪 npm latest。可用 `pragma version` 查看版本，
+`pragma doctor` 的文本输出展示执行路径和 PATH 中其他安装；JSON/JSONL 协议保持不变。
+
+macOS 首次打开安装后的 Desktop 时注册 `~/.pragma/bin/pragma` 和 `pragma-desktop`；开发模式、DMG
+临时运行和 App Translocation 不注册。Zsh、Bash 和 Fish 的启动配置会加入有明确标记的 PATH 片段。
+配置修改保留权限和内容，首次修改留下 `.pragma-backup`。变更后打开新终端。
+
+Windows 安装器使用管理员权限执行整机安装，把 `<安装目录>\bin` 放到系统 PATH 最前面；升级时
+复用 NSIS 旧版本卸载流程，保留用户数据并迁移当前用户已有的用户级安装。其他用户自己的用户级
+安装不扫描，需由所属用户手动卸载。卸载删除自身 PATH 项，不修改其他 CLI。
+
+默认 `pragma` 使用 Desktop 版，`pragma-desktop` 明确使用内置版。npm、pnpm 等安装的其他版本继续
+保留，可通过绝对路径或 `npx --package=@pqpo/pragma@版本 pragma …` 调用。用户 alias、function、
+Windows 当前目录查找和主动调整 PATH 仍可覆盖默认优先级。
+
+设置 → 通用提供终端集成的状态、修复和移除。Windows 修复/移除需管理员确认并影响所有用户。
+macOS 移除会保留显式停用状态，后续启动不自动恢复；修复可重新启用。应用被拖入废纸篓后，旧脚本
+提示重新安装或打开应用修复，不会删除其他版本或 Pragma 数据。Agent 的 `manage-pragma` 始终使用
+Execution 私有命令通道，终端注册不会赋予管理权限。
+
+发行打包的 `afterPack` 门禁运行解包 CLI、SQLite/向量/代码 worker 和原生 keyring，使用空 PATH
+验证不依赖用户 Node；检查 CLI/应用版本、源码提交、外部 workspace import 和构建路径泄漏。
+Windows 提权安装、旧用户级安装迁移和三种 macOS Shell 需补真实安装验收记录。
+
+Native 打包 job 还会执行 Windows 安装器的首次安装、重复升级、CLI 共存、移除/修复和卸载检查，
+以及 macOS 的 Zsh/Bash/Fish 注册测试。Windows 检查脚本只适合隔离且已提权的测试机；它会安装
+临时 Desktop、短暂修改系统 PATH，并在 finally 中恢复 PATH。旧用户级发行版迁移及交互式 UAC
+仍需使用真实旧安装包补发布验收，不以同版本重复安装代替。

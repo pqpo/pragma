@@ -1,3 +1,4 @@
+import { auditDesktopCli } from "./audit-desktop-cli.mjs";
 import { open, readdir, stat, writeFile } from "node:fs/promises";
 import { join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -137,6 +138,18 @@ export default async function afterPack(context) {
   );
   await writeFile(reportPath, `${JSON.stringify(report, null, 2)}\n`);
   assertClean(report);
+  const executable =
+    context.electronPlatformName === "darwin"
+      ? join(
+          context.appOutDir,
+          `${context.packager.appInfo.productFilename}.app`,
+          "Contents/MacOS",
+          context.packager.appInfo.productFilename,
+        )
+      : join(context.appOutDir, `${context.packager.appInfo.productFilename}.exe`);
+  const cli = await auditDesktopCli(resources, executable);
+  report.cli = cli;
+  await writeFile(reportPath, `${JSON.stringify(report, null, 2)}\n`);
   console.log(
     `Desktop packaging audit passed: ${report.physicalBytes} resource bytes. Report: ${reportPath}`,
   );

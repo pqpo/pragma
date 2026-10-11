@@ -1,6 +1,7 @@
 import { execFile } from "node:child_process";
+import { readFile } from "node:fs/promises";
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { promisify } from "node:util";
 
 const execFileAsync = promisify(execFile);
@@ -46,6 +47,26 @@ export interface DesktopVersionDetectorOptions {
 export async function detectInstalledDesktopVersion(
   options: DesktopVersionDetectorOptions = {},
 ): Promise<string | undefined> {
+  // A bundled CLI reports its own Desktop even when another app exists in /Applications.
+  if (
+    Object.keys(options).length === 0 &&
+    process.argv[1]?.replaceAll("\\", "/").includes("/desktop-cli/")
+  ) {
+    try {
+      const metadata: unknown = JSON.parse(
+        await readFile(join(dirname(process.argv[1]), "distribution.json"), "utf8"),
+      );
+      if (
+        typeof metadata === "object" &&
+        metadata !== null &&
+        "desktopVersion" in metadata &&
+        typeof metadata.desktopVersion === "string"
+      )
+        return metadata.desktopVersion;
+    } catch {
+      /* Fall back to installed app discovery for incomplete distributions. */
+    }
+  }
   const platform = options.platform ?? process.platform;
   const commandRunner = options.commandRunner ?? runCommand;
   const timeoutMs = options.timeoutMs ?? DEFAULT_COMMAND_TIMEOUT_MS;

@@ -1,4 +1,20 @@
 export const settings = {
+  terminal: {
+    title: "終端 CLI",
+    description:
+      "透過 pragma 或 pragma-desktop 使用內建 CLI。預設優先使用 Desktop 版本；其他已安裝版本仍可透過完整路徑或指定 npx 版本呼叫。",
+    ready: "已註冊",
+    removed: "已移除",
+    unavailable: "開啟已安裝的 Desktop 後可用",
+    failed: "需要修復",
+    loading: "正在檢查終端整合…",
+    restart: "變更後請開啟新終端。Windows 操作需要管理員確認，並影響所有使用者。",
+    repair: "修復整合",
+    remove: "移除整合",
+    removeDescription:
+      "從 PATH 中移除 Desktop CLI 命令。保留其他 CLI 安裝和 Pragma 資料。Windows 移除會影響所有使用者。",
+    removing: "正在移除…",
+  },
   storage: {
     navigation: "儲存",
     title: "儲存",

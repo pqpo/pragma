@@ -1,3 +1,4 @@
+import type { DesktopTerminalIntegration } from "./terminal-integration.ts";
 import type {
   MemoryRetrievalStatus,
   UpdateMemoryRetrievalSettings,
@@ -306,6 +307,12 @@ export interface PragmaDesktopAPI {
   subscribeAssetGitStatusUpdates: (listener: (status: AssetGitStatus) => void) => () => void;
   reportRendererLog: (input: DesktopRendererLog) => void;
   getBridgeSnapshot: () => Promise<DesktopBridgeSnapshot>;
+  subscribeTerminalIntegration: (
+    listener: (snapshot: DesktopTerminalIntegration) => void,
+  ) => () => void;
+  inspectTerminalIntegration: () => Promise<DesktopTerminalIntegration>;
+  repairTerminalIntegration: () => Promise<DesktopTerminalIntegration>;
+  removeTerminalIntegration: () => Promise<DesktopTerminalIntegration>;
   getDesktopSettings: () => Promise<DesktopSettingsSnapshot>;
   updateDesktopSettings: (input: UpdateDesktopSettings) => Promise<DesktopSettingsSnapshot>;
   inspectStorageCleanup: () => Promise<DesktopStorageCleanupOverview>;

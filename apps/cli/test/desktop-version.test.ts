@@ -1,3 +1,6 @@
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
@@ -11,6 +14,24 @@ afterEach(() => {
 });
 
 describe("detectInstalledDesktopVersion", () => {
+  it("reports the executing bundle version instead of another installed Desktop", async () => {
+    const root = await mkdtemp(join(tmpdir(), "pragma-bundle-version-"));
+    const original = process.argv[1];
+    try {
+      const directory = join(root, "desktop-cli");
+      await mkdir(directory);
+      await writeFile(
+        join(directory, "distribution.json"),
+        JSON.stringify({ desktopVersion: "0.2.55" }),
+      );
+      process.argv[1] = join(directory, "pragma.js");
+      expect(await detectInstalledDesktopVersion()).toBe("0.2.55");
+    } finally {
+      if (original === undefined) delete process.argv[1];
+      else process.argv[1] = original;
+      await rm(root, { recursive: true, force: true });
+    }
+  });
   it("reads the validated macOS bundle version from /Applications", async () => {
     const calls: string[][] = [];
     const commandRunner: DesktopVersionCommandRunner = async (command, args, options) => {

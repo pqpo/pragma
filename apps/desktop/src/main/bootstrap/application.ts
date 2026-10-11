@@ -16,6 +16,8 @@ import { installDesktopShutdown } from "./shutdown-sequence.ts";
 import { startDesktopWindowWithServices } from "./startup-sequence.ts";
 import { registerMissionAttachmentScheme } from "../features/missions/mission-attachment-protocol.ts";
 
+import { createTerminalIntegration } from "../features/terminal-integration/terminal-integration.ts";
+
 export function startDesktopApplication(): void {
   registerMissionAttachmentScheme();
   configureDesktopApplicationIdentity(app);
@@ -25,6 +27,24 @@ export function startDesktopApplication(): void {
   const logging = createDesktopLogging(paths);
   const windows = createDesktopWindowManager(logging.mainLogger);
   mainWindow = windows.getWindow;
+  const terminalIntegration = createTerminalIntegration({
+    platform: process.platform,
+    isPackaged: app.isPackaged,
+    executable: process.execPath,
+    resources: process.resourcesPath,
+    desktopVersion: app.getVersion(),
+  });
+  ipcMain.handle("terminal-integration:inspect", () => terminalIntegration.inspect());
+  ipcMain.handle("terminal-integration:repair", async () => {
+    const snapshot = await terminalIntegration.repair();
+    mainWindow()?.webContents.send("terminal-integration:changed", snapshot);
+    return snapshot;
+  });
+  ipcMain.handle("terminal-integration:remove", async () => {
+    const snapshot = await terminalIntegration.remove();
+    mainWindow()?.webContents.send("terminal-integration:changed", snapshot);
+    return snapshot;
+  });
   let startupStatus: DesktopBridgeSnapshot["startup"] = { status: "ready" };
 
   ipcMain.handle("bridge:snapshot", () => createBridgeSnapshot(startupStatus));
@@ -106,6 +126,24 @@ export function startDesktopApplication(): void {
           },
         }),
       createWindow: windows.createWindow,
+      afterWindowCreated: async () => {
+        try {
+          const status = await terminalIntegration.initialize();
+          mainWindow()?.webContents.send("terminal-integration:changed", status);
+          if (status.status === "failed")
+            logging.mainLogger.warn(
+              "desktop.cli_registration_failed",
+              "Terminal integration needs repair.",
+              { error: status.error },
+            );
+        } catch (error) {
+          logging.mainLogger.warn(
+            "desktop.cli_registration_failed",
+            "Terminal integration needs repair.",
+            { error },
+          );
+        }
+      },
       onContainerReady: (created) => {
         installDesktopShutdown({
           app,

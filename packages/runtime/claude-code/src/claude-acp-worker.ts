@@ -3,6 +3,9 @@ import { runAcp } from "@agentclientprotocol/claude-agent-acp";
 import { applyManagedPolicyEnv } from "@agentclientprotocol/claude-agent-acp/dist/managed-policy.js";
 import { installClaudeAcpEditedInput } from "./acp-permissions.ts";
 
+// The worker has already entered Electron's Node mode. Its external CLI and tools must not inherit it.
+delete process.env["ELECTRON_RUN_AS_NODE"];
+
 if (process.argv.includes("--version")) {
   process.stdout.write(`${packageManifest.version}\n`);
   process.exit(0);
@@ -25,6 +28,8 @@ console.info = console.error;
 console.warn = console.error;
 console.debug = console.error;
 await applyManagedPolicyEnv();
+// Managed policy can merge environment values; keep the startup-only switch private to this worker.
+delete process.env["ELECTRON_RUN_AS_NODE"];
 // Policy env may replace or clear this variable. Keep the command selected by
 // the Host instead of allowing an unvalidated command or SDK fallback.
 process.env["CLAUDE_CODE_EXECUTABLE"] = externalCli;

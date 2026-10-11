@@ -6,12 +6,23 @@ Desktop to be running.
 
 ## Requirements
 
-- Node.js 22 or later
+- Node.js 22 or later for the npm distribution; Desktop supplies its own runtime
 - macOS (Apple Silicon or Intel) or Windows (x64)
 
 Linux and other operating systems are not supported by this release.
 
 ## Install
+
+Pragma Desktop includes the complete CLI from its release. On macOS, open the installed app once;
+on Windows, the administrator installer registers the commands. Open a new terminal and use
+`pragma` or `pragma-desktop`, without installing Node. The bundled CLI updates with Desktop and keeps
+its own CLI version number. Settings → General provides terminal integration status, repair and removal.
+
+Desktop takes default PATH priority. Other CLI installations remain untouched and can be invoked by
+absolute path or `npx --package=@pqpo/pragma@VERSION pragma ...`. Shell aliases/functions and deliberate
+PATH changes remain user overrides. Windows registration/removal affects all users.
+
+For an independent npm installation:
 
 ```bash
 npm install --global @pqpo/pragma

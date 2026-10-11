@@ -1,3 +1,4 @@
+import { terminalDiagnostics } from "./commands/terminal-diagnostics.ts";
 import { isManagementCliArgv, runManagementCli } from "./management-client.ts";
 import {
   createIntegrationError,
@@ -137,6 +138,9 @@ export async function runCli(
   const command = commandName(parsed.command);
   let runStreamPresenter: ReturnType<typeof createV2StreamPresenter> | undefined;
   try {
+    if (parsed.command.kind === "doctor" && parsed.options.format === "text") {
+      io.writeStdout(await terminalDiagnostics(CLI_VERSION));
+    }
     if (parsed.command.kind === "executor-run") {
       runStreamPresenter =
         parsed.options.format === "jsonl"

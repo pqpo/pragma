@@ -6,6 +6,7 @@ export async function startDesktopWindowWithServices<T extends DesktopStartupCon
   readonly createContainer: () => Promise<T>;
   readonly createWindow: () => Promise<void>;
   readonly onContainerReady?: ((container: T) => void) | undefined;
+  readonly afterWindowCreated?: (() => Promise<void>) | undefined;
   readonly onContainerError: (error: unknown) => void;
 }): Promise<T | undefined> {
   let container: T | undefined;
@@ -16,6 +17,7 @@ export async function startDesktopWindowWithServices<T extends DesktopStartupCon
     input.onContainerError(error);
   }
   await input.createWindow();
+  await input.afterWindowCreated?.();
   container?.startBackgroundTasks();
   return container;
 }

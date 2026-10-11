@@ -1,6 +1,9 @@
 #!/usr/bin/env node
 import process from "node:process";
 
+// Electron has already consumed this switch. External runtimes must not inherit it.
+delete process.env["ELECTRON_RUN_AS_NODE"];
+
 const nodeVersion = process.versions.node;
 const nodeMajor = Number.parseInt(nodeVersion.split(".", 1)[0] ?? "", 10);
 

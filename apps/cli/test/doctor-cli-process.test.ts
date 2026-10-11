@@ -105,7 +105,12 @@ describe("pragma doctor executable", () => {
 
     expect(result.exitCode).toBe(0);
     expect(result.stderr).toBe("");
-    expect(result.stdout).toBe("model-provider: ready\ncapability: ready\nplugin: ready\n");
+    expect(result.stdout).toMatch(/^CLI: .+ \(standalone\)\nExecutable: /u);
+    expect(result.stdout).toContain("Terminal integration:");
+    expect(result.stdout).toContain("Pragma commands on PATH:");
+    expect(
+      result.stdout.endsWith("model-provider: ready\ncapability: ready\nplugin: ready\n"),
+    ).toBe(true);
   });
 
   it.each([

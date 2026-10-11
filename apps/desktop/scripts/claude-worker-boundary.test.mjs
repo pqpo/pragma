@@ -49,6 +49,7 @@ test("worker requires an external CLI and preserves it across managed-policy ini
                 export async function applyManagedPolicyEnv() {
                   await apply(async () => ({ effective: { env: {
                     CLAUDE_CODE_EXECUTABLE: process.env.PRAGMA_TEST_POLICY_CLI ?? "",
+                    ELECTRON_RUN_AS_NODE: "policy-value",
                     PRAGMA_TEST_POLICY_APPLIED: "yes"
                   } } }));
                 }`,
@@ -64,6 +65,7 @@ test("worker requires an external CLI and preserves it across managed-policy ini
       USERPROFILE: root,
       CLAUDE_CONFIG_DIR: root,
       CLAUDE_CODE_EXECUTABLE: "",
+      ELECTRON_RUN_AS_NODE: "1",
       PRAGMA_TEST_POLICY_CLI: "",
     };
     const version = await run(worker, ["--version"], env);
@@ -91,7 +93,7 @@ test("worker requires an external CLI and preserves it across managed-policy ini
     const external = join(root, "User Installed Claude");
     await writeFile(
       external,
-      '#!/bin/sh\nprintf "%s" "$PRAGMA_TEST_POLICY_APPLIED" > "$PRAGMA_TEST_CLI_MARKER"\nprintf \'{}\\n\'\n',
+      '#!/bin/sh\nprintf "%s:%s" "$PRAGMA_TEST_POLICY_APPLIED" "${ELECTRON_RUN_AS_NODE-unset}" > "$PRAGMA_TEST_CLI_MARKER"\nprintf \'{}\\n\'\n',
     );
     await chmod(external, 0o755);
     for (const [index, policyCli] of ["", join(root, "unvalidated-cli")].entries()) {
@@ -114,7 +116,7 @@ test("worker requires an external CLI and preserves it across managed-policy ini
       );
       assert.equal(result.code, 0, result.stderr);
       assert.ok(result.stdout.split("\n").some((line) => line && JSON.parse(line).id === 1));
-      assert.equal(await readFile(marker, "utf8"), "yes");
+      assert.equal(await readFile(marker, "utf8"), "yes:unset");
     }
   } finally {
     await rm(root, { recursive: true, force: true });
@@ -123,10 +125,14 @@ test("worker requires an external CLI and preserves it across managed-policy ini
 
 async function run(worker, args, env, input) {
   return await new Promise((resolve, reject) => {
-    const child = spawn(process.execPath, [worker, ...args], {
-      env,
-      stdio: ["pipe", "pipe", "pipe"],
-    });
+    const child = spawn(
+      process.env.PRAGMA_TEST_WORKER_EXECUTABLE ?? process.execPath,
+      [worker, ...args],
+      {
+        env,
+        stdio: ["pipe", "pipe", "pipe"],
+      },
+    );
     let stdout = "";
     let stderr = "";
     const timeout = setTimeout(() => {

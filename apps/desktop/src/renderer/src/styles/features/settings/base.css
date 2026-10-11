@@ -104,6 +104,7 @@
 }
 
 .general-settings-list {
+  min-width: 0;
   width: 100%;
 }
 
@@ -874,4 +875,30 @@
 
 .manual-model-row > input:focus-visible {
   outline: 0;
+}
+
+.terminal-integration-setting {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: start;
+}
+
+.terminal-integration-setting > .setting-copy {
+  max-width: 44ch;
+}
+
+.terminal-integration-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.terminal-integration-setting code {
+  overflow-wrap: anywhere;
+}
+
+@media (max-width: 1180px) {
+  .terminal-integration-setting {
+    grid-template-columns: minmax(0, 1fr);
+  }
 }

@@ -18,6 +18,9 @@ import {
 const scriptDirectory = dirname(fileURLToPath(import.meta.url));
 const packageDirectory = resolve(scriptDirectory, "..");
 const repositoryDirectory = resolve(packageDirectory, "../..");
+const expectedKeyringVersion = JSON.parse(
+  await readFile(join(packageDirectory, "package.json"), "utf8"),
+).dependencies["@napi-rs/keyring"];
 const releaseDirectory = join(packageDirectory, ".release");
 const buildDirectories = [
   process.env.GITHUB_WORKSPACE,
@@ -36,6 +39,7 @@ const expectedFiles = new Set([
   "package/dist/code-service-worker.js",
   "package/dist/canonical-event-feed-worker.js",
   "package/dist/vector-worker.js",
+  "package/dist/sqlite-execution-worker.js",
 ]);
 const expectedDirectories = new Set(["package", "package/dist"]);
 const maxTarballBytes = 32 * 1024 * 1024;
@@ -93,7 +97,9 @@ for (const entry of entries) {
     entry.name.endsWith("/cli.js") ||
     entry.name.endsWith("/code-service-worker.js") ||
     entry.name.endsWith("/canonical-event-feed-worker.js") ||
-    entry.name.endsWith("/claude-acp-worker.js");
+    entry.name.endsWith("/claude-acp-worker.js") ||
+    entry.name.endsWith("/vector-worker.js") ||
+    entry.name.endsWith("/sqlite-execution-worker.js");
   assertSafeText(text, entry.name, {
     repositoryDirectory,
     checkDependencyProtocols: true,
@@ -259,8 +265,10 @@ function assertManifest(manifest) {
   if (manifest.dependencies === undefined || Object.keys(manifest.dependencies).length !== 1) {
     throw new Error("Tarball dependencies must contain only the native keyring dependency.");
   }
-  if (manifest.dependencies["@napi-rs/keyring"] !== "1.3.0") {
-    throw new Error("Tarball keyring dependency must be pinned to 1.3.0.");
+  if (manifest.dependencies["@napi-rs/keyring"] !== expectedKeyringVersion) {
+    throw new Error(
+      `Tarball keyring dependency must match the CLI source pin ${expectedKeyringVersion}.`,
+    );
   }
   for (const field of ["devDependencies", "optionalDependencies", "scripts", "main"]) {
     if (manifest[field] !== undefined) throw new Error(`Tarball must not contain ${field}.`);
@@ -282,6 +290,7 @@ async function readMetafiles() {
     ["claude ACP worker", join(releaseDirectory, "claude-acp-worker.metafile.json")],
     ["code service worker", join(releaseDirectory, "code-service-worker.metafile.json")],
     ["memory vector worker", join(releaseDirectory, "vector-worker.metafile.json")],
+    ["SQLite execution worker", join(releaseDirectory, "sqlite-execution-worker.metafile.json")],
     [
       "canonical event feed worker",
       join(releaseDirectory, "canonical-event-feed-worker.metafile.json"),
