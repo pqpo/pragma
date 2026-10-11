@@ -14,9 +14,11 @@ test("prepared artifact rejects changed bytes, missing files, same-commit source
       new URL("./build-artifact.mjs", import.meta.url),
       join(root, "scripts/build-artifact.mjs"),
     );
+    for (const name of ["workspace-build-artifact.mjs", "archive-workspace-build.mjs"])
+      await cp(new URL(`./${name}`, import.meta.url), join(root, `scripts/${name}`));
     await writeFile(
       join(root, ".gitignore"),
-      "dist/\n.release/\nout/\n.plugin-bundles/\n.packaging/\n",
+      "dist/\n.release/\nout/\n.plugin-bundles/\n.packaging/\n.test-results/\n",
     );
     for (const app of ["cli", "desktop"]) {
       await mkdir(join(root, `apps/${app}`), { recursive: true });
@@ -57,6 +59,43 @@ test("prepared artifact rejects changed bytes, missing files, same-commit source
     );
     await recordArtifact("cli");
     await verifyArtifact("cli");
+    // The archive covers compiled dependencies beyond the CLI/Desktop manifests.
+    await mkdir(join(root, ".test-results"));
+    await mkdir(join(root, "packages/core/dist"), { recursive: true });
+    const dependency = join(root, "packages/core/dist/index.js");
+    await writeFile(dependency, "compiled dependency");
+    const archive = join(root, ".test-results/workspace-build.tar.gz");
+    execFileSync("tar", ["-czf", archive, "packages/core/dist"], { cwd: root });
+    const archiveModule = await import(
+      pathToFileURL(join(root, "scripts/workspace-build-artifact.mjs")).href
+    );
+    await archiveModule.recordWorkspaceArchive();
+    await archiveModule.verifyWorkspaceArchive();
+    const restore = () =>
+      execFileSync(process.execPath, ["scripts/archive-workspace-build.mjs", "restore"], {
+        cwd: root,
+        stdio: "pipe",
+      });
+    await rm(dependency);
+    restore();
+    assert.equal(await readFile(dependency, "utf8"), "compiled dependency");
+    const bytes = await readFile(archive);
+    await writeFile(archive, Buffer.concat([bytes, Buffer.from("corrupt dependency")]));
+    await assert.rejects(archiveModule.verifyWorkspaceArchive(), /digest mismatch/);
+    await writeFile(dependency, "must not overwrite before verification");
+    assert.throws(restore, /digest mismatch/);
+    assert.equal(await readFile(dependency, "utf8"), "must not overwrite before verification");
+    await writeFile(archive, bytes);
+    await writeFile(join(root, "source.ts"), "dirty source");
+    await assert.rejects(archiveModule.verifyWorkspaceArchive(), /Stale workspace/);
+    await writeFile(join(root, "source.ts"), "export const value = 1;\n");
+    const archiveManifestPath = join(root, ".test-results/workspace-build.json");
+    const archiveManifest = JSON.parse(await readFile(archiveManifestPath, "utf8"));
+    await writeFile(archiveManifestPath, JSON.stringify({ ...archiveManifest, schemaVersion: 2 }));
+    await assert.rejects(archiveModule.verifyWorkspaceArchive(), /Stale workspace/);
+    await writeFile(archiveManifestPath, JSON.stringify(archiveManifest));
+    await rm(archive);
+    await assert.rejects(archiveModule.verifyWorkspaceArchive(), /ENOENT/);
     await mkdir(join(root, "apps/desktop/out"), { recursive: true });
     await mkdir(join(root, "apps/desktop/.packaging"), { recursive: true });
     await mkdir(join(root, "apps/desktop/.plugin-bundles/plugins"), { recursive: true });

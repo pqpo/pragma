@@ -150,8 +150,7 @@ jobs:
           path: .test-results
 
       - name: Restore neutral application and audit dependencies
-        shell: bash
-        run: tar -xzf .test-results/workspace-build.tar.gz
+        run: node scripts/archive-workspace-build.mjs restore
 
       - name: Test packaging audit on native host
         run: pnpm --filter @pragma/desktop test:packaging

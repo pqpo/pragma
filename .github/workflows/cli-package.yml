@@ -98,6 +98,9 @@ jobs:
           security default-keychain -d user -s "$keychain_path"
       - name: Verify isolated package behavior
         run: node apps/cli/scripts/smoke-package.mjs --mode ${{ matrix.mode }} --artifact-dir apps/cli/.release/ci-artifact
+      - name: Verify Windows pnpm argument handling
+        if: runner.os == 'Windows' && matrix.mode == 'positive'
+        run: node --test scripts/pnpm-command.test.mjs
       - name: Remove isolated macOS keychain
         if: always() && runner.os == 'macOS' && matrix.mode == 'positive'
         shell: bash

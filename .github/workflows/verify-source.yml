@@ -62,7 +62,9 @@ jobs:
       - uses: actions/upload-artifact@v7
         with:
           name: workspace-build
-          path: .test-results/workspace-build.tar.gz
+          path: |
+            .test-results/workspace-build.tar.gz
+            .test-results/workspace-build.json
           if-no-files-found: error
           retention-days: 14
       - name: Upload Desktop common build
@@ -108,7 +110,7 @@ jobs:
           path: .test-results
       - name: Restore and verify prepared workspace
         run: |
-          tar -xzf .test-results/workspace-build.tar.gz
+          node scripts/archive-workspace-build.mjs restore
           node scripts/build-artifact.mjs verify cli
           node scripts/build-artifact.mjs verify desktop
       - name: Quality and fast contracts

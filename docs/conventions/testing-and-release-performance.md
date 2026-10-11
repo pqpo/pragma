@@ -45,3 +45,5 @@ Release 只接受本仓库 push main 的同 SHA 最新成功 CI 与验证 receip
 CI 的两条验证 lane 按耗时平衡：quality 负责静态检查、快速契约和 Desktop 接线/UI 回归；business 负责共享 Host、CLI、Memory 与 Runtime 门禁。Desktop 回归不是从 CI 删除，而是利用 quality 的剩余时间并行执行；本地 test:business 默认仍执行全部选集。Node 内置模块审计使用 node:module 的 isBuiltin，识别 Node 22 的 node:sqlite 等必须带前缀的模块，同时拒绝未知 node: 名称。
 
 原生 Desktop job 还原同一 CI 的 workspace-build 归档，包括用于原生审计的已编译 Core/Shared 模块；只传递运行环境中立的编译产物，不传递 node_modules。归档与 receipt 保留十四天，任一必需 artifact 缺失/过期都重新验证。
+
+workspace-build 的独立清单绑定提交、源码散列及整个归档的 SHA-256，消费者先校验再解包，覆盖业务测试与原生审计依赖的全部 workspace dist。Windows 构建和业务入口直接启动 pnpm JavaScript 入口，保留含空格的测试筛选参数。

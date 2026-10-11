@@ -1,6 +1,14 @@
 import { execFileSync } from "node:child_process";
 import { existsSync } from "node:fs";
 import { relative, resolve } from "node:path";
+import { recordWorkspaceArchive, verifyWorkspaceArchive } from "./workspace-build-artifact.mjs";
+
+if (process.argv[2] === "restore") {
+  await verifyWorkspaceArchive();
+  execFileSync("tar", ["-xzf", ".test-results/workspace-build.tar.gz"], { stdio: "inherit" });
+  process.exit(0);
+}
+if (process.argv.length > 2) throw new Error("Usage: archive-workspace-build.mjs [restore]");
 const packages = JSON.parse(
   execFileSync("pnpm", ["list", "-r", "--depth=-1", "--json"], { encoding: "utf8" }),
 );
@@ -23,3 +31,4 @@ for (const path of [
 execFileSync("tar", ["-czf", ".test-results/workspace-build.tar.gz", ...paths], {
   stdio: "inherit",
 });
+await recordWorkspaceArchive();

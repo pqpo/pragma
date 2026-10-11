@@ -1,6 +1,7 @@
 import { spawn } from "node:child_process";
 import { mkdir, writeFile } from "node:fs/promises";
 import { resolve } from "node:path";
+import { pnpmInvocation } from "./pnpm-command.mjs";
 
 const prepared = process.argv.includes("--prepared");
 const lane = process.argv.find((argument) => argument.startsWith("--lane="))?.slice(7) ?? "all";
@@ -13,9 +14,10 @@ async function run(args, name) {
   let status = "passed";
   try {
     await new Promise((accept, reject) => {
-      const child = spawn("pnpm", args, {
+      const invocation = pnpmInvocation(args);
+      const child = spawn(invocation.command, invocation.args, {
         stdio: "inherit",
-        shell: process.platform === "win32",
+        shell: false,
         env: { ...process.env, PRAGMA_LOG_LEVEL: "error" },
       });
       child.once("error", reject);
