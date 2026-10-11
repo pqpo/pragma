@@ -1,5 +1,30 @@
 appId: com.pqpo.pragma
 productName: Pragma
+electronLanguages:
+  - en
+  - en-US
+  - en-GB
+  - zh-CN
+  - zh-TW
+  - en_FEMININE
+  - en_MASCULINE
+  - en_NEUTER
+  - en_US
+  - en_US_FEMININE
+  - en_US_MASCULINE
+  - en_US_NEUTER
+  - en_GB
+  - en_GB_FEMININE
+  - en_GB_MASCULINE
+  - en_GB_NEUTER
+  - zh_CN
+  - zh_CN_FEMININE
+  - zh_CN_MASCULINE
+  - zh_CN_NEUTER
+  - zh_TW
+  - zh_TW_FEMININE
+  - zh_TW_MASCULINE
+  - zh_TW_NEUTER
 asar: true
 beforePack: ./scripts/packaging-policy.mjs
 afterPack: ./scripts/audit-packaged-app.mjs

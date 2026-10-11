@@ -258,3 +258,75 @@ Native 打包 job 还会执行 Windows 安装器的首次安装、重复升级�
 以及 macOS 的 Zsh/Bash/Fish 注册测试。Windows 检查脚本只适合隔离且已提权的测试机；它会安装
 临时 Desktop、短暂修改系统 PATH，并在 finally 中恢复 PATH。旧用户级发行版迁移及交互式 UAC
 仍需使用真实旧安装包补发布验收，不以同版本重复安装代替。
+
+## 安装包体积与依赖裁剪
+
+Desktop 的打包文件范围只包含编译产物、package metadata 与生产依赖。平台配置必须保留正向的
+`out/**/*` 和 `package.json` 规则，避免仅配置排除规则时回退到整个应用目录。
+
+`beforePack` 根据编译产物的 JavaScript AST、共享 CLI 的 esbuild metadata 和生产依赖图生成
+`packaging-policy-<platform>-<arch>.json`。只有编译产物没有引用、且保留的第三方依赖没有声明依赖的
+候选包才会被排除；非字面量动态加载及 SDK 自带资源继续保守保留。第三方许可证按 package/version
+复制到应用 `Resources/third-party-notices/`，不会因原始 package 被排除而丢失。
+
+原生依赖使用**发行目标**平台和架构过滤，包含 sharp/libvips、keyring、clipboard、esbuild、msgpackr
+和 PI TUI 内嵌 prebuild。打包审计还读取 Mach-O（含 universal）、PE 和 ELF 头，拒绝明确不匹配目标的
+二进制。esbuild 的复制入口仍保留，不能只根据相同 hash 删除可能被调用的文件。
+
+主进程、内置 CLI、管理客户端和 Worker 在生产构建中开启 minify，保留函数名、类名与许可证注释，
+不混淆属性名；开发构建不启用压缩。`PRAGMA_BUILD_MINIFY=0 pnpm --filter @pragma/desktop build`
+仅用于建立未压缩对照产物，不用于发行。生产包不携带 `.map`。若调试构建需要生成 map，应输出到
+`out` 以外的构建证据目录并单独上传 CI artifact；依赖原始 map 可通过 lockfile 对应版本重建。
+
+Electron 语言资源保留英文、简体中文、繁体中文。macOS 的 underscore 名称及 Chromium 43 新增的
+语法性别资源一并保留；Windows 保留对应的 hyphen locale。应用 i18n、ICU、字体和 V8 snapshot 不裁剪。
+
+### 审计与体积门禁
+
+`packaging-audit-<platform>-<arch>.json` 记录源码 commit、lockfile hash、Electron 版本、应用版本、
+压缩配置、应用物理大小、按类别/package/扩展名的体积、文件 hash、重复内容和最大文件。
+ASAR unpacked 引用只计一次，框架符号链接不跟随。DMG/ZIP/EXE 完成后将实际字节数和 SHA-256
+写回同一报告；并发完成的安装包更新会串行处理，报告在临时 app 目录被清理前保存。
+
+`afterPack` 使用发行应用的 Electron Node 模式，在空 PATH、空 NODE_PATH 和临时 PRAGMA_HOME 下
+验证内置 CLI、Worker、keyring、sharp、真实 tokenizer chunk、QuickJS 执行/错误路径及自包含插件加载。
+探针文件和临时插件在结束时删除，不进入最终安装包。这些检查不替代需要认证的 Runtime 实际执行，
+也不替代窗口、Bridge、原生菜单和语言回退的视觉验收；报告为这些项目保留待验收状态。
+
+发行流水线始终上传审计与裁剪报告，包括打包失败的诊断。新增/升级 SDK、Electron 或原生依赖后，需要
+重新检查动态资源、locale 名称、许可证和各目标的原生 smoke。Qoder worker/ripgrep、PI 扩展资源、jiti
+以及未知动态入口不得凭文件体积删除。
+
+已测量的安装包预算保存在 `apps/desktop/build/size-baselines.json`。相同平台、架构和格式的安装包增长
+同时超过 **5%** 和 **5 MiB** 时发行失败。新增目标尚无实测预算时，报告显示
+`awaiting-native-measurement`，不会用估算值假装已验证。首次原生发行完成后，使用通过资源 smoke 的报告
+更新预算，并随代码审查提交增长原因：
+
+```bash
+pnpm --filter @pragma/desktop size:baseline dist/packaging-audit-darwin-1.json
+```
+
+此命令只记录报告内已完成的安装包，不补造其他平台数字。更新预算必须保留可审查的 explanation。
+
+### 2026-10-11 本地 macOS x64 实测
+
+应用版本 0.2.55、Electron 43.7.6，同一运行时代码、正常压缩与未签名配置。对照版本使用原打包范围和
+未压缩 JS；DMG 对照由对照 ZIP 中的原应用重新封装。所有数字使用 MiB（1,048,576 bytes）：
+
+| 产物                |     优化前 |     优化后 |               减少 |
+| ------------------- | ---------: | ---------: | -----------------: |
+| macOS x64 ZIP       | 247.37 MiB | 187.33 MiB | 60.04 MiB / 24.27% |
+| macOS x64 DMG       | 247.35 MiB | 187.46 MiB | 59.89 MiB / 24.21% |
+| macOS x64 应用目录  | 约 748 MiB | 约 500 MiB |         约 249 MiB |
+| macOS arm64 DMG/ZIP | 待原生测量 | 待原生测量 |           不做推算 |
+| Windows x64 EXE     | 待原生测量 | 待原生测量 |           不做推算 |
+
+本机六个 Runtime 的可用性探测通过。Claude Code 真实 stream probe 通过；Qoder 的真实 stream probe
+返回账户额度用尽，不能记为执行通过。其他 Runtime 的认证执行、三个系统语言下的原生界面，以及
+macOS arm64/Windows x64 安装执行仍属于发布验收待办。各阶段收益有重叠，本次只报告最终净减少量，
+不把源码、map、原始依赖与 minify 的候选收益相加。
+
+本次共享业务门禁未通过：`host-storage-pool.test.ts` 单独复测仍为 2 passed / 6 failed，首次失败是
+33 MiB 提交测试超过默认 5 秒，随后出现 `HOST_STORAGE_BACKPRESSURE`。Core 和 Local Host 源码与
+优化前保持一致，本次没有通过放宽断言或修改存储逻辑掩盖该问题。需要在发布前独立修复/验证此门禁，
+不能将安装包 smoke 通过表述为全部业务回归通过。
