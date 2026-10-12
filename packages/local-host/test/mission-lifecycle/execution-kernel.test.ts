@@ -111,6 +111,26 @@ describe("shared Mission execution kernel with durable Core stores", { timeout: 
     expect((await missions.readTimelinePage(mission.id, { limit: 10 })).turns).toHaveLength(2);
   });
 
+  it("reconciles an accepted prompt after Session closure without another Runtime dispatch", async () => {
+    const f = await fixture();
+    const session = await f.app.experts.createSession(f.expert);
+    f.openSessions.push(session);
+    const requestId = randomUUID();
+    const original = await session.prompt("accepted", { requestId });
+    await original.result;
+    await session.close("The acceptance receipt remains readable");
+    const discard = vi.fn(async () => undefined);
+    const recovered = await submitMissionExpertPrompt(
+      { missionId: randomUUID(), session, content: "accepted", options: { requestId } },
+      async () => [],
+      discard,
+    );
+    expect(recovered.turn.executionId).toBe(original.executionId);
+    await expect(recovered.turn.result).resolves.toEqual(await original.result);
+    expect(discard).not.toHaveBeenCalled();
+    expect(f.dispatched).toHaveBeenCalledOnce();
+  });
+
   it.each(["closed", "idempotency", "parameters"] as const)(
     "rejects the Inbox and discards prepared images when Core explicitly rejects (%s)",
     async (reason) => {

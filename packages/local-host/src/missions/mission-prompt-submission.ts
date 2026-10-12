@@ -6,7 +6,7 @@ import {
   type ExpertTurn,
   type PromptOptions,
 } from "@pragma/core";
-import type { ExpertPromptAttachment } from "@pragma/shared";
+import type { ExpertPromptAttachment, PromptRequest } from "@pragma/shared";
 import { createIntegrationError } from "@pragma/shared/integration";
 
 import { MissionSemanticWritePendingError } from "./controller/mission-controller-store.ts";
@@ -99,11 +99,11 @@ export async function submitMissionExpertPrompt(
         error instanceof ExpertPromptRejectedError ||
         error instanceof StopOnlyDefinitionExecutionError
       ) {
-        // A closed/released Session can reject a replay of an already accepted
-        // request. Preserve its files until the Host reconciles that receipt.
-        let accepted: boolean;
+        // Closing a Session does not erase a previously accepted request.
+        // Reuse its owned turn without resubmitting or deleting its input files.
+        let accepted: PromptRequest | undefined;
         try {
-          accepted = (await input.session.getPromptQueue()).some(
+          accepted = (await input.session.getPromptQueue()).find(
             (prompt) =>
               prompt.requestId === input.options.requestId &&
               prompt.content === input.content &&
@@ -112,7 +112,19 @@ export async function submitMissionExpertPrompt(
         } catch (receiptError) {
           throw new MissionSemanticWritePendingError({ cause: receiptError });
         }
-        if (accepted) throw new MissionSemanticWritePendingError({ cause: error });
+        if (accepted !== undefined) {
+          if (accepted.mode === "enqueue") {
+            try {
+              const receipt = (await input.session.listTurns()).find(
+                (turn) => turn.executionId === accepted.executionId,
+              );
+              if (receipt !== undefined) return receipt;
+            } catch (receiptError) {
+              throw new MissionSemanticWritePendingError({ cause: receiptError });
+            }
+          }
+          throw new MissionSemanticWritePendingError({ cause: error });
+        }
         try {
           if (prepared !== undefined) await discardAttachments?.(input);
         } catch (cleanupError) {

@@ -318,7 +318,7 @@ describe("Local Host message admission", () => {
     expect(f.project).toHaveBeenCalledOnce();
   });
 
-  it("preserves prepared files when a closed Session rejects a replay of an accepted receipt", async () => {
+  it("preserves prepared files when an accepted receipt handle cannot be read", async () => {
     const f = fixture();
     f.prompt.mockRejectedValueOnce(
       new ExpertPromptRejectedError("ExpertSession is closing or closed"),

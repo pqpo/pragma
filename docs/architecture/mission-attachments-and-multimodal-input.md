@@ -103,6 +103,7 @@ admission 不直接调用 `ExpertSession.prompt()`，也不各自决定执行附
 Core 接受后，`appendUserMessage()` 使用已准备路径，通过现有消息事务一起发布用户消息和权威附件清单，
 再移除准备 journal。Execution 和 Invocation 的图片路径在这次提交前后保持稳定。Core 的明确拒绝通过
 `ExpertPromptRejectedError` 表达；Host 核对没有匹配的已接受 receipt 后清理准备文件，将 Inbox 收敛为拒绝。
+已接受的 enqueue receipt 在 Session 关闭后直接复用原 turn 完成投影，不重新执行 Runtime。
 接受写入或 receipt 读取状态不确定时保留准备 journal，使用同一 requestId 重放；取消发生在附件 I/O 之后时
 也保留准备数据，但不从取消的尝试提交 Core。Repository 只暴露附件事务错误，由 fenced adapter 转换为
 Controller 的恢复语义，永久数据错误保留原始诊断并停止自动重试。
