@@ -150,7 +150,7 @@ export class KnowledgeRevisionToolError extends Error {
 
 const KnowledgeRevisionDraftRecoverySchema = z
   .object({
-    code: z.enum(["mission_orphaned", "mission_unreadable"]),
+    code: z.enum(["mission_orphaned", "mission_unreadable", "revision_rework_unavailable"]),
     message: z.string().min(1).max(500),
   })
   .strict();

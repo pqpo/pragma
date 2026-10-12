@@ -193,3 +193,8 @@ Pragma delegates managed content changes to the corresponding Revision Agent bef
 write. Formal content is read-only to Agents; only drafts are writable. Human approval remains
 the publication boundary. Continuation carries the draftId and review feedback to the original
 Revision Agent conversation rather than creating a replacement.
+
+An unreadable return journal is reported as `revision_rework_unavailable` in the draft recovery
+summary and logged with `knowledge_revision_rework_unavailable`. It prevents that draft from
+exposing a writable namespace, while unrelated list entries and background processing continue.
+The original data and journal remain available for diagnosis.

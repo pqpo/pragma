@@ -38,6 +38,63 @@ afterEach(async () => {
 });
 
 describe("Skill revision service", () => {
+  it("replays the Mission restore callback before exposing an interrupted review return", async () => {
+    const restore = vi.fn(async () => {
+      if (restore.mock.calls.length === 1) throw new Error("Mission restore interrupted");
+    });
+    const fixture = await createService({ onReturnedForRework: restore });
+    const job = await fixture.service.start(request("expert-reflection"), {
+      missionId: randomUUID(),
+    });
+    const inspection = await fixture.service.inspectDraft(job.draftId, job.missionId);
+    const pending = await fixture.service.submitDraft({
+      draftId: job.draftId,
+      expectedRevision: inspection.draft.revision,
+      expectedWorkingTreeHash: inspection.workingTree.hash,
+      summary: "Review",
+      missionId: job.missionId!,
+    });
+    await expect(fixture.service.returnForRework(job.id, pending.revision)).rejects.toThrow(
+      "Mission restore interrupted",
+    );
+    expect((await fixture.service.get(job.id)).state).toBe("editing");
+    expect(restore).toHaveBeenCalledTimes(2);
+    expect(restore).toHaveBeenLastCalledWith(
+      expect.objectContaining({ id: job.id, draftId: job.draftId, missionId: job.missionId }),
+    );
+    await expect(stat(join(fixture.draftsPath, job.draftId, "rework.json"))).rejects.toMatchObject({
+      code: "ENOENT",
+    });
+  });
+
+  it.each([false, true])(
+    "keeps one consistent winner when return and rejection race (rejectFirst=%s)",
+    async (rejectFirst) => {
+      const fixture = await createService();
+      const job = await fixture.service.start(request("expert-reflection"), {
+        missionId: randomUUID(),
+      });
+      const inspection = await fixture.service.inspectDraft(job.draftId, job.missionId);
+      const pending = await fixture.service.submitDraft({
+        draftId: job.draftId,
+        expectedRevision: inspection.draft.revision,
+        expectedWorkingTreeHash: inspection.workingTree.hash,
+        summary: "Review",
+        missionId: job.missionId!,
+      });
+      const actions = [
+        () => fixture.service.returnForRework(job.id, pending.revision),
+        () => fixture.service.reject(job.id, pending.revision),
+      ];
+      if (rejectFirst) actions.reverse();
+      const settled = await Promise.allSettled(actions.map((action) => action()));
+      expect(settled.filter((result) => result.status === "fulfilled")).toHaveLength(1);
+      const current = await fixture.service.get(job.id);
+      expect((await fixture.service.getDraft(job.draftId)).state).toBe(current.state);
+      expect(["editing", "rejected"]).toContain(current.state);
+    },
+  );
+
   it("rejects a future rework journal without changing this or another owner", async () => {
     const fixture = await createService();
     const job = await fixture.service.start(request("expert-reflection"));
@@ -57,6 +114,12 @@ describe("Skill revision service", () => {
       before,
     );
     expect((await fixture.service.get(other.id)).state).toBe("editing");
+    expect(await fixture.service.list()).toEqual([expect.objectContaining({ id: other.id })]);
+    expect(await fixture.service.listDiagnostics()).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ id: job.id, code: "skill_revision_rework_unavailable" }),
+      ]),
+    );
   });
 
   it("restores submitted files and remounts the same Skill draft in its original Mission", async () => {
@@ -2375,6 +2438,9 @@ async function createService(
       readonly sourcePath: string;
     }) => Promise<{ readonly manifest: { readonly latestRevision: number } }>;
     readonly executablePaths?: readonly string[];
+    readonly onReturnedForRework?: Parameters<
+      typeof createSkillRevisionService
+    >[0]["onReturnedForRework"];
     readonly supportsExecutableBits?: boolean;
   } = {},
 ) {
@@ -2441,6 +2507,9 @@ async function createService(
       capabilities,
       resolveWorkspacePath: options.resolveWorkspacePath ?? (async () => canonicalWorkspacePath),
       ...(options.generator === undefined ? {} : { generator: options.generator }),
+      ...(options.onReturnedForRework === undefined
+        ? {}
+        : { onReturnedForRework: options.onReturnedForRework }),
       ...(options.supportsExecutableBits === undefined
         ? {}
         : { supportsExecutableBits: options.supportsExecutableBits }),

@@ -56,7 +56,7 @@ export interface ContextStoreRevisionGenerator {
 }
 
 export interface ContextStoreRevisionDraftRecoveryIssue {
-  readonly code: "mission_orphaned" | "mission_unreadable";
+  readonly code: "mission_orphaned" | "mission_unreadable" | "revision_rework_unavailable";
   readonly message: string;
 }
 
@@ -979,17 +979,22 @@ export function createContextStoreRevisionService(options: {
     },
 
     async list(filter = {}) {
-      for (const job of await readAllJobs()) {
-        if (filter.storeId === undefined || job.request.storeId === filter.storeId)
-          await recoverRework(job.draftId);
-      }
       const jobs = (await readAllJobs()).filter(
-        (job) =>
-          (filter.storeId === undefined || job.request.storeId === filter.storeId) &&
-          (filter.state === undefined || job.state === filter.state),
+        (job) => filter.storeId === undefined || job.request.storeId === filter.storeId,
       );
       const reconciled: ContextStoreRevisionJob[] = [];
-      for (const job of jobs) {
+      for (const previous of jobs) {
+        try {
+          await recoverRework(previous.draftId);
+        } catch (error) {
+          options.warn?.(
+            "knowledge_revision_rework_unavailable: the revision owner could not be recovered.",
+            error,
+          );
+          continue;
+        }
+        const job = await readJob(previous.id);
+        if (filter.state !== undefined && job.state !== filter.state) continue;
         try {
           await recoverOrphanedClaim(job);
           reconciled.push(
@@ -1334,17 +1339,30 @@ export function createContextStoreRevisionService(options: {
     },
 
     async listDraftsWithRecovery(filter = {}) {
-      for (const draft of await readAllDrafts()) {
-        if (filter.storeId === undefined || draft.storeId === filter.storeId)
-          await recoverRework(draft.id);
-      }
       const drafts = (await readAllDrafts()).filter(
-        (draft) =>
-          (filter.storeId === undefined || draft.storeId === filter.storeId) &&
-          (filter.state === undefined || draft.state === filter.state),
+        (draft) => filter.storeId === undefined || draft.storeId === filter.storeId,
       );
       const reconciled: ContextStoreRevisionDraftListEntry[] = [];
-      for (const draft of drafts) {
+      for (const previous of drafts) {
+        try {
+          await recoverRework(previous.id);
+        } catch (error) {
+          options.warn?.(
+            "knowledge_revision_rework_unavailable: the draft owner could not be recovered.",
+            error,
+          );
+          reconciled.push({
+            draft: previous,
+            recovery: {
+              code: "revision_rework_unavailable",
+              message:
+                "knowledge_revision_rework_unavailable: The review return could not be recovered. The draft and journal were preserved for diagnosis.",
+            },
+          });
+          continue;
+        }
+        const draft = await readDraft(previous.id);
+        if (filter.state !== undefined && draft.state !== filter.state) continue;
         try {
           const recovery = await recoverOrphanedClaim({
             draftId: draft.id,
@@ -1371,7 +1389,9 @@ export function createContextStoreRevisionService(options: {
     },
 
     async listDrafts(filter = {}) {
-      return (await api.listDraftsWithRecovery(filter)).map((entry) => entry.draft);
+      return (await api.listDraftsWithRecovery(filter))
+        .filter((entry) => entry.recovery?.code !== "revision_rework_unavailable")
+        .map((entry) => entry.draft);
     },
 
     async getDraftWithRecovery(draftId) {

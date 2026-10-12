@@ -90,3 +90,18 @@ Pragma delegates managed content changes to the corresponding Revision Agent bef
 write. Formal content is read-only to Agents; only drafts are writable. Human approval remains
 the publication boundary. Continuation carries the draftId and review feedback to the original
 Revision Agent conversation rather than creating a replacement.
+
+### CR follow-up for #383
+
+Submission still removes the editable workspace tree and Mission mount. Returning for changes
+replays a Host callback before retiring the rework journal. The callback restores a Skill mount
+only when that candidate exactly matches the persisted Session's original Context fingerprint.
+This restores the original compilation identity and Native Session for both retained owners and
+cold recovery, while leaving newly changed Mission authority untouched. The callback runs outside
+Skill aggregate locks to avoid an inverse dependency on Mission fencing and resource resolution.
+
+Unreadable rework journals quarantine only their own list entries with a stable recovery diagnostic;
+healthy drafts/jobs and background processing continue. Reject and return validate and mutate the
+same draft/job pair under the existing locks so concurrent review decisions cannot leave a returned
+job paired with a rejected draft. Tests cover retained/cold Native Sessions over two review returns,
+interrupted Host callbacks, invalid journal isolation, and competing review decisions.

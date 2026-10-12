@@ -96,6 +96,17 @@ describe("context store sparse draft revisions", () => {
     await expect(service.getDraft(draft.id)).rejects.toThrow();
     expect(await readFile(join(draftsPath, draft.id, "draft.json"), "utf8")).toBe(before);
     expect((await service.getDraft(other.id)).state).toBe("editing");
+    expect(await service.listDraftsWithRecovery()).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          draft: expect.objectContaining({ id: draft.id }),
+          recovery: expect.objectContaining({ code: "revision_rework_unavailable" }),
+        }),
+      ]),
+    );
+    expect(await service.listDrafts()).toEqual(
+      expect.arrayContaining([expect.objectContaining({ id: other.id })]),
+    );
   });
 
   it("keeps the same Mission claim, content, and draft through repeated returns for changes", async () => {

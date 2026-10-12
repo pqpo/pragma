@@ -208,6 +208,7 @@ export function createSkillRevisionService(options: {
   readonly resolveWorkspacePath?:
     ((missionId?: string | undefined, draftId?: string | undefined) => Promise<string>) | undefined;
   readonly warn?: (message: string, error: unknown) => void;
+  readonly onReturnedForRework?: (job: ManagedSkillRevisionJob) => Promise<void>;
   readonly supportsExecutableBits?: boolean;
 }): SkillRevisionService {
   const jobsPath = join(options.statePath, "jobs");
@@ -1187,7 +1188,9 @@ export function createSkillRevisionService(options: {
     .strict();
   const reworkJournalPath = (draftId: string) => join(draftRoot(draftId), "rework.json");
 
-  const applyReworkJournal = async (draftId: string): Promise<void> => {
+  const applyReworkJournal = async (
+    draftId: string,
+  ): Promise<ManagedSkillRevisionJob | undefined> => {
     const path = reworkJournalPath(draftId);
     let raw: string;
     try {
@@ -1240,7 +1243,7 @@ export function createSkillRevisionService(options: {
       await writeDraft(nextDraft);
     }
     if (job.revision < nextJob.revision) await writeJob(nextJob);
-    await rm(path, { force: true });
+    return nextJob;
   };
 
   const withReworkLocks = async <T>(draftId: string, action: () => Promise<T>): Promise<T> =>
@@ -1253,6 +1256,25 @@ export function createSkillRevisionService(options: {
         ),
     );
 
+  const finishRework = async (job: ManagedSkillRevisionJob): Promise<void> => {
+    // Mission fencing can call back into resource resolution: never hold Skill locks here.
+    await options.onReturnedForRework?.(job);
+    await withReworkLocks(job.draftId, async () => {
+      const path = reworkJournalPath(job.draftId);
+      let stored: string;
+      try {
+        stored = await readFile(path, "utf8");
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code === "ENOENT") return;
+        throw error;
+      }
+      const pending = ReworkJournalSchema.parse(JSON.parse(stored));
+      if (pending.nextJob.id !== job.id || pending.nextJob.revision !== job.revision)
+        throw coded("skill_revision_rework_conflict");
+      await rm(path, { force: true });
+    });
+  };
+
   const recoverRework = async (draftId: string): Promise<void> => {
     try {
       await stat(reworkJournalPath(draftId));
@@ -1260,7 +1282,8 @@ export function createSkillRevisionService(options: {
       if ((error as NodeJS.ErrnoException).code === "ENOENT") return;
       throw error;
     }
-    await withReworkLocks(draftId, async () => await applyReworkJournal(draftId));
+    const job = await withReworkLocks(draftId, async () => await applyReworkJournal(draftId));
+    if (job !== undefined) await finishRework(job);
   };
 
   const requireOwner = (draft: SkillRevisionDraft, missionId: string | undefined): void => {
@@ -1733,38 +1756,69 @@ export function createSkillRevisionService(options: {
       });
     },
     async list(filter = {}) {
-      for (const record of await readAllJobs()) {
-        if (
-          filter.capabilityId === undefined ||
-          record.request.capabilityId === filter.capabilityId
-        )
-          await recoverRework(record.draftId);
-      }
-      return (await readAllJobs())
+      const records = (await readAllJobs()).filter(
+        (job) =>
+          filter.capabilityId === undefined || job.request.capabilityId === filter.capabilityId,
+      );
+      const settled = await Promise.allSettled(
+        records.map(async (job) => {
+          await recoverRework(job.draftId);
+          return await readJob(job.id);
+        }),
+      );
+      diagnostics = [
+        ...diagnostics,
+        ...settled.flatMap((result, index) =>
+          result.status === "rejected"
+            ? [
+                {
+                  ...recordDiagnostic("job", records[index]!.id, result.reason),
+                  code: "skill_revision_rework_unavailable",
+                },
+              ]
+            : [],
+        ),
+      ];
+      return settled
+        .flatMap((result) => (result.status === "fulfilled" ? [result.value] : []))
         .filter(
           (job) =>
             job.error?.code !== "draft_discarded" &&
-            (filter.capabilityId === undefined ||
-              job.request.capabilityId === filter.capabilityId) &&
             (filter.state === undefined || job.state === filter.state),
         )
         .toSorted((left, right) => right.updatedAt.localeCompare(left.updatedAt));
     },
     async listDrafts(filter = {}) {
-      for (const record of await readAllDrafts()) {
-        if (filter.capabilityId === undefined || record.capabilityId === filter.capabilityId)
-          await recoverRework(record.id);
-      }
-      return (await readAllDrafts())
-        .filter(
-          (draft) =>
-            (filter.capabilityId === undefined || draft.capabilityId === filter.capabilityId) &&
-            (filter.state === undefined || draft.state === filter.state),
-        )
+      const records = (await readAllDrafts()).filter(
+        (draft) => filter.capabilityId === undefined || draft.capabilityId === filter.capabilityId,
+      );
+      const settled = await Promise.allSettled(
+        records.map(async (draft) => {
+          await recoverRework(draft.id);
+          return await readDraft(draft.id);
+        }),
+      );
+      diagnostics = [
+        ...diagnostics,
+        ...settled.flatMap((result, index) =>
+          result.status === "rejected"
+            ? [
+                {
+                  ...recordDiagnostic("draft", records[index]!.id, result.reason),
+                  code: "skill_revision_rework_unavailable",
+                },
+              ]
+            : [],
+        ),
+      ];
+      return settled
+        .flatMap((result) => (result.status === "fulfilled" ? [result.value] : []))
+        .filter((draft) => filter.state === undefined || draft.state === filter.state)
         .toSorted((left, right) => right.updatedAt.localeCompare(left.updatedAt));
     },
     async listDiagnostics() {
-      await Promise.all([readAllJobs(), readAllDrafts()]);
+      await service.list();
+      await service.listDrafts();
       return diagnostics;
     },
     async get(id) {
@@ -2079,7 +2133,7 @@ export function createSkillRevisionService(options: {
       await recoverSubmissionCleanupJournals();
       const selected = await readJob(jobId);
       await recoverRework(selected.draftId);
-      return await withReworkLocks(selected.draftId, async () => {
+      const returned = await withReworkLocks(selected.draftId, async () => {
         const job = await readJob(jobId);
         const draft = await readDraft(job.draftId);
         if (
@@ -2121,23 +2175,42 @@ export function createSkillRevisionService(options: {
         await applyReworkJournal(draft.id);
         return nextJob;
       });
+      await finishRework(returned);
+      return returned;
     },
 
     async reject(id, revision) {
       await recoverSubmissionCleanupJournals();
-      await recoverRework((await readJob(id)).draftId);
-      const job = await readJob(id);
-      if (job.revision !== revision || job.state !== "pending_review") {
-        throw coded("skill_revision_conflict");
-      }
-      const draft = await readDraft(job.draftId);
-      await mutateDraft(draft.id, draft.revision, () => ({
-        state: "rejected",
-        activeMissionId: undefined,
-      }));
-      return await mutateJob(job.id, job.revision, () => ({
-        state: "rejected",
-      }));
+      const selected = await readJob(id);
+      await recoverRework(selected.draftId);
+      return await withReworkLocks(selected.draftId, async () => {
+        const job = await readJob(id);
+        const draft = await readDraft(job.draftId);
+        if (
+          job.revision !== revision ||
+          job.state !== "pending_review" ||
+          draft.state !== "pending_review"
+        )
+          throw coded("skill_revision_conflict");
+        const timestamp = new Date().toISOString();
+        await writeDraft(
+          SkillRevisionDraftSchema.parse({
+            ...draft,
+            state: "rejected",
+            activeMissionId: undefined,
+            revision: draft.revision + 1,
+            updatedAt: timestamp,
+          }),
+        );
+        const rejected = ManagedSkillRevisionJobSchema.parse({
+          ...job,
+          state: "rejected",
+          revision: job.revision + 1,
+          updatedAt: timestamp,
+        });
+        await writeJob(rejected);
+        return rejected;
+      });
     },
     async retry(id, revision) {
       await recoverSubmissionCleanupJournals();
@@ -2372,7 +2445,7 @@ export function createSkillRevisionService(options: {
       processing = (async () => {
         do {
           processingRequested = false;
-          const jobs = await readAllJobs();
+          const jobs = await service.list();
           const interrupted = await nextInterruptedPublication(jobs);
           if (interrupted !== undefined) {
             try {

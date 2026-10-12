@@ -333,6 +333,49 @@ describe("mission store", { timeout: 30_000 }, () => {
     ).resolves.toMatchObject({ contextMounts: [] });
   });
 
+  it("restores only a Skill draft binding already owned by the persisted Session", async () => {
+    const root = await temporaryRoot();
+    const store = createMissionStore({ missionsPath: join(root, "missions") });
+    const mount = {
+      draftId: "20000000-0000-4000-8000-000000000002",
+      revisionJobId: "30000000-0000-4000-8000-000000000003",
+      capabilityId: "40000000-0000-4000-8000-000000000004",
+    };
+    const mission = await store.create({
+      workspace: { path: root, basename: "workspace" },
+      goal: "Skill revision",
+      project: { id: "studio", revision: 1 },
+      executor: missionExecutorSnapshot(expertFixture()),
+      contextMounts: [{ kind: "skill-revision-draft", ...mount }],
+    });
+    await store.updateExecution(mission.id, {
+      id: "50000000-0000-4000-8000-000000000005",
+      inputMessageId: mission.initialMessageId,
+      status: "succeeded",
+      startedAt: "2026-10-12T00:00:00.000Z",
+      sessionId: "60000000-0000-4000-8000-000000000006",
+      contextMountsFingerprint: missionContextMountsFingerprint(mission),
+    });
+    await store.unmountSkillRevisionDraft({ id: mission.id, draftId: mount.draftId });
+    const different = await store.mountSkillRevisionDraft({
+      id: mission.id,
+      ...mount,
+      draftId: "70000000-0000-4000-8000-000000000007",
+      restoreSessionBinding: true,
+    });
+    expect(different.contextMounts).toEqual([]);
+    const restored = await store.mountSkillRevisionDraft({
+      id: mission.id,
+      ...mount,
+      restoreSessionBinding: true,
+    });
+    expect(restored.contextMounts).toEqual(mission.contextMounts);
+    expect(restored.execution?.sessionId).toBe("60000000-0000-4000-8000-000000000006");
+    expect(restored.execution?.contextMountsFingerprint).toBe(
+      missionContextMountsFingerprint(restored),
+    );
+  });
+
   it("rebinds only the owning legacy Skill revision Mission workspace", async () => {
     const root = await temporaryRoot();
     const store = createMissionStore({ missionsPath: join(root, "missions") });

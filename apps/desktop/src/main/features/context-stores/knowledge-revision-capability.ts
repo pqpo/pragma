@@ -192,7 +192,9 @@ export function createDesktopKnowledgeRevisionSubmissionPort(options: {
               ? {}
               : { activeMissionId: draft.activeMissionId }),
             ...(recovery === undefined ? {} : { recovery }),
-            ...(inlineMission !== undefined && draft.activeMissionId === inlineMission.id
+            ...(recovery === undefined &&
+            inlineMission !== undefined &&
+            draft.activeMissionId === inlineMission.id
               ? { writableNamespace: inlineMission.writableNamespaceForStore(draft.storeId) }
               : {}),
             ...(draft.submittedRevision === undefined

@@ -1,3 +1,4 @@
+import { createSkillRevisionService } from "../capabilities/skill-revision-service.ts";
 import { randomUUID } from "node:crypto";
 import { AsyncLocalStorage } from "node:async_hooks";
 import { createLocalHostNodeApplication } from "@pragma/local-host/node-application";
@@ -729,6 +730,133 @@ describe("Desktop Mission resource adapter contracts", { timeout: 30_000 }, () =
       }
     },
   );
+  it.each([false, true])(
+    "keeps the Skill revision Session and Native Session after rework (cold=%s)",
+    async (cold) => {
+      const root = await mkdtemp(join(tmpdir(), "pragma-skill-review-session-"));
+      temporaryPaths.push(root);
+      const project = createPragmaProjectStore({ projectsPath: join(root, "projects") });
+      const expert = expertFixture();
+      const snapshot = await project.publish({
+        expectedRevision: 0,
+        resources: [runtimeFixture(), expert],
+      });
+      const missions = createMissionStore({ missionsPath: join(root, "missions") });
+      const mission = await missions.create({
+        workspace: { path: root, basename: "workspace" },
+        goal: "Revise the Skill",
+        project: { id: snapshot.projectId, revision: snapshot.revision },
+        executor: missionExecutorSnapshot(expert),
+        contextMounts: [],
+      });
+      const source = join(root, "formal-skill");
+      await mkdir(source);
+      await writeFile(
+        join(source, "SKILL.md"),
+        "---\nname: safe-workflow\ndescription: Safe workflow.\n---\n\nFollow the workflow.\n",
+      );
+      const capabilityId = "00000000-0000-4000-8000-000000000001";
+      const revisions = createSkillRevisionService({
+        statePath: join(root, "skill-state"),
+        capabilities: {
+          get: async () => ({
+            manifest: { latestRevision: 1 },
+            definition: {
+              kind: "skill",
+              name: "safe-workflow",
+              description: "Safe workflow.",
+              contentHash: "a".repeat(64),
+            },
+          }),
+          skillFilesPath: async () => source,
+        } as unknown as CapabilityStore,
+        resolveWorkspacePath: async () => root,
+        onReturnedForRework: async (job) => {
+          await missions.mountSkillRevisionDraft({
+            id: job.missionId!,
+            draftId: job.draftId,
+            revisionJobId: job.id,
+            capabilityId: job.request.capabilityId,
+            restoreSessionBinding: true,
+          });
+        },
+      });
+      const job = await revisions.start(
+        {
+          schemaVersion: "pragma.skill-revision-request/v4",
+          operation: "revise",
+          capabilityId,
+          source: "expert-reflection",
+          sourceDigest: "b".repeat(64),
+          sourceRefs: [],
+          prompt: "Improve the Skill",
+        },
+        { missionId: mission.id },
+      );
+      const mount = { draftId: job.draftId, revisionJobId: job.id, capabilityId };
+      await missions.mountSkillRevisionDraft({ id: mission.id, ...mount });
+      const nativeIds: string[] = [];
+      const runtime = defineRuntimeTestDriver<never, { id: string }>({
+        descriptor: { id: "fake", kind: "fake", displayName: "Fake" },
+        createSession: ({ systemSessionId }) => ({ id: `native-${systemSessionId}` }),
+        restoreSession: ({ systemSessionId }) => ({ id: `native-${systemSessionId}` }),
+        readSession: (session) => ({ runtimeSessionId: session.id }),
+        startTurn: (session) => {
+          nativeIds.push(session.id);
+          return { outputText: "Submitted", runtimeSessionId: session.id };
+        },
+        mapEvent: () => ({ events: [] }),
+      });
+      const runner = createDesktopMissionTestApplication({
+        missions,
+        project,
+        contextStores: createContextStoreStore({ storesPath: join(root, "context-stores") }),
+        capabilityStore: {} as CapabilityStore,
+        capabilityCredentials: {} as CapabilityCredentialStore,
+        capabilitiesPath: join(root, "capabilities"),
+        pragmaHome: join(root, "state"),
+        runtimes: createStaticRuntimeResolver({ runtimes: [runtime], defaultRuntimeId: "fake" }),
+      });
+      await runner.startRun(mission.id);
+      await vi.waitFor(async () =>
+        expect((await missions.get(mission.id)).execution?.status).toBe("succeeded"),
+      );
+      const original = await missions.get(mission.id);
+      for (let round = 0; round < 2; round++) {
+        const inspection = await revisions.inspectDraft(job.draftId, mission.id);
+        await mkdir(join(inspection.draftPath!, "references"), { recursive: true });
+        await writeFile(
+          join(inspection.draftPath!, "references", `round-${round}.md`),
+          `Feedback ${round}`,
+        );
+        const edited = await revisions.inspectDraft(job.draftId, mission.id);
+        const pending = await revisions.submitDraft({
+          draftId: job.draftId,
+          expectedRevision: edited.draft.revision,
+          expectedWorkingTreeHash: edited.workingTree.hash,
+          summary: `Round ${round}`,
+          missionId: mission.id,
+        });
+        await missions.unmountSkillRevisionDraft({ id: mission.id, draftId: mount.draftId });
+        if (cold) await runner.stopLocalController(mission.id);
+        await revisions.returnForRework(pending.id, pending.revision);
+        await runner.sendMessage({
+          id: mission.id,
+          content: `Apply review feedback ${round}`,
+          requestId: randomUUID(),
+        });
+        await vi.waitFor(async () => {
+          expect(nativeIds).toHaveLength(round + 2);
+          expect((await missions.get(mission.id)).execution?.status).toBe("succeeded");
+        });
+        expect((await missions.get(mission.id)).execution?.sessionId).toBe(
+          original.execution?.sessionId,
+        );
+        expect(nativeIds.at(-1)).toBe(nativeIds[0]);
+      }
+    },
+  );
+
   it("removes an inactive Mission Knowledge mount through the guarded update path", async () => {
     const root = await mkdtemp(join(tmpdir(), "pragma-mission-idle-knowledge-mount-"));
     temporaryPaths.push(root);
