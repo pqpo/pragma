@@ -18,6 +18,7 @@ function missionExecutorSnapshot(resource: PragmaExpertResource) {
 
 import { createMissionStore } from "../../src/missions/repository/mission-store.ts";
 import { createFencedMissionStore } from "../../src/missions/repository/mission-store-fenced-adapter.ts";
+import { MissionAttachmentWritePendingError } from "../../src/missions/repository/mission-store-error.ts";
 
 const roots: string[] = [];
 
@@ -195,6 +196,13 @@ describe("Local Host fenced Mission repository", () => {
       }),
     ).rejects.toMatchObject({ name: "MissionSemanticWritePendingError" });
 
+    const interrupted = new MissionAttachmentWritePendingError({
+      cause: new Error("attachment publication interrupted"),
+    });
+    vi.spyOn(rawStore, "updateOptions").mockRejectedValueOnce(interrupted);
+    await expect(
+      fencedStore.updateOptions(mission.id, { toolPermissionMode: "request-approval" }),
+    ).rejects.toMatchObject({ name: "MissionSemanticWritePendingError", cause: interrupted });
     await expect(
       fencedStore.updateOptions(mission.id, { toolPermissionMode: "request-approval" }),
     ).resolves.toMatchObject({ toolPermissionMode: "request-approval" });

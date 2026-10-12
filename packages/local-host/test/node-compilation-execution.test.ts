@@ -2,8 +2,8 @@ import {
   createLocalHostContextStoreReader,
   SNAPSHOT_STORAGE_MARKER,
 } from "../src/resources/context-store-reader.ts";
-import { ContextStoreSchema } from "@pragma/shared";
-import type { Expert } from "@pragma/core";
+import { ContextStoreSchema, type ExpertPromptAttachment } from "@pragma/shared";
+import type { Expert, RuntimeTurnContext } from "@pragma/core";
 import { randomUUID } from "node:crypto";
 import { spawn } from "node:child_process";
 import { readFileSync } from "node:fs";
@@ -124,6 +124,7 @@ async function fixture(
   checkpoint = false,
   running = false,
   probe?: (agent: Expert) => Promise<void>,
+  imageMode?: "native" | "paths",
 ) {
   const home = await mkdtemp(join(tmpdir(), "pragma-node-compiled-execution-"));
   roots.push(home);
@@ -134,14 +135,31 @@ async function fixture(
   const stop = vi.fn((session: { id: string }) =>
     pending.get(session.id)?.(new Error("Native stopped")),
   );
-  const startTurn = vi.fn(async (session: { readonly id: string }) => {
-    if (fail) throw new Error("fixture execution failure");
-    if (running && pending.size === 0)
-      await new Promise<never>((_resolve, reject) => pending.set(session.id, reject));
-    return { outputText: "done", runtimeSessionId: session.id };
-  });
+  const startTurn = vi.fn(
+    async (session: { readonly id: string }, _turn: RuntimeTurnContext<never>) => {
+      void _turn;
+      if (fail) throw new Error("fixture execution failure");
+      if (running && pending.size === 0)
+        await new Promise<never>((_resolve, reject) => pending.set(session.id, reject));
+      return { outputText: "done", runtimeSessionId: session.id };
+    },
+  );
   const driver = defineRuntimeTestDriver<never, { readonly id: string }>({
     descriptor: { id: "codex", kind: "test", displayName: "Fixture" },
+    ...(imageMode !== undefined
+      ? {
+          steerTurn: async () => undefined,
+          listModels: async () => [
+            {
+              id: "vision",
+              displayName: "Vision",
+              provider: { id: "fixture", kind: "registered" as const, displayName: "Fixture" },
+              default: true,
+              inputModalities: imageMode === "native" ? ["text", "image"] : ["text"],
+            },
+          ],
+        }
+      : {}),
     createSession: async ({ systemSessionId, agent }) => {
       await probe?.(agent);
       return { id: `native-${systemSessionId}` };
@@ -263,6 +281,273 @@ async function fixture(
 }
 
 describe("default Node compilation reaches persisted Execution", { timeout: 15_000 }, () => {
+  it.each(["native", "paths"] as const)(
+    "uses Mission-owned images for initial, follow-up, queued and recovered prompts (%s)",
+    { timeout: 45_000 },
+    async (imageMode) => {
+      // Keep the real Mission, Session, Execution and Runtime boundaries. Optional
+      // Memory owners are outside this attachment recovery test's lifecycle.
+      const createMemory = runMemoryModule.createLocalHostRunMemory;
+      vi.spyOn(runMemoryModule, "createLocalHostRunMemory").mockImplementation((options) => ({
+        ...createMemory(options),
+        bindings: async () => [],
+        beginPrompt: async () => async () => undefined,
+        register: async () => undefined,
+        resume: async () => undefined,
+        complete: async () => undefined,
+        reconcile: async () => undefined,
+      }));
+      const f = await fixture(false, false, false, undefined, imageMode);
+      const paths = new PragmaPaths({ pragmaHome: f.home });
+      const executions = createSqliteExecutionStore({ pragmaHome: f.home });
+      const sessions = createFileExpertSessionStore({ pragmaHome: f.home, executions });
+      const missions = createMissionStore({ missionsPath: paths.missionsRoot() });
+      const draft = async (): Promise<ExpertPromptAttachment> => {
+        const id = randomUUID();
+        const path = join(f.home, `${id}.original.png`);
+        const optimizedPath = join(f.home, `${id}.webp`);
+        await writeFile(path, "original-image");
+        await writeFile(optimizedPath, "optimized-image");
+        return {
+          id,
+          kind: "image",
+          name: "clipboard.png",
+          path,
+          mimeType: "image/png",
+          optimized: { path: optimizedPath, mimeType: "image/webp", size: 15, width: 1, height: 1 },
+        };
+      };
+      const seen: Array<readonly ExpertPromptAttachment[]> = [];
+      f.startTurn.mockImplementation(async (session, turn) => {
+        if (turn.rawQuery === "hold") {
+          await new Promise<never>((_resolve, reject) => f.pending.set(session.id, reject));
+        }
+        const storedImages = (await missions.getAttachments(mission.id)).filter((image) =>
+          turn.prompt.includes(image.path),
+        );
+        expect(storedImages).toHaveLength(1);
+        seen.push(storedImages);
+        expect(turn.attachments.map((image) => image.path)).toEqual(
+          imageMode === "native" ? storedImages.map((image) => image.optimized!.path) : [],
+        );
+        for (const stored of storedImages) {
+          expect(stored.path).toContain(
+            join(missions.storagePath!(mission.id), "attachments", "images"),
+          );
+          expect(await readFile(stored.path, "utf8")).toBe("original-image");
+          expect(await readFile(stored.optimized!.path, "utf8")).toBe("optimized-image");
+          expect(turn.prompt).toContain(stored.path);
+          expect(turn.prompt).not.toContain(".original.png");
+        }
+        return { outputText: "done", runtimeSessionId: session.id };
+      });
+      const initialImage = await draft();
+      const expert = createPublishedProjectResources().find(
+        (resource) => resource.kind === "Expert",
+      )!;
+      const mission = await missions.create({
+        workspace: { path: f.home, basename: "workspace" },
+        goal: "initial",
+        project: { id: "studio", revision: 1 },
+        executor: {
+          kind: "expert",
+          ref: `expert:${expert.metadata.id}`,
+          name: expert.metadata.name,
+        },
+        attachments: [initialImage],
+      });
+      await rm(initialImage.path);
+      await rm(initialImage.optimized!.path);
+      const started = await f.app.run!.startAttached({
+        missionId: mission.id,
+        request: {
+          requestId: mission.initialMessageId,
+          command: "expert.run",
+          executor: { kind: "expert", id: f.expertId },
+          project: { projectId: "studio", revision: 1 },
+          workspace: f.workspace,
+          prompt: "initial",
+          detach: false,
+        },
+      });
+      expect((await started.outcome).status).toBe("succeeded");
+      const submit = async (
+        app: typeof f.app,
+        requestId: string,
+        image: ExpertPromptAttachment,
+      ) => {
+        await app.missionControl!.submit({
+          missionId: mission.id,
+          requestId,
+          kind: "send",
+          payload: { kind: "send", input: { prompt: "inspect image", attachments: [image] } },
+        });
+        const result = await app.missionControl!.waitForTerminal({
+          missionId: mission.id,
+          requestId,
+          timeoutMs: 5_000,
+        });
+        expect(result, JSON.stringify(result.error)).toMatchObject({ state: "applied" });
+        const sessionId = (await missions.get(mission.id)).execution!.sessionId!;
+        return (await sessions.listPrompts(sessionId)).find(
+          (prompt) => prompt.requestId === requestId,
+        )!.executionId;
+      };
+      const blankImage = await draft();
+      const blankId = randomUUID();
+      await f.app.missionControl!.submit({
+        missionId: mission.id,
+        requestId: blankId,
+        kind: "send",
+        payload: { kind: "send", input: { prompt: " \n\t ", attachments: [blankImage] } },
+      });
+      expect(
+        await f.app.missionControl!.waitForTerminal({
+          missionId: mission.id,
+          requestId: blankId,
+          timeoutMs: 5_000,
+        }),
+      ).toMatchObject({ state: "rejected" });
+      expect(
+        (await missions.readTimelinePage(mission.id, { limit: 20 })).turns.some(
+          (turn) => turn.message.id === blankId,
+        ),
+      ).toBe(false);
+      expect(
+        (await missions.getAttachments(mission.id)).some((image) => image.id === blankImage.id),
+      ).toBe(false);
+      const followup = await draft();
+      const followupId = randomUUID();
+      const followupExecution = await submit(f.app, followupId, followup);
+      await rm(followup.path);
+      await rm(followup.optimized!.path);
+      await f.app.missionControl!.waitExecution!({
+        missionId: mission.id,
+        executionId: followupExecution,
+      });
+      // Idempotent replay must work after the source drafts have been discarded.
+      expect(await submit(f.app, followupId, followup)).toBe(followupExecution);
+      const open = () =>
+        createLocalHostNodeApplication({
+          pragmaHome: f.home,
+          runtimes: f.runtimes,
+          client: { surface: "cli", version: "test", instanceId: randomUUID() },
+          workspace: {
+            stat: async () => ({ isDirectory: () => true }),
+            access: async () => undefined,
+            realpath: async (path) => path,
+          },
+        });
+      const queuedHost = f.app;
+      const holdId = randomUUID();
+      await queuedHost.missionControl!.submit({
+        missionId: mission.id,
+        requestId: holdId,
+        kind: "send",
+        payload: { kind: "send", input: { prompt: "hold" } },
+      });
+      expect(
+        await queuedHost.missionControl!.waitForTerminal({
+          missionId: mission.id,
+          requestId: holdId,
+          timeoutMs: 5_000,
+        }),
+      ).toMatchObject({ state: "applied" });
+      await vi.waitFor(() => expect(f.pending.size).toBe(1));
+      const rejectedImage = await draft();
+      const steerId = randomUUID();
+      await queuedHost.missionControl!.submit({
+        missionId: mission.id,
+        requestId: steerId,
+        kind: "steer",
+        payload: {
+          kind: "steer",
+          input: { prompt: "strict image steer", attachments: [rejectedImage] },
+        },
+      });
+      expect(
+        await queuedHost.missionControl!.waitForTerminal({
+          missionId: mission.id,
+          requestId: steerId,
+          timeoutMs: 5_000,
+        }),
+      ).toMatchObject({ state: "rejected" });
+      expect(
+        (await missions.readTimelinePage(mission.id, { limit: 20 })).turns.some(
+          (turn) => turn.message.id === steerId,
+        ),
+      ).toBe(false);
+      expect(
+        (await missions.getAttachments(mission.id)).some((image) => image.id === rejectedImage.id),
+      ).toBe(false);
+      const queuedImage = await draft();
+      const queuedId = randomUUID();
+      const queuedExecution = await submit(queuedHost, queuedId, queuedImage);
+      expect((await executions.get(queuedExecution))?.status).toBe("queued");
+      const queuedSteerId = randomUUID();
+      await queuedHost.missionControl!.submit({
+        missionId: mission.id,
+        requestId: queuedSteerId,
+        kind: "queue.steer",
+        payload: { kind: "queue.steer", requestId: queuedId },
+      });
+      expect(
+        await queuedHost.missionControl!.waitForTerminal({
+          missionId: mission.id,
+          requestId: queuedSteerId,
+          timeoutMs: 5_000,
+        }),
+      ).toMatchObject({ state: "rejected" });
+      expect((await executions.get(queuedExecution))?.status).toBe("queued");
+      await rm(queuedImage.path);
+      await rm(queuedImage.optimized!.path);
+      for (const reject of f.pending.values())
+        reject(new Error("Pause after the active turn fails"));
+      await vi.waitFor(async () =>
+        expect(
+          (await sessions.listPrompts((await missions.get(mission.id)).execution!.sessionId!)).find(
+            (prompt) => prompt.requestId === holdId,
+          )?.status,
+        ).toBe("failed"),
+      );
+      expect((await executions.get(queuedExecution))?.status).toBe("queued");
+      await queuedHost.dispose!();
+      const restored = open();
+      expect(await submit(restored, queuedId, queuedImage)).toBe(queuedExecution);
+      const resumeId = randomUUID();
+      await restored.missionControl!.submit({
+        missionId: mission.id,
+        requestId: resumeId,
+        kind: "queue.resume",
+        payload: { kind: "queue.resume" },
+      });
+      expect(
+        await restored.missionControl!.waitForTerminal({
+          missionId: mission.id,
+          requestId: resumeId,
+          timeoutMs: 5_000,
+        }),
+      ).toMatchObject({ state: "applied" });
+      await restored.missionControl!.waitExecution!({
+        missionId: mission.id,
+        executionId: queuedExecution,
+      });
+      expect(seen).toHaveLength(3);
+      const stored = await missions.getAttachments(mission.id);
+      expect(seen.flat()).toEqual(stored);
+      for (const executionId of [started.executionId!, followupExecution, queuedExecution]) {
+        expect((await executions.get(executionId))?.status).toBe("succeeded");
+        expect(JSON.stringify((await executions.get(executionId))?.input)).not.toContain(
+          ".original.png",
+        );
+        const invocations = await executions.listInvocations(executionId);
+        expect(JSON.stringify(invocations.map((invocation) => invocation.input))).not.toContain(
+          ".original.png",
+        );
+      }
+      await executions.close();
+    },
+  );
   it.each(["show", "query", "owned-show"] as const)(
     "recovers terminal receipt custody on explicit %s before immediate facade disposal without another Native turn",
     async (access) => {

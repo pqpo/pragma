@@ -1,3 +1,4 @@
+import { ExpertPromptRejectedError } from "./expert-prompt-rejected-error.ts";
 import { randomUUID } from "node:crypto";
 
 import type {
@@ -19,6 +20,7 @@ import type {
 import {
   ExpertMessageHistorySchema,
   ExpertPromptAttachmentSchema,
+  RuntimeModelSelectionSchema,
   InvocationOutputSchema,
   isFinalExecutionStatus as isFinal,
 } from "@pragma/shared";
@@ -989,14 +991,18 @@ class ExpertSessionImpl implements ExpertSession {
   private async promptInternal(content: string, options: PromptOptions): Promise<ExpertTurn> {
     if (this.leaseError !== undefined) throw this.leaseError;
     if (this.resourcesReleasing || this.terminalReleaseRequested) {
-      throw new Error(`ExpertSession resources are being released: ${this.sessionId}`);
+      throw new ExpertPromptRejectedError(
+        `ExpertSession resources are being released: ${this.sessionId}`,
+      );
     }
     if (this.closePromise !== undefined || this.stopPromise !== undefined || this.deletionFrozen) {
-      throw new Error(`ExpertSession is closing or closed: ${this.sessionId}`);
+      throw new ExpertPromptRejectedError(`ExpertSession is closing or closed: ${this.sessionId}`);
     }
-    if (content.trim() === "") throw new Error("Prompt content must not be empty.");
+    if (content.trim() === "")
+      throw new ExpertPromptRejectedError("Prompt content must not be empty.");
     const requestId = options.requestId ?? randomUUID();
-    if (requestId.trim() === "") throw new Error("Prompt requestId must not be empty.");
+    if (requestId.trim() === "")
+      throw new ExpertPromptRejectedError("Prompt requestId must not be empty.");
     const mode = options.mode ?? "enqueue";
 
     if (mode === "steer") {
@@ -1010,7 +1016,7 @@ class ExpertSessionImpl implements ExpertSession {
           previous.deliveryAttempt?.state === "not_dispatched"
         ) {
           if (previous.content !== content) {
-            throw new Error(`Prompt idempotency conflict: ${requestId}`);
+            throw new ExpertPromptRejectedError(`Prompt idempotency conflict: ${requestId}`);
           }
           // Resume the durable fallback after a crash without attempting native delivery again.
           return await this.fallbackToEnqueue(
@@ -1022,14 +1028,16 @@ class ExpertSessionImpl implements ExpertSession {
         }
       }
       if (options.modelSelection !== undefined) {
-        const error = new Error(
+        const error = new ExpertPromptRejectedError(
           "A steer request cannot change the active Runtime model selection.",
         );
         if (options.steerFallback !== "enqueue") throw error;
         return await this.fallbackToEnqueue(content, requestId, options, error);
       }
       if ((options.attachments?.length ?? 0) > 0) {
-        const error = new Error("A steer request cannot add prompt attachments.");
+        const error = new ExpertPromptRejectedError(
+          "A steer request cannot add prompt attachments.",
+        );
         if (options.steerFallback !== "enqueue") throw error;
         return await this.fallbackToEnqueue(content, requestId, options, error);
       }
@@ -1067,10 +1075,22 @@ class ExpertSessionImpl implements ExpertSession {
     const now = new Date().toISOString();
     const session = await this.getState();
     const rootContextId = session.rootContextId;
-    const modelSelection = options.modelSelection;
-    const attachments = ExpertPromptAttachmentSchema.array()
+    const modelSelectionResult = RuntimeModelSelectionSchema.optional().safeParse(
+      options.modelSelection,
+    );
+    if (!modelSelectionResult.success)
+      throw new ExpertPromptRejectedError("Invalid prompt Runtime model selection.", {
+        cause: modelSelectionResult.error,
+      });
+    const modelSelection = modelSelectionResult.data;
+    const attachmentResult = ExpertPromptAttachmentSchema.array()
       .max(20)
-      .parse(options.attachments ?? []);
+      .safeParse(options.attachments ?? []);
+    if (!attachmentResult.success)
+      throw new ExpertPromptRejectedError("Invalid prompt attachments.", {
+        cause: attachmentResult.error,
+      });
+    const attachments = attachmentResult.data;
     const storedInput = createExpertPromptInput(content, attachments);
     const definitionKind = isExpertTeam(this.expert) ? "expert-team" : "expert";
     const execution: ExecutionRecord = {
@@ -2724,7 +2744,7 @@ class ExpertSessionImpl implements ExpertSession {
     const inFlight = this.strictSteersInFlight.get(requestId);
     if (inFlight !== undefined) {
       if (inFlight.content !== content) {
-        throw new Error(`Prompt idempotency conflict: ${requestId}`);
+        throw new ExpertPromptRejectedError(`Prompt idempotency conflict: ${requestId}`);
       }
       return await inFlight.delivery;
     }
@@ -2752,7 +2772,7 @@ class ExpertSessionImpl implements ExpertSession {
       );
       if (duplicate !== undefined) {
         if (duplicate.content !== content || duplicate.mode !== "steer")
-          throw new Error(`Prompt idempotency conflict: ${requestId}`);
+          throw new ExpertPromptRejectedError(`Prompt idempotency conflict: ${requestId}`);
         if (duplicate.status === "succeeded" && duplicate.deliveryAttempt?.state === "confirmed") {
           return this.createTurn(duplicate.executionId, requestId, "steer", "steer");
         }
@@ -2787,7 +2807,7 @@ class ExpertSessionImpl implements ExpertSession {
         const duplicate = prompts.find((prompt) => prompt.requestId === requestId);
         if (duplicate !== undefined) {
           if (duplicate.content !== content || duplicate.mode !== "steer") {
-            throw new Error(`Prompt idempotency conflict: ${requestId}`);
+            throw new ExpertPromptRejectedError(`Prompt idempotency conflict: ${requestId}`);
           }
           if (
             duplicate.deliveryAttempt?.state === "dispatching" ||

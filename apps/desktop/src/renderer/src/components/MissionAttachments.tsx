@@ -1,12 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import {
-  File as FileIcon,
-  FolderOpen,
-  ImageSquare,
-  Plus,
-  WarningCircle,
-  X,
-} from "@phosphor-icons/react";
+import { File as FileIcon, FolderOpen, ImageSquare, Plus, X } from "@phosphor-icons/react";
 import type { ExpertPromptAttachment, ExpertPromptAttachmentKind } from "@pragma/shared";
 import { useTranslation } from "react-i18next";
 
@@ -91,7 +84,6 @@ export function MissionAttachmentPicker(props: {
 export function MissionAttachmentList(props: {
   readonly attachments: readonly ExpertPromptAttachment[];
   readonly previews?: Readonly<Record<string, string>> | undefined;
-  readonly imageUnsupported?: boolean | undefined;
   readonly originalUrl?: ((attachment: ExpertPromptAttachment) => string) | undefined;
   readonly onRemove: (id: string) => void;
 }) {
@@ -157,12 +149,6 @@ export function MissionAttachmentList(props: {
           );
         })}
       </div>
-      {props.imageUnsupported && hasImages ? (
-        <div className="mission-attachment-model-error">
-          <WarningCircle size={16} aria-hidden="true" />
-          <span>{t("imageUnsupportedByModel")}</span>
-        </div>
-      ) : null}
       {previewing === undefined ? null : (
         <MissionImagePreviewDialog
           name={previewing.name}

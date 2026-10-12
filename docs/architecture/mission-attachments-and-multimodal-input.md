@@ -20,11 +20,14 @@ Home 任务输入框提供统一的 `+` 入口，支持选择图片、文件和�
 
 ```mermaid
 flowchart LR
-  UI["Home Composer + 菜单"] --> IPC["Desktop IPC 文件选择与校验"]
+  UI["Home / Mission Composer + 菜单"] --> IPC["Desktop IPC 文件选择与校验"]
   IPC --> Store["MissionStore"]
   Store --> Manifest["attachments.json v1"]
   Store --> ImageCopy["Mission-owned image copy"]
-  Manifest --> Session["ExpertSession.prompt attachments"]
+  Manifest --> Submit["共享 Mission prompt submission"]
+  Store --> Prepared["待接受的附件准备 journal"]
+  Prepared --> Submit
+  Submit --> Session["ExpertSession.prompt attachments"]
   Session --> Execution["Execution / Invocation structured input"]
   Execution --> Core["Expert Runner"]
   Core --> Text["所有 Runtime：路径前言"]
@@ -56,7 +59,8 @@ type ExpertPromptAttachment = {
 
 ### Mission 持久化
 
-附件不进入 `pragma.mission/v7` 或 `pragma.mission-message/v1`，避免改变既有 Mission 与时间线协议。每个 Mission 使用独立文件：
+Mission 配置保存在 `mission.yaml`，附件的权威清单保存在 `attachments.json`，用户消息的可选
+`attachments` 字段记录该条消息登记的附件。每个 Mission 使用独立文件：
 
 ```text
 <mission>/
@@ -66,6 +70,8 @@ type ExpertPromptAttachment = {
   attachments/
     images/
       <attachment-id>.<ext>
+      optimized/
+        <attachment-id>.webp
 ```
 
 `attachments.json` 使用 `pragma.mission-attachments/v1`：
@@ -76,10 +82,34 @@ type ExpertPromptAttachment = {
 - 未识别或损坏的附件 manifest 会 fail closed，并报告 `config_invalid`。
 - 删除 Mission 时，Mission-owned 图片随 owner 图一起删除。
 
-Mission 聊天快照会在读取时把该 manifest 投影到首条用户消息的可选 `attachments` 字段，供详情页展示；
-投影不写回 `pragma.mission-message/v1`。图片缩略图通过只读
+创建 Mission 时，首条消息和已物化的附件随创建事务一起发布；追加附件时，用户消息、附件清单与图片通过
+同一个带 journal 的消息事务提交。两种事务共用 `materializeMissionAttachments()`，同时保存原图和可选的
+optimized WebP。图片缩略图通过只读
 `pragma-mission-attachment://` 协议按 Mission ID 与附件 ID 加载，主进程会重新校验 manifest、文件类型和
 Mission-owned 图片目录边界，Renderer 不能把任意本地路径转换成可读取 URL。
+
+### 统一提交边界
+
+首轮启动与后续 Send/Steer 均通过 Local Host 的 `executionKernel.prompt()`，由
+`submitMissionExpertPrompt()` 统一准备附件、检查取消状态、调用 Core 和处理待重放错误。页面和消息
+admission 不直接调用 `ExpertSession.prompt()`，也不各自决定执行附件的路径。
+
+首轮从创建时登记的 Mission 输入读取规范路径。后续消息通过共享 `preparePromptAttachments` 端口
+将原图和 WebP 准备到稳定的 Mission-owned 路径，在 `prompt-attachments/<encoded-request-id>/manifest.json`
+保存独立的 `pragma.mission-prompt-attachments/v1` 准备 journal。该新命名空间不改变既有 Mission、附件清单
+或消息事务格式；旧消息事务仍可恢复，未知未来准备版本严格拒绝。准备 journal 只保存待提交输入，
+不写用户 Timeline 或权威 `attachments.json`。重试按 requestId 读取准备 journal，不依赖已删除草稿。
+
+Core 接受后，`appendUserMessage()` 使用已准备路径，通过现有消息事务一起发布用户消息和权威附件清单，
+再移除准备 journal。Execution 和 Invocation 的图片路径在这次提交前后保持稳定。Core 的明确拒绝通过
+`ExpertPromptRejectedError` 表达；Host 核对没有匹配的已接受 receipt 后清理准备文件，将 Inbox 收敛为拒绝。
+已接受的 enqueue receipt 在 Session 关闭后直接复用原 turn 完成投影，不重新执行 Runtime。
+接受写入或 receipt 读取状态不确定时保留准备 journal，使用同一 requestId 重放；取消发生在附件 I/O 之后时
+也保留准备数据，但不从取消的尝试提交 Core。Repository 只暴露附件事务错误，由 fenced adapter 转换为
+Controller 的恢复语义，永久数据错误保留原始诊断并停止自动重试。
+
+严格 Steer 不接受新增附件，拒绝时不触发附件准备。无附件请求不建立准备 journal；其错误分类同样依据
+Core 接受结果，不因首轮消息已经存在就把明确拒绝转换成待重放错误。
 
 ### Expert Core
 

@@ -1,3 +1,4 @@
+import { ExpertPromptRejectedError } from "./expert-prompt-rejected-error.ts";
 import { isOwnerDeletionFenced } from "../storage/owner-deletion.ts";
 import { randomUUID } from "node:crypto";
 import { mkdir, rm } from "node:fs/promises";
@@ -220,7 +221,8 @@ export function createFileExpertSessionStore(options: {
         const events = ExpertSessionEventSchema.array().parse(
           (await readJson(paths.expertSessionEvents(sessionId))) ?? [],
         );
-        if (session.status === "closed") throw new Error(`ExpertSession is closed: ${sessionId}`);
+        if (session.status === "closed")
+          throw new ExpertPromptRejectedError(`ExpertSession is closed: ${sessionId}`);
         const rootContext = session.contexts[session.rootContextId]!;
         const prompt =
           transaction.prompt.modelSelection !== undefined ||
@@ -239,7 +241,7 @@ export function createFileExpertSessionStore(options: {
             !replacesFailedSteer &&
             (duplicate.content !== prompt.content || duplicate.mode !== prompt.mode)
           ) {
-            throw new Error(`Prompt idempotency conflict: ${prompt.requestId}`);
+            throw new ExpertPromptRejectedError(`Prompt idempotency conflict: ${prompt.requestId}`);
           }
           if (!replacesFailedSteer) {
             return duplicate.executionId;

@@ -97,7 +97,6 @@ import {
   type ContextStoreBrowserSource,
 } from "../../components/ContextStoreBrowser.tsx";
 import { ContextStorePickerDialog } from "../../components/ContextStorePickerDialog.tsx";
-import { missionImageSupport } from "../../lib/mission-attachments.ts";
 import {
   desktopApi,
   entryContentLength,
@@ -664,8 +663,6 @@ export function MissionDetailFragment(props: {
     onError: (optionError) => setOptionsError(missionError(optionError)),
     onClearError: () => setOptionsError(null),
   });
-  const imageUnsupported =
-    missionImageSupport(models, modelOverride, defaultModelSelection) === "unsupported";
   const visibleError = props.error ?? optionsError;
   const unavailableTool =
     visibleError === null || visibleError === undefined
@@ -1963,7 +1960,6 @@ export function MissionDetailFragment(props: {
                         props.onComposerRecovery?.(recovered, "unmount");
                       }}
                       mentionCandidates={mentionCandidates}
-                      imageUnsupported={imageUnsupported}
                       isFlow={isFlow}
                       sending={clientOperation.kind === "sending"}
                       clientOperationBusy={clientOperationBusy}

@@ -4,6 +4,8 @@ import type { MissionSemanticOperation } from "../controller/schemas.ts";
 
 import type { Mission } from "@pragma/shared";
 import type { MissionStore } from "./mission-store.ts";
+import { MissionAttachmentWritePendingError } from "./mission-store-error.ts";
+import { MissionSemanticWritePendingError } from "../controller/mission-controller-store.ts";
 
 /**
  * Adds the Local Host ownership fence to the Mission persistence
@@ -38,8 +40,20 @@ export function createFencedMissionStore(
     input,
   });
 
-  const replay = async (operation: MissionSemanticOperation): Promise<void> => {
+  const replayOperation = async (operation: MissionSemanticOperation): Promise<void> => {
     switch (operation.name) {
+      case "mission.prompt.attachments.prepare":
+        await store.preparePromptAttachments(
+          String(operation.input.id),
+          operation.input.message as Parameters<MissionStore["preparePromptAttachments"]>[1],
+        );
+        return;
+      case "mission.prompt.attachments.discard":
+        await store.discardPromptAttachments(
+          String(operation.input.id),
+          String(operation.input.messageId),
+        );
+        return;
       case "mission.managed-revision-draft.mount":
         await store.mountManagedRevisionDraft(
           operation.input.input as Parameters<MissionStore["mountManagedRevisionDraft"]>[0],
@@ -143,6 +157,17 @@ export function createFencedMissionStore(
     }
   };
 
+  const recoverRepositoryWrite = async <T>(operation: () => Promise<T>): Promise<T> => {
+    try {
+      return await operation();
+    } catch (error) {
+      if (error instanceof MissionAttachmentWritePendingError)
+        throw new MissionSemanticWritePendingError({ cause: error });
+      throw error;
+    }
+  };
+  const replay = async (operation: MissionSemanticOperation): Promise<void> =>
+    await recoverRepositoryWrite(() => replayOperation(operation));
   options.setSemanticWriteReplay(replay);
 
   const sameOperation = (
@@ -166,7 +191,7 @@ export function createFencedMissionStore(
           // Capture the original method result while the controller still owns
           // the recovery journal and lock. Never repeat the mutation after it
           // commits: the lease may be revoked as soon as recovery returns.
-          recoveredResult = { value: await apply() };
+          recoveredResult = { value: await recoverRepositoryWrite(apply) };
         } else {
           await replay(pending);
         }
@@ -190,6 +215,24 @@ export function createFencedMissionStore(
 
   return {
     ...store,
+    get: async (id) => await recoverRepositoryWrite(() => store.get(id)),
+    getAttachments: async (id) => await recoverRepositoryWrite(() => store.getAttachments(id)),
+    getPromptAttachments: async (id, messageId) =>
+      await recoverRepositoryWrite(() => store.getPromptAttachments(id, messageId)),
+    preparePromptAttachments: async (id, message) =>
+      await write(
+        id,
+        "mission.prompt.attachments.prepared",
+        named("mission.prompt.attachments.prepare", { id, message }),
+        () => store.preparePromptAttachments(id, message),
+      ),
+    discardPromptAttachments: async (id, messageId) =>
+      await write(
+        id,
+        "mission.prompt.attachments.discarded",
+        named("mission.prompt.attachments.discard", { id, messageId }),
+        () => store.discardPromptAttachments(id, messageId),
+      ),
     mountManagedRevisionDraft: async (input) =>
       await write(
         input.id,

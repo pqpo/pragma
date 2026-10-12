@@ -1280,7 +1280,6 @@ describe("MissionDetailFragment", () => {
           attachmentPreviews: {},
         }}
         mentionCandidates={[]}
-        imageUnsupported={false}
         isFlow={false}
         sending={false}
         clientOperationBusy={false}
