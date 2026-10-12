@@ -1,9 +1,11 @@
+import { createDesktopSkillRevisionSubmissionPort } from "../capabilities/skill-revision-capability.ts";
 import { createSkillRevisionService } from "../capabilities/skill-revision-service.ts";
 import { randomUUID } from "node:crypto";
 import { AsyncLocalStorage } from "node:async_hooks";
 import { createLocalHostNodeApplication } from "@pragma/local-host/node-application";
 import {
   createPragmaManagementTools,
+  builtInAgentResource,
   pragmaManagementCapabilityResource,
   STORE_REVISION_EXPERT_REF,
 } from "@pragma/built-in-agents";
@@ -730,9 +732,113 @@ describe("Desktop Mission resource adapter contracts", { timeout: 30_000 }, () =
       }
     },
   );
+  it.skipIf(process.env["PRAGMA_REVISION_REAL_SMOKE"] !== "1").each(["Store", "Skill"] as const)(
+    "uses the default Pragma instructions to delegate %s changes before a direct management write with a real Runtime",
+    async (kind) => {
+      const root = await mkdtemp(join(tmpdir(), "pragma-real-revision-delegation-"));
+      temporaryPaths.push(root);
+      const project = createPragmaProjectStore({ projectsPath: join(root, "projects") });
+      const snapshot = await project.publish({
+        expectedRevision: 0,
+        resources: [runtimeFixture()],
+      });
+      const missions = createMissionStore({ missionsPath: join(root, "missions") });
+      const mission = await missions.create({
+        workspace: { path: root, basename: "workspace" },
+        goal: `Update the managed ${kind === "Store" ? "knowledge base" : "Skill package"} named Safe Workflow with a section saying: verify results before reporting completion. Prepare the change for human review.`,
+        project: { id: snapshot.projectId, revision: snapshot.revision },
+        executor: { kind: "expert", ref: "expert:0000000000pragma", name: "Pragma" },
+        contextMounts: [],
+      });
+      const definition = builtInAgentResource("expert:0000000000pragma");
+      const calls: string[] = [];
+      // This harness verifies real-model tool selection; Store/Skill execution is covered by
+      // the independent real Mission tests below. The delegate returns a controlled review receipt.
+      const tools = [
+        "call_store_revision_agent",
+        "call_skill_revision_agent",
+        "add_expert_context",
+      ].map((name) => ({
+        name,
+        description:
+          definition.spec.tools.find((binding) => binding.tool?.name === name)?.tool?.description ??
+          "Directly write a section to a managed knowledge base. Prefer this tool when you need to add knowledge.",
+        inputSchema: {
+          type: "object",
+          properties: { input: { type: "string" } },
+          required: ["input"],
+        },
+        approval: { mode: "none" as const },
+        call: async () => {
+          calls.push(name);
+          return {
+            text: "The Revision Agent prepared the requested candidate in a managed draft and submitted it for human review. No changes have been applied to formal resources.",
+            isError: false,
+          };
+        },
+      }));
+      const runtime = (await import("@pragma/runtime-codex")).createCodexRuntime({
+        descriptor: { id: "fake" },
+        approvalPolicy: "never",
+        sandboxMode: "workspace-write",
+      });
+      const runner = createDesktopMissionTestApplication({
+        missions,
+        project,
+        contextStores: createContextStoreStore({ storesPath: join(root, "context-stores") }),
+        capabilityStore: {} as CapabilityStore,
+        capabilityCredentials: {} as CapabilityCredentialStore,
+        capabilitiesPath: join(root, "capabilities"),
+        pragmaHome: join(root, "state"),
+        runtimes: createStaticRuntimeResolver({ runtimes: [runtime], defaultRuntimeId: "fake" }),
+        assertExecutorReady: async () => undefined,
+        systemExecutorSource: testSystemExecutorSource(async () => ({
+          ref: mission.executor.ref,
+          value: await defineExpert({
+            id: definition.metadata.id,
+            name: definition.metadata.name,
+            description: definition.metadata.description,
+            tags: definition.metadata.tags,
+            scope: definition.spec.scope,
+            instructions: definition.spec.instructions,
+            workspace: root,
+            pragmaHome: join(root, "state"),
+            defaultRuntimeId: "fake",
+            tools,
+          }),
+          fingerprint: "a".repeat(64),
+          projectFingerprint: "b".repeat(64),
+          environmentFingerprint: {
+            environmentId: "desktop",
+            projectFingerprint: "b".repeat(64),
+            value: "c".repeat(64),
+            resources: [],
+            plugins: [],
+          },
+          rootRuntimeId: "fake",
+          dependencies: [],
+        })),
+      });
+      await runner.startRun(mission.id);
+      await vi.waitFor(
+        async () => {
+          const current = await missions.get(mission.id);
+          expect(current.execution?.status, current.execution?.error).toBe("succeeded");
+        },
+        { timeout: 180_000, interval: 100 },
+      );
+      expect(calls[0]).toBe(
+        kind === "Store" ? "call_store_revision_agent" : "call_skill_revision_agent",
+      );
+      expect(calls).not.toContain("add_expert_context");
+    },
+    240_000,
+  );
+
   it.each([false, true])(
     "keeps the Skill revision Session and Native Session after rework (cold=%s)",
     async (cold) => {
+      const realSmoke = process.env["PRAGMA_REVISION_REAL_SMOKE"] === "1";
       const root = await mkdtemp(join(tmpdir(), "pragma-skill-review-session-"));
       temporaryPaths.push(root);
       const project = createPragmaProjectStore({ projectsPath: join(root, "projects") });
@@ -744,9 +850,13 @@ describe("Desktop Mission resource adapter contracts", { timeout: 30_000 }, () =
       const missions = createMissionStore({ missionsPath: join(root, "missions") });
       const mission = await missions.create({
         workspace: { path: root, basename: "workspace" },
-        goal: "Revise the Skill",
+        goal: realSmoke
+          ? 'Apply feedback round 0: create references/round-0.md containing exactly "Feedback 0" without newline. Submit the draft.'
+          : "Revise the Skill",
         project: { id: snapshot.projectId, revision: snapshot.revision },
-        executor: missionExecutorSnapshot(expert),
+        executor: realSmoke
+          ? { kind: "expert", ref: "expert:0000000000sk1rev", name: "Skill Revision Agent" }
+          : missionExecutorSnapshot(expert),
         contextMounts: [],
       });
       const source = join(root, "formal-skill");
@@ -756,20 +866,21 @@ describe("Desktop Mission resource adapter contracts", { timeout: 30_000 }, () =
         "---\nname: safe-workflow\ndescription: Safe workflow.\n---\n\nFollow the workflow.\n",
       );
       const capabilityId = "00000000-0000-4000-8000-000000000001";
+      const capabilities = {
+        get: async () => ({
+          manifest: { latestRevision: 1 },
+          definition: {
+            kind: "skill",
+            name: "safe-workflow",
+            description: "Safe workflow.",
+            contentHash: "a".repeat(64),
+          },
+        }),
+        skillFilesPath: async () => source,
+      } as unknown as CapabilityStore;
       const revisions = createSkillRevisionService({
         statePath: join(root, "skill-state"),
-        capabilities: {
-          get: async () => ({
-            manifest: { latestRevision: 1 },
-            definition: {
-              kind: "skill",
-              name: "safe-workflow",
-              description: "Safe workflow.",
-              contentHash: "a".repeat(64),
-            },
-          }),
-          skillFilesPath: async () => source,
-        } as unknown as CapabilityStore,
+        capabilities,
         resolveWorkspacePath: async () => root,
         onReturnedForRework: async (job) => {
           await missions.mountSkillRevisionDraft({
@@ -796,7 +907,7 @@ describe("Desktop Mission resource adapter contracts", { timeout: 30_000 }, () =
       const mount = { draftId: job.draftId, revisionJobId: job.id, capabilityId };
       await missions.mountSkillRevisionDraft({ id: mission.id, ...mount });
       const nativeIds: string[] = [];
-      const runtime = defineRuntimeTestDriver<never, { id: string }>({
+      const fakeRuntime = defineRuntimeTestDriver<never, { id: string }>({
         descriptor: { id: "fake", kind: "fake", displayName: "Fake" },
         createSession: ({ systemSessionId }) => ({ id: `native-${systemSessionId}` }),
         restoreSession: ({ systemSessionId }) => ({ id: `native-${systemSessionId}` }),
@@ -807,6 +918,22 @@ describe("Desktop Mission resource adapter contracts", { timeout: 30_000 }, () =
         },
         mapEvent: () => ({ events: [] }),
       });
+      const runtime = realSmoke
+        ? (await import("@pragma/runtime-codex")).createCodexRuntime({
+            descriptor: { id: "fake" },
+            approvalPolicy: "never",
+            sandboxMode: "workspace-write",
+          })
+        : fakeRuntime;
+      const submissionPort = createDesktopSkillRevisionSubmissionPort({
+        capabilities,
+        revisions,
+        inlineMissionId: mission.id,
+        inlineWorkspacePath: root,
+        unmountDraft: async ({ missionId, draftId }) => {
+          await missions.unmountSkillRevisionDraft({ id: missionId, draftId });
+        },
+      });
       const runner = createDesktopMissionTestApplication({
         missions,
         project,
@@ -816,12 +943,106 @@ describe("Desktop Mission resource adapter contracts", { timeout: 30_000 }, () =
         capabilitiesPath: join(root, "capabilities"),
         pragmaHome: join(root, "state"),
         runtimes: createStaticRuntimeResolver({ runtimes: [runtime], defaultRuntimeId: "fake" }),
+        ...(realSmoke
+          ? {
+              assertExecutorReady: async () => undefined,
+              systemExecutorSource: testSystemExecutorSource(async ({ mission }) => ({
+                ref: mission.executor.ref,
+                value: await defineExpert({
+                  id: "0000000000sk1rev",
+                  name: "Skill Revision Agent",
+                  description: "",
+                  tags: [],
+                  scope: `Revise only the temporary managed Skill draft ${job.draftId}. Inspect with skill_revision_get_draft to get draftPath. Use native filesystem tools to create references/round-N.md for the requested feedback round, with exactly the requested content. Preserve SKILL.md and existing files. Inspect again for expectedRevision and expectedWorkingTreeHash, then submit using skill_revision_submit_draft. Never write formal-skill.`,
+                  workspace: root,
+                  pragmaHome: join(root, "state"),
+                  defaultRuntimeId: "fake",
+                  tools: createPragmaManagementTools({ skillRevisions: submissionPort }).map(
+                    (tool) => ({ ...tool, approval: { mode: "none" as const } }),
+                  ),
+                }),
+                fingerprint: "a".repeat(64),
+                projectFingerprint: "b".repeat(64),
+                environmentFingerprint: {
+                  environmentId: "desktop",
+                  projectFingerprint: "b".repeat(64),
+                  value: "c".repeat(64),
+                  resources: [],
+                  plugins: [],
+                },
+                rootRuntimeId: "fake",
+                dependencies: [],
+              })),
+            }
+          : {}),
       });
       await runner.startRun(mission.id);
-      await vi.waitFor(async () =>
-        expect((await missions.get(mission.id)).execution?.status).toBe("succeeded"),
+      await vi.waitFor(
+        async () => {
+          const current = await missions.get(mission.id);
+          expect(current.execution?.status, current.execution?.error).toBe("succeeded");
+        },
+        { timeout: realSmoke ? 180_000 : 5000, interval: 100 },
       );
       const original = await missions.get(mission.id);
+      if (realSmoke) {
+        const sessions = createFileExpertSessionStore({
+          pragmaHome: join(root, "state"),
+          executions: createSqliteExecutionStore({ pragmaHome: join(root, "state") }),
+        });
+        const nativeSession = async () => {
+          const current = await missions.get(mission.id);
+          const session = (await sessions.get(current.execution!.sessionId!))!;
+          const context = session.contexts[session.rootContextId]!;
+          return (
+            await readRuntimeSessionRecord(
+              new PragmaPaths({ pragmaHome: join(root, "state") }),
+              session.sessionId,
+              context.snapshot!.systemSessionId,
+            )
+          ).runtimeSessionRef;
+        };
+        const originalNative = await nativeSession();
+        expect(originalNative).toBeTruthy();
+        for (let round = 1; round <= 2; round++) {
+          const pending = await revisions.get(job.id);
+          expect(pending.state).toBe("pending_review");
+          if (cold) await runner.stopLocalController(mission.id);
+          await revisions.returnForRework(pending.id, pending.revision);
+          await runner.sendMessage({
+            id: mission.id,
+            requestId: randomUUID(),
+            content: `Apply feedback round ${round}: create references/round-${round}.md containing exactly ${JSON.stringify(`Feedback ${round}`)} without newline. Preserve all previous files and submit the same draft.`,
+          });
+          await vi.waitFor(
+            async () => {
+              const current = await missions.get(mission.id);
+              expect(current.execution?.status, current.execution?.error).toBe("succeeded");
+              expect((await revisions.get(job.id)).state).toBe("pending_review");
+            },
+            { timeout: 180_000, interval: 100 },
+          );
+          expect((await missions.get(mission.id)).execution?.sessionId).toBe(
+            original.execution?.sessionId,
+          );
+          expect(await nativeSession()).toEqual(originalNative);
+          const submitted = await revisions.inspectDraft(job.draftId, mission.id);
+          for (let previous = 0; previous <= round; previous++) {
+            await expect(
+              readFile(
+                join(submitted.referencePath!, "references", `round-${previous}.md`),
+                "utf8",
+              ),
+            ).resolves.toBe(`Feedback ${previous}`);
+          }
+          await expect(readFile(join(source, "SKILL.md"), "utf8")).resolves.toBe(
+            "---\nname: safe-workflow\ndescription: Safe workflow.\n---\n\nFollow the workflow.\n",
+          );
+        }
+        expect(await missions.list()).toHaveLength(1);
+        expect(await revisions.list()).toHaveLength(1);
+        return;
+      }
       for (let round = 0; round < 2; round++) {
         const inspection = await revisions.inspectDraft(job.draftId, mission.id);
         await mkdir(join(inspection.draftPath!, "references"), { recursive: true });
@@ -855,6 +1076,7 @@ describe("Desktop Mission resource adapter contracts", { timeout: 30_000 }, () =
         expect(nativeIds.at(-1)).toBe(nativeIds[0]);
       }
     },
+    process.env["PRAGMA_REVISION_REAL_SMOKE"] === "1" ? 600_000 : 60_000,
   );
 
   it("removes an inactive Mission Knowledge mount through the guarded update path", async () => {
@@ -2101,11 +2323,17 @@ describe("Desktop Mission resource adapter contracts", { timeout: 30_000 }, () =
         closeSession: () => undefined,
       });
       const runtime = realSmoke
-        ? (await import("@pragma/runtime-antigravity")).createAntigravityRuntime({
-            descriptor: { id: "fake" },
-            permissionMode: "auto-approve",
-            defaultModelName: "gemini-3.6-flash-low",
-          })
+        ? process.env["PRAGMA_REVISION_REAL_RUNTIME"] === "codex"
+          ? (await import("@pragma/runtime-codex")).createCodexRuntime({
+              descriptor: { id: "fake" },
+              approvalPolicy: "never",
+              sandboxMode: "workspace-write",
+            })
+          : (await import("@pragma/runtime-antigravity")).createAntigravityRuntime({
+              descriptor: { id: "fake" },
+              permissionMode: "auto-approve",
+              defaultModelName: "gemini-3.6-flash-low",
+            })
         : fakeRuntime;
       const runtimes = createStaticRuntimeResolver({
         runtimes: [runtime],
@@ -2223,14 +2451,17 @@ describe("Desktop Mission resource adapter contracts", { timeout: 30_000 }, () =
         value: { content: preparedContent },
       });
       expect((await contextStores.getSnapshot(target.id)).snapshotHash).toBe(original.snapshotHash);
-      if (!realSmoke) {
+      {
         const originalContextId = teammateContextId;
+        const originalSessionId = (await missions.get(caller.id)).execution?.sessionId;
         for (reworkRound = 1; reworkRound <= 2; reworkRound++) {
           const pending = await revisions.get(job.id);
           await revisions.returnForRework(pending.id, pending.revision);
           await runner.sendMessage({
             id: caller.id,
-            content: "Apply the review feedback to the same draft and submit again",
+            content: realSmoke
+              ? `Continue the same draft ${job.draftId}. Add items/rework-${reworkRound}.md with exactly the content ${JSON.stringify(`Review feedback ${reworkRound}`)} (no final punctuation or newline). Use the existing writable namespace, inspect the latest revision, then submit again. Preserve all previous files.`
+              : "Apply the review feedback to the same draft and submit again",
             requestId: randomUUID(),
           });
           await vi.waitFor(
@@ -2239,10 +2470,11 @@ describe("Desktop Mission resource adapter contracts", { timeout: 30_000 }, () =
               expect(current.execution?.status, current.execution?.error).toBe("succeeded");
               expect((await revisions.get(job.id)).state).toBe("pending_review");
             },
-            { timeout: 30_000, interval: 100 },
+            { timeout: realSmoke ? 180_000 : 30_000, interval: 100 },
           );
           expect(jobId).toBe(job.id);
-          expect(draftId).toBe(job.draftId);
+          if (!realSmoke) expect(draftId).toBe(job.draftId);
+          expect((await missions.get(caller.id)).execution?.sessionId).toBe(originalSessionId);
           expect(teammateContextId).toBe(originalContextId);
           expect(await missions.list()).toHaveLength(1);
           expect(await revisions.list()).toHaveLength(1);
@@ -2252,7 +2484,7 @@ describe("Desktop Mission resource adapter contracts", { timeout: 30_000 }, () =
         }
       }
     },
-    process.env["PRAGMA_REVISION_REAL_SMOKE"] === "1" ? 300_000 : 60_000,
+    process.env["PRAGMA_REVISION_REAL_SMOKE"] === "1" ? 600_000 : 60_000,
   );
 
   it("writes a newly created knowledge draft before its formal store exists", async () => {

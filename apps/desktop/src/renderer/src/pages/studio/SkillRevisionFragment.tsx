@@ -1,3 +1,4 @@
+import { REVISION_USER_REJECTED_ERROR_CODE } from "@pragma/built-in-agents/contracts";
 import {
   ArrowClockwise,
   ArrowLeft,
@@ -117,7 +118,8 @@ export function canRetrySkillRevisionJob(
 ): boolean {
   return (
     (state === "needs_attention" || state === "rejected") &&
-    errorCode !== "skill_revision_base_changed"
+    errorCode !== "skill_revision_base_changed" &&
+    errorCode !== REVISION_USER_REJECTED_ERROR_CODE
   );
 }
 
@@ -465,6 +467,7 @@ export function SkillRevisionFragment(props: {
       }
       await load();
     } catch (cause) {
+      await load();
       setError(errorMessage(cause));
     } finally {
       setBusyId(undefined);

@@ -105,3 +105,37 @@ healthy drafts/jobs and background processing continue. Reject and return valida
 same draft/job pair under the existing locks so concurrent review decisions cannot leave a returned
 job paired with a rejected draft. Tests cover retained/cold Native Sessions over two review returns,
 interrupted Host callbacks, invalid journal isolation, and competing review decisions.
+
+### PR #384 review corrections
+
+New deliberate rejections persist `revision_user_rejected` in the existing Job error field.
+All retry/resume entries and the review UI treat that reason as terminal; a new revision requires
+a new draft. Historical stopped/rejected records without that reason keep their existing recovery
+semantics. No stored Schema or version changes, or reinterpretation of supported historical data,
+are required. A rejected Store draft remains read-only in `needs_attention`, with its Job retaining
+the terminal reason; it no longer counts as an actionable unmerged draft.
+
+When the original Skill Mission was deleted during review, the return journal completes by
+clearing only that stale Mission ownership and setting the Job to `needs_attention` with
+`mission_orphaned`. The editable draft and files remain available. No Mission is automatically
+created; the user must explicitly choose a new Mission to continue. The amended journal is
+persisted before either owner record is reconciled and remains replayable after a crash.
+
+If a restore callback fails transiently, retrying the same return while its journal still exists
+finishes recovery and returns the resulting Job. The journal identifies the exact source Job
+revision; unrelated or already completed stale requests continue to conflict. Review-action
+failures refresh the UI from persisted state before displaying the error.
+
+Opt-in real-model validation uses isolated temporary resources and the existing authenticated
+Codex Runtime. The Store and Skill Mission cases each perform two returns/resubmissions; the Skill
+case also compares persisted Native Session refs. A separate selection harness loads the default
+Pragma instructions and tool descriptions, supplies controlled delegate receipts, and verifies
+that the model calls the matching Revision tool before a direct management write. It does not
+claim to test the complete Pragma-to-Revision compiler/Invocation chain.
+
+```sh
+PRAGMA_LOG_LEVEL=error PRAGMA_REVISION_REAL_SMOKE=1 PRAGMA_REVISION_REAL_RUNTIME=codex \
+  pnpm --filter @pragma/desktop exec vitest run \
+  src/main/features/missions/desktop-mission-adapter.test.ts \
+  -t 'unmounted target inside the original Mission from expert:0000000000st0rev|Skill revision Session.*cold=false|default Pragma instructions'
+```

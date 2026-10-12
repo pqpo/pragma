@@ -137,6 +137,21 @@ describe("ContextStoreRevisionFragment", () => {
     expect(html).toContain('aria-label="丢弃草稿"');
     expect(html).not.toContain('aria-label="删除任务"');
     expect(html).not.toContain("revision-task-view");
+    const rejectedHtml = renderToStaticMarkup(
+      <ContextStoreRevisionTaskActions
+        job={{
+          ...job,
+          state: "rejected",
+          error: { code: "revision_user_rejected", message: "Ended by user" },
+        }}
+        draft={{ ...draft, state: "needs_attention" }}
+        busy={null}
+        onRetry={() => undefined}
+        onDiscard={() => undefined}
+        onDelete={() => undefined}
+      />,
+    );
+    expect(rejectedHtml).not.toContain('aria-label="重试"');
   });
 
   it("renders review-only documents before the changed files", async () => {

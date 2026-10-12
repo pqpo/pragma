@@ -10,6 +10,8 @@ import {
   KnowledgeDraftValidationError,
 } from "@pragma/built-in-agents";
 import {
+  REVISION_USER_REJECTED_ERROR_CODE,
+  isUserRejectedRevision,
   ContextStoreChangeSetSchema,
   ContextStoreDraftRebaseInspectionSchema,
   ContextStoreDraftSchema,
@@ -308,6 +310,7 @@ export function createContextStoreRevisionService(options: {
         revision: current.revision + 1,
         updatedAt: new Date().toISOString(),
       });
+      if (next.state === "editing") await assertDraftNotUserRejected(id);
       await writeDraft(next);
       return next;
     });
@@ -603,6 +606,13 @@ export function createContextStoreRevisionService(options: {
     }
   };
 
+  const userRejectedDraftIds = async (): Promise<ReadonlySet<string>> =>
+    new Set((await readAllJobs()).filter(isUserRejectedRevision).map((job) => job.draftId));
+  const assertDraftNotUserRejected = async (draftId: string): Promise<void> => {
+    if ((await userRejectedDraftIds()).has(draftId))
+      throw invalidState("The user ended this revision. Create a new draft for a new revision.");
+  };
+
   const isActiveMissionJob = (job: ContextStoreRevisionJob): boolean =>
     !["merged", "rejected", "needs_attention"].includes(job.state);
 
@@ -670,6 +680,7 @@ export function createContextStoreRevisionService(options: {
           : undefined,
       );
     }
+    await assertDraftNotUserRejected(draft.id);
     if (draft.storeId !== claim.storeId || draft.state === "merged") {
       throw invalidState("The claimed knowledge draft is not editable for this knowledge base.");
     }
@@ -846,7 +857,11 @@ export function createContextStoreRevisionService(options: {
               job.request.source === request.source &&
               job.request.sourceDigest === request.sourceDigest,
           );
-          if (existing !== undefined) return existing;
+          if (existing !== undefined) {
+            if (isUserRejectedRevision(existing))
+              throw invalidState("The user ended this revision.");
+            return existing;
+          }
         }
         const draft =
           startOptions.draftId === undefined
@@ -870,6 +885,7 @@ export function createContextStoreRevisionService(options: {
         ) {
           throw invalidState("The selected draft is not editable for this knowledge base.");
         }
+        await assertDraftNotUserRejected(draft.id);
         const active = (await readAllJobs()).find(
           (job) =>
             job.draftId === draft.id &&
@@ -898,7 +914,10 @@ export function createContextStoreRevisionService(options: {
     },
 
     async startForMission(input) {
-      if (input.draftId !== undefined) await recoverRework(input.draftId);
+      if (input.draftId !== undefined) {
+        await recoverRework(input.draftId);
+        await assertDraftNotUserRejected(input.draftId);
+      }
       const request = ContextStoreRevisionRequestSchema.parse(input.request);
       return await withFileLock(
         missionClaimsLockPath,
@@ -1167,11 +1186,17 @@ export function createContextStoreRevisionService(options: {
         if (job.state !== "pending_review") {
           throw invalidState("Only a submitted draft can be rejected.");
         }
-        return { state: "rejected" };
+        return {
+          state: "rejected",
+          error: {
+            code: REVISION_USER_REJECTED_ERROR_CODE,
+            message: "The user ended this revision without applying changes.",
+          },
+        };
       });
       const rejectedDraft = await readDraft(rejected.draftId);
       await mutateDraftRecord(rejectedDraft.id, rejectedDraft.revision, () => ({
-        state: "editing",
+        state: "needs_attention",
         activeMissionId: undefined,
         submittedRevision: undefined,
       }));
@@ -1313,7 +1338,7 @@ export function createContextStoreRevisionService(options: {
         throw invalidState("The conflicted creation was already moved to a replacement task.");
       }
       const retried = await mutateJob(jobId, expectedRevision, (job) => {
-        if (!["needs_attention", "rejected"].includes(job.state)) {
+        if (isUserRejectedRevision(job) || !["needs_attention", "rejected"].includes(job.state)) {
           throw invalidState("Only a stopped revision task can be retried.");
         }
         return { state: "editing", error: undefined, missionId: undefined };
@@ -1327,6 +1352,20 @@ export function createContextStoreRevisionService(options: {
     },
 
     async delete(jobId, expectedRevision) {
+      const candidate = await readJob(jobId);
+      if (candidate.revision !== expectedRevision) throw revisionConflict();
+      if (isUserRejectedRevision(candidate)) {
+        // The Job owns the terminal reason. Remove its draft before deleting that authority.
+        try {
+          const draft = await readDraft(candidate.draftId);
+          await api.discardDraft(draft.id, draft.revision);
+        } catch (error) {
+          if (!(
+            error instanceof ContextStoreRevisionServiceError && error.code === "draft_not_found"
+          ))
+            throw error;
+        }
+      }
       await withFileLock(jobsLockPath, async () => {
         const job = await readJob(jobId);
         if (job.revision !== expectedRevision) throw revisionConflict();
@@ -1339,8 +1378,11 @@ export function createContextStoreRevisionService(options: {
     },
 
     async listDraftsWithRecovery(filter = {}) {
+      const terminalDrafts = await userRejectedDraftIds();
       const drafts = (await readAllDrafts()).filter(
-        (draft) => filter.storeId === undefined || draft.storeId === filter.storeId,
+        (draft) =>
+          !terminalDrafts.has(draft.id) &&
+          (filter.storeId === undefined || draft.storeId === filter.storeId),
       );
       const reconciled: ContextStoreRevisionDraftListEntry[] = [];
       for (const previous of drafts) {
@@ -1817,10 +1859,16 @@ export function createContextStoreRevisionService(options: {
     },
 
     async hasUnmergedDrafts(storeId) {
+      const terminalDrafts = await userRejectedDraftIds();
       for (const name of await readNames(draftsPath, true)) {
         try {
           const draft = await readDraft(name);
-          if (draft.storeId === storeId && draft.state !== "merged") return true;
+          if (
+            draft.storeId === storeId &&
+            draft.state !== "merged" &&
+            !terminalDrafts.has(draft.id)
+          )
+            return true;
         } catch (error) {
           // Lock directories and interrupted/discarded drafts have no draft record.
           // Match the list boundary rather than treating them as unmerged drafts.

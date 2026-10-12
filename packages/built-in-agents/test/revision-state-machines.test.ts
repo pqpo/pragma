@@ -26,6 +26,26 @@ describe("built-in revision state machines", () => {
     );
   });
 
+  it("prevents retry or editing of a deliberate rejection while retaining historical stopped-job recovery", () => {
+    const review = transitionContextStoreRevisionJob(
+      contextJob(),
+      { type: "submitted" },
+      timestamp,
+    );
+    const rejected = transitionContextStoreRevisionJob(review, { type: "rejected" }, timestamp);
+    expect(rejected.error?.code).toBe("revision_user_rejected");
+    expect(() => transitionContextStoreRevisionJob(rejected, { type: "retried" })).toThrow(
+      "revision_user_rejected",
+    );
+    expect(() => transitionContextStoreRevisionJob(rejected, { type: "editing_started" })).toThrow(
+      "revision_user_rejected",
+    );
+    expect(
+      transitionContextStoreRevisionJob({ ...rejected, error: undefined }, { type: "retried" })
+        .state,
+    ).toBe("editing");
+  });
+
   it("owns the Store Revision review and approval transitions", () => {
     const pending = contextJob();
     const running = transitionContextStoreRevisionJob(

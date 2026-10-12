@@ -7,6 +7,15 @@ import {
 } from "@pragma/shared";
 import { z } from "zod";
 
+/** A deliberate review refusal is terminal; older stopped records retain their recovery semantics. */
+export const REVISION_USER_REJECTED_ERROR_CODE = "revision_user_rejected" as const;
+export function isUserRejectedRevision(job: {
+  readonly state: string;
+  readonly error?: { readonly code: string } | undefined;
+}): boolean {
+  return job.state === "rejected" && job.error?.code === REVISION_USER_REJECTED_ERROR_CODE;
+}
+
 const CapabilityResourceIdSchema = z.union([SemanticResourceIdSchema, z.string().uuid()]);
 
 export const BuiltInAgentModelConfigSchema = z.object({

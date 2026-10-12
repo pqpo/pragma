@@ -1,3 +1,4 @@
+import { isUserRejectedRevision } from "@pragma/built-in-agents/contracts";
 import {
   ArrowClockwise,
   ArrowLeft,
@@ -228,6 +229,8 @@ export function ContextStoreRevisionFragment(props: {
       await load();
     } catch (caught) {
       if (activeStoreId.current === storeId) {
+        await load();
+        if (activeStoreId.current !== storeId) return;
         setError(localizedContextStoreRevisionError(caught, translateRevisionError));
       }
     } finally {
@@ -765,7 +768,7 @@ export function ContextStoreRevisionTaskActions(props: {
     props.draft !== undefined && props.draft.state !== "merged" ? props.draft : undefined;
   const canRetry =
     (props.job.state === "needs_attention" && !awaitingConfirmation) ||
-    props.job.state === "rejected";
+    (props.job.state === "rejected" && !isUserRejectedRevision(props.job));
 
   return (
     <div className="revision-task-actions">
@@ -933,7 +936,7 @@ export function ContextStoreRevisionDiffFragment(props: {
                 </>
               ) : null}
               {(props.job.state === "needs_attention" && !awaitingConfirmation) ||
-              props.job.state === "rejected" ? (
+              (props.job.state === "rejected" && !isUserRejectedRevision(props.job)) ? (
                 <button
                   className="secondary-button"
                   type="button"

@@ -90,6 +90,7 @@ describe("SkillRevisionEmptyState", () => {
     expect(canRetrySkillRevisionJob("needs_rebase", "skill_revision_base_changed")).toBe(false);
     expect(canRetrySkillRevisionJob("rejected", "skill_revision_base_changed")).toBe(false);
     expect(canRetrySkillRevisionJob("rejected", undefined)).toBe(true);
+    expect(canRetrySkillRevisionJob("rejected", "revision_user_rejected")).toBe(false);
     expect(canRetrySkillRevisionJob("needs_attention", "invalid_input")).toBe(true);
   });
 

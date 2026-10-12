@@ -15,6 +15,9 @@ import { dirname, join } from "node:path";
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 
+import { createMissionStore } from "@pragma/local-host";
+
+import { createSkillRevisionMissionRestorer } from "./skill-revision-mission-restore.ts";
 import type { CapabilityStore } from "./capability-store.ts";
 import { createDesktopSkillRevisionSubmissionPort } from "./skill-revision-capability.ts";
 import { copySkillTree } from "./skill-revision-draft-store.ts";
@@ -65,6 +68,186 @@ describe("Skill revision service", () => {
     await expect(stat(join(fixture.draftsPath, job.draftId, "rework.json"))).rejects.toMatchObject({
       code: "ENOENT",
     });
+  });
+
+  it("completes a retry of the same interrupted return but rejects later stale requests", async () => {
+    const restore = vi.fn(async () => {
+      if (restore.mock.calls.length === 1) throw new Error("Transient restore failure");
+    });
+    const fixture = await createService({ onReturnedForRework: restore });
+    const job = await fixture.service.start(request("expert-reflection"), {
+      missionId: randomUUID(),
+    });
+    const inspection = await fixture.service.inspectDraft(job.draftId, job.missionId);
+    const pending = await fixture.service.submitDraft({
+      draftId: job.draftId,
+      expectedRevision: inspection.draft.revision,
+      expectedWorkingTreeHash: inspection.workingTree.hash,
+      summary: "Review",
+      missionId: job.missionId!,
+    });
+    await expect(fixture.service.returnForRework(job.id, pending.revision)).rejects.toThrow(
+      "Transient restore failure",
+    );
+    await expect(fixture.service.returnForRework(job.id, pending.revision)).resolves.toMatchObject({
+      id: job.id,
+      state: "editing",
+      revision: pending.revision + 1,
+    });
+    await expect(fixture.service.returnForRework(job.id, pending.revision)).rejects.toThrow(
+      "skill_revision_conflict",
+    );
+    expect(restore).toHaveBeenCalledTimes(2);
+  });
+
+  it("retains an editable draft after its original Mission is deleted without recreating that Mission", async () => {
+    const fixture = await createService({ onReturnedForRework: async (job) => await restore(job) });
+    const missions = createMissionStore({
+      missionsPath: join(dirname(fixture.statePath), "missions"),
+    });
+    const restore = createSkillRevisionMissionRestorer(missions);
+    const missionInput = {
+      workspace: { path: fixture.workspacePath, basename: "workspace" },
+      goal: "Revise Skill",
+      project: { id: "studio", revision: 1 },
+      executor: {
+        kind: "expert" as const,
+        ref: "expert:0000000000sk1rev",
+        name: "Skill Revision Agent",
+      },
+    };
+    const mission = await missions.create(missionInput);
+    const revisionRequest = request("expert-reflection");
+    const job = await fixture.service.start(revisionRequest, { missionId: mission.id });
+    const inspection = await fixture.service.inspectDraft(job.draftId, mission.id);
+    await writeFile(join(inspection.draftPath!, "retained.txt"), "Preserved candidate");
+    const edited = await fixture.service.inspectDraft(job.draftId, mission.id);
+    const pending = await fixture.service.submitDraft({
+      draftId: job.draftId,
+      expectedRevision: edited.draft.revision,
+      expectedWorkingTreeHash: edited.workingTree.hash,
+      summary: "Review",
+      missionId: mission.id,
+    });
+    await missions.remove(mission.id);
+    const returned = await fixture.service.returnForRework(job.id, pending.revision);
+    expect(returned).toMatchObject({
+      id: job.id,
+      draftId: job.draftId,
+      state: "needs_attention",
+      error: { code: "mission_orphaned" },
+    });
+    expect(returned.missionId).toBeUndefined();
+    const draft = await fixture.service.getDraft(job.draftId);
+    expect(draft).toMatchObject({ state: "editing" });
+    expect(draft.activeMissionId).toBeUndefined();
+    await expect(stat(join(fixture.draftsPath, job.draftId, "rework.json"))).rejects.toMatchObject({
+      code: "ENOENT",
+    });
+    const restarted = createSkillRevisionService({
+      statePath: fixture.statePath,
+      draftsPath: fixture.draftsPath,
+      capabilities: fixture.capabilities,
+      resolveWorkspacePath: async () => fixture.workspacePath,
+      onReturnedForRework: restore,
+    });
+    await restarted.processPending();
+    await expect(restarted.get(job.id)).resolves.toEqual(returned);
+    await expect(missions.list()).resolves.toEqual([]);
+    const nextMission = await missions.create(missionInput);
+    const resumed = await restarted.start(revisionRequest, {
+      draftId: job.draftId,
+      missionId: nextMission.id,
+    });
+    expect(resumed).toMatchObject({
+      id: job.id,
+      draftId: job.draftId,
+      state: "running",
+      missionId: nextMission.id,
+    });
+    const resumedDraft = await restarted.inspectDraft(job.draftId, nextMission.id);
+    await expect(readFile(join(resumedDraft.draftPath!, "retained.txt"), "utf8")).resolves.toBe(
+      "Preserved candidate",
+    );
+  });
+
+  it.each(["journal_only", "draft_reconciled", "both_reconciled"])(
+    "replays stale Mission ownership release after a crash at %s",
+    async (phase) => {
+      const restore = vi.fn(async () => {
+        if (restore.mock.calls.length === 1) throw new Error("Interrupted callback");
+      });
+      const fixture = await createService({ onReturnedForRework: restore });
+      const job = await fixture.service.start(request("expert-reflection"), {
+        missionId: randomUUID(),
+      });
+      const inspected = await fixture.service.inspectDraft(job.draftId, job.missionId);
+      const pending = await fixture.service.submitDraft({
+        draftId: job.draftId,
+        expectedRevision: inspected.draft.revision,
+        expectedWorkingTreeHash: inspected.workingTree.hash,
+        summary: "Review",
+        missionId: job.missionId!,
+      });
+      await expect(fixture.service.returnForRework(job.id, pending.revision)).rejects.toThrow(
+        "Interrupted callback",
+      );
+      const journalPath = join(fixture.draftsPath, job.draftId, "rework.json");
+      const journal = JSON.parse(await readFile(journalPath, "utf8"));
+      delete journal.nextDraft.activeMissionId;
+      delete journal.nextJob.missionId;
+      journal.nextJob.state = "needs_attention";
+      journal.nextJob.error = {
+        code: "mission_orphaned",
+        message: "The original Mission was deleted.",
+      };
+      await writeFile(journalPath, JSON.stringify(journal));
+      if (phase !== "journal_only")
+        await writeFile(
+          join(fixture.draftsPath, job.draftId, "draft.json"),
+          JSON.stringify(journal.nextDraft),
+        );
+      if (phase === "both_reconciled")
+        await writeFile(
+          join(fixture.statePath, "jobs", `${job.id}.json`),
+          JSON.stringify(journal.nextJob),
+        );
+      const recovered = await fixture.service.get(job.id);
+      expect(recovered).toMatchObject({
+        state: "needs_attention",
+        error: { code: "mission_orphaned" },
+      });
+      expect(recovered.missionId).toBeUndefined();
+      const draft = await fixture.service.getDraft(job.draftId);
+      expect(draft.activeMissionId).toBeUndefined();
+      const editable = await fixture.service.inspectDraft(job.draftId);
+      await expect(readFile(join(editable.draftPath!, "SKILL.md"), "utf8")).resolves.toContain(
+        "Follow the workflow.",
+      );
+      await expect(stat(journalPath)).rejects.toMatchObject({ code: "ENOENT" });
+    },
+  );
+
+  it("keeps an explicitly rejected Skill revision terminal across every resume entry", async () => {
+    const fixture = await createService();
+    const revisionRequest = request("expert-reflection");
+    const job = await fixture.service.start(revisionRequest);
+    const inspection = await fixture.service.inspectDraft(job.draftId);
+    const pending = await fixture.service.submitDraft({
+      draftId: job.draftId,
+      expectedRevision: inspection.draft.revision,
+      expectedWorkingTreeHash: inspection.workingTree.hash,
+      summary: "Review",
+    });
+    const rejected = await fixture.service.reject(job.id, pending.revision);
+    expect(rejected.error?.code).toBe("revision_user_rejected");
+    await expect(fixture.service.retry(job.id, rejected.revision)).rejects.toThrow();
+    await expect(
+      fixture.service.start(revisionRequest, { draftId: job.draftId }),
+    ).rejects.toThrow();
+    await expect(fixture.service.attachMission(job.id, randomUUID())).rejects.toThrow();
+    expect((await fixture.service.inspectDraft(job.draftId)).draftPath).toBeUndefined();
+    expect(fixture.publish).not.toHaveBeenCalled();
   });
 
   it.each([false, true])(
@@ -2306,12 +2489,10 @@ describe("Skill revision service", () => {
       summary: "Review this revision.",
     });
     const rejected = await fixture.service.reject(nextPending.id, nextPending.revision);
-    const reopened = await fixture.service.retry(rejected.id, rejected.revision);
-    expect(reopened.state).toBe("pending_review");
-    const rejectedAgain = await fixture.service.reject(reopened.id, reopened.revision);
-    await fixture.service.delete(rejectedAgain.id, rejectedAgain.revision);
+    await expect(fixture.service.retry(rejected.id, rejected.revision)).rejects.toThrow();
+    await fixture.service.delete(rejected.id, rejected.revision);
 
-    await expect(fixture.service.get(rejectedAgain.id)).resolves.toMatchObject({
+    await expect(fixture.service.get(rejected.id)).resolves.toMatchObject({
       state: "rejected",
       error: { code: "draft_discarded" },
     });

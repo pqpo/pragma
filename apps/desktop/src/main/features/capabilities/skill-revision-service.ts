@@ -21,6 +21,8 @@ import {
   type SkillPackageValidationResult,
 } from "@pragma/built-in-agents";
 import {
+  REVISION_USER_REJECTED_ERROR_CODE,
+  isUserRejectedRevision,
   SkillRevisionDraftSchema,
   ManagedSkillRevisionJobSchema,
   SkillRevisionRequestV4Schema,
@@ -208,7 +210,9 @@ export function createSkillRevisionService(options: {
   readonly resolveWorkspacePath?:
     ((missionId?: string | undefined, draftId?: string | undefined) => Promise<string>) | undefined;
   readonly warn?: (message: string, error: unknown) => void;
-  readonly onReturnedForRework?: (job: ManagedSkillRevisionJob) => Promise<void>;
+  readonly onReturnedForRework?: (
+    job: ManagedSkillRevisionJob,
+  ) => Promise<void | "mission_missing">;
   readonly supportsExecutableBits?: boolean;
 }): SkillRevisionService {
   const jobsPath = join(options.statePath, "jobs");
@@ -1207,7 +1211,10 @@ export function createSkillRevisionService(options: {
       nextDraft.id !== draftId ||
       nextJob.draftId !== draftId ||
       nextDraft.state !== "editing" ||
-      nextJob.state !== "editing" ||
+      !(
+        nextJob.state === "editing" ||
+        (nextJob.state === "needs_attention" && nextJob.error?.code === "mission_orphaned")
+      ) ||
       ![nextDraft.revision - 1, nextDraft.revision].includes(draft.revision) ||
       ![nextJob.revision - 1, nextJob.revision].includes(job.revision) ||
       (draft.revision === nextDraft.revision - 1 && draft.state !== "pending_review") ||
@@ -1240,9 +1247,9 @@ export function createSkillRevisionService(options: {
       } finally {
         await rm(replacement, { recursive: true, force: true }).catch(() => undefined);
       }
-      await writeDraft(nextDraft);
     }
-    if (job.revision < nextJob.revision) await writeJob(nextJob);
+    if (JSON.stringify(draft) !== JSON.stringify(nextDraft)) await writeDraft(nextDraft);
+    if (JSON.stringify(job) !== JSON.stringify(nextJob)) await writeJob(nextJob);
     return nextJob;
   };
 
@@ -1256,26 +1263,48 @@ export function createSkillRevisionService(options: {
         ),
     );
 
-  const finishRework = async (job: ManagedSkillRevisionJob): Promise<void> => {
+  const finishRework = async (job: ManagedSkillRevisionJob): Promise<ManagedSkillRevisionJob> => {
     // Mission fencing can call back into resource resolution: never hold Skill locks here.
-    await options.onReturnedForRework?.(job);
-    await withReworkLocks(job.draftId, async () => {
+    const outcome = await options.onReturnedForRework?.(job);
+    return await withReworkLocks(job.draftId, async () => {
       const path = reworkJournalPath(job.draftId);
       let stored: string;
       try {
         stored = await readFile(path, "utf8");
       } catch (error) {
-        if ((error as NodeJS.ErrnoException).code === "ENOENT") return;
+        if ((error as NodeJS.ErrnoException).code === "ENOENT") return await readJob(job.id);
         throw error;
       }
-      const pending = ReworkJournalSchema.parse(JSON.parse(stored));
+      let pending = ReworkJournalSchema.parse(JSON.parse(stored));
       if (pending.nextJob.id !== job.id || pending.nextJob.revision !== job.revision)
         throw coded("skill_revision_rework_conflict");
+      if (outcome === "mission_missing" && pending.nextJob.missionId === job.missionId) {
+        // This is still the original uncommitted return, not a new user mutation.
+        pending = ReworkJournalSchema.parse({
+          ...pending,
+          nextDraft: { ...pending.nextDraft, activeMissionId: undefined },
+          nextJob: {
+            ...pending.nextJob,
+            missionId: undefined,
+            state: "needs_attention",
+            error: {
+              code: "mission_orphaned",
+              message:
+                "The original Mission was deleted. The editable draft was preserved; explicitly select a new Mission to continue.",
+            },
+          },
+        });
+        await writeJsonAtomic(path, pending);
+        await applyReworkJournal(job.draftId);
+      }
       await rm(path, { force: true });
+      return await readJob(job.id);
     });
   };
 
-  const recoverRework = async (draftId: string): Promise<void> => {
+  const recoverRework = async (
+    draftId: string,
+  ): Promise<{ job: ManagedSkillRevisionJob; expectedRevision: number } | undefined> => {
     try {
       await stat(reworkJournalPath(draftId));
     } catch (error) {
@@ -1283,7 +1312,8 @@ export function createSkillRevisionService(options: {
       throw error;
     }
     const job = await withReworkLocks(draftId, async () => await applyReworkJournal(draftId));
-    if (job !== undefined) await finishRework(job);
+    if (job !== undefined)
+      return { job: await finishRework(job), expectedRevision: job.revision - 1 };
   };
 
   const requireOwner = (draft: SkillRevisionDraft, missionId: string | undefined): void => {
@@ -1617,6 +1647,8 @@ export function createSkillRevisionService(options: {
             job.request.capabilityId === request.capabilityId &&
             job.request.sourceDigest === request.sourceDigest,
         );
+        if (existing !== undefined && isUserRejectedRevision(existing))
+          throw coded("skill_revision_state_invalid");
         if (existing !== undefined && startOptions.draftId === undefined) return existing;
         let draft: SkillRevisionDraft;
         if (startOptions.draftId === undefined) {
@@ -1920,6 +1952,7 @@ export function createSkillRevisionService(options: {
       await recoverRework((await readJob(jobId)).draftId);
       const job = await readJob(jobId);
       const draft = await readDraft(job.draftId);
+      if (isUserRejectedRevision(job)) throw coded("skill_revision_state_invalid");
       if (draft.activeMissionId !== undefined && draft.activeMissionId !== missionId) {
         throw coded("skill_revision_owned_by_another_context");
       }
@@ -2132,7 +2165,9 @@ export function createSkillRevisionService(options: {
     async returnForRework(jobId, expectedRevision) {
       await recoverSubmissionCleanupJournals();
       const selected = await readJob(jobId);
-      await recoverRework(selected.draftId);
+      const recovered = await recoverRework(selected.draftId);
+      if (recovered?.job.id === jobId && recovered.expectedRevision === expectedRevision)
+        return recovered.job;
       const returned = await withReworkLocks(selected.draftId, async () => {
         const job = await readJob(jobId);
         const draft = await readDraft(job.draftId);
@@ -2175,8 +2210,7 @@ export function createSkillRevisionService(options: {
         await applyReworkJournal(draft.id);
         return nextJob;
       });
-      await finishRework(returned);
-      return returned;
+      return await finishRework(returned);
     },
 
     async reject(id, revision) {
@@ -2205,6 +2239,10 @@ export function createSkillRevisionService(options: {
         const rejected = ManagedSkillRevisionJobSchema.parse({
           ...job,
           state: "rejected",
+          error: {
+            code: REVISION_USER_REJECTED_ERROR_CODE,
+            message: "The user ended this revision without applying changes.",
+          },
           revision: job.revision + 1,
           updatedAt: timestamp,
         });
@@ -2218,6 +2256,7 @@ export function createSkillRevisionService(options: {
       const candidate = await readJob(id);
       if (
         candidate.revision !== revision ||
+        isUserRejectedRevision(candidate) ||
         !["needs_attention", "rejected"].includes(candidate.state)
       ) {
         throw coded("skill_revision_conflict");

@@ -695,7 +695,25 @@ describe("context store sparse draft revisions", () => {
     const rejectedDraft = await service.resolveDraft(job.draftId);
     await expect(
       rejectedDraft.store.addContext({ id: "items/b.md", content: "B" }),
-    ).resolves.toMatchObject({ ok: true });
+    ).resolves.toMatchObject({ ok: false, error: { code: "permission_denied" } });
+    const rejected = await service.get(job.id);
+    expect(rejected.error?.code).toBe("revision_user_rejected");
+    await expect(service.retry(job.id, rejected.revision)).rejects.toMatchObject({
+      code: "invalid_state",
+    });
+    await expect(service.start(job.request, { draftId: job.draftId })).rejects.toMatchObject({
+      code: "invalid_state",
+    });
+    await expect(
+      service.startForMission({ request: job.request, draftId: job.draftId, missionId }),
+    ).rejects.toMatchObject({ code: "invalid_state" });
+    await expect(service.hasUnmergedDrafts(store.id)).resolves.toBe(false);
+    await service.delete(job.id, rejected.revision);
+    await expect(service.getDraft(job.draftId)).rejects.toMatchObject({ code: "draft_not_found" });
+    await expect(service.start(job.request, { draftId: job.draftId })).rejects.toMatchObject({
+      code: "draft_not_found",
+    });
+    await expect(service.hasUnmergedDrafts(store.id)).resolves.toBe(false);
   });
 
   it("makes repeated Mission attachment idempotent", async () => {
@@ -1421,7 +1439,7 @@ describe("context store sparse draft revisions", () => {
 
   it("rejects and detaches every revision job associated with a discarded draft", async () => {
     const onRevisionDetached = vi.fn(async () => undefined);
-    const { service, store } = await fixture({ onRevisionDetached });
+    const { service, store, directory, draftsPath } = await fixture({ onRevisionDetached });
     const first = await service.start({
       schemaVersion: "pragma.context-store-revision-request/v2",
       operation: "revise" as const,
@@ -1435,6 +1453,15 @@ describe("context store sparse draft revisions", () => {
     await service.submitDraft(first.draftId, firstEdited.revision, "First attempt");
     const firstPending = await service.get(first.id);
     await service.reject(first.id, firstPending.revision);
+    // A supported historical stopped job has no explicit user-rejection reason.
+    const jobPath = join(directory, "state", "context-store-revisions", "jobs", `${first.id}.json`);
+    const historical = JSON.parse(await readFile(jobPath, "utf8"));
+    delete historical.error;
+    await writeFile(jobPath, JSON.stringify(historical));
+    const draftPath = join(draftsPath, first.draftId, "draft.json");
+    const historicalDraft = JSON.parse(await readFile(draftPath, "utf8"));
+    historicalDraft.state = "editing";
+    await writeFile(draftPath, JSON.stringify(historicalDraft));
 
     const second = await service.start(
       {

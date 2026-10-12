@@ -198,3 +198,16 @@ An unreadable return journal is reported as `revision_rework_unavailable` in the
 summary and logged with `knowledge_revision_rework_unavailable`. It prevents that draft from
 exposing a writable namespace, while unrelated list entries and background processing continue.
 The original data and journal remain available for diagnosis.
+
+### PR #384 review corrections
+
+New deliberate rejections persist `revision_user_rejected` in the existing Job error field.
+All retry/resume entries and the review UI treat that reason as terminal; a new revision requires
+a new draft. Historical stopped/rejected records without that reason keep their existing recovery
+semantics. No stored Schema or version changes, or reinterpretation of supported historical data,
+are required. A rejected Store draft remains read-only in `needs_attention`, with its Job retaining
+the terminal reason; it no longer counts as an actionable unmerged draft.
+
+Deleting a newly user-rejected Job first discards its draft through the existing draft-cleanup
+boundary. This prevents removing the terminal reason while leaving a candidate that a later
+Mission claim could reopen. Formal Store content is preserved.
