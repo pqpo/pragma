@@ -88,7 +88,7 @@ describe("HomeExecutorConfigurationTip", () => {
 });
 
 describe("MissionAttachmentList", () => {
-  it("renders one model warning below multiple clickable image thumbnails", () => {
+  it("renders clickable image thumbnails without a model warning", () => {
     const html = renderToStaticMarkup(
       <MissionAttachmentList
         attachments={[
@@ -111,7 +111,7 @@ describe("MissionAttachmentList", () => {
           "00000000-0000-4000-8000-000000000001": "data:image/webp;base64,aW1hZ2U=",
           "00000000-0000-4000-8000-000000000002": "data:image/webp;base64,aW1hZ2U=",
         }}
-        imageUnsupported
+
         onRemove={() => undefined}
       />,
     );
@@ -120,9 +120,7 @@ describe("MissionAttachmentList", () => {
     expect(html).toContain('aria-label="View original diagram.png"');
     expect(html).toContain("mission-attachment-thumbnail");
     expect(html).not.toContain("<figcaption");
-    expect(html).toContain("This model does not support images");
-    expect(html.match(/mission-attachment-model-error/g)).toHaveLength(1);
-    expect(html).toContain('</figure></div><div class="mission-attachment-model-error">');
+    expect(html).not.toContain("This model does not support images");
   });
 
   it("renders a chromeless image preview with only an icon close control", () => {

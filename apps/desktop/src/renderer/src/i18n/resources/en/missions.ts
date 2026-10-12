@@ -253,8 +253,6 @@ export const missions = {
   viewOriginalImage: "View original {{name}}",
   originalImageAlt: "Original {{name}}",
   closeImagePreview: "Close preview",
-  imageUnsupportedByModel:
-    "This model does not support images. Only the original path is provided.",
   attachmentKind: {
     image: "Image",
     file: "File",

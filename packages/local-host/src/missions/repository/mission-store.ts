@@ -14,6 +14,7 @@ import { decodePragmaPathSegment, encodePragmaPathSegment, withFileLock } from "
 import type { ExpertPromptAttachment } from "@pragma/shared";
 import { createIntegrationError } from "@pragma/shared/integration";
 import { MissionAggregateStateSchema } from "../controller/schemas.ts";
+import { MissionSemanticWritePendingError } from "../controller/mission-controller-store.ts";
 import { formatPragmaYaml, parsePragmaYaml } from "@pragma/interpreter";
 import { z } from "zod";
 
@@ -94,6 +95,8 @@ export interface MissionStore {
   get(id: string): Promise<Mission>;
   backfillAutomationOrigin(id: string, automationRef: string): Promise<Mission>;
   getAttachments(id: string): Promise<readonly ExpertPromptAttachment[]>;
+  /** Resolve a prompt's attachments from the canonical Mission attachment manifest. */
+  getPromptAttachments(id: string, messageId: string): Promise<readonly ExpertPromptAttachment[]>;
   readBranchHistory(id: string): Promise<MissionBranchHistory | undefined>;
   createBranch(input: {
     readonly sourceMissionId: string;
@@ -951,11 +954,30 @@ export function createMissionStore(options: {
   };
 
   const recoverUserMessageAttachmentsTransaction = async (id: string): Promise<void> => {
-    const value = await readJsonIfExists(userMessageAttachmentsTransactionPath(id));
+    const value = await readJsonIfExists(userMessageAttachmentsTransactionPath(id)).catch(
+      (error: unknown) => {
+        // Malformed journals remain a data error; unreadable journals may still
+        // own an unfinished write and must not turn its command into a rejection.
+        if (error instanceof SyntaxError) throw error;
+        throw new MissionSemanticWritePendingError({ cause: error });
+      },
+    );
     if (value === undefined) return;
     const transaction = UserMessageAttachmentsTransactionSchema.parse(value);
-    const mission = await readMissionUnlocked(id);
-    await applyUserMessageAttachmentsTransaction(id, mission, transaction);
+    try {
+      const mission = await readMissionUnlocked(id);
+      await applyUserMessageAttachmentsTransaction(id, mission, transaction);
+    } catch (error) {
+      // Permanent data errors require intervention. Retain the journal, but
+      // expose the diagnostic so the Inbox stops automatic replay.
+      const permanentStoreError =
+        error instanceof MissionStoreError &&
+        !(error.cause instanceof Error && "code" in error.cause);
+      if (permanentStoreError || error instanceof SyntaxError || error instanceof z.ZodError) {
+        throw error;
+      }
+      throw new MissionSemanticWritePendingError({ cause: error });
+    }
   };
 
   // A claimed Node reservation already owns the directory containing controller facts.
@@ -1522,6 +1544,40 @@ export function createMissionStore(options: {
         }
       });
     },
+    async getPromptAttachments(id, messageId) {
+      const parsedId = MissionIdSchema.parse(id);
+      const parsedMessageId = MissionUserMessageSchema.shape.id.parse(messageId);
+      return await withMissionLock(parsedId, "mission.message.attachments.read", async () => {
+        await recoverPendingTransactions(parsedId);
+        const mission = await readMissionUnlocked(parsedId);
+        const ownedAttachments = (await readAttachmentsManifest(parsedId)).attachments;
+        // The initial prompt consumes the Mission's registered input context.
+        // Subsequent prompts select only the attachments registered by that message.
+        if (parsedMessageId === mission.initialMessageId) return ownedAttachments;
+        const message = (await readRecords(parsedId, false)).find(
+          (record) => record.kind === "user" && record.id === parsedMessageId,
+        );
+        if (message?.kind !== "user") {
+          throw new MissionStoreError(
+            "timeline_invalid",
+            `Mission ${parsedId} has no user message ${parsedMessageId}.`,
+          );
+        }
+        const ownedById = new Map(
+          ownedAttachments.map((attachment) => [attachment.id, attachment]),
+        );
+        return (message.attachments ?? []).map((attachment) => {
+          const owned = ownedById.get(attachment.id);
+          if (owned === undefined || !sameValue(owned, attachment)) {
+            throw new MissionStoreError(
+              "timeline_invalid",
+              `Mission ${parsedId} user message ${parsedMessageId} has an unregistered attachment.`,
+            );
+          }
+          return owned;
+        });
+      });
+    },
     async create(input) {
       const id = MissionIdSchema.parse(input.id ?? randomUUID());
       if (await options.isDeletionFenced?.(id)) throw new Error("MISSION_DELETION_PENDING");
@@ -1932,6 +1988,10 @@ export function createMissionStore(options: {
             } catch (error) {
               if (!journalWritten) {
                 await rm(stagingPath, { recursive: true, force: true });
+              } else {
+                // The durable intent must replay before the Inbox can reject or
+                // apply this request, including pre-Core attachment admission.
+                throw new MissionSemanticWritePendingError({ cause: error });
               }
               throw error;
             }
@@ -2556,6 +2616,7 @@ function normalizeReadError(error: unknown, id: string): MissionStoreError {
   return new MissionStoreError(
     "config_invalid",
     error instanceof Error ? error.message : `Mission ${id} is invalid.`,
+    { cause: error },
   );
 }
 

@@ -1,14 +1,11 @@
 import type { ExpertPromptAttachment } from "@pragma/shared";
 
 import type {
-  DesktopRuntimeModel,
-  MissionModelOverride,
   PickMissionAttachmentsResult,
   StageMissionClipboardImage,
 } from "../../../shared/contracts/index.ts";
 
 export const MAX_MISSION_ATTACHMENTS = 20;
-export type MissionImageSupport = "supported" | "unsupported" | "unknown";
 const supportedClipboardImageTypes = new Set<StageMissionClipboardImage["mimeType"]>([
   "image/gif",
   "image/jpeg",
@@ -30,23 +27,6 @@ export function mergeMissionAttachments(
   return current.length + unique.length > MAX_MISSION_ATTACHMENTS
     ? undefined
     : [...current, ...unique];
-}
-
-export function missionImageSupport(
-  models: readonly DesktopRuntimeModel[],
-  override: MissionModelOverride | undefined,
-  defaultSelection: MissionModelOverride | undefined,
-): MissionImageSupport {
-  const selection = override ?? defaultSelection;
-  const model =
-    selection === undefined
-      ? models.find((candidate) => candidate.default === true)
-      : models.find(
-          (candidate) =>
-            candidate.provider.id === selection.providerId && candidate.id === selection.modelId,
-        );
-  if (model?.inputModalities === undefined) return "unknown";
-  return model.inputModalities.includes("image") ? "supported" : "unsupported";
 }
 
 export function mergeMissionAttachmentPreviews(

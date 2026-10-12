@@ -20,11 +20,12 @@ Home 任务输入框提供统一的 `+` 入口，支持选择图片、文件和�
 
 ```mermaid
 flowchart LR
-  UI["Home Composer + 菜单"] --> IPC["Desktop IPC 文件选择与校验"]
+  UI["Home / Mission Composer + 菜单"] --> IPC["Desktop IPC 文件选择与校验"]
   IPC --> Store["MissionStore"]
   Store --> Manifest["attachments.json v1"]
   Store --> ImageCopy["Mission-owned image copy"]
-  Manifest --> Session["ExpertSession.prompt attachments"]
+  Manifest --> Submit["共享 Mission prompt submission"]
+  Submit --> Session["ExpertSession.prompt attachments"]
   Session --> Execution["Execution / Invocation structured input"]
   Execution --> Core["Expert Runner"]
   Core --> Text["所有 Runtime：路径前言"]
@@ -56,7 +57,8 @@ type ExpertPromptAttachment = {
 
 ### Mission 持久化
 
-附件不进入 `pragma.mission/v7` 或 `pragma.mission-message/v1`，避免改变既有 Mission 与时间线协议。每个 Mission 使用独立文件：
+Mission 配置保存在 `mission.yaml`，附件的权威清单保存在 `attachments.json`，用户消息的可选
+`attachments` 字段记录该条消息登记的附件。每个 Mission 使用独立文件：
 
 ```text
 <mission>/
@@ -66,6 +68,8 @@ type ExpertPromptAttachment = {
   attachments/
     images/
       <attachment-id>.<ext>
+      optimized/
+        <attachment-id>.webp
 ```
 
 `attachments.json` 使用 `pragma.mission-attachments/v1`：
@@ -76,10 +80,25 @@ type ExpertPromptAttachment = {
 - 未识别或损坏的附件 manifest 会 fail closed，并报告 `config_invalid`。
 - 删除 Mission 时，Mission-owned 图片随 owner 图一起删除。
 
-Mission 聊天快照会在读取时把该 manifest 投影到首条用户消息的可选 `attachments` 字段，供详情页展示；
-投影不写回 `pragma.mission-message/v1`。图片缩略图通过只读
+创建 Mission 时，首条消息和已物化的附件随创建事务一起发布；追加附件时，用户消息、附件清单与图片通过
+同一个带 journal 的消息事务提交。两种事务共用 `materializeMissionAttachments()`，同时保存原图和可选的
+optimized WebP。图片缩略图通过只读
 `pragma-mission-attachment://` 协议按 Mission ID 与附件 ID 加载，主进程会重新校验 manifest、文件类型和
 Mission-owned 图片目录边界，Renderer 不能把任意本地路径转换成可读取 URL。
+
+### 统一提交边界
+
+首轮启动与后续 Send/Steer 均通过 Local Host 的 `executionKernel.prompt()`，由
+`submitMissionExpertPrompt()` 统一准备附件、检查取消状态、调用 Core 和处理待重放错误。页面和消息
+admission 不直接调用 `ExpertSession.prompt()`，也不各自决定执行附件的路径。
+
+共享 `preparePromptAttachments` 存储端口在需要时先提交附件事务，再通过
+`MissionStore.getPromptAttachments(missionId, messageId)` 读取权威清单中的规范路径。首轮使用创建时登记的
+Mission 输入；后续消息只选择该消息登记的附件。新提交的 Execution 和根 Invocation 保存这些稳定路径，
+排队与恢复继续复用持久化输入，草稿在命令安全完成后清理。
+
+严格 Steer 不接受新增附件，拒绝时不触发附件事务。附件 I/O 完成后再次检查取消状态；已经提交的附件
+事务或 Core 接收写入发生故障时，保留请求的待重放状态与 requestId 幂等性，不把尚未完成的写入标为拒绝。
 
 ### Expert Core
 

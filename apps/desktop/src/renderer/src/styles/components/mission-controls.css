@@ -448,21 +448,6 @@
   visibility: visible;
 }
 
-.mission-attachment-model-error {
-  display: flex;
-  align-items: flex-start;
-  gap: 4px;
-  padding: 0 16px 8px;
-  color: var(--ui-danger);
-  font-size: 12px;
-  line-height: 1.45;
-}
-
-.mission-attachment-model-error svg {
-  flex: 0 0 auto;
-  margin-top: 1px;
-}
-
 .mission-attachment-chip {
   display: inline-flex;
   min-width: 0;

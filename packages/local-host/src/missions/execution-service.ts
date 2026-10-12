@@ -173,6 +173,7 @@ import {
 import { createMissionResumeOptions } from "./mission-session-upgrade.ts";
 import { MissionStatusService } from "./mission-status-service.ts";
 import { MissionStoreError } from "./repository/mission-store-error.ts";
+import { MissionSemanticWritePendingError } from "./controller/mission-controller-store.ts";
 import type { MissionStore, MissionTimelineTurn } from "./repository/mission-store.ts";
 import { MissionWorkService } from "./mission-work-service.ts";
 
@@ -546,6 +547,33 @@ export function createLocalHostMissionExecutionService(
     executions: executionStore,
     sessions: expertSessionStore,
     owners: executionOwner,
+    preparePromptAttachments: async (input) => {
+      const messageId = input.attachmentMessageId ?? input.options.requestId;
+      let messageCommitted = false;
+      if (input.attachmentMessageId === undefined) {
+        const attachments = input.options.attachments ?? [];
+        if (attachments.length === 0) return { attachments, durable: false };
+        const message = await options.missions.appendUserMessage(input.missionId, {
+          id: messageId,
+          content: input.content,
+          attachments: [...attachments],
+          createdAt: input.requestedAt ?? new Date().toISOString(),
+        });
+        if (message.kind !== "user") {
+          throw new Error("Mission attachment persistence returned an invalid timeline record.");
+        }
+        messageCommitted = true;
+      }
+      try {
+        return {
+          attachments: await options.missions.getPromptAttachments(input.missionId, messageId),
+          durable: true,
+        };
+      } catch (error) {
+        if (messageCommitted) throw new MissionSemanticWritePendingError({ cause: error });
+        throw error;
+      }
+    },
   });
   const sessionService = executionOwner;
   const executorMetadataCache = new Map<string, ExecutorMetadata>();
@@ -2294,9 +2322,6 @@ export function createLocalHostMissionExecutionService(
         const inputMessageId = recoverable
           ? mission.execution!.inputMessageId
           : mission.initialMessageId;
-        const promptAttachments = recoverable
-          ? []
-          : await options.missions.getAttachments(mission.id);
         if (!lifecycleService.isRunGenerationCurrent(mission.id, runGeneration)) {
           throw createIntegrationError({
             code: "MISSION_FENCING_REJECTED",
@@ -2320,7 +2345,7 @@ export function createLocalHostMissionExecutionService(
                     `Mission goal: ${mission.goal}`,
                   ].join("\n")
                 : mission.goal,
-              ...(promptAttachments.length === 0 ? {} : { attachments: promptAttachments }),
+              ...(recoverable ? {} : { attachmentMessageId: inputMessageId }),
             },
             ...(mission.execution === undefined
               ? {}
@@ -2666,10 +2691,9 @@ export function createLocalHostMissionExecutionService(
         const session = sessionService.session(mission.id)!;
         const promptAttachments = input.attachments ?? [];
         await publishPromptQueue(mission);
-        // Core owns acceptance and idempotency. Project the user message only
-        // after Core accepts it so a rejected strict steer cannot leave an orphan
-        // in the Mission timeline. Replaying an accepted Inbox command is safe:
-        // both session.prompt and appendUserMessage are keyed by requestId.
+        // Attachment-bearing enqueues were persisted before Core admission so
+        // Runtime paths are stable. Strict steer is projected only after acceptance.
+        // Both writes are keyed by requestId for Inbox and transaction recovery.
         const userMessage = await options.missions.appendUserMessage(mission.id, {
           id: input.requestId,
           content: input.content,

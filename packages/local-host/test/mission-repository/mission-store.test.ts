@@ -13,7 +13,10 @@ import {
 import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
 
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import * as coreStorage from "@pragma/core";
+import { MissionSemanticWritePendingError } from "../../src/missions/controller/mission-controller-store.ts";
+import { createMissionControllerStore } from "../../src/missions/controller/mission-controller-store.ts";
 
 import { formatPragmaYaml, parsePragmaYaml } from "@pragma/interpreter";
 import type { PragmaExpertResource } from "@pragma/interpreter/ast";
@@ -606,6 +609,9 @@ describe("mission store", { timeout: 30_000 }, () => {
     ).toMatchObject({ schemaVersion: "pragma.mission-attachments/v1" });
     const initialTurn = (await store.readTimelinePage(mission.id, { limit: 10 })).turns[0];
     expect(initialTurn?.message.attachments).toEqual(stored);
+    await expect(store.getPromptAttachments(mission.id, mission.initialMessageId)).resolves.toEqual(
+      stored,
+    );
   });
 
   it("materializes follow-up attachments on their own timeline message", async () => {
@@ -666,6 +672,10 @@ describe("mission store", { timeout: 30_000 }, () => {
     expect(turns[1]?.message.attachments?.map(({ name }) => name)).toEqual(["pasted-image.png"]);
     await expect(readFile(added[0]!.path, "utf8")).resolves.toBe("followup-image");
     await expect(store.getAttachments(mission.id)).resolves.toHaveLength(2);
+    await expect(store.getPromptAttachments(mission.id, followup.id)).resolves.toEqual(added);
+    await expect(
+      store.getPromptAttachments(mission.id, "00000000-0000-4000-8000-000000000099"),
+    ).rejects.toMatchObject({ code: "timeline_invalid" });
   });
 
   it("creates an isolated branch from the latest reply and copies current Mission context", async () => {
@@ -958,6 +968,241 @@ describe("mission store", { timeout: 30_000 }, () => {
       ),
     ).resolves.toBe("private notes");
     await expect(store.get(source.id)).resolves.toEqual(interrupted);
+  });
+
+  it("retains an attachment transaction for Inbox replay when publishing fails", async () => {
+    const root = await temporaryRoot();
+    const source = join(root, "draft.png");
+    await writeFile(source, "image-bytes");
+    const store = createMissionStore({ missionsPath: join(root, "missions") });
+    const mission = await store.create({
+      workspace: { path: root, basename: "workspace" },
+      goal: "review",
+      project: { id: "studio", revision: 1 },
+      executor: missionExecutorSnapshot(expertFixture()),
+    });
+    const input = {
+      id: "00000000-0000-4000-8000-000000000003",
+      content: "followup",
+      createdAt: "2026-08-10T00:00:00.000Z",
+      attachments: [
+        {
+          id: "00000000-0000-4000-8000-000000000002",
+          kind: "image" as const,
+          name: "draft.png",
+          path: source,
+          mimeType: "image/png" as const,
+        },
+      ],
+    };
+    const replace = coreStorage.replaceStorageFile;
+    const fail = vi.spyOn(coreStorage, "replaceStorageFile").mockImplementation(async (...args) => {
+      if (args[1] === join(store.storagePath!(mission.id), "attachments.json"))
+        throw new Error("publication interrupted");
+      return await replace(...args);
+    });
+    try {
+      await expect(store.appendUserMessage(mission.id, input)).rejects.toBeInstanceOf(
+        MissionSemanticWritePendingError,
+      );
+      const restartingStore = createMissionStore({ missionsPath: join(root, "missions") });
+      await expect(restartingStore.get(mission.id)).rejects.toBeInstanceOf(
+        MissionSemanticWritePendingError,
+      );
+      await expect(restartingStore.appendUserMessage(mission.id, input)).rejects.toBeInstanceOf(
+        MissionSemanticWritePendingError,
+      );
+    } finally {
+      fail.mockRestore();
+    }
+    // The original has already moved to its owned path; recovery uses the journal.
+    await rm(source);
+    const recoveredStore = createMissionStore({ missionsPath: join(root, "missions") });
+    const record = await recoveredStore.appendUserMessage(mission.id, input);
+    expect(record).toMatchObject({ kind: "user", id: input.id });
+    const images = await recoveredStore.getAttachments(mission.id);
+    expect(images).toHaveLength(1);
+    expect(await readFile(images[0]!.path, "utf8")).toBe("image-bytes");
+    expect(
+      (await recoveredStore.readTimelinePage(mission.id, { limit: 10 })).turns.filter(
+        (turn) => turn.message.id === input.id,
+      ),
+    ).toHaveLength(1);
+  });
+
+  it.each([
+    { fault: "conflict", error: { name: "MissionStoreError", code: "config_invalid" } },
+    { fault: "malformed", error: { name: "SyntaxError" } },
+    { fault: "future", error: { name: "ZodError" } },
+  ])(
+    "stops Inbox replay for a $fault attachment manifest and preserves its journal",
+    async ({ fault, error }) => {
+      const root = await temporaryRoot();
+      const missionsPath = join(root, "missions");
+      const store = createMissionStore({ missionsPath });
+      const mission = await store.create({
+        workspace: { path: root, basename: "workspace" },
+        goal: "review",
+        project: { id: "studio", revision: 1 },
+        executor: missionExecutorSnapshot(expertFixture()),
+      });
+      const directory = store.storagePath!(mission.id);
+      const emptyManifest = { schemaVersion: "pragma.mission-attachments/v1", attachments: [] };
+      const manifest =
+        fault === "malformed"
+          ? "{not-json"
+          : JSON.stringify({
+              schemaVersion:
+                fault === "future" ? "pragma.mission-attachments/v2" : emptyManifest.schemaVersion,
+              attachments:
+                fault === "conflict"
+                  ? [
+                      {
+                        id: "00000000-0000-4000-8000-000000000002",
+                        kind: "file",
+                        name: "context.txt",
+                        path: join(root, "context.txt"),
+                      },
+                    ]
+                  : [],
+            });
+      const journal = JSON.stringify({
+        schemaVersion: "pragma.mission-user-message-attachments-transaction/v1",
+        baseAttachments: emptyManifest,
+        targetAttachments: emptyManifest,
+        record: {
+          schemaVersion: "pragma.mission-message/v1",
+          sequence: 2,
+          kind: "user",
+          id: "00000000-0000-4000-8000-000000000003",
+          content: "followup",
+          createdAt: "2026-08-10T00:00:00.000Z",
+        },
+        updatedAt: "2026-08-10T00:00:01.000Z",
+      });
+      const manifestPath = join(directory, "attachments.json");
+      const journalPath = join(directory, ".user-message-attachments.transaction.json");
+      await writeFile(manifestPath, manifest);
+      await writeFile(journalPath, journal);
+      const controller = createMissionControllerStore({ missionsPath });
+      const guard = await controller.claim({
+        missionId: mission.id,
+        claimId: "00000000-0000-4000-8000-000000000034",
+        leaseMs: 10_000,
+      });
+      // The first attempt retains the controller's durable intent. Recovery must
+      // expose permanent repository errors rather than reclassify them for retry.
+      await expect(
+        controller.coordinateSemanticWrite({
+          missionId: mission.id,
+          guard,
+          operation: { name: "mission.timeline.user-message.append", input: { id: mission.id } },
+          eventType: "mission.timeline.user-message.appended",
+          eventData: {},
+          apply: async () => await store.get(mission.id),
+        }),
+      ).rejects.toBeInstanceOf(MissionSemanticWritePendingError);
+      const apply = vi.fn(async () => ({ result: {} }));
+      const onPollingStopped = vi.fn();
+      const onPollingError = vi.fn();
+      const onLeaseLost = vi.fn();
+      const poller = controller.startPolling({
+        missionId: mission.id,
+        guard,
+        consumer: { apply },
+        recoverSemanticWrite: async () => {
+          await controller.recoverSemanticWrite({
+            missionId: mission.id,
+            guard,
+            replay: async () => {
+              await store.get(mission.id);
+            },
+          });
+        },
+        initialDelayMs: 1,
+        maxDelayMs: 4,
+        onPollingStopped,
+        onPollingError,
+        onLeaseLost,
+      });
+      try {
+        await vi.waitFor(() => expect(onPollingStopped).toHaveBeenCalledOnce(), { timeout: 1_000 });
+        expect(onPollingError).toHaveBeenCalledExactlyOnceWith({
+          error: expect.objectContaining(error),
+          consecutiveFailures: 1,
+        });
+        expect(apply).not.toHaveBeenCalled();
+        expect(onLeaseLost).not.toHaveBeenCalled();
+        await expect(
+          controller.assertWriteGuard({ missionId: mission.id, guard }),
+        ).resolves.toBeUndefined();
+        await expect(readFile(manifestPath, "utf8")).resolves.toBe(manifest);
+        await expect(readFile(journalPath, "utf8")).resolves.toBe(journal);
+      } finally {
+        await poller.stop();
+      }
+      // Repairing the manifest allows both retained journals to finish without
+      // recreating the message or discarding its durable intent.
+      await writeFile(manifestPath, JSON.stringify(emptyManifest));
+      const replay = async () => {
+        await store.get(mission.id);
+      };
+      await controller.recoverSemanticWrite({ missionId: mission.id, guard, replay });
+      await expect(readFile(journalPath, "utf8")).rejects.toMatchObject({ code: "ENOENT" });
+      await expect(
+        controller.recoverSemanticWrite({ missionId: mission.id, guard, replay }),
+      ).resolves.toBeUndefined();
+      const timeline = await store.readTimelinePage(mission.id, { limit: 10 });
+      expect(
+        timeline.turns.filter((turn) => turn.message.id === "00000000-0000-4000-8000-000000000003"),
+      ).toHaveLength(1);
+    },
+  );
+
+  it("keeps Mission read I/O failures retryable during attachment recovery", async () => {
+    const root = await temporaryRoot();
+    const store = createMissionStore({ missionsPath: join(root, "missions") });
+    const mission = await store.create({
+      workspace: { path: root, basename: "workspace" },
+      goal: "review",
+      project: { id: "studio", revision: 1 },
+      executor: missionExecutorSnapshot(expertFixture()),
+    });
+    const directory = store.storagePath!(mission.id);
+    const manifest = join(directory, "mission.yaml");
+    const emptyAttachments = { schemaVersion: "pragma.mission-attachments/v1", attachments: [] };
+    await writeFile(
+      join(directory, ".user-message-attachments.transaction.json"),
+      JSON.stringify({
+        schemaVersion: "pragma.mission-user-message-attachments-transaction/v1",
+        baseAttachments: emptyAttachments,
+        targetAttachments: emptyAttachments,
+        record: {
+          schemaVersion: "pragma.mission-message/v1",
+          sequence: 2,
+          kind: "user",
+          id: "00000000-0000-4000-8000-000000000003",
+          content: "followup",
+          createdAt: "2026-08-10T00:00:00.000Z",
+        },
+        updatedAt: "2026-08-10T00:00:01.000Z",
+      }),
+    );
+    await rename(manifest, `${manifest}.backup`);
+    await mkdir(manifest);
+    try {
+      await expect(store.get(mission.id)).rejects.toMatchObject({
+        name: "MissionSemanticWritePendingError",
+        cause: { name: "MissionStoreError", cause: { code: "EISDIR" } },
+      });
+    } finally {
+      await rm(manifest, { recursive: true });
+      await rename(`${manifest}.backup`, manifest);
+    }
+    await expect(store.get(mission.id)).resolves.toMatchObject({ id: mission.id });
+    await expect(
+      readFile(join(directory, ".user-message-attachments.transaction.json"), "utf8"),
+    ).rejects.toMatchObject({ code: "ENOENT" });
   });
 
   it("recovers a follow-up whose attachment manifest persisted before its user message", async () => {

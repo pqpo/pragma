@@ -4,6 +4,11 @@ import { join } from "node:path";
 import { SteerNotDispatchedError, type ExpertSession, type ExpertTurn } from "@pragma/core";
 import { describe, expect, it, vi } from "vitest";
 import { createLocalHostMissionCommandAdmission } from "../src/mission-command-admission.ts";
+import {
+  submitMissionExpertPrompt,
+  type MissionExpertPromptSubmission,
+} from "../src/missions/mission-prompt-submission.ts";
+import type { ExpertPromptAttachment } from "@pragma/shared";
 import { MissionExecutionOwner } from "../src/missions/execution-owner.ts";
 import { createMissionControllerStore, MissionSemanticWritePendingError } from "../src/index.ts";
 
@@ -43,6 +48,7 @@ function fixture() {
     executionKernel: {
       preparePromptSession: async () => ({ session, replaced: false }),
       receiptStatus: async () => undefined,
+      prompt: submitMissionExpertPrompt,
     },
     getMission: async () => mission,
     admit: <T>(id: string, operation: () => Promise<T>) => owner.admit(id, operation),
@@ -72,6 +78,17 @@ function fixture() {
     dispatch,
     open,
     project,
+    withPersistedAttachments: (persist: () => Promise<readonly ExpertPromptAttachment[]>) => ({
+      ...options,
+      executionKernel: {
+        ...options.executionKernel,
+        prompt: (input: MissionExpertPromptSubmission) =>
+          submitMissionExpertPrompt(input, async () => ({
+            attachments: await persist(),
+            durable: true,
+          })),
+      },
+    }),
     setLifecycle: (status: string) => {
       mission = { ...mission, lifecycleStatus: status };
     },
@@ -206,6 +223,126 @@ describe("Local Host message admission", () => {
     release();
     await rejected;
     expect(f.prompt).not.toHaveBeenCalled();
+  });
+
+  it("does not dispatch after attachment persistence outlives command cancellation", async () => {
+    const f = fixture();
+    const abort = new AbortController();
+    const image = {
+      id: requestId,
+      kind: "image" as const,
+      name: "screen.png",
+      path: "/missions/images/screen.png",
+      mimeType: "image/png" as const,
+    };
+    const persistAttachments = vi.fn(async () => {
+      abort.abort("Mission command deadline expired during the copy");
+      return [image];
+    });
+    const send = createLocalHostMissionCommandAdmission(
+      f.withPersistedAttachments(persistAttachments),
+    );
+    await expect(
+      send({
+        id: missionId,
+        requestId,
+        content: "inspect",
+        attachments: [image],
+        signal: abort.signal,
+      }),
+    ).rejects.toMatchObject({ code: "COMMAND_RESULT_TIMEOUT" });
+    expect(persistAttachments).toHaveBeenCalledOnce();
+    expect(f.prompt).not.toHaveBeenCalled();
+    expect(f.project).not.toHaveBeenCalled();
+    // A successor can replay the durable intent using a fresh command signal.
+    const replay = createLocalHostMissionCommandAdmission(
+      f.withPersistedAttachments(async () => [image]),
+    );
+    await replay({ id: missionId, requestId, content: "inspect", attachments: [image] });
+    expect(f.dispatch).toHaveBeenCalledOnce();
+  });
+
+  it("rejects blank attachment prompts before persisting a Mission message", async () => {
+    const f = fixture();
+    const persistAttachments = vi.fn(async () => []);
+    const send = createLocalHostMissionCommandAdmission(
+      f.withPersistedAttachments(persistAttachments),
+    );
+    await expect(
+      send({
+        id: missionId,
+        requestId,
+        content: " \n\t ",
+        attachments: [
+          {
+            id: requestId,
+            kind: "image",
+            name: "screen.png",
+            path: "/tmp/draft.png",
+            mimeType: "image/png",
+          },
+        ],
+      }),
+    ).rejects.toThrow("Prompt content must not be empty");
+    expect(persistAttachments).not.toHaveBeenCalled();
+    expect(f.prompt).not.toHaveBeenCalled();
+    expect(f.project).not.toHaveBeenCalled();
+  });
+
+  it("replays durable attachments when the Core acceptance write fails", async () => {
+    const f = fixture();
+    const draft = {
+      id: requestId,
+      kind: "image" as const,
+      name: "screen.png",
+      path: "/tmp/draft.png",
+      mimeType: "image/png" as const,
+    };
+    const persistent = { ...draft, path: "/missions/images/screen.png" };
+    const persistAttachments = vi.fn(async () => [persistent]);
+    f.prompt.mockRejectedValueOnce(new Error("Core write interrupted"));
+    const send = createLocalHostMissionCommandAdmission(
+      f.withPersistedAttachments(persistAttachments),
+    );
+    const input = { id: missionId, requestId, content: "inspect", attachments: [draft] };
+    await expect(send(input)).rejects.toBeInstanceOf(MissionSemanticWritePendingError);
+    expect(f.project).not.toHaveBeenCalled();
+    await send(input);
+    expect(f.prompt).toHaveBeenLastCalledWith("inspect", {
+      requestId,
+      mode: "enqueue",
+      attachments: [persistent],
+    });
+    expect(f.dispatch).toHaveBeenCalledOnce();
+    expect(f.project).toHaveBeenCalledOnce();
+  });
+
+  it("rejects attachment-bearing strict steer without persisting a user message", async () => {
+    const f = fixture();
+    const persistAttachments = vi.fn(async () => []);
+    f.prompt.mockRejectedValueOnce(new Error("A steer request cannot add prompt attachments."));
+    const send = createLocalHostMissionCommandAdmission(
+      f.withPersistedAttachments(persistAttachments),
+    );
+    await expect(
+      send({
+        id: missionId,
+        requestId,
+        content: "inspect",
+        mode: "steer",
+        attachments: [
+          {
+            id: requestId,
+            kind: "image",
+            name: "screen.png",
+            path: "/tmp/draft.png",
+            mimeType: "image/png",
+          },
+        ],
+      }),
+    ).rejects.toThrow("cannot add prompt attachments");
+    expect(persistAttachments).not.toHaveBeenCalled();
+    expect(f.project).not.toHaveBeenCalled();
   });
 
   it("maps a Core CAS target change to the stable Mission conflict", async () => {

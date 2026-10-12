@@ -9,8 +9,9 @@ export class MissionStoreError extends Error {
       | "message_conflict"
       | "config_invalid",
     message: string,
+    options?: ErrorOptions,
   ) {
-    super(message);
+    super(message, options);
     this.name = "MissionStoreError";
   }
 }

@@ -18,6 +18,11 @@ import { openLocalHostFlowExecution, releaseLocalHostFlowExecution } from "./flo
 import { openLocalHostExpertSession, releaseLocalHostExpertSession } from "./session-lifecycle.ts";
 import { shouldCreateSuccessorExpertSession } from "./mission-session-upgrade.ts";
 import type { MissionExecutionOwnerAccess } from "./execution-owner.ts";
+import {
+  submitMissionExpertPrompt,
+  type MissionExpertPromptSubmission,
+  type MissionPromptAttachmentPreparation,
+} from "./mission-prompt-submission.ts";
 
 type ExpertApplication = PragmaApp["experts"];
 type FlowApplication = PragmaApp["flows"];
@@ -38,6 +43,7 @@ export interface MissionExecutionSubject {
     readonly requestId: string;
     readonly prompt?: string | undefined;
     readonly input?: unknown;
+    readonly attachmentMessageId?: string | undefined;
     readonly attachments?: Parameters<ExpertSession["prompt"]>[1] extends infer T
       ? NonNullable<T> extends { attachments?: infer A }
         ? A
@@ -94,7 +100,10 @@ export function createMissionExecutionKernel(options: {
   readonly executions: ExecutionStore;
   readonly sessions: ExpertSessionStore;
   readonly owners: MissionExecutionOwnerAccess;
+  readonly preparePromptAttachments?: MissionPromptAttachmentPreparation | undefined;
 }) {
+  const prompt = async (input: MissionExpertPromptSubmission) =>
+    await submitMissionExpertPrompt(input, options.preparePromptAttachments);
   const interruptSupersededSession = async (subject: MissionExecutionSubject): Promise<void> => {
     const sessionId = subject.priorExecution?.sessionId ?? subject.sessionId;
     if (
@@ -431,15 +440,18 @@ export function createMissionExecutionKernel(options: {
         return { kind: "native", owner, handle, acceptance: "recovered" };
       }
     }
-    const handle = await owner.session.prompt(
-      subject.request.prompt ?? JSON.stringify(subject.request.input ?? null),
-      {
+    const { turn: handle } = await prompt({
+      missionId: subject.missionId,
+      session: owner.session,
+      content: subject.request.prompt ?? JSON.stringify(subject.request.input ?? null),
+      attachmentMessageId: subject.request.attachmentMessageId,
+      options: {
         requestId: subject.request.requestId,
         ...(subject.request.attachments === undefined
           ? {}
           : { attachments: subject.request.attachments }),
       },
-    );
+    });
     return {
       kind: "native",
       owner,
@@ -574,6 +586,7 @@ export function createMissionExecutionKernel(options: {
     interruptSupersededSession,
     release,
     receiptStatus,
+    prompt,
   };
 }
 

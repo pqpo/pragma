@@ -1,10 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 
-import {
-  mergeMissionAttachments,
-  missionImageSupport,
-  stageClipboardImage,
-} from "./mission-attachments.ts";
+import { mergeMissionAttachments, stageClipboardImage } from "./mission-attachments.ts";
 
 describe("Mission composer attachments", () => {
   const existing = {
@@ -54,30 +50,5 @@ describe("Mission composer attachments", () => {
       mimeType: "image/png",
       data: "aW1hZ2U=",
     });
-  });
-
-  it("reports image support only when the effective model capability is explicit", () => {
-    const models = [
-      {
-        id: "vision",
-        displayName: "Vision",
-        provider: { kind: "registered" as const, id: "provider", displayName: "Provider" },
-        inputModalities: ["text", "image"],
-      },
-      {
-        id: "text",
-        displayName: "Text",
-        provider: { kind: "registered" as const, id: "provider", displayName: "Provider" },
-        inputModalities: ["text"],
-      },
-    ];
-
-    expect(
-      missionImageSupport(models, { providerId: "provider", modelId: "vision" }, undefined),
-    ).toBe("supported");
-    expect(
-      missionImageSupport(models, { providerId: "provider", modelId: "text" }, undefined),
-    ).toBe("unsupported");
-    expect(missionImageSupport(models, undefined, undefined)).toBe("unknown");
   });
 });

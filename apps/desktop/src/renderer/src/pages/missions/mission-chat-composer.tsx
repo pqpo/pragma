@@ -114,7 +114,6 @@ export const MissionChatComposer = forwardRef<
     readonly onInitialRecoveryConsumed?: ((snapshot: MissionComposerSnapshot) => void) | undefined;
     readonly onUnmountState?: ((snapshot: MissionComposerSnapshot) => void) | undefined;
     readonly mentionCandidates: readonly ExpertMentionCandidate[];
-    readonly imageUnsupported: boolean;
     readonly isFlow: boolean;
     readonly sending: boolean;
     readonly clientOperationBusy: boolean;
@@ -340,7 +339,6 @@ export const MissionChatComposer = forwardRef<
       <MissionAttachmentList
         attachments={attachments}
         previews={attachmentPreviews}
-        imageUnsupported={props.imageUnsupported}
         onRemove={removeAttachment}
       />
       {props.mission.executor.kind === "team" ? (
