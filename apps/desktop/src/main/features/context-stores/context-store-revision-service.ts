@@ -1378,11 +1378,8 @@ export function createContextStoreRevisionService(options: {
     },
 
     async listDraftsWithRecovery(filter = {}) {
-      const terminalDrafts = await userRejectedDraftIds();
       const drafts = (await readAllDrafts()).filter(
-        (draft) =>
-          !terminalDrafts.has(draft.id) &&
-          (filter.storeId === undefined || draft.storeId === filter.storeId),
+        (draft) => filter.storeId === undefined || draft.storeId === filter.storeId,
       );
       const reconciled: ContextStoreRevisionDraftListEntry[] = [];
       for (const previous of drafts) {

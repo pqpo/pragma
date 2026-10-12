@@ -211,3 +211,7 @@ the terminal reason; it no longer counts as an actionable unmerged draft.
 Deleting a newly user-rejected Job first discards its draft through the existing draft-cleanup
 boundary. This prevents removing the terminal reason while leaving a candidate that a later
 Mission claim could reopen. Formal Store content is preserved.
+
+The general draft query retains deliberately rejected drafts for read-only history and Diff
+display. Their Job remains terminal, their draft stays non-editable, and they remain excluded
+from actionable unmerged-draft checks. History visibility grants no write or resume authority.

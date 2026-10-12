@@ -661,6 +661,7 @@ export const studio = {
   revisionErrorValidationFailed: "草稿未通过结构校验，请打开关联任务修正后重新提交。",
   revisionErrorGenerationFailed: "修订生成未完成，请打开关联任务查看运行详情后重试。",
   revisionErrorMissionUnavailable: "关联修订任务已不存在；草稿已保留，可继续修订或丢弃。",
+  revisionUserRejected: "用户已拒绝本次修订。草稿仅供历史查看，无法继续修改或重试。",
   revisionErrorGeneric: "修订任务未完成，请查看任务状态或运行详情后重试。",
   revisionSource: {
     manual: "合并编辑",

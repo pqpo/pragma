@@ -706,6 +706,8 @@ export const studio = {
     "Revision generation did not finish. Open the related task to inspect the run details, then retry.",
   revisionErrorMissionUnavailable:
     "The linked revision task no longer exists. The draft was preserved and can be continued or discarded.",
+  revisionUserRejected:
+    "The user rejected this revision. The draft is available as read-only history and cannot be edited or retried.",
   revisionErrorGeneric:
     "The revision task did not finish. Check its status or run details, then retry.",
   revisionSource: {

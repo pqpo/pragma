@@ -881,6 +881,11 @@ export function ContextStoreRevisionDiffFragment(props: {
             <div>
               <h1 id="context-store-revision-detail-title">{t("revisionResult")}</h1>
               <p>{revisionMetadata}</p>
+              {isUserRejectedRevision(props.job) ? (
+                <p className="form-hint" role="status">
+                  {t("revisionUserRejected")}
+                </p>
+              ) : null}
               {props.job.request.provenance === undefined ? null : (
                 <p>
                   {props.job.request.provenance.teamId === undefined

@@ -698,6 +698,20 @@ describe("context store sparse draft revisions", () => {
     ).resolves.toMatchObject({ ok: false, error: { code: "permission_denied" } });
     const rejected = await service.get(job.id);
     expect(rejected.error?.code).toBe("revision_user_rejected");
+    const historyDraft = (await service.listDrafts({ storeId: store.id })).find(
+      (draft) => draft.id === job.draftId,
+    );
+    expect(historyDraft).toMatchObject({ state: "needs_attention", overlay: edited.overlay });
+    await expect(service.listDraftsWithRecovery({ storeId: store.id })).resolves.toContainEqual({
+      draft: historyDraft,
+    });
+    const historyChanges = await service.getDraftChangeSet(job.draftId);
+    expect(historyChanges.operations).toContainEqual(
+      expect.objectContaining({ operation: "upsert", id: "items/a.md", content: "A" }),
+    );
+    await expect(
+      service.submitDraft(job.draftId, historyDraft!.revision, "Resubmit rejected history"),
+    ).rejects.toMatchObject({ code: "invalid_state" });
     await expect(service.retry(job.id, rejected.revision)).rejects.toMatchObject({
       code: "invalid_state",
     });

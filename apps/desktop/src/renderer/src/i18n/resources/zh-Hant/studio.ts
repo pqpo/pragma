@@ -661,6 +661,7 @@ export const studio = {
   revisionErrorValidationFailed: "草稿未通過結構驗證，請開啟關聯任務修正後重新提交。",
   revisionErrorGenerationFailed: "修訂產生未完成，請開啟關聯任務查看執行詳情後重試。",
   revisionErrorMissionUnavailable: "關聯修訂任務已不存在；草稿已保留，可繼續修訂或丟棄。",
+  revisionUserRejected: "使用者已拒絕本次修訂。草稿僅供歷史檢視，無法繼續修改或重試。",
   revisionErrorGeneric: "修訂任務未完成，請查看任務狀態或執行詳情後重試。",
   revisionSource: {
     manual: "合併編輯",
