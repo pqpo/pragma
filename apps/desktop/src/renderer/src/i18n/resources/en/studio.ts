@@ -731,7 +731,13 @@ export const studio = {
   noStoreRevisionTasks: "No revision history yet.",
   noStoreRevisionTasksDescription:
     "Manual saves, submitted tasks, and changes waiting for review will appear here.",
-  approveRevision: "Approve and apply",
+  approveRevision: "Approve",
+  returnRevision: "Return for changes",
+  approveRevisionTooltip: "Approve this review and apply the revision.",
+  returnRevisionTooltip:
+    "Keep this draft and return it to editing. Continue in the original Mission and submit it for review again.",
+  rejectRevisionTooltip:
+    "End this revision without applying changes. This does not return the draft for continued editing.",
   rejectRevision: "Reject",
   retryRevision: "Retry",
   deleteRevisionTask: "Delete task",
@@ -772,21 +778,21 @@ export const studio = {
   revisionDraftAwaitingConfirmationTitle: "The draft is still editable",
   revisionDraftAwaitingConfirmationDescription:
     "The agent paused without submitting the draft. Review the current changes first; open the original task to request adjustments, or ask the agent to submit it when you are ready for formal review.",
-  revisionNeedsRebaseTitle: "The Skill changed — rebase first",
+  revisionNeedsRebaseTitle: "The knowledge base changed — rebase first",
   revisionNeedsRebaseDescription:
-    "This draft is based on an older Skill revision, so it cannot be applied directly. Continue the related Mission to rebase the draft onto the latest version. The published Skill is unchanged.",
+    "This draft is based on an older knowledge base revision, so it cannot be applied directly. Continue the related Mission to rebase the draft onto the latest version. The published knowledge base is unchanged.",
   revisionNeedsRebaseStepOpenMission:
     "Choose “Open task to rebase” below; the next instruction will be prefilled in the Mission composer.",
   revisionNeedsRebaseStepReopen:
     "If the Mission is completed, choose “Reopen” before continuing the conversation.",
   revisionNeedsRebasePrompt:
-    "Inspect the latest Skill, rebase this draft, resolve any conflicts with me, and submit the revision again.",
+    "Inspect the latest knowledge base, rebase this draft, resolve any conflicts with me, and submit the revision again.",
   revisionNeedsRebaseStepAskAgent:
     "Review the prefilled instruction in the Mission composer and send it to the revision Agent: “{{prompt}}”",
   revisionNeedsRebaseStepReview:
-    "Return to Studio → Skills → Revision tasks, review the new proposal, then choose Approve and apply.",
+    "Return to Studio → knowledge bases → Revision tasks, review the new proposal, then choose Approve and apply.",
   revisionNeedsRebaseNoMission:
-    "This task has no related Mission to continue. Delete it, then go to Studio → Skills → the relevant Skill → Submit revision to start a new proposal.",
+    "This task has no related Mission to continue. Delete it, then go to Studio → knowledge bases → the relevant knowledge base → Submit revision to start a new proposal.",
   filesChanged: "{{count}} files changed",
   baseRevision: "Base revision {{count}}",
   newKnowledgeBaseRevision: "New knowledge base",

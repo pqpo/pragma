@@ -146,6 +146,10 @@ export const capabilitiesApi = {
     ManagedSkillRevisionJobSchema.parse(
       await ipcRenderer.invoke("capabilities:approve-skill-revision", input),
     ),
+  returnSkillRevision: async (input) =>
+    ManagedSkillRevisionJobSchema.parse(
+      await ipcRenderer.invoke("capabilities:return-skill-revision", input),
+    ),
   rejectSkillRevision: async (input) =>
     ManagedSkillRevisionJobSchema.parse(
       await ipcRenderer.invoke("capabilities:reject-skill-revision", input),
@@ -181,6 +185,7 @@ export const capabilitiesApi = {
   | "getSkillRevisionReview"
   | "getSkillRevisionReviewFile"
   | "approveSkillRevision"
+  | "returnSkillRevision"
   | "rejectSkillRevision"
   | "retrySkillRevision"
   | "deleteSkillRevision"

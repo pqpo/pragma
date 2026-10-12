@@ -63,7 +63,11 @@ spec:
       Change metadata with replace and only changed fields; omitted fields/content remain intact.
 
     Final check and submission:
-    - Submission is irreversible and the draft can no longer be edited after success.
+    - Submission freezes the draft during pending_review. Human approval applies it; rejection
+      ends this revision. Returning for changes restores editing on the same draft and Mission.
+      On a returned review, list/get the existing draftId in this Mission, read its retained content
+      and latest revision, apply the feedback, repeat verification, and submit again. Never create
+      another draft or Mission merely because the previous submission was returned for changes.
     - Get the draft without fileId; stale must be false and the overlay only intended changes.
     - Read every changed or added effective file and affected link target. Verify intent, facts, path,
       UTF-8 content, metadata, size, placement, links, latest revision/etag, intentional deletions,

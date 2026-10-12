@@ -174,3 +174,22 @@ written draft in `pending_review`, and an unchanged formal Store snapshot; no pu
   before another task can be created for their draft.
 - The background drain also rechecks wakeups during completion cleanup so requests cannot be lost
   between resolving the drain promise and clearing its active marker.
+
+## Return a review for changes (#383)
+
+The review has three distinct actions: approve applies the candidate, return for changes preserves
+the draft and returns it to `editing`, and reject ends the revision without applying it. Returning
+retains the same draft/job identities, request, base, summary, and original Mission association; it
+clears the submission pin so the Agent can inspect, edit, and submit the same candidate repeatedly.
+
+The selected draft and job are updated under their existing aggregate locks with a versioned
+`rework.json` journal in that draft's authority directory. First owner access replays interrupted
+updates without overwriting an already restored editable tree. Future journals fail closed and
+remain available for diagnosis; unrelated owner access continues. Existing draft/job schemas and
+state names are unchanged, so existing persisted records require no migration. This adds an
+explicit review operation and does not reinterpret prior rejected records.
+
+Pragma delegates managed content changes to the corresponding Revision Agent before trying any
+write. Formal content is read-only to Agents; only drafts are writable. Human approval remains
+the publication boundary. Continuation carries the draftId and review feedback to the original
+Revision Agent conversation rather than creating a replacement.

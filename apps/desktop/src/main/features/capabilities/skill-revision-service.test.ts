@@ -16,6 +16,7 @@ import { dirname, join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type { CapabilityStore } from "./capability-store.ts";
+import { createDesktopSkillRevisionSubmissionPort } from "./skill-revision-capability.ts";
 import { copySkillTree } from "./skill-revision-draft-store.ts";
 import {
   SkillRevisionDraftV4StoredSchema,
@@ -37,6 +38,206 @@ afterEach(async () => {
 });
 
 describe("Skill revision service", () => {
+  it("rejects a future rework journal without changing this or another owner", async () => {
+    const fixture = await createService();
+    const job = await fixture.service.start(request("expert-reflection"));
+    const inspection = await fixture.service.inspectDraft(job.draftId);
+    await fixture.service.submitDraft({
+      draftId: job.draftId,
+      expectedRevision: inspection.draft.revision,
+      expectedWorkingTreeHash: inspection.workingTree.hash,
+      summary: "Review",
+    });
+    const other = await fixture.service.start(request("expert-reflection"));
+    const path = join(fixture.draftsPath, job.draftId, "rework.json");
+    await writeFile(path, JSON.stringify({ schemaVersion: "pragma.skill-revision-rework/v2" }));
+    const before = await readFile(join(fixture.draftsPath, job.draftId, "draft.json"), "utf8");
+    await expect(fixture.service.get(job.id)).rejects.toThrow();
+    expect(await readFile(join(fixture.draftsPath, job.draftId, "draft.json"), "utf8")).toBe(
+      before,
+    );
+    expect((await fixture.service.get(other.id)).state).toBe("editing");
+  });
+
+  it("restores submitted files and remounts the same Skill draft in its original Mission", async () => {
+    const fixture = await createService();
+    const missionId = randomUUID();
+    const initialRequest = request("expert-reflection");
+    const initial = await fixture.service.start(initialRequest, { missionId });
+    fixture.capabilities.list = vi.fn(async () => [
+      {
+        ...(await fixture.capabilities.get(capabilityId)),
+        manifest: {
+          ...(await fixture.capabilities.get(capabilityId)).manifest,
+          id: capabilityId,
+          latestRevision: 1,
+        },
+      },
+    ]) as typeof fixture.capabilities.list;
+    const mountDraft = vi.fn(async () => undefined);
+    const unmountDraft = vi.fn(async () => undefined);
+    const port = createDesktopSkillRevisionSubmissionPort({
+      capabilities: fixture.capabilities,
+      revisions: fixture.service,
+      inlineMissionId: missionId,
+      inlineWorkspacePath: fixture.workspacePath,
+      mountDraft,
+      unmountDraft,
+    });
+    const invocation = {
+      executionId: randomUUID(),
+      invocationId: randomUUID(),
+      expertId: "0000000000sk1rev",
+      operationId: randomUUID(),
+    };
+    for (let round = 0; round < 2; round++) {
+      const inspection = await fixture.service.inspectDraft(initial.draftId, missionId);
+      await mkdir(join(inspection.draftPath!, "references"), { recursive: true });
+      await writeFile(
+        join(inspection.draftPath!, "references", `round-${round}.md`),
+        `Round ${round}`,
+      );
+      const candidate = await fixture.service.inspectDraft(initial.draftId, missionId);
+      await port.submitDraft({
+        ...invocation,
+        draftId: initial.draftId,
+        expectedRevision: candidate.draft.revision,
+        expectedWorkingTreeHash: candidate.workingTree.hash,
+        summary: `Round ${round}`,
+      });
+      await expect(stat(candidate.draftPath!)).rejects.toMatchObject({ code: "ENOENT" });
+      const pending = await fixture.service.get(initial.id);
+      await expect(
+        fixture.service.returnForRework(initial.id, pending.revision - 1),
+      ).rejects.toThrow("skill_revision_conflict");
+      const returned = await fixture.service.returnForRework(initial.id, pending.revision);
+      expect(returned).toMatchObject({
+        id: initial.id,
+        draftId: initial.draftId,
+        missionId,
+        state: "editing",
+      });
+      const editable = await fixture.service.inspectDraft(initial.draftId, missionId);
+      expect(editable.draft).toMatchObject({
+        activeMissionId: missionId,
+        summary: `Round ${round}`,
+        state: "editing",
+      });
+      expect(editable.draft.submissionHash).toBeUndefined();
+      expect(editable.draft.submittedRevision).toBeUndefined();
+      expect(
+        await readFile(join(editable.draftPath!, "references", `round-${round}.md`), "utf8"),
+      ).toBe(`Round ${round}`);
+      expect(
+        (await fixture.service.inspectDraft(initial.draftId, randomUUID())).draftPath,
+      ).toBeUndefined();
+      await expect(
+        fixture.service.start(initialRequest, {
+          draftId: initial.draftId,
+          missionId: randomUUID(),
+        }),
+      ).rejects.toThrow("skill_revision_owned_by_another_context");
+      expect(
+        await port.start({
+          ...invocation,
+          draftId: initial.draftId,
+          prompt: `Apply review feedback ${round}`,
+        }),
+      ).toMatchObject({
+        jobId: initial.id,
+        draftId: initial.draftId,
+        missionId,
+        draftPath: editable.draftPath,
+      });
+      expect(fixture.publish).not.toHaveBeenCalled();
+    }
+    expect(mountDraft).toHaveBeenCalledTimes(2);
+    expect(unmountDraft).toHaveBeenCalledTimes(2);
+    expect(await fixture.service.list()).toHaveLength(1);
+    const final = await fixture.service.inspectDraft(initial.draftId, missionId);
+    const pending = await fixture.service.submitDraft({
+      draftId: initial.draftId,
+      expectedRevision: final.draft.revision,
+      expectedWorkingTreeHash: final.workingTree.hash,
+      summary: "Final",
+      missionId,
+    });
+    expect((await fixture.service.approve(pending.id, pending.revision)).state).toBe("completed");
+    expect(fixture.publish).toHaveBeenCalledTimes(1);
+  });
+
+  it.each(["prepared", "draft_written", "both_written"])(
+    "replays a %s Skill rework without replacing already restored files",
+    async (phase) => {
+      const fixture = await createService();
+      const initial = await fixture.service.start(request("expert-reflection"), {
+        missionId: randomUUID(),
+      });
+      const inspection = await fixture.service.inspectDraft(initial.draftId, initial.missionId);
+      const pending = await fixture.service.submitDraft({
+        draftId: initial.draftId,
+        expectedRevision: inspection.draft.revision,
+        expectedWorkingTreeHash: inspection.workingTree.hash,
+        summary: "Replay",
+        missionId: initial.missionId!,
+      });
+      const draft = await fixture.service.getDraft(initial.draftId);
+      if (phase === "prepared") {
+        // A valid persisted review is still returnable without a historical cleanup record.
+        await rm(join(fixture.statePath, "submission-cleanup-journals", `${draft.id}.json`));
+      }
+      const nextDraft = {
+        ...draft,
+        revision: draft.revision + 1,
+        state: "editing",
+        activeMissionId: initial.missionId,
+        submissionHash: undefined,
+        submittedRevision: undefined,
+      };
+      const nextJob = { ...pending, revision: pending.revision + 1, state: "editing" };
+      const journalPath = join(fixture.draftsPath, draft.id, "rework.json");
+      await writeFile(
+        journalPath,
+        JSON.stringify({
+          schemaVersion: "pragma.skill-revision-rework/v1",
+          nextDraft,
+          nextJob,
+          submissionHash: draft.submissionHash,
+        }),
+      );
+      if (phase !== "prepared") {
+        await copySkillTree(
+          join(fixture.draftsPath, draft.id, "submissions", draft.submissionHash!),
+          inspection.draftPath!,
+        );
+        await writeFile(join(inspection.draftPath!, "SKILL.md"), "Already restored content");
+        await writeFile(
+          join(fixture.draftsPath, draft.id, "draft.json"),
+          JSON.stringify(nextDraft),
+        );
+      }
+      if (phase === "both_written")
+        await writeFile(
+          join(fixture.statePath, "jobs", `${pending.id}.json`),
+          JSON.stringify(nextJob),
+        );
+      const restarted = createSkillRevisionService({
+        statePath: fixture.statePath,
+        draftsPath: fixture.draftsPath,
+        capabilities: fixture.capabilities,
+      });
+      expect(await restarted.get(initial.id)).toMatchObject(JSON.parse(JSON.stringify(nextJob)));
+      expect(await restarted.getDraft(draft.id)).toMatchObject(
+        JSON.parse(JSON.stringify(nextDraft)),
+      );
+      expect(await readFile(join(inspection.draftPath!, "SKILL.md"), "utf8")).toContain(
+        phase === "prepared" ? "Follow the workflow." : "Already restored content",
+      );
+      await expect(stat(journalPath)).rejects.toMatchObject({ code: "ENOENT" });
+      expect(await restarted.get(initial.id)).toMatchObject(JSON.parse(JSON.stringify(nextJob)));
+    },
+  );
+
   it("ignores auxiliary files and recordless directories when listing drafts and diagnostics", async () => {
     const fixture = await createService();
     const job = await fixture.service.start(request("expert-reflection"));

@@ -19,6 +19,16 @@ spec:
     diagnostics and diffs, and commit only the prepared change-set. Discover workspace paths and
     knowledge store IDs before creating Missions or Automations. All management commands use
     the pragma manage namespace.
+    For any creation or modification of managed knowledge or Skills, delegate immediately to
+    call_store_revision_agent or call_skill_revision_agent respectively. Formal Store content and
+    Skill packages are read-only: never try context writes, native file writes, shell commands, or
+    storage edits first, and never wait for a permission failure to discover the revision workflow.
+    Give the Revision Agent the complete requirements, source content, target identity, and any
+    existing draftId. Drafts are the only writable candidates; human approval applies them.
+    When a user returns a review for changes, continue the original Revision Agent conversation
+    with the same draftId and review feedback. Reuse its editing draft and original Mission,
+    inspect current contents and revision, then modify and resubmit; do not create a replacement.
+    Rejection ends that revision; returning for changes preserves it for another review.
     Never edit Pragma project storage directly. Ask before consequential or
     ambiguous actions and respect workspace and approval boundaries.
   capabilities:
@@ -36,12 +46,12 @@ spec:
         ref: expert:0000000000st0rev
       tool:
         name: call_store_revision_agent
-        description: Ask the Store Revision Agent to create or revise managed knowledge.
+        description: Required first step for managed knowledge changes. Delegate complete requirements and an existing draftId to the Store Revision Agent; formal content is read-only, and only drafts may be edited. Continue the same Agent conversation and draft after a review is returned for changes.
         approval: ask
     - adapter: pragma.tool.call@v1
       target:
         ref: expert:0000000000sk1rev
       tool:
         name: call_skill_revision_agent
-        description: Ask the Skill Revision Agent to create or revise a managed Skill.
+        description: Required first step for managed Skill changes. Delegate complete requirements and an existing draftId to the Skill Revision Agent; formal packages are read-only, and only drafts may be edited. Continue the same Agent conversation and draft after a review is returned for changes.
         approval: ask

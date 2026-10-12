@@ -691,7 +691,7 @@ const PRAGMA_KNOWLEDGE_REVISION_TOOL_DEFINITIONS = [
   ),
   definition(
     KNOWLEDGE_REVISION_START_TOOL_NAME,
-    "Start or continue a revision for any listed target; a current Mission mount is not required. In a Store Revision Mission with that target mounted, returns writableNamespace for immediate editing. Otherwise schedules a background Store Revision Mission and omits writableNamespace: follow the returned job/draft through existing listings, do not guess a namespace or start again. Include complete requirements and source content in prompt; read required Mission Board materials before calling, because background Missions do not inherit the caller's board or relative paths. Never changes formal knowledge.",
+    "Start or continue a revision for any listed target; a current Mission mount is not required. In a Store Revision Mission with that target mounted, returns writableNamespace for immediate editing. Otherwise schedules a background Store Revision Mission and omits writableNamespace: follow the returned job/draft through existing listings, do not guess a namespace or start again. Include complete requirements and source content in prompt; read required Mission Board materials before calling, because background Missions do not inherit the caller's board or relative paths. Formal knowledge is read-only; never attempt direct writes before this workflow. After a review is returned for changes, list/get and reuse the same draftId and original Mission, then edit and resubmit. Never changes formal knowledge.",
     KnowledgeRevisionStartInputSchema,
     KnowledgeRevisionStartResultSchema,
   ),
@@ -749,7 +749,7 @@ const PRAGMA_SKILL_REVISION_TOOL_DEFINITIONS = [
   ),
   definition(
     SKILL_REVISION_START_TOOL_NAME,
-    "Start or continue a Skill revision. Edit only the returned draftPath with native Runtime file tools; never edit the formal Skill.",
+    "Start or continue a Skill revision. After a review is returned for changes, reuse its existing draftId in the original Mission to remount the restored editable candidate. Edit only the returned draftPath with native Runtime file tools; never edit the formal Skill.",
     SkillRevisionStartInputSchema,
     SkillRevisionStartResultSchema,
   ),

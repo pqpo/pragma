@@ -13,6 +13,7 @@ export type ContextStoreRevisionEvent =
   | { readonly type: "submitted" }
   | { readonly type: "execution_failed"; readonly code: string; readonly message: string }
   | { readonly type: "approved" }
+  | { readonly type: "returned_for_rework" }
   | { readonly type: "rejected" }
   | { readonly type: "retried" }
   | { readonly type: "merge_succeeded" }
@@ -41,6 +42,9 @@ export function transitionContextStoreRevisionJob(
       case "approved":
         requireState(current.state, ["pending_review"]);
         return { ...current, state: "merging" as const };
+      case "returned_for_rework":
+        requireState(current.state, ["pending_review"]);
+        return { ...current, state: "editing" as const, error: undefined };
       case "rejected":
         requireState(current.state, ["pending_review"]);
         return { ...current, state: "rejected" as const };

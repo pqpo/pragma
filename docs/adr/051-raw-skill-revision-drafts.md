@@ -67,3 +67,26 @@ status. Manual records expose the saved revision, its parent, timestamp, and cha
 entries. File previews use the same metadata, size/line limits, binary handling, and line-diff view as
 Agent reviews; bytes are loaded from the two published immutable revisions. Directory-only edits are
 recorded even when the existing file-content snapshot hash is unchanged.
+
+## Return a review for changes (#383)
+
+The review has three distinct actions: approve applies the candidate, return for changes preserves
+the draft and returns it to `editing`, and reject ends the revision without applying it. Returning
+retains the same draft/job identities, request, base, summary, and original Mission association; it
+clears the submission pin so the Agent can inspect, edit, and submit the same candidate repeatedly.
+The Host restores the immutable submitted package into the original Workspace draft directory and
+restores ownership from the job's Mission before exposing a writable draftPath. The original Agent
+uses `skill_revision_start` with that draftId to remount it; a different Mission cannot claim it.
+Repeated submissions with the same content reuse the verified immutable snapshot.
+
+The selected draft and job are updated under their existing aggregate locks with a versioned
+`rework.json` journal in that draft's authority directory. First owner access replays interrupted
+updates without overwriting an already restored editable tree. Future journals fail closed and
+remain available for diagnosis; unrelated owner access continues. Existing draft/job schemas and
+state names are unchanged, so existing persisted records require no migration. This adds an
+explicit review operation and does not reinterpret prior rejected records.
+
+Pragma delegates managed content changes to the corresponding Revision Agent before trying any
+write. Formal content is read-only to Agents; only drafts are writable. Human approval remains
+the publication boundary. Continuation carries the draftId and review feedback to the original
+Revision Agent conversation rather than creating a replacement.

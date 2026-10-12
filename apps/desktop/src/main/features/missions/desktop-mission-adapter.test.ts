@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { AsyncLocalStorage } from "node:async_hooks";
 import { createLocalHostNodeApplication } from "@pragma/local-host/node-application";
 import {
@@ -1835,6 +1836,7 @@ describe("Desktop Mission resource adapter contracts", { timeout: 30_000 }, () =
       let jobId: string | undefined;
       let draftId: string | undefined;
       let teammateContextId: string | undefined;
+      let reworkRound = 0;
 
       const fakeRuntime = defineRuntimeTestDriver<never, { context: RuntimeNativeSessionContext }>({
         descriptor: { id: "fake", kind: "fake", displayName: "Fake" },
@@ -1920,6 +1922,18 @@ describe("Desktop Mission resource adapter contracts", { timeout: 30_000 }, () =
                 namespace: started.writableNamespace,
                 id: "items/tracking.md",
                 content: preparedContent,
+              },
+              turn.signal,
+              { execution: session.context.request.executionContext },
+            );
+            expect(written.isError, written.text).not.toBe(true);
+          }
+          if (reworkRound > 0) {
+            const written = await add.call(
+              {
+                namespace: started.writableNamespace,
+                id: `items/rework-${reworkRound}.md`,
+                content: `Review feedback ${reworkRound}`,
               },
               turn.signal,
               { execution: session.context.request.executionContext },
@@ -2081,6 +2095,34 @@ describe("Desktop Mission resource adapter contracts", { timeout: 30_000 }, () =
         value: { content: preparedContent },
       });
       expect((await contextStores.getSnapshot(target.id)).snapshotHash).toBe(original.snapshotHash);
+      if (!realSmoke) {
+        const originalContextId = teammateContextId;
+        for (reworkRound = 1; reworkRound <= 2; reworkRound++) {
+          const pending = await revisions.get(job.id);
+          await revisions.returnForRework(pending.id, pending.revision);
+          await runner.sendMessage({
+            id: caller.id,
+            content: "Apply the review feedback to the same draft and submit again",
+            requestId: randomUUID(),
+          });
+          await vi.waitFor(
+            async () => {
+              const current = await missions.get(caller.id);
+              expect(current.execution?.status, current.execution?.error).toBe("succeeded");
+              expect((await revisions.get(job.id)).state).toBe("pending_review");
+            },
+            { timeout: 30_000, interval: 100 },
+          );
+          expect(jobId).toBe(job.id);
+          expect(draftId).toBe(job.draftId);
+          expect(teammateContextId).toBe(originalContextId);
+          expect(await missions.list()).toHaveLength(1);
+          expect(await revisions.list()).toHaveLength(1);
+          expect(
+            await draft.store.readContext({ id: `items/rework-${reworkRound}.md` }),
+          ).toMatchObject({ ok: true, value: { content: `Review feedback ${reworkRound}` } });
+        }
+      }
     },
     process.env["PRAGMA_REVISION_REAL_SMOKE"] === "1" ? 300_000 : 60_000,
   );

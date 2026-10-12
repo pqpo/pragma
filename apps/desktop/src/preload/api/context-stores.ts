@@ -173,6 +173,13 @@ export const contextStoresApi = {
         ContextStoreRevisionJobRefSchema.parse(input),
       ),
     ),
+  returnContextStoreRevision: async (input) =>
+    ContextStoreRevisionJobSchema.parse(
+      await ipcRenderer.invoke(
+        "context-store-revisions:return",
+        ContextStoreRevisionJobRefSchema.parse(input),
+      ),
+    ),
   rejectContextStoreRevision: async (input) =>
     ContextStoreRevisionJobSchema.parse(
       await ipcRenderer.invoke(
@@ -289,6 +296,7 @@ export const contextStoresApi = {
   | "listContextStoreRevisions"
   | "getContextStoreRevision"
   | "approveContextStoreRevision"
+  | "returnContextStoreRevision"
   | "rejectContextStoreRevision"
   | "retryContextStoreRevision"
   | "deleteContextStoreRevision"
