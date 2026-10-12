@@ -1,5 +1,7 @@
 import {
   SteerNotDispatchedError,
+  ExpertPromptRejectedError,
+  StopOnlyDefinitionExecutionError,
   type ExpertSession,
   type ExpertTurn,
   type PromptOptions,
@@ -22,10 +24,11 @@ export interface MissionExpertPromptSubmission {
 
 export type MissionPromptAttachmentPreparation = (
   input: Omit<MissionExpertPromptSubmission, "session" | "signal">,
-) => Promise<{
-  readonly attachments: readonly ExpertPromptAttachment[];
-  readonly durable: boolean;
-}>;
+) => Promise<readonly ExpertPromptAttachment[]>;
+
+export type MissionPromptAttachmentDiscard = (
+  input: Omit<MissionExpertPromptSubmission, "session" | "signal">,
+) => Promise<void>;
 
 export function assertMissionPromptContent(content: string): void {
   if (content.trim() === "") throw new Error("Prompt content must not be empty.");
@@ -49,6 +52,7 @@ export function assertMissionPromptNotCancelled(input: {
 export async function submitMissionExpertPrompt(
   input: MissionExpertPromptSubmission,
   prepareAttachments?: MissionPromptAttachmentPreparation,
+  discardAttachments?: MissionPromptAttachmentDiscard,
 ): Promise<{ readonly turn: ExpertTurn; readonly attachments: readonly ExpertPromptAttachment[] }> {
   assertMissionPromptContent(input.content);
   const cancellation = {
@@ -69,30 +73,56 @@ export async function submitMissionExpertPrompt(
           requestedAt: input.requestedAt,
         })
       : undefined;
-  const attachments = prepared?.attachments ?? input.options.attachments ?? [];
+  const attachments = prepared ?? input.options.attachments ?? [];
   // Attachment I/O may outlive the controller deadline. Keep its durable intent
   // for replay, but do not submit from this cancelled attempt.
   assertMissionPromptNotCancelled(cancellation);
   const promptOptions = { ...input.options };
   if (attachments.length === 0) delete promptOptions.attachments;
   else promptOptions.attachments = attachments;
-  const turn = await input.session.prompt(input.content, promptOptions).catch((error: unknown) => {
-    if (
-      input.options.mode === "steer" &&
-      error instanceof SteerNotDispatchedError &&
-      error.reason === "target_changed"
-    ) {
-      throw createIntegrationError({
-        code: "STEER_TARGET_CHANGED",
-        category: "conflict",
-        message: "Strict Mission steer target changed before native dispatch.",
-        details: { missionId: input.missionId },
-      });
-    }
-    if (prepared?.durable === true) {
-      throw new MissionSemanticWritePendingError({ cause: error });
-    }
-    throw error;
-  });
+  const turn = await input.session
+    .prompt(input.content, promptOptions)
+    .catch(async (error: unknown) => {
+      if (
+        input.options.mode === "steer" &&
+        error instanceof SteerNotDispatchedError &&
+        error.reason === "target_changed"
+      ) {
+        throw createIntegrationError({
+          code: "STEER_TARGET_CHANGED",
+          category: "conflict",
+          message: "Strict Mission steer target changed before native dispatch.",
+          details: { missionId: input.missionId },
+        });
+      }
+      if (
+        error instanceof ExpertPromptRejectedError ||
+        error instanceof StopOnlyDefinitionExecutionError
+      ) {
+        // A closed/released Session can reject a replay of an already accepted
+        // request. Preserve its files until the Host reconciles that receipt.
+        let accepted: boolean;
+        try {
+          accepted = (await input.session.getPromptQueue()).some(
+            (prompt) =>
+              prompt.requestId === input.options.requestId &&
+              prompt.content === input.content &&
+              prompt.mode === (input.options.mode ?? "enqueue"),
+          );
+        } catch (receiptError) {
+          throw new MissionSemanticWritePendingError({ cause: receiptError });
+        }
+        if (accepted) throw new MissionSemanticWritePendingError({ cause: error });
+        try {
+          if (prepared !== undefined) await discardAttachments?.(input);
+        } catch (cleanupError) {
+          throw new MissionSemanticWritePendingError({ cause: cleanupError });
+        }
+        throw error;
+      }
+      if ((input.options.mode ?? "enqueue") === "enqueue")
+        throw new MissionSemanticWritePendingError({ cause: error });
+      throw error;
+    });
   return { turn, attachments };
 }

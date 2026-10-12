@@ -14,7 +14,7 @@ import { decodePragmaPathSegment, encodePragmaPathSegment, withFileLock } from "
 import type { ExpertPromptAttachment } from "@pragma/shared";
 import { createIntegrationError } from "@pragma/shared/integration";
 import { MissionAggregateStateSchema } from "../controller/schemas.ts";
-import { MissionSemanticWritePendingError } from "../controller/mission-controller-store.ts";
+import { MissionAttachmentWritePendingError } from "./mission-store-error.ts";
 import { formatPragmaYaml, parsePragmaYaml } from "@pragma/interpreter";
 import { z } from "zod";
 
@@ -97,6 +97,11 @@ export interface MissionStore {
   getAttachments(id: string): Promise<readonly ExpertPromptAttachment[]>;
   /** Resolve a prompt's attachments from the canonical Mission attachment manifest. */
   getPromptAttachments(id: string, messageId: string): Promise<readonly ExpertPromptAttachment[]>;
+  preparePromptAttachments(
+    id: string,
+    message: MissionUserMessage,
+  ): Promise<readonly ExpertPromptAttachment[]>;
+  discardPromptAttachments(id: string, messageId: string): Promise<void>;
   readBranchHistory(id: string): Promise<MissionBranchHistory | undefined>;
   createBranch(input: {
     readonly sourceMissionId: string;
@@ -227,6 +232,11 @@ const UserMessageAttachmentsTransactionSchema = z.object({
   updatedAt: z.string().datetime(),
 });
 
+const PreparedPromptAttachmentsSchema = z.object({
+  schemaVersion: z.literal("pragma.mission-prompt-attachments/v1"),
+  message: MissionUserMessageSchema,
+});
+
 type UserMessageAttachmentsTransaction = z.infer<typeof UserMessageAttachmentsTransactionSchema>;
 
 const MissionV7MigrationTransactionSchema = z.object({
@@ -311,6 +321,10 @@ export function createMissionStore(options: {
     join(missionPath(id), ".user-message-attachments.transaction.json");
   const userMessageAttachmentsStagingPath = (id: string, messageId: string) =>
     join(missionPath(id), `.user-message-${messageId}.attachments.tmp`);
+  const preparedPromptPath = (id: string, messageId: string) =>
+    join(missionPath(id), "prompt-attachments", encodePragmaPathSegment(messageId));
+  const preparedPromptManifestPath = (id: string, messageId: string) =>
+    join(preparedPromptPath(id, messageId), "manifest.json");
   const v7MigrationTransactionPath = (id: string) =>
     join(missionPath(id), ".v6-to-v7.transaction.json");
   const earlyMigrationTransactionPath = (id: string) =>
@@ -949,6 +963,7 @@ export function createMissionStore(options: {
       recursive: true,
       force: true,
     });
+    await rm(preparedPromptPath(id, transaction.record.id), { recursive: true, force: true });
     await rm(userMessageAttachmentsTransactionPath(id), { force: true });
     markMissionMutation();
   };
@@ -959,7 +974,7 @@ export function createMissionStore(options: {
         // Malformed journals remain a data error; unreadable journals may still
         // own an unfinished write and must not turn its command into a rejection.
         if (error instanceof SyntaxError) throw error;
-        throw new MissionSemanticWritePendingError({ cause: error });
+        throw new MissionAttachmentWritePendingError({ cause: error });
       },
     );
     if (value === undefined) return;
@@ -976,7 +991,7 @@ export function createMissionStore(options: {
       if (permanentStoreError || error instanceof SyntaxError || error instanceof z.ZodError) {
         throw error;
       }
-      throw new MissionSemanticWritePendingError({ cause: error });
+      throw new MissionAttachmentWritePendingError({ cause: error });
     }
   };
 
@@ -1529,6 +1544,115 @@ export function createMissionStore(options: {
         return mission;
       });
     },
+    async preparePromptAttachments(id, message) {
+      const parsedId = MissionIdSchema.parse(id);
+      const input = MissionUserMessageSchema.parse(message);
+      return await withMissionLock(parsedId, "mission.prompt.attachments.prepare", async () => {
+        await recoverPendingTransactions(parsedId);
+        await readMissionUnlocked(parsedId);
+        const existing = (await readRecords(parsedId, false)).find(
+          (record) => record.kind === "user" && record.id === input.id,
+        );
+        if (existing?.kind === "user") {
+          if (!sameUserMessageInput(existing, input)) throw messageConflict(existing);
+          return existing.attachments ?? [];
+        }
+        const preparedPath = preparedPromptManifestPath(parsedId, input.id);
+        const stagingPath = join(preparedPromptPath(parsedId, input.id), "staging");
+        const value = await readJsonIfExists(preparedPath);
+        let prepared =
+          value === undefined ? undefined : PreparedPromptAttachmentsSchema.parse(value);
+        if (prepared !== undefined) {
+          const record = {
+            ...prepared.message,
+            kind: "user" as const,
+            sequence: 0,
+            schemaVersion: "pragma.mission-message/v1" as const,
+          };
+          if (!sameUserMessageInput(record, input)) throw messageConflict(record);
+        } else {
+          const owned = (await readAttachmentsManifest(parsedId)).attachments;
+          const attachments = input.attachments ?? [];
+          const ids = new Set(attachments.map((attachment) => attachment.id));
+          if (ids.size !== attachments.length || owned.some((attachment) => ids.has(attachment.id)))
+            throw new Error("Mission attachment ids must be unique.");
+          if (owned.length + attachments.length > 20)
+            throw new Error("A mission can include up to 20 attachments.");
+          await rm(stagingPath, { recursive: true, force: true });
+          const materialized = await materializeMissionAttachments({
+            attachments,
+            temporaryMissionPath: stagingPath,
+            targetMissionPath: missionPath(parsedId),
+          });
+          prepared = PreparedPromptAttachmentsSchema.parse({
+            schemaVersion: "pragma.mission-prompt-attachments/v1",
+            message: { ...input, attachments: materialized.attachments },
+          });
+          await writeJsonAtomically(preparedPath, prepared);
+        }
+        try {
+          await moveStagedAttachmentImages({
+            attachments: prepared.message.attachments ?? [],
+            stagingPath,
+            targetMissionPath: missionPath(parsedId),
+          });
+        } catch (error) {
+          if (error instanceof MissionStoreError) throw error;
+          throw new MissionAttachmentWritePendingError({ cause: error });
+        }
+        return prepared.message.attachments ?? [];
+      }).catch(rethrowAttachmentIOFailure);
+    },
+    async discardPromptAttachments(id, messageId) {
+      const parsedId = MissionIdSchema.parse(id);
+      const parsedMessageId = MissionUserMessageSchema.shape.id.parse(messageId);
+      await withMissionLock(parsedId, "mission.prompt.attachments.discard", async () => {
+        await recoverPendingTransactions(parsedId);
+        const value = await readJsonIfExists(preparedPromptManifestPath(parsedId, parsedMessageId));
+        if (value === undefined) return;
+        const prepared = PreparedPromptAttachmentsSchema.parse(value);
+        const ownedIds = new Set(
+          (await readAttachmentsManifest(parsedId)).attachments.map((attachment) => attachment.id),
+        );
+        for (const attachment of prepared.message.attachments ?? []) {
+          if (attachment.kind !== "image" || ownedIds.has(attachment.id)) continue;
+          for (const image of [attachment, attachment.optimized]) {
+            if (image === undefined) continue;
+            const relativePath = relative(
+              join(missionPath(parsedId), "attachments", "images"),
+              image.path,
+            );
+            if (relativePath === "" || relativePath.startsWith("..") || isAbsolute(relativePath))
+              throw new MissionStoreError(
+                "config_invalid",
+                "Prepared attachment escaped its Mission image directory.",
+              );
+            const expectedPath =
+              image === attachment
+                ? join(
+                    missionPath(parsedId),
+                    "attachments",
+                    "images",
+                    `${attachment.id}${imageExtension(missionImageMimeType(attachment.path))}`,
+                  )
+                : join(
+                    missionPath(parsedId),
+                    "attachments",
+                    "images",
+                    "optimized",
+                    `${attachment.id}.webp`,
+                  );
+            if (image.path !== expectedPath)
+              throw new MissionStoreError(
+                "config_invalid",
+                "Prepared attachment path does not match its identity.",
+              );
+            await rm(image.path, { force: true });
+          }
+        }
+        await rm(preparedPromptPath(parsedId, parsedMessageId), { recursive: true, force: true });
+      }).catch(rethrowAttachmentIOFailure);
+    },
     async getAttachments(id) {
       const parsedId = MissionIdSchema.parse(id);
       return await withMissionLock(parsedId, "mission.attachments.read", async () => {
@@ -1951,16 +2075,46 @@ export function createMissionStore(options: {
             if (baseAttachments.attachments.length + inputAttachments.length > 20) {
               throw new Error("A mission can include up to 20 attachments.");
             }
+            const preparedValue = await readJsonIfExists(
+              preparedPromptManifestPath(parsedId, parsedMessage.id),
+            );
+            const prepared =
+              preparedValue === undefined
+                ? undefined
+                : PreparedPromptAttachmentsSchema.parse(preparedValue);
+            if (
+              prepared !== undefined &&
+              !sameUserMessageInput(
+                {
+                  ...prepared.message,
+                  kind: "user",
+                  sequence: 0,
+                  schemaVersion: "pragma.mission-message/v1",
+                },
+                parsedMessage,
+              )
+            ) {
+              throw new MissionStoreError(
+                "message_conflict",
+                "Prepared attachments conflict with the accepted message.",
+              );
+            }
             const stagingPath = userMessageAttachmentsStagingPath(parsedId, parsedMessage.id);
             await rm(stagingPath, { recursive: true, force: true });
             await mkdir(stagingPath, { recursive: true, mode: 0o700 });
             let journalWritten = false;
             try {
-              const added = await materializeMissionAttachments({
-                attachments: inputAttachments,
-                temporaryMissionPath: stagingPath,
-                targetMissionPath: missionPath(parsedId),
-              });
+              const added =
+                prepared === undefined
+                  ? await materializeMissionAttachments({
+                      attachments: inputAttachments,
+                      temporaryMissionPath: stagingPath,
+                      targetMissionPath: missionPath(parsedId),
+                    })
+                  : MissionAttachmentsManifestSchema.parse({
+                      schemaVersion: "pragma.mission-attachments/v1",
+                      attachments: prepared.message.attachments ?? [],
+                    });
               const record = MissionTimelineRecordSchema.parse({
                 schemaVersion: "pragma.mission-message/v1",
                 sequence: (records.at(-1)?.sequence ?? 0) + 1,
@@ -1991,7 +2145,7 @@ export function createMissionStore(options: {
               } else {
                 // The durable intent must replay before the Inbox can reject or
                 // apply this request, including pre-Core attachment admission.
-                throw new MissionSemanticWritePendingError({ cause: error });
+                throw new MissionAttachmentWritePendingError({ cause: error });
               }
               throw error;
             }
@@ -2662,4 +2816,12 @@ async function mapWithConcurrency<T, R>(
   );
   await Promise.all(workers);
   return results;
+}
+
+function rethrowAttachmentIOFailure(error: unknown): never {
+  const cause = error instanceof MissionStoreError ? error.cause : error;
+  if (cause instanceof Error && "code" in cause && typeof cause.code === "string") {
+    throw new MissionAttachmentWritePendingError({ cause: error });
+  }
+  throw error;
 }

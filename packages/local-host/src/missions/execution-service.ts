@@ -173,7 +173,6 @@ import {
 import { createMissionResumeOptions } from "./mission-session-upgrade.ts";
 import { MissionStatusService } from "./mission-status-service.ts";
 import { MissionStoreError } from "./repository/mission-store-error.ts";
-import { MissionSemanticWritePendingError } from "./controller/mission-controller-store.ts";
 import type { MissionStore, MissionTimelineTurn } from "./repository/mission-store.ts";
 import { MissionWorkService } from "./mission-work-service.ts";
 
@@ -548,31 +547,23 @@ export function createLocalHostMissionExecutionService(
     sessions: expertSessionStore,
     owners: executionOwner,
     preparePromptAttachments: async (input) => {
-      const messageId = input.attachmentMessageId ?? input.options.requestId;
-      let messageCommitted = false;
-      if (input.attachmentMessageId === undefined) {
-        const attachments = input.options.attachments ?? [];
-        if (attachments.length === 0) return { attachments, durable: false };
-        const message = await options.missions.appendUserMessage(input.missionId, {
-          id: messageId,
-          content: input.content,
-          attachments: [...attachments],
-          createdAt: input.requestedAt ?? new Date().toISOString(),
-        });
-        if (message.kind !== "user") {
-          throw new Error("Mission attachment persistence returned an invalid timeline record.");
-        }
-        messageCommitted = true;
-      }
-      try {
-        return {
-          attachments: await options.missions.getPromptAttachments(input.missionId, messageId),
-          durable: true,
-        };
-      } catch (error) {
-        if (messageCommitted) throw new MissionSemanticWritePendingError({ cause: error });
-        throw error;
-      }
+      if (input.attachmentMessageId !== undefined)
+        return await options.missions.getPromptAttachments(
+          input.missionId,
+          input.attachmentMessageId,
+        );
+      const attachments = input.options.attachments ?? [];
+      if (attachments.length === 0) return attachments;
+      return await options.missions.preparePromptAttachments(input.missionId, {
+        id: input.options.requestId,
+        content: input.content,
+        attachments: [...attachments],
+        createdAt: input.requestedAt ?? new Date().toISOString(),
+      });
+    },
+    discardPromptAttachments: async (input) => {
+      if (input.attachmentMessageId === undefined && (input.options.attachments?.length ?? 0) > 0)
+        await options.missions.discardPromptAttachments(input.missionId, input.options.requestId);
     },
   });
   const sessionService = executionOwner;
@@ -2691,8 +2682,8 @@ export function createLocalHostMissionExecutionService(
         const session = sessionService.session(mission.id)!;
         const promptAttachments = input.attachments ?? [];
         await publishPromptQueue(mission);
-        // Attachment-bearing enqueues were persisted before Core admission so
-        // Runtime paths are stable. Strict steer is projected only after acceptance.
+        // Prepared attachment files have stable Runtime paths, but the user
+        // message and canonical manifest are published only after Core acceptance.
         // Both writes are keyed by requestId for Inbox and transaction recovery.
         const userMessage = await options.missions.appendUserMessage(mission.id, {
           id: input.requestId,

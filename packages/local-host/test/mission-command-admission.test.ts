@@ -1,7 +1,12 @@
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { SteerNotDispatchedError, type ExpertSession, type ExpertTurn } from "@pragma/core";
+import {
+  ExpertPromptRejectedError,
+  SteerNotDispatchedError,
+  type ExpertSession,
+  type ExpertTurn,
+} from "@pragma/core";
 import { describe, expect, it, vi } from "vitest";
 import { createLocalHostMissionCommandAdmission } from "../src/mission-command-admission.ts";
 import {
@@ -82,11 +87,7 @@ function fixture() {
       ...options,
       executionKernel: {
         ...options.executionKernel,
-        prompt: (input: MissionExpertPromptSubmission) =>
-          submitMissionExpertPrompt(input, async () => ({
-            attachments: await persist(),
-            durable: true,
-          })),
+        prompt: (input: MissionExpertPromptSubmission) => submitMissionExpertPrompt(input, persist),
       },
     }),
     setLifecycle: (status: string) => {
@@ -149,7 +150,7 @@ describe("Local Host message admission", () => {
 
   it("rolls back optional resources when Core rejects without masking the original error", async () => {
     const f = fixture();
-    const coreFailure = new Error("Core rejected the prompt");
+    const coreFailure = new ExpertPromptRejectedError("Core rejected the prompt");
     const rollbackFailure = new Error("Memory rollback degraded");
     f.prompt.mockRejectedValueOnce(coreFailure);
     const rollback = vi.fn(async () => {
@@ -315,6 +316,43 @@ describe("Local Host message admission", () => {
     });
     expect(f.dispatch).toHaveBeenCalledOnce();
     expect(f.project).toHaveBeenCalledOnce();
+  });
+
+  it("preserves prepared files when a closed Session rejects a replay of an accepted receipt", async () => {
+    const f = fixture();
+    f.prompt.mockRejectedValueOnce(
+      new ExpertPromptRejectedError("ExpertSession is closing or closed"),
+    );
+    Object.assign(f.session, {
+      getPromptQueue: async () => [{ requestId, content: "accepted", mode: "enqueue" }],
+    });
+    const discard = vi.fn(async () => undefined);
+    await expect(
+      submitMissionExpertPrompt(
+        { missionId, session: f.session, content: "accepted", options: { requestId } },
+        async () => [],
+        discard,
+      ),
+    ).rejects.toBeInstanceOf(MissionSemanticWritePendingError);
+    expect(discard).not.toHaveBeenCalled();
+  });
+
+  it("does not classify an initial text-only Core rejection as a pending attachment write", async () => {
+    const f = fixture();
+    const rejection = new ExpertPromptRejectedError("ExpertSession is closing or closed");
+    f.prompt.mockRejectedValueOnce(rejection);
+    await expect(
+      submitMissionExpertPrompt(
+        {
+          missionId,
+          session: f.session,
+          attachmentMessageId: requestId,
+          content: "initial",
+          options: { requestId },
+        },
+        async () => [],
+      ),
+    ).rejects.toBe(rejection);
   });
 
   it("rejects attachment-bearing strict steer without persisting a user message", async () => {

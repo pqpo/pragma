@@ -22,6 +22,7 @@ import {
   submitMissionExpertPrompt,
   type MissionExpertPromptSubmission,
   type MissionPromptAttachmentPreparation,
+  type MissionPromptAttachmentDiscard,
 } from "./mission-prompt-submission.ts";
 
 type ExpertApplication = PragmaApp["experts"];
@@ -101,9 +102,14 @@ export function createMissionExecutionKernel(options: {
   readonly sessions: ExpertSessionStore;
   readonly owners: MissionExecutionOwnerAccess;
   readonly preparePromptAttachments?: MissionPromptAttachmentPreparation | undefined;
+  readonly discardPromptAttachments?: MissionPromptAttachmentDiscard | undefined;
 }) {
   const prompt = async (input: MissionExpertPromptSubmission) =>
-    await submitMissionExpertPrompt(input, options.preparePromptAttachments);
+    await submitMissionExpertPrompt(
+      input,
+      options.preparePromptAttachments,
+      options.discardPromptAttachments,
+    );
   const interruptSupersededSession = async (subject: MissionExecutionSubject): Promise<void> => {
     const sessionId = subject.priorExecution?.sessionId ?? subject.sessionId;
     if (

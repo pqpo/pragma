@@ -16,6 +16,7 @@ import { basename, join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import * as coreStorage from "@pragma/core";
 import { MissionSemanticWritePendingError } from "../../src/missions/controller/mission-controller-store.ts";
+import { MissionAttachmentWritePendingError } from "../../src/missions/repository/mission-store-error.ts";
 import { createMissionControllerStore } from "../../src/missions/controller/mission-controller-store.ts";
 
 import { formatPragmaYaml, parsePragmaYaml } from "@pragma/interpreter";
@@ -970,6 +971,144 @@ describe("mission store", { timeout: 30_000 }, () => {
     await expect(store.get(source.id)).resolves.toEqual(interrupted);
   });
 
+  it("prepares stable images without publishing a user message and commits them after acceptance", async () => {
+    const root = await temporaryRoot();
+    const missionsPath = join(root, "missions");
+    const store = createMissionStore({ missionsPath });
+    const mission = await store.create({
+      workspace: { path: root, basename: "workspace" },
+      goal: "review",
+      project: { id: "studio", revision: 1 },
+      executor: missionExecutorSnapshot(expertFixture()),
+    });
+    const source = join(root, "draft.png");
+    await writeFile(source, "original-image");
+    const input = {
+      id: "00000000-0000-4000-8000-000000000003",
+      content: "review",
+      createdAt: "2026-10-12T00:00:00.000Z",
+      attachments: [
+        {
+          id: "00000000-0000-4000-8000-000000000002",
+          kind: "image" as const,
+          name: "draft.png",
+          path: source,
+          mimeType: "image/png" as const,
+        },
+      ],
+    };
+    const prepared = await store.preparePromptAttachments(mission.id, input);
+    await rm(source);
+    expect(await store.getAttachments(mission.id)).toEqual([]);
+    expect((await store.readTimelinePage(mission.id, { limit: 10 })).turns).toHaveLength(1);
+    const restarted = createMissionStore({ missionsPath });
+    const preparedManifest = join(
+      restarted.storagePath!(mission.id),
+      "prompt-attachments",
+      encodePragmaPathSegment(input.id),
+      "manifest.json",
+    );
+    const currentPreparation = await readFile(preparedManifest, "utf8");
+    await writeFile(
+      preparedManifest,
+      JSON.stringify({
+        ...JSON.parse(currentPreparation),
+        schemaVersion: "pragma.mission-prompt-attachments/v2",
+      }),
+    );
+    await expect(restarted.preparePromptAttachments(mission.id, input)).rejects.toMatchObject({
+      name: "ZodError",
+    });
+    await expect(readFile(prepared[0]!.path, "utf8")).resolves.toBe("original-image");
+    await writeFile(preparedManifest, currentPreparation);
+    expect(await restarted.preparePromptAttachments(mission.id, input)).toEqual(prepared);
+    await restarted.appendUserMessage(mission.id, { ...input, attachments: [...prepared] });
+    expect(await restarted.getPromptAttachments(mission.id, input.id)).toEqual(prepared);
+    await expect(readFile(prepared[0]!.path, "utf8")).resolves.toBe("original-image");
+    expect((await restarted.readTimelinePage(mission.id, { limit: 10 })).turns).toHaveLength(2);
+    await expect(
+      readFile(
+        join(
+          restarted.storagePath!(mission.id),
+          "prompt-attachments",
+          encodePragmaPathSegment(input.id),
+          "manifest.json",
+        ),
+        "utf8",
+      ),
+    ).rejects.toMatchObject({ code: "ENOENT" });
+    await restarted.discardPromptAttachments(mission.id, input.id);
+    await expect(readFile(prepared[0]!.path, "utf8")).resolves.toBe("original-image");
+  });
+
+  it("replays a partially published prepared image pair without its deleted draft", async () => {
+    const root = await temporaryRoot();
+    const missionsPath = join(root, "missions");
+    const store = createMissionStore({ missionsPath });
+    const mission = await store.create({
+      workspace: { path: root, basename: "workspace" },
+      goal: "review",
+      project: { id: "studio", revision: 1 },
+      executor: missionExecutorSnapshot(expertFixture()),
+    });
+    const source = join(root, "draft.png");
+    const optimized = join(root, "optimized.webp");
+    await writeFile(source, "original-image");
+    await writeFile(optimized, "webp");
+    const attachmentId = "00000000-0000-4000-8000-000000000002";
+    const input = {
+      id: "00000000-0000-4000-8000-000000000003",
+      content: "review",
+      createdAt: "2026-10-12T00:00:00.000Z",
+      attachments: [
+        {
+          id: attachmentId,
+          kind: "image" as const,
+          name: "draft.png",
+          path: source,
+          mimeType: "image/png" as const,
+          optimized: {
+            path: optimized,
+            mimeType: "image/webp" as const,
+            size: 4,
+            width: 1,
+            height: 1,
+          },
+        },
+      ],
+    };
+    const optimizedTarget = join(
+      store.storagePath!(mission.id),
+      "attachments",
+      "images",
+      "optimized",
+      `${attachmentId}.webp`,
+    );
+    const replace = coreStorage.replaceStorageFile;
+    const fail = vi.spyOn(coreStorage, "replaceStorageFile").mockImplementation(async (...args) => {
+      if (args[1] === optimizedTarget) throw new Error("image pair publication interrupted");
+      return await replace(...args);
+    });
+    try {
+      await expect(store.preparePromptAttachments(mission.id, input)).rejects.toBeInstanceOf(
+        MissionAttachmentWritePendingError,
+      );
+    } finally {
+      fail.mockRestore();
+    }
+    await rm(source);
+    await rm(optimized);
+    const restarted = createMissionStore({ missionsPath });
+    const prepared = await restarted.preparePromptAttachments(mission.id, input);
+    expect(await restarted.getAttachments(mission.id)).toEqual([]);
+    expect((await restarted.readTimelinePage(mission.id, { limit: 10 })).turns).toHaveLength(1);
+    await expect(readFile(prepared[0]!.optimized!.path, "utf8")).resolves.toBe("webp");
+    await restarted.discardPromptAttachments(mission.id, input.id);
+    for (const path of [prepared[0]!.path, prepared[0]!.optimized!.path])
+      await expect(readFile(path, "utf8")).rejects.toMatchObject({ code: "ENOENT" });
+    await restarted.discardPromptAttachments(mission.id, input.id);
+  });
+
   it("retains an attachment transaction for Inbox replay when publishing fails", async () => {
     const root = await temporaryRoot();
     const source = join(root, "draft.png");
@@ -1003,14 +1142,14 @@ describe("mission store", { timeout: 30_000 }, () => {
     });
     try {
       await expect(store.appendUserMessage(mission.id, input)).rejects.toBeInstanceOf(
-        MissionSemanticWritePendingError,
+        MissionAttachmentWritePendingError,
       );
       const restartingStore = createMissionStore({ missionsPath: join(root, "missions") });
       await expect(restartingStore.get(mission.id)).rejects.toBeInstanceOf(
-        MissionSemanticWritePendingError,
+        MissionAttachmentWritePendingError,
       );
       await expect(restartingStore.appendUserMessage(mission.id, input)).rejects.toBeInstanceOf(
-        MissionSemanticWritePendingError,
+        MissionAttachmentWritePendingError,
       );
     } finally {
       fail.mockRestore();
@@ -1192,7 +1331,7 @@ describe("mission store", { timeout: 30_000 }, () => {
     await mkdir(manifest);
     try {
       await expect(store.get(mission.id)).rejects.toMatchObject({
-        name: "MissionSemanticWritePendingError",
+        name: "MissionAttachmentWritePendingError",
         cause: { name: "MissionStoreError", cause: { code: "EISDIR" } },
       });
     } finally {
