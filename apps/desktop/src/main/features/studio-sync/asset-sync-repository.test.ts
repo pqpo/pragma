@@ -110,20 +110,24 @@ describe("structured sync repository", () => {
     expect(errorMessage).toContain(`pragma-sync/skills/${skillId}`);
     expect(errorMessage).toContain("SKILL.md:name");
   });
-  it("round-trips metadata descriptions with YAML line breaks against single-line frontmatter", () => {
-    const original = skill();
-    const originalData = original.data as {
-      name: string;
-      description: string;
-      files: { path: string; content: string; executable: boolean }[];
-    };
-    const multilineData = { ...originalData, description: "Review\ncode" };
-    const files = encode(item("skill", skillId, "review", multilineData));
+  it.each(["Review\ncode", String.raw`Review \ncode with \"quotes\"`, "Different description"])(
+    "round-trips independent metadata descriptions: %s",
+    (description) => {
+      const original = skill();
+      const originalData = original.data as {
+        name: string;
+        description: string;
+        files: { path: string; content: string; executable: boolean }[];
+      };
+      const multilineData = { ...originalData, description };
+      const files = encode(item("skill", skillId, "review", multilineData));
 
-    const restored = decodeSyncRepository(files).get(`skill:${skillId}`);
+      const restored = decodeSyncRepository(files).get(`skill:${skillId}`);
 
-    expect(restored?.data).toMatchObject({ description: "Review\ncode" });
-  });
+      expect(restored?.data).toMatchObject({ description });
+      expect(encodeSyncRepository(decodeSyncRepository(files))).toEqual(files);
+    },
+  );
   it("accepts edits, additions and deletions without a manually updated hash index", () => {
     const original = knowledge();
     const files = encode(original);

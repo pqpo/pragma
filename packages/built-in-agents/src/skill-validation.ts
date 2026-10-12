@@ -30,6 +30,8 @@ export interface SkillPackageValidationResult {
 }
 
 export interface SkillPackageValidationOptions {
+  /** Sync preserves descriptions independently from SKILL.md frontmatter. Defaults to true. */
+  readonly checkDescriptionConsistency?: boolean;
   /** File paths marked executable by repository metadata or working-tree mode. */
   readonly executablePaths: ReadonlySet<string>;
   /** Unchanged executable files preserved from a previously accepted Skill revision. */
@@ -125,7 +127,8 @@ function staticDiagnostics(
           });
         } else if (
           field === "description"
-            ? normalizeDescription(value) !== normalizeDescription(skill.description)
+            ? options.checkDescriptionConsistency !== false &&
+              normalizeDescription(value) !== normalizeDescription(skill.description)
             : value.trim() !== skill.name
         ) {
           diagnostics.push({

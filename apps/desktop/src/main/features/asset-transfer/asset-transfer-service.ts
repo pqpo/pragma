@@ -661,6 +661,7 @@ export function createAssetTransferService(options: {
             description: data.description,
             sourcePath: root,
             candidateContentHash: tree.hash,
+            checkDescriptionConsistency: false,
             executablePaths,
             ...(localCapability === undefined ? {} : { current: localCapability }),
           });

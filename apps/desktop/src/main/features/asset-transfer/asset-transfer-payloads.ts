@@ -98,6 +98,7 @@ export function validateTransferredSkill(
       })),
     },
     {
+      checkDescriptionConsistency: false,
       executablePaths: new Set(
         data.files.filter((file) => file.executable).map((file) => file.path),
       ),
@@ -120,6 +121,7 @@ export async function publishTransferredSkill(
     readonly description: string;
     readonly sourcePath: string;
     readonly candidateContentHash: string;
+    readonly checkDescriptionConsistency?: boolean;
     readonly executablePaths?: readonly string[];
     readonly current?: Awaited<ReturnType<CapabilityStore["get"]>>;
   },
@@ -135,6 +137,9 @@ export async function publishTransferredSkill(
       ...common,
       name: input.name,
       description: input.description,
+      ...(input.checkDescriptionConsistency === undefined
+        ? {}
+        : { checkDescriptionConsistency: input.checkDescriptionConsistency }),
     });
   if (input.current.definition.kind !== "skill")
     throw new Error(`Capability ${input.id} is not a Skill.`);

@@ -121,6 +121,7 @@ export interface CapabilityStore extends CapabilityRepository {
     readonly manualChanges?: SkillManualRevisionRecord["operations"] | undefined;
   }): Promise<Capability>;
   publishNewSkillRevisionCandidate(input: {
+    readonly checkDescriptionConsistency?: boolean;
     readonly id: string;
     readonly name: string;
     readonly description: string;
@@ -1109,10 +1110,16 @@ export function createCapabilityStore(options: {
           const contentHash = await hashSkillDirectoryContent(payloadPath);
           const skillDocument = await readFile(join(payloadPath, "SKILL.md"), "utf8");
           const metadata = readSkillMetadata(skillDocument);
-          if (metadata.name !== input.name || metadata.description !== input.description) {
+          if (
+            metadata.name !== input.name ||
+            (rawInput.checkDescriptionConsistency !== false &&
+              metadata.description !== input.description)
+          ) {
             throw new CapabilityStoreError(
               "config_invalid",
-              "SKILL.md name and description must match the creation draft metadata.",
+              rawInput.checkDescriptionConsistency === false
+                ? "SKILL.md name must match the creation draft metadata."
+                : "SKILL.md name and description must match the creation draft metadata.",
             );
           }
           const definition = CapabilityDefinitionSchema.parse({

@@ -33,7 +33,10 @@ pragma-sync/
 README is a generated Chinese name/type/path index and is ignored on import. Knowledge metadata
 retains names, descriptions, empty directories and per-file metadata. The actual file tree controls
 file additions and removals; new files receive normal priority and manual activation. Skill files
-retain original bytes, including binary content; executable flags come from the Git index. Users
+retain original bytes, including binary content; executable flags come from the Git index. Sync
+does not compare the Skill description in metadata.yaml with SKILL.md frontmatter, including
+during initial publication. Both descriptions retain their original content; frontmatter must still
+contain string name and description fields, and name consistency remains required. Users
 can edit YAML and native files without maintaining a hash list. Import recalculates domain hashes
 and canonical semantic fingerprints. YAML formatting, generated README, credentials and local
 revision numbers do not affect fingerprints. Definitions and bindings are normalized through the

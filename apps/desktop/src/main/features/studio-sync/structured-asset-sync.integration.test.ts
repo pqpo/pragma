@@ -713,6 +713,41 @@ describe("structured asset sync with real Git and domain stores", { timeout: 60_
       beforeCapability + 1,
     );
   });
+  it("synchronizes Skill description differences through export, restore and first publication", async () => {
+    const git = await fixture();
+    const a = device(join(git.root, "a"));
+    const b = device(join(git.root, "b"));
+    const skill = await addSkill(a.capabilities, a.root);
+    const configured = await a.service.configure(configuration);
+    expect(configured.status, configured.error).toBe("ready");
+    const checkout = join(git.root, "editor");
+    await exec("git", ["clone", git.bare, checkout]);
+    const description = String.raw`Audit \ncode with \"quotes\"`;
+    await writeFile(
+      join(checkout, "pragma-sync", "skills", skill.manifest.id, "metadata.yaml"),
+      formatPragmaYaml({
+        id: skill.manifest.id,
+        name: "audit",
+        description,
+        entryPath: "SKILL.md",
+      }),
+    );
+    await exec("git", ["-C", checkout, "add", "--all"]);
+    await exec("git", ["-C", checkout, "commit", "-m", "Edit Skill description"]);
+    await exec("git", ["-C", checkout, "push"]);
+
+    const restored = await b.service.configure(configuration);
+    expect(restored.status, restored.error).toBe("ready");
+    expect((await b.capabilities.get(skill.manifest.id)).definition).toMatchObject({
+      description,
+    });
+    const root = await b.capabilities.skillFilesPath(skill.manifest.id, 1);
+    expect(await readFile(join(root, "SKILL.md"), "utf8")).toContain("description: Audit code");
+    const head = await git.head();
+    const synced = await b.service.sync();
+    expect(synced.status, synced.error).toBe("ready");
+    expect(await git.head()).toBe(head);
+  });
   it("accepts remote file edits/additions/deletions and honors automatic upload configuration", async () => {
     const git = await fixture();
     const a = device(join(git.root, "a"));
