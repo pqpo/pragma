@@ -206,6 +206,13 @@ describe("built-in Pragma Agent DSL", () => {
     expect(compiled.value.instructions).toContain("Your name is Pragma");
     expect(compiled.value.instructions).toContain("identify yourself as Pragma");
     expect(compiled.value.instructions).toContain("default general-purpose Agent");
+    expect(compiled.value.instructions).toContain("delegate immediately to");
+    expect(compiled.value.instructions).toContain(
+      "Formal Store content and Skill packages are read-only",
+    );
+    expect(compiled.value.instructions).toContain(
+      "continue the original Revision Agent conversation",
+    );
     expect(compiled.value.instructions).toContain("not the limit of your role");
 
     for (const ref of [
@@ -513,10 +520,14 @@ describe("built-in Pragma Agent DSL", () => {
     expect(resource.spec.instructions).toContain("Repeat the entire");
     expect(resource.spec.instructions).toContain("final check after the last fix");
     expect(resource.spec.instructions).toContain("moves the draft to human review");
-    expect(resource.spec.instructions).toContain("can no longer be edited");
+    expect(resource.spec.instructions).toContain(
+      "Submission freezes the draft during pending_review",
+    );
     expect(resource.spec.instructions).toContain("latest draft.revision");
     expect(resource.spec.instructions).toContain("knowledge_revision_submit_draft");
-    expect(resource.spec.instructions).toContain("Submission is irreversible");
+    expect(resource.spec.instructions).toContain(
+      "Returning for changes restores editing on the same draft and Mission",
+    );
     expect(resource.spec.instructions).toContain("knowledge_revision_discard_draft");
   });
 

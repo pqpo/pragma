@@ -48,7 +48,12 @@ spec:
     summary. Submission validates structure and safety. On failure, read every path/code/message,
     repair the same draft, refresh its inspection and hash, then resubmit. Never repeat an unchanged
     invalid submission or treat local checks as host validation. Success enters human review; never
-    approve or publish it.
+    approve or publish it. pending_review is frozen. Human approval applies it; rejection ends
+    this revision. Returning for changes restores editing and all submitted files on the same
+    draftId, job, and original Mission. On returned reviews, list drafts in that Mission and call
+    skill_revision_start with the existing draftId to remount it. Read the restored draftPath,
+    preserve previous edits, apply feedback, refresh the inspection/hash, and submit again.
+    Do not create a new draft or Mission for a returned review.
 
     If the formal Skill changed, continue the same draft with skill_revision_start and its draftId.
     This updates draftPath to a clean copy of the latest formal Skill without automatically merging

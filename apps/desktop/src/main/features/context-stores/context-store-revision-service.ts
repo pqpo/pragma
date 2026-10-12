@@ -10,6 +10,8 @@ import {
   KnowledgeDraftValidationError,
 } from "@pragma/built-in-agents";
 import {
+  REVISION_USER_REJECTED_ERROR_CODE,
+  isUserRejectedRevision,
   ContextStoreChangeSetSchema,
   ContextStoreDraftRebaseInspectionSchema,
   ContextStoreDraftSchema,
@@ -56,7 +58,7 @@ export interface ContextStoreRevisionGenerator {
 }
 
 export interface ContextStoreRevisionDraftRecoveryIssue {
-  readonly code: "mission_orphaned" | "mission_unreadable";
+  readonly code: "mission_orphaned" | "mission_unreadable" | "revision_rework_unavailable";
   readonly message: string;
 }
 
@@ -90,6 +92,7 @@ export interface ContextStoreRevisionService {
   list(filter?: ListContextStoreRevisionJobs): Promise<readonly ContextStoreRevisionJob[]>;
   get(jobId: string): Promise<ContextStoreRevisionJob>;
   approve(jobId: string, expectedRevision: number): Promise<ContextStoreRevisionJob>;
+  returnForRework(jobId: string, expectedRevision: number): Promise<ContextStoreRevisionJob>;
   reject(jobId: string, expectedRevision: number): Promise<ContextStoreRevisionJob>;
   retry(jobId: string, expectedRevision: number): Promise<ContextStoreRevisionJob>;
   delete(jobId: string, expectedRevision: number): Promise<void>;
@@ -307,6 +310,7 @@ export function createContextStoreRevisionService(options: {
         revision: current.revision + 1,
         updatedAt: new Date().toISOString(),
       });
+      if (next.state === "editing") await assertDraftNotUserRejected(id);
       await writeDraft(next);
       return next;
     });
@@ -477,6 +481,63 @@ export function createContextStoreRevisionService(options: {
     await writeJsonAtomic(jobPath(job.id), ContextStoreRevisionJobSchema.parse(job));
   };
 
+  const ReworkJournalSchema = z
+    .object({
+      schemaVersion: z.literal("pragma.knowledge-revision-rework/v1"),
+      nextDraft: ContextStoreDraftSchema,
+      nextJob: ContextStoreRevisionJobSchema,
+    })
+    .strict();
+  const reworkJournalPath = (draftId: string) => join(draftRoot(draftId), "rework.json");
+
+  const applyReworkJournal = async (draftId: string): Promise<void> => {
+    const path = reworkJournalPath(draftId);
+    let raw: string;
+    try {
+      raw = await readFile(path, "utf8");
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") return;
+      throw error;
+    }
+    const journal = ReworkJournalSchema.parse(JSON.parse(raw));
+    const { nextDraft, nextJob } = journal;
+    const draft = await readDraft(draftId);
+    const job = await readJob(nextJob.id);
+    if (
+      nextDraft.id !== draftId ||
+      nextJob.draftId !== draftId ||
+      nextDraft.state !== "editing" ||
+      nextJob.state !== "editing" ||
+      ![nextDraft.revision - 1, nextDraft.revision].includes(draft.revision) ||
+      ![nextJob.revision - 1, nextJob.revision].includes(job.revision) ||
+      (draft.revision === nextDraft.revision - 1 && draft.state !== "pending_review") ||
+      (job.revision === nextJob.revision - 1 && job.state !== "pending_review")
+    ) {
+      throw invalidState("The revision rework journal conflicts with its owner.");
+    }
+    if (draft.revision < nextDraft.revision) {
+      await writeDraft(nextDraft);
+    }
+    if (job.revision < nextJob.revision) await writeJob(nextJob);
+    await rm(path, { force: true });
+  };
+
+  const withReworkLocks = async <T>(draftId: string, action: () => Promise<T>): Promise<T> =>
+    await withFileLock(
+      `${draftRoot(draftId)}.lock`,
+      async () => await withFileLock(jobsLockPath, action),
+    );
+
+  const recoverRework = async (draftId: string): Promise<void> => {
+    try {
+      await stat(reworkJournalPath(draftId));
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") return;
+      throw error;
+    }
+    await withReworkLocks(draftId, async () => await applyReworkJournal(draftId));
+  };
+
   const mutateJob = async (
     id: string,
     expectedRevision: number,
@@ -543,6 +604,13 @@ export function createContextStoreRevisionService(options: {
       if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
       throw error;
     }
+  };
+
+  const userRejectedDraftIds = async (): Promise<ReadonlySet<string>> =>
+    new Set((await readAllJobs()).filter(isUserRejectedRevision).map((job) => job.draftId));
+  const assertDraftNotUserRejected = async (draftId: string): Promise<void> => {
+    if ((await userRejectedDraftIds()).has(draftId))
+      throw invalidState("The user ended this revision. Create a new draft for a new revision.");
   };
 
   const isActiveMissionJob = (job: ContextStoreRevisionJob): boolean =>
@@ -612,6 +680,7 @@ export function createContextStoreRevisionService(options: {
           : undefined,
       );
     }
+    await assertDraftNotUserRejected(draft.id);
     if (draft.storeId !== claim.storeId || draft.state === "merged") {
       throw invalidState("The claimed knowledge draft is not editable for this knowledge base.");
     }
@@ -778,6 +847,7 @@ export function createContextStoreRevisionService(options: {
     },
 
     async start(input, startOptions = {}) {
+      if (startOptions.draftId !== undefined) await recoverRework(startOptions.draftId);
       const request = ContextStoreRevisionRequestSchema.parse(input);
       return await withFileLock(jobsLockPath, async () => {
         if (request.sourceDigest !== undefined) {
@@ -787,7 +857,11 @@ export function createContextStoreRevisionService(options: {
               job.request.source === request.source &&
               job.request.sourceDigest === request.sourceDigest,
           );
-          if (existing !== undefined) return existing;
+          if (existing !== undefined) {
+            if (isUserRejectedRevision(existing))
+              throw invalidState("The user ended this revision.");
+            return existing;
+          }
         }
         const draft =
           startOptions.draftId === undefined
@@ -811,6 +885,7 @@ export function createContextStoreRevisionService(options: {
         ) {
           throw invalidState("The selected draft is not editable for this knowledge base.");
         }
+        await assertDraftNotUserRejected(draft.id);
         const active = (await readAllJobs()).find(
           (job) =>
             job.draftId === draft.id &&
@@ -839,6 +914,10 @@ export function createContextStoreRevisionService(options: {
     },
 
     async startForMission(input) {
+      if (input.draftId !== undefined) {
+        await recoverRework(input.draftId);
+        await assertDraftNotUserRejected(input.draftId);
+      }
       const request = ContextStoreRevisionRequestSchema.parse(input.request);
       return await withFileLock(
         missionClaimsLockPath,
@@ -895,6 +974,8 @@ export function createContextStoreRevisionService(options: {
     },
 
     async getMissionActiveJob(input) {
+      const pending = await findMissionActiveJob(input.missionId, input.storeId);
+      if (pending !== undefined) await recoverRework(pending.draftId);
       return await withFileLock(missionClaimLockPath(input.missionId, input.storeId), async () => {
         const claim = await readMissionClaim(input.missionId, input.storeId);
         if (claim !== undefined) {
@@ -918,12 +999,21 @@ export function createContextStoreRevisionService(options: {
 
     async list(filter = {}) {
       const jobs = (await readAllJobs()).filter(
-        (job) =>
-          (filter.storeId === undefined || job.request.storeId === filter.storeId) &&
-          (filter.state === undefined || job.state === filter.state),
+        (job) => filter.storeId === undefined || job.request.storeId === filter.storeId,
       );
       const reconciled: ContextStoreRevisionJob[] = [];
-      for (const job of jobs) {
+      for (const previous of jobs) {
+        try {
+          await recoverRework(previous.draftId);
+        } catch (error) {
+          options.warn?.(
+            "knowledge_revision_rework_unavailable: the revision owner could not be recovered.",
+            error,
+          );
+          continue;
+        }
+        const job = await readJob(previous.id);
+        if (filter.state !== undefined && job.state !== filter.state) continue;
         try {
           await recoverOrphanedClaim(job);
           reconciled.push(
@@ -940,6 +1030,7 @@ export function createContextStoreRevisionService(options: {
     },
 
     async get(jobId) {
+      await recoverRework((await readJob(jobId)).draftId);
       const job = await readJob(jobId);
       await recoverOrphanedClaim(job);
       return await recoverTerminalMissionClaim(
@@ -948,6 +1039,7 @@ export function createContextStoreRevisionService(options: {
     },
 
     async approve(jobId, expectedRevision) {
+      await recoverRework((await readJob(jobId)).draftId);
       const current = await readJob(jobId);
       if (current.revision !== expectedRevision) throw revisionConflict();
       if (current.state !== "pending_review") {
@@ -1046,16 +1138,65 @@ export function createContextStoreRevisionService(options: {
       }
     },
 
+    async returnForRework(jobId, expectedRevision) {
+      const selected = await readJob(jobId);
+      await recoverRework(selected.draftId);
+      return await withReworkLocks(selected.draftId, async () => {
+        const job = await readJob(jobId);
+        const draft = await readDraft(job.draftId);
+        if (
+          job.revision !== expectedRevision ||
+          job.state !== "pending_review" ||
+          draft.state !== "pending_review" ||
+          draft.submittedRevision !== draft.revision
+        ) {
+          throw revisionConflict();
+        }
+        const timestamp = new Date().toISOString();
+        const nextDraft = ContextStoreDraftSchema.parse({
+          ...draft,
+          revision: draft.revision + 1,
+          state: "editing",
+          submittedRevision: undefined,
+          updatedAt: timestamp,
+        });
+        const nextJob = ContextStoreRevisionJobSchema.parse({
+          ...job,
+          revision: job.revision + 1,
+          state: "editing",
+          error: undefined,
+          updatedAt: timestamp,
+        });
+        await writeJsonAtomic(
+          reworkJournalPath(draft.id),
+          ReworkJournalSchema.parse({
+            schemaVersion: "pragma.knowledge-revision-rework/v1",
+            nextDraft,
+            nextJob,
+          }),
+        );
+        await applyReworkJournal(draft.id);
+        return nextJob;
+      });
+    },
+
     async reject(jobId, expectedRevision) {
+      await recoverRework((await readJob(jobId)).draftId);
       const rejected = await mutateJob(jobId, expectedRevision, (job) => {
         if (job.state !== "pending_review") {
           throw invalidState("Only a submitted draft can be rejected.");
         }
-        return { state: "rejected" };
+        return {
+          state: "rejected",
+          error: {
+            code: REVISION_USER_REJECTED_ERROR_CODE,
+            message: "The user ended this revision without applying changes.",
+          },
+        };
       });
       const rejectedDraft = await readDraft(rejected.draftId);
       await mutateDraftRecord(rejectedDraft.id, rejectedDraft.revision, () => ({
-        state: "editing",
+        state: "needs_attention",
         activeMissionId: undefined,
         submittedRevision: undefined,
       }));
@@ -1074,6 +1215,7 @@ export function createContextStoreRevisionService(options: {
     },
 
     async retry(jobId, expectedRevision) {
+      await recoverRework((await readJob(jobId)).draftId);
       const candidate = await readJob(jobId);
       if (
         candidate.request.operation === "create" &&
@@ -1196,7 +1338,7 @@ export function createContextStoreRevisionService(options: {
         throw invalidState("The conflicted creation was already moved to a replacement task.");
       }
       const retried = await mutateJob(jobId, expectedRevision, (job) => {
-        if (!["needs_attention", "rejected"].includes(job.state)) {
+        if (isUserRejectedRevision(job) || !["needs_attention", "rejected"].includes(job.state)) {
           throw invalidState("Only a stopped revision task can be retried.");
         }
         return { state: "editing", error: undefined, missionId: undefined };
@@ -1210,6 +1352,20 @@ export function createContextStoreRevisionService(options: {
     },
 
     async delete(jobId, expectedRevision) {
+      const candidate = await readJob(jobId);
+      if (candidate.revision !== expectedRevision) throw revisionConflict();
+      if (isUserRejectedRevision(candidate)) {
+        // The Job owns the terminal reason. Remove its draft before deleting that authority.
+        try {
+          const draft = await readDraft(candidate.draftId);
+          await api.discardDraft(draft.id, draft.revision);
+        } catch (error) {
+          if (!(
+            error instanceof ContextStoreRevisionServiceError && error.code === "draft_not_found"
+          ))
+            throw error;
+        }
+      }
       await withFileLock(jobsLockPath, async () => {
         const job = await readJob(jobId);
         if (job.revision !== expectedRevision) throw revisionConflict();
@@ -1223,12 +1379,29 @@ export function createContextStoreRevisionService(options: {
 
     async listDraftsWithRecovery(filter = {}) {
       const drafts = (await readAllDrafts()).filter(
-        (draft) =>
-          (filter.storeId === undefined || draft.storeId === filter.storeId) &&
-          (filter.state === undefined || draft.state === filter.state),
+        (draft) => filter.storeId === undefined || draft.storeId === filter.storeId,
       );
       const reconciled: ContextStoreRevisionDraftListEntry[] = [];
-      for (const draft of drafts) {
+      for (const previous of drafts) {
+        try {
+          await recoverRework(previous.id);
+        } catch (error) {
+          options.warn?.(
+            "knowledge_revision_rework_unavailable: the draft owner could not be recovered.",
+            error,
+          );
+          reconciled.push({
+            draft: previous,
+            recovery: {
+              code: "revision_rework_unavailable",
+              message:
+                "knowledge_revision_rework_unavailable: The review return could not be recovered. The draft and journal were preserved for diagnosis.",
+            },
+          });
+          continue;
+        }
+        const draft = await readDraft(previous.id);
+        if (filter.state !== undefined && draft.state !== filter.state) continue;
         try {
           const recovery = await recoverOrphanedClaim({
             draftId: draft.id,
@@ -1255,10 +1428,13 @@ export function createContextStoreRevisionService(options: {
     },
 
     async listDrafts(filter = {}) {
-      return (await api.listDraftsWithRecovery(filter)).map((entry) => entry.draft);
+      return (await api.listDraftsWithRecovery(filter))
+        .filter((entry) => entry.recovery?.code !== "revision_rework_unavailable")
+        .map((entry) => entry.draft);
     },
 
     async getDraftWithRecovery(draftId) {
+      await recoverRework(draftId);
       const draft = await readDraft(draftId);
       const recovery = await recoverOrphanedClaim({
         draftId: draft.id,
@@ -1275,6 +1451,7 @@ export function createContextStoreRevisionService(options: {
     },
 
     async getDraftChangeSet(draftId) {
+      await recoverRework(draftId);
       const draft = await readDraft(draftId);
       const base = await draftBaseSnapshot(draft, options.contextStores);
       return attachContextStoreBaseContent(base, changeSetFromDraft(draft, base));
@@ -1297,6 +1474,7 @@ export function createContextStoreRevisionService(options: {
     },
 
     async submitDraft(draftId, expectedRevision, summary) {
+      await recoverRework(draftId);
       return await withFileLock(`${draftRoot(draftId)}.lock`, async () => {
         const current = await readDraft(draftId);
         if (current.revision !== expectedRevision) throw revisionConflict();
@@ -1472,6 +1650,7 @@ export function createContextStoreRevisionService(options: {
     },
 
     async resolveDraft(draftId) {
+      await recoverRework(draftId);
       const draft = await readDraft(draftId);
       return {
         revision: String(draft.revision),
@@ -1486,6 +1665,7 @@ export function createContextStoreRevisionService(options: {
     },
 
     async attachMission(jobId, missionId) {
+      await recoverRework((await readJob(jobId)).draftId);
       const job = await readJob(jobId);
       if (job.missionId !== undefined && job.missionId !== missionId) {
         throw invalidState("The knowledge draft is already attached to another Mission.");
@@ -1676,10 +1856,16 @@ export function createContextStoreRevisionService(options: {
     },
 
     async hasUnmergedDrafts(storeId) {
+      const terminalDrafts = await userRejectedDraftIds();
       for (const name of await readNames(draftsPath, true)) {
         try {
           const draft = await readDraft(name);
-          if (draft.storeId === storeId && draft.state !== "merged") return true;
+          if (
+            draft.storeId === storeId &&
+            draft.state !== "merged" &&
+            !terminalDrafts.has(draft.id)
+          )
+            return true;
         } catch (error) {
           // Lock directories and interrupted/discarded drafts have no draft record.
           // Match the list boundary rather than treating them as unmerged drafts.

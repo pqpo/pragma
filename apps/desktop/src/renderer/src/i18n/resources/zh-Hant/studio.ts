@@ -661,6 +661,7 @@ export const studio = {
   revisionErrorValidationFailed: "草稿未通過結構驗證，請開啟關聯任務修正後重新提交。",
   revisionErrorGenerationFailed: "修訂產生未完成，請開啟關聯任務查看執行詳情後重試。",
   revisionErrorMissionUnavailable: "關聯修訂任務已不存在；草稿已保留，可繼續修訂或丟棄。",
+  revisionUserRejected: "使用者已拒絕本次修訂。草稿僅供歷史檢視，無法繼續修改或重試。",
   revisionErrorGeneric: "修訂任務未完成，請查看任務狀態或執行詳情後重試。",
   revisionSource: {
     manual: "合併編輯",
@@ -683,7 +684,12 @@ export const studio = {
   allKnowledgeBases: "全部知識庫",
   noStoreRevisionTasks: "暫無修訂記錄。",
   noStoreRevisionTasksDescription: "手動儲存、提交後的任務以及等待審批的變更會顯示在這裡。",
-  approveRevision: "同意並套用",
+  approveRevision: "同意",
+  returnRevision: "駁回",
+  approveRevisionTooltip: "審核通過，套用本次修訂。",
+  returnRevisionTooltip:
+    "審核未通過但保留草稿，退回可編輯狀態。可在原 Mission 中繼續修改並再次提交審核。",
+  rejectRevisionTooltip: "終止本次修訂，不套用修改，不繼續此草稿。",
   rejectRevision: "拒絕",
   retryRevision: "重試",
   deleteRevisionTask: "刪除任務",
@@ -724,20 +730,20 @@ export const studio = {
   revisionDraftAwaitingConfirmationTitle: "草稿仍可修改",
   revisionDraftAwaitingConfirmationDescription:
     "Agent 已暫停且尚未提交草稿。你可以先審核目前變更；需要調整時開啟原任務繼續修改，確認無誤後再讓 Agent 提交審批。",
-  revisionNeedsRebaseTitle: "Skill 已更新，需要先變基",
+  revisionNeedsRebaseTitle: "知識庫已更新，需要先變基",
   revisionNeedsRebaseDescription:
-    "這份草稿基於較早的 Skill 版本，不能直接套用。請繼續關聯任務，讓修訂 Agent 將草稿變基到最新版本。已發佈的 Skill 不會被修改。",
+    "這份草稿基於較早的知識庫版本，不能直接套用。請繼續關聯任務，讓修訂 Agent 將草稿變基到最新版本。已發佈的知識庫不會被修改。",
   revisionNeedsRebaseStepOpenMission:
     "點擊下方「開啟任務並變基」；下一步指令會自動帶入任務輸入框。",
   revisionNeedsRebaseStepReopen: "如果任務顯示為已完成，先點擊「重新開啟」，再繼續對話。",
   revisionNeedsRebasePrompt:
-    "請檢查最新 Skill，將此草稿變基到最新版本；如有衝突，請逐項說明並和我確認處理方式，然後重新提交修訂。",
+    "請檢查最新知識庫，將此草稿變基到最新版本；如有衝突，請逐項說明並和我確認處理方式，然後重新提交修訂。",
   revisionNeedsRebaseStepAskAgent:
     "檢查任務輸入框中已帶入的提示詞，確認後傳送給修訂 Agent：「{{prompt}}」",
   revisionNeedsRebaseStepReview:
-    "返回「工作室 → Skill → 修訂任務」，審核新的變更方案，然後點擊「同意並套用」。",
+    "返回「工作室 → 知識庫 → 修訂任務」，審核新的變更方案，然後點擊「同意並套用」。",
   revisionNeedsRebaseNoMission:
-    "此任務沒有可繼續的關聯任務。請刪除它，然後前往「工作室 → Skill → 對應 Skill → 提交修訂」，重新建立一份修訂方案。",
+    "此任務沒有可繼續的關聯任務。請刪除它，然後前往「工作室 → 知識庫 → 對應 知識庫 → 提交修訂」，重新建立一份修訂方案。",
   filesChanged: "變更 {{count}} 個檔案",
   baseRevision: "基於版本 {{count}}",
   newKnowledgeBaseRevision: "新增知識庫",

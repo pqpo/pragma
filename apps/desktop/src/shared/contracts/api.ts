@@ -460,6 +460,9 @@ export interface PragmaDesktopAPI {
   approveContextStoreRevision: (
     input: ContextStoreRevisionJobRef,
   ) => Promise<ContextStoreRevisionJob>;
+  returnContextStoreRevision: (
+    input: ContextStoreRevisionJobRef,
+  ) => Promise<ContextStoreRevisionJob>;
   rejectContextStoreRevision: (
     input: ContextStoreRevisionJobRef,
   ) => Promise<ContextStoreRevisionJob>;
@@ -678,6 +681,10 @@ export interface PragmaDesktopAPI {
     input: GetSkillRevisionReviewFile,
   ) => Promise<SkillRevisionReviewFile>;
   approveSkillRevision: (input: {
+    readonly jobId: string;
+    readonly expectedRevision: number;
+  }) => Promise<ManagedSkillRevisionJob>;
+  returnSkillRevision: (input: {
     readonly jobId: string;
     readonly expectedRevision: number;
   }) => Promise<ManagedSkillRevisionJob>;

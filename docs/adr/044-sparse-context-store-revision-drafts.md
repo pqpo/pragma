@@ -174,3 +174,44 @@ written draft in `pending_review`, and an unchanged formal Store snapshot; no pu
   before another task can be created for their draft.
 - The background drain also rechecks wakeups during completion cleanup so requests cannot be lost
   between resolving the drain promise and clearing its active marker.
+
+## Return a review for changes (#383)
+
+The review has three distinct actions: approve applies the candidate, return for changes preserves
+the draft and returns it to `editing`, and reject ends the revision without applying it. Returning
+retains the same draft/job identities, request, base, summary, and original Mission association; it
+clears the submission pin so the Agent can inspect, edit, and submit the same candidate repeatedly.
+
+The selected draft and job are updated under their existing aggregate locks with a versioned
+`rework.json` journal in that draft's authority directory. First owner access replays interrupted
+updates without overwriting an already restored editable tree. Future journals fail closed and
+remain available for diagnosis; unrelated owner access continues. Existing draft/job schemas and
+state names are unchanged, so existing persisted records require no migration. This adds an
+explicit review operation and does not reinterpret prior rejected records.
+
+Pragma delegates managed content changes to the corresponding Revision Agent before trying any
+write. Formal content is read-only to Agents; only drafts are writable. Human approval remains
+the publication boundary. Continuation carries the draftId and review feedback to the original
+Revision Agent conversation rather than creating a replacement.
+
+An unreadable return journal is reported as `revision_rework_unavailable` in the draft recovery
+summary and logged with `knowledge_revision_rework_unavailable`. It prevents that draft from
+exposing a writable namespace, while unrelated list entries and background processing continue.
+The original data and journal remain available for diagnosis.
+
+### PR #384 review corrections
+
+New deliberate rejections persist `revision_user_rejected` in the existing Job error field.
+All retry/resume entries and the review UI treat that reason as terminal; a new revision requires
+a new draft. Historical stopped/rejected records without that reason keep their existing recovery
+semantics. No stored Schema or version changes, or reinterpretation of supported historical data,
+are required. A rejected Store draft remains read-only in `needs_attention`, with its Job retaining
+the terminal reason; it no longer counts as an actionable unmerged draft.
+
+Deleting a newly user-rejected Job first discards its draft through the existing draft-cleanup
+boundary. This prevents removing the terminal reason while leaving a candidate that a later
+Mission claim could reopen. Formal Store content is preserved.
+
+The general draft query retains deliberately rejected drafts for read-only history and Diff
+display. Their Job remains terminal, their draft stays non-editable, and they remain excluded
+from actionable unmerged-draft checks. History visibility grants no write or resume authority.

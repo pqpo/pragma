@@ -174,6 +174,10 @@ export function installCapabilityHandlers(
     const parsed = actionSchema.parse(input);
     return skillRevisions.approve(parsed.jobId, parsed.expectedRevision);
   });
+  ipcMain.handle("capabilities:return-skill-revision", (_event, input: unknown) => {
+    const parsed = actionSchema.parse(input);
+    return skillRevisions.returnForRework(parsed.jobId, parsed.expectedRevision);
+  });
   ipcMain.handle("capabilities:reject-skill-revision", (_event, input: unknown) => {
     const parsed = actionSchema.parse(input);
     return skillRevisions.reject(parsed.jobId, parsed.expectedRevision);

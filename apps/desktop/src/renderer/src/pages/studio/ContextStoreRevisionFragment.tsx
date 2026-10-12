@@ -1,3 +1,4 @@
+import { isUserRejectedRevision } from "@pragma/built-in-agents/contracts";
 import {
   ArrowClockwise,
   ArrowLeft,
@@ -207,7 +208,7 @@ export function ContextStoreRevisionFragment(props: {
 
   const act = async (
     job: ContextStoreRevisionJob,
-    action: "approve" | "reject" | "retry" | "delete",
+    action: "approve" | "return" | "reject" | "retry" | "delete",
   ) => {
     const api = desktopApi();
     if (api === undefined) return;
@@ -215,6 +216,7 @@ export function ContextStoreRevisionFragment(props: {
     try {
       const input = { jobId: job.id, expectedRevision: job.revision };
       if (action === "approve") await api.approveContextStoreRevision(input);
+      else if (action === "return") await api.returnContextStoreRevision(input);
       else if (action === "reject") await api.rejectContextStoreRevision(input);
       else if (action === "retry") await api.retryContextStoreRevision(input);
       else await api.deleteContextStoreRevision(input);
@@ -227,6 +229,8 @@ export function ContextStoreRevisionFragment(props: {
       await load();
     } catch (caught) {
       if (activeStoreId.current === storeId) {
+        await load();
+        if (activeStoreId.current !== storeId) return;
         setError(localizedContextStoreRevisionError(caught, translateRevisionError));
       }
     } finally {
@@ -342,6 +346,7 @@ export function ContextStoreRevisionFragment(props: {
         error={error}
         onBack={() => setSelectedJobId(null)}
         onApprove={() => void act(selectedJob, "approve")}
+        onReturn={() => void act(selectedJob, "return")}
         onReject={() => void act(selectedJob, "reject")}
         onRetry={() => void act(selectedJob, "retry")}
         onOpenMission={props.onOpenMission}
@@ -763,7 +768,7 @@ export function ContextStoreRevisionTaskActions(props: {
     props.draft !== undefined && props.draft.state !== "merged" ? props.draft : undefined;
   const canRetry =
     (props.job.state === "needs_attention" && !awaitingConfirmation) ||
-    props.job.state === "rejected";
+    (props.job.state === "rejected" && !isUserRejectedRevision(props.job));
 
   return (
     <div className="revision-task-actions">
@@ -814,6 +819,7 @@ export function ContextStoreRevisionDiffFragment(props: {
   readonly error: string | null;
   readonly onBack: () => void;
   readonly onApprove: () => void;
+  readonly onReturn: () => void;
   readonly onReject: () => void;
   readonly onRetry: () => void;
   readonly onOpenMission?: ((missionId: string, composerDraft?: string) => void) | undefined;
@@ -875,6 +881,11 @@ export function ContextStoreRevisionDiffFragment(props: {
             <div>
               <h1 id="context-store-revision-detail-title">{t("revisionResult")}</h1>
               <p>{revisionMetadata}</p>
+              {isUserRejectedRevision(props.job) ? (
+                <p className="form-hint" role="status">
+                  {t("revisionUserRejected")}
+                </p>
+              ) : null}
               {props.job.request.provenance === undefined ? null : (
                 <p>
                   {props.job.request.provenance.teamId === undefined
@@ -902,6 +913,7 @@ export function ContextStoreRevisionDiffFragment(props: {
                     className="primary-button"
                     type="button"
                     disabled={props.busy}
+                    title={t("approveRevisionTooltip")}
                     onClick={props.onApprove}
                   >
                     <Check size={15} aria-hidden="true" />
@@ -911,6 +923,16 @@ export function ContextStoreRevisionDiffFragment(props: {
                     className="secondary-button"
                     type="button"
                     disabled={props.busy}
+                    title={t("returnRevisionTooltip")}
+                    onClick={props.onReturn}
+                  >
+                    {t("returnRevision")}
+                  </button>
+                  <button
+                    className="secondary-button"
+                    type="button"
+                    disabled={props.busy}
+                    title={t("rejectRevisionTooltip")}
                     onClick={props.onReject}
                   >
                     <X size={15} aria-hidden="true" />
@@ -919,7 +941,7 @@ export function ContextStoreRevisionDiffFragment(props: {
                 </>
               ) : null}
               {(props.job.state === "needs_attention" && !awaitingConfirmation) ||
-              props.job.state === "rejected" ? (
+              (props.job.state === "rejected" && !isUserRejectedRevision(props.job)) ? (
                 <button
                   className="secondary-button"
                   type="button"

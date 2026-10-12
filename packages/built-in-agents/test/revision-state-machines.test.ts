@@ -5,6 +5,47 @@ import { transitionContextStoreRevisionJob, type ContextStoreRevisionJob } from 
 const timestamp = "2026-01-01T00:00:00.000Z";
 
 describe("built-in revision state machines", () => {
+  it("returns the same submitted draft for repeated review without rejecting it", () => {
+    let job = { ...contextJob(), missionId: "30000000-0000-4000-8000-000000000001" };
+    for (let round = 0; round < 2; round++) {
+      job = transitionContextStoreRevisionJob(job, { type: "submitted" }, timestamp) as typeof job;
+      job = transitionContextStoreRevisionJob(
+        job,
+        { type: "returned_for_rework" },
+        timestamp,
+      ) as typeof job;
+      expect(job).toMatchObject({
+        id: contextJob().id,
+        draftId: contextJob().draftId,
+        state: "editing",
+        missionId: "30000000-0000-4000-8000-000000000001",
+      });
+    }
+    expect(() => transitionContextStoreRevisionJob(job, { type: "returned_for_rework" })).toThrow(
+      "revision_state_invalid",
+    );
+  });
+
+  it("prevents retry or editing of a deliberate rejection while retaining historical stopped-job recovery", () => {
+    const review = transitionContextStoreRevisionJob(
+      contextJob(),
+      { type: "submitted" },
+      timestamp,
+    );
+    const rejected = transitionContextStoreRevisionJob(review, { type: "rejected" }, timestamp);
+    expect(rejected.error?.code).toBe("revision_user_rejected");
+    expect(() => transitionContextStoreRevisionJob(rejected, { type: "retried" })).toThrow(
+      "revision_user_rejected",
+    );
+    expect(() => transitionContextStoreRevisionJob(rejected, { type: "editing_started" })).toThrow(
+      "revision_user_rejected",
+    );
+    expect(
+      transitionContextStoreRevisionJob({ ...rejected, error: undefined }, { type: "retried" })
+        .state,
+    ).toBe("editing");
+  });
+
   it("owns the Store Revision review and approval transitions", () => {
     const pending = contextJob();
     const running = transitionContextStoreRevisionJob(

@@ -147,6 +147,8 @@ export interface MissionStore {
     readonly revisionJobId: string;
   }): Promise<Mission>;
   mountSkillRevisionDraft(input: {
+    /** Reattach only the binding already owned by the persisted Session; leave other mounts intact. */
+    readonly restoreSessionBinding?: boolean;
     readonly id: string;
     readonly draftId: string;
     readonly revisionJobId: string;
@@ -1922,7 +1924,7 @@ export function createMissionStore(options: {
           )
         )
           return current;
-        return {
+        const restored = {
           ...current,
           contextMounts: [
             ...current.contextMounts.filter(
@@ -1933,6 +1935,14 @@ export function createMissionStore(options: {
           ],
           updatedAt: timestamp,
         };
+        // A review return must restore the original authority, never acknowledge a new one.
+        if (
+          input.restoreSessionBinding === true &&
+          current.execution?.contextMountsFingerprint !== missionContextMountsFingerprint(restored)
+        ) {
+          return current;
+        }
+        return restored;
       });
     },
     async unmountSkillRevisionDraft(input) {
