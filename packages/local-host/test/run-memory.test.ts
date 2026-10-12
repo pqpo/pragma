@@ -4,6 +4,7 @@ import { join } from "node:path";
 import {
   createFileExpertSessionStore,
   createNoopLoggerProvider,
+  ExpertPromptRejectedError,
   type ExpertSession,
 } from "@pragma/core";
 import { createLocalHostMissionCommandAdmission } from "../src/mission-command-admission.ts";
@@ -447,6 +448,7 @@ describe("shared Host Mission Memory lifecycle", () => {
       const beforeFeedClose = vi.fn(async () => undefined);
       const memory = createLocalHostRunMemory({ pragmaHome: home, beforeFeedClose });
       let rejectPrompt!: (error: Error) => void;
+      const coreRejection = new ExpertPromptRejectedError("Core rejected");
       const prompt = vi.fn(
         async () =>
           await new Promise<never>((_resolve, reject) => {
@@ -514,7 +516,7 @@ describe("shared Host Mission Memory lifecycle", () => {
         if (stopBeforeIntent)
           await vi.waitFor(() => expect(fixtures.stopMission).toHaveBeenCalledOnce());
         const accepted = admission({ id: "mission", requestId: "second", content: "second" });
-        const rejected = expect(accepted).rejects.toThrow("Core rejected");
+        const rejected = expect(accepted).rejects.toBe(coreRejection);
         await vi.waitFor(() => expect(prompt).toHaveBeenCalledOnce());
         expect(fixtures.conversationState.mock.calls).toHaveLength(statesBeforeIntent);
         if (terminalDuringIntent) await memory.complete("mission", "first");
@@ -522,7 +524,7 @@ describe("shared Host Mission Memory lifecycle", () => {
           releaseOldStop!();
           await oldCompletion;
         }
-        rejectPrompt(new Error("Core rejected"));
+        rejectPrompt(coreRejection);
         await rejected;
         if (!terminalDuringIntent && !stopBeforeIntent && !firstPromptRejection)
           await memory.complete("mission", "first");
