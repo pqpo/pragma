@@ -22,6 +22,12 @@ import { createInMemoryExecutionStore, createRuntimeTestFeatures } from "../src/
 
 describe("ExpertSession ordinary closure", () => {
   it.each([
+    "terminal-only-native failure",
+    "checkpoint-only-native failure",
+    "terminal-only-cleanup failure",
+    "checkpoint-only-cleanup failure",
+    "terminal-only-lease lost",
+    "checkpoint-only-lease lost",
     "success",
     "pending close",
     "pending release",
@@ -39,7 +45,10 @@ describe("ExpertSession ordinary closure", () => {
     const pool = createMcpToolRegistryPool();
     const registrations: RuntimeMcpPreparation["registration"][] = [];
     let failing = false;
-    const nativeFailure = outcome === "native stop failure" || outcome === "lease lost";
+    const nativeFailure =
+      outcome.endsWith("native failure") ||
+      outcome.endsWith("lease lost") ||
+      outcome === "native stop failure";
     let completeRelease = () => undefined as void;
     const releaseGate = new Promise<void>((resolve) => (completeRelease = resolve));
     let completeStop = () => undefined as void;
@@ -49,7 +58,7 @@ describe("ExpertSession ordinary closure", () => {
       if (failing && nativeFailure) throw new Error("native stop failed");
     });
     const afterDestroy = vi.fn(() => {
-      if (failing && outcome === "cleanup failure") throw new Error("cleanup failed");
+      if (failing && outcome.endsWith("cleanup failure")) throw new Error("cleanup failed");
     });
     const mcp = createExpertToolsHttpMcpFeature({
       readiness: runtimeFeature.degraded("Real MCP lifecycle regression fixture."),
@@ -137,6 +146,48 @@ describe("ExpertSession ordinary closure", () => {
       await expect(fetch(registrations[0]!.url)).rejects.toThrow();
       expect((await fetch(registrations[1]!.url)).status).not.toBe(404);
       failing = true;
+      if (outcome.includes("-only-")) {
+        const release = () =>
+          outcome.startsWith("terminal")
+            ? session.releaseAfterTerminal()
+            : session.releaseAfterHumanCheckpoint();
+        const original = await session.getState();
+        await expect(release()).rejects.toThrow(
+          nativeFailure ? "native stop failed" : "cleanup failed",
+        );
+        await expect(session.prompt("sealed after failed release")).rejects.toThrow();
+        const leasePath = new PragmaPaths({ pragmaHome: home }).expertSessionLease(
+          session.sessionId,
+        );
+        expect(await session.getState()).toEqual(original);
+        await expect(access(leasePath)).resolves.toBeUndefined();
+        if (nativeFailure) expect((await fetch(registrations[1]!.url)).status).not.toBe(404);
+        else await expect(fetch(registrations[1]!.url)).rejects.toThrow();
+        if (outcome.endsWith("lease lost")) {
+          vi.setSystemTime(Date.now() + 40_000);
+          expect(await sessions.claimLease(session.sessionId, "successor", 30_000)).toBe(true);
+          const successorLease = await readFile(leasePath, "utf8");
+          const stopped = nativeClose.mock.calls.length;
+          failing = false;
+          await expect(release()).rejects.toThrow("lease is no longer owned");
+          expect(nativeClose).toHaveBeenCalledTimes(stopped);
+          expect(await session.getState()).toEqual(original);
+          expect(await readFile(leasePath, "utf8")).toBe(successorLease);
+          return;
+        }
+        await vi.advanceTimersByTimeAsync(40_000);
+        await vi.waitFor(async () => {
+          const lease = JSON.parse(await readFile(leasePath, "utf8")) as { expiresAt: string };
+          expect(Date.parse(lease.expiresAt)).toBeGreaterThan(Date.now());
+        });
+        expect(await sessions.claimLease(session.sessionId, "competitor", 30_000)).toBe(false);
+        failing = false;
+        await release();
+        expect(await session.getState()).toEqual(original);
+        await expect(access(leasePath)).rejects.toMatchObject({ code: "ENOENT" });
+        await expect(fetch(registrations[1]!.url)).rejects.toThrow();
+        return;
+      }
       if (outcome === "release waiting admission") {
         const getState = session.getState.bind(session);
         vi.spyOn(session, "getState").mockImplementationOnce(async () => {

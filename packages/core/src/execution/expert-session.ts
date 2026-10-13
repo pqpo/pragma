@@ -852,6 +852,7 @@ class ExpertSessionImpl implements ExpertSession {
   private lifecycleTail: Promise<void> = Promise.resolve();
   private leaseReleased = false;
   private resourceReleaseCompleted = false;
+  private leaseLossNativeStopped = false;
   private pendingResourceReleases = 0;
   private readonly closeRequested = new AbortController();
   private terminalReleasePromise: Promise<void> | undefined;
@@ -1298,7 +1299,7 @@ class ExpertSessionImpl implements ExpertSession {
       this.humanCheckpointReleasePromise = this.coordinateResourceRelease(() =>
         this.releaseAfterHumanCheckpointInternal(),
       ).catch((error: unknown) => {
-        if (!this.resourcesReleasing) this.humanCheckpointReleasePromise = undefined;
+        this.humanCheckpointReleasePromise = undefined;
         throw error;
       });
     }
@@ -1309,7 +1310,7 @@ class ExpertSessionImpl implements ExpertSession {
     if (this.closePromise !== undefined || this.stopPromise !== undefined || this.deletionFrozen) {
       throw new Error(`ExpertSession is closing or closed: ${this.sessionId}`);
     }
-    if (this.resourcesReleasing) throw new Error("ExpertSession resources are being released.");
+    const previouslyReleasing = this.resourcesReleasing;
     this.resourcesReleasing = true;
     try {
       if (!(await this.waitForReleaseAdmissions())) return;
@@ -1323,39 +1324,10 @@ class ExpertSessionImpl implements ExpertSession {
         throw new Error("Wait for the active Expert turn before releasing the human checkpoint.");
       }
     } catch (error) {
-      this.resourcesReleasing = false;
+      this.resourcesReleasing = previouslyReleasing;
       throw new ExpertSessionReleaseBlockedError(error);
     }
-    const errors: unknown[] = [];
-    try {
-      await this.runtimeSessions.clear();
-    } catch (error) {
-      errors.push(error);
-    }
-    // A queued close owns the remaining durable closure. Keep its lease and
-    // heartbeat rather than releasing them underneath the next lifecycle step.
-    if (this.closePromise !== undefined) return;
-    this.stopLeaseRenewal();
-    if (this.leaseRenewalTask !== undefined) {
-      try {
-        await this.leaseRenewalTask;
-      } catch (error) {
-        errors.push(error);
-      }
-    }
-    if (this.closePromise !== undefined) {
-      this.startLeaseRenewal();
-      return;
-    }
-    try {
-      await this.dependencies.sessions.releaseLease(this.sessionId, this.claimId);
-      this.leaseReleased = true;
-    } catch (error) {
-      errors.push(error);
-    }
-    if (errors.length === 0) this.resourceReleaseCompleted = true;
-    this.onClosed();
-    throwCollectedErrors(errors, "ExpertSession human checkpoint release failed.");
+    await this.finishResourceRelease();
   }
 
   async refreshRuntimeSessions(): Promise<void> {
@@ -1382,7 +1354,7 @@ class ExpertSessionImpl implements ExpertSession {
         options.waitForIdle === true,
         options.settlement,
       ).catch((error: unknown) => {
-        if (!this.resourcesReleasing) this.terminalReleasePromise = undefined;
+        this.terminalReleasePromise = undefined;
         throw error;
       });
     }
@@ -1425,7 +1397,7 @@ class ExpertSessionImpl implements ExpertSession {
     if (this.closePromise !== undefined || this.stopPromise !== undefined || this.deletionFrozen) {
       throw new Error(`ExpertSession is closing or closed: ${this.sessionId}`);
     }
-    if (this.resourcesReleasing) throw new Error("ExpertSession resources are being released.");
+    const previouslyReleasing = this.resourcesReleasing;
     this.resourcesReleasing = true;
     try {
       // Close admission before reading persisted state. A prompt already admitted
@@ -1444,7 +1416,7 @@ class ExpertSessionImpl implements ExpertSession {
         );
       }
     } catch (error) {
-      this.resourcesReleasing = false;
+      this.resourcesReleasing = previouslyReleasing;
       throw error instanceof ExpertSessionReleaseBlockedError
         ? error
         : new ExpertSessionReleaseBlockedError(error);
@@ -1452,37 +1424,67 @@ class ExpertSessionImpl implements ExpertSession {
     // Validation alone must not interrupt an already admitted turn. Seal its
     // execution boundary only once teardown is committed (or explicitly requested).
     this.terminalReleaseRequested = true;
-    const errors: unknown[] = [];
-    try {
-      await this.runtimeSessions.clear();
-    } catch (error) {
-      errors.push(error);
-    }
-    // A queued close owns the remaining durable closure. Keep its lease and
-    // heartbeat rather than releasing them underneath the next lifecycle step.
-    if (this.closePromise !== undefined) return;
-    this.stopLeaseRenewal();
-    if (this.leaseRenewalTask !== undefined) {
-      try {
-        await this.leaseRenewalTask;
-      } catch (error) {
-        errors.push(error);
-      }
-    }
-    if (this.closePromise !== undefined) {
-      this.startLeaseRenewal();
+    await this.finishResourceRelease();
+  }
+
+  private async finishResourceRelease(): Promise<void> {
+    // Lease-loss cleanup may already have completed while release awaited it.
+    // Acknowledging that cleanup must not reacquire or touch a successor's claim.
+    if (this.resourceReleaseCompleted) return;
+    if (this.leaseError !== undefined && this.leaseLossNativeStopped) {
+      // Only finish local cleanup after lease-loss teardown confirmed Native stop.
+      // Never reclaim custody or release the successor's lease.
+      await this.runtimeSessions.finishDeletion();
+      this.resourceReleaseCompleted = true;
       return;
     }
+    this.paused = true;
+    // Human checkpointing may have relinquished custody before releasing the
+    // Runtime. Reacquire it and fence each retry before touching Native resources.
+    if (this.leaseReleased) {
+      if (
+        !(await this.dependencies.sessions.claimLease(
+          this.sessionId,
+          this.claimId,
+          EXPERT_SESSION_LEASE_MS,
+        ))
+      )
+        throw new Error(`ExpertSession is active in another process: ${this.sessionId}`);
+      this.leaseReleased = false;
+    }
+    await this.assertCloseOwnership();
+    this.startLeaseRenewal();
+    // Confirm Native stop before destroying transports, hooks and registrations.
+    // Release ends this handle's lifetime even though its durable Session stays open.
+    await this.runtimeSessions.closeForDeletion();
+    await this.runtimeSessions.finishDeletion();
+    // A queued close retains custody for its durable closure. Failed cleanup
+    // also retains the heartbeat, sealed admission and Host owner for retry.
+    if (this.closePromise !== undefined) return;
+    // Drain renewal before releasing the claim so an in-flight heartbeat cannot
+    // recreate it. Every failed finalization restores renewal without a state read.
+    this.stopLeaseRenewal();
     try {
+      if (this.leaseRenewalTask !== undefined) await this.leaseRenewalTask;
+      if (this.closePromise !== undefined) {
+        this.startLeaseRenewal();
+        return;
+      }
+      await this.assertCloseOwnership();
+      if (this.closePromise !== undefined) {
+        this.startLeaseRenewal();
+        return;
+      }
       await this.dependencies.sessions.releaseLease(this.sessionId, this.claimId);
       this.leaseReleased = true;
     } catch (error) {
-      errors.push(error);
+      this.startLeaseRenewal();
+      throw error;
     }
+    if (this.closePromise !== undefined) return;
     this.controller = undefined;
-    if (errors.length === 0) this.resourceReleaseCompleted = true;
+    this.resourceReleaseCompleted = true;
     this.onClosed();
-    throwCollectedErrors(errors, "ExpertSession terminal resource release failed.");
   }
 
   async finishDeletion(): Promise<void> {
@@ -1578,8 +1580,8 @@ class ExpertSessionImpl implements ExpertSession {
       this.paused = true;
       this.deletionFrozen = true;
       this.closeRequested.abort();
-      // Seal admission immediately, but only seal the Runtime pool after an
-      // already running Terminal/Checkpoint clear has left the lifecycle gate.
+      // Seal admission immediately; queue ordinary close behind any running
+      // Terminal/Checkpoint teardown to avoid competing cleanup.
       this.closePromise = this.runLifecycle(async () => {
         if (this.leaseReleased) {
           // A completed recoverable release may precede close. Acquire custody
@@ -1793,7 +1795,20 @@ class ExpertSessionImpl implements ExpertSession {
     try {
       await this.controller?.cancel(error.message).catch(() => undefined);
       await this.waitForProcessingShutdown();
-      await this.runtimeSessions.clear().catch(() => undefined);
+      await this.runtimeSessions.closeForDeletion().then(
+        () => {
+          this.leaseLossNativeStopped = true;
+        },
+        () => undefined,
+      );
+      if (this.leaseLossNativeStopped) {
+        await this.runtimeSessions.finishDeletion().then(
+          () => {
+            this.resourceReleaseCompleted = true;
+          },
+          () => undefined,
+        );
+      }
       await this.dependencies.sessions
         .releaseLease(this.sessionId, this.claimId)
         .catch(() => undefined);

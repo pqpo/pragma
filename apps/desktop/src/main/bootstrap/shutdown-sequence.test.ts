@@ -145,6 +145,10 @@ it.each([
   "native stop failure",
   "cleanup failure",
   "persistence and read failure",
+  "terminal-only-native failure",
+  "checkpoint-only-native failure",
+  "terminal-only-cleanup failure",
+  "checkpoint-only-cleanup failure",
   "terminal-release",
   "checkpoint-release",
   "terminal-release-native failure",
@@ -160,6 +164,8 @@ it.each([
     const owners = new MissionExecutionOwner();
     let completeStop = () => undefined as void;
     const stopGate = new Promise<void>((resolve) => (completeStop = resolve));
+    const releaseOnly = outcome.includes("-only-");
+    const leaseTiming = releaseOnly || outcome === "persistence and read failure";
     const releaseBoundary = outcome.startsWith("terminal-release")
       ? "terminal"
       : outcome.startsWith("checkpoint-release")
@@ -240,7 +246,7 @@ it.each([
       pragmaHome: home,
       hooks: { afterSessionDestroy: afterDestroy },
     });
-    if (persistenceFailure) vi.useFakeTimers({ toFake: ["Date", "setInterval", "clearInterval"] });
+    if (leaseTiming) vi.useFakeTimers({ toFake: ["Date", "setInterval", "clearInterval"] });
     const session = await core.experts.createSession(expert);
     const closeResources = vi.fn(async () => undefined);
     const application = createLocalHostMissionApplication({
@@ -268,7 +274,18 @@ it.each([
       await session.waitForPromptProcessing();
       if (!persistenceFailure) await lifecycle.ownerScope.acquire(missionId);
       owners.setControlOwner(missionId, { kind: "session", session }, "live");
-      if (releaseBoundary !== undefined) {
+      const ordinaryClose = vi.spyOn(session, "close");
+      const terminalRelease = vi.spyOn(session, "releaseAfterTerminal");
+      const checkpointRelease = vi.spyOn(session, "releaseAfterHumanCheckpoint");
+      if (releaseOnly) {
+        if (outcome.startsWith("checkpoint")) {
+          await sessions.transact(session.sessionId, ({ session: state, prompts }) => ({
+            result: undefined,
+            session: { ...state, lastStatus: "waiting" },
+            prompts,
+          }));
+        }
+      } else if (releaseBoundary !== undefined) {
         const releasing =
           releaseBoundary === "terminal"
             ? session.releaseAfterTerminal()
@@ -321,6 +338,12 @@ it.each([
               expect.objectContaining({ message: "State read failed" }),
             ]),
           });
+        }
+        if (leaseTiming) {
+          await expect(
+            access(new PragmaPaths({ pragmaHome: home }).expertSessionLease(session.sessionId)),
+          ).resolves.toBeUndefined();
+          await expect(session.prompt("must remain sealed")).rejects.toThrow();
           await vi.advanceTimersByTimeAsync(40_000);
           await vi.waitFor(async () => {
             const lease = JSON.parse(
@@ -346,7 +369,14 @@ it.each([
       expect(closeResources).toHaveBeenCalledOnce();
       expect(maximumActiveStops).toBe(1);
       expect(owners.controlOwner(missionId)).toBeUndefined();
-      expect((await session.getState()).status).toBe("closed");
+      expect((await session.getState()).status).toBe(releaseOnly ? "open" : "closed");
+      if (releaseOnly) {
+        expect(ordinaryClose).not.toHaveBeenCalled();
+        expect(terminalRelease).toHaveBeenCalledTimes(outcome.startsWith("terminal") ? 2 : 0);
+        expect(checkpointRelease).toHaveBeenCalledTimes(outcome.startsWith("checkpoint") ? 2 : 0);
+        expect(nativeClose).toHaveBeenCalledTimes(nativeFailure ? 2 : 1);
+        expect(afterDestroy).toHaveBeenCalledTimes(cleanupFailure ? 2 : 1);
+      }
       await expect(
         access(new PragmaPaths({ pragmaHome: home }).expertSessionLease(session.sessionId)),
       ).rejects.toMatchObject({ code: "ENOENT" });
@@ -362,7 +392,7 @@ it.each([
       failing = false;
       completeStop();
       await session.close();
-      if (persistenceFailure) vi.useRealTimers();
+      if (leaseTiming) vi.useRealTimers();
       await application.dispose();
       await executions.close();
       await rm(home, { recursive: true, force: true });
