@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
-import { chmod, mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
+import { chmod, link, mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
 import { isDeepStrictEqual } from "node:util";
 
@@ -248,20 +248,7 @@ export function createDesktopSystemExpertRegistry(options?: {
       targetVersion: SYSTEM_EXPERT_CONFIG_SCHEMA_VERSION,
       backupPath,
     });
-    try {
-      await writeFile(backupPath, `${JSON.stringify(source, null, 2)}\n`, {
-        mode: 0o600,
-        flag: "wx",
-      });
-    } catch (error) {
-      if (!isNodeError(error, "EEXIST")) throw error;
-      if (!isDeepStrictEqual(JSON.parse(await readFile(backupPath, "utf8")), source)) {
-        throw new Error(
-          "System Expert migration backup conflicts with its original configuration.",
-          { cause: error },
-        );
-      }
-    }
+    await writeMigrationBackup(backupPath, source);
     await writeConfig(migrated);
     await rm(journalPath, { force: true });
     for (const targetVersion of [7, 8]) {
@@ -436,6 +423,46 @@ export function createDesktopSystemExpertRegistry(options?: {
 
 function isNodeError(error: unknown, code: string): boolean {
   return error instanceof Error && "code" in error && error.code === code;
+}
+
+async function writeMigrationBackup(path: string, source: unknown): Promise<void> {
+  const temporaryPath = `${path}.${randomUUID()}.tmp`;
+  try {
+    await writeFile(temporaryPath, `${JSON.stringify(source, null, 2)}\n`, {
+      mode: 0o600,
+      flag: "wx",
+      flush: true,
+    });
+    try {
+      // Linking a complete file installs the backup atomically without replacing an existing one.
+      await link(temporaryPath, path);
+    } catch (error) {
+      if (!isNodeError(error, "EEXIST")) throw error;
+      let existing: unknown;
+      try {
+        existing = JSON.parse(await readFile(path, "utf8"));
+      } catch (cause) {
+        throw Object.assign(
+          new Error(
+            `System Expert migration backup is unreadable or incomplete at ${path}. Original configuration and backup were preserved; restore a verified original backup before retrying.`,
+            { cause },
+          ),
+          { code: "system_expert_migration_backup_invalid" },
+        );
+      }
+      if (!isDeepStrictEqual(existing, source)) {
+        throw Object.assign(
+          new Error(
+            `System Expert migration backup conflicts with its original configuration at ${path}. Both files were preserved; verify the original backup before retrying.`,
+            { cause: error },
+          ),
+          { code: "system_expert_migration_backup_conflict" },
+        );
+      }
+    }
+  } finally {
+    await rm(temporaryPath, { force: true });
+  }
 }
 
 async function writePrivateJson(path: string, value: unknown): Promise<void> {

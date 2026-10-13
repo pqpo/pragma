@@ -54,8 +54,12 @@ the strongest effective old mode and any existing lifecycle override. This preve
 `required` approval; unrelated approval keys stay intact.
 
 Upgrade runs on first configuration access inside the existing aggregate file lock. It writes a stable
-migration journal and an exclusive v8 backup before atomically replacing the configuration; retries
-verify the existing backup rather than overwriting it. Completed writes can be recovered without
+migration journal before writing the backup into a unique temporary file in the same directory.
+The complete temporary file is flushed, then installed by a hard link: the final backup appears
+atomically and an existing backup cannot be overwritten. An interrupted temporary write cannot
+publish a partial backup; reopening retries with a fresh temporary file. Retries verify the existing
+backup rather than overwriting it. An unreadable or conflicting final backup reports a stable error
+code and its path, preserving both files for verified manual recovery. Completed writes can be recovered without
 rewriting the v9 target or deleting the backup. Older registered upgrade paths chain into v8-to-v9;
 current v9 is a no-op and future versions fail closed. No DSL apiVersion change is needed.
 
@@ -73,8 +77,10 @@ Store/Skill status, CAS, rejection and Context-lifecycle tests. Run `pnpm test:r
 Local Host/system-expert checks; use isolated real Runtime smoke data for end-to-end evidence.
 Historical fixtures come from the actual v8 writer at `b4b3cc1ca537046e5324138efcbacbaf47a3fa3d`;
 tests compare the complete upgraded fixture, preserve a truly modified binding and all other settings,
-exercise existing chained upgrades, journal replay at each crash stage, an injected atomic replacement
-failure, current-version no-op and future-version rejection. Actual MCP calls validate denied and
+exercise existing chained upgrades, journal replay at each crash stage, interrupted backup writes,
+leftover partial temporary files, interruption after atomic backup installation, repeated initialization,
+invalid/conflicting final backup diagnostics, an injected atomic replacement failure, current-version
+no-op and future-version rejection. Actual MCP calls validate denied and
 accepted spawn/continue after both persisted migration and Studio clear/save/reopen.
 
 ### Recorded Runtime smoke

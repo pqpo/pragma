@@ -17,7 +17,12 @@ import { desktopCapabilityBindingRef } from "../../platform/bindings/desktop-bin
 
 vi.mock("node:fs/promises", async (importOriginal) => {
   const actual = await importOriginal<typeof import("node:fs/promises")>();
-  return { ...actual, rename: vi.fn(actual.rename) };
+  return {
+    ...actual,
+    rename: vi.fn(actual.rename),
+    writeFile: vi.fn(actual.writeFile),
+    link: vi.fn(actual.link),
+  };
 });
 
 const directories: string[] = [];
@@ -589,6 +594,124 @@ describe("DesktopSystemExpertRegistry", () => {
     ).toMatchObject({ sourceVersion: 8, targetVersion: 9 });
     await createDesktopSystemExpertRegistry({ configPath }).initialize();
     expect(JSON.parse(await readFile(configPath, "utf8"))).toMatchObject({ schemaVersion: 9 });
+  });
+
+  it.each(["temporary_write", "backup_installed"] as const)(
+    "retries after an interrupted %s without exposing an incomplete backup",
+    async (phase) => {
+      const directory = await mkdtemp(join(tmpdir(), "pragma-system-experts-backup-interrupted-"));
+      directories.push(directory);
+      const configPath = join(directory, "system-experts.json");
+      const backup = `${configPath}.v8.backup.json`;
+      const source = await readFile(
+        new URL("./__fixtures__/system-experts-v8.json", import.meta.url),
+        "utf8",
+      );
+      const target = await readFile(
+        new URL("./__fixtures__/system-experts-v9.json", import.meta.url),
+        "utf8",
+      );
+      await writeFile(configPath, source);
+      const actual = await vi.importActual<typeof fsPromises>("node:fs/promises");
+      const fault =
+        phase === "temporary_write"
+          ? vi.mocked(fsPromises.writeFile).mockImplementation(async (path, data, options) => {
+              if (
+                typeof path === "string" &&
+                path.startsWith(`${backup}.`) &&
+                path.endsWith(".tmp")
+              ) {
+                await actual.writeFile(path, source.slice(0, 32), options);
+                throw new Error("Injected backup interruption");
+              }
+              return await actual.writeFile(path, data, options);
+            })
+          : vi.mocked(fsPromises.link).mockImplementation(async (from, to) => {
+              await actual.link(from, to);
+              if (to === backup) throw new Error("Injected backup interruption");
+            });
+      try {
+        await expect(
+          createDesktopSystemExpertRegistry({ configPath }).initialize(),
+        ).rejects.toThrow("Injected backup interruption");
+      } finally {
+        fault.mockRestore();
+      }
+      expect(await readFile(configPath, "utf8")).toBe(source);
+      const before = phase === "backup_installed" ? await fsPromises.stat(backup) : undefined;
+      if (phase === "temporary_write")
+        await expect(readFile(backup, "utf8")).rejects.toMatchObject({ code: "ENOENT" });
+      else expect(await readFile(backup, "utf8")).toBe(source);
+      expect(
+        JSON.parse(await readFile(`${configPath}.migration-v8-to-v9.json`, "utf8")),
+      ).toMatchObject({ sourceVersion: 8, targetVersion: 9 });
+      const reopened = createDesktopSystemExpertRegistry({ configPath });
+      await reopened.initialize();
+      await reopened.initialize();
+      expect(await readFile(configPath, "utf8")).toBe(target);
+      expect(await readFile(backup, "utf8")).toBe(source);
+      if (before !== undefined)
+        expect((await fsPromises.stat(backup)).mtimeMs).toBe(before.mtimeMs);
+    },
+  );
+
+  it("recovers from a crash leaving only an incomplete temporary backup", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "pragma-system-experts-backup-temporary-"));
+    directories.push(directory);
+    const configPath = join(directory, "system-experts.json");
+    const backup = `${configPath}.v8.backup.json`;
+    const staleTemporary = `${backup}.interrupted.tmp`;
+    const source = await readFile(
+      new URL("./__fixtures__/system-experts-v8.json", import.meta.url),
+      "utf8",
+    );
+    const target = await readFile(
+      new URL("./__fixtures__/system-experts-v9.json", import.meta.url),
+      "utf8",
+    );
+    await writeFile(configPath, source);
+    await writeFile(staleTemporary, source.slice(0, 32));
+    await writeFile(
+      `${configPath}.migration-v8-to-v9.json`,
+      JSON.stringify({
+        schemaVersion: "pragma.system-expert-customization-migration/v1",
+        sourceVersion: 8,
+        targetVersion: 9,
+        backupPath: backup,
+      }),
+    );
+    const registry = createDesktopSystemExpertRegistry({ configPath });
+    await registry.initialize();
+    await registry.initialize();
+    expect(await readFile(configPath, "utf8")).toBe(target);
+    expect(await readFile(backup, "utf8")).toBe(source);
+    expect(await readFile(staleTemporary, "utf8")).toBe(source.slice(0, 32));
+    await expect(readFile(`${configPath}.migration-v8-to-v9.json`, "utf8")).rejects.toMatchObject({
+      code: "ENOENT",
+    });
+  });
+
+  it("preserves an already-incomplete final backup and gives an actionable diagnostic", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "pragma-system-experts-backup-invalid-"));
+    directories.push(directory);
+    const configPath = join(directory, "system-experts.json");
+    const backup = `${configPath}.v8.backup.json`;
+    const source = await readFile(
+      new URL("./__fixtures__/system-experts-v8.json", import.meta.url),
+      "utf8",
+    );
+    await writeFile(configPath, source);
+    await writeFile(backup, source.slice(0, 32));
+    for (let retry = 0; retry < 2; retry++) {
+      await expect(
+        createDesktopSystemExpertRegistry({ configPath }).initialize(),
+      ).rejects.toMatchObject({
+        code: "system_expert_migration_backup_invalid",
+        message: expect.stringContaining(backup),
+      });
+      expect(await readFile(configPath, "utf8")).toBe(source);
+      expect(await readFile(backup, "utf8")).toBe(source.slice(0, 32));
+    }
   });
 
   it("preserves both files and reports a conflicting migration backup", async () => {
