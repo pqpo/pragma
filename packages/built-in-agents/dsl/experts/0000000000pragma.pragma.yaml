@@ -19,16 +19,27 @@ spec:
     diagnostics and diffs, and commit only the prepared change-set. Discover workspace paths and
     knowledge store IDs before creating Missions or Automations. All management commands use
     the pragma manage namespace.
-    For any creation or modification of managed knowledge or Skills, delegate immediately to
-    call_store_revision_agent or call_skill_revision_agent respectively. Formal Store content and
+    For any creation or modification of managed knowledge or Skills, delegate immediately using
+    the Expert lifecycle tools to Store Revision Agent (expertId 0000000000st0rev) or Skill
+    Revision Agent (expertId 0000000000sk1rev) respectively. Use spawn_expert for fresh work.
+    Formal Store content and
     Skill packages are read-only: never try context writes, native file writes, shell commands, or
     storage edits first, and never wait for a permission failure to discover the revision workflow.
     Give the Revision Agent the complete requirements, source content, target identity, and any
     existing draftId. Drafts are the only writable candidates; human approval applies them.
-    When a user returns a review for changes, continue the original Revision Agent conversation
-    with the same draftId and review feedback. Reuse its editing draft and original Mission,
+    Keep the contextId and invocationId returned by spawn_expert and wait for its result with
+    wait_experts. For related follow-up work, use continue_expert with that exact contextId.
+    After compaction or reopening, use list_agents to recover the original Context and check its
+    permission flags; never select a Context merely because its expertId matches.
+    When a user returns a review for changes, use continue_expert on the original Revision Agent
+    Context with the same draftId and complete review feedback. The Revision Agent must call
+    knowledge_revision_start or skill_revision_start with that draftId to reclaim/remount it
+    before editing. Reuse its editing draft and original Mission,
     inspect current contents and revision, then modify and resubmit; do not create a replacement.
     Rejection ends that revision; returning for changes preserves it for another review.
+    If the original Context is closed, unavailable, or cannot be resumed, report the diagnostic;
+    do not spawn a replacement Context, draft, or Mission to bypass ownership. Wait for the new
+    invocationId after every continuation and inspect its result before reporting success.
     Never edit Pragma project storage directly. Ask before consequential or
     ambiguous actions and respect workspace and approval boundaries.
   capabilities:
@@ -37,21 +48,16 @@ spec:
     - ref: capability:0000000000manage
       kind: tools
       tools: []
-  toolApprovals: {}
+  toolApprovals:
+    spawn_expert: ask
+    continue_expert: ask
   contextStores: []
   plugins: []
   tools:
-    - adapter: pragma.tool.call@v1
-      target:
-        ref: expert:0000000000st0rev
-      tool:
-        name: call_store_revision_agent
-        description: Required first step for managed knowledge changes. Delegate complete requirements and an existing draftId to the Store Revision Agent; formal content is read-only, and only drafts may be edited. Continue the same Agent conversation and draft after a review is returned for changes.
-        approval: ask
-    - adapter: pragma.tool.call@v1
-      target:
-        ref: expert:0000000000sk1rev
-      tool:
-        name: call_skill_revision_agent
-        description: Required first step for managed Skill changes. Delegate complete requirements and an existing draftId to the Skill Revision Agent; formal packages are read-only, and only drafts may be edited. Continue the same Agent conversation and draft after a review is returned for changes.
-        approval: ask
+    - adapter: pragma.tool.delegate@v1
+      targets:
+        - ref: expert:0000000000st0rev
+        - ref: expert:0000000000sk1rev
+      policy:
+        maxConcurrency: 4
+        maxDepth: 3

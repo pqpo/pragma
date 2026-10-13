@@ -25,6 +25,7 @@ ADR 的数字来自项目演进历史，早期曾出现同号记录。链接文�
 - [Pragma 默认通用 Agent](./015-pragma-default-general-purpose-agent.md)
 - [Flow parallelism 与持久 Fork/Join](./017-flow-parallelism-requires-fork-join.md)
 - [Automation 与 Trigger Adapter](./020-automation-integrations-and-trigger-adapters.md)
+- [Built-in Revision Agent Context Continuation](./069-built-in-revision-agent-context-continuation.md)
 - [DSL-defined Built-in Agents](./040-dsl-defined-built-in-agents-package.md)
 - [Local Host 与 CLI 边界](./042-local-host-and-cli-boundary.md)
 - [Mission controller lease 与 command inbox](./043-mission-controller-lease-and-command-inbox.md)

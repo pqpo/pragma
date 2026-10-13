@@ -52,9 +52,12 @@ describe("DesktopSystemExpertRegistry", () => {
     expect(registry.isReservedRef(BUILT_IN_PRAGMA_REF)).toBe(true);
     expect(registry.isReservedId("0000000000pragma")).toBe(true);
     expect(registry.fingerprint(BUILT_IN_PRAGMA_REF)).toMatch(/^[a-f0-9]{64}$/);
-    expect(
-      registry.get(BUILT_IN_PRAGMA_REF)?.resourceTools.map((binding) => binding.tool?.name),
-    ).toEqual(["call_store_revision_agent", "call_skill_revision_agent"]);
+    expect(registry.get(BUILT_IN_PRAGMA_REF)?.resourceTools).toEqual([
+      expect.objectContaining({
+        adapter: "pragma.tool.delegate@v1",
+        targets: [{ ref: STORE_REVISION_EXPERT_REF }, { ref: SKILL_REVISION_EXPERT_REF }],
+      }),
+    ]);
   });
 
   it("exposes Store and Skill Revision while keeping the other managed identities internal", async () => {
@@ -232,10 +235,7 @@ describe("DesktopSystemExpertRegistry", () => {
       customized: false,
       revision: 1,
     });
-    expect(reset.resourceTools.map((binding) => binding.tool?.name)).toEqual([
-      "call_store_revision_agent",
-      "call_skill_revision_agent",
-    ]);
+    expect(reset.resourceTools).toEqual(original.resourceTools);
   });
 
   it("customizes and resets Store Revision without removing its required tools", async () => {
@@ -385,10 +385,8 @@ describe("DesktopSystemExpertRegistry", () => {
 
     expect(reloaded.get(BUILT_IN_PRAGMA_REF)?.resourceTools).toEqual([
       expect.objectContaining({
-        tool: expect.objectContaining({ name: "call_store_revision_agent" }),
-      }),
-      expect.objectContaining({
-        tool: expect.objectContaining({ name: "call_skill_revision_agent" }),
+        adapter: "pragma.tool.delegate@v1",
+        targets: [{ ref: STORE_REVISION_EXPERT_REF }, { ref: SKILL_REVISION_EXPERT_REF }],
       }),
     ]);
     expect(JSON.parse(await readFile(configPath, "utf8"))).toMatchObject({ schemaVersion: 8 });

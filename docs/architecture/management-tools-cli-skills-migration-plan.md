@@ -258,17 +258,17 @@ Flow 的主要收益来自 `update_flow_draft`（9,388 参考 tokens、19,453 Sc
 
 ## 7. 最终保留工具与边界
 
-| 工具                                                            | 保留理由                                                                           |
-| --------------------------------------------------------------- | ---------------------------------------------------------------------------------- |
-| read、write、edit、bash                                         | 通用任务、Skill 按需读取、草稿文件操作和 CLI 进程入口；各 Runtime 使用原生等价能力 |
-| askUserQuestion                                                 | 当前 Execution 的用户交互与回答协议                                                |
-| list_expert_context、read_expert_context、search_expert_context | 当前 Agent 的 Context 可见性、namespace、知识/Memory/白板及有界输出读取            |
-| add_expert_context、edit_expert_context、delete_expert_context  | Context mutation 权限、revision/etag、动态挂载和私有 Runtime Context 隔离          |
-| call_store_revision_agent、call_skill_revision_agent            | 当前 Execution 的 invokeResource、取消与调用治理；输入仅 prompt，迁移收益低        |
+| 工具                                                                                     | 保留理由                                                                           |
+| ---------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------- |
+| read、write、edit、bash                                                                  | 通用任务、Skill 按需读取、草稿文件操作和 CLI 进程入口；各 Runtime 使用原生等价能力 |
+| askUserQuestion                                                                          | 当前 Execution 的用户交互与回答协议                                                |
+| list_expert_context、read_expert_context、search_expert_context                          | 当前 Agent 的 Context 可见性、namespace、知识/Memory/白板及有界输出读取            |
+| add_expert_context、edit_expert_context、delete_expert_context                           | Context mutation 权限、revision/etag、动态挂载和私有 Runtime Context 隔离          |
+| spawn_expert、continue_expert、list_agents、wait_experts、steer_expert、interrupt_expert | Expert 与 ExpertTeam 共用的 Context 生命周期、权限、并发、取消和续用治理           |
 
-两个 Revision Agent 调用暂时保留，不使用普通 CLI executor run 替换它们；以后如迁移，需独立验证当前 Invocation 语义。
+内置 Pragma 通过一个 `pragma.tool.delegate@v1` binding 委派两个 Revision Agent，首次 spawn、后续按明确 contextId continue；不使用普通 CLI executor run 替换当前 Session 内的委派。
 
-`spawn_expert`、`continue_expert`、`list_agents`、`wait_experts`、`steer_expert`、`interrupt_expert` 当前不在上述默认 55 个工具中；配置 delegation 或 ExpertTeam 时按权限注入，仍保留为结构化生命周期工具。CLI Mission 管理不能替代当前 Execution 的 ownerContextId、并发和深度治理。
+`spawn_expert`、`continue_expert`、`list_agents`、`wait_experts`、`steer_expert`、`interrupt_expert` 不计入上述 55 个业务管理工具；内置 Pragma 默认配置 delegation，其他 Expert 或 ExpertTeam 配置后按权限注入，仍保留为结构化生命周期工具。CLI Mission 管理不能替代当前 Execution 的 ownerContextId、并发和深度治理。
 
 ## 8. 分阶段交付与验收记录
 
