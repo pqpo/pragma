@@ -33,6 +33,7 @@
   },
   "dependencies": {
     "@napi-rs/keyring": "2.1.0",
+    "@silvia-odwyer/photon-node": "0.3.4",
     "@pragma/local-host": "workspace:*",
     "@pragma/runtime-antigravity": "workspace:*",
     "@pragma/runtime-claude-code": "workspace:*",

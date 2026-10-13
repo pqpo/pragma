@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { createPackageWithOptions, uncacheAll } from "@electron/asar";
+import { auditRuntimeResources } from "./audit-runtime-resources.mjs";
 import { auditPackagedResources, forbiddenClaudePayload } from "./audit-packaged-app.mjs";
 
 test("rejects all SDK platforms, old layouts and renamed native/script payloads", () => {
@@ -244,6 +245,37 @@ test("afterPack saves smoke failures before rejecting the package", async () => 
       report.failures.some(({ path, reason }) => path === "packaged-smoke" && reason.length > 0),
     );
   } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("runtime resource audit rejects broken shipped Pi entries before building its own probe", async () => {
+  const root = await mkdtemp(join(tmpdir(), "pragma-pi-entry-audit-"));
+  const source = join(root, "source");
+  const resources = join(root, "resources");
+  try {
+    await mkdir(join(source, "out/main/desktop-cli"), { recursive: true });
+    await mkdir(resources);
+    for (const brokenEntry of ["out/main/index.js", "out/main/desktop-cli/cli.js"]) {
+      for (const entry of ["out/main/index.js", "out/main/desktop-cli/cli.js"])
+        await writeFile(
+          join(source, entry),
+          entry === brokenEntry
+            ? "const bundledPhoton = {};"
+            : 'import("@silvia-odwyer/photon-node");',
+        );
+      // A healthy standalone probe cannot compensate for either broken production entry.
+      await writeFile(join(source, "out/main/probe.js"), 'import("@silvia-odwyer/photon-node");');
+      await createPackageWithOptions(source, join(resources, "app.asar"), {
+        unpack: "**/desktop-cli/**/*",
+      });
+      uncacheAll();
+      await assert.rejects(auditRuntimeResources(resources, process.execPath), (error) =>
+        error.message.includes(`Production bundle ${brokenEntry} does not load external resource`),
+      );
+    }
+  } finally {
+    uncacheAll();
     await rm(root, { recursive: true, force: true });
   }
 });

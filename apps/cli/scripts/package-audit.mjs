@@ -10,6 +10,7 @@ import { gunzipSync } from "node:zlib";
 
 import {
   allowedExternalSpecifiers,
+  assertExternalResourceImport,
   assertNoBuildPathLeaks,
   assertNoExternalWorkspaceImports,
   assertSafeText,
@@ -19,9 +20,13 @@ import {
 const scriptDirectory = dirname(fileURLToPath(import.meta.url));
 const packageDirectory = resolve(scriptDirectory, "..");
 const repositoryDirectory = resolve(packageDirectory, "../..");
-const expectedKeyringVersion = JSON.parse(
+const sourceDependencies = JSON.parse(
   await readFile(join(packageDirectory, "package.json"), "utf8"),
-).dependencies["@napi-rs/keyring"];
+).dependencies;
+const expectedRuntimeDependencies = {
+  "@napi-rs/keyring": sourceDependencies["@napi-rs/keyring"],
+  "@silvia-odwyer/photon-node": sourceDependencies["@silvia-odwyer/photon-node"],
+};
 const releaseDirectory = join(packageDirectory, ".release");
 const buildDirectories = [
   process.env.GITHUB_WORKSPACE,
@@ -117,6 +122,16 @@ if (unpackedBytes > maxUnpackedBytes) {
     `Unpacked package is larger than the 40 MiB audit limit: ${unpackedBytes} bytes.`,
   );
 }
+
+await assertExternalResourceImport(
+  "package/dist/cli.js",
+  "@silvia-odwyer/photon-node",
+  async (path) => {
+    const entry = entryMap.get(path);
+    if (entry?.type !== "file") throw new Error(`Missing production bundle module: ${path}.`);
+    return entry.data.toString("utf8");
+  },
+);
 
 const bootstrap = entryMap.get("package/dist/pragma.js");
 if (!bootstrap.data.subarray(0, 3).equals(Buffer.from("#!/"))) {
@@ -263,13 +278,17 @@ function assertManifest(manifest) {
   if (JSON.stringify(manifest.os) !== JSON.stringify(["darwin", "win32"])) {
     throw new Error("Tarball OS metadata must target darwin and win32.");
   }
-  if (manifest.dependencies === undefined || Object.keys(manifest.dependencies).length !== 1) {
-    throw new Error("Tarball dependencies must contain only the native keyring dependency.");
-  }
-  if (manifest.dependencies["@napi-rs/keyring"] !== expectedKeyringVersion) {
+  if (
+    manifest.dependencies === undefined ||
+    Object.keys(manifest.dependencies).length !== Object.keys(expectedRuntimeDependencies).length
+  ) {
     throw new Error(
-      `Tarball keyring dependency must match the CLI source pin ${expectedKeyringVersion}.`,
+      "Tarball dependencies must contain only the keyring and Photon runtime resources.",
     );
+  }
+  for (const [name, version] of Object.entries(expectedRuntimeDependencies)) {
+    if (manifest.dependencies[name] !== version)
+      throw new Error(`Tarball dependency ${name} must match the CLI source pin ${version}.`);
   }
   for (const field of ["devDependencies", "optionalDependencies", "scripts", "main"]) {
     if (manifest[field] !== undefined) throw new Error(`Tarball must not contain ${field}.`);

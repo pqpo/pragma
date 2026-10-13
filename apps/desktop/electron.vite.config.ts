@@ -1,5 +1,5 @@
 // @ts-expect-error Build-only JavaScript helper shared with npm packaging.
-import { buildDesktopCli } from "./scripts/build-desktop-cli.mjs";
+import { buildDesktopCli, RUNTIME_RESOURCE_EXTERNALS } from "./scripts/build-desktop-cli.mjs";
 import { build } from "esbuild";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
@@ -78,7 +78,8 @@ export default defineConfig(({ command }) => ({
       rollupOptions: {
         // ws treats these native accelerators as optional and catches a missing
         // require at runtime. Keep that fallback intact when Vite bundles ws.
-        external: ["@napi-rs/keyring", "bufferutil", "utf-8-validate"],
+        // Photon must keep its CommonJS entry beside photon_rs_bg.wasm.
+        external: [...RUNTIME_RESOURCE_EXTERNALS, "bufferutil", "utf-8-validate"],
         input: {
           index: fileURLToPath(new URL("./src/main/index.ts", import.meta.url)),
           "storage-capacity-worker": fileURLToPath(

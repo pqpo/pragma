@@ -208,6 +208,7 @@ export default async function beforePack(context) {
     retainedDynamicResources: [
       "@qoder-ai/qoder-agent-sdk",
       "@earendil-works/pi-coding-agent",
+      "@silvia-odwyer/photon-node",
       "jiti",
       "esbuild",
     ],

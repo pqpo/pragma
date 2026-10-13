@@ -1,4 +1,7 @@
-import { findExternalWorkspaceImports } from "../../cli/scripts/package-audit-lib.mjs";
+import {
+  assertExternalResourceImport,
+  findExternalWorkspaceImports,
+} from "../../cli/scripts/package-audit-lib.mjs";
 import { readdir, readFile } from "node:fs/promises";
 import { extname, join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -40,3 +43,10 @@ if (failures.length > 0) {
 }
 
 console.log("Desktop main bundle contains no external @pragma imports.");
+
+for (const entry of ["index.js", "desktop-cli/cli.js"]) {
+  await assertExternalResourceImport(entry, "@silvia-odwyer/photon-node", async (path) =>
+    readFile(join(mainOutputDirectory, ...path.split("/")), "utf8"),
+  );
+}
+console.log("Desktop Main and bundled CLI preserve the external Photon resource import.");
