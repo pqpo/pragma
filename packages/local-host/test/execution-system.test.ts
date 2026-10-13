@@ -153,6 +153,7 @@ interface FakeRuntimeOptions {
   readonly failSteer?: boolean;
   readonly failQuery?: string;
   readonly turnGate?: Promise<void>;
+  readonly onTurnStarted?: () => void;
   readonly onSteer?: () => void;
   readonly reconcileSteer?: () => Promise<"delivered" | "not_dispatched" | "uncertain">;
   readonly onWait?: () => void;
@@ -196,6 +197,7 @@ function createFakeRuntime(options: FakeRuntimeOptions = {}) {
       stats?.turnAttachmentPaths.push(turn.attachments.map((attachment) => attachment.path));
       const executionId = session.context.request.executionContext?.executionId;
       if (stats !== undefined && executionId !== undefined) stats.executionIds.push(executionId);
+      options.onTurnStarted?.();
       if (turn.rawQuery === "active") await options.turnGate;
       const delayMs = options.delayMsByAgent?.[session.context.agent.id] ?? options.delayMs;
       if (delayMs !== undefined) {
@@ -1840,13 +1842,17 @@ describe("ExpertSession", { timeout: 30_000 }, () => {
       const turnGate = new Promise<void>((resolve) => {
         releaseTurn = resolve;
       });
+      let markTurnStarted!: () => void;
+      const turnStarted = new Promise<void>((resolve) => {
+        markTurnStarted = resolve;
+      });
       const stats = createFakeRuntimeStats();
       const app = createPragma({
         pragmaHome: home,
         executionStore: executions,
         expertSessionStore: sessions,
         runtimes: createStaticRuntimeResolver({
-          runtimes: [createFakeRuntime({ stats, turnGate })],
+          runtimes: [createFakeRuntime({ stats, turnGate, onTurnStarted: markTurnStarted })],
           defaultRuntimeId: "fake",
         }),
         loggerProvider: createNoopLoggerProvider(),
@@ -1884,7 +1890,10 @@ describe("ExpertSession", { timeout: 30_000 }, () => {
         const session = await app.experts.createSession(expert);
         createdSession = session;
         const active = await session.prompt("active", { requestId: "active" });
-        await vi.waitFor(() => expect(stats.executionIds).toHaveLength(1));
+        // Runtime preparation includes durable worker I/O; synchronize on admission,
+        // rather than assuming the CI runner can complete it within a polling timeout.
+        await turnStarted;
+        expect(stats.executionIds).toHaveLength(1);
         const ownerClaimId = claimLease.mock.calls[0]![1];
         if (takeover) {
           const read = executions.get.bind(executions);

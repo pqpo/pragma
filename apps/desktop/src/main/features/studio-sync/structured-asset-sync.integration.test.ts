@@ -21,7 +21,10 @@ import {
   hashSnapshotContent,
   type ContextStoreStore,
 } from "../context-stores/context-store-store.ts";
-import { createPragmaProjectStore } from "../projects/pragma-project-store.ts";
+import {
+  createPragmaProjectStore,
+  type PragmaProjectStore,
+} from "../projects/pragma-project-store.ts";
 import { createWorkflowLayoutStore } from "../projects/workflow-layout-store.ts";
 import { createCapabilityStore, type CapabilityStore } from "../capabilities/capability-store.ts";
 import { createCapabilityCredentialStore } from "../capabilities/capability-credential-store.ts";
@@ -32,6 +35,7 @@ import {
 import { createDesktopSystemExpertRegistry } from "../experts/system-expert-registry.ts";
 import { createTestSecretStore } from "../credentials/test-secret-store.ts";
 import { createCoreAssetSyncService } from "./core-asset-sync-service.ts";
+import { readSyncRepository } from "./asset-sync-repository.ts";
 import { appendTransferredKnowledge } from "../asset-transfer/asset-transfer-payloads.ts";
 
 const exec = promisify(execFile);
@@ -71,6 +75,12 @@ function device(
   beforeList?: () => Promise<void>,
   beforeLayoutSave?: () => Promise<void>,
   verify?: CapabilityVerifier,
+  projectHooks?: {
+    beforeGet?: (project: PragmaProjectStore) => Promise<void>;
+    afterValidation?: (project: PragmaProjectStore) => Promise<void>;
+    beforeApply?: (project: PragmaProjectStore) => Promise<void>;
+    afterApply?: (project: PragmaProjectStore) => Promise<void>;
+  },
 ) {
   const project = createPragmaProjectStore({ projectsPath: join(root, "data", "projects") });
   const stores = createContextStoreStore({
@@ -146,7 +156,29 @@ function device(
     "create",
     interruptCreate === "capability",
   );
-  const importProject = interruptAfter(project, "apply", interruptCreate === "project");
+  const importProject = new Proxy(interruptAfter(project, "apply", interruptCreate === "project"), {
+    get(target, property, receiver) {
+      if (property === "get" && projectHooks?.beforeGet)
+        return async (...args: Parameters<PragmaProjectStore["get"]>) => {
+          await projectHooks.beforeGet!(project);
+          return await target.get(...args);
+        };
+      if (property === "validateChanges" && projectHooks?.afterValidation)
+        return async (...args: Parameters<PragmaProjectStore["validateChanges"]>) => {
+          const diagnostics = await target.validateChanges(...args);
+          await projectHooks.afterValidation!(project);
+          return diagnostics;
+        };
+      if (property === "apply" && (projectHooks?.beforeApply || projectHooks?.afterApply))
+        return async (...args: Parameters<PragmaProjectStore["apply"]>) => {
+          await projectHooks.beforeApply?.(project);
+          const value = await target.apply(...args);
+          await projectHooks.afterApply?.(project);
+          return value;
+        };
+      return Reflect.get(target, property, receiver);
+    },
+  });
   const importLayouts = new Proxy(layouts, {
     get(target, property, receiver) {
       if (property !== "save" || !beforeLayoutSave) return Reflect.get(target, property, receiver);
@@ -297,6 +329,532 @@ async function addSkill(capabilities: CapabilityStore, root: string) {
 }
 
 describe("structured asset sync with real Git and domain stores", { timeout: 60_000 }, () => {
+  it.each(["conflict", "after-commit interruption"] as const)(
+    "coordinates Flow layout deletion with Project publication during %s",
+    async (mode) => {
+      const git = await fixture();
+      const a = device(join(git.root, "a"));
+      const original = resources();
+      const flow = original.find((resource) => resource.kind === "Flow")!;
+      let enabled = false;
+      const b = device(join(git.root, "b"), false, undefined, undefined, undefined, {
+        beforeApply: async (project) => {
+          if (!enabled || mode !== "conflict") return;
+          enabled = false;
+          await project.upsert({
+            baseRevision: (await project.get()).revision,
+            resource: { ...flow, metadata: { ...flow.metadata, description: "Concurrent edit" } },
+          });
+        },
+        afterApply: async () => {
+          if (!enabled || mode !== "after-commit interruption") return;
+          enabled = false;
+          throw new Error("Injected interruption after Flow deletion commit.");
+        },
+      });
+      await a.project.publish({ expectedRevision: 0, resources: original });
+      await a.layouts.save(initialLayout);
+      await a.service.configure({ ...configuration, pushDeletions: true });
+      await b.service.configure(configuration);
+      await a.project.remove({
+        baseRevision: (await a.project.get()).revision,
+        ref: canonicalPragmaResourceRef(flow),
+      });
+      await a.service.sync();
+      enabled = true;
+      const result = await b.service.refresh();
+      if (mode === "conflict") {
+        expect(result.status, result.error).toBe("conflict");
+        expect(await b.layouts.get(initialLayout)).toMatchObject({ nodes: initialLayout.nodes });
+        expect((await b.restart().refresh()).status).toBe("conflict");
+        expect(await b.layouts.get(initialLayout)).toMatchObject({ nodes: initialLayout.nodes });
+        const resolved = await b
+          .restart()
+          .resolve(`flow:${canonicalPragmaResourceRef(flow)}`, "local");
+        expect(resolved.status, resolved.error).toBe("ready");
+        const checkout = join(git.root, "inspect-preserved-layout");
+        await exec("git", ["clone", git.bare, checkout]);
+        expect(
+          (await readSyncRepository(checkout, true)).get(`flow-layout:${flow.metadata.id}`)?.data,
+        ).toMatchObject({ nodes: initialLayout.nodes });
+      } else {
+        expect(result.status).toBe("error");
+        expect(await b.layouts.get(initialLayout)).toBeNull();
+        const recovered = await b.restart().refresh();
+        expect(recovered.status, recovered.error).toBe("ready");
+        expect(recovered.items.some((item) => item.assetKey === `flow:${flow.metadata.id}`)).toBe(
+          false,
+        );
+        expect(await b.layouts.get(initialLayout)).toBeNull();
+      }
+    },
+  );
+
+  it("isolates one Project CAS conflict while importing the other independent DSL resources", async () => {
+    const git = await fixture();
+    const a = device(join(git.root, "a"));
+    const runtime = resources().find((resource) => resource.kind === "RuntimeProfile")!;
+    const original = ["zdkgs0fde4xt00vr", "2dkgs0fde4xt00vr", "3dkgs0fde4xt00vr"].map((id) => ({
+      ...runtime,
+      metadata: { ...runtime.metadata, id, name: `Runtime ${id[0]}` },
+    }));
+    let enabled = false;
+    const b = device(join(git.root, "b"), false, undefined, undefined, undefined, {
+      beforeApply: async (project) => {
+        if (!enabled) return;
+        enabled = false;
+        await project.upsert({
+          baseRevision: (await project.get()).revision,
+          resource: {
+            ...original[1]!,
+            metadata: { ...original[1]!.metadata, description: "User edit" },
+          },
+        });
+      },
+    });
+    await a.project.publish({ expectedRevision: 0, resources: original });
+    await a.service.configure(configuration);
+    await b.service.configure(configuration);
+    const incoming = original.map((resource) => ({
+      ...resource,
+      metadata: { ...resource.metadata, description: "Remote edit" },
+    }));
+    await a.project.apply({ baseRevision: (await a.project.get()).revision, upserts: incoming });
+    await a.service.sync();
+    enabled = true;
+    const result = await b.service.refresh();
+    expect(result.status, result.error).toBe("conflict");
+    expect(
+      result.items.filter((item) => item.status === "conflict").map((item) => item.key),
+    ).toEqual([`runtime-profile:${canonicalPragmaResourceRef(original[1]!)}`]);
+    const current = (await b.project.get()).resources;
+    for (const index of [0, 2])
+      expect(
+        current.find((resource) => resource.metadata.id === original[index]!.metadata.id),
+      ).toEqual(incoming[index]);
+    expect(
+      current.find((resource) => resource.metadata.id === original[1]!.metadata.id)?.metadata
+        .description,
+    ).toBe("User edit");
+    const state = JSON.parse(await readFile(join(b.root, "state/asset-sync/state.json"), "utf8"));
+    expect(state.restoreConflicts).toEqual([
+      `runtime-profile:${canonicalPragmaResourceRef(original[1]!)}`,
+    ]);
+    expect(
+      (
+        await b
+          .restart()
+          .resolve(`runtime-profile:${canonicalPragmaResourceRef(original[1]!)}`, "local")
+      ).status,
+    ).toBe("ready");
+  });
+
+  it.each(["knowledge", "capability"] as const)(
+    "attributes a missing unchanged %s authority to its pending incoming dependents",
+    async (kind) => {
+      const git = await fixture();
+      const a = device(join(git.root, "a"));
+      const authority =
+        kind === "knowledge"
+          ? await addKnowledge(a.stores, "Docs")
+          : await a.capabilities.create({
+              definition: {
+                kind: "mcp_server",
+                name: "Tools",
+                description: "Tools",
+                connection: { transport: "streamable-http", url: "https://example.test/mcp" },
+                tools: [],
+                timeoutMs: 30_000,
+              },
+              credentials: {},
+            });
+      const authorityId = "id" in authority ? authority.id : authority.manifest.id;
+      const binding =
+        kind === "knowledge"
+          ? createDesktopContextResource({ owner: "project-expert", storeId: authorityId })
+          : createDesktopCapabilityResource({ owner: "project-expert", capabilityId: authorityId });
+      const runtime = resources().find((resource) => resource.kind === "RuntimeProfile")!;
+      const expert = resources(kind === "knowledge" ? authorityId : undefined).find(
+        (resource) => resource.kind === "Expert",
+      )!;
+      if (kind === "capability")
+        expert.spec.capabilities = [
+          { ref: canonicalPragmaResourceRef(binding), kind: "tools", tools: [] },
+        ];
+      const flow = resources().find((resource) => resource.kind === "Flow")!;
+      let armed = false;
+      let enabled = false;
+      let invalidated = false;
+      const path = join(
+        git.root,
+        "b/data",
+        kind === "knowledge" ? "context-stores" : "capabilities",
+        authorityId,
+        kind === "knowledge" ? "store.json" : "capability.json",
+      );
+      const b = device(join(git.root, "b"), false, undefined, undefined, undefined, {
+        afterValidation: async () => {
+          if (enabled && !invalidated) armed = true;
+        },
+        beforeGet: async () => {
+          if (!armed) return;
+          armed = false;
+          invalidated = true;
+          await writeFile(path, "{}");
+        },
+      });
+      await a.project.publish({ expectedRevision: 0, resources: [runtime, binding] });
+      await a.service.configure(configuration);
+      await b.service.configure(configuration);
+      const originalManifest = await readFile(path, "utf8");
+      await a.project.apply({
+        baseRevision: (await a.project.get()).revision,
+        upserts: [expert, flow],
+      });
+      await a.layouts.save(initialLayout);
+      await a.service.sync();
+      enabled = true;
+      const result = await b.service.refresh();
+      expect(invalidated).toBe(true);
+      expect(result.status, result.error).toBe("conflict");
+      const affected = result.items
+        .filter((item) => item.status === "conflict")
+        .map((item) => item.key);
+      expect(affected).toContain(`expert:${canonicalPragmaResourceRef(expert)}`);
+      expect(affected).toContain(`flow:${canonicalPragmaResourceRef(flow)}`);
+      expect(await b.layouts.get(initialLayout)).toBeNull();
+      await expect(
+        readFile(join(b.root, "state/asset-sync/restore-journal.json")),
+      ).rejects.toMatchObject({ code: "ENOENT" });
+      await writeFile(path, originalManifest);
+      const service = b.restart();
+      await service.restore(`expert:${canonicalPragmaResourceRef(expert)}`);
+      const restored = await service.restore(`flow:${canonicalPragmaResourceRef(flow)}`);
+      expect(restored.status, restored.error).toBe("ready");
+      expect(await b.layouts.get(initialLayout)).toMatchObject({ nodes: initialLayout.nodes });
+    },
+  );
+
+  it("defers a keep-local expert until its conflicted runtime can also be published", async () => {
+    const git = await fixture();
+    const a = device(join(git.root, "a"));
+    const b = device(join(git.root, "b"));
+    const original = resources().filter((resource) => resource.kind !== "Flow");
+    await a.project.publish({ expectedRevision: 0, resources: original });
+    await a.service.configure({ ...configuration, pushDeletions: true });
+    await b.service.configure(configuration);
+    await b.project.apply({
+      baseRevision: (await b.project.get()).revision,
+      upserts: original.map((resource) => ({
+        ...resource,
+        metadata: { ...resource.metadata, description: "Local change" },
+      })),
+    });
+    await a.project.apply({
+      baseRevision: (await a.project.get()).revision,
+      removals: original.map(canonicalPragmaResourceRef),
+    });
+    await a.service.sync();
+    expect((await b.service.sync()).status).toBe("conflict");
+    const expertKey = "expert:expert:1xddvess309a6gme";
+    const runtimeKey = "runtime-profile:runtime-profile:zdkgs0fde4xt00vr";
+    const deferred = await b.service.resolve(expertKey, "local");
+    expect(deferred.status, deferred.error).toBe("conflict");
+    const checkout = join(git.root, "inspect-deferred");
+    await exec("git", ["clone", git.bare, checkout]);
+    expect((await readSyncRepository(checkout, true)).size).toBe(0);
+    await b.service.resolve(runtimeKey, "local");
+    expect((await b.service.resolve(expertKey, "local")).status).toBe("ready");
+    const consumer = device(join(git.root, "consumer"));
+    const restored = await consumer.service.configure(configuration);
+    expect(restored.status, restored.error).toBe("ready");
+    expect((await consumer.project.get()).resources).toEqual((await b.project.get()).resources);
+  });
+
+  it.each(["update", "delete", "commit-update"] as const)(
+    "preserves a concurrent DSL edit during %s import and permits keep-local recovery",
+    async (mode) => {
+      const git = await fixture();
+      const a = device(join(git.root, "a"));
+      const runtime = resources().find((resource) => resource.kind === "RuntimeProfile")!;
+      let enabled = false;
+      let validations = 0;
+      let armed = false;
+      let edited = false;
+      const edit = async (project: PragmaProjectStore) => {
+        if (edited) return;
+        edited = true;
+        await project.upsert({
+          baseRevision: (await project.get()).revision,
+          resource: {
+            ...runtime,
+            spec: {
+              ...runtime.spec,
+              config: { runtimeId: "codex", providerId: "openai", model: "user-model" },
+            },
+          },
+        });
+      };
+      const b = device(join(git.root, "b"), false, undefined, undefined, undefined, {
+        afterValidation: async () => {
+          if (enabled && ++validations === 2) armed = true;
+        },
+        beforeGet: async (project) => {
+          if (!armed || mode === "commit-update") return;
+          armed = false;
+          await edit(project);
+        },
+        beforeApply: async (project) => {
+          if (!armed || mode !== "commit-update") return;
+          armed = false;
+          await edit(project);
+        },
+      });
+      await a.project.publish({ expectedRevision: 0, resources: [runtime] });
+      await a.service.configure({ ...configuration, pushDeletions: true });
+      await b.service.configure(configuration);
+      if (mode === "delete")
+        await a.project.remove({
+          baseRevision: (await a.project.get()).revision,
+          ref: canonicalPragmaResourceRef(runtime),
+        });
+      else
+        await a.project.upsert({
+          baseRevision: (await a.project.get()).revision,
+          resource: {
+            ...runtime,
+            spec: {
+              ...runtime.spec,
+              config: { runtimeId: "codex", providerId: "openai", model: "remote-model" },
+            },
+          },
+        });
+      await a.service.sync();
+      enabled = true;
+      const result = await b.service.refresh();
+      expect(edited).toBe(true);
+      expect(result.status, result.error).toBe("conflict");
+      expect((await b.project.get()).resources[0]).toMatchObject({
+        spec: { config: { model: "user-model" } },
+      });
+      await expect(
+        readFile(join(b.root, "state/asset-sync/restore-journal.json")),
+      ).rejects.toMatchObject({
+        code: "ENOENT",
+      });
+      const recovered = await b
+        .restart()
+        .resolve(`runtime-profile:${canonicalPragmaResourceRef(runtime)}`, "local");
+      expect(recovered.status, recovered.error).toBe("ready");
+      expect((await b.project.get()).resources[0]).toMatchObject({
+        spec: { config: { model: "user-model" } },
+      });
+    },
+  );
+
+  it.each(["planning", "commit"] as const)(
+    "retires a deletion journal when new local experts reference its target during %s",
+    async (phase) => {
+      const git = await fixture();
+      const a = device(join(git.root, "a"));
+      const runtime = resources().find((resource) => resource.kind === "RuntimeProfile")!;
+      const expert = resources().find((resource) => resource.kind === "Expert")!;
+      const otherExpert = {
+        ...expert,
+        metadata: { ...expert.metadata, id: "2xddvess309a6gme", name: "Writer B" },
+      };
+      let enabled = false;
+      let armed = false;
+      let injected = false;
+      let validations = 0;
+      const addReferences = async (project: PragmaProjectStore) => {
+        armed = false;
+        injected = true;
+        await project.apply({
+          baseRevision: (await project.get()).revision,
+          upserts: [expert, otherExpert],
+        });
+      };
+      const b = device(join(git.root, "b"), false, undefined, undefined, undefined, {
+        afterValidation: async () => {
+          if (enabled && ++validations === (phase === "planning" ? 1 : 2)) armed = true;
+        },
+        beforeGet: async (project) => {
+          if (armed && phase === "planning") await addReferences(project);
+        },
+        beforeApply: async (project) => {
+          if (armed && phase === "commit") await addReferences(project);
+        },
+      });
+      await a.project.publish({ expectedRevision: 0, resources: [runtime] });
+      await a.service.configure({ ...configuration, pushDeletions: true });
+      await b.service.configure(configuration);
+      await a.project.remove({
+        baseRevision: (await a.project.get()).revision,
+        ref: canonicalPragmaResourceRef(runtime),
+      });
+      await a.service.sync();
+      enabled = true;
+      const result = await b.service.refresh();
+      expect(injected).toBe(true);
+      expect(result.status, result.error).toBe("conflict");
+      expect((await b.project.get()).resources).toHaveLength(3);
+      await expect(
+        readFile(join(b.root, "state/asset-sync/restore-journal.json")),
+      ).rejects.toMatchObject({
+        code: "ENOENT",
+      });
+      const recovered = await b
+        .restart()
+        .resolve(`runtime-profile:${canonicalPragmaResourceRef(runtime)}`, "local");
+      expect(recovered.status, recovered.error).toBe("ready");
+      const consumer = device(join(git.root, "consumer"));
+      expect((await consumer.service.configure(configuration)).status).toBe("ready");
+      expect((await consumer.project.get()).resources).toHaveLength(3);
+    },
+  );
+
+  it("completes Git deletion after a crash between push and state persistence", async () => {
+    const git = await fixture();
+    const a = device(join(git.root, "a"));
+    const runtime = resources().find((resource) => resource.kind === "RuntimeProfile")!;
+    const knowledge = await addKnowledge(a.stores, "Unchanged docs");
+    await a.project.publish({ expectedRevision: 0, resources: [runtime] });
+    await a.service.configure(configuration);
+    await a.project.remove({
+      baseRevision: (await a.project.get()).revision,
+      ref: canonicalPragmaResourceRef(runtime),
+    });
+    await a.service.refresh();
+    const path = join(a.root, "state/asset-sync/state.json");
+    const previousState = await readFile(path, "utf8");
+    const key = `runtime-profile:${canonicalPragmaResourceRef(runtime)}`;
+    expect((await a.service.deleteRemote(key)).status).toBe("ready");
+    // Git has committed the deletion, but the old local checkpoint survived the crash.
+    await writeFile(path, previousState);
+    await append(a.stores, knowledge.id, "# Unpublished edit");
+    const head = await git.head();
+    const recovered = await a.restart().deleteRemote(key);
+    expect(recovered.status, recovered.error).toBe("ready");
+    expect(recovered.items.some((item) => item.key === key)).toBe(false);
+    expect(await git.head()).toBe(head);
+    expect((await a.restart().overview()).items.some((item) => item.key === key)).toBe(false);
+    const state = JSON.parse(await readFile(path, "utf8"));
+    expect(state.bases[key]).toBeUndefined();
+    expect(state.ignoredRemote).not.toContain(key);
+  });
+
+  it("keeps a deleted shared dependency graph ignored and deletes every reference before its runtime", async () => {
+    const git = await fixture();
+    const a = device(join(git.root, "a"));
+    const first = resources();
+    const expert = first.find((resource) => resource.kind === "Expert")!;
+    const flow = first.find((resource) => resource.kind === "Flow")!;
+    const otherExpert = {
+      ...expert,
+      metadata: { ...expert.metadata, id: "2xddvess309a6gme", name: "Writer B" },
+    };
+    const otherFlow = structuredClone(flow);
+    otherFlow.metadata.id = "31e73vjvctx49gkq";
+    otherFlow.metadata.name = "Release B";
+    otherFlow.spec.graph.steps["finish"]!.expert = { ref: "expert:2xddvess309a6gme" };
+    const original = [...first, otherExpert, otherFlow];
+    await a.layouts.save(initialLayout);
+    await a.layouts.save({ ...initialLayout, flowId: otherFlow.metadata.id });
+    await a.project.publish({ expectedRevision: 0, resources: original });
+    expect((await a.service.configure(configuration)).status).toBe("ready");
+    await a.project.apply({
+      baseRevision: (await a.project.get()).revision,
+      upserts: [],
+      removals: original.map(canonicalPragmaResourceRef),
+    });
+    const keys = [
+      "flow:flow:t1e73vjvctx49gkq",
+      "expert:expert:1xddvess309a6gme",
+      "runtime-profile:runtime-profile:zdkgs0fde4xt00vr",
+    ];
+    for (const service of [a.service, a.restart()]) {
+      const ignored = await service.refresh();
+      expect(ignored.status, ignored.error).toBe("ready");
+      expect(ignored.items).toHaveLength(7);
+      expect(ignored.items.every((item) => item.status === "ignored_remote")).toBe(true);
+      expect((await a.project.get()).resources).toEqual([]);
+    }
+
+    // Reproduce conflict state persisted by the old dependency propagation.
+    const statePath = join(a.root, "state", "asset-sync", "state.json");
+    const state = JSON.parse(await readFile(statePath, "utf8"));
+    await writeFile(statePath, JSON.stringify({ ...state, conflicts: keys.slice(0, 2) }));
+    const service = a.restart();
+    expect((await service.deleteRemote(keys[2]!)).error).toContain("still referenced");
+    expect((await service.resolve(keys[1]!, "local")).error).toContain("Release in Git");
+    const flowResolved = await service.resolve(keys[0]!, "local");
+    expect(flowResolved.status, flowResolved.error).toBe("ready");
+    expect(flowResolved.items.some((item) => item.key === keys[0])).toBe(false);
+    const expertResolved = await service.resolve(keys[1]!, "local");
+    expect(expertResolved.status, expertResolved.error).toBe("ready");
+    expect(expertResolved.items.some((item) => item.key === keys[1])).toBe(false);
+    expect((await service.deleteRemote(keys[2]!)).error).toContain("Writer B in Git");
+    expect(
+      (await service.deleteRemote(`flow:${canonicalPragmaResourceRef(otherFlow)}`)).status,
+    ).toBe("ready");
+    expect(
+      (await service.deleteRemote(`expert:${canonicalPragmaResourceRef(otherExpert)}`)).status,
+    ).toBe("ready");
+    const removed = await service.deleteRemote(keys[2]!);
+    expect(removed.status, removed.error).toBe("ready");
+    expect(removed.items).toEqual([]);
+    expect((await a.project.get()).resources).toEqual([]);
+    expect((await a.restart().refresh()).items).toEqual([]);
+    const checkout = join(git.root, "inspect-deleted-graph");
+    await exec("git", ["clone", git.bare, checkout]);
+    expect((await readSyncRepository(checkout, true)).size).toBe(0);
+  });
+
+  it("publishes deletion of a whole local dependency graph in one synchronization", async () => {
+    const git = await fixture();
+    const a = device(join(git.root, "a"));
+    const original = resources();
+    await a.project.publish({ expectedRevision: 0, resources: original });
+    await a.service.configure({ ...configuration, pushDeletions: true });
+    await a.project.apply({
+      baseRevision: (await a.project.get()).revision,
+      upserts: [],
+      removals: original.map(canonicalPragmaResourceRef),
+    });
+    const removed = await a.service.sync();
+    expect(removed.status, removed.error).toBe("ready");
+    expect(removed.items).toEqual([]);
+    expect((await a.restart().refresh()).items).toEqual([]);
+  });
+
+  it("keeps local resolution effective when the old Git expert references an ignored runtime", async () => {
+    const git = await fixture();
+    const a = device(join(git.root, "a"));
+    const original = resources().filter((resource) => resource.kind !== "Flow");
+    await a.project.publish({ expectedRevision: 0, resources: original });
+    await a.service.configure(configuration);
+    await a.project.apply({
+      baseRevision: (await a.project.get()).revision,
+      upserts: [],
+      removals: original.map(canonicalPragmaResourceRef),
+    });
+    await a.service.refresh();
+    const hook = join(git.bare, "hooks", "pre-receive");
+    await writeFile(hook, "#!/bin/sh\nexit 1\n", { mode: 0o700 });
+    const key = "expert:expert:1xddvess309a6gme";
+    const failed = await a.service.resolve(key, "local");
+    expect(failed.status).toBe("error");
+    expect(failed.items.some((item) => item.key === key)).toBe(true);
+    await rm(hook);
+    const resolved = await a.restart().resolve(key, "local");
+    expect(resolved.status, resolved.error).toBe("ready");
+    expect(resolved.items.some((item) => item.key === key)).toBe(false);
+    expect(resolved.items[0]?.status).toBe("ignored_remote");
+    expect((await a.project.get()).resources).toEqual([]);
+    expect((await a.restart().refresh()).items.some((item) => item.key === key)).toBe(false);
+  });
+
   it.each([false, true])(
     "synchronizes historical Knowledge Git metadata safely (interrupted restore: %s)",
     async (interruptRestore) => {

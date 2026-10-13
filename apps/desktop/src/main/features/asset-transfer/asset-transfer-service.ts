@@ -27,7 +27,10 @@ import {
   PragmaProjectStoreError,
   type PragmaProjectStore,
 } from "../projects/pragma-project-store.ts";
-import type { WorkflowLayoutStore } from "../projects/workflow-layout-store.ts";
+import {
+  WorkflowLayoutConflictError,
+  type WorkflowLayoutStore,
+} from "../projects/workflow-layout-store.ts";
 
 import {
   bindExistingDesktopCapabilityResource,
@@ -79,6 +82,16 @@ export interface AssetTransferChange {
   readonly expectedRevision?: number | undefined;
   readonly local?: CoreAssetSyncItem | undefined;
   readonly remote?: CoreAssetSyncItem | undefined;
+}
+/** A previously planned import can no longer safely replace these local assets. */
+export class AssetTransferConflictError extends Error {
+  constructor(
+    readonly keys: readonly string[],
+    message: string,
+  ) {
+    super(`asset_sync.restore_conflict: ${message}`);
+    this.name = "AssetTransferConflictError";
+  }
 }
 export function createAssetTransferService(options: {
   readonly project: PragmaProjectStore;
@@ -393,19 +406,72 @@ export function createAssetTransferService(options: {
       ),
       ...upserts,
     ];
-    const requiredRefs = new Set(referencedPragmaResourceRefs(upserts));
-    let expanded = true;
-    while (expanded) {
-      expanded = false;
-      for (const resource of desired) {
-        if (!requiredRefs.has(canonicalPragmaResourceRef(resource))) continue;
-        for (const ref of referencedPragmaResourceRefs([resource]))
-          if (!requiredRefs.has(ref)) {
-            requiredRefs.add(ref);
-            expanded = true;
-          }
+    const removedRefs = new Map(
+      changes.flatMap((change) =>
+        change.local && !change.remote && isResourceItem(change.local)
+          ? [
+              [
+                canonicalPragmaResourceRef(
+                  PragmaForwardCompatibleResourceSchema.parse(change.local.data),
+                ),
+                change.key,
+              ] as const,
+            ]
+          : [],
+      ),
+    );
+    const retainedDependencies = referencedPragmaResourceRefs(desired);
+    const referencedRemovals = [...removedRefs].flatMap(([ref, key]) =>
+      retainedDependencies.has(ref) ? [key] : [],
+    );
+    if (referencedRemovals.length > 0)
+      throw new AssetTransferConflictError(
+        referencedRemovals,
+        "Local resources now reference an asset scheduled for deletion.",
+      );
+    const dependencyRefs = (roots: readonly PragmaResource[]): Set<string> => {
+      const refs = new Set(referencedPragmaResourceRefs(roots));
+      let expanded = true;
+      while (expanded) {
+        expanded = false;
+        for (const resource of desired) {
+          if (!refs.has(canonicalPragmaResourceRef(resource))) continue;
+          for (const ref of referencedPragmaResourceRefs([resource]))
+            if (!refs.has(ref)) {
+              refs.add(ref);
+              expanded = true;
+            }
+        }
       }
-    }
+      return refs;
+    };
+    const requiredRefs = dependencyRefs(upserts);
+    const incomingDependencies = new Map(
+      prepared.flatMap((change) =>
+        change.remote && isResourceItem(change.remote)
+          ? [
+              [
+                change.key,
+                dependencyRefs([PragmaForwardCompatibleResourceSchema.parse(change.remote.data)]),
+              ] as const,
+            ]
+          : [],
+      ),
+    );
+    const missingAuthorityKeys = (
+      resource: PragmaResource,
+      payloadKeys: readonly string[],
+    ): string[] => {
+      const ref = canonicalPragmaResourceRef(resource);
+      return changes
+        .filter(
+          (change) =>
+            payloadKeys.includes(change.key) ||
+            change.key.endsWith(`:${ref}`) ||
+            incomingDependencies.get(change.key)?.has(ref),
+        )
+        .map((change) => change.key);
+    };
     for (const resource of desired) {
       const changedOrRequired =
         replacements.has(canonicalPragmaResourceRef(resource)) ||
@@ -417,7 +483,10 @@ export function createAssetTransferService(options: {
         !storeIds.has(storeId) &&
         (changedOrRequired || removedPayloads.has(`knowledge:${storeId}`))
       )
-        throw new Error(`Incoming ContextStore refers to missing knowledge: ${storeId}`);
+        throw new AssetTransferConflictError(
+          missingAuthorityKeys(resource, [`knowledge:${storeId}`]),
+          `Incoming ContextStore refers to missing knowledge: ${storeId}`,
+        );
       if (
         capabilityId &&
         !capabilityIds.has(capabilityId) &&
@@ -425,7 +494,10 @@ export function createAssetTransferService(options: {
           removedPayloads.has(`capability:${capabilityId}`) ||
           removedPayloads.has(`skill:${capabilityId}`))
       )
-        throw new Error(`Incoming Capability refers to missing definition: ${capabilityId}`);
+        throw new AssetTransferConflictError(
+          missingAuthorityKeys(resource, [`capability:${capabilityId}`, `skill:${capabilityId}`]),
+          `Incoming Capability refers to missing definition: ${capabilityId}`,
+        );
       if (resource.kind !== "Expert") continue;
       for (const ref of resource.spec.capabilities) {
         if (ref.kind !== "tools") continue;
@@ -462,6 +534,10 @@ export function createAssetTransferService(options: {
   };
   const applyImport = async (changes: readonly AssetTransferChange[]): Promise<void> => {
     const initialProject = await options.project.get();
+    const [initialStores, initialCapabilities] = await Promise.all([
+      options.stores.list(),
+      options.capabilities.list(),
+    ]);
     const assertExpected = (key: string, currentData: unknown, revision?: number): void => {
       const change = changes.find((candidate) => candidate.key === key);
       if (!change) return;
@@ -471,15 +547,17 @@ export function createAssetTransferService(options: {
         revision !== change.expectedRevision &&
         currentHash !== change.remote?.fingerprint
       )
-        throw new Error(
-          `asset_sync.restore_conflict: Local asset revision changed during restore: ${key}`,
+        throw new AssetTransferConflictError(
+          [key],
+          `Local asset revision changed during restore: ${key}`,
         );
       if (currentHash !== change.local?.fingerprint && currentHash !== change.remote?.fingerprint)
-        throw new Error(`asset_sync.restore_conflict: Local asset changed during restore: ${key}`);
+        throw new AssetTransferConflictError([key], `Local asset changed during restore: ${key}`);
     };
     const projectUpserts: PragmaResource[] = [];
     const projectRemovals: string[] = [];
     const deferredRemovals: { kind: "knowledge" | "skill" | "capability"; id: string }[] = [];
+    const deferredLayouts: (() => Promise<void>)[] = [];
     const capabilityUpdates: {
       id: string;
       definition: Exclude<z.infer<typeof CapabilityDefinitionSchema>, { kind: "skill" }>;
@@ -499,18 +577,34 @@ export function createAssetTransferService(options: {
         (item.kind === "capability" && item.key.startsWith("capability:capability:")) ||
         (item.kind === "knowledge" && item.key.startsWith("knowledge:context-store:"))
       ) {
-        if (remote === undefined) {
-          const current = (await options.project.get()).resources.find(
-            (candidate) =>
-              canonicalPragmaResourceRef(candidate) === item.key.slice(item.kind.length + 1),
+        const ref = item.key.slice(item.kind.length + 1);
+        const current = initialProject.resources.find(
+          (candidate) => canonicalPragmaResourceRef(candidate) === ref,
+        );
+        // Collection normalizes bound metadata from its local authority. Compare the
+        // same representation before replacing DSL, using the publication's base snapshot.
+        let portable = current;
+        if (current) {
+          const storeId = classifyDesktopContextResource(current);
+          const binding = classifyDesktopCapabilityResource(current);
+          const store = initialStores.find((candidate) => candidate.id === storeId);
+          const capability = initialCapabilities.find(
+            (candidate) => candidate.manifest.id === binding?.id,
           );
-          if (current) projectRemovals.push(item.key.slice(item.kind.length + 1));
+          if (current.kind === "ContextStore" && store)
+            portable = bindExistingDesktopContextResource(current, store.id, store);
+          else if (current.kind === "Capability" && binding && capability)
+            portable = bindExistingDesktopCapabilityResource(
+              current,
+              binding,
+              capability.definition,
+            );
+        }
+        assertExpected(item.key, portable);
+        if (remote === undefined) {
+          if (current) projectRemovals.push(ref);
         } else {
           const resource = PragmaForwardCompatibleResourceSchema.parse(remote.data);
-          const current = (await options.project.get()).resources.find(
-            (candidate) =>
-              canonicalPragmaResourceRef(candidate) === canonicalPragmaResourceRef(resource),
-          );
           if (fingerprint(current) !== fingerprint(resource)) projectUpserts.push(resource);
         }
         continue;
@@ -521,26 +615,42 @@ export function createAssetTransferService(options: {
         const expected =
           current === null ? null : { nodes: current.nodes, viewport: current.viewport };
         assertExpected(item.key, expected ?? undefined);
-        if (remote === undefined)
-          await options.layouts.remove({ projectId: options.project.projectId, flowId }, expected);
-        else {
-          const layout = z
-            .object({
-              nodes: WorkflowLayoutSchema.shape.nodes,
-              viewport: WorkflowLayoutSchema.shape.viewport,
-            })
-            .parse(remote.data);
-          await options.layouts.save(
-            {
-              ...layout,
-              schemaVersion: "pragma.desktop-flow-layout/v2",
-              projectId: options.project.projectId,
-              flowId,
-              updatedAt: new Date().toISOString(),
-            },
-            expected,
-          );
-        }
+        const removesFlow = changes.some(
+          (change) => change.local?.key === `flow:flow:${flowId}` && change.remote === undefined,
+        );
+        // The Project owns layout removal and journals it across the Flow publication CAS.
+        if (remote === undefined && removesFlow) continue;
+        deferredLayouts.push(async () => {
+          try {
+            if (remote === undefined)
+              await options.layouts.remove(
+                { projectId: options.project.projectId, flowId },
+                expected,
+              );
+            else {
+              const layout = z
+                .object({
+                  nodes: WorkflowLayoutSchema.shape.nodes,
+                  viewport: WorkflowLayoutSchema.shape.viewport,
+                })
+                .parse(remote.data);
+              await options.layouts.save(
+                {
+                  ...layout,
+                  schemaVersion: "pragma.desktop-flow-layout/v2",
+                  projectId: options.project.projectId,
+                  flowId,
+                  updatedAt: new Date().toISOString(),
+                },
+                expected,
+              );
+            }
+          } catch (error) {
+            if (error instanceof WorkflowLayoutConflictError)
+              throw new AssetTransferConflictError([item.key], error.message);
+            throw error;
+          }
+        });
         continue;
       }
       if (item.kind === "knowledge") {
@@ -724,12 +834,49 @@ export function createAssetTransferService(options: {
       removals: projectRemovals,
     };
     const hasProjectChanges = projectUpserts.length > 0 || projectRemovals.length > 0;
+    const projectChangeKeys = changes.flatMap((change) => {
+      const item = change.remote ?? change.local;
+      return item && isResourceItem(item) ? [change.key] : [];
+    });
+    const applyProject = async () => {
+      try {
+        await options.project.apply(projectChanges);
+      } catch (error) {
+        if (
+          error instanceof PragmaProjectStoreError &&
+          ["revision_conflict", "resource_referenced", "project_invalid"].includes(error.code)
+        ) {
+          const refs = new Set(error.conflict?.conflictingRefs ?? []);
+          const keys = projectChangeKeys.filter((key) => {
+            const item = changes.find((change) => change.key === key);
+            const resource = item?.remote ?? item?.local;
+            return (
+              resource &&
+              refs.has(
+                canonicalPragmaResourceRef(
+                  PragmaForwardCompatibleResourceSchema.parse(resource.data),
+                ),
+              )
+            );
+          });
+          throw new AssetTransferConflictError(
+            keys.length > 0 ? keys : projectChangeKeys,
+            error.message,
+          );
+        }
+        throw error;
+      }
+    };
     if (hasProjectChanges) {
       const diagnostics = await options.project.validateChanges(projectChanges);
       const error = diagnostics.find((diagnostic) => diagnostic.severity === "error");
-      if (error) throw new Error(`Incoming project is invalid: ${error.message}`);
+      if (error)
+        throw new AssetTransferConflictError(
+          projectChangeKeys,
+          `Incoming project is invalid: ${error.message}`,
+        );
     }
-    if (projectFirst && hasProjectChanges) await options.project.apply(projectChanges);
+    if (projectFirst && hasProjectChanges) await applyProject();
     for (const { id, definition } of capabilityUpdates) {
       const localCapability = (await options.capabilities.list()).find(
         (candidate) => candidate.manifest.id === id,
@@ -755,7 +902,8 @@ export function createAssetTransferService(options: {
           { preserveDefinition: true },
         );
     }
-    if (!projectFirst && hasProjectChanges) await options.project.apply(projectChanges);
+    if (!projectFirst && hasProjectChanges) await applyProject();
+    for (const applyLayout of deferredLayouts) await applyLayout();
     for (const removal of deferredRemovals) {
       if (removal.kind === "knowledge") {
         const store = (await options.stores.list()).find(
