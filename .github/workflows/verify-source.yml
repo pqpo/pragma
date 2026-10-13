@@ -97,7 +97,7 @@ jobs:
         with:
           ref: ${{ needs.resolve.outputs.source_sha }}
       - uses: ./.github/actions/setup
-      - uses: actions/cache@v4
+      - uses: actions/cache@v6
         if: matrix.lane == 'business'
         with:
           path: node_modules/.vitest-cache
