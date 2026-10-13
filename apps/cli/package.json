@@ -46,7 +46,7 @@
   "devDependencies": {
     "@pragma/tsconfig": "workspace:*",
     "@types/node": "latest",
-    "acorn": "8.15.0",
+    "acorn": "8.19.0",
     "esbuild": "0.28.2",
     "typescript": "latest",
     "vitest": "latest"
