@@ -145,6 +145,15 @@ it.each([
   "native stop failure",
   "cleanup failure",
   "persistence and read failure",
+  "terminal-only-pending native success",
+  "checkpoint-only-pending native success",
+  "terminal-only-pending native rejection",
+  "checkpoint-only-pending native rejection",
+  "terminal-only-pending hook success",
+  "checkpoint-only-pending hook success",
+  "terminal-only-pending hook rejection",
+  "checkpoint-only-pending hook rejection",
+  "terminal-only-pending native close",
   "terminal-only-native failure",
   "checkpoint-only-native failure",
   "terminal-only-cleanup failure",
@@ -165,23 +174,38 @@ it.each([
     let completeStop = () => undefined as void;
     const stopGate = new Promise<void>((resolve) => (completeStop = resolve));
     const releaseOnly = outcome.includes("-only-");
+    const pendingRelease = outcome.includes("pending");
+    const pendingHook = outcome.includes("pending hook");
+    const pendingClose = outcome.endsWith("native close");
+    const lateRejection = outcome.endsWith("rejection");
+    const deadlines: (() => void)[] = [];
+    let restoreDeadline = () => undefined as void;
     const leaseTiming = releaseOnly || outcome === "persistence and read failure";
     const releaseBoundary = outcome.startsWith("terminal-release")
       ? "terminal"
       : outcome.startsWith("checkpoint-release")
         ? "checkpoint"
         : undefined;
-    const nativeFailure = outcome.endsWith("native failure") || outcome === "native stop failure";
-    const cleanupFailure = outcome.endsWith("cleanup failure");
+    const nativeFailure =
+      outcome.endsWith("native failure") ||
+      outcome === "native stop failure" ||
+      (pendingRelease && !pendingHook && lateRejection);
+    const cleanupFailure = outcome.endsWith("cleanup failure") || (pendingHook && lateRejection);
     const persistenceFailure = outcome === "persistence and read failure";
     let failing = nativeFailure || cleanupFailure || persistenceFailure;
     let activeStops = 0;
     let maximumActiveStops = 0;
-    const nativeClose = vi.fn(async () => {
+    let primaryNativeId: string | undefined;
+    const nativeClose = vi.fn(async (native: { id: string }) => {
+      if (native.id !== primaryNativeId) return;
       activeStops += 1;
       maximumActiveStops = Math.max(maximumActiveStops, activeStops);
       try {
-        if (outcome === "closing" || (releaseBoundary !== undefined && !cleanupFailure))
+        if (
+          (pendingRelease && !pendingHook) ||
+          outcome === "closing" ||
+          (releaseBoundary !== undefined && !cleanupFailure)
+        )
           await stopGate;
         if (failing && nativeFailure) throw new Error("Native stop failed");
       } finally {
@@ -189,12 +213,15 @@ it.each([
       }
     });
     const afterDestroy = vi.fn(async () => {
-      if (releaseBoundary !== undefined && cleanupFailure) await stopGate;
+      if (pendingHook || (releaseBoundary !== undefined && cleanupFailure)) await stopGate;
       if (failing && cleanupFailure) throw new Error("Cleanup failed");
     });
     const runtime = defineRuntimeTestDriver({
       descriptor: { id: "quit-test", kind: "test", displayName: "Quit test" },
-      createSession: (context) => ({ id: context.systemSessionId }),
+      createSession: (context) => {
+        primaryNativeId ??= context.systemSessionId;
+        return { id: context.systemSessionId };
+      },
       readSession: (session) => ({ runtimeSessionId: session.id }),
       startTurn: () => ({ outputText: "done" }),
       mapEvent: () => ({ events: [] }),
@@ -319,6 +346,95 @@ it.each([
           access(new PragmaPaths({ pragmaHome: home }).expertSessionLease(session.sessionId)),
         ).resolves.toBeUndefined();
       }
+      if (pendingRelease) {
+        // A second, independent real Session must close even if the first hangs.
+        const otherExpert = await defineExpert({
+          id: "qvttest000000002",
+          name: "Other quit test",
+          description: "",
+          tags: [],
+          scope: "test",
+          workspace: home,
+          pragmaHome: home,
+        });
+        const other = await core.experts.createSession(otherExpert);
+        const otherTurn = await other.prompt("independent owner");
+        await otherTurn.result;
+        await otherTurn.settled;
+        await other.waitForPromptProcessing();
+        const otherId = randomUUID();
+        await lifecycle.ownerScope.acquire(otherId);
+        owners.setControlOwner(otherId, { kind: "session", session: other }, "live");
+        const scheduleTimeout = globalThis.setTimeout;
+        const deadlineSpy = vi
+          .spyOn(globalThis, "setTimeout")
+          .mockImplementation((callback, delay, ...args) => {
+            if (delay === 15_000) deadlines.push(callback as () => void);
+            return scheduleTimeout(callback, delay, ...args);
+          });
+        restoreDeadline = () => deadlineSpy.mockRestore();
+        f.requestQuit();
+        await vi.waitFor(() => expect(deadlines).toHaveLength(1));
+        await vi.waitFor(() => expect(nativeClose).toHaveBeenCalledOnce());
+        if (pendingHook) await vi.waitFor(() => expect(afterDestroy).toHaveBeenCalledOnce());
+        if (pendingClose) void session.close().catch(() => undefined);
+        deadlines[0]!();
+        await vi.waitFor(() => expect(f.reportFailure).toHaveBeenCalledOnce());
+        expect(f.reportFailure.mock.calls[0]?.[0]).toMatchObject({
+          errors: expect.arrayContaining([
+            expect.objectContaining({ name: "OwnerShutdownPendingError" }),
+          ]),
+        });
+        expect(owners.controlOwner(missionId)).toBeDefined();
+        expect(owners.controlOwner(otherId)).toBeUndefined();
+        expect((await other.getState()).status).toBe("open");
+        expect(nativeClose).toHaveBeenCalledTimes(2);
+        expect(closeResources).not.toHaveBeenCalled();
+        expect(f.quit).not.toHaveBeenCalled();
+        await expect(session.prompt("still sealed")).rejects.toThrow();
+        await vi.advanceTimersByTimeAsync(40_000);
+        await vi.waitFor(async () => {
+          const lease = JSON.parse(
+            await readFile(
+              new PragmaPaths({ pragmaHome: home }).expertSessionLease(session.sessionId),
+              "utf8",
+            ),
+          ) as { expiresAt: string };
+          expect(Date.parse(lease.expiresAt)).toBeGreaterThan(Date.now());
+        });
+        expect(await sessions.claimLease(session.sessionId, "competing-owner", 30_000)).toBe(false);
+        f.requestQuit();
+        // The first attempt visited both owners; retry waits on the retained owner.
+        await vi.waitFor(() => expect(deadlines).toHaveLength(3));
+        deadlines[2]!();
+        await vi.waitFor(() => expect(f.reportFailure).toHaveBeenCalledTimes(2));
+        expect(nativeClose).toHaveBeenCalledTimes(2);
+        expect(afterDestroy).toHaveBeenCalledTimes(pendingHook ? 1 : 0);
+        expect(ordinaryClose).toHaveBeenCalledTimes(pendingClose ? 1 : 0);
+        const release = (outcome.startsWith("checkpoint") ? checkpointRelease : terminalRelease)
+          .mock.results[0]?.value as Promise<void>;
+        completeStop();
+        if (lateRejection)
+          await expect(release).rejects.toThrow(
+            pendingHook ? "Cleanup failed" : "Native stop failed",
+          );
+        else await release;
+        await new Promise<void>((resolve) => setImmediate(resolve));
+        failing = false;
+        f.requestQuit();
+        await vi.waitFor(() => expect(f.quit).toHaveBeenCalledOnce());
+        expect(closeResources).toHaveBeenCalledOnce();
+        expect(owners.controlOwner(missionId)).toBeUndefined();
+        expect((await session.getState()).status).toBe(pendingClose ? "closed" : "open");
+        expect(nativeClose).toHaveBeenCalledTimes(2 + (lateRejection && !pendingHook ? 1 : 0));
+        expect(afterDestroy).toHaveBeenCalledTimes(lateRejection && pendingHook ? 2 : 1);
+        expect(maximumActiveStops).toBe(1);
+        await expect(
+          access(new PragmaPaths({ pragmaHome: home }).expertSessionLease(session.sessionId)),
+        ).rejects.toMatchObject({ code: "ENOENT" });
+        await other.close();
+        return;
+      }
       f.requestQuit();
       f.requestQuit();
       if (outcome === "closing" || releaseBoundary !== undefined) {
@@ -393,6 +509,7 @@ it.each([
       completeStop();
       await session.close();
       if (leaseTiming) vi.useRealTimers();
+      restoreDeadline();
       await application.dispose();
       await executions.close();
       await rm(home, { recursive: true, force: true });
