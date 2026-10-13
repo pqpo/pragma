@@ -872,7 +872,7 @@ class ExpertSessionImpl implements ExpertSession {
   private readonly leaseLost = new AbortController();
   private leaseExpiresAt: number;
   private leaseRenewalStopped = false;
-  private readonly leaseRenewal: ReturnType<typeof setInterval>;
+  private leaseRenewal: ReturnType<typeof setInterval> | undefined;
 
   constructor(
     readonly expert: ExpertDefinition,
@@ -909,6 +909,12 @@ class ExpertSessionImpl implements ExpertSession {
       appendEvent: (sessionId: string, event: ExpertSessionEventInput) =>
         this.dependencies.sessions.appendEvent(sessionId, event, this.claimId),
     };
+    this.startLeaseRenewal();
+  }
+
+  private startLeaseRenewal(): void {
+    if (this.leaseRenewal !== undefined || this.leaseError !== undefined) return;
+    this.leaseRenewalStopped = false;
     this.leaseRenewal = setInterval(() => {
       if (this.leaseRenewalTask === undefined) {
         this.leaseRenewalTask = this.renewLease().finally(() => {
@@ -1372,6 +1378,9 @@ class ExpertSessionImpl implements ExpertSession {
     // Seal admission immediately, but preserve ownership until those tasks finish.
     if (settlement !== undefined) await Promise.allSettled([settlement]);
     while (true) {
+      // Ordinary close can begin while the Host's settlement is still pending.
+      // Join it here as well as at admission, instead of rejecting its state.
+      if (this.closePromise !== undefined) return await this.close();
       try {
         await this.releaseAfterTerminalInternal();
         return;
@@ -1461,6 +1470,10 @@ class ExpertSessionImpl implements ExpertSession {
 
   stopForDeletion(reason?: string): Promise<void> {
     this.freezeForDeletion();
+    return this.stopNativeWork(reason);
+  }
+
+  private stopNativeWork(reason?: string): Promise<void> {
     if (this.stopPromise === undefined) {
       this.processingGeneration += 1;
       this.processing = undefined;
@@ -1489,11 +1502,17 @@ class ExpertSessionImpl implements ExpertSession {
     if (this.closePromise === undefined || this.closeFailed) {
       this.closeFailed = false;
       this.paused = true;
-      this.stopLeaseRenewal();
+      this.deletionFrozen = true;
       this.runtimeSessions.seal();
       // Keep the closing boundary sealed on failure, but allow the next caller
       // to retry cleanup using the same owner and lease.
-      this.closePromise = this.closeInternal(reason).catch((error: unknown) => {
+      this.closePromise = this.closeInternal(reason).catch(async (error: unknown) => {
+        // Final persistence can fail after the heartbeat was stopped. An open
+        // retained owner still needs renewal until a retry confirms release.
+        if (this.leaseRenewalStopped) {
+          const state = await this.getState().catch(() => undefined);
+          if (state?.status === "open") this.startLeaseRenewal();
+        }
         this.closeFailed = true;
         throw error;
       });
@@ -1501,17 +1520,35 @@ class ExpertSessionImpl implements ExpertSession {
     return this.closePromise;
   }
 
+  private async assertCloseOwnership(): Promise<void> {
+    if (this.leaseError !== undefined) throw this.leaseError;
+    if (this.dependencies.sessions.assertLeaseOwner !== undefined)
+      await this.dependencies.sessions.assertLeaseOwner(this.sessionId, this.claimId);
+    else
+      await this.ownedSessions.transact(this.sessionId, ({ session, prompts }) => ({
+        result: undefined,
+        session,
+        prompts,
+      }));
+  }
+
   private async closeInternal(reason?: string): Promise<void> {
     const errors: unknown[] = [];
+    let ownershipConfirmed = false;
     let stopAttempted = false;
     let stopConfirmed = false;
     try {
+      // A retry must fence a replaced claim before stopping Native work or
+      // cancelling durable Executions belonging to a successor owner.
+      await this.assertCloseOwnership();
+      ownershipConfirmed = true;
       const pending = (await this.getPromptQueue()).filter(
         (prompt) => prompt.status === "queued" || prompt.status === "running",
       );
       stopAttempted = true;
-      await this.stopForDeletion(reason);
+      await this.stopNativeWork(reason);
       stopConfirmed = true;
+      await this.assertCloseOwnership();
       for (const prompt of pending) {
         await this.cancelPersistedExecution(
           prompt.executionId,
@@ -1538,17 +1575,27 @@ class ExpertSessionImpl implements ExpertSession {
     try {
       // Ordinary closure also releases Runtime resources after native stop;
       // owner deletion performs this cleanup in its separate completion phase.
-      if (stopConfirmed) await this.runtimeSessions.finishDeletion();
-      else if (!stopAttempted) await this.runtimeSessions.close();
+      if (stopConfirmed) {
+        await this.assertCloseOwnership();
+        await this.runtimeSessions.finishDeletion();
+      } else if (ownershipConfirmed && !stopAttempted) {
+        await this.assertCloseOwnership();
+        await this.runtimeSessions.close();
+      }
     } catch (error) {
       errors.push(error);
     }
     if (errors.length === 0) {
       try {
+        await this.assertCloseOwnership();
         const session = await this.getState();
         for (const executionId of session.executionIds) {
           await closeExecutionContexts(this.dependencies.executions, executionId);
         }
+        // Keep heartbeats alive through Native stop and cleanup, but finish
+        // any heartbeat before marking the Session closed (claim rejects closed).
+        this.stopLeaseRenewal();
+        await this.leaseRenewalTask;
         await this.ownedSessions.transact(this.sessionId, ({ session, prompts }) => ({
           result: undefined,
           session: closeSessionContexts(session),
@@ -1574,7 +1621,6 @@ class ExpertSessionImpl implements ExpertSession {
   }
 
   private async renewLease(): Promise<void> {
-    if (this.closePromise !== undefined) return;
     let consecutiveFailures = 0;
     const logger = this.dependencies.loggerProvider.createLogger({
       component: "core.expert-session",
@@ -1685,6 +1731,7 @@ class ExpertSessionImpl implements ExpertSession {
   private stopLeaseRenewal(): void {
     this.leaseRenewalStopped = true;
     clearInterval(this.leaseRenewal);
+    this.leaseRenewal = undefined;
   }
 
   async getState(): Promise<ExpertSessionRecord> {

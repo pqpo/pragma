@@ -1,4 +1,4 @@
-import { mkdtemp, readdir, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -41,6 +41,7 @@ import {
   type ExpertAgentManagedTool,
   type ExpertAgentToolCallResult,
   type FlowExecution,
+  type ExpertSession,
   type RuntimeNativeSessionContext,
   type RuntimeModelSelection,
   type RuntimeUsageObservation,
@@ -64,6 +65,16 @@ async function createTemporaryHome(prefix: string): Promise<string> {
   const home = await mkdtemp(join(tmpdir(), prefix));
   temporaryHomes.push(home);
   return home;
+}
+
+// The fake Runtime has no process to terminate. A stop error alone does not
+// simulate process death: stop its heartbeat and expire the authoritative lease
+// explicitly, so recovery assertions exercise a departed owner.
+async function simulateSessionProcessExit(home: string, session: ExpertSession): Promise<void> {
+  session.freezeForDeletion();
+  const path = new PragmaPaths({ pragmaHome: home }).expertSessionLease(session.sessionId);
+  const lease = JSON.parse(await readFile(path, "utf8")) as Record<string, unknown>;
+  await writeFile(path, JSON.stringify({ ...lease, expiresAt: new Date(0).toISOString() }));
 }
 
 async function waitForTemporaryHomesToQuiesce(): Promise<void> {
@@ -980,6 +991,7 @@ describe("ExpertSession", { timeout: 30_000 }, () => {
     const persisted = await session.getState();
     expect(persisted.contexts[persisted.rootContextId]?.snapshot).toBeDefined();
     await expect(session.close()).rejects.toThrow("simulate process exit");
+    await simulateSessionProcessExit(home, session);
 
     const recoveredStats = createFakeRuntimeStats();
     const recoveryApp = createPragma({
@@ -1599,6 +1611,7 @@ describe("ExpertSession", { timeout: 30_000 }, () => {
         expect.objectContaining({ message: "simulated process cleanup failure" }),
       ]),
     });
+    await simulateSessionProcessExit(home, session);
     const recoveredStats = createFakeRuntimeStats();
     const recoveryApp = createPragma({
       pragmaHome: home,
@@ -1761,7 +1774,7 @@ describe("ExpertSession", { timeout: 30_000 }, () => {
     expect((await failedTurn.getState()).usage).toEqual(perTurnUsage);
   });
 
-  it("releases the lease and leaves the session recoverable when Runtime cleanup fails", async () => {
+  it("retains ownership after Runtime stop fails and recovers after the owner process exits", async () => {
     const { home, app, expert } = await trackedFixture({ closeError: "close failed" });
     const session = await app.experts.createSession(expert);
     await (
@@ -1776,6 +1789,10 @@ describe("ExpertSession", { timeout: 30_000 }, () => {
       executions: recoveryExecutions,
       pragmaHome: home,
     });
+    await expect(
+      durableRecoverySessions.claimLease(session.sessionId, "competing-owner", 30_000),
+    ).resolves.toBe(false);
+    await simulateSessionProcessExit(home, session);
     let recoveryLeaseClaims = 0;
     const recoveryApp = createPragma({
       pragmaHome: home,
