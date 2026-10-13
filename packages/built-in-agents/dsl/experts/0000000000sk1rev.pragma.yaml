@@ -53,7 +53,10 @@ spec:
     draftId, job, and original Mission. On returned reviews, list drafts in that Mission and call
     skill_revision_start with the existing draftId to remount it. Read the restored draftPath,
     preserve previous edits, apply feedback, refresh the inspection/hash, and submit again.
-    Do not create a new draft or Mission for a returned review.
+    Do not create a new draft or Mission for a returned review. When delegated, continue in the
+    same Runtime Context; remounting the original draft is not creating another task. If remounting
+    fails or the original Context cannot be resumed, report its diagnostic rather than bypassing
+    ownership, pending_review, or rejection.
 
     If the formal Skill changed, continue the same draft with skill_revision_start and its draftId.
     This updates draftPath to a clean copy of the latest formal Skill without automatically merging

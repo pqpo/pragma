@@ -20,6 +20,7 @@ import {
 import { ContextStorePickerDialog } from "../../components/ContextStorePickerDialog.tsx";
 import {
   expertCapabilityCounts,
+  expertResourceToolRefs,
   fixedSkillCapabilityIds,
   type ExpertDraft,
   type ExpertRecord,
@@ -79,6 +80,89 @@ function getTools(capability: Capability) {
     : definition.kind === "code_service"
       ? [definition.tool]
       : definition.tools;
+}
+
+export function updateResourceToolSelection(
+  bindings: ExpertDraft["resourceTools"],
+  refs: readonly string[],
+  resources: readonly PragmaResourcePickerItem[],
+  toolApprovals: ExpertDraft["toolApprovals"] = {},
+): Pick<ExpertDraft, "resourceTools" | "toolApprovals"> {
+  const selected = new Set(refs);
+  const resourceTools = bindings.flatMap((binding) => {
+    if (binding.target !== undefined) return selected.has(binding.target.ref) ? [binding] : [];
+    const targets = (binding.targets ?? []).filter((target) => selected.has(target.ref));
+    return targets.length === 0 ? [] : [{ ...binding, targets }];
+  });
+  const retainedRefs = new Set(resourceTools.flatMap(expertResourceToolRefs));
+  const newExperts: { ref: string }[] = [];
+  for (const ref of selected) {
+    if (retainedRefs.has(ref)) continue;
+    const resource = resources.find((candidate) => candidate.ref === ref);
+    if (resource === undefined) continue;
+    if (resource.kind === "expert") {
+      newExperts.push({ ref });
+    } else {
+      resourceTools.push({
+        adapter: "pragma.tool.call@v1",
+        target: { ref },
+        tool: {
+          name: `call_${resource.kind}_${ref.slice(ref.indexOf(":") + 1)}`.replace(
+            /[^A-Za-z0-9_-]/g,
+            "_",
+          ),
+          description: `Call ${resource.name}.`,
+          approval: "ask",
+        },
+      });
+    }
+  }
+  if (newExperts.length > 0) {
+    const delegateIndex = resourceTools.findIndex(
+      (binding) => binding.adapter === "pragma.tool.delegate@v1",
+    );
+    if (delegateIndex < 0) {
+      const previous = bindings.find((binding) => binding.adapter === "pragma.tool.delegate@v1");
+      resourceTools.push({
+        adapter: "pragma.tool.delegate@v1",
+        targets: newExperts,
+        policy: previous?.policy ?? { maxConcurrency: 4, maxDepth: 3, runtimes: {} },
+      });
+    } else {
+      const delegate = resourceTools[delegateIndex]!;
+      const { target, ...rest } = delegate;
+      resourceTools[delegateIndex] = {
+        ...rest,
+        targets: [...(target === undefined ? delegate.targets! : [target]), ...newExperts],
+      };
+    }
+  }
+  return {
+    resourceTools: resourceTools.map((binding) => {
+      if (binding.adapter !== "pragma.tool.delegate@v1" || binding.policy === undefined)
+        return binding;
+      const expertIds = new Set(
+        expertResourceToolRefs(binding).map((ref) => ref.slice("expert:".length)),
+      );
+      return {
+        ...binding,
+        policy: {
+          ...binding.policy,
+          runtimes: Object.fromEntries(
+            Object.entries(binding.policy.runtimes).filter(([expertId]) => expertIds.has(expertId)),
+          ),
+        },
+      };
+    }),
+    toolApprovals:
+      newExperts.length === 0
+        ? toolApprovals
+        : {
+            spawn_expert: "ask",
+            continue_expert: "ask",
+            ...toolApprovals,
+          },
+  };
 }
 
 export function matchingToolNames(capability: Capability, query: string): readonly string[] {
@@ -283,8 +367,9 @@ export function ExpertCapabilityPicker(props: {
     };
   }, [activePicker]);
 
-  const selectedResourceNames = props.resourceTools.flatMap((binding) => {
-    const resource = resourcePickerItems.find((candidate) => candidate.ref === binding.target?.ref);
+  const selectedResourceRefs = props.resourceTools.flatMap(expertResourceToolRefs);
+  const selectedResourceNames = selectedResourceRefs.flatMap((ref) => {
+    const resource = resourcePickerItems.find((candidate) => candidate.ref === ref);
     return resource ? [resource.name] : [];
   });
   const selectedStoreNames = props.contextStoreMounts.flatMap((mount) => {
@@ -317,7 +402,7 @@ export function ExpertCapabilityPicker(props: {
     {
       id: "resources",
       icon: Network,
-      selected: props.resourceTools.length,
+      selected: selectedResourceRefs.length,
       available: resourcePickerItems.length,
       names: selectedResourceNames,
     },
@@ -370,7 +455,7 @@ export function ExpertCapabilityPicker(props: {
 
   const activeSelectedCount =
     activePicker === "resources"
-      ? props.resourceTools.length
+      ? selectedResourceRefs.length
       : activePicker === "context-stores"
         ? props.contextStoreMounts.length
         : activePicker === "skills"
@@ -399,7 +484,7 @@ export function ExpertCapabilityPicker(props: {
           <span>
             {t("selectedCount", {
               count:
-                props.resourceTools.length +
+                selectedResourceRefs.length +
                 props.contextStoreMounts.length +
                 selectedSkillCount +
                 selectedToolCount,
@@ -445,35 +530,19 @@ export function ExpertCapabilityPicker(props: {
           title={pickerCopy.resources.title}
           description={pickerCopy.resources.description}
           items={resourcePickerItems}
-          selectedRefs={props.resourceTools.flatMap((binding) =>
-            binding.target === undefined ? [] : [binding.target.ref],
-          )}
+          selectedRefs={selectedResourceRefs}
           selectionMode="multiple"
           searchPlaceholder={pickerCopy.resources.searchPlaceholder}
-          onSelectedRefsChange={(refs) =>
-            props.onResourceToolsChange(
-              refs.flatMap((ref) => {
-                const existing = props.resourceTools.find((binding) => binding.target?.ref === ref);
-                if (existing !== undefined) return [existing];
-                const resource = resourcePickerItems.find((candidate) => candidate.ref === ref);
-                if (resource === undefined) return [];
-                return [
-                  {
-                    adapter: "pragma.tool.call@v1",
-                    target: { ref },
-                    tool: {
-                      name: `call_${resource.kind}_${ref.slice(ref.indexOf(":") + 1)}`.replace(
-                        /[^A-Za-z0-9_-]/g,
-                        "_",
-                      ),
-                      description: `Call ${resource.name}.`,
-                      approval: "ask",
-                    },
-                  },
-                ];
-              }),
-            )
-          }
+          onSelectedRefsChange={(refs) => {
+            const next = updateResourceToolSelection(
+              props.resourceTools,
+              refs,
+              resourcePickerItems,
+              props.toolApprovals,
+            );
+            props.onResourceToolsChange(next.resourceTools);
+            props.onToolApprovalsChange(next.toolApprovals);
+          }}
           onClose={closePicker}
         />
       ) : activePicker === "context-stores" ? (

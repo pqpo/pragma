@@ -29,7 +29,7 @@ afterEach(async () => {
 });
 
 describe("Local Host built-in executors", () => {
-  it("compiles default Pragma with its built-in dependencies and invokes a resource-call tool", async () => {
+  it("compiles default Pragma with its built-in dependencies and invokes shared delegation tools", async () => {
     const home = await mkdtemp(join(tmpdir(), "pragma-local-host-built-in-"));
     temporaryRoots.push(home);
     const resolver = createLocalHostBuiltInExecutorResolver({
@@ -55,28 +55,44 @@ describe("Local Host built-in executors", () => {
     if (resolved === undefined || "kind" in resolved.definition) {
       throw new Error("Expected the built-in Pragma Expert definition.");
     }
-    const tool = resolved.definition.tools?.find(
-      (candidate) => candidate.name === "call_store_revision_agent",
+    const tool = resolved.definition.tools?.find((candidate) => candidate.name === "spawn_expert");
+    if (tool === undefined) throw new Error("Expert lifecycle tool is missing.");
+    const spawnExpert = vi.fn(
+      async (input: { readonly expertId: string; readonly task: string }) => {
+        expect(input).toEqual({
+          expertId: STORE_REVISION_EXPERT_ID,
+          task: "Revise the managed store.",
+        });
+        return {
+          contextId: "revision-context",
+          invocationId: "revision-invocation",
+          status: "queued",
+        };
+      },
     );
-    if (tool === undefined) throw new Error("Store Revision resource-call tool is missing.");
-    const invokeResource = vi.fn(async ({ target }: { readonly target: unknown }) => {
-      expect(target).toMatchObject({ id: STORE_REVISION_EXPERT_ID });
-      return { status: "called" };
-    });
 
     await expect(
-      tool.call({ prompt: "Revise the managed store." }, undefined, {
-        execution: {
-          executionId: "execution-1",
-          invocationId: "invocation-1",
-          depth: 0,
-          invokeResource,
+      tool.call(
+        { expertId: STORE_REVISION_EXPERT_ID, task: "Revise the managed store." },
+        undefined,
+        {
+          execution: {
+            executionId: "execution-1",
+            invocationId: "invocation-1",
+            depth: 0,
+            spawnExpert,
+          },
         },
-      }),
+      ),
     ).resolves.toMatchObject<ExpertAgentToolCallResult>({
-      text: expect.stringContaining('"status": "called"'),
+      details: expect.objectContaining({ contextId: "revision-context", status: "queued" }),
     });
-    expect(invokeResource).toHaveBeenCalledOnce();
+    expect(spawnExpert).toHaveBeenCalledOnce();
+    expect(tool.approval).toEqual({ mode: "ask" });
+    const continuation = resolved.definition.tools?.find(
+      (candidate) => candidate.name === "continue_expert",
+    );
+    expect(continuation?.approval).toEqual({ mode: "ask" });
   });
 });
 
