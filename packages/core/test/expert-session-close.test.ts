@@ -1,4 +1,4 @@
-import { mkdtemp, rm } from "node:fs/promises";
+import { access, mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
@@ -6,6 +6,7 @@ import { describe, expect, it, vi } from "vitest";
 import {
   createNoopLoggerProvider,
   createPragma,
+  PragmaPaths,
   createStaticRuntimeResolver,
   defineExpert,
   defineRuntimeDriver,
@@ -106,6 +107,20 @@ describe("ExpertSession ordinary closure", () => {
           expect(afterDestroy).toHaveBeenCalledOnce();
         } else {
           await expect(fetch(registrations[1]!.url)).rejects.toThrow();
+        }
+        if (outcome !== "success") {
+          await expect(
+            access(new PragmaPaths({ pragmaHome: home }).expertSessionLease(session.sessionId)),
+          ).resolves.toBeUndefined();
+          failing = false;
+          if (outcome === "native stop failure") await session.releaseAfterTerminal();
+          else await session.releaseAfterHumanCheckpoint();
+          expect((await session.getState()).status).toBe("closed");
+          await expect(
+            access(new PragmaPaths({ pragmaHome: home }).expertSessionLease(session.sessionId)),
+          ).rejects.toMatchObject({ code: "ENOENT" });
+          await expect(fetch(registrations[1]!.url)).rejects.toThrow();
+          await session.close();
         }
       } finally {
         await session.close().catch(() => undefined);

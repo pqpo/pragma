@@ -848,6 +848,7 @@ class ExpertSessionImpl implements ExpertSession {
   private stopPromise: Promise<void> | undefined;
   private deletionFrozen = false;
   private closePromise: Promise<void> | undefined;
+  private closeFailed = false;
   private terminalReleasePromise: Promise<void> | undefined;
   private humanCheckpointReleasePromise: Promise<void> | undefined;
   private resourcesReleasing = false;
@@ -1276,6 +1277,7 @@ class ExpertSessionImpl implements ExpertSession {
   }
 
   releaseAfterHumanCheckpoint(): Promise<void> {
+    if (this.closePromise !== undefined) return this.close();
     if (this.humanCheckpointReleasePromise === undefined) {
       this.humanCheckpointReleasePromise = this.releaseAfterHumanCheckpointInternal().catch(
         (error: unknown) => {
@@ -1348,6 +1350,7 @@ class ExpertSessionImpl implements ExpertSession {
       readonly settlement?: Promise<unknown> | undefined;
     } = {},
   ): Promise<void> {
+    if (this.closePromise !== undefined) return this.close();
     if (options.waitForIdle) this.terminalReleaseRequested = true;
     if (this.terminalReleasePromise === undefined) {
       this.terminalReleasePromise = this.releaseTerminalWhenIdle(
@@ -1483,11 +1486,17 @@ class ExpertSessionImpl implements ExpertSession {
   }
 
   close(reason?: string): Promise<void> {
-    if (this.closePromise === undefined) {
+    if (this.closePromise === undefined || this.closeFailed) {
+      this.closeFailed = false;
       this.paused = true;
       this.stopLeaseRenewal();
       this.runtimeSessions.seal();
-      this.closePromise = this.closeInternal(reason);
+      // Keep the closing boundary sealed on failure, but allow the next caller
+      // to retry cleanup using the same owner and lease.
+      this.closePromise = this.closeInternal(reason).catch((error: unknown) => {
+        this.closeFailed = true;
+        throw error;
+      });
     }
     return this.closePromise;
   }
@@ -1500,6 +1509,15 @@ class ExpertSessionImpl implements ExpertSession {
       const pending = (await this.getPromptQueue()).filter(
         (prompt) => prompt.status === "queued" || prompt.status === "running",
       );
+      stopAttempted = true;
+      await this.stopForDeletion(reason);
+      stopConfirmed = true;
+      for (const prompt of pending) {
+        await this.cancelPersistedExecution(
+          prompt.executionId,
+          reason ?? "Execution cancelled because the Session closed.",
+        );
+      }
       await this.ownedSessions.transact(this.sessionId, ({ session, prompts }) => ({
         result: undefined,
         session: {
@@ -1514,15 +1532,6 @@ class ExpertSessionImpl implements ExpertSession {
             : prompt,
         ),
       }));
-      stopAttempted = true;
-      await this.stopForDeletion(reason);
-      stopConfirmed = true;
-      for (const prompt of pending) {
-        await this.cancelPersistedExecution(
-          prompt.executionId,
-          reason ?? "Execution cancelled because the Session closed.",
-        );
-      }
     } catch (error) {
       errors.push(error);
     }
@@ -1556,14 +1565,12 @@ class ExpertSessionImpl implements ExpertSession {
         errors.push(error);
       }
     }
-    try {
-      await this.dependencies.sessions.releaseLease(this.sessionId, this.claimId);
-    } catch (error) {
-      errors.push(error);
-    }
+    // A failed native stop or cleanup still owns resources. Keep its lease and
+    // application registration so shutdown can retry rather than strand it.
+    throwCollectedErrors(errors, "ExpertSession close failed.");
+    await this.dependencies.sessions.releaseLease(this.sessionId, this.claimId);
     this.controller = undefined;
     this.onClosed();
-    throwCollectedErrors(errors, "ExpertSession close failed.");
   }
 
   private async renewLease(): Promise<void> {
