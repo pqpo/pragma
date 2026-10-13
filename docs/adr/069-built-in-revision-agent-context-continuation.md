@@ -38,12 +38,30 @@ During the #388 plan review, the maintainer explicitly instructed: “既有call
 This authorizes excluding old call-created Missions from Context continuation compatibility. Their
 Mission, Invocation, draft and Runtime data are retained; no eager scan, conversion, synthetic Agent
 record or automatic deletion is introduced. The new path uses the existing delegate configuration and
-current storage namespace, with no new Schema or version discriminator. Closed, inaccessible or
+current Mission storage namespace, with no new Mission Schema or version discriminator. Closed, inaccessible or
 non-resumable Contexts report diagnostics instead of spawning replacements to bypass ownership.
 
 The `pragma.tool.call@v1` parser and other resource-call uses remain available. User-authored DSL and
 historical Project Revisions are not rewritten; explicit customized resource tools remain user-owned.
-No persistent or DSL Schema changes, protocol version bumps or storage migrations are required.
+This authorization does not cover active System Expert customizations. The historical v8 writer
+persists the complete default tool array even when only the name or additional instructions change;
+that array would override the new built-in delegate defaults. The customization configuration advances
+from v8 to v9 with a registered adjacent migration and a frozen v8 aggregate Schema snapshot.
+Only the exact former default pair on Pragma is converted to the delegate binding. Modified bindings,
+other experts, metadata, model, capabilities, Context mounts, plugins and instructions are preserved.
+For converted defaults, the two obsolete call approval keys become spawn/continue overrides using
+the strongest effective old mode and any existing lifecycle override. This prevents weakening a
+`required` approval; unrelated approval keys stay intact.
+
+Upgrade runs on first configuration access inside the existing aggregate file lock. It writes a stable
+migration journal and an exclusive v8 backup before atomically replacing the configuration; retries
+verify the existing backup rather than overwriting it. Completed writes can be recovered without
+rewriting the v9 target or deleting the backup. Older registered upgrade paths chain into v8-to-v9;
+current v9 is a no-op and future versions fail closed. No DSL apiVersion change is needed.
+
+Clearing Studio's Tools category removes only approval keys belonging to the removed mutable
+Capability tools. Lifecycle approvals, explicit overrides, fixed Capability tools and other categories
+remain intact. The browser-safe selection function is shared with the save/reopen regression test.
 
 ## Verification
 
@@ -53,6 +71,11 @@ ExpertSession and child Context, retained files, unchanged published knowledge a
 access. Validate lifecycle approvals at the execution tool boundary, and retain the independent
 Store/Skill status, CAS, rejection and Context-lifecycle tests. Run `pnpm test:revision` and focused
 Local Host/system-expert checks; use isolated real Runtime smoke data for end-to-end evidence.
+Historical fixtures come from the actual v8 writer at `b4b3cc1ca537046e5324138efcbacbaf47a3fa3d`;
+tests compare the complete upgraded fixture, preserve a truly modified binding and all other settings,
+exercise existing chained upgrades, journal replay at each crash stage, an injected atomic replacement
+failure, current-version no-op and future-version rejection. Actual MCP calls validate denied and
+accepted spawn/continue after both persisted migration and Studio clear/save/reopen.
 
 ### Recorded Runtime smoke
 

@@ -1,0 +1,68 @@
+{
+  "schemaVersion": 8,
+  "customizations": [
+    {
+      "avatarId": "pragma.avatar.expert.reviewer",
+      "name": "My Pragma",
+      "description": "Customized Pragma.",
+      "tags": [
+        "builtin",
+        "customized"
+      ],
+      "model": {
+        "runtimeId": "codex",
+        "providerId": "openai",
+        "modelId": "gpt-5.6",
+        "thinkingLevel": "high"
+      },
+      "capabilities": [
+        {
+          "kind": "tools",
+          "capabilityId": "11111111-1111-4111-8111-111111111111",
+          "toolNames": [
+            "search_docs"
+          ]
+        }
+      ],
+      "toolApprovals": {
+        "mcp_docs_search_docs": "required"
+      },
+      "plugins": [],
+      "contextStoreMounts": [
+        {
+          "storeId": "22222222-2222-4222-8222-222222222222",
+          "enabled": true,
+          "priority": 0
+        }
+      ],
+      "resourceTools": [
+        {
+          "adapter": "pragma.tool.call@v1",
+          "target": {
+            "ref": "expert:0000000000st0rev"
+          },
+          "tool": {
+            "name": "call_store_revision_agent",
+            "description": "Required first step for managed knowledge changes. Delegate complete requirements and an existing draftId to the Store Revision Agent; formal content is read-only, and only drafts may be edited. Continue the same Agent conversation and draft after a review is returned for changes.",
+            "approval": "ask"
+          }
+        },
+        {
+          "adapter": "pragma.tool.call@v1",
+          "target": {
+            "ref": "expert:0000000000sk1rev"
+          },
+          "tool": {
+            "name": "call_skill_revision_agent",
+            "description": "Required first step for managed Skill changes. Delegate complete requirements and an existing draftId to the Skill Revision Agent; formal packages are read-only, and only drafts may be edited. Continue the same Agent conversation and draft after a review is returned for changes.",
+            "approval": "ask"
+          }
+        }
+      ],
+      "additionalInstructions": "Keep these custom instructions.",
+      "ref": "expert:0000000000pragma",
+      "revision": 3,
+      "updatedAt": "2026-10-13T04:55:52.288Z"
+    }
+  ]
+}

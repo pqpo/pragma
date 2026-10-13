@@ -14,6 +14,7 @@ import {
   updateToolSelection,
   updateResourceToolSelection,
 } from "./ExpertCapabilityPicker.tsx";
+import { clearCapabilityToolSelection } from "../../../../shared/expert-tool-selection.ts";
 import type { ExpertRecord } from "./studio-model.ts";
 
 const toolCapability = {
@@ -502,3 +503,39 @@ it("removes Runtime overrides for deselected Experts while retaining valid overr
     },
   ]);
 });
+
+it.each(["ask", "required", "none"] as const)(
+  "clears only selected Capability approvals and retains %s delegation overrides",
+  (mode) => {
+    const result = clearCapabilityToolSelection({
+      capabilities: [toolCapability],
+      capabilityReferences: [
+        {
+          kind: "tools",
+          capabilityId: toolCapability.manifest.id,
+          toolNames: ["searchCodeWiki", "getCodeWikiStructure"],
+        },
+        { kind: "skill", capabilityId: "skill" },
+      ],
+      retainedApprovalKeys: ["mcp_codewiki_getCodeWikiStructure"],
+      toolApprovals: {
+        mcp_codewiki_searchCodeWiki: "ask",
+        mcp_codewiki_getCodeWikiStructure: "required",
+        mcp_other_searchCodeWiki: "required",
+        spawn_expert: mode,
+        continue_expert: mode,
+        edit_expert_context: "required",
+      },
+    });
+    expect(result).toEqual({
+      capabilityReferences: [{ kind: "skill", capabilityId: "skill" }],
+      toolApprovals: {
+        mcp_codewiki_getCodeWikiStructure: "required",
+        mcp_other_searchCodeWiki: "required",
+        spawn_expert: mode,
+        continue_expert: mode,
+        edit_expert_context: "required",
+      },
+    });
+  },
+);

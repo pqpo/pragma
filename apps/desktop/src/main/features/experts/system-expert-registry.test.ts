@@ -1,8 +1,9 @@
+import * as fsPromises from "node:fs/promises";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
   BUILT_IN_AGENT_REFS,
@@ -13,6 +14,11 @@ import {
 
 import { createDesktopSystemExpertRegistry } from "./system-expert-registry.ts";
 import { desktopCapabilityBindingRef } from "../../platform/bindings/desktop-binding-ref.ts";
+
+vi.mock("node:fs/promises", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("node:fs/promises")>();
+  return { ...actual, rename: vi.fn(actual.rename) };
+});
 
 const directories: string[] = [];
 
@@ -290,7 +296,7 @@ describe("DesktopSystemExpertRegistry", () => {
       ],
     });
     expect(JSON.parse(await readFile(configPath, "utf8"))).toMatchObject({
-      schemaVersion: 8,
+      schemaVersion: 9,
       customizations: [{ ref: BUILT_IN_PRAGMA_REF }],
     });
     await expect(readFile(`${configPath}.v3.backup.json`, "utf8")).resolves.toContain(
@@ -354,7 +360,7 @@ describe("DesktopSystemExpertRegistry", () => {
         { storeId: "26980318-cc35-4a16-95ae-fd8806492c4a", enabled: true, priority: 0 },
       ],
     });
-    expect(JSON.parse(await readFile(configPath, "utf8"))).toMatchObject({ schemaVersion: 8 });
+    expect(JSON.parse(await readFile(configPath, "utf8"))).toMatchObject({ schemaVersion: 9 });
     await expect(readFile(`${configPath}.v5.backup.json`, "utf8")).resolves.toContain(
       "deepseek-v4-flash",
     );
@@ -389,7 +395,7 @@ describe("DesktopSystemExpertRegistry", () => {
         targets: [{ ref: STORE_REVISION_EXPERT_REF }, { ref: SKILL_REVISION_EXPERT_REF }],
       }),
     ]);
-    expect(JSON.parse(await readFile(configPath, "utf8"))).toMatchObject({ schemaVersion: 8 });
+    expect(JSON.parse(await readFile(configPath, "utf8"))).toMatchObject({ schemaVersion: 9 });
     await expect(readFile(`${configPath}.v6.backup.json`, "utf8")).resolves.toContain(
       "Preserve this v6 customization.",
     );
@@ -421,6 +427,189 @@ describe("DesktopSystemExpertRegistry", () => {
     await createDesktopSystemExpertRegistry({ configPath }).initialize();
 
     await expect(readFile(configPath, "utf8")).resolves.toBe(before);
+  });
+
+  it("upgrades a real v8 default-binding customization with a retained backup and all user settings", async () => {
+    // Written by createDesktopSystemExpertRegistry at b4b3cc1ca537046e5324138efcbacbaf47a3fa3d.
+    const directory = await mkdtemp(join(tmpdir(), "pragma-system-experts-v8-"));
+    directories.push(directory);
+    const configPath = join(directory, "system-experts.json");
+    const source = await readFile(
+      new URL("./__fixtures__/system-experts-v8.json", import.meta.url),
+      "utf8",
+    );
+    const expected = await readFile(
+      new URL("./__fixtures__/system-experts-v9.json", import.meta.url),
+      "utf8",
+    );
+    await writeFile(configPath, source);
+    const registry = createDesktopSystemExpertRegistry({ configPath });
+    await registry.initialize();
+    expect(await readFile(configPath, "utf8")).toBe(expected);
+    expect(await readFile(`${configPath}.v8.backup.json`, "utf8")).toBe(source);
+    expect(registry.getResource(BUILT_IN_PRAGMA_REF)?.spec.tools).toEqual([
+      expect.objectContaining({ adapter: "pragma.tool.delegate@v1" }),
+    ]);
+    const before = JSON.parse(source).customizations[0];
+    const after = JSON.parse(expected).customizations[0];
+    expect({
+      ...after,
+      resourceTools: before.resourceTools,
+      toolApprovals: before.toolApprovals,
+    }).toEqual(before);
+    expect(after.toolApprovals).toEqual({
+      ...before.toolApprovals,
+      spawn_expert: "ask",
+      continue_expert: "ask",
+    });
+  });
+
+  it("preserves genuinely customized bindings written by the v8 registry", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "pragma-system-experts-v8-custom-"));
+    directories.push(directory);
+    const configPath = join(directory, "system-experts.json");
+    const source = JSON.parse(
+      await readFile(
+        new URL("./__fixtures__/system-experts-v8-custom-bindings.json", import.meta.url),
+        "utf8",
+      ),
+    );
+    await writeFile(configPath, JSON.stringify(source));
+    const registry = createDesktopSystemExpertRegistry({ configPath });
+    await registry.initialize();
+    const upgraded = JSON.parse(await readFile(configPath, "utf8"));
+    expect(upgraded).toEqual({ ...source, schemaVersion: 9 });
+    expect(registry.getResource(BUILT_IN_PRAGMA_REF)?.spec.tools).toEqual(
+      source.customizations[0].resourceTools,
+    );
+  });
+
+  it("preserves stricter old call approvals when moving to shared lifecycle tools", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "pragma-system-experts-v8-approvals-"));
+    directories.push(directory);
+    const configPath = join(directory, "system-experts.json");
+    const source = JSON.parse(
+      await readFile(new URL("./__fixtures__/system-experts-v8.json", import.meta.url), "utf8"),
+    );
+    source.customizations[0].toolApprovals.call_store_revision_agent = "required";
+    source.customizations[0].toolApprovals.call_skill_revision_agent = "none";
+    await writeFile(configPath, JSON.stringify(source));
+    const registry = createDesktopSystemExpertRegistry({ configPath });
+    await registry.initialize();
+    expect(registry.get(BUILT_IN_PRAGMA_REF)?.toolApprovals).toEqual({
+      mcp_docs_search_docs: "required",
+      spawn_expert: "required",
+      continue_expert: "required",
+    });
+    expect(JSON.parse(await readFile(`${configPath}.v8.backup.json`, "utf8"))).toEqual(source);
+  });
+
+  it("reads current v9 without rewriting the configuration or creating a backup", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "pragma-system-experts-v9-"));
+    directories.push(directory);
+    const configPath = join(directory, "system-experts.json");
+    const fixture = await readFile(
+      new URL("./__fixtures__/system-experts-v9.json", import.meta.url),
+      "utf8",
+    );
+    await writeFile(configPath, fixture);
+    const before = await fsPromises.stat(configPath);
+    const registry = createDesktopSystemExpertRegistry({ configPath });
+    await registry.initialize();
+    await registry.initialize();
+    expect(await readFile(configPath, "utf8")).toBe(fixture);
+    expect((await fsPromises.stat(configPath)).mtimeMs).toBe(before.mtimeMs);
+    await expect(readFile(`${configPath}.v8.backup.json`, "utf8")).rejects.toMatchObject({
+      code: "ENOENT",
+    });
+  });
+
+  it.each(["prepared", "backed_up", "target_written"])(
+    "recovers a %s v8-to-v9 migration without changing its backup",
+    async (phase) => {
+      const directory = await mkdtemp(join(tmpdir(), "pragma-system-experts-v8-replay-"));
+      directories.push(directory);
+      const configPath = join(directory, "system-experts.json");
+      const source = await readFile(
+        new URL("./__fixtures__/system-experts-v8.json", import.meta.url),
+        "utf8",
+      );
+      const target = await readFile(
+        new URL("./__fixtures__/system-experts-v9.json", import.meta.url),
+        "utf8",
+      );
+      const journal = `${configPath}.migration-v8-to-v9.json`;
+      const backup = `${configPath}.v8.backup.json`;
+      await writeFile(configPath, phase === "target_written" ? target : source);
+      await writeFile(
+        journal,
+        JSON.stringify({
+          schemaVersion: "pragma.system-expert-customization-migration/v1",
+          sourceVersion: 8,
+          targetVersion: 9,
+          backupPath: backup,
+        }),
+      );
+      if (phase !== "prepared") await writeFile(backup, source);
+      const before = phase === "prepared" ? undefined : await fsPromises.stat(backup);
+      await createDesktopSystemExpertRegistry({ configPath }).initialize();
+      expect(await readFile(configPath, "utf8")).toBe(target);
+      expect(await readFile(backup, "utf8")).toBe(source);
+      if (before !== undefined)
+        expect((await fsPromises.stat(backup)).mtimeMs).toBe(before.mtimeMs);
+      await expect(readFile(journal, "utf8")).rejects.toMatchObject({ code: "ENOENT" });
+    },
+  );
+
+  it("keeps original data when the atomic upgrade fails and retries the existing journal", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "pragma-system-experts-v8-failure-"));
+    directories.push(directory);
+    const configPath = join(directory, "system-experts.json");
+    const source = await readFile(
+      new URL("./__fixtures__/system-experts-v8.json", import.meta.url),
+      "utf8",
+    );
+    await writeFile(configPath, source);
+    const rename = (await vi.importActual<typeof fsPromises>("node:fs/promises")).rename;
+    const fault = vi.mocked(fsPromises.rename).mockImplementation(async (from, to) => {
+      if (to === configPath) throw new Error("Injected atomic replacement failure");
+      return await rename(from, to);
+    });
+    try {
+      await expect(createDesktopSystemExpertRegistry({ configPath }).initialize()).rejects.toThrow(
+        "Injected atomic replacement failure",
+      );
+    } finally {
+      fault.mockImplementation(rename);
+    }
+    expect(await readFile(configPath, "utf8")).toBe(source);
+    expect(await readFile(`${configPath}.v8.backup.json`, "utf8")).toBe(source);
+    expect(
+      JSON.parse(await readFile(`${configPath}.migration-v8-to-v9.json`, "utf8")),
+    ).toMatchObject({ sourceVersion: 8, targetVersion: 9 });
+    await createDesktopSystemExpertRegistry({ configPath }).initialize();
+    expect(JSON.parse(await readFile(configPath, "utf8"))).toMatchObject({ schemaVersion: 9 });
+  });
+
+  it("preserves both files and reports a conflicting migration backup", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "pragma-system-experts-backup-conflict-"));
+    directories.push(directory);
+    const configPath = join(directory, "system-experts.json");
+    const source = await readFile(
+      new URL("./__fixtures__/system-experts-v8.json", import.meta.url),
+      "utf8",
+    );
+    const previous = await readFile(
+      new URL("./__fixtures__/system-experts-v8-custom-bindings.json", import.meta.url),
+      "utf8",
+    );
+    await writeFile(configPath, source);
+    await writeFile(`${configPath}.v8.backup.json`, previous);
+    await expect(createDesktopSystemExpertRegistry({ configPath }).initialize()).rejects.toThrow(
+      "backup conflicts",
+    );
+    expect(await readFile(configPath, "utf8")).toBe(source);
+    expect(await readFile(`${configPath}.v8.backup.json`, "utf8")).toBe(previous);
   });
 
   it("fails closed on future customization schemas", async () => {

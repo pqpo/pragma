@@ -1,3 +1,8 @@
+import {
+  SystemExpertCustomizationConfigV8Schema,
+  type SystemExpertCustomizationConfigV8,
+} from "./migrations/system-expert-customization/schemas/v8.ts";
+import { migrateV8ToV9 } from "./migrations/system-expert-customization/steps/v8-to-v9.ts";
 import type { PragmaExpertResource } from "@pragma/interpreter/ast";
 import {
   BUILT_IN_PRAGMA_REF,
@@ -8,7 +13,7 @@ import { z } from "zod";
 
 import { UpdateBuiltInExpertDefinitionSchema } from "../../../shared/contracts/index.ts";
 
-export const SYSTEM_EXPERT_CONFIG_SCHEMA_VERSION = 8;
+export const SYSTEM_EXPERT_CONFIG_SCHEMA_VERSION = 9;
 const LEGACY_BUILT_IN_PRAGMA_REF = "expert:pragma@1.0.0";
 
 const LegacyExpertCapabilityReferenceSchema = z.discriminatedUnion("kind", [
@@ -152,9 +157,11 @@ function migrateV6ToV7(
   });
 }
 
-function migrateV7ToV8(source: V7SystemExpertCustomizationConfig): SystemExpertCustomizationConfig {
-  return SystemExpertCustomizationConfigSchema.parse({
-    schemaVersion: SYSTEM_EXPERT_CONFIG_SCHEMA_VERSION,
+function migrateV7ToV8(
+  source: V7SystemExpertCustomizationConfig,
+): SystemExpertCustomizationConfigV8 {
+  return SystemExpertCustomizationConfigV8Schema.parse({
+    schemaVersion: 8,
     customizations: source.customizations.map((customization) => ({
       ...customization,
       capabilities: customization.capabilities.map((capability) =>
@@ -173,39 +180,52 @@ function migrateV7ToV8(source: V7SystemExpertCustomizationConfig): SystemExpertC
 export function migrateSystemExpertCustomizationConfig(
   source: unknown,
   defaultPragmaTools: PragmaExpertResource["spec"]["tools"],
-): { readonly sourceVersion: 3 | 4 | 5 | 6 | 7; readonly config: SystemExpertCustomizationConfig } {
+): {
+  readonly sourceVersion: 3 | 4 | 5 | 6 | 7 | 8;
+  readonly config: SystemExpertCustomizationConfig;
+} {
+  const upgrade = (config: SystemExpertCustomizationConfigV8) =>
+    SystemExpertCustomizationConfigSchema.parse(migrateV8ToV9(config));
+  const parsedV8 = SystemExpertCustomizationConfigV8Schema.safeParse(source);
+  if (parsedV8.success) return { sourceVersion: 8, config: upgrade(parsedV8.data) };
   const parsedV7 = V7SystemExpertCustomizationConfigSchema.safeParse(source);
   if (parsedV7.success) {
-    return { sourceVersion: 7, config: migrateV7ToV8(parsedV7.data) };
+    return { sourceVersion: 7, config: upgrade(migrateV7ToV8(parsedV7.data)) };
   }
   const parsedV6 = V6SystemExpertCustomizationConfigSchema.safeParse(source);
   if (parsedV6.success) {
     return {
       sourceVersion: 6,
-      config: migrateV7ToV8(migrateV6ToV7(parsedV6.data, defaultPragmaTools)),
+      config: upgrade(migrateV7ToV8(migrateV6ToV7(parsedV6.data, defaultPragmaTools))),
     };
   }
   const parsedV5 = V5SystemExpertCustomizationConfigSchema.safeParse(source);
   if (parsedV5.success) {
     return {
       sourceVersion: 5,
-      config: migrateV7ToV8(migrateV6ToV7(migrateV5ToV6(parsedV5.data), defaultPragmaTools)),
+      config: upgrade(
+        migrateV7ToV8(migrateV6ToV7(migrateV5ToV6(parsedV5.data), defaultPragmaTools)),
+      ),
     };
   }
   const parsedV4 = V4SystemExpertCustomizationConfigSchema.safeParse(source);
   if (parsedV4.success) {
     return {
       sourceVersion: 4,
-      config: migrateV7ToV8(
-        migrateV6ToV7(migrateV5ToV6(migrateV4ToV5(parsedV4.data)), defaultPragmaTools),
+      config: upgrade(
+        migrateV7ToV8(
+          migrateV6ToV7(migrateV5ToV6(migrateV4ToV5(parsedV4.data)), defaultPragmaTools),
+        ),
       ),
     };
   }
   const parsedV3 = V3SystemExpertCustomizationConfigSchema.parse(source);
   return {
     sourceVersion: 3,
-    config: migrateV7ToV8(
-      migrateV6ToV7(migrateV5ToV6(migrateV4ToV5(migrateV3ToV4(parsedV3))), defaultPragmaTools),
+    config: upgrade(
+      migrateV7ToV8(
+        migrateV6ToV7(migrateV5ToV6(migrateV4ToV5(migrateV3ToV4(parsedV3))), defaultPragmaTools),
+      ),
     ),
   };
 }

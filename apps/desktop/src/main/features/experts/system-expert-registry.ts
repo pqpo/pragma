@@ -1,6 +1,7 @@
 import { createHash, randomUUID } from "node:crypto";
 import { chmod, mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
+import { isDeepStrictEqual } from "node:util";
 
 import { withFileLock } from "@pragma/core";
 import {
@@ -188,7 +189,7 @@ export function createDesktopSystemExpertRegistry(options?: {
       if (current.success) {
         if (options.configPath !== undefined) {
           await Promise.all(
-            ([3, 4, 5, 6, 7] as const).map(
+            ([3, 4, 5, 6, 7, 8] as const).map(
               async (sourceVersion) =>
                 await rm(
                   `${options.configPath}.migration-v${sourceVersion}-to-v${SYSTEM_EXPERT_CONFIG_SCHEMA_VERSION}.json`,
@@ -235,7 +236,7 @@ export function createDesktopSystemExpertRegistry(options?: {
 
   const migrateConfig = async (
     source: unknown,
-    sourceVersion: 3 | 4 | 5 | 6 | 7,
+    sourceVersion: 3 | 4 | 5 | 6 | 7 | 8,
     migrated: ReadonlyMap<string, SystemExpertCustomization>,
   ): Promise<void> => {
     if (options?.configPath === undefined) return;
@@ -247,10 +248,29 @@ export function createDesktopSystemExpertRegistry(options?: {
       targetVersion: SYSTEM_EXPERT_CONFIG_SCHEMA_VERSION,
       backupPath,
     });
-    await writePrivateJson(backupPath, source);
+    try {
+      await writeFile(backupPath, `${JSON.stringify(source, null, 2)}\n`, {
+        mode: 0o600,
+        flag: "wx",
+      });
+    } catch (error) {
+      if (!isNodeError(error, "EEXIST")) throw error;
+      if (!isDeepStrictEqual(JSON.parse(await readFile(backupPath, "utf8")), source)) {
+        throw new Error(
+          "System Expert migration backup conflicts with its original configuration.",
+          { cause: error },
+        );
+      }
+    }
     await writeConfig(migrated);
     await rm(journalPath, { force: true });
-    await rm(`${options.configPath}.migration-v${sourceVersion}-to-v7.json`, { force: true });
+    for (const targetVersion of [7, 8]) {
+      if (targetVersion > sourceVersion && targetVersion < SYSTEM_EXPERT_CONFIG_SCHEMA_VERSION) {
+        await rm(`${options.configPath}.migration-v${sourceVersion}-to-v${targetVersion}.json`, {
+          force: true,
+        });
+      }
+    }
   };
 
   const mutate = async (operation: () => Promise<void>): Promise<void> => {
