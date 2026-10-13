@@ -25,8 +25,13 @@ describe("ExpertSession ordinary closure", () => {
     "success",
     "pending close",
     "pending release",
+    "release waiting admission",
+    "released terminal",
+    "released checkpoint",
+    "released owner taken",
     "cleanup failure",
     "persistence failure",
+    "persistence and read failure",
     "native stop failure",
     "lease lost",
   ] as const)("releases real MCP registrations after confirmed stop: %s", async (outcome) => {
@@ -78,6 +83,15 @@ describe("ExpertSession ordinary closure", () => {
     });
     const executions = createInMemoryExecutionStore();
     const sessions = createFileExpertSessionStore({ pragmaHome: home, executions });
+    let failStateRead = false;
+    const get = sessions.get.bind(sessions);
+    vi.spyOn(sessions, "get").mockImplementation(async (id) => {
+      if (failStateRead) {
+        failStateRead = false;
+        throw new Error("state read failed");
+      }
+      return await get(id);
+    });
     const transact = sessions.transact.bind(sessions);
     vi.spyOn(sessions, "transact").mockImplementation(
       async (id, action, claimId) =>
@@ -85,8 +99,14 @@ describe("ExpertSession ordinary closure", () => {
           id,
           async (snapshot) => {
             const next = await action(snapshot);
-            if (failing && outcome === "persistence failure" && next.session.status === "closed")
+            if (
+              failing &&
+              (outcome === "persistence failure" || outcome === "persistence and read failure") &&
+              next.session.status === "closed"
+            ) {
+              if (outcome === "persistence and read failure") failStateRead = true;
               throw new Error("close persistence failed");
+            }
             return next;
           },
           claimId,
@@ -117,7 +137,54 @@ describe("ExpertSession ordinary closure", () => {
       await expect(fetch(registrations[0]!.url)).rejects.toThrow();
       expect((await fetch(registrations[1]!.url)).status).not.toBe(404);
       failing = true;
-      if (outcome === "success" || outcome === "pending close" || outcome === "pending release") {
+      if (outcome === "release waiting admission") {
+        const getState = session.getState.bind(session);
+        vi.spyOn(session, "getState").mockImplementationOnce(async () => {
+          await releaseGate;
+          return await getState();
+        });
+        const admitting = session.prompt("admitted before release");
+        const rejectedAdmission = expect(admitting).rejects.toThrow();
+        const releasing = session.releaseAfterTerminal();
+        await session.close();
+        completeRelease();
+        await rejectedAdmission;
+        await releasing;
+        expect((await session.getState()).status).toBe("closed");
+        expect(nativeClose).toHaveBeenCalledTimes(2);
+        return;
+      }
+      const previouslyReleased = outcome.startsWith("released");
+      if (previouslyReleased) {
+        const before = await session.getState();
+        if (outcome === "released checkpoint") await session.releaseAfterHumanCheckpoint();
+        else await session.releaseAfterTerminal();
+        const released = await session.getState();
+        expect(released.status).toBe("open");
+        expect(released.contexts).toEqual(before.contexts);
+        const leasePath = new PragmaPaths({ pragmaHome: home }).expertSessionLease(
+          session.sessionId,
+        );
+        await expect(access(leasePath)).rejects.toMatchObject({ code: "ENOENT" });
+        if (outcome === "released owner taken") {
+          const competingStore = createFileExpertSessionStore({ pragmaHome: home, executions });
+          expect(await competingStore.claimLease(session.sessionId, "successor", 30_000)).toBe(
+            true,
+          );
+          const successorLease = await readFile(leasePath, "utf8");
+          await expect(session.close()).rejects.toThrow("active in another process");
+          expect(await session.getState()).toEqual(released);
+          expect(await readFile(leasePath, "utf8")).toBe(successorLease);
+          expect(nativeClose).toHaveBeenCalledTimes(2);
+          return;
+        }
+      }
+      if (
+        previouslyReleased ||
+        outcome === "success" ||
+        outcome === "pending close" ||
+        outcome === "pending release"
+      ) {
         const releasing =
           outcome === "pending release"
             ? session.releaseAfterTerminal({ settlement: releaseGate })
@@ -151,6 +218,8 @@ describe("ExpertSession ordinary closure", () => {
               ? "cleanup failed"
               : "close persistence failed",
         );
+        if (outcome === "persistence and read failure")
+          await expect(session.getState()).rejects.toThrow("state read failed");
         const state = await session.getState();
         expect(state.status).toBe("open");
         expect(state.contexts[state.rootContextId]!.lifecycle).not.toBe("closed");
@@ -164,7 +233,12 @@ describe("ExpertSession ordinary closure", () => {
       } else {
         await expect(fetch(registrations[1]!.url)).rejects.toThrow();
       }
-      if (outcome !== "success" && outcome !== "pending close" && outcome !== "pending release") {
+      if (
+        !previouslyReleased &&
+        outcome !== "success" &&
+        outcome !== "pending close" &&
+        outcome !== "pending release"
+      ) {
         await expect(
           access(new PragmaPaths({ pragmaHome: home }).expertSessionLease(session.sessionId)),
         ).resolves.toBeUndefined();

@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { access, mkdtemp, rm } from "node:fs/promises";
+import { access, mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -8,7 +8,13 @@ import {
   MissionExecutionOwner,
   createSqliteExecutionStore,
 } from "@pragma/local-host";
-import { createPragma, createStaticRuntimeResolver, defineExpert, PragmaPaths } from "@pragma/core";
+import {
+  createFileExpertSessionStore,
+  createPragma,
+  createStaticRuntimeResolver,
+  defineExpert,
+  PragmaPaths,
+} from "@pragma/core";
 import { defineRuntimeTestDriver } from "@pragma/core/testing";
 import { describe, expect, it, vi } from "vitest";
 import { installDesktopShutdown } from "./shutdown-sequence.ts";
@@ -133,7 +139,19 @@ it("the Electron adapter retains real shared Host lease and resources until Nati
 
 // Keep a real Core Session registered in the Host while an ordinary close and
 // Electron shutdown overlap, as can happen when bindings change before quitting.
-it.each(["closing", "closed", "native stop failure", "cleanup failure"] as const)(
+it.each([
+  "closing",
+  "closed",
+  "native stop failure",
+  "cleanup failure",
+  "persistence and read failure",
+  "terminal-release",
+  "checkpoint-release",
+  "terminal-release-native failure",
+  "checkpoint-release-native failure",
+  "terminal-release-cleanup failure",
+  "checkpoint-release-cleanup failure",
+] as const)(
   "Dock quit releases a real ExpertSession after %s and keeps retries usable",
   async (outcome) => {
     const home = await mkdtemp(join(tmpdir(), "pragma-desktop-session-quit-"));
@@ -142,13 +160,31 @@ it.each(["closing", "closed", "native stop failure", "cleanup failure"] as const
     const owners = new MissionExecutionOwner();
     let completeStop = () => undefined as void;
     const stopGate = new Promise<void>((resolve) => (completeStop = resolve));
-    let failing = outcome === "native stop failure" || outcome === "cleanup failure";
+    const releaseBoundary = outcome.startsWith("terminal-release")
+      ? "terminal"
+      : outcome.startsWith("checkpoint-release")
+        ? "checkpoint"
+        : undefined;
+    const nativeFailure = outcome.endsWith("native failure") || outcome === "native stop failure";
+    const cleanupFailure = outcome.endsWith("cleanup failure");
+    const persistenceFailure = outcome === "persistence and read failure";
+    let failing = nativeFailure || cleanupFailure || persistenceFailure;
+    let activeStops = 0;
+    let maximumActiveStops = 0;
     const nativeClose = vi.fn(async () => {
-      if (outcome === "closing") await stopGate;
-      if (failing && outcome === "native stop failure") throw new Error("Native stop failed");
+      activeStops += 1;
+      maximumActiveStops = Math.max(maximumActiveStops, activeStops);
+      try {
+        if (outcome === "closing" || (releaseBoundary !== undefined && !cleanupFailure))
+          await stopGate;
+        if (failing && nativeFailure) throw new Error("Native stop failed");
+      } finally {
+        activeStops -= 1;
+      }
     });
-    const afterDestroy = vi.fn(() => {
-      if (failing && outcome === "cleanup failure") throw new Error("Cleanup failed");
+    const afterDestroy = vi.fn(async () => {
+      if (releaseBoundary !== undefined && cleanupFailure) await stopGate;
+      if (failing && cleanupFailure) throw new Error("Cleanup failed");
     });
     const runtime = defineRuntimeTestDriver({
       descriptor: { id: "quit-test", kind: "test", displayName: "Quit test" },
@@ -162,7 +198,38 @@ it.each(["closing", "closed", "native stop failure", "cleanup failure"] as const
       runtimes: [runtime],
       defaultRuntimeId: "quit-test",
     });
-    const core = createPragma({ pragmaHome: home, runtimes, executionStore: executions });
+    const sessions = createFileExpertSessionStore({ pragmaHome: home, executions });
+    let failStateRead = false;
+    const get = sessions.get.bind(sessions);
+    vi.spyOn(sessions, "get").mockImplementation(async (id) => {
+      if (failStateRead) {
+        failStateRead = false;
+        throw new Error("State read failed");
+      }
+      return await get(id);
+    });
+    const transact = sessions.transact.bind(sessions);
+    vi.spyOn(sessions, "transact").mockImplementation(
+      async (id, action, claimId) =>
+        await transact(
+          id,
+          async (snapshot) => {
+            const next = await action(snapshot);
+            if (failing && persistenceFailure && next.session.status === "closed") {
+              failStateRead = true;
+              throw new Error("Close persistence failed");
+            }
+            return next;
+          },
+          claimId,
+        ),
+    );
+    const core = createPragma({
+      pragmaHome: home,
+      runtimes,
+      executionStore: executions,
+      expertSessionStore: sessions,
+    });
     const expert = await defineExpert({
       id: "qvttest000000001",
       name: "Quit test",
@@ -173,6 +240,7 @@ it.each(["closing", "closed", "native stop failure", "cleanup failure"] as const
       pragmaHome: home,
       hooks: { afterSessionDestroy: afterDestroy },
     });
+    if (persistenceFailure) vi.useFakeTimers({ toFake: ["Date", "setInterval", "clearInterval"] });
     const session = await core.experts.createSession(expert);
     const closeResources = vi.fn(async () => undefined);
     const application = createLocalHostMissionApplication({
@@ -198,9 +266,24 @@ it.each(["closing", "closed", "native stop failure", "cleanup failure"] as const
       await turn.result;
       await turn.settled;
       await session.waitForPromptProcessing();
-      await lifecycle.ownerScope.acquire(missionId);
+      if (!persistenceFailure) await lifecycle.ownerScope.acquire(missionId);
       owners.setControlOwner(missionId, { kind: "session", session }, "live");
-      if (outcome === "closed") await session.close();
+      if (releaseBoundary !== undefined) {
+        const releasing =
+          releaseBoundary === "terminal"
+            ? session.releaseAfterTerminal()
+            : session.releaseAfterHumanCheckpoint();
+        void releasing.catch(() => undefined);
+        await vi.waitFor(() => expect(nativeClose).toHaveBeenCalledOnce());
+        if (cleanupFailure) await vi.waitFor(() => expect(afterDestroy).toHaveBeenCalledOnce());
+        const closing = session.close();
+        void closing.catch(() => undefined);
+        expect(activeStops).toBe(cleanupFailure ? 0 : 1);
+        expect(nativeClose).toHaveBeenCalledOnce();
+        await expect(
+          access(new PragmaPaths({ pragmaHome: home }).expertSessionLease(session.sessionId)),
+        ).resolves.toBeUndefined();
+      } else if (outcome === "closed") await session.close();
       else if (outcome === "closing") {
         const closing = session.close();
         expect(session.close()).toBe(closing);
@@ -209,7 +292,11 @@ it.each(["closing", "closed", "native stop failure", "cleanup failure"] as const
         await vi.waitFor(() => expect(nativeClose).toHaveBeenCalledOnce());
       } else {
         await expect(session.close()).rejects.toThrow(
-          outcome === "native stop failure" ? "Native stop failed" : "Cleanup failed",
+          persistenceFailure
+            ? "Close persistence failed"
+            : nativeFailure
+              ? "Native stop failed"
+              : "Cleanup failed",
         );
         await expect(
           access(new PragmaPaths({ pragmaHome: home }).expertSessionLease(session.sessionId)),
@@ -217,7 +304,7 @@ it.each(["closing", "closed", "native stop failure", "cleanup failure"] as const
       }
       f.requestQuit();
       f.requestQuit();
-      if (outcome === "closing") {
+      if (outcome === "closing" || releaseBoundary !== undefined) {
         await new Promise<void>((resolve) => setImmediate(resolve));
         expect(f.quit).not.toHaveBeenCalled();
         expect(closeResources).not.toHaveBeenCalled();
@@ -228,14 +315,36 @@ it.each(["closing", "closed", "native stop failure", "cleanup failure"] as const
         expect(f.quit).not.toHaveBeenCalled();
         expect(closeResources).not.toHaveBeenCalled();
         expect(owners.controlOwner(missionId)).toBeDefined();
-        expect(
-          (await lifecycle.controller.readSnapshot({ missionId })).snapshot.lease,
-        ).toBeDefined();
+        if (persistenceFailure) {
+          expect(f.reportFailure.mock.calls[0]?.[0]).toMatchObject({
+            errors: expect.arrayContaining([
+              expect.objectContaining({ message: "State read failed" }),
+            ]),
+          });
+          await vi.advanceTimersByTimeAsync(40_000);
+          await vi.waitFor(async () => {
+            const lease = JSON.parse(
+              await readFile(
+                new PragmaPaths({ pragmaHome: home }).expertSessionLease(session.sessionId),
+                "utf8",
+              ),
+            ) as { expiresAt: string };
+            expect(Date.parse(lease.expiresAt)).toBeGreaterThan(Date.now());
+          });
+          expect(await sessions.claimLease(session.sessionId, "competing-owner", 30_000)).toBe(
+            false,
+          );
+        } else {
+          expect(
+            (await lifecycle.controller.readSnapshot({ missionId })).snapshot.lease,
+          ).toBeDefined();
+        }
         failing = false;
         f.requestQuit();
       }
       await vi.waitFor(() => expect(f.quit).toHaveBeenCalledOnce());
       expect(closeResources).toHaveBeenCalledOnce();
+      expect(maximumActiveStops).toBe(1);
       expect(owners.controlOwner(missionId)).toBeUndefined();
       expect((await session.getState()).status).toBe("closed");
       await expect(
@@ -253,6 +362,7 @@ it.each(["closing", "closed", "native stop failure", "cleanup failure"] as const
       failing = false;
       completeStop();
       await session.close();
+      if (persistenceFailure) vi.useRealTimers();
       await application.dispose();
       await executions.close();
       await rm(home, { recursive: true, force: true });
