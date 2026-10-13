@@ -1,6 +1,7 @@
 import { inspectAssetReadiness } from "../asset-transfer/asset-transfer-readiness.ts";
 import {
   createAssetTransferService,
+  AssetTransferConflictError,
   NAME_RESOLUTION_ERROR_CODE,
   type CollectedItems,
   type CoreAssetSyncNameResolutionIssue,
@@ -414,10 +415,21 @@ export function createCoreAssetSyncService(options: {
     try {
       await transfer.applyImport(await transfer.prepareImport(pending));
     } catch (error) {
-      if (!(error instanceof Error) || !error.message.startsWith("asset_sync.restore_conflict:"))
-        throw error;
+      if (!(error instanceof AssetTransferConflictError)) throw error;
       current = await collect();
-      conflicts = interruptedConflicts(current);
+      conflicts = [
+        ...new Set([
+          ...interruptedConflicts(current),
+          ...pending
+            .filter(
+              (change) =>
+                error.keys.includes(change.key) &&
+                (current.items.get(change.key)?.fingerprint ?? null) !==
+                  (change.remote?.fingerprint ?? null),
+            )
+            .map((change) => change.key),
+        ]),
+      ];
       if (conflicts.length === 0) throw error;
       await deferConflicts(current, conflicts);
       return "conflict";
@@ -469,12 +481,16 @@ export function createCoreAssetSyncService(options: {
               ...local.keys(),
               ...remote.keys(),
               ...Object.keys(bases),
+              ...Object.keys(state.remoteItems),
+              ...state.ignoredRemote,
               ...state.restoreConflicts,
             ]);
             const groups = new Map<string, string[]>();
             for (const key of keys) {
-              const item = local.get(key) ?? remote.get(key);
-              const group = item ? logicalAssetIdentity(item, local, remote).assetKey : key;
+              const item = itemSummaryAt(key, local, remote, state.remoteItems);
+              const group = item
+                ? logicalAssetIdentity(item, local, remote, state.remoteItems).assetKey
+                : key;
               groups.set(group, [...(groups.get(group) ?? []), key]);
             }
             const deletionKeys =
@@ -482,45 +498,23 @@ export function createCoreAssetSyncService(options: {
                 ? [...groups.values()].find((members) => members.includes(resolution.key))
                 : undefined;
             if (resolution?.choice === "delete") {
-              if (!deletionKeys?.some((key) => remote.has(key)))
+              if (
+                !deletionKeys?.some(
+                  (key) =>
+                    remote.has(key) ||
+                    state.remoteItems[key] !== undefined ||
+                    bases[key] !== undefined,
+                )
+              )
                 throw new Error("The Git asset no longer exists. Refresh synchronization status.");
               if (deletionKeys.some((key) => local.has(key)))
                 throw new Error(
                   "The asset exists locally again. Refresh synchronization status before deleting from Git.",
                 );
-              const removedRefs = new Set(
-                deletionKeys.flatMap((key) => {
-                  const parsed = PragmaForwardCompatibleResourceSchema.safeParse(
-                    remote.get(key)?.data,
-                  );
-                  return parsed.success ? [canonicalPragmaResourceRef(parsed.data)] : [];
-                }),
-              );
-              for (const item of remote.values()) {
-                if (deletionKeys.includes(item.key)) continue;
-                const parsed = PragmaForwardCompatibleResourceSchema.safeParse(item.data);
-                if (!parsed.success) continue;
-                const resource = parsed.data;
-                const capability = classifyDesktopCapabilityResource(resource);
-                const storeId = classifyDesktopContextResource(resource);
-                if (
-                  [...referencedPragmaResourceRefs([resource])].some((ref) =>
-                    removedRefs.has(ref),
-                  ) ||
-                  (capability &&
-                    deletionKeys.some(
-                      (key) =>
-                        key === `capability:${capability.id}` || key === `skill:${capability.id}`,
-                    )) ||
-                  (storeId && deletionKeys.includes(`knowledge:${storeId}`))
-                )
-                  throw new Error(
-                    `The Git asset is still referenced by ${resource.metadata.name}. Update or delete that reference first.`,
-                  );
-              }
             }
             const groupChoices = new Map<string, "local" | "remote">();
             const groupedConflicts = new Set<string>();
+            const retainedRemoteKeys = new Set<string>();
             for (const members of groups.values()) {
               if (
                 (!resolution || !members.includes(resolution.key)) &&
@@ -528,7 +522,10 @@ export function createCoreAssetSyncService(options: {
                 members.some((key) => state.ignoredRemote.includes(key)) &&
                 !members.some((key) => state.restoreConflicts.includes(key))
               ) {
-                for (const key of members) ignored.add(key);
+                for (const key of members) {
+                  ignored.add(key);
+                  retainedRemoteKeys.add(key);
+                }
                 continue;
               }
               const localChanged = members.some(
@@ -553,7 +550,19 @@ export function createCoreAssetSyncService(options: {
               )
                 for (const key of members) groupedConflicts.add(key);
             }
-            for (const item of [...remote.values(), ...local.values()]) {
+            // Dependency deferral concerns incoming assets. A retained Git-only asset is
+            // not being imported, and an explicit local choice must not use its old Git edges.
+            const dependencyItems = [...keys].flatMap((key) => {
+              if (retainedRemoteKeys.has(key)) return [];
+              const here = local.get(key);
+              const there = remote.get(key);
+              if (groupChoices.get(key) === "local") return here ? [here] : [];
+              if (groupChoices.get(key) === "remote") return there ? [there] : [];
+              if (here?.fingerprint !== bases[key] && there?.fingerprint === bases[key])
+                return here ? [here] : [];
+              return there ? [there] : here ? [here] : [];
+            });
+            for (const item of dependencyItems) {
               const parsed = PragmaForwardCompatibleResourceSchema.safeParse(item.data);
               if (!parsed.success) continue;
               const storeId = classifyDesktopContextResource(parsed.data);
@@ -596,7 +605,7 @@ export function createCoreAssetSyncService(options: {
                     if (parsed.success) blockedRefs.add(canonicalPragmaResourceRef(parsed.data));
                     grew = true;
                   }
-              for (const item of [...remote.values(), ...local.values()]) {
+              for (const item of dependencyItems) {
                 const parsed = PragmaForwardCompatibleResourceSchema.safeParse(item.data);
                 if (!parsed.success || groupedConflicts.has(item.key)) continue;
                 if (
@@ -613,10 +622,9 @@ export function createCoreAssetSyncService(options: {
             for (const key of keys) {
               if (deletionKeys) {
                 if (!deletionKeys.includes(key)) continue;
-                nextRemote.delete(key);
+                if (nextRemote.delete(key)) pushNeeded = true;
                 ignored.delete(key);
                 delete bases[key];
-                pushNeeded = true;
                 continue;
               }
               if (groupedConflicts.has(key)) {
@@ -703,6 +711,7 @@ export function createCoreAssetSyncService(options: {
                   bases[change.key] = change.remote.fingerprint;
                   pushNeeded = true;
                 }
+            if (pushNeeded) assertGitAssetReferences(remote, nextRemote, local);
             const nextState = StateSchema.parse({
               ...state,
               repositoryInitialized: repositoryInitialized || pushNeeded,
@@ -854,6 +863,61 @@ export function createCoreAssetSyncService(options: {
 type CoreAssetSyncItemSummary = Pick<CoreAssetSyncItem, "key" | "kind" | "name" | "fingerprint"> & {
   readonly data?: unknown;
 };
+
+function assertGitAssetReferences(previous: ItemMap, next: ItemMap, local: ItemMap): void {
+  const removedKeys = new Set([...previous.keys()].filter((key) => !next.has(key)));
+  const resourceRefs = (items: ItemMap) =>
+    new Map(
+      [...items.values()].flatMap((item) => {
+        const parsed = PragmaForwardCompatibleResourceSchema.safeParse(item.data);
+        return parsed.success
+          ? [[canonicalPragmaResourceRef(parsed.data), parsed.data.metadata.name] as const]
+          : [];
+      }),
+    );
+  const availableRefs = resourceRefs(next);
+  const previousRefs = resourceRefs(previous);
+  const knownRefs = new Map([...resourceRefs(local), ...previousRefs]);
+  for (const item of next.values()) {
+    const parsed = PragmaForwardCompatibleResourceSchema.safeParse(item.data);
+    if (!parsed.success) continue;
+    const resource = parsed.data;
+    const capability = classifyDesktopCapabilityResource(resource);
+    const storeId = classifyDesktopContextResource(resource);
+    if (
+      [...referencedPragmaResourceRefs([resource])].some(
+        (ref) => previousRefs.has(ref) && !availableRefs.has(ref),
+      ) ||
+      (capability &&
+        (removedKeys.has(`capability:${capability.id}`) ||
+          removedKeys.has(`skill:${capability.id}`))) ||
+      (storeId && removedKeys.has(`knowledge:${storeId}`))
+    )
+      throw new Error(
+        `The Git asset is still referenced by ${resource.metadata.name} in Git, even if it was deleted locally. Update or delete that Git reference first.`,
+      );
+    const missing = [...referencedPragmaResourceRefs([resource])].find(
+      (ref) => knownRefs.has(ref) && !availableRefs.has(ref),
+    );
+    const missingCapability =
+      capability &&
+      [previous, local].some(
+        (items) => items.has(`capability:${capability.id}`) || items.has(`skill:${capability.id}`),
+      ) &&
+      !next.has(`capability:${capability.id}`) &&
+      !next.has(`skill:${capability.id}`);
+    const missingKnowledge =
+      storeId &&
+      [previous, local].some((items) => items.has(`knowledge:${storeId}`)) &&
+      !next.has(`knowledge:${storeId}`);
+    // Host-provided external refs are not exported. Only synchronized authorities
+    // participate in this graph, including local dependencies deferred by conflicts.
+    if (missing || missingCapability || missingKnowledge)
+      throw new Error(
+        `The Git asset ${resource.metadata.name} requires ${missing ? knownRefs.get(missing) : "an asset"} that is missing from Git. Resolve that dependency first.`,
+      );
+  }
+}
 
 function logicalAssetIdentity(
   item: CoreAssetSyncItemSummary,
