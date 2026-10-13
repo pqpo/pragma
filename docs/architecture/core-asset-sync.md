@@ -78,7 +78,9 @@ synchronize. Removing configuration or changing source cancels unfinished stages
 lock without removing already published local data. Reconfiguration reconciles the retained assets
 normally. A source mismatch after an interrupted configuration change also cancels the old operation
 instead of applying targets from the wrong repository. Layout updates and deletions use expected semantic versions under
-the layout file lock; deferred Knowledge/Capability deletion rechecks the journal's expected content
+the layout file lock and run after successful Project publication. Flow deletion delegates layout
+cleanup to the Project's existing removal journal, preserving the layout when publication conflicts
+and completing cleanup after an interrupted committed deletion. Deferred Knowledge/Capability deletion rechecks the journal's expected content
 before domain revision checks. Revision checks also protect credential-only edits from concurrent deletion. Successful incoming baselines are saved before outgoing push, so a
 push failure does not republish imported revisions. Startup recovery errors are reported through
 the sync diagnostic without preventing the window from opening.
@@ -114,6 +116,10 @@ checks. A changed target or a newly added reference to a pending deletion report
 with the affected synchronization keys. Recovery saves those conflicts before retiring its journal,
 preserves completed stages, and replans pending stages from Git. Schema errors and transient failures
 retain their replayable journal rather than being silently discarded.
+Project revision conflicts use the store's conflicting resource references to defer only affected
+resources; errors without precise attribution defer the Project batch. Missing unchanged Knowledge
+or Capability authorities are attributed to pending incoming resources that reference them directly
+or transitively, allowing recovery to persist actionable conflicts and retire the interrupted journal.
 
 Capability and Knowledge deletion checks both Project DSL references and System Expert
 references. All bindings to the local authority are removed before its files are deleted.

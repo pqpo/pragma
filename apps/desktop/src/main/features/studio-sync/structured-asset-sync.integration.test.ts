@@ -79,6 +79,7 @@ function device(
     beforeGet?: (project: PragmaProjectStore) => Promise<void>;
     afterValidation?: (project: PragmaProjectStore) => Promise<void>;
     beforeApply?: (project: PragmaProjectStore) => Promise<void>;
+    afterApply?: (project: PragmaProjectStore) => Promise<void>;
   },
 ) {
   const project = createPragmaProjectStore({ projectsPath: join(root, "data", "projects") });
@@ -168,10 +169,12 @@ function device(
           await projectHooks.afterValidation!(project);
           return diagnostics;
         };
-      if (property === "apply" && projectHooks?.beforeApply)
+      if (property === "apply" && (projectHooks?.beforeApply || projectHooks?.afterApply))
         return async (...args: Parameters<PragmaProjectStore["apply"]>) => {
-          await projectHooks.beforeApply!(project);
-          return await target.apply(...args);
+          await projectHooks.beforeApply?.(project);
+          const value = await target.apply(...args);
+          await projectHooks.afterApply?.(project);
+          return value;
         };
       return Reflect.get(target, property, receiver);
     },
@@ -326,6 +329,212 @@ async function addSkill(capabilities: CapabilityStore, root: string) {
 }
 
 describe("structured asset sync with real Git and domain stores", { timeout: 60_000 }, () => {
+  it.each(["conflict", "after-commit interruption"] as const)(
+    "coordinates Flow layout deletion with Project publication during %s",
+    async (mode) => {
+      const git = await fixture();
+      const a = device(join(git.root, "a"));
+      const original = resources();
+      const flow = original.find((resource) => resource.kind === "Flow")!;
+      let enabled = false;
+      const b = device(join(git.root, "b"), false, undefined, undefined, undefined, {
+        beforeApply: async (project) => {
+          if (!enabled || mode !== "conflict") return;
+          enabled = false;
+          await project.upsert({
+            baseRevision: (await project.get()).revision,
+            resource: { ...flow, metadata: { ...flow.metadata, description: "Concurrent edit" } },
+          });
+        },
+        afterApply: async () => {
+          if (!enabled || mode !== "after-commit interruption") return;
+          enabled = false;
+          throw new Error("Injected interruption after Flow deletion commit.");
+        },
+      });
+      await a.project.publish({ expectedRevision: 0, resources: original });
+      await a.layouts.save(initialLayout);
+      await a.service.configure({ ...configuration, pushDeletions: true });
+      await b.service.configure(configuration);
+      await a.project.remove({
+        baseRevision: (await a.project.get()).revision,
+        ref: canonicalPragmaResourceRef(flow),
+      });
+      await a.service.sync();
+      enabled = true;
+      const result = await b.service.refresh();
+      if (mode === "conflict") {
+        expect(result.status, result.error).toBe("conflict");
+        expect(await b.layouts.get(initialLayout)).toMatchObject({ nodes: initialLayout.nodes });
+        expect((await b.restart().refresh()).status).toBe("conflict");
+        expect(await b.layouts.get(initialLayout)).toMatchObject({ nodes: initialLayout.nodes });
+        const resolved = await b
+          .restart()
+          .resolve(`flow:${canonicalPragmaResourceRef(flow)}`, "local");
+        expect(resolved.status, resolved.error).toBe("ready");
+        const checkout = join(git.root, "inspect-preserved-layout");
+        await exec("git", ["clone", git.bare, checkout]);
+        expect(
+          (await readSyncRepository(checkout, true)).get(`flow-layout:${flow.metadata.id}`)?.data,
+        ).toMatchObject({ nodes: initialLayout.nodes });
+      } else {
+        expect(result.status).toBe("error");
+        expect(await b.layouts.get(initialLayout)).toBeNull();
+        const recovered = await b.restart().refresh();
+        expect(recovered.status, recovered.error).toBe("ready");
+        expect(recovered.items.some((item) => item.assetKey === `flow:${flow.metadata.id}`)).toBe(
+          false,
+        );
+        expect(await b.layouts.get(initialLayout)).toBeNull();
+      }
+    },
+  );
+
+  it("isolates one Project CAS conflict while importing the other independent DSL resources", async () => {
+    const git = await fixture();
+    const a = device(join(git.root, "a"));
+    const runtime = resources().find((resource) => resource.kind === "RuntimeProfile")!;
+    const original = ["zdkgs0fde4xt00vr", "2dkgs0fde4xt00vr", "3dkgs0fde4xt00vr"].map((id) => ({
+      ...runtime,
+      metadata: { ...runtime.metadata, id, name: `Runtime ${id[0]}` },
+    }));
+    let enabled = false;
+    const b = device(join(git.root, "b"), false, undefined, undefined, undefined, {
+      beforeApply: async (project) => {
+        if (!enabled) return;
+        enabled = false;
+        await project.upsert({
+          baseRevision: (await project.get()).revision,
+          resource: {
+            ...original[1]!,
+            metadata: { ...original[1]!.metadata, description: "User edit" },
+          },
+        });
+      },
+    });
+    await a.project.publish({ expectedRevision: 0, resources: original });
+    await a.service.configure(configuration);
+    await b.service.configure(configuration);
+    const incoming = original.map((resource) => ({
+      ...resource,
+      metadata: { ...resource.metadata, description: "Remote edit" },
+    }));
+    await a.project.apply({ baseRevision: (await a.project.get()).revision, upserts: incoming });
+    await a.service.sync();
+    enabled = true;
+    const result = await b.service.refresh();
+    expect(result.status, result.error).toBe("conflict");
+    expect(
+      result.items.filter((item) => item.status === "conflict").map((item) => item.key),
+    ).toEqual([`runtime-profile:${canonicalPragmaResourceRef(original[1]!)}`]);
+    const current = (await b.project.get()).resources;
+    for (const index of [0, 2])
+      expect(
+        current.find((resource) => resource.metadata.id === original[index]!.metadata.id),
+      ).toEqual(incoming[index]);
+    expect(
+      current.find((resource) => resource.metadata.id === original[1]!.metadata.id)?.metadata
+        .description,
+    ).toBe("User edit");
+    const state = JSON.parse(await readFile(join(b.root, "state/asset-sync/state.json"), "utf8"));
+    expect(state.restoreConflicts).toEqual([
+      `runtime-profile:${canonicalPragmaResourceRef(original[1]!)}`,
+    ]);
+    expect(
+      (
+        await b
+          .restart()
+          .resolve(`runtime-profile:${canonicalPragmaResourceRef(original[1]!)}`, "local")
+      ).status,
+    ).toBe("ready");
+  });
+
+  it.each(["knowledge", "capability"] as const)(
+    "attributes a missing unchanged %s authority to its pending incoming dependents",
+    async (kind) => {
+      const git = await fixture();
+      const a = device(join(git.root, "a"));
+      const authority =
+        kind === "knowledge"
+          ? await addKnowledge(a.stores, "Docs")
+          : await a.capabilities.create({
+              definition: {
+                kind: "mcp_server",
+                name: "Tools",
+                description: "Tools",
+                connection: { transport: "streamable-http", url: "https://example.test/mcp" },
+                tools: [],
+                timeoutMs: 30_000,
+              },
+              credentials: {},
+            });
+      const authorityId = "id" in authority ? authority.id : authority.manifest.id;
+      const binding =
+        kind === "knowledge"
+          ? createDesktopContextResource({ owner: "project-expert", storeId: authorityId })
+          : createDesktopCapabilityResource({ owner: "project-expert", capabilityId: authorityId });
+      const runtime = resources().find((resource) => resource.kind === "RuntimeProfile")!;
+      const expert = resources(kind === "knowledge" ? authorityId : undefined).find(
+        (resource) => resource.kind === "Expert",
+      )!;
+      if (kind === "capability")
+        expert.spec.capabilities = [
+          { ref: canonicalPragmaResourceRef(binding), kind: "tools", tools: [] },
+        ];
+      const flow = resources().find((resource) => resource.kind === "Flow")!;
+      let armed = false;
+      let enabled = false;
+      let invalidated = false;
+      const path = join(
+        git.root,
+        "b/data",
+        kind === "knowledge" ? "context-stores" : "capabilities",
+        authorityId,
+        kind === "knowledge" ? "store.json" : "capability.json",
+      );
+      const b = device(join(git.root, "b"), false, undefined, undefined, undefined, {
+        afterValidation: async () => {
+          if (enabled && !invalidated) armed = true;
+        },
+        beforeGet: async () => {
+          if (!armed) return;
+          armed = false;
+          invalidated = true;
+          await writeFile(path, "{}");
+        },
+      });
+      await a.project.publish({ expectedRevision: 0, resources: [runtime, binding] });
+      await a.service.configure(configuration);
+      await b.service.configure(configuration);
+      const originalManifest = await readFile(path, "utf8");
+      await a.project.apply({
+        baseRevision: (await a.project.get()).revision,
+        upserts: [expert, flow],
+      });
+      await a.layouts.save(initialLayout);
+      await a.service.sync();
+      enabled = true;
+      const result = await b.service.refresh();
+      expect(invalidated).toBe(true);
+      expect(result.status, result.error).toBe("conflict");
+      const affected = result.items
+        .filter((item) => item.status === "conflict")
+        .map((item) => item.key);
+      expect(affected).toContain(`expert:${canonicalPragmaResourceRef(expert)}`);
+      expect(affected).toContain(`flow:${canonicalPragmaResourceRef(flow)}`);
+      expect(await b.layouts.get(initialLayout)).toBeNull();
+      await expect(
+        readFile(join(b.root, "state/asset-sync/restore-journal.json")),
+      ).rejects.toMatchObject({ code: "ENOENT" });
+      await writeFile(path, originalManifest);
+      const service = b.restart();
+      await service.restore(`expert:${canonicalPragmaResourceRef(expert)}`);
+      const restored = await service.restore(`flow:${canonicalPragmaResourceRef(flow)}`);
+      expect(restored.status, restored.error).toBe("ready");
+      expect(await b.layouts.get(initialLayout)).toMatchObject({ nodes: initialLayout.nodes });
+    },
+  );
+
   it("defers a keep-local expert until its conflicted runtime can also be published", async () => {
     const git = await fixture();
     const a = device(join(git.root, "a"));

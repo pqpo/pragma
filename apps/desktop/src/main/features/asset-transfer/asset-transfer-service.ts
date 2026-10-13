@@ -429,19 +429,49 @@ export function createAssetTransferService(options: {
         referencedRemovals,
         "Local resources now reference an asset scheduled for deletion.",
       );
-    const requiredRefs = new Set(referencedPragmaResourceRefs(upserts));
-    let expanded = true;
-    while (expanded) {
-      expanded = false;
-      for (const resource of desired) {
-        if (!requiredRefs.has(canonicalPragmaResourceRef(resource))) continue;
-        for (const ref of referencedPragmaResourceRefs([resource]))
-          if (!requiredRefs.has(ref)) {
-            requiredRefs.add(ref);
-            expanded = true;
-          }
+    const dependencyRefs = (roots: readonly PragmaResource[]): Set<string> => {
+      const refs = new Set(referencedPragmaResourceRefs(roots));
+      let expanded = true;
+      while (expanded) {
+        expanded = false;
+        for (const resource of desired) {
+          if (!refs.has(canonicalPragmaResourceRef(resource))) continue;
+          for (const ref of referencedPragmaResourceRefs([resource]))
+            if (!refs.has(ref)) {
+              refs.add(ref);
+              expanded = true;
+            }
+        }
       }
-    }
+      return refs;
+    };
+    const requiredRefs = dependencyRefs(upserts);
+    const incomingDependencies = new Map(
+      prepared.flatMap((change) =>
+        change.remote && isResourceItem(change.remote)
+          ? [
+              [
+                change.key,
+                dependencyRefs([PragmaForwardCompatibleResourceSchema.parse(change.remote.data)]),
+              ] as const,
+            ]
+          : [],
+      ),
+    );
+    const missingAuthorityKeys = (
+      resource: PragmaResource,
+      payloadKeys: readonly string[],
+    ): string[] => {
+      const ref = canonicalPragmaResourceRef(resource);
+      return changes
+        .filter(
+          (change) =>
+            payloadKeys.includes(change.key) ||
+            change.key.endsWith(`:${ref}`) ||
+            incomingDependencies.get(change.key)?.has(ref),
+        )
+        .map((change) => change.key);
+    };
     for (const resource of desired) {
       const changedOrRequired =
         replacements.has(canonicalPragmaResourceRef(resource)) ||
@@ -454,13 +484,7 @@ export function createAssetTransferService(options: {
         (changedOrRequired || removedPayloads.has(`knowledge:${storeId}`))
       )
         throw new AssetTransferConflictError(
-          changes
-            .filter(
-              (change) =>
-                change.key === `knowledge:${storeId}` ||
-                change.key.endsWith(`:${canonicalPragmaResourceRef(resource)}`),
-            )
-            .map((change) => change.key),
+          missingAuthorityKeys(resource, [`knowledge:${storeId}`]),
           `Incoming ContextStore refers to missing knowledge: ${storeId}`,
         );
       if (
@@ -471,14 +495,7 @@ export function createAssetTransferService(options: {
           removedPayloads.has(`skill:${capabilityId}`))
       )
         throw new AssetTransferConflictError(
-          changes
-            .filter(
-              (change) =>
-                change.key === `capability:${capabilityId}` ||
-                change.key === `skill:${capabilityId}` ||
-                change.key.endsWith(`:${canonicalPragmaResourceRef(resource)}`),
-            )
-            .map((change) => change.key),
+          missingAuthorityKeys(resource, [`capability:${capabilityId}`, `skill:${capabilityId}`]),
           `Incoming Capability refers to missing definition: ${capabilityId}`,
         );
       if (resource.kind !== "Expert") continue;
@@ -540,6 +557,7 @@ export function createAssetTransferService(options: {
     const projectUpserts: PragmaResource[] = [];
     const projectRemovals: string[] = [];
     const deferredRemovals: { kind: "knowledge" | "skill" | "capability"; id: string }[] = [];
+    const deferredLayouts: (() => Promise<void>)[] = [];
     const capabilityUpdates: {
       id: string;
       definition: Exclude<z.infer<typeof CapabilityDefinitionSchema>, { kind: "skill" }>;
@@ -597,35 +615,42 @@ export function createAssetTransferService(options: {
         const expected =
           current === null ? null : { nodes: current.nodes, viewport: current.viewport };
         assertExpected(item.key, expected ?? undefined);
-        try {
-          if (remote === undefined)
-            await options.layouts.remove(
-              { projectId: options.project.projectId, flowId },
-              expected,
-            );
-          else {
-            const layout = z
-              .object({
-                nodes: WorkflowLayoutSchema.shape.nodes,
-                viewport: WorkflowLayoutSchema.shape.viewport,
-              })
-              .parse(remote.data);
-            await options.layouts.save(
-              {
-                ...layout,
-                schemaVersion: "pragma.desktop-flow-layout/v2",
-                projectId: options.project.projectId,
-                flowId,
-                updatedAt: new Date().toISOString(),
-              },
-              expected,
-            );
+        const removesFlow = changes.some(
+          (change) => change.local?.key === `flow:flow:${flowId}` && change.remote === undefined,
+        );
+        // The Project owns layout removal and journals it across the Flow publication CAS.
+        if (remote === undefined && removesFlow) continue;
+        deferredLayouts.push(async () => {
+          try {
+            if (remote === undefined)
+              await options.layouts.remove(
+                { projectId: options.project.projectId, flowId },
+                expected,
+              );
+            else {
+              const layout = z
+                .object({
+                  nodes: WorkflowLayoutSchema.shape.nodes,
+                  viewport: WorkflowLayoutSchema.shape.viewport,
+                })
+                .parse(remote.data);
+              await options.layouts.save(
+                {
+                  ...layout,
+                  schemaVersion: "pragma.desktop-flow-layout/v2",
+                  projectId: options.project.projectId,
+                  flowId,
+                  updatedAt: new Date().toISOString(),
+                },
+                expected,
+              );
+            }
+          } catch (error) {
+            if (error instanceof WorkflowLayoutConflictError)
+              throw new AssetTransferConflictError([item.key], error.message);
+            throw error;
           }
-        } catch (error) {
-          if (error instanceof WorkflowLayoutConflictError)
-            throw new AssetTransferConflictError([item.key], error.message);
-          throw error;
-        }
+        });
         continue;
       }
       if (item.kind === "knowledge") {
@@ -820,8 +845,25 @@ export function createAssetTransferService(options: {
         if (
           error instanceof PragmaProjectStoreError &&
           ["revision_conflict", "resource_referenced", "project_invalid"].includes(error.code)
-        )
-          throw new AssetTransferConflictError(projectChangeKeys, error.message);
+        ) {
+          const refs = new Set(error.conflict?.conflictingRefs ?? []);
+          const keys = projectChangeKeys.filter((key) => {
+            const item = changes.find((change) => change.key === key);
+            const resource = item?.remote ?? item?.local;
+            return (
+              resource &&
+              refs.has(
+                canonicalPragmaResourceRef(
+                  PragmaForwardCompatibleResourceSchema.parse(resource.data),
+                ),
+              )
+            );
+          });
+          throw new AssetTransferConflictError(
+            keys.length > 0 ? keys : projectChangeKeys,
+            error.message,
+          );
+        }
         throw error;
       }
     };
@@ -861,6 +903,7 @@ export function createAssetTransferService(options: {
         );
     }
     if (!projectFirst && hasProjectChanges) await applyProject();
+    for (const applyLayout of deferredLayouts) await applyLayout();
     for (const removal of deferredRemovals) {
       if (removal.kind === "knowledge") {
         const store = (await options.stores.list()).find(
