@@ -1,4 +1,6 @@
 import { build } from "esbuild";
+import { assertExternalResourceImport } from "../../cli/scripts/package-audit-lib.mjs";
+import { RUNTIME_RESOURCE_EXTERNALS } from "../../cli/scripts/build-bundles.mjs";
 import { extractFile, listPackage, statFile } from "@electron/asar";
 import { execFile } from "node:child_process";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
@@ -18,6 +20,12 @@ const samples = [
 /** Runs against the app's resolver and shipped tokenizer chunk, never workspace node_modules. */
 export async function auditRuntimeResources(resources, executable) {
   const archive = join(resources, "app.asar");
+  // Inspect the actual shipped entry graphs before executing a separately compiled resource probe.
+  for (const entry of ["out/main/index.js", "out/main/desktop-cli/cli.js"]) {
+    await assertExternalResourceImport(entry, "@silvia-odwyer/photon-node", async (path) =>
+      extractFile(archive, join(...path.split("/"))).toString("utf8"),
+    );
+  }
   const tokenizerEntry = listPackage(archive)
     .map((path) => path.replaceAll("\\", "/").replace(/^\//, ""))
     .find((path) => /^out\/main\/chunks\/o200k_base-[^/]+\.js$/.test(path));
@@ -69,6 +77,8 @@ export async function auditRuntimeResources(resources, executable) {
     import { Worker } from 'node:worker_threads';
     import { readdir, access } from 'node:fs/promises';
     import { join } from 'node:path';
+    import { probePiImages } from ${JSON.stringify(fileURLToPath(new URL("../../../packages/runtime/pi/test/support/image-probe.mjs", import.meta.url)))};
+    import { writeFile } from "node:fs/promises";
     import { createRuntimeTokenCounter } from ${JSON.stringify(fileURLToPath(new URL("../../../packages/core/dist/runtime/token-counter.js", import.meta.url)))};
     import { loadExpertAgentPlugins } from ${JSON.stringify(fileURLToPath(new URL("../../../packages/core/dist/plugins/plugin-loader.js", import.meta.url)))};
     const resources=process.argv[2], home=process.env.PRAGMA_HOME;
@@ -78,6 +88,10 @@ export async function auditRuntimeResources(resources, executable) {
     const image=await sharp({create:{width:8,height:8,channels:4,background:'#f00'}}).png().toBuffer();
     assert.equal((await sharp(image).metadata()).width,8);
     assert.equal((await sharp(image).resize(4,4).jpeg().toBuffer({resolveWithObject:true})).info.width,4);
+    const smallImagePath=join(home,'small-image.png'), largeImagePath=join(home,'large-image.jpg');
+    await writeFile(smallImagePath,image);
+    await sharp({create:{width:2180,height:684,channels:3,background:'#f00'}}).jpeg().toFile(largeImagePath);
+    await probePiImages(home,[{path:smallImagePath,mimeType:'image/png'},{path:largeImagePath,mimeType:'image/jpeg'}]);
     assert.equal(typeof require('@napi-rs/keyring').Entry,'function');
     const shipped=await import(pathToFileURL(join(archive,${JSON.stringify(tokenizerEntry)})).href);
     const counter=createRuntimeTokenCounter();
@@ -117,6 +131,7 @@ export async function auditRuntimeResources(resources, executable) {
     await build({
       stdin: { contents: source, resolveDir: fileURLToPath(new URL("../", import.meta.url)) },
       outfile: probe,
+      external: [...RUNTIME_RESOURCE_EXTERNALS, "bufferutil", "utf-8-validate"],
       bundle: true,
       platform: "node",
       target: "node22",
@@ -149,6 +164,7 @@ export async function auditRuntimeResources(resources, executable) {
     return {
       keyring: "passed",
       sharp: "passed",
+      piImages: "passed",
       tokenizer: "passed",
       quickjs: "passed",
       pluginLoader: "passed",

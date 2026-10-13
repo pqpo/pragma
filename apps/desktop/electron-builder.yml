@@ -34,6 +34,8 @@ asarUnpack:
   - out/main/pragma-command-client.js
   - out/main/desktop-cli/**/*
   - node_modules/@napi-rs/keyring*/**/*
+  # The unpacked CLI must resolve Photon and its WASM without ASAR module lookup.
+  - node_modules/@silvia-odwyer/photon-node/**/*
 
 directories:
   buildResources: build

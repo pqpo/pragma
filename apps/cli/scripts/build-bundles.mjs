@@ -3,6 +3,9 @@ import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { fileURLToPath, URL } from "node:url";
 
+// Packages with runtime files that must remain beside their entrypoints.
+export const RUNTIME_RESOURCE_EXTERNALS = ["@napi-rs/keyring", "@silvia-odwyer/photon-node"];
+
 export const CLI_WORKERS = {
   "code-service-worker": "packages/core/src/code-service-worker.ts",
   "canonical-event-feed-worker": "packages/core/src/events/canonical-event-feed-worker.ts",
@@ -19,7 +22,8 @@ export async function buildCliBundles({ outputDirectory, version, minify = true 
     absWorkingDir: repositoryDirectory,
     bundle: true,
     charset: "utf8",
-    external: ["@napi-rs/keyring", "bufferutil", "utf-8-validate"],
+    // Photon reads its WASM relative to its own CommonJS entry. Keep both together.
+    external: [...RUNTIME_RESOURCE_EXTERNALS, "bufferutil", "utf-8-validate"],
     format: "esm",
     legalComments: "eof",
     logLevel: "info",

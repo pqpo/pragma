@@ -4,6 +4,8 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { buildCliBundles } from "../../cli/scripts/build-bundles.mjs";
 
+export { RUNTIME_RESOURCE_EXTERNALS } from "../../cli/scripts/build-bundles.mjs";
+
 export async function buildDesktopCli(mainDirectory, { minify = true } = {}) {
   const cliPackage = JSON.parse(
     await readFile(new URL("../../cli/package.json", import.meta.url), "utf8"),

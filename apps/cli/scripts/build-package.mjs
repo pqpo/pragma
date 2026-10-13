@@ -69,7 +69,10 @@ function createReleaseManifest(releaseVersion) {
     engines: { node: ">=22" },
     os: ["darwin", "win32"],
     files: ["dist", "README.md", "LICENSE", "THIRD_PARTY_NOTICES.txt"],
-    dependencies: { "@napi-rs/keyring": packageManifest.dependencies["@napi-rs/keyring"] },
+    dependencies: {
+      "@napi-rs/keyring": packageManifest.dependencies["@napi-rs/keyring"],
+      "@silvia-odwyer/photon-node": packageManifest.dependencies["@silvia-odwyer/photon-node"],
+    },
     publishConfig: {
       access: "public",
       registry: "https://registry.npmjs.org",

@@ -1,8 +1,10 @@
 import { parse } from "acorn";
 import { isBuiltin } from "node:module";
+import { posix } from "node:path";
 
 export const allowedExternalSpecifiers = new Set([
   "@napi-rs/keyring",
+  "@silvia-odwyer/photon-node",
   "bufferutil",
   "utf-8-validate",
 ]);
@@ -112,6 +114,26 @@ export function inspectJavaScript(source) {
   }
   visit(tree);
   return { specifiers: [...specifiers], literals: [...literals], dynamicLoads };
+}
+
+/** Verify a resource load in the emitted entry graph, rather than in a separately built probe. */
+export async function assertExternalResourceImport(entry, resource, readSource) {
+  const pending = [entry];
+  const visited = new Set();
+  while (pending.length > 0) {
+    const path = pending.pop();
+    if (visited.has(path)) continue;
+    visited.add(path);
+    const { specifiers } = inspectJavaScript(await readSource(path));
+    if (specifiers.includes(resource)) return;
+    for (const specifier of specifiers) {
+      if (specifier.startsWith(".") && /\.[cm]?js$/.test(specifier))
+        pending.push(posix.normalize(posix.join(posix.dirname(path), specifier)));
+    }
+  }
+  throw new Error(
+    `Production bundle ${entry} does not load external resource ${resource}; it may have been inlined.`,
+  );
 }
 
 export function findExternalWorkspaceImports(source) {

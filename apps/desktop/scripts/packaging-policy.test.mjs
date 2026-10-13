@@ -8,6 +8,7 @@ import {
 import { nativeBinaryTarget, summarizeInventory, assertSizeBudget } from "./packaging-size.mjs";
 import {
   inspectJavaScript,
+  assertExternalResourceImport,
   findExternalWorkspaceImports,
   findBuildPathLeaks,
 } from "../../cli/scripts/package-audit-lib.mjs";
@@ -231,4 +232,30 @@ test("failed packaging cleanup preserves diagnostics and removes incomplete inst
   } finally {
     await rm(directory, { recursive: true, force: true });
   }
+});
+
+test("requires Photon to be loaded by the production entry graph, not an unrelated probe", async () => {
+  const resource = "@silvia-odwyer/photon-node";
+  const modules = new Map([
+    ["out/main/index.js", 'import "./chunks/runtime.js";'],
+    [
+      "out/main/chunks/runtime.js",
+      'import "../index.js";const label="@silvia-odwyer/photon-node";',
+    ],
+    ["out/main/desktop-cli/cli.js", 'const label="@silvia-odwyer/photon-node";'],
+    ["out/main/probe.js", 'import("@silvia-odwyer/photon-node");'],
+  ]);
+  const readSource = async (path) => {
+    assert.ok(modules.has(path), `Missing module ${path}`);
+    return modules.get(path);
+  };
+  for (const entry of ["out/main/index.js", "out/main/desktop-cli/cli.js"])
+    await assert.rejects(
+      assertExternalResourceImport(entry, resource, readSource),
+      /Production bundle.*does not load external resource/,
+    );
+  modules.set("out/main/chunks/runtime.js", 'import("@silvia-odwyer/photon-node");');
+  modules.set("out/main/desktop-cli/cli.js", 'import("@silvia-odwyer/photon-node");');
+  for (const entry of ["out/main/index.js", "out/main/desktop-cli/cli.js"])
+    await assertExternalResourceImport(entry, resource, readSource);
 });
