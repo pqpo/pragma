@@ -78,7 +78,9 @@ synchronize. Removing configuration or changing source cancels unfinished stages
 lock without removing already published local data. Reconfiguration reconciles the retained assets
 normally. A source mismatch after an interrupted configuration change also cancels the old operation
 instead of applying targets from the wrong repository. Layout updates and deletions use expected semantic versions under
-the layout file lock; deferred Knowledge/Capability deletion rechecks the journal's expected content
+the layout file lock and run after successful Project publication. Flow deletion delegates layout
+cleanup to the Project's existing removal journal, preserving the layout when publication conflicts
+and completing cleanup after an interrupted committed deletion. Deferred Knowledge/Capability deletion rechecks the journal's expected content
 before domain revision checks. Revision checks also protect credential-only edits from concurrent deletion. Successful incoming baselines are saved before outgoing push, so a
 push failure does not republish imported revisions. Startup recovery errors are reported through
 the sync diagnostic without preventing the window from opening.
@@ -94,6 +96,30 @@ share a conflict choice; a Capability shares its bindings and definition or Skil
 bindings and Knowledge content have separate identities. Concurrent edits require “keep local” or
 “keep Git”. Conflicted dependencies are deferred while unrelated assets proceed. There is no
 file-level automatic merge in core asset sync.
+
+Dependency deferral uses the selected resource version, not both versions' reference graphs.
+An explicit keep-local choice checks the local version's references, including unresolved dependencies,
+without inheriting edges from the old Git version.
+Persistently ignored Git-only assets are retained without being imported or turned into conflicts
+because their dependencies were also deleted locally. New incoming dependents still require those
+dependencies to be restored. All outgoing deletions, including keep-local and deletion upload,
+check the final planned Git graph before import or publication; references removed or updated in
+the same synchronization do not block deletion. Remaining Git references report the referencing
+resource name and explicitly distinguish Git presence from local deletion. Publication also rejects
+missing synchronized dependencies and binding payloads, including assets deferred by a conflict;
+Host-provided external references remain outside the synchronized authority graph.
+
+DSL imports compare each resource with its expected portable content before applying changes.
+Binding metadata is normalized against the pre-import local authority, and the Project publication
+keeps its base snapshot so concurrent edits during commit are protected by the existing change-set
+checks. A changed target or a newly added reference to a pending deletion reports a typed conflict
+with the affected synchronization keys. Recovery saves those conflicts before retiring its journal,
+preserves completed stages, and replans pending stages from Git. Schema errors and transient failures
+retain their replayable journal rather than being silently discarded.
+Project revision conflicts use the store's conflicting resource references to defer only affected
+resources; errors without precise attribution defer the Project batch. Missing unchanged Knowledge
+or Capability authorities are attributed to pending incoming resources that reference them directly
+or transitively, allowing recovery to persist actionable conflicts and retire the interrupted journal.
 
 Capability and Knowledge deletion checks both Project DSL references and System Expert
 references. All bindings to the local authority are removed before its files are deleted.
@@ -129,6 +155,12 @@ checks. Only changed managed files are written; confirmed removals remove their 
 Push uses the system Git `user.name` and `user.email`, credential helper or SSH agent, with actionable
 identity errors. No dedicated Pragma author is injected. Remote head competition causes a fresh
 read and reconciliation, for at most three attempts, without force push.
+
+If the Git deletion committed before the local checkpoint was saved, retry treats a cached logical
+asset absent on both sides as a completed deletion. It clears the group's baseline, ignored state,
+and conflicts without another commit or uploading unrelated local edits. Local reappearance still
+blocks deletion, and an unknown key is rejected. Cached identities retain the same grouping even
+when all of a group's remote records have already disappeared.
 
 The explicit automatic entry point respects `autoPush`: startup, publication callbacks and backup
 after individual asset sync can upload only when enabled. Focus and network recovery pull only.

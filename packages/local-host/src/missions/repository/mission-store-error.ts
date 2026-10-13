@@ -9,8 +9,17 @@ export class MissionStoreError extends Error {
       | "message_conflict"
       | "config_invalid",
     message: string,
+    options?: ErrorOptions,
   ) {
-    super(message);
+    super(message, options);
     this.name = "MissionStoreError";
+  }
+}
+
+/** Attachment files or their journal have committed and need storage replay. */
+export class MissionAttachmentWritePendingError extends Error {
+  constructor(options: ErrorOptions) {
+    super("Mission attachment write is pending durable replay.", options);
+    this.name = "MissionAttachmentWritePendingError";
   }
 }

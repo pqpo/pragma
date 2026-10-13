@@ -99,6 +99,8 @@ export function createLocalHostMissionApplication(
     commandConsumer: control.consumer,
   });
   control.bindApplication(commands);
+  // A Host wait deadline must not abandon or duplicate the real teardown.
+  const shutdownStops = new Map<string, Promise<void>>();
   let disposing: Promise<void> | undefined;
   const dispose = (): Promise<void> => {
     if (disposing !== undefined) return disposing;
@@ -106,15 +108,35 @@ export function createLocalHostMissionApplication(
       const errors: unknown[] = [];
       let retainedRuntimeOwner = false;
       await ownerScope.quiesce(options.prepareShutdown);
-      const ids = new Set([...executionOwner.missionIds(), ...ownerScope.ownedMissionIds()]);
+      const ids = new Set([
+        ...executionOwner.missionIds(),
+        ...ownerScope.ownedMissionIds(),
+        ...shutdownStops.keys(),
+      ]);
       for (const id of ids) {
         try {
           // Drain work already admitted before acquisition was sealed. Do not
           // hold admission during stop: terminal cleanup also uses this queue.
-          await executionOwner.admit(id, async () => undefined);
-          await service.stopLocalController(id, "shutdown");
+          let stopping = shutdownStops.get(id);
+          if (stopping === undefined) {
+            stopping = (async () => {
+              await executionOwner.admit(id, async () => undefined);
+              await service.stopLocalController(id, "shutdown");
+            })();
+            shutdownStops.set(id, stopping);
+            const forget = () => {
+              if (shutdownStops.get(id) === stopping) shutdownStops.delete(id);
+            };
+            // Observe late rejection even after the caller's deadline expires.
+            void stopping.then(forget, forget);
+          }
+          await waitForShutdownOwner(id, stopping);
         } catch (error) {
           errors.push(error);
+          if (error instanceof OwnerShutdownPendingError) {
+            retainedRuntimeOwner = true;
+            continue;
+          }
         }
         // Bounded stop can return while Native teardown is still pending. Its
         // owner and lease must remain until the exact Runtime has stopped.
@@ -163,4 +185,28 @@ export function createLocalHostMissionApplication(
   });
   canonicalMissionApplications.add(application);
   return application;
+}
+
+class OwnerShutdownPendingError extends Error {
+  constructor(missionId: string) {
+    super(
+      `Mission ${missionId} shutdown is still pending; retry after its Runtime cleanup settles.`,
+    );
+    this.name = "OwnerShutdownPendingError";
+  }
+}
+
+async function waitForShutdownOwner(missionId: string, stopping: Promise<void>): Promise<void> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    await Promise.race([
+      stopping,
+      new Promise<never>((_resolve, reject) => {
+        timer = setTimeout(() => reject(new OwnerShutdownPendingError(missionId)), 15_000);
+        timer.unref();
+      }),
+    ]);
+  } finally {
+    if (timer !== undefined) clearTimeout(timer);
+  }
 }

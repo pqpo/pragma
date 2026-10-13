@@ -234,7 +234,6 @@ export const missions = {
   viewOriginalImage: "查看原图 {{name}}",
   originalImageAlt: "{{name}} 的原图",
   closeImagePreview: "关闭预览",
-  imageUnsupportedByModel: "当前模型不支持图片，将仅提供原图路径。",
   attachmentKind: {
     image: "图片",
     file: "文件",

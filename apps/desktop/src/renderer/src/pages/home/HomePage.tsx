@@ -68,7 +68,6 @@ import {
   clipboardImageFile,
   mergeMissionAttachmentPreviews,
   mergeMissionAttachments,
-  missionImageSupport,
   stageClipboardImage,
 } from "../../lib/mission-attachments.ts";
 import { localizeSystemExpertCopy } from "../../lib/system-expert-copy.ts";
@@ -368,8 +367,6 @@ export function HomePage(props: {
   }, []);
 
   const selectedExecutor = executors.find((executor) => executor.ref === executorRef);
-  const imageUnsupported =
-    missionImageSupport(models, modelOverride, defaultModelSelection) === "unsupported";
   const hasValidExecutor = selectedExecutor !== undefined;
   const flowInputSchema =
     selectedExecutor?.kind === "flow" ? selectedExecutor.inputSchema : undefined;
@@ -891,7 +888,6 @@ export function HomePage(props: {
           <MissionAttachmentList
             attachments={attachments}
             previews={attachmentPreviews}
-            imageUnsupported={imageUnsupported}
             onRemove={(id) => {
               void window.pragmaDesktop.discardMissionAttachmentDrafts({ attachmentIds: [id] });
               setAttachments((current) => current.filter((attachment) => attachment.id !== id));

@@ -24,6 +24,13 @@ const RemovalJournalSchema = z
 
 export type WorkflowLayoutVersion = Pick<WorkflowLayout, "nodes" | "viewport"> | null;
 
+export class WorkflowLayoutConflictError extends Error {
+  constructor() {
+    super("Flow layout changed during restore.");
+    this.name = "WorkflowLayoutConflictError";
+  }
+}
+
 export interface WorkflowLayoutStore {
   prepareRemoval(input: GetWorkflowLayout, baseRevision: number): Promise<void>;
   recoverRemovals(
@@ -71,7 +78,7 @@ export function createWorkflowLayoutStore(options: {
         expected,
       )
     )
-      throw new Error("asset_sync.restore_conflict: Flow layout changed during restore.");
+      throw new WorkflowLayoutConflictError();
   };
   return {
     get,

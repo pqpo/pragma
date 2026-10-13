@@ -1,4 +1,5 @@
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, rm, readFile, writeFile } from "node:fs/promises";
+import { randomUUID } from "node:crypto";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
@@ -23,6 +24,8 @@ import { createLocalHostMissionCommandAdmission } from "../../src/mission-comman
 import { createLocalHostRunMemory } from "../../src/run-memory.ts";
 import { createSqliteExecutionStore } from "../../src/execution/sqlite-execution-store.ts";
 import { MissionExecutionOwner } from "../../src/missions/execution-owner.ts";
+import { createMissionStore } from "../../src/missions/repository/mission-store.ts";
+import { submitMissionExpertPrompt } from "../../src/missions/mission-prompt-submission.ts";
 import {
   createMissionExecutionKernel,
   type MissionExecutionSubject,
@@ -40,6 +43,188 @@ afterEach(async () => {
 });
 
 describe("shared Mission execution kernel with durable Core stores", { timeout: 15_000 }, () => {
+  it("replays uncertain Core acceptance without publishing a message or rereading deleted drafts", async () => {
+    const f = await fixture();
+    const missionsPath = new PragmaPaths({ pragmaHome: f.home }).missionsRoot();
+    const missions = createMissionStore({ missionsPath });
+    const mission = await missions.create({
+      workspace: { path: f.home, basename: "workspace" },
+      goal: "review",
+      project: { id: "studio", revision: 1 },
+      executor: { kind: "expert", ref: "expert:aaaaaaaaaaaaaaaa", name: "Expert" },
+    });
+    const requestId = randomUUID();
+    const source = join(f.home, "draft.png");
+    await writeFile(source, "image-bytes");
+    const input = {
+      id: requestId,
+      content: "review",
+      createdAt: "2026-10-12T00:00:00.000Z",
+      attachments: [
+        {
+          id: randomUUID(),
+          kind: "image" as const,
+          name: "draft.png",
+          path: source,
+          mimeType: "image/png" as const,
+        },
+      ],
+    };
+    const session = await f.app.experts.createSession(f.expert);
+    f.openSessions.push(session);
+    const enqueue = f.sessions.enqueue.bind(f.sessions);
+    vi.spyOn(f.sessions, "enqueue").mockImplementationOnce(async (...args) => {
+      await enqueue(...args);
+      throw new Error("Core acceptance committed before its acknowledgement failed");
+    });
+    const submit = () =>
+      submitMissionExpertPrompt(
+        {
+          missionId: mission.id,
+          session,
+          content: input.content,
+          options: { requestId, attachments: input.attachments },
+        },
+        () => missions.preparePromptAttachments(mission.id, input),
+        () => missions.discardPromptAttachments(mission.id, requestId),
+      );
+    await expect(submit()).rejects.toMatchObject({ name: "MissionSemanticWritePendingError" });
+    const receipts = await session.getPromptQueue();
+    expect(receipts.filter((prompt) => prompt.requestId === requestId)).toHaveLength(1);
+    expect(await missions.getAttachments(mission.id)).toEqual([]);
+    expect((await missions.readTimelinePage(mission.id, { limit: 10 })).turns).toHaveLength(1);
+    await rm(source);
+    const { turn, attachments } = await submit();
+    expect(turn.executionId).toBe(receipts[0]!.executionId);
+    await turn.result;
+    expect(f.dispatched).toHaveBeenCalledOnce();
+    expect(await f.executions.get(turn.executionId)).toMatchObject({ input: { attachments } });
+    await missions.appendUserMessage(mission.id, { ...input, attachments: [...attachments] });
+    await missions.appendExecutionReference({
+      missionId: mission.id,
+      inputMessageId: requestId,
+      executionId: turn.executionId,
+      createdAt: input.createdAt,
+    });
+    expect(await missions.getPromptAttachments(mission.id, requestId)).toEqual(attachments);
+    await expect(readFile(attachments[0]!.path, "utf8")).resolves.toBe("image-bytes");
+    expect((await missions.readTimelinePage(mission.id, { limit: 10 })).turns).toHaveLength(2);
+  });
+
+  it("reconciles an accepted prompt after Session closure without another Runtime dispatch", async () => {
+    const f = await fixture();
+    const session = await f.app.experts.createSession(f.expert);
+    f.openSessions.push(session);
+    const requestId = randomUUID();
+    const original = await session.prompt("accepted", { requestId });
+    await original.result;
+    await session.close("The acceptance receipt remains readable");
+    const discard = vi.fn(async () => undefined);
+    const recovered = await submitMissionExpertPrompt(
+      { missionId: randomUUID(), session, content: "accepted", options: { requestId } },
+      async () => [],
+      discard,
+    );
+    expect(recovered.turn.executionId).toBe(original.executionId);
+    await expect(recovered.turn.result).resolves.toEqual(await original.result);
+    expect(discard).not.toHaveBeenCalled();
+    expect(f.dispatched).toHaveBeenCalledOnce();
+  });
+
+  it.each(["closed", "idempotency", "parameters"] as const)(
+    "rejects the Inbox and discards prepared images when Core explicitly rejects (%s)",
+    async (reason) => {
+      const f = await fixture();
+      const missionsPath = new PragmaPaths({ pragmaHome: f.home }).missionsRoot();
+      const missions = createMissionStore({ missionsPath });
+      const mission = await missions.create({
+        workspace: { path: f.home, basename: "workspace" },
+        goal: "review",
+        project: { id: "studio", revision: 1 },
+        executor: { kind: "expert", ref: "expert:aaaaaaaaaaaaaaaa", name: "Expert" },
+      });
+      const requestId = randomUUID();
+      const session = await f.app.experts.createSession(f.expert);
+      f.openSessions.push(session);
+      if (reason === "closed") await session.close("Test explicit rejection");
+      else if (reason === "idempotency")
+        await (
+          await session.prompt("existing", { requestId })
+        ).result;
+      const dispatchedBefore = f.dispatched.mock.calls.length;
+      const imagePath = join(f.home, "draft.png");
+      await writeFile(imagePath, "image-bytes");
+      const image = {
+        id: randomUUID(),
+        kind: "image" as const,
+        name: "draft.png",
+        path: imagePath,
+        mimeType: "image/png" as const,
+      };
+      const controller = createMissionControllerStore({ missionsPath });
+      const guard = await controller.claim({
+        missionId: mission.id,
+        claimId: randomUUID(),
+        leaseMs: 30_000,
+      });
+      await controller.appendCommand({
+        missionId: mission.id,
+        kind: "send",
+        request: {
+          schemaVersion: "pragma.integration-request/v1",
+          requestId,
+          payloadHash: `sha256:${"a".repeat(64)}`,
+          requestedAt: "2026-10-12T00:00:00.000Z",
+          client: { surface: "desktop", version: "test", instanceId: randomUUID() },
+        },
+        payload: { kind: "send", input: { prompt: "rejected", attachments: [image] } },
+      });
+      let preparedPath: string | undefined;
+      const apply = vi.fn(async () => {
+        await submitMissionExpertPrompt(
+          {
+            missionId: mission.id,
+            session,
+            content: "rejected",
+            options: {
+              requestId,
+              attachments: [image],
+              ...(reason === "parameters"
+                ? { modelSelection: { model: { providerId: "", modelId: "" } } }
+                : {}),
+            },
+          },
+          async () => {
+            const attachments = await missions.preparePromptAttachments(mission.id, {
+              id: requestId,
+              content: "rejected",
+              attachments: [image],
+              createdAt: "2026-10-12T00:00:00.000Z",
+            });
+            preparedPath = attachments[0]!.path;
+            expect(await readFile(preparedPath, "utf8")).toBe("image-bytes");
+            expect(await missions.getAttachments(mission.id)).toEqual([]);
+            expect((await missions.readTimelinePage(mission.id, { limit: 10 })).turns).toHaveLength(
+              1,
+            );
+            return attachments;
+          },
+          async () => await missions.discardPromptAttachments(mission.id, requestId),
+        );
+        return { result: {} };
+      });
+      await controller.processNext({ missionId: mission.id, guard, consumer: { apply } });
+      expect(await controller.getOperation({ missionId: mission.id, requestId })).toMatchObject({
+        state: "rejected",
+      });
+      await controller.processNext({ missionId: mission.id, guard, consumer: { apply } });
+      expect(apply).toHaveBeenCalledOnce();
+      expect(f.dispatched).toHaveBeenCalledTimes(dispatchedBefore);
+      expect(await missions.getAttachments(mission.id)).toEqual([]);
+      expect((await missions.readTimelinePage(mission.id, { limit: 10 })).turns).toHaveLength(1);
+      await expect(readFile(preparedPath!, "utf8")).rejects.toMatchObject({ code: "ENOENT" });
+    },
+  );
   it("observes an immediately failed Flow while optional Memory registration is blocked", async () => {
     const originalError = new Error("fast Native failure before Memory finishes");
     const f = await fixture(async () => {

@@ -1,3 +1,4 @@
+import { createSkillRevisionMissionRestorer } from "../features/capabilities/skill-revision-mission-restore.ts";
 import {
   createLocalHostNodeMissionCompiler,
   createLocalHostProjectCatalogFromHome,
@@ -861,6 +862,7 @@ export async function createDesktopApplicationContainer(
     draftsTrashPath: join(pragmaPaths.trashRoot(), "skill-revision-drafts"),
     capabilities: capabilityStore,
     generator: skillRevisionGenerator,
+    onReturnedForRework: createSkillRevisionMissionRestorer(guardedMissionStore),
     resolveWorkspacePath: async (missionId, draftId) => {
       if (missionId !== undefined) {
         try {

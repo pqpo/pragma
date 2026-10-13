@@ -90,6 +90,7 @@ describe("SkillRevisionEmptyState", () => {
     expect(canRetrySkillRevisionJob("needs_rebase", "skill_revision_base_changed")).toBe(false);
     expect(canRetrySkillRevisionJob("rejected", "skill_revision_base_changed")).toBe(false);
     expect(canRetrySkillRevisionJob("rejected", undefined)).toBe(true);
+    expect(canRetrySkillRevisionJob("rejected", "revision_user_rejected")).toBe(false);
     expect(canRetrySkillRevisionJob("needs_attention", "invalid_input")).toBe(true);
   });
 
@@ -179,6 +180,7 @@ describe("SkillRevisionEmptyState", () => {
         canOpenMission={false}
         onBack={noop}
         onApprove={noop}
+        onReturn={() => undefined}
         onReject={noop}
         onRetry={noop}
         onContinue={noop}
@@ -194,7 +196,11 @@ describe("SkillRevisionEmptyState", () => {
     expect(html).toContain("revision-summary.md");
     expect(html).toContain("revision-request.md");
     expect(html).toContain('class="primary-button"');
-    expect(html).toContain("批准并发布");
+    expect(html).toContain(">同意</button>");
+    expect(html).toContain(">驳回</button>");
+    expect(html).toContain("审核通过，应用本次修订。");
+    expect(html).toContain("审核未通过但保留草稿");
+    expect(html).toContain("终止本次修订，不应用修改，不继续此草稿。");
     expect(html).toContain("拒绝");
     expect(html).toContain("新增合并前分析与合并后验证。");
   });
@@ -278,6 +284,7 @@ describe("SkillRevisionEmptyState", () => {
         canOpenMission
         onBack={noop}
         onApprove={noop}
+        onReturn={() => undefined}
         onReject={noop}
         onRetry={noop}
         onContinue={noop}

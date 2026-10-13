@@ -1,3 +1,4 @@
+import { ExpertPromptRejectedError } from "./expert-prompt-rejected-error.ts";
 import { randomUUID } from "node:crypto";
 
 import type {
@@ -19,6 +20,7 @@ import type {
 import {
   ExpertMessageHistorySchema,
   ExpertPromptAttachmentSchema,
+  RuntimeModelSelectionSchema,
   InvocationOutputSchema,
   isFinalExecutionStatus as isFinal,
 } from "@pragma/shared";
@@ -846,6 +848,13 @@ class ExpertSessionImpl implements ExpertSession {
   private stopPromise: Promise<void> | undefined;
   private deletionFrozen = false;
   private closePromise: Promise<void> | undefined;
+  private closeFailed = false;
+  private lifecycleTail: Promise<void> = Promise.resolve();
+  private leaseReleased = false;
+  private resourceReleaseCompleted = false;
+  private leaseLossNativeStopped = false;
+  private pendingResourceReleases = 0;
+  private readonly closeRequested = new AbortController();
   private terminalReleasePromise: Promise<void> | undefined;
   private humanCheckpointReleasePromise: Promise<void> | undefined;
   private resourcesReleasing = false;
@@ -869,7 +878,7 @@ class ExpertSessionImpl implements ExpertSession {
   private readonly leaseLost = new AbortController();
   private leaseExpiresAt: number;
   private leaseRenewalStopped = false;
-  private readonly leaseRenewal: ReturnType<typeof setInterval>;
+  private leaseRenewal: ReturnType<typeof setInterval> | undefined;
 
   constructor(
     readonly expert: ExpertDefinition,
@@ -906,6 +915,12 @@ class ExpertSessionImpl implements ExpertSession {
       appendEvent: (sessionId: string, event: ExpertSessionEventInput) =>
         this.dependencies.sessions.appendEvent(sessionId, event, this.claimId),
     };
+    this.startLeaseRenewal();
+  }
+
+  private startLeaseRenewal(): void {
+    if (this.leaseRenewal !== undefined || this.leaseError !== undefined) return;
+    this.leaseRenewalStopped = false;
     this.leaseRenewal = setInterval(() => {
       if (this.leaseRenewalTask === undefined) {
         this.leaseRenewalTask = this.renewLease().finally(() => {
@@ -988,15 +1003,23 @@ class ExpertSessionImpl implements ExpertSession {
 
   private async promptInternal(content: string, options: PromptOptions): Promise<ExpertTurn> {
     if (this.leaseError !== undefined) throw this.leaseError;
-    if (this.resourcesReleasing || this.terminalReleaseRequested) {
-      throw new Error(`ExpertSession resources are being released: ${this.sessionId}`);
+    if (
+      this.resourcesReleasing ||
+      this.pendingResourceReleases > 0 ||
+      this.terminalReleaseRequested
+    ) {
+      throw new ExpertPromptRejectedError(
+        `ExpertSession resources are being released: ${this.sessionId}`,
+      );
     }
     if (this.closePromise !== undefined || this.stopPromise !== undefined || this.deletionFrozen) {
-      throw new Error(`ExpertSession is closing or closed: ${this.sessionId}`);
+      throw new ExpertPromptRejectedError(`ExpertSession is closing or closed: ${this.sessionId}`);
     }
-    if (content.trim() === "") throw new Error("Prompt content must not be empty.");
+    if (content.trim() === "")
+      throw new ExpertPromptRejectedError("Prompt content must not be empty.");
     const requestId = options.requestId ?? randomUUID();
-    if (requestId.trim() === "") throw new Error("Prompt requestId must not be empty.");
+    if (requestId.trim() === "")
+      throw new ExpertPromptRejectedError("Prompt requestId must not be empty.");
     const mode = options.mode ?? "enqueue";
 
     if (mode === "steer") {
@@ -1010,7 +1033,7 @@ class ExpertSessionImpl implements ExpertSession {
           previous.deliveryAttempt?.state === "not_dispatched"
         ) {
           if (previous.content !== content) {
-            throw new Error(`Prompt idempotency conflict: ${requestId}`);
+            throw new ExpertPromptRejectedError(`Prompt idempotency conflict: ${requestId}`);
           }
           // Resume the durable fallback after a crash without attempting native delivery again.
           return await this.fallbackToEnqueue(
@@ -1022,14 +1045,16 @@ class ExpertSessionImpl implements ExpertSession {
         }
       }
       if (options.modelSelection !== undefined) {
-        const error = new Error(
+        const error = new ExpertPromptRejectedError(
           "A steer request cannot change the active Runtime model selection.",
         );
         if (options.steerFallback !== "enqueue") throw error;
         return await this.fallbackToEnqueue(content, requestId, options, error);
       }
       if ((options.attachments?.length ?? 0) > 0) {
-        const error = new Error("A steer request cannot add prompt attachments.");
+        const error = new ExpertPromptRejectedError(
+          "A steer request cannot add prompt attachments.",
+        );
         if (options.steerFallback !== "enqueue") throw error;
         return await this.fallbackToEnqueue(content, requestId, options, error);
       }
@@ -1067,10 +1092,22 @@ class ExpertSessionImpl implements ExpertSession {
     const now = new Date().toISOString();
     const session = await this.getState();
     const rootContextId = session.rootContextId;
-    const modelSelection = options.modelSelection;
-    const attachments = ExpertPromptAttachmentSchema.array()
+    const modelSelectionResult = RuntimeModelSelectionSchema.optional().safeParse(
+      options.modelSelection,
+    );
+    if (!modelSelectionResult.success)
+      throw new ExpertPromptRejectedError("Invalid prompt Runtime model selection.", {
+        cause: modelSelectionResult.error,
+      });
+    const modelSelection = modelSelectionResult.data;
+    const attachmentResult = ExpertPromptAttachmentSchema.array()
       .max(20)
-      .parse(options.attachments ?? []);
+      .safeParse(options.attachments ?? []);
+    if (!attachmentResult.success)
+      throw new ExpertPromptRejectedError("Invalid prompt attachments.", {
+        cause: attachmentResult.error,
+      });
+    const attachments = attachmentResult.data;
     const storedInput = createExpertPromptInput(content, attachments);
     const definitionKind = isExpertTeam(this.expert) ? "expert-team" : "expert";
     const execution: ExecutionRecord = {
@@ -1228,6 +1265,7 @@ class ExpertSessionImpl implements ExpertSession {
     await this.processing;
     this.stopLeaseRenewal();
     await this.dependencies.sessions.releaseLease(this.sessionId, this.claimId);
+    this.leaseReleased = true;
     this.controller = undefined;
     this.onClosed();
   }
@@ -1256,13 +1294,14 @@ class ExpertSessionImpl implements ExpertSession {
   }
 
   releaseAfterHumanCheckpoint(): Promise<void> {
+    if (this.closePromise !== undefined) return this.close();
     if (this.humanCheckpointReleasePromise === undefined) {
-      this.humanCheckpointReleasePromise = this.releaseAfterHumanCheckpointInternal().catch(
-        (error: unknown) => {
-          if (!this.resourcesReleasing) this.humanCheckpointReleasePromise = undefined;
-          throw error;
-        },
-      );
+      this.humanCheckpointReleasePromise = this.coordinateResourceRelease(() =>
+        this.releaseAfterHumanCheckpointInternal(),
+      ).catch((error: unknown) => {
+        this.humanCheckpointReleasePromise = undefined;
+        throw error;
+      });
     }
     return this.humanCheckpointReleasePromise;
   }
@@ -1271,10 +1310,10 @@ class ExpertSessionImpl implements ExpertSession {
     if (this.closePromise !== undefined || this.stopPromise !== undefined || this.deletionFrozen) {
       throw new Error(`ExpertSession is closing or closed: ${this.sessionId}`);
     }
-    if (this.resourcesReleasing) throw new Error("ExpertSession resources are being released.");
+    const previouslyReleasing = this.resourcesReleasing;
     this.resourcesReleasing = true;
     try {
-      await this.waitForPromptAdmissions();
+      if (!(await this.waitForReleaseAdmissions())) return;
       if (this.controller !== undefined) {
         throw new Error(
           "Checkpoint the active human interaction before releasing the ExpertSession owner.",
@@ -1285,30 +1324,10 @@ class ExpertSessionImpl implements ExpertSession {
         throw new Error("Wait for the active Expert turn before releasing the human checkpoint.");
       }
     } catch (error) {
-      this.resourcesReleasing = false;
+      this.resourcesReleasing = previouslyReleasing;
       throw new ExpertSessionReleaseBlockedError(error);
     }
-    const errors: unknown[] = [];
-    this.stopLeaseRenewal();
-    try {
-      await this.runtimeSessions.clear();
-    } catch (error) {
-      errors.push(error);
-    }
-    if (this.leaseRenewalTask !== undefined) {
-      try {
-        await this.leaseRenewalTask;
-      } catch (error) {
-        errors.push(error);
-      }
-    }
-    try {
-      await this.dependencies.sessions.releaseLease(this.sessionId, this.claimId);
-    } catch (error) {
-      errors.push(error);
-    }
-    this.onClosed();
-    throwCollectedErrors(errors, "ExpertSession human checkpoint release failed.");
+    await this.finishResourceRelease();
   }
 
   async refreshRuntimeSessions(): Promise<void> {
@@ -1328,13 +1347,14 @@ class ExpertSessionImpl implements ExpertSession {
       readonly settlement?: Promise<unknown> | undefined;
     } = {},
   ): Promise<void> {
+    if (this.closePromise !== undefined) return this.close();
     if (options.waitForIdle) this.terminalReleaseRequested = true;
     if (this.terminalReleasePromise === undefined) {
       this.terminalReleasePromise = this.releaseTerminalWhenIdle(
         options.waitForIdle === true,
         options.settlement,
       ).catch((error: unknown) => {
-        if (!this.resourcesReleasing) this.terminalReleasePromise = undefined;
+        this.terminalReleasePromise = undefined;
         throw error;
       });
     }
@@ -1349,8 +1369,11 @@ class ExpertSessionImpl implements ExpertSession {
     // Seal admission immediately, but preserve ownership until those tasks finish.
     if (settlement !== undefined) await Promise.allSettled([settlement]);
     while (true) {
+      // Ordinary close can begin while the Host's settlement is still pending.
+      // Join it here as well as at admission, instead of rejecting its state.
+      if (this.closePromise !== undefined) return await this.close();
       try {
-        await this.releaseAfterTerminalInternal();
+        await this.coordinateResourceRelease(() => this.releaseAfterTerminalInternal());
         return;
       } catch (error) {
         if (
@@ -1374,12 +1397,12 @@ class ExpertSessionImpl implements ExpertSession {
     if (this.closePromise !== undefined || this.stopPromise !== undefined || this.deletionFrozen) {
       throw new Error(`ExpertSession is closing or closed: ${this.sessionId}`);
     }
-    if (this.resourcesReleasing) throw new Error("ExpertSession resources are being released.");
+    const previouslyReleasing = this.resourcesReleasing;
     this.resourcesReleasing = true;
     try {
       // Close admission before reading persisted state. A prompt already admitted
       // must finish enqueueing first, so release cannot overlook its pending turn.
-      await this.waitForPromptAdmissions();
+      if (!(await this.waitForReleaseAdmissions())) return;
       if (this.leaseError !== undefined) await this.leaseFailureTask;
       const [state, prompts] = await Promise.all([this.getState(), this.getPromptQueue()]);
       if (
@@ -1393,7 +1416,7 @@ class ExpertSessionImpl implements ExpertSession {
         );
       }
     } catch (error) {
-      this.resourcesReleasing = false;
+      this.resourcesReleasing = previouslyReleasing;
       throw error instanceof ExpertSessionReleaseBlockedError
         ? error
         : new ExpertSessionReleaseBlockedError(error);
@@ -1401,28 +1424,67 @@ class ExpertSessionImpl implements ExpertSession {
     // Validation alone must not interrupt an already admitted turn. Seal its
     // execution boundary only once teardown is committed (or explicitly requested).
     this.terminalReleaseRequested = true;
-    const errors: unknown[] = [];
+    await this.finishResourceRelease();
+  }
+
+  private async finishResourceRelease(): Promise<void> {
+    // Lease-loss cleanup may already have completed while release awaited it.
+    // Acknowledging that cleanup must not reacquire or touch a successor's claim.
+    if (this.resourceReleaseCompleted) return;
+    if (this.leaseError !== undefined && this.leaseLossNativeStopped) {
+      // Only finish local cleanup after lease-loss teardown confirmed Native stop.
+      // Never reclaim custody or release the successor's lease.
+      await this.runtimeSessions.finishDeletion();
+      this.resourceReleaseCompleted = true;
+      return;
+    }
+    this.paused = true;
+    // Human checkpointing may have relinquished custody before releasing the
+    // Runtime. Reacquire it and fence each retry before touching Native resources.
+    if (this.leaseReleased) {
+      if (
+        !(await this.dependencies.sessions.claimLease(
+          this.sessionId,
+          this.claimId,
+          EXPERT_SESSION_LEASE_MS,
+        ))
+      )
+        throw new Error(`ExpertSession is active in another process: ${this.sessionId}`);
+      this.leaseReleased = false;
+    }
+    await this.assertCloseOwnership();
+    this.startLeaseRenewal();
+    // Confirm Native stop before destroying transports, hooks and registrations.
+    // Release ends this handle's lifetime even though its durable Session stays open.
+    await this.runtimeSessions.closeForDeletion();
+    await this.runtimeSessions.finishDeletion();
+    // A queued close retains custody for its durable closure. Failed cleanup
+    // also retains the heartbeat, sealed admission and Host owner for retry.
+    if (this.closePromise !== undefined) return;
+    // Drain renewal before releasing the claim so an in-flight heartbeat cannot
+    // recreate it. Every failed finalization restores renewal without a state read.
     this.stopLeaseRenewal();
     try {
-      await this.runtimeSessions.clear();
-    } catch (error) {
-      errors.push(error);
-    }
-    if (this.leaseRenewalTask !== undefined) {
-      try {
-        await this.leaseRenewalTask;
-      } catch (error) {
-        errors.push(error);
+      if (this.leaseRenewalTask !== undefined) await this.leaseRenewalTask;
+      if (this.closePromise !== undefined) {
+        this.startLeaseRenewal();
+        return;
       }
-    }
-    try {
+      await this.assertCloseOwnership();
+      if (this.closePromise !== undefined) {
+        this.startLeaseRenewal();
+        return;
+      }
       await this.dependencies.sessions.releaseLease(this.sessionId, this.claimId);
+      this.leaseReleased = true;
     } catch (error) {
-      errors.push(error);
+      this.startLeaseRenewal();
+      throw error;
     }
+    if (this.closePromise !== undefined) return;
     this.controller = undefined;
+    this.resourceReleaseCompleted = true;
     this.onClosed();
-    throwCollectedErrors(errors, "ExpertSession terminal resource release failed.");
   }
 
   async finishDeletion(): Promise<void> {
@@ -1438,6 +1500,10 @@ class ExpertSessionImpl implements ExpertSession {
 
   stopForDeletion(reason?: string): Promise<void> {
     this.freezeForDeletion();
+    return this.stopNativeWork(reason);
+  }
+
+  private stopNativeWork(reason?: string): Promise<void> {
     if (this.stopPromise === undefined) {
       this.processingGeneration += 1;
       this.processing = undefined;
@@ -1462,24 +1528,121 @@ class ExpertSessionImpl implements ExpertSession {
     return this.stopPromise;
   }
 
+  private async waitForReleaseAdmissions(): Promise<boolean> {
+    const signal = this.closeRequested.signal;
+    if (signal.aborted) return false;
+    let onClose!: () => void;
+    const closing = new Promise<false>((resolve) => {
+      onClose = () => resolve(false);
+      signal.addEventListener("abort", onClose, { once: true });
+    });
+    try {
+      // Closing must be able to cancel Native work that an admitted steer is
+      // waiting on; validation cannot hold the cleanup gate until that happens.
+      return await Promise.race([this.waitForPromptAdmissions().then(() => true), closing]);
+    } finally {
+      signal.removeEventListener("abort", onClose);
+    }
+  }
+
+  private runLifecycle(operation: () => Promise<void>): Promise<void> {
+    const running = this.lifecycleTail.then(operation);
+    this.lifecycleTail = running.then(
+      () => undefined,
+      () => undefined,
+    );
+    return running;
+  }
+
+  private async coordinateResourceRelease(operation: () => Promise<void>): Promise<void> {
+    // Reserve admission synchronously even if Native cleanup must queue behind
+    // another lifecycle step. Failed validation releases this reservation.
+    this.pendingResourceReleases += 1;
+    try {
+      try {
+        await this.runLifecycle(async () => {
+          if (this.closePromise !== undefined || this.resourceReleaseCompleted) return;
+          await operation();
+        });
+      } catch (error) {
+        if (this.closePromise === undefined) throw error;
+        // A queued close retries the Native cleanup under the retained claim.
+      }
+      if (this.closePromise !== undefined) await this.closePromise;
+    } finally {
+      this.pendingResourceReleases -= 1;
+    }
+  }
+
   close(reason?: string): Promise<void> {
-    if (this.closePromise === undefined) {
+    if (this.closePromise === undefined || this.closeFailed) {
+      this.closeFailed = false;
       this.paused = true;
-      this.stopLeaseRenewal();
-      this.runtimeSessions.seal();
-      this.closePromise = this.closeInternal(reason);
+      this.deletionFrozen = true;
+      this.closeRequested.abort();
+      // Seal admission immediately; queue ordinary close behind any running
+      // Terminal/Checkpoint teardown to avoid competing cleanup.
+      this.closePromise = this.runLifecycle(async () => {
+        if (this.leaseReleased) {
+          // A completed recoverable release may precede close. Acquire custody
+          // again before changing its durable state; a successor remains fenced.
+          if (
+            !(await this.dependencies.sessions.claimLease(
+              this.sessionId,
+              this.claimId,
+              EXPERT_SESSION_LEASE_MS,
+            ))
+          )
+            throw new Error(`ExpertSession is active in another process: ${this.sessionId}`);
+          this.leaseReleased = false;
+        }
+        await this.assertCloseOwnership();
+        this.startLeaseRenewal();
+        this.runtimeSessions.seal();
+        await this.closeInternal(reason);
+      }).catch((error: unknown) => {
+        this.closeFailed = true;
+        throw error;
+      });
     }
     return this.closePromise;
   }
 
+  private async assertCloseOwnership(): Promise<void> {
+    if (this.leaseError !== undefined) throw this.leaseError;
+    if (this.dependencies.sessions.assertLeaseOwner !== undefined)
+      await this.dependencies.sessions.assertLeaseOwner(this.sessionId, this.claimId);
+    else
+      await this.ownedSessions.transact(this.sessionId, ({ session, prompts }) => ({
+        result: undefined,
+        session,
+        prompts,
+      }));
+  }
+
   private async closeInternal(reason?: string): Promise<void> {
     const errors: unknown[] = [];
+    let ownershipConfirmed = false;
     let stopAttempted = false;
     let stopConfirmed = false;
     try {
+      // A retry must fence a replaced claim before stopping Native work or
+      // cancelling durable Executions belonging to a successor owner.
+      await this.assertCloseOwnership();
+      ownershipConfirmed = true;
       const pending = (await this.getPromptQueue()).filter(
         (prompt) => prompt.status === "queued" || prompt.status === "running",
       );
+      stopAttempted = true;
+      await this.stopNativeWork(reason);
+      stopConfirmed = true;
+      await this.assertCloseOwnership();
+      for (const prompt of pending) {
+        await this.cancelPersistedExecution(
+          prompt.executionId,
+          reason ?? "Execution cancelled because the Session closed.",
+        );
+      }
       await this.ownedSessions.transact(this.sessionId, ({ session, prompts }) => ({
         result: undefined,
         session: {
@@ -1494,37 +1657,37 @@ class ExpertSessionImpl implements ExpertSession {
             : prompt,
         ),
       }));
-      stopAttempted = true;
-      await this.stopForDeletion(reason);
-      stopConfirmed = true;
-      for (const prompt of pending) {
-        await this.cancelPersistedExecution(
-          prompt.executionId,
-          reason ?? "Execution cancelled because the Session closed.",
-        );
-      }
     } catch (error) {
       errors.push(error);
     }
     try {
       // Ordinary closure also releases Runtime resources after native stop;
       // owner deletion performs this cleanup in its separate completion phase.
-      if (stopConfirmed) await this.runtimeSessions.finishDeletion();
-      else if (!stopAttempted) await this.runtimeSessions.close();
+      if (stopConfirmed) {
+        await this.assertCloseOwnership();
+        await this.runtimeSessions.finishDeletion();
+      } else if (ownershipConfirmed && !stopAttempted) {
+        await this.assertCloseOwnership();
+        await this.runtimeSessions.close();
+      }
     } catch (error) {
       errors.push(error);
     }
     if (errors.length === 0) {
       try {
+        await this.assertCloseOwnership();
         const session = await this.getState();
         for (const executionId of session.executionIds) {
           await closeExecutionContexts(this.dependencies.executions, executionId);
         }
+        // Keep the heartbeat until the durable close is confirmed. A failed
+        // commit or diagnostic read must not disable a retained owner's lease.
         await this.ownedSessions.transact(this.sessionId, ({ session, prompts }) => ({
           result: undefined,
           session: closeSessionContexts(session),
           prompts,
         }));
+        this.stopLeaseRenewal();
       } catch (error) {
         errors.push(error);
       }
@@ -1536,18 +1699,15 @@ class ExpertSessionImpl implements ExpertSession {
         errors.push(error);
       }
     }
-    try {
-      await this.dependencies.sessions.releaseLease(this.sessionId, this.claimId);
-    } catch (error) {
-      errors.push(error);
-    }
+    // A failed native stop or cleanup still owns resources. Keep its lease and
+    // application registration so shutdown can retry rather than strand it.
+    throwCollectedErrors(errors, "ExpertSession close failed.");
+    await this.dependencies.sessions.releaseLease(this.sessionId, this.claimId);
     this.controller = undefined;
     this.onClosed();
-    throwCollectedErrors(errors, "ExpertSession close failed.");
   }
 
   private async renewLease(): Promise<void> {
-    if (this.closePromise !== undefined) return;
     let consecutiveFailures = 0;
     const logger = this.dependencies.loggerProvider.createLogger({
       component: "core.expert-session",
@@ -1564,6 +1724,12 @@ class ExpertSessionImpl implements ExpertSession {
         );
         if (this.leaseRenewalStopped) return;
         if (!renewed) {
+          // claimLease rejects closed records. A heartbeat racing the final
+          // close commit still owns its claim until close releases it.
+          if (this.closePromise !== undefined) {
+            await this.assertCloseOwnership();
+            return;
+          }
           await this.failLease(new Error(`ExpertSession lease was lost: ${this.sessionId}`));
           return;
         }
@@ -1629,7 +1795,20 @@ class ExpertSessionImpl implements ExpertSession {
     try {
       await this.controller?.cancel(error.message).catch(() => undefined);
       await this.waitForProcessingShutdown();
-      await this.runtimeSessions.clear().catch(() => undefined);
+      await this.runtimeSessions.closeForDeletion().then(
+        () => {
+          this.leaseLossNativeStopped = true;
+        },
+        () => undefined,
+      );
+      if (this.leaseLossNativeStopped) {
+        await this.runtimeSessions.finishDeletion().then(
+          () => {
+            this.resourceReleaseCompleted = true;
+          },
+          () => undefined,
+        );
+      }
       await this.dependencies.sessions
         .releaseLease(this.sessionId, this.claimId)
         .catch(() => undefined);
@@ -1658,6 +1837,7 @@ class ExpertSessionImpl implements ExpertSession {
   private stopLeaseRenewal(): void {
     this.leaseRenewalStopped = true;
     clearInterval(this.leaseRenewal);
+    this.leaseRenewal = undefined;
   }
 
   async getState(): Promise<ExpertSessionRecord> {
@@ -1919,7 +2099,11 @@ class ExpertSessionImpl implements ExpertSession {
     options: { readonly recovery?: "abandon" | undefined } = {},
   ): Promise<void> {
     assertExecutableDefinition(this.expert);
-    if (this.resourcesReleasing || this.terminalReleaseRequested)
+    if (
+      this.resourcesReleasing ||
+      this.pendingResourceReleases > 0 ||
+      this.terminalReleaseRequested
+    )
       throw new Error(`ExpertSession resources are being released: ${this.sessionId}`);
     if (this.queueRecoveryInFlight)
       throw new SteerDeliveryUncertainError("Queue delivery recovery is already in progress.");
@@ -2256,7 +2440,11 @@ class ExpertSessionImpl implements ExpertSession {
     options: { readonly target?: ExpertSteerTarget | undefined } = {},
   ): Promise<ExpertTurn> {
     assertExecutableDefinition(this.expert);
-    if (this.resourcesReleasing || this.terminalReleaseRequested)
+    if (
+      this.resourcesReleasing ||
+      this.pendingResourceReleases > 0 ||
+      this.terminalReleaseRequested
+    )
       throw new Error(`ExpertSession resources are being released: ${this.sessionId}`);
     const admission = this.steerQueuedPromptInternal(requestId, options);
     this.promptControlAdmissions.add(admission);
@@ -2724,7 +2912,7 @@ class ExpertSessionImpl implements ExpertSession {
     const inFlight = this.strictSteersInFlight.get(requestId);
     if (inFlight !== undefined) {
       if (inFlight.content !== content) {
-        throw new Error(`Prompt idempotency conflict: ${requestId}`);
+        throw new ExpertPromptRejectedError(`Prompt idempotency conflict: ${requestId}`);
       }
       return await inFlight.delivery;
     }
@@ -2752,7 +2940,7 @@ class ExpertSessionImpl implements ExpertSession {
       );
       if (duplicate !== undefined) {
         if (duplicate.content !== content || duplicate.mode !== "steer")
-          throw new Error(`Prompt idempotency conflict: ${requestId}`);
+          throw new ExpertPromptRejectedError(`Prompt idempotency conflict: ${requestId}`);
         if (duplicate.status === "succeeded" && duplicate.deliveryAttempt?.state === "confirmed") {
           return this.createTurn(duplicate.executionId, requestId, "steer", "steer");
         }
@@ -2787,7 +2975,7 @@ class ExpertSessionImpl implements ExpertSession {
         const duplicate = prompts.find((prompt) => prompt.requestId === requestId);
         if (duplicate !== undefined) {
           if (duplicate.content !== content || duplicate.mode !== "steer") {
-            throw new Error(`Prompt idempotency conflict: ${requestId}`);
+            throw new ExpertPromptRejectedError(`Prompt idempotency conflict: ${requestId}`);
           }
           if (
             duplicate.deliveryAttempt?.state === "dispatching" ||

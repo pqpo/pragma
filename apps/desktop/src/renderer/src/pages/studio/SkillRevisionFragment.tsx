@@ -1,3 +1,4 @@
+import { REVISION_USER_REJECTED_ERROR_CODE } from "@pragma/built-in-agents/contracts";
 import {
   ArrowClockwise,
   ArrowLeft,
@@ -117,7 +118,8 @@ export function canRetrySkillRevisionJob(
 ): boolean {
   return (
     (state === "needs_attention" || state === "rejected") &&
-    errorCode !== "skill_revision_base_changed"
+    errorCode !== "skill_revision_base_changed" &&
+    errorCode !== REVISION_USER_REJECTED_ERROR_CODE
   );
 }
 
@@ -195,6 +197,7 @@ export function SkillRevisionDetailFragment(props: {
   readonly canOpenMission: boolean;
   readonly onBack: () => void;
   readonly onApprove: () => void;
+  readonly onReturn: () => void;
   readonly onReject: () => void;
   readonly onRetry: () => void;
   readonly onContinue: () => void;
@@ -263,15 +266,26 @@ export function SkillRevisionDetailFragment(props: {
                     className="primary-button"
                     type="button"
                     disabled={props.busy}
+                    title={t("approveRevisionTooltip")}
                     onClick={props.onApprove}
                   >
                     <Check size={15} aria-hidden="true" />
-                    {t("approveAndPublish")}
+                    {t("approveRevision")}
                   </button>
                   <button
                     className="secondary-button"
                     type="button"
                     disabled={props.busy}
+                    title={t("returnRevisionTooltip")}
+                    onClick={props.onReturn}
+                  >
+                    {t("returnRevision")}
+                  </button>
+                  <button
+                    className="secondary-button"
+                    type="button"
+                    disabled={props.busy}
+                    title={t("rejectRevisionTooltip")}
                     onClick={props.onReject}
                   >
                     <X size={15} aria-hidden="true" />
@@ -291,7 +305,8 @@ export function SkillRevisionDetailFragment(props: {
                   {t("retryRevision")}
                 </button>
               ) : null}
-              {job.state === "needs_attention" && attentionActions.canContinue ? (
+              {["editing", "needs_attention"].includes(job.state) &&
+              attentionActions.canContinue ? (
                 <button
                   className="secondary-button"
                   type="button"
@@ -433,7 +448,7 @@ export function SkillRevisionFragment(props: {
 
   const act = async (
     entry: SkillRevisionEntry,
-    action: "approve" | "reject" | "retry" | "delete",
+    action: "approve" | "return" | "reject" | "retry" | "delete",
   ) => {
     const api = desktopApi();
     if (api === undefined) return;
@@ -441,6 +456,7 @@ export function SkillRevisionFragment(props: {
     try {
       const input = { jobId: entry.job.id, expectedRevision: entry.job.revision };
       if (action === "approve") await api.approveSkillRevision(input);
+      else if (action === "return") await api.returnSkillRevision(input);
       else if (action === "reject") await api.rejectSkillRevision(input);
       else if (action === "retry") await api.retrySkillRevision(input);
       else await api.deleteSkillRevision(input);
@@ -451,6 +467,7 @@ export function SkillRevisionFragment(props: {
       }
       await load();
     } catch (cause) {
+      await load();
       setError(errorMessage(cause));
     } finally {
       setBusyId(undefined);
@@ -481,6 +498,7 @@ export function SkillRevisionFragment(props: {
         canOpenMission={props.onOpenMission !== undefined}
         onBack={() => setSelectedJobId(undefined)}
         onApprove={() => void act(selectedEntry, "approve")}
+        onReturn={() => void act(selectedEntry, "return")}
         onReject={() => void act(selectedEntry, "reject")}
         onRetry={() => void act(selectedEntry, "retry")}
         onContinue={() =>

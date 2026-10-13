@@ -209,7 +209,15 @@ export async function createStableSkillSubmission(input: {
     try {
       await rename(temporary, target);
     } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
+      if (!["EEXIST", "ENOTEMPTY"].includes((error as NodeJS.ErrnoException).code ?? ""))
+        throw error;
+      const existing = await scanSkillWorkingTree(target);
+      if (existing.hash !== before.hash) {
+        throw new SkillWorkingTreeError(
+          "skill_revision_working_tree_changed",
+          "The existing Skill submission differs from its content hash.",
+        );
+      }
     }
     return { path: target, snapshot: before };
   } finally {

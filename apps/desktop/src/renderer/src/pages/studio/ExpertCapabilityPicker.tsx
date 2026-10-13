@@ -1,4 +1,10 @@
 import {
+  clearCapabilityToolSelection,
+  toolApprovalKey,
+  updateResourceToolSelection,
+} from "../../../../shared/expert-tool-selection.ts";
+export { updateResourceToolSelection } from "../../../../shared/expert-tool-selection.ts";
+import {
   BookOpenText,
   CaretDown,
   Database,
@@ -20,6 +26,7 @@ import {
 import { ContextStorePickerDialog } from "../../components/ContextStorePickerDialog.tsx";
 import {
   expertCapabilityCounts,
+  expertResourceToolRefs,
   fixedSkillCapabilityIds,
   type ExpertDraft,
   type ExpertRecord,
@@ -283,8 +290,9 @@ export function ExpertCapabilityPicker(props: {
     };
   }, [activePicker]);
 
-  const selectedResourceNames = props.resourceTools.flatMap((binding) => {
-    const resource = resourcePickerItems.find((candidate) => candidate.ref === binding.target?.ref);
+  const selectedResourceRefs = props.resourceTools.flatMap(expertResourceToolRefs);
+  const selectedResourceNames = selectedResourceRefs.flatMap((ref) => {
+    const resource = resourcePickerItems.find((candidate) => candidate.ref === ref);
     return resource ? [resource.name] : [];
   });
   const selectedStoreNames = props.contextStoreMounts.flatMap((mount) => {
@@ -317,7 +325,7 @@ export function ExpertCapabilityPicker(props: {
     {
       id: "resources",
       icon: Network,
-      selected: props.resourceTools.length,
+      selected: selectedResourceRefs.length,
       available: resourcePickerItems.length,
       names: selectedResourceNames,
     },
@@ -357,12 +365,17 @@ export function ExpertCapabilityPicker(props: {
           props.capabilityReferences.filter((reference) => reference.kind !== "skill"),
         );
         break;
-      case "tools":
-        props.onToolApprovalsChange({});
-        props.onCapabilityReferencesChange(
-          props.capabilityReferences.filter((reference) => reference.kind !== "tools"),
-        );
+      case "tools": {
+        const next = clearCapabilityToolSelection({
+          capabilityReferences: props.capabilityReferences,
+          toolApprovals: props.toolApprovals,
+          capabilities: props.capabilities,
+          retainedApprovalKeys: fixedToolNames,
+        });
+        props.onToolApprovalsChange(next.toolApprovals);
+        props.onCapabilityReferencesChange(next.capabilityReferences);
         break;
+      }
       case null:
         break;
     }
@@ -370,7 +383,7 @@ export function ExpertCapabilityPicker(props: {
 
   const activeSelectedCount =
     activePicker === "resources"
-      ? props.resourceTools.length
+      ? selectedResourceRefs.length
       : activePicker === "context-stores"
         ? props.contextStoreMounts.length
         : activePicker === "skills"
@@ -399,7 +412,7 @@ export function ExpertCapabilityPicker(props: {
           <span>
             {t("selectedCount", {
               count:
-                props.resourceTools.length +
+                selectedResourceRefs.length +
                 props.contextStoreMounts.length +
                 selectedSkillCount +
                 selectedToolCount,
@@ -445,35 +458,19 @@ export function ExpertCapabilityPicker(props: {
           title={pickerCopy.resources.title}
           description={pickerCopy.resources.description}
           items={resourcePickerItems}
-          selectedRefs={props.resourceTools.flatMap((binding) =>
-            binding.target === undefined ? [] : [binding.target.ref],
-          )}
+          selectedRefs={selectedResourceRefs}
           selectionMode="multiple"
           searchPlaceholder={pickerCopy.resources.searchPlaceholder}
-          onSelectedRefsChange={(refs) =>
-            props.onResourceToolsChange(
-              refs.flatMap((ref) => {
-                const existing = props.resourceTools.find((binding) => binding.target?.ref === ref);
-                if (existing !== undefined) return [existing];
-                const resource = resourcePickerItems.find((candidate) => candidate.ref === ref);
-                if (resource === undefined) return [];
-                return [
-                  {
-                    adapter: "pragma.tool.call@v1",
-                    target: { ref },
-                    tool: {
-                      name: `call_${resource.kind}_${ref.slice(ref.indexOf(":") + 1)}`.replace(
-                        /[^A-Za-z0-9_-]/g,
-                        "_",
-                      ),
-                      description: `Call ${resource.name}.`,
-                      approval: "ask",
-                    },
-                  },
-                ];
-              }),
-            )
-          }
+          onSelectedRefsChange={(refs) => {
+            const next = updateResourceToolSelection(
+              props.resourceTools,
+              refs,
+              resourcePickerItems,
+              props.toolApprovals,
+            );
+            props.onResourceToolsChange(next.resourceTools);
+            props.onToolApprovalsChange(next.toolApprovals);
+          }}
           onClose={closePicker}
         />
       ) : activePicker === "context-stores" ? (
@@ -862,9 +859,4 @@ export function ToolResults(props: {
       ) : null}
     </div>
   );
-}
-
-function toolApprovalKey(runtimeKey: string, toolName: string): string {
-  const sanitized = toolName.replace(/[^a-zA-Z0-9_]/g, "_").replace(/_+/g, "_") || "tool";
-  return `mcp_${runtimeKey}_${sanitized}`;
 }

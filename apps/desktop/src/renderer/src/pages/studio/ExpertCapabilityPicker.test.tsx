@@ -12,7 +12,9 @@ import {
   ToolResults,
   SkillResults,
   updateToolSelection,
+  updateResourceToolSelection,
 } from "./ExpertCapabilityPicker.tsx";
+import { clearCapabilityToolSelection } from "../../../../shared/expert-tool-selection.ts";
 import type { ExpertRecord } from "./studio-model.ts";
 
 const toolCapability = {
@@ -219,7 +221,7 @@ describe("ExpertCapabilityPicker", () => {
     expect(html).not.toContain("Edit selection");
   });
 
-  it("includes built-in experts once in the callable resource summary", () => {
+  it("counts and names grouped built-in experts without duplicate project copies", () => {
     const duplicateResource = PragmaExpertResourceSchema.parse({
       ...invocableResource,
       metadata: {
@@ -228,22 +230,23 @@ describe("ExpertCapabilityPicker", () => {
         name: "Stale project copy",
       },
     });
+    const skillExpert: ExpertRecord = {
+      ...builtInExpert,
+      id: "0000000000sk1rev",
+      ref: "expert:0000000000sk1rev",
+      name: "Skill Revision Agent",
+    };
     const html = renderToStaticMarkup(
       <ExpertCapabilityPicker
         currentExpertId="current"
-        experts={[builtInExpert]}
+        experts={[builtInExpert, skillExpert]}
         resources={[duplicateResource]}
         contextStores={[]}
         capabilities={[]}
         resourceTools={[
           {
-            adapter: "pragma.tool.call@v1",
-            target: { ref: builtInExpert.ref! },
-            tool: {
-              name: "call_store_revision_agent",
-              description: "Call Store Revision Agent.",
-              approval: "ask",
-            },
+            adapter: "pragma.tool.delegate@v1",
+            targets: [{ ref: builtInExpert.ref! }, { ref: skillExpert.ref! }],
           },
         ]}
         contextStoreMounts={[]}
@@ -258,7 +261,9 @@ describe("ExpertCapabilityPicker", () => {
 
     expect(html).toContain("Store Revision Agent");
     expect(html).not.toContain("Stale project copy");
-    expect(html).toContain("1 available");
+    expect(html).toContain("Skill Revision Agent");
+    expect(html).toContain("2 available");
+    expect(html).toContain("2 selected");
   });
 
   it("searches tool names, descriptions, and their parent service", () => {
@@ -365,3 +370,172 @@ describe("ExpertCapabilityPicker", () => {
     expect(selection.toolApprovals).toEqual({});
   });
 });
+
+it("preserves grouped delegate policy when reselecting or removing a target", () => {
+  const first = "expert:0000000000st0rev" as const;
+  const second = "expert:0000000000sk1rev" as const;
+  const bindings = [
+    {
+      adapter: "pragma.tool.delegate@v1",
+      targets: [{ ref: first }, { ref: second }],
+      policy: { maxConcurrency: 4, maxDepth: 3, runtimes: {} },
+    },
+  ];
+  expect(updateResourceToolSelection(bindings, [first, second], []).resourceTools).toEqual(
+    bindings,
+  );
+  expect(updateResourceToolSelection(bindings, [second], []).resourceTools).toEqual([
+    { ...bindings[0], targets: [{ ref: second }] },
+  ]);
+  expect(updateResourceToolSelection(bindings, [], []).resourceTools).toEqual([]);
+});
+
+it("creates one approved launcher for ten Experts and keeps Flow calls separate", () => {
+  const experts = Array.from({ length: 10 }, (_, index) => ({
+    ref: `expert:000000000000000${index}`,
+    name: `Expert ${index}`,
+    kind: "expert" as const,
+  }));
+  const flow = { ref: "flow:0000000000000001", name: "Flow", kind: "flow" as const };
+  const next = updateResourceToolSelection(
+    [],
+    [...experts.map((expert) => expert.ref), flow.ref],
+    [...experts, flow],
+  );
+  expect(next.resourceTools).toEqual([
+    expect.objectContaining({
+      adapter: "pragma.tool.call@v1",
+      target: { ref: flow.ref },
+      tool: expect.objectContaining({ approval: "ask" }),
+    }),
+    {
+      adapter: "pragma.tool.delegate@v1",
+      targets: experts.map(({ ref }) => ({ ref })),
+      policy: { maxConcurrency: 4, maxDepth: 3, runtimes: {} },
+    },
+  ]);
+  expect(next.toolApprovals).toEqual({ spawn_expert: "ask", continue_expert: "ask" });
+});
+
+it("extends an existing launcher without changing its policy or explicit approvals", () => {
+  const first = "expert:0000000000st0rev";
+  const second = "expert:0000000000sk1rev";
+  const bindings = [
+    {
+      adapter: "pragma.tool.delegate@v1",
+      target: { ref: first },
+      policy: { maxConcurrency: 2, maxDepth: 7, runtimes: {} },
+    },
+  ];
+  const approvals = {
+    spawn_expert: "required" as const,
+    continue_expert: "none" as const,
+    edit_expert_context: "ask" as const,
+  };
+  const next = updateResourceToolSelection(
+    bindings,
+    [first, second],
+    [{ ref: second, name: "Skill Revision Agent", kind: "expert" }],
+    approvals,
+  );
+  expect(next).toEqual({
+    resourceTools: [
+      {
+        adapter: bindings[0]!.adapter,
+        policy: bindings[0]!.policy,
+        targets: [{ ref: first }, { ref: second }],
+      },
+    ],
+    toolApprovals: approvals,
+  });
+});
+
+it("readds removed Revision Experts through delegation instead of resource calls", () => {
+  const ref = "expert:0000000000st0rev";
+  const removed = updateResourceToolSelection(
+    [{ adapter: "pragma.tool.delegate@v1", targets: [{ ref }] }],
+    [],
+    [],
+  );
+  const readded = updateResourceToolSelection(
+    removed.resourceTools,
+    [ref],
+    [{ ref, name: "Store Revision Agent", kind: "expert" }],
+    removed.toolApprovals,
+  );
+  expect(readded.resourceTools).toEqual([
+    expect.objectContaining({ adapter: "pragma.tool.delegate@v1", targets: [{ ref }] }),
+  ]);
+  expect(readded.toolApprovals).toEqual({ spawn_expert: "ask", continue_expert: "ask" });
+});
+
+it("removes Runtime overrides for deselected Experts while retaining valid overrides", () => {
+  const first = "expert:0000000000st0rev";
+  const second = "expert:0000000000sk1rev";
+  const profile = "runtime-profile:0000000000000001";
+  const bindings = [
+    {
+      adapter: "pragma.tool.delegate@v1",
+      targets: [{ ref: first }, { ref: second }],
+      policy: {
+        maxConcurrency: 2,
+        maxDepth: 7,
+        runtimes: { "0000000000st0rev": profile, "0000000000sk1rev": profile },
+      },
+    },
+  ];
+  expect(updateResourceToolSelection(bindings, [second], []).resourceTools).toEqual([
+    {
+      adapter: bindings[0]!.adapter,
+      targets: [{ ref: second }],
+      policy: { maxConcurrency: 2, maxDepth: 7, runtimes: { "0000000000sk1rev": profile } },
+    },
+  ]);
+  const third = "expert:0000000000000003";
+  expect(
+    updateResourceToolSelection(bindings, [third], [{ ref: third, name: "Third", kind: "expert" }])
+      .resourceTools,
+  ).toEqual([
+    {
+      adapter: bindings[0]!.adapter,
+      targets: [{ ref: third }],
+      policy: { maxConcurrency: 2, maxDepth: 7, runtimes: {} },
+    },
+  ]);
+});
+
+it.each(["ask", "required", "none"] as const)(
+  "clears only selected Capability approvals and retains %s delegation overrides",
+  (mode) => {
+    const result = clearCapabilityToolSelection({
+      capabilities: [toolCapability],
+      capabilityReferences: [
+        {
+          kind: "tools",
+          capabilityId: toolCapability.manifest.id,
+          toolNames: ["searchCodeWiki", "getCodeWikiStructure"],
+        },
+        { kind: "skill", capabilityId: "skill" },
+      ],
+      retainedApprovalKeys: ["mcp_codewiki_getCodeWikiStructure"],
+      toolApprovals: {
+        mcp_codewiki_searchCodeWiki: "ask",
+        mcp_codewiki_getCodeWikiStructure: "required",
+        mcp_other_searchCodeWiki: "required",
+        spawn_expert: mode,
+        continue_expert: mode,
+        edit_expert_context: "required",
+      },
+    });
+    expect(result).toEqual({
+      capabilityReferences: [{ kind: "skill", capabilityId: "skill" }],
+      toolApprovals: {
+        mcp_codewiki_getCodeWikiStructure: "required",
+        mcp_other_searchCodeWiki: "required",
+        spawn_expert: mode,
+        continue_expert: mode,
+        edit_expert_context: "required",
+      },
+    });
+  },
+);

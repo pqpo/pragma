@@ -67,3 +67,75 @@ status. Manual records expose the saved revision, its parent, timestamp, and cha
 entries. File previews use the same metadata, size/line limits, binary handling, and line-diff view as
 Agent reviews; bytes are loaded from the two published immutable revisions. Directory-only edits are
 recorded even when the existing file-content snapshot hash is unchanged.
+
+## Return a review for changes (#383)
+
+The review has three distinct actions: approve applies the candidate, return for changes preserves
+the draft and returns it to `editing`, and reject ends the revision without applying it. Returning
+retains the same draft/job identities, request, base, summary, and original Mission association; it
+clears the submission pin so the Agent can inspect, edit, and submit the same candidate repeatedly.
+The Host restores the immutable submitted package into the original Workspace draft directory and
+restores ownership from the job's Mission before exposing a writable draftPath. The original Agent
+uses `skill_revision_start` with that draftId to remount it; a different Mission cannot claim it.
+Repeated submissions with the same content reuse the verified immutable snapshot.
+
+The selected draft and job are updated under their existing aggregate locks with a versioned
+`rework.json` journal in that draft's authority directory. First owner access replays interrupted
+updates without overwriting an already restored editable tree. Future journals fail closed and
+remain available for diagnosis; unrelated owner access continues. Existing draft/job schemas and
+state names are unchanged, so existing persisted records require no migration. This adds an
+explicit review operation and does not reinterpret prior rejected records.
+
+Pragma delegates managed content changes to the corresponding Revision Agent before trying any
+write. Formal content is read-only to Agents; only drafts are writable. Human approval remains
+the publication boundary. Continuation carries the draftId and review feedback to the original
+Revision Agent conversation rather than creating a replacement.
+
+### CR follow-up for #383
+
+Submission still removes the editable workspace tree and Mission mount. Returning for changes
+replays a Host callback before retiring the rework journal. The callback restores a Skill mount
+only when that candidate exactly matches the persisted Session's original Context fingerprint.
+This restores the original compilation identity and Native Session for both retained owners and
+cold recovery, while leaving newly changed Mission authority untouched. The callback runs outside
+Skill aggregate locks to avoid an inverse dependency on Mission fencing and resource resolution.
+
+Unreadable rework journals quarantine only their own list entries with a stable recovery diagnostic;
+healthy drafts/jobs and background processing continue. Reject and return validate and mutate the
+same draft/job pair under the existing locks so concurrent review decisions cannot leave a returned
+job paired with a rejected draft. Tests cover retained/cold Native Sessions over two review returns,
+interrupted Host callbacks, invalid journal isolation, and competing review decisions.
+
+### PR #384 review corrections
+
+New deliberate rejections persist `revision_user_rejected` in the existing Job error field.
+All retry/resume entries and the review UI treat that reason as terminal; a new revision requires
+a new draft. Historical stopped/rejected records without that reason keep their existing recovery
+semantics. No stored Schema or version changes, or reinterpretation of supported historical data,
+are required. A rejected Store draft remains read-only in `needs_attention`, with its Job retaining
+the terminal reason; it no longer counts as an actionable unmerged draft.
+
+When the original Skill Mission was deleted during review, the return journal completes by
+clearing only that stale Mission ownership and setting the Job to `needs_attention` with
+`mission_orphaned`. The editable draft and files remain available. No Mission is automatically
+created; the user must explicitly choose a new Mission to continue. The amended journal is
+persisted before either owner record is reconciled and remains replayable after a crash.
+
+If a restore callback fails transiently, retrying the same return while its journal still exists
+finishes recovery and returns the resulting Job. The journal identifies the exact source Job
+revision; unrelated or already completed stale requests continue to conflict. Review-action
+failures refresh the UI from persisted state before displaying the error.
+
+Opt-in real-model validation uses isolated temporary resources and the existing authenticated
+Codex Runtime. The Store and Skill Mission cases each perform two returns/resubmissions; the Skill
+case also compares persisted Native Session refs. A separate selection harness loads the default
+Pragma instructions and tool descriptions, supplies controlled delegate receipts, and verifies
+that the model calls the matching Revision tool before a direct management write. It does not
+claim to test the complete Pragma-to-Revision compiler/Invocation chain.
+
+```sh
+PRAGMA_LOG_LEVEL=error PRAGMA_REVISION_REAL_SMOKE=1 PRAGMA_REVISION_REAL_RUNTIME=codex \
+  pnpm --filter @pragma/desktop exec vitest run \
+  src/main/features/missions/desktop-mission-adapter.test.ts \
+  -t 'unmounted target inside the original Mission from expert:0000000000st0rev|Skill revision Session.*cold=false|default Pragma instructions'
+```

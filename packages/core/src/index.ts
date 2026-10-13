@@ -63,6 +63,7 @@ export {
 } from "./execution/expert-runner.ts";
 export * from "./execution/expert-session-store.ts";
 export * from "./execution/expert-session.ts";
+export * from "./execution/expert-prompt-rejected-error.ts";
 export * from "./execution/steer-delivery-error.ts";
 export * from "./expert-tools-mcp-server.ts";
 export * from "./flow/flow-execution.ts";

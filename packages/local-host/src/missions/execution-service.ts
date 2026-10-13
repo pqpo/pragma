@@ -546,6 +546,25 @@ export function createLocalHostMissionExecutionService(
     executions: executionStore,
     sessions: expertSessionStore,
     owners: executionOwner,
+    preparePromptAttachments: async (input) => {
+      if (input.attachmentMessageId !== undefined)
+        return await options.missions.getPromptAttachments(
+          input.missionId,
+          input.attachmentMessageId,
+        );
+      const attachments = input.options.attachments ?? [];
+      if (attachments.length === 0) return attachments;
+      return await options.missions.preparePromptAttachments(input.missionId, {
+        id: input.options.requestId,
+        content: input.content,
+        attachments: [...attachments],
+        createdAt: input.requestedAt ?? new Date().toISOString(),
+      });
+    },
+    discardPromptAttachments: async (input) => {
+      if (input.attachmentMessageId === undefined && (input.options.attachments?.length ?? 0) > 0)
+        await options.missions.discardPromptAttachments(input.missionId, input.options.requestId);
+    },
   });
   const sessionService = executionOwner;
   const executorMetadataCache = new Map<string, ExecutorMetadata>();
@@ -2294,9 +2313,6 @@ export function createLocalHostMissionExecutionService(
         const inputMessageId = recoverable
           ? mission.execution!.inputMessageId
           : mission.initialMessageId;
-        const promptAttachments = recoverable
-          ? []
-          : await options.missions.getAttachments(mission.id);
         if (!lifecycleService.isRunGenerationCurrent(mission.id, runGeneration)) {
           throw createIntegrationError({
             code: "MISSION_FENCING_REJECTED",
@@ -2320,7 +2336,7 @@ export function createLocalHostMissionExecutionService(
                     `Mission goal: ${mission.goal}`,
                   ].join("\n")
                 : mission.goal,
-              ...(promptAttachments.length === 0 ? {} : { attachments: promptAttachments }),
+              ...(recoverable ? {} : { attachmentMessageId: inputMessageId }),
             },
             ...(mission.execution === undefined
               ? {}
@@ -2666,10 +2682,9 @@ export function createLocalHostMissionExecutionService(
         const session = sessionService.session(mission.id)!;
         const promptAttachments = input.attachments ?? [];
         await publishPromptQueue(mission);
-        // Core owns acceptance and idempotency. Project the user message only
-        // after Core accepts it so a rejected strict steer cannot leave an orphan
-        // in the Mission timeline. Replaying an accepted Inbox command is safe:
-        // both session.prompt and appendUserMessage are keyed by requestId.
+        // Prepared attachment files have stable Runtime paths, but the user
+        // message and canonical manifest are published only after Core acceptance.
+        // Both writes are keyed by requestId for Inbox and transaction recovery.
         const userMessage = await options.missions.appendUserMessage(mission.id, {
           id: input.requestId,
           content: input.content,

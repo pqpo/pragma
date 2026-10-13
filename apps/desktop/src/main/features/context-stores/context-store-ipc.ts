@@ -171,6 +171,11 @@ export function installContextStoreHandlers(
       revisions.scheduleProcessing();
       return result;
     });
+    ipcMain.handle("context-store-revisions:return", async (_event, input: unknown) => {
+      const parsed = ContextStoreRevisionJobRefSchema.parse(input);
+      const result = await revisions.returnForRework(parsed.jobId, parsed.expectedRevision);
+      return result;
+    });
     ipcMain.handle("context-store-revisions:reject", async (_event, input: unknown) => {
       const parsed = ContextStoreRevisionJobRefSchema.parse(input);
       const result = await revisions.reject(parsed.jobId, parsed.expectedRevision);

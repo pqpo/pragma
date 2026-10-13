@@ -1949,12 +1949,23 @@ it("assembles the production CLI grants and hooks with no selected management to
           toolApprovals: {},
         },
       },
-      value: f.context.agent,
+      value: await defineExpert({
+        id: ref.slice("expert:".length),
+        name: "Delegate",
+        description: "Test",
+        scope: "Test",
+        tags: [],
+        workspace: f.root,
+      }),
     }),
   });
   expect(compiled.value.tools?.map((tool) => tool.name)).toEqual([
-    "call_store_revision_agent",
-    "call_skill_revision_agent",
+    "spawn_expert",
+    "continue_expert",
+    "list_agents",
+    "wait_experts",
+    "steer_expert",
+    "interrupt_expert",
   ]);
   expect(compiled.value.skills?.skills).toHaveLength(1);
   expect(prepare).toHaveBeenCalledWith({ cacheRoot: join(f.root, "cache") });

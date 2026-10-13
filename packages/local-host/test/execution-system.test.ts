@@ -1,4 +1,4 @@
-import { mkdtemp, readdir, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -41,6 +41,7 @@ import {
   type ExpertAgentManagedTool,
   type ExpertAgentToolCallResult,
   type FlowExecution,
+  type ExpertSession,
   type RuntimeNativeSessionContext,
   type RuntimeModelSelection,
   type RuntimeUsageObservation,
@@ -64,6 +65,16 @@ async function createTemporaryHome(prefix: string): Promise<string> {
   const home = await mkdtemp(join(tmpdir(), prefix));
   temporaryHomes.push(home);
   return home;
+}
+
+// The fake Runtime has no process to terminate. A stop error alone does not
+// simulate process death: stop its heartbeat and expire the authoritative lease
+// explicitly, so recovery assertions exercise a departed owner.
+async function simulateSessionProcessExit(home: string, session: ExpertSession): Promise<void> {
+  session.freezeForDeletion();
+  const path = new PragmaPaths({ pragmaHome: home }).expertSessionLease(session.sessionId);
+  const lease = JSON.parse(await readFile(path, "utf8")) as Record<string, unknown>;
+  await writeFile(path, JSON.stringify({ ...lease, expiresAt: new Date(0).toISOString() }));
 }
 
 async function waitForTemporaryHomesToQuiesce(): Promise<void> {
@@ -153,6 +164,7 @@ interface FakeRuntimeOptions {
   readonly failSteer?: boolean;
   readonly failQuery?: string;
   readonly turnGate?: Promise<void>;
+  readonly onTurnStarted?: () => void;
   readonly onSteer?: () => void;
   readonly reconcileSteer?: () => Promise<"delivered" | "not_dispatched" | "uncertain">;
   readonly onWait?: () => void;
@@ -196,6 +208,7 @@ function createFakeRuntime(options: FakeRuntimeOptions = {}) {
       stats?.turnAttachmentPaths.push(turn.attachments.map((attachment) => attachment.path));
       const executionId = session.context.request.executionContext?.executionId;
       if (stats !== undefined && executionId !== undefined) stats.executionIds.push(executionId);
+      options.onTurnStarted?.();
       if (turn.rawQuery === "active") await options.turnGate;
       const delayMs = options.delayMsByAgent?.[session.context.agent.id] ?? options.delayMs;
       if (delayMs !== undefined) {
@@ -980,6 +993,7 @@ describe("ExpertSession", { timeout: 30_000 }, () => {
     const persisted = await session.getState();
     expect(persisted.contexts[persisted.rootContextId]?.snapshot).toBeDefined();
     await expect(session.close()).rejects.toThrow("simulate process exit");
+    await simulateSessionProcessExit(home, session);
 
     const recoveredStats = createFakeRuntimeStats();
     const recoveryApp = createPragma({
@@ -1599,6 +1613,7 @@ describe("ExpertSession", { timeout: 30_000 }, () => {
         expect.objectContaining({ message: "simulated process cleanup failure" }),
       ]),
     });
+    await simulateSessionProcessExit(home, session);
     const recoveredStats = createFakeRuntimeStats();
     const recoveryApp = createPragma({
       pragmaHome: home,
@@ -1761,7 +1776,7 @@ describe("ExpertSession", { timeout: 30_000 }, () => {
     expect((await failedTurn.getState()).usage).toEqual(perTurnUsage);
   });
 
-  it("releases the lease and leaves the session recoverable when Runtime cleanup fails", async () => {
+  it("retains ownership after Runtime stop fails and recovers after the owner process exits", async () => {
     const { home, app, expert } = await trackedFixture({ closeError: "close failed" });
     const session = await app.experts.createSession(expert);
     await (
@@ -1776,6 +1791,10 @@ describe("ExpertSession", { timeout: 30_000 }, () => {
       executions: recoveryExecutions,
       pragmaHome: home,
     });
+    await expect(
+      durableRecoverySessions.claimLease(session.sessionId, "competing-owner", 30_000),
+    ).resolves.toBe(false);
+    await simulateSessionProcessExit(home, session);
     let recoveryLeaseClaims = 0;
     const recoveryApp = createPragma({
       pragmaHome: home,
@@ -1840,13 +1859,17 @@ describe("ExpertSession", { timeout: 30_000 }, () => {
       const turnGate = new Promise<void>((resolve) => {
         releaseTurn = resolve;
       });
+      let markTurnStarted!: () => void;
+      const turnStarted = new Promise<void>((resolve) => {
+        markTurnStarted = resolve;
+      });
       const stats = createFakeRuntimeStats();
       const app = createPragma({
         pragmaHome: home,
         executionStore: executions,
         expertSessionStore: sessions,
         runtimes: createStaticRuntimeResolver({
-          runtimes: [createFakeRuntime({ stats, turnGate })],
+          runtimes: [createFakeRuntime({ stats, turnGate, onTurnStarted: markTurnStarted })],
           defaultRuntimeId: "fake",
         }),
         loggerProvider: createNoopLoggerProvider(),
@@ -1884,7 +1907,10 @@ describe("ExpertSession", { timeout: 30_000 }, () => {
         const session = await app.experts.createSession(expert);
         createdSession = session;
         const active = await session.prompt("active", { requestId: "active" });
-        await vi.waitFor(() => expect(stats.executionIds).toHaveLength(1));
+        // Runtime preparation includes durable worker I/O; synchronize on admission,
+        // rather than assuming the CI runner can complete it within a polling timeout.
+        await turnStarted;
+        expect(stats.executionIds).toHaveLength(1);
         const ownerClaimId = claimLease.mock.calls[0]![1];
         if (takeover) {
           const read = executions.get.bind(executions);

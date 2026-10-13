@@ -88,6 +88,8 @@ export const emptyDraft = (random: () => number = Math.random): ExpertDraft => (
   tagInput: "",
 });
 
+export { expertResourceToolRefs } from "../../../../shared/expert-tool-selection.ts";
+
 export function toExpertRecord(definition: ExpertDefinition): ExpertRecord {
   return {
     id: definition.id,

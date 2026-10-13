@@ -34,7 +34,12 @@ import {
 } from "../../components/MemoryStoreBrowser.tsx";
 import { MarkdownContent } from "../../components/MarkdownContent.tsx";
 import { ProfiledExpertAvatar } from "../../components/ProfiledExpertAvatar.tsx";
-import { fixedSkillCapabilityIds, isBuiltInExpert, type ExpertRecord } from "./studio-model.ts";
+import {
+  expertResourceToolRefs,
+  fixedSkillCapabilityIds,
+  isBuiltInExpert,
+  type ExpertRecord,
+} from "./studio-model.ts";
 import { errorMessage } from "../../lib/errors.ts";
 import { runtimeDisplayName } from "../../lib/runtime-display.ts";
 import {
@@ -260,14 +265,16 @@ export function ExpertDetailFragment(props: {
     }
     return t("runtimeDefault");
   })();
-  const selectedResources = props.expert.resourceTools.map((binding) => {
-    const expert = props.experts.find((candidate) => candidate.ref === binding.target?.ref);
-    if (expert !== undefined) return expert.name;
-    const resource = props.resources.find(
-      (candidate) => canonicalPragmaResourceRef(candidate) === binding.target?.ref,
-    );
-    return resource?.metadata.name ?? binding.target?.ref ?? t("notConfigured");
-  });
+  const selectedResources = props.expert.resourceTools
+    .flatMap(expertResourceToolRefs)
+    .map((ref) => {
+      const expert = props.experts.find((candidate) => candidate.ref === ref);
+      if (expert !== undefined) return expert.name;
+      const resource = props.resources.find(
+        (candidate) => canonicalPragmaResourceRef(candidate) === ref,
+      );
+      return resource?.metadata.name ?? t("unavailable");
+    });
   const fixedSkillIds = fixedSkillCapabilityIds(props.expert.persisted?.opaqueCapabilities);
   const selectedSkills = [
     ...fixedSkillIds.map((id) => {

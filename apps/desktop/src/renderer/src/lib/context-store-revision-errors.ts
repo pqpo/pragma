@@ -1,3 +1,5 @@
+import { REVISION_USER_REJECTED_ERROR_CODE } from "@pragma/built-in-agents/contracts";
+
 import { errorMessage } from "./errors.ts";
 
 export function localizedContextStoreRevisionError(
@@ -6,6 +8,8 @@ export function localizedContextStoreRevisionError(
 ): string {
   const details = readErrorDetails(error);
   const message = details.message;
+
+  if (details.code === REVISION_USER_REJECTED_ERROR_CODE) return translate("revisionUserRejected");
 
   if (
     details.code === "model_not_configured" ||

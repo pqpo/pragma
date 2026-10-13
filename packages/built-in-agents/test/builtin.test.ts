@@ -180,9 +180,19 @@ describe("built-in Pragma Agent DSL", () => {
         },
       },
     });
-    expect(compiled.value.tools?.map((tool) => tool.name)).toHaveLength(2);
-    expect(compiled.value.tools?.map((tool) => tool.name)).toContain("call_store_revision_agent");
-    expect(compiled.value.tools?.map((tool) => tool.name)).toContain("call_skill_revision_agent");
+    expect(compiled.value.tools?.map((tool) => tool.name)).toEqual([
+      "spawn_expert",
+      "continue_expert",
+      "list_agents",
+      "wait_experts",
+      "steer_expert",
+      "interrupt_expert",
+    ]);
+    for (const name of ["spawn_expert", "continue_expert"]) {
+      expect(compiled.value.tools?.find((tool) => tool.name === name)?.approval).toEqual({
+        mode: "ask",
+      });
+    }
     for (const name of [
       ...CLI_MIGRATED_AUTHORING_TOOLS,
       "create_flow_draft",
@@ -206,6 +216,11 @@ describe("built-in Pragma Agent DSL", () => {
     expect(compiled.value.instructions).toContain("Your name is Pragma");
     expect(compiled.value.instructions).toContain("identify yourself as Pragma");
     expect(compiled.value.instructions).toContain("default general-purpose Agent");
+    expect(compiled.value.instructions).toContain("delegate immediately using");
+    expect(compiled.value.instructions).toContain(
+      "Formal Store content and Skill packages are read-only",
+    );
+    expect(compiled.value.instructions).toContain("continue_expert on the original Revision Agent");
     expect(compiled.value.instructions).toContain("not the limit of your role");
 
     for (const ref of [
@@ -243,9 +258,33 @@ describe("built-in Pragma Agent DSL", () => {
       expect(hidden.value.tools ?? []).toEqual([]);
     }
 
+    let approved = false;
+    const approvalRequests: string[] = [];
+    const spawnExpert = vi.fn(async () => ({
+      contextId: "revision-context",
+      invocationId: "revision-first",
+      status: "queued",
+    }));
+    const continueExpert = vi.fn(async () => ({
+      contextId: "revision-context",
+      invocationId: "revision-next",
+      status: "queued",
+    }));
     const registration = await registerExpertToolsMcpSession({
       agent: compiled.value,
       getContext: () => undefined,
+      executionContext: {
+        executionId: "approval-execution",
+        invocationId: "approval-invocation",
+        depth: 0,
+        spawnExpert,
+        continueExpert,
+      },
+      humanInteractionHandler: async (request) => {
+        if (request.kind !== "tool_approval") throw new Error("Unexpected interaction");
+        approvalRequests.push(request.toolName);
+        return { kind: "tool_approval", approved, updatedInput: request.input };
+      },
       logger: createPragmaLogger(undefined, {
         component: "runtime.adapter",
         scope: { agentId: compiled.value.id },
@@ -259,6 +298,30 @@ describe("built-in Pragma Agent DSL", () => {
     try {
       await client.connect(new StreamableHTTPClientTransport(new URL(registration.url)));
       const catalog = await client.listTools();
+      for (const [name, args, execute] of [
+        ["spawn_expert", { expertId: "0000000000st0rev", task: "Revise" }, spawnExpert],
+        [
+          "continue_expert",
+          { contextId: "revision-context", task: "Apply feedback" },
+          continueExpert,
+        ],
+      ] as const) {
+        const toolName = catalog.tools.find(
+          (tool) => tool.name === name || tool.name.endsWith(`_${name}`),
+        )!.name;
+        approved = false;
+        expect(await client.callTool({ name: toolName, arguments: args })).toMatchObject({
+          isError: true,
+        });
+        expect(execute).not.toHaveBeenCalled();
+        approved = true;
+        expect(await client.callTool({ name: toolName, arguments: args })).not.toMatchObject({
+          isError: true,
+        });
+        expect(execute).toHaveBeenCalledOnce();
+        expect(approvalRequests.filter((tool) => tool === name)).toHaveLength(2);
+      }
+
       for (const name of [
         ...CLI_MIGRATED_AUTHORING_TOOLS,
         "create_flow_draft",
@@ -496,7 +559,7 @@ describe("built-in Pragma Agent DSL", () => {
     expect(resource.spec.instructions).toContain("delegated teammate");
     expect(resource.spec.instructions).toContain("Do not create another Mission for this work");
     expect(resource.spec.instructions).toContain("Inspect and edit only writableNamespace");
-    expect(resource.spec.instructions).toContain("do not start");
+    expect(resource.spec.instructions).toContain("do not create");
     expect(resource.spec.instructions).toContain("After compaction, recover draftId");
     expect(resource.spec.instructions).toContain("Never reuse a token");
     expect(resource.spec.instructions).toContain("description is a concise retrieval label");
@@ -513,10 +576,14 @@ describe("built-in Pragma Agent DSL", () => {
     expect(resource.spec.instructions).toContain("Repeat the entire");
     expect(resource.spec.instructions).toContain("final check after the last fix");
     expect(resource.spec.instructions).toContain("moves the draft to human review");
-    expect(resource.spec.instructions).toContain("can no longer be edited");
+    expect(resource.spec.instructions).toContain(
+      "Submission freezes the draft during pending_review",
+    );
     expect(resource.spec.instructions).toContain("latest draft.revision");
     expect(resource.spec.instructions).toContain("knowledge_revision_submit_draft");
-    expect(resource.spec.instructions).toContain("Submission is irreversible");
+    expect(resource.spec.instructions).toContain(
+      "Returning for changes restores editing on the same draft and Mission",
+    );
     expect(resource.spec.instructions).toContain("knowledge_revision_discard_draft");
   });
 
@@ -853,14 +920,6 @@ it("preserves explicit bindings for all migrated groups after the default cutove
     resources: {} as never,
     automations: {} as never,
   });
-  const delegated = await defineExpert({
-    id: "explicit-delegate",
-    name: "Delegate",
-    description: "Test",
-    scope: "Test",
-    tags: [],
-    workspace: root,
-  });
   const compiled = await compileBuiltInAgent({
     ref: BUILT_IN_PRAGMA_REF,
     expertResource: resource,
@@ -890,10 +949,27 @@ it("preserves explicit bindings for all migrated groups after the default cutove
         ...resource,
         metadata: { ...resource.metadata, id: ref.slice("expert:".length) },
       },
-      value: delegated,
+      value: await defineExpert({
+        id: ref.slice("expert:".length),
+        name: "Delegate",
+        description: "Test",
+        scope: "Test",
+        tags: [],
+        workspace: root,
+      }),
     }),
   });
   expect(compiled.value.tools?.map((tool) => tool.name)).toEqual(
-    expect.arrayContaining([...selected, "call_store_revision_agent", "call_skill_revision_agent"]),
+    expect.arrayContaining([
+      ...selected,
+      ...[
+        "spawn_expert",
+        "continue_expert",
+        "list_agents",
+        "wait_experts",
+        "steer_expert",
+        "interrupt_expert",
+      ],
+    ]),
   );
 });

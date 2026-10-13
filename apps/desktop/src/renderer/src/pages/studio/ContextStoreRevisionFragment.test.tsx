@@ -78,7 +78,7 @@ describe("ContextStoreRevisionFragment", () => {
 
     expect(html).toContain("产品知识");
     expect(html).toContain("修订版本 2");
-    expect(html).toContain("手动修改");
+    expect(html).toContain("合并编辑");
     expect(html).toContain('aria-label="查看变更"');
     expect(html).not.toContain("revision-task-view");
     expect(html).toContain('aria-label="删除记录"');
@@ -137,6 +137,21 @@ describe("ContextStoreRevisionFragment", () => {
     expect(html).toContain('aria-label="丢弃草稿"');
     expect(html).not.toContain('aria-label="删除任务"');
     expect(html).not.toContain("revision-task-view");
+    const rejectedHtml = renderToStaticMarkup(
+      <ContextStoreRevisionTaskActions
+        job={{
+          ...job,
+          state: "rejected",
+          error: { code: "revision_user_rejected", message: "Ended by user" },
+        }}
+        draft={{ ...draft, state: "needs_attention" }}
+        busy={null}
+        onRetry={() => undefined}
+        onDiscard={() => undefined}
+        onDelete={() => undefined}
+      />,
+    );
+    expect(rejectedHtml).not.toContain('aria-label="重试"');
   });
 
   it("renders review-only documents before the changed files", async () => {
@@ -190,6 +205,7 @@ describe("ContextStoreRevisionFragment", () => {
         error={null}
         onBack={() => undefined}
         onApprove={() => undefined}
+        onReturn={() => undefined}
         onReject={() => undefined}
         onRetry={() => undefined}
       />,
@@ -203,7 +219,11 @@ describe("ContextStoreRevisionFragment", () => {
     expect(html).toContain("不会进入 Memory");
     expect(html).toContain("更新审批规范");
     expect(html).toContain("guide.md");
-    expect(html).toContain("同意并应用");
+    expect(html).toContain(">同意</button>");
+    expect(html).toContain(">驳回</button>");
+    expect(html).toContain("审核通过，应用本次修订。");
+    expect(html).toContain("审核未通过但保留草稿");
+    expect(html).toContain("终止本次修订，不应用修改，不继续此草稿。");
     expect(html).toContain('class="revision-diff-scroll-area"');
     expect(html).not.toContain("revision-draft-editor");
     expect(html).not.toContain("保存草稿文件");
@@ -253,6 +273,7 @@ describe("ContextStoreRevisionFragment", () => {
         error={null}
         onBack={() => undefined}
         onApprove={() => undefined}
+        onReturn={() => undefined}
         onReject={() => undefined}
         onRetry={() => undefined}
         onOpenMission={() => undefined}
@@ -309,6 +330,7 @@ describe("ContextStoreRevisionFragment", () => {
         error={null}
         onBack={() => undefined}
         onApprove={() => undefined}
+        onReturn={() => undefined}
         onReject={() => undefined}
         onRetry={() => undefined}
         onOpenMission={() => undefined}

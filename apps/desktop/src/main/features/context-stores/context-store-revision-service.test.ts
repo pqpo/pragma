@@ -78,6 +78,158 @@ async function fixture(
 }
 
 describe("context store sparse draft revisions", () => {
+  it("rejects a future rework journal without changing this or another owner", async () => {
+    const { service, store, draftsPath } = await fixture();
+    const job = await service.submit({
+      schemaVersion: "pragma.context-store-revision-request/v2",
+      operation: "revise",
+      storeId: store.id,
+      prompt: "Review",
+      source: "user",
+    });
+    await service.processPending();
+    const draft = await service.getDraft(job.draftId);
+    const other = await service.createDraft({ storeId: store.id, name: "Unaffected" });
+    const path = join(draftsPath, draft.id, "rework.json");
+    await writeFile(path, JSON.stringify({ schemaVersion: "pragma.knowledge-revision-rework/v2" }));
+    const before = await readFile(join(draftsPath, draft.id, "draft.json"), "utf8");
+    await expect(service.getDraft(draft.id)).rejects.toThrow();
+    expect(await readFile(join(draftsPath, draft.id, "draft.json"), "utf8")).toBe(before);
+    expect((await service.getDraft(other.id)).state).toBe("editing");
+    expect(await service.listDraftsWithRecovery()).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          draft: expect.objectContaining({ id: draft.id }),
+          recovery: expect.objectContaining({ code: "revision_rework_unavailable" }),
+        }),
+      ]),
+    );
+    expect(await service.listDrafts()).toEqual(
+      expect.arrayContaining([expect.objectContaining({ id: other.id })]),
+    );
+  });
+
+  it("keeps the same Mission claim, content, and draft through repeated returns for changes", async () => {
+    const detached = vi.fn(async () => undefined);
+    const { service, contextStores, store } = await fixture({ onRevisionDetached: detached });
+    const missionId = "30000000-0000-4000-8000-000000000001";
+    const request = {
+      schemaVersion: "pragma.context-store-revision-request/v2" as const,
+      operation: "revise" as const,
+      storeId: store.id,
+      prompt: "Revise the knowledge.",
+      source: "user" as const,
+    };
+    const initial = await service.startForMission({ request, missionId });
+    const baseline = await contextStores.getSnapshot(store.id);
+    const draftStore = (await service.resolveDraft(initial.draftId)).store;
+    for (let round = 0; round < 2; round++) {
+      expect(
+        (
+          await draftStore.addContext({
+            id: `items/round-${round}.md`,
+            content: `Round ${round}`,
+            metadata: { trigger: "manual", priority: "normal" },
+          })
+        ).ok,
+      ).toBe(true);
+      const draft = await service.getDraft(initial.draftId);
+      await service.submitDraft(draft.id, draft.revision, `Round ${round}`);
+      const pending = await service.get(initial.id);
+      expect((await draftStore.addContext({ id: "items/forbidden.md", content: "No" })).ok).toBe(
+        false,
+      );
+      const results = await Promise.allSettled([
+        service.returnForRework(pending.id, pending.revision),
+        service.returnForRework(pending.id, pending.revision),
+      ]);
+      expect(results.filter((result) => result.status === "fulfilled")).toHaveLength(1);
+      const returned = await service.get(initial.id);
+      expect(returned).toMatchObject({
+        id: initial.id,
+        draftId: initial.draftId,
+        missionId,
+        state: "editing",
+        request,
+      });
+      const editable = await service.getDraft(initial.draftId);
+      expect(editable).toMatchObject({
+        state: "editing",
+        activeMissionId: missionId,
+        summary: `Round ${round}`,
+      });
+      expect(editable.submittedRevision).toBeUndefined();
+      expect(
+        await service.startForMission({ request, missionId, draftId: initial.draftId }),
+      ).toMatchObject({ id: initial.id, draftId: initial.draftId });
+      expect((await draftStore.readContext({ id: `items/round-${round}.md` })).ok).toBe(true);
+      expect((await contextStores.getSnapshot(store.id)).snapshotHash).toBe(baseline.snapshotHash);
+    }
+    expect(detached).not.toHaveBeenCalled();
+    expect(await service.list()).toHaveLength(1);
+    const draft = await service.getDraft(initial.draftId);
+    await service.submitDraft(draft.id, draft.revision, "Final candidate");
+    const pending = await service.get(initial.id);
+    await service.approve(pending.id, pending.revision);
+    expect(
+      (await contextStores.getSnapshot(store.id)).files.some(
+        (file) => file.id === "items/round-1.md",
+      ),
+    ).toBe(true);
+  });
+
+  it.each(["prepared", "draft_written", "both_written"])(
+    "replays a %s rework journal before reading the selected owner",
+    async (phase) => {
+      const { service, store, directory, draftsPath, contextStores } = await fixture();
+      const job = await service.submit({
+        schemaVersion: "pragma.context-store-revision-request/v2",
+        operation: "revise",
+        storeId: store.id,
+        prompt: "Replay",
+        source: "user",
+      });
+      await service.processPending();
+      const pending = await service.get(job.id);
+      const draft = await service.getDraft(job.draftId);
+      const nextDraft = {
+        ...draft,
+        revision: draft.revision + 1,
+        state: "editing",
+        submittedRevision: undefined,
+      };
+      const nextJob = { ...pending, revision: pending.revision + 1, state: "editing" };
+      const journalPath = join(draftsPath, draft.id, "rework.json");
+      await writeFile(
+        journalPath,
+        JSON.stringify({
+          schemaVersion: "pragma.knowledge-revision-rework/v1",
+          nextDraft,
+          nextJob,
+        }),
+      );
+      if (phase !== "prepared")
+        await writeFile(join(draftsPath, draft.id, "draft.json"), JSON.stringify(nextDraft));
+      if (phase === "both_written")
+        await writeFile(
+          join(directory, "state", "context-store-revisions", "jobs", `${job.id}.json`),
+          JSON.stringify(nextJob),
+        );
+      const restarted = createContextStoreRevisionService({
+        statePath: join(directory, "state", "context-store-revisions"),
+        draftsPath,
+        contextStores,
+        generator: { generate: vi.fn() },
+      });
+      expect(await restarted.getDraft(draft.id)).toMatchObject(
+        JSON.parse(JSON.stringify(nextDraft)),
+      );
+      expect(await restarted.get(job.id)).toMatchObject(JSON.parse(JSON.stringify(nextJob)));
+      await expect(stat(journalPath)).rejects.toMatchObject({ code: "ENOENT" });
+      expect(await restarted.get(job.id)).toMatchObject(JSON.parse(JSON.stringify(nextJob)));
+    },
+  );
+
   it("publishes an approved creation draft as formal revision 1", async () => {
     const { directory, draftsPath, service, contextStores } = await fixture();
     const reservedId = "90000000-0000-4000-8000-000000000001";
@@ -543,7 +695,39 @@ describe("context store sparse draft revisions", () => {
     const rejectedDraft = await service.resolveDraft(job.draftId);
     await expect(
       rejectedDraft.store.addContext({ id: "items/b.md", content: "B" }),
-    ).resolves.toMatchObject({ ok: true });
+    ).resolves.toMatchObject({ ok: false, error: { code: "permission_denied" } });
+    const rejected = await service.get(job.id);
+    expect(rejected.error?.code).toBe("revision_user_rejected");
+    const historyDraft = (await service.listDrafts({ storeId: store.id })).find(
+      (draft) => draft.id === job.draftId,
+    );
+    expect(historyDraft).toMatchObject({ state: "needs_attention", overlay: edited.overlay });
+    await expect(service.listDraftsWithRecovery({ storeId: store.id })).resolves.toContainEqual({
+      draft: historyDraft,
+    });
+    const historyChanges = await service.getDraftChangeSet(job.draftId);
+    expect(historyChanges.operations).toContainEqual(
+      expect.objectContaining({ operation: "upsert", id: "items/a.md", content: "A" }),
+    );
+    await expect(
+      service.submitDraft(job.draftId, historyDraft!.revision, "Resubmit rejected history"),
+    ).rejects.toMatchObject({ code: "invalid_state" });
+    await expect(service.retry(job.id, rejected.revision)).rejects.toMatchObject({
+      code: "invalid_state",
+    });
+    await expect(service.start(job.request, { draftId: job.draftId })).rejects.toMatchObject({
+      code: "invalid_state",
+    });
+    await expect(
+      service.startForMission({ request: job.request, draftId: job.draftId, missionId }),
+    ).rejects.toMatchObject({ code: "invalid_state" });
+    await expect(service.hasUnmergedDrafts(store.id)).resolves.toBe(false);
+    await service.delete(job.id, rejected.revision);
+    await expect(service.getDraft(job.draftId)).rejects.toMatchObject({ code: "draft_not_found" });
+    await expect(service.start(job.request, { draftId: job.draftId })).rejects.toMatchObject({
+      code: "draft_not_found",
+    });
+    await expect(service.hasUnmergedDrafts(store.id)).resolves.toBe(false);
   });
 
   it("makes repeated Mission attachment idempotent", async () => {
@@ -1269,7 +1453,7 @@ describe("context store sparse draft revisions", () => {
 
   it("rejects and detaches every revision job associated with a discarded draft", async () => {
     const onRevisionDetached = vi.fn(async () => undefined);
-    const { service, store } = await fixture({ onRevisionDetached });
+    const { service, store, directory, draftsPath } = await fixture({ onRevisionDetached });
     const first = await service.start({
       schemaVersion: "pragma.context-store-revision-request/v2",
       operation: "revise" as const,
@@ -1283,6 +1467,15 @@ describe("context store sparse draft revisions", () => {
     await service.submitDraft(first.draftId, firstEdited.revision, "First attempt");
     const firstPending = await service.get(first.id);
     await service.reject(first.id, firstPending.revision);
+    // A supported historical stopped job has no explicit user-rejection reason.
+    const jobPath = join(directory, "state", "context-store-revisions", "jobs", `${first.id}.json`);
+    const historical = JSON.parse(await readFile(jobPath, "utf8"));
+    delete historical.error;
+    await writeFile(jobPath, JSON.stringify(historical));
+    const draftPath = join(draftsPath, first.draftId, "draft.json");
+    const historicalDraft = JSON.parse(await readFile(draftPath, "utf8"));
+    historicalDraft.state = "editing";
+    await writeFile(draftPath, JSON.stringify(historicalDraft));
 
     const second = await service.start(
       {

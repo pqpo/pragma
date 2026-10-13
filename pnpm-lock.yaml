@@ -214,6 +214,9 @@ importers:
       '@electron/asar':
         specifier: 4.3.1
         version: 4.3.1
+      '@modelcontextprotocol/client':
+        specifier: 2.3.1
+        version: 2.3.1
       '@pragma/tsconfig':
         specifier: workspace:*
         version: link:../../packages/tsconfig

@@ -1,4 +1,3 @@
-import { SteerNotDispatchedError } from "@pragma/core";
 import type { ExpertSession, ExpertTurn, RuntimeModelSelection } from "@pragma/core";
 import { MissionSemanticWritePendingError } from "./missions/controller/mission-controller-store.ts";
 import { createIntegrationError } from "@pragma/shared/integration";
@@ -11,6 +10,10 @@ import {
   type MissionExecutionResources,
 } from "./missions/execution-kernel.ts";
 import type { LocalHostMissionPromptAdmissionHook } from "./missions/prompt-admission.ts";
+import {
+  assertMissionPromptContent,
+  assertMissionPromptNotCancelled,
+} from "./missions/mission-prompt-submission.ts";
 export {
   beginLocalHostMissionPromptAdmission,
   type LocalHostMissionPromptAdmissionHook,
@@ -91,7 +94,7 @@ export interface LocalHostMissionMessageResources<
 > {
   readonly executionKernel: Pick<
     ReturnType<typeof createMissionExecutionKernel>,
-    "preparePromptSession" | "receiptStatus"
+    "preparePromptSession" | "receiptStatus" | "prompt"
   >;
   readonly onPromptAdmitting?: LocalHostMissionPromptAdmissionHook | undefined;
   readonly onTerminalReceipt?:
@@ -169,6 +172,7 @@ async function acceptMissionMessage<
   options: LocalHostMissionMessageResources<Mission, Prepared, Result, PreparationScope>,
   input: MissionMessageAdmissionInput,
 ): Promise<Result> {
+  assertMissionPromptContent(input.content);
   let initialRequested = false;
   while (true) {
     const outcome = await options.admit(
@@ -261,13 +265,11 @@ async function acceptMissionMessage<
               if (opened.replaced) options.forgetSession(mission.id);
               prepared.rememberSession(session);
               phase("expert_session_open", sessionOpenStartedAt, sessionCacheHit);
-              if (input.signal?.aborted)
-                throw createIntegrationError({
-                  code: "COMMAND_RESULT_TIMEOUT",
-                  category: "conflict",
-                  message: "Mission command application was cancelled before Core acceptance.",
-                  details: { missionId: input.id, requestId: input.requestId },
-                });
+              assertMissionPromptNotCancelled({
+                missionId: input.id,
+                requestId: input.requestId,
+                signal: input.signal,
+              });
               const requestedMode = input.mode ?? "enqueue";
               if (requestedMode === "steer" && input.target !== undefined) {
                 const prompts = await session.getPromptQueue();
@@ -314,9 +316,18 @@ async function acceptMissionMessage<
               const replayed = (await session.getPromptQueue()).some(
                 (prompt) => prompt.requestId === input.requestId,
               );
+              const persistedInput = {
+                ...input,
+                requestedAt: input.requestedAt ?? new Date().toISOString(),
+              };
               const promptStartedAt = performance.now();
-              const turn = await session
-                .prompt(input.content, {
+              const { turn, attachments } = await options.executionKernel.prompt({
+                missionId: input.id,
+                session,
+                content: input.content,
+                requestedAt: persistedInput.requestedAt,
+                signal: input.signal,
+                options: {
                   requestId: input.requestId,
                   mode: requestedMode,
                   ...(input.target === undefined ||
@@ -335,21 +346,8 @@ async function acceptMissionMessage<
                   ...(prepared.promptModelSelection === undefined
                     ? {}
                     : { modelSelection: prepared.promptModelSelection }),
-                })
-                .catch(async (error: unknown) => {
-                  if (
-                    requestedMode === "steer" &&
-                    error instanceof SteerNotDispatchedError &&
-                    error.reason === "target_changed"
-                  )
-                    throw createIntegrationError({
-                      code: "STEER_TARGET_CHANGED",
-                      category: "conflict",
-                      message: "Strict Mission steer target changed before native dispatch.",
-                      details: { missionId: input.id },
-                    });
-                  throw error;
-                });
+                },
+              });
               const receiptStatus = replayed
                 ? await options.executionKernel.receiptStatus(turn.executionId)
                 : undefined;
@@ -393,7 +391,7 @@ async function acceptMissionMessage<
                   requestedMode,
                   acceptedAt,
                   replayed,
-                  input: { ...input, requestedAt: input.requestedAt ?? new Date().toISOString() },
+                  input: { ...persistedInput, attachments },
                 })
                 .catch((error: unknown) => {
                   throw error instanceof MissionSemanticWritePendingError
