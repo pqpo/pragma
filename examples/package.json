@@ -27,7 +27,7 @@
     "clean": "rm -rf dist"
   },
   "dependencies": {
-    "@earendil-works/pi-tui": "1.0.0",
+    "@earendil-works/pi-tui": "1.1.0",
     "@pragma/core": "workspace:*",
     "@pragma/context-filesystem": "workspace:*",
     "@pragma/interpreter": "workspace:*",
@@ -36,7 +36,7 @@
     "@pragma/runtime-codex": "workspace:*",
     "@pragma/runtime-pi": "workspace:*",
     "@pragma/runtime-qodercli": "workspace:*",
-    "cac": "^7.0.0",
+    "cac": "^7.0.1",
     "dotenv": "latest",
     "zod": "latest",
     "@pragma/local-host": "workspace:*"
