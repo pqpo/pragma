@@ -1,9 +1,14 @@
-import { mkdtemp, readFile, readdir, rm, stat } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, readdir, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
-import { createPragmaLogger, moveOwnedStorageToTrash, PragmaPaths } from "@pragma/core";
+import {
+  createPragmaLogger,
+  moveOwnedStorageToTrash,
+  PragmaPaths,
+  readRuntimeSessionsForOwners,
+} from "@pragma/core";
 import { afterEach, expect, it } from "vitest";
 import { createMissionControllerStore } from "../src/missions/controller/mission-controller-store.ts";
 import { withMissionControllerDeletionBarrier } from "../src/missions/controller/storage-locks.ts";
@@ -299,3 +304,132 @@ it("serializes deletion in a separate process with the complete semantic transac
     await Promise.allSettled([write, exited]);
   }
 });
+
+// Exercise both real recovery entrances, after the deletion journal/catalog prepare
+// but before the owner rename. The trash obstruction creates that crash window.
+it.each([
+  ["background", "aggregate"],
+  ["background", "semantic"],
+  ["catalog", "aggregate"],
+  ["catalog", "semantic"],
+] as const)(
+  "%s recovery drains an already validated %s write before moving the owner",
+  async (entrance, writer) => {
+    const target = await fixture();
+    const ownerPath = target.repository.storagePath!(missionId);
+    const record = await target.deletion.prepare({
+      missionId,
+      executionIds: [],
+      payload: {},
+      missionPath: ownerPath,
+    });
+    const trash = join(target.paths.trashRoot(), record.deletionId);
+    await mkdir(trash, { recursive: true });
+    await writeFile(join(trash, "mission"), "block owner rename");
+    await expect(
+      withMissionControllerDeletionBarrier(target.paths.missionsRoot(), missionId, async () => {
+        await moveOwnedStorageToTrash({
+          paths: target.paths,
+          deletionId: record.deletionId,
+          owner: { type: "mission", id: missionId },
+          sources: [{ label: "mission", path: ownerPath }],
+          runtimeSessionOwnerIds: [],
+          onCommitted: async () => await target.deletion.commit(missionId),
+        });
+      }),
+    ).rejects.toThrow();
+    await rm(join(trash, "mission"));
+    expect((await target.deletion.read(missionId))?.phase).toBe("prepared");
+    expect(
+      JSON.parse(
+        await readFile(
+          join(target.paths.deletionJournalRoot(), `${record.deletionId}.json`),
+          "utf8",
+        ),
+      ).status,
+    ).toBe("moving");
+    expect(await isMissionDeletionCommitted(target.paths, missionId)).toBe(false);
+
+    let entered!: () => void;
+    let resume!: () => void;
+    const started = new Promise<void>((resolve) => {
+      entered = resolve;
+    });
+    const gate = new Promise<void>((resolve) => {
+      resume = resolve;
+    });
+    const write =
+      writer === "aggregate"
+        ? target.controller.write({
+            missionId,
+            guard: target.guard,
+            operation: async ({ appendEvent }) => {
+              entered();
+              await gate;
+              await appendEvent("recovery.in-flight-write", {});
+            },
+          })
+        : target.controller.coordinateSemanticWrite({
+            missionId,
+            guard: target.guard,
+            operation: { name: "mission.options.update", input: {} },
+            eventType: "recovery.in-flight-write",
+            eventData: {},
+            apply: async () => {
+              entered();
+              await gate;
+            },
+          });
+    await started;
+    const recovery =
+      entrance === "background"
+        ? target.deletion.runOnce()
+        : readRuntimeSessionsForOwners(target.paths, [missionId]);
+    try {
+      expect(
+        await Promise.race([
+          recovery.then(() => "finished"),
+          new Promise<string>((resolve) => {
+            setTimeout(() => resolve("waiting"), 100);
+          }),
+        ]),
+      ).toBe("waiting");
+      await expect(stat(ownerPath)).resolves.toBeDefined();
+      // Recovery must wait for owner locks BEFORE taking the catalog lock.
+      await expect(
+        stat(join(target.paths.runtimeSessionsRoot(), "catalog.sqlite.deletion.lock")),
+      ).rejects.toMatchObject({ code: "ENOENT" });
+      if (writer === "semantic") {
+        await target.otherController.write({
+          missionId,
+          guard: target.guard,
+          operation: async ({ appendEvent }) => {
+            await appendEvent("runtime.event", {});
+          },
+        });
+      }
+      resume();
+      await Promise.all([write, recovery]);
+      const events = await readFile(join(trash, "mission", "local-host", "events.jsonl"), "utf8");
+      expect(events).toContain("recovery.in-flight-write");
+      await expect(
+        stat(join(trash, "mission", "local-host", ".semantic-write-transaction.json")),
+      ).rejects.toMatchObject({ code: "ENOENT" });
+      await expect(stat(ownerPath)).rejects.toMatchObject({ code: "ENOENT" });
+      expect(await isMissionDeletionCommitted(target.paths, missionId)).toBe(true);
+      await expect(
+        target.otherController.write({ missionId, guard: target.guard, operation: async () => {} }),
+      ).rejects.toMatchObject({ code: "MISSION_NOT_FOUND" });
+      await expect(
+        target.otherController.claim({ missionId, claimId: missionId, leaseMs: 60_000 }),
+      ).rejects.toMatchObject({ code: "MISSION_NOT_FOUND" });
+      // Catalog recovery also remains replayable by the Host finalizer.
+      await target.deletion.runOnce();
+      expect((await target.deletion.read(missionId))?.phase).toBe("completed");
+      await expect(stat(ownerPath)).rejects.toMatchObject({ code: "ENOENT" });
+    } finally {
+      resume();
+      await Promise.allSettled([write, recovery]);
+    }
+  },
+);

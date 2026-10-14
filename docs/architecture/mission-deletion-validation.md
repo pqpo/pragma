@@ -7,6 +7,17 @@ Execution/Session 的既有删除锁顺序获取屏障。semantic-write 锁覆�
 与事件提交的完整生命周期；aggregate 锁覆盖 lease 校验与持久化，避免已验证的 writer 在搬移
 后递归创建旧目录。搬移时仍未完成的 journal 随 owner 保存在回收站，不自动重放或删除。
 
+后台删除恢复与 Runtime Session catalog 自动恢复同样通过 Core 的共享存储屏障：
+semantic-write → aggregate → repository metadata → catalog deletion。catalog 自动恢复先读取
+待处理事务 ID，再逐个获取 owner 屏障；等待 Mission 锁时不持有 catalog 删除锁。取得屏障和
+catalog 锁后重新读取 journal 与 catalog 进度，正常删除或其他恢复已完成的事务不重复搬移。
+Core 只协调存储锁，不反向依赖 Local Host。
+
+并发回归用真实删除事务构造 prepared + moving + 原目录尚在的故障窗口，分别暂停已经通过
+校验的 aggregate 写入与完整 semantic-write 事务，再从后台和 catalog 自动恢复入口触发
+搬移。四种组合均等待在途写入完成，事件保存在 trash 中；完成后拒绝迟到写入且原路径不重建。
+修复前实现上的四种组合均提前搬移，回归测试失败。
+
 Node 与 Desktop composition 均在 aggregate 锁内检查 owner 目录之外的已提交/已完成删除记录，
 拒绝迟到 claim、续租、写入与恢复。prepared 阶段仅在 owner 尚未搬移时允许 controller 完成 Runtime 停止；
 repository 写入继续使用删除 fencing。语义 journal 存在但 aggregate 缺失时不能生成新 lease，

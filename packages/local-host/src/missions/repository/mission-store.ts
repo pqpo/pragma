@@ -1,5 +1,6 @@
 import type { ContextStoreRevisionRequest } from "@pragma/built-in-agents/contracts";
 import {
+  missionRepositoryLockPath,
   readStorageFile as readFile,
   writeStorageFile as writeFile,
   replaceStorageFile as rename,
@@ -360,8 +361,7 @@ export function createMissionStore(options: {
     join(missionPath(id), "migration-backups", "mission.v10.yaml");
   const branchHistoryPath = (id: string) => join(missionPath(id), "branch", "history.json");
   const projections = createMissionProjectionStorage(missionPath);
-  const lockPath = (id: string) =>
-    join(options.missionsPath, ".locks", `${encodePragmaPathSegment(id)}.lock`);
+  const lockPath = (id: string) => missionRepositoryLockPath(options.missionsPath, id);
   const timelineCache = new Map<
     string,
     { readonly size: number; readonly mtimeMs: number; readonly records: MissionTimelineRecord[] }
