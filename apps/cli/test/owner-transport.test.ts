@@ -3,7 +3,7 @@ import { fork } from "node:child_process";
 import { expect, it, vi } from "vitest";
 import { invokeMissionOwner } from "../src/mission-owner-process.ts";
 import { runMissionOwnerRequest } from "../src/mission-owner-runtime.ts";
-import { runCli } from "../src/index.ts";
+import { runCli, type CliLocalHost } from "../src/index.ts";
 import { createIntegrationError, type CliOwnerFrame } from "@pragma/shared/integration";
 
 vi.mock("node:child_process", async (importOriginal) => ({
@@ -11,9 +11,70 @@ vi.mock("node:child_process", async (importOriginal) => ({
   fork: vi.fn(),
 }));
 vi.mock("../src/composition/default.ts", () => ({
-  createCliLocalHost: () => ({ dispose: async () => {} }),
+  createCliLocalHost: (input: { localHost?: CliLocalHost }) =>
+    input.localHost ?? { dispose: async () => {} },
 }));
 const id = "11111111-1111-4111-8111-111111111111";
+
+it.each([
+  {
+    argv: [
+      "flow",
+      "run",
+      "flow:aaaaaaaaaaaaaaaa",
+      "--workspace",
+      "/workspace",
+      "--input-json",
+      "-",
+    ],
+    bytes: Buffer.from("invalid JSON"),
+    code: "INPUT_SCHEMA_INVALID",
+  },
+  {
+    argv: ["expert", "run", "expert:aaaaaaaaaaaaaaaa", "--workspace", "/workspace", "--input", "-"],
+    bytes: Buffer.from([0xc0, 0x80]),
+    code: "INVALID_ARGUMENT",
+  },
+  {
+    argv: ["mission", "respond", id, "--interaction", "approval", "--answers-json", "-"],
+    bytes: Buffer.from("invalid JSON"),
+    code: "INVALID_ARGUMENT",
+  },
+])(
+  "keeps the normal input error contract for an owner request ($code)",
+  async ({ argv, bytes, code }) => {
+    const start = vi.fn();
+    const submit = vi.fn();
+    const host = {
+      run: { start },
+      missionControl: { submit },
+      resolveWorkspace: async () => ({}),
+    } as unknown as CliLocalHost;
+    const stdout: string[] = [];
+    await runCli(
+      [...argv, "--json"],
+      { writeStdout: (text) => stdout.push(text), writeStderr: () => {} },
+      { localHost: host, readStdin: async () => bytes },
+    );
+    expect(JSON.parse(stdout[0]!).error.code).toBe(code);
+    const frames: CliOwnerFrame[] = [];
+    await runMissionOwnerRequest(
+      {
+        schemaVersion: "pragma.cli-owner-request/v1",
+        requestId: id,
+        argv: [...argv, "--json"],
+        stdin: bytes.toString("base64"),
+      },
+      () => host,
+      async (frame) => {
+        frames.push(frame);
+      },
+    );
+    expect(frames.at(-1)).toMatchObject({ type: "failed", error: { code } });
+    expect(start).not.toHaveBeenCalled();
+    expect(submit).not.toHaveBeenCalled();
+  },
+);
 
 it("prints the generated request ID before an owner acceptance failure", async () => {
   const child = Object.assign(new EventEmitter(), {

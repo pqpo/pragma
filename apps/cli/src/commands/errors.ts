@@ -2,11 +2,29 @@ import {
   IntegrationErrorCodeSchema,
   IntegrationErrorRetryPolicies,
   IntegrationErrorSchema,
+  createIntegrationError,
   type IntegrationError,
   type IntegrationErrorCode,
 } from "@pragma/shared/integration";
 
 import { isRecord } from "./utils.ts";
+import { CliInputError } from "../input.ts";
+import { CliParseError, type ParsedCommand } from "../parser/argv.ts";
+
+/** Keep process-owner and inline command failures on the same public contract. */
+export function toCliCommandError(error: unknown, command?: ParsedCommand): IntegrationError {
+  if (error instanceof CliParseError) return error.error;
+  if (error instanceof CliInputError)
+    return createIntegrationError({
+      code:
+        command?.kind === "executor-run" && command.executorKind === "flow"
+          ? "INPUT_SCHEMA_INVALID"
+          : "INVALID_ARGUMENT",
+      category: "usage",
+      message: error.message,
+    });
+  return toIntegrationError(error);
+}
 
 const HOST_ERROR_CODE_MAP: Readonly<Record<string, IntegrationErrorCode>> = {
   mission_not_found: "MISSION_NOT_FOUND",

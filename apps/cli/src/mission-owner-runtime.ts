@@ -7,12 +7,12 @@ import {
   type CliOwnerFrame,
 } from "@pragma/shared/integration";
 import type { CliLocalHost } from "./commands/types.ts";
-import { parseCliArgv, CliParseError } from "./parser/argv.ts";
+import { parseCliArgv, type ParsedCommand } from "./parser/argv.ts";
 import { createSystemTerminalPort } from "./terminal.ts";
 import { startExecutorRun } from "./commands/run.ts";
 import { executeMutationCommand } from "./commands/mutations.ts";
 import { normalizeRunOutcome } from "./index.ts";
-import { toIntegrationError } from "./commands/errors.ts";
+import { toCliCommandError } from "./commands/errors.ts";
 import { CLI_VERSION } from "./version.ts";
 import { asJsonValue, isRecord } from "./commands/utils.ts";
 
@@ -24,6 +24,7 @@ export async function runMissionOwnerRequest(
 ): Promise<void> {
   let host: CliLocalHost | undefined;
   let requestId: string | undefined;
+  let command: ParsedCommand | undefined;
   const keepAlive = setInterval(() => undefined, 1000);
   let cancel: (() => Promise<void>) | undefined;
   let cancelRequested = false;
@@ -45,6 +46,7 @@ export async function runMissionOwnerRequest(
     const request = validated.data;
     requestId = request.requestId;
     const parsed = parseCliArgv(request.argv);
+    command = parsed.command;
     host = createHost();
     const context = {
       requestId: request.requestId,
@@ -138,7 +140,7 @@ export async function runMissionOwnerRequest(
     await host?.dispose?.().catch(() => undefined);
     await send({
       type: "failed",
-      error: toIntegrationError(error instanceof CliParseError ? error.error : error),
+      error: toCliCommandError(error, command),
     });
   } finally {
     process.removeListener("message", onMessage);

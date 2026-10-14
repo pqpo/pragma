@@ -23,14 +23,14 @@ import {
   selectPrimaryDoctorCode,
   type DoctorDependencies,
 } from "./commands/doctor.ts";
-import { toIntegrationError } from "./commands/errors.ts";
+import { toIntegrationError, toCliCommandError } from "./commands/errors.ts";
 import { executeReadOnlyCommand } from "./commands/readonly.ts";
 import { executeMutationCommand } from "./commands/mutations.ts";
 import { startExecutorRun } from "./commands/run.ts";
 import { executeSourceCommand, type SourceCommand } from "./commands/source.ts";
 import type { CliLocalHost } from "./commands/types.ts";
 import { createCliLocalHost } from "./composition/default.ts";
-import { CliInputError, readProcessStdin } from "./input.ts";
+import { readProcessStdin } from "./input.ts";
 import { CliParseError, parseCliArgv, type ParsedCommand } from "./parser/argv.ts";
 import {
   collectHumanInteraction,
@@ -553,18 +553,7 @@ export async function runCli(
       failure = new AggregateError([error, shutdownError], "Command and Host shutdown failed.");
     }
     const integrationError =
-      failure instanceof DoctorFailure
-        ? failure.error
-        : failure instanceof CliInputError
-          ? createIntegrationError({
-              code:
-                parsed.command.kind === "executor-run" && parsed.command.executorKind === "flow"
-                  ? "INPUT_SCHEMA_INVALID"
-                  : "INVALID_ARGUMENT",
-              category: "usage",
-              message: failure.message,
-            })
-          : toIntegrationError(failure);
+      failure instanceof DoctorFailure ? failure.error : toCliCommandError(failure, parsed.command);
     const presentationInput = {
       io,
       format: parsed.options.format,
