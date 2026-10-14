@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 
@@ -8,9 +8,34 @@ import { afterEach, describe, expect, it } from "vitest";
 import {
   inspectCredentialMigration,
   type CredentialDoctorFinding,
-  type OsKeychain,
-  type SecretStore,
-} from "../src/index.ts";
+} from "../src/secrets/credential-doctor.ts";
+import type { OsKeychain, SecretStore } from "../src/secrets/secret-store.ts";
+import {
+  MODEL_PROVIDER_STORAGE_VERSION,
+  StoredModelProviderConfigSchema,
+} from "../src/model-providers/reader.ts";
+import {
+  ModelProvidersV5Schema,
+  ModelProvidersV6Schema,
+} from "../src/model-providers/migrations/index.ts";
+import {
+  CapabilityCredentialsV2Schema,
+  CapabilityCredentialsV3Schema,
+  capabilityCredentialStorageVersions,
+} from "../src/resources/capability-credential-migrations/index.ts";
+import { pluginCredentialStorageVersions } from "../src/resources/plugin-credential-migrations/index.ts";
+
+const currentDocuments = {
+  "model-provider": StoredModelProviderConfigSchema.parse({
+    schemaVersion: MODEL_PROVIDER_STORAGE_VERSION,
+    providers: [],
+  }),
+  capability: CapabilityCredentialsV3Schema.parse({
+    schemaVersion: capabilityCredentialStorageVersions.currentVersion,
+    credentials: {},
+  }),
+  plugin: { schemaVersion: pluginCredentialStorageVersions.currentVersion, credentials: {} },
+};
 
 const roots: string[] = [];
 
@@ -63,10 +88,38 @@ const readySecretStore: SecretStore = {
 };
 
 describe("credential doctor schema versions", () => {
+  it("accepts current storage schemas without a journal and leaves files unchanged", async () => {
+    const root = await mkdtemp(join(tmpdir(), "pragma-credential-doctor-current-"));
+    roots.push(root);
+    const files = {
+      "model-provider": join(root, "model.json"),
+      capability: join(root, "capability.json"),
+      plugin: join(root, "plugin.json"),
+    };
+    await Promise.all(
+      Object.entries(files).map(([module, file]) =>
+        writeFile(
+          file,
+          JSON.stringify(currentDocuments[module as CredentialDoctorFinding["module"]]),
+        ),
+      ),
+    );
+    const before = await Promise.all(Object.values(files).map((file) => readFile(file, "utf8")));
+
+    expect(await inspectCredentialMigration({ secretStore: readySecretStore, files })).toEqual([
+      { module: "model-provider", status: "ready" },
+      { module: "capability", status: "ready" },
+      { module: "plugin", status: "ready" },
+    ]);
+    expect(await Promise.all(Object.values(files).map((file) => readFile(file, "utf8")))).toEqual(
+      before,
+    );
+  });
+
   it.each([
-    ["model-provider", 6],
-    ["capability", 3],
-    ["plugin", 3],
+    ["model-provider", currentDocuments["model-provider"].schemaVersion + 1],
+    ["capability", currentDocuments.capability.schemaVersion + 1],
+    ["plugin", currentDocuments.plugin.schemaVersion + 1],
   ] as const)(
     "reports future %s files as degraded storage incompatibility",
     async (module, version) => {
@@ -97,7 +150,7 @@ describe("credential doctor schema versions", () => {
     },
   );
 
-  it("reports only the target version as ready and older versions as migration-required", async () => {
+  it("reports supported metadata versions as ready and legacy credentials as migration-required", async () => {
     const root = await mkdtemp(join(tmpdir(), "pragma-credential-doctor-"));
     roots.push(root);
     const paths = {
@@ -128,16 +181,19 @@ describe("credential doctor schema versions", () => {
   });
 
   it.each([
-    ["model-provider", 5],
-    ["capability", 2],
-    ["plugin", 2],
+    ["model-provider", currentDocuments["model-provider"]],
+    ["capability", currentDocuments.capability],
+    ["plugin", currentDocuments.plugin],
+    ["model-provider", ModelProvidersV5Schema.parse({ schemaVersion: 5, providers: [] })],
+    ["model-provider", ModelProvidersV6Schema.parse({ schemaVersion: 6, providers: [] })],
+    ["capability", CapabilityCredentialsV2Schema.parse({ schemaVersion: 2, credentials: {} })],
   ] as const)(
-    "treats a retained-backup journal for %s at its target schema as ready",
-    async (module, targetVersion) => {
+    "treats a retained-backup journal for supported %s data as ready",
+    async (module, document) => {
       const root = await mkdtemp(join(tmpdir(), "pragma-credential-doctor-terminal-"));
       roots.push(root);
       const file = join(root, `${module}.json`);
-      await writeFile(file, JSON.stringify({ schemaVersion: targetVersion }));
+      await writeFile(file, JSON.stringify(document));
       await writeMigrationJournal(file, module, "legacy_backup_retained");
 
       const findings = await inspectCredentialMigration({
@@ -165,7 +221,7 @@ describe("credential doctor schema versions", () => {
     const root = await mkdtemp(join(tmpdir(), "pragma-credential-doctor-pending-"));
     roots.push(root);
     const file = join(root, "model-provider.json");
-    await writeFile(file, JSON.stringify({ schemaVersion: 5 }));
+    await writeFile(file, JSON.stringify(currentDocuments["model-provider"]));
     await writeMigrationJournal(file, "model-provider", stage);
 
     const findings = await inspectCredentialMigration({
@@ -188,7 +244,7 @@ describe("credential doctor schema versions", () => {
     const root = await mkdtemp(join(tmpdir(), "pragma-credential-doctor-backup-"));
     roots.push(root);
     const file = join(root, "model-provider.json");
-    await writeFile(file, JSON.stringify({ schemaVersion: 5 }));
+    await writeFile(file, JSON.stringify(currentDocuments["model-provider"]));
     await writeMigrationJournal(file, "model-provider", "legacy_backup_retained", {
       writeBackup: false,
     });
@@ -220,7 +276,7 @@ describe("credential doctor schema versions", () => {
     const root = await mkdtemp(join(tmpdir(), "pragma-credential-doctor-invalid-"));
     roots.push(root);
     const file = join(root, "model-provider.json");
-    await writeFile(file, JSON.stringify({ schemaVersion: 5 }));
+    await writeFile(file, JSON.stringify(currentDocuments["model-provider"]));
     await writeFile(`${file}.migration-journal.json`, content);
 
     const findings = await inspectCredentialMigration({
@@ -243,7 +299,7 @@ describe("credential doctor schema versions", () => {
     const root = await mkdtemp(join(tmpdir(), "pragma-credential-doctor-mismatch-"));
     roots.push(root);
     const file = join(root, "model-provider.json");
-    await writeFile(file, JSON.stringify({ schemaVersion: 5 }));
+    await writeFile(file, JSON.stringify(currentDocuments["model-provider"]));
     await writeMigrationJournal(file, "model-provider", "legacy_backup_retained", {
       family: "pragma.plugin-credentials",
     });
@@ -263,6 +319,49 @@ describe("credential doctor schema versions", () => {
       code: "SECRET_MIGRATION_REQUIRED",
     });
   });
+
+  it.each(["model-provider", "capability", "plugin"] as const)(
+    "rejects inconsistent historical journal metadata for current %s data",
+    async (module) => {
+      const root = await mkdtemp(join(tmpdir(), "pragma-credential-doctor-metadata-"));
+      roots.push(root);
+      const file = join(root, `${module}.json`);
+      await writeFile(file, JSON.stringify(currentDocuments[module]));
+      const files = {
+        "model-provider": join(root, "missing-model.json"),
+        capability: join(root, "missing-capability.json"),
+        plugin: join(root, "missing-plugin.json"),
+        [module]: file,
+      };
+      for (const [options, code] of [
+        [
+          { sourceVersion: migrationDefinitions[module].sourceVersion + 1 },
+          "SECRET_MIGRATION_REQUIRED",
+        ],
+        [
+          { targetVersion: migrationDefinitions[module].targetVersion + 1 },
+          "SECRET_MIGRATION_REQUIRED",
+        ],
+        [
+          { targetMetadataVersion: migrationDefinitions[module].targetVersion + 1 },
+          "STORAGE_CORRUPTED",
+        ],
+      ] as const) {
+        await writeMigrationJournal(file, module, "legacy_backup_retained", options);
+        expect(
+          (await inspectCredentialMigration({ secretStore: readySecretStore, files })).find(
+            (finding) => finding.module === module,
+          ),
+        ).toEqual({ module, status: "degraded", code });
+      }
+      await writeMigrationJournal(file, module, "prepared");
+      expect(
+        (await inspectCredentialMigration({ secretStore: readySecretStore, files })).find(
+          (finding) => finding.module === module,
+        ),
+      ).toEqual({ module, status: "degraded", code: "SECRET_MIGRATION_REQUIRED" });
+    },
+  );
 });
 
 async function writeMigrationJournal(
@@ -272,6 +371,9 @@ async function writeMigrationJournal(
   options: {
     readonly writeBackup?: boolean;
     readonly family?: string;
+    readonly sourceVersion?: number;
+    readonly targetVersion?: number;
+    readonly targetMetadataVersion?: number;
   } = {},
 ): Promise<void> {
   const definition = migrationDefinitions[module];
@@ -286,11 +388,11 @@ async function writeMigrationJournal(
       schemaVersion: "pragma.legacy-credential-migration/v1",
       family: options.family ?? definition.family,
       id: definition.id,
-      sourceVersion: definition.sourceVersion,
-      targetVersion: definition.targetVersion,
+      sourceVersion: options.sourceVersion ?? definition.sourceVersion,
+      targetVersion: options.targetVersion ?? definition.targetVersion,
       stage,
       sourceHash: "a".repeat(64),
-      targetMetadata: { schemaVersion: definition.targetVersion },
+      targetMetadata: { schemaVersion: options.targetMetadataVersion ?? definition.targetVersion },
       refs: [],
       backupPath,
       decision: "legacy_ciphertext_removed_after_verified_secretstore_migration",
