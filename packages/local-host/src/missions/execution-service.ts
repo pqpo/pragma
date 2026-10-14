@@ -1276,6 +1276,72 @@ export function createLocalHostMissionExecutionService(
       await missionSessionResources({ mission, compiled, capabilities, app, sessionId }),
     );
 
+  const reconcileMissionCompilationIdentity = async (
+    accepted: Mission,
+    executionId: string,
+    acceptedIdentity: string,
+  ): Promise<void> => {
+    const current = await options.missions.get(accepted.id);
+    const execution = current.execution;
+    if (
+      execution?.id !== executionId ||
+      execution.sessionId === undefined ||
+      execution.environmentFingerprint !== acceptedIdentity ||
+      missionContextMountsFingerprint(current) === missionContextMountsFingerprint(accepted)
+    )
+      return;
+    // Re-evaluate all non-mount inputs with the current authority. Permission,
+    // model, dependency and Capability changes must never be acknowledged as a
+    // dynamic draft mount. The repository checks the mount delta atomically.
+    const scope = compileService.createRequestScope(current);
+    const capabilities = await compileService.capabilities(scope);
+    const baseline = compileService.createRequestScope(
+      { ...current, contextMounts: accepted.contextMounts },
+      scope.getRevision(),
+    );
+    if ((await compileService.identity(baseline, capabilities)) !== acceptedIdentity) return;
+    const identity = await compileService.identity(scope, capabilities);
+    if (
+      (await compileService.identity(baseline, await compileService.capabilities(scope))) !==
+      acceptedIdentity
+    )
+      return;
+    await options.missions.updateExecution(
+      current.id,
+      { ...execution, environmentFingerprint: identity },
+      {
+        executionId,
+        acceptedContextMounts: accepted.contextMounts,
+        environmentReconciliation: {
+          acceptedFingerprint: acceptedIdentity,
+          contextMountsFingerprint: missionContextMountsFingerprint(current),
+        },
+      },
+    );
+  };
+  const reconcilePublishedCompilationIdentity = async (
+    mission: Mission,
+    executionId: string,
+    identity: string,
+  ): Promise<void> => {
+    try {
+      await reconcileMissionCompilationIdentity(mission, executionId, identity);
+    } catch (error) {
+      if (
+        typeof error === "object" &&
+        error !== null &&
+        "code" in error &&
+        error.code === "MISSION_FENCING_REJECTED"
+      )
+        throw error;
+      logger.warn(
+        "mission.compilation_identity_reconciliation_degraded",
+        "Mission compilation metadata could not be reconciled; recovery retains environment checks.",
+        { error, missionId: mission.id, executionId },
+      );
+    }
+  };
+
   const trackExecution = (input: {
     readonly mission: Mission;
     readonly handle: MissionExecutionHandle;
@@ -1287,6 +1353,7 @@ export function createLocalHostMissionExecutionService(
     readonly acceptedAt?: number | undefined;
     readonly publishRunningStatus?: boolean | undefined;
     readonly onFinished?: (() => void | Promise<void>) | undefined;
+    readonly compilationIdentity?: string | undefined;
   }): void => {
     const missionId = input.mission.id;
     // Each observer keeps the claim that authorized its Core execution. A late
@@ -1473,6 +1540,15 @@ export function createLocalHostMissionExecutionService(
       async (terminal) => {
         humanWaitingObserver.stop();
         const mission = input.mission;
+        if (input.compilationIdentity !== undefined) {
+          if (projectionGuard !== undefined)
+            await projectionOwnerScope!.assertOwnership(missionId, projectionGuard);
+          await reconcilePublishedCompilationIdentity(
+            mission,
+            input.handle.executionId,
+            input.compilationIdentity,
+          );
+        }
         if (terminal.status === "failed") options.invalidateRuntimeReadiness?.();
         // Core already committed the terminal fact. A rebuildable Mission
         // projection must not hold the UI's status notification hostage.
@@ -2391,16 +2467,21 @@ export function createLocalHostMissionExecutionService(
           createdAt: executionStartedAt,
         });
         await notifyExecutionLinked(mission, turn.executionId, inputMessageId);
-        const running = await options.missions.updateExecution(mission.id, {
-          id: turn.executionId,
-          inputMessageId,
-          sessionId: session.sessionId,
-          status: recoveredTurn === undefined ? "running" : "waiting",
-          ...(recoverable ? {} : { contextMountsFingerprint }),
-          environmentFingerprint: compiledIdentity,
-          resolvedCapabilities,
-          startedAt: executionStartedAt,
-        });
+        const running = await options.missions.updateExecution(
+          mission.id,
+          {
+            id: turn.executionId,
+            inputMessageId,
+            sessionId: session.sessionId,
+            status: recoveredTurn === undefined ? "running" : "waiting",
+            ...(recoverable ? {} : { contextMountsFingerprint }),
+            environmentFingerprint: compiledIdentity,
+            resolvedCapabilities,
+            startedAt: executionStartedAt,
+          },
+          { acceptedContextMounts: mission.contextMounts },
+        );
+        await reconcilePublishedCompilationIdentity(mission, turn.executionId, compiledIdentity);
         trackExecution({
           mission,
           handle: turn,
@@ -2411,6 +2492,7 @@ export function createLocalHostMissionExecutionService(
           sessionId: session.sessionId,
           acceptedAt,
           onFinished: async () => await turn.settled,
+          compilationIdentity: compiledIdentity,
         });
         return running;
       },
@@ -2733,17 +2815,26 @@ export function createLocalHostMissionExecutionService(
         const running =
           hasCurrent || queuePaused
             ? await options.missions.get(mission.id)
-            : await options.missions.updateExecution(mission.id, {
-                id: turn.executionId,
-                inputMessageId: input.requestId,
-                sessionId: session.sessionId,
-                status: "running",
-                contextMountsFingerprint,
-                environmentFingerprint: desiredCompilationIdentity,
-                resolvedCapabilities: desiredCapabilities,
-                startedAt,
-              });
+            : await options.missions.updateExecution(
+                mission.id,
+                {
+                  id: turn.executionId,
+                  inputMessageId: input.requestId,
+                  sessionId: session.sessionId,
+                  status: "running",
+                  contextMountsFingerprint,
+                  environmentFingerprint: desiredCompilationIdentity,
+                  resolvedCapabilities: desiredCapabilities,
+                  startedAt,
+                },
+                { acceptedContextMounts: mission.contextMounts },
+              );
         if (!hasCurrent && !queuePaused) {
+          await reconcilePublishedCompilationIdentity(
+            mission,
+            turn.executionId,
+            desiredCompilationIdentity,
+          );
           trackExecution({
             mission,
             handle: turn,
@@ -2753,6 +2844,7 @@ export function createLocalHostMissionExecutionService(
             sessionId: session.sessionId,
             acceptedAt,
             onFinished: async () => await turn.settled,
+            compilationIdentity: desiredCompilationIdentity,
           });
         } else {
           watchQueuedSessionTurn(mission, session, turn, executorMetadata);

@@ -2279,9 +2279,17 @@ describe("Desktop Mission resource adapter contracts", { timeout: 30_000 }, () =
     { executorRef: "team:0000000000000003", cold: false },
     { executorRef: "expert:0000000000pragma", cold: false },
     { executorRef: "expert:0000000000pragma", cold: true },
+    { executorRef: "expert:0000000000pragma", cold: false, delayedPublication: true },
+    { executorRef: "expert:0000000000pragma", cold: true, delayedPublication: true },
+    {
+      executorRef: "expert:0000000000pragma",
+      cold: true,
+      delayedPublication: true,
+      changePermissionDuringMount: true,
+    },
   ])(
-    "revises an unmounted target inside the original Mission from $executorRef (cold=$cold)",
-    async ({ executorRef, cold }) => {
+    "handles an unmounted target from $executorRef (cold=$cold, delayedPublication=$delayedPublication, changePermission=$changePermissionDuringMount)",
+    async ({ executorRef, cold, delayedPublication, changePermissionDuringMount }) => {
       const root = await mkdtemp(join(tmpdir(), "pragma-background-revision-"));
       temporaryPaths.push(root);
       const pragmaHome = join(root, "state");
@@ -2297,7 +2305,48 @@ describe("Desktop Mission resource adapter contracts", { timeout: 30_000 }, () =
         description: "",
       });
       const original = await contextStores.getSnapshot(target.id);
-      const missions = createMissionStore({ missionsPath: join(root, "missions") });
+      let releasePublication!: () => void;
+      const draftMounted = new Promise<void>((resolve) => {
+        releasePublication = resolve;
+      });
+      const missionStore = createMissionStore({ missionsPath: join(root, "missions") });
+      let publicationDelayed = false;
+      const missions = {
+        ...missionStore,
+        mountManagedRevisionDraft: async (
+          input: Parameters<typeof missionStore.mountManagedRevisionDraft>[0],
+        ) => {
+          const mounted = await missionStore.mountManagedRevisionDraft(input);
+          if (changePermissionDuringMount) {
+            // The first Execution is not linked yet. Simulate an independent
+            // options update while publication is held at the mount barrier.
+            await missionStore.updateOptions(input.id, { toolPermissionMode: "full-access" });
+          }
+          releasePublication();
+          return mounted;
+        },
+        updateExecution: async (...args: Parameters<typeof missionStore.updateExecution>) => {
+          if (delayedPublication && !publicationDelayed && args[1].status === "running") {
+            publicationDelayed = true;
+            let timeout: ReturnType<typeof setTimeout> | undefined;
+            try {
+              await Promise.race([
+                draftMounted,
+                new Promise<never>((_, reject) => {
+                  timeout = setTimeout(
+                    () =>
+                      reject(new Error("Managed draft did not mount before delayed publication")),
+                    30_000,
+                  );
+                }),
+              ]);
+            } finally {
+              if (timeout !== undefined) clearTimeout(timeout);
+            }
+          }
+          return await missionStore.updateExecution(...args);
+        },
+      };
       const generate = vi.fn(async () => undefined);
       const revisions = createContextStoreRevisionService({
         statePath: join(root, "revisions"),
@@ -2337,6 +2386,13 @@ describe("Desktop Mission resource adapter contracts", { timeout: 30_000 }, () =
                 .find((tool) => tool.name === "list_agents")!
                 .call({ expertId: "0000000000st0rev" }, turn.signal, context);
               expect(directory.isError, directory.text).not.toBe(true);
+              if (changePermissionDuringMount) {
+                expect(directory.details).toMatchObject({ contexts: [] });
+                return {
+                  outputText: "New Session after permission change",
+                  runtimeSessionId: "runtime",
+                };
+              }
               expect(directory.details).toMatchObject({
                 contexts: expect.arrayContaining([
                   expect.objectContaining({ contextId: teammateContextId }),
@@ -2630,13 +2686,41 @@ describe("Desktop Mission resource adapter contracts", { timeout: 30_000 }, () =
       );
       const callerExecution = (await missions.get(caller.id)).execution;
       expect(callerExecution?.status, callerExecution?.error).toBe("succeeded");
+      if (!realSmoke && executorRef === "expert:0000000000pragma") {
+        expect((await runner.getWork(caller.id)).records).toEqual(
+          expect.arrayContaining([
+            expect.objectContaining({
+              kind: "agent",
+              sessionId: teammateContextId,
+              status: "succeeded",
+            }),
+          ]),
+        );
+      }
       if (!realSmoke && executorRef !== STORE_REVISION_EXPERT_REF) {
         expect((await revisions.get(jobId!)).state).toBe("running");
+        if (cold) {
+          await runner.stopLocalController(caller.id);
+          runner = createRunner();
+        }
         await runner.sendMessage({
           id: caller.id,
           content: "Continue and submit this draft",
           requestId: "33333333-3333-4333-8333-333333333333",
         });
+        if (changePermissionDuringMount) {
+          await vi.waitFor(
+            async () => {
+              const current = await missions.get(caller.id);
+              expect(current.execution?.status, current.execution?.error).toBe("succeeded");
+              expect(current.execution?.sessionId).not.toBe(callerExecution?.sessionId);
+            },
+            { timeout: 30_000, interval: 100 },
+          );
+          expect((await revisions.get(jobId!)).state).toBe("running");
+          await runner.stopLocalController(caller.id);
+          return;
+        }
         await vi.waitFor(
           async () => {
             const current = await missions.get(caller.id);
@@ -2646,6 +2730,7 @@ describe("Desktop Mission resource adapter contracts", { timeout: 30_000 }, () =
           { timeout: 30_000, interval: 100 },
         );
       }
+      expect((await missions.get(caller.id)).execution?.sessionId).toBe(callerExecution?.sessionId);
       await revisions.processPending();
       if (realSmoke) jobId = (await revisions.list())[0]?.id;
       expect(
@@ -2711,6 +2796,14 @@ describe("Desktop Mission resource adapter contracts", { timeout: 30_000 }, () =
             },
             { timeout: realSmoke ? 180_000 : 30_000, interval: 100 },
           );
+          if (!realSmoke && executorRef === "expert:0000000000pragma") {
+            expect((await runner.getWork(caller.id)).records).toEqual(
+              expect.arrayContaining([
+                expect.objectContaining({ kind: "agent", sessionId: originalContextId }),
+              ]),
+            );
+            expect((await missions.get(caller.id)).execution?.sessionId).toBe(originalSessionId);
+          }
           expect(jobId).toBe(job.id);
           if (!realSmoke) expect(draftId).toBe(job.draftId);
           expect((await missions.get(caller.id)).execution?.sessionId).toBe(originalSessionId);

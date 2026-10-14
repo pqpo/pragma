@@ -179,6 +179,13 @@ export interface MissionStore {
     guard?: {
       readonly executionId?: string | undefined;
       readonly statuses?: readonly NonNullable<Mission["execution"]>["status"][] | undefined;
+      readonly acceptedContextMounts?: Mission["contextMounts"] | undefined;
+      readonly environmentReconciliation?:
+        | {
+            readonly acceptedFingerprint: string;
+            readonly contextMountsFingerprint: string;
+          }
+        | undefined;
     },
   ): Promise<Mission>;
   appendUserMessage(id: string, message: MissionUserMessage): Promise<MissionTimelineRecord>;
@@ -2029,10 +2036,56 @@ export function createMissionStore(options: {
         ) {
           return current;
         }
+        // Core may mount a managed draft before the Host links this Execution.
+        // Do not publish the older acceptance fingerprint over that acknowledgement.
+        const currentFingerprint = missionContextMountsFingerprint(current);
+        const acceptedMounts = guard?.acceptedContextMounts;
+        const reconciliation = guard?.environmentReconciliation;
+        if (reconciliation !== undefined) {
+          // A compile identity can be rebased only onto an acknowledged managed
+          // addition. Keep every other execution field from the atomic read.
+          if (
+            current.execution?.id !== execution.id ||
+            execution.sessionId === undefined ||
+            execution.environmentFingerprint === undefined ||
+            current.execution.sessionId !== execution.sessionId ||
+            current.execution.environmentFingerprint !== reconciliation.acceptedFingerprint ||
+            current.execution.contextMountsFingerprint !== currentFingerprint ||
+            reconciliation.contextMountsFingerprint !== currentFingerprint ||
+            acceptedMounts === undefined ||
+            !onlyManagedDraftsAdded(acceptedMounts, current.contextMounts)
+          ) {
+            return current;
+          }
+          return {
+            ...current,
+            execution: {
+              ...current.execution,
+              environmentFingerprint: execution.environmentFingerprint,
+            },
+            updatedAt: timestamp,
+          };
+        }
+        const acknowledgedSession =
+          execution.sessionId !== undefined &&
+          execution.sessionId === current.execution?.sessionId &&
+          current.execution.contextMountsFingerprint === currentFingerprint;
+        const dynamicMountsAdded =
+          acceptedMounts !== undefined &&
+          execution.contextMountsFingerprint ===
+            missionContextMountsFingerprint({ contextMounts: acceptedMounts }) &&
+          onlyManagedDraftsAdded(acceptedMounts, current.contextMounts);
+        const contextMountsFingerprint =
+          execution.contextMountsFingerprint !== undefined &&
+          execution.sessionId !== undefined &&
+          (acknowledgedSession || dynamicMountsAdded)
+            ? currentFingerprint
+            : execution.contextMountsFingerprint;
         return {
           ...current,
           execution: {
             ...execution,
+            ...(contextMountsFingerprint === undefined ? {} : { contextMountsFingerprint }),
             ...(current.execution?.id === execution.id
               ? {
                   ...(execution.contextMountsFingerprint === undefined &&
@@ -2834,4 +2887,25 @@ function rethrowAttachmentIOFailure(error: unknown): never {
     throw new MissionAttachmentWritePendingError({ cause: error });
   }
   throw error;
+}
+
+function onlyManagedDraftsAdded(
+  accepted: Mission["contextMounts"],
+  current: Mission["contextMounts"],
+): boolean {
+  const remaining = [...current];
+  for (const mount of accepted) {
+    const fingerprint = missionContextMountsFingerprint({ contextMounts: [mount] });
+    const index = remaining.findIndex(
+      (candidate) =>
+        missionContextMountsFingerprint({ contextMounts: [candidate] }) === fingerprint,
+    );
+    if (index < 0) return false;
+    remaining.splice(index, 1);
+  }
+  return remaining.every(
+    (mount) =>
+      mount.kind === "skill-revision-draft" ||
+      (mount.kind === "context-store-draft" && mount.revisionJobId !== undefined),
+  );
 }
