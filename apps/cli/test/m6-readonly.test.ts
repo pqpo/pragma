@@ -152,12 +152,13 @@ function completionLineHasOption(line: string, option: string): boolean {
 describe("M6 parser and read-only command surface", () => {
   it("shows healthy Missions alongside unavailable-owner diagnostics in text and JSON", async () => {
     const base = createHost();
+    const unavailableId = "4b4f2993-4f39-4915-adc4-a052163d4e28";
     const error = createIntegrationError({
       code: "STORAGE_CORRUPTED",
       category: "protocol",
-      message: `Mission ${MISSION_ID} is unavailable: local-host/aggregate.json (journal_without_aggregate).`,
+      message: "Mission storage is unavailable.",
       details: {
-        missionId: MISSION_ID,
+        missionId: unavailableId,
         stage: "owner.inspect",
         file: "local-host/aggregate.json",
         reason: "journal_without_aggregate",
@@ -180,6 +181,8 @@ describe("M6 parser and read-only command surface", () => {
     expect(text.stdout.join("")).toContain("22222222-2222-4222-8222-222222222222");
     expect(text.stderr.join("")).toContain("journal_without_aggregate");
     expect(text.stderr.join("")).toContain("local-host/aggregate.json");
+    expect(text.stderr.join("")).toContain("stage=owner.inspect");
+    expect(text.stderr.join("")).toContain(`missionId=${unavailableId}`);
     const json = createIo();
     await expect(runCli(["mission", "list", "--json"], json, { localHost: host })).resolves.toBe(0);
     expect(JSON.parse(json.stdout.join(""))).toMatchObject({
@@ -188,7 +191,7 @@ describe("M6 parser and read-only command surface", () => {
       warnings: [
         {
           code: "MISSION_UNAVAILABLE",
-          details: { missionId: MISSION_ID, errorCode: "STORAGE_CORRUPTED" },
+          details: { missionId: unavailableId, errorCode: "STORAGE_CORRUPTED" },
         },
       ],
     });

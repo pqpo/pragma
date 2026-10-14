@@ -262,8 +262,15 @@ export function presentSuccess(input: PresentationInput, result: JsonValue): voi
   if (input.format === "text") {
     input.io.writeStdout(renderText(input.command, result, input.continuationCommand));
     for (const warning of warnings ?? []) {
-      if (isRecord(warning))
-        input.io.writeStderr(`Warning ${String(warning["code"])}: ${String(warning["message"])}\n`);
+      if (isRecord(warning)) {
+        const details = isRecord(warning["details"]) ? warning["details"] : undefined;
+        const context = ["missionId", "stage", "file", "reason"].flatMap((key) =>
+          typeof details?.[key] === "string" ? [`${key}=${details[key]}`] : [],
+        );
+        input.io.writeStderr(
+          `Warning ${String(warning["code"])}: ${String(warning["message"])}${context.length === 0 ? "" : ` (${context.join(", ")})`}\n`,
+        );
+      }
     }
     return;
   }

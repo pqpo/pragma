@@ -1,4 +1,6 @@
 import { Worker } from "node:worker_threads";
+import { DatabaseSync } from "node:sqlite";
+import { PragmaPaths } from "@pragma/core";
 import { mkdtemp, rm, readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -24,6 +26,69 @@ vi.mock("node:worker_threads", async (importOriginal) => {
 });
 
 describe("Shared Host storage lifecycle", () => {
+  it("reopens Execution WAL metadata after another process holds an exclusive lock", async () => {
+    const home = await mkdtemp(join(tmpdir(), "pragma-execution-busy-"));
+    const store = createSqliteExecutionStore({ pragmaHome: home });
+    const pool = acquireHostStoragePool();
+    const fixture = JSON.parse(
+      await readFile(new URL("./fixtures/execution-file-v12.json", import.meta.url), "utf8"),
+    );
+    const id = "exclusive-owner";
+    await store.create(
+      { ...fixture.execution, executionId: id, version: 0, lastAppliedSequence: 0 },
+      fixture.invocations[0],
+    );
+    await Promise.all(pool.clients.map((client) => client.call("get", id, undefined, false, home)));
+    const locker = new DatabaseSync(new PragmaPaths({ pragmaHome: home }).executionDatabase(id));
+    locker.exec(
+      "PRAGMA locking_mode=EXCLUSIVE; BEGIN EXCLUSIVE; UPDATE execution SET payload=payload; COMMIT;",
+    );
+    const reading = store.get(id);
+    const settled = reading.then(
+      () => "resolved",
+      () => "rejected",
+    );
+    try {
+      await new Promise((resolve) => setTimeout(resolve, 250));
+      expect(await Promise.race([settled, Promise.resolve("pending")])).toBe("pending");
+      locker.close();
+      await expect(reading).resolves.toMatchObject({ executionId: id });
+    } finally {
+      if (locker.isOpen) locker.close();
+      await Promise.allSettled([reading]);
+      await store.close();
+      await pool.close();
+      await rm(home, { recursive: true, force: true });
+    }
+  });
+  it("recovers receipt reads after a real SQLite lock outlasts the previous retry window", async () => {
+    const home = await mkdtemp(join(tmpdir(), "pragma-receipt-busy-"));
+    const file = join(home, "receipt.sqlite");
+    const pool = acquireHostStoragePool();
+    await pool.clients[0]!.call("mission-receipt:open", file);
+    await pool.clients[1]!.call("mission-receipt:open", file);
+    const locker = new DatabaseSync(file);
+    locker.exec("PRAGMA locking_mode=EXCLUSIVE; BEGIN EXCLUSIVE;");
+    // Checkpointing forces the exclusive connection to keep the WAL read lock.
+    locker.exec("UPDATE delivery_metadata SET value=value WHERE key='cursor'; COMMIT;");
+    const reading = pool.clients[1]!.call("mission-receipt:open", file);
+    const settled = reading.then(
+      () => "resolved",
+      () => "rejected",
+    );
+    try {
+      // This lock lasts longer than the old 75 ms retry budget.
+      await new Promise((resolve) => setTimeout(resolve, 250));
+      expect(await Promise.race([settled, Promise.resolve("pending")])).toBe("pending");
+      locker.close();
+      await expect(reading).resolves.toBeDefined();
+    } finally {
+      if (locker.isOpen) locker.close();
+      await Promise.allSettled([reading]);
+      await pool.close();
+      await rm(home, { recursive: true, force: true });
+    }
+  });
   it("lets ID-only acknowledgements share the second lane with foreground reads", async () => {
     const home = await mkdtemp(join(tmpdir(), "pragma-ack-lane-"));
     const pool = acquireHostStoragePool();

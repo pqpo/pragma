@@ -1,6 +1,7 @@
 import { ExecutionStorageAuthoritySchema as authoritySchema } from "./execution-storage-export.ts";
 import { readDeletedExecutionUsageSourceInWorker } from "./deleted-execution-usage.ts";
 import { createHash } from "node:crypto";
+import { withSqliteBusyRetry } from "./sqlite-busy.ts";
 import { performance } from "node:perf_hooks";
 import { executionStorageConversionMigrationChain } from "@pragma/core";
 import { executeUsageLedger } from "../usage-ledger-database.ts";
@@ -338,7 +339,7 @@ async function prepare(id: string): Promise<boolean> {
           root: InvocationSchema,
         })
         .parse(initialization);
-      const db = database(id, true);
+      const db = await withSqliteBusyRetry(() => database(id, true));
       if (read(db, "execution", id) === undefined) {
         await beginWrite(db);
         try {
@@ -982,19 +983,13 @@ async function execute(request: Request): Promise<unknown> {
       request.input,
     );
   if (request.operation.startsWith("mission-receipt:")) {
-    for (let attempt = 0; ; attempt++) {
-      try {
-        return await executeMissionReceipt(
-          request.executionId,
-          request.operation.slice(16),
-          request.input as unknown[],
-        );
-      } catch (error) {
-        if (!String((error as Error).message).includes("database is locked") || attempt >= 5)
-          throw error;
-        await new Promise((resolve) => setTimeout(resolve, 5 * (attempt + 1)));
-      }
-    }
+    return await withSqliteBusyRetry(() =>
+      executeMissionReceipt(
+        request.executionId,
+        request.operation.slice(16),
+        request.input as unknown[],
+      ),
+    );
   }
   if (request.operation.startsWith("usage:")) return await executeUsage(request);
   paths = new PragmaPaths({ pragmaHome: request.pragmaHome });
@@ -1039,7 +1034,10 @@ async function execute(request: Request): Promise<unknown> {
     if (preparationRequired) return { state: "requires_preparation" };
     if (marker === undefined) return { state: "ready" };
     try {
-      return { state: "ready", execution: read(database(id), "execution", id) };
+      return {
+        state: "ready",
+        execution: read(await withSqliteBusyRetry(() => database(id)), "execution", id),
+      };
     } finally {
       close(id);
     }
@@ -1077,7 +1075,7 @@ async function execute(request: Request): Promise<unknown> {
         record: execution,
         root: invocation,
       });
-      const db = database(id, true);
+      const db = await withSqliteBusyRetry(() => database(id, true));
       await beginWrite(db);
       try {
         put(db, "execution", id, execution);
@@ -1095,7 +1093,7 @@ async function execute(request: Request): Promise<unknown> {
       await rm(paths.executionStorageInitialization(id), { force: true });
       return;
     }
-    const db = database(id);
+    const db = await withSqliteBusyRetry(() => database(id));
     switch (request.operation) {
       case "get":
         return read(db, "execution", id);

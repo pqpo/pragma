@@ -39,7 +39,7 @@ const LegacyOwnershipClaimSchema = z
   })
   .strict();
 
-const StorageDeletionJournalSchema = z
+export const StorageDeletionJournalSchema = z
   .object({
     schemaVersion: z.literal("pragma.storage-deletion/v1"),
     deletionId: z.string().uuid(),
@@ -47,7 +47,7 @@ const StorageDeletionJournalSchema = z
     status: z.enum(["preparing", "moving", "catalog-pending", "trashed"]),
     sources: z.array(z.object({ label: z.string().min(1), path: z.string().min(1) }).strict()),
     moved: z.array(z.string().min(1)),
-    runtimeSessionOwnerIds: z.array(z.string().min(1)),
+    runtimeSessionOwnerIds: z.array(z.string().min(1)).default([]),
     startedAt: z.string().datetime(),
     completedAt: z.string().datetime().optional(),
   })

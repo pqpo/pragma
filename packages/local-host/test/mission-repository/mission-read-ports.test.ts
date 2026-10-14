@@ -9,6 +9,7 @@ import {
   type RuntimeResolver,
 } from "@pragma/core";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { createIntegrationError } from "@pragma/shared/integration";
 
 import { createMissionControllerStore } from "../../src/missions/controller/mission-controller-store.ts";
 import { createMissionStore } from "../../src/missions/repository/mission-store.ts";
@@ -47,6 +48,89 @@ afterEach(async () => {
 });
 
 describe("Shared Mission read ports in the Node application", () => {
+  it("isolates a deletion record owner mismatch without hiding healthy Missions", async () => {
+    const target = await diagnosticFixture();
+    const badId = "4b4f2993-4f39-4915-adc4-a052163d4e28";
+    const paths = new PragmaPaths({ pragmaHome: target.home });
+    await target.controller.claim({ missionId: badId, claimId: badId, leaseMs: 60_000 });
+    const deletion = createMissionDeletionService({
+      paths,
+      logger: createPragmaLogger(undefined, { component: "test" }),
+      ports: {
+        usage: async () => {},
+        memory: async () => {},
+        drafts: async () => {},
+        claims: async () => {},
+        settlement: async () => {},
+      },
+    });
+    const record = await deletion.prepare({ missionId: badId, executionIds: [], payload: {} });
+    await writeFile(
+      paths.missionDeletion(badId),
+      JSON.stringify({ ...record, missionId: target.missionId }),
+    );
+    await expect(target.ports.missions.listDiagnostics()).resolves.toMatchObject({
+      items: [expect.objectContaining({ missionId: target.missionId })],
+      diagnostics: [
+        {
+          code: "STORAGE_CORRUPTED",
+          details: { missionId: badId, stage: "deletion-record.read", reason: "owner_mismatch" },
+        },
+      ],
+    });
+    expect(JSON.parse(await readFile(paths.missionDeletion(badId), "utf8")).missionId).toBe(
+      target.missionId,
+    );
+  });
+
+  it.each(["repository", "controller"])(
+    "enriches structured errors from %s and preserves precise details",
+    async (layer) => {
+      const target = await diagnosticFixture();
+      const fail = vi.fn(async () => {
+        throw createIntegrationError({
+          code: "STORAGE_CORRUPTED",
+          category: "protocol",
+          message: "Invalid transaction owner.",
+        });
+      });
+      const ports = createLocalHostMissionReadPorts({
+        pragmaHome: target.home,
+        repository:
+          layer === "repository" ? { ...target.repository, get: fail } : target.repository,
+        controller:
+          layer === "controller" ? { ...target.controller, readSnapshot: fail } : target.controller,
+      });
+      const stage = layer === "repository" ? "repository.read" : "controller.read";
+      await expect(ports.missions.listDiagnostics()).resolves.toMatchObject({
+        items: [],
+        diagnostics: [
+          {
+            code: "STORAGE_CORRUPTED",
+            details: { missionId: target.missionId, stage, file: expect.any(String) },
+          },
+        ],
+      });
+      const details = {
+        missionId: target.missionId,
+        stage: "transaction.read",
+        file: "local-host/.event-transaction.json",
+        reason: "owner_mismatch",
+      };
+      fail.mockImplementation(async () => {
+        throw createIntegrationError({
+          code: "STORAGE_CORRUPTED",
+          category: "protocol",
+          message: "Invalid transaction owner.",
+          details,
+        });
+      });
+      await expect(ports.missions.listDiagnostics()).resolves.toMatchObject({
+        diagnostics: [{ details }],
+      });
+    },
+  );
+
   it("returns explicit partial diagnostics for journal-only owners without changing their evidence", async () => {
     const target = await diagnosticFixture();
     const orphanId = "4b4f2993-4f39-4915-adc4-a052163d4e28";

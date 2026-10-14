@@ -167,6 +167,64 @@ it("preserves a failed mutation journal in trash and fences a fresh controller a
   });
 });
 
+it.each(["file_move", "onCommitted"])(
+  "fences a moved owner before Host commit after failure at %s",
+  async (failureAt) => {
+    const target = await fixture();
+    const record = await target.deletion.prepare({
+      missionId,
+      executionIds: [],
+      payload: {},
+      missionPath: target.repository.storagePath!(missionId),
+    });
+    expect(await isMissionDeletionCommitted(target.paths, missionId)).toBe(false);
+    await expect(
+      target.otherController.claim({ missionId, claimId: missionId, leaseMs: 60_000 }),
+    ).resolves.toMatchObject({
+      claimId: target.guard.claimId,
+      fencingToken: target.guard.fencingToken,
+    });
+    await expect(
+      target.controller.assertWriteGuard({ missionId, guard: target.guard }),
+    ).resolves.toBeUndefined();
+    await expect(
+      withMissionControllerDeletionBarrier(target.paths.missionsRoot(), missionId, async () => {
+        await moveOwnedStorageToTrash({
+          paths: target.paths,
+          deletionId: record.deletionId,
+          owner: { type: "mission", id: missionId },
+          sources: [{ label: "mission", path: target.repository.storagePath!(missionId) }],
+          onPhase: (phase) => {
+            if (failureAt === phase) throw new Error("process exited after move");
+          },
+          onCommitted: async () => {
+            throw new Error("Host commit callback failed");
+          },
+        });
+      }),
+    ).rejects.toThrow();
+    expect((await target.deletion.read(missionId))?.phase).toBe("prepared");
+    const restarted = createMissionControllerStore({
+      missionsPath: target.paths.missionsRoot(),
+      missionPath: target.repository.storagePath,
+      isDeletionCommitted: async (id) => await isMissionDeletionCommitted(target.paths, id),
+    });
+    expect(await isMissionDeletionCommitted(target.paths, missionId)).toBe(true);
+    await expect(
+      restarted.claim({ missionId, claimId: missionId, leaseMs: 60_000 }),
+    ).rejects.toMatchObject({ code: "MISSION_NOT_FOUND" });
+    await expect(
+      restarted.write({ missionId, guard: target.guard, operation: async () => {} }),
+    ).rejects.toMatchObject({ code: "MISSION_NOT_FOUND" });
+    await expect(stat(target.repository.storagePath!(missionId))).rejects.toMatchObject({
+      code: "ENOENT",
+    });
+    expect((await target.deletion.read(missionId))?.phase).toBe("prepared");
+    await target.deletion.runOnce();
+    expect((await target.deletion.read(missionId))?.phase).toBe("completed");
+  },
+);
+
 it("serializes deletion in a separate process with the complete semantic transaction", async () => {
   const target = await fixture();
   let entered!: () => void;

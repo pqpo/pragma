@@ -435,7 +435,6 @@ async function listMissionSnapshots(
           // when this Mission has only controller facts and no envelope.
           envelope = await repository.get(missionId);
         } catch (error) {
-          if (IntegrationErrorSchema.safeParse(error).success) throw error;
           if (!(error instanceof MissionStoreError) || error.code !== "mission_not_found")
             throw normalizeMissionReadError(error, missionId, "repository.read", "mission.yaml");
         }
@@ -443,7 +442,6 @@ async function listMissionSnapshots(
         try {
           snapshot = await controller.readSnapshot({ missionId });
         } catch (error) {
-          if (IntegrationErrorSchema.safeParse(error).success) throw error;
           throw normalizeMissionReadError(
             error,
             missionId,

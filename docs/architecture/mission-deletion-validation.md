@@ -8,14 +8,26 @@ Execution/Session 的既有删除锁顺序获取屏障。semantic-write 锁覆�
 后递归创建旧目录。搬移时仍未完成的 journal 随 owner 保存在回收站，不自动重放或删除。
 
 Node 与 Desktop composition 均在 aggregate 锁内检查 owner 目录之外的已提交/已完成删除记录，
-拒绝迟到 claim、续租、写入与恢复。prepared 阶段仍允许现有 controller 完成 Runtime 停止；
+拒绝迟到 claim、续租、写入与恢复。prepared 阶段仅在 owner 尚未搬移时允许 controller 完成 Runtime 停止；
 repository 写入继续使用删除 fencing。语义 journal 存在但 aggregate 缺失时不能生成新 lease，
 包括默认路径解析器遇到 canonical journal-only 目录的情况。
+
+fencing 同步核对底层 storage deletion journal，不依赖后台恢复先执行。即使上层记录仍为
+prepared，底层已经 trashed，或 owner 已出现在本次事务的 trash 中且原路径消失，也禁止新
+claim/写入；真正尚未搬移的 prepared 不被误判为已提交。Desktop 与 Node 共用这一判定。
 
 共享读取端口新增 `listDiagnostics()`，区分删除状态、缺失主数据、无效事务、权限错误和待完成
 事务，返回可读条目及明确诊断。既有严格 `list()` 保留失败行为，并附带可读 Mission ID 和诊断。
 CLI 与 Desktop 的 Local Host facade 均提供该入口；CLI 的文本和 JSON/JSONL 展示部分结果警告。
-未知异常继续失败，文件与 journal 保持原状。本次没有更改持久化 Schema 或协议版本。
+删除记录 owner mismatch 使用结构化损坏诊断；已有 IntegrationError 同样补足 Mission ID、
+阶段与文件，并保留底层精确 details，文本警告展示这些定位字段。未知异常继续失败，文件与
+journal 保持原状。持久格式与协议版本保持不变；Core 的 journal 读取 Schema 接受 writer
+合法省略的 Runtime owner 列表并默认成空数组。
+
+Flow 崩溃恢复中的短暂 SQLite BUSY/LOCKED 争用使用有界、可让出 Worker 的重试：覆盖打开
+Execution WAL 元数据和既有 Mission receipt 操作。只重试 SQLite 数值错误码对应的锁争用，
+不重复已开始的 Execution 业务事务，也不隐藏损坏或版本错误。真实 SQLite 独占锁回归验证锁
+超过旧等待窗口后仍可恢复读取。
 
 回归覆盖健康 Mission 与 journal-only 目录并存、待恢复事务、异常聚合与未知错误、删除中残留、
 同进程及独立进程的事务/删除竞争，以及重启和 completed 删除记录对新 claim 的 fencing。

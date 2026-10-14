@@ -168,4 +168,7 @@ function isNotFound(error: unknown): boolean {
   return typeof error === "object" && error !== null && "code" in error && error.code === "ENOENT";
 }
 
-export { recoverRuntimeSessionDeletion } from "./migrations/runtime-session-catalog/index.ts";
+export {
+  recoverRuntimeSessionDeletion,
+  StorageDeletionJournalSchema,
+} from "./migrations/runtime-session-catalog/index.ts";
