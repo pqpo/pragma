@@ -377,6 +377,11 @@ export async function createDesktopApplicationContainer(
   const missionLifecycle = createLocalHostMissionController({
     logger: mainLogger,
     missionsPath,
+    missionPath: missionStore.storagePath,
+    isDeletionCommitted: async (id) => {
+      const record = await readMissionDeletionRecord(pragmaPaths, id);
+      return record?.phase === "committed" || record?.phase === "completed";
+    },
     readMission: readMissionEnvelope,
     onIdleError: (missionId, error) => {
       mainLogger.warn(

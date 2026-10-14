@@ -257,19 +257,25 @@ function renderRunText(outcome: CliRunPresentationOutcome, requestId: string): s
 }
 
 export function presentSuccess(input: PresentationInput, result: JsonValue): void {
+  const warnings =
+    isRecord(result) && Array.isArray(result["warnings"]) ? result["warnings"] : undefined;
   if (input.format === "text") {
     input.io.writeStdout(renderText(input.command, result, input.continuationCommand));
+    for (const warning of warnings ?? []) {
+      if (isRecord(warning))
+        input.io.writeStderr(`Warning ${String(warning["code"])}: ${String(warning["message"])}\n`);
+    }
     return;
   }
   if (input.format === "json") {
     input.io.writeStdout(
-      `${JSON.stringify(makeV2Result(input, { status: "succeeded", result }))}\n`,
+      `${JSON.stringify(makeV2Result(input, { status: "succeeded", result, warnings }))}\n`,
     );
     return;
   }
   const presenter = createV2StreamPresenter(input);
   presenter.emit({ type: "command.result", data: { command: input.command, result } });
-  presenter.finalize({ status: "succeeded", result });
+  presenter.finalize({ status: "succeeded", result, warnings });
 }
 
 export function renderWatchEventText(event: {
@@ -566,7 +572,11 @@ function renderMissionList(
 ): string {
   const items = arrayValue(result, "items");
   if (items.length === 0) {
-    return appendContinuation("No missions found.\n", result, "mission.list", continuationCommand);
+    const message =
+      isRecord(result) && result["partial"] === true
+        ? "No readable missions found; see warnings.\n"
+        : "No missions found.\n";
+    return appendContinuation(message, result, "mission.list", continuationCommand);
   }
   const lines = items.map((item) => {
     if (!isRecord(item)) return JSON.stringify(item);

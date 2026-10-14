@@ -58,12 +58,19 @@ export async function readMissionDeletionRecord(
 ): Promise<MissionDeletionRecord | undefined> {
   for (const path of [paths.missionDeletion(id), paths.missionDeletionCompleted(id)]) {
     try {
-      return MissionDeletionRecordSchema.parse(JSON.parse(await readFile(path, "utf8")));
+      const record = MissionDeletionRecordSchema.parse(JSON.parse(await readFile(path, "utf8")));
+      if (record.missionId !== id) throw new Error("Mission deletion record owner mismatch.");
+      return record;
     } catch (error) {
       if (!missing(error)) throw error;
     }
   }
   return undefined;
+}
+
+export async function isMissionDeletionCommitted(paths: PragmaPaths, id: string): Promise<boolean> {
+  const record = await readMissionDeletionRecord(paths, id);
+  return record?.phase === "committed" || record?.phase === "completed";
 }
 
 export class MissionDeletionSourceExpiredError extends Error {

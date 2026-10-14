@@ -1,5 +1,27 @@
 # Mission 删除优化：审查与验证记录
 
+## Issue #397：语义事务与 owner 搬移的协调
+
+Local Host 最终搬移 owner 前，按 semantic-write → aggregate → repository metadata →
+Execution/Session 的既有删除锁顺序获取屏障。semantic-write 锁覆盖准备 journal、业务 mutation
+与事件提交的完整生命周期；aggregate 锁覆盖 lease 校验与持久化，避免已验证的 writer 在搬移
+后递归创建旧目录。搬移时仍未完成的 journal 随 owner 保存在回收站，不自动重放或删除。
+
+Node 与 Desktop composition 均在 aggregate 锁内检查 owner 目录之外的已提交/已完成删除记录，
+拒绝迟到 claim、续租、写入与恢复。prepared 阶段仍允许现有 controller 完成 Runtime 停止；
+repository 写入继续使用删除 fencing。语义 journal 存在但 aggregate 缺失时不能生成新 lease，
+包括默认路径解析器遇到 canonical journal-only 目录的情况。
+
+共享读取端口新增 `listDiagnostics()`，区分删除状态、缺失主数据、无效事务、权限错误和待完成
+事务，返回可读条目及明确诊断。既有严格 `list()` 保留失败行为，并附带可读 Mission ID 和诊断。
+CLI 与 Desktop 的 Local Host facade 均提供该入口；CLI 的文本和 JSON/JSONL 展示部分结果警告。
+未知异常继续失败，文件与 journal 保持原状。本次没有更改持久化 Schema 或协议版本。
+
+回归覆盖健康 Mission 与 journal-only 目录并存、待恢复事务、异常聚合与未知错误、删除中残留、
+同进程及独立进程的事务/删除竞争，以及重启和 completed 删除记录对新 claim 的 fencing。
+这证明当前代码中的竞态机制及其防护，不据此认定用户现场由删除操作造成；现场仍需核对原始
+journal、删除记录与路径迁移记录。
+
 日期：2026-10-01。基于远端 `main` 的 `a5054c38`，分支 `codex/mission-deletion-optimization`。
 实施与验证使用独立 worktree，原工作区未提交改动未复制、未修改。
 

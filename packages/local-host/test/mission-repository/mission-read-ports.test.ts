@@ -1,14 +1,43 @@
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import type { RuntimeResolver } from "@pragma/core";
+import {
+  createPragmaLogger,
+  encodePragmaPathSegment,
+  PragmaPaths,
+  type RuntimeResolver,
+} from "@pragma/core";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { createMissionControllerStore } from "../../src/missions/controller/mission-controller-store.ts";
 import { createMissionStore } from "../../src/missions/repository/mission-store.ts";
 import { createLocalHostNodeApplication } from "../../src/node-application.ts";
 import { createLocalHostMissionBoardBindings } from "../../src/mission-board.ts";
+import { createLocalHostMissionReadPorts } from "../../src/missions/read-ports.ts";
+import { createMissionDeletionService } from "../../src/missions/deletion.ts";
+
+async function diagnosticFixture() {
+  const home = await mkdtemp(join(tmpdir(), "pragma-mission-diagnostic-"));
+  roots.push(home);
+  const missionsPath = join(home, "data", "missions");
+  const repository = createMissionStore({ missionsPath });
+  const controller = createMissionControllerStore({
+    missionsPath,
+    missionPath: repository.storagePath,
+  });
+  const missionId = "11111111-1111-4111-8111-111111111111";
+  const guard = await controller.claim({ missionId, claimId: missionId, leaseMs: 60_000 });
+  await controller.write({
+    missionId,
+    guard,
+    operation: async ({ appendEvent }) => {
+      await appendEvent("mission.created", {});
+    },
+  });
+  const ports = createLocalHostMissionReadPorts({ pragmaHome: home, repository, controller });
+  return { home, missionsPath, repository, controller, missionId, guard, ports };
+}
 
 const roots: string[] = [];
 afterEach(async () => {
@@ -18,6 +47,148 @@ afterEach(async () => {
 });
 
 describe("Shared Mission read ports in the Node application", () => {
+  it("returns explicit partial diagnostics for journal-only owners without changing their evidence", async () => {
+    const target = await diagnosticFixture();
+    const orphanId = "4b4f2993-4f39-4915-adc4-a052163d4e28";
+    const directory = join(target.missionsPath, encodePragmaPathSegment(orphanId), "local-host");
+    await mkdir(directory, { recursive: true });
+    const journal = join(directory, ".semantic-write-transaction.json");
+    const evidence = "original unreadable transaction evidence";
+    await writeFile(journal, evidence);
+    await expect(target.ports.missions.listDiagnostics()).resolves.toMatchObject({
+      items: [expect.objectContaining({ missionId: target.missionId })],
+      diagnostics: [
+        {
+          code: "STORAGE_CORRUPTED",
+          details: {
+            missionId: orphanId,
+            stage: "owner.inspect",
+            file: "local-host/aggregate.json",
+            reason: "journal_without_aggregate",
+          },
+        },
+      ],
+    });
+    await expect(target.ports.missions.list()).rejects.toMatchObject({
+      details: { availableMissionIds: [target.missionId] },
+    });
+    await expect(
+      target.controller.claim({ missionId: orphanId, claimId: orphanId, leaseMs: 60_000 }),
+    ).rejects.toMatchObject({ code: "STORAGE_CORRUPTED" });
+    expect(await readFile(journal, "utf8")).toBe(evidence);
+    await expect(stat(join(directory, "aggregate.json"))).rejects.toMatchObject({ code: "ENOENT" });
+    const defaultController = createMissionControllerStore({ missionsPath: target.missionsPath });
+    await expect(
+      defaultController.claim({ missionId: orphanId, claimId: orphanId, leaseMs: 60_000 }),
+    ).rejects.toMatchObject({ code: "STORAGE_CORRUPTED" });
+    await expect(stat(join(target.missionsPath, orphanId))).rejects.toMatchObject({
+      code: "ENOENT",
+    });
+  });
+
+  it("distinguishes deletion records from storage corruption without cleaning residual data", async () => {
+    const target = await diagnosticFixture();
+    const deletion = createMissionDeletionService({
+      paths: new PragmaPaths({ pragmaHome: target.home }),
+      logger: createPragmaLogger(undefined, { component: "test" }),
+      ports: {
+        usage: async () => {},
+        memory: async () => {},
+        drafts: async () => {},
+        claims: async () => {},
+        settlement: async () => {},
+      },
+    });
+    await deletion.prepare({ missionId: target.missionId, executionIds: [], payload: {} });
+    await expect(target.ports.missions.listDiagnostics()).resolves.toMatchObject({
+      items: [],
+      diagnostics: [{ code: "MISSION_NOT_FOUND", details: { reason: "deletion_prepared" } }],
+    });
+    await deletion.commit(target.missionId);
+    await expect(target.ports.missions.listDiagnostics()).resolves.toMatchObject({
+      items: [],
+      diagnostics: [{ code: "MISSION_NOT_FOUND", details: { reason: "deletion_committed" } }],
+    });
+    expect(
+      (await target.controller.readSnapshot({ missionId: target.missionId })).events,
+    ).toHaveLength(1);
+  });
+
+  it("reports a pending transaction and leaves replay to the fenced mutation path", async () => {
+    const target = await diagnosticFixture();
+    await expect(
+      target.controller.coordinateSemanticWrite({
+        missionId: target.missionId,
+        guard: target.guard,
+        operation: { name: "mission.options.update", input: {} },
+        eventType: "mission.options.updated",
+        eventData: {},
+        apply: async () => {
+          throw new Error("crash");
+        },
+      }),
+    ).rejects.toThrow("pending durable replay");
+    const journal = join(
+      target.repository.storagePath!(target.missionId),
+      "local-host",
+      ".semantic-write-transaction.json",
+    );
+    const original = await readFile(journal, "utf8");
+    await expect(target.ports.missions.listDiagnostics()).resolves.toMatchObject({
+      items: [expect.objectContaining({ missionId: target.missionId })],
+      diagnostics: [],
+      warnings: [{ code: "MISSION_TRANSACTION_PENDING", details: { missionId: target.missionId } }],
+    });
+    expect(await readFile(journal, "utf8")).toBe(original);
+    const replay = vi.fn(async () => {});
+    await target.controller.recoverSemanticWrite({
+      missionId: target.missionId,
+      guard: target.guard,
+      replay,
+    });
+    expect(replay).toHaveBeenCalledOnce();
+    await expect(target.ports.missions.listDiagnostics()).resolves.toMatchObject({
+      diagnostics: [],
+      warnings: [],
+    });
+  });
+
+  it("keeps malformed aggregates unavailable and propagates unexpected errors", async () => {
+    const target = await diagnosticFixture();
+    const unexpected = new Error("unexpected repository bug");
+    const failing = createLocalHostMissionReadPorts({
+      pragmaHome: target.home,
+      repository: {
+        ...target.repository,
+        get: async () => {
+          throw unexpected;
+        },
+      },
+      controller: target.controller,
+    });
+    await expect(failing.missions.listDiagnostics()).rejects.toBe(unexpected);
+    const aggregate = join(
+      target.repository.storagePath!(target.missionId),
+      "local-host",
+      "aggregate.json",
+    );
+    await writeFile(aggregate, "malformed aggregate");
+    await expect(target.ports.missions.listDiagnostics()).resolves.toMatchObject({
+      items: [],
+      diagnostics: [
+        {
+          code: "STORAGE_CORRUPTED",
+          details: {
+            missionId: target.missionId,
+            stage: "controller.read",
+            reason: "invalid_data",
+          },
+        },
+      ],
+    });
+    expect(await readFile(aggregate, "utf8")).toBe("malformed aggregate");
+  });
+
   it("reads controller-only history through get/list/query/watch/Board without inventing a full Mission", async () => {
     const home = await mkdtemp(join(tmpdir(), "pragma-desktop-sparse-read-"));
     roots.push(home);

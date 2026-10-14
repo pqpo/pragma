@@ -150,6 +150,51 @@ function completionLineHasOption(line: string, option: string): boolean {
 }
 
 describe("M6 parser and read-only command surface", () => {
+  it("shows healthy Missions alongside unavailable-owner diagnostics in text and JSON", async () => {
+    const base = createHost();
+    const error = createIntegrationError({
+      code: "STORAGE_CORRUPTED",
+      category: "protocol",
+      message: `Mission ${MISSION_ID} is unavailable: local-host/aggregate.json (journal_without_aggregate).`,
+      details: {
+        missionId: MISSION_ID,
+        stage: "owner.inspect",
+        file: "local-host/aggregate.json",
+        reason: "journal_without_aggregate",
+      },
+    });
+    const listMissions = vi.fn(async () => {
+      throw new Error("Strict list should not be used");
+    });
+    const host: CliLocalHost = {
+      ...base,
+      listMissions,
+      listMissionDiagnostics: async () => ({
+        items: await base.listMissions(),
+        diagnostics: [error],
+        warnings: [],
+      }),
+    };
+    const text = createIo();
+    await expect(runCli(["mission", "list"], text, { localHost: host })).resolves.toBe(0);
+    expect(text.stdout.join("")).toContain("22222222-2222-4222-8222-222222222222");
+    expect(text.stderr.join("")).toContain("journal_without_aggregate");
+    expect(text.stderr.join("")).toContain("local-host/aggregate.json");
+    const json = createIo();
+    await expect(runCli(["mission", "list", "--json"], json, { localHost: host })).resolves.toBe(0);
+    expect(JSON.parse(json.stdout.join(""))).toMatchObject({
+      status: "succeeded",
+      result: { partial: true, diagnostics: [error], items: expect.any(Array) },
+      warnings: [
+        {
+          code: "MISSION_UNAVAILABLE",
+          details: { missionId: MISSION_ID, errorCode: "STORAGE_CORRUPTED" },
+        },
+      ],
+    });
+    expect(listMissions).not.toHaveBeenCalled();
+  });
+
   it("keeps the frozen parser shape for Unicode, Windows-like quoting, ranges, and aliases", () => {
     expect(
       parseCliArgv([
