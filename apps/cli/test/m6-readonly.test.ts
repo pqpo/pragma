@@ -150,6 +150,34 @@ function completionLineHasOption(line: string, option: string): boolean {
 }
 
 describe("M6 parser and read-only command surface", () => {
+  it("fails closed when no Mission can be read and includes diagnostic context in failure text", async () => {
+    const error = createIntegrationError({
+      code: "STORAGE_CORRUPTED",
+      category: "protocol",
+      message: "Invalid stored aggregate.",
+      details: {
+        missionId: MISSION_ID,
+        stage: "controller.read",
+        file: "local-host/aggregate.json",
+        reason: "invalid_data",
+      },
+    });
+    const host: CliLocalHost = {
+      ...createHost(),
+      listMissionDiagnostics: async () => ({ items: [], diagnostics: [error], warnings: [] }),
+    };
+    const text = createIo();
+    await expect(runCli(["mission", "list"], text, { localHost: host })).resolves.toBe(7);
+    expect(text.stderr.join("")).toContain(`missionId=${MISSION_ID}`);
+    expect(text.stderr.join("")).toContain("stage=controller.read");
+    const json = createIo();
+    await expect(runCli(["mission", "list", "--json"], json, { localHost: host })).resolves.toBe(7);
+    expect(JSON.parse(json.stdout.join(""))).toMatchObject({
+      status: "failed",
+      error: { code: "STORAGE_CORRUPTED", details: { diagnostics: [error] } },
+    });
+  });
+
   it("shows healthy Missions alongside unavailable-owner diagnostics in text and JSON", async () => {
     const base = createHost();
     const unavailableId = "4b4f2993-4f39-4915-adc4-a052163d4e28";

@@ -3,6 +3,7 @@ import {
   BoardReadResultSchema,
   BoardSearchResultSchema,
   ExecutorDescriptorSchema,
+  IntegrationErrorSchema,
   type HumanInteractionRequestEnvelope,
   type JsonValue,
 } from "@pragma/shared/integration";
@@ -200,6 +201,17 @@ async function listMissions(
   context: CliCommandContext,
 ): Promise<JsonValue> {
   const diagnostics = await context.localHost.listMissionDiagnostics?.();
+  if (
+    diagnostics !== undefined &&
+    diagnostics.items.length === 0 &&
+    diagnostics.diagnostics.length > 0
+  ) {
+    const error = diagnostics.diagnostics[0]!;
+    throw IntegrationErrorSchema.parse({
+      ...error,
+      details: { ...error.details, diagnostics: diagnostics.diagnostics.map(asJsonValue) },
+    });
+  }
   const page = hostPage(diagnostics?.items ?? (await context.localHost.listMissions()));
   const filtered = page.items.filter((mission) => matchesMission(mission, command));
   const result = paginateOrHost(

@@ -263,12 +263,8 @@ export function presentSuccess(input: PresentationInput, result: JsonValue): voi
     input.io.writeStdout(renderText(input.command, result, input.continuationCommand));
     for (const warning of warnings ?? []) {
       if (isRecord(warning)) {
-        const details = isRecord(warning["details"]) ? warning["details"] : undefined;
-        const context = ["missionId", "stage", "file", "reason"].flatMap((key) =>
-          typeof details?.[key] === "string" ? [`${key}=${details[key]}`] : [],
-        );
         input.io.writeStderr(
-          `Warning ${String(warning["code"])}: ${String(warning["message"])}${context.length === 0 ? "" : ` (${context.join(", ")})`}\n`,
+          `Warning ${String(warning["code"])}: ${String(warning["message"])}${diagnosticContext(warning["details"])}\n`,
         );
       }
     }
@@ -772,7 +768,15 @@ function renderCredentialFindings(items: readonly JsonValue[]): string {
 
 function renderFailure(error: IntegrationError, requestId?: string): string {
   const credentials = error.details?.["credentials"];
-  return `${requestId === undefined ? "" : `Request ID: ${requestId}\n`}${Array.isArray(credentials) ? renderCredentialFindings(credentials) : ""}${error.code}: ${error.message}\n`;
+  return `${requestId === undefined ? "" : `Request ID: ${requestId}\n`}${Array.isArray(credentials) ? renderCredentialFindings(credentials) : ""}${error.code}: ${error.message}${diagnosticContext(error.details)}\n`;
+}
+
+function diagnosticContext(details: unknown): string {
+  if (!isRecord(details)) return "";
+  const context = ["missionId", "stage", "file", "reason"].flatMap((key) =>
+    typeof details[key] === "string" ? [`${key}=${details[key]}`] : [],
+  );
+  return context.length === 0 ? "" : ` (${context.join(", ")})`;
 }
 
 function resultValue(value: JsonValue, key: string): JsonValue | undefined {
