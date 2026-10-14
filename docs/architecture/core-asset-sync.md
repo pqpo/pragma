@@ -125,6 +125,16 @@ reference is a logical conflict that reports the referencing asset name; indepen
 synchronize. Whole graphs removed locally can be deleted in one publication. Host-provided external
 references are not exported and do not participate in this graph.
 
+Incoming graph planning also checks the resulting local graph before import preparation, on
+full, pull and automatic synchronization. A locally retained conflicting Expert blocks deletion of
+its referenced RuntimeProfile as a persistent conflict, while unrelated changes continue. Keeping
+the local Expert keeps its unchanged dependencies that were deleted remotely; competing dependency
+edits remain decisions. Domain transfer reference validation still runs after planning.
+
+Unreadable authorities keep their last-known identity in the optional `unavailableItems` checkpoint
+cache until repaired or truly removed. This cache is separate from `remoteItems`, so a remotely
+deleted resource remains diagnosable across refresh/restart without being counted as present in Git.
+
 DSL imports compare each resource with its expected portable content before applying changes.
 Binding metadata is normalized against the pre-import local authority, and the Project publication
 keeps its base snapshot so concurrent edits during commit are protected by the existing change-set

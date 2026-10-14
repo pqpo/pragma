@@ -65,3 +65,12 @@ configuration/checkpoint snapshots are read atomically without waiting on networ
 upgrades/recovery retain their exclusive lock, and execution journals remain validated by execution.
 Forward-compatible Context fields survive metadata normalization and interrupted automatic repair.
 Regression tests reproduce each failure before the correction and validate the corrected outcomes.
+
+Incoming deletions are planned against the resulting local resource graph for full, pull and
+automatic synchronization, including resources retained by conflicts. Reference competition is
+persisted before calling the transfer executor; unrelated imports continue. Keeping a local owner
+also keeps its unchanged dependencies deleted remotely, while competing dependency changes still
+require decisions. Choosing the remote deletion removes the owner and its dependencies together.
+Unreadable authorities retain last-known identities in a separate `unavailableItems` diagnostic
+cache until configuration repair or actual removal. This optional v2 checkpoint field defaults to
+empty for existing v2 checkpoints and v1 migration results; it never implies presence in Git.

@@ -129,6 +129,7 @@ export function createCoreAssetSyncService(options: {
       repositoryInitialized: false,
       bases: {},
       remoteItems: {},
+      unavailableItems: {},
       conflicts: [],
       conflictMessages: {},
       restoreConflicts: [],
@@ -279,18 +280,19 @@ export function createCoreAssetSyncService(options: {
     const current = state ?? (await readState(sourceKey(config)));
     const { items: local, nameResolutionIssues } = collected ?? (await collect());
     const missing = await readiness(local);
+    const knownItems = { ...current.unavailableItems, ...current.remoteItems };
     const keys = new Set([
       ...local.keys(),
       ...(remote?.keys() ?? []),
-      ...Object.keys(current.remoteItems),
+      ...Object.keys(knownItems),
       ...current.conflicts,
     ]);
     const unavailable = await unavailableLocalAuthorities(local, keys);
     const items = [...keys].sort().flatMap((key) => {
-      const item = local.get(key) ?? remote?.get(key) ?? current.remoteItems[key];
+      const item = local.get(key) ?? remote?.get(key) ?? knownItems[key];
       if (item === undefined) return [];
       const remoteItem = remote?.get(key) ?? current.remoteItems[key];
-      const identity = logicalAssetIdentity({ ...item, key }, local, remote, current.remoteItems);
+      const identity = logicalAssetIdentity({ ...item, key }, local, remote, knownItems);
       const localNameIssue = nameResolutionIssues.get(key);
       const status =
         unavailable.has(key) || localNameIssue !== undefined
@@ -314,9 +316,9 @@ export function createCoreAssetSyncService(options: {
         bindingId === undefined
           ? undefined
           : issueKind === "context-store"
-            ? itemSummaryAt(`knowledge:${bindingId}`, local, remote, current.remoteItems)
-            : (itemSummaryAt(`capability:${bindingId}`, local, remote, current.remoteItems) ??
-              itemSummaryAt(`skill:${bindingId}`, local, remote, current.remoteItems));
+            ? itemSummaryAt(`knowledge:${bindingId}`, local, remote, knownItems)
+            : (itemSummaryAt(`capability:${bindingId}`, local, remote, knownItems) ??
+              itemSummaryAt(`skill:${bindingId}`, local, remote, knownItems));
       const identityIssue =
         nameIssue && !namedAuthority
           ? generatedBindingPlaceholder({ ...displayItem, name: identity.assetName })
@@ -409,6 +411,7 @@ export function createCoreAssetSyncService(options: {
           state.repositoryInitialized || journal.incomingState.repositoryInitialized,
         bases,
         remoteItems: journal.incomingState.remoteItems,
+        unavailableItems: journal.incomingState.unavailableItems,
         conflicts: [...new Set([...state.conflicts, ...conflicts])],
         restoreConflicts: [...new Set([...state.restoreConflicts, ...conflicts])],
       });
@@ -472,6 +475,7 @@ export function createCoreAssetSyncService(options: {
           try {
             const remote = await readSyncRepository(checkout.root, state.repositoryInitialized);
             const { items: local, revisions, nameResolutionIssues } = await collect();
+            const knownItems = { ...state.unavailableItems, ...state.remoteItems };
             const nextRemote = new Map(remote);
             const changes: {
               key: string;
@@ -495,15 +499,25 @@ export function createCoreAssetSyncService(options: {
               ...local.keys(),
               ...remote.keys(),
               ...Object.keys(bases),
-              ...Object.keys(state.remoteItems),
+              ...Object.keys(knownItems),
               ...state.restoreConflicts,
             ]);
             const groups = new Map<string, string[]>();
-            const deferredUnavailable = await unavailableLocalAuthorities(local, keys);
+            const unavailableAuthorities = await unavailableLocalAuthorities(local, keys);
+            const deferredUnavailable = new Set(unavailableAuthorities);
+            // Diagnostic identities are separate from the current Git inventory.
+            const unavailableItems = Object.fromEntries(
+              [...unavailableAuthorities].flatMap((key) => {
+                const item = itemSummaryAt(key, local, remote, knownItems);
+                return item
+                  ? [[key, { kind: item.kind, name: item.name, fingerprint: item.fingerprint }]]
+                  : [];
+              }),
+            );
             for (const key of keys) {
-              const item = itemSummaryAt(key, local, remote, state.remoteItems);
+              const item = itemSummaryAt(key, local, remote, knownItems);
               const group = item
-                ? logicalAssetIdentity(item, local, remote, state.remoteItems).assetKey
+                ? logicalAssetIdentity(item, local, remote, knownItems).assetKey
                 : key;
               groups.set(group, [...(groups.get(group) ?? []), key]);
             }
@@ -621,14 +635,38 @@ export function createCoreAssetSyncService(options: {
                     else planned.delete(key);
                   }
                 }
-                for (const [key, dependencies] of missingGitDependencyKeys(remote, planned, local))
+                for (const [key, dependencies] of missingGitDependencyKeys(
+                  remote,
+                  planned,
+                  local,
+                )) {
+                  // Keeping a local owner also retains its unchanged dependencies deleted remotely.
+                  // Competing dependency edits remain separate user decisions.
+                  if (
+                    resolution?.choice === "local" &&
+                    groupChoices.get(key) === "local" &&
+                    dependencies.every(
+                      (dependency) =>
+                        local.has(dependency) &&
+                        local.get(dependency)?.fingerprint === bases[dependency] &&
+                        !remote.has(dependency) &&
+                        !deferredUnavailable.has(dependency) &&
+                        !groupedConflicts.has(dependency),
+                    )
+                  ) {
+                    for (const dependency of dependencies)
+                      for (const members of groups.values())
+                        if (members.includes(dependency))
+                          for (const member of members) groupChoices.set(member, "local");
+                    grew = true;
+                    continue;
+                  }
                   for (const blocked of [key, ...dependencies]) {
                     const owner = planned.get(key)?.name ?? remote.get(key)?.name ?? "an asset";
                     const names = dependencies
                       .map(
                         (dependency) =>
-                          itemSummaryAt(dependency, local, remote, state.remoteItems)?.name ??
-                          "an asset",
+                          itemSummaryAt(dependency, local, remote, knownItems)?.name ?? "an asset",
                       )
                       .join(", ");
                     conflictMessages[blocked] = (
@@ -640,6 +678,50 @@ export function createCoreAssetSyncService(options: {
                     groupedConflicts.add(blocked);
                     const parsed = PragmaForwardCompatibleResourceSchema.safeParse(
                       (remote.get(blocked) ?? local.get(blocked))?.data,
+                    );
+                    if (parsed.success) blockedRefs.add(canonicalPragmaResourceRef(parsed.data));
+                    grew = true;
+                  }
+                }
+              }
+              if (!deletionKeys) {
+                const plannedLocal: ItemMap = new Map(local);
+                for (const key of keys) {
+                  if (groupedConflicts.has(key) || deferredUnavailable.has(key)) continue;
+                  const here = local.get(key);
+                  const there = remote.get(key);
+                  if (
+                    groupChoices.get(key) === "remote" ||
+                    (groupChoices.get(key) !== "local" &&
+                      here?.fingerprint === bases[key] &&
+                      there?.fingerprint !== bases[key])
+                  ) {
+                    if (there) plannedLocal.set(key, there);
+                    else plannedLocal.delete(key);
+                  }
+                }
+                for (const [key, dependencies] of missingGitDependencyKeys(
+                  local,
+                  plannedLocal,
+                  remote,
+                ))
+                  for (const blocked of [key, ...dependencies]) {
+                    const owner = plannedLocal.get(key)?.name ?? local.get(key)?.name ?? "an asset";
+                    const names = dependencies
+                      .map(
+                        (dependency) =>
+                          itemSummaryAt(dependency, local, remote, knownItems)?.name ?? "an asset",
+                      )
+                      .join(", ");
+                    conflictMessages[blocked] = (
+                      blocked === key
+                        ? `dependency_conflict: ${owner} requires ${names}. Resolve their deletion or competing changes together.`
+                        : `resource_referenced: ${owner} still requires this asset. Resolve the reference before deleting it.`
+                    ).slice(0, 2_000);
+                    if (groupedConflicts.has(blocked)) continue;
+                    groupedConflicts.add(blocked);
+                    const parsed = PragmaForwardCompatibleResourceSchema.safeParse(
+                      (local.get(blocked) ?? remote.get(blocked))?.data,
                     );
                     if (parsed.success) blockedRefs.add(canonicalPragmaResourceRef(parsed.data));
                     grew = true;
@@ -793,6 +875,7 @@ export function createCoreAssetSyncService(options: {
               ...state,
               repositoryInitialized: repositoryInitialized || pushNeeded,
               bases,
+              unavailableItems,
               remoteItems: Object.fromEntries(
                 [...nextRemote].map(([key, item]) => [
                   key,
@@ -845,6 +928,7 @@ export function createCoreAssetSyncService(options: {
                     ...state,
                     repositoryInitialized,
                     bases: incomingBases,
+                    unavailableItems,
                     remoteItems: Object.fromEntries(
                       [...remote].map(([key, item]) => [
                         key,

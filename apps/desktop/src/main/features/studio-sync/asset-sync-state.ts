@@ -12,6 +12,12 @@ export const StateSchema = z
         CoreAssetSyncItemSchema.pick({ kind: true, name: true, fingerprint: true }),
       )
       .default({}),
+    unavailableItems: z
+      .record(
+        z.string(),
+        CoreAssetSyncItemSchema.pick({ kind: true, name: true, fingerprint: true }),
+      )
+      .default({}),
     conflicts: z.array(z.string()),
     conflictMessages: z.record(z.string(), z.string().max(2_000)).default({}),
     restoreConflicts: z.array(z.string()).default([]),
