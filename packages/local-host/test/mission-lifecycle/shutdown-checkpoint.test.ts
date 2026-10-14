@@ -121,13 +121,17 @@ it.each(["flow-human", "session-human", "flow-terminal"] as const)(
         if (kind === "flow-terminal") await handle.result;
       }
       if (kind !== "flow-terminal") {
-        await vi.waitFor(async () =>
-          expect(
-            (await executions.listInvocations(executionId)).some(
-              (invocation) =>
-                invocation.status === "waiting" && invocation.waitReason === "human_input",
-            ),
-          ).toBe(true),
+        // The real SQLite worker and preceding Flow step must persist the checkpoint.
+        // Vitest's default one-second poll budget is shorter than cold CI startup.
+        await vi.waitFor(
+          async () =>
+            expect(
+              (await executions.listInvocations(executionId)).some(
+                (invocation) =>
+                  invocation.status === "waiting" && invocation.waitReason === "human_input",
+              ),
+            ).toBe(true),
+          { timeout: 5_000 },
         );
       }
       await lifecycle.ownerScope.acquire(missionId);
