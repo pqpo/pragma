@@ -2391,16 +2391,20 @@ export function createLocalHostMissionExecutionService(
           createdAt: executionStartedAt,
         });
         await notifyExecutionLinked(mission, turn.executionId, inputMessageId);
-        const running = await options.missions.updateExecution(mission.id, {
-          id: turn.executionId,
-          inputMessageId,
-          sessionId: session.sessionId,
-          status: recoveredTurn === undefined ? "running" : "waiting",
-          ...(recoverable ? {} : { contextMountsFingerprint }),
-          environmentFingerprint: compiledIdentity,
-          resolvedCapabilities,
-          startedAt: executionStartedAt,
-        });
+        const running = await options.missions.updateExecution(
+          mission.id,
+          {
+            id: turn.executionId,
+            inputMessageId,
+            sessionId: session.sessionId,
+            status: recoveredTurn === undefined ? "running" : "waiting",
+            ...(recoverable ? {} : { contextMountsFingerprint }),
+            environmentFingerprint: compiledIdentity,
+            resolvedCapabilities,
+            startedAt: executionStartedAt,
+          },
+          { acceptedContextMounts: mission.contextMounts },
+        );
         trackExecution({
           mission,
           handle: turn,
@@ -2733,16 +2737,20 @@ export function createLocalHostMissionExecutionService(
         const running =
           hasCurrent || queuePaused
             ? await options.missions.get(mission.id)
-            : await options.missions.updateExecution(mission.id, {
-                id: turn.executionId,
-                inputMessageId: input.requestId,
-                sessionId: session.sessionId,
-                status: "running",
-                contextMountsFingerprint,
-                environmentFingerprint: desiredCompilationIdentity,
-                resolvedCapabilities: desiredCapabilities,
-                startedAt,
-              });
+            : await options.missions.updateExecution(
+                mission.id,
+                {
+                  id: turn.executionId,
+                  inputMessageId: input.requestId,
+                  sessionId: session.sessionId,
+                  status: "running",
+                  contextMountsFingerprint,
+                  environmentFingerprint: desiredCompilationIdentity,
+                  resolvedCapabilities: desiredCapabilities,
+                  startedAt,
+                },
+                { acceptedContextMounts: mission.contextMounts },
+              );
         if (!hasCurrent && !queuePaused) {
           trackExecution({
             mission,

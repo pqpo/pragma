@@ -1672,6 +1672,72 @@ describe("mission store", { timeout: 30_000 }, () => {
     expect(restored.contextMounts).toEqual([{ kind: "context-store", storeId }]);
   });
 
+  it.each(["managed", "ordinary", "unmanaged-draft"] as const)(
+    "publishes an accepted Session after a concurrent %s mount without acknowledging unrelated changes",
+    async (kind) => {
+      const root = await temporaryRoot();
+      const store = createMissionStore({ missionsPath: join(root, "missions") });
+      const mission = await store.create({
+        workspace: { path: root, basename: "workspace" },
+        goal: "Delegate revision",
+        project: { id: "studio", revision: 1 },
+        executor: missionExecutorSnapshot(expertFixture()),
+        contextMounts: [],
+      });
+      const storeId = "00000000-0000-4000-8000-000000000021";
+      const draftId = "00000000-0000-4000-8000-000000000024";
+      if (kind === "managed") {
+        await store.mountManagedRevisionDraft({
+          id: mission.id,
+          expectedExecutorRef: mission.executor.ref,
+          storeId,
+          draftId,
+          revisionJobId: "00000000-0000-4000-8000-000000000025",
+          preserveSession: true,
+          allowUnmountedTarget: true,
+        });
+      } else {
+        await store.updateContextMounts(
+          mission.id,
+          kind === "ordinary"
+            ? [{ kind: "context-store", storeId }]
+            : [{ kind: "context-store-draft", draftId }],
+        );
+      }
+      const execution = {
+        id: "00000000-0000-4000-8000-000000000023",
+        sessionId: "00000000-0000-4000-8000-000000000022",
+        inputMessageId: mission.initialMessageId,
+        status: "running" as const,
+        startedAt: "2026-10-14T00:00:00.000Z",
+        contextMountsFingerprint: missionContextMountsFingerprint(mission),
+      };
+      const updated = await store.updateExecution(mission.id, execution, {
+        acceptedContextMounts: mission.contextMounts,
+      });
+      expect(updated.execution?.contextMountsFingerprint).toBe(
+        kind === "managed"
+          ? missionContextMountsFingerprint(updated)
+          : execution.contextMountsFingerprint,
+      );
+      if (kind === "managed") {
+        const replayed = await store.updateExecution(mission.id, execution, {
+          acceptedContextMounts: mission.contextMounts,
+        });
+        expect(replayed.execution?.contextMountsFingerprint).toBe(
+          missionContextMountsFingerprint(replayed),
+        );
+        const next = await store.updateExecution(mission.id, {
+          ...execution,
+          id: "00000000-0000-4000-8000-000000000026",
+        });
+        expect(next.execution?.contextMountsFingerprint).toBe(
+          missionContextMountsFingerprint(next),
+        );
+      }
+    },
+  );
+
   it("updates idle Mission options without changing pinned Mission identity", async () => {
     const root = await temporaryRoot();
     const store = createMissionStore({ missionsPath: join(root, "missions") });

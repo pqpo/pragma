@@ -2279,9 +2279,10 @@ describe("Desktop Mission resource adapter contracts", { timeout: 30_000 }, () =
     { executorRef: "team:0000000000000003", cold: false },
     { executorRef: "expert:0000000000pragma", cold: false },
     { executorRef: "expert:0000000000pragma", cold: true },
+    { executorRef: "expert:0000000000pragma", cold: false, delayedPublication: true },
   ])(
-    "revises an unmounted target inside the original Mission from $executorRef (cold=$cold)",
-    async ({ executorRef, cold }) => {
+    "revises an unmounted target inside the original Mission from $executorRef (cold=$cold, delayedPublication=$delayedPublication)",
+    async ({ executorRef, cold, delayedPublication }) => {
       const root = await mkdtemp(join(tmpdir(), "pragma-background-revision-"));
       temporaryPaths.push(root);
       const pragmaHome = join(root, "state");
@@ -2297,7 +2298,43 @@ describe("Desktop Mission resource adapter contracts", { timeout: 30_000 }, () =
         description: "",
       });
       const original = await contextStores.getSnapshot(target.id);
-      const missions = createMissionStore({ missionsPath: join(root, "missions") });
+      let releasePublication!: () => void;
+      const draftMounted = new Promise<void>((resolve) => {
+        releasePublication = resolve;
+      });
+      const missionStore = createMissionStore({ missionsPath: join(root, "missions") });
+      let publicationDelayed = false;
+      const missions = {
+        ...missionStore,
+        mountManagedRevisionDraft: async (
+          input: Parameters<typeof missionStore.mountManagedRevisionDraft>[0],
+        ) => {
+          const mounted = await missionStore.mountManagedRevisionDraft(input);
+          releasePublication();
+          return mounted;
+        },
+        updateExecution: async (...args: Parameters<typeof missionStore.updateExecution>) => {
+          if (delayedPublication && !publicationDelayed && args[1].status === "running") {
+            publicationDelayed = true;
+            let timeout: ReturnType<typeof setTimeout> | undefined;
+            try {
+              await Promise.race([
+                draftMounted,
+                new Promise<never>((_, reject) => {
+                  timeout = setTimeout(
+                    () =>
+                      reject(new Error("Managed draft did not mount before delayed publication")),
+                    30_000,
+                  );
+                }),
+              ]);
+            } finally {
+              if (timeout !== undefined) clearTimeout(timeout);
+            }
+          }
+          return await missionStore.updateExecution(...args);
+        },
+      };
       const generate = vi.fn(async () => undefined);
       const revisions = createContextStoreRevisionService({
         statePath: join(root, "revisions"),
@@ -2630,6 +2667,17 @@ describe("Desktop Mission resource adapter contracts", { timeout: 30_000 }, () =
       );
       const callerExecution = (await missions.get(caller.id)).execution;
       expect(callerExecution?.status, callerExecution?.error).toBe("succeeded");
+      if (!realSmoke && executorRef === "expert:0000000000pragma") {
+        expect((await runner.getWork(caller.id)).records).toEqual(
+          expect.arrayContaining([
+            expect.objectContaining({
+              kind: "agent",
+              sessionId: teammateContextId,
+              status: "succeeded",
+            }),
+          ]),
+        );
+      }
       if (!realSmoke && executorRef !== STORE_REVISION_EXPERT_REF) {
         expect((await revisions.get(jobId!)).state).toBe("running");
         await runner.sendMessage({
@@ -2711,6 +2759,14 @@ describe("Desktop Mission resource adapter contracts", { timeout: 30_000 }, () =
             },
             { timeout: realSmoke ? 180_000 : 30_000, interval: 100 },
           );
+          if (!realSmoke && executorRef === "expert:0000000000pragma") {
+            expect((await runner.getWork(caller.id)).records).toEqual(
+              expect.arrayContaining([
+                expect.objectContaining({ kind: "agent", sessionId: originalContextId }),
+              ]),
+            );
+            expect((await missions.get(caller.id)).execution?.sessionId).toBe(originalSessionId);
+          }
           expect(jobId).toBe(job.id);
           if (!realSmoke) expect(draftId).toBe(job.draftId);
           expect((await missions.get(caller.id)).execution?.sessionId).toBe(originalSessionId);

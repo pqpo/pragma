@@ -102,3 +102,39 @@ approval refusal and acceptance are tested separately through the real MCP execu
 The earlier attempt ended without creating a revision; the smoke fails on that outcome rather than
 accepting a successful Runtime turn as proof of a submitted draft. Real Runtime cold recovery and
 Skill delegation are not claimed by this run; the deterministic integration cases cover both.
+
+## Mission publication ordering
+
+A delegated revision can mount its managed draft before the Host publishes the parent Execution.
+The accepted parent resource snapshot then contains an older Context mount fingerprint. Publishing
+that fingerprint later used to overwrite the draft mount's Session acknowledgement (or miss it when
+no Execution had been linked yet), so the next prompt created a successor Session. The previous
+child Context disappeared from the new Session's directory and Work projection despite completing
+successfully.
+
+Execution publication now carries its accepted mount snapshot into the existing Mission atomic
+write. The repository retains an already-acknowledged fingerprint for the same Session, or accepts
+only additions of managed Knowledge/Skill draft mounts to the exact accepted baseline. Removal,
+replacement, ordinary Knowledge mounts and unmanaged drafts are not acknowledged by this path;
+normal environment changes still require a successor. Core ownership and closed-Context rules are
+unchanged. The new parameter is an internal publication input; no persisted state Schema changes.
+
+A controlled-order test delays parent Execution publication until the delegated draft has mounted.
+It fails on the original code with an empty child directory on the next prompt. The repaired test
+asserts the same Session and child Context, successful continuation and two review returns, and
+retention of the child in the Work tab. Repository tests cover first publication, replay and later
+Execution publication, plus refusal to acknowledge ordinary or unmanaged draft changes.
+
+On 2026-10-14, the ordinary real Codex Pragma smoke also passed (232 seconds) after this repair:
+
+```sh
+PRAGMA_REVISION_REAL_SMOKE=1 PRAGMA_REVISION_REAL_RUNTIME=codex \
+  pnpm --filter @pragma/desktop exec vitest run \
+  src/main/features/missions/desktop-mission-adapter.test.ts \
+  -t 'unmounted target.*expert:0000000000pragma.*cold=false, delayedPublication=undefined'
+```
+
+This run verifies actual writes, initial submission and two returned-review continuations in the same
+persisted child Context/Session. The publication ordering and Work-record assertions are covered by
+the deterministic `delayedPublication=true` regression, not claimed as part of this native run.
+An earlier forced-order native attempt was interrupted without a complete assertion result.
