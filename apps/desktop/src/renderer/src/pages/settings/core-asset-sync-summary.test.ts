@@ -73,14 +73,15 @@ describe("core asset sync summary", () => {
         kind: "knowledge",
         assetKey: "knowledge:one",
         assetKind: "knowledge",
-        status: "ignored_remote",
+        status: "pending",
       }),
       item({
         key: "expert:expert:one",
         kind: "expert",
         assetKey: "expert:one",
         assetKind: "expert",
-        status: "needs_attention",
+        status: "synced",
+        readiness: { status: "needs_attention", message: "Choose a model" },
       }),
       item({
         key: "flow:flow:one",
@@ -98,16 +99,18 @@ describe("core asset sync summary", () => {
       }),
     ]);
 
-    expect(summary).toMatchObject({ total: 3, synced: 0, pending: 2, failed: 1 });
+    expect(summary).toMatchObject({ total: 3, synced: 1, pending: 1, conflicts: 1, failed: 0 });
     expect(summary.groups.find((group) => group.kind === "flow")?.assets[0]).toMatchObject({
       key: "flow:one",
-      status: "failed",
+      status: "conflict",
     });
   });
 
   it("reports an operational synchronization error even when every asset is synchronized", () => {
-    expect(coreAssetOverallHealth("error", { failed: 0, pending: 0 })).toBe("failed");
-    expect(coreAssetOverallHealth("syncing", { failed: 0, pending: 0 })).toBe("syncing");
-    expect(coreAssetOverallHealth("ready", { failed: 0, pending: 0 })).toBe("synced");
+    expect(coreAssetOverallHealth("error", { failed: 0, pending: 0, conflicts: 0 })).toBe("failed");
+    expect(coreAssetOverallHealth("syncing", { failed: 0, pending: 0, conflicts: 0 })).toBe(
+      "syncing",
+    );
+    expect(coreAssetOverallHealth("ready", { failed: 0, pending: 0, conflicts: 0 })).toBe("synced");
   });
 });

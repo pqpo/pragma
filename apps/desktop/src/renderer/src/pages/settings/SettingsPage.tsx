@@ -28,6 +28,7 @@ export type SettingsView =
 export function SettingsPage(
   props: {
     readonly initialView?: SettingsView;
+    readonly onOpenStudio?: (() => void) | undefined;
     readonly onMemoryEnabledChange?: ((enabled: boolean) => void) | undefined;
   } = {},
 ) {
@@ -144,7 +145,7 @@ export function SettingsPage(
         ) : activeView === "evaluations" ? (
           <EvaluationSettingsFragment />
         ) : activeView === "core-asset-sync" ? (
-          <CoreAssetSyncSettingsFragment />
+          <CoreAssetSyncSettingsFragment onOpenStudio={props.onOpenStudio} />
         ) : activeView === "bundle-sources" ? (
           <BundleRegistrySourcesFragment />
         ) : activeView === "models" ? (

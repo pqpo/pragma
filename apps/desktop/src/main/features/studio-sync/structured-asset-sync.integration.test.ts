@@ -35,13 +35,14 @@ import {
 import { createDesktopSystemExpertRegistry } from "../experts/system-expert-registry.ts";
 import { createTestSecretStore } from "../credentials/test-secret-store.ts";
 import { createCoreAssetSyncService } from "./core-asset-sync-service.ts";
-import { readSyncRepository } from "./asset-sync-repository.ts";
+import { readSyncRepository, writeSyncRepository } from "./asset-sync-repository.ts";
+import { CoreAssetSyncItemSchema } from "../../../shared/contracts/index.ts";
 import { appendTransferredKnowledge } from "../asset-transfer/asset-transfer-payloads.ts";
 
 const exec = promisify(execFile);
 const temporary: string[] = [];
 const remote = "ssh://git@pragma.test/assets.git";
-const configuration = { remote, branch: "main", autoPush: false, pushDeletions: false };
+const configuration = { remote, branch: "main", autoPush: false };
 const originalGlobal = process.env.GIT_CONFIG_GLOBAL;
 const originalSystem = process.env.GIT_CONFIG_NOSYSTEM;
 afterEach(async () => {
@@ -329,6 +330,236 @@ async function addSkill(capabilities: CapabilityStore, root: string) {
 }
 
 describe("structured asset sync with real Git and domain stores", { timeout: 60_000 }, () => {
+  it.each(["knowledge", "skill"] as const)(
+    "preserves an unreadable local %s authority instead of deleting its Git backup",
+    async (kind) => {
+      const git = await fixture();
+      const a = device(join(git.root, "a"));
+      const id =
+        kind === "knowledge"
+          ? (await addKnowledge(a.stores, "Protected docs")).id
+          : (await addSkill(a.capabilities, a.root)).manifest.id;
+      const independent = await addKnowledge(a.stores, "Independent docs");
+      await a.service.configure(configuration);
+      const statePath = join(a.root, "state/asset-sync/state.json");
+      const before = JSON.parse(await readFile(statePath, "utf8"));
+      await writeFile(
+        join(
+          a.root,
+          "data",
+          kind === "knowledge" ? "context-stores" : "capabilities",
+          id,
+          kind === "knowledge" ? "store.json" : "capability.json",
+        ),
+        "{}",
+      );
+      await append(a.stores, independent.id, "# Independent edit");
+      const result = await a.service.sync();
+      expect(result.items.find((item) => item.key === `${kind}:${id}`)).toMatchObject({
+        status: "error",
+      });
+      expect(result.items.find((item) => item.key === `knowledge:${independent.id}`)?.status).toBe(
+        "synced",
+      );
+      const state = JSON.parse(await readFile(statePath, "utf8"));
+      expect(state.bases[`${kind}:${id}`]).toBe(before.bases[`${kind}:${id}`]);
+      const check = join(git.root, "inspect-unreadable");
+      await exec("git", ["clone", git.bare, check]);
+      expect((await readSyncRepository(check, true)).has(`${kind}:${id}`)).toBe(true);
+    },
+  );
+
+  it.each([
+    ["sync", "local"],
+    ["sync", "remote"],
+    ["refresh", "local"],
+    ["refresh", "remote"],
+    ["automatic", "local"],
+    ["automatic", "remote"],
+  ] as const)(
+    "isolates incoming referenced deletions during %s and resolves with %s while automatic upload is disabled",
+    async (entry, choice) => {
+      const git = await fixture();
+      const a = device(join(git.root, "a"));
+      const original = resources().filter((resource) => resource.kind !== "Flow");
+      await a.project.publish({ expectedRevision: 0, resources: original });
+      const knowledge = await addKnowledge(a.stores, "Independent docs");
+      await a.service.configure(configuration);
+      const b = device(join(git.root, "b"));
+      await b.service.configure(configuration);
+      const expert = original.find((resource) => resource.kind === "Expert")!;
+      const runtime = original.find((resource) => resource.kind === "RuntimeProfile")!;
+      await b.project.upsert({
+        baseRevision: (await b.project.get()).revision,
+        resource: { ...expert, spec: { ...expert.spec, instructions: "Local instructions" } },
+      });
+      await a.project.apply({
+        baseRevision: (await a.project.get()).revision,
+        upserts: [],
+        removals: original.map(canonicalPragmaResourceRef),
+      });
+      await append(a.stores, knowledge.id, "# Independent remote update");
+      await a.service.sync();
+      const result = await b.service[entry]();
+      expect(result.status, result.error).toBe("conflict");
+      expect(result.error).toBeUndefined();
+      for (const resource of original)
+        expect(
+          result.items.find(
+            (item) =>
+              item.key ===
+              `${resource.kind === "Expert" ? "expert" : "runtime-profile"}:${canonicalPragmaResourceRef(resource)}`,
+          )?.status,
+        ).toBe("conflict");
+      expect((await b.project.get()).resources).toContainEqual(runtime);
+      expect((await b.stores.getSnapshot(knowledge.id)).files[0]?.content).toBe(
+        "# Independent remote update",
+      );
+      expect((await b.restart().refresh()).status).toBe("conflict");
+      const resolved = await b
+        .restart()
+        .resolve(`expert:${canonicalPragmaResourceRef(expert)}`, choice);
+      expect(resolved.status, resolved.error).toBe("ready");
+      const finalResources = (await b.project.get()).resources;
+      if (choice === "remote") expect(finalResources).toEqual([]);
+      else {
+        expect(finalResources).toContainEqual(runtime);
+        expect(finalResources.find((resource) => resource.kind === "Expert")?.spec).toMatchObject({
+          instructions: "Local instructions",
+        });
+        const check = join(git.root, "inspect-retained-dependency");
+        await exec("git", ["clone", git.bare, check]);
+        expect(
+          (await readSyncRepository(check, true)).has(
+            `runtime-profile:${canonicalPragmaResourceRef(runtime)}`,
+          ),
+        ).toBe(true);
+      }
+    },
+  );
+
+  it.each(["repair", "delete"] as const)(
+    "persists unreadable authority diagnostics after remote deletion until %s",
+    async (recovery) => {
+      const git = await fixture();
+      const a = device(join(git.root, "a"));
+      const knowledge = await addKnowledge(a.stores, "Protected docs");
+      await a.service.configure(configuration);
+      const b = device(join(git.root, "b"));
+      await b.service.configure(configuration);
+      const path = join(b.root, "data/context-stores", knowledge.id, "store.json");
+      const original = await readFile(path, "utf8");
+      await writeFile(path, "{}");
+      await a.stores.remove(knowledge.id);
+      await a.service.sync();
+      const key = `knowledge:${knowledge.id}`;
+      for (const result of [
+        await b.service.sync(),
+        await b.service.refresh(),
+        await b.restart().overview(),
+      ]) {
+        expect(result.status, result.error).toBe("error");
+        expect(result.items.find((item) => item.key === key)).toMatchObject({
+          name: "Protected docs",
+          status: "error",
+        });
+      }
+      const state = JSON.parse(await readFile(join(b.root, "state/asset-sync/state.json"), "utf8"));
+      expect(state.remoteItems[key]).toBeUndefined();
+      expect(state.bases[key]).toBeDefined();
+      if (recovery === "repair") await writeFile(path, original);
+      else await rm(join(b.root, "data/context-stores", knowledge.id), { recursive: true });
+      const repaired = await b.restart().refresh();
+      expect(repaired.status, repaired.error).toBe("ready");
+      expect(repaired.items.some((item) => item.key === key)).toBe(false);
+      expect(await b.stores.exists(knowledge.id)).toBe(false);
+      const completed = JSON.parse(
+        await readFile(join(b.root, "state/asset-sync/state.json"), "utf8"),
+      );
+      expect(completed.unavailableItems[key]).toBeUndefined();
+    },
+  );
+
+  it("rechecks a local deletion after incoming publication recreates the authority", async () => {
+    const git = await fixture();
+    const a = device(join(git.root, "a"));
+    const knowledge = await addKnowledge(a.stores, "Original docs");
+    await a.service.configure(configuration);
+    let recreate = false;
+    const b = device(join(git.root, "b"), false, undefined, undefined, undefined, {
+      afterApply: async () => {
+        if (!recreate) return;
+        recreate = false;
+        await b.stores.createFromSnapshot({
+          id: knowledge.id,
+          name: "Recreated docs",
+          description: "Recreated",
+          directories: [],
+          files: [],
+          author: "user",
+          summary: "Recreated locally",
+        });
+      },
+    });
+    await b.service.configure(configuration);
+    await b.stores.remove(knowledge.id);
+    const runtime = resources().find((resource) => resource.kind === "RuntimeProfile")!;
+    await a.project.publish({ expectedRevision: 0, resources: [runtime] });
+    await a.service.sync();
+    recreate = true;
+    const result = await b.service.sync();
+    expect(result.status, result.error).toBe("ready");
+    const check = join(git.root, "inspect-recreation");
+    await exec("git", ["clone", git.bare, check]);
+    expect((await readSyncRepository(check, true)).get(`knowledge:${knowledge.id}`)?.name).toBe(
+      "Recreated docs",
+    );
+    expect((await b.stores.get(knowledge.id)).name).toBe("Recreated docs");
+  });
+  it.each([false, true])(
+    "upgrades real historical state before execution with an interrupted import=%s",
+    async (interrupted) => {
+      const git = await fixture();
+      const a = device(join(git.root, "a"));
+      const historical = join(import.meta.dirname, "migrations/fixtures/v1");
+      const journal = JSON.parse(
+        await readFile(join(historical, "restore-journal.json"), "utf8"),
+      ) as { changes: { remote: unknown }[] };
+      const item = CoreAssetSyncItemSchema.parse(journal.changes[0]!.remote);
+      const seed = join(git.root, "historical-seed");
+      await mkdir(seed);
+      await exec("git", ["-C", seed, "init", "-b", "main"]);
+      await writeSyncRepository(seed, new Map([[item.key, item]]));
+      await exec("git", ["-C", seed, "commit", "-m", "Historical repository"]);
+      await exec("git", ["-C", seed, "push", git.bare, "main"]);
+      const owner = join(a.root, "state/asset-sync");
+      await mkdir(owner, { recursive: true });
+      for (const name of interrupted
+        ? ["settings.json", "state.json", "restore-journal.json"]
+        : ["settings.json", "state.json"])
+        await writeFile(join(owner, name), await readFile(join(historical, name)));
+      const upgraded = await a.service.sync();
+      expect(upgraded.status, upgraded.error).toBe("ready");
+      expect((await a.project.get()).resources.map(canonicalPragmaResourceRef)).toEqual(
+        interrupted ? [item.key.slice("runtime-profile:".length)] : [],
+      );
+      expect(upgraded.items.find((entry) => entry.key === item.key)?.status).toBe(
+        interrupted ? "synced" : undefined,
+      );
+      const revision = (await a.project.get()).revision;
+      expect((await a.restart().sync()).status).toBe("ready");
+      expect((await a.project.get()).revision).toBe(revision);
+      const state = JSON.parse(await readFile(join(owner, "state.json"), "utf8"));
+      expect(state.schemaVersion).toBe("pragma.asset-sync-state/v2");
+      expect(state).not.toHaveProperty("ignoredRemote");
+      const settings = JSON.parse(await readFile(join(owner, "settings.json"), "utf8"));
+      expect(settings).not.toHaveProperty("pushDeletions");
+      await expect(readFile(join(owner, "restore-journal.json"))).rejects.toMatchObject({
+        code: "ENOENT",
+      });
+    },
+  );
+
   it.each(["conflict", "after-commit interruption"] as const)(
     "coordinates Flow layout deletion with Project publication during %s",
     async (mode) => {
@@ -354,7 +585,7 @@ describe("structured asset sync with real Git and domain stores", { timeout: 60_
       });
       await a.project.publish({ expectedRevision: 0, resources: original });
       await a.layouts.save(initialLayout);
-      await a.service.configure({ ...configuration, pushDeletions: true });
+      await a.service.configure({ ...configuration });
       await b.service.configure(configuration);
       await a.project.remove({
         baseRevision: (await a.project.get()).revision,
@@ -450,7 +681,7 @@ describe("structured asset sync with real Git and domain stores", { timeout: 60_
   });
 
   it.each(["knowledge", "capability"] as const)(
-    "attributes a missing unchanged %s authority to its pending incoming dependents",
+    "defers incoming dependents when an unchanged %s authority becomes unreadable and resumes after repair",
     async (kind) => {
       const git = await fixture();
       const a = device(join(git.root, "a"));
@@ -516,20 +747,26 @@ describe("structured asset sync with real Git and domain stores", { timeout: 60_
       enabled = true;
       const result = await b.service.refresh();
       expect(invalidated).toBe(true);
-      expect(result.status, result.error).toBe("conflict");
-      const affected = result.items
-        .filter((item) => item.status === "conflict")
-        .map((item) => item.key);
-      expect(affected).toContain(`expert:${canonicalPragmaResourceRef(expert)}`);
-      expect(affected).toContain(`flow:${canonicalPragmaResourceRef(flow)}`);
+      expect(result.status, result.error).toBe("error");
+      expect(result.items.find((item) => item.key === `${kind}:${authorityId}`)?.status).toBe(
+        "error",
+      );
+      expect(result.items.some((item) => item.status === "conflict")).toBe(false);
+      expect(
+        result.items.find((item) => item.key === `expert:${canonicalPragmaResourceRef(expert)}`)
+          ?.status,
+      ).toBe("pending");
+      expect(
+        result.items.find((item) => item.key === `flow:${canonicalPragmaResourceRef(flow)}`)
+          ?.status,
+      ).toBe("pending");
       expect(await b.layouts.get(initialLayout)).toBeNull();
       await expect(
         readFile(join(b.root, "state/asset-sync/restore-journal.json")),
       ).rejects.toMatchObject({ code: "ENOENT" });
       await writeFile(path, originalManifest);
       const service = b.restart();
-      await service.restore(`expert:${canonicalPragmaResourceRef(expert)}`);
-      const restored = await service.restore(`flow:${canonicalPragmaResourceRef(flow)}`);
+      const restored = await service.refresh();
       expect(restored.status, restored.error).toBe("ready");
       expect(await b.layouts.get(initialLayout)).toMatchObject({ nodes: initialLayout.nodes });
     },
@@ -541,7 +778,7 @@ describe("structured asset sync with real Git and domain stores", { timeout: 60_
     const b = device(join(git.root, "b"));
     const original = resources().filter((resource) => resource.kind !== "Flow");
     await a.project.publish({ expectedRevision: 0, resources: original });
-    await a.service.configure({ ...configuration, pushDeletions: true });
+    await a.service.configure({ ...configuration });
     await b.service.configure(configuration);
     await b.project.apply({
       baseRevision: (await b.project.get()).revision,
@@ -611,7 +848,7 @@ describe("structured asset sync with real Git and domain stores", { timeout: 60_
         },
       });
       await a.project.publish({ expectedRevision: 0, resources: [runtime] });
-      await a.service.configure({ ...configuration, pushDeletions: true });
+      await a.service.configure({ ...configuration });
       await b.service.configure(configuration);
       if (mode === "delete")
         await a.project.remove({
@@ -687,7 +924,7 @@ describe("structured asset sync with real Git and domain stores", { timeout: 60_
         },
       });
       await a.project.publish({ expectedRevision: 0, resources: [runtime] });
-      await a.service.configure({ ...configuration, pushDeletions: true });
+      await a.service.configure({ ...configuration });
       await b.service.configure(configuration);
       await a.project.remove({
         baseRevision: (await a.project.get()).revision,
@@ -741,10 +978,10 @@ describe("structured asset sync with real Git and domain stores", { timeout: 60_
     expect((await a.restart().overview()).items.some((item) => item.key === key)).toBe(false);
     const state = JSON.parse(await readFile(path, "utf8"));
     expect(state.bases[key]).toBeUndefined();
-    expect(state.ignoredRemote).not.toContain(key);
+    expect(state).not.toHaveProperty("ignoredRemote");
   });
 
-  it("keeps a deleted shared dependency graph ignored and deletes every reference before its runtime", async () => {
+  it("automatically deletes a shared dependency graph without per-resource decisions", async () => {
     const git = await fixture();
     const a = device(join(git.root, "a"));
     const first = resources();
@@ -777,7 +1014,7 @@ describe("structured asset sync with real Git and domain stores", { timeout: 60_
       const ignored = await service.refresh();
       expect(ignored.status, ignored.error).toBe("ready");
       expect(ignored.items).toHaveLength(7);
-      expect(ignored.items.every((item) => item.status === "ignored_remote")).toBe(true);
+      expect(ignored.items.every((item) => item.status === "pending")).toBe(true);
       expect((await a.project.get()).resources).toEqual([]);
     }
 
@@ -786,22 +1023,7 @@ describe("structured asset sync with real Git and domain stores", { timeout: 60_
     const state = JSON.parse(await readFile(statePath, "utf8"));
     await writeFile(statePath, JSON.stringify({ ...state, conflicts: keys.slice(0, 2) }));
     const service = a.restart();
-    expect((await service.deleteRemote(keys[2]!)).error).toContain("still referenced");
-    expect((await service.resolve(keys[1]!, "local")).error).toContain("Release in Git");
-    const flowResolved = await service.resolve(keys[0]!, "local");
-    expect(flowResolved.status, flowResolved.error).toBe("ready");
-    expect(flowResolved.items.some((item) => item.key === keys[0])).toBe(false);
-    const expertResolved = await service.resolve(keys[1]!, "local");
-    expect(expertResolved.status, expertResolved.error).toBe("ready");
-    expect(expertResolved.items.some((item) => item.key === keys[1])).toBe(false);
-    expect((await service.deleteRemote(keys[2]!)).error).toContain("Writer B in Git");
-    expect(
-      (await service.deleteRemote(`flow:${canonicalPragmaResourceRef(otherFlow)}`)).status,
-    ).toBe("ready");
-    expect(
-      (await service.deleteRemote(`expert:${canonicalPragmaResourceRef(otherExpert)}`)).status,
-    ).toBe("ready");
-    const removed = await service.deleteRemote(keys[2]!);
+    const removed = await service.sync();
     expect(removed.status, removed.error).toBe("ready");
     expect(removed.items).toEqual([]);
     expect((await a.project.get()).resources).toEqual([]);
@@ -811,12 +1033,62 @@ describe("structured asset sync with real Git and domain stores", { timeout: 60_
     expect((await readSyncRepository(checkout, true)).size).toBe(0);
   });
 
+  it("isolates a referenced deletion conflict while publishing independent local changes", async () => {
+    const git = await fixture();
+    const a = device(join(git.root, "a"));
+    const original = resources();
+    const knowledge = await addKnowledge(a.stores, "Independent docs");
+    await a.project.publish({ expectedRevision: 0, resources: original });
+    await a.service.configure(configuration);
+    const b = device(join(git.root, "b"));
+    await b.service.configure(configuration);
+    await a.project.apply({
+      baseRevision: (await a.project.get()).revision,
+      upserts: [],
+      removals: original.map(canonicalPragmaResourceRef),
+    });
+    await append(a.stores, knowledge.id, "# Independent local change");
+    const remoteHead = await b.project.get();
+    const expert = remoteHead.resources.find((resource) => resource.kind === "Expert")!;
+    await b.project.apply({
+      baseRevision: remoteHead.revision,
+      upserts: [{ ...expert, metadata: { ...expert.metadata, name: "Writer remote edit" } }],
+    });
+    await b.service.sync();
+    const result = await a.service.sync();
+    expect(result.status, result.error).toBe("conflict");
+    expect(result.error).toBeUndefined();
+    expect(result.items.find((item) => item.key === `knowledge:${knowledge.id}`)?.status).toBe(
+      "synced",
+    );
+    const runtimeKey = "runtime-profile:runtime-profile:zdkgs0fde4xt00vr";
+    expect(result.items.find((item) => item.key === runtimeKey)).toMatchObject({
+      status: "conflict",
+    });
+    expect(result.items.find((item) => item.key === runtimeKey)?.message).toContain(
+      "Writer remote edit",
+    );
+    const checkout = join(git.root, "inspect-partial-sync");
+    await exec("git", ["clone", git.bare, checkout]);
+    const items = await readSyncRepository(checkout, true);
+    expect(items.has(runtimeKey)).toBe(true);
+    expect(items.get(`knowledge:${knowledge.id}`)?.data).toMatchObject({
+      files: [{ content: "# Independent local change" }],
+    });
+    const resolved = await a.service.resolve(
+      `expert:${canonicalPragmaResourceRef(expert)}`,
+      "local",
+    );
+    expect(resolved.status, resolved.error).toBe("ready");
+    expect(resolved.items.some((item) => item.kind === "runtime-profile")).toBe(false);
+  });
+
   it("publishes deletion of a whole local dependency graph in one synchronization", async () => {
     const git = await fixture();
     const a = device(join(git.root, "a"));
     const original = resources();
     await a.project.publish({ expectedRevision: 0, resources: original });
-    await a.service.configure({ ...configuration, pushDeletions: true });
+    await a.service.configure({ ...configuration });
     await a.project.apply({
       baseRevision: (await a.project.get()).revision,
       upserts: [],
@@ -850,7 +1122,7 @@ describe("structured asset sync with real Git and domain stores", { timeout: 60_
     const resolved = await a.restart().resolve(key, "local");
     expect(resolved.status, resolved.error).toBe("ready");
     expect(resolved.items.some((item) => item.key === key)).toBe(false);
-    expect(resolved.items[0]?.status).toBe("ignored_remote");
+    expect(resolved.items).toEqual([]);
     expect((await a.project.get()).resources).toEqual([]);
     expect((await a.restart().refresh()).items.some((item) => item.key === key)).toBe(false);
   });
@@ -939,7 +1211,7 @@ describe("structured asset sync with real Git and domain stores", { timeout: 60_
       expect(await git.head()).toBe(syncedHead);
       expect((await a.stores.getSnapshot(knowledge.id)).revision).toBe(updated.revision);
       if (!interruptRestore) {
-        await b.service.configure({ ...configuration, pushDeletions: true });
+        await b.service.configure({ ...configuration });
         await b.stores.remove(knowledge.id);
         expect((await b.service.sync()).status).toBe("ready");
         const deleted = await a.restart().sync();
@@ -983,7 +1255,7 @@ describe("structured asset sync with real Git and domain stores", { timeout: 60_
       );
       const snapshot = await a.project.get();
       await a.project.apply({ baseRevision: snapshot.revision, upserts: bindings });
-      const configured = await a.service.configure({ ...configuration, pushDeletions: true });
+      const configured = await a.service.configure({ ...configuration });
       expect(configured.status, configured.error).toBe("ready");
 
       await a.capabilities.remove(skill.manifest.id);
@@ -1031,6 +1303,55 @@ describe("structured asset sync with real Git and domain stores", { timeout: 60_
     expect((await a.project.get()).revision).toBe(snapshot.revision + 1);
   });
 
+  it.each([false, true])(
+    "automatically repairs an internal Context mapping with real stores and restart=%s",
+    async (interrupt) => {
+      const git = await fixture();
+      const a = device(join(git.root, "a"), interrupt ? "project" : false);
+      const knowledge = await addKnowledge(a.stores, "snipe_develop");
+      const initialBinding = createDesktopContextResource({
+        owner: "project-expert",
+        storeId: knowledge.id,
+      });
+      const binding = {
+        ...initialBinding,
+        futurePolicy: { entries: [{ preserve: true }] },
+        metadata: { ...initialBinding.metadata, futureSource: "remote" },
+      };
+      const head = await a.project.get();
+      await a.project.apply({ baseRevision: head.revision, upserts: [binding] });
+      expect((await a.service.configure(configuration)).status).toBe("ready");
+      const before = await a.stores.getSnapshot(knowledge.id);
+      const beforeStore = await a.stores.get(knowledge.id);
+      const mounted = await a.project.get();
+      await a.project.remove({
+        baseRevision: mounted.revision,
+        ref: canonicalPragmaResourceRef(binding),
+      });
+      const statePath = join(a.root, "state", "asset-sync", "state.json");
+      const state = JSON.parse(await readFile(statePath, "utf8"));
+      const key = `knowledge:${canonicalPragmaResourceRef(binding)}`;
+      await writeFile(statePath, JSON.stringify(state));
+      expect((await a.service.overview()).items.some((item) => item.key === key)).toBe(false);
+      const first = await a.service.automatic();
+      expect(first.status, first.error).toBe(interrupt ? "error" : "ready");
+      const published = await a.project.get();
+      const completed = await a.restart().automatic();
+      expect(completed.status, completed.error).toBe("ready");
+      expect((await a.project.get()).revision).toBe(published.revision);
+      expect((await a.project.get()).resources.map(canonicalPragmaResourceRef)).toEqual([
+        canonicalPragmaResourceRef(binding),
+      ]);
+      expect(completed.items.find((item) => item.key === key)?.status).toBe("synced");
+      expect((await a.project.get()).resources[0]).toMatchObject({
+        futurePolicy: { entries: [{ preserve: true }] },
+        metadata: { futureSource: "remote" },
+      });
+      expect(await a.stores.getSnapshot(knowledge.id)).toEqual(before);
+      expect(await a.stores.get(knowledge.id)).toEqual(beforeStore);
+    },
+  );
+
   it("removes Knowledge bindings before authority deletion and retries an interrupted removal", async () => {
     const git = await fixture();
     const a = device(join(git.root, "a"));
@@ -1041,9 +1362,7 @@ describe("structured asset sync with real Git and domain stores", { timeout: 60_
     });
     const snapshot = await a.project.get();
     await a.project.apply({ baseRevision: snapshot.revision, upserts: [binding] });
-    expect((await a.service.configure({ ...configuration, pushDeletions: true })).status).toBe(
-      "ready",
-    );
+    expect((await a.service.configure({ ...configuration })).status).toBe("ready");
     let interrupted = false;
     const stores = createContextStoreStore({
       storesPath: join(a.root, "data", "context-stores"),
@@ -1345,7 +1664,7 @@ describe("structured asset sync with real Git and domain stores", { timeout: 60_
     const first = await b.stores.getSnapshot(knowledge.id);
     expect(
       await readFile(join(b.root, "state", "asset-sync", "restore-journal.json"), "utf8"),
-    ).toContain("pragma.asset-sync-journal/v1");
+    ).toContain("pragma.asset-sync-journal/v2");
     const recovered = await b.restart().sync();
     expect(recovered.status, recovered.error).toBe("ready");
     expect((await b.stores.list()).length).toBe(1);
@@ -1437,7 +1756,7 @@ describe("structured asset sync with real Git and domain stores", { timeout: 60_
         await writeFile(
           join(b.root, "state/asset-sync/settings.json"),
           JSON.stringify({
-            schemaVersion: "pragma.asset-sync-settings/v1",
+            schemaVersion: "pragma.asset-sync-settings/v2",
             ...selected,
           }),
         );
@@ -1766,7 +2085,7 @@ describe("structured asset sync with real Git and domain stores", { timeout: 60_
       });
       await a.project.publish({ expectedRevision: 0, resources: resources() });
       await a.layouts.save(initialLayout);
-      await a.service.configure({ ...configuration, pushDeletions: true });
+      await a.service.configure({ ...configuration });
       let edit: (() => Promise<void>) | undefined;
       const b = device(join(git.root, "b"), false, undefined, async () => {
         const action = edit;
@@ -1820,7 +2139,7 @@ describe("structured asset sync with real Git and domain stores", { timeout: 60_
         expect(await b.credentials.get(cap.manifest.id, "token")).toBe("Concurrent secret");
     },
   );
-  it("keeps deleted local assets ignored after remote edits and defers new dependents only", async () => {
+  it("keeps deletion versus remote edits conflicted while importing independent resources", async () => {
     const git = await fixture();
     const a = device(join(git.root, "a"));
     const knowledge = await addKnowledge(a.stores, "Docs");
@@ -1832,13 +2151,13 @@ describe("structured asset sync with real Git and domain stores", { timeout: 60_
       revision: snapshot.revision,
       snapshotHash: snapshot.snapshotHash,
     });
-    await b.service.sync();
+    await b.service.refresh();
     await append(a.stores, knowledge.id, "# Remote edit");
     await a.service.sync();
     const ignored = await b.service.refresh();
-    expect(ignored.status, ignored.error).toBe("ready");
+    expect(ignored.status, ignored.error).toBe("conflict");
     expect(ignored.items.find((item) => item.key === `knowledge:${knowledge.id}`)?.status).toBe(
-      "ignored_remote",
+      "conflict",
     );
     await a.project.publish({ expectedRevision: 0, resources: resources(knowledge.id) });
     const unrelated = await addKnowledge(a.stores, "Independent");

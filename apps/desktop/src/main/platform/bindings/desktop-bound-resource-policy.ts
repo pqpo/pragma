@@ -9,6 +9,7 @@ import {
   PRAGMA_DSL_WRITE_API_VERSION,
   PragmaCapabilityResourceSchema,
   PragmaContextStoreResourceSchema,
+  PragmaForwardCompatibleResourceSchema,
   PragmaRuntimeProfileResourceSchema,
   canonicalPragmaResourceRef,
   type PragmaCapabilityResource,
@@ -225,7 +226,7 @@ export function bindExistingDesktopContextResource(
   storeId: string,
   metadata?: { readonly name: string; readonly description: string },
 ): PragmaContextStoreResource {
-  return PragmaContextStoreResourceSchema.parse({
+  const bound = PragmaForwardCompatibleResourceSchema.parse({
     ...resource,
     metadata: {
       ...resource.metadata,
@@ -244,6 +245,8 @@ export function bindExistingDesktopContextResource(
       config: { ...(resource.spec.config ?? {}), key: storeId },
     },
   });
+  if (bound.kind !== "ContextStore") throw new Error("Expected a ContextStore binding.");
+  return bound;
 }
 
 export function resolveDesktopContextResource(input: {

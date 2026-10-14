@@ -24,9 +24,8 @@ export const CoreAssetLogicalKindSchema = z.enum([
 ]);
 export const CoreAssetSyncKeySchema = z.string().min(1).max(300);
 export const CoreAssetSyncConfigurationSchema = AssetGitSourceSchema.extend({
-  schemaVersion: z.literal("pragma.asset-sync-settings/v1"),
+  schemaVersion: z.literal("pragma.asset-sync-settings/v2"),
   autoPush: z.boolean().default(true),
-  pushDeletions: z.boolean().default(false),
 }).strict();
 export const UpdateCoreAssetSyncConfigurationSchema = CoreAssetSyncConfigurationSchema.omit({
   schemaVersion: true,
@@ -48,11 +47,16 @@ export const CoreAssetSyncItemStatusSchema = CoreAssetSyncItemSchema.pick({
   assetKey: CoreAssetSyncKeySchema,
   assetKind: CoreAssetLogicalKindSchema,
   assetName: z.string().max(300),
-  status: z.enum(["synced", "pending", "conflict", "ignored_remote", "needs_attention", "error"]),
+  status: z.enum(["synced", "pending", "conflict", "error"]),
+  readiness: z
+    .object({ status: z.literal("needs_attention"), message: z.string().max(2_000) })
+    .strict()
+    .optional(),
   message: z.string().max(2_000).optional(),
 });
 export const CoreAssetSyncOverviewSchema = z
   .object({
+    schemaVersion: z.literal("pragma.asset-sync-overview/v2"),
     configuration: CoreAssetSyncConfigurationSchema.optional(),
     status: z.enum(["unconfigured", "ready", "syncing", "conflict", "error"]),
     syncedAt: z.string().datetime().optional(),

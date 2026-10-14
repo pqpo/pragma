@@ -6,7 +6,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
 
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
   hashSnapshotContent,
@@ -176,6 +176,7 @@ function device(
     capabilitiesOverride ??
     ({
       list: async () => (skillRoot === undefined ? [] : [skillCapability()]),
+      exists: async () => skillRoot !== undefined,
       skillFilesPath: async () => skillRoot,
       publishNewSkillRevisionCandidate: async (input: { sourcePath: string }) => {
         const destination = join(root, "restored-skill");
@@ -196,6 +197,8 @@ function device(
   });
   return {
     service,
+    project,
+    stores,
     name: () => value,
     setDescription: (next: string) => {
       description = next;
@@ -218,6 +221,45 @@ function device(
 }
 
 describe("core asset Git synchronization", { timeout: 30_000 }, () => {
+  it("returns a syncing overview without waiting for an active incoming publication", async () => {
+    const root = await fixture();
+    const a = device(join(root, "a"), "Original");
+    const b = device(join(root, "b"));
+    const config = { remote, branch: "main", autoPush: false };
+    await a.service.configure(config);
+    await b.service.configure(config);
+    a.rename("Incoming");
+    await a.service.sync();
+    let release = () => {};
+    let entered = () => {};
+    const gate = new Promise<void>((resolve) => (release = resolve));
+    const started = new Promise<void>((resolve) => (entered = resolve));
+    const append = b.stores.appendSnapshot;
+    vi.spyOn(b.stores, "appendSnapshot").mockImplementationOnce(async (...args) => {
+      entered();
+      await gate;
+      return await append(...args);
+    });
+    const pending = b.service.refresh();
+    let overviewPromise: Promise<Awaited<ReturnType<typeof b.service.overview>>> | undefined;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    try {
+      await started;
+      overviewPromise = b.service.overview();
+      const overview = await Promise.race([
+        overviewPromise,
+        new Promise<never>((_, reject) => {
+          timer = setTimeout(() => reject(new Error("Overview waited for the sync lock")), 500);
+        }),
+      ]);
+      expect(overview.status).toBe("syncing");
+    } finally {
+      if (timer) clearTimeout(timer);
+      release();
+      await pending;
+      await overviewPromise;
+    }
+  });
   it("preserves a binding rebound while another orphan cleanup changes the head", async () => {
     const first = createDesktopContextResource({ owner: "project-expert", storeId });
     const second = createDesktopContextResource({ owner: "system-expert-customization", storeId });
@@ -270,7 +312,6 @@ describe("core asset Git synchronization", { timeout: 30_000 }, () => {
         remote,
         branch: "main",
         autoPush: false,
-        pushDeletions: false,
       });
       const synchronized = await local.service.sync();
       expect(synchronized.status, synchronized.error).toBe("ready");
@@ -315,7 +356,6 @@ describe("core asset Git synchronization", { timeout: 30_000 }, () => {
         remote,
         branch: "main",
         autoPush: false,
-        pushDeletions: false,
       });
       expect(configured.status, configured.error).toBe("ready");
       const overview = await local.service.overview();
@@ -338,7 +378,6 @@ describe("core asset Git synchronization", { timeout: 30_000 }, () => {
       remote,
       branch: "main",
       autoPush: true,
-      pushDeletions: false,
     });
     expect(failed.status).toBe("error");
     expect(failed.error).toContain("Git push failed:");
@@ -368,7 +407,6 @@ describe("core asset Git synchronization", { timeout: 30_000 }, () => {
           remote,
           branch: "main",
           autoPush: true,
-          pushDeletions: false,
         })
       ).status,
     ).toBe("ready");
@@ -428,7 +466,6 @@ describe("core asset Git synchronization", { timeout: 30_000 }, () => {
       remote,
       branch: "main",
       autoPush: true,
-      pushDeletions: false,
     });
 
     expect(
@@ -488,7 +525,6 @@ describe("core asset Git synchronization", { timeout: 30_000 }, () => {
       remote,
       branch: "main",
       autoPush: true,
-      pushDeletions: false,
     });
     const contextItem = overview.items.find(
       (item) => item.key === `knowledge:${canonicalPragmaResourceRef(context)}`,
@@ -560,12 +596,15 @@ describe("core asset Git synchronization", { timeout: 30_000 }, () => {
       remote,
       branch: "main",
       autoPush: true,
-      pushDeletions: false,
     });
 
     expect(
       overview.items.find((item) => item.key === `knowledge:${canonicalPragmaResourceRef(context)}`)
         ?.name,
+    ).toBe("Unavailable knowledge base");
+    expect(
+      overview.items.find((item) => item.key === `knowledge:${canonicalPragmaResourceRef(context)}`)
+        ?.assetName,
     ).toBe("Unavailable knowledge base");
     expect(
       overview.items.find((item) => item.key === `knowledge:${canonicalPragmaResourceRef(context)}`)
@@ -611,12 +650,11 @@ describe("core asset Git synchronization", { timeout: 30_000 }, () => {
       undefined,
       (issue) => issues.push(issue),
     );
-    const configuration = { remote, branch: "main", autoPush: true, pushDeletions: false };
+    const configuration = { remote, branch: "main", autoPush: true };
     await local.service.configure(configuration);
     const statePath = join(localRoot, "state.json");
     const state = JSON.parse(await readFile(statePath, "utf8")) as {
       remoteItems: Record<string, unknown>;
-      ignoredRemote: string[];
     };
     state.remoteItems = {
       [contextKey]: {
@@ -630,14 +668,11 @@ describe("core asset Git synchronization", { timeout: 30_000 }, () => {
         fingerprint: "b".repeat(64),
       },
     };
-    state.ignoredRemote = [contextKey, capabilityKey];
     await writeFile(statePath, JSON.stringify(state));
 
     const overview = await local.service.overview();
 
-    expect(overview.items.find((item) => item.key === contextKey)?.name).toBe(
-      "Unavailable knowledge base",
-    );
+    expect(overview.items.find((item) => item.key === contextKey)).toBeUndefined();
     expect(overview.items.find((item) => item.key === capabilityKey)?.name).toBe(
       "Unavailable capability",
     );
@@ -659,7 +694,7 @@ describe("core asset Git synchronization", { timeout: 30_000 }, () => {
     const root = await fixture();
     const first = device(join(root, "first"), "Team docs");
     const second = device(join(root, "second"));
-    const configuration = { remote, branch: "main", autoPush: true, pushDeletions: false };
+    const configuration = { remote, branch: "main", autoPush: true };
     const published = await first.service.configure(configuration);
     expect(published.status).toBe("ready");
     expect(published.items.find((item) => item.key === `knowledge:${storeId}`)?.status).toBe(
@@ -684,19 +719,17 @@ describe("core asset Git synchronization", { timeout: 30_000 }, () => {
     expect(await readFile(join(check, "README.md"), "utf8")).toContain("Core asset repository");
   });
 
-  it("keeps a locally deleted asset in Git until explicitly restored", async () => {
+  it("automatically deletes a known local deletion from Git", async () => {
     const root = await fixture();
     const local = device(join(root, "local"), "Shared docs");
-    const configuration = { remote, branch: "main", autoPush: true, pushDeletions: false };
-    await local.service.configure(configuration);
+    await local.service.configure({ remote, branch: "main", autoPush: true });
     local.remove();
-    const overview = await local.service.sync();
-    expect(overview.items.find((item) => item.key === `knowledge:${storeId}`)?.status).toBe(
-      "ignored_remote",
-    );
-    expect(local.name()).toBeUndefined();
-    await local.service.restore(`knowledge:${storeId}`);
-    expect(local.name()).toBe("Shared docs");
+    const overview = await local.service.automatic();
+    expect(overview.status, overview.error).toBe("ready");
+    expect(overview.items).toEqual([]);
+    const target = device(join(root, "target"));
+    await target.service.configure({ remote, branch: "main", autoPush: true });
+    expect(target.name()).toBeUndefined();
   });
 
   it("deletes a locally removed runtime profile from Git without restoring it or uploading unrelated edits", async () => {
@@ -720,16 +753,18 @@ describe("core asset Git synchronization", { timeout: 30_000 }, () => {
       remote,
       branch: "main",
       autoPush: false,
-      pushDeletions: false,
     });
     const key = `runtime-profile:${canonicalPragmaResourceRef(runtime)}`;
     local.replaceResources([]);
     expect((await local.service.refresh()).items.find((item) => item.key === key)?.status).toBe(
-      "ignored_remote",
+      "pending",
     );
     const restored = await local.service.restore(key);
     expect(local.resources()).toEqual([runtime]);
-    expect(restored.items.find((item) => item.key === key)?.status).toBe("needs_attention");
+    expect(restored.items.find((item) => item.key === key)).toMatchObject({
+      status: "synced",
+      readiness: { status: "needs_attention" },
+    });
     local.replaceResources([]);
     await local.service.refresh();
     local.rename("Unpublished local edit");
@@ -744,7 +779,7 @@ describe("core asset Git synchronization", { timeout: 30_000 }, () => {
     expect(items.get(`knowledge:${storeId}`)?.name).toBe("Shared docs");
     expect(await readFile(join(check, "README.md"), "utf8")).toContain("Core asset repository");
     const state = JSON.parse(await readFile(join(root, "local", "state.json"), "utf8"));
-    expect(state.ignoredRemote).not.toContain(key);
+    expect(state).not.toHaveProperty("ignoredRemote");
     expect(state.bases[key]).toBeUndefined();
     expect((await local.service.refresh()).items.some((item) => item.key === key)).toBe(false);
   });
@@ -756,7 +791,6 @@ describe("core asset Git synchronization", { timeout: 30_000 }, () => {
       remote,
       branch: "main",
       autoPush: false,
-      pushDeletions: false,
     });
     local.remove();
     await local.service.refresh();
@@ -767,7 +801,7 @@ describe("core asset Git synchronization", { timeout: 30_000 }, () => {
     const key = `knowledge:${storeId}`;
     expect((await local.service.deleteRemote(key)).status).toBe("error");
     const failed = JSON.parse(await readFile(statePath, "utf8"));
-    expect(failed.ignoredRemote).toEqual(before.ignoredRemote);
+    expect(failed.remoteItems).toEqual(before.remoteItems);
     expect(failed.bases).toEqual(before.bases);
     expect(local.name()).toBeUndefined();
     await rm(hook);
@@ -783,7 +817,6 @@ describe("core asset Git synchronization", { timeout: 30_000 }, () => {
       remote,
       branch: "main",
       autoPush: false,
-      pushDeletions: false,
     });
     expect((await local.service.deleteRemote(`knowledge:${storeId}`)).error).toContain(
       "exists locally again",
@@ -807,7 +840,6 @@ describe("core asset Git synchronization", { timeout: 30_000 }, () => {
       remote,
       branch: "main",
       autoPush: true,
-      pushDeletions: false,
     });
 
     expect(
@@ -826,6 +858,107 @@ describe("core asset Git synchronization", { timeout: 30_000 }, () => {
     });
   });
 
+  it.each(["sync", "refresh"] as const)(
+    "automatically repairs missing Context mappings during %s",
+    async (mode) => {
+      const root = await fixture();
+      const binding = createDesktopContextResource({ owner: "project-expert", storeId });
+      const local = device(join(root, "local"), "snipe_develop", undefined, [binding]);
+      const key = `knowledge:${canonicalPragmaResourceRef(binding)}`;
+      await local.service.configure({
+        remote,
+        branch: "main",
+        autoPush: false,
+      });
+      local.replaceResources([]);
+      const statePath = join(root, "local", "state.json");
+      const state = JSON.parse(await readFile(statePath, "utf8"));
+      state.conflicts = [key];
+      state.restoreConflicts = [key];
+      await writeFile(statePath, JSON.stringify(state));
+      const overview = await local.service.overview();
+      expect(overview.status).toBe("ready");
+      expect(overview.items.find((item) => item.key === key)).toBeUndefined();
+      expect(overview.items.find((item) => item.key === `knowledge:${storeId}`)?.status).toBe(
+        "synced",
+      );
+      // Repair must not write or create Knowledge revisions, even after a local edit.
+      local.rename("snipe_develop_local");
+      const append = vi.spyOn(local.stores, "appendSnapshot");
+      const create = vi.spyOn(local.stores, "createFromSnapshot");
+      const restored = await local.service[mode]();
+      expect(restored.error).toBeUndefined();
+      expect(restored.status).toBe("ready");
+      expect(local.name()).toBe("snipe_develop_local");
+      expect(append).not.toHaveBeenCalled();
+      expect(create).not.toHaveBeenCalled();
+      expect(local.resources().map(canonicalPragmaResourceRef)).toContain(
+        canonicalPragmaResourceRef(binding),
+      );
+      expect(restored.items.find((item) => item.key === key)?.status).not.toBe("conflict");
+      expect(restored.items.find((item) => item.key === key)?.message).toBeUndefined();
+      const repairedState = JSON.parse(await readFile(statePath, "utf8"));
+      expect(repairedState).not.toHaveProperty("ignoredRemote");
+      expect(repairedState.conflicts).not.toContain(key);
+      expect(repairedState.restoreConflicts).not.toContain(key);
+    },
+  );
+
+  it("replays an interrupted automatic Context repair without duplicate publication or Knowledge writes", async () => {
+    const root = await fixture();
+    const binding = createDesktopContextResource({ owner: "project-expert", storeId });
+    const local = device(join(root, "local"), "snipe_develop", undefined, [binding]);
+    await local.service.configure({
+      remote,
+      branch: "main",
+      autoPush: false,
+    });
+    local.replaceResources([]);
+    const apply = local.project.apply;
+    const publish = vi.spyOn(local.project, "apply").mockImplementationOnce(async (input) => {
+      await apply(input);
+      throw new Error("Interrupted after Context publication.");
+    });
+    const append = vi.spyOn(local.stores, "appendSnapshot");
+    const first = await local.service.refresh();
+    expect(first.status).toBe("error");
+    expect(await readFile(join(root, "local", "restore-journal.json"), "utf8")).toContain(
+      canonicalPragmaResourceRef(binding),
+    );
+    const recovered = await local.service.automatic();
+    expect(recovered.status, recovered.error).toBe("ready");
+    expect(publish).toHaveBeenCalledTimes(1);
+    expect(append).not.toHaveBeenCalled();
+    expect(local.resources().filter((resource) => resource.kind === "ContextStore")).toHaveLength(
+      1,
+    );
+    await expect(readFile(join(root, "local", "restore-journal.json"))).rejects.toMatchObject({
+      code: "ENOENT",
+    });
+  });
+
+  it("does not resurrect deleted Knowledge to repair an unused Context mapping", async () => {
+    const root = await fixture();
+    const binding = createDesktopContextResource({ owner: "project-expert", storeId });
+    const local = device(join(root, "local"), "snipe_develop", undefined, [binding]);
+    await local.service.configure({
+      remote,
+      branch: "main",
+      autoPush: false,
+    });
+    local.remove();
+    local.replaceResources([]);
+    const create = vi.spyOn(local.stores, "createFromSnapshot");
+    const overview = await local.service.automatic();
+    expect(overview.status, overview.error).toBe("ready");
+    expect(overview.items.some((item) => item.assetKind === "context")).toBe(false);
+    expect(overview.items.find((item) => item.key === `knowledge:${storeId}`)?.status).toBe(
+      "pending",
+    );
+    expect(local.resources()).toEqual([]);
+    expect(create).not.toHaveBeenCalled();
+  });
+
   it("shows a locally deleted asset as restorable after a pull-only refresh", async () => {
     const root = await fixture();
     const local = device(join(root, "local"), "Shared docs");
@@ -833,21 +966,20 @@ describe("core asset Git synchronization", { timeout: 30_000 }, () => {
       remote,
       branch: "main",
       autoPush: false,
-      pushDeletions: false,
     });
     local.remove();
     expect(
       (await local.service.overview()).items.find((item) => item.key === `knowledge:${storeId}`)
         ?.status,
-    ).toBe("ignored_remote");
+    ).toBe("pending");
     const overview = await local.service.refresh();
     expect(overview.items.find((item) => item.key === `knowledge:${storeId}`)?.status).toBe(
-      "ignored_remote",
+      "pending",
     );
     expect(
       (await local.service.overview()).items.find((item) => item.key === `knowledge:${storeId}`)
         ?.status,
-    ).toBe("ignored_remote");
+    ).toBe("pending");
     await local.service.restore(`knowledge:${storeId}`);
     expect(local.name()).toBe("Shared docs");
   });
@@ -859,7 +991,6 @@ describe("core asset Git synchronization", { timeout: 30_000 }, () => {
       remote,
       branch: "main",
       autoPush: true,
-      pushDeletions: false,
     });
     const checkout = join(root, "invalid");
     await exec("git", ["clone", barePath(root), checkout]);
@@ -890,7 +1021,6 @@ describe("core asset Git synchronization", { timeout: 30_000 }, () => {
           remote,
           branch: "main",
           autoPush: true,
-          pushDeletions: false,
         })
       ).status,
     ).toBe("error");
@@ -900,7 +1030,7 @@ describe("core asset Git synchronization", { timeout: 30_000 }, () => {
   it("keeps local assets when the remote manifest disappears", async () => {
     const root = await fixture();
     const local = device(join(root, "local"), "Shared docs");
-    const configuration = { remote, branch: "main", autoPush: true, pushDeletions: false };
+    const configuration = { remote, branch: "main", autoPush: true };
     await local.service.configure(configuration);
     const checkout = join(root, "missing-manifest");
     await exec("git", ["clone", barePath(root), checkout]);
@@ -924,7 +1054,7 @@ describe("core asset Git synchronization", { timeout: 30_000 }, () => {
   it("does not upload local changes when synchronization is removed", async () => {
     const root = await fixture();
     const local = device(join(root, "local"), "Shared docs");
-    await local.service.configure({ remote, branch: "main", autoPush: true, pushDeletions: false });
+    await local.service.configure({ remote, branch: "main", autoPush: true });
     local.rename("Local only");
     await local.service.removeConfiguration();
     expect((await local.service.overview()).status).toBe("unconfigured");
@@ -938,11 +1068,11 @@ describe("core asset Git synchronization", { timeout: 30_000 }, () => {
     ).toContain("Shared docs");
   });
 
-  it("propagates future deletions only when enabled", async () => {
+  it("propagates local deletions to another unchanged device", async () => {
     const root = await fixture();
     const first = device(join(root, "first"), "Shared docs");
     const second = device(join(root, "second"));
-    const configuration = { remote, branch: "main", autoPush: true, pushDeletions: true };
+    const configuration = { remote, branch: "main", autoPush: true };
     await first.service.configure(configuration);
     await second.service.configure(configuration);
     first.remove();
@@ -951,38 +1081,33 @@ describe("core asset Git synchronization", { timeout: 30_000 }, () => {
     expect(second.name()).toBeUndefined();
   });
 
-  it("does not upload deletions made before enabling deletion uploads", async () => {
+  it("keeps delete-versus-modify competition as a conflict and supports either choice", async () => {
     const root = await fixture();
-    const local = device(join(root, "local"), "Shared docs");
-    const base = { remote, branch: "main", autoPush: true };
-    await local.service.configure({ ...base, pushDeletions: false });
-    local.remove();
-    expect(
-      (await local.service.sync()).items.find((item) => item.key === `knowledge:${storeId}`)
-        ?.status,
-    ).toBe("ignored_remote");
-    const enabled = await local.service.configure({ ...base, pushDeletions: true });
-    expect(enabled.items.find((item) => item.key === `knowledge:${storeId}`)?.status).toBe(
-      "ignored_remote",
+    const a = device(join(root, "a"), "Shared docs");
+    const b = device(join(root, "b"));
+    const config = { remote, branch: "main", autoPush: true };
+    await a.service.configure(config);
+    await b.service.configure(config);
+    a.remove();
+    b.rename("Remote edit");
+    await b.service.sync();
+    const conflict = await a.service.sync();
+    expect(conflict.status).toBe("conflict");
+    expect(a.name()).toBeUndefined();
+    expect(conflict.items.find((item) => item.key === `knowledge:${storeId}`)?.status).toBe(
+      "conflict",
     );
-    const restored = device(join(root, "restored"));
-    await restored.service.configure({ ...base, pushDeletions: false });
-    expect(restored.name()).toBe("Shared docs");
+    const kept = await a.service.resolve(`knowledge:${storeId}`, "remote");
+    expect(kept.status, kept.error).toBe("ready");
+    expect(a.name()).toBe("Remote edit");
+    a.remove();
+    b.rename("Second remote edit");
+    await b.service.sync();
+    expect((await a.service.sync()).status).toBe("conflict");
+    expect((await a.service.resolve(`knowledge:${storeId}`, "local")).items).toEqual([]);
   });
 
-  it("grandfathers a local deletion even when deletion uploads are enabled before the next sync", async () => {
-    const root = await fixture();
-    const local = device(join(root, "local"), "Shared docs");
-    const base = { remote, branch: "main", autoPush: true };
-    await local.service.configure({ ...base, pushDeletions: false });
-    local.remove();
-    await local.service.configure({ ...base, pushDeletions: true });
-    const restored = device(join(root, "restored"));
-    await restored.service.configure({ ...base, pushDeletions: false });
-    expect(restored.name()).toBe("Shared docs");
-  });
-
-  it("reads remote identity metadata for overview without reconciling or rewriting v1 state", async () => {
+  it("reads remote identity metadata for overview without reconciling or rewriting current state", async () => {
     const root = await fixture();
     const capabilityId = "5c98c888-e972-4b7c-a92c-00461dd41e3e";
     const binding = createDesktopCapabilityResource({
@@ -1013,7 +1138,7 @@ describe("core asset Git synchronization", { timeout: 30_000 }, () => {
         },
       ],
     } as unknown as CapabilityStore;
-    const configuration = { remote, branch: "main", autoPush: true, pushDeletions: false };
+    const configuration = { remote, branch: "main", autoPush: true };
     const source = device(
       join(root, "source"),
       undefined,
@@ -1029,7 +1154,7 @@ describe("core asset Git synchronization", { timeout: 30_000 }, () => {
     await mkdir(observerRoot);
     await writeFile(
       join(observerRoot, "settings.json"),
-      JSON.stringify({ schemaVersion: "pragma.asset-sync-settings/v1", ...configuration }),
+      JSON.stringify({ schemaVersion: "pragma.asset-sync-settings/v2", ...configuration }),
     );
     await cp(join(root, "source", "state.json"), join(observerRoot, "state.json"));
     const observer = device(observerRoot);
@@ -1093,7 +1218,7 @@ describe("core asset Git synchronization", { timeout: 30_000 }, () => {
       undefined,
       capabilities,
     );
-    const configuration = { remote, branch: "main", autoPush: true, pushDeletions: false };
+    const configuration = { remote, branch: "main", autoPush: true };
     await source.service.configure(configuration);
     const offlineRoot = join(root, "offline");
     await mkdir(offlineRoot);
@@ -1101,7 +1226,7 @@ describe("core asset Git synchronization", { timeout: 30_000 }, () => {
     await writeFile(
       join(offlineRoot, "settings.json"),
       JSON.stringify({
-        schemaVersion: "pragma.asset-sync-settings/v1",
+        schemaVersion: "pragma.asset-sync-settings/v2",
         ...configuration,
         remote: unavailableRemote,
       }),
@@ -1181,7 +1306,7 @@ describe("core asset Git synchronization", { timeout: 30_000 }, () => {
       undefined,
       sourceCapabilities,
     );
-    const configuration = { remote, branch: "main", autoPush: true, pushDeletions: false };
+    const configuration = { remote, branch: "main", autoPush: true };
     const sourceOverview = await source.service.configure(configuration);
     expect(sourceOverview.status).toBe("ready");
     expect(
@@ -1247,7 +1372,7 @@ describe("core asset Git synchronization", { timeout: 30_000 }, () => {
     );
     const first = device(join(root, "first"), undefined, source);
     const second = device(join(root, "second"));
-    const configuration = { remote, branch: "main", autoPush: true, pushDeletions: false };
+    const configuration = { remote, branch: "main", autoPush: true };
     expect((await first.service.configure(configuration)).status).toBe("ready");
     const restored = await second.service.configure(configuration);
     expect(restored.status, restored.error).toBe("ready");
@@ -1338,7 +1463,7 @@ describe("core asset Git synchronization", { timeout: 30_000 }, () => {
       firstProject,
     );
     const second = device(join(root, "second"), undefined, undefined, [], undefined, secondProject);
-    const configuration = { remote, branch: "main", autoPush: true, pushDeletions: false };
+    const configuration = { remote, branch: "main", autoPush: true };
     expect((await first.service.configure(configuration)).status).toBe("ready");
     const restored = await second.service.configure(configuration);
     expect(restored.status).toBe("ready");
@@ -1358,6 +1483,10 @@ describe("core asset Git synchronization", { timeout: 30_000 }, () => {
     ).toEqual(["flow", "flow-layout"]);
     expect(
       restored.items.find((item) => item.key === "expert:expert:1xddvess309a6gme")?.status,
+    ).toBe("synced");
+    expect(
+      restored.items.find((item) => item.key === "expert:expert:1xddvess309a6gme")?.readiness
+        ?.status,
     ).toBe("needs_attention");
 
     const current = await firstProject.get();

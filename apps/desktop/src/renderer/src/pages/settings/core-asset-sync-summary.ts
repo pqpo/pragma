@@ -4,7 +4,7 @@ import type {
   CoreAssetSyncItemStatus,
 } from "../../../../shared/contracts/index.ts";
 
-export type CoreAssetHealth = "synced" | "pending" | "failed";
+export type CoreAssetHealth = "synced" | "pending" | "conflict" | "failed";
 export type CoreAssetOverallHealth = CoreAssetHealth | "syncing";
 
 export interface CoreAssetSyncLogicalAsset {
@@ -20,6 +20,7 @@ export interface CoreAssetSyncGroup {
   readonly total: number;
   readonly synced: number;
   readonly pending: number;
+  readonly conflicts: number;
   readonly failed: number;
   readonly assets: readonly CoreAssetSyncLogicalAsset[];
 }
@@ -28,6 +29,7 @@ export interface CoreAssetSyncSummary {
   readonly total: number;
   readonly synced: number;
   readonly pending: number;
+  readonly conflicts: number;
   readonly failed: number;
   readonly groups: readonly CoreAssetSyncGroup[];
 }
@@ -46,7 +48,8 @@ const KIND_ORDER: readonly CoreAssetLogicalKind[] = [
 const HEALTH_PRIORITY: Readonly<Record<CoreAssetHealth, number>> = {
   synced: 0,
   pending: 1,
-  failed: 2,
+  conflict: 2,
+  failed: 3,
 };
 
 export function aggregateCoreAssetSyncItems(
@@ -88,6 +91,7 @@ export function aggregateCoreAssetSyncItems(
         total: grouped.length,
         synced: grouped.filter((asset) => asset.status === "synced").length,
         pending: grouped.filter((asset) => asset.status === "pending").length,
+        conflicts: grouped.filter((asset) => asset.status === "conflict").length,
         failed: grouped.filter((asset) => asset.status === "failed").length,
         assets: grouped,
       },
@@ -98,6 +102,7 @@ export function aggregateCoreAssetSyncItems(
     total: assets.size,
     synced: [...assets.values()].filter((asset) => asset.status === "synced").length,
     pending: [...assets.values()].filter((asset) => asset.status === "pending").length,
+    conflicts: [...assets.values()].filter((asset) => asset.status === "conflict").length,
     failed: [...assets.values()].filter((asset) => asset.status === "failed").length,
     groups,
   };
@@ -105,9 +110,10 @@ export function aggregateCoreAssetSyncItems(
 
 export function coreAssetOverallHealth(
   status: CoreAssetSyncOverview["status"],
-  summary: Pick<CoreAssetSyncSummary, "failed" | "pending">,
+  summary: Pick<CoreAssetSyncSummary, "failed" | "pending" | "conflicts">,
 ): CoreAssetOverallHealth {
-  if (status === "error" || status === "conflict") return "failed";
+  if (status === "error") return "failed";
+  if (status === "conflict" || summary.conflicts > 0) return "conflict";
   if (status === "syncing") return "syncing";
   if (summary.failed > 0) return "failed";
   if (summary.pending > 0) return "pending";
@@ -115,8 +121,8 @@ export function coreAssetOverallHealth(
 }
 
 function syncItemHealth(status: CoreAssetSyncItemStatus["status"]): CoreAssetHealth {
-  if (status === "conflict" || status === "error") return "failed";
-  if (status === "pending" || status === "ignored_remote" || status === "needs_attention")
-    return "pending";
+  if (status === "error") return "failed";
+  if (status === "conflict") return "conflict";
+  if (status === "pending") return "pending";
   return "synced";
 }
