@@ -27,6 +27,7 @@ export interface LocalHostMissionControllerCompositionOptions {
   readonly onIdleError?: Parameters<typeof createMissionOwnerScope>[0]["onIdleError"];
   readonly missionsPath: string;
   readonly missionPath?: ((missionId: string) => string) | undefined;
+  readonly isDeletionCommitted?: ((missionId: string) => Promise<boolean>) | undefined;
   readonly readMission?: Parameters<typeof createMissionQuery>[0]["readMission"];
   readonly onLeaseLost?: ((missionId: string, error?: unknown) => Promise<void> | void) | undefined;
   readonly onLeaseRenewalError?:
@@ -59,6 +60,7 @@ export function createLocalHostMissionController(
     logger: options.logger,
     missionsPath: options.missionsPath,
     ...(options.missionPath === undefined ? {} : { missionPath: options.missionPath }),
+    isDeletionCommitted: options.isDeletionCommitted,
   });
   const ownerScope = createMissionOwnerScope({
     controller,

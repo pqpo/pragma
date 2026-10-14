@@ -3,6 +3,7 @@ import {
   BoardReadResultSchema,
   BoardSearchResultSchema,
   ExecutorDescriptorSchema,
+  IntegrationErrorSchema,
   type HumanInteractionRequestEnvelope,
   type JsonValue,
 } from "@pragma/shared/integration";
@@ -199,7 +200,19 @@ async function listMissions(
   command: Extract<ParsedCommand, { readonly kind: "mission-list" }>,
   context: CliCommandContext,
 ): Promise<JsonValue> {
-  const page = hostPage(await context.localHost.listMissions());
+  const diagnostics = await context.localHost.listMissionDiagnostics?.();
+  if (
+    diagnostics !== undefined &&
+    diagnostics.items.length === 0 &&
+    diagnostics.diagnostics.length > 0
+  ) {
+    const error = diagnostics.diagnostics[0]!;
+    throw IntegrationErrorSchema.parse({
+      ...error,
+      details: { ...error.details, diagnostics: diagnostics.diagnostics.map(asJsonValue) },
+    });
+  }
+  const page = hostPage(diagnostics?.items ?? (await context.localHost.listMissions()));
   const filtered = page.items.filter((mission) => matchesMission(mission, command));
   const result = paginateOrHost(
     filtered,
@@ -215,6 +228,23 @@ async function listMissions(
   return {
     items: result.items.map(asJsonValue),
     ...(result.nextCursor === undefined ? {} : { nextCursor: result.nextCursor }),
+    ...(diagnostics === undefined ||
+    (diagnostics.diagnostics.length === 0 && diagnostics.warnings.length === 0)
+      ? {}
+      : {
+          partial: diagnostics.diagnostics.length > 0,
+          diagnostics: diagnostics.diagnostics.map(asJsonValue),
+          warnings: [
+            ...diagnostics.warnings.map(asJsonValue),
+            ...diagnostics.diagnostics.map((issue) =>
+              asJsonValue({
+                code: "MISSION_UNAVAILABLE",
+                message: issue.message,
+                details: { ...issue.details, errorCode: issue.code },
+              }),
+            ),
+          ],
+        }),
   };
 }
 

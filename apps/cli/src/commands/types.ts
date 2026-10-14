@@ -21,6 +21,7 @@ export type CliLocalHost = Pick<
   | "listExecutors"
   | "getMission"
   | "listMissions"
+  | "listMissionDiagnostics"
   | "queryMission"
   | "listSharedBoard"
   | "readSharedBoard"

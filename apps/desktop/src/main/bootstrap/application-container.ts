@@ -13,6 +13,7 @@ import { createMissionAttentionRetirement } from "./mission-attention-retirement
 import {
   createMissionDeletionService,
   readMissionDeletionRecord,
+  isMissionDeletionCommitted,
   MissionDeletionSourceExpiredError,
 } from "@pragma/local-host";
 import { readDeletedExecutionUsageSource } from "@pragma/local-host";
@@ -377,6 +378,8 @@ export async function createDesktopApplicationContainer(
   const missionLifecycle = createLocalHostMissionController({
     logger: mainLogger,
     missionsPath,
+    missionPath: missionStore.storagePath,
+    isDeletionCommitted: async (id) => await isMissionDeletionCommitted(pragmaPaths, id),
     readMission: readMissionEnvelope,
     onIdleError: (missionId, error) => {
       mainLogger.warn(

@@ -1,5 +1,50 @@
 # Mission 删除优化：审查与验证记录
 
+## Issue #397：语义事务与 owner 搬移的协调
+
+Local Host 最终搬移 owner 前，按 semantic-write → aggregate → repository metadata →
+Execution/Session 的既有删除锁顺序获取屏障。semantic-write 锁覆盖准备 journal、业务 mutation
+与事件提交的完整生命周期；aggregate 锁覆盖 lease 校验与持久化，避免已验证的 writer 在搬移
+后递归创建旧目录。搬移时仍未完成的 journal 随 owner 保存在回收站，不自动重放或删除。
+
+后台删除恢复与 Runtime Session catalog 自动恢复同样通过 Core 的共享存储屏障：
+semantic-write → aggregate → repository metadata → catalog deletion。catalog 自动恢复先读取
+待处理事务 ID，再逐个获取 owner 屏障；等待 Mission 锁时不持有 catalog 删除锁。取得屏障和
+catalog 锁后重新读取 journal 与 catalog 进度，正常删除或其他恢复已完成的事务不重复搬移。
+Core 只协调存储锁，不反向依赖 Local Host。
+
+并发回归用真实删除事务构造 prepared + moving + 原目录尚在的故障窗口，分别暂停已经通过
+校验的 aggregate 写入与完整 semantic-write 事务，再从后台和 catalog 自动恢复入口触发
+搬移。四种组合均等待在途写入完成，事件保存在 trash 中；完成后拒绝迟到写入且原路径不重建。
+修复前实现上的四种组合均提前搬移，回归测试失败。
+
+Node 与 Desktop composition 均在 aggregate 锁内检查 owner 目录之外的已提交/已完成删除记录，
+拒绝迟到 claim、续租、写入与恢复。prepared 阶段仅在 owner 尚未搬移时允许 controller 完成 Runtime 停止；
+repository 写入继续使用删除 fencing。语义 journal 存在但 aggregate 缺失时不能生成新 lease，
+包括默认路径解析器遇到 canonical journal-only 目录的情况。
+
+fencing 同步核对底层 storage deletion journal，不依赖后台恢复先执行。即使上层记录仍为
+prepared，底层已经 trashed，或 owner 已出现在本次事务的 trash 中且原路径消失，也禁止新
+claim/写入；真正尚未搬移的 prepared 不被误判为已提交。Desktop 与 Node 共用这一判定。
+
+共享读取端口新增 `listDiagnostics()`，区分删除状态、缺失主数据、无效事务、权限错误和待完成
+事务，返回可读条目及明确诊断。既有严格 `list()` 保留失败行为，并附带可读 Mission ID 和诊断。
+CLI 与 Desktop 的 Local Host facade 均提供该入口；CLI 的文本和 JSON/JSONL 展示部分结果警告。
+删除记录 owner mismatch 使用结构化损坏诊断；已有 IntegrationError 同样补足 Mission ID、
+阶段与文件，并保留底层精确 details，文本警告展示这些定位字段。未知异常继续失败，文件与
+journal 保持原状。持久格式与协议版本保持不变；Core 的 journal 读取 Schema 接受 writer
+合法省略的 Runtime owner 列表并默认成空数组。
+
+Flow 崩溃恢复中的短暂 SQLite BUSY/LOCKED 争用使用有界、可让出 Worker 的重试：覆盖打开
+Execution WAL 元数据和既有 Mission receipt 操作。只重试 SQLite 数值错误码对应的锁争用，
+不重复已开始的 Execution 业务事务，也不隐藏损坏或版本错误。真实 SQLite 独占锁回归验证锁
+超过旧等待窗口后仍可恢复读取。
+
+回归覆盖健康 Mission 与 journal-only 目录并存、待恢复事务、异常聚合与未知错误、删除中残留、
+同进程及独立进程的事务/删除竞争，以及重启和 completed 删除记录对新 claim 的 fencing。
+这证明当前代码中的竞态机制及其防护，不据此认定用户现场由删除操作造成；现场仍需核对原始
+journal、删除记录与路径迁移记录。
+
 日期：2026-10-01。基于远端 `main` 的 `a5054c38`，分支 `codex/mission-deletion-optimization`。
 实施与验证使用独立 worktree，原工作区未提交改动未复制、未修改。
 

@@ -8,6 +8,8 @@ import {
   WorkspaceSelectionSchema,
   type HumanInteractionRequestEnvelope,
   type IntegrationCapability,
+  type IntegrationError,
+  type IntegrationWarning,
   type WorkspaceSelection,
 } from "@pragma/shared/integration";
 import type { MissionControlApplication } from "./missions/controller/mission-control.ts";
@@ -29,6 +31,13 @@ export type { IntegrationErrorCode } from "@pragma/shared/integration";
 export const LOCAL_HOST_APPLICATION_PROTOCOL = "pragma.local-host/v1" as const;
 export const LOCAL_HOST_SHARED_BOARD_STORE_ID = "mission-board" as const;
 export const LOCAL_HOST_SHARED_BOARD_SCOPE_ID = "mission-board:shared" as const;
+
+export interface LocalHostMissionListResult<T = unknown> {
+  readonly items: readonly T[];
+  /** Unavailable owners are retained on disk and explicitly reported. */
+  readonly diagnostics: readonly IntegrationError[];
+  readonly warnings: readonly IntegrationWarning[];
+}
 
 export * from "./built-in-executors.ts";
 export * from "./bundle-source-migration.ts";
@@ -139,6 +148,8 @@ export interface LocalHostApplicationPort<
   listExecutors(): Promise<readonly TExecutor[]>;
   getMission(id: string): Promise<TMission>;
   listMissions(): Promise<readonly TMissionSummary[]>;
+  readonly listMissionDiagnostics?:
+    (() => Promise<LocalHostMissionListResult<TMissionSummary>>) | undefined;
   /** Real, view-specific Mission projection owned by Local Host. */
   readonly queryMission: MissionQueryPort["queryMission"];
   resolveWorkspace(requestedPath: string): Promise<WorkspaceSelection>;
@@ -190,6 +201,8 @@ export interface LocalHostApplicationPorts<
   readonly missions: {
     readonly get: (id: string) => Promise<TMission>;
     readonly list: () => Promise<readonly TMissionSummary[]>;
+    readonly listDiagnostics?:
+      (() => Promise<LocalHostMissionListResult<TMissionSummary>>) | undefined;
     readonly query: MissionQueryPort["queryMission"];
   };
   /** Desktop and CLI inject raw filesystem operations; Local Host owns the resolution policy. */
@@ -256,6 +269,7 @@ export function createLocalHostApplication<
     listExecutors: ports.catalog.listExecutors,
     getMission: ports.missions.get,
     listMissions: ports.missions.list,
+    listMissionDiagnostics: ports.missions.listDiagnostics,
     queryMission: ports.missions.query,
     resolveWorkspace: async (requestedPath) =>
       await resolveWorkspace(requestedPath, ports.workspace),

@@ -84,6 +84,16 @@ Mission cursor 会返回 `CURSOR_EXPIRED`/`CURSOR_INVALID`。安装版本支持�
 先列出 `state/pendingCount/supportsSteer`，再列出完整 REQUEST ID 和内容预览。所有文本分页
 支持 cursor 的文本分页结果都会打印可复制的 continuation 命令。
 
+`mission list` 遇到无法读取的单个 Mission、且仍有可读 Mission 时，通过共享 Local Host 诊断入口返回可读条目。
+文本模式在 stderr 报告 Mission ID、缺失或异常文件及原因；JSON/JSONL 的结果包含
+`partial: true`、`diagnostics`，结果信封同时包含 `warnings`。只有待完成的语义事务、且主状态
+仍可读取时，保留该 Mission 并报告 `MISSION_TRANSACTION_PENDING`，`partial` 为 false。
+调用方应检查这些字段，不能把部分结果当成完整清单；未知异常仍使命令失败。
+如果所有候选 Mission 都不可读，CLI 继续返回非零错误状态，并在错误 details 中包含完整诊断；
+正常首次使用、没有任何 Mission 时仍返回成功的空清单。
+列表不会删除日志或重放事务。缺少 `aggregate.json` 的 journal-only 目录需要保留证据后调查，
+不能通过补空状态或重新 claim 来恢复。
+
 `run` 默认等待终态，`--detach` 在 durable Mission/Execution receipt 持久化后返回；回执返回时
 任务可能仍在队列中。`--request-id` 可选；省略时
 CLI 自动生成 UUID。文本模式会在副作用前显示 Request ID，并在获得 handle 后显示 Mission ID

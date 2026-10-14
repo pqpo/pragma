@@ -1,13 +1,15 @@
 import { randomUUID } from "node:crypto";
-import { mkdir, readFile, readdir, rename, writeFile, rm } from "node:fs/promises";
-import { dirname, join } from "node:path";
+import { mkdir, readFile, readdir, rename, writeFile, rm, stat } from "node:fs/promises";
+import { dirname, join, relative } from "node:path";
 import {
   PragmaPaths,
   withFileLock,
   recoverRuntimeSessionDeletion,
+  StorageDeletionJournalSchema,
   type PragmaLogger,
 } from "@pragma/core";
 import { z } from "zod";
+import { createIntegrationError } from "@pragma/shared/integration";
 
 export const MISSION_DELETION_STEPS = [
   "usage",
@@ -58,12 +60,74 @@ export async function readMissionDeletionRecord(
 ): Promise<MissionDeletionRecord | undefined> {
   for (const path of [paths.missionDeletion(id), paths.missionDeletionCompleted(id)]) {
     try {
-      return MissionDeletionRecordSchema.parse(JSON.parse(await readFile(path, "utf8")));
+      const record = MissionDeletionRecordSchema.parse(JSON.parse(await readFile(path, "utf8")));
+      if (record.missionId !== id)
+        throw createIntegrationError({
+          code: "STORAGE_CORRUPTED",
+          category: "protocol",
+          message: `Mission ${id} deletion record belongs to another owner.`,
+          details: {
+            missionId: id,
+            stage: "deletion-record.read",
+            file: relative(paths.root, path),
+            reason: "owner_mismatch",
+          },
+        });
+      return record;
     } catch (error) {
       if (!missing(error)) throw error;
     }
   }
   return undefined;
+}
+
+export async function isMissionDeletionCommitted(paths: PragmaPaths, id: string): Promise<boolean> {
+  const record = await readMissionDeletionRecord(paths, id);
+  if (record === undefined) return false;
+  if (record.phase !== "prepared") return true;
+  const file = join(paths.deletionJournalRoot(), `${record.deletionId}.json`);
+  let journal;
+  try {
+    journal = StorageDeletionJournalSchema.parse(JSON.parse(await readFile(file, "utf8")));
+  } catch (error) {
+    if (missing(error)) return false;
+    throw error;
+  }
+  if (
+    journal.deletionId !== record.deletionId ||
+    journal.owner.id !== id ||
+    journal.owner.type !== "mission"
+  )
+    throw createIntegrationError({
+      code: "STORAGE_CORRUPTED",
+      category: "protocol",
+      message: `Mission ${id} storage deletion journal owner does not match its deletion record.`,
+      details: {
+        missionId: id,
+        stage: "deletion-journal.read",
+        file: relative(paths.root, file),
+        reason: "owner_mismatch",
+      },
+    });
+  // The physical move is authoritative even if the Host callback never ran.
+  if (journal.status === "trashed") return true;
+  // A crash can also precede the final journal update. Do not recreate an
+  // owner already present in trash while targeted recovery is still pending.
+  const owner = journal.sources.find((source) => source.label === "mission");
+  if (owner === undefined) return false;
+  const exists = async (path: string): Promise<boolean> => {
+    try {
+      await stat(path);
+      return true;
+    } catch (error) {
+      if (missing(error)) return false;
+      throw error;
+    }
+  };
+  return (
+    (await exists(join(paths.trashRoot(), record.deletionId, owner.label))) &&
+    !(await exists(owner.path))
+  );
 }
 
 export class MissionDeletionSourceExpiredError extends Error {

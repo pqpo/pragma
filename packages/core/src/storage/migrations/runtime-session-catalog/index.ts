@@ -6,6 +6,10 @@ import { DatabaseSync } from "node:sqlite";
 import { z } from "zod";
 
 import { withFileLock } from "../../file-lock.ts";
+import {
+  missionRepositoryLockPath,
+  withMissionStorageDeletionBarrier,
+} from "../../mission-storage-locks.ts";
 import { encodePragmaPathSegment, type PragmaPaths } from "../../pragma-paths.ts";
 import {
   runtimeSessionRecordMigrationChain,
@@ -39,7 +43,7 @@ const LegacyOwnershipClaimSchema = z
   })
   .strict();
 
-const StorageDeletionJournalSchema = z
+export const StorageDeletionJournalSchema = z
   .object({
     schemaVersion: z.literal("pragma.storage-deletion/v1"),
     deletionId: z.string().uuid(),
@@ -47,7 +51,7 @@ const StorageDeletionJournalSchema = z
     status: z.enum(["preparing", "moving", "catalog-pending", "trashed"]),
     sources: z.array(z.object({ label: z.string().min(1), path: z.string().min(1) }).strict()),
     moved: z.array(z.string().min(1)),
-    runtimeSessionOwnerIds: z.array(z.string().min(1)),
+    runtimeSessionOwnerIds: z.array(z.string().min(1)).default([]),
     startedAt: z.string().datetime(),
     completedAt: z.string().datetime().optional(),
   })
@@ -65,9 +69,7 @@ export async function openRuntimeSessionCatalog(paths: PragmaPaths): Promise<Dat
   const database = openWritableCatalog(path);
   try {
     if (hasPendingCatalogDeletions(database)) {
-      await withRuntimeSessionCatalogDeletionLock(paths, () =>
-        recoverPendingCatalogDeletions(paths, database),
-      );
+      await recoverPendingCatalogDeletions(paths, database);
     }
     return database;
   } catch (error) {
@@ -348,17 +350,30 @@ async function cleanupLegacyFiles(
   }
 }
 
+/** Snapshot IDs without holding the catalog lock while waiting for an owner barrier. */
 async function recoverPendingCatalogDeletions(
   paths: PragmaPaths,
   database: DatabaseSync,
-  deletionId?: string,
+): Promise<void> {
+  const pending = database
+    .prepare(
+      "SELECT deletion_id AS deletionId FROM runtime_session_deletions ORDER BY prepared_at, deletion_id",
+    )
+    .all() as { readonly deletionId: string }[];
+  for (const row of pending) await recoverRuntimeSessionDeletion(paths, row.deletionId);
+}
+
+async function recoverCatalogDeletionUnlocked(
+  paths: PragmaPaths,
+  database: DatabaseSync,
+  deletionId: string,
 ): Promise<void> {
   const pending = database
     .prepare(
       `SELECT deletion_id AS deletionId, owner_ids_json AS ownerIdsJson, status
-       FROM runtime_session_deletions WHERE (? IS NULL OR deletion_id = ?) ORDER BY prepared_at, deletion_id`,
+       FROM runtime_session_deletions WHERE deletion_id = ?`,
     )
-    .all(deletionId ?? null, deletionId ?? null) as {
+    .all(deletionId) as {
     readonly deletionId: string;
     readonly ownerIdsJson: string;
     readonly status: string;
@@ -576,20 +591,43 @@ export async function recoverRuntimeSessionDeletion(
   await assertCatalogVersion(path);
   const database = openWritableCatalog(path);
   try {
-    await withRuntimeSessionCatalogDeletionLock(paths, async () => {
-      const journalPath = join(paths.deletionJournalRoot(), `${deletionId}.json`);
-      const journal = StorageDeletionJournalSchema.parse(
-        JSON.parse(await readFile(journalPath, "utf8")),
+    const journalPath = join(paths.deletionJournalRoot(), `${deletionId}.json`);
+    const journal = StorageDeletionJournalSchema.parse(
+      JSON.parse(await readFile(journalPath, "utf8")),
+    );
+    assertDeletionJournal(paths, journal, deletionId, journal.runtimeSessionOwnerIds);
+    const recover = async () =>
+      await withRuntimeSessionCatalogDeletionLock(paths, async () => {
+        // Normal deletion or another recoverer may have completed while we waited.
+        const current = StorageDeletionJournalSchema.parse(
+          JSON.parse(await readFile(journalPath, "utf8")),
+        );
+        assertDeletionJournal(paths, current, deletionId, current.runtimeSessionOwnerIds);
+        if (current.status !== "trashed") {
+          database
+            .prepare(
+              `INSERT OR IGNORE INTO runtime_session_deletions(deletion_id, owner_ids_json, status, prepared_at) VALUES (?, ?, 'prepared', ?)`,
+            )
+            .run(deletionId, JSON.stringify(current.runtimeSessionOwnerIds), current.startedAt);
+        }
+        await recoverCatalogDeletionUnlocked(paths, database, deletionId);
+      });
+    if (journal.owner.type === "mission") {
+      const ownerSource = journal.sources.find((source) => source.label === "mission");
+      // Use the same root as the normal deletion barrier, including custom roots.
+      const missionsPath =
+        ownerSource === undefined ? paths.missionsRoot() : dirname(ownerSource.path);
+      await withMissionStorageDeletionBarrier(
+        missionsPath,
+        journal.owner.id,
+        async () =>
+          await withFileLock(missionRepositoryLockPath(missionsPath, journal.owner.id), recover, {
+            operation: "mission.deletion-recovery-repository-barrier",
+          }),
       );
-      assertDeletionJournal(paths, journal, deletionId, journal.runtimeSessionOwnerIds);
-      if (journal.status === "trashed") return;
-      database
-        .prepare(
-          `INSERT OR IGNORE INTO runtime_session_deletions(deletion_id, owner_ids_json, status, prepared_at) VALUES (?, ?, 'prepared', ?)`,
-        )
-        .run(deletionId, JSON.stringify(journal.runtimeSessionOwnerIds), journal.startedAt);
-      await recoverPendingCatalogDeletions(paths, database, deletionId);
-    });
+    } else {
+      await recover();
+    }
   } finally {
     database.close();
   }
