@@ -1965,7 +1965,10 @@ describe("ExpertSession", { timeout: 30_000 }, () => {
           releaseRead!();
           readSpy!.mockRestore();
           readSpy = undefined;
-          await vi.waitFor(() => expect(stats.closeSessionCalls).toBeGreaterThan(0));
+          // Lease-loss settlement rejects before native cleanup finishes. Await
+          // the Session cleanup boundary instead of imposing a one-second I/O deadline.
+          await expect(session.waitForPromptProcessing()).resolves.toBe("lease-lost");
+          expect(stats.closeSessionCalls).toBeGreaterThan(0);
           expect((await executions.get(active.executionId))?.status).not.toBe("cancelled");
           await expect(
             sessions.assertLeaseOwner!(session.sessionId, "successor"),
