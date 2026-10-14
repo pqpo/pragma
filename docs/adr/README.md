@@ -93,6 +93,8 @@ ADR 的数字来自项目演进历史，早期曾出现同号记录。链接文�
 
 - [Desktop bundled CLI and terminal registration](./068-desktop-bundled-cli-and-terminal-registration.md)
 
+- [Automatic core asset reconciliation](./070-automatic-core-asset-reconciliation.md)
+
 ## 维护规则
 
 - 新决策使用下一个未使用编号，不复用既有编号；

@@ -52,7 +52,7 @@ repository is initialized, a missing marker is an error, including for an empty 
 Desktop's internal batch transfer service in `features/asset-transfer/` collects assets, prepares the complete incoming resource
 graph and applies imports. Bundle and sync share native Knowledge/Skill reading and publication
 helpers and dependency readiness inspection. Neither shared transfer nor sync depends on the Bundle feature. Bundle retains localization, copies and installation catalog semantics; sync preserves IDs,
-does not create unreferenced DSL bindings and does not write Bundle installation records.
+does not synthesize DSL bindings for unreferenced payloads and does not write Bundle installation records.
 Capability changes use the configured mutation coordinator, validate Expert tool selections and
 retain existing credentials. Transfer preserves the imported definition: if MCP verification
 observes a different tool snapshot, the revision is stored as `needs_attention` with
@@ -64,9 +64,9 @@ profile configuration schema. Missing runtimes, models, plugins or authenticatio
 provider keys, execution state, historical revisions and plugin packages are excluded.
 
 Configuration and private state live in `~/.pragma/state/asset-sync/settings.json` and `state.json`,
-using `pragma.asset-sync-settings/v1` and `pragma.asset-sync-state/v1`. A file lock serializes sync.
+using `pragma.asset-sync-settings/v2` and `pragma.asset-sync-state/v2`. A file lock serializes sync.
 `restore-journal.json` stores target payloads, expected semantic versions, domain revision numbers and incoming baselines
-under `pragma.asset-sync-journal/v1`. On retry, restore completes before reading a new remote head;
+under `pragma.asset-sync-journal/v2`. On retry, restore completes before reading a new remote head;
 already identical publications are skipped. Knowledge metadata is canonicalized using domain
 schemas; implicit parent directories are included before hashing. Expert plugin configuration and
 secret binding references are retained, while secret values remain local. Import planning also applies the authoritative DSL unknown-field
@@ -97,17 +97,33 @@ bindings and Knowledge content have separate identities. Concurrent edits requir
 “keep Git”. Conflicted dependencies are deferred while unrelated assets proceed. There is no
 file-level automatic merge in core asset sync.
 
+Missing Context mappings are internal reconciliation work and are not exposed as user decisions.
+Sync imports a missing Git mapping when its Knowledge authority exists locally. It uses ordinary
+expected-content checks and the durable import journal; identities and configuration are retained,
+no Expert is mounted, and no Knowledge revision is published. If its authority was deleted, mapping
+and authority deletions follow the baseline rule together rather than resurrecting Knowledge.
+
+Local deletion requires confirmed authority absence: a Knowledge/Capability directory that still
+exists but cannot be listed is unavailable, never a deletion. Its Git copy and baseline are retained;
+imports depending on it are deferred while independent assets proceed. Before publishing outgoing
+deletions, sync recollects local assets and replans if a selected resource has reappeared.
+Current-version overview snapshots use atomic reads without waiting for active network/import work;
+actual protocol upgrades still acquire the aggregate lock before consumption. Active overview reads
+do not load large import-journal payloads. Context metadata normalization retains unknown fields
+through the authoritative forward-compatible resource schema.
+
+Only conflicting content or deletion/reference competition needs a decision. Overview distinguishes
+pending synchronization from conflicts and errors. Runtime, model, plugin and credential readiness
+is an independent diagnostic: an unusable asset can still be successfully synchronized.
+The v2 overview IPC envelope is versioned and validated by preload; all Desktop layers ship together.
+
 Dependency deferral uses the selected resource version, not both versions' reference graphs.
 An explicit keep-local choice checks the local version's references, including unresolved dependencies,
 without inheriting edges from the old Git version.
-Persistently ignored Git-only assets are retained without being imported or turned into conflicts
-because their dependencies were also deleted locally. New incoming dependents still require those
-dependencies to be restored. All outgoing deletions, including keep-local and deletion upload,
-check the final planned Git graph before import or publication; references removed or updated in
-the same synchronization do not block deletion. Remaining Git references report the referencing
-resource name and explicitly distinguish Git presence from local deletion. Publication also rejects
-missing synchronized dependencies and binding payloads, including assets deferred by a conflict;
-Host-provided external references remain outside the synchronized authority graph.
+The planned Git graph is checked before publication. A deletion competing with a retained Git
+reference is a logical conflict that reports the referencing asset name; independent assets still
+synchronize. Whole graphs removed locally can be deleted in one publication. Host-provided external
+references are not exported and do not participate in this graph.
 
 DSL imports compare each resource with its expected portable content before applying changes.
 Binding metadata is normalized against the pre-import local authority, and the Project publication
@@ -142,23 +158,29 @@ the intent. Unpublished Flow draft layouts and immutable historical Project revi
 Future removal-journal versions are rejected without deleting a layout. Project access recovers
 only that owner's pending layout removals; application startup does not scan other Projects.
 
-Local deletion preserves remote data by default. Ignored remote assets offer explicit restore or
-Git deletion. Restore recovers saved configuration/content, not model or dependency availability;
-unavailable RuntimeProfiles remain `needs_attention`. Explicit Git deletion commits only the
-selected logical asset's managed paths, regardless of `autoPush` or `pushDeletions`, and leaves
-unrelated pending changes untouched. The operation rechecks local absence under the sync lock,
-rejects remaining Git references, and clears its baseline and ignored state only after a successful
-push. Git history retains prior content. Remote-head competition rechecks the deletion against the
-new head through the existing retry loop. Enabling deletion
-upload only applies to subsequent local deletions. Git deletion uses domain deletion and reference
-checks. Only changed managed files are written; confirmed removals remove their managed paths.
+Known local deletions propagate to Git automatically during bidirectional sync. A missing local
+resource without a successful baseline is a remote addition and is imported. Remote-only edits or
+deletions propagate to an unchanged local copy. Competing edits and deletion-versus-modification
+remain conflicts. autoPush controls background upload; pull-only refresh leaves local changes queued
+without individual decisions. Git history retains prior versions. The explicit targeted Git-delete
+API still commits only the selected logical asset and rejects remaining references.
+
+Settings, state and the embedded restore journal have static adjacent v1-to-v2 migrations. First
+owner access holds the sync lock, validates all documents, backs up exact source files, writes one
+stable migration journal and atomically replaces targets. Pending migration journals replay before
+business reads; future versions, malformed data or missing chains fail closed without downgrading
+newer documents. Historical ignored flags are removed while successful baselines survive: old queued
+deletions reconcile normally, and absent resources with no baseline are never guessed to be deleted.
+An interrupted v1 import is upgraded with its expectations intact and recovered before new planning.
+No startup-wide maintenance or unrelated owner scanning is introduced. See [ADR 070](../adr/070-automatic-core-asset-reconciliation.md).
+
+Only changed managed files are written; confirmed removals remove their managed paths.
 Push uses the system Git `user.name` and `user.email`, credential helper or SSH agent, with actionable
 identity errors. No dedicated Pragma author is injected. Remote head competition causes a fresh
 read and reconciliation, for at most three attempts, without force push.
 
 If the Git deletion committed before the local checkpoint was saved, retry treats a cached logical
-asset absent on both sides as a completed deletion. It clears the group's baseline, ignored state,
-and conflicts without another commit or uploading unrelated local edits. Local reappearance still
+asset absent on both sides as a completed deletion. It clears the group's baseline and conflicts without another commit or uploading unrelated local edits. Local reappearance still
 blocks deletion, and an unknown key is rejected. Cached identities retain the same grouping even
 when all of a group's remote records have already disappeared.
 

@@ -1,6 +1,10 @@
 # ADR 060: Structured core asset synchronization
 
-Status: Accepted
+Status: Superseded in part
+
+The repository format, transfer boundaries and recovery constraints remain active.
+[ADR 070](./070-automatic-core-asset-reconciliation.md) replaces deletion-retention policy and
+upgrades local synchronization state and overview IPC; the Git repository format stays v1.
 
 ## Context
 

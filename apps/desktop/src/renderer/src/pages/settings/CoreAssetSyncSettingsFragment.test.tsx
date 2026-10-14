@@ -1,7 +1,71 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 
-import { CoreAssetSyncStatus, CoreAssetSyncError } from "./CoreAssetSyncSettingsFragment.tsx";
+import {
+  CoreAssetSyncStatus,
+  CoreAssetSyncError,
+  CoreAssetSyncOverviewPanel,
+} from "./CoreAssetSyncSettingsFragment.tsx";
+import { aggregateCoreAssetSyncItems } from "./core-asset-sync-summary.ts";
+import type { CoreAssetSyncItemStatus } from "../../../../shared/contracts/index.ts";
+
+function panel(item: CoreAssetSyncItemStatus) {
+  return renderToStaticMarkup(
+    <CoreAssetSyncOverviewPanel
+      summary={aggregateCoreAssetSyncItems([item])}
+      busy={false}
+      run={async () => true}
+      onOpenStudio={() => {}}
+    />,
+  );
+}
+const asset = {
+  key: "expert:expert:0123456789abcdef",
+  kind: "expert",
+  name: "Writer",
+  assetKey: "expert:0123456789abcdef",
+  assetKind: "expert",
+  assetName: "Writer",
+} as const;
+
+it("shows ordinary queued changes without resource decision buttons", () => {
+  const html = panel({ ...asset, status: "pending" });
+  expect(html).toContain("Waiting to sync");
+  expect(html).toContain("Queued");
+  expect(html).not.toContain("<button");
+  expect(html).not.toContain("Deleted locally");
+  expect(html).not.toContain("Restore from Git");
+});
+it("keeps an unavailable model separate from synchronization success", () => {
+  const html = panel({
+    ...asset,
+    status: "synced",
+    readiness: { status: "needs_attention", message: "Choose a model" },
+  });
+  expect(html).toContain("Setup needed to use this asset: Choose a model");
+  expect(html).toContain("Open Studio");
+  expect(html).not.toContain("Synchronization failed");
+  expect(html).not.toContain("Choose a version");
+});
+it("offers decisions only for real conflicts", () => {
+  const html = panel({ ...asset, status: "conflict" });
+  expect(html).toContain("Choose a version");
+  expect(html).toContain("Keep local");
+  expect(html).toContain("Keep Git");
+  expect(html).not.toContain("Synchronization failed");
+});
+it("shows an unreadable authority diagnostic once without conflict choices", () => {
+  const message = "asset_sync.local_unavailable: Repair the local asset.";
+  const html = panel({
+    ...asset,
+    status: "error",
+    message,
+    readiness: { status: "needs_attention", message },
+  });
+  expect(html.match(/asset_sync.local_unavailable/gu)).toHaveLength(1);
+  expect(html).toContain("Open Studio");
+  expect(html).not.toContain("Keep local");
+});
 
 it("shows an actionable reason and expandable redacted diagnostics", () => {
   const html = renderToStaticMarkup(

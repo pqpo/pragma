@@ -4,17 +4,22 @@ import { useTranslation } from "react-i18next";
 
 import type { CoreAssetSyncOverview } from "../../../../shared/contracts/index.ts";
 import { gitFailureDetails, gitFailureKey } from "../../lib/git-feedback.ts";
-import { aggregateCoreAssetSyncItems, coreAssetOverallHealth } from "./core-asset-sync-summary.ts";
+import {
+  aggregateCoreAssetSyncItems,
+  coreAssetOverallHealth,
+  type CoreAssetSyncSummary,
+} from "./core-asset-sync-summary.ts";
 import { Dialog } from "../../components/Dialog.tsx";
 import { SettingsScreenFrame } from "./SettingsScreenFrame.tsx";
 
-export function CoreAssetSyncSettingsFragment() {
+export function CoreAssetSyncSettingsFragment(
+  props: { readonly onOpenStudio?: (() => void) | undefined } = {},
+) {
   const { t } = useTranslation("settings");
   const [overview, setOverview] = useState<CoreAssetSyncOverview>();
   const [remote, setRemote] = useState("");
   const [branch, setBranch] = useState("");
   const [autoPush, setAutoPush] = useState(true);
-  const [pushDeletions, setPushDeletions] = useState(false);
   const [busy, setBusy] = useState(false);
   const [configurationOpen, setConfigurationOpen] = useState(false);
   const [error, setError] = useState<unknown>();
@@ -70,7 +75,6 @@ export function CoreAssetSyncSettingsFragment() {
     setRemote(config?.remote ?? "");
     setBranch(config?.branch ?? "");
     setAutoPush(config?.autoPush ?? true);
-    setPushDeletions(config?.pushDeletions ?? false);
     setError(undefined);
     setConfigurationOpen(true);
   };
@@ -89,9 +93,11 @@ export function CoreAssetSyncSettingsFragment() {
             ? summary.failed > 0
               ? t("coreAssetSync.overview.failed", { count: summary.failed })
               : t("coreAssetSync.overview.syncError")
-            : syncStatus === "pending"
-              ? t("coreAssetSync.overview.pending", { count: summary.pending })
-              : t("coreAssetSync.overview.synced");
+            : syncStatus === "conflict"
+              ? t("coreAssetSync.overview.conflicts", { count: summary.conflicts })
+              : syncStatus === "pending"
+                ? t("coreAssetSync.overview.pending", { count: summary.pending })
+                : t("coreAssetSync.overview.synced");
   return (
     <SettingsScreenFrame
       className="core-asset-sync-screen"
@@ -184,7 +190,6 @@ export function CoreAssetSyncSettingsFragment() {
                   remote: remote.trim(),
                   ...(branch.trim() ? { branch: branch.trim() } : {}),
                   autoPush,
-                  pushDeletions,
                 }),
               ).then((success) => {
                 if (success) setConfigurationOpen(false);
@@ -218,15 +223,7 @@ export function CoreAssetSyncSettingsFragment() {
               />
               {t("coreAssetSync.autoPush")}
             </label>
-            <label className="knowledge-sync-toggle">
-              <input
-                type="checkbox"
-                checked={pushDeletions}
-                onChange={(event) => setPushDeletions(event.target.checked)}
-                disabled={busy}
-              />
-              {t("coreAssetSync.pushDeletions")}
-            </label>
+            <p>{t("coreAssetSync.deletionPolicy")}</p>
           </form>
           {failure !== undefined && failure !== null ? (
             <CoreAssetSyncError error={failure} />
@@ -235,185 +232,187 @@ export function CoreAssetSyncSettingsFragment() {
       ) : null}
 
       {overview?.configuration && (
-        <section className="core-asset-sync-status" aria-label={t("coreAssetSync.overview.title")}>
-          <header>
-            <dl>
-              <div>
-                <dt>{t("coreAssetSync.counts.total")}</dt>
-                <dd>{summary.total}</dd>
-              </div>
-              <div>
-                <dt>{t("coreAssetSync.counts.synced")}</dt>
-                <dd>{summary.synced}</dd>
-              </div>
-              <div>
-                <dt>{t("coreAssetSync.counts.pending")}</dt>
-                <dd>{summary.pending}</dd>
-              </div>
-              <div>
-                <dt>{t("coreAssetSync.counts.failed")}</dt>
-                <dd>{summary.failed}</dd>
-              </div>
-            </dl>
-          </header>
-          <div className="core-asset-sync-groups">
-            <div className="core-asset-sync-columns" aria-hidden="true">
-              <span>{t("coreAssetSync.assetType")}</span>
-              {(["total", "synced", "pending", "failed"] as const).map((key) => (
-                <span key={key}>{t(`coreAssetSync.counts.${key}`)}</span>
-              ))}
-            </div>
-            {summary.groups.map((group) => {
-              const attention = group.assets.filter((asset) => asset.status !== "synced");
-              const metrics = (
-                <span className="core-asset-sync-group-metrics">
-                  <span
-                    aria-label={t("coreAssetSync.counts.totalWithCount", { count: group.total })}
-                  >
-                    {group.total}
-                  </span>
-                  <span
-                    aria-label={t("coreAssetSync.counts.syncedWithCount", { count: group.synced })}
-                  >
-                    {group.synced}
-                  </span>
-                  <span
-                    aria-label={t("coreAssetSync.counts.pendingWithCount", {
-                      count: group.pending,
-                    })}
-                  >
-                    {group.pending}
-                  </span>
-                  <span
-                    className={group.failed > 0 ? "is-failed" : undefined}
-                    aria-label={t("coreAssetSync.counts.failedWithCount", { count: group.failed })}
-                  >
-                    {group.failed}
-                  </span>
-                </span>
-              );
-              if (attention.length === 0)
-                return (
-                  <div className="core-asset-sync-group-row" key={group.kind}>
-                    <strong>{t(`coreAssetSync.assetKinds.${group.kind}`)}</strong>
-                    {metrics}
-                  </div>
-                );
-              return (
-                <details className="core-asset-sync-group" key={group.kind}>
-                  <summary>
-                    <strong>
-                      {t(`coreAssetSync.assetKinds.${group.kind}`)}
-                      <CaretRight className="core-asset-sync-caret" size={16} aria-hidden="true" />
-                    </strong>
-                    {metrics}
-                  </summary>
-                  <div className="core-asset-sync-attention-list">
-                    {attention.map((asset) => (
-                      <article key={asset.key} className="core-asset-sync-attention-item">
-                        <div className="skill-sync-item-copy">
-                          <strong>{asset.name}</strong>
-                          <small>{t(`coreAssetSync.health.${asset.status}`)}</small>
-                          {asset.records.some((item) => item.status === "ignored_remote") ? (
-                            <p>
-                              {t("coreAssetSync.deletedLocally")}{" "}
-                              {t(
-                                asset.kind === "runtime-profile"
-                                  ? "coreAssetSync.restoreDescription"
-                                  : "coreAssetSync.restoreAssetDescription",
-                              )}
-                            </p>
-                          ) : null}
-                          {asset.records.flatMap((item) =>
-                            item.message ? [<p key={item.key}>{item.message}</p>] : [],
-                          )}
-                        </div>
-                        <div className="knowledge-sync-actions">
-                          {asset.records.flatMap((item) => {
-                            if (item.status === "conflict")
-                              return [
-                                <button
-                                  className="secondary-button"
-                                  disabled={busy}
-                                  key={`${item.key}:local`}
-                                  type="button"
-                                  onClick={() =>
-                                    void run(() =>
-                                      window.pragmaDesktop.resolveCoreAssetSyncConflict({
-                                        key: item.key,
-                                        choice: "local",
-                                      }),
-                                    )
-                                  }
-                                >
-                                  {t("coreAssetSync.keepLocal")}
-                                </button>,
-                                <button
-                                  className="secondary-button"
-                                  disabled={busy}
-                                  key={`${item.key}:remote`}
-                                  type="button"
-                                  onClick={() =>
-                                    void run(() =>
-                                      window.pragmaDesktop.resolveCoreAssetSyncConflict({
-                                        key: item.key,
-                                        choice: "remote",
-                                      }),
-                                    )
-                                  }
-                                >
-                                  {t("coreAssetSync.keepRemote")}
-                                </button>,
-                              ];
-                            if (item.status === "ignored_remote") {
-                              if (
-                                item.key !==
-                                asset.records.find((record) => record.status === "ignored_remote")
-                                  ?.key
-                              )
-                                return [];
-                              return [
-                                <button
-                                  className="secondary-button"
-                                  disabled={busy}
-                                  key={`${item.key}:restore`}
-                                  type="button"
-                                  onClick={() =>
-                                    void run(() =>
-                                      window.pragmaDesktop.restoreIgnoredCoreAsset(item.key),
-                                    )
-                                  }
-                                >
-                                  {t("coreAssetSync.restore")}
-                                </button>,
-                                <button
-                                  className="secondary-button"
-                                  disabled={busy}
-                                  key={`${item.key}:delete-remote`}
-                                  type="button"
-                                  onClick={() =>
-                                    void run(() =>
-                                      window.pragmaDesktop.deleteRemoteCoreAsset(item.key),
-                                    )
-                                  }
-                                >
-                                  {t("coreAssetSync.deleteRemote")}
-                                </button>,
-                              ];
-                            }
-                            return [];
-                          })}
-                        </div>
-                      </article>
-                    ))}
-                  </div>
-                </details>
-              );
-            })}
-          </div>
-        </section>
+        <CoreAssetSyncOverviewPanel
+          summary={summary}
+          busy={busy}
+          run={run}
+          onOpenStudio={props.onOpenStudio}
+        />
       )}
     </SettingsScreenFrame>
+  );
+}
+
+export function CoreAssetSyncOverviewPanel(props: {
+  readonly summary: CoreAssetSyncSummary;
+  readonly busy: boolean;
+  readonly run: (action: () => Promise<CoreAssetSyncOverview | void>) => Promise<boolean>;
+  readonly onOpenStudio?: (() => void) | undefined;
+}) {
+  const { t } = useTranslation("settings");
+  const { summary, busy, run } = props;
+  return (
+    <section className="core-asset-sync-status" aria-label={t("coreAssetSync.overview.title")}>
+      <header>
+        <dl>
+          <div>
+            <dt>{t("coreAssetSync.counts.total")}</dt>
+            <dd>{summary.total}</dd>
+          </div>
+          <div>
+            <dt>{t("coreAssetSync.counts.synced")}</dt>
+            <dd>{summary.synced}</dd>
+          </div>
+          <div>
+            <dt>{t("coreAssetSync.counts.pending")}</dt>
+            <dd>{summary.pending}</dd>
+          </div>
+          <div>
+            <dt>{t("coreAssetSync.counts.conflicts")}</dt>
+            <dd>{summary.conflicts}</dd>
+          </div>
+          <div>
+            <dt>{t("coreAssetSync.counts.failed")}</dt>
+            <dd>{summary.failed}</dd>
+          </div>
+        </dl>
+      </header>
+      <div className="core-asset-sync-groups">
+        <div className="core-asset-sync-columns" aria-hidden="true">
+          <span>{t("coreAssetSync.assetType")}</span>
+          {(["total", "synced", "pending", "conflicts", "failed"] as const).map((key) => (
+            <span key={key}>{t(`coreAssetSync.counts.${key}`)}</span>
+          ))}
+        </div>
+        {summary.groups.map((group) => {
+          const attention = group.assets.filter(
+            (asset) =>
+              asset.status !== "synced" ||
+              asset.records.some((record) => record.readiness !== undefined),
+          );
+          const metrics = (
+            <span className="core-asset-sync-group-metrics">
+              <span aria-label={t("coreAssetSync.counts.totalWithCount", { count: group.total })}>
+                {group.total}
+              </span>
+              <span aria-label={t("coreAssetSync.counts.syncedWithCount", { count: group.synced })}>
+                {group.synced}
+              </span>
+              <span
+                aria-label={t("coreAssetSync.counts.pendingWithCount", {
+                  count: group.pending,
+                })}
+              >
+                {group.pending}
+              </span>
+              <span
+                aria-label={t("coreAssetSync.counts.conflictsWithCount", {
+                  count: group.conflicts,
+                })}
+              >
+                {group.conflicts}
+              </span>
+              <span
+                className={group.failed > 0 ? "is-failed" : undefined}
+                aria-label={t("coreAssetSync.counts.failedWithCount", { count: group.failed })}
+              >
+                {group.failed}
+              </span>
+            </span>
+          );
+          if (attention.length === 0)
+            return (
+              <div className="core-asset-sync-group-row" key={group.kind}>
+                <strong>{t(`coreAssetSync.assetKinds.${group.kind}`)}</strong>
+                {metrics}
+              </div>
+            );
+          return (
+            <details className="core-asset-sync-group" key={group.kind}>
+              <summary>
+                <strong>
+                  {t(`coreAssetSync.assetKinds.${group.kind}`)}
+                  <CaretRight className="core-asset-sync-caret" size={16} aria-hidden="true" />
+                </strong>
+                {metrics}
+              </summary>
+              <div className="core-asset-sync-attention-list">
+                {attention.map((asset) => (
+                  <article key={asset.key} className="core-asset-sync-attention-item">
+                    <div className="skill-sync-item-copy">
+                      <strong>{asset.name}</strong>
+                      <small>{t(`coreAssetSync.health.${asset.status}`)}</small>
+                      {asset.records.flatMap((item) =>
+                        item.message && item.message !== item.readiness?.message
+                          ? [<p key={item.key}>{item.message}</p>]
+                          : [],
+                      )}
+                      {asset.records
+                        .filter((item) => item.readiness !== undefined)
+                        .map((item) => (
+                          <p key={`${item.key}:readiness`}>
+                            {t("coreAssetSync.readiness", { message: item.readiness!.message })}
+                          </p>
+                        ))}
+                    </div>
+                    <div className="knowledge-sync-actions">
+                      {asset.records.some((item) => item.readiness !== undefined) &&
+                      props.onOpenStudio ? (
+                        <button
+                          className="secondary-button"
+                          type="button"
+                          onClick={props.onOpenStudio}
+                        >
+                          {t("coreAssetSync.openStudio")}
+                        </button>
+                      ) : null}
+                      {asset.records.flatMap((item) => {
+                        if (item.status === "conflict")
+                          return [
+                            <button
+                              className="secondary-button"
+                              disabled={busy}
+                              key={`${item.key}:local`}
+                              type="button"
+                              onClick={() =>
+                                void run(() =>
+                                  window.pragmaDesktop.resolveCoreAssetSyncConflict({
+                                    key: item.key,
+                                    choice: "local",
+                                  }),
+                                )
+                              }
+                            >
+                              {t("coreAssetSync.keepLocal")}
+                            </button>,
+                            <button
+                              className="secondary-button"
+                              disabled={busy}
+                              key={`${item.key}:remote`}
+                              type="button"
+                              onClick={() =>
+                                void run(() =>
+                                  window.pragmaDesktop.resolveCoreAssetSyncConflict({
+                                    key: item.key,
+                                    choice: "remote",
+                                  }),
+                                )
+                              }
+                            >
+                              {t("coreAssetSync.keepRemote")}
+                            </button>,
+                          ];
+                        return [];
+                      })}
+                    </div>
+                  </article>
+                ))}
+              </div>
+            </details>
+          );
+        })}
+      </div>
+    </section>
   );
 }
 
@@ -432,7 +431,7 @@ export function CoreAssetSyncError({ error }: { readonly error: unknown }) {
 
 export function CoreAssetSyncStatus(props: {
   readonly message: string;
-  readonly status: "synced" | "pending" | "failed" | "syncing";
+  readonly status: "synced" | "pending" | "conflict" | "failed" | "syncing";
   readonly loading: boolean;
   readonly busy: boolean;
   readonly configured: boolean;
@@ -446,6 +445,8 @@ export function CoreAssetSyncStatus(props: {
       <div className={`core-asset-sync-indicator is-${props.status}`}>
         {spinning ? (
           <Disc className="core-asset-sync-disc" size={32} aria-hidden="true" />
+        ) : props.status === "pending" ? (
+          <Disc size={32} aria-hidden="true" />
         ) : props.configured && props.status === "synced" ? (
           <CheckCircle size={32} weight="fill" aria-hidden="true" />
         ) : (

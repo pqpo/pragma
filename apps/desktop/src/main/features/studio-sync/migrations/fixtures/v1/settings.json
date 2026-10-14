@@ -1,0 +1,7 @@
+{
+  "remote": "ssh://git@pragma.test/assets.git",
+  "branch": "main",
+  "schemaVersion": "pragma.asset-sync-settings/v1",
+  "autoPush": false,
+  "pushDeletions": false
+}

@@ -7,6 +7,7 @@ import {
   PragmaContextStoreResourceSchema,
   PragmaRuntimeProfileResourceSchema,
   canonicalPragmaResourceRef,
+  PragmaForwardCompatibleResourceSchema,
 } from "@pragma/interpreter/ast";
 
 import {
@@ -23,6 +24,24 @@ import { desktopCapabilityBindingRef, desktopContextBindingRef } from "./desktop
 const CAPABILITY_ID = "751a410b-4f80-4d0f-9db4-0efbe86afea7";
 
 describe("desktop bound resource policy", () => {
+  it("preserves unknown Context fields when normalizing restored metadata", () => {
+    const original = resolveDesktopContextResource({ storeId: CAPABILITY_ID, resources: [] });
+    const resource = PragmaForwardCompatibleResourceSchema.parse({
+      ...original,
+      futurePolicy: { entries: [{ flag: true }] },
+      metadata: { ...original.metadata, futureSource: "remote" },
+    });
+    if (resource.kind !== "ContextStore") throw new Error("Expected ContextStore");
+    expect(
+      bindExistingDesktopContextResource(resource, CAPABILITY_ID, {
+        name: "Docs",
+        description: "Updated",
+      }),
+    ).toMatchObject({
+      futurePolicy: { entries: [{ flag: true }] },
+      metadata: { name: "Docs", futureSource: "remote" },
+    });
+  });
   it("uses the fixed built-in resource for Pragma management tools", () => {
     const resource = createDesktopCapabilityResource({
       owner: "project-expert",

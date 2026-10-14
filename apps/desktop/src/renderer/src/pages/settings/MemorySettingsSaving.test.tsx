@@ -151,11 +151,10 @@ it("preserves the Git configuration draft across background sync refreshes", asy
   const overview = {
     status: "syncing",
     configuration: {
-      schemaVersion: "pragma.asset-sync-settings/v1",
+      schemaVersion: "pragma.asset-sync-settings/v2",
       remote: "https://example.test/original.git",
       branch: "main",
       autoPush: true,
-      pushDeletions: false,
     },
     items: [],
   };
@@ -191,7 +190,6 @@ it("preserves the Git configuration draft across background sync refreshes", asy
       remote: "https://example.test/new.git",
       branch: "main",
       autoPush: true,
-      pushDeletions: false,
     });
   } finally {
     view.unmount();

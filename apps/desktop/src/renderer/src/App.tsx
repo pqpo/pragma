@@ -291,7 +291,11 @@ export function App() {
       ) : activeView === "memory" ? (
         <MemoryPage onConfigureExtraction={openMemorySettings} />
       ) : (
-        <SettingsPage initialView={settingsView} onMemoryEnabledChange={setMemoryEnabled} />
+        <SettingsPage
+          initialView={settingsView}
+          onMemoryEnabledChange={setMemoryEnabled}
+          onOpenStudio={() => navigate("studio")}
+        />
       )}
       <div className="application-notices">
         {assetGitIssues[0] === undefined ? null : (

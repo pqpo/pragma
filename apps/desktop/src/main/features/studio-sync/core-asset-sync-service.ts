@@ -7,6 +7,8 @@ import {
   type CoreAssetSyncNameResolutionIssue,
 } from "../asset-transfer/asset-transfer-service.ts";
 import type { PluginStore } from "../plugins/plugin-store.ts";
+import { fingerprint } from "../asset-transfer/asset-transfer-fingerprint.ts";
+import { KnowledgeDataSchema } from "../asset-transfer/asset-transfer-payloads.ts";
 import {
   encodeSyncRepository,
   readSyncRepository,
@@ -32,7 +34,6 @@ import {
   CapabilityIdSchema,
   ContextStoreIdSchema,
   CoreAssetSyncConfigurationSchema,
-  CoreAssetSyncItemSchema,
   CoreAssetSyncOverviewSchema,
   type CoreAssetLogicalKind,
   type CoreAssetSyncConfiguration,
@@ -49,6 +50,7 @@ import { redactGitDiagnostic } from "../../../shared/git-diagnostics.ts";
 import {
   classifyDesktopCapabilityResource,
   classifyDesktopContextResource,
+  bindExistingDesktopContextResource,
   desktopCapabilityResourceId,
   desktopContextResourceId,
 } from "../../platform/bindings/desktop-bound-resource-policy.ts";
@@ -57,42 +59,8 @@ import type { PragmaProjectStore } from "../projects/pragma-project-store.ts";
 import { referencedPragmaResourceRefs } from "../projects/pragma-resource-references.ts";
 import type { WorkflowLayoutStore } from "../projects/workflow-layout-store.ts";
 
-const StateSchema = z
-  .object({
-    schemaVersion: z.literal("pragma.asset-sync-state/v1"),
-    source: z.string(),
-    repositoryInitialized: z.boolean(),
-    bases: z.record(z.string(), z.string().regex(/^[a-f0-9]{64}$/u)),
-    remoteItems: z
-      .record(
-        z.string(),
-        CoreAssetSyncItemSchema.pick({ kind: true, name: true, fingerprint: true }),
-      )
-      .default({}),
-    ignoredRemote: z.array(z.string()),
-    conflicts: z.array(z.string()),
-    restoreConflicts: z.array(z.string()).default([]),
-    syncedAt: z.string().datetime().optional(),
-  })
-  .strict();
-const ChangeSchema = z
-  .object({
-    key: z.string(),
-    expectedRevision: z.number().int().positive().optional(),
-    local: CoreAssetSyncItemSchema.optional(),
-    remote: CoreAssetSyncItemSchema.optional(),
-  })
-  .strict();
-const JournalSchema = z
-  .object({
-    schemaVersion: z.literal("pragma.asset-sync-journal/v1"),
-    source: z.string(),
-    changes: z.array(ChangeSchema),
-    expected: z.record(z.string(), z.string().nullable()),
-    incomingState: StateSchema,
-  })
-  .strict();
-type SyncState = z.infer<typeof StateSchema>;
+import { StateSchema, JournalSchema, type SyncState } from "./asset-sync-state.ts";
+import { upgradeAssetSyncOwner, readCurrentAssetSyncOwner } from "./asset-sync-upgrade.ts";
 type ItemMap = Map<string, CoreAssetSyncItem>;
 export interface CoreAssetSyncService {
   overview(): Promise<CoreAssetSyncOverview>;
@@ -137,7 +105,8 @@ export function createCoreAssetSyncService(options: {
     options.reportNameResolutionIssue?.(issue);
     return issue;
   };
-  const readConfig = async (): Promise<CoreAssetSyncConfiguration | undefined> => {
+  const readConfigUnlocked = async (): Promise<CoreAssetSyncConfiguration | undefined> => {
+    await upgradeAssetSyncOwner(options.configurationPath, options.statePath);
     try {
       return CoreAssetSyncConfigurationSchema.parse(
         JSON.parse(await readFile(options.configurationPath, "utf8")),
@@ -155,13 +124,13 @@ export function createCoreAssetSyncService(options: {
       if (!isMissing(error)) throw error;
     }
     return {
-      schemaVersion: "pragma.asset-sync-state/v1",
+      schemaVersion: "pragma.asset-sync-state/v2",
       source,
       repositoryInitialized: false,
       bases: {},
       remoteItems: {},
-      ignoredRemote: [],
       conflicts: [],
+      conflictMessages: {},
       restoreConflicts: [],
     };
   };
@@ -170,6 +139,30 @@ export function createCoreAssetSyncService(options: {
 
   const transfer = createAssetTransferService({ ...options, reportNameResolutionFailure });
   const collect = transfer.collectAssets;
+
+  const unavailableLocalAuthorities = async (local: ItemMap, keys: Iterable<string>) => {
+    const unavailable = new Set<string>();
+    await Promise.all(
+      [...keys].map(async (key) => {
+        if (local.has(key)) return;
+        const separator = key.indexOf(":");
+        const kind = key.slice(0, separator);
+        const id = key.slice(separator + 1);
+        if (id.includes(":")) return;
+        const exists =
+          kind === "knowledge" && ContextStoreIdSchema.safeParse(id).success
+            ? await options.stores.exists(id)
+            : (kind === "capability" || kind === "skill") &&
+                CapabilityIdSchema.safeParse(id).success
+              ? await options.capabilities.exists(id)
+              : false;
+        if (exists) unavailable.add(key);
+      }),
+    );
+    return unavailable;
+  };
+  const unavailableMessage =
+    "asset_sync.local_unavailable: The local asset exists but cannot be read. Repair its configuration in Studio before synchronizing.";
 
   const readiness = async (items: ItemMap): Promise<Map<string, string>> => {
     const unavailable = new Map<string, string>();
@@ -281,7 +274,7 @@ export function createCoreAssetSyncService(options: {
     collected?: CollectedItems,
   ): Promise<CoreAssetSyncOverview> => {
     if (config === undefined) {
-      return { status: "unconfigured", items: [] };
+      return { schemaVersion: "pragma.asset-sync-overview/v2", status: "unconfigured", items: [] };
     }
     const current = state ?? (await readState(sourceKey(config)));
     const { items: local, nameResolutionIssues } = collected ?? (await collect());
@@ -291,59 +284,80 @@ export function createCoreAssetSyncService(options: {
       ...(remote?.keys() ?? []),
       ...Object.keys(current.remoteItems),
       ...current.conflicts,
-      ...current.ignoredRemote,
     ]);
+    const unavailable = await unavailableLocalAuthorities(local, keys);
     const items = [...keys].sort().flatMap((key) => {
       const item = local.get(key) ?? remote?.get(key) ?? current.remoteItems[key];
       if (item === undefined) return [];
       const remoteItem = remote?.get(key) ?? current.remoteItems[key];
       const identity = logicalAssetIdentity({ ...item, key }, local, remote, current.remoteItems);
       const localNameIssue = nameResolutionIssues.get(key);
-      const status = current.conflicts.includes(key)
-        ? "conflict"
-        : localNameIssue !== undefined
+      const status =
+        unavailable.has(key) || localNameIssue !== undefined
           ? "error"
-          : current.ignoredRemote.includes(key)
-            ? "ignored_remote"
-            : !local.has(key) && remoteItem !== undefined
-              ? config.pushDeletions
-                ? "pending"
-                : "ignored_remote"
-              : missing.has(key)
-                ? "needs_attention"
-                : current.bases[key] === item.fingerprint
-                  ? "synced"
-                  : "pending";
+          : current.conflicts.includes(key)
+            ? "conflict"
+            : local.has(key) &&
+                current.bases[key] === item.fingerprint &&
+                (remoteItem === undefined || remoteItem.fingerprint === item.fingerprint)
+              ? "synced"
+              : "pending";
       const displayItem = { key, kind: item.kind, name: item.name };
       const unresolved = local.has(key) ? undefined : generatedBindingPlaceholder(displayItem);
       if (unresolved !== undefined) {
         reportNameResolutionFailure(key, unresolved.kind, unresolved.bindingId);
       }
       const nameIssue = localNameIssue ?? unresolved;
+      const issueKind = localNameIssue?.resourceKind ?? unresolved?.kind;
+      const bindingId = localNameIssue?.bindingId ?? unresolved?.bindingId;
+      const namedAuthority =
+        bindingId === undefined
+          ? undefined
+          : issueKind === "context-store"
+            ? itemSummaryAt(`knowledge:${bindingId}`, local, remote, current.remoteItems)
+            : (itemSummaryAt(`capability:${bindingId}`, local, remote, current.remoteItems) ??
+              itemSummaryAt(`skill:${bindingId}`, local, remote, current.remoteItems));
+      const identityIssue =
+        nameIssue && !namedAuthority
+          ? generatedBindingPlaceholder({ ...displayItem, name: identity.assetName })
+          : undefined;
+      // Missing Host mappings are reconciled by sync, not user deletion decisions.
+      // The independent Knowledge record still exposes content conflicts/deletions.
+      if (identity.assetKind === "context" && !local.has(key)) return [];
       return [
         {
           key,
           kind: item.kind,
           name: safeSyncItemName(displayItem, localNameIssue?.resourceKind ?? unresolved?.kind),
           ...identity,
+          assetName: safeSyncItemName({ name: identity.assetName }, identityIssue?.kind),
           status,
-          ...(nameIssue !== undefined
-            ? { message: "The bound local asset is unavailable. Check the application logs." }
+          ...(unavailable.has(key)
+            ? { readiness: { status: "needs_attention", message: unavailableMessage } }
             : missing.has(key)
-              ? { message: missing.get(key) }
+              ? { readiness: { status: "needs_attention", message: missing.get(key)! } }
               : {}),
+          ...(unavailable.has(key)
+            ? { message: unavailableMessage }
+            : status === "conflict" && current.conflictMessages[key] !== undefined
+              ? { message: current.conflictMessages[key] }
+              : nameIssue !== undefined
+                ? { message: "The bound local asset is unavailable. Check the application logs." }
+                : {}),
         },
       ];
     });
     return CoreAssetSyncOverviewSchema.parse({
+      schemaVersion: "pragma.asset-sync-overview/v2",
       configuration: config,
-      status: lastError
-        ? "error"
-        : current.conflicts.length > 0
-          ? "conflict"
-          : running
-            ? "syncing"
-            : "ready",
+      status:
+        lastError || items.some((item) => item.status === "error")
+          ? "error"
+          : items.some((item) => item.status === "conflict")
+            ? "conflict"
+            : running
+              ? "syncing"
+              : "ready",
       ...(current.syncedAt ? { syncedAt: current.syncedAt } : {}),
       ...(lastError ? { error: lastError } : {}),
       items,
@@ -445,7 +459,7 @@ export function createCoreAssetSyncService(options: {
   ): Promise<CoreAssetSyncOverview> => {
     await mkdir(dirname(options.statePath), { recursive: true });
     return await withFileLock(`${options.statePath}.lock`, async () => {
-      const config = await readConfig();
+      const config = await readConfigUnlocked();
       if (config === undefined) return await makeOverview(undefined);
       const effectiveIntent = intent === "automatic" ? (config.autoPush ? "full" : "pull") : intent;
       running = true;
@@ -466,7 +480,7 @@ export function createCoreAssetSyncService(options: {
               remote?: CoreAssetSyncItem;
             }[] = [];
             const conflicts: string[] = [];
-            const ignored = new Set(state.ignoredRemote);
+            const conflictMessages: Record<string, string> = {};
             const bases = { ...state.bases };
             const repositoryInitialized = await lstat(
               join(checkout.root, SYNC_DIRECTORY, "sync.yaml"),
@@ -482,10 +496,10 @@ export function createCoreAssetSyncService(options: {
               ...remote.keys(),
               ...Object.keys(bases),
               ...Object.keys(state.remoteItems),
-              ...state.ignoredRemote,
               ...state.restoreConflicts,
             ]);
             const groups = new Map<string, string[]>();
+            const deferredUnavailable = await unavailableLocalAuthorities(local, keys);
             for (const key of keys) {
               const item = itemSummaryAt(key, local, remote, state.remoteItems);
               const group = item
@@ -514,22 +528,23 @@ export function createCoreAssetSyncService(options: {
             }
             const groupChoices = new Map<string, "local" | "remote">();
             const groupedConflicts = new Set<string>();
-            const retainedRemoteKeys = new Set<string>();
+            const repairContextKeys = new Set<string>();
+            for (const [key, item] of remote) {
+              if (local.has(key)) continue;
+              const parsed = PragmaForwardCompatibleResourceSchema.safeParse(item.data);
+              const storeId = parsed.success
+                ? classifyDesktopContextResource(parsed.data)
+                : undefined;
+              if (storeId === undefined || !local.has(`knowledge:${storeId}`)) continue;
+              // Absence of an internal mapping is not deletion of its authority.
+              // Replay through the ordinary CAS/journal import path, including old
+              // ignored and restore-conflict checkpoints, without touching content.
+              repairContextKeys.add(key);
+              groupChoices.set(key, "remote");
+            }
             for (const members of groups.values()) {
-              if (
-                (!resolution || !members.includes(resolution.key)) &&
-                members.every((key) => !local.has(key)) &&
-                members.some((key) => state.ignoredRemote.includes(key)) &&
-                !members.some((key) => state.restoreConflicts.includes(key))
-              ) {
-                for (const key of members) {
-                  ignored.add(key);
-                  retainedRemoteKeys.add(key);
-                }
-                continue;
-              }
               const localChanged = members.some(
-                (key) => local.get(key)?.fingerprint !== bases[key],
+                (key) => !repairContextKeys.has(key) && local.get(key)?.fingerprint !== bases[key],
               );
               const remoteChanged = members.some(
                 (key) => remote.get(key)?.fingerprint !== bases[key],
@@ -546,14 +561,14 @@ export function createCoreAssetSyncService(options: {
               else if (
                 !equal &&
                 ((localChanged && remoteChanged) ||
-                  members.some((key) => state.restoreConflicts.includes(key)))
+                  members.some(
+                    (key) => !repairContextKeys.has(key) && state.restoreConflicts.includes(key),
+                  ))
               )
                 for (const key of members) groupedConflicts.add(key);
             }
-            // Dependency deferral concerns incoming assets. A retained Git-only asset is
-            // not being imported, and an explicit local choice must not use its old Git edges.
+            // Use the selected versions' edges, including local graph deletions.
             const dependencyItems = [...keys].flatMap((key) => {
-              if (retainedRemoteKeys.has(key)) return [];
               const here = local.get(key);
               const there = remote.get(key);
               if (groupChoices.get(key) === "local") return here ? [here] : [];
@@ -566,34 +581,82 @@ export function createCoreAssetSyncService(options: {
               const parsed = PragmaForwardCompatibleResourceSchema.safeParse(item.data);
               if (!parsed.success) continue;
               const storeId = classifyDesktopContextResource(parsed.data);
-              if (
-                storeId &&
-                (groupedConflicts.has(`knowledge:${storeId}`) ||
-                  (ignored.has(`knowledge:${storeId}`) &&
-                    !local.has(`knowledge:${storeId}`) &&
-                    groupChoices.get(`knowledge:${storeId}`) !== "remote" &&
-                    !ignored.has(item.key)))
-              )
+              if (storeId && groupedConflicts.has(`knowledge:${storeId}`))
                 groupedConflicts.add(item.key);
+              if (storeId && deferredUnavailable.has(`knowledge:${storeId}`))
+                deferredUnavailable.add(item.key);
             }
             // Block incoming changes that would depend on a conflicted resource or payload.
             const blockedRefs = new Set(
-              [
-                ...new Set([
-                  ...groupedConflicts,
-                  ...[...ignored].filter(
-                    (key) => !local.has(key) && groupChoices.get(key) !== "remote",
-                  ),
-                ]),
-              ].flatMap((key) => {
+              [...groupedConflicts].flatMap((key) => {
                 const item = remote.get(key) ?? local.get(key);
                 const parsed = PragmaForwardCompatibleResourceSchema.safeParse(item?.data);
+                return parsed.success ? [canonicalPragmaResourceRef(parsed.data)] : [];
+              }),
+            );
+            const unavailableRefs = new Set(
+              [...deferredUnavailable].flatMap((key) => {
+                const parsed = PragmaForwardCompatibleResourceSchema.safeParse(
+                  (remote.get(key) ?? local.get(key))?.data,
+                );
                 return parsed.success ? [canonicalPragmaResourceRef(parsed.data)] : [];
               }),
             );
             let grew = true;
             while (grew) {
               grew = false;
+              if (effectiveIntent === "full" && !deletionKeys) {
+                const planned = new Map(remote);
+                for (const key of keys) {
+                  if (groupedConflicts.has(key) || deferredUnavailable.has(key)) continue;
+                  const here = local.get(key);
+                  const there = remote.get(key);
+                  if (
+                    groupChoices.get(key) === "local" ||
+                    (groupChoices.get(key) !== "remote" &&
+                      here?.fingerprint !== bases[key] &&
+                      there?.fingerprint === bases[key])
+                  ) {
+                    if (here) planned.set(key, here);
+                    else planned.delete(key);
+                  }
+                }
+                for (const [key, dependencies] of missingGitDependencyKeys(remote, planned, local))
+                  for (const blocked of [key, ...dependencies]) {
+                    const owner = planned.get(key)?.name ?? remote.get(key)?.name ?? "an asset";
+                    const names = dependencies
+                      .map(
+                        (dependency) =>
+                          itemSummaryAt(dependency, local, remote, state.remoteItems)?.name ??
+                          "an asset",
+                      )
+                      .join(", ");
+                    conflictMessages[blocked] = (
+                      blocked === key
+                        ? `dependency_conflict: ${owner} requires ${names}. Resolve their deletion or competing changes together.`
+                        : `resource_referenced: ${owner} still requires this asset. Resolve the reference before deleting it.`
+                    ).slice(0, 2_000);
+                    if (groupedConflicts.has(blocked)) continue;
+                    groupedConflicts.add(blocked);
+                    const parsed = PragmaForwardCompatibleResourceSchema.safeParse(
+                      (remote.get(blocked) ?? local.get(blocked))?.data,
+                    );
+                    if (parsed.success) blockedRefs.add(canonicalPragmaResourceRef(parsed.data));
+                    grew = true;
+                  }
+              }
+              for (const members of groups.values())
+                if (members.some((key) => deferredUnavailable.has(key)))
+                  for (const key of members) {
+                    if (deferredUnavailable.has(key)) continue;
+                    deferredUnavailable.add(key);
+                    const parsed = PragmaForwardCompatibleResourceSchema.safeParse(
+                      (remote.get(key) ?? local.get(key))?.data,
+                    );
+                    if (parsed.success)
+                      unavailableRefs.add(canonicalPragmaResourceRef(parsed.data));
+                    grew = true;
+                  }
               for (const members of groups.values())
                 if (members.some((key) => groupedConflicts.has(key)))
                   for (const key of members) {
@@ -607,7 +670,18 @@ export function createCoreAssetSyncService(options: {
                   }
               for (const item of dependencyItems) {
                 const parsed = PragmaForwardCompatibleResourceSchema.safeParse(item.data);
-                if (!parsed.success || groupedConflicts.has(item.key)) continue;
+                if (!parsed.success || deferredUnavailable.has(item.key)) continue;
+                if (
+                  [...referencedPragmaResourceRefs([parsed.data])].some((ref) =>
+                    unavailableRefs.has(ref),
+                  )
+                ) {
+                  deferredUnavailable.add(item.key);
+                  unavailableRefs.add(canonicalPragmaResourceRef(parsed.data));
+                  grew = true;
+                  continue;
+                }
+                if (groupedConflicts.has(item.key)) continue;
                 if (
                   [...referencedPragmaResourceRefs([parsed.data])].some((ref) =>
                     blockedRefs.has(ref),
@@ -620,10 +694,13 @@ export function createCoreAssetSyncService(options: {
               }
             }
             for (const key of keys) {
+              if (deferredUnavailable.has(key)) {
+                if (deletionKeys?.includes(key)) throw new Error(unavailableMessage);
+                continue;
+              }
               if (deletionKeys) {
                 if (!deletionKeys.includes(key)) continue;
                 if (nextRemote.delete(key)) pushNeeded = true;
-                ignored.delete(key);
                 delete bases[key];
                 continue;
               }
@@ -637,16 +714,6 @@ export function createCoreAssetSyncService(options: {
               if (here?.fingerprint === there?.fingerprint) {
                 if (here) bases[key] = here.fingerprint;
                 else delete bases[key];
-                ignored.delete(key);
-                continue;
-              }
-              if (
-                here === undefined &&
-                there !== undefined &&
-                ignored.has(key) &&
-                !groupChoices.has(key)
-              ) {
-                ignored.add(key);
                 continue;
               }
               const localChanged = here?.fingerprint !== base;
@@ -662,8 +729,6 @@ export function createCoreAssetSyncService(options: {
                   ((localChanged && !remoteChanged) || (base === undefined && here && !there)))
               ) {
                 if (effectiveIntent === "pull") {
-                  if (here === undefined && there !== undefined && !config.pushDeletions)
-                    ignored.add(key);
                   continue;
                 }
                 if (here) {
@@ -671,13 +736,10 @@ export function createCoreAssetSyncService(options: {
                   nextRemote.set(key, here);
                   bases[key] = here.fingerprint;
                   pushNeeded = true;
-                } else if (choice === "local" || config.pushDeletions) {
+                } else {
                   nextRemote.delete(key);
-                  ignored.delete(key);
                   delete bases[key];
                   pushNeeded = true;
-                } else {
-                  ignored.add(key);
                 }
                 continue;
               }
@@ -686,19 +748,34 @@ export function createCoreAssetSyncService(options: {
                 (choice === undefined &&
                   ((!localChanged && remoteChanged) || (base === undefined && there && !here)))
               ) {
+                let incoming = there;
+                if (there && repairContextKeys.has(key)) {
+                  const resource = PragmaForwardCompatibleResourceSchema.parse(there.data);
+                  const storeId = classifyDesktopContextResource(resource);
+                  if (resource.kind === "ContextStore" && storeId !== undefined) {
+                    const authority = KnowledgeDataSchema.parse(
+                      local.get(`knowledge:${storeId}`)?.data,
+                    );
+                    const data = bindExistingDesktopContextResource(resource, storeId, authority);
+                    incoming = {
+                      ...there,
+                      name: authority.name,
+                      data,
+                      fingerprint: fingerprint(data),
+                    };
+                  }
+                }
                 changes.push({
                   key,
                   ...(revisions.has(key) ? { expectedRevision: revisions.get(key)! } : {}),
                   ...(here ? { local: here } : {}),
-                  ...(there ? { remote: there } : {}),
+                  ...(incoming ? { remote: incoming } : {}),
                 });
                 if (there) bases[key] = there.fingerprint;
                 else delete bases[key];
-                ignored.delete(key);
                 continue;
               }
               if (here && there) conflicts.push(key);
-              else if (!here && there) ignored.add(key);
             }
             const prepared = await transfer.prepareImport(changes);
             if (effectiveIntent === "full")
@@ -726,10 +803,21 @@ export function createCoreAssetSyncService(options: {
                   },
                 ]),
               ),
-              ignoredRemote: [...ignored],
               conflicts: deletionKeys
                 ? state.conflicts.filter((key) => !deletionKeys.includes(key))
                 : conflicts,
+              conflictMessages: deletionKeys
+                ? Object.fromEntries(
+                    Object.entries(state.conflictMessages).filter(
+                      ([key]) => !deletionKeys.includes(key),
+                    ),
+                  )
+                : Object.fromEntries(
+                    conflicts.flatMap((key) => {
+                      const message = conflictMessages[key] ?? state.conflictMessages[key];
+                      return message === undefined ? [] : [[key, message]];
+                    }),
+                  ),
               restoreConflicts: state.restoreConflicts.filter((key) =>
                 deletionKeys ? !deletionKeys.includes(key) : conflicts.includes(key),
               ),
@@ -744,7 +832,7 @@ export function createCoreAssetSyncService(options: {
               await writeAtomic(
                 journalPath,
                 JournalSchema.parse({
-                  schemaVersion: "pragma.asset-sync-journal/v1",
+                  schemaVersion: "pragma.asset-sync-journal/v2",
                   source,
                   changes: prepared,
                   expected: Object.fromEntries(
@@ -773,14 +861,29 @@ export function createCoreAssetSyncService(options: {
                 return await makeOverview(config);
               }
             }
-            if (pushNeeded) await publishRepository(checkout, nextRemote);
+            if (pushNeeded) {
+              const deletions = [...remote.keys()].filter((key) => !nextRemote.has(key));
+              if (deletions.length > 0) {
+                const latest = await collect();
+                if (
+                  deletions.some((key) => latest.items.has(key)) ||
+                  (await unavailableLocalAuthorities(latest.items, deletions)).size > 0
+                )
+                  throw new LocalHeadChangedError();
+              }
+              await publishRepository(checkout, nextRemote);
+            }
             nextState.syncedAt = new Date().toISOString();
             await writeState(nextState);
             lastError = undefined;
             running = false;
             return await makeOverview(config, nextState, nextRemote);
           } catch (error) {
-            if (error instanceof RemoteHeadChangedError && attempt < 2) continue;
+            if (
+              (error instanceof RemoteHeadChangedError || error instanceof LocalHeadChangedError) &&
+              attempt < 2
+            )
+              continue;
             throw error;
           } finally {
             await rm(checkout.root, { recursive: true, force: true });
@@ -800,9 +903,26 @@ export function createCoreAssetSyncService(options: {
   };
   return {
     async overview() {
-      const config = await readConfig();
+      await mkdir(dirname(options.statePath), { recursive: true });
+      const snapshot = await readCurrentAssetSyncOwner(
+        options.configurationPath,
+        options.statePath,
+        { executionActive: running },
+      );
+      const { config, state: storedState } =
+        snapshot ??
+        (await withFileLock(`${options.statePath}.lock`, async () => {
+          const config = await readConfigUnlocked();
+          return {
+            config,
+            state: config === undefined ? undefined : await readState(sourceKey(config)),
+          };
+        }));
       if (config === undefined) return await makeOverview(undefined);
-      const state = await readState(sourceKey(config));
+      const state =
+        storedState?.source === sourceKey(config)
+          ? storedState
+          : await readState(sourceKey(config));
       const local = await collect();
       if (!needsRemoteIdentity(state, local.items))
         return await makeOverview(config, state, undefined, local);
@@ -821,23 +941,10 @@ export function createCoreAssetSyncService(options: {
     async configure(input) {
       const config = CoreAssetSyncConfigurationSchema.parse({
         ...input,
-        schemaVersion: "pragma.asset-sync-settings/v1",
+        schemaVersion: "pragma.asset-sync-settings/v2",
       });
       await withFileLock(`${options.statePath}.lock`, async () => {
-        const previous = await readConfig();
-        if (
-          previous?.pushDeletions === false &&
-          config.pushDeletions &&
-          sourceKey(previous) === sourceKey(config)
-        ) {
-          const state = await readState(sourceKey(config));
-          const { items: local } = await collect();
-          const ignored = new Set(state.ignoredRemote);
-          for (const key of Object.keys(state.remoteItems)) {
-            if (!local.has(key)) ignored.add(key);
-          }
-          await writeState({ ...state, ignoredRemote: [...ignored] });
-        }
+        const previous = await readConfigUnlocked();
         if (previous === undefined || sourceKey(previous) !== sourceKey(config))
           await rm(journalPath, { force: true });
         await writeAtomic(options.configurationPath, config);
@@ -846,6 +953,7 @@ export function createCoreAssetSyncService(options: {
     },
     async removeConfiguration() {
       await withFileLock(`${options.statePath}.lock`, async () => {
+        await upgradeAssetSyncOwner(options.configurationPath, options.statePath);
         await rm(options.configurationPath, { force: true });
         await rm(journalPath, { force: true });
         lastError = undefined;
@@ -863,6 +971,45 @@ export function createCoreAssetSyncService(options: {
 type CoreAssetSyncItemSummary = Pick<CoreAssetSyncItem, "key" | "kind" | "name" | "fingerprint"> & {
   readonly data?: unknown;
 };
+
+function missingGitDependencyKeys(
+  previous: ItemMap,
+  next: ItemMap,
+  local: ItemMap,
+): Map<string, string[]> {
+  const knownRefs = new Map<string, string>();
+  const availableRefs = new Set<string>();
+  for (const [key, item] of [...previous, ...local]) {
+    const parsed = PragmaForwardCompatibleResourceSchema.safeParse(item.data);
+    if (parsed.success) knownRefs.set(canonicalPragmaResourceRef(parsed.data), key);
+  }
+  for (const item of next.values()) {
+    const parsed = PragmaForwardCompatibleResourceSchema.safeParse(item.data);
+    if (parsed.success) availableRefs.add(canonicalPragmaResourceRef(parsed.data));
+  }
+  const missing = new Map<string, string[]>();
+  for (const [key, item] of next) {
+    const parsed = PragmaForwardCompatibleResourceSchema.safeParse(item.data);
+    if (!parsed.success) continue;
+    const resource = parsed.data;
+    const dependencies = [...referencedPragmaResourceRefs([resource])].flatMap((ref) => {
+      const target = knownRefs.get(ref);
+      return target !== undefined && !availableRefs.has(ref) ? [target] : [];
+    });
+    const storeId = classifyDesktopContextResource(resource);
+    const capability = classifyDesktopCapabilityResource(resource);
+    const payloads = storeId
+      ? [`knowledge:${storeId}`]
+      : capability
+        ? [`capability:${capability.id}`, `skill:${capability.id}`]
+        : [];
+    const known = payloads.filter((candidate) => previous.has(candidate) || local.has(candidate));
+    if (known.length > 0 && !payloads.some((candidate) => next.has(candidate)))
+      dependencies.push(...known);
+    if (dependencies.length > 0) missing.set(key, dependencies);
+  }
+  return missing;
+}
 
 function assertGitAssetReferences(previous: ItemMap, next: ItemMap, local: ItemMap): void {
   const removedKeys = new Set([...previous.keys()].filter((key) => !next.has(key)));
@@ -1164,6 +1311,14 @@ async function publishRepository(checkout: Checkout, items: ItemMap): Promise<vo
 class RemoteHeadChangedError extends Error {
   constructor() {
     super("The Git branch changed during synchronization. Retrying with the latest revision.");
+  }
+}
+
+class LocalHeadChangedError extends Error {
+  constructor() {
+    super(
+      "asset_sync.local_changed: Local resources changed during synchronization. Retrying with the latest local state.",
+    );
   }
 }
 
