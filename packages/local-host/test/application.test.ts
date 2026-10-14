@@ -97,6 +97,23 @@ describe("LocalHostApplication", () => {
     expect(listMissions).toHaveBeenCalledOnce();
   });
 
+  it("owns queue pagination across application instances", async () => {
+    const queue = async () => [
+      { missionId: "mission-1", state: "queued" },
+      { missionId: "mission-2", state: "queued" },
+    ];
+    const first = (await createApplication({ queue }).queryMissionQueue!("mission-1", {
+      limit: 1,
+    })) as { items: unknown[]; nextCursor: string };
+    expect(first.items).toHaveLength(1);
+    const second = (await createApplication({ queue }).queryMissionQueue!("mission-1", {
+      limit: 1,
+      cursor: first.nextCursor,
+    })) as { items: unknown[]; nextCursor?: string };
+    expect(second.items).toEqual([{ missionId: "mission-2", state: "queued" }]);
+    expect(second.nextCursor).toBeUndefined();
+  });
+
   it("fixes Board reads to the shared scope and exposes no private Board operation", async () => {
     const requests: unknown[] = [];
     const application = createApplication({

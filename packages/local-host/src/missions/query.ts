@@ -1,3 +1,4 @@
+import { missionContentReference, readMissionContentValue } from "../mission-content-query.ts";
 import {
   createIntegrationError,
   ExecutorReferenceSchema,
@@ -8,6 +9,17 @@ import {
   MissionEventsSchema,
   MissionResultSchema,
   MissionSummarySchema,
+  MissionSummaryV2Schema,
+  MissionBoundedResultSchema,
+  MissionScalarEventDataSchema,
+  MissionBoundedEventsSchema,
+  type MissionBoundedResult,
+  type MissionBoundedEvents,
+  type ContentSelector,
+  type MissionContentRead,
+  MissionResultV2Schema,
+  type MissionSummaryV2,
+  type MissionResultV2,
   type JsonValue,
   type MissionEventViewItem,
   type MissionEvents,
@@ -18,26 +30,39 @@ import { AgentMessageUsageSchema, type Mission } from "@pragma/shared";
 
 import {
   makeMissionEventCursor,
+  parseMissionEventCursor,
   type MissionControllerStore,
 } from "./controller/mission-controller-store.ts";
 import type { MissionEvent } from "./controller/schemas.ts";
 
-export type MissionQueryView = "summary" | "result" | "chat" | "work" | "events";
+export type MissionQueryView = "summary" | "result" | "chat" | "work" | "events" | "content";
 
 export interface MissionQueryRequest {
   readonly missionId: string;
   readonly view: MissionQueryView;
   readonly limit: number;
   readonly cursor?: string | undefined;
+  readonly queryVersion?: 1 | 2 | undefined;
+  readonly includeRecentInput?: boolean | undefined;
+  readonly maxContentBytes?: number | undefined;
+  readonly content?: ContentSelector | undefined;
 }
 
-export type MissionQueryResult = MissionSummary | MissionResult | MissionEvents;
+export type MissionQueryResult =
+  | MissionSummary
+  | MissionResult
+  | MissionEvents
+  | MissionSummaryV2
+  | MissionResultV2
+  | MissionBoundedResult
+  | MissionBoundedEvents
+  | MissionContentRead;
 
 export interface MissionQueryPort {
   readonly queryMission: (input: MissionQueryRequest) => Promise<MissionQueryResult>;
 }
 
-export const SUPPORTED_MISSION_QUERY_VIEWS = ["summary", "result", "events"] as const;
+export const SUPPORTED_MISSION_QUERY_VIEWS = ["summary", "result", "events", "content"] as const;
 
 interface ExecutionProjection {
   readonly status: "queued" | "running" | "waiting" | "succeeded" | "failed" | "interrupted";
@@ -58,6 +83,8 @@ interface ExecutionProjection {
 export function createMissionQuery(options: {
   readonly controller: Pick<MissionControllerStore, "readSnapshot">;
   readonly readMission?: ((missionId: string) => Promise<Mission | undefined>) | undefined;
+  readonly readLatestInput?:
+    ((missionId: string) => Promise<{ id: string; content: string } | undefined>) | undefined;
 }): MissionQueryPort {
   return {
     async queryMission(input) {
@@ -65,6 +92,17 @@ export function createMissionQuery(options: {
         throw unsupportedMissionView(input.view);
       }
       assertQueryLimit(input.limit);
+      if (
+        input.maxContentBytes !== undefined &&
+        (!Number.isSafeInteger(input.maxContentBytes) ||
+          input.maxContentBytes < 4 ||
+          input.maxContentBytes > 64000)
+      )
+        throw createIntegrationError({
+          code: "INVALID_ARGUMENT",
+          category: "usage",
+          message: "Content budget must be 4..64000 bytes.",
+        });
 
       const mission = await options.readMission?.(input.missionId);
       const snapshot = await options.controller.readSnapshot(
@@ -75,25 +113,100 @@ export function createMissionQuery(options: {
       if (mission === undefined)
         assertMissionExists(input.missionId, snapshot.snapshot.eventSequence, snapshot.events);
 
+      const semantics =
+        input.queryVersion === 2 && input.view !== "events"
+          ? {
+              title: mission?.title ?? eventTitle(snapshot.events),
+              ...(input.includeRecentInput && mission !== undefined
+                ? await recentInput(options, input.missionId)
+                : {}),
+            }
+          : undefined;
+      if (input.view === "content") {
+        if (input.content === undefined)
+          throw createIntegrationError({
+            code: "INVALID_ARGUMENT",
+            category: "usage",
+            message: "Content view requires a selector.",
+          });
+        const selector = input.content;
+        if (selector.source === "queue")
+          throw createIntegrationError({
+            code: "DEPENDENCY_UNAVAILABLE", category: "dependency",
+            message: "Queue content requires the Host queue read port.",
+          });
+        let eventSequence: number | undefined;
+        if (selector.source === "event") {
+          try {
+            eventSequence = parseMissionEventCursor(selector.id, input.missionId);
+          } catch {
+            /* IDs and decimal sequences remain valid selectors. */
+          }
+        }
+
+        const event =
+          selector.source === "result"
+            ? snapshot.events
+                .toReversed()
+                .find(
+                  (event) =>
+                    event.type === "run.succeeded" &&
+                    (event.data["executionId"] === selector.id ||
+                      (selector.id.startsWith("event:") && event.eventId === selector.id.slice(6))),
+                )
+            : snapshot.events.find(
+                (event) =>
+                  event.eventId === selector.id ||
+                  String(event.sequence) === selector.id ||
+                  event.sequence === eventSequence,
+              );
+        const scalar = MissionScalarEventDataSchema.safeParse(event?.data);
+        const value =
+          selector.source === "result"
+            ? event?.data["result"]
+            : scalar.success
+              ? scalar.data.value
+              : event?.data;
+        if (value === undefined)
+          throw createIntegrationError({
+            code: "NOT_FOUND",
+            category: "not_found",
+            message: "The referenced Mission content is no longer available.",
+          });
+        return readMissionContentValue(input.missionId, selector, value);
+      }
       switch (input.view) {
         case "summary":
-          return projectMissionSummary({
-            missionId: input.missionId,
-            snapshot,
-            mission,
-          });
+          return withSemantics(
+            projectMissionSummary({
+              missionId: input.missionId,
+              snapshot,
+              mission,
+            }),
+            semantics,
+          );
         case "result":
-          return projectMissionResult({
-            missionId: input.missionId,
-            snapshot,
-            mission,
-          });
+          return boundedMissionResult(
+            withSemantics(
+              projectMissionResult({
+                missionId: input.missionId,
+                snapshot,
+                mission,
+              }),
+              semantics,
+            ),
+            input.maxContentBytes,
+            snapshot.events.toReversed().find((event) => event.type === "run.succeeded")?.eventId,
+          );
         case "events":
-          return projectMissionEvents({
-            missionId: input.missionId,
-            events: snapshot.events,
-            limit: input.limit,
-          });
+          return boundedMissionEvents(
+            projectMissionEvents({
+              missionId: input.missionId,
+              events: snapshot.events,
+              limit: input.limit,
+            }),
+            input.maxContentBytes,
+          );
         default:
           return unreachableMissionQueryView(input.view);
       }
@@ -477,5 +590,113 @@ function unreachableMissionQueryView(view: never): never {
       view: String(view),
       supportedViews: [...SUPPORTED_MISSION_QUERY_VIEWS],
     },
+  });
+}
+
+function eventTitle(events: readonly MissionEvent[]): string | null {
+  const title = events.find((event) => event.type === "mission.created")?.data["title"];
+  return typeof title === "string" && title.trim().length > 0 && title.length <= 120 ? title : null;
+}
+
+async function recentInput(
+  options: {
+    readLatestInput?:
+      ((id: string) => Promise<{ id: string; content: string } | undefined>) | undefined;
+  },
+  missionId: string,
+) {
+  const message = await options.readLatestInput?.(missionId);
+  if (message === undefined) return {};
+  const chars = Array.from(message.content);
+  return {
+    recentInput: {
+      messageId: message.id,
+      text: chars.slice(0, 250).join(""),
+      truncated: chars.length > 250,
+    },
+  };
+}
+
+function withSemantics<T extends MissionSummary | MissionResult>(
+  value: T,
+  semantics:
+    | {
+        title: string | null;
+        recentInput?: { messageId: string; text: string; truncated: boolean };
+      }
+    | undefined,
+): T | MissionSummaryV2 | MissionResultV2 {
+  if (semantics === undefined) return value;
+  return value.schemaVersion === "pragma.mission-summary/v1"
+    ? MissionSummaryV2Schema.parse({
+        ...value,
+        ...semantics,
+        schemaVersion: "pragma.mission-summary/v2",
+      })
+    : MissionResultV2Schema.parse({
+        ...value,
+        ...semantics,
+        schemaVersion: "pragma.mission-result/v2",
+      });
+}
+
+function boundedMissionResult(
+  value: MissionSummary | MissionResult | MissionSummaryV2 | MissionResultV2,
+  maxBytes?: number,
+  resultEventId?: string,
+) {
+  if (
+    maxBytes === undefined ||
+    !("result" in value) ||
+    value.result === undefined ||
+    ((!("executionId" in value) || value.executionId === undefined) && resultEventId === undefined)
+  )
+    return value;
+  const resultContent = missionContentReference(
+    value.missionId,
+    "result",
+    "executionId" in value && value.executionId !== undefined
+      ? value.executionId
+      : `event:${resultEventId}`,
+    value.result,
+    maxBytes,
+  );
+  if (resultContent === undefined) return value;
+  return MissionBoundedResultSchema.parse({
+    ...value,
+    schemaVersion: "pragma.mission-result/v3",
+    title: "title" in value ? value.title : null,
+    result: undefined,
+    resultContent,
+  });
+}
+function boundedMissionEvents(value: MissionEvents, maxBytes?: number) {
+  if (maxBytes === undefined) return value;
+  let remaining = maxBytes;
+  return MissionBoundedEventsSchema.parse({
+    ...value,
+    schemaVersion: "pragma.mission-events/v2",
+    items: value.items.map((item) => {
+      const scalar = MissionScalarEventDataSchema.safeParse(item.data);
+      const data = scalar.success ? scalar.data.value : item.data;
+      const reference =
+        item.type.includes("human.") ||
+        item.type.includes("interaction") ||
+        item.type.includes("input_required") ||
+        item.type.includes("failed")
+          ? undefined
+          : missionContentReference(value.missionId, "event", item.eventId, data, remaining);
+      remaining = Math.max(
+        0,
+        remaining -
+          Buffer.byteLength(reference === undefined ? JSON.stringify(data) : reference.preview),
+      );
+      return {
+        ...item,
+        schemaVersion: "pragma.local-host-mission-event/v2",
+        data,
+        ...(reference === undefined ? {} : { data: undefined, dataContent: reference }),
+      };
+    }),
   });
 }

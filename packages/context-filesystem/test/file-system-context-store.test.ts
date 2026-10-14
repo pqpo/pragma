@@ -17,6 +17,27 @@ afterEach(async () => {
 });
 
 describe("FileSystemContextStore", () => {
+  it("reconstructs multibyte content from bounded UTF-8 ranges", async () => {
+    const rootDir = await mkdtemp(join(tmpdir(), "pragma-byte-pages-"));
+    temporaryRoots.push(rootDir);
+    const store = new FileSystemContextStore({ rootDir });
+    const content = "中😀文\nend";
+    expect((await store.addContext({ id: "range.md", content })).ok).toBe(true);
+    let start = 0;
+    let rebuilt = "";
+    do {
+      const read = await store.readContext({ id: "range.md", start, offset: 4 });
+      if (!read.ok) throw new Error(read.error.message);
+      expect(Buffer.byteLength(read.value.content)).toBeLessThanOrEqual(4);
+      const range = read.value.contentRange;
+      expect(range.startOffset).toBe(start);
+      expect(range.endOffset).toBeGreaterThan(start);
+      rebuilt += read.value.content;
+      start = range.nextStartOffset;
+    } while (start < Buffer.byteLength(content));
+    expect(rebuilt).toBe(content);
+  });
+
   it.each([
     "# Guide",
     "# Guide\n",

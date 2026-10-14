@@ -1,5 +1,6 @@
+import { missionContentReference } from "../../mission-content-query.ts";
 import { JsonValueSchema, type JsonValue } from "@pragma/shared";
-import { createIntegrationError } from "@pragma/shared/integration";
+import { createIntegrationError, MissionScalarEventDataSchema } from "@pragma/shared/integration";
 
 import {
   makeMissionEventCursor,
@@ -10,7 +11,7 @@ import {
 export type MissionWatchUntil = "terminal" | "input-required";
 
 export type MissionWatchObservedStatus =
-  "input_required" | "succeeded" | "failed" | "interrupted" | "detached";
+  "input_required" | "succeeded" | "failed" | "interrupted" | "detached" | "timed_out";
 
 export type MissionWatchStopReason = MissionWatchObservedStatus;
 
@@ -32,6 +33,8 @@ export interface MissionWatchRequest {
   readonly replay?: number | undefined;
   readonly until?: MissionWatchUntil | undefined;
   readonly signal?: AbortSignal | undefined;
+  readonly maxContentBytes?: number | undefined;
+  readonly waitTimeoutMs?: number | undefined;
   /** The callback is awaited before the watcher advances its durable cursor. */
   readonly onEvent: (event: MissionWatchEvent) => Promise<void> | void;
   /** Test/embedded-host override; the CLI uses the bounded default. */
@@ -40,7 +43,8 @@ export interface MissionWatchRequest {
 
 export interface MissionWatchResult {
   readonly missionId: string;
-  readonly status: "detached" | "completed";
+  readonly status: "detached" | "completed" | "timed_out";
+  readonly lastObservedStatus?: string | undefined;
   /** The Mission state observed when this watcher stopped. */
   readonly observedStatus: MissionWatchObservedStatus;
   /** Why the watcher stopped; detached means local Ctrl-C only. */
@@ -76,6 +80,17 @@ export function createMissionWatchApplication(options: {
   return {
     async watch(input) {
       const replay = input.replay ?? DEFAULT_WATCH_REPLAY;
+      if (input.waitTimeoutMs !== undefined)
+        assertPositiveInteger(input.waitTimeoutMs, "waitTimeoutMs");
+      const deadline =
+        input.waitTimeoutMs === undefined ? Infinity : performance.now() + input.waitTimeoutMs;
+      if (
+        input.maxContentBytes !== undefined &&
+        (!Number.isSafeInteger(input.maxContentBytes) ||
+          input.maxContentBytes < 4 ||
+          input.maxContentBytes > 64000)
+      )
+        throw watchArgumentError("Content budget must be 4..64000 bytes.");
       if (input.after !== undefined && input.replay !== undefined) {
         throw watchArgumentError("Mission watch accepts either after or replay, not both.");
       }
@@ -109,6 +124,7 @@ export function createMissionWatchApplication(options: {
       }
 
       for (;;) {
+        if (performance.now() >= deadline) return timedOutResult(input, lastCursor, status);
         if (isAborted(input.signal)) return detachedResult(input, lastCursor);
         const current = await options.controller.readWatchBarrier({
           missionId: input.missionId,
@@ -122,6 +138,7 @@ export function createMissionWatchApplication(options: {
             return completedResult(input, lastCursor, status);
           }
         }
+        if (performance.now() >= deadline) return timedOutResult(input, lastCursor, status);
         if (isAborted(input.signal)) return detachedResult(input, lastCursor);
         status = statusFromEventType(current.latestStatusEventType, status);
         if (isUntilSatisfied(input.until, status)) {
@@ -133,7 +150,12 @@ export function createMissionWatchApplication(options: {
         } else {
           nextPollInterval = Math.min(nextPollInterval * 2, maxPollInterval);
         }
-        if ((await waitForPoll(input.signal, waitInterval)) === false) {
+        if (
+          (await waitForPoll(
+            input.signal,
+            Math.min(waitInterval, Math.max(1, deadline - performance.now())),
+          )) === false
+        ) {
           return detachedResult(input, lastCursor);
         }
       }
@@ -147,7 +169,25 @@ async function deliverDurableEvent(
   seenEventIds: BoundedEventIdSet,
 ): Promise<boolean> {
   if (seenEventIds.has(event.eventId)) return false;
-  const data = JsonValueSchema.parse(event.data);
+  const scalar = MissionScalarEventDataSchema.safeParse(event.data);
+  const eventData = scalar.success ? scalar.data.value : event.data;
+  const reference =
+    input.maxContentBytes === undefined ||
+    event.type.includes("human.") ||
+    event.type.includes("interaction") ||
+    event.type.includes("input_required") ||
+    event.type.includes("failed")
+      ? undefined
+      : missionContentReference(
+          input.missionId,
+          "event",
+          event.eventId,
+          eventData,
+          input.maxContentBytes,
+        );
+  const data = JsonValueSchema.parse(
+    reference === undefined ? eventData : { contentReference: reference },
+  );
   const executionId = readExecutionId(event.data);
   const watched: MissionWatchEvent = {
     type: event.type,
@@ -351,4 +391,21 @@ class BoundedEventIdSet {
       if (oldest !== undefined) this.values.delete(oldest);
     }
   }
+}
+
+function timedOutResult(
+  input: MissionWatchRequest,
+  lastCursor: string,
+  status: string,
+): MissionWatchResult {
+  return {
+    missionId: input.missionId,
+    status: "timed_out",
+    observedStatus: "timed_out",
+    stopReason: "timed_out",
+    missionContinues: true,
+    lastCursor,
+    lastObservedStatus: status,
+    ...(input.until === undefined ? {} : { until: input.until }),
+  };
 }

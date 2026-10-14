@@ -77,7 +77,7 @@ Expert、Team 与 Flow 使用一致的 run 结构：
 ```bash
 pragma expert run expert:<16-char-id> --workspace "$WORKSPACE" --input - --detach --format=json
 pragma team run team:<16-char-id> --workspace "$WORKSPACE" --input - --detach --format=json
-pragma flow run flow:<16-char-id> --workspace "$WORKSPACE" --input - --detach --format=json
+pragma flow run flow:<16-char-id> --workspace "$WORKSPACE" --input-json - --detach --format=json
 ```
 
 `--detach` 的成功边界是请求已经持久提交。返回的 `missionId`、`executionId` 与 `requestId` 应立即保存。
@@ -102,7 +102,7 @@ watch 返回 `input_required` 时，从事件或 result 中读取 `interactionId
 printf '%s' "$ANSWER" |
   pragma mission respond "$MISSION_ID" \
     --interaction "$INTERACTION_ID" \
-    --input - \
+    --answers-json - \
     --request-id "$RESPOND_REQUEST_ID" \
     --format=json \
     --interactive=never \
@@ -119,9 +119,9 @@ Execution identity；目标变化时先刷新 Mission 状态再重新决策。
 
 ```bash
 pragma mission queue list "$MISSION_ID" --format=json
-pragma mission queue steer "$MISSION_ID" "$REQUEST_ID" \
-  --expected-execution "$EXECUTION_ID" --input - --format=json
-pragma mission queue remove "$MISSION_ID" "$REQUEST_ID" --format=json
+pragma mission queue steer "$MISSION_ID" --request "$REQUEST_ID" \
+  --expected-execution "$EXECUTION_ID" --format=json
+pragma mission queue remove "$MISSION_ID" --request "$REQUEST_ID" --format=json
 pragma mission interrupt "$MISSION_ID" \
   --expected-execution "$EXECUTION_ID" --request-id "$INTERRUPT_REQUEST_ID" --format=json
 ```
@@ -174,3 +174,36 @@ CLI 不替代调用方的 sandbox 或 Agent tool permission wrapper。需要生�
 side-effect annotation 或平台审计记录时，应由集成层基于当前 `pragma --help` 和本页协议显式定义。
 
 返回入口：[人类 CLI 指南](./cli.md) · [CLI 分发与发布运维手册](./cli-release.md)。
+
+## 精简输出与有界等待
+
+外部 Agent 可以选择 --output-view compact：JSON 为 pragma.cli-result/v3，JSONL 为 pragma.cli-event/v3。
+stdout 保持协议纯净；完整结果一次，stream.end 只给状态、退出码、错误/警告和恢复信息。默认 full 仍为 v2。
+GET 的 body 默认使用 semantic v2（nullable title）；旧 strict v1 parser 需 --query-version 1。
+不要只检查 envelope.status：查询成功不等于 Mission 成功。
+
+先用 mission list --query TEXT --workspace CANONICAL_PATH 定位，再 get --view result。
+--recent-input 返回最近的持久输入预览，可能尚未执行。范围绑定 cursor 过期时保留已知 ID 并重新查询，
+不要靠截断 cursor 或修改 offset 续页。
+
+--wait-timeout SECONDS 限制持久 receipt 后的等待，run、watch 和支持 --wait 的 mutation 可用。
+到期是 accepted/exit 0，result.waitExpired=true；记录 requestId、missionId、可得的 Execution/operation 状态和 next。
+run/分离 mutation 的默认 composition 有独立 owner 子进程，调用方退出不等于取消；watch 始终只读。
+停止任务使用显式 interrupt；原 request 的不确定重试复用同一个 UUID。
+
+大正文引用包含 source、id、fingerprint、encoding、totalBytes、preview/end。直接使用其读取入口：
+
+```bash
+pragma mission get "$MISSION_ID" --view content --source "$SOURCE" --content-id "$CONTENT_ID" \
+  --fingerprint "$FINGERPRINT" --start "$NEXT_START" --max-bytes 8000 --json --output-view compact
+```
+
+使用 [start,end) UTF-8 字节范围和 nextStart，不使用字符数计算偏移。
+完整重建需要按序合并 JSON content；utf8-json 编码合并后再解析。预览不是最终结果的替代摘要。
+Native 瞬时小事件不承诺 replay；选择有界展示时，大 scalar/array 事件先持久化再返回引用。
+问题、选项、答复值及必要错误保持完整；question contract 使用问题文本作 answers key，没有独立 question ID 时不制造它。
+--answers-json 的文件是完整 response 对象（例如 {"answers":{"Which region?":"us-west"}}），不是裸字符串。
+
+Flow describe 的文本提供输入模板，复杂完整 Schema 使用 describe --json --output-view full。
+Board read 的 --max-bytes 是大小，--start 是字节位置；原 --offset 是大小别名。
+该公共 CLI 不替代当前 Execution 的 pragma manage 授权通道。

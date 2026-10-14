@@ -56,6 +56,7 @@ export interface ResolvedRunExecutor {
 
 export interface LocalHostRunEvent {
   readonly type: string;
+  readonly missionId?: string | undefined;
   readonly data: JsonValue;
   /** Durable lower-level event identity, when supplied by Core. */
   readonly eventId?: string | undefined;
@@ -139,7 +140,11 @@ export interface LocalHostRunMissionPort {
     type: string,
     data: Record<string, unknown>,
     eventId?: string | undefined,
-  ) => Promise<{ readonly cursor: string }>;
+  ) => Promise<{
+    readonly cursor: string;
+    readonly eventId?: string;
+    readonly occurredAt?: string;
+  }>;
   readonly ensurePinnedBinding: (input: {
     readonly missionId: string;
     readonly guard: MissionControllerGuard;
@@ -173,6 +178,7 @@ export interface LocalHostRunApplication {
 }
 
 export interface LocalHostRunPresentation {
+  readonly maxContentBytes?: number | undefined;
   readonly onEvent?: ((event: LocalHostRunEvent) => void) | undefined;
   readonly onHumanInteraction?:
     | ((
@@ -238,6 +244,17 @@ export function createLocalHostRunApplication(options: {
     readonly presentation: LocalHostRunPresentation;
   }): Promise<LocalHostRunApplicationHandle> => {
     const { request, target, presentation } = input;
+    if (
+      presentation.maxContentBytes !== undefined &&
+      (!Number.isSafeInteger(presentation.maxContentBytes) ||
+        presentation.maxContentBytes < 4 ||
+        presentation.maxContentBytes > 64000)
+    )
+      throw createIntegrationError({
+        code: "INVALID_ARGUMENT",
+        category: "usage",
+        message: "Content budget must be 4..64000 bytes.",
+      });
     const redactor =
       typeof options.redactor === "function"
         ? options.redactor()
@@ -388,6 +405,7 @@ export function createLocalHostRunApplication(options: {
       mission: options.mission,
       redactor,
       onEvent: presentation.onEvent,
+      maxContentBytes: presentation.maxContentBytes,
       knownEventIds: existingEvents.map((event) => event.eventId),
     });
     const projectEvent = (event: LocalHostRunEvent): void => eventProjector.enqueue(event);
@@ -613,14 +631,18 @@ export function createControllerRunMissionPort(
     claim: async (missionId, claimId) => await ownerScope.acquire(missionId, claimId),
     append: async (missionId, guard, type, data, eventId) => {
       const currentGuard = ownerScope.currentGuard(missionId) ?? guard;
-      await controller.write({
+      const committed = await controller.write({
         missionId,
         guard: currentGuard,
         operation: async ({ appendEvent }) => {
-          await appendEvent(type, data, validMissionEventId(eventId));
+          return await appendEvent(type, data, validMissionEventId(eventId));
         },
       });
-      return { cursor: (await controller.readSnapshot({ missionId })).cursor };
+      return {
+        cursor: (await controller.readSnapshot({ missionId })).cursor,
+        eventId: committed.eventId,
+        occurredAt: committed.occurredAt,
+      };
     },
     ensurePinnedBinding: async (input) =>
       await controller.ensurePinnedBinding({

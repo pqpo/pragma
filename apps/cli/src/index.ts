@@ -1,3 +1,11 @@
+import {
+  invokeMissionOwner,
+  waitForOwnedOutcome,
+  waitExpiredOutcome,
+  type OwnerReceipt,
+} from "./mission-owner-process.ts";
+import { asJsonValue, isRecord } from "./commands/utils.ts";
+import { shellArgument } from "./commands/utils.ts";
 import { terminalDiagnostics } from "./commands/terminal-diagnostics.ts";
 import { isManagementCliArgv, runManagementCli } from "./management-client.ts";
 import {
@@ -81,6 +89,13 @@ export async function runCli(
         io,
         format: parseError.format,
         requestId,
+        outputView: argv.some(
+          (value, index) =>
+            value === "--output-view=compact" ||
+            (value === "--output-view" && argv[index + 1] === "compact"),
+        )
+          ? "compact"
+          : "full",
         command: "cli.parse",
         cliVersion: CLI_VERSION,
         startedAt,
@@ -100,6 +115,7 @@ export async function runCli(
     startedAt,
     localHost: createCliLocalHost(dependencies),
     format: parsed.options.format,
+    outputView: parsed.options.outputView,
     interactive: parsed.options.interactive,
     terminal: dependencies.terminal ?? createSystemTerminalPort(),
   };
@@ -147,12 +163,68 @@ export async function runCli(
           ? createV2StreamPresenter({
               io,
               format: parsed.options.format,
+              outputView: parsed.options.outputView,
               requestId,
               command,
               cliVersion: CLI_VERSION,
               startedAt,
             })
           : undefined;
+      if (
+        dependencies.localHost === undefined &&
+        dependencies.onBeforeExit === undefined &&
+        (parsed.command.waitTimeoutSeconds !== undefined || parsed.command.detach)
+      ) {
+        if (parsed.options.format === "text")
+          io.writeStderr(`Request ID: ${requestId} (reuse with --request-id for an exact retry)\n`);
+        const stdin =
+          parsed.command.inputPath === "-" || parsed.command.inputJsonPath === "-"
+            ? await (dependencies.readStdin ?? readProcessStdin)()
+            : undefined;
+        let outcome = await invokeMissionOwner({
+          argv,
+          requestId,
+          stdin,
+          waitTimeoutSeconds: parsed.command.waitTimeoutSeconds,
+          detach: parsed.command.detach,
+          onInterrupt: (callback) =>
+            (dependencies.signals ?? createProcessSignalPort()).onInterrupt(callback),
+          onEvent: (event) => {
+            if (!isRecord(event) || typeof event["type"] !== "string") return;
+            runStreamPresenter?.emit({
+              type: event["type"],
+              data: asJsonValue(event["data"]),
+              missionId: typeof event["missionId"] === "string" ? event["missionId"] : undefined,
+              executionId:
+                typeof event["executionId"] === "string" ? event["executionId"] : undefined,
+              eventId: typeof event["eventId"] === "string" ? event["eventId"] : undefined,
+              cursor: typeof event["cursor"] === "string" ? event["cursor"] : undefined,
+              replayable: event["replayable"] === true,
+              emittedAt: typeof event["occurredAt"] === "string" ? event["occurredAt"] : undefined,
+            });
+          },
+          onStarted: (receipt) => {
+            if (parsed.options.format === "text")
+              io.writeStderr(
+                `Mission ID: ${receipt.missionId}\nExecution ID: ${receipt.executionId ?? "pending"}\n`,
+              );
+          },
+        });
+        outcome = await addTimeoutObservation(outcome, context.localHost);
+        await closeLocalHost();
+        const input = {
+          io,
+          format: parsed.options.format,
+          outputView: parsed.options.outputView,
+          requestId,
+          command,
+          cliVersion: CLI_VERSION,
+          startedAt,
+        };
+        if (runStreamPresenter === undefined) presentRunOutcome(input, outcome);
+        else runStreamPresenter.finalize(outcome);
+        return runOutcomeExitCode(outcome);
+      }
       let activeHandle: Awaited<ReturnType<typeof startExecutorRun>> | undefined;
       const terminal = context.terminal;
       if (parsed.options.interactive === "always" && !terminal.isControllingTerminal()) {
@@ -164,6 +236,7 @@ export async function runCli(
       }
       const useTerminalInteraction =
         !parsed.command.detach &&
+        parsed.command.waitTimeoutSeconds === undefined &&
         (parsed.options.interactive === "always" ||
           (parsed.options.interactive === "auto" &&
             parsed.options.format === "text" &&
@@ -201,9 +274,9 @@ export async function runCli(
               replayable: event.replayable,
               cursor: event.cursor,
               emittedAt: event.occurredAt,
-              ...(activeHandle?.missionId === undefined
+              ...((activeHandle?.missionId ?? event.missionId) === undefined
                 ? {}
-                : { missionId: activeHandle.missionId }),
+                : { missionId: activeHandle?.missionId ?? event.missionId }),
               ...(activeHandle?.executionId === undefined
                 ? {}
                 : { executionId: activeHandle.executionId }),
@@ -217,7 +290,12 @@ export async function runCli(
           );
         }
         if (interrupting) void handle.cancel("SIGINT");
-        const rawOutcome = await handle.outcome;
+        const waited = await waitForOwnedOutcome(
+          handle.outcome,
+          Promise.resolve({ missionId: handle.missionId, executionId: handle.executionId }),
+          parsed.command.waitTimeoutSeconds,
+        );
+        const rawOutcome = "waitExpired" in waited ? waitExpiredOutcome(waited.receipt) : waited;
         terminalCommitted = true;
         const outcome = interrupting
           ? {
@@ -229,12 +307,17 @@ export async function runCli(
           : rawOutcome;
         if (outcome.status === "accepted") detachLocalHostCleanup();
         else await closeLocalHost();
-        const presentation = normalizeRunOutcome(outcome, handle.request);
+        let presentation =
+          "waitExpired" in waited
+            ? (rawOutcome as CliRunPresentationOutcome)
+            : normalizeRunOutcome(outcome as LocalHostRunApplicationOutcome, handle.request);
+        presentation = await addTimeoutObservation(presentation, context.localHost);
         if (runStreamPresenter === undefined) {
           presentRunOutcome(
             {
               io,
               format: parsed.options.format,
+              outputView: parsed.options.outputView,
               requestId,
               command,
               cliVersion: CLI_VERSION,
@@ -253,11 +336,17 @@ export async function runCli(
     const presentationInput = {
       io,
       format: parsed.options.format,
+      outputView: parsed.options.outputView,
       requestId,
       command,
       cliVersion: CLI_VERSION,
       startedAt,
-      continuationCommand: (cursor: string) => continuationCommandFor(parsed.command, cursor),
+      continuationCommand: (cursor: string) =>
+        [
+          continuationCommandFor(parsed.command, cursor),
+          ...(parsed.options.outputView === "compact" ? ["--output-view compact"] : []),
+          ...(parsed.options.format === "text" ? [] : [`--format ${parsed.options.format}`]),
+        ].join(" "),
     } as const;
     if (isSourceCommand(parsed.command)) {
       const result = await executeSourceCommand(parsed.command, context);
@@ -288,10 +377,16 @@ export async function runCli(
       try {
         const result = await context.localHost.watchMission({
           missionId: parsed.command.missionId,
+          ...(parsed.command.waitTimeoutSeconds === undefined
+            ? {}
+            : { waitTimeoutMs: parsed.command.waitTimeoutSeconds * 1000 }),
           ...(parsed.command.after === undefined ? {} : { after: parsed.command.after }),
           ...(parsed.command.replay === undefined ? {} : { replay: parsed.command.replay }),
           ...(parsed.command.until === undefined ? {} : { until: parsed.command.until }),
           signal: abortController.signal,
+          ...(parsed.options.format === "text" || parsed.options.outputView === "compact"
+            ? { maxContentBytes: 8000 }
+            : {}),
           onEvent: async (event) => {
             if (runStreamPresenter !== undefined) {
               runStreamPresenter.emit({
@@ -311,13 +406,34 @@ export async function runCli(
         });
         streamCommitted = true;
         await closeLocalHost();
+        if (result.status === "timed_out") {
+          const outcome: CliRunPresentationOutcome = {
+            status: "accepted",
+            missionId: result.missionId,
+            lastCursor: result.lastCursor,
+            result: asJsonValue({
+              ...result,
+              waitExpired: true,
+              next: {
+                get: `pragma mission get ${result.missionId}`,
+                watch: `pragma mission watch ${result.missionId} --after ${result.lastCursor}`,
+              },
+            }),
+          };
+          if (runStreamPresenter === undefined) presentRunOutcome(presentationInput, outcome);
+          else runStreamPresenter.finalize(outcome);
+          return 0;
+        }
         if (result.status === "detached") {
           const detachedEvent = {
             missionId: result.missionId,
             missionContinues: true,
             lastCursor: result.lastCursor,
-            observedStatus: result.observedStatus,
-            stopReason: result.stopReason,
+            observedStatus: result.observedStatus as Exclude<
+              typeof result.observedStatus,
+              "timed_out"
+            >,
+            stopReason: result.stopReason as Exclude<typeof result.stopReason, "timed_out">,
           } as const;
           if (runStreamPresenter !== undefined) {
             runStreamPresenter.emit({
@@ -338,8 +454,11 @@ export async function runCli(
             missionId: result.missionId,
             result: watchResultData(result),
             lastCursor: result.lastCursor,
-            observedStatus: result.observedStatus,
-            stopReason: result.stopReason,
+            observedStatus: result.observedStatus as Exclude<
+              typeof result.observedStatus,
+              "timed_out"
+            >,
+            stopReason: result.stopReason as Exclude<typeof result.stopReason, "timed_out">,
           });
         }
         return 0;
@@ -348,11 +467,53 @@ export async function runCli(
       }
     }
     if (isMutationCommand(parsed.command)) {
-      const mutation = await executeMutationCommand(
+      const timeout =
+        "waitTimeoutSeconds" in parsed.command ? parsed.command.waitTimeoutSeconds : undefined;
+      const detached = "detach" in parsed.command && parsed.command.detach;
+      if (
+        dependencies.localHost === undefined &&
+        dependencies.onBeforeExit === undefined &&
+        (timeout !== undefined || detached)
+      ) {
+        if (parsed.options.format === "text")
+          io.writeStderr(`Request ID: ${requestId} (reuse with --request-id for an exact retry)\n`);
+        const stdin =
+          ("inputPath" in parsed.command && parsed.command.inputPath === "-") ||
+          ("answersPath" in parsed.command && parsed.command.answersPath === "-")
+            ? await (dependencies.readStdin ?? readProcessStdin)()
+            : undefined;
+        let outcome = await invokeMissionOwner({
+          argv,
+          requestId,
+          stdin,
+          waitTimeoutSeconds: timeout,
+          detach: detached,
+          ackTimeoutSeconds: parsed.command.ackTimeoutSeconds,
+        });
+        outcome = await addTimeoutObservation(outcome, context.localHost);
+        await closeLocalHost();
+        presentRunOutcome(presentationInput, outcome);
+        return runOutcomeExitCode(outcome);
+      }
+      let resolveReceipt!: (receipt: OwnerReceipt) => void;
+      const receipt = new Promise<OwnerReceipt>((resolve) => {
+        resolveReceipt = resolve;
+      });
+
+      const mutationOperation = executeMutationCommand(
         parsed.command,
         context,
         dependencies.readStdin ?? readProcessStdin,
+        resolveReceipt,
       );
+      const waited = await waitForOwnedOutcome(mutationOperation, receipt, timeout);
+      if ("waitExpired" in waited) {
+        let outcome = waitExpiredOutcome(waited.receipt);
+        outcome = await addTimeoutObservation(outcome, context.localHost);
+        presentRunOutcome(presentationInput, outcome);
+        return 0;
+      }
+      const mutation = waited;
       if (mutation.detached) detachLocalHostCleanup();
       else await closeLocalHost();
       if (mutation.status === "input_required") {
@@ -407,6 +568,7 @@ export async function runCli(
     const presentationInput = {
       io,
       format: parsed.options.format,
+      outputView: parsed.options.outputView,
       requestId,
       command,
       cliVersion: CLI_VERSION,
@@ -465,7 +627,7 @@ function runOutcomeExitCode(outcome: {
   return integrationErrorExitCode(outcome.error?.code ?? "INTERNAL_ERROR");
 }
 
-function normalizeRunOutcome(
+export function normalizeRunOutcome(
   outcome: LocalHostRunApplicationOutcome | CliInterruptedOutcome,
   request?: {
     readonly executor: CliRunPresentationOutcome["executor"];
@@ -602,6 +764,10 @@ function continuationCommandFor(command: ParsedCommand, cursor: string): string 
         "list",
         ...(command.status === undefined ? [] : ["--status", command.status]),
         ...(command.executor === undefined ? [] : ["--executor", shellArgument(command.executor)]),
+        ...(command.query === undefined ? [] : ["--query", shellArgument(command.query)]),
+        ...(command.workspace === undefined
+          ? []
+          : ["--workspace", shellArgument(command.workspace)]),
         "--limit",
         String(command.limit),
         "--cursor",
@@ -615,6 +781,8 @@ function continuationCommandFor(command: ParsedCommand, cursor: string): string 
         shellArgument(command.missionId),
         "--view",
         command.view,
+        ...(command.queryVersion === 1 ? ["--query-version", "1"] : []),
+        ...(command.includeRecentInput ? ["--recent-input"] : []),
         "--limit",
         String(command.limit),
         "--cursor",
@@ -649,10 +817,6 @@ function continuationCommandFor(command: ParsedCommand, cursor: string): string 
   }
 }
 
-function shellArgument(value: string): string {
-  return /^[A-Za-z0-9_./:@=-]+$/u.test(value) ? value : `'${value.replaceAll("'", "'\\''")}'`;
-}
-
 function isMutationCommand(command: ParsedCommand): command is Extract<
   ParsedCommand,
   {
@@ -678,3 +842,42 @@ function isMutationCommand(command: ParsedCommand): command is Extract<
 }
 
 export type { IntegrationError };
+
+async function addTimeoutObservation(
+  outcome: CliRunPresentationOutcome,
+  host: CliLocalHost,
+): Promise<CliRunPresentationOutcome> {
+  if (
+    outcome.status !== "accepted" ||
+    !isRecord(outcome.result) ||
+    outcome.result["waitExpired"] !== true ||
+    outcome.missionId === undefined
+  )
+    return outcome;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    const observation = await Promise.race([
+      host.queryMission({
+        missionId: outcome.missionId,
+        view: "summary",
+        limit: 1,
+        queryVersion: 2,
+      }),
+      new Promise<undefined>((resolve) => {
+        timer = setTimeout(() => resolve(undefined), 250);
+      }),
+    ]);
+    if (observation !== undefined && "status" in observation)
+      return {
+        ...outcome,
+        result: asJsonValue({ ...outcome.result, observedStatus: observation.status }),
+      };
+  } catch {
+    /* The durable receipt remains actionable when observation is unavailable. */
+  } finally {
+    clearTimeout(timer);
+  }
+  return outcome;
+}
+
+export { runMissionOwnerProcessMessage } from "./mission-owner-runtime.ts";

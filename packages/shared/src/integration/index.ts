@@ -4,3 +4,7 @@ export * from "./contracts.schema.ts";
 export * from "./cli-v2.schema.ts";
 export * from "./mission-query.schema.ts";
 export * from "./management-command.schema.ts";
+export * from "./list-query.schema.ts";
+export * from "./cli-compact.schema.ts";
+export * from "./content-query.schema.ts";
+export * from "./cli-owner.schema.ts";

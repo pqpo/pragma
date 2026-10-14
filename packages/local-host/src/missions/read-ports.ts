@@ -52,7 +52,12 @@ export function createLocalHostMissionReadPorts(options: {
   };
   const query =
     options.query ??
-    createMissionQuery({ controller: options.controller, readMission: readEnvelope });
+    createMissionQuery({
+      controller: options.controller,
+      readMission: readEnvelope,
+      readLatestInput: async (id) =>
+        (await options.repository.readTimelinePage(id, { limit: 1 })).turns.at(-1)?.message,
+    });
   const watch = options.watch ?? createMissionWatchApplication({ controller: options.controller });
   return {
     readEnvelope,
@@ -352,7 +357,9 @@ async function listMissionSnapshots(
       return {
         id: missionId,
         missionId,
-        title: envelope?.title ?? missionId,
+        title:
+          envelope?.title ??
+          (typeof created?.data["title"] === "string" ? created.data["title"] : null),
         ...(executor === undefined ? {} : { executor }),
         ...(envelope === undefined
           ? created?.data["workspace"] === undefined

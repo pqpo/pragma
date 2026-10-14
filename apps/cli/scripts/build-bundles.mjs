@@ -7,6 +7,7 @@ import { fileURLToPath, URL } from "node:url";
 export const RUNTIME_RESOURCE_EXTERNALS = ["@napi-rs/keyring", "@silvia-odwyer/photon-node"];
 
 export const CLI_WORKERS = {
+  "mission-owner-worker": "apps/cli/src/mission-owner-worker.ts",
   "code-service-worker": "packages/core/src/code-service-worker.ts",
   "canonical-event-feed-worker": "packages/core/src/events/canonical-event-feed-worker.ts",
   "vector-worker": "packages/memory/src/retrieval/vector-worker.ts",

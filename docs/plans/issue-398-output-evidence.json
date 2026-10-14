@@ -1,0 +1,78 @@
+{
+  "baseline": "1cec48eba13590094c6ac0ddcd61dad3d01598ba",
+  "tokenizer": "@pragma/core RuntimeTokenCounter (gpt-tokenizer o200k_base)",
+  "methodology": "Fixed semantic fixtures rendered through the baseline and current presenters. Synthetic timestamps/event IDs normalized for repeatability. Calls count the explicitly scripted paths to acquire the same task/answer/range facts; this is an output benchmark, not native Runtime performance.",
+  "cursor": {
+    "before": {
+      "characters": 176,
+      "bytes": 176,
+      "tokens": 107
+    },
+    "after": {
+      "characters": 97,
+      "bytes": 97,
+      "tokens": 65
+    }
+  },
+  "continuation": {
+    "before": {
+      "bytes": 416,
+      "tokens": 230
+    },
+    "after": {
+      "bytes": 147,
+      "tokens": 77
+    }
+  },
+  "workflows": {
+    "findTaskAndResult": {
+      "before": {
+        "calls": 3,
+        "bytes": 1433,
+        "tokens": 625
+      },
+      "after": {
+        "calls": 2,
+        "bytes": 504,
+        "tokens": 202
+      },
+      "explanation": "Baseline text list has no title, so the scripted caller repeats the list as JSON to identify the task; the current title removes that call."
+    },
+    "waitAnswerContinue": {
+      "before": {
+        "calls": 3,
+        "bytes": 1816,
+        "tokens": 568
+      },
+      "after": {
+        "calls": 2,
+        "bytes": 1022,
+        "tokens": 320
+      },
+      "explanation": "Baseline text omits the question/choices and requires a result query before submitting the same response. Current text supplies them; response ownership/authorization remains unchanged."
+    },
+    "readLargeBoard": {
+      "before": {
+        "calls": 3,
+        "bytes": 23631,
+        "tokens": 6712
+      },
+      "after": {
+        "calls": 2,
+        "bytes": 14102,
+        "tokens": 4080
+      },
+      "explanation": "The baseline caller repeats the first read as JSON to discover truncation and the next byte offset. Current text carries the range/continuation, and both paths reconstruct identical UTF-8 content."
+    }
+  },
+  "jsonlQuery": {
+    "before": {
+      "bytes": 1062,
+      "tokens": 347
+    },
+    "after": {
+      "bytes": 581,
+      "tokens": 175
+    }
+  }
+}

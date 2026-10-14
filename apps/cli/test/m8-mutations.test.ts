@@ -5,6 +5,9 @@ import { createIntegrationError } from "@pragma/shared/integration";
 
 import { runCli, type CliIo, type CliLocalHost } from "../src/index.ts";
 import { parseCliArgv } from "../src/parser/argv.ts";
+import { runMissionOwnerRequest } from "../src/mission-owner-runtime.ts";
+import { presentRunOutcome } from "../src/presenters/index.ts";
+import type { CliOwnerFrame } from "@pragma/shared/integration";
 
 const MISSION_ID = "11111111-1111-4111-8111-111111111111";
 const EXECUTION_ID = "22222222-2222-4222-8222-222222222222";
@@ -91,6 +94,147 @@ function createMutationHost(
 }
 
 describe("M8 mutation and queue command surface", () => {
+  it("keeps request identity and operation state in an owner detached receipt", () => {
+    const io = createIo();
+    presentRunOutcome(
+      {
+        io,
+        format: "text",
+        requestId: REQUEST_ID,
+        command: "mission.send",
+        cliVersion: "test",
+        startedAt: new Date(),
+      },
+      {
+        status: "accepted",
+        missionId: MISSION_ID,
+        result: {
+          missionId: MISSION_ID,
+          operationId: OPERATION_ID,
+          operationState: "queued",
+          missionContinues: true,
+        },
+      },
+    );
+    expect(io.stdout.join("")).toContain(`Request ID: ${REQUEST_ID}`);
+    expect(io.stdout.join("")).toContain("Status: queued");
+  });
+  it.each(["succeeded", "waiting"] as const)(
+    "retains execution identity in owner mutation %s",
+    async (status) => {
+      const interaction = {
+        schemaVersion: "pragma.human-interaction/v1" as const,
+        kind: "request" as const,
+        missionId: MISSION_ID,
+        executionId: EXECUTION_ID,
+        interactionId: INTERACTION_ID,
+        sensitive: false,
+        interaction: { kind: "approval" as const, prompt: "Approve?" },
+      };
+      const { host } = createMutationHost({
+        execution: {
+          status,
+          executionId: EXECUTION_ID,
+          ...(status === "waiting" ? { interaction } : { result: "large result ".repeat(2000) }),
+        },
+      });
+      const frames: CliOwnerFrame[] = [];
+      await runMissionOwnerRequest(
+        {
+          schemaVersion: "pragma.cli-owner-request/v1",
+          requestId: REQUEST_ID,
+          argv: ["mission", "send", MISSION_ID, "--prompt", "hello", "--wait-timeout", "1"],
+        },
+        () => host,
+        async (frame) => {
+          frames.push(frame);
+        },
+      );
+      const completed = frames.find((frame) => frame.type === "completed");
+      expect(completed).toMatchObject({
+        type: "completed",
+        outcome: { executionId: EXECUTION_ID },
+      });
+      if (completed?.type === "completed" && status === "succeeded") {
+        const io = createIo();
+        presentRunOutcome(
+          {
+            io,
+            format: "text",
+            requestId: REQUEST_ID,
+            command: "mission.send",
+            cliVersion: "test",
+            startedAt: new Date(),
+          },
+          completed.outcome,
+        );
+        expect(io.stdout.join("")).toContain("Applied: send");
+        expect(io.stdout.join("").length).toBeLessThan(1000);
+      }
+    },
+  );
+
+  it("returns pending input without reading a TTY during finite embedded waiting", async () => {
+    const interaction = {
+      schemaVersion: "pragma.human-interaction/v1" as const,
+      kind: "request" as const,
+      missionId: MISSION_ID,
+      executionId: EXECUTION_ID,
+      interactionId: INTERACTION_ID,
+      sensitive: false,
+      interaction: { kind: "approval" as const, prompt: "Approve?" },
+    };
+    const { host } = createMutationHost({
+      execution: { executionId: EXECUTION_ID, status: "waiting", interaction },
+    });
+    const readLine = vi.fn(async () => {
+      throw new Error("Unexpected TTY read");
+    });
+    const io = createIo();
+    expect(
+      await runCli(
+        ["mission", "send", MISSION_ID, "--prompt", "hello", "--wait-timeout", "1"],
+        io,
+        {
+          localHost: host,
+          terminal: { isControllingTerminal: () => true, readLine },
+        },
+      ),
+    ).toBe(3);
+    expect(readLine).not.toHaveBeenCalled();
+    expect(io.stdout.join("")).toContain("Approve?");
+  });
+
+  it("returns the durable timeout receipt even when status observation never settles", async () => {
+    const { host, waitExecution } = createMutationHost();
+    waitExecution.mockImplementation(async () => await new Promise(() => {}));
+    const timedHost: CliLocalHost = {
+      ...host,
+      queryMission: async () => await new Promise(() => {}),
+    };
+    const io = createIo();
+    let guard: ReturnType<typeof setTimeout> | undefined;
+    try {
+      const result = await Promise.race([
+        runCli(
+          ["mission", "send", MISSION_ID, "--prompt", "hello", "--wait-timeout", "1", "--json"],
+          io,
+          { localHost: timedHost },
+        ),
+        new Promise((resolve) => {
+          guard = setTimeout(() => resolve("stalled"), 1800);
+        }),
+      ]);
+      expect(result).toBe(0);
+      expect(JSON.parse(io.stdout[0]!)).toMatchObject({
+        status: "accepted",
+        result: { waitExpired: true },
+      });
+    } finally {
+      clearTimeout(guard);
+    }
+  });
+
   it.each([false, true])(
     "submits explicit terminal recovery only when requested (abandon: %s)",
     async (abandon) => {

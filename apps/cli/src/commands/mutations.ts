@@ -37,6 +37,14 @@ export async function executeMutationCommand(
   command: MutationCommand,
   context: CliCommandContext,
   readStdin?: (() => Promise<Uint8Array>) | undefined,
+  onDurable?:
+    | ((receipt: {
+        missionId: string;
+        executionId?: string | undefined;
+        operationId?: string | undefined;
+        operationState?: string | undefined;
+      }) => void)
+    | undefined,
 ): Promise<{
   readonly result: JsonValue;
   readonly detached: boolean;
@@ -64,6 +72,11 @@ export async function executeMutationCommand(
   if (isTerminalOperation(submission.operation.state) && submission.operation.state !== "applied") {
     assertOperationSucceeded(submission.operation);
   }
+  onDurable?.({
+    missionId: command.missionId,
+    operationId: submission.operation.operationId,
+    operationState: submission.operation.state,
+  });
   if ("detach" in command && command.detach) {
     // submit() is the durability barrier. Detached callers must not wait for
     // an owner to acquire the Mission lease; a queued operation is a valid
@@ -137,10 +150,13 @@ async function waitForMutationExecution(options: {
     });
     if (execution.status !== "waiting" || execution.interaction === undefined) return execution;
     const useTerminalInteraction =
-      options.context.interactive === "always" ||
-      (options.context.interactive === "auto" &&
-        options.context.format === "text" &&
-        options.context.terminal.isControllingTerminal());
+      !(
+        "waitTimeoutSeconds" in options.command && options.command.waitTimeoutSeconds !== undefined
+      ) &&
+      (options.context.interactive === "always" ||
+        (options.context.interactive === "auto" &&
+          options.context.format === "text" &&
+          options.context.terminal.isControllingTerminal()));
     if (!useTerminalInteraction) return execution;
     const interaction = HumanInteractionRequestEnvelopeSchema.parse(execution.interaction);
     const response = (await collectHumanInteraction(options.context.terminal, interaction))

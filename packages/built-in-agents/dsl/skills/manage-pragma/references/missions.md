@@ -13,3 +13,5 @@ Pass bounded JSON using `--input request.json` or `--input -`. Keep request file
 workspace. Mutations retain Host approval; shell approval does not approve creating a task or
 sending instructions. Reuse `--request-id` only for an identical request. `input_required` returns
 control to the owning Execution. Cancellation does not undo accepted work.
+
+For explicitly requested external/public CLI automation, see [External CLI workflows](missions/external-cli.md). This does not replace the current Execution's authorized manage channel.

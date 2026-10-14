@@ -1,5 +1,19 @@
 import {
+  missionContentReference,
+  missionContentIdentity,
+  summarizeIntegrationExecutor,
+  boundMissionMutationResult,
+} from "@pragma/local-host";
+import { renderContentReference, contentReadCommand } from "./content.ts";
+import { renderInputSchemaText } from "./input-schema.ts";
+import { renderInteractionText } from "./interaction.ts";
+import {
   CliEventV2Schema,
+  MissionContentReadSchema,
+  MissionContentReferenceSchema,
+  CliCompactResultSchema,
+  CliCompactEventSchema,
+  CliCompactEndSchema,
   CliResultV2Schema,
   CliStreamEndDataV2Schema,
   EventIdSchema,
@@ -14,7 +28,7 @@ import {
 import type { AgentMessageUsage } from "@pragma/shared";
 
 import { HELP_TEXT, type OutputFormat } from "../parser/argv.ts";
-import { isRecord } from "../commands/utils.ts";
+import { isRecord, shellArgument, asJsonValue } from "../commands/utils.ts";
 
 export type CliIo = Readonly<{
   readonly writeStdout: (value: string) => void;
@@ -25,6 +39,7 @@ export type CliIo = Readonly<{
 export interface PresentationInput {
   readonly io: CliIo;
   readonly format: OutputFormat;
+  readonly outputView?: "full" | "compact" | undefined;
   readonly requestId: string;
   readonly command: string;
   readonly cliVersion: string;
@@ -82,7 +97,7 @@ export function presentRunOutcome(
   outcome: CliRunPresentationOutcome,
 ): void {
   if (input.format === "text") {
-    input.io.writeStdout(renderRunText(outcome, input.requestId));
+    input.io.writeStdout(renderRunText(outcome, input.requestId, input.command));
     return;
   }
   if (input.format === "json") {
@@ -113,6 +128,7 @@ export function createV2StreamPresenter(input: PresentationInput): CliV2StreamPr
   let sequence = 0;
   let finalized = false;
   let lastCursor: string | undefined;
+  const emittedResults = new Set<string>();
   const write = (event: {
     readonly type: string;
     readonly data: JsonValue;
@@ -125,7 +141,33 @@ export function createV2StreamPresenter(input: PresentationInput): CliV2StreamPr
   }): void => {
     if (finalized) return;
     if (event.cursor !== undefined) lastCursor = event.cursor;
-    const parsed = CliEventV2Schema.parse({
+    if (
+      input.outputView === "compact" &&
+      isRecord(event.data) &&
+      event.data["result"] !== undefined &&
+      ["command.result", "run.succeeded"].includes(event.type)
+    ) {
+      const key = resultKey(
+        valueText(event.data, "executionId") ?? event.executionId,
+        event.data["result"],
+      );
+      if (emittedResults.has(key)) return;
+      emittedResults.add(key);
+    }
+
+    if (
+      input.outputView === "compact" &&
+      isRecord(event.data) &&
+      ["command.result", "run.succeeded"].includes(event.type)
+    ) {
+      const reference = MissionContentReferenceSchema.safeParse(event.data["resultContent"]);
+      if (reference.success && reference.data.source === "result") {
+        const key = `${valueText(event.data, "executionId") ?? event.executionId ?? reference.data.id}|${reference.data.encoding}|${reference.data.fingerprint}`;
+        if (emittedResults.has(key)) return;
+        emittedResults.add(key);
+      }
+    }
+    const eventValue = {
       schemaVersion: "pragma.cli-event/v2",
       requestId: input.requestId,
       eventId: durableOrSyntheticEventId(event.eventId),
@@ -136,9 +178,12 @@ export function createV2StreamPresenter(input: PresentationInput): CliV2StreamPr
       ...(event.executionId === undefined ? {} : { executionId: event.executionId }),
       ...(event.cursor === undefined ? {} : { cursor: event.cursor }),
       type: event.type,
-      data: event.data,
-    });
-    input.io.writeStdout(`${JSON.stringify(parsed)}\n`);
+      data: input.outputView === "compact" ? boundedStreamData(event, input.command) : event.data,
+    };
+    const parsed = input.outputView === "compact" ? eventValue : CliEventV2Schema.parse(eventValue);
+    input.io.writeStdout(
+      `${JSON.stringify(input.outputView === "compact" ? compactEvent(parsed) : parsed)}\n`,
+    );
     input.io.flushStdout?.();
   };
   return {
@@ -173,6 +218,38 @@ export function createV2StreamPresenter(input: PresentationInput): CliV2StreamPr
         ...(outcome.usage === undefined ? {} : { usage: outcome.usage }),
         ...(outcome.warnings === undefined ? {} : { warnings: outcome.warnings }),
       });
+      if (input.outputView === "compact") {
+        if (
+          (outcome.status === "succeeded" || outcome.status === "accepted") &&
+          !emittedResults.has(resultKey(outcome.executionId, outcome.result))
+        ) {
+          write({
+            type: "command.result",
+            data: { command: input.command, result: outcome.result },
+            ...(outcome.missionId === undefined ? {} : { missionId: outcome.missionId }),
+            ...(outcome.executionId === undefined ? {} : { executionId: outcome.executionId }),
+          });
+        }
+        if (outcome.status === "input_required")
+          write({
+            type: "command.input_required",
+            data: { interaction: outcome.interaction as JsonValue },
+          });
+        const compactEnd = CliCompactEndSchema.parse({
+          status: end.status,
+          exitCode: end.exitCode,
+          missionId: end.missionId,
+          executionId: end.executionId,
+          lastCursor: end.lastCursor,
+          observedStatus: end.observedStatus,
+          stopReason: end.stopReason,
+          error: end.error,
+          ...(end.warnings.length === 0 ? {} : { warnings: end.warnings }),
+        });
+        write({ type: "stream.end", data: asJsonValue(compactEnd) });
+        finalized = true;
+        return;
+      }
       finalized = true;
       const parsed = {
         schemaVersion: "pragma.cli-event/v2" as const,
@@ -197,7 +274,7 @@ function durableOrSyntheticEventId(eventId: string | undefined): string {
 }
 
 function makeV2Result(input: PresentationInput, outcome: CliRunPresentationOutcome) {
-  return CliResultV2Schema.parse({
+  const full = CliResultV2Schema.parse({
     schemaVersion: "pragma.cli-result/v2",
     requestId: input.requestId,
     command: input.command,
@@ -229,6 +306,38 @@ function makeV2Result(input: PresentationInput, outcome: CliRunPresentationOutco
       protocolVersion: "pragma.integration/v2",
     },
   });
+  if (input.outputView !== "compact") return full;
+  const reference =
+    input.command.endsWith(".run") &&
+    (full.status === "succeeded" || full.status === "accepted") &&
+    full.missionId !== undefined &&
+    full.executionId !== undefined
+      ? missionContentReference(full.missionId, "result", full.executionId, full.result)
+      : undefined;
+  return CliCompactResultSchema.parse({
+    schemaVersion: "pragma.cli-result/v3",
+    requestId: full.requestId,
+    command: full.command,
+    status: full.status,
+    missionId: full.missionId,
+    executionId: full.executionId,
+    result:
+      reference === undefined
+        ? full.result !== undefined && input.command.endsWith(".describe")
+          ? summarizeIntegrationExecutor(full.result)
+          : full.result === undefined
+            ? undefined
+            : asJsonValue(
+                isMutationCommandName(input.command)
+                  ? boundMissionMutationResult(full.result)
+                  : full.result,
+              )
+        : undefined,
+    resultContent: reference,
+    interaction: full.interaction,
+    error: full.error,
+    ...(full.warnings.length === 0 ? {} : { warnings: full.warnings }),
+  });
 }
 
 function runOutcomeExitCode(outcome: CliRunPresentationOutcome): number {
@@ -241,18 +350,39 @@ function runOutcomeExitCode(outcome: CliRunPresentationOutcome): number {
   return 10;
 }
 
-function renderRunText(outcome: CliRunPresentationOutcome, requestId: string): string {
+function renderRunText(
+  outcome: CliRunPresentationOutcome,
+  requestId: string,
+  command: string,
+): string {
   if (outcome.status === "failed") return renderFailure(outcome.error!, requestId);
   if (outcome.status === "input_required") {
-    return `Request ID: ${requestId}\nInput required for ${outcome.missionId ?? "unknown"}/${outcome.executionId ?? "unknown"}. Use mission respond with the pending interaction.\n`;
+    return `Request ID: ${requestId}\n${renderInteractionText(outcome.interaction, outcome.missionId)}`;
   }
   if (outcome.status === "interrupted") {
     return `Request ID: ${requestId}\nInterrupted: ${outcome.executionId ?? "unknown"}\n`;
   }
   if (outcome.status === "accepted") {
+    if (isRecord(outcome.result) && outcome.result["waitExpired"] === true) {
+      const next = recordValue(outcome.result, "next");
+      return `WAIT EXPIRED: mission ${outcome.missionId ?? "unknown"}; observed=${valueText(outcome.result, "observedStatus") ?? valueText(outcome.result, "lastObservedStatus") ?? "unknown"}. Mission continues.\nRequest ID: ${requestId}\nNEXT: ${valueText(next, "watch") ?? `pragma mission watch ${outcome.missionId}`}\n`;
+    }
+
+    if (isMutationCommandName(command))
+      return renderMutationText(command, outcome.result, true, requestId);
     return `Accepted: request ${requestId}, mission ${outcome.missionId ?? "unknown"}, execution ${outcome.executionId ?? "unknown"}\n`;
   }
-  if (outcome.status === "succeeded") return `${JSON.stringify(outcome.result, null, 2)}\n`;
+  if (outcome.status === "succeeded") {
+    if (isMutationCommandName(command))
+      return renderMutationText(command, outcome.result, false, requestId);
+    const reference =
+      outcome.missionId !== undefined && outcome.executionId !== undefined
+        ? missionContentReference(outcome.missionId, "result", outcome.executionId, outcome.result)
+        : undefined;
+    return reference === undefined
+      ? `${resultText(outcome.result)}\n`
+      : renderContentReference(reference);
+  }
   return "\n";
 }
 
@@ -279,6 +409,8 @@ export function renderWatchEventText(event: {
 }): string {
   const data = isRecord(event.data) ? event.data : undefined;
   const executionId = valueText(data, "executionId");
+  if (data?.["contentReference"] !== undefined)
+    return `EVENT: ${event.type}\n${renderContentReference(data["contentReference"])}`;
   if (event.type === "mission.snapshot") {
     const missionId = typeof data?.["missionId"] === "string" ? data["missionId"] : "unknown";
     const status = typeof data?.["status"] === "string" ? data["status"] : "unknown";
@@ -319,7 +451,14 @@ export function renderWatchEventText(event: {
     return `Message${executionId === undefined ? "" : ` (${executionId})`}: ${valueText(data, "content") ?? ""}\n`;
   }
   if (event.type === "human.interaction.requested" || event.type === "run.input_required") {
-    return `Input required for execution ${executionId ?? "unknown"}; interaction ${valueText(data, "interactionId") ?? "<INTERACTION_ID>"}.\n`;
+    return renderInteractionText(
+      data?.["interaction"] &&
+        isRecord(data["interaction"]) &&
+        data["interaction"]["schemaVersion"] === "pragma.human-interaction/v1"
+        ? data["interaction"]
+        : data,
+      valueText(data, "missionId"),
+    );
   }
   if (event.type === "human.interaction.resolved") {
     return `Human input resolved for execution ${executionId ?? "unknown"}.\n`;
@@ -417,7 +556,18 @@ function renderText(
   }
   if (command === "mission.board.read" && isRecord(result)) {
     const item = result["item"];
-    if (isRecord(item) && typeof item["content"] === "string") return item["content"];
+    if (isRecord(item) && typeof item["content"] === "string") {
+      const range = recordValue(item, "contentRange");
+      if (range !== undefined && (range["nextStart"] !== undefined || range["start"] !== 0)) {
+        const next = range["nextStart"];
+        const footer =
+          next === undefined
+            ? "End of content."
+            : `TRUNCATED; NEXT: pragma mission board read ${shellArgument(valueText(result, "missionId") ?? "<MISSION_ID>")} ${shellArgument(valueText(item, "id") ?? "<CONTEXT_ID>")} --start ${String(next)} --max-bytes 8000`;
+        return `BYTE RANGE: [${String(range["start"])},${String(range["end"])}) / ${String(range["totalBytes"])} bytes\n${item["content"]}\n${footer}\n`;
+      }
+      return item["content"];
+    }
   }
   if (
     command === "executor.discover" ||
@@ -433,6 +583,15 @@ function renderText(
   if (command === "mission.list") return renderMissionList(result, continuationCommand);
   if (command === "mission.get") return renderMissionView(result, continuationCommand);
   if (command === "mission.queue.list") return renderQueueList(result, continuationCommand);
+  if (command === "mission.board.list") {
+    const items = arrayValue(result, "items");
+    return appendContinuation(
+      `${["CONTEXT ID", "DESCRIPTION", "BYTES"].join("\t")}\n${items.map((item) => (isRecord(item) ? [valueText(item, "id") ?? "unknown", valueText(item, "description") ?? "(description unavailable)", valueText(item, "sizeBytes") ?? "-"].join("\t") : JSON.stringify(item))).join("\n")}\n`,
+      result,
+      command,
+      continuationCommand,
+    );
+  }
   if (isMutationCommandName(command)) return renderMutationText(command, result, false);
   if (isRecord(result) && Array.isArray(result["items"])) {
     return renderList(result["items"], result, command, continuationCommand);
@@ -440,7 +599,7 @@ function renderText(
   if (command === "mission.board.search" && isRecord(result) && Array.isArray(result["matches"])) {
     return renderBoardSearch(result["matches"]);
   }
-  return `${JSON.stringify(result, null, 2)}\n`;
+  return `${resultText(result)}\n`;
 }
 
 function renderVersion(result: Record<string, unknown>): string {
@@ -541,7 +700,7 @@ function renderExecutorDetails(result: JsonValue): string {
     [
       `REF: ${ref}`,
       `NAME: ${valueText(result, "name") ?? "unknown"}`,
-      `DESCRIPTION: ${valueText(result, "description") ?? ""}`,
+      `DESCRIPTION: ${(valueText(result, "description") ?? "").slice(0, 500)}${(valueText(result, "description")?.length ?? 0) > 500 ? " (truncated; read --json --output-view full)" : ""}`,
       `SOURCE: ${valueText(result, "source") ?? "unknown"}`,
       `STATUS: ${valueText(availability, "status") ?? "unknown"}`,
       ...(project === undefined
@@ -555,6 +714,7 @@ function renderExecutorDetails(result: JsonValue): string {
         : [
             `CAPABILITIES: interactive=${booleanText(capabilities["interactive"])}, resumable=${booleanText(capabilities["resumable"])}, steerable=${booleanText(capabilities["steerable"])}, queue=${booleanText(capabilities["supportsQueue"])}`,
           ]),
+      ...renderInputSchemaText(result["inputSchema"], refKind ?? "expert", ref),
       `NEXT: ${runExample}`,
     ].join("\n") + "\n"
   );
@@ -577,6 +737,7 @@ function renderMissionList(
     const workspace = workspaceText(item["workspace"]);
     return [
       valueText(item, "missionId") ?? valueText(item, "id") ?? "unknown",
+      valueText(item, "title") ?? "(title unavailable)",
       valueText(item, "status") ?? valueText(item, "lifecycleStatus") ?? "unknown",
       executor ?? "-",
       valueText(item, "updatedAt") ?? "-",
@@ -584,7 +745,7 @@ function renderMissionList(
     ].join("\t");
   });
   return appendContinuation(
-    `${["MISSION ID", "STATUS", "EXECUTOR", "UPDATED", "WORKSPACE"].join("\t")}\n${lines.join("\n")}\n`,
+    `${["MISSION ID", "TITLE", "STATUS", "EXECUTOR", "UPDATED", "WORKSPACE"].join("\t")}\n${lines.join("\n")}\n`,
     result,
     "mission.list",
     continuationCommand,
@@ -596,10 +757,28 @@ function renderMissionView(
   continuationCommand?: ((cursor: string) => string) | undefined,
 ): string {
   if (!isRecord(result)) return `${JSON.stringify(result, null, 2)}\n`;
-  if (result["schemaVersion"] === "pragma.mission-summary/v1") return renderMissionSummary(result);
-  if (result["schemaVersion"] === "pragma.mission-result/v1") return renderMissionResult(result);
-  if (result["schemaVersion"] === "pragma.mission-events/v1") {
+  if (
+    result["schemaVersion"] === "pragma.mission-summary/v1" ||
+    result["schemaVersion"] === "pragma.mission-summary/v2"
+  )
+    return renderMissionSummary(result);
+  if (
+    result["schemaVersion"] === "pragma.mission-result/v1" ||
+    result["schemaVersion"] === "pragma.mission-result/v2" ||
+    result["schemaVersion"] === "pragma.mission-result/v3"
+  )
+    return renderMissionResult(result);
+  if (
+    result["schemaVersion"] === "pragma.mission-events/v1" ||
+    result["schemaVersion"] === "pragma.mission-events/v2"
+  ) {
     return renderMissionEvents(result, continuationCommand);
+  }
+  if (result["schemaVersion"] === "pragma.mission-content/v1") {
+    const content = MissionContentReadSchema.parse(result);
+    const range = content.contentRange;
+    const next = range.nextStart;
+    return `BYTE RANGE: [${String(range?.["start"])},${String(range?.["end"])}) / ${String(range?.["totalBytes"])}; ${String(result["encoding"])}\n${String(result["content"])}\n${next === undefined ? "End of content." : `NEXT: ${contentReadCommand({ ...content, end: next })}`}\n`;
   }
   return `${JSON.stringify(result, null, 2)}\n`;
 }
@@ -611,6 +790,7 @@ function renderMissionSummary(result: Record<string, unknown>): string {
   return (
     [
       `MISSION ID: ${valueText(result, "missionId") ?? "unknown"}`,
+      ...missionSemanticsText(result),
       `STATUS: ${valueText(result, "status") ?? "unknown"}`,
       `LIFECYCLE: ${valueText(result, "lifecycleStatus") ?? "unknown"}`,
       `EXECUTOR: ${executor ?? "-"}`,
@@ -625,21 +805,23 @@ function renderMissionSummary(result: Record<string, unknown>): string {
 function renderMissionResult(result: Record<string, unknown>): string {
   const lines = [
     `MISSION ID: ${valueText(result, "missionId") ?? "unknown"}`,
+    ...missionSemanticsText(result),
     `EXECUTION: ${valueText(result, "executionId") ?? "-"}`,
     `STATUS: ${valueText(result, "status") ?? "unknown"}`,
     `AVAILABLE: ${booleanText(result["available"])}`,
   ];
-  if (result["available"] === true && result["result"] !== undefined) {
-    lines.push(`RESULT:\n${JSON.stringify(result["result"], null, 2)}`);
+  if (result["resultContent"] !== undefined) {
+    lines.push(renderContentReference(result["resultContent"]));
+  } else if (result["available"] === true && result["result"] !== undefined) {
+    lines.push(`RESULT:\n${resultText(result["result"])}`);
   } else if (result["error"] !== undefined) {
     lines.push(`ERROR: ${JSON.stringify(result["error"], null, 2)}`);
+  } else if (result["status"] === "waiting") {
+    lines.push(
+      renderInteractionText(result["interaction"], valueText(result, "missionId")).trimEnd(),
+    );
   } else {
-    const missionId = valueText(result, "missionId") ?? "<MISSION_ID>";
-    const next =
-      result["status"] === "waiting" && isRecord(result["interaction"])
-        ? `mission respond ${missionId} --interaction ${valueText(result["interaction"], "interactionId") ?? "<INTERACTION_ID>"} ... (or mission watch ${missionId})`
-        : `mission watch ${missionId}`;
-    lines.push(`NEXT: ${next}`);
+    lines.push(`NEXT: pragma mission watch ${valueText(result, "missionId") ?? "<MISSION_ID>"}`);
   }
   return lines.join("\n") + "\n";
 }
@@ -655,7 +837,9 @@ function renderMissionEvents(
       valueText(item, "sequence") ?? "?",
       valueText(item, "occurredAt") ?? "-",
       valueText(item, "type") ?? "unknown",
-      JSON.stringify(item["data"]),
+      item["dataContent"] === undefined
+        ? JSON.stringify(item["data"])
+        : renderContentReference(item["dataContent"]),
     ].join("\t");
   });
   const body = `${["SEQUENCE", "OCCURRED AT", "TYPE", "DATA"].join("\t")}\n${lines.join("\n")}\n`;
@@ -682,11 +866,30 @@ function renderQueueList(
       valueText(item, "requestId") ?? "unknown",
       valueText(item, "status") ?? "unknown",
       booleanText(item["steerable"]),
-      contentPreview(item["content"]),
+      contentPreview(item["content"] ?? recordValue(item, "contentReference")?.["preview"]),
     ].join("\t");
   });
+  const contentHints = items
+    .filter(isRecord)
+    .map((item) => {
+      const reference =
+        item["contentReference"] ??
+        (typeof item["content"] === "string"
+          ? missionContentReference(
+              valueText(result, "missionId") ?? "",
+              "queue",
+              valueText(item, "requestId") ?? "",
+              item["content"],
+              160,
+            )
+          : undefined);
+      return reference === undefined
+        ? ""
+        : `CONTENT TRUNCATED (${valueText(item, "requestId")}): ${contentReadCommand(MissionContentReferenceSchema.parse(reference), 0)}`;
+    })
+    .filter(Boolean);
   return appendContinuation(
-    `${header}\n${lines.join("\n")}\n`,
+    `${header}\n${lines.join("\n")}\n${contentHints.join("\n")}${contentHints.length === 0 ? "" : "\n"}`,
     result,
     "mission.queue.list",
     continuationCommand,
@@ -697,7 +900,12 @@ function renderAcceptedText(command: string, result: JsonValue): string {
   return renderMutationText(command, result, true);
 }
 
-function renderMutationText(command: string, result: JsonValue, accepted: boolean): string {
+function renderMutationText(
+  command: string,
+  result: JsonValue,
+  accepted: boolean,
+  fallbackRequestId?: string,
+): string {
   const record = isRecord(result) ? result : undefined;
   const operation = recordValue(record, "operation") ?? record;
   const operationResult = recordValue(operation, "result");
@@ -707,12 +915,13 @@ function renderMutationText(command: string, result: JsonValue, accepted: boolea
     valueText(operation, "missionId") ??
     valueText(operationResult, "missionId") ??
     valueText(record, "missionId");
-  const requestId = valueText(operation, "requestId") ?? valueText(record, "requestId");
+  const requestId =
+    valueText(operation, "requestId") ?? valueText(record, "requestId") ?? fallbackRequestId;
   const operationId = valueText(operation, "operationId");
   const executionId =
     valueText(recordValue(record, "execution"), "executionId") ??
     valueText(operationResult, "executionId");
-  const state = valueText(operation, "state");
+  const state = valueText(operation, "state") ?? valueText(record, "operationState");
   if (missionId !== undefined) lines.push(`Mission ID: ${missionId}`);
   if (requestId !== undefined) lines.push(`Request ID: ${requestId}`);
   if (operationId !== undefined) lines.push(`Operation ID: ${operationId}`);
@@ -831,7 +1040,7 @@ function appendContinuation(
   const cursor = result["nextCursor"];
   const continuation =
     continuationCommand?.(cursor) ?? defaultContinuationCommand(command, result, cursor);
-  return `${body}Next cursor: ${cursor}\nContinue: ${continuation}\n`;
+  return `${body}Continue: ${continuation}\n`;
 }
 
 function defaultContinuationCommand(
@@ -853,4 +1062,103 @@ function defaultContinuationCommand(
     return `pragma mission board list ${valueText(result, "missionId") ?? "<MISSION_ID>"} --cursor ${cursor}`;
   }
   return `pragma ${command.replaceAll(".", " ")} --cursor ${cursor}`;
+}
+
+function missionSemanticsText(result: Record<string, unknown>): string[] {
+  const recent = recordValue(result, "recentInput");
+  return [
+    `TITLE: ${valueText(result, "title") ?? "(title unavailable)"}`,
+    ...(recent === undefined
+      ? []
+      : [
+          `RECENT INPUT${recent["truncated"] === true ? " (truncated)" : ""}: ${valueText(recent, "text") ?? ""}`,
+        ]),
+  ];
+}
+
+function resultText(value: unknown): string {
+  return typeof value === "string" ? value : JSON.stringify(value, null, 2);
+}
+
+function resultKey(executionId: string | undefined, result: unknown): string {
+  const identity = missionContentIdentity(result);
+  return `${executionId ?? ""}|${identity.encoding}|${identity.fingerprint}`;
+}
+function compactEvent(event: {
+  requestId: string;
+  sequence: number;
+  type: string;
+  data: JsonValue;
+  missionId?: string | undefined;
+  executionId?: string | undefined;
+  cursor?: string | undefined;
+  replayable: boolean;
+  eventId: string;
+  emittedAt: string;
+}) {
+  return CliCompactEventSchema.parse({
+    schemaVersion: "pragma.cli-event/v3",
+    requestId: event.requestId,
+    sequence: event.sequence,
+    type: event.type,
+    data: event.data,
+    missionId: event.missionId,
+    executionId: event.executionId,
+    cursor: event.cursor,
+    ...(event.replayable
+      ? { replayable: true, eventId: event.eventId, emittedAt: event.emittedAt }
+      : {}),
+  });
+}
+
+function boundedEventResult(
+  data: Record<string, unknown>,
+  missionId: string,
+  executionId: string,
+): JsonValue {
+  const reference = missionContentReference(missionId, "result", executionId, data["result"]);
+  return asJsonValue(
+    reference === undefined ? data : { ...data, result: undefined, resultContent: reference },
+  );
+}
+
+function boundedStreamData(
+  event: {
+    type: string;
+    data: JsonValue;
+    missionId?: string | undefined;
+    executionId?: string | undefined;
+    replayable?: boolean | undefined;
+    cursor?: string | undefined;
+  },
+  command: string,
+): JsonValue {
+  if (
+    event.missionId === undefined ||
+    event.type.includes("human.") ||
+    event.type.includes("interaction") ||
+    event.type.includes("input_required") ||
+    event.type.includes("failed")
+  )
+    return event.data;
+  if (
+    isRecord(event.data) &&
+    (MissionContentReferenceSchema.safeParse(event.data["contentReference"]).success ||
+      MissionContentReferenceSchema.safeParse(event.data["resultContent"]).success)
+  )
+    return event.data;
+  if (isMutationCommandName(command) && isRecord(event.data) && event.data["result"] !== undefined)
+    return asJsonValue({ ...event.data, result: boundMissionMutationResult(event.data["result"]) });
+  const executionId =
+    (isRecord(event.data) ? valueText(event.data, "executionId") : undefined) ?? event.executionId;
+  if (
+    ["run.succeeded", "command.result"].includes(event.type) &&
+    isRecord(event.data) &&
+    event.data["result"] !== undefined &&
+    executionId !== undefined
+  )
+    return boundedEventResult(event.data, event.missionId, executionId);
+  if (!event.replayable || event.cursor === undefined) return event.data;
+  const reference = missionContentReference(event.missionId, "event", event.cursor, event.data);
+  return reference === undefined ? event.data : asJsonValue({ contentReference: reference });
 }

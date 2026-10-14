@@ -163,6 +163,8 @@ export function createLocalHostNodeApplication(
     missionsPath: join(options.pragmaHome, "data", "missions"),
     missionPath: rawMissionRepository.storagePath,
     readMission: readMissionEnvelope,
+    readLatestInput: async (id) =>
+      (await rawMissionRepository.readTimelinePage(id, { limit: 1 })).turns.at(-1)?.message,
     recoverSemanticWrite: async ({ missionId, guard }) => {
       if (replaySemanticWrite === undefined)
         throw new Error("Mission repository replay is not initialized.");

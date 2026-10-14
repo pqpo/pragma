@@ -19,13 +19,17 @@ export type CliLocalHost = Pick<
   | "integrationCapability"
   | "resolveWorkspace"
   | "listExecutors"
+  | "queryExecutors"
   | "getMission"
   | "listMissions"
+  | "queryMissions"
   | "queryMission"
   | "listSharedBoard"
+  | "querySharedBoard"
   | "readSharedBoard"
   | "searchSharedBoard"
   | "listMissionQueue"
+  | "queryMissionQueue"
   | "watchMission"
   | "resumeMission"
   | "missionControl"
@@ -38,6 +42,7 @@ export interface CliCommandContext {
   readonly startedAt: Date;
   readonly localHost: CliLocalHost;
   readonly format: OutputFormat;
+  readonly outputView?: "full" | "compact" | undefined;
   readonly interactive: InteractiveMode;
   readonly terminal: TerminalPort;
 }

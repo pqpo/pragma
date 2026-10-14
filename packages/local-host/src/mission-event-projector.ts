@@ -1,5 +1,7 @@
+import { missionContentReference } from "./mission-content-query.ts";
 import { createHash } from "node:crypto";
 
+import { MissionScalarEventDataSchema } from "@pragma/shared/integration";
 import type { JsonValue } from "@pragma/shared/integration";
 
 import type { LocalHostRunEvent, LocalHostRunMissionPort, LocalHostRunTerminal } from "./run.ts";
@@ -21,6 +23,7 @@ export function createLocalHostMissionEventProjector(options: {
   readonly guard: Parameters<LocalHostRunMissionPort["append"]>[1];
   readonly mission: Pick<LocalHostRunMissionPort, "controller" | "append">;
   readonly redactor?: RunRedactor | undefined;
+  readonly maxContentBytes?: number | undefined;
   readonly onEvent?: ((event: LocalHostRunEvent) => void) | undefined;
   readonly knownEventIds?: Iterable<string> | undefined;
 }): LocalHostMissionEventProjector {
@@ -30,9 +33,59 @@ export function createLocalHostMissionEventProjector(options: {
   let failed = false;
   let failure: unknown;
 
+  const boundedPublishedData = (event: LocalHostRunEvent, cursor: string): JsonValue => {
+    if (
+      options.maxContentBytes === undefined ||
+      event.type.includes("human.") ||
+      event.type.includes("interaction") ||
+      event.type.includes("input_required") ||
+      event.type.includes("failed")
+    )
+      return event.data;
+    if (
+      event.type === "run.succeeded" &&
+      isObjectData(event.data) &&
+      event.data["result"] !== undefined &&
+      typeof event.data["executionId"] === "string"
+    ) {
+      const reference = missionContentReference(
+        options.missionId,
+        "result",
+        event.data["executionId"],
+        event.data["result"],
+        options.maxContentBytes,
+      );
+      if (reference !== undefined)
+        return Object.fromEntries([
+          ...Object.entries(event.data).filter(([key]) => key !== "result"),
+          ["resultContent", reference],
+        ]) as JsonValue;
+    }
+    const reference = missionContentReference(
+      options.missionId,
+      "event",
+      cursor,
+      event.data,
+      options.maxContentBytes,
+    );
+    return reference === undefined
+      ? event.data
+      : (JSON.parse(JSON.stringify({ contentReference: reference })) as JsonValue);
+  };
+
   const appendOne = async (event: LocalHostRunEvent, publish: boolean): Promise<void> => {
     const redacted = redactEvent(event, redactor);
-    if (!isObjectData(event.data)) {
+    const scalar =
+      !isObjectData(redacted.data) &&
+      options.maxContentBytes !== undefined &&
+      missionContentReference(
+        options.missionId,
+        "event",
+        "pending",
+        redacted.data,
+        options.maxContentBytes,
+      ) !== undefined;
+    if (!isObjectData(event.data) && !scalar) {
       if (publish) {
         options.onEvent?.({ ...redacted, replayable: false, cursor: undefined });
       }
@@ -54,12 +107,25 @@ export function createLocalHostMissionEventProjector(options: {
       options.missionId,
       options.guard,
       event.type,
-      redactEventData(event.data, redactor),
+      scalar
+        ? MissionScalarEventDataSchema.parse({
+            schemaVersion: "pragma.mission-event-scalar/v1",
+            value: redacted.data,
+          })
+        : redactEventData(event.data, redactor),
       event.eventId,
     );
     if (event.eventId !== undefined) knownEventIds.add(event.eventId);
     if (publish) {
-      options.onEvent?.({ ...redacted, replayable: true, cursor: committed.cursor });
+      options.onEvent?.({
+        ...redacted,
+        eventId: committed.eventId ?? redacted.eventId,
+        occurredAt: committed.occurredAt ?? redacted.occurredAt,
+        data: boundedPublishedData(redacted, committed.cursor),
+        missionId: options.missionId,
+        replayable: true,
+        cursor: committed.cursor,
+      });
     }
   };
 

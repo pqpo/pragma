@@ -2,11 +2,17 @@ import {
   BoardListResultSchema,
   BoardReadResultSchema,
   BoardSearchResultSchema,
-  ExecutorDescriptorSchema,
   type HumanInteractionRequestEnvelope,
   type JsonValue,
 } from "@pragma/shared/integration";
-import { unsupportedMissionView } from "@pragma/local-host";
+import {
+  unsupportedMissionView,
+  paginateIntegrationItems,
+  queryIntegrationMissions,
+  queryIntegrationExecutors,
+  normalizeIntegrationExecutor,
+  fullIntegrationItems,
+} from "@pragma/local-host";
 
 import type { ParsedCommand } from "../parser/argv.ts";
 import { HELP_TEXT } from "../parser/argv.ts";
@@ -14,15 +20,7 @@ import { detectInstalledDesktopVersion } from "../desktop-version.ts";
 import { toIntegrationError } from "./errors.ts";
 import { collectHumanInteraction } from "../terminal.ts";
 import type { CliCommandContext } from "./types.ts";
-import {
-  asJsonValue,
-  hostPage,
-  isRecord,
-  pageItems,
-  recordField,
-  stringField,
-  type CursorScope,
-} from "./utils.ts";
+import { asJsonValue, hostPage, isRecord, recordField, stringField } from "./utils.ts";
 
 export async function executeReadOnlyCommand(
   command: ParsedCommand,
@@ -137,35 +135,28 @@ async function discoverExecutors(
   command: Extract<ParsedCommand, { readonly kind: "executor-discover" }>,
   context: CliCommandContext,
 ): Promise<JsonValue> {
-  const page = hostPage(await context.localHost.listExecutors());
-  const descriptors = page.items
-    .map((item) => normalizeExecutor(item, command.executorKind))
-    .filter((item) => matchesExecutor(item, command));
-  if (command.selector !== undefined && descriptors.length === 0) {
-    throw toIntegrationError({
-      code: "EXECUTOR_NOT_FOUND",
-      message: `Executor not found: ${command.selector}.`,
-    });
-  }
-  const result = paginateOrHost(
-    descriptors,
-    page.hostPaged,
-    page.nextCursor,
-    command.limit,
-    command.cursor,
-    {
-      command: `${command.executorKind}.discover`,
-      filters: {
-        selector: command.selector,
-        query: command.query,
-        status: command.status,
-        project: command.project,
-      },
-    },
-  );
+  const request = {
+    executorKind: command.executorKind,
+    limit: command.limit,
+    cursor: command.cursor,
+    selector: command.selector,
+    query: command.query,
+    status: command.status,
+    project: command.project,
+    ...(context.format === "text" || context.outputView === "compact"
+      ? { maxContentBytes: 8000 }
+      : {}),
+  };
+  const result =
+    context.localHost.queryExecutors === undefined
+      ? queryIntegrationExecutors(
+          fullIntegrationItems(await context.localHost.listExecutors()),
+          request,
+        )
+      : hostPage(await context.localHost.queryExecutors(request));
   return {
     kind: command.executorKind,
-    items: result.items,
+    items: result.items.map(asJsonValue),
     ...(result.nextCursor === undefined ? {} : { nextCursor: result.nextCursor }),
   };
 }
@@ -175,7 +166,7 @@ async function describeExecutor(
   context: CliCommandContext,
 ): Promise<JsonValue> {
   const descriptors = hostPage(await context.localHost.listExecutors()).items.map((item) =>
-    normalizeExecutor(item, command.executorKind),
+    normalizeIntegrationExecutor(item, command.executorKind),
   );
   const match = descriptors.find((descriptor) => {
     const record = isRecord(descriptor) ? descriptor : undefined;
@@ -199,19 +190,21 @@ async function listMissions(
   command: Extract<ParsedCommand, { readonly kind: "mission-list" }>,
   context: CliCommandContext,
 ): Promise<JsonValue> {
-  const page = hostPage(await context.localHost.listMissions());
-  const filtered = page.items.filter((mission) => matchesMission(mission, command));
-  const result = paginateOrHost(
-    filtered,
-    page.hostPaged,
-    page.nextCursor,
-    command.limit,
-    command.cursor,
-    {
-      command: "mission.list",
-      filters: { status: command.status, executor: command.executor },
-    },
-  );
+  const request = {
+    limit: command.limit,
+    cursor: command.cursor,
+    status: command.status,
+    executor: command.executor,
+    query: command.query,
+    workspace: command.workspace,
+  };
+  const result =
+    context.localHost.queryMissions === undefined
+      ? queryIntegrationMissions(
+          fullIntegrationItems(await context.localHost.listMissions()),
+          request,
+        )
+      : hostPage(await context.localHost.queryMissions(request));
   return {
     items: result.items.map(asJsonValue),
     ...(result.nextCursor === undefined ? {} : { nextCursor: result.nextCursor }),
@@ -229,6 +222,17 @@ async function getMission(
     await context.localHost.queryMission({
       missionId: command.missionId,
       view: command.view,
+      ...(command.content === undefined ? {} : { content: command.content }),
+      ...((context.format === "text" || context.outputView === "compact") &&
+      command.queryVersion !== 1
+        ? { maxContentBytes: 8000 }
+        : {}),
+      ...(command.view === "events"
+        ? {}
+        : {
+            queryVersion: command.queryVersion ?? 2,
+            includeRecentInput: command.includeRecentInput,
+          }),
       limit: command.limit,
       ...(command.cursor === undefined ? {} : { cursor: command.cursor }),
     }),
@@ -239,24 +243,27 @@ async function listBoard(
   command: Extract<ParsedCommand, { readonly kind: "board-list" }>,
   context: CliCommandContext,
 ): Promise<JsonValue> {
-  const page = hostPage(await context.localHost.listSharedBoard(command.missionId), [
-    "items",
-    "entries",
-  ]);
-  const items = page.items.map((item) => mapBoardItem(item));
-  const result = paginateOrHost(
-    items,
-    page.hostPaged,
-    page.nextCursor,
-    command.limit,
-    command.cursor,
-    { command: "mission.board.list", filters: { missionId: command.missionId } },
-  );
+  const request = {
+    limit: command.limit,
+    ...(command.cursor === undefined ? {} : { cursor: command.cursor }),
+  };
+  const result =
+    context.localHost.querySharedBoard === undefined
+      ? paginateIntegrationItems(
+          fullIntegrationItems(await context.localHost.listSharedBoard(command.missionId), [
+            "items",
+            "entries",
+          ]).map((item) => mapBoardItem(item)),
+          request,
+          "mission.board.list",
+          { missionId: command.missionId },
+        )
+      : hostPage(await context.localHost.querySharedBoard(command.missionId, request));
   return asJsonValue(
     BoardListResultSchema.parse({
       schemaVersion: "pragma.board-list/v1",
       missionId: command.missionId,
-      items: result.items,
+      items: result.items.map((item) => mapBoardItem(item)),
       ...(result.nextCursor === undefined ? {} : { nextCursor: result.nextCursor }),
     }),
   );
@@ -278,11 +285,18 @@ async function readBoard(
       rawItem,
       rawItem !== undefined && typeof rawItem["content"] === "string" ? rawItem["content"] : "",
     );
+    assertBoardReadProgress(BoardReadResultSchema.parse(raw));
     return asJsonValue(BoardReadResultSchema.parse(raw));
   }
   const record = isRecord(raw) ? raw : {};
   const content = typeof record["content"] === "string" ? record["content"] : "";
   const mappedRange = mapContentRange(record["contentRange"], content);
+  if (mappedRange["nextStart"] !== undefined && mappedRange["nextStart"] <= mappedRange["start"]!)
+    throw toIntegrationError({
+      code: "INVALID_ARGUMENT",
+      message:
+        "The byte budget cannot fit the next UTF-8 character. Increase --max-bytes to at least 4.",
+    });
   return asJsonValue(
     BoardReadResultSchema.parse({
       schemaVersion: "pragma.board-read/v1",
@@ -326,23 +340,12 @@ async function searchBoard(
       snippet: line,
     };
   });
-  const result = paginateOrHost(
-    matches,
-    page.hostPaged,
-    page.nextCursor,
-    command.maxResults,
-    undefined,
-    {
-      command: "mission.board.search",
-      filters: {
-        missionId: command.missionId,
-        query: command.query,
-        maxResults: command.maxResults,
-        caseSensitive: command.caseSensitive,
-        contextLines: command.contextLines,
-      },
-    },
-  );
+  if (matches.length > command.maxResults)
+    throw toIntegrationError({
+      code: "PROTOCOL_VERSION_UNSUPPORTED",
+      message: "Host search exceeded the requested maximum; refine the search.",
+    });
+  const result = { items: matches, nextCursor: page.nextCursor };
   return asJsonValue(
     BoardSearchResultSchema.parse({
       schemaVersion: "pragma.board-search/v1",
@@ -358,16 +361,23 @@ async function listQueue(
   command: Extract<ParsedCommand, { readonly kind: "queue-list" }>,
   context: CliCommandContext,
 ): Promise<JsonValue> {
-  const raw = await context.localHost.listMissionQueue(command.missionId);
+  const request = {
+    limit: command.limit,
+    ...(context.format === "text" || context.outputView === "compact"
+      ? { maxContentBytes: 1024 }
+      : {}),
+    ...(command.cursor === undefined ? {} : { cursor: command.cursor }),
+  };
+  const raw =
+    context.localHost.queryMissionQueue === undefined
+      ? await context.localHost.listMissionQueue(command.missionId)
+      : await context.localHost.queryMissionQueue(command.missionId, request);
   const page = hostPage(raw, ["items", "queue"]);
-  const result = paginateOrHost(
-    page.items.map(asJsonValue),
-    page.hostPaged,
-    page.nextCursor,
-    command.limit,
-    command.cursor,
-    { command: "mission.queue.list", filters: { missionId: command.missionId } },
-  );
+  const result = page.hostPaged
+    ? page
+    : paginateIntegrationItems(page.items.map(asJsonValue), request, "mission.queue.list", {
+        missionId: command.missionId,
+      });
   const projection = isRecord(raw) ? (isRecord(raw["queue"]) ? raw["queue"] : raw) : undefined;
   return {
     missionId: command.missionId,
@@ -388,129 +398,9 @@ async function listQueue(
     ...(typeof projection?.["supportsSteer"] === "boolean"
       ? { supportsSteer: projection["supportsSteer"] }
       : {}),
-    items: result.items,
+    items: result.items.map(asJsonValue),
     ...(result.nextCursor === undefined ? {} : { nextCursor: result.nextCursor }),
   };
-}
-
-function normalizeExecutor(
-  value: unknown,
-  expectedKind: Extract<ParsedCommand, { readonly kind: "executor-discover" }>["executorKind"],
-): JsonValue {
-  const direct = ExecutorDescriptorSchema.safeParse(value);
-  if (direct.success) return asJsonValue(direct.data);
-  if (!isRecord(value)) return asJsonValue(value);
-
-  const rawKind = value["kind"];
-  const kind =
-    rawKind === "team" || rawKind === "expert" || rawKind === "flow" ? rawKind : expectedKind;
-  const rawRef = value["ref"];
-  const ref = typeof rawRef === "string" ? rawRef : undefined;
-  const id = ref?.startsWith(`${kind}:`) ? ref.slice(kind.length + 1) : undefined;
-  if (id === undefined || !/^[0-9a-hjkmnp-tv-z]{16}$/u.test(id)) return asJsonValue(value);
-
-  const origin =
-    value["origin"] === "built-in"
-      ? "built_in"
-      : value["origin"] === "project"
-        ? "project"
-        : "installed";
-  const availability = recordField(value, "availability");
-  const descriptor: Record<string, unknown> = {
-    schemaVersion: "pragma.integration-executor/v1",
-    ref: { kind, id },
-    name: stringField(value, "name") ?? ref,
-    description: stringField(value, "description") ?? "",
-    source: origin,
-    availability: {
-      status:
-        availability?.["status"] === "needs_attention" || availability?.["status"] === "unavailable"
-          ? availability["status"]
-          : "ready",
-      blockingCodes: Array.isArray(availability?.["blockingCodes"])
-        ? availability["blockingCodes"]
-        : [],
-    },
-    workspace: recordField(value, "workspace") ?? { required: true, allowNonGitDirectory: true },
-    capabilities: recordField(value, "capabilities") ?? {
-      interactive: true,
-      resumable: true,
-      steerable: kind !== "flow",
-      supportsQueue: kind !== "flow",
-    },
-  };
-  if (value["inputSchema"] !== undefined) descriptor["inputSchema"] = value["inputSchema"];
-  const project = recordField(value, "project");
-  if (project !== undefined) descriptor["project"] = project;
-  const parsed = ExecutorDescriptorSchema.safeParse(descriptor);
-  return parsed.success ? asJsonValue(parsed.data) : asJsonValue(value);
-}
-
-function matchesExecutor(
-  value: JsonValue,
-  command: Extract<ParsedCommand, { readonly kind: "executor-discover" }>,
-): boolean {
-  if (!isRecord(value)) return false;
-  const ref = referenceText(value["ref"]);
-  const kind = ref?.split(":", 1)[0] ?? value["kind"];
-  if (kind !== command.executorKind) return false;
-  if (command.selector !== undefined) {
-    if (isCanonicalExecutorRef(command.selector)) return ref === command.selector;
-    const haystack = [stringField(value, "name"), stringField(value, "description")]
-      .filter((item): item is string => item !== undefined)
-      .join(" ")
-      .toLocaleLowerCase();
-    if (!haystack.includes(command.selector.toLocaleLowerCase())) return false;
-  }
-  if (command.query !== undefined) {
-    const haystack = [ref, stringField(value, "name"), stringField(value, "description")]
-      .filter((item): item is string => item !== undefined)
-      .join(" ")
-      .toLocaleLowerCase();
-    if (!haystack.includes(command.query.toLocaleLowerCase())) return false;
-  }
-  if (
-    command.status !== undefined &&
-    recordField(value, "availability")?.["status"] !== command.status
-  ) {
-    return false;
-  }
-  if (
-    command.project !== undefined &&
-    recordField(value, "project")?.["projectId"] !== command.project
-  ) {
-    return false;
-  }
-  return true;
-}
-
-function matchesMission(
-  value: unknown,
-  command: Extract<ParsedCommand, { readonly kind: "mission-list" }>,
-): boolean {
-  if (!isRecord(value)) return false;
-  const execution = recordField(value, "execution");
-  const status = stringField(value, "status") ?? stringField(execution, "status");
-  const lifecycleStatus = stringField(value, "lifecycleStatus");
-  if (
-    command.status !== undefined &&
-    status !== command.status &&
-    lifecycleStatus !== command.status
-  ) {
-    return false;
-  }
-  if (command.executor !== undefined) {
-    const executorValue = value["executor"];
-    const ref =
-      referenceText(isRecord(executorValue) ? executorValue["ref"] : undefined) ??
-      referenceText(executorValue);
-    if (ref !== command.executor) return false;
-  }
-  return true;
-}
-
-function isCanonicalExecutorRef(value: string): boolean {
-  return /^(team|expert|flow):[0-9a-hjkmnp-tv-z]{16}$/u.test(value);
 }
 
 function mapBoardItem(value: unknown, content = ""): Record<string, unknown> {
@@ -591,36 +481,6 @@ function mapContentRange(value: unknown, content: string): Record<string, number
         ? record["nextStartOffset"]
         : end;
   return { start, end, totalBytes, ...(nextStart < totalBytes ? { nextStart } : {}) };
-}
-
-function paginateOrHost<T>(
-  items: readonly T[],
-  hostPaged: boolean,
-  hostNextCursor: string | undefined,
-  limit: number,
-  cursor: string | undefined,
-  scope: CursorScope,
-): { readonly items: readonly T[]; readonly nextCursor?: string | undefined } {
-  if (hostPaged) {
-    if (cursor !== undefined) {
-      throw toIntegrationError({
-        code: "CURSOR_INVALID",
-        message: "This Host query does not accept a client cursor.",
-      });
-    }
-    return {
-      items: items.slice(0, limit),
-      ...(hostNextCursor === undefined ? {} : { nextCursor: hostNextCursor }),
-    };
-  }
-  try {
-    return pageItems(items, limit, cursor, scope);
-  } catch {
-    throw toIntegrationError({
-      code: "CURSOR_INVALID",
-      message: "The cursor is invalid for this query.",
-    });
-  }
 }
 
 function referenceText(value: unknown): string | undefined {
@@ -1011,4 +871,16 @@ function completionPowerShellScript(): string {
 
 function replaceShellDollar(script: string, separator: string): string {
   return script.replaceAll("__PRAGMA_DOLLAR__", "$").trimStart() + separator;
+}
+
+function assertBoardReadProgress(result: {
+  item: { contentRange: { start: number; nextStart?: number | undefined } };
+}): void {
+  const range = result.item.contentRange;
+  if (range.nextStart !== undefined && range.nextStart <= range.start)
+    throw toIntegrationError({
+      code: "INVALID_ARGUMENT",
+      message:
+        "The byte budget cannot fit the next UTF-8 character. Increase --max-bytes to at least 4.",
+    });
 }

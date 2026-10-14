@@ -1,3 +1,4 @@
+import { MissionSchema } from "@pragma/shared";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -11,7 +12,14 @@ import {
   type MissionControllerStore,
   type MissionQueryView,
 } from "../src/index.ts";
-import { MissionEventsSchema, MissionSummarySchema } from "@pragma/shared/integration";
+import {
+  MissionEventsSchema,
+  MissionSummarySchema,
+  MissionSummaryV2Schema,
+  MissionResultV2Schema,
+  MissionBoundedResultSchema,
+  MissionContentReadSchema,
+} from "@pragma/shared/integration";
 
 const MISSION_ID = "11111111-1111-4111-8111-111111111111";
 const OTHER_MISSION_ID = "22222222-2222-4222-8222-222222222222";
@@ -25,6 +33,178 @@ describe("Mission query projections", () => {
     await Promise.all(
       temporaryPaths.splice(0).map(async (path) => await rm(path, { recursive: true })),
     );
+  });
+
+  it("negotiates v2 titles while preserving strict v1 and missing historical titles", async () => {
+    const controller = await createController();
+    await appendEvents(controller, [
+      ["mission.created", { title: "Review repository" }],
+      ["run.started", { executionId: EXECUTION_ONE }],
+    ]);
+    const query = createMissionQuery({ controller });
+    const old = await query.queryMission({ missionId: MISSION_ID, view: "summary", limit: 50 });
+    expect(MissionSummarySchema.safeParse(old).success).toBe(true);
+    expect(old).not.toHaveProperty("title");
+    const summary = await query.queryMission({
+      missionId: MISSION_ID,
+      view: "summary",
+      limit: 50,
+      queryVersion: 2,
+    });
+    expect(MissionSummaryV2Schema.parse(summary).title).toBe("Review repository");
+    const result = await query.queryMission({
+      missionId: MISSION_ID,
+      view: "result",
+      limit: 50,
+      queryVersion: 2,
+    });
+    expect(MissionResultV2Schema.parse(result).title).toBe("Review repository");
+    expect(MissionSummarySchema.safeParse(summary).success).toBe(false);
+  });
+
+  it("returns null for a historical title without reading a nonexistent timeline", async () => {
+    const controller = await createController();
+    await appendEvents(controller, [["mission.created", {}]]);
+    const query = createMissionQuery({
+      controller,
+      readLatestInput: async () => {
+        throw new Error("missing timeline");
+      },
+    });
+    expect(
+      await query.queryMission({
+        missionId: MISSION_ID,
+        view: "summary",
+        limit: 50,
+        queryVersion: 2,
+        includeRecentInput: true,
+      }),
+    ).toMatchObject({ title: null });
+  });
+
+  it("derives a bounded latest input from the durable timeline port", async () => {
+    const controller = await createController();
+    await appendEvents(controller, [["mission.created", {}]]);
+    const mission = MissionSchema.parse({
+      schemaVersion: "pragma.mission/v11",
+      id: MISSION_ID,
+      title: "Task theme",
+      goal: "First request",
+      initialMessageId: EXECUTION_ONE,
+      workspace: { path: "/workspace", basename: "workspace" },
+      project: { id: "p", revision: 1 },
+      executor: { kind: "expert", ref: "expert:aaaaaaaaaaaaaaaa", name: "Fixture" },
+      lifecycleStatus: "active",
+      createdAt: "2026-08-27T00:00:00Z",
+      updatedAt: "2026-08-27T00:00:00Z",
+      contextMounts: [],
+    });
+    const query = createMissionQuery({
+      controller,
+      readMission: async () => mission,
+      readLatestInput: async () => ({ id: EXECUTION_TWO, content: "😀".repeat(300) }),
+    });
+    const value = MissionSummaryV2Schema.parse(
+      await query.queryMission({
+        missionId: MISSION_ID,
+        view: "summary",
+        limit: 50,
+        queryVersion: 2,
+        includeRecentInput: true,
+      }),
+    );
+    expect(value.title).toBe("Task theme");
+    expect(value.recentInput).toEqual({
+      messageId: EXECUTION_TWO,
+      text: "😀".repeat(250),
+      truncated: true,
+    });
+    expect(
+      await query.queryMission({
+        missionId: MISSION_ID,
+        view: "summary",
+        limit: 50,
+        queryVersion: 2,
+      }),
+    ).not.toHaveProperty("recentInput");
+  });
+
+  it("reads a bounded final result from durable facts in a new query instance", async () => {
+    const controller = await createController();
+    const result = "中😀".repeat(30);
+    await appendEvents(controller, [
+      ["mission.created", {}],
+      ["run.started", { executionId: EXECUTION_ONE }],
+      ["run.succeeded", { executionId: EXECUTION_ONE, result }],
+    ]);
+    const query = createMissionQuery({ controller });
+    const bounded = MissionBoundedResultSchema.parse(
+      await query.queryMission({
+        missionId: MISSION_ID,
+        view: "result",
+        limit: 50,
+        queryVersion: 2,
+        maxContentBytes: 4,
+      }),
+    );
+    expect(bounded.result).toBeUndefined();
+    expect(bounded.resultContent!.preview).toBe("中");
+    const fresh = createMissionQuery({
+      controller: createMissionControllerStore({ missionsPath: temporaryPaths.at(-1)! }),
+    });
+    const read = MissionContentReadSchema.parse(
+      await fresh.queryMission({
+        missionId: MISSION_ID,
+        view: "content",
+        limit: 50,
+        content: {
+          source: "result",
+          id: EXECUTION_ONE,
+          fingerprint: bounded.resultContent!.fingerprint,
+          start: 0,
+          maxBytes: 64000,
+        },
+      }),
+    );
+    expect(read.content).toBe(result);
+    const original = await fresh.queryMission({ missionId: MISSION_ID, view: "result", limit: 50 });
+    expect(original).toMatchObject({ schemaVersion: "pragma.mission-result/v1", result });
+  });
+
+  it("offers durable event content recovery without truncating interactions", async () => {
+    const controller = await createController();
+    const data = { executionId: EXECUTION_ONE, content: "event body".repeat(100) };
+    await appendEvents(controller, [
+      ["mission.created", {}],
+      ["message.committed", data],
+    ]);
+    const query = createMissionQuery({ controller });
+    const page = await query.queryMission({
+      missionId: MISSION_ID,
+      view: "events",
+      limit: 50,
+      maxContentBytes: 32,
+    });
+    if (!("items" in page)) throw new Error("Missing events");
+    const event = page.items.at(-1)!;
+    if (!("dataContent" in event) || event.dataContent === undefined)
+      throw new Error("Missing content reference");
+    const reference = event.dataContent;
+    const read = MissionContentReadSchema.parse(
+      await query.queryMission({
+        missionId: MISSION_ID,
+        view: "content",
+        limit: 50,
+        content: {
+          source: "event",
+          id: reference.id,
+          fingerprint: reference.fingerprint,
+          start: 0,
+          maxBytes: 64000,
+        },
+      }),
+    );
+    expect(JSON.parse(read.content)).toEqual(data);
   });
 
   it("projects a compact summary without returning the raw event stream", async () => {
@@ -272,7 +452,7 @@ describe("Mission query projections", () => {
       query.queryMission({ missionId: MISSION_ID, view, limit: 50 }),
     ).rejects.toMatchObject({
       code: "INVALID_ARGUMENT",
-      details: { view, supportedViews: ["summary", "result", "events"] },
+      details: { view, supportedViews: ["summary", "result", "events", "content"] },
     });
   });
 
@@ -290,7 +470,7 @@ describe("Mission query projections", () => {
       }),
     ).rejects.toMatchObject({
       code: "INVALID_ARGUMENT",
-      details: { view: "future", supportedViews: ["summary", "result", "events"] },
+      details: { view: "future", supportedViews: ["summary", "result", "events", "content"] },
     });
   });
 });
