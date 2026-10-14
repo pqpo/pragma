@@ -3,13 +3,42 @@ import { fork } from "node:child_process";
 import { expect, it, vi } from "vitest";
 import { invokeMissionOwner } from "../src/mission-owner-process.ts";
 import { runMissionOwnerRequest } from "../src/mission-owner-runtime.ts";
+import { runCli } from "../src/index.ts";
 import { createIntegrationError, type CliOwnerFrame } from "@pragma/shared/integration";
 
 vi.mock("node:child_process", async (importOriginal) => ({
   ...(await importOriginal<typeof import("node:child_process")>()),
   fork: vi.fn(),
 }));
+vi.mock("../src/composition/default.ts", () => ({
+  createCliLocalHost: () => ({ dispose: async () => {} }),
+}));
 const id = "11111111-1111-4111-8111-111111111111";
+
+it("prints the generated request ID before an owner acceptance failure", async () => {
+  const child = Object.assign(new EventEmitter(), {
+    connected: true,
+    disconnect: vi.fn(),
+    unref: vi.fn(),
+    send: vi.fn(),
+  });
+  vi.mocked(fork).mockReturnValue(child as unknown as ReturnType<typeof fork>);
+  const stderr: string[] = [];
+  const result = runCli(["mission", "send", id, "--prompt", "hello", "--wait-timeout", "1"], {
+    writeStdout: () => {},
+    writeStderr: (value) => stderr.push(value),
+  });
+  expect(stderr.join("")).toMatch(/Request ID: [0-9a-f-]{36}/u);
+  child.emit("message", {
+    type: "failed",
+    error: createIntegrationError({
+      code: "COMMAND_ACCEPTANCE_TIMEOUT",
+      category: "conflict",
+      message: "Retry the same request ID.",
+    }),
+  });
+  expect(await result).not.toBe(0);
+});
 
 it("reports invalid requests and Host creation errors through the IPC failure contract", async () => {
   const frames: CliOwnerFrame[] = [];
