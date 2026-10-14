@@ -2280,6 +2280,7 @@ describe("Desktop Mission resource adapter contracts", { timeout: 30_000 }, () =
     { executorRef: "expert:0000000000pragma", cold: false },
     { executorRef: "expert:0000000000pragma", cold: true },
     { executorRef: "expert:0000000000pragma", cold: false, delayedPublication: true },
+    { executorRef: "expert:0000000000pragma", cold: true, delayedPublication: true },
   ])(
     "revises an unmounted target inside the original Mission from $executorRef (cold=$cold, delayedPublication=$delayedPublication)",
     async ({ executorRef, cold, delayedPublication }) => {

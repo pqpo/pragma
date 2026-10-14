@@ -122,8 +122,8 @@ unchanged. The new parameter is an internal publication input; no persisted stat
 A controlled-order test delays parent Execution publication until the delegated draft has mounted.
 It fails on the original code with an empty child directory on the next prompt. The repaired test
 asserts the same Session and child Context, successful continuation and two review returns, and
-retention of the child in the Work tab. Repository tests cover first publication, replay and later
-Execution publication, plus refusal to acknowledge ordinary or unmanaged draft changes.
+retention of the child in the Work tab in both warm and cold runner recovery. Repository tests cover
+first publication, replay and later Execution publication, plus refusal to acknowledge ordinary or unmanaged draft changes.
 
 On 2026-10-14, the ordinary real Codex Pragma smoke also passed (232 seconds) after this repair:
 
