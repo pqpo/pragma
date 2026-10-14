@@ -19,9 +19,10 @@ import {
   type IntegrationError,
 } from "@pragma/shared/integration";
 
-import type {
-  MissionControllerGuard,
-  MissionControllerStore,
+import {
+  makeMissionEventCursor,
+  type MissionControllerGuard,
+  type MissionControllerStore,
 } from "./missions/controller/mission-controller-store.ts";
 import {
   createMissionPinnedBinding,
@@ -639,7 +640,7 @@ export function createControllerRunMissionPort(
         },
       });
       return {
-        cursor: (await controller.readSnapshot({ missionId })).cursor,
+        cursor: makeMissionEventCursor(missionId, committed.sequence),
         eventId: committed.eventId,
         occurredAt: committed.occurredAt,
       };

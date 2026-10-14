@@ -1,19 +1,83 @@
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { expect, it } from "vitest";
+import { expect, it, vi } from "vitest";
 import {
   createControllerRunMissionPort,
   createLocalHostMissionEventProjector,
   createMissionControllerStore,
   createMissionQuery,
   createMissionWatchApplication,
+  makeMissionEventCursor,
   type LocalHostRunEvent,
 } from "../src/index.ts";
 import {
   MissionContentReferenceSchema,
   MissionContentReadSchema,
 } from "@pragma/shared/integration";
+
+it("keeps an event's recovery reference on its own sequence when another writer commits", async () => {
+  const root = await mkdtemp(join(tmpdir(), "pragma-event-cursor-"));
+  const missionId = "11111111-1111-4111-8111-111111111111";
+  try {
+    const controller = createMissionControllerStore({ missionsPath: root });
+    const guard = await controller.claim({
+      missionId,
+      claimId: "22222222-2222-4222-8222-222222222222",
+      leaseMs: 30000,
+    });
+    const write = controller.write;
+    let inject = true;
+    vi.spyOn(controller, "write").mockImplementation(async (input) => {
+      const committed = await write(input);
+      if (inject) {
+        inject = false;
+        await write({
+          ...input,
+          operation: ({ appendEvent }) => appendEvent("concurrent.progress", { later: true }),
+        });
+      }
+      return committed;
+    });
+    const mission = createControllerRunMissionPort(controller);
+    let published: LocalHostRunEvent | undefined;
+    const value = { body: "original ".repeat(100) };
+    const projector = createLocalHostMissionEventProjector({
+      missionId,
+      guard,
+      mission,
+      maxContentBytes: 32,
+      onEvent: (event) => {
+        published = event;
+      },
+    });
+    projector.enqueue({ type: "run.progress", data: value });
+    await projector.flush();
+    const snapshot = await controller.readSnapshot({ missionId });
+    const target = snapshot.events.find((event) => event.eventId === published!.eventId)!;
+    expect(snapshot.snapshot.eventSequence).toBe(target.sequence + 1);
+    expect(published!.cursor).toBe(makeMissionEventCursor(missionId, target.sequence));
+    const reference = MissionContentReferenceSchema.parse(
+      (published!.data as Record<string, unknown>).contentReference,
+    );
+    const read = await createMissionQuery({ controller }).queryMission({
+      missionId,
+      view: "content",
+      limit: 1,
+      content: {
+        source: "event",
+        id: reference.id,
+        fingerprint: reference.fingerprint,
+        start: 0,
+        maxBytes: 64000,
+      },
+    });
+    expect(JSON.parse(MissionContentReadSchema.parse(read).content)).toEqual(value);
+    await controller.release({ missionId, guard });
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
 
 it.each(
   [
