@@ -16,6 +16,7 @@
 - [x] R10 — 内容 selector 默认值与来源：Schema 接受的默认 start/maxBytes 未实际使用；无队列端口的直接查询也可能把 queue selector 当作事件。读取使用验证后的默认值；queue 必须经过真正的 Host queue 端口。
 - [x] R11 — 并发写入使回执 cursor 指向后续事件：append 后读取最新 snapshot，在另一条事件先落盘时会跳过当前事件，并使当前正文引用误读后续事件。已用实际持久控制器复现 sequence 1 的回执错误指向 sequence 2；回执现在直接绑定 committed.sequence，回归验证精确 cursor 和正文恢复。
 - [x] R12 — owner 输入错误变成内部错误：非法 Flow JSON、非法 UTF-8 输入和非法 answers JSON，在普通调用返回 INPUT_SCHEMA_INVALID/INVALID_ARGUMENT，在 owner 中却返回 INTERNAL_ERROR。统一命令错误转换，三个回归同时比较普通调用和 owner frame，保持公开错误码和退出语义。
+- [x] R13 — receipt 释放 lease 与新命令存在竞态：完整内核门禁和独立冷 Flow 场景复现，新 send 在 applying 时失去 lease，编译拒绝后无法写入 command.rejected。原有“读取 pending 后再释放”不是原子操作。增加持久锁内的 releaseIfIdle，queued/applying 期间保留 guard 和 poller；空闲时才释放，并恢复释放期间到达的新命令。已有冷停止断言与超时未修改；owner/controller 专项 64 项和完整 Node 编译执行 27 项通过。
 
 ## 复核后未判为缺陷
 
