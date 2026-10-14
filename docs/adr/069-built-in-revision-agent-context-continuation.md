@@ -125,6 +125,23 @@ asserts the same Session and child Context, successful continuation and two revi
 retention of the child in the Work tab in both warm and cold runner recovery. Repository tests cover
 first publication, replay and later Execution publication, plus refusal to acknowledge ordinary or unmanaged draft changes.
 
+Cold recovery must also agree with the compilation identity, which includes the Context mount
+fingerprint. At parent publication and terminal projection, Local Host re-evaluates the accepted
+mount baseline using current permission, model, dependency and Capability inputs. Only when that
+identity still matches the accepted compilation may the repository atomically rebase the environment
+identity onto the acknowledged managed additions. The write checks the exact Execution, Session,
+previous environment identity and current mount fingerprint, and changes only the environment field;
+a stale reconciliation cannot overwrite status or a newer execution. Environment checks during cold
+recovery remain unchanged. No persisted Schema or ownership rules change.
+
+The cold regression now restarts the runner immediately after the first delegated turn, before any
+warm continuation can refresh compilation metadata. Both ordinary and delayed publication restore
+the original Session, discover and continue the original child Context, and complete subsequent
+review returns. This immediate-cold case failed before environment reconciliation; the prior cold
+case restarted only after a warm continuation and did not cover this boundary.
+A concurrent permission-update case verifies the opposite result: the environment is not rebased,
+cold recovery creates a successor Session, and the original child is not reassigned to it.
+
 On 2026-10-14, the ordinary real Codex Pragma smoke also passed (232 seconds) after this repair:
 
 ```sh
@@ -138,3 +155,18 @@ This run verifies actual writes, initial submission and two returned-review cont
 persisted child Context/Session. The publication ordering and Work-record assertions are covered by
 the deterministic `delayedPublication=true` regression, not claimed as part of this native run.
 An earlier forced-order native attempt was interrupted without a complete assertion result.
+
+On 2026-10-14, the real Codex cold-runner smoke passed after compilation reconciliation
+(256 seconds):
+
+```sh
+PRAGMA_REVISION_REAL_SMOKE=1 PRAGMA_REVISION_REAL_RUNTIME=codex \
+  pnpm --filter @pragma/desktop exec vitest run \
+  src/main/features/missions/desktop-mission-adapter.test.ts \
+  -t 'unmounted target.*expert:0000000000pragma.*cold=true, delayedPublication=undefined'
+```
+
+This run restarts the runner after the initial submission and again for the next review return.
+Both continuations retain the original persisted Session and Store Revision Context, actually edit
+the same draft, and submit for review. Controlled late publication remains covered by the deterministic
+integration case; this native run uses ordinary publication.

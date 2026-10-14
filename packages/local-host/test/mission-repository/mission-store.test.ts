@@ -1738,6 +1738,95 @@ describe("mission store", { timeout: 30_000 }, () => {
     },
   );
 
+  it.each([
+    "accepted",
+    "changed-environment",
+    "changed-mounts",
+    "changed-execution",
+    "changed-session",
+    "ordinary",
+    "unmanaged-draft",
+  ] as const)(
+    "reconciles compilation metadata only for an atomic managed acknowledgement (%s)",
+    async (kind) => {
+      const root = await temporaryRoot();
+      const store = createMissionStore({ missionsPath: join(root, "missions") });
+      const mission = await store.create({
+        workspace: { path: root, basename: "workspace" },
+        goal: "Delegate revision",
+        project: { id: "studio", revision: 1 },
+        executor: missionExecutorSnapshot(expertFixture()),
+        contextMounts: [],
+      });
+      const storeId = "00000000-0000-4000-8000-000000000021";
+      const draftId = "00000000-0000-4000-8000-000000000024";
+      if (kind === "ordinary" || kind === "unmanaged-draft") {
+        await store.updateContextMounts(
+          mission.id,
+          kind === "ordinary"
+            ? [{ kind: "context-store", storeId }]
+            : [{ kind: "context-store-draft", draftId }],
+        );
+      } else {
+        await store.mountManagedRevisionDraft({
+          id: mission.id,
+          expectedExecutorRef: mission.executor.ref,
+          storeId,
+          draftId,
+          revisionJobId: "00000000-0000-4000-8000-000000000025",
+          preserveSession: true,
+          allowUnmountedTarget: true,
+        });
+      }
+      const mounted = await store.get(mission.id);
+      const execution = {
+        id: "00000000-0000-4000-8000-000000000023",
+        sessionId: "00000000-0000-4000-8000-000000000022",
+        inputMessageId: mission.initialMessageId,
+        status: "running" as const,
+        startedAt: "2026-10-14T00:00:00.000Z",
+        contextMountsFingerprint: missionContextMountsFingerprint(mounted),
+        environmentFingerprint: "a".repeat(64),
+      };
+      await store.updateExecution(mission.id, {
+        ...execution,
+        status: "waiting",
+        waitReason: "human_input",
+      });
+      const reconciled = await store.updateExecution(
+        mission.id,
+        {
+          ...execution,
+          ...(kind === "changed-execution" ? { id: "00000000-0000-4000-8000-000000000026" } : {}),
+          ...(kind === "changed-session"
+            ? { sessionId: "00000000-0000-4000-8000-000000000027" }
+            : {}),
+          environmentFingerprint: "b".repeat(64),
+        },
+        {
+          acceptedContextMounts: mission.contextMounts,
+          environmentReconciliation: {
+            acceptedFingerprint: (kind === "changed-environment" ? "c" : "a").repeat(64),
+            contextMountsFingerprint:
+              kind === "changed-mounts"
+                ? missionContextMountsFingerprint(mission)
+                : missionContextMountsFingerprint(mounted),
+          },
+        },
+      );
+      expect(reconciled.execution).toEqual({
+        ...execution,
+        status: "waiting",
+        waitReason: "human_input",
+        environmentFingerprint: (kind === "accepted" ? "b" : "a").repeat(64),
+      });
+      const reopened = await createMissionStore({ missionsPath: join(root, "missions") }).get(
+        mission.id,
+      );
+      expect(reopened.execution).toEqual(reconciled.execution);
+    },
+  );
+
   it("updates idle Mission options without changing pinned Mission identity", async () => {
     const root = await temporaryRoot();
     const store = createMissionStore({ missionsPath: join(root, "missions") });

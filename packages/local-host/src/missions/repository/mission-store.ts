@@ -180,6 +180,12 @@ export interface MissionStore {
       readonly executionId?: string | undefined;
       readonly statuses?: readonly NonNullable<Mission["execution"]>["status"][] | undefined;
       readonly acceptedContextMounts?: Mission["contextMounts"] | undefined;
+      readonly environmentReconciliation?:
+        | {
+            readonly acceptedFingerprint: string;
+            readonly contextMountsFingerprint: string;
+          }
+        | undefined;
     },
   ): Promise<Mission>;
   appendUserMessage(id: string, message: MissionUserMessage): Promise<MissionTimelineRecord>;
@@ -2034,6 +2040,32 @@ export function createMissionStore(options: {
         // Do not publish the older acceptance fingerprint over that acknowledgement.
         const currentFingerprint = missionContextMountsFingerprint(current);
         const acceptedMounts = guard?.acceptedContextMounts;
+        const reconciliation = guard?.environmentReconciliation;
+        if (reconciliation !== undefined) {
+          // A compile identity can be rebased only onto an acknowledged managed
+          // addition. Keep every other execution field from the atomic read.
+          if (
+            current.execution?.id !== execution.id ||
+            execution.sessionId === undefined ||
+            execution.environmentFingerprint === undefined ||
+            current.execution.sessionId !== execution.sessionId ||
+            current.execution.environmentFingerprint !== reconciliation.acceptedFingerprint ||
+            current.execution.contextMountsFingerprint !== currentFingerprint ||
+            reconciliation.contextMountsFingerprint !== currentFingerprint ||
+            acceptedMounts === undefined ||
+            !onlyManagedDraftsAdded(acceptedMounts, current.contextMounts)
+          ) {
+            return current;
+          }
+          return {
+            ...current,
+            execution: {
+              ...current.execution,
+              environmentFingerprint: execution.environmentFingerprint,
+            },
+            updatedAt: timestamp,
+          };
+        }
         const acknowledgedSession =
           execution.sessionId !== undefined &&
           execution.sessionId === current.execution?.sessionId &&
