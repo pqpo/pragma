@@ -5,6 +5,9 @@ import { PragmaPaths } from "@pragma/core";
 import { SecretRefSchema, type IntegrationErrorCode } from "@pragma/shared/integration";
 import { z } from "zod";
 
+import { modelProviderStorageVersions } from "../model-providers/migrations/index.ts";
+import { capabilityCredentialStorageVersions } from "../resources/capability-credential-migrations/index.ts";
+import { pluginCredentialStorageVersions } from "../resources/plugin-credential-migrations/index.ts";
 import { createNativeOsKeychain } from "./native-os-keychain.ts";
 import type { SecretStore } from "./secret-store.ts";
 import { createSecretStore, type OsKeychain } from "./secret-store.ts";
@@ -15,7 +18,8 @@ export type CredentialDoctorFinding = {
   readonly code?: IntegrationErrorCode | undefined;
 };
 
-const CredentialMigrationDefinitions = {
+// These historical journal targets stay fixed after later storage upgrades.
+const LegacyCredentialMigrationDefinitions = {
   "model-provider": {
     family: "pragma.model-providers",
     sourceVersion: 4,
@@ -35,6 +39,12 @@ const CredentialMigrationDefinitions = {
   CredentialDoctorFinding["module"],
   { readonly family: string; readonly sourceVersion: number; readonly targetVersion: number }
 >;
+
+const CredentialStorageVersions = {
+  "model-provider": modelProviderStorageVersions,
+  capability: capabilityCredentialStorageVersions,
+  plugin: pluginCredentialStorageVersions,
+} as const;
 
 /**
  * This is deliberately a local, metadata-only copy of the Desktop journal
@@ -84,7 +94,7 @@ export async function inspectCredentialMigration(input: {
     (Object.entries(input.files) as [CredentialDoctorFinding["module"], string][]).map(
       async ([module, file]) => {
         if (keychainCode !== undefined) return { module, status: "degraded", code: keychainCode };
-        const definition = CredentialMigrationDefinitions[module];
+        const definition = LegacyCredentialMigrationDefinitions[module];
         let journal: CredentialMigrationJournal | undefined;
         try {
           journal = await readMigrationJournal(`${file}.migration-journal.json`);
@@ -105,10 +115,16 @@ export async function inspectCredentialMigration(input: {
           return journal === undefined
             ? { module, status: "ready" }
             : { module, status: "degraded", code: "SECRET_MIGRATION_REQUIRED" };
-        const targetVersion = definition.targetVersion;
-        if (version < targetVersion)
+        const storageVersions = CredentialStorageVersions[module];
+        if (version > storageVersions.currentVersion)
+          return { module, status: "degraded", code: "STORAGE_VERSION_UNSUPPORTED" };
+        if (version < definition.targetVersion)
           return { module, status: "migration_required", code: "SECRET_MIGRATION_REQUIRED" };
-        if (version > targetVersion)
+        // Metadata migrations are supported by the storage owner; doctor stays read-only.
+        if (
+          version !== storageVersions.currentVersion &&
+          !(storageVersions.migratableVersions as readonly number[]).includes(version)
+        )
           return { module, status: "degraded", code: "STORAGE_VERSION_UNSUPPORTED" };
         if (journal === undefined) return { module, status: "ready" };
 
@@ -122,7 +138,7 @@ export async function inspectCredentialMigration(input: {
         if (journal.stage !== "legacy_backup_retained")
           return { module, status: "degraded", code: "SECRET_MIGRATION_REQUIRED" };
 
-        if (!hasTargetSchema(journal.targetMetadata, targetVersion))
+        if (!hasTargetSchema(journal.targetMetadata, definition.targetVersion))
           return { module, status: "degraded", code: "STORAGE_CORRUPTED" };
 
         try {

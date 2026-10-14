@@ -12,13 +12,14 @@ import { SecretRefSchema } from "@pragma/shared/integration";
 import { z } from "zod";
 import type { SecretStore } from "../secrets/secret-store.ts";
 import {
+  MODEL_PROVIDER_STORAGE_VERSION,
   ModelProvidersV5Schema,
   ModelProvidersV6Schema,
   modelProvidersV5ToV6Step,
   modelProvidersV6ToV7Step,
 } from "./migrations/index.ts";
 
-export const MODEL_PROVIDER_STORAGE_VERSION = 7;
+export { MODEL_PROVIDER_STORAGE_VERSION } from "./migrations/index.ts";
 const VerificationSchema = z.object({
   status: z.enum(["unverified", "verified", "failed"]),
   checkedAt: z.string().datetime().optional(),

@@ -17,6 +17,7 @@ import {
 import {
   PluginCredentialsV1Schema,
   pluginCredentialsV1ToV2Step,
+  pluginCredentialStorageVersions,
 } from "./plugin-credential-migrations/index.ts";
 
 interface LegacyPluginCredentials {
@@ -24,7 +25,7 @@ interface LegacyPluginCredentials {
   readonly credentials: Readonly<Record<string, string>>;
 }
 interface StoredPluginCredentials {
-  readonly schemaVersion: 2;
+  readonly schemaVersion: typeof pluginCredentialStorageVersions.currentVersion;
   readonly credentials: Readonly<Record<string, SecretRef>>;
 }
 export interface PluginCredentialStore {
@@ -101,7 +102,7 @@ export function createPluginCredentialStore(options: {
       return parseCurrent(raw);
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code === "ENOENT")
-        return { schemaVersion: 2, credentials: {} };
+        return { schemaVersion: pluginCredentialStorageVersions.currentVersion, credentials: {} };
       if (error instanceof PluginCredentialStoreError) throw error;
       throw error;
     }
@@ -140,7 +141,7 @@ export function createPluginCredentialStore(options: {
             ...(existing === undefined ? {} : { expectedRevision: existing.revision }),
           });
         }
-        await write({ schemaVersion: 2, credentials });
+        await write({ schemaVersion: pluginCredentialStorageVersions.currentVersion, credentials });
       },
       { operation: "plugin-credentials.mutate" },
     );
@@ -209,7 +210,10 @@ function parseLegacy(value: unknown): LegacyPluginCredentials {
   return PluginCredentialsV1Schema.parse(value);
 }
 function parseCurrent(value: unknown): StoredPluginCredentials {
-  if (version(value) !== 2 || !recordOf((value as { credentials?: unknown }).credentials, isRef))
+  if (
+    version(value) !== pluginCredentialStorageVersions.currentVersion ||
+    !recordOf((value as { credentials?: unknown }).credentials, isRef)
+  )
     throw new Error("Invalid current plugin credentials.");
   return value as StoredPluginCredentials;
 }
