@@ -82,3 +82,7 @@ CLI owner process/readonly/watch/mutations/run：65 测试通过；Host watch：
 最后复核修正了未提供 event ID 的 Runtime 事件：实时输出现在使用真正持久化的 event ID，避免 replayable 事件引用合成 ID；相关回归 15 项通过，并重新完成上述检查、构建、内核及 CLI 门禁。
 
 验证范围：真实子进程回归使用确定性 executor 和生产 Local Host 存储；真实模型 Runtime 以及 macOS/Windows smoke 尚未执行，正式平台发布前仍需验证。Qoder Worker 下载超时，使用 frozen-lockfile --ignore-scripts 恢复依赖，锁文件未变；没有执行发布。
+
+## CR 后最终验证
+
+13 组复核确认的问题已全部修复，见 [CR 记录](issue-398-review.md)。在包含 main #400 修复的新基线上，最终 check/build、共享内核（985 通过、1 跳过，文件锁 22 通过）、CLI adapter（158 通过）、npm 包 owner 启动审计均通过；输出基准精确复现。补充覆盖并发事件的精确 cursor、owner 输入错误契约，以及 receipt 清理期间 queued/applying 命令的原子 lease 保留。

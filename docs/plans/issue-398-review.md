@@ -27,6 +27,17 @@
 
 ## 验证
 
-首批新增回归在修复前复现 10 个失败场景；修复后 Host 专项 41 项、CLI 专项 54 项、owner IPC 专项 3 项通过。`pnpm check` 与 `pnpm build` 通过。最终产物的共享内核、完整 CLI adapter 和包启动审计仍在复核，完成后补充最终数量。
+首批新增回归在修复前复现 10 个失败场景；后续补充真实控制器的并发 cursor 复现、三个 owner 输入错误契约对比，以及 queued/applying 期间 lease 保留的回归。13 组确认问题已修复并逐项勾选。
+
+基于 main `e70173b1` 的最终代码，门禁全部通过：
+
+- `pnpm check`：lint、typecheck 和核心测试通过。
+- `pnpm build`：19 个任务通过，Desktop 打包 Host 存储 worker 启动检查通过。
+- `pnpm test:local-host-kernel`：106 个文件、985 项通过、1 项跳过；文件锁另有 22 项通过，最终进程退出码为 0。
+- 完整 CLI adapter：21 个文件、158 项通过，包括真实 owner 进程在调用方退出后完成和幂等重试。
+- npm 包构建和审计通过；包内 owner 的真实 IPC 启动检查通过。
+- 最终 Token 基准与保存的 JSON 完全一致；格式及 `git diff --check` 通过。
+
+中途完整门禁曾出现恢复场景失败，单文件独立复核 27 项通过；随后冷 Flow 的 lease 竞态在完整门禁和独立用例中复现，已按 R13 修复。控制器/owner 专项 64 项和完整 Node 编译执行 27 项通过，最终再独立运行整个共享门禁并通过。没有修改既有断言或放宽超时。一次执行会话中断且没有完整汇总，不计为通过；最终独立日志记录了完整汇总和退出码。
 
 真实子进程回归使用确定性 executor 和生产 Local Host 存储。真实模型 Runtime、macOS/Windows smoke 尚未执行；发布前仍需验证。
