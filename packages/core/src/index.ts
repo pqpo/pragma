@@ -108,6 +108,7 @@ export * from "./runtime/usage.ts";
 export * from "./storage/content-addressed-store.ts";
 export * from "./storage/deletion-transaction.ts";
 export * from "./storage/file-lock.ts";
+export * from "./storage/mission-storage-locks.ts";
 export * from "./storage/migrations/bundle-installations/index.ts";
 export * from "./storage/pragma-paths.ts";
 export * from "./storage/state-migration.ts";

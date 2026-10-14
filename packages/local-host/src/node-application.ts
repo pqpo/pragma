@@ -1,4 +1,5 @@
 import { PragmaPaths } from "@pragma/core";
+import { isMissionDeletionCommitted, readMissionDeletionRecord } from "./missions/deletion.ts";
 import type { Mission } from "@pragma/shared";
 import { join } from "node:path";
 
@@ -143,6 +144,9 @@ export function createLocalHostNodeApplication(
   });
   const rawMissionRepository = createMissionStore({
     missionsPath: join(options.pragmaHome, "data", "missions"),
+    isDeletionFenced: async (id) =>
+      (await readMissionDeletionRecord(new PragmaPaths({ pragmaHome: options.pragmaHome }), id)) !==
+      undefined,
   });
   const readMissionEnvelope = async (id: string): Promise<Mission | undefined> => {
     try {
@@ -162,6 +166,8 @@ export function createLocalHostNodeApplication(
     logger: missionLogger,
     missionsPath: join(options.pragmaHome, "data", "missions"),
     missionPath: rawMissionRepository.storagePath,
+    isDeletionCommitted: async (id) =>
+      await isMissionDeletionCommitted(new PragmaPaths({ pragmaHome: options.pragmaHome }), id),
     readMission: readMissionEnvelope,
     readLatestInput: async (id) =>
       (await rawMissionRepository.readTimelinePage(id, { limit: 1 })).turns.at(-1)?.message,

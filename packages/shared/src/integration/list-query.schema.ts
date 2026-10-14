@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { JsonValueSchema, OpaqueCursorSchema } from "./primitives.schema.ts";
+import { IntegrationErrorSchema, IntegrationWarningSchema } from "./error.schema.ts";
 
 export const ListPageRequestSchema = z
   .object({
@@ -20,6 +21,14 @@ export const ListPageResultSchema = z
 
 export type ListPageRequest = z.infer<typeof ListPageRequestSchema>;
 export type ListPageResult = z.infer<typeof ListPageResultSchema>;
+
+/** Explicit diagnostic projection; strict generic v1 pages remain unchanged. */
+export const MissionListDiagnosticsPageSchema = ListPageResultSchema.extend({
+  schemaVersion: z.literal("pragma.mission-list-page/v2"),
+  partial: z.boolean(),
+  diagnostics: z.array(IntegrationErrorSchema),
+  warnings: z.array(IntegrationWarningSchema),
+});
 
 export const MissionListRequestSchema = ListPageRequestSchema.extend({
   status: z

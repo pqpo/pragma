@@ -63,6 +63,7 @@ import {
   type MissionRetentionReport,
 } from "./retention.ts";
 import { MissionCommandV1Schema } from "./migrations/mission-command/schemas/v1.ts";
+import { missionAggregateLockPath, missionSemanticWriteLockPath } from "./storage-locks.ts";
 
 function parseStoredMissionCommand(value: unknown): MissionCommand {
   const current = MissionCommandSchema.safeParse(value);
@@ -387,6 +388,8 @@ export function createMissionControllerStore(options: {
   readonly logger?: PragmaLogger | undefined;
   readonly missionsPath: string;
   readonly missionPath?: ((missionId: string) => string) | undefined;
+  /** Committed deletion records live outside the owner tree and fence all later access. */
+  readonly isDeletionCommitted?: ((missionId: string) => Promise<boolean>) | undefined;
   readonly clock?: MissionControlClock;
   readonly retention?: MissionRetentionOptions | undefined;
   /** Maximum time a command consumer may hold the Inbox poller. */
@@ -410,6 +413,7 @@ export function createMissionControllerStore(options: {
     const canonical = join(options.missionsPath, encodePragmaPathSegment(missionId));
     if (
       existsSync(join(canonical, "local-host", "aggregate.json")) ||
+      existsSync(join(canonical, "local-host", ".semantic-write-transaction.json")) ||
       existsSync(join(canonical, "mission.yaml"))
     )
       return join(canonical, "local-host");
@@ -433,10 +437,9 @@ export function createMissionControllerStore(options: {
     join(missionDirectory(missionId), ".semantic-write-transaction.json");
   const retentionTransactionPath = (missionId: string) =>
     join(missionDirectory(missionId), ".retention-transaction.json");
-  const lockPath = (missionId: string) =>
-    join(options.missionsPath, ".locks", `${missionId}.aggregate.lock`);
+  const lockPath = (missionId: string) => missionAggregateLockPath(options.missionsPath, missionId);
   const semanticWriteLockPath = (missionId: string) =>
-    join(options.missionsPath, ".locks", `${missionId}.semantic-write.lock`);
+    missionSemanticWriteLockPath(options.missionsPath, missionId);
   const registryPath = join(options.missionsPath, ".local-host", "run-request-registry.json");
   const registryLock = join(options.missionsPath, ".locks", "run-request-registry.lock");
   const watchBarrierCache = new Map<string, WatchBarrierCacheEntry>();
@@ -448,13 +451,48 @@ export function createMissionControllerStore(options: {
   const withAggregateLock = async <T>(missionId: string, operation: () => Promise<T>): Promise<T> =>
     await withStorageDiagnostics(
       { family: "mission-controller", ownerId: missionId, operation: "aggregate" },
-      () => withFileLock(lockPath(missionId), operation, { operation: "mission-aggregate" }),
+      () =>
+        withFileLock(
+          lockPath(missionId),
+          async () => {
+            if (await options.isDeletionCommitted?.(missionId)) {
+              throw createIntegrationError({
+                code: "MISSION_NOT_FOUND",
+                category: "not_found",
+                message: `Mission ${missionId} has been deleted.`,
+                details: { missionId, reason: "deletion_committed" },
+              });
+            }
+            return await operation();
+          },
+          { operation: "mission-aggregate" },
+        ),
       options.logger,
     );
 
   const readState = async (missionId: string): Promise<MissionAggregateState> => {
     const raw = await readJsonIfExists(statePath(missionId));
     if (raw === undefined) {
+      // A journal is evidence of an existing owner, never an initial claim.
+      // Do not manufacture a fresh lease that could authorize its replay.
+      for (const file of [semanticWriteTransactionPath(missionId)]) {
+        const existing = await stat(file).catch((error: unknown) => {
+          if (isNodeError(error, "ENOENT")) return undefined;
+          throw error;
+        });
+        if (existing !== undefined)
+          throw createIntegrationError({
+            code: "STORAGE_CORRUPTED",
+            category: "protocol",
+            message: `Mission ${missionId} has a semantic write journal without aggregate.json.`,
+            details: {
+              missionId,
+              stage: "controller.read",
+              file: "local-host/aggregate.json",
+              reason: "journal_without_aggregate",
+            },
+          });
+      }
       return MissionAggregateStateSchema.parse({
         schemaVersion: "pragma.local-host-mission-aggregate/v1",
         missionId,

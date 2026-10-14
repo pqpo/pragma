@@ -1,6 +1,7 @@
 import { missionContentReference, readMissionContentValue } from "./mission-content-query.ts";
 import {
   queryIntegrationMissions,
+  queryIntegrationMissionsWithDiagnostics,
   queryIntegrationExecutors,
   fullIntegrationItems,
 } from "./integration-list-query.ts";
@@ -18,6 +19,8 @@ import {
   type ListPageRequest,
   type MissionListRequest,
   type ExecutorListRequest,
+  type IntegrationError,
+  type IntegrationWarning,
   type WorkspaceSelection,
 } from "@pragma/shared/integration";
 import type { MissionControlApplication } from "./missions/controller/mission-control.ts";
@@ -39,6 +42,13 @@ export type { IntegrationErrorCode } from "@pragma/shared/integration";
 export const LOCAL_HOST_APPLICATION_PROTOCOL = "pragma.local-host/v1" as const;
 export const LOCAL_HOST_SHARED_BOARD_STORE_ID = "mission-board" as const;
 export const LOCAL_HOST_SHARED_BOARD_SCOPE_ID = "mission-board:shared" as const;
+
+export interface LocalHostMissionListResult<T = unknown> {
+  readonly items: readonly T[];
+  /** Unavailable owners are retained on disk and explicitly reported. */
+  readonly diagnostics: readonly IntegrationError[];
+  readonly warnings: readonly IntegrationWarning[];
+}
 
 export * from "./built-in-executors.ts";
 export * from "./bundle-source-migration.ts";
@@ -151,6 +161,8 @@ export interface LocalHostApplicationPort<
   getMission(id: string): Promise<TMission>;
   listMissions(): Promise<readonly TMissionSummary[]>;
   readonly queryMissions?: (request: MissionListRequest) => Promise<unknown>;
+  readonly listMissionDiagnostics?:
+    (() => Promise<LocalHostMissionListResult<TMissionSummary>>) | undefined;
   /** Real, view-specific Mission projection owned by Local Host. */
   readonly queryMission: MissionQueryPort["queryMission"];
   resolveWorkspace(requestedPath: string): Promise<WorkspaceSelection>;
@@ -204,6 +216,8 @@ export interface LocalHostApplicationPorts<
   readonly missions: {
     readonly get: (id: string) => Promise<TMission>;
     readonly list: () => Promise<readonly TMissionSummary[]>;
+    readonly listDiagnostics?:
+      (() => Promise<LocalHostMissionListResult<TMissionSummary>>) | undefined;
     readonly query: MissionQueryPort["queryMission"];
   };
   /** Desktop and CLI inject raw filesystem operations; Local Host owns the resolution policy. */
@@ -272,8 +286,11 @@ export function createLocalHostApplication<
       queryIntegrationExecutors(await ports.catalog.listExecutors(), request),
     getMission: ports.missions.get,
     listMissions: ports.missions.list,
+    listMissionDiagnostics: ports.missions.listDiagnostics,
     queryMissions: async (request) =>
-      queryIntegrationMissions(await ports.missions.list(), request),
+      ports.missions.listDiagnostics === undefined
+        ? queryIntegrationMissions(await ports.missions.list(), request)
+        : queryIntegrationMissionsWithDiagnostics(await ports.missions.listDiagnostics(), request),
     queryMission: async (input) => {
       if (input.view === "content" && input.content?.source === "queue") {
         if (ports.queue === undefined)

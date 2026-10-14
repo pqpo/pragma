@@ -4,11 +4,51 @@ import {
   MissionListRequestSchema,
   ExecutorListRequestSchema,
   createIntegrationError,
+  IntegrationErrorSchema,
+  MissionListDiagnosticsPageSchema,
+  type IntegrationError,
+  type IntegrationWarning,
   type MissionListRequest,
   type ExecutorListRequest,
   type JsonValue,
 } from "@pragma/shared/integration";
 import { paginateIntegrationItems } from "./integration-pagination.ts";
+
+/** Keep unavailable-owner facts and fail-closed semantics on the same Host query snapshot. */
+export function queryIntegrationMissionsWithDiagnostics(
+  value: {
+    readonly items: readonly unknown[];
+    readonly diagnostics: readonly IntegrationError[];
+    readonly warnings: readonly IntegrationWarning[];
+  },
+  request: MissionListRequest,
+) {
+  if (value.items.length === 0 && value.diagnostics.length > 0) {
+    const first = value.diagnostics[0]!;
+    throw IntegrationErrorSchema.parse({
+      ...first,
+      details: { ...first.details, diagnostics: value.diagnostics },
+    });
+  }
+  const page = queryIntegrationMissions(value.items, request);
+  return value.diagnostics.length === 0 && value.warnings.length === 0
+    ? page
+    : MissionListDiagnosticsPageSchema.parse({
+        ...page,
+        schemaVersion: "pragma.mission-list-page/v2",
+        items: page.items.map(asJsonValue),
+        partial: value.diagnostics.length > 0,
+        diagnostics: value.diagnostics,
+        warnings: [
+          ...value.warnings,
+          ...value.diagnostics.map((issue) => ({
+            code: "MISSION_UNAVAILABLE",
+            message: issue.message,
+            details: { ...issue.details, errorCode: issue.code },
+          })),
+        ],
+      });
+}
 
 export function queryIntegrationMissions(items: readonly unknown[], request: MissionListRequest) {
   if (!MissionListRequestSchema.safeParse(request).success)
@@ -86,7 +126,7 @@ export function fullIntegrationItems(
   if (
     isRecord(value) &&
     value["nextCursor"] === undefined &&
-    value["schemaVersion"] !== "pragma.list-page/v1"
+    !["pragma.list-page/v1", "pragma.mission-list-page/v2"].includes(String(value["schemaVersion"]))
   ) {
     for (const key of keys) if (Array.isArray(value[key])) return value[key];
   }

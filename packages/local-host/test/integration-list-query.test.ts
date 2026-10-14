@@ -2,9 +2,69 @@ import { describe, expect, it } from "vitest";
 import {
   queryIntegrationMissions,
   queryIntegrationExecutors,
+  queryIntegrationMissionsWithDiagnostics,
 } from "../src/integration-list-query.ts";
+import {
+  createIntegrationError,
+  ListPageResultSchema,
+  MissionListDiagnosticsPageSchema,
+} from "@pragma/shared/integration";
 
 describe("Host list queries", () => {
+  it("keeps unavailable-owner diagnostics on filtered paged results with an explicit version", () => {
+    const error = createIntegrationError({
+      code: "STORAGE_CORRUPTED",
+      category: "protocol",
+      message: "Unreadable owner",
+    });
+    const page = queryIntegrationMissionsWithDiagnostics(
+      {
+        items: [
+          { id: "b", title: "Match B" },
+          { id: "a", title: "Match A" },
+          { id: "c", title: "Other" },
+        ],
+        diagnostics: [error],
+        warnings: [],
+      },
+      { limit: 1, query: "Match" },
+    );
+    expect(MissionListDiagnosticsPageSchema.safeParse(page).success).toBe(true);
+    expect(ListPageResultSchema.safeParse(page).success).toBe(false);
+    expect(page).toMatchObject({
+      schemaVersion: "pragma.mission-list-page/v2",
+      partial: true,
+      items: [{ id: "a" }],
+      diagnostics: [error],
+    });
+    expect(page.nextCursor).toBeDefined();
+    const second = queryIntegrationMissionsWithDiagnostics(
+      {
+        items: [
+          { id: "b", title: "Match B" },
+          { id: "a", title: "Match A" },
+          { id: "c", title: "Other" },
+        ],
+        diagnostics: [error],
+        warnings: [],
+      },
+      { limit: 1, query: "Match", cursor: page.nextCursor },
+    );
+    expect(second.items).toEqual([{ id: "b", title: "Match B" }]);
+  });
+  it("fails closed if diagnostics contain no readable owner", () => {
+    const error = createIntegrationError({
+      code: "STORAGE_VERSION_UNSUPPORTED",
+      category: "protocol",
+      message: "Future owner",
+    });
+    expect(() =>
+      queryIntegrationMissionsWithDiagnostics(
+        { items: [], diagnostics: [error], warnings: [] },
+        { limit: 1 },
+      ),
+    ).toThrowError(expect.objectContaining({ code: "STORAGE_VERSION_UNSUPPORTED" }));
+  });
   const missions = [
     {
       id: "b",

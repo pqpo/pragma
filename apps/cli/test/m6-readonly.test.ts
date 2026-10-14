@@ -150,6 +150,82 @@ function completionLineHasOption(line: string, option: string): boolean {
 }
 
 describe("M6 parser and read-only command surface", () => {
+  it("fails closed when no Mission can be read and includes diagnostic context in failure text", async () => {
+    const error = createIntegrationError({
+      code: "STORAGE_CORRUPTED",
+      category: "protocol",
+      message: "Invalid stored aggregate.",
+      details: {
+        missionId: MISSION_ID,
+        stage: "controller.read",
+        file: "local-host/aggregate.json",
+        reason: "invalid_data",
+      },
+    });
+    const host: CliLocalHost = {
+      ...createHost(),
+      listMissionDiagnostics: async () => ({ items: [], diagnostics: [error], warnings: [] }),
+    };
+    const text = createIo();
+    await expect(runCli(["mission", "list"], text, { localHost: host })).resolves.toBe(7);
+    expect(text.stderr.join("")).toContain(`missionId=${MISSION_ID}`);
+    expect(text.stderr.join("")).toContain("stage=controller.read");
+    const json = createIo();
+    await expect(runCli(["mission", "list", "--json"], json, { localHost: host })).resolves.toBe(7);
+    expect(JSON.parse(json.stdout.join(""))).toMatchObject({
+      status: "failed",
+      error: { code: "STORAGE_CORRUPTED", details: { diagnostics: [error] } },
+    });
+  });
+
+  it("shows healthy Missions alongside unavailable-owner diagnostics in text and JSON", async () => {
+    const base = createHost();
+    const unavailableId = "4b4f2993-4f39-4915-adc4-a052163d4e28";
+    const error = createIntegrationError({
+      code: "STORAGE_CORRUPTED",
+      category: "protocol",
+      message: "Mission storage is unavailable.",
+      details: {
+        missionId: unavailableId,
+        stage: "owner.inspect",
+        file: "local-host/aggregate.json",
+        reason: "journal_without_aggregate",
+      },
+    });
+    const listMissions = vi.fn(async () => {
+      throw new Error("Strict list should not be used");
+    });
+    const host: CliLocalHost = {
+      ...base,
+      listMissions,
+      listMissionDiagnostics: async () => ({
+        items: await base.listMissions(),
+        diagnostics: [error],
+        warnings: [],
+      }),
+    };
+    const text = createIo();
+    await expect(runCli(["mission", "list"], text, { localHost: host })).resolves.toBe(0);
+    expect(text.stdout.join("")).toContain("22222222-2222-4222-8222-222222222222");
+    expect(text.stderr.join("")).toContain("journal_without_aggregate");
+    expect(text.stderr.join("")).toContain("local-host/aggregate.json");
+    expect(text.stderr.join("")).toContain("stage=owner.inspect");
+    expect(text.stderr.join("")).toContain(`missionId=${unavailableId}`);
+    const json = createIo();
+    await expect(runCli(["mission", "list", "--json"], json, { localHost: host })).resolves.toBe(0);
+    expect(JSON.parse(json.stdout.join(""))).toMatchObject({
+      status: "succeeded",
+      result: { partial: true, diagnostics: [error], items: expect.any(Array) },
+      warnings: [
+        {
+          code: "MISSION_UNAVAILABLE",
+          details: { missionId: unavailableId, errorCode: "STORAGE_CORRUPTED" },
+        },
+      ],
+    });
+    expect(listMissions).not.toHaveBeenCalled();
+  });
+
   it("keeps the frozen parser shape for Unicode, Windows-like quoting, ranges, and aliases", () => {
     expect(
       parseCliArgv([

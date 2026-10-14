@@ -27,11 +27,14 @@ export function hostPage(value: unknown, itemKeys: readonly string[] = ["items"]
     const items = value[key];
     if (!Array.isArray(items)) continue;
     const nextCursor = value["nextCursor"];
-    if (nextCursor !== undefined && value["schemaVersion"] !== "pragma.list-page/v1")
+    const explicitPage = ["pragma.list-page/v1", "pragma.mission-list-page/v2"].includes(
+      String(value["schemaVersion"]),
+    );
+    if (nextCursor !== undefined && !explicitPage)
       throw new Error("A paged Host result must declare pragma.list-page/v1.");
     return {
       items,
-      hostPaged: value["schemaVersion"] === "pragma.list-page/v1",
+      hostPaged: explicitPage,
       ...(typeof nextCursor === "string" ? { nextCursor } : {}),
     };
   }

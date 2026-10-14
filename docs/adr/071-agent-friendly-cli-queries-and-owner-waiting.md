@@ -8,7 +8,7 @@ Issue: #398。基线：`1cec48eba13590094c6ac0ddcd61dad3d01598ba`。
 
 Shared 定义查询、分页、正文引用与 owner IPC 的版本化 DTO；Local Host 拥有事实读取、筛选、排序、分页、内容指纹及运行生命周期。CLI 只组织参数、进程、信号和展示。Desktop 的相同 Host composition 注入同一 timeline 读取端口。保留原有完整列表端口，显式分页使用 queryMissions/queryExecutors/querySharedBoard/queryMissionQueue；旧嵌入式完整列表由 Local Host 导出的纯查询函数适配，不在 CLI 建立业务内核。
 
-列表页显式标记 `pragma.list-page/v1`，不能按 `items` 猜测分页。Mission 按 updatedAt 降序、ID 升序排列；Executor 按 ref 排列。筛选和排序后的完整结果参与指纹。每次续页重新读取实时列表：匹配结果改变时返回 `CURSOR_EXPIRED`，调用方重新查询。这不是持久快照，也不提供文件系统查询索引。
+列表页显式标记 `pragma.list-page/v1`，不能按 `items` 猜测分页。同步 #397 后，含不可读 owner 诊断的 Mission 页使用独立 `pragma.mission-list-page/v2`，严格通用 v1 DTO 不改；诊断、筛选和分页由同一次 Host 读取生成。没有任何可读 owner 时保持 fail closed，不伪装为空列表。Mission 按 updatedAt 降序、ID 升序排列；Executor 按 ref 排列。筛选和排序后的完整结果参与指纹。每次续页重新读取实时列表：匹配结果改变时返回 `CURSOR_EXPIRED`，调用方重新查询。这不是持久快照，也不提供文件系统查询索引。
 
 分页 cursor `p2.` 使用 32 字节范围 SHA-256、32 字节结果 SHA-256、6 字节 offset，Base64URL 后共 97 字符。保留完整校验，不复用 Core 的 96-bit 摘要来降低既有校验强度，不引入短 ID 服务或进程内映射。旧 `pragma.cli.cursor.v2.` 没有结果指纹，无法证明稳定性，明确过期并要求重启查询；其他未知格式无效。cursor 是可重建查询状态，不是持久用户数据。事件 watch/replay cursor 及其迁移链保持不变。
 

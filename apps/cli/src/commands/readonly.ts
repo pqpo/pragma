@@ -9,6 +9,7 @@ import {
   unsupportedMissionView,
   paginateIntegrationItems,
   queryIntegrationMissions,
+  queryIntegrationMissionsWithDiagnostics,
   queryIntegrationExecutors,
   normalizeIntegrationExecutor,
   fullIntegrationItems,
@@ -198,16 +199,30 @@ async function listMissions(
     query: command.query,
     workspace: command.workspace,
   };
-  const result =
+  const value =
     context.localHost.queryMissions === undefined
-      ? queryIntegrationMissions(
-          fullIntegrationItems(await context.localHost.listMissions()),
-          request,
-        )
-      : hostPage(await context.localHost.queryMissions(request));
+      ? context.localHost.listMissionDiagnostics === undefined
+        ? queryIntegrationMissions(
+            fullIntegrationItems(await context.localHost.listMissions()),
+            request,
+          )
+        : queryIntegrationMissionsWithDiagnostics(
+            await context.localHost.listMissionDiagnostics(),
+            request,
+          )
+      : await context.localHost.queryMissions(request);
+  const page = hostPage(value);
+  const metadata = isRecord(value) ? value : {};
   return {
-    items: result.items.map(asJsonValue),
-    ...(result.nextCursor === undefined ? {} : { nextCursor: result.nextCursor }),
+    items: page.items.map(asJsonValue),
+    ...(page.nextCursor === undefined ? {} : { nextCursor: page.nextCursor }),
+    ...(metadata["diagnostics"] === undefined
+      ? {}
+      : {
+          partial: metadata["partial"] === true,
+          diagnostics: asJsonValue(metadata["diagnostics"]),
+          warnings: asJsonValue(metadata["warnings"] ?? []),
+        }),
   };
 }
 

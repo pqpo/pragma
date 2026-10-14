@@ -55,6 +55,8 @@ import {
   type FlowExecution,
 } from "@pragma/core";
 import type { CompiledResource, InvocableResource, PragmaResource } from "@pragma/interpreter";
+import { withMissionControllerDeletionBarrier } from "./controller/storage-locks.ts";
+import { isMissionDeletionCommitted } from "./deletion.ts";
 import { createPragmaResourceIdentityMigrationIndex } from "@pragma/interpreter";
 import {
   createExpertSessionPromptQueueProjection,
@@ -96,7 +98,7 @@ import {
 } from "@pragma/shared";
 import { createIntegrationError } from "@pragma/shared/integration";
 import { randomUUID } from "node:crypto";
-import { basename } from "node:path";
+import { basename, dirname } from "node:path";
 import { isDeepStrictEqual } from "node:util";
 import {
   isUserFacingMissionOrigin,
@@ -3375,8 +3377,19 @@ export function createLocalHostMissionExecutionService(
             ]),
           { operation: "mission.attention-deletion-barrier" },
         );
-      if (options.missions.withDeletionBarrier === undefined) await action();
-      else await options.missions.withDeletionBarrier(id, action);
+      const repositoryBarrier = async () => {
+        if (options.missions.withDeletionBarrier === undefined) await action();
+        else await options.missions.withDeletionBarrier(id, action);
+      };
+      // Match the controller's transaction locks. A metadata-only barrier
+      // cannot stop a validated writer from recreating the moved owner tree.
+      await withMissionControllerDeletionBarrier(
+        options.missions.storagePath === undefined
+          ? new PragmaPaths({ pragmaHome: options.pragmaHome }).missionsRoot()
+          : dirname(options.missions.storagePath(id)),
+        id,
+        repositoryBarrier,
+      );
     });
   };
 
@@ -4634,7 +4647,12 @@ export function createLocalHostMissionExecutionService(
     // Node composition binds its existing controller/owner before product use.
     if (missionCommands === undefined) {
       const controller = createMissionControllerStore({
-        missionsPath: new PragmaPaths({ pragmaHome: options.pragmaHome }).missionsRoot(),
+        missionsPath:
+          options.missions.storagePath === undefined
+            ? new PragmaPaths({ pragmaHome: options.pragmaHome }).missionsRoot()
+            : dirname(options.missions.storagePath(input.missionId)),
+        isDeletionCommitted: async (id) =>
+          await isMissionDeletionCommitted(new PragmaPaths({ pragmaHome: options.pragmaHome }), id),
         ...(options.missions.storagePath === undefined
           ? {}
           : { missionPath: options.missions.storagePath }),
