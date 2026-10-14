@@ -1,8 +1,19 @@
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { spawn } from "node:child_process";
 import { afterEach, describe, expect, it } from "vitest";
+import {
+  MODEL_PROVIDER_STORAGE_VERSION,
+  ModelProvidersV5Schema,
+  StoredModelProviderConfigSchema,
+} from "@pragma/local-host";
+import {
+  CapabilityCredentialsV3Schema,
+  CapabilityCredentialsV2Schema,
+  capabilityCredentialStorageVersions,
+  pluginCredentialStorageVersions,
+} from "@pragma/local-host/resources";
 
 const roots: string[] = [];
 
@@ -94,19 +105,48 @@ describe("pragma doctor executable", () => {
     expect(`${result.stdout}${result.stderr}`).not.toContain(home);
   });
 
-  it("reports completed migration journals as ready", async () => {
-    const home = await completedJournalHome();
-    const result = await invokeDoctor(home);
+  it.each([
+    ["current storage", false, false],
+    ["current storage with historical journals", true, false],
+    ["compatible legacy metadata with historical journals", true, true],
+  ] as const)(
+    "reports %s as ready without rewriting data or journals",
+    async (_description, withJournals, withLegacyMetadata) => {
+      const home = await currentHome(withJournals, withLegacyMetadata);
+      const paths = credentialFiles(home);
+      const inspectedPaths = Object.values(paths).flatMap((file) =>
+        withJournals ? [file, `${file}.migration-journal.json`] : [file],
+      );
+      const before = await Promise.all(inspectedPaths.map((file) => readFile(file, "utf8")));
+      const result = await invokeDoctor(home);
 
-    expect(result.exitCode).toBe(0);
-    expect(result.stderr).toBe("");
-    expect(result.stdout).toMatch(/^CLI: .+ \(standalone\)\nExecutable: /u);
-    expect(result.stdout).toContain("Terminal integration:");
-    expect(result.stdout).toContain("Pragma commands on PATH:");
-    expect(
-      result.stdout.endsWith("model-provider: ready\ncapability: ready\nplugin: ready\n"),
-    ).toBe(true);
-  });
+      expect(result.exitCode).toBe(0);
+      expect(result.stderr).toBe("");
+      expect(result.stdout).toMatch(/^CLI: .+ \(standalone\)\nExecutable: /u);
+      expect(result.stdout).toContain("Terminal integration:");
+      expect(result.stdout).toContain("Pragma commands on PATH:");
+      expect(
+        result.stdout.endsWith("model-provider: ready\ncapability: ready\nplugin: ready\n"),
+      ).toBe(true);
+      expect(await Promise.all(inspectedPaths.map((file) => readFile(file, "utf8")))).toEqual(
+        before,
+      );
+    },
+  );
+
+  it.each(["model-provider", "capability", "plugin"] as const)(
+    "rejects a future %s storage version with exit code 7",
+    async (module) => {
+      const home = await currentHome(false);
+      const file = credentialFiles(home)[module];
+      const value = JSON.parse(await readFile(file, "utf8")) as { schemaVersion: number };
+      await writeFile(file, JSON.stringify({ ...value, schemaVersion: value.schemaVersion + 1 }));
+      const result = await invokeDoctor(home);
+      expect(result.exitCode).toBe(7);
+      expect(result.stdout).toContain(`${module}: degraded (STORAGE_VERSION_UNSUPPORTED)`);
+      expect(result.stderr).toBe("");
+    },
+  );
 
   it.each([
     ["locked", 5, "SECRET_STORE_LOCKED"],
@@ -166,7 +206,15 @@ async function journalPendingHome(): Promise<string> {
   return home;
 }
 
-async function completedJournalHome(): Promise<string> {
+function credentialFiles(home: string) {
+  return {
+    "model-provider": join(home, "data", "model-providers.json"),
+    capability: join(home, "data", "credentials", "capability-credentials.json"),
+    plugin: join(home, "data", "credentials", "plugin-credentials.json"),
+  };
+}
+
+async function currentHome(withJournals: boolean, withLegacyMetadata = false): Promise<string> {
   const home = await mkdtemp(join(tmpdir(), "pragma-cli-doctor-completed-"));
   roots.push(home);
   const data = join(home, "data");
@@ -174,8 +222,36 @@ async function completedJournalHome(): Promise<string> {
   await mkdir(credentials, { recursive: true });
   const providerPath = join(data, "model-providers.json");
   const capabilityPath = join(credentials, "capability-credentials.json");
-  await writeFile(providerPath, JSON.stringify({ schemaVersion: 5, providers: [] }));
-  await writeFile(capabilityPath, JSON.stringify({ schemaVersion: 2, credentials: {} }));
+  await writeFile(
+    providerPath,
+    JSON.stringify(
+      withLegacyMetadata
+        ? ModelProvidersV5Schema.parse({ schemaVersion: 5, providers: [] })
+        : StoredModelProviderConfigSchema.parse({
+            schemaVersion: MODEL_PROVIDER_STORAGE_VERSION,
+            providers: [],
+          }),
+    ),
+  );
+  await writeFile(
+    capabilityPath,
+    JSON.stringify(
+      withLegacyMetadata
+        ? CapabilityCredentialsV2Schema.parse({ schemaVersion: 2, credentials: {} })
+        : CapabilityCredentialsV3Schema.parse({
+            schemaVersion: capabilityCredentialStorageVersions.currentVersion,
+            credentials: {},
+          }),
+    ),
+  );
+  await writeFile(
+    credentialFiles(home).plugin,
+    JSON.stringify({
+      schemaVersion: pluginCredentialStorageVersions.currentVersion,
+      credentials: {},
+    }),
+  );
+  if (!withJournals) return home;
   await writeCompletedJournal(providerPath, {
     family: "pragma.model-providers",
     sourceVersion: 4,
@@ -187,6 +263,12 @@ async function completedJournalHome(): Promise<string> {
     sourceVersion: 1,
     targetVersion: 2,
     id: "41a1b2c3-d4e5-46f7-89a0-b1c2d3e4f5a6",
+  });
+  await writeCompletedJournal(credentialFiles(home).plugin, {
+    family: "pragma.plugin-credentials",
+    sourceVersion: 1,
+    targetVersion: 2,
+    id: "51a1b2c3-d4e5-46f7-89a0-b1c2d3e4f5a6",
   });
   return home;
 }

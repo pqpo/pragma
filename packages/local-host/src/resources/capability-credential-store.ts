@@ -22,7 +22,10 @@ import {
   CapabilityCredentialsV3Schema,
   capabilityCredentialsV1ToV2Step,
   capabilityCredentialsV2ToV3Step,
+  capabilityCredentialStorageVersions,
 } from "./capability-credential-migrations/index.ts";
+
+const CURRENT_STORAGE_VERSION = capabilityCredentialStorageVersions.currentVersion;
 
 interface LegacyStoredCredentialConfig {
   readonly schemaVersion: 1;
@@ -135,8 +138,8 @@ export function createCapabilityCredentialStore(options: {
   const v2MigrationJournalPath = `${options.configPath}.v2-to-v3.json`;
   const migrateLegacy = async (): Promise<boolean> => {
     const source = await readRaw();
-    if (source === undefined || version(source) === 3) return false;
-    if (version(source) > 3) {
+    if (source === undefined || version(source) === CURRENT_STORAGE_VERSION) return false;
+    if (version(source) > CURRENT_STORAGE_VERSION) {
       throw new CapabilityCredentialStoreError(
         "unsupported_version",
         `Capability credential schema version ${version(source)} is newer than this Desktop supports.`,
@@ -219,13 +222,13 @@ export function createCapabilityCredentialStore(options: {
     const raw = await readRaw();
     if (raw === undefined) return;
     const sourceVersion = version(raw);
-    if (sourceVersion > 3) {
+    if (sourceVersion > CURRENT_STORAGE_VERSION) {
       throw new CapabilityCredentialStoreError(
         "unsupported_version",
         `Capability credential schema version ${sourceVersion} is newer than this Desktop supports.`,
       );
     }
-    if (sourceVersion === 3) {
+    if (sourceVersion === CURRENT_STORAGE_VERSION) {
       await rm(v2MigrationJournalPath, { force: true });
       return;
     }
@@ -265,7 +268,7 @@ export function createCapabilityCredentialStore(options: {
       async () => {
         const source = await readRaw();
         if (source === undefined) return;
-        if (version(source) === 3) {
+        if (version(source) === CURRENT_STORAGE_VERSION) {
           await rm(v2MigrationJournalPath, { force: true });
           return;
         }
@@ -309,7 +312,9 @@ export function createCapabilityCredentialStore(options: {
   const readConfig = async (): Promise<StoredCredentialConfig> => {
     await ensureCurrent();
     const raw = await readRaw();
-    return raw === undefined ? { schemaVersion: 3, credentials: {} } : parseCurrent(raw);
+    return raw === undefined
+      ? { schemaVersion: CURRENT_STORAGE_VERSION, credentials: {} }
+      : parseCurrent(raw);
   };
   const deleteRef = async (ref: SecretRef | undefined): Promise<void> => {
     if (ref === undefined) return;
@@ -351,12 +356,14 @@ export function createCapabilityCredentialStore(options: {
     if (journal === undefined) return;
     const raw = await readRaw();
     const current =
-      raw === undefined ? { schemaVersion: 3 as const, credentials: {} } : parseCurrent(raw);
+      raw === undefined
+        ? { schemaVersion: CURRENT_STORAGE_VERSION, credentials: {} }
+        : parseCurrent(raw);
     const credentials = Object.fromEntries(
       Object.entries(current.credentials).filter(([key]) => !key.startsWith(`${capabilityId}/`)),
     );
     if (Object.keys(credentials).length !== Object.keys(current.credentials).length) {
-      await writeConfig({ schemaVersion: 3, credentials });
+      await writeConfig({ schemaVersion: CURRENT_STORAGE_VERSION, credentials });
     }
     for (const ref of journal.refs) await deleteRef(ref);
     await rm(deletionJournalPath(capabilityId), { force: true });
@@ -370,7 +377,9 @@ export function createCapabilityCredentialStore(options: {
   const rollbackJournalLocked = async (journal: CredentialMutationJournal): Promise<void> => {
     const raw = await readRaw();
     const current =
-      raw === undefined ? { schemaVersion: 3 as const, credentials: {} } : parseCurrent(raw);
+      raw === undefined
+        ? { schemaVersion: CURRENT_STORAGE_VERSION, credentials: {} }
+        : parseCurrent(raw);
     if (journal.stage === "mapping-committed") {
       const restored = { ...current.credentials };
       for (const entry of journal.entries) {
@@ -381,7 +390,7 @@ export function createCapabilityCredentialStore(options: {
             ref: entry.previousRef,
           };
       }
-      await writeConfig({ schemaVersion: 3, credentials: restored });
+      await writeConfig({ schemaVersion: CURRENT_STORAGE_VERSION, credentials: restored });
     }
     for (const entry of journal.entries) {
       await deleteRef(entry.nextRef);
@@ -572,7 +581,7 @@ export function createCapabilityCredentialStore(options: {
           }
           next[entry.key] = { generation: entry.generation, ref: entry.nextRef! };
         }
-        await writeConfig({ schemaVersion: 3, credentials: next });
+        await writeConfig({ schemaVersion: CURRENT_STORAGE_VERSION, credentials: next });
         journal = CredentialMutationJournalSchema.parse({
           ...journal,
           stage: "mapping-committed",
@@ -669,7 +678,7 @@ export function createCapabilityCredentialStore(options: {
           });
           await writeDeletionJournal(deletion);
           await writeConfig({
-            schemaVersion: 3,
+            schemaVersion: CURRENT_STORAGE_VERSION,
             credentials: Object.fromEntries(
               Object.entries(current.credentials).filter(
                 ([key]) => !key.startsWith(`${capabilityId}/`),

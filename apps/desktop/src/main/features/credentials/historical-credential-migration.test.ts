@@ -2,7 +2,7 @@ import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { createSecretStore } from "@pragma/local-host";
+import { createSecretStore, inspectDefaultCredentialMigration } from "@pragma/local-host";
 import { afterEach, describe, expect, it } from "vitest";
 
 import {
@@ -116,6 +116,25 @@ describe("historical credential writer migration chain", () => {
       "capability-historical-secret",
     );
     await expect(readSecret(cliSecretStore, pluginRef)).resolves.toBe("plugin-historical-secret");
+
+    // Diagnose real, populated writer output and completed journals after later metadata upgrades.
+    const diagnosticPaths: string[] = [];
+    for (const path of [providerPath, capabilityPath, pluginPath]) {
+      const journalPath = `${path}.migration-journal.json`;
+      const journal = JSON.parse(await readFile(journalPath, "utf8")) as { backupPath: string };
+      diagnosticPaths.push(path, journalPath, journal.backupPath);
+    }
+    const beforeDoctor = await Promise.all(diagnosticPaths.map((path) => readFile(path, "utf8")));
+    await expect(
+      inspectDefaultCredentialMigration({ pragmaHome: root, keychain }),
+    ).resolves.toEqual([
+      { module: "model-provider", status: "ready" },
+      { module: "capability", status: "ready" },
+      { module: "plugin", status: "ready" },
+    ]);
+    expect(await Promise.all(diagnosticPaths.map((path) => readFile(path, "utf8")))).toEqual(
+      beforeDoctor,
+    );
 
     for (const path of [providerPath, capabilityPath, pluginPath]) {
       const current = await readFile(path, "utf8");
