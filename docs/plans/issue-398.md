@@ -86,3 +86,5 @@ CLI owner process/readonly/watch/mutations/run：65 测试通过；Host watch：
 ## CR 后最终验证
 
 13 组复核确认的问题已全部修复，见 [CR 记录](issue-398-review.md)。在包含 main #400 修复的新基线上，最终 check/build、共享内核（985 通过、1 跳过，文件锁 22 通过）、CLI adapter（158 通过）、npm 包 owner 启动审计均通过；输出基准精确复现。补充覆盖并发事件的精确 cursor、owner 输入错误契约，以及 receipt 清理期间 queued/applying 命令的原子 lease 保留。
+
+随后同步 main #401 并解决冲突，保留存储屏障和 owner 诊断；含诊断的分页使用独立 v2 DTO。合并后重新通过 check/build、完整共享内核（1005 通过、1 跳过）、文件锁 22 项、完整 CLI 160 项、包启动审计和基准复现。

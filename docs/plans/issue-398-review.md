@@ -41,3 +41,9 @@
 中途完整门禁曾出现恢复场景失败，单文件独立复核 27 项通过；随后冷 Flow 的 lease 竞态在完整门禁和独立用例中复现，已按 R13 修复。控制器/owner 专项 64 项和完整 Node 编译执行 27 项通过，最终再独立运行整个共享门禁并通过。没有修改既有断言或放宽超时。一次执行会话中断且没有完整汇总，不计为通过；最终独立日志记录了完整汇总和退出码。
 
 真实子进程回归使用确定性 executor 和生产 Local Host 存储。真实模型 Runtime、macOS/Windows smoke 尚未执行；发布前仍需验证。
+
+## 同步 main #401 后的最终结果
+
+PR 创建后 main 合入 #401（`3d89ff0c`），已解决全部合并冲突并保留 Mission 删除屏障、SQLite 锁重试和不可读 owner 诊断。诊断和分页来自同一次 Host 读取；无可读 owner 时保持 fail closed。含诊断的页使用独立 `pragma.mission-list-page/v2`，严格通用 v1 DTO 不改。
+
+合并后的 check/build、Host 专项 24 项、CLI 专项 38 项通过；再独立完成整个共享门禁：107 个文件、1005 项通过、1 项跳过，文件锁 22 项通过，退出码 0。最终完整 CLI adapter 21 个文件、160 项通过；npm 包构建与包内 owner IPC 启动审计通过；Token 基准与保存的 JSON 精确一致。PR 无冲突并处于可审核状态。
