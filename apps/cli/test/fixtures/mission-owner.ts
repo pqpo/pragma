@@ -7,6 +7,8 @@ import {
   createControllerRunMissionPort,
   createMissionControllerStore,
   createMissionQuery,
+  createMissionControlApplication,
+  createMissionOwnerScope,
   type LocalHostRunTerminal,
 } from "@pragma/local-host";
 import { CliOwnerFrameSchema } from "@pragma/shared/integration";
@@ -91,7 +93,28 @@ process.once("message", (value) => {
         },
         runtime: { resolver: {} as never },
       });
-      return { ...readOnly, run, dispose: async () => undefined };
+      const ownerScope = createMissionOwnerScope({ controller });
+      const missionControl = createMissionControlApplication({
+        controller,
+        ownerScope,
+        consumer: {
+          apply: async () => {
+            await new Promise((resolve) => setTimeout(resolve, 2500));
+            return { result: { answer: "mutation finished after SIGINT" } };
+          },
+        },
+      });
+      return {
+        ...readOnly,
+        run,
+        missionControl,
+        dispose: async () => {
+          for (const missionId of ownerScope.ownedMissionIds()) {
+            await ownerScope.release(missionId);
+            await ownerScope.stop(missionId);
+          }
+        },
+      };
     },
     async (frame) => {
       const parsed = CliOwnerFrameSchema.parse(frame);

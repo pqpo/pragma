@@ -365,7 +365,7 @@ function renderRunText(
   if (outcome.status === "accepted") {
     if (isRecord(outcome.result) && outcome.result["waitExpired"] === true) {
       const next = recordValue(outcome.result, "next");
-      return `WAIT EXPIRED: mission ${outcome.missionId ?? "unknown"}; observed=${valueText(outcome.result, "observedStatus") ?? valueText(outcome.result, "lastObservedStatus") ?? "unknown"}. Mission continues.\nRequest ID: ${requestId}\nNEXT: ${valueText(next, "watch") ?? `pragma mission watch ${outcome.missionId}`}\n`;
+      return `WAIT EXPIRED: mission ${outcome.missionId ?? "unknown"}; observed=${valueText(outcome.result, "lastObservedStatus") ?? valueText(outcome.result, "observedStatus") ?? "unknown"}; stopReason=${valueText(outcome.result, "stopReason") ?? "timed_out"}. Mission continues.\nRequest ID: ${requestId}\nNEXT: ${valueText(next, "watch") ?? `pragma mission watch ${outcome.missionId}`}\n`;
     }
 
     if (isMutationCommandName(command))

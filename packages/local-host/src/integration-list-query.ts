@@ -111,6 +111,7 @@ export function queryIntegrationExecutors(items: readonly unknown[], request: Ex
       query: request.query,
       status: request.status,
       project: request.project,
+      maxContentBytes: request.maxContentBytes,
     },
   );
   return request.maxContentBytes === undefined

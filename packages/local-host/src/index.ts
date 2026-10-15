@@ -382,7 +382,10 @@ export function createLocalHostApplication<
           : undefined;
       const items = Array.isArray(raw) ? raw : record?.["items"];
       if (!Array.isArray(items)) throw new Error("Invalid full queue projection.");
-      const page = paginateIntegrationItems(items, request, "mission.queue.list", { missionId });
+      const page = paginateIntegrationItems(items, request, "mission.queue.list", {
+        missionId,
+        maxContentBytes: request.maxContentBytes,
+      });
       return {
         ...record,
         ...page,

@@ -114,6 +114,32 @@ describe("LocalHostApplication", () => {
     expect(second.nextCursor).toBeUndefined();
   });
 
+  it("rejects queue continuation with a changed content projection or byte budget", async () => {
+    const queue = async () =>
+      ["first", "second"].map((requestId) => ({ requestId, content: "x".repeat(2000) }));
+    for (const maxContentBytes of [undefined, 500, 1000]) {
+      const request = { limit: 1, maxContentBytes };
+      const first = (await createApplication({ queue }).queryMissionQueue!(
+        "11111111-1111-4111-8111-111111111111",
+        request,
+      )) as { nextCursor: string };
+      await expect(
+        createApplication({ queue }).queryMissionQueue!("11111111-1111-4111-8111-111111111111", {
+          ...request,
+          cursor: first.nextCursor,
+        }),
+      ).resolves.toMatchObject({ items: [expect.objectContaining({ requestId: "second" })] });
+      for (const changed of [undefined, 500, 1000].filter((value) => value !== maxContentBytes)) {
+        await expect(
+          createApplication({ queue }).queryMissionQueue!("11111111-1111-4111-8111-111111111111", {
+            ...request,
+            maxContentBytes: changed,
+            cursor: first.nextCursor,
+          }),
+        ).rejects.toMatchObject({ code: "CURSOR_INVALID" });
+      }
+    }
+  });
   it("fixes Board reads to the shared scope and exposes no private Board operation", async () => {
     const requests: unknown[] = [];
     const application = createApplication({

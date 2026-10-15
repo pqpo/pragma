@@ -222,6 +222,7 @@ pragma mission board read "$MISSION_ID" report.md --start 0 --max-bytes 8000
 列表由 Host 筛选、稳定排序和分页，limit 为 1..200。--query 搜索标题，--workspace 精确匹配 canonical path。
 文本只给出一份可执行 Continue 命令。匹配结果变化时 cursor 过期，重新查询；列表不是持久快照。
 旧 CLI v2 列表 cursor 无结果指纹，升级后明确过期；事件分页和 watch/replay cursor 不受影响。
+Executor/Queue 的列表 cursor 同时绑定 full/有界投影及正文预算，续页必须保持原输出模式；切换模式或预算返回 CURSOR_INVALID。
 
 GET 默认返回带 title 的语义 v2；严格 v1 消费者可以加 --query-version 1。历史 title 为 null 时明确展示不可用。
 最近输入来自持久 timeline，可能仍排队；不要把它当作当前 execution 已开始的证明。
@@ -236,6 +237,8 @@ compact 的完整结果只出现一次，结束行保留退出码和恢复字段
 默认 CLI 的 run 和支持分离的 mutation 使用每次调用专属的 owner 子进程；超时不会隐式取消。
 wait-timeout 为 1..86400 秒，mutation 中隐含 --wait，与 --detach/--interactive always 互斥。
 到期返回 accepted/exit 0、waitExpired、当前观测及继续入口；任务仍可能排队、需要回答或失败。
+watch 超时文本分别显示最后观测的 Mission 状态和 stopReason=timed_out。
+有限等待的 mutation 收到 Ctrl-C 时调用方退出，owner 继续处理已持久化命令；executor run 的 Ctrl-C 则请求取消执行。
 --ack-timeout 继续表示命令确认。问题/选项与完整回答格式直接展示；审批须依据用户授权，不自动批准。
 
 完整协议与兼容决策见 [ADR 071](../adr/071-agent-friendly-cli-queries-and-owner-waiting.md)。

@@ -1143,6 +1143,31 @@ describe("M6 parser and read-only command surface", () => {
     expect(jsonOutput(differentFilterIo).error).toMatchObject({ code: "CURSOR_INVALID" });
   });
 
+  it("binds embedded Host queue cursors to the output projection", async () => {
+    const host = {
+      ...createHost(),
+      listMissionQueue: async () => [{ requestId: "one" }, { requestId: "two" }],
+    };
+    const argv = ["mission", "queue", "list", MISSION_ID, "--limit", "1", "--json"];
+    const first = createIo();
+    expect(await runCli([...argv, "--output-view", "compact"], first, { localHost: host })).toBe(0);
+    const cursor = JSON.parse(first.stdout.join("")).result.nextCursor as string;
+    expect(cursor).toBeDefined();
+    const same = createIo();
+    expect(
+      await runCli([...argv, "--output-view", "compact", "--cursor", cursor], same, {
+        localHost: host,
+      }),
+    ).toBe(0);
+    const changed = createIo();
+    expect(
+      await runCli([...argv, "--output-view", "full", "--cursor", cursor], changed, {
+        localHost: host,
+      }),
+    ).not.toBe(0);
+    expect(JSON.parse(changed.stdout.join("")).error.code).toBe("CURSOR_INVALID");
+  });
+
   it("keeps completion independent of Host and secret inspection", async () => {
     let queried = false;
     const host = createHost();
@@ -1176,6 +1201,7 @@ describe("M6 parser and read-only command surface", () => {
       "--json",
       "--stream-json",
       "--color",
+      "--output-view",
       "--interactive",
       "--help",
     ];
@@ -1397,6 +1423,51 @@ describe("M6 parser and read-only command surface", () => {
       },
     ] as const;
 
+    for (const shell of ["bash", "zsh", "fish", "powershell"] as const) {
+      const script = scripts.get(shell)!;
+      const markers = {
+        bash: [
+          '        list) candidates="--status',
+          '        get) candidates="--view',
+          "        watch) candidates=",
+          "        send) candidates=",
+          "        interrupt) candidates=",
+        ],
+        zsh: [
+          "              list) _describe option '--status",
+          "              get) _describe option '--view",
+          "              watch) _describe option",
+          "              send) _describe option",
+          "              interrupt) _describe option",
+        ],
+        fish: [
+          "__pragma_mission_list' -a",
+          "__pragma_mission_get' -a",
+          "__pragma_mission_watch' -a",
+          "__pragma_mission_send' -a",
+          "__pragma_mission_interrupt' -a",
+        ],
+        powershell: [
+          "$tokens -contains 'list') { $candidates = $globalOptions + @('--status'",
+          "$tokens -contains 'get')",
+          "$tokens -contains 'watch')",
+          "$tokens -contains 'send')",
+          "$tokens -contains 'interrupt')",
+        ],
+      };
+      const expected = [
+        ["--query", "--workspace"],
+        ["--query-version", "--recent-input", "--content-id", "--max-bytes"],
+        ["--wait-timeout"],
+        ["--wait-timeout"],
+        ["--wait-timeout"],
+      ];
+      markers[shell].forEach((marker, index) => {
+        const line = completionContextLine(script, marker);
+        for (const option of expected[index]!)
+          expect(completionLineHasOption(line, option), `${shell}: ${option}`).toBe(true);
+      });
+    }
     for (const completionCase of cases) {
       const line = completionContextLine(scripts.get(completionCase.shell)!, completionCase.marker);
       for (const option of completionCase.allowed) {

@@ -119,6 +119,30 @@ describe("Host list queries", () => {
       }),
     ).toThrowError(expect.objectContaining({ code: "CURSOR_INVALID" }));
   });
+  it("binds executor cursors to full/summary projection and the exact byte budget", () => {
+    const items = ["aaaaaaaaaaaaaaaa", "bbbbbbbbbbbbbbbb"].map((id) => ({
+      kind: "expert",
+      ref: `expert:${id}`,
+      name: "Research",
+      description: "x".repeat(1000),
+    }));
+    for (const maxContentBytes of [undefined, 500, 1000]) {
+      const request = { executorKind: "expert" as const, limit: 1, maxContentBytes };
+      const first = queryIntegrationExecutors(items, request);
+      expect(
+        queryIntegrationExecutors(items, { ...request, cursor: first.nextCursor }).items,
+      ).toHaveLength(1);
+      for (const changed of [undefined, 500, 1000].filter((value) => value !== maxContentBytes)) {
+        expect(() =>
+          queryIntegrationExecutors(items, {
+            ...request,
+            maxContentBytes: changed,
+            cursor: first.nextCursor,
+          }),
+        ).toThrowError(expect.objectContaining({ code: "CURSOR_INVALID" }));
+      }
+    }
+  });
   it("filters executor kind and offers stable name search", () => {
     const items = [
       { kind: "expert", ref: "expert:aaaaaaaaaaaaaaaa", name: "Research" },

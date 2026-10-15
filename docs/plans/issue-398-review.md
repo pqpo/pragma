@@ -47,3 +47,18 @@
 PR 创建后 main 合入 #401（`3d89ff0c`），已解决全部合并冲突并保留 Mission 删除屏障、SQLite 锁重试和不可读 owner 诊断。诊断和分页来自同一次 Host 读取；无可读 owner 时保持 fail closed。含诊断的页使用独立 `pragma.mission-list-page/v2`，严格通用 v1 DTO 不改。
 
 合并后的 check/build、Host 专项 24 项、CLI 专项 38 项通过；再独立完成整个共享门禁：107 个文件、1005 项通过、1 项跳过，文件锁 22 项通过，退出码 0。最终完整 CLI adapter 21 个文件、160 项通过；npm 包构建与包内 owner IPC 启动审计通过；Token 基准与保存的 JSON 精确一致。PR 无冲突并处于可审核状态。
+
+## PR #402 评论复核（2026-10-15）
+
+已读取全部 2 条讨论评论、3 条行内评论和 1 次审核（基于 `af03fab`）。自动评审汇总与审核说明没有额外独立问题；维护者评论补充了补全和 SIGINT 回归要求。
+
+- [x] [Cursor 投影绑定](https://github.com/pqpo/pragma/pull/402#discussion_r4273586701)：确认需要修复。Executor 和 Queue 原先按原始列表与筛选生成 cursor，未绑定 `maxContentBytes`。现在把该值纳入 scope；省略表示 full，数值表示有界投影。回归分别覆盖 full→有界、有界→full、预算变化和相同预算跨 Host 实例正常续页，变化均返回 `CURSOR_INVALID`。CLI 嵌入式完整 Queue fallback 也绑定同一预算，并覆盖 compact→full 拒绝和 compact→compact 正常续页。两项新增测试先复现失败，修复后 Host 专项 18 项通过。
+- [x] [watch 超时文本](https://github.com/pqpo/pragma/pull/402#discussion_r4273586706)：确认需要修复。文本优先展示 `lastObservedStatus`，并独立展示 `stopReason=timed_out`；没有观测值时保留 `unknown`。`running` / `input_required` 两个回归先复现失败，修复后通过；JSON/JSONL 原始状态契约不变。
+- [x] [有限 mutation 的 SIGINT](https://github.com/pqpo/pragma/pull/402#discussion_r4273586697)：自动评论描述的 cancel frame 被吞路径在当前 mutation 调用中不成立，因为该分支未安装 `onInterrupt`。新增 runCli 接线断言和真实 Linux Node 调用方/owner 子进程回归：持久 receipt 后发送 SIGINT，调用方在 1.5 秒内退出，owner 完成真实 Host Inbox 命令并落盘、释放 lease；同时验证 executor run 的显式 cancel frame 仍产生持久 interrupted 结果。Windows 不用 Node POSIX 信号模拟，两个信号专项明确跳过；其余 owner 回归照常运行。owner/transport 专项 12 项通过。
+- [x] [Shell Completion](https://github.com/pqpo/pragma/pull/402#issuecomment-6181604866)：确认遗漏并修复 bash/zsh/fish/PowerShell 的 Mission query/workspace、内容 selector、query-version/recent-input、wait-timeout 和全局 output-view 参数。四种 Shell 的命令上下文回归通过，仍限制 watch 不提供不支持的 JSON 输出。
+- [x] 默认 Host 双重初始化：维护者明确本 PR 不要求重构。此次不修改 owner/调用方的 Host 生命周期，作为后续优化保留。
+- [x] 最新 CI：`af03fab` 的 source 质量/业务、CLI 包构建及 macOS/Windows/Linux 包 smoke 全部成功（条件入口一项跳过）。本次修复推送后会重新触发 CI。真实模型 Runtime smoke 仍未执行，平台包 smoke 不替代真实 Runtime 验证。
+
+完整共享门禁首次执行出现一个既有测试的同步竞态：`canonical-event-feed` 删除屏障用例在调用异步批量删除后立即释放 feed，没有等待全局文件锁内的 `deleting` 屏障生效，因此下一批事件可能先投递。独立原文件 15 项通过；已将测试改为观测 `store.get()` 的删除屏障拒绝后再释放 feed，保留原来 append 一次、一个 handoff 的全部断言和测试超时。生产删除实现不改，修复后的专项及完整门禁重新验证。
+
+本轮最终验证：`pnpm check` 通过；最终 `pnpm build` 19 个任务通过（含 Desktop 打包 Host worker 启动），CLI 最后补全修改的 lint/typecheck 通过。修正同步后的完整共享门禁 107 个文件、1007 项通过、1 项跳过，文件锁另有 22 项通过，退出码 0；最终完整 CLI adapter 21 个文件、165 项通过，包含四种 Shell 补全、embedded Queue 模式绑定和真实 SIGINT 进程回归。npm 包审计及包内 owner IPC 检查通过，提交后重新绑定产物的提交身份并审计。

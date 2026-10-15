@@ -85,10 +85,16 @@ it("prints the generated request ID before an owner acceptance failure", async (
   });
   vi.mocked(fork).mockReturnValue(child as unknown as ReturnType<typeof fork>);
   const stderr: string[] = [];
-  const result = runCli(["mission", "send", id, "--prompt", "hello", "--wait-timeout", "1"], {
-    writeStdout: () => {},
-    writeStderr: (value) => stderr.push(value),
-  });
+  const onInterrupt = vi.fn(() => () => undefined);
+  const result = runCli(
+    ["mission", "send", id, "--prompt", "hello", "--wait-timeout", "1"],
+    {
+      writeStdout: () => {},
+      writeStderr: (value) => stderr.push(value),
+    },
+    { signals: { onInterrupt } },
+  );
+  expect(onInterrupt).not.toHaveBeenCalled();
   expect(stderr.join("")).toMatch(/Request ID: [0-9a-f-]{36}/u);
   child.emit("message", {
     type: "failed",
