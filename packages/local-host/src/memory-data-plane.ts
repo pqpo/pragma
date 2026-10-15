@@ -118,6 +118,7 @@ export async function createLocalHostMemoryDataPlane(options: {
     checkpoints: state,
     deadLetters: state,
     policies,
+    extractionSettings,
     activity,
   });
   const scheduler = createMemoryPipelineScheduler({

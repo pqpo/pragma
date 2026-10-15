@@ -8,7 +8,7 @@ import {
   MEMORY_CURATOR_ID,
   MEMORY_CURATOR_REF,
 } from "@pragma/memory";
-import { MissionExecutorRefSchema } from "@pragma/shared";
+import { MemoryEvidenceEnvelopeSchema, MissionExecutorRefSchema } from "@pragma/shared";
 import { createStaticRuntimeResolver } from "@pragma/core";
 import { defineRuntimeTestDriver } from "@pragma/core/testing";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -35,6 +35,7 @@ describe("Desktop Memory Curator", () => {
     "read-failed",
     "missing-output",
     "invalid-json",
+    "missing-receipt",
     "cancelled",
   ] as const)(
     "uses internal transcripts and protects the paid execution when %s",
@@ -50,8 +51,35 @@ describe("Desktop Memory Curator", () => {
         startTurn: () => ({ outputText: "unused", runtimeSessionId: "runtime" }),
         mapEvent: () => ({ events: [] }),
       });
+      const runtimes = createStaticRuntimeResolver({
+        runtimes: [runtime],
+        defaultRuntimeId: "fake",
+      });
       const run = vi.fn(async (id: string) => {
         const mission = await missions.get(id);
+        if (scenario !== "cancelled" && scenario !== "missing-receipt") {
+          const source = await curator.source({
+            missionId: id,
+            runtimes,
+            workspace: root,
+            pragmaHome: root,
+          });
+          const binding = await source.adapterHost!.resolveBinding("binding:pragma.memory-curator");
+          const tools = (
+            binding!.value as {
+              contribution: {
+                tools: import("@pragma/core").ExpertAgentManagedTool<
+                  string,
+                  import("@pragma/core").ExpertAgentToolCallResult
+                >[];
+              };
+            }
+          ).contribution.tools;
+          const result = await tools
+            .find((tool) => tool.name === "finish_extraction")!
+            .call({ retain: false, reason: "low-value" }, undefined);
+          expect(result.text).toContain("durable");
+        }
         return await missions.updateExecution(id, {
           id: randomUUID(),
           inputMessageId: mission.initialMessageId,
@@ -100,6 +128,7 @@ describe("Desktop Memory Curator", () => {
         startRun: run,
         getChatPage,
         getInternalConversationSnapshot,
+        getInternalContextWindow: async () => ({ missionId: "test", revision: 1 }),
         subscribeChat: () => () => undefined,
         getTerminalRuntimeOutputDiagnostic: async () => undefined,
         getTerminalRuntimeFailure: async () => ({ message: "Cancelled", retryable: true }),
@@ -113,28 +142,55 @@ describe("Desktop Memory Curator", () => {
         pragmaHome: root,
         workspace: root,
         profiles: createFileMemoryExtractorProfileStore({ pragmaHome: root }),
-        runtimes: createStaticRuntimeResolver({ runtimes: [runtime], defaultRuntimeId: "fake" }),
+        runtimes,
       });
       const extraction = curator.episodicExtractor.extract({
         schemaVersion: "pragma.memory-episodic-extraction-input/v2",
         jobId: "paid-job",
         executionId: "source",
-        evidence: [],
+        evidence: [
+          MemoryEvidenceEnvelopeSchema.parse({
+            schemaVersion: "pragma.memory-evidence/v1",
+            messageId: "source-message",
+            topic: "execution.message.appended",
+            schemaRef: "pragma.memory.execution-message/v2",
+            sourceRef: {
+              type: "pragma.execution-event",
+              id: "event",
+              canonicalEventId: "canonical",
+            },
+            subjectRefs: [{ type: "pragma.execution", id: "source" }],
+            occurredAt: "2026-10-14T00:00:00.000Z",
+            visibility: { mode: "host-private" },
+            sensitivity: "internal",
+            bindings: [],
+            policySnapshot: {
+              capture: true,
+              recall: true,
+              learning: "local-candidates",
+              appliedRevisions: [],
+            },
+            payload: { message: { role: "user", text: "Hello" } },
+          }),
+        ],
         omittedEvidence: { records: 0, bytes: 0, byTopic: {} },
       });
-      if (scenario === "success" || scenario === "read-recovered")
+      if (scenario !== "cancelled" && scenario !== "missing-receipt")
         await expect(extraction).resolves.toMatchObject({ output: { retain: false } });
-      else
-        await expect(extraction).rejects.toMatchObject({ retryable: scenario === "invalid-json" });
+      else await expect(extraction).rejects.toMatchObject({ retryable: false });
       expect(run).toHaveBeenCalledTimes(1);
       expect(getChatPage).not.toHaveBeenCalled();
-      if (scenario === "read-failed" || scenario === "missing-output")
+      if (scenario === "read-failed")
         expect(getInternalConversationSnapshot).toHaveBeenCalledTimes(4);
       if (scenario === "read-recovered")
         expect(getInternalConversationSnapshot).toHaveBeenCalledTimes(2);
       const [archived] = await curator.listRuns({ module: "episodic", jobId: "paid-job" });
       expect(archived).toBeDefined();
-      if (scenario === "read-failed" || scenario === "missing-output" || scenario === "cancelled") {
+      if (
+        scenario === "read-failed" ||
+        scenario === "missing-receipt" ||
+        scenario === "cancelled"
+      ) {
         expect(deleteMission).not.toHaveBeenCalled();
         await expect(curator.recoverOrphans()).resolves.toBe(0);
         missingOutput = false;

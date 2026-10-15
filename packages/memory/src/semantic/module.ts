@@ -1,3 +1,5 @@
+import { extractionEvidenceAccessGuard } from "../pipeline/extraction-settings.ts";
+import { redactMemoryValue } from "../evidence/redact.ts";
 import type {
   MemoryEvidenceEnvelope,
   MemoryExtractionFailurePhase,
@@ -20,7 +22,7 @@ import {
   selectMemoryExtractionEvidence,
   type MemoryExtractionSettingsStore,
 } from "../pipeline/extraction-settings.ts";
-import type { MemoryModule } from "../pipeline/memory-module.ts";
+import { MemoryRecallScopeSchema, type MemoryModule } from "../pipeline/memory-module.ts";
 import { mergeMemoryEvidenceOmissionStats } from "../storage/bounded-evidence.ts";
 
 export interface SemanticMemoryModule extends MemoryModule {
@@ -107,6 +109,7 @@ export async function createSemanticMemoryModule(
       },
     },
     subscriptions: [
+      { topic: "execution.tool.content", schemaRefs: ["pragma.memory.tool-content/v1"] },
       { topic: "execution.message.appended", schemaRefs: ["pragma.memory.execution-message/v2"] },
       {
         topic: "execution.execution.terminal",
@@ -147,7 +150,8 @@ export async function createSemanticMemoryModule(
           await store.completePreviouslyApplied(job, now());
           return;
         }
-        if (localRecoveryOnly === true) {
+        let recovered = await extractor.recover?.(job.id, job.inputWatermark);
+        if (localRecoveryOnly === true && recovered === undefined) {
           phase = "storage";
           throw Object.assign(new Error("memory_extraction_recovery_result_unavailable"), {
             retryable: false,
@@ -161,8 +165,14 @@ export async function createSemanticMemoryModule(
         const selectedEvidence = selectMemoryExtractionEvidence(
           capturedEvidence,
           allowToolAssisted,
+          "semantic",
         );
         const evidence = sanitizeEvidence(selectedEvidence.retained);
+        const assertAccess = extractionEvidenceAccessGuard(
+          evidence,
+          "semantic",
+          options.extractionSettings,
+        );
         const omittedEvidence = mergeMemoryEvidenceOmissionStats(
           await store.readOmissionStatsForJob(job),
           selectedEvidence.omittedStats,
@@ -187,7 +197,16 @@ export async function createSemanticMemoryModule(
           ...attribution.producerRefs,
         ]);
         const allowedSubjectKeys = new Set(allowedSubjectRefs.map(refKey));
-        const factsBeforeExtraction = await store.list();
+        const recallScope = MemoryRecallScopeSchema.parse({
+          rootRef: attribution.rootRef,
+          principalRefs: subjectContext.subjectRefs,
+        });
+        const factsBeforeExtraction = await store.searchCandidatesForRecall(
+          recallScope,
+          "",
+          100,
+          now(),
+        );
         const currentFacts = boundCurrentFacts(
           factsBeforeExtraction
             .filter(
@@ -216,13 +235,31 @@ export async function createSemanticMemoryModule(
           evidence,
           omittedEvidence,
         });
+        if (recovered !== undefined)
+          recovered = await extractor.recover?.(job.id, job.inputWatermark, input);
         if (!(await store.isClaimCurrent(job))) return;
         controller.signal.throwIfAborted();
         phase = "curator_run";
         unadmittedClaims.delete(controller);
-        const extracted = await extractor.extract(input, { signal: controller.signal });
+        const extracted =
+          recovered ??
+          (await extractor.extract(input, {
+            signal: controller.signal,
+            watermark: job.inputWatermark,
+            isCurrent: () => store.isClaimCurrent(job),
+            assertAccess,
+            findFacts: async (query) =>
+              (await store.searchCandidatesForRecall(recallScope, query, 10, now())).filter(
+                (fact) => fact.subjectRefs.every((ref) => allowedSubjectKeys.has(refKey(ref))),
+              ),
+            canUseFact: async (id, revision) => {
+              const fact = await store.getForRecall(recallScope, id, now());
+              return fact?.revision === revision;
+            },
+          }));
         controller.signal.throwIfAborted();
         phase = "validation";
+        await assertAccess();
         const output = SemanticExtractionOutputSchema.parse(extracted.output);
         if (!output.retain) {
           await store.completeRejected(job, output.reason, now());
@@ -234,6 +271,7 @@ export async function createSemanticMemoryModule(
           candidates: output.facts,
           evidence,
           rootRef: attribution.rootRef,
+          principalRefs: subjectContext.subjectRefs,
           producerRefs: attribution.producerRefs,
           visibility,
           sensitivity: strictestSensitivity(evidence),
@@ -319,6 +357,7 @@ function conversationKey(ref: MemorySubjectRef): string {
 
 function hasTextEvidence(evidence: readonly MemoryEvidenceEnvelope[]): boolean {
   return evidence.some((item) => {
+    if (item.schemaRef === "pragma.memory.tool-content/v1") return true;
     if (item.schemaRef !== "pragma.memory.execution-message/v2") return false;
     const payload = item.payload as { readonly message?: { readonly text?: unknown } };
     return typeof payload.message?.text === "string" && payload.message.text.trim() !== "";
@@ -407,23 +446,7 @@ function strictestVisibility(evidence: readonly MemoryEvidenceEnvelope[]) {
 function sanitizeEvidence(
   evidence: readonly MemoryEvidenceEnvelope[],
 ): readonly MemoryEvidenceEnvelope[] {
-  return evidence.map((item) => ({ ...item, payload: redactValue(item.payload) }));
-}
-
-function redactValue(value: unknown): unknown {
-  if (typeof value === "string") {
-    return value
-      .replace(/\b(?:sk|rk|pk)-[A-Za-z0-9_-]{12,}\b/g, "[REDACTED_CREDENTIAL]")
-      .replace(/\b(?:AKIA|ASIA)[A-Z0-9]{16}\b/g, "[REDACTED_CREDENTIAL]")
-      .replace(/(authorization\s*[:=]\s*(?:bearer\s+)?)[^\s,;]+/gi, "$1[REDACTED_CREDENTIAL]")
-      .replace(
-        /((?:password|passwd|secret|token|api[_-]?key)\s*[:=]\s*)[^\s,;]+/gi,
-        "$1[REDACTED_CREDENTIAL]",
-      );
-  }
-  if (Array.isArray(value)) return value.map(redactValue);
-  if (typeof value !== "object" || value === null) return value;
-  return Object.fromEntries(Object.entries(value).map(([key, item]) => [key, redactValue(item)]));
+  return evidence.map((item) => ({ ...item, payload: redactMemoryValue(item.payload) }));
 }
 
 function uniqueRefs(refs: readonly MemorySubjectRef[]): MemorySubjectRef[] {

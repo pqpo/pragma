@@ -1,3 +1,5 @@
+import { hasMemoryExtractionReceipt } from "../pipeline/extraction-session/store.ts";
+import { createMemoryExtractionSessionStore } from "../pipeline/extraction-session.ts";
 import {
   blocksAutomaticExtractionRetry,
   MAX_EXTRACTION_ATTEMPTS,
@@ -63,7 +65,7 @@ import {
   insertExtractionFailureAttempt,
   listExtractionFailureAttempts,
 } from "../pipeline/extraction-failure-store.ts";
-import type { MemoryRecallScope } from "../pipeline/memory-module.ts";
+import { MemoryRecallScopeSchema, type MemoryRecallScope } from "../pipeline/memory-module.ts";
 import {
   EMPTY_MEMORY_EVIDENCE_OMISSION_STATS,
   MemoryEvidenceOmissionStatsSchema,
@@ -103,6 +105,7 @@ export interface SemanticFactMaterialization {
   readonly candidates: readonly SemanticFactCandidate[];
   readonly evidence: readonly MemoryEvidenceEnvelope[];
   readonly rootRef: MemorySubjectRef;
+  readonly principalRefs?: readonly MemorySubjectRef[] | undefined;
   readonly producerRefs: readonly MemorySubjectRef[];
   readonly visibility: MemoryVisibilityPolicy;
   readonly sensitivity: "public" | "internal" | "confidential" | "restricted";
@@ -615,9 +618,10 @@ export async function createSemanticMemoryStore(
         }
         const canSettleLocally =
           current.status === "running" &&
-          data
+          (data
             .prepare("SELECT 1 FROM applied_jobs WHERE job_id = ? AND input_watermark = ?")
-            .get(current.id, current.inputWatermark) !== undefined;
+            .get(current.id, current.inputWatermark) !== undefined ||
+            hasMemoryExtractionReceipt(options, "semantic", current.id, current.inputWatermark));
         const replayBlocked =
           !canSettleLocally &&
           blocksAutomaticExtractionRetry(current.lastFailure, current.attempts);
@@ -869,8 +873,27 @@ export async function createSemanticMemoryStore(
               if (envelope === undefined) throw new Error(`semantic_evidence_ref_invalid:${id}`);
               return envelope;
             });
-            const replacement = resolveAuthoritativeReplacement(data, candidate, subjects, cited);
-            let existing = replacement ?? findEquivalentFact(data, subjects, candidate);
+            const replacement = resolveAuthoritativeReplacement(
+              data,
+              candidate,
+              subjects,
+              cited,
+              input.rootRef,
+              input.now,
+              input.principalRefs,
+            );
+            let existing =
+              replacement ??
+              findEquivalentFact(
+                data,
+                subjects,
+                candidate,
+                MemoryRecallScopeSchema.parse({
+                  rootRef: input.rootRef,
+                  principalRefs: input.principalRefs,
+                }),
+                input.now,
+              );
             const effectiveChange =
               existing === undefined ||
               replacement !== undefined ||
@@ -1135,6 +1158,8 @@ export async function createSemanticMemoryStore(
         throw new Error("memory_extraction_job_revision_conflict");
       }
       if (job.status !== "needs_attention") throw new Error("memory_extraction_job_not_retryable");
+      if (job.lastErrorCode !== "memory_curator_budget_exhausted")
+        await createMemoryExtractionSessionStore(options).deleteJobs("semantic", [job.id]);
       writeJob(
         SemanticExtractionJobSchema.parse({
           ...job,
@@ -1204,6 +1229,7 @@ export async function createSemanticMemoryStore(
     async deleteJob(input) {
       const job = readJob(state, input.id);
       assertManageableJob(job, input.expectedRevision, ["needs_attention"]);
+      await createMemoryExtractionSessionStore(options).deleteJobs("semantic", [job.id]);
       deleteExtractionJobState(state, job, input.now);
     },
 
@@ -1222,6 +1248,7 @@ export async function createSemanticMemoryStore(
     },
 
     async maintain(now) {
+      await createMemoryExtractionSessionStore({ ...options, now: () => now }).maintain();
       const result = maintainJobs(state, now);
       maintainSemanticData(data, now);
       const cutoff = now.getTime() - DEFAULT_MEMORY_STORAGE_POLICY.jobRecordRetentionMs;
@@ -1237,6 +1264,7 @@ export async function createSemanticMemoryStore(
     },
 
     async deleteExecutionState(executionIds, now = new Date()) {
+      await createMemoryExtractionSessionStore(options).deleteExecutions(executionIds);
       deleteExecutionState(state, executionIds, now);
     },
 
@@ -2200,16 +2228,20 @@ function findEquivalentFact(
   database: DatabaseSync,
   subjects: readonly MemorySubjectRef[],
   candidate: Pick<SemanticFactCandidate, "predicate" | "normalizedValue">,
+  scope?: MemoryRecallScope,
+  now = new Date(),
 ): SemanticFact | undefined {
+  const access = scope === undefined ? undefined : recallPredicate("current_facts", scope, now);
   return readFactRows(
     database
       .prepare(
         `SELECT record_json AS recordJson FROM current_facts
          WHERE status = 'active'
            AND json_extract(record_json, '$.predicate') = ?
-           AND json_extract(record_json, '$.normalizedValue') = ?`,
+           AND json_extract(record_json, '$.normalizedValue') = ?
+           ${access === undefined ? "" : `AND ${access.sql}`}`,
       )
-      .all(candidate.predicate, candidate.normalizedValue),
+      .all(candidate.predicate, candidate.normalizedValue, ...(access?.parameters ?? [])),
   ).find((fact) => subjectKey(fact.subjectRefs) === subjectKey(subjects));
 }
 
@@ -2218,9 +2250,24 @@ function resolveAuthoritativeReplacement(
   candidate: SemanticFactCandidate,
   subjects: readonly MemorySubjectRef[],
   cited: readonly MemoryEvidenceEnvelope[],
+  rootRef: MemorySubjectRef,
+  now: Date,
+  principalRefs?: readonly MemorySubjectRef[],
 ): SemanticFact | undefined {
   const target = candidate.replacementTarget;
   if (target === undefined) return undefined;
+  const access = recallPredicate(
+    "current_facts",
+    MemoryRecallScopeSchema.parse({ rootRef, principalRefs }),
+    now,
+  );
+  if (
+    database
+      .prepare(`SELECT 1 FROM current_facts WHERE id = ? AND ${access.sql}`)
+      .get(target.factId, ...access.parameters) === undefined
+  ) {
+    throw new Error("semantic_replacement_target_denied");
+  }
   const current = readRequiredFact(database, target.factId);
   if (current.revision !== target.expectedRevision) {
     throw revisionConflict(target.expectedRevision, current.revision);
@@ -2271,7 +2318,17 @@ function recomputeConflicts(database: DatabaseSync, mutable: ReadonlySet<string>
         right.conflictMode !== "exclusive" ||
         left.predicate !== right.predicate ||
         left.normalizedValue === right.normalizedValue ||
-        subjectKey(left.subjectRefs) !== subjectKey(right.subjectRefs)
+        subjectKey(left.subjectRefs) !== subjectKey(right.subjectRefs) ||
+        !left.bindings.some(
+          (binding) =>
+            binding.recall === "allow" &&
+            right.bindings.some(
+              (other) =>
+                other.recall === "allow" &&
+                refKey(binding.consumerRef) === refKey(other.consumerRef),
+            ),
+        ) ||
+        intersectVisibility(left.visibility, right.visibility) === undefined
       ) {
         continue;
       }

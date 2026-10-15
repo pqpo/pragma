@@ -1,0 +1,12 @@
+apiVersion: pragma/v5
+kind: Capability
+metadata:
+  id: 0000000000memt00
+  name: Memory extraction tools
+  description: Task-scoped evidence reading and validated Memory candidate submission.
+  tags: [builtin, system, memory]
+spec:
+  adapter: pragma.capability.host@v1
+  binding: binding:pragma.memory-curator
+  config:
+    key: pragma.memory-curator

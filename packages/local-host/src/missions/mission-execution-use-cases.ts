@@ -119,6 +119,8 @@ export interface MissionExecutionUseCases {
   getChatPage(input: MissionChatPageQuery): Promise<MissionChatPage>;
   /** Main-process only: system task transcripts, never exposed through Mission IPC. */
   getInternalConversationSnapshot(id: string): Promise<MissionConversationSnapshot>;
+  /** Main-process only: context budget for the hidden Memory task. */
+  getInternalContextWindow(id: string): Promise<MissionContextWindowSnapshot>;
   getConversationState(id: string): Promise<MissionConversationState>;
   getContextWindow(id: string): Promise<MissionContextWindowSnapshot>;
   getTerminalRuntimeFailure(id: string): Promise<

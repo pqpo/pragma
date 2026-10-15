@@ -106,3 +106,5 @@ ADR 的数字来自项目演进历史，早期曾出现同号记录。链接文�
 - 持久协议、DSL 和 storage schema 的版本升级必须与迁移、fixture 和恢复测试在同一变更中提交。
 
 - [Execution 管理 CLI 与内置 Skill（cutover 待验收）](./067-execution-management-cli-and-built-in-skills.md)
+
+- [ADR 072: Tool-driven Memory extraction](./072-tool-driven-memory-extraction.md)

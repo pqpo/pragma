@@ -37,3 +37,5 @@ export * from "./retrieval/embedding.ts";
 export * from "./retrieval/projection.ts";
 export * from "./retrieval/vector-index.ts";
 export * from "./retrieval/indexer.ts";
+
+export * from "./pipeline/extraction-session.ts";

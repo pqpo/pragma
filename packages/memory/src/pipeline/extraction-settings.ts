@@ -6,6 +6,7 @@ import { PragmaPaths, withFileLock } from "@pragma/core";
 import {
   MemorySafeExecutionMessagePayloadSchema,
   MemorySafeToolEventPayloadSchema,
+  MemoryToolContentPayloadSchema,
   type MemoryEvidenceEnvelope,
 } from "@pragma/shared";
 import { z } from "zod";
@@ -97,11 +98,12 @@ export interface MemoryExtractionEvidenceSelection {
 export function selectMemoryExtractionEvidence(
   evidence: readonly MemoryEvidenceEnvelope[],
   allowToolAssisted: boolean,
+  module?: "episodic" | "semantic",
 ): MemoryExtractionEvidenceSelection {
   const retained: MemoryEvidenceEnvelope[] = [];
   const omitted: MemoryEvidenceEnvelope[] = [];
   for (const item of evidence) {
-    const prepared = prepareExtractionEvidence(item, allowToolAssisted);
+    const prepared = prepareExtractionEvidence(item, allowToolAssisted, module);
     if (prepared === undefined) omitted.push(item);
     else retained.push(prepared);
   }
@@ -117,61 +119,24 @@ export function selectMemoryExtractionEvidence(
 function prepareExtractionEvidence(
   item: MemoryEvidenceEnvelope,
   allowToolAssisted: boolean,
+  module?: "episodic" | "semantic",
 ): MemoryEvidenceEnvelope | undefined {
+  if (item.schemaRef === "pragma.memory.tool-content/v1") {
+    const content = MemoryToolContentPayloadSchema.safeParse(item.payload);
+    return allowToolAssisted &&
+      module !== undefined &&
+      content.success &&
+      content.data.allowedModules.includes(module)
+      ? { ...item, payload: content.data }
+      : undefined;
+  }
   if (item.schemaRef === "pragma.memory.tool-event/v2") {
     const structural = MemorySafeToolEventPayloadSchema.safeParse(item.payload);
-    if (!structural.success) return undefined;
-    return {
-      ...item,
-      payload: allowToolAssisted
-        ? toolAssistedEventPayload(structural.data, item.payload)
-        : structural.data,
-    };
+    return structural.success ? { ...item, payload: structural.data } : undefined;
   }
   if (item.schemaRef !== "pragma.memory.execution-message/v2") return item;
   const structural = MemorySafeExecutionMessagePayloadSchema.safeParse(item.payload);
-  if (!structural.success) return undefined;
-  if (!allowToolAssisted || structural.data.message.role !== "tool") {
-    return { ...item, payload: structural.data };
-  }
-  const rawMessage = readRecord(readRecord(item.payload)?.["message"]);
-  return {
-    ...item,
-    payload: {
-      message: {
-        ...structural.data.message,
-        ...(rawMessage !== undefined && "content" in rawMessage
-          ? { content: rawMessage["content"] }
-          : {}),
-      },
-    },
-  };
-}
-
-function toolAssistedEventPayload(
-  structural: ReturnType<typeof MemorySafeToolEventPayloadSchema.parse>,
-  payload: unknown,
-) {
-  const raw = readRecord(payload);
-  if (raw === undefined) return structural;
-  return {
-    ...structural,
-    ...(structural.phase === "started" && "inputPreview" in raw
-      ? { inputPreview: raw["inputPreview"] }
-      : {}),
-    ...(structural.phase === "completed" && "outputPreview" in raw
-      ? { outputPreview: raw["outputPreview"] }
-      : {}),
-    ...(structural.phase === "failed" && typeof raw["message"] === "string"
-      ? { errorMessage: raw["message"] }
-      : {}),
-  };
-}
-
-function readRecord(value: unknown): Record<string, unknown> | undefined {
-  return typeof value === "object" && value !== null
-    ? (value as Record<string, unknown>)
-    : undefined;
+  return structural.success ? { ...item, payload: structural.data } : undefined;
 }
 
 function isNotFound(error: unknown): boolean {
@@ -181,4 +146,20 @@ function isNotFound(error: unknown): boolean {
     "code" in error &&
     (error as { readonly code?: unknown }).code === "ENOENT"
   );
+}
+
+/** Recheck consent before every delivery and before accepting a completed extraction. */
+export function extractionEvidenceAccessGuard(
+  evidence: readonly MemoryEvidenceEnvelope[],
+  module: "episodic" | "semantic",
+  settings: Pick<MemoryExtractionSettingsStore, "get"> | undefined,
+): () => Promise<void> {
+  const containsToolContent = evidence.some(
+    (item) => item.schemaRef === "pragma.memory.tool-content/v1",
+  );
+  return async () => {
+    if (containsToolContent && (await settings?.get())?.allowToolAssisted[module] !== true) {
+      throw Object.assign(new Error("memory_curator_tool_content_denied"), { retryable: false });
+    }
+  };
 }

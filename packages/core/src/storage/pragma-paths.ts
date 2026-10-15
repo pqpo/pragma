@@ -205,6 +205,10 @@ export class PragmaPaths {
     return join(this.memoryStateRoot(), "curator-missions.json");
   }
 
+  memoryExtractionSessions(): string {
+    return join(this.memoryStateRoot(), "curator-sessions-v1.sqlite");
+  }
+
   memoryCacheRoot(): string {
     return join(this.cacheRoot(), "memory");
   }

@@ -1,3 +1,4 @@
+import type { MemoryExtractorOptions } from "../pipeline/extraction-session.ts";
 import {
   MemoryEvidenceEnvelopeSchema,
   MemorySensitivitySchema,
@@ -143,9 +144,20 @@ export type EpisodicExtractionJob = z.infer<typeof EpisodicExtractionJobSchema>;
 export type EpisodicExtractorProvenance = z.infer<typeof EpisodicExtractorProvenanceSchema>;
 
 export interface EpisodicMemoryExtractor {
+  recover?(
+    jobId: string,
+    watermark: string,
+    input?: EpisodicExtractionInput,
+  ): Promise<
+    | {
+        readonly output: EpisodicExtractionOutput;
+        readonly provenance: EpisodicExtractorProvenance;
+      }
+    | undefined
+  >;
   extract(
     input: EpisodicExtractionInput,
-    options?: { readonly signal?: AbortSignal },
+    options?: MemoryExtractorOptions,
   ): Promise<{
     readonly output: EpisodicExtractionOutput;
     readonly provenance: EpisodicExtractorProvenance;

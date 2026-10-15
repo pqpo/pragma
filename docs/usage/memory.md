@@ -46,10 +46,18 @@ Store/Skill Revision Agent 托管的 Knowledge 与 Skill 学习闭环：
 扩展接入同一 SPI。旧插件与其 Task/Experience/Fact/Skill 数据不属于当前 Memory Plane
 的读取和导入协议。
 
-Episodic 与 Semantic 的 data Store 当前为 user version 4，job Store 为 version 3。data v3→v4 增加
+Episodic 的 data Store 当前为 user version 5，Semantic 为 version 6；两者 job Store 均为 version 4。data v3→v4 增加
 binding-scoped hot/archive 索引与召回统计；相邻 v2→v3 迁移将提炼生命周期
 升级为 conversation、source Execution 和 input-watermark 模型，并对升级前数据创建备份；未来
 版本仍 fail closed。
+
+## 提炼任务的输入与工具
+
+Memory Curator 的任务入口只显示提炼目标、主体别名和证据数量。短对话直接提供原文；长对话通过专用工具分页浏览和分段读取。事实候选和情景各部分分项提交，字段错误可在同一次执行中修正。提炼完成以 Host 保存的结果回执为准，聊天回复无需包含 JSON。
+
+证据读取和已有事实查询沿用原任务的权限。达到预算仍有未处理内容时，任务进入“需要处理”，保留进度，不标为“没有值得记忆的内容”。可检查后手动重试。
+
+“允许工具辅助提炼”控制后续采集的脱敏工具输入与结果正文。正文只对采集时允许且当前仍启用的 Module 可用；历史中未保存的工具正文无法补读。工具名称和状态继续保留，不能代替结果内容作为事实依据。
 
 ## 分层加载
 

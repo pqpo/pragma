@@ -119,21 +119,8 @@ describe("Memory extraction settings", () => {
     expect(filtered.omittedStats.records).toBe(0);
 
     const enabled = selectMemoryExtractionEvidence(evidence, true);
-    expect(enabled.retained[1]?.payload).toEqual({
-      toolCallId: "call-1",
-      toolName: "search",
-      phase: "started",
-      inputPreview: { query: "private query" },
-    });
-    expect(enabled.retained[2]?.payload).toEqual({
-      message: {
-        role: "tool",
-        toolCallId: "call-1",
-        toolName: "search",
-        status: "succeeded",
-        content: "private result",
-      },
-    });
+    expect(enabled.retained[1]?.payload).toEqual(filtered.retained[1]?.payload);
+    expect(enabled.retained[2]?.payload).toEqual(filtered.retained[2]?.payload);
     expect(enabled.retained[0]?.payload).toEqual(filtered.retained[0]?.payload);
     expect(enabled.retained[3]?.payload).toEqual(filtered.retained[3]?.payload);
   });

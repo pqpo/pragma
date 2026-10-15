@@ -32,26 +32,28 @@ describe("Memory extraction job v3 migration", () => {
     "upgrades $moduleId data v3 with a backed-up hot/archive index",
     async ({ moduleId, file, open }) => {
       const root = await temporaryRoot();
-      const initial = await open({ pragmaHome: root });
-      initial.close();
       const dataPath = join(
         new PragmaPaths({ pragmaHome: root }).memoryModuleDataRoot(moduleId),
         file,
       );
+      await mkdir(join(dataPath, ".."), { recursive: true });
       const historical = new DatabaseSync(dataPath);
-      historical.exec(`
-      DROP TABLE memory_index;
-      DROP TABLE revision_prune_audit;
-      ${moduleId === "pragma.memory.semantic" ? "DROP TABLE projection_notifications;" : ""}
-      PRAGMA user_version = 3;
-    `);
+      historical.exec(
+        await readFile(
+          new URL(
+            `./fixtures/extraction-data/${moduleId === "pragma.memory.semantic" ? "semantic" : "episodic"}-v3.sql`,
+            import.meta.url,
+          ),
+          "utf8",
+        ),
+      );
       historical.close();
 
       const migratedModule = await open({ pragmaHome: root });
       const migrated = new DatabaseSync(dataPath);
       expect(
         (migrated.prepare("PRAGMA user_version").get() as { user_version: number }).user_version,
-      ).toBe(moduleId === "pragma.memory.semantic" ? 5 : 4);
+      ).toBe(moduleId === "pragma.memory.semantic" ? 6 : 5);
       expect(
         migrated
           .prepare(
@@ -332,16 +334,15 @@ describe("Memory extraction job v3 migration", () => {
     );
     await mkdir(join(dataPath, ".."), { recursive: true });
     const database = new DatabaseSync(dataPath);
-    database.exec(`
-      CREATE TABLE applied_jobs (
-        job_id TEXT PRIMARY KEY,
-        terminal_message_id TEXT NOT NULL,
-        applied_at TEXT NOT NULL
-      );
-      INSERT INTO applied_jobs(job_id, terminal_message_id, applied_at)
-        VALUES ('semantic-conversation', 'terminal-v2', '2026-08-01T00:00:00.000Z');
-      PRAGMA user_version = 2;
-    `);
+    database.exec(
+      await readFile(
+        new URL("./fixtures/extraction-data/semantic-v2.sql", import.meta.url),
+        "utf8",
+      ),
+    );
+    database
+      .prepare("INSERT INTO applied_jobs(job_id, terminal_message_id, applied_at) VALUES (?, ?, ?)")
+      .run("semantic-conversation", "terminal-v2", "2026-08-01T00:00:00.000Z");
     database.close();
 
     const module = await createSemanticMemoryModule({ pragmaHome: root });

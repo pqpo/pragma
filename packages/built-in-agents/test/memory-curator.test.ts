@@ -1,160 +1,102 @@
+import { mkdtemp, rm } from "node:fs/promises";
+import { join } from "node:path";
+import { tmpdir } from "node:os";
+import { afterEach, expect, it, vi } from "vitest";
+import {
+  createMemoryExtractionSessionStore,
+  createFileMemoryExtractorProfileStore,
+} from "@pragma/memory";
+import { createBuiltInMemoryCurator } from "../src/memory-curator.ts";
+import { createMemoryCuratorTools } from "../src/memory-curator-tools.ts";
 import { MemoryEvidenceEnvelopeSchema } from "@pragma/shared";
-import { describe, expect, it } from "vitest";
-import { renderEpisodicExtractionPrompt } from "../src/memory-curator.ts";
-
-describe("Memory Curator Evidence prompts", () => {
-  it("keeps content and agent stewardship while removing envelope metadata", () => {
-    const evidence = [
+const roots: string[] = [];
+afterEach(async () => {
+  await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true })));
+});
+it("executes through scoped tools and recovers a durable result without parsing assistant JSON or rerunning the model", async () => {
+  const root = await mkdtemp(join(tmpdir(), "pragma-builtin-curator-"));
+  roots.push(root);
+  const input = {
+    schemaVersion: "pragma.memory-semantic-extraction-input/v3" as const,
+    jobId: "job",
+    executionId: "execution",
+    allowedSubjectRefs: [{ type: "pragma.user", id: "user" }],
+    currentFacts: [],
+    omittedEvidence: { records: 0, bytes: 0, byTopic: {} },
+    evidence: [
       MemoryEvidenceEnvelopeSchema.parse({
         schemaVersion: "pragma.memory-evidence/v1",
-        messageId: "message-user",
+        messageId: "message",
         topic: "execution.message.appended",
         schemaRef: "pragma.memory.execution-message/v2",
-        sourceRef: {
-          type: "pragma.execution-event",
-          id: "source-event-id",
-          canonicalEventId: "canonical-event-id",
-          cursor: "42",
-        },
-        subjectRefs: [
-          { type: "pragma.execution", id: "execution-id" },
-          { type: "pragma.invocation", id: "invocation-id" },
-        ],
-        correlationId: "execution-id",
-        causationId: "canonical-event-id",
-        occurredAt: "2026-08-13T06:00:00.000Z",
-        visibility: { mode: "host-private" },
-        sensitivity: "confidential",
-        bindings: [{ consumerRef: { type: "pragma.expert", id: "agent-a" }, access: "allow" }],
-        attribution: {
-          rootRef: { type: "pragma.expert-team", id: "team-a" },
-          producerRefs: [{ type: "pragma.expert", id: "agent-a" }],
-        },
-        policySnapshot: {
-          capture: true,
-          recall: true,
-          learning: "local-candidates",
-          appliedRevisions: [{ scope: "global", revision: 7 }],
-        },
-        payload: { message: { role: "user", text: "先让我确认方案，再执行依赖树净化。" } },
-      }),
-      MemoryEvidenceEnvelopeSchema.parse({
-        schemaVersion: "pragma.memory-evidence/v1",
-        messageId: "tool-failed",
-        topic: "execution.tool.failed",
-        schemaRef: "pragma.memory.tool-event/v2",
-        sourceRef: {
-          type: "pragma.execution-event",
-          id: "tool-source-event-id",
-          canonicalEventId: "tool-canonical-event-id",
-        },
-        subjectRefs: [{ type: "pragma.execution", id: "execution-id" }],
-        occurredAt: "2026-08-13T06:01:00.000Z",
+        sourceRef: { type: "pragma.execution-event", id: "event", canonicalEventId: "canonical" },
+        subjectRefs: [{ type: "pragma.execution", id: "execution" }],
+        occurredAt: "2026-10-14T00:00:00.000Z",
         visibility: { mode: "host-private" },
         sensitivity: "confidential",
         bindings: [],
-        attribution: {
-          rootRef: { type: "pragma.expert-team", id: "team-a" },
-          producerRefs: [{ type: "pragma.expert", id: "agent-a" }],
-        },
         policySnapshot: {
           capture: true,
           recall: true,
           learning: "local-candidates",
           appliedRevisions: [],
         },
-        payload: { toolCallId: "call-1", toolName: "search_expert_context", phase: "failed" },
+        payload: { message: { role: "user", text: "User prefers Chinese" } },
       }),
-    ];
-
-    const prompt = renderEpisodicExtractionPrompt({
-      schemaVersion: "pragma.memory-episodic-extraction-input/v2",
-      jobId: "job-id",
-      executionId: "execution-id",
-      evidence,
-      omittedEvidence: { records: 0, bytes: 0, byTopic: {} },
-    });
-
-    expect(prompt).toContain('"root":"pragma.expert-team:team-a"');
-    expect(prompt).toContain('"producers":["pragma.expert:agent-a"]');
-    expect(prompt.match(/"root":"pragma\.expert-team:team-a"/gu)).toHaveLength(1);
-    expect(prompt).toContain(
-      '"id":"message-user","at":"2026-08-13T06:00:00.000Z","steward":0,"kind":"user","text":"先让我确认方案，再执行依赖树净化。"',
-    );
-    expect(prompt).toContain(
-      '"id":"tool-failed","at":"2026-08-13T06:01:00.000Z","steward":0,"kind":"tool","tool":"search_expert_context","phase":"failed"',
-    );
-    for (const discardedField of [
-      "schemaVersion",
-      "source-event-id",
-      "canonical-event-id",
-      "execution-id",
-      "host-private",
-      "confidential",
-      "policySnapshot",
-      "bindings",
-      "toolCallId",
-    ]) {
-      expect(prompt).not.toContain(discardedField);
-    }
+    ],
+  };
+  const run = vi.fn(
+    async ({
+      session,
+      prompt,
+    }: Parameters<Parameters<typeof createBuiltInMemoryCurator>[0]["execution"]["run"]>[0]) => {
+      expect(prompt).not.toContain('"schemaVersion"');
+      await session.setProvenance({
+        curatorRef: "expert:0000000000mem0ry",
+        promptVersion: "test/v1",
+        profileRevision: 0,
+        runtimeId: "test",
+        providerId: "test",
+        modelId: "test",
+        extractedAt: new Date().toISOString(),
+      });
+      const tools = createMemoryCuratorTools(session);
+      const submit = tools.find((tool) => tool.name === "submit_fact")!;
+      expect((await submit.call({ wrong: true }, undefined)).text).toContain("arguments_invalid");
+      await submit.call(
+        {
+          statement: "User prefers Chinese",
+          subjects: ["user"],
+          property: { predicate: "user.preference.language", conflictMode: "exclusive" },
+          value: "zh-Hans",
+          confidence: 0.8,
+          evidence: ["e1"],
+        },
+        undefined,
+      );
+      await tools
+        .find((tool) => tool.name === "finish_extraction")!
+        .call({ retain: true }, undefined);
+    },
+  );
+  const profiles = createFileMemoryExtractorProfileStore({ pragmaHome: root });
+  const curator = createBuiltInMemoryCurator({ pragmaHome: root, profiles, execution: { run } });
+  expect((await curator.semanticExtractor.extract(input, { watermark: "w" })).output).toMatchObject(
+    { retain: true },
+  );
+  await curator.semanticExtractor.extract(input, { watermark: "w" });
+  expect(run).toHaveBeenCalledOnce();
+  expect(await curator.semanticExtractor.recover?.("job", "w")).toMatchObject({
+    output: { retain: true },
   });
-
-  it("uses the compact projection when applying the prompt byte budget", () => {
-    const template = MemoryEvidenceEnvelopeSchema.parse({
-      schemaVersion: "pragma.memory-evidence/v1",
-      messageId: "template",
-      topic: "execution.message.appended",
-      schemaRef: "pragma.memory.execution-message/v2",
-      sourceRef: {
-        type: "pragma.execution-event",
-        id: "source-event-id",
-        canonicalEventId: "canonical-event-id",
-      },
-      subjectRefs: [
-        { type: "pragma.execution", id: "execution-id" },
-        { type: "pragma.invocation", id: "invocation-id" },
-      ],
-      correlationId: "execution-id",
-      causationId: "canonical-event-id",
-      occurredAt: "2026-08-13T06:00:00.000Z",
-      visibility: { mode: "host-private" },
-      sensitivity: "confidential",
-      bindings: [{ consumerRef: { type: "pragma.expert", id: "agent-a" }, access: "allow" }],
-      attribution: {
-        rootRef: { type: "pragma.expert-team", id: "team-a" },
-        producerRefs: [{ type: "pragma.expert", id: "agent-a" }],
-      },
-      policySnapshot: {
-        capture: true,
-        recall: true,
-        learning: "local-candidates",
-        appliedRevisions: Array.from({ length: 24 }, (_, revision) => ({
-          scope: "global" as const,
-          revision,
-        })),
-      },
-      payload: { message: { role: "user", text: "template" } },
-    });
-    const evidence = Array.from({ length: 200 }, (_, index) =>
-      MemoryEvidenceEnvelopeSchema.parse({
-        ...template,
-        messageId: `message-${index}`,
-        occurredAt: `2026-08-13T06:00:00.${String(index).padStart(3, "0")}Z`,
-        payload: { message: { role: "user", text: `useful-${index}` } },
-      }),
-    );
-
-    expect(Buffer.byteLength(JSON.stringify(evidence))).toBeGreaterThan(78_000);
-
-    const prompt = renderEpisodicExtractionPrompt({
-      schemaVersion: "pragma.memory-episodic-extraction-input/v2",
-      jobId: "job-id",
-      executionId: "execution-id",
-      evidence,
-      omittedEvidence: { records: 0, bytes: 0, byTopic: {} },
-    });
-
-    expect(prompt).toContain('"id":"message-0"');
-    expect(prompt).toContain('"id":"message-199"');
-  });
+  await expect(
+    curator.semanticExtractor.recover?.("job", "w", { ...input, allowedSubjectRefs: [] }),
+  ).rejects.toThrow("snapshot_scope_changed");
+  expect(
+    await createMemoryExtractionSessionStore({ pragmaHome: root }).recover(
+      "semantic",
+      "job",
+      "other",
+    ),
+  ).toBeUndefined();
 });

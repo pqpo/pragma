@@ -2,7 +2,7 @@
 
 Memory Curator runs as a hidden `system-memory` Mission. The public Mission chat, state and context
 window methods reject this origin. Main-process Memory consumers use
-`MissionRunner.getInternalConversationSnapshot`, which checks the system origin and reuses the same
+`LocalHostMissionApplication.getInternalConversationSnapshot`, which checks the system origin and reuses the same
 chat projection without opening public Mission IPC access.
 
 Extraction jobs allow three automatic retries after the initial attempt (four total execution
@@ -18,8 +18,7 @@ A completed Curator execution is read at most four times, with five seconds betw
 Transient transcript failures, missing output and diagnostic-read failures retry the same Mission;
 they never rerun a successful model, even if the local exception carries `retryable=true`. Successful reads are reused during archiving, so archive
 collection does not add an extra read after exhaustion. If reads remain unavailable, the job enters
-`needs_attention` and retains the original Mission. A terminal retryable model failure or invalid
-structured output can start another extraction within the persisted job budget.
+`needs_attention` and retains the original Mission. A terminal retryable model failure can start another extraction within the persisted job budget. Candidate validation errors are returned through tools for same-execution repair.
 
 An expired running lease remains an unknown billing outcome. Recovery parks it for inspection
 unless existing durable Episodic/Semantic results prove it can settle locally without another model
@@ -45,7 +44,15 @@ Curator archives the original transcript before deleting a successful temporary 
 reads, missing output, archive failures and uncertain executions retain their Mission for
 inspection within the existing 30-day job retention window. Reading that retained transcript never
 starts a model. Failed-run inspection prefers the retained live transcript when available, with the
-archived transcript as a fallback. Structured-output parse failures retain the raw transcript in the run archive.
+archived transcript as a fallback. Candidate submission failures remain visible in the tool transcript.
 
 Cache hits, model-catalog validation and routine chat reads are debug diagnostics. Failures and
 meaningful execution lifecycle transitions remain visible at normal logging levels.
+
+## Tool-driven extraction
+
+See [ADR 072](../adr/072-tool-driven-memory-extraction.md). Curator Missions receive a short task and dedicated tools, not an inline Evidence JSON dump. Evidence is listed and read using task-scoped handles and bounded plain-text pages. Candidates are submitted individually; `finish_extraction` persists a validated receipt before returning success. Assistant chat text is only a transcript.
+
+The receipt and snapshot live in `state/memory/curator-sessions-v1.sqlite`. Module recovery reads receipts before admitting any model execution. Retained outputs still go through the existing Module transaction and applied-job marker. Transcript reads are archive operations; an unreadable transcript cannot invalidate a durable extraction receipt or authorize another model call. The original Mission remains available when its transcript could not be archived.
+
+Fact lookup, merge and replacement use the source task's authorization, including restricted principals and expiry. Every tool call checks the claim and cancellation signal. Budget failures and incomplete retained evidence park the job with a stable code; they are never reported as generated Memory or a completed low-value rejection.

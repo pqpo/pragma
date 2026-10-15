@@ -1,3 +1,5 @@
+import { extractionEvidenceAccessGuard } from "../pipeline/extraction-settings.ts";
+import { redactMemoryValue } from "../evidence/redact.ts";
 import type {
   MemoryEvidenceEnvelope,
   MemoryExtractionFailurePhase,
@@ -77,6 +79,7 @@ export async function createEpisodicMemoryModule(
       },
     },
     subscriptions: [
+      { topic: "execution.tool.content", schemaRefs: ["pragma.memory.tool-content/v1"] },
       {
         topic: "execution.message.appended",
         schemaRefs: ["pragma.memory.execution-message/v2"],
@@ -118,7 +121,8 @@ export async function createEpisodicMemoryModule(
       const startedAt = now();
       let phase: MemoryExtractionFailurePhase = "source_read";
       try {
-        if (localRecoveryOnly === true) {
+        let recovered = await extractor.recover?.(job.id, job.inputWatermark);
+        if (localRecoveryOnly === true && recovered === undefined) {
           phase = "storage";
           const retained = await store.getByConversation(job.conversationRef);
           if (retained?.terminalMessageId !== job.terminalMessageId) {
@@ -140,8 +144,14 @@ export async function createEpisodicMemoryModule(
         const selectedEvidence = selectMemoryExtractionEvidence(
           capturedEvidence,
           allowToolAssisted,
+          "episodic",
         );
         const evidence = sanitizeEvidence(selectedEvidence.retained);
+        const assertAccess = extractionEvidenceAccessGuard(
+          evidence,
+          "episodic",
+          options.extractionSettings,
+        );
         const omittedEvidence = mergeMemoryEvidenceOmissionStats(
           await store.readOmissionStatsForJob(job),
           selectedEvidence.omittedStats,
@@ -176,13 +186,23 @@ export async function createEpisodicMemoryModule(
           evidence,
           omittedEvidence,
         });
+        if (recovered !== undefined)
+          recovered = await extractor.recover?.(job.id, job.inputWatermark, input);
         if (!(await store.isClaimCurrent(job))) return;
         controller.signal.throwIfAborted();
         phase = "curator_run";
         unadmittedClaims.delete(controller);
-        const extracted = await extractor.extract(input, { signal: controller.signal });
+        const extracted =
+          recovered ??
+          (await extractor.extract(input, {
+            signal: controller.signal,
+            watermark: job.inputWatermark,
+            isCurrent: () => store.isClaimCurrent(job),
+            assertAccess,
+          }));
         controller.signal.throwIfAborted();
         phase = "validation";
+        await assertAccess();
         const output = EpisodicExtractionOutputSchema.parse(extracted.output);
         if (!output.retain) {
           await store.completeRejected(job, output.reason, now());
@@ -310,26 +330,8 @@ function sanitizeEvidence(
 ): readonly MemoryEvidenceEnvelope[] {
   return evidence.map((item) => ({
     ...item,
-    payload: redactValue(item.payload),
+    payload: redactMemoryValue(item.payload),
   }));
-}
-
-function redactValue(value: unknown): unknown {
-  if (typeof value === "string") return redact(value);
-  if (Array.isArray(value)) return value.map(redactValue);
-  if (typeof value !== "object" || value === null) return value;
-  return Object.fromEntries(Object.entries(value).map(([key, item]) => [key, redactValue(item)]));
-}
-
-function redact(value: string): string {
-  return value
-    .replace(/\b(?:sk|rk|pk)-[A-Za-z0-9_-]{12,}\b/g, "[REDACTED_CREDENTIAL]")
-    .replace(/\b(?:AKIA|ASIA)[A-Z0-9]{16}\b/g, "[REDACTED_CREDENTIAL]")
-    .replace(/(authorization\s*[:=]\s*(?:bearer\s+)?)[^\s,;]+/gi, "$1[REDACTED_CREDENTIAL]")
-    .replace(
-      /((?:password|passwd|secret|token|api[_-]?key)\s*[:=]\s*)[^\s,;]+/gi,
-      "$1[REDACTED_CREDENTIAL]",
-    );
 }
 
 function assertEvidenceRefs(

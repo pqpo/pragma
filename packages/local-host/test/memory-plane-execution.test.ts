@@ -1,4 +1,4 @@
-import { mkdtemp } from "node:fs/promises";
+import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createTestExecutionStore } from "./execution-test-host.ts";
@@ -9,6 +9,9 @@ import { describe, expect, it } from "vitest";
 
 import {
   createExecutionEvidenceAdapter,
+  createFileMemoryExtractionSettingsStore,
+  selectMemoryExtractionEvidence,
+  createMemoryExtractionSessionStore,
   createFederatedMemoryContextStore,
   createFileMemoryPipelineStateStore,
   createFileMemoryPolicyStore,
@@ -171,6 +174,135 @@ describe("Host Memory Execution integration", () => {
     });
     await canonical.close();
   });
+  it("captures authorized tool text across the real Execution and Feed boundary and reads it through extraction tools", async () => {
+    const home = await mkdtemp(join(tmpdir(), "pragma-memory-tool-text-"));
+    const canonical = await createFileCanonicalEventFeed({ pragmaHome: home });
+    try {
+      const executions = createTestExecutionStore({
+        pragmaHome: home,
+        canonicalEventFeed: canonical,
+      });
+      const policies = createFileMemoryPolicyStore({
+        pragmaHome: home,
+        now: () => new Date("2000-01-01T00:00:00.000Z"),
+      });
+      await policies.updateGlobal({
+        expectedRevision: 0,
+        policy: {
+          enabled: "enabled",
+          capture: "enabled",
+          recall: "enabled",
+          learning: "local-candidates",
+        },
+      });
+      const extractionSettings = createFileMemoryExtractionSettingsStore({ pragmaHome: home });
+      await extractionSettings.update({
+        expectedRevision: 0,
+        allowToolAssisted: { episodic: false, semantic: true },
+      });
+      await createExecution(executions);
+      await appendExecutionEvent(
+        executions,
+        "execution",
+        "root",
+        "invocation.message.appended",
+        {
+          message: {
+            role: "toolResult",
+            toolCallId: "tool-text",
+            toolName: "lookup",
+            content: [{ type: "text", text: "Useful tool result. api_key=secret-value" }],
+            isError: false,
+            timestamp: 1,
+          },
+        },
+        "tool-message",
+      );
+      const state = createFileMemoryPipelineStateStore({ pragmaHome: home });
+      let settingsUnavailable = true;
+      const adapter = createExecutionEvidenceAdapter({
+        source: canonical,
+        publisher: createMemoryEvidencePublisher(canonical),
+        checkpoints: state,
+        deadLetters: state,
+        policies,
+        extractionSettings: {
+          get: async () => {
+            if (settingsUnavailable) throw new Error("settings_unavailable");
+            return await extractionSettings.get();
+          },
+        },
+      });
+      await executions.drainCanonicalEvents();
+      await expect(adapter.runOnce()).rejects.toThrow("settings_unavailable");
+      expect((await state.read("pragma.memory.execution-evidence-adapter")).sequence).toBe(0);
+      expect(await state.list("pragma.memory.execution-evidence-adapter")).toHaveLength(0);
+      settingsUnavailable = false;
+      expect((await adapter.runOnce()).published).toBe(2);
+      const page = await createMemoryEvidenceFeed(canonical).read({ limit: 100 });
+      const selected = selectMemoryExtractionEvidence(page.items, true, "semantic");
+      const content = selected.retained.find(
+        (item) => item.schemaRef === "pragma.memory.tool-content/v1",
+      )!;
+      expect(content.payload).toMatchObject({
+        allowedModules: ["semantic"],
+        completeness: "full",
+        text: expect.stringContaining("[REDACTED_CREDENTIAL]"),
+      });
+      expect(JSON.stringify(content)).not.toContain("secret-value");
+      expect(selectMemoryExtractionEvidence(page.items, true, "episodic").retained).toHaveLength(1);
+      expect(selectMemoryExtractionEvidence(page.items, false, "semantic").retained).toHaveLength(
+        1,
+      );
+      const session = await createMemoryExtractionSessionStore({ pragmaHome: home }).create({
+        module: "semantic",
+        watermark: "tool",
+        input: {
+          schemaVersion: "pragma.memory-semantic-extraction-input/v3",
+          jobId: "tool",
+          executionId: "execution",
+          allowedSubjectRefs: [{ type: "pragma.user", id: "user" }],
+          currentFacts: [],
+          evidence: [content],
+          omittedEvidence: { records: 0, bytes: 0, byTopic: {} },
+        },
+      });
+      expect(await session.call("read_evidence", { evidence: "e1" })).toContain(
+        "Useful tool result",
+      );
+      await extractionSettings.update({
+        expectedRevision: 1,
+        allowToolAssisted: { episodic: false, semantic: false },
+      });
+      await appendExecutionEvent(
+        executions,
+        "execution",
+        "root",
+        "invocation.message.appended",
+        {
+          message: {
+            role: "toolResult",
+            toolCallId: "later",
+            toolName: "lookup",
+            content: [{ type: "text", text: "Never captured" }],
+            isError: false,
+            timestamp: 2,
+          },
+        },
+        "later-tool",
+      );
+      await executions.drainCanonicalEvents();
+      await adapter.runOnce();
+      const all = await createMemoryEvidenceFeed(canonical).read({ limit: 100 });
+      expect(
+        all.items.filter((item) => item.schemaRef === "pragma.memory.tool-content/v1"),
+      ).toHaveLength(1);
+    } finally {
+      await canonical.close();
+      await rm(home, { recursive: true, force: true });
+    }
+  });
+
   it("advances the canonical cursor without publishing evidence when capture is disabled", async () => {
     const home = await mkdtemp(join(tmpdir(), "pragma-memory-disabled-"));
     const canonical = await createFileCanonicalEventFeed({ pragmaHome: home });
