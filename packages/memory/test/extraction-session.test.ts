@@ -85,6 +85,8 @@ describe("Memory extraction sessions", () => {
       assertAccess,
     });
     await session.setProvenance(provenance);
+    expect(session.prompt()).not.toContain("private");
+    await session.call("read_evidence", { evidence: "e1" });
     await session.call("submit_fact", factArguments);
     enabled = false;
     await expect(session.call("read_evidence", { evidence: "e2" })).rejects.toThrow(
@@ -106,6 +108,116 @@ describe("Memory extraction sessions", () => {
   ])("redacts common credential formats: %s", (text) => {
     expect(redactMemoryValue(text)).not.toContain("private");
     expect(redactMemoryValue(text)).toContain("[REDACTED_CREDENTIAL]");
+  });
+  it.each([
+    "PRIVATE KEY",
+    "RSA PRIVATE KEY",
+    "EC PRIVATE KEY",
+    "ENCRYPTED PRIVATE KEY",
+    "OPENSSH PRIVATE KEY",
+  ])("redacts %s blocks and truncated previews", (label) => {
+    const block = `-----BEGIN ${label}-----\nc3ludGhldGljLXByaXZhdGUtYnl0ZXM=\n-----END ${label}-----`;
+    expect(redactMemoryValue(`before\n${block}\nafter`)).toBe(
+      "before\n[REDACTED_PRIVATE_KEY]\nafter",
+    );
+    expect(redactMemoryValue(block.slice(0, block.indexOf("-----END")))).toBe(
+      "[REDACTED_PRIVATE_KEY]",
+    );
+  });
+  it.each(["ghp_", "gho_", "ghu_", "ghs_", "ghr_", "github_pat_", "glpat-", "xoxb-", "xoxp-"])(
+    "redacts standalone %s credentials recursively",
+    (prefix) => {
+      const credential = prefix + "A".repeat(40);
+      expect(redactMemoryValue({ text: [credential] })).toEqual({
+        text: ["[REDACTED_CREDENTIAL]"],
+      });
+    },
+  );
+  it("reads 130 short records in one bounded admission and materializes a Fact", async () => {
+    const { pragmaHome, store } = await setup();
+    const source = { type: "pragma.expert", id: "expert-a" };
+    const base = {
+      ...extractionInput().evidence[0]!,
+      attribution: { rootRef: source, producerRefs: [source] },
+      bindings: [{ consumerRef: source, access: "allow" as const }],
+    };
+    const messages = Array.from({ length: 130 }, (_, index) => ({
+      ...base,
+      messageId: `message-${index}`,
+      payload: {
+        message: {
+          role: "user",
+          text: `Record ${index}: user prefers Chinese answers and concise explanations.`,
+        },
+      },
+    }));
+    let admissions = 0;
+    const module = await createSemanticMemoryModule({
+      pragmaHome,
+      extractor: {
+        extract: async (input, options) => {
+          admissions++;
+          const session = await store.create({
+            ...options,
+            module: "semantic",
+            input,
+            watermark: options!.watermark!,
+          });
+          await session.setProvenance(provenance);
+          expect(session.prompt()).not.toContain("[e1] user");
+          let evidence = "e1";
+          let cursor = 0;
+          const read = new Set<string>();
+          let calls = 0;
+          while (evidence !== "end" && calls < 60) {
+            const page = await session.call("read_evidence", { evidence, cursor });
+            calls++;
+            expect(defaultRuntimeTokenCounter.countText(page).tokens).toBeLessThanOrEqual(2000);
+            for (const match of page.matchAll(/Record (\d+):/gu)) read.add(match[1]!);
+            evidence = /Next evidence: (e\d+|end)/u.exec(page)![1]!;
+            cursor = Number(/Next cursor: (\d+|end)/u.exec(page)![1]);
+          }
+          expect(evidence).toBe("end");
+          expect(read.size).toBe(130);
+          expect(calls).toBeLessThan(60);
+          await session.call("submit_fact", factArguments);
+          await session.call("finish_extraction", { retain: true });
+          const receipt = (await session.receipt())!;
+          return { ...receipt, output: SemanticExtractionOutputSchema.parse(receipt.output) };
+        },
+      },
+    });
+    try {
+      await module.registerExecutionSubjects({
+        executionId: "execution",
+        subjectRefs: [{ type: "pragma.user", id: "local-user" }],
+      });
+      await module.consume([
+        ...messages,
+        {
+          ...base,
+          messageId: "terminal",
+          topic: "execution.execution.terminal",
+          schemaRef: "pragma.memory.execution-terminal/v2",
+          payload: { outcome: "succeeded" },
+        },
+      ]);
+      await module.setConversationState({
+        conversationRef: { type: "pragma.execution", id: "execution" },
+        state: "completed",
+        now: new Date(),
+      });
+      await module.runBackgroundOnce?.();
+      expect(admissions).toBe(1);
+      expect(await module.store.list()).toHaveLength(1);
+      expect((await module.store.listExtractionJobs())[0]).toMatchObject({
+        status: "completed",
+        completion: "retained",
+        attempts: 1,
+      });
+    } finally {
+      module.close();
+    }
   });
   it("uses a short readable task and durable idempotent fact receipt", async () => {
     const { pragmaHome, session } = await setup();
@@ -227,6 +339,38 @@ describe("Memory extraction sessions", () => {
       session.call("submit_fact", { ...factArguments, property: "p1", replaces: "f1" }),
     ).rejects.toThrow("stale_or_denied");
   });
+  it.each(["denied", "expired", "revised"])(
+    "rejects a %s property handle without a replacement",
+    async (condition) => {
+      const { store } = await setup();
+      const fact = {
+        id: "fact",
+        revision: 2,
+        statement: "User prefers English",
+        subjectRefs: [{ type: "pragma.user", id: "local-user" }],
+        predicate: "user.preference.language",
+        normalizedValue: "en",
+        conflictMode: "exclusive" as const,
+        observedAt: provenance.extractedAt,
+      };
+      let currentRevision: number | undefined = 2;
+      const session = await store.create({
+        module: "semantic",
+        input: extractionInput(),
+        watermark: condition,
+        findFacts: async () => [fact],
+        canUseFact: async (_, revision) => revision === currentRevision,
+      });
+      await session.setProvenance(provenance);
+      await session.call("find_existing_memory", {});
+      currentRevision = condition === "revised" ? 3 : undefined;
+      await expect(
+        session.call("submit_fact", { ...factArguments, property: "p1" }),
+      ).rejects.toThrow("stale_or_denied");
+      await expect(session.call("finish_extraction", { retain: true })).rejects.toThrow();
+      expect(await session.receipt()).toBeUndefined();
+    },
+  );
   it("pages every previous episode section without dropping attempts or recoveries", async () => {
     const { store } = await setup();
     const input = extractionInput();

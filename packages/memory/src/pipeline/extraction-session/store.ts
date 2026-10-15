@@ -140,6 +140,7 @@ export function createMemoryExtractionSessionStore(
       module: initial.module,
       toolNames,
       prompt: () => renderTask(initial),
+      assertCurrent: async () => await guardCurrent(guard),
       async bindMission(missionId) {
         await transaction((db) => {
           db.prepare("INSERT INTO missions(mission_id, session_key) VALUES (?, ?)").run(

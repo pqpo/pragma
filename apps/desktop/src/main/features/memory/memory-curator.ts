@@ -180,6 +180,7 @@ export function createDesktopMemoryCurator(options: {
     };
     const session = activeSessions.get(input.missionId);
     if (session === undefined) throw new Error("memory_curator_session_unavailable");
+    await session.assertCurrent();
     const resource = builtInAgentResource(BUILT_IN_MEMORY_CURATOR_REF);
     for (const capability of resource.spec.capabilities) {
       if (capability.kind === "tools") capability.tools = [...session.toolNames];
@@ -380,7 +381,7 @@ export function createDesktopMemoryCurator(options: {
 async function runCuratorMission(input: {
   readonly options: Pick<
     Parameters<typeof createDesktopMemoryCurator>[0],
-    "project" | "missions" | "application" | "workspace" | "pragmaHome" | "loggerProvider"
+    "project" | "missions" | "application" | "workspace" | "pragmaHome" | "loggerProvider" | "now"
   >;
   readonly runtime: {
     readonly runtimeId: string;
@@ -458,6 +459,7 @@ async function runCuratorMission(input: {
   try {
     await registerCuratorMission(pragmaHome, mission.id, input.jobId);
     input.signal?.throwIfAborted();
+    await input.session.assertCurrent();
     // Once admitted, provider execution/billing may have happened even if a later read fails.
     executionRequested = true;
     await input.options.application.startRun(mission.id);
@@ -489,18 +491,27 @@ async function runCuratorMission(input: {
       throw error;
     }
     resultReadRequested = true;
-    if ((await input.session.receipt()) === undefined)
+    const receipt = await input.session.receipt();
+    if (receipt === undefined)
       throw Object.assign(
         new Error((await input.session.failure()) ?? "memory_curator_result_unavailable"),
         { retryable: false },
       );
+    const runtimeOutput = await readCuratorResultWithRetry(
+      () => input.options.application.getTerminalRuntimeOutputDiagnostic(mission.id),
+      input.signal,
+    );
+    await input.session.setProvenance({
+      ...receipt.provenance,
+      ...(runtimeOutput?.responseModel === undefined
+        ? {}
+        : { responseModel: runtimeOutput.responseModel }),
+      extractedAt:
+        finished.execution.finishedAt ?? (input.options.now?.() ?? new Date()).toISOString(),
+    });
     try {
-      await readCuratorResultWithRetry(
-        input.options.application,
-        mission.id,
-        (snapshot) => {
-          resultChat = snapshot;
-        },
+      resultChat = await readCuratorResultWithRetry(
+        () => input.options.application.getInternalConversationSnapshot(mission.id),
         input.signal,
       );
     } catch (error) {
@@ -624,18 +635,14 @@ function redactCuratorDiagnosticText(value: string): string {
 }
 
 /** Retry only reads of the completed execution; never rerun the model for a read failure. */
-async function readCuratorResultWithRetry(
-  application: LocalHostMissionApplication,
-  missionId: string,
-  onSnapshot: (snapshot: MissionConversationSnapshot) => void,
+async function readCuratorResultWithRetry<T>(
+  read: () => Promise<T>,
   signal?: AbortSignal,
-) {
+): Promise<T> {
   for (let attempt = 0; ; attempt += 1) {
     signal?.throwIfAborted();
     try {
-      const chat = await application.getInternalConversationSnapshot(missionId);
-      onSnapshot(chat);
-      return;
+      return await read();
     } catch (error) {
       signal?.throwIfAborted();
       if (attempt >= 3) throw error;

@@ -56,3 +56,10 @@ See [ADR 072](../adr/072-tool-driven-memory-extraction.md). Curator Missions rec
 The receipt and snapshot live in `state/memory/curator-sessions-v1.sqlite`. Module recovery reads receipts before admitting any model execution. Retained outputs still go through the existing Module transaction and applied-job marker. Transcript reads are archive operations; an unreadable transcript cannot invalidate a durable extraction receipt or authorize another model call. The original Mission remains available when its transcript could not be archived.
 
 Fact lookup, merge and replacement use the source task's authorization, including restricted principals and expiry. Every tool call checks the claim and cancellation signal. Budget failures and incomplete retained evidence park the job with a stable code; they are never reported as generated Memory or a completed low-value rejection.
+
+Tool content is never inlined into Mission goals, even for small snapshots. Session authorization is
+checked before `startRun`, again when resolving the Curator capability source, on each tool call,
+and before materialization. `read_evidence` batches adjacent passages within the 2,000-token response
+budget, with both a next-evidence handle and a character cursor. Property handles revalidate their
+Fact before use. Terminal diagnostic reads share the bounded same-Mission read retry; the receipt
+is updated with `responseModel` when supplied and completion time before the Module consumes it.

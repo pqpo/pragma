@@ -80,17 +80,43 @@ export async function callTool(
       const index = Number(/^e([1-9]\d*)$/u.exec(args.evidence)?.[1]) - 1;
       const item = state.input.evidence[index];
       if (item === undefined) fail("memory_curator_evidence_ref_invalid");
-      const { role, text } = evidenceText(item);
-      if (args.cursor > text.length) fail("memory_curator_cursor_invalid");
-      const fragment = boundedPrefix(
-        text.slice(args.cursor),
-        MEMORY_EXTRACTION_LIMITS.responseTokens - 200,
-      );
-      const end = args.cursor + fragment.length;
-      (state.read[args.evidence] ??= []).push([args.cursor, end]);
+      if (args.cursor > evidenceText(item).text.length) fail("memory_curator_cursor_invalid");
+      const passages: string[] = [];
+      let nextIndex = index;
+      let nextCursor = args.cursor;
+      // Pack adjacent source passages, including short structural events, into one bounded delivery.
+      for (let count = 0; count < MEMORY_EXTRACTION_LIMITS.pageSize; count++) {
+        const current = state.input.evidence[nextIndex];
+        if (current === undefined) break;
+        const { role, text } = evidenceText(current);
+        const header = `[e${nextIndex + 1}] ${role} · ${current.occurredAt}\n`;
+        const remaining =
+          MEMORY_EXTRACTION_LIMITS.responseTokens -
+          200 -
+          defaultRuntimeTokenCounter.countText(passages.join("\n\n") + header).tokens;
+        if (remaining < 100) break;
+        const fragment = boundedPrefix(text.slice(nextCursor), remaining);
+        const end = nextCursor + fragment.length;
+        const passage = header + fragment;
+        // Count the packed result as well, since token boundaries may cross separators.
+        if (
+          defaultRuntimeTokenCounter.countText(passages.concat(passage).join("\n\n")).tokens >
+          MEMORY_EXTRACTION_LIMITS.responseTokens - 150
+        )
+          break;
+        passages.push(passage);
+        (state.read[`e${nextIndex + 1}`] ??= []).push([nextCursor, end]);
+        if (end < text.length) {
+          nextCursor = end;
+          break;
+        }
+        nextIndex++;
+        nextCursor = 0;
+      }
+      const next = nextIndex < state.input.evidence.length ? `e${nextIndex + 1}` : "end";
       return deliver(
         state,
-        `[${args.evidence}] ${role} · ${item.occurredAt}\n${fragment}\nNext cursor: ${end < text.length ? end : "end"}. Neighbors: ${index > 0 ? `e${index}` : "none"}, ${index + 1 < state.input.evidence.length ? `e${index + 2}` : "none"}.`,
+        `${passages.join("\n\n")}\nNext evidence: ${next}; Next cursor: ${next === "end" ? "end" : nextCursor}.`,
       );
     }
     case "find_existing_memory": {
@@ -182,11 +208,18 @@ export async function callTool(
     }
     case "submit_fact": {
       const args = MemoryExtractionToolSchemas.submit_fact.parse(raw);
-      const property =
+      const existingProperty =
         typeof args.property === "string"
           ? state.facts[Number(/^p([1-9]\d*)$/u.exec(args.property)?.[1]) - 1]
-          : args.property;
+          : undefined;
+      const property = typeof args.property === "string" ? existingProperty : args.property;
       if (property === undefined) fail("memory_curator_property_ref_invalid");
+      if (
+        existingProperty !== undefined &&
+        guard.canUseFact !== undefined &&
+        !(await guard.canUseFact(existingProperty.id, existingProperty.revision))
+      )
+        fail("memory_curator_fact_stale_or_denied");
       const replacement =
         args.replaces === undefined
           ? undefined

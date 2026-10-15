@@ -146,6 +146,7 @@ export interface MemoryExtractionSession {
   readonly module: "episodic" | "semantic";
   readonly toolNames: readonly MemoryExtractionToolName[];
   prompt(): string;
+  assertCurrent(): Promise<void>;
   call(name: MemoryExtractionToolName, args: unknown): Promise<string>;
   bindMission(missionId: string): Promise<void>;
   setProvenance(value: z.infer<typeof Provenance>): Promise<void>;

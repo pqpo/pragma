@@ -1,3 +1,4 @@
+import { generateKeyPairSync } from "node:crypto";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -200,6 +201,12 @@ describe("Host Memory Execution integration", () => {
         expectedRevision: 0,
         allowToolAssisted: { episodic: false, semantic: true },
       });
+      const privateKey = generateKeyPairSync("ed25519")
+        .privateKey.export({ type: "pkcs8", format: "pem" })
+        .toString();
+      const githubToken = "ghp_" + "A".repeat(36);
+      const slackToken = "xoxb-" + "1".repeat(13) + "-" + "2".repeat(13) + "-" + "a".repeat(24);
+      const riskyText = `Useful tool result. api_key=secret-value\n${privateKey}\n${githubToken}\n${slackToken}`;
       await createExecution(executions);
       await appendExecutionEvent(
         executions,
@@ -211,13 +218,38 @@ describe("Host Memory Execution integration", () => {
             role: "toolResult",
             toolCallId: "tool-text",
             toolName: "lookup",
-            content: [{ type: "text", text: "Useful tool result. api_key=secret-value" }],
+            content: [{ type: "text", text: riskyText }],
             isError: false,
             timestamp: 1,
           },
         },
         "tool-message",
       );
+      for (const type of ["tool.started", "tool.completed"] as const) {
+        await appendExecutionEvent(
+          executions,
+          "execution",
+          "root",
+          "runtime.event",
+          {
+            schemaVersion: "pragma.stream/v1",
+            eventId: `preview-${type}`,
+            sequence: 1,
+            runId: "run",
+            emittedAt: new Date().toISOString(),
+            source: { kind: "runtime", runId: "run", path: [] },
+            type,
+            payload: {
+              toolCallId: "preview",
+              toolName: "lookup",
+              ...(type === "tool.started"
+                ? { inputPreview: { nested: riskyText } }
+                : { outputPreview: riskyText }),
+            },
+          },
+          `preview-${type}`,
+        );
+      }
       const state = createFileMemoryPipelineStateStore({ pragmaHome: home });
       let settingsUnavailable = true;
       const adapter = createExecutionEvidenceAdapter({
@@ -238,7 +270,7 @@ describe("Host Memory Execution integration", () => {
       expect((await state.read("pragma.memory.execution-evidence-adapter")).sequence).toBe(0);
       expect(await state.list("pragma.memory.execution-evidence-adapter")).toHaveLength(0);
       settingsUnavailable = false;
-      expect((await adapter.runOnce()).published).toBe(2);
+      expect((await adapter.runOnce()).published).toBe(6);
       const page = await createMemoryEvidenceFeed(canonical).read({ limit: 100 });
       const selected = selectMemoryExtractionEvidence(page.items, true, "semantic");
       const content = selected.retained.find(
@@ -249,10 +281,20 @@ describe("Host Memory Execution integration", () => {
         completeness: "full",
         text: expect.stringContaining("[REDACTED_CREDENTIAL]"),
       });
-      expect(JSON.stringify(content)).not.toContain("secret-value");
-      expect(selectMemoryExtractionEvidence(page.items, true, "episodic").retained).toHaveLength(1);
+      const captured = JSON.stringify(page.items);
+      for (const secret of [
+        "secret-value",
+        privateKey.trim(),
+        ...privateKey.trim().split("\n").slice(1, -1),
+        githubToken,
+        slackToken,
+      ])
+        expect(captured).not.toContain(secret);
+      expect(captured).toContain("[REDACTED_PRIVATE_KEY]");
+
+      expect(selectMemoryExtractionEvidence(page.items, true, "episodic").retained).toHaveLength(3);
       expect(selectMemoryExtractionEvidence(page.items, false, "semantic").retained).toHaveLength(
-        1,
+        3,
       );
       const session = await createMemoryExtractionSessionStore({ pragmaHome: home }).create({
         module: "semantic",
@@ -296,7 +338,7 @@ describe("Host Memory Execution integration", () => {
       const all = await createMemoryEvidenceFeed(canonical).read({ limit: 100 });
       expect(
         all.items.filter((item) => item.schemaRef === "pragma.memory.tool-content/v1"),
-      ).toHaveLength(1);
+      ).toHaveLength(3);
     } finally {
       await canonical.close();
       await rm(home, { recursive: true, force: true });
