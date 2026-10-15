@@ -807,6 +807,7 @@ describe("MissionsPage", () => {
         pinned={false}
         selected={false}
         unread
+        onRename={vi.fn()}
         onDelete={vi.fn()}
         onMarkComplete={vi.fn()}
         onOpen={vi.fn()}
@@ -837,6 +838,7 @@ describe("MissionsPage", () => {
         pinned={false}
         selected
         unread={false}
+        onRename={vi.fn()}
         onDelete={vi.fn()}
         onMarkComplete={vi.fn()}
         onOpen={vi.fn()}

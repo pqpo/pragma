@@ -1,4 +1,15 @@
 export const missions = {
+  renameMission: "Rename mission",
+  renameNamed: "Rename “{{title}}”",
+  renameDescription: "Keep it short and easy to recognize",
+  renameClose: "Close",
+  renameCancel: "Cancel",
+  renameSave: "Save",
+  renameSaving: "Saving…",
+  renameTitleLabel: "Mission title",
+  renameInvalid: "Enter a title of 1–{{max}} characters",
+  renameUnavailable: "Desktop connection unavailable. Please try again.",
+
   memoryEvidenceHelp: "About published evidence",
   memoryResizeFileList: "Resize file list",
   memoryRecallLogDescription:

@@ -16,6 +16,7 @@ import {
   Circle,
   MagnifyingGlass,
   Plus,
+  PencilSimple,
   PushPin,
   SpinnerGap,
   Trash,
@@ -156,6 +157,7 @@ export function MissionRail(props: {
   readonly onOpen: (mission: MissionSummary) => void;
   readonly onTogglePin: (mission: MissionSummary) => void;
   readonly onMarkComplete: (mission: MissionSummary) => void | Promise<void>;
+  readonly onRename: (mission: MissionSummary) => void;
   readonly onDelete: (mission: MissionSummary) => void;
 }) {
   const { t } = useTranslation("missions");
@@ -284,6 +286,11 @@ export function MissionRail(props: {
             <span className="sr-only">{t("search")}</span>
             <input
               value={props.search}
+              onFocus={() => {
+                if (!searchCollapsed) return;
+                lockSearchTransition();
+                setSearchCollapsed(false);
+              }}
               onChange={(event) => props.onSearch(event.target.value)}
               placeholder={t("search")}
               tabIndex={searchCollapsed ? -1 : undefined}
@@ -304,6 +311,7 @@ export function MissionRail(props: {
           onOpen={props.onOpen}
           onTogglePin={props.onTogglePin}
           onMarkComplete={props.onMarkComplete}
+          onRename={props.onRename}
           onDelete={props.onDelete}
           onLoadMore={() => setVisibleLimits(increaseMissionRailVisibleLimit("waitingInput"))}
         />
@@ -319,6 +327,7 @@ export function MissionRail(props: {
         onOpen={props.onOpen}
         onTogglePin={props.onTogglePin}
         onMarkComplete={props.onMarkComplete}
+        onRename={props.onRename}
         onDelete={props.onDelete}
         onLoadMore={() => setVisibleLimits(increaseMissionRailVisibleLimit("active"))}
       />
@@ -334,6 +343,7 @@ export function MissionRail(props: {
         onOpen={props.onOpen}
         onTogglePin={props.onTogglePin}
         onMarkComplete={props.onMarkComplete}
+        onRename={props.onRename}
         onDelete={props.onDelete}
         onLoadMore={() => setVisibleLimits(increaseMissionRailVisibleLimit("completed"))}
       />
@@ -444,6 +454,7 @@ export function resolveMissionRowIndicator(
 }
 
 export const MISSION_ROW_PREVIEW_HOVER_DELAY_MS = 500;
+export const MISSION_ROW_PREVIEW_CLOSE_DELAY_MS = 100;
 
 const MISSION_ROW_PREVIEW_GAP = 8;
 
@@ -522,12 +533,16 @@ export const useMissionRowPreviewLayoutEffect =
 
 function MissionRowPreviewCard(props: {
   readonly anchorRef: RefObject<HTMLDivElement | null>;
+  readonly cardRef: RefObject<HTMLElement | null>;
+  readonly onEnter: () => void;
+  readonly onLeave: () => void;
+  readonly onRename: () => void;
   readonly id: string;
   readonly mission: MissionSummary;
   readonly open: boolean;
 }) {
   const { t } = useTranslation("missions");
-  const cardRef = useRef<HTMLElement>(null);
+  const cardRef = props.cardRef;
   const [position, setPosition] = useState<MissionRowPreviewPosition | null>(null);
 
   const updatePosition = useCallback(() => {
@@ -541,7 +556,7 @@ function MissionRowPreviewCard(props: {
         viewport: { width: window.innerWidth, height: window.innerHeight },
       }),
     );
-  }, [props.anchorRef]);
+  }, [props.anchorRef, cardRef]);
 
   useMissionRowPreviewLayoutEffect(() => {
     if (props.open) updatePosition();
@@ -564,7 +579,7 @@ function MissionRowPreviewCard(props: {
       window.removeEventListener("scroll", reposition, true);
       observer?.disconnect();
     };
-  }, [props.anchorRef, props.open, updatePosition]);
+  }, [props.anchorRef, props.open, updatePosition, cardRef]);
 
   if (!props.open) return null;
   const content = (
@@ -573,14 +588,31 @@ function MissionRowPreviewCard(props: {
       data-placement={position?.placement}
       id={props.id}
       ref={cardRef}
-      role="tooltip"
+      role="region"
+      aria-label={props.mission.title}
+      onMouseEnter={props.onEnter}
+      onMouseLeave={props.onLeave}
       style={
         position === null
           ? undefined
           : ({ left: position.left, top: position.top } satisfies CSSProperties)
       }
     >
-      <strong>{props.mission.title}</strong>
+      <div className="mission-row-preview-heading">
+        <strong>{props.mission.title}</strong>
+        <button
+          type="button"
+          className="mission-row-preview-edit"
+          aria-label={t("renameNamed", { title: props.mission.title })}
+          title={t("renameMission")}
+          onClick={(event) => {
+            event.stopPropagation();
+            props.onRename();
+          }}
+        >
+          <PencilSimple size={16} aria-hidden="true" />
+        </button>
+      </div>
       <dl>
         <div>
           <dt>{t("missionPreviewExecutor")}</dt>
@@ -621,51 +653,123 @@ export function MissionRailRow(props: {
   readonly onOpen: (mission: MissionSummary) => void;
   readonly onTogglePin: (mission: MissionSummary) => void;
   readonly onMarkComplete: (mission: MissionSummary) => void | Promise<void>;
+  readonly onRename: (mission: MissionSummary) => void;
   readonly onDelete: (mission: MissionSummary) => void;
 }) {
   const previewId = useId();
   const rowRef = useRef<HTMLDivElement>(null);
+  const cardRef = useRef<HTMLElement>(null);
+  const rowHoveredRef = useRef(false);
+  const cardHoveredRef = useRef(false);
+  const hideTimerRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const showTimerRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const [previewOpen, setPreviewOpen] = useState(false);
   const indicator = resolveMissionRowIndicator(props.mission, props.unread);
   const running = props.mission.execution?.status === "running";
 
+  const cancelHide = useCallback(() => {
+    if (hideTimerRef.current !== undefined) clearTimeout(hideTimerRef.current);
+    hideTimerRef.current = undefined;
+  }, []);
   const hidePreview = useCallback(() => {
+    cancelHide();
     if (showTimerRef.current !== undefined) clearTimeout(showTimerRef.current);
     showTimerRef.current = undefined;
+    cardHoveredRef.current = false;
     setPreviewOpen(false);
-  }, []);
+  }, [cancelHide]);
   const showPreview = useCallback(() => {
+    cancelHide();
     if (showTimerRef.current !== undefined) clearTimeout(showTimerRef.current);
     showTimerRef.current = undefined;
     setPreviewOpen(true);
-  }, []);
+  }, [cancelHide]);
   const schedulePreview = useCallback(() => {
+    cancelHide();
     if (showTimerRef.current !== undefined) clearTimeout(showTimerRef.current);
     showTimerRef.current = setTimeout(showPreview, MISSION_ROW_PREVIEW_HOVER_DELAY_MS);
-  }, [showPreview]);
+  }, [showPreview, cancelHide]);
+  const scheduleHide = useCallback(() => {
+    if (showTimerRef.current !== undefined) clearTimeout(showTimerRef.current);
+    showTimerRef.current = undefined;
+    cancelHide();
+    hideTimerRef.current = setTimeout(() => {
+      hideTimerRef.current = undefined;
+      const active = document.activeElement;
+      if (
+        rowHoveredRef.current ||
+        cardHoveredRef.current ||
+        (active instanceof HTMLElement &&
+          active.matches(":focus-visible") &&
+          rowRef.current?.contains(active)) ||
+        cardRef.current?.contains(active)
+      )
+        return;
+      setPreviewOpen(false);
+    }, MISSION_ROW_PREVIEW_CLOSE_DELAY_MS);
+  }, [cancelHide]);
 
   useEffect(
     () => () => {
       if (showTimerRef.current !== undefined) clearTimeout(showTimerRef.current);
+      if (hideTimerRef.current !== undefined) clearTimeout(hideTimerRef.current);
     },
     [],
   );
 
   const handleBlur = (event: ReactFocusEvent<HTMLDivElement>) => {
-    if (event.relatedTarget !== null && event.currentTarget.contains(event.relatedTarget as Node)) {
+    const next = event.relatedTarget as Node | null;
+    if (next !== null && (rowRef.current?.contains(next) || cardRef.current?.contains(next)))
       return;
-    }
-    hidePreview();
+    scheduleHide();
   };
   const handleFocus = (event: ReactFocusEvent<HTMLDivElement>) => {
+    cancelHide();
     if (event.target instanceof HTMLElement && event.target.matches(":focus-visible")) {
       showPreview();
     }
   };
   const handleKeyDown = (event: ReactKeyboardEvent<HTMLDivElement>) => {
-    if (event.key !== "Escape") return;
-    hidePreview();
+    if (event.key === "Escape") {
+      event.stopPropagation();
+      rowRef.current?.querySelector<HTMLButtonElement>(".mission-row-open")?.focus();
+      hidePreview();
+    }
+    if (event.key !== "Tab" || !previewOpen) return;
+    const buttons = rowRef.current?.querySelectorAll<HTMLButtonElement>("button");
+    const last = buttons?.[buttons.length - 1];
+    if (!event.shiftKey && event.target === last) {
+      event.preventDefault();
+      cardRef.current?.querySelector<HTMLButtonElement>("button")?.focus();
+    } else if (cardRef.current?.contains(event.target as Node)) {
+      if (event.shiftKey) {
+        event.preventDefault();
+        last?.focus();
+        return;
+      }
+      // The card lives at the end of document.body. Continue from its row,
+      // otherwise native Tab wraps to the start and skips subsequent Missions.
+      const row = rowRef.current;
+      const next = [
+        ...document.querySelectorAll<HTMLElement>(
+          'a[href], button, input, textarea, select, [tabindex], [contenteditable="true"]',
+        ),
+      ].find(
+        (candidate) =>
+          row !== null &&
+          !row.contains(candidate) &&
+          !candidate.closest(".mission-row-preview, [inert]") &&
+          (row.compareDocumentPosition(candidate) & Node.DOCUMENT_POSITION_FOLLOWING) !== 0 &&
+          candidate.tabIndex >= 0 &&
+          !candidate.matches(":disabled") &&
+          candidate.getClientRects().length > 0 &&
+          getComputedStyle(candidate).visibility !== "hidden",
+      );
+      if (next !== undefined) {
+        event.preventDefault();
+        next.focus();
+      }
+    }
   };
 
   return (
@@ -680,15 +784,24 @@ export function MissionRailRow(props: {
         .filter(Boolean)
         .join(" ")}
       ref={rowRef}
+      data-mission-id={props.mission.id}
       onBlur={handleBlur}
       onFocus={handleFocus}
       onKeyDown={handleKeyDown}
-      onMouseDown={hidePreview}
-      onMouseEnter={schedulePreview}
-      onMouseLeave={hidePreview}
+      onMouseDown={(event) => {
+        if (rowRef.current?.contains(event.target as Node)) hidePreview();
+      }}
+      onMouseEnter={() => {
+        rowHoveredRef.current = true;
+        schedulePreview();
+      }}
+      onMouseLeave={() => {
+        rowHoveredRef.current = false;
+        scheduleHide();
+      }}
     >
       <button
-        aria-describedby={previewOpen ? previewId : undefined}
+        aria-controls={previewOpen ? previewId : undefined}
         aria-label={i18n.t("missionRowAccessibleLabel", {
           ns: "missions",
           title: props.mission.title,
@@ -760,6 +873,20 @@ export function MissionRailRow(props: {
       </div>
       <MissionRowPreviewCard
         anchorRef={rowRef}
+        cardRef={cardRef}
+        onEnter={() => {
+          cardHoveredRef.current = true;
+          cancelHide();
+        }}
+        onLeave={() => {
+          cardHoveredRef.current = false;
+          scheduleHide();
+        }}
+        onRename={() => {
+          rowRef.current?.querySelector<HTMLButtonElement>(".mission-row-open")?.focus();
+          hidePreview();
+          props.onRename(props.mission);
+        }}
         id={previewId}
         mission={props.mission}
         open={previewOpen}
@@ -780,6 +907,7 @@ function MissionRailGroup(props: {
   readonly onOpen: (mission: MissionSummary) => void;
   readonly onTogglePin: (mission: MissionSummary) => void;
   readonly onMarkComplete: (mission: MissionSummary) => void | Promise<void>;
+  readonly onRename: (mission: MissionSummary) => void;
   readonly onDelete: (mission: MissionSummary) => void;
   readonly onLoadMore: () => void;
 }) {
@@ -803,6 +931,7 @@ function MissionRailGroup(props: {
                 pinned={isPinned}
                 selected={mission.id === props.selectedMissionId}
                 unread={props.unreadMissionOutputIds.has(mission.id)}
+                onRename={props.onRename}
                 onDelete={props.onDelete}
                 onMarkComplete={props.onMarkComplete}
                 onOpen={props.onOpen}

@@ -20,6 +20,8 @@ import { formatPragmaYaml, parsePragmaYaml } from "@pragma/interpreter";
 import { z } from "zod";
 
 import {
+  PRAGMA_TEXT_LIMITS,
+  RenameMissionSchema,
   MissionIdSchema,
   MissionOriginSchema,
   MissionSchema,
@@ -129,6 +131,7 @@ export interface MissionStore {
     readonly origin?: Mission["origin"] | undefined;
     readonly contextMounts?: readonly MissionContextMount[] | undefined;
   }): Promise<Mission>;
+  renameMission(id: string, title: string): Promise<Mission>;
   updateOptions(
     id: string,
     input: {
@@ -366,11 +369,9 @@ export function createMissionStore(options: {
     string,
     { readonly size: number; readonly mtimeMs: number; readonly records: MissionTimelineRecord[] }
   >();
-  const executionTitleIndex = new Map<
-    string,
-    { readonly missionId: string; readonly title: string }
-  >();
-  let executionTitleIndexInitialized = false;
+  // Execution ownership is immutable; titles must be read from the current Mission.
+  const executionMissionIndex = new Map<string, string>();
+  let executionMissionIndexInitialized = false;
   let missionMutationVersion = 0;
   let listRequest:
     { readonly version: number; readonly promise: Promise<MissionSummary[]> } | undefined;
@@ -1209,8 +1210,8 @@ export function createMissionStore(options: {
     storagePath: missionPath,
     forget(id) {
       timelineCache.delete(id);
-      for (const [executionId, entry] of executionTitleIndex) {
-        if (entry.missionId === id) executionTitleIndex.delete(executionId);
+      for (const [executionId, missionId] of executionMissionIndex) {
+        if (missionId === id) executionMissionIndex.delete(executionId);
       }
       markMissionMutation();
     },
@@ -1281,40 +1282,49 @@ export function createMissionStore(options: {
       return request;
     },
     async resolveExecutionTitles(executionIds) {
-      const unresolved = new Set(executionIds);
+      const requested = new Set(executionIds);
       const resolved = new Map<string, string>();
-      if (unresolved.size === 0) return resolved;
-      for (const executionId of unresolved) {
-        const cached = executionTitleIndex.get(executionId);
-        if (cached === undefined) continue;
-        resolved.set(executionId, cached.title);
-        unresolved.delete(executionId);
-      }
-      if (unresolved.size === 0 || executionTitleIndexInitialized) return resolved;
-      let missionIds;
-      try {
-        missionIds = await listMissionIds();
-      } catch (error) {
-        if (isNodeError(error, "ENOENT")) return resolved;
-        throw error;
-      }
-      for (const missionId of missionIds) {
-        const records = await readRecords(missionId, false);
-        const executions = records.filter((record) => record.kind === "execution");
-        if (executions.length === 0) continue;
-        const mission = await readMission(missionId);
-        for (const record of executions) {
-          if (record.kind !== "execution") continue;
-          executionTitleIndex.set(record.executionId, {
-            missionId: mission.id,
-            title: mission.title,
-          });
+      if (requested.size === 0) return resolved;
+      if (
+        !executionMissionIndexInitialized &&
+        [...requested].some((id) => !executionMissionIndex.has(id))
+      ) {
+        let missionIds;
+        try {
+          missionIds = await listMissionIds();
+        } catch (error) {
+          if (isNodeError(error, "ENOENT")) return resolved;
+          throw error;
         }
+        for (const missionId of missionIds) {
+          const records = await readRecords(missionId, false);
+          const executions = records.filter((record) => record.kind === "execution");
+          if (executions.length === 0) continue;
+          const mission = await readMission(missionId);
+          for (const record of executions) {
+            executionMissionIndex.set(record.executionId, mission.id);
+          }
+        }
+        executionMissionIndexInitialized = true;
       }
-      executionTitleIndexInitialized = true;
-      for (const executionId of unresolved) {
-        const indexed = executionTitleIndex.get(executionId);
-        if (indexed !== undefined) resolved.set(executionId, indexed.title);
+      // Revalidate only requested owners, once per Mission in this query. Another
+      // Desktop/CLI process can rename or delete them without touching this cache.
+      const titles = new Map<string, string | null>();
+      for (const executionId of requested) {
+        const missionId = executionMissionIndex.get(executionId);
+        if (missionId === undefined) continue;
+        if (!titles.has(missionId)) {
+          try {
+            titles.set(missionId, (await readMission(missionId)).title);
+          } catch (error) {
+            if (!(error instanceof MissionStoreError) || error.code !== "mission_not_found")
+              throw error;
+            titles.set(missionId, null);
+          }
+        }
+        const title = titles.get(missionId);
+        if (title !== undefined && title !== null) resolved.set(executionId, title);
+        else executionMissionIndex.delete(executionId);
       }
       return resolved;
     },
@@ -1810,6 +1820,19 @@ export function createMissionStore(options: {
       }
       return await readMission(id);
     },
+    async renameMission(id, title) {
+      const parsed = RenameMissionSchema.parse({ id, title });
+      const updated = await updateMission(
+        parsed.id,
+        (current, timestamp) => ({
+          ...current,
+          title: parsed.title,
+          updatedAt: timestamp,
+        }),
+        true,
+      );
+      return updated;
+    },
     async updateOptions(id, input) {
       return await updateMission(MissionIdSchema.parse(id), (current, timestamp) => {
         if (
@@ -2225,7 +2248,6 @@ export function createMissionStore(options: {
     async appendExecutionReference(input) {
       const missionId = MissionIdSchema.parse(input.missionId);
       const executionId = MissionIdSchema.parse(input.executionId);
-      const mission = await readMission(missionId);
       const record = await appendRecord(
         missionId,
         "mission.execution-reference.append",
@@ -2238,7 +2260,7 @@ export function createMissionStore(options: {
           createdAt: z.string().datetime().parse(input.createdAt),
         }),
       );
-      executionTitleIndex.set(executionId, { missionId, title: mission.title });
+      executionMissionIndex.set(executionId, missionId);
       return record;
     },
     async readTimelinePage(id, pageOptions) {
@@ -2323,8 +2345,8 @@ export function createMissionStore(options: {
         }
         await rm(missionPath(parsedId), { recursive: true, force: true });
         timelineCache.delete(parsedId);
-        for (const [executionId, entry] of executionTitleIndex) {
-          if (entry.missionId === parsedId) executionTitleIndex.delete(executionId);
+        for (const [executionId, missionId] of executionMissionIndex) {
+          if (missionId === parsedId) executionMissionIndex.delete(executionId);
         }
         markMissionMutation();
       });
@@ -2797,7 +2819,7 @@ function titleFromGoal(goal: string): string {
   return normalizeMissionTitle(firstLine);
 }
 
-export const MISSION_TITLE_MAX_LENGTH = 48;
+export const MISSION_TITLE_MAX_LENGTH = PRAGMA_TEXT_LIMITS.mission.title;
 const MISSION_SCHEMA_TITLE_MAX_LENGTH = 120;
 
 export function normalizeMissionTitle(value: string): string {

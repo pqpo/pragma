@@ -2,7 +2,7 @@ import type { MissionControllerStore } from "../controller/mission-controller-st
 import type { MissionOwnerScope } from "../controller/owner-scope.ts";
 import type { MissionSemanticOperation } from "../controller/schemas.ts";
 
-import type { Mission } from "@pragma/shared";
+import { RenameMissionSchema, type Mission } from "@pragma/shared";
 import type { MissionStore } from "./mission-store.ts";
 import { MissionAttachmentWritePendingError } from "./mission-store-error.ts";
 import { MissionSemanticWritePendingError } from "../controller/mission-controller-store.ts";
@@ -75,6 +75,11 @@ export function createFencedMissionStore(
           operation.input.automationRef as Parameters<MissionStore["backfillAutomationOrigin"]>[1],
         );
         return;
+      case "mission.title.rename": {
+        const parsed = RenameMissionSchema.parse(operation.input);
+        await store.renameMission(parsed.id, parsed.title);
+        return;
+      }
       case "mission.options.update":
         await store.updateOptions(
           String(operation.input.id),
@@ -261,6 +266,15 @@ export function createFencedMissionStore(
         named("mission.origin.backfill", { id, automationRef }),
         async () => await store.backfillAutomationOrigin(id, automationRef),
       ),
+    renameMission: async (id, title) => {
+      const parsed = RenameMissionSchema.parse({ id, title });
+      return await write(
+        parsed.id,
+        "mission.title.updated",
+        named("mission.title.rename", parsed),
+        async () => await store.renameMission(parsed.id, parsed.title),
+      );
+    },
     updateOptions: async (id, input) =>
       await write(
         id,

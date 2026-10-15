@@ -1,4 +1,5 @@
 export const PRAGMA_TEXT_LIMITS = {
+  mission: { title: 48 },
   defaultMetadata: {
     name: 200,
     description: 4_000,

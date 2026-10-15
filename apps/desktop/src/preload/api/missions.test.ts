@@ -22,6 +22,19 @@ describe("missionsApi", () => {
     mocks.removeListener.mockReset();
   });
 
+  it("validates rename input before invoking the mutation channel", async () => {
+    const id = "00000000-0000-4000-8000-000000000001";
+    await expect(missionsApi.renameMission({ id, title: "x".repeat(49) })).rejects.toThrow();
+    expect(mocks.invokeMutation).not.toHaveBeenCalled();
+    // An invalid host result must also be rejected after the validated request is sent.
+    mocks.invokeMutation.mockResolvedValueOnce({});
+    await expect(missionsApi.renameMission({ id, title: "  New title  " })).rejects.toThrow();
+    expect(mocks.invokeMutation).toHaveBeenCalledWith("missions:rename", {
+      id,
+      title: "New title",
+    });
+  });
+
   it("validates direct Mission status deltas before forwarding them", () => {
     const listener = vi.fn();
     const unsubscribe = missionsApi.subscribeMissionStatusUpdates(listener);

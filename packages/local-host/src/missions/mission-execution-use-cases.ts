@@ -30,6 +30,7 @@ import type {
   MissionWorkSnapshot,
   MissionWorkUpdate,
   UpdateMissionContextMounts,
+  RenameMission,
   UpdateMissionOptions,
 } from "@pragma/shared";
 import type { RuntimeEnvironmentBinding } from "@pragma/shared";
@@ -99,6 +100,7 @@ export interface MissionExecutionUseCases {
     resources: import("./controller-fact-execution.ts").LocalHostMissionControllerFactResources,
   ): void;
   readonly missionControl: import("../index.ts").LocalHostCoreMissionControlAdapter;
+  renameMission(input: RenameMission): Promise<Mission>;
   updateOptions(input: UpdateMissionOptions): Promise<Mission>;
   updateContextMounts(input: UpdateMissionContextMounts): Promise<Mission>;
   assertContextMountChangeAllowed(id: string): Promise<void>;

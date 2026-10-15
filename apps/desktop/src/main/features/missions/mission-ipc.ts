@@ -52,6 +52,7 @@ import {
   MissionIdSchema,
   RespondMissionHumanInteractionSchema,
   SendMissionMessageSchema,
+  RenameMissionSchema,
   UpdateMissionOptionsSchema,
   UpdateMissionContextMountsSchema,
   UpdateHomeExecutorPreferenceSchema,
@@ -599,6 +600,15 @@ export function installMissionHandlers(options: {
       const parsed = UpdateMissionContextMountsSchema.parse(input);
       await assertManagedMission(parsed.id);
       const mission = await options.application.updateContextMounts(parsed);
+      await publishMission(mission);
+      return mission;
+    }),
+  );
+  ipcMain.handle("missions:rename", (_event, input: unknown) =>
+    runDesktopMutation(async () => {
+      const parsed = RenameMissionSchema.parse(input);
+      await assertManagedMission(parsed.id);
+      const mission = await options.application.renameMission(parsed);
       await publishMission(mission);
       return mission;
     }),

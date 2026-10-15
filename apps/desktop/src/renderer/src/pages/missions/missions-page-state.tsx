@@ -1,6 +1,7 @@
 import { resolveUnlistedMissionSelection } from "./mission-list-selection.ts";
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import { useTranslation } from "react-i18next";
+import { MissionRenameDialog } from "./mission-rename-dialog.tsx";
 import { ConfirmationDialog } from "../../components/Dialog.tsx";
 import {
   type Mission,
@@ -199,6 +200,7 @@ export function MissionsPage(props: {
   const [search, setSearch] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [, setComposerRecoveryRevision] = useState(0);
+  const [renameCandidate, setRenameCandidate] = useState<MissionSummary | null>(null);
   const [deleteCandidate, setDeleteCandidate] = useState<MissionSummary | null>(null);
   const [deleting, setDeleting] = useState(false);
   const [initialRunRequest, setInitialRunRequest] = useState<{
@@ -947,6 +949,10 @@ export function MissionsPage(props: {
             setError(missionError(actionError));
           }
         }}
+        onRename={(summary) => {
+          const original = missions.find((mission) => mission.id === summary.id);
+          if (original !== undefined) setRenameCandidate(original);
+        }}
         onDelete={setDeleteCandidate}
       />
       <SidebarResizeHandle
@@ -1153,6 +1159,28 @@ export function MissionsPage(props: {
           <MissionErrorBanner error={error} onDismiss={() => setError(null)} />
         ) : null}
       </div>
+      {renameCandidate !== null ? (
+        <MissionRenameDialog
+          key={renameCandidate.id}
+          mission={renameCandidate}
+          onSave={async (title) => {
+            const api = desktopApi();
+            if (api === undefined) throw new Error(t("renameUnavailable"));
+            replaceMission(await api.renameMission({ id: renameCandidate.id, title }));
+          }}
+          onClose={() => {
+            const id = renameCandidate.id;
+            setRenameCandidate(null);
+            requestAnimationFrame(() => {
+              const row = document.querySelector<HTMLElement>(
+                `[data-mission-id="${id}"] .mission-row-open`,
+              );
+              const fallback = document.querySelector<HTMLElement>(".mission-search input");
+              (row ?? fallback)?.focus();
+            });
+          }}
+        />
+      ) : null}
       {deleteCandidate !== null ? (
         <ConfirmationDialog
           title={t("deleteTitle", { ns: "missions" })}

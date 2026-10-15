@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  RenameMissionSchema,
+  MissionBaseSchema,
   MissionContextMountsSchema,
   MissionExecutionBindingSchema,
   MissionModelOverrideSchema,
@@ -11,6 +13,15 @@ const id = "10000000-0000-4000-8000-000000000001";
 const fingerprint = "a".repeat(64);
 
 describe("neutral Mission values", () => {
+  it("validates manual titles by Unicode characters without narrowing persisted titles", () => {
+    expect(RenameMissionSchema.parse({ id, title: "  新标题  " }).title).toBe("新标题");
+    expect(RenameMissionSchema.parse({ id, title: "😀".repeat(48) }).title).toBe("😀".repeat(48));
+    for (const title of [" ", "a".repeat(49), "😀".repeat(49)]) {
+      expect(RenameMissionSchema.safeParse({ id, title }).success).toBe(false);
+    }
+    expect(MissionBaseSchema.shape.title.parse("a".repeat(120))).toHaveLength(120);
+    expect(RenameMissionSchema.safeParse({ id: "bad", title: "valid" }).success).toBe(false);
+  });
   it("preserves model normalization, bounds and the closed override shape", () => {
     expect(
       MissionModelOverrideSchema.parse({

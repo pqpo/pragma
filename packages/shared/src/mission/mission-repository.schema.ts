@@ -3,6 +3,7 @@ import { RuntimeContextWindowUsageSchema } from "../runtime-context-window.schem
 import { IntegrationErrorSchema } from "../integration/error.schema.ts";
 import { MissionQueueSteerOutcomeSchema } from "../integration/contracts.schema.ts";
 import { z } from "zod";
+import { PRAGMA_TEXT_LIMITS, pragmaUnicodeLength } from "../pragma-text-limits.ts";
 import { ExpertPromptAttachmentSchema } from "../expert-prompt.schema.ts";
 import {
   HumanInteractionRequestSchema,
@@ -403,6 +404,18 @@ export const MissionStatusUpdateSchema = z.object({
 });
 
 /** Detail/interaction access only. Top-level list placement is resolved by the Host. */
+
+export const RenameMissionSchema = z.object({
+  id: MissionIdSchema,
+  title: z
+    .string()
+    .trim()
+    .min(1)
+    .refine((value) => pragmaUnicodeLength(value) <= PRAGMA_TEXT_LIMITS.mission.title, {
+      message: `Must contain at most ${PRAGMA_TEXT_LIMITS.mission.title} characters.`,
+    }),
+});
+export type RenameMission = z.infer<typeof RenameMissionSchema>;
 
 export const UpdateMissionOptionsSchema = z.object({
   id: MissionIdSchema,

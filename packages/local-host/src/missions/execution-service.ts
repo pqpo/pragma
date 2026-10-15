@@ -124,6 +124,7 @@ import {
   type OpenMissionWorkConversationStream,
   type OpenMissionWorkConversationStreamResult,
   type UpdateMissionContextMounts,
+  RenameMissionSchema,
   type UpdateMissionOptions,
 } from "@pragma/shared";
 import {
@@ -5831,6 +5832,12 @@ export function createLocalHostMissionExecutionService(
       });
     },
     controllerFactSessionStore: expertSessionStore,
+    async renameMission(input) {
+      const parsed = RenameMissionSchema.parse(input);
+      return await withMissionController(parsed.id, () =>
+        options.missions.renameMission(parsed.id, parsed.title),
+      );
+    },
     async updateOptions(input) {
       return await withMissionPromptAdmission(input.id, () =>
         withMissionController(input.id, async () => await updateMissionOptions(input)),

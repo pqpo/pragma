@@ -34,6 +34,96 @@ afterEach(async () => {
 });
 
 describe("Local Host fenced Mission repository", () => {
+  it("replays an interrupted rename through the owner fence", async () => {
+    const root = await mkdtemp(join(tmpdir(), "pragma-rename-replay-"));
+    roots.push(root);
+    const missionsPath = join(root, "missions");
+    const rawStore = createMissionStore({ missionsPath });
+    const mission = await rawStore.create({
+      workspace: { path: root, basename: "workspace" },
+      goal: "Rename recovery",
+      project: { id: "studio", revision: 1 },
+      executor: missionExecutorSnapshot(expertFixture()),
+    });
+    const controller = createMissionControllerStore({
+      missionsPath,
+      missionPath: rawStore.storagePath,
+    });
+    const ownerScope = createMissionOwnerScope({ controller });
+    const fenced = createFencedMissionStore(rawStore, {
+      controller,
+      ownerScope,
+      setSemanticWriteReplay: () => undefined,
+    });
+    const guard = await ownerScope.acquire(mission.id);
+    await expect(
+      controller.coordinateSemanticWrite({
+        missionId: mission.id,
+        guard,
+        operation: {
+          name: "mission.title.rename",
+          input: { id: mission.id, title: "Recovered title" },
+        },
+        eventType: "mission.title.updated",
+        eventData: {},
+        apply: async () => {
+          throw new Error("simulated interruption");
+        },
+      }),
+    ).rejects.toMatchObject({ name: "MissionSemanticWritePendingError" });
+    await ownerScope.runWithGuard(mission.id, guard, () =>
+      fenced.renameMission(mission.id, "Next title"),
+    );
+    expect((await rawStore.get(mission.id)).title).toBe("Next title");
+    await ownerScope.release(mission.id);
+  });
+
+  it("rejects a malformed rename journal instead of coercing its title during replay", async () => {
+    const root = await mkdtemp(join(tmpdir(), "pragma-rename-invalid-replay-"));
+    roots.push(root);
+    const missionsPath = join(root, "missions");
+    const rawStore = createMissionStore({ missionsPath });
+    const mission = await rawStore.create({
+      workspace: { path: root, basename: "workspace" },
+      goal: "Preserve the original title",
+      project: { id: "studio", revision: 1 },
+      executor: missionExecutorSnapshot(expertFixture()),
+    });
+    const controller = createMissionControllerStore({
+      missionsPath,
+      missionPath: rawStore.storagePath,
+    });
+    const ownerScope = createMissionOwnerScope({ controller });
+    const fenced = createFencedMissionStore(rawStore, {
+      controller,
+      ownerScope,
+      setSemanticWriteReplay: () => undefined,
+    });
+    const guard = await ownerScope.acquire(mission.id);
+    try {
+      await expect(
+        controller.coordinateSemanticWrite({
+          missionId: mission.id,
+          guard,
+          operation: { name: "mission.title.rename", input: { id: mission.id } },
+          eventType: "mission.title.updated",
+          eventData: {},
+          apply: async () => {
+            throw new Error("interrupted malformed request");
+          },
+        }),
+      ).rejects.toMatchObject({ name: "MissionSemanticWritePendingError" });
+      await expect(
+        ownerScope.runWithGuard(mission.id, guard, () =>
+          fenced.renameMission(mission.id, "Next title"),
+        ),
+      ).rejects.toThrow();
+      expect((await rawStore.get(mission.id)).title).toBe(mission.title);
+    } finally {
+      await ownerScope.release(mission.id);
+    }
+  });
+
   it("uses the shared Local Host owner scope for semantic writes", async () => {
     const root = await mkdtemp(join(tmpdir(), "pragma-desktop-fenced-store-"));
     roots.push(root);

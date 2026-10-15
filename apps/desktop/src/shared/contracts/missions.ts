@@ -18,6 +18,7 @@ export {
   MissionWorkSnapshotSchema,
   MissionUpdateSchema,
   MissionStatusUpdateSchema,
+  RenameMissionSchema,
   UpdateMissionOptionsSchema,
   UpdateMissionContextMountsSchema,
   MissionActionSchema,

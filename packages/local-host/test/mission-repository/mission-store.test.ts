@@ -57,6 +57,85 @@ afterEach(async () => {
 });
 
 describe("mission store", { timeout: 30_000 }, () => {
+  it("persists a renamed running Mission and preserves concurrent execution updates", async () => {
+    const root = await temporaryRoot();
+    const missionsPath = join(root, "missions");
+    const store = createMissionStore({ missionsPath });
+    const created = await store.create({
+      workspace: { path: join(root, "workspace"), basename: "workspace" },
+      goal: "Keep the original task input",
+      project: { id: "studio", revision: 1 },
+      executor: missionExecutorSnapshot(expertFixture()),
+    });
+    const execution = {
+      id: "00000000-0000-4000-8000-000000000111",
+      inputMessageId: created.initialMessageId,
+      status: "running" as const,
+      startedAt: new Date().toISOString(),
+    };
+    await store.updateExecution(created.id, execution);
+    await store.appendExecutionReference({
+      missionId: created.id,
+      inputMessageId: created.initialMessageId,
+      executionId: execution.id,
+      createdAt: execution.startedAt,
+    });
+    // Populate the title index before renaming.
+    await store.resolveExecutionTitles([execution.id]);
+    await Promise.all([
+      store.renameMission(created.id, "  新任务😀  "),
+      store.updateExecution(created.id, { ...execution, status: "succeeded" }),
+    ]);
+    const updated = await createMissionStore({ missionsPath }).get(created.id);
+    expect(updated).toMatchObject({
+      title: "新任务😀",
+      goal: created.goal,
+      executor: created.executor,
+      execution: { id: execution.id, status: "succeeded" },
+    });
+    expect(updated.updatedAt >= created.updatedAt).toBe(true);
+    expect((await store.list()).find((mission) => mission.id === created.id)?.title).toBe(
+      "新任务😀",
+    );
+    expect((await store.resolveExecutionTitles([execution.id])).get(execution.id)).toBe("新任务😀");
+    await store.markComplete(created.id);
+    await store.renameMission(created.id, "😀".repeat(48));
+    await expect(store.renameMission(created.id, "x".repeat(49))).rejects.toThrow();
+    await store.claimCompletedTaskDeletion(created.id);
+    await expect(store.renameMission(created.id, "Too late")).rejects.toThrow(
+      "deletion is already pending",
+    );
+  });
+
+  it("resolves current execution titles after another Store instance renames a Mission", async () => {
+    const root = await temporaryRoot();
+    const missionsPath = join(root, "missions");
+    const reader = createMissionStore({ missionsPath });
+    const writer = createMissionStore({ missionsPath });
+    const mission = await writer.create({
+      workspace: { path: root, basename: "workspace" },
+      goal: "Original title",
+      project: { id: "studio", revision: 1 },
+      executor: missionExecutorSnapshot(expertFixture()),
+    });
+    const executionId = "00000000-0000-4000-8000-000000000112";
+    await writer.appendExecutionReference({
+      missionId: mission.id,
+      inputMessageId: mission.initialMessageId,
+      executionId,
+      createdAt: mission.createdAt,
+    });
+    expect((await reader.resolveExecutionTitles([executionId])).get(executionId)).toBe(
+      "Original title",
+    );
+    await writer.renameMission(mission.id, "Updated by another owner");
+    expect((await reader.resolveExecutionTitles([executionId])).get(executionId)).toBe(
+      "Updated by another owner",
+    );
+    await writer.remove(mission.id);
+    expect(await reader.resolveExecutionTitles([executionId])).toEqual(new Map());
+  });
+
   it("claims cleanup only for settled completed user conversations and blocks reopening", async () => {
     const root = await temporaryRoot();
     const store = createMissionStore({ missionsPath: join(root, "missions") });

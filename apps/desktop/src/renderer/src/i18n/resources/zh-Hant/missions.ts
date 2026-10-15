@@ -1,4 +1,15 @@
 export const missions = {
+  renameMission: "重新命名任務",
+  renameNamed: "重新命名「{{title}}」",
+  renameDescription: "保持簡短且易於識別",
+  renameClose: "關閉",
+  renameCancel: "取消",
+  renameSave: "儲存",
+  renameSaving: "儲存中…",
+  renameTitleLabel: "任務標題",
+  renameInvalid: "請輸入 1–{{max}} 字的標題",
+  renameUnavailable: "桌面連線無法使用，請重試",
+
   memoryEvidenceHelp: "已發佈 Evidence 說明",
   memoryResizeFileList: "調整檔案清單寬度",
   memoryRecallLogDescription: "記錄 Agent 如何查找和讀取記憶。點擊記憶名稱可查看目前內容。",

@@ -53,6 +53,7 @@ import {
   MissionWorkUpdateSchema,
   RespondMissionHumanInteractionSchema,
   SendMissionMessageSchema,
+  RenameMissionSchema,
   UpdateMissionOptionsSchema,
   UpdateMissionContextMountsSchema,
   PickMissionAttachmentsResultSchema,
@@ -205,6 +206,8 @@ export const missionsApi = {
       DiscardMissionAttachmentDraftsSchema.parse(input),
     );
   },
+  renameMission: async (input) =>
+    MissionSchema.parse(await invokeMutation("missions:rename", RenameMissionSchema.parse(input))),
   updateMissionOptions: async (input) =>
     MissionSchema.parse(
       await invokeMutation("missions:options:update", UpdateMissionOptionsSchema.parse(input)),
@@ -371,6 +374,7 @@ export const missionsApi = {
   | "pickMissionAttachments"
   | "stageMissionClipboardImage"
   | "discardMissionAttachmentDrafts"
+  | "renameMission"
   | "updateMissionOptions"
   | "updateMissionContextMounts"
   | "runMission"

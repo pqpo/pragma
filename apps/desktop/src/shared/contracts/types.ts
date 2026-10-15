@@ -228,6 +228,7 @@ import {
   RespondMissionHumanInteractionSchema,
   SendMissionMessageSchema,
   UpdateMissionContextMountsSchema,
+  RenameMissionSchema,
   UpdateMissionOptionsSchema,
 } from "./missions.ts";
 import {
@@ -624,6 +625,7 @@ export type MissionLifecycleStatus = z.infer<typeof MissionLifecycleStatusSchema
 export type MissionExecutionAction = z.infer<typeof MissionExecutionActionSchema>;
 export type CreateMission = z.infer<typeof CreateMissionSchema>;
 export type CreateMissionBranch = z.infer<typeof CreateMissionBranchSchema>;
+export type RenameMission = z.infer<typeof RenameMissionSchema>;
 export type UpdateMissionOptions = z.infer<typeof UpdateMissionOptionsSchema>;
 export type UpdateMissionContextMounts = z.infer<typeof UpdateMissionContextMountsSchema>;
 export type MissionUserMessage = z.infer<typeof MissionUserMessageSchema>;

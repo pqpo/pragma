@@ -1052,6 +1052,48 @@
   box-shadow: 0 0 0 3px rgb(88 121 104 / 12%);
 }
 
+.mission-rename-dialog {
+  width: min(480px, calc(100vw - 32px));
+}
+
+.mission-rename-dialog .ui-dialog-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.mission-rename-dialog .ui-dialog-footer {
+  border-top: 0;
+}
+
+.mission-rename-input {
+  width: 100%;
+  height: 40px;
+  padding: 0 12px;
+  border: 1px solid var(--ui-line-strong);
+  border-radius: var(--ui-radius-md);
+  background: var(--ui-surface);
+  color: var(--ui-text);
+  font: inherit;
+  font-size: 13px;
+}
+
+.mission-rename-help {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+  margin-top: 8px;
+  font-size: 12px;
+  color: var(--ui-text-secondary);
+}
+
+.mission-rename-help > span,
+.mission-rename-error {
+  color: var(--ui-danger);
+}
+
 .mission-row-preview {
   position: fixed;
   z-index: 220;
@@ -1070,9 +1112,38 @@
 
 .mission-row-preview.is-positioned {
   opacity: 1;
+  pointer-events: auto;
 }
 
-.mission-row-preview > strong {
+.mission-row-preview-heading {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+}
+
+.mission-row-preview-edit {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 32px;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--ui-radius-sm);
+  background: transparent;
+  color: var(--ui-text-secondary);
+  cursor: pointer;
+}
+
+.mission-row-preview-edit:hover {
+  background: var(--ui-surface-subtle);
+  color: var(--ui-text);
+}
+
+.mission-row-preview-heading > strong {
+  flex: 1;
+  min-width: 0;
   display: -webkit-box;
   overflow: hidden;
   font-size: 14px;
