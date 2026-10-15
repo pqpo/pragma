@@ -1,3 +1,4 @@
+import { MissionContentReferenceSchema } from "./content-query.schema.ts";
 import { z } from "zod";
 
 import { AgentMessageUsageSchema } from "../agent-message.schema.ts";
@@ -150,3 +151,91 @@ export type MissionSummary = z.infer<typeof MissionSummarySchema>;
 export type MissionResult = z.infer<typeof MissionResultSchema>;
 export type MissionEventViewItem = z.infer<typeof MissionEventViewItemSchema>;
 export type MissionEvents = z.infer<typeof MissionEventsSchema>;
+
+/** v1 remains directly readable; v2 is selected by the query request. */
+export const MissionRecentInputSchema = z
+  .object({
+    messageId: z.string().uuid().optional(),
+    text: z.string().max(500),
+    truncated: z.boolean(),
+  })
+  .strict();
+const MissionSemanticsShape = {
+  title: z.string().min(1).max(120).nullable(),
+  recentInput: MissionRecentInputSchema.optional(),
+};
+export const MissionSummaryV2Schema = MissionSummarySchema.extend({
+  schemaVersion: z.literal("pragma.mission-summary/v2"),
+  ...MissionSemanticsShape,
+});
+export const MissionResultV2Schema = z
+  .object({
+    ...MissionResultSchema.shape,
+    schemaVersion: z.literal("pragma.mission-result/v2"),
+    ...MissionSemanticsShape,
+  })
+  .strict()
+  .superRefine((value, context) => {
+    const legacy = Object.fromEntries(
+      Object.entries(value).filter(([key]) => key !== "title" && key !== "recentInput"),
+    );
+    const checked = MissionResultSchema.safeParse({
+      ...legacy,
+      schemaVersion: "pragma.mission-result/v1",
+    });
+    if (!checked.success)
+      for (const issue of checked.error.issues)
+        context.addIssue({ code: "custom", path: issue.path, message: issue.message });
+  });
+export type MissionSummaryV2 = z.infer<typeof MissionSummaryV2Schema>;
+export type MissionResultV2 = z.infer<typeof MissionResultV2Schema>;
+
+export const MissionBoundedResultSchema = z
+  .object({
+    ...MissionResultV2Schema.shape,
+    schemaVersion: z.literal("pragma.mission-result/v3"),
+    resultContent: MissionContentReferenceSchema.optional(),
+  })
+  .strict()
+  .superRefine((value, context) => {
+    const legacy = Object.fromEntries(
+      Object.entries(value).filter(
+        ([key]) => key !== "resultContent" && key !== "title" && key !== "recentInput",
+      ),
+    );
+    const checked = MissionResultSchema.safeParse({
+      ...legacy,
+      schemaVersion: "pragma.mission-result/v1",
+      ...(value.resultContent === undefined ? {} : { result: null }),
+    });
+    if (!checked.success)
+      for (const issue of checked.error.issues)
+        context.addIssue({ code: "custom", path: issue.path, message: issue.message });
+    if (value.resultContent !== undefined && value.result !== undefined)
+      context.addIssue({
+        code: "custom",
+        message: "Use exactly one inline result or content reference.",
+      });
+  });
+export const MissionBoundedEventsSchema = z
+  .object({
+    ...MissionEventsSchema.shape,
+    schemaVersion: z.literal("pragma.mission-events/v2"),
+    items: z.array(
+      z
+        .object({
+          ...MissionEventViewItemSchema.shape,
+          schemaVersion: z.literal("pragma.local-host-mission-event/v2"),
+          data: JsonValueSchema.optional(),
+          dataContent: MissionContentReferenceSchema.optional(),
+        })
+        .strict()
+        .refine(
+          (value) => (value.data !== undefined) !== (value.dataContent !== undefined),
+          "An event requires exactly one data or dataContent.",
+        ),
+    ),
+  })
+  .strict();
+export type MissionBoundedResult = z.infer<typeof MissionBoundedResultSchema>;
+export type MissionBoundedEvents = z.infer<typeof MissionBoundedEventsSchema>;

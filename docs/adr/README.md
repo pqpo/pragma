@@ -95,6 +95,8 @@ ADR 的数字来自项目演进历史，早期曾出现同号记录。链接文�
 
 - [Automatic core asset reconciliation](./070-automatic-core-asset-reconciliation.md)
 
+- [CLI queries, compact output and owner waiting](./071-agent-friendly-cli-queries-and-owner-waiting.md)
+
 ## 维护规则
 
 - 新决策使用下一个未使用编号，不复用既有编号；

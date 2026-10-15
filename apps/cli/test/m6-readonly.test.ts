@@ -252,6 +252,7 @@ describe("M6 parser and read-only command surface", () => {
           "color": "auto",
           "format": "json",
           "interactive": "auto",
+          "outputView": "full",
         },
       }
     `);
@@ -492,6 +493,32 @@ describe("M6 parser and read-only command surface", () => {
     );
   });
 
+  it("requests semantic v2 by default and displays the latest input", async () => {
+    const host = createHost();
+    const queryHost: CliLocalHost = {
+      ...host,
+      queryMission: async (input) => {
+        expect(input.queryVersion).toBe(2);
+        expect(input.includeRecentInput).toBe(true);
+        return {
+          ...((await host.queryMission(input)) as object),
+          schemaVersion: "pragma.mission-summary/v2",
+          title: "Review task",
+          recentInput: { text: "Check the latest patch", truncated: false },
+        } as never;
+      },
+    };
+    const io = createIo();
+    expect(
+      await runCli(["mission", "get", MISSION_ID, "--recent-input"], io, { localHost: queryHost }),
+    ).toBe(0);
+    expect(io.stdout.join("")).toContain("TITLE: Review task");
+    expect(io.stdout.join("")).toContain("RECENT INPUT: Check the latest patch");
+    expect(
+      parseCliArgv(["mission", "get", MISSION_ID, "--query-version", "1"]).command,
+    ).toMatchObject({ queryVersion: 1 });
+  });
+
   it("uses the Local Host query contract and fails loudly for chat/work", async () => {
     const host = createHost();
     const calls: unknown[] = [];
@@ -537,7 +564,7 @@ describe("M6 parser and read-only command surface", () => {
     ).resolves.toBe(2);
     expect(jsonOutput(chatIo).error).toMatchObject({
       code: "INVALID_ARGUMENT",
-      details: { view: "chat", supportedViews: ["summary", "result", "events"] },
+      details: { view: "chat", supportedViews: ["summary", "result", "events", "content"] },
     });
     expect(calls).toHaveLength(1);
 
@@ -565,7 +592,7 @@ describe("M6 parser and read-only command surface", () => {
       }),
     ).resolves.toBe(0);
     expect(resultIo.stdout.join("")).toContain(`MISSION ID: ${MISSION_ID}`);
-    expect(resultIo.stdout.join("")).toContain(`NEXT: mission watch ${MISSION_ID}`);
+    expect(resultIo.stdout.join("")).toContain(`NEXT: pragma mission watch ${MISSION_ID}`);
   });
 
   it("shows generated/explicit run identity in text without adding machine side channels", async () => {
@@ -752,9 +779,9 @@ describe("M6 parser and read-only command surface", () => {
       0,
     );
     const missionText = missionIo.stdout.join("");
-    expect(missionText).toContain("MISSION ID\tSTATUS\tEXECUTOR\tUPDATED\tWORKSPACE");
+    expect(missionText).toContain("MISSION ID\tTITLE\tSTATUS\tEXECUTOR\tUPDATED\tWORKSPACE");
     expect(missionText).toContain(MISSION_ID);
-    expect(missionText).not.toContain("Fixture Mission");
+    expect(missionText).toContain("Fixture Mission");
 
     const queueIo = createIo();
     await expect(
@@ -885,6 +912,127 @@ describe("M6 parser and read-only command surface", () => {
     expect(JSON.parse(searchIo.stdout.join("")).result.matches[0].line).toBe(2);
   });
 
+  it("paginates a full queue wrapper without losing the second item", async () => {
+    const host: CliLocalHost = {
+      ...createHost(),
+      listMissionQueue: async () => ({
+        missionId: MISSION_ID,
+        pendingCount: 2,
+        items: [{ requestId: "q1" }, { requestId: "q2" }],
+      }),
+    };
+    const firstIo = createIo();
+    expect(
+      await runCli(["mission", "queue", "list", MISSION_ID, "--limit", "1", "--json"], firstIo, {
+        localHost: host,
+      }),
+    ).toBe(0);
+    const first = jsonOutput(firstIo).result;
+    expect(first.items).toEqual([{ requestId: "q1" }]);
+    expect(first.nextCursor).toBeDefined();
+    const secondIo = createIo();
+    expect(
+      await runCli(
+        [
+          "mission",
+          "queue",
+          "list",
+          MISSION_ID,
+          "--limit",
+          "1",
+          "--cursor",
+          first.nextCursor,
+          "--json",
+        ],
+        secondIo,
+        { localHost: { ...host } },
+      ),
+    ).toBe(0);
+    expect(jsonOutput(secondIo).result.items).toEqual([{ requestId: "q2" }]);
+    expect(jsonOutput(secondIo).result.nextCursor).toBeUndefined();
+  });
+
+  it("reports Board byte ranges and preserves the legacy size alias", async () => {
+    const host = createHost();
+    const io = createIo();
+    expect(
+      await runCli(["mission", "board", "read", MISSION_ID, "plan.md", "--max-bytes", "9"], io, {
+        localHost: host,
+      }),
+    ).toBe(0);
+    const output = io.stdout.join("");
+    expect(output).toContain("BYTE RANGE: [0,9) / 20 bytes");
+    expect(output).toContain("TRUNCATED; NEXT:");
+    expect(output).toContain("--start 9 --max-bytes");
+    expect(host.calls.boardRead[0]).toEqual([MISSION_ID, "plan.md", 0, 9]);
+    expect(
+      parseCliArgv(["mission", "board", "read", MISSION_ID, "plan.md", "--offset", "9"]).command,
+    ).toMatchObject({ maxBytes: 9 });
+    expect(() =>
+      parseCliArgv([
+        "mission",
+        "board",
+        "read",
+        MISSION_ID,
+        "plan.md",
+        "--offset",
+        "9",
+        "--max-bytes",
+        "9",
+      ]),
+    ).toThrow();
+    const listIo = createIo();
+    expect(
+      await runCli(["mission", "board", "list", MISSION_ID], listIo, { localHost: host }),
+    ).toBe(0);
+    expect(listIo.stdout.join("")).toContain("DESCRIPTION");
+    expect(listIo.stdout.join("")).toContain("Plan");
+  });
+
+  it("forwards title and workspace searches to the explicit Host query", async () => {
+    const requests: unknown[] = [];
+    const host: CliLocalHost = {
+      ...createHost(),
+      queryMissions: async (request) => {
+        requests.push(request);
+        return {
+          schemaVersion: "pragma.list-page/v1",
+          items: [{ id: MISSION_ID, title: "Review patch" }],
+          nextCursor: "opaque-page",
+        };
+      },
+    };
+    const io = createIo();
+    expect(
+      await runCli(
+        ["mission", "list", "--query", "Review patch", "--workspace", "/work tree", "--limit", "1"],
+        io,
+        { localHost: host },
+      ),
+    ).toBe(0);
+    expect(requests[0]).toMatchObject({ query: "Review patch", workspace: "/work tree", limit: 1 });
+    expect(io.stdout.join("")).toContain("--query 'Review patch' --workspace '/work tree'");
+    const nextIo = createIo();
+    expect(
+      await runCli(
+        [
+          "mission",
+          "list",
+          "--query",
+          "Review patch",
+          "--workspace",
+          "/work tree",
+          "--cursor",
+          "opaque-page",
+          "--json",
+        ],
+        nextIo,
+        { localHost: host },
+      ),
+    ).toBe(0);
+    expect(requests[1]).toMatchObject({ cursor: "opaque-page" });
+  });
+
   it("binds local cursors to the command and filters", async () => {
     const host = createHost();
     const firstIo = createIo();
@@ -995,6 +1143,31 @@ describe("M6 parser and read-only command surface", () => {
     expect(jsonOutput(differentFilterIo).error).toMatchObject({ code: "CURSOR_INVALID" });
   });
 
+  it("binds embedded Host queue cursors to the output projection", async () => {
+    const host = {
+      ...createHost(),
+      listMissionQueue: async () => [{ requestId: "one" }, { requestId: "two" }],
+    };
+    const argv = ["mission", "queue", "list", MISSION_ID, "--limit", "1", "--json"];
+    const first = createIo();
+    expect(await runCli([...argv, "--output-view", "compact"], first, { localHost: host })).toBe(0);
+    const cursor = JSON.parse(first.stdout.join("")).result.nextCursor as string;
+    expect(cursor).toBeDefined();
+    const same = createIo();
+    expect(
+      await runCli([...argv, "--output-view", "compact", "--cursor", cursor], same, {
+        localHost: host,
+      }),
+    ).toBe(0);
+    const changed = createIo();
+    expect(
+      await runCli([...argv, "--output-view", "full", "--cursor", cursor], changed, {
+        localHost: host,
+      }),
+    ).not.toBe(0);
+    expect(JSON.parse(changed.stdout.join("")).error.code).toBe("CURSOR_INVALID");
+  });
+
   it("keeps completion independent of Host and secret inspection", async () => {
     let queried = false;
     const host = createHost();
@@ -1028,6 +1201,7 @@ describe("M6 parser and read-only command surface", () => {
       "--json",
       "--stream-json",
       "--color",
+      "--output-view",
       "--interactive",
       "--help",
     ];
@@ -1249,6 +1423,51 @@ describe("M6 parser and read-only command surface", () => {
       },
     ] as const;
 
+    for (const shell of ["bash", "zsh", "fish", "powershell"] as const) {
+      const script = scripts.get(shell)!;
+      const markers = {
+        bash: [
+          '        list) candidates="--status',
+          '        get) candidates="--view',
+          "        watch) candidates=",
+          "        send) candidates=",
+          "        interrupt) candidates=",
+        ],
+        zsh: [
+          "              list) _describe option '--status",
+          "              get) _describe option '--view",
+          "              watch) _describe option",
+          "              send) _describe option",
+          "              interrupt) _describe option",
+        ],
+        fish: [
+          "__pragma_mission_list' -a",
+          "__pragma_mission_get' -a",
+          "__pragma_mission_watch' -a",
+          "__pragma_mission_send' -a",
+          "__pragma_mission_interrupt' -a",
+        ],
+        powershell: [
+          "$tokens -contains 'list') { $candidates = $globalOptions + @('--status'",
+          "$tokens -contains 'get')",
+          "$tokens -contains 'watch')",
+          "$tokens -contains 'send')",
+          "$tokens -contains 'interrupt')",
+        ],
+      };
+      const expected = [
+        ["--query", "--workspace"],
+        ["--query-version", "--recent-input", "--content-id", "--max-bytes"],
+        ["--wait-timeout"],
+        ["--wait-timeout"],
+        ["--wait-timeout"],
+      ];
+      markers[shell].forEach((marker, index) => {
+        const line = completionContextLine(script, marker);
+        for (const option of expected[index]!)
+          expect(completionLineHasOption(line, option), `${shell}: ${option}`).toBe(true);
+      });
+    }
     for (const completionCase of cases) {
       const line = completionContextLine(scripts.get(completionCase.shell)!, completionCase.marker);
       for (const option of completionCase.allowed) {
@@ -1291,6 +1510,41 @@ describe("M6 parser and read-only command surface", () => {
     expect(textIo.stdout.join("")).toContain(
       "Continue: pragma mission list --status succeeded --limit 1 --cursor",
     );
+    expect(textIo.stdout.join("")).not.toContain("Next cursor:");
+    expect(textIo.stdout.join("").match(/p2\./gu)).toHaveLength(1);
+  });
+
+  it("preserves explicit query version and compact view in event continuation", async () => {
+    const io = createIo();
+    const host: CliLocalHost = {
+      ...createHost(),
+      queryMission: async () => ({
+        schemaVersion: "pragma.mission-events/v1",
+        missionId: MISSION_ID,
+        items: [],
+        nextCursor: "next-event-cursor",
+      }),
+    };
+    expect(
+      await runCli(
+        [
+          "mission",
+          "get",
+          MISSION_ID,
+          "--view",
+          "events",
+          "--query-version",
+          "1",
+          "--output-view",
+          "compact",
+        ],
+        io,
+        { localHost: host },
+      ),
+    ).toBe(0);
+    const continuation = io.stdout.join("").split("Continue: ")[1]!;
+    expect(continuation).toContain("--query-version 1");
+    expect(continuation).toContain("--output-view compact");
   });
 
   it("returns the same read-only result before and after the Desktop lifecycle changes", async () => {

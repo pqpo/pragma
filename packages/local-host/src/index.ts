@@ -1,3 +1,11 @@
+import { missionContentReference, readMissionContentValue } from "./mission-content-query.ts";
+import {
+  queryIntegrationMissions,
+  queryIntegrationMissionsWithDiagnostics,
+  queryIntegrationExecutors,
+  fullIntegrationItems,
+} from "./integration-list-query.ts";
+import { paginateIntegrationItems } from "./integration-pagination.ts";
 import { createHash } from "node:crypto";
 import { basename, isAbsolute } from "node:path";
 
@@ -8,6 +16,9 @@ import {
   WorkspaceSelectionSchema,
   type HumanInteractionRequestEnvelope,
   type IntegrationCapability,
+  type ListPageRequest,
+  type MissionListRequest,
+  type ExecutorListRequest,
   type IntegrationError,
   type IntegrationWarning,
   type WorkspaceSelection,
@@ -146,14 +157,17 @@ export interface LocalHostApplicationPort<
   listProjects(): Promise<readonly TProject[]>;
   getProjectRevision(projectId: string, revision: number): Promise<TRevision | undefined>;
   listExecutors(): Promise<readonly TExecutor[]>;
+  readonly queryExecutors?: (request: ExecutorListRequest) => Promise<unknown>;
   getMission(id: string): Promise<TMission>;
   listMissions(): Promise<readonly TMissionSummary[]>;
+  readonly queryMissions?: (request: MissionListRequest) => Promise<unknown>;
   readonly listMissionDiagnostics?:
     (() => Promise<LocalHostMissionListResult<TMissionSummary>>) | undefined;
   /** Real, view-specific Mission projection owned by Local Host. */
   readonly queryMission: MissionQueryPort["queryMission"];
   resolveWorkspace(requestedPath: string): Promise<WorkspaceSelection>;
   listSharedBoard(missionId: string): Promise<TBoardList>;
+  readonly querySharedBoard?: (missionId: string, request: ListPageRequest) => Promise<unknown>;
   readSharedBoard(
     missionId: string,
     id: string,
@@ -167,6 +181,7 @@ export interface LocalHostApplicationPort<
     options?: Pick<LocalHostSharedBoardSearchRequest, "caseSensitive" | "contextLines">,
   ): Promise<TBoardSearch>;
   listMissionQueue(missionId: string): Promise<TQueue>;
+  readonly queryMissionQueue?: (missionId: string, request: ListPageRequest) => Promise<unknown>;
   /** Read-only Mission event watcher; this port never claims a controller lease. */
   readonly watchMission?: MissionWatchPort["watch"];
   /** Performs only the explicit, proof-based missing-pin repair for one Mission. */
@@ -267,10 +282,41 @@ export function createLocalHostApplication<
     listProjects: ports.catalog.listProjects,
     getProjectRevision: ports.catalog.getProjectRevision,
     listExecutors: ports.catalog.listExecutors,
+    queryExecutors: async (request) =>
+      queryIntegrationExecutors(await ports.catalog.listExecutors(), request),
     getMission: ports.missions.get,
     listMissions: ports.missions.list,
     listMissionDiagnostics: ports.missions.listDiagnostics,
-    queryMission: ports.missions.query,
+    queryMissions: async (request) =>
+      ports.missions.listDiagnostics === undefined
+        ? queryIntegrationMissions(await ports.missions.list(), request)
+        : queryIntegrationMissionsWithDiagnostics(await ports.missions.listDiagnostics(), request),
+    queryMission: async (input) => {
+      if (input.view === "content" && input.content?.source === "queue") {
+        if (ports.queue === undefined)
+          throw createIntegrationError({
+            code: "DEPENDENCY_UNAVAILABLE",
+            category: "dependency",
+            message: "Queue content is unavailable.",
+          });
+        const items = fullIntegrationItems(await ports.queue.list(input.missionId));
+        const item = items.find(
+          (item) =>
+            typeof item === "object" &&
+            item !== null &&
+            "requestId" in item &&
+            item.requestId === input.content?.id,
+        ) as { content?: unknown } | undefined;
+        if (item?.content === undefined)
+          throw createIntegrationError({
+            code: "NOT_FOUND",
+            category: "not_found",
+            message: "Queue content is no longer available; re-query the queue.",
+          });
+        return readMissionContentValue(input.missionId, input.content, item.content);
+      }
+      return await ports.missions.query(input);
+    },
     resolveWorkspace: async (requestedPath) =>
       await resolveWorkspace(requestedPath, ports.workspace),
     listSharedBoard: async (missionId) =>
@@ -279,6 +325,20 @@ export function createLocalHostApplication<
         storeId: LOCAL_HOST_SHARED_BOARD_STORE_ID,
         scopeId: LOCAL_HOST_SHARED_BOARD_SCOPE_ID,
       }),
+    querySharedBoard: async (missionId, request) =>
+      paginateIntegrationItems(
+        fullIntegrationItems(
+          await ports.board.list({
+            missionId,
+            storeId: LOCAL_HOST_SHARED_BOARD_STORE_ID,
+            scopeId: LOCAL_HOST_SHARED_BOARD_SCOPE_ID,
+          }),
+          ["items", "entries"],
+        ),
+        request,
+        "mission.board.list",
+        { missionId },
+      ),
     readSharedBoard: async (missionId, id, start, maxBytes) =>
       await ports.board.read({
         missionId,
@@ -307,6 +367,48 @@ export function createLocalHostApplication<
         });
       }
       return await ports.queue.list(missionId);
+    },
+    queryMissionQueue: async (missionId, request) => {
+      if (ports.queue === undefined)
+        throw createIntegrationError({
+          code: "DEPENDENCY_UNAVAILABLE",
+          category: "dependency",
+          message: "Mission queue queries are unavailable.",
+        });
+      const raw = await ports.queue.list(missionId);
+      const record =
+        typeof raw === "object" && raw !== null && !Array.isArray(raw)
+          ? (raw as Record<string, unknown>)
+          : undefined;
+      const items = Array.isArray(raw) ? raw : record?.["items"];
+      if (!Array.isArray(items)) throw new Error("Invalid full queue projection.");
+      const page = paginateIntegrationItems(items, request, "mission.queue.list", {
+        missionId,
+        maxContentBytes: request.maxContentBytes,
+      });
+      return {
+        ...record,
+        ...page,
+        items: page.items.map((item) => {
+          if (
+            request.maxContentBytes === undefined ||
+            typeof item !== "object" ||
+            item === null ||
+            !("content" in item) ||
+            !("requestId" in item)
+          )
+            return item;
+          const reference = missionContentReference(
+            missionId,
+            "queue",
+            String(item.requestId),
+            item.content,
+            request.maxContentBytes,
+          );
+          if (reference === undefined) return item;
+          return { ...item, content: undefined, contentReference: reference };
+        }),
+      };
     },
     ...(ports.watch === undefined ? {} : { watchMission: ports.watch.watch }),
     runtimeResolver: () => ports.runtime.resolver,
@@ -482,3 +584,9 @@ export * from "./pragma-mission-port.ts";
 export * from "./pragma-automation-port.ts";
 export * from "./management-mutation.ts";
 export * from "./management-workspace.ts";
+
+export * from "./integration-pagination.ts";
+
+export * from "./integration-list-query.ts";
+
+export * from "./mission-content-query.ts";

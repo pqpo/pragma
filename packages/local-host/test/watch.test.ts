@@ -15,6 +15,46 @@ import {
 const missionId = "00000000-0000-4000-8000-000000000301";
 
 describe("Mission watch", () => {
+  it("stops waiting at its deadline without claiming or cancelling the Mission", async () => {
+    const root = await mkdtemp(join(tmpdir(), "pragma-watch-timeout-"));
+    try {
+      const controller = createMissionControllerStore({ missionsPath: join(root, "missions") });
+      const guard = await controller.claim({
+        missionId,
+        claimId: "00000000-0000-4000-8000-000000000302",
+        leaseMs: 10000,
+      });
+      await controller.write({
+        missionId,
+        guard,
+        operation: async ({ appendEvent }) => {
+          await appendEvent("mission.created", {});
+          await appendEvent("run.started", {});
+        },
+      });
+      const before = await controller.readSnapshot({ missionId });
+      const result = await createMissionWatchApplication({ controller }).watch({
+        missionId,
+        until: "terminal",
+        waitTimeoutMs: 25,
+        onEvent: () => {},
+      });
+      expect(result).toMatchObject({
+        status: "timed_out",
+        observedStatus: "timed_out",
+        stopReason: "timed_out",
+        missionContinues: true,
+        lastObservedStatus: "running",
+      });
+      const after = await controller.readSnapshot({ missionId });
+      expect(after.events).toEqual(before.events);
+      expect(after.snapshot.lease).toEqual(before.snapshot.lease);
+      await controller.release({ missionId, guard });
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
   it("emits replay, snapshot, ready, and follow events from one barrier without claiming", async () => {
     const root = await mkdtemp(join(tmpdir(), "pragma-watch-follow-"));
     try {

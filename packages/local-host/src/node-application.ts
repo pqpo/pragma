@@ -169,6 +169,8 @@ export function createLocalHostNodeApplication(
     isDeletionCommitted: async (id) =>
       await isMissionDeletionCommitted(new PragmaPaths({ pragmaHome: options.pragmaHome }), id),
     readMission: readMissionEnvelope,
+    readLatestInput: async (id) =>
+      (await rawMissionRepository.readTimelinePage(id, { limit: 1 })).turns.at(-1)?.message,
     recoverSemanticWrite: async ({ missionId, guard }) => {
       if (replaySemanticWrite === undefined)
         throw new Error("Mission repository replay is not initialized.");

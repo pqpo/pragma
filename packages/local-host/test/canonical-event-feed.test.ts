@@ -301,7 +301,15 @@ describe("Canonical Event Feed", () => {
       ["execution"],
       async (handoffFiles) => handoffFiles,
     );
-    releaseDelivery();
+    try {
+      // The batch lock is asynchronous: wait until the deletion fence is active
+      // before releasing the in-flight delivery that guards the queued batch.
+      await vi.waitFor(async () => {
+        await expect(store.get("execution")).rejects.toThrow("Execution deletion is in progress");
+      });
+    } finally {
+      releaseDelivery();
+    }
 
     const [, , handoffFiles] = await Promise.all([firstCommit, secondCommit, deletion]);
     expect(appendCalls).toBe(1);

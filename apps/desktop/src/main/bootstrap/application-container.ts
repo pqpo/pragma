@@ -381,6 +381,8 @@ export async function createDesktopApplicationContainer(
     missionPath: missionStore.storagePath,
     isDeletionCommitted: async (id) => await isMissionDeletionCommitted(pragmaPaths, id),
     readMission: readMissionEnvelope,
+    readLatestInput: async (id) =>
+      (await missionStore.readTimelinePage(id, { limit: 1 })).turns.at(-1)?.message,
     onIdleError: (missionId, error) => {
       mainLogger.warn(
         "mission.idle_release_failed",

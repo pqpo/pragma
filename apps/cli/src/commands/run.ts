@@ -64,6 +64,9 @@ export async function startExecutorRun(
   };
   return await run.start(request, {
     onEvent: options.onEvent,
+    ...(context.format === "text" || context.outputView === "compact"
+      ? { maxContentBytes: 8000 }
+      : {}),
     ...(options.onHumanInteraction === undefined
       ? {}
       : { onHumanInteraction: options.onHumanInteraction }),

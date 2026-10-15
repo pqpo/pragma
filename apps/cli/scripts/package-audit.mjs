@@ -1,9 +1,9 @@
 import { parse } from "acorn";
-import { mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, readdir, rm, writeFile, symlink, mkdir } from "node:fs/promises";
 import { dirname, isAbsolute, join, normalize, resolve, sep } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { Worker } from "node:worker_threads";
-import { execFile } from "node:child_process";
+import { execFile, fork } from "node:child_process";
 import { tmpdir } from "node:os";
 import { promisify } from "node:util";
 import { gunzipSync } from "node:zlib";
@@ -41,6 +41,7 @@ const expectedFiles = new Set([
   "package/THIRD_PARTY_NOTICES.txt",
   "package/dist/pragma.js",
   "package/dist/cli.js",
+  "package/dist/mission-owner-worker.js",
   "package/dist/claude-acp-worker.js",
   "package/dist/code-service-worker.js",
   "package/dist/canonical-event-feed-worker.js",
@@ -101,6 +102,7 @@ for (const entry of entries) {
   const text = entry.data.toString("utf8");
   const isBundle =
     entry.name.endsWith("/cli.js") ||
+    entry.name.endsWith("/mission-owner-worker.js") ||
     entry.name.endsWith("/code-service-worker.js") ||
     entry.name.endsWith("/canonical-event-feed-worker.js") ||
     entry.name.endsWith("/claude-acp-worker.js") ||
@@ -150,6 +152,7 @@ assertBootstrapOrder(bootstrap.data.toString("utf8"));
 
 const metafiles = await readMetafiles();
 for (const [label, metafile] of metafiles) assertMetafile(label, metafile);
+await verifyOwnerWorker(entryMap);
 await verifyWorker(entryMap.get("package/dist/code-service-worker.js"));
 await verifyVectorWorker(entryMap.get("package/dist/vector-worker.js"));
 await verifyClaudeAcpWorker(entryMap.get("package/dist/claude-acp-worker.js"));
@@ -307,6 +310,7 @@ function assertManifest(manifest) {
 async function readMetafiles() {
   const paths = [
     ["cli bundle", join(releaseDirectory, "cli.metafile.json")],
+    ["mission owner worker", join(releaseDirectory, "mission-owner-worker.metafile.json")],
     ["claude ACP worker", join(releaseDirectory, "claude-acp-worker.metafile.json")],
     ["code service worker", join(releaseDirectory, "code-service-worker.metafile.json")],
     ["memory vector worker", join(releaseDirectory, "vector-worker.metafile.json")],
@@ -357,6 +361,11 @@ function assertMetafile(label, metafile) {
     }
   }
   const outputPaths = Object.keys(metafile.outputs ?? {}).map((path) => path.replaceAll("\\", "/"));
+  if (
+    label === "mission owner worker" &&
+    !outputPaths.some((path) => path.endsWith("/mission-owner-worker.js"))
+  )
+    throw new Error("Owner metafile is missing mission-owner-worker.js output.");
   if (label === "cli bundle" && !outputPaths.some((path) => path.endsWith("/cli.js"))) {
     throw new Error("CLI metafile is missing cli.js output.");
   }
@@ -550,4 +559,62 @@ function isReleaseVersion(value) {
   return /^(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)(?:-[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$/u.test(
     value,
   );
+}
+
+async function verifyOwnerWorker(entries) {
+  const directory = await mkdtemp(join(tmpdir(), "pragma-owner-audit-"));
+  try {
+    for (const entry of entries.values())
+      if (entry.name.startsWith("package/dist/") && entry.name.endsWith(".js"))
+        await writeFile(join(directory, entry.name.slice("package/dist/".length)), entry.data);
+    await writeFile(join(directory, "package.json"), JSON.stringify({ type: "module" }));
+    await symlink(
+      join(packageDirectory, "node_modules"),
+      join(directory, "node_modules"),
+      "junction",
+    );
+    const pragmaHome = join(directory, "home");
+    await mkdir(pragmaHome);
+    await new Promise((resolvePromise, reject) => {
+      const child = fork(join(directory, "mission-owner-worker.js"), [], {
+        stdio: ["ignore", "ignore", "pipe", "ipc"],
+        execArgv: [],
+        env: { ...process.env, PRAGMA_HOME: pragmaHome },
+      });
+      let stderr = "";
+      let replied = false;
+      const timer = setTimeout(() => {
+        child.kill();
+        reject(new Error("Packaged Mission owner did not reply within 15 seconds."));
+      }, 15000);
+      child.stderr.on("data", (chunk) => {
+        stderr += String(chunk);
+      });
+      child.on("message", (message) => {
+        if (
+          message?.type === "failed" &&
+          message.error?.schemaVersion === "pragma.integration-error/v1"
+        )
+          replied = true;
+      });
+      child.once("error", (error) => {
+        clearTimeout(timer);
+        reject(error);
+      });
+      child.once("exit", (code) => {
+        clearTimeout(timer);
+        code === 0 && replied
+          ? resolvePromise()
+          : reject(new Error(`Packaged Mission owner bootstrap failed (${code}): ${stderr}`));
+      });
+      // Unsupported read-only command proves the real IPC/bootstrap path without starting a Runtime.
+      child.send({
+        schemaVersion: "pragma.cli-owner-request/v1",
+        requestId: "11111111-1111-4111-8111-111111111111",
+        argv: ["version"],
+      });
+    });
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
 }

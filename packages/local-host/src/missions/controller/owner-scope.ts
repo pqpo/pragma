@@ -41,6 +41,8 @@ export interface MissionOwnerScope {
   /** Wake this process's owner after a command is durable; never bypasses the Inbox. */
   wake(missionId: string): void;
   release(missionId: string, expectedGuard?: MissionControllerGuard): Promise<void>;
+  /** Receipt cleanup must not fence a concurrently accepted successor command. */
+  releaseIfIdle(missionId: string, guard: MissionControllerGuard): Promise<boolean>;
   /** Explicitly fences the current owner, including a live owner in another process. */
   forceRevoke(missionId: string): Promise<void>;
   releaseAfterLowerLevel(missionId: string, releaseLowerLevel: () => Promise<void>): Promise<void>;
@@ -588,6 +590,33 @@ export function createMissionOwnerScope(options: {
       cancelRecovery(missionId);
       await stopWithoutCallback(missionId, true);
       await options.controller.revoke({ missionId });
+    },
+    async releaseIfIdle(missionId, guard) {
+      const current = active.get(missionId);
+      if (current === undefined || current.stopped) return false;
+      if (
+        current.guard.claimId !== guard.claimId ||
+        current.guard.fencingToken !== guard.fencingToken
+      )
+        throw createIntegrationError({
+          code: "MISSION_FENCING_REJECTED",
+          category: "conflict",
+          message: "Mission idle release belongs to a previous owner claim.",
+        });
+      if (!(await options.controller.releaseIfIdle({ missionId, guard }))) return false;
+      // The durable decision precedes poller shutdown. No in-flight command
+      // existed at that decision, and a new arrival must acquire a new fence.
+      if (active.get(missionId) !== current) return true;
+      current.stopped = true;
+      if (current.timer !== undefined) clearTimeout(current.timer);
+      cancelRecovery(missionId);
+      try {
+        await stopPolling(missionId);
+      } finally {
+        if (active.get(missionId) === current) active.delete(missionId);
+        scheduleRecovery(missionId, 1);
+      }
+      return true;
     },
     async releaseAfterLowerLevel(missionId, releaseLowerLevel) {
       cancelRecovery(missionId);

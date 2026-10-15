@@ -24,6 +24,43 @@ describe("Mission owner scope", () => {
     });
     return { promise, resolve };
   };
+  it("retains an idle-release fence until a queued or applying successor has a durable outcome", async () => {
+    const root = await mkdtemp(join(tmpdir(), "pragma-owner-idle-release-"));
+    const controller = createMissionControllerStore({ missionsPath: root });
+    const scope = createMissionOwnerScope({ controller });
+    const entered = deferred();
+    const finish = deferred();
+    try {
+      const guard = await scope.acquireForRecovery(missionId);
+      await appendCommand(controller);
+      expect(await scope.releaseIfIdle(missionId, guard)).toBe(false);
+      const consuming = controller.processNext({
+        missionId,
+        guard,
+        consumer: {
+          apply: async () => {
+            entered.resolve();
+            await finish.promise;
+            return { result: {} };
+          },
+        },
+      });
+      await entered.promise;
+      expect((await controller.getOperation({ missionId, requestId }))?.state).toBe("applying");
+      expect(await scope.releaseIfIdle(missionId, guard)).toBe(false);
+      await scope.assertOwnership(missionId, guard);
+      finish.resolve();
+      await consuming;
+      expect((await controller.getOperation({ missionId, requestId }))?.state).toBe("applied");
+      expect(await scope.releaseIfIdle(missionId, guard)).toBe(true);
+      expect(scope.currentGuard(missionId)).toBeUndefined();
+      expect((await controller.readSnapshot({ missionId })).snapshot.lease).toBeUndefined();
+    } finally {
+      finish.resolve();
+      await scope.stop(missionId);
+      await rm(root, { recursive: true, force: true });
+    }
+  });
   it("allows accepted shutdown recovery claims without consuming a queued command", async () => {
     const root = await mkdtemp(join(tmpdir(), "pragma-owner-recovery-drain-"));
     const controller = createMissionControllerStore({ missionsPath: root });

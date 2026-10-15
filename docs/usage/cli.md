@@ -37,7 +37,7 @@ pragma mission respond <MISSION_ID> --interaction INTERACTION_ID
 pragma mission interrupt <MISSION_ID> [--expected-execution EXECUTION_ID]
   [--reason TEXT] [--request-id UUID] [--wait | --detach] [--ack-timeout SECONDS]
 pragma mission board list <MISSION_ID> [--limit N] [--cursor CURSOR]
-pragma mission board read <MISSION_ID> <CONTEXT_ID> [--start BYTE] [--offset MAX_BYTES]
+pragma mission board read <MISSION_ID> <CONTEXT_ID> [--start BYTE] [--max-bytes MAX_BYTES]（--offset 为兼容别名）
 pragma mission board search <MISSION_ID> QUERY [--case-sensitive] [--context-lines N] [--max-results N]
 pragma mission queue list <MISSION_ID> [--limit N] [--cursor CURSOR]
 pragma mission queue remove <MISSION_ID> --request REQUEST_ID
@@ -47,8 +47,7 @@ pragma mission queue steer <MISSION_ID> --request REQUEST_ID [--expected-executi
 
 `send`、`respond`、`interrupt` 和 queue mutation 通过 durable Inbox 路由；`--wait` 等待执行
 结果，`--detach` 在 Inbox 持久化后立即返回（operation 可能仍为 queued），后续用 query/watch
-观察。CLI 本身不启动常驻 daemon；没有存活的 Desktop/Host owner 时，queued 表示可恢复回执，
-需要后续 Host 或一次 attached/resume 调用继续消费。所有 mutation 使用 `requestId + payloadHash` 幂等。默认
+观察。CLI 不启动常驻 daemon；支持分离的入口使用一次调用专属的 owner 子进程，复用共享 Kernel。queued 仍表示尚未完成的持久回执，需要观察实际执行状态。所有 mutation 使用 `requestId + payloadHash` 幂等。默认
 ack timeout 为 30 秒，可用 `--ack-timeout` 调整。
 
 `steer` 与 `queue steer` 是 strict target 操作，要求 execution、turn 和 fencing target 仍然
@@ -80,7 +79,7 @@ selector 跨 kind 会立即返回 `INVALID_ARGUMENT`，canonical selector 无结
 Mission cursor 会返回 `CURSOR_EXPIRED`/`CURSOR_INVALID`。安装版本支持的 view 以
 `pragma mission get --help` 为准。
 
-文本模式的 `mission list` 列出 `MISSION ID/STATUS/EXECUTOR/UPDATED/WORKSPACE`；`queue list`
+文本模式的 `mission list` 列出 `MISSION ID/TITLE/STATUS/EXECUTOR/UPDATED/WORKSPACE`；`queue list`
 先列出 `state/pendingCount/supportsSteer`，再列出完整 REQUEST ID 和内容预览。所有文本分页
 支持 cursor 的文本分页结果都会打印可复制的 continuation 命令。
 
@@ -208,3 +207,38 @@ Node.js 20 即使 npm 发出 `EBADENGINE` 警告也不满足运行要求：boots
 ## Memory
 
 CLI 与 Desktop 共用同一 Pragma home 的 Memory 策略、RecallScope、已有记忆与可选 Attention。CLI 捕获 Evidence 并提交待提取任务；实际模型提炼由后续 Desktop 执行。CLI 不启动 Memory daemon，不提供 Jev Key 写入命令。Attention 配置和诊断见 [Memory 使用指南](./memory.md)。
+
+## Agent 查询与有限等待（#398）
+
+```bash
+pragma mission list --query "review" --workspace "$PWD" --limit 10
+pragma mission get "$MISSION_ID" --recent-input --json --output-view compact
+pragma expert run "$EXPERT_REF" --workspace "$PWD" --input prompt.txt \
+  --request-id "$RUN_REQUEST_ID" --wait-timeout 30 --interactive never --json --output-view compact
+pragma mission watch "$MISSION_ID" --until terminal --wait-timeout 30 --format jsonl --output-view compact
+pragma mission board read "$MISSION_ID" report.md --start 0 --max-bytes 8000
+```
+
+列表由 Host 筛选、稳定排序和分页，limit 为 1..200。--query 搜索标题，--workspace 精确匹配 canonical path。
+文本只给出一份可执行 Continue 命令。匹配结果变化时 cursor 过期，重新查询；列表不是持久快照。
+旧 CLI v2 列表 cursor 无结果指纹，升级后明确过期；事件分页和 watch/replay cursor 不受影响。
+Executor/Queue 的列表 cursor 同时绑定 full/有界投影及正文预算，续页必须保持原输出模式；切换模式或预算返回 CURSOR_INVALID。
+
+GET 默认返回带 title 的语义 v2；严格 v1 消费者可以加 --query-version 1。历史 title 为 null 时明确展示不可用。
+最近输入来自持久 timeline，可能仍排队；不要把它当作当前 execution 已开始的证明。
+
+--output-view full 默认使用 v2 envelope；compact 使用 result/event v3。full 的 JSONL 保留历史重复 result；
+compact 的完整结果只出现一次，结束行保留退出码和恢复字段。成功查询到 failed Mission 的退出码仍为 0，
+必须读取任务 status。大正文返回 resultContent/dataContent/contentReference，不用预览冒充完整结果。
+按引用中的 source/id/fingerprint 读取 --view content；字节偏移由返回的 nextStart 指定。文本带范围说明，
+需要逐字节重建时使用 JSON 的 content 字段；utf8-json 必须合并后再 JSON.parse。队列被消费或内容被清理后
+返回 NOT_FOUND；内容改变返回 CURSOR_EXPIRED。
+
+默认 CLI 的 run 和支持分离的 mutation 使用每次调用专属的 owner 子进程；超时不会隐式取消。
+wait-timeout 为 1..86400 秒，mutation 中隐含 --wait，与 --detach/--interactive always 互斥。
+到期返回 accepted/exit 0、waitExpired、当前观测及继续入口；任务仍可能排队、需要回答或失败。
+watch 超时文本分别显示最后观测的 Mission 状态和 stopReason=timed_out。
+有限等待的 mutation 收到 Ctrl-C 时调用方退出，owner 继续处理已持久化命令；executor run 的 Ctrl-C 则请求取消执行。
+--ack-timeout 继续表示命令确认。问题/选项与完整回答格式直接展示；审批须依据用户授权，不自动批准。
+
+完整协议与兼容决策见 [ADR 071](../adr/071-agent-friendly-cli-queries-and-owner-waiting.md)。

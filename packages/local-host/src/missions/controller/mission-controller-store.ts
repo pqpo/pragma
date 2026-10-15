@@ -212,6 +212,11 @@ export interface MissionControllerStore {
     readonly missionId: string;
     readonly guard: MissionControllerGuard;
   }): Promise<void>;
+  /** Atomically retain custody while any durable command is queued or applying. */
+  releaseIfIdle(input: {
+    readonly missionId: string;
+    readonly guard: MissionControllerGuard;
+  }): Promise<boolean>;
   /**
    * Explicit recovery escape hatch. Revoking a lease fences every late write
    * from the previous owner; callers must only use it for a user-confirmed
@@ -1188,6 +1193,23 @@ export function createMissionControllerStore(options: {
         const next = { ...state };
         delete next.lease;
         await writeState(input.missionId, MissionAggregateStateSchema.parse(next));
+      });
+    },
+    async releaseIfIdle(input) {
+      return await withAggregateLock(input.missionId, async () => {
+        await recoverTransactions(input.missionId);
+        const state = await readState(input.missionId);
+        assertGuard(state, input.guard);
+        if (
+          Object.values(state.operations).some(
+            (operation) => operation.state === "queued" || operation.state === "applying",
+          )
+        )
+          return false;
+        const next = { ...state };
+        delete next.lease;
+        await writeState(input.missionId, MissionAggregateStateSchema.parse(next));
+        return true;
       });
     },
     async revoke(input) {

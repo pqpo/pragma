@@ -12,6 +12,28 @@ const CURSOR =
   "eyJtaXNzaW9uSWQiOiIxMTExMTExMS0xMTExLTQxMTEtODExMS0xMTExMTExMTExMTEiLCJzZXF1ZW5jZSI6MX0";
 
 describe("M8 mission watch command", () => {
+  it.each(["running", "input_required"])(
+    "separates timeout reason from the last Mission state (%s)",
+    async (lastObservedStatus) => {
+      const io = createIo();
+      const watchMission = async (): Promise<MissionWatchResult> => ({
+        missionId: MISSION_ID,
+        status: "timed_out",
+        observedStatus: "timed_out",
+        stopReason: "timed_out",
+        lastObservedStatus,
+        missionContinues: true,
+        lastCursor: CURSOR,
+      });
+      expect(
+        await runCli(["mission", "watch", MISSION_ID, "--wait-timeout", "1"], io, {
+          localHost: { watchMission } as unknown as CliLocalHost,
+        }),
+      ).toBe(0);
+      expect(io.stdout.join("")).toContain(`observed=${lastObservedStatus}; stopReason=timed_out`);
+      expect(io.stdout.join("")).not.toContain("observed=timed_out");
+    },
+  );
   it("parses replay/after/until and rejects the unsupported json format", () => {
     expect(
       parseCliArgv([

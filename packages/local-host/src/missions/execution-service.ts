@@ -4946,7 +4946,7 @@ export function createLocalHostMissionExecutionService(
         sessionService.deleteExecutionContext(id);
       }
       await options.ownerScope?.assertOwnership(id, guard);
-      await options.ownerScope?.release(id, guard);
+      await options.ownerScope?.releaseIfIdle(id, guard);
     },
     resolveActiveOwner: async (id) => {
       const session = sessionService.session(id);

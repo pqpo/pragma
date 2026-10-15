@@ -2,12 +2,18 @@ import {
   BoardListResultSchema,
   BoardReadResultSchema,
   BoardSearchResultSchema,
-  ExecutorDescriptorSchema,
-  IntegrationErrorSchema,
   type HumanInteractionRequestEnvelope,
   type JsonValue,
 } from "@pragma/shared/integration";
-import { unsupportedMissionView } from "@pragma/local-host";
+import {
+  unsupportedMissionView,
+  paginateIntegrationItems,
+  queryIntegrationMissions,
+  queryIntegrationMissionsWithDiagnostics,
+  queryIntegrationExecutors,
+  normalizeIntegrationExecutor,
+  fullIntegrationItems,
+} from "@pragma/local-host";
 
 import type { ParsedCommand } from "../parser/argv.ts";
 import { HELP_TEXT } from "../parser/argv.ts";
@@ -15,15 +21,7 @@ import { detectInstalledDesktopVersion } from "../desktop-version.ts";
 import { toIntegrationError } from "./errors.ts";
 import { collectHumanInteraction } from "../terminal.ts";
 import type { CliCommandContext } from "./types.ts";
-import {
-  asJsonValue,
-  hostPage,
-  isRecord,
-  pageItems,
-  recordField,
-  stringField,
-  type CursorScope,
-} from "./utils.ts";
+import { asJsonValue, hostPage, isRecord, recordField, stringField } from "./utils.ts";
 
 export async function executeReadOnlyCommand(
   command: ParsedCommand,
@@ -138,35 +136,28 @@ async function discoverExecutors(
   command: Extract<ParsedCommand, { readonly kind: "executor-discover" }>,
   context: CliCommandContext,
 ): Promise<JsonValue> {
-  const page = hostPage(await context.localHost.listExecutors());
-  const descriptors = page.items
-    .map((item) => normalizeExecutor(item, command.executorKind))
-    .filter((item) => matchesExecutor(item, command));
-  if (command.selector !== undefined && descriptors.length === 0) {
-    throw toIntegrationError({
-      code: "EXECUTOR_NOT_FOUND",
-      message: `Executor not found: ${command.selector}.`,
-    });
-  }
-  const result = paginateOrHost(
-    descriptors,
-    page.hostPaged,
-    page.nextCursor,
-    command.limit,
-    command.cursor,
-    {
-      command: `${command.executorKind}.discover`,
-      filters: {
-        selector: command.selector,
-        query: command.query,
-        status: command.status,
-        project: command.project,
-      },
-    },
-  );
+  const request = {
+    executorKind: command.executorKind,
+    limit: command.limit,
+    cursor: command.cursor,
+    selector: command.selector,
+    query: command.query,
+    status: command.status,
+    project: command.project,
+    ...(context.format === "text" || context.outputView === "compact"
+      ? { maxContentBytes: 8000 }
+      : {}),
+  };
+  const result =
+    context.localHost.queryExecutors === undefined
+      ? queryIntegrationExecutors(
+          fullIntegrationItems(await context.localHost.listExecutors()),
+          request,
+        )
+      : hostPage(await context.localHost.queryExecutors(request));
   return {
     kind: command.executorKind,
-    items: result.items,
+    items: result.items.map(asJsonValue),
     ...(result.nextCursor === undefined ? {} : { nextCursor: result.nextCursor }),
   };
 }
@@ -176,7 +167,7 @@ async function describeExecutor(
   context: CliCommandContext,
 ): Promise<JsonValue> {
   const descriptors = hostPage(await context.localHost.listExecutors()).items.map((item) =>
-    normalizeExecutor(item, command.executorKind),
+    normalizeIntegrationExecutor(item, command.executorKind),
   );
   const match = descriptors.find((descriptor) => {
     const record = isRecord(descriptor) ? descriptor : undefined;
@@ -200,50 +191,37 @@ async function listMissions(
   command: Extract<ParsedCommand, { readonly kind: "mission-list" }>,
   context: CliCommandContext,
 ): Promise<JsonValue> {
-  const diagnostics = await context.localHost.listMissionDiagnostics?.();
-  if (
-    diagnostics !== undefined &&
-    diagnostics.items.length === 0 &&
-    diagnostics.diagnostics.length > 0
-  ) {
-    const error = diagnostics.diagnostics[0]!;
-    throw IntegrationErrorSchema.parse({
-      ...error,
-      details: { ...error.details, diagnostics: diagnostics.diagnostics.map(asJsonValue) },
-    });
-  }
-  const page = hostPage(diagnostics?.items ?? (await context.localHost.listMissions()));
-  const filtered = page.items.filter((mission) => matchesMission(mission, command));
-  const result = paginateOrHost(
-    filtered,
-    page.hostPaged,
-    page.nextCursor,
-    command.limit,
-    command.cursor,
-    {
-      command: "mission.list",
-      filters: { status: command.status, executor: command.executor },
-    },
-  );
+  const request = {
+    limit: command.limit,
+    cursor: command.cursor,
+    status: command.status,
+    executor: command.executor,
+    query: command.query,
+    workspace: command.workspace,
+  };
+  const value =
+    context.localHost.queryMissions === undefined
+      ? context.localHost.listMissionDiagnostics === undefined
+        ? queryIntegrationMissions(
+            fullIntegrationItems(await context.localHost.listMissions()),
+            request,
+          )
+        : queryIntegrationMissionsWithDiagnostics(
+            await context.localHost.listMissionDiagnostics(),
+            request,
+          )
+      : await context.localHost.queryMissions(request);
+  const page = hostPage(value);
+  const metadata = isRecord(value) ? value : {};
   return {
-    items: result.items.map(asJsonValue),
-    ...(result.nextCursor === undefined ? {} : { nextCursor: result.nextCursor }),
-    ...(diagnostics === undefined ||
-    (diagnostics.diagnostics.length === 0 && diagnostics.warnings.length === 0)
+    items: page.items.map(asJsonValue),
+    ...(page.nextCursor === undefined ? {} : { nextCursor: page.nextCursor }),
+    ...(metadata["diagnostics"] === undefined
       ? {}
       : {
-          partial: diagnostics.diagnostics.length > 0,
-          diagnostics: diagnostics.diagnostics.map(asJsonValue),
-          warnings: [
-            ...diagnostics.warnings.map(asJsonValue),
-            ...diagnostics.diagnostics.map((issue) =>
-              asJsonValue({
-                code: "MISSION_UNAVAILABLE",
-                message: issue.message,
-                details: { ...issue.details, errorCode: issue.code },
-              }),
-            ),
-          ],
+          partial: metadata["partial"] === true,
+          diagnostics: asJsonValue(metadata["diagnostics"]),
+          warnings: asJsonValue(metadata["warnings"] ?? []),
         }),
   };
 }
@@ -259,6 +237,17 @@ async function getMission(
     await context.localHost.queryMission({
       missionId: command.missionId,
       view: command.view,
+      ...(command.content === undefined ? {} : { content: command.content }),
+      ...((context.format === "text" || context.outputView === "compact") &&
+      command.queryVersion !== 1
+        ? { maxContentBytes: 8000 }
+        : {}),
+      ...(command.view === "events"
+        ? {}
+        : {
+            queryVersion: command.queryVersion ?? 2,
+            includeRecentInput: command.includeRecentInput,
+          }),
       limit: command.limit,
       ...(command.cursor === undefined ? {} : { cursor: command.cursor }),
     }),
@@ -269,24 +258,27 @@ async function listBoard(
   command: Extract<ParsedCommand, { readonly kind: "board-list" }>,
   context: CliCommandContext,
 ): Promise<JsonValue> {
-  const page = hostPage(await context.localHost.listSharedBoard(command.missionId), [
-    "items",
-    "entries",
-  ]);
-  const items = page.items.map((item) => mapBoardItem(item));
-  const result = paginateOrHost(
-    items,
-    page.hostPaged,
-    page.nextCursor,
-    command.limit,
-    command.cursor,
-    { command: "mission.board.list", filters: { missionId: command.missionId } },
-  );
+  const request = {
+    limit: command.limit,
+    ...(command.cursor === undefined ? {} : { cursor: command.cursor }),
+  };
+  const result =
+    context.localHost.querySharedBoard === undefined
+      ? paginateIntegrationItems(
+          fullIntegrationItems(await context.localHost.listSharedBoard(command.missionId), [
+            "items",
+            "entries",
+          ]).map((item) => mapBoardItem(item)),
+          request,
+          "mission.board.list",
+          { missionId: command.missionId },
+        )
+      : hostPage(await context.localHost.querySharedBoard(command.missionId, request));
   return asJsonValue(
     BoardListResultSchema.parse({
       schemaVersion: "pragma.board-list/v1",
       missionId: command.missionId,
-      items: result.items,
+      items: result.items.map((item) => mapBoardItem(item)),
       ...(result.nextCursor === undefined ? {} : { nextCursor: result.nextCursor }),
     }),
   );
@@ -308,11 +300,18 @@ async function readBoard(
       rawItem,
       rawItem !== undefined && typeof rawItem["content"] === "string" ? rawItem["content"] : "",
     );
+    assertBoardReadProgress(BoardReadResultSchema.parse(raw));
     return asJsonValue(BoardReadResultSchema.parse(raw));
   }
   const record = isRecord(raw) ? raw : {};
   const content = typeof record["content"] === "string" ? record["content"] : "";
   const mappedRange = mapContentRange(record["contentRange"], content);
+  if (mappedRange["nextStart"] !== undefined && mappedRange["nextStart"] <= mappedRange["start"]!)
+    throw toIntegrationError({
+      code: "INVALID_ARGUMENT",
+      message:
+        "The byte budget cannot fit the next UTF-8 character. Increase --max-bytes to at least 4.",
+    });
   return asJsonValue(
     BoardReadResultSchema.parse({
       schemaVersion: "pragma.board-read/v1",
@@ -356,23 +355,12 @@ async function searchBoard(
       snippet: line,
     };
   });
-  const result = paginateOrHost(
-    matches,
-    page.hostPaged,
-    page.nextCursor,
-    command.maxResults,
-    undefined,
-    {
-      command: "mission.board.search",
-      filters: {
-        missionId: command.missionId,
-        query: command.query,
-        maxResults: command.maxResults,
-        caseSensitive: command.caseSensitive,
-        contextLines: command.contextLines,
-      },
-    },
-  );
+  if (matches.length > command.maxResults)
+    throw toIntegrationError({
+      code: "PROTOCOL_VERSION_UNSUPPORTED",
+      message: "Host search exceeded the requested maximum; refine the search.",
+    });
+  const result = { items: matches, nextCursor: page.nextCursor };
   return asJsonValue(
     BoardSearchResultSchema.parse({
       schemaVersion: "pragma.board-search/v1",
@@ -388,16 +376,24 @@ async function listQueue(
   command: Extract<ParsedCommand, { readonly kind: "queue-list" }>,
   context: CliCommandContext,
 ): Promise<JsonValue> {
-  const raw = await context.localHost.listMissionQueue(command.missionId);
+  const request = {
+    limit: command.limit,
+    ...(context.format === "text" || context.outputView === "compact"
+      ? { maxContentBytes: 1024 }
+      : {}),
+    ...(command.cursor === undefined ? {} : { cursor: command.cursor }),
+  };
+  const raw =
+    context.localHost.queryMissionQueue === undefined
+      ? await context.localHost.listMissionQueue(command.missionId)
+      : await context.localHost.queryMissionQueue(command.missionId, request);
   const page = hostPage(raw, ["items", "queue"]);
-  const result = paginateOrHost(
-    page.items.map(asJsonValue),
-    page.hostPaged,
-    page.nextCursor,
-    command.limit,
-    command.cursor,
-    { command: "mission.queue.list", filters: { missionId: command.missionId } },
-  );
+  const result = page.hostPaged
+    ? page
+    : paginateIntegrationItems(page.items.map(asJsonValue), request, "mission.queue.list", {
+        missionId: command.missionId,
+        maxContentBytes: request.maxContentBytes,
+      });
   const projection = isRecord(raw) ? (isRecord(raw["queue"]) ? raw["queue"] : raw) : undefined;
   return {
     missionId: command.missionId,
@@ -418,129 +414,9 @@ async function listQueue(
     ...(typeof projection?.["supportsSteer"] === "boolean"
       ? { supportsSteer: projection["supportsSteer"] }
       : {}),
-    items: result.items,
+    items: result.items.map(asJsonValue),
     ...(result.nextCursor === undefined ? {} : { nextCursor: result.nextCursor }),
   };
-}
-
-function normalizeExecutor(
-  value: unknown,
-  expectedKind: Extract<ParsedCommand, { readonly kind: "executor-discover" }>["executorKind"],
-): JsonValue {
-  const direct = ExecutorDescriptorSchema.safeParse(value);
-  if (direct.success) return asJsonValue(direct.data);
-  if (!isRecord(value)) return asJsonValue(value);
-
-  const rawKind = value["kind"];
-  const kind =
-    rawKind === "team" || rawKind === "expert" || rawKind === "flow" ? rawKind : expectedKind;
-  const rawRef = value["ref"];
-  const ref = typeof rawRef === "string" ? rawRef : undefined;
-  const id = ref?.startsWith(`${kind}:`) ? ref.slice(kind.length + 1) : undefined;
-  if (id === undefined || !/^[0-9a-hjkmnp-tv-z]{16}$/u.test(id)) return asJsonValue(value);
-
-  const origin =
-    value["origin"] === "built-in"
-      ? "built_in"
-      : value["origin"] === "project"
-        ? "project"
-        : "installed";
-  const availability = recordField(value, "availability");
-  const descriptor: Record<string, unknown> = {
-    schemaVersion: "pragma.integration-executor/v1",
-    ref: { kind, id },
-    name: stringField(value, "name") ?? ref,
-    description: stringField(value, "description") ?? "",
-    source: origin,
-    availability: {
-      status:
-        availability?.["status"] === "needs_attention" || availability?.["status"] === "unavailable"
-          ? availability["status"]
-          : "ready",
-      blockingCodes: Array.isArray(availability?.["blockingCodes"])
-        ? availability["blockingCodes"]
-        : [],
-    },
-    workspace: recordField(value, "workspace") ?? { required: true, allowNonGitDirectory: true },
-    capabilities: recordField(value, "capabilities") ?? {
-      interactive: true,
-      resumable: true,
-      steerable: kind !== "flow",
-      supportsQueue: kind !== "flow",
-    },
-  };
-  if (value["inputSchema"] !== undefined) descriptor["inputSchema"] = value["inputSchema"];
-  const project = recordField(value, "project");
-  if (project !== undefined) descriptor["project"] = project;
-  const parsed = ExecutorDescriptorSchema.safeParse(descriptor);
-  return parsed.success ? asJsonValue(parsed.data) : asJsonValue(value);
-}
-
-function matchesExecutor(
-  value: JsonValue,
-  command: Extract<ParsedCommand, { readonly kind: "executor-discover" }>,
-): boolean {
-  if (!isRecord(value)) return false;
-  const ref = referenceText(value["ref"]);
-  const kind = ref?.split(":", 1)[0] ?? value["kind"];
-  if (kind !== command.executorKind) return false;
-  if (command.selector !== undefined) {
-    if (isCanonicalExecutorRef(command.selector)) return ref === command.selector;
-    const haystack = [stringField(value, "name"), stringField(value, "description")]
-      .filter((item): item is string => item !== undefined)
-      .join(" ")
-      .toLocaleLowerCase();
-    if (!haystack.includes(command.selector.toLocaleLowerCase())) return false;
-  }
-  if (command.query !== undefined) {
-    const haystack = [ref, stringField(value, "name"), stringField(value, "description")]
-      .filter((item): item is string => item !== undefined)
-      .join(" ")
-      .toLocaleLowerCase();
-    if (!haystack.includes(command.query.toLocaleLowerCase())) return false;
-  }
-  if (
-    command.status !== undefined &&
-    recordField(value, "availability")?.["status"] !== command.status
-  ) {
-    return false;
-  }
-  if (
-    command.project !== undefined &&
-    recordField(value, "project")?.["projectId"] !== command.project
-  ) {
-    return false;
-  }
-  return true;
-}
-
-function matchesMission(
-  value: unknown,
-  command: Extract<ParsedCommand, { readonly kind: "mission-list" }>,
-): boolean {
-  if (!isRecord(value)) return false;
-  const execution = recordField(value, "execution");
-  const status = stringField(value, "status") ?? stringField(execution, "status");
-  const lifecycleStatus = stringField(value, "lifecycleStatus");
-  if (
-    command.status !== undefined &&
-    status !== command.status &&
-    lifecycleStatus !== command.status
-  ) {
-    return false;
-  }
-  if (command.executor !== undefined) {
-    const executorValue = value["executor"];
-    const ref =
-      referenceText(isRecord(executorValue) ? executorValue["ref"] : undefined) ??
-      referenceText(executorValue);
-    if (ref !== command.executor) return false;
-  }
-  return true;
-}
-
-function isCanonicalExecutorRef(value: string): boolean {
-  return /^(team|expert|flow):[0-9a-hjkmnp-tv-z]{16}$/u.test(value);
 }
 
 function mapBoardItem(value: unknown, content = ""): Record<string, unknown> {
@@ -623,36 +499,6 @@ function mapContentRange(value: unknown, content: string): Record<string, number
   return { start, end, totalBytes, ...(nextStart < totalBytes ? { nextStart } : {}) };
 }
 
-function paginateOrHost<T>(
-  items: readonly T[],
-  hostPaged: boolean,
-  hostNextCursor: string | undefined,
-  limit: number,
-  cursor: string | undefined,
-  scope: CursorScope,
-): { readonly items: readonly T[]; readonly nextCursor?: string | undefined } {
-  if (hostPaged) {
-    if (cursor !== undefined) {
-      throw toIntegrationError({
-        code: "CURSOR_INVALID",
-        message: "This Host query does not accept a client cursor.",
-      });
-    }
-    return {
-      items: items.slice(0, limit),
-      ...(hostNextCursor === undefined ? {} : { nextCursor: hostNextCursor }),
-    };
-  }
-  try {
-    return pageItems(items, limit, cursor, scope);
-  } catch {
-    throw toIntegrationError({
-      code: "CURSOR_INVALID",
-      message: "The cursor is invalid for this query.",
-    });
-  }
-}
-
 function referenceText(value: unknown): string | undefined {
   if (typeof value === "string") return value;
   if (!isRecord(value)) return undefined;
@@ -682,44 +528,44 @@ function completionBashScript(): string {
 _pragma_complete() {
   local cur candidates
   cur="__PRAGMA_DOLLAR__{COMP_WORDS[COMP_CWORD]}"
-  candidates="version doctor completion team expert flow mission source --format --json --stream-json --color --interactive --help"
+  candidates="version doctor completion team expert flow mission source --format --json --stream-json --color --output-view --interactive --help"
   case "__PRAGMA_DOLLAR__{COMP_WORDS[1]}" in
     team|expert|flow)
       case "__PRAGMA_DOLLAR__{COMP_WORDS[2]}" in
-        discover) candidates="--project --query --status --limit --cursor --format --json --stream-json --color --interactive --help" ;;
-        run) candidates="--workspace --prompt --input --input-json --project --revision --expected-fingerprint --request-id --detach --format --json --stream-json --color --interactive --help" ;;
-        describe) candidates="--revision --format --json --stream-json --color --interactive --help" ;;
-        *) candidates="discover describe run --format --json --stream-json --color --interactive --help" ;;
+        discover) candidates="--project --query --status --limit --cursor --format --json --stream-json --color --output-view --interactive --help" ;;
+        run) candidates="--workspace --prompt --input --input-json --project --revision --expected-fingerprint --request-id --detach --wait-timeout --format --json --stream-json --color --output-view --interactive --help" ;;
+        describe) candidates="--revision --format --json --stream-json --color --output-view --interactive --help" ;;
+        *) candidates="discover describe run --format --json --stream-json --color --output-view --interactive --help" ;;
       esac
       ;;
     mission)
       case "__PRAGMA_DOLLAR__{COMP_WORDS[2]}" in
-        list) candidates="--status --executor --limit --cursor --format --json --stream-json --color --interactive --help" ;;
-        get) candidates="--view --limit --cursor --format --json --stream-json --color --interactive --help" ;;
-        board) candidates="list read search --format --json --stream-json --color --interactive --help" ;;
+        list) candidates="--status --executor --limit --cursor --query --workspace --format --json --stream-json --color --output-view --interactive --help" ;;
+        get) candidates="--view --limit --cursor --query-version --recent-input --source --content-id --fingerprint --start --max-bytes --format --json --stream-json --color --output-view --interactive --help" ;;
+        board) candidates="list read search --format --json --stream-json --color --output-view --interactive --help" ;;
         queue)
           case "__PRAGMA_DOLLAR__{COMP_WORDS[3]}" in
-            list) candidates="--limit --cursor --format --json --stream-json --color --interactive --help" ;;
-            remove) candidates="--request --request-id --ack-timeout --format --json --stream-json --color --interactive --help" ;;
-            resume) candidates="--request-id --ack-timeout --abandon-uncertain --format --json --stream-json --color --interactive --help" ;;
-            steer) candidates="--request --request-id --expected-execution --wait --detach --ack-timeout --format --json --stream-json --color --interactive --help" ;;
-            *) candidates="list remove resume steer --format --json --stream-json --color --interactive --help" ;;
+            list) candidates="--limit --cursor --format --json --stream-json --color --output-view --interactive --help" ;;
+            remove) candidates="--request --request-id --ack-timeout --format --json --stream-json --color --output-view --interactive --help" ;;
+            resume) candidates="--request-id --ack-timeout --abandon-uncertain --format --json --stream-json --color --output-view --interactive --help" ;;
+            steer) candidates="--request --request-id --expected-execution --wait --detach --ack-timeout --wait-timeout --format --json --stream-json --color --output-view --interactive --help" ;;
+            *) candidates="list remove resume steer --format --json --stream-json --color --output-view --interactive --help" ;;
           esac
           ;;
-        watch) candidates="--after --replay --until --format --stream-json --color --interactive --help" ;;
-        resume) candidates="--project --revision --expected-fingerprint --request-id --detach --format --json --stream-json --color --interactive --help" ;;
-        send) candidates="--prompt --input --request-id --wait --detach --ack-timeout --format --json --stream-json --color --interactive --help" ;;
-        steer) candidates="--prompt --input --expected-execution --request-id --wait --detach --ack-timeout --format --json --stream-json --color --interactive --help" ;;
-        respond) candidates="--interaction --answer --choice --answers-json --request-id --wait --detach --ack-timeout --format --json --stream-json --color --interactive --help" ;;
-        interrupt) candidates="--expected-execution --reason --request-id --wait --detach --ack-timeout --format --json --stream-json --color --interactive --help" ;;
-        *) candidates="list get resume watch send steer respond interrupt board queue --format --json --stream-json --color --interactive --help" ;;
+        watch) candidates="--after --replay --until --wait-timeout --format --stream-json --color --output-view --interactive --help" ;;
+        resume) candidates="--project --revision --expected-fingerprint --request-id --detach --format --json --stream-json --color --output-view --interactive --help" ;;
+        send) candidates="--prompt --input --request-id --wait --detach --ack-timeout --wait-timeout --format --json --stream-json --color --output-view --interactive --help" ;;
+        steer) candidates="--prompt --input --expected-execution --request-id --wait --detach --ack-timeout --wait-timeout --format --json --stream-json --color --output-view --interactive --help" ;;
+        respond) candidates="--interaction --answer --choice --answers-json --request-id --wait --detach --ack-timeout --wait-timeout --format --json --stream-json --color --output-view --interactive --help" ;;
+        interrupt) candidates="--expected-execution --reason --request-id --wait --detach --ack-timeout --wait-timeout --format --json --stream-json --color --output-view --interactive --help" ;;
+        *) candidates="list get resume watch send steer respond interrupt board queue --format --json --stream-json --color --output-view --interactive --help" ;;
       esac
       ;;
     source)
       case "__PRAGMA_DOLLAR__{COMP_WORDS[2]}" in
-        init) candidates="--id --name --format --json --stream-json --color --interactive --help" ;;
-        add) candidates="--directory --format --json --stream-json --color --interactive --help" ;;
-        *) candidates="init add --format --json --stream-json --color --interactive --help" ;;
+        init) candidates="--id --name --format --json --stream-json --color --output-view --interactive --help" ;;
+        add) candidates="--directory --format --json --stream-json --color --output-view --interactive --help" ;;
+        *) candidates="init add --format --json --stream-json --color --output-view --interactive --help" ;;
       esac
       ;;
   esac
@@ -747,10 +593,10 @@ _pragma() {
             _describe command 'discover describe run'
           else
             case __PRAGMA_DOLLAR__words[3] in
-              discover) _describe option '--project --query --status --limit --cursor --format --json --stream-json --color --interactive --help' ;;
-              describe) _describe option '--revision --format --json --stream-json --color --interactive --help' ;;
-              run) _describe option '--workspace --prompt --input --input-json --project --revision --expected-fingerprint --request-id --detach --format --json --stream-json --color --interactive --help' ;;
-              *) _describe option '--format --json --stream-json --color --interactive --help' ;;
+              discover) _describe option '--project --query --status --limit --cursor --format --json --stream-json --color --output-view --interactive --help' ;;
+              describe) _describe option '--revision --format --json --stream-json --color --output-view --interactive --help' ;;
+              run) _describe option '--workspace --prompt --input --input-json --project --revision --expected-fingerprint --request-id --detach --wait-timeout --format --json --stream-json --color --output-view --interactive --help' ;;
+              *) _describe option '--format --json --stream-json --color --output-view --interactive --help' ;;
             esac
           fi
           ;;
@@ -759,26 +605,27 @@ _pragma() {
             _describe command 'list get resume watch send steer respond interrupt board queue'
           else
             case __PRAGMA_DOLLAR__words[3] in
-              list) _describe option '--status --executor --limit --cursor --format --json --stream-json --color --interactive --help' ;;
-              get) _describe option '--view --limit --cursor --format --json --stream-json --color --interactive --help' ;;
+              list) _describe option '--status --executor --limit --cursor --query --workspace --format --json --stream-json --color --output-view --interactive --help' ;;
+              get) _describe option '--view --limit --cursor --query-version --recent-input --source --content-id --fingerprint --start --max-bytes --format --json --stream-json --color --output-view --interactive --help' ;;
               board) _describe command 'list read search' ;;
               queue)
                 if (( CURRENT == 4 )); then _describe command 'list remove resume steer';
                 else
                   case __PRAGMA_DOLLAR__words[4] in
-                    list) _describe option '--limit --cursor --format --json --stream-json --color --interactive --help' ;;
-                    remove) _describe option '--request --request-id --ack-timeout --format --json --stream-json --color --interactive --help' ;;
-                    resume) _describe option '--request-id --ack-timeout --abandon-uncertain --format --json --stream-json --color --interactive --help' ;;
-                    steer) _describe option '--request --request-id --expected-execution --wait --detach --ack-timeout --format --json --stream-json --color --interactive --help' ;;
+                    list) _describe option '--limit --cursor --format --json --stream-json --color --output-view --interactive --help' ;;
+                    remove) _describe option '--request --request-id --ack-timeout --format --json --stream-json --color --output-view --interactive --help' ;;
+                    resume) _describe option '--request-id --ack-timeout --abandon-uncertain --format --json --stream-json --color --output-view --interactive --help' ;;
+                    steer) _describe option '--request --request-id --expected-execution --wait --detach --ack-timeout --wait-timeout --format --json --stream-json --color --output-view --interactive --help' ;;
                   esac
                 fi
                 ;;
-              watch) _describe option '--after --replay --until --format --stream-json --color --interactive --help' ;;
-              resume) _describe option '--project --revision --expected-fingerprint --request-id --detach --format --json --stream-json --color --interactive --help' ;;
-              respond) _describe option '--interaction --answer --choice --answers-json --request-id --wait --detach --ack-timeout --format --json --stream-json --color --interactive --help' ;;
-              send) _describe option '--prompt --input --request-id --wait --detach --ack-timeout --format --json --stream-json --color --interactive --help' ;;
-              steer) _describe option '--prompt --input --expected-execution --request-id --wait --detach --ack-timeout --format --json --stream-json --color --interactive --help' ;;
-              *) _describe option '--format --json --stream-json --color --interactive --help' ;;
+              watch) _describe option '--after --replay --until --wait-timeout --format --stream-json --color --output-view --interactive --help' ;;
+              resume) _describe option '--project --revision --expected-fingerprint --request-id --detach --format --json --stream-json --color --output-view --interactive --help' ;;
+              respond) _describe option '--interaction --answer --choice --answers-json --request-id --wait --detach --ack-timeout --wait-timeout --format --json --stream-json --color --output-view --interactive --help' ;;
+              send) _describe option '--prompt --input --request-id --wait --detach --ack-timeout --wait-timeout --format --json --stream-json --color --output-view --interactive --help' ;;
+              steer) _describe option '--prompt --input --expected-execution --request-id --wait --detach --ack-timeout --wait-timeout --format --json --stream-json --color --output-view --interactive --help' ;;
+              interrupt) _describe option '--expected-execution --reason --request-id --wait --detach --ack-timeout --wait-timeout --format --json --stream-json --color --output-view --interactive --help' ;;
+              *) _describe option '--format --json --stream-json --color --output-view --interactive --help' ;;
             esac
           fi
           ;;
@@ -787,8 +634,8 @@ _pragma() {
             _describe command 'init add'
           else
             case __PRAGMA_DOLLAR__words[3] in
-              init) _describe option '--id --name --format --json --stream-json --color --interactive --help' ;;
-              add) _describe option '--directory --format --json --stream-json --color --interactive --help' ;;
+              init) _describe option '--id --name --format --json --stream-json --color --output-view --interactive --help' ;;
+              add) _describe option '--directory --format --json --stream-json --color --output-view --interactive --help' ;;
             esac
           fi
           ;;
@@ -950,27 +797,27 @@ end
 complete -c pragma -f -n '__fish_use_subcommand' -a 'version doctor completion team expert flow mission source'
 complete -c pragma -f -n '__fish_seen_subcommand_from team expert flow' -a 'discover describe run'
 complete -c pragma -f -n '__fish_seen_subcommand_from source' -a 'init add'
-complete -c pragma -f -n '__fish_seen_subcommand_from source; and __fish_seen_subcommand_from init' -a '--id --name --format --json --stream-json --color --interactive --help'
-complete -c pragma -f -n '__fish_seen_subcommand_from source; and __fish_seen_subcommand_from add' -a '--directory --format --json --stream-json --color --interactive --help'
+complete -c pragma -f -n '__fish_seen_subcommand_from source; and __fish_seen_subcommand_from init' -a '--id --name --format --json --stream-json --color --output-view --interactive --help'
+complete -c pragma -f -n '__fish_seen_subcommand_from source; and __fish_seen_subcommand_from add' -a '--directory --format --json --stream-json --color --output-view --interactive --help'
 complete -c pragma -f -n '__fish_seen_subcommand_from mission' -a 'list get resume watch send steer respond interrupt board queue'
 complete -c pragma -f -n '__pragma_mission_queue' -a 'list remove resume steer'
 complete -c pragma -f -n '__fish_seen_subcommand_from board' -a 'list read search'
-complete -c pragma -f -n '__pragma_discover' -a '--project --query --status --limit --cursor --format --json --stream-json --color --interactive --help'
-complete -c pragma -f -n '__pragma_describe' -a '--revision --format --json --stream-json --color --interactive --help'
-complete -c pragma -f -n '__pragma_run' -a '--workspace --prompt --input --input-json --project --revision --expected-fingerprint --request-id --detach --format --json --stream-json --color --interactive --help'
-complete -c pragma -f -n '__pragma_mission_list' -a '--status --executor --limit --cursor --format --json --stream-json --color --interactive --help'
-complete -c pragma -f -n '__pragma_mission_get' -a '--view --limit --cursor --format --json --stream-json --color --interactive --help'
-complete -c pragma -f -n '__pragma_mission_watch' -a '--after --replay --until --format --stream-json --color --interactive --help'
-complete -c pragma -f -n '__pragma_mission_resume' -a '--project --revision --expected-fingerprint --request-id --detach --format --json --stream-json --color --interactive --help'
-complete -c pragma -f -n '__pragma_mission_send' -a '--prompt --input --request-id --wait --detach --ack-timeout --format --json --stream-json --color --interactive --help'
-complete -c pragma -f -n '__pragma_mission_steer' -a '--prompt --input --expected-execution --request-id --wait --detach --ack-timeout --format --json --stream-json --color --interactive --help'
-complete -c pragma -f -n '__pragma_mission_respond' -a '--interaction --answer --choice --answers-json --request-id --wait --detach --ack-timeout --format --json --stream-json --color --interactive --help'
-complete -c pragma -f -n '__pragma_mission_interrupt' -a '--expected-execution --reason --request-id --wait --detach --ack-timeout --format --json --stream-json --color --interactive --help'
-complete -c pragma -f -n '__pragma_queue_list' -a '--limit --cursor --format --json --stream-json --color --interactive --help'
-complete -c pragma -f -n '__pragma_queue_remove' -a '--request --request-id --ack-timeout --format --json --stream-json --color --interactive --help'
-complete -c pragma -f -n '__pragma_queue_resume' -a '--request-id --ack-timeout --abandon-uncertain --format --json --stream-json --color --interactive --help'
-complete -c pragma -f -n '__pragma_queue_steer' -a '--request --request-id --expected-execution --wait --detach --ack-timeout --format --json --stream-json --color --interactive --help'
-complete -c pragma -f -n '__pragma_global_options' -a '--format --json --stream-json --color --interactive --help'
+complete -c pragma -f -n '__pragma_discover' -a '--project --query --status --limit --cursor --format --json --stream-json --color --output-view --interactive --help'
+complete -c pragma -f -n '__pragma_describe' -a '--revision --format --json --stream-json --color --output-view --interactive --help'
+complete -c pragma -f -n '__pragma_run' -a '--workspace --prompt --input --input-json --project --revision --expected-fingerprint --request-id --detach --wait-timeout --format --json --stream-json --color --output-view --interactive --help'
+complete -c pragma -f -n '__pragma_mission_list' -a '--status --executor --limit --cursor --query --workspace --format --json --stream-json --color --output-view --interactive --help'
+complete -c pragma -f -n '__pragma_mission_get' -a '--view --limit --cursor --query-version --recent-input --source --content-id --fingerprint --start --max-bytes --format --json --stream-json --color --output-view --interactive --help'
+complete -c pragma -f -n '__pragma_mission_watch' -a '--after --replay --until --wait-timeout --format --stream-json --color --output-view --interactive --help'
+complete -c pragma -f -n '__pragma_mission_resume' -a '--project --revision --expected-fingerprint --request-id --detach --format --json --stream-json --color --output-view --interactive --help'
+complete -c pragma -f -n '__pragma_mission_send' -a '--prompt --input --request-id --wait --detach --ack-timeout --wait-timeout --format --json --stream-json --color --output-view --interactive --help'
+complete -c pragma -f -n '__pragma_mission_steer' -a '--prompt --input --expected-execution --request-id --wait --detach --ack-timeout --wait-timeout --format --json --stream-json --color --output-view --interactive --help'
+complete -c pragma -f -n '__pragma_mission_respond' -a '--interaction --answer --choice --answers-json --request-id --wait --detach --ack-timeout --wait-timeout --format --json --stream-json --color --output-view --interactive --help'
+complete -c pragma -f -n '__pragma_mission_interrupt' -a '--expected-execution --reason --request-id --wait --detach --ack-timeout --wait-timeout --format --json --stream-json --color --output-view --interactive --help'
+complete -c pragma -f -n '__pragma_queue_list' -a '--limit --cursor --format --json --stream-json --color --output-view --interactive --help'
+complete -c pragma -f -n '__pragma_queue_remove' -a '--request --request-id --ack-timeout --format --json --stream-json --color --output-view --interactive --help'
+complete -c pragma -f -n '__pragma_queue_resume' -a '--request-id --ack-timeout --abandon-uncertain --format --json --stream-json --color --output-view --interactive --help'
+complete -c pragma -f -n '__pragma_queue_steer' -a '--request --request-id --expected-execution --wait --detach --ack-timeout --wait-timeout --format --json --stream-json --color --output-view --interactive --help'
+complete -c pragma -f -n '__pragma_global_options' -a '--format --json --stream-json --color --output-view --interactive --help'
 `,
     "\n",
   );
@@ -981,27 +828,27 @@ function completionPowerShellScript(): string {
     String.raw`Register-ArgumentCompleter -CommandName pragma -ScriptBlock {
   param(__PRAGMA_DOLLAR__wordToComplete, __PRAGMA_DOLLAR__commandAst, __PRAGMA_DOLLAR__cursorPosition)
   __PRAGMA_DOLLAR__tokens = @(__PRAGMA_DOLLAR__commandAst.CommandElements | ForEach-Object { __PRAGMA_DOLLAR___.ToString().Trim([char]39, [char]34) })
-  __PRAGMA_DOLLAR__globalOptions = @('--format','--json','--stream-json','--color','--interactive','--help')
-  __PRAGMA_DOLLAR__watchGlobalOptions = @('--format','--stream-json','--color','--interactive','--help')
+  __PRAGMA_DOLLAR__globalOptions = @('--format','--json','--stream-json','--color','--output-view','--interactive','--help')
+  __PRAGMA_DOLLAR__watchGlobalOptions = @('--format','--stream-json','--color','--output-view','--interactive','--help')
   __PRAGMA_DOLLAR__candidates = __PRAGMA_DOLLAR__globalOptions + @('version','doctor','completion','team','expert','flow','mission','source')
   if (__PRAGMA_DOLLAR__tokens.Count -ge 2) {
     switch (__PRAGMA_DOLLAR__tokens[1]) {
       'team' {
         if (__PRAGMA_DOLLAR__tokens -contains 'discover') { __PRAGMA_DOLLAR__candidates = __PRAGMA_DOLLAR__globalOptions + @('--project','--query','--status','--limit','--cursor') }
         elseif (__PRAGMA_DOLLAR__tokens -contains 'describe') { __PRAGMA_DOLLAR__candidates = __PRAGMA_DOLLAR__globalOptions + @('--revision') }
-        elseif (__PRAGMA_DOLLAR__tokens -contains 'run') { __PRAGMA_DOLLAR__candidates = __PRAGMA_DOLLAR__globalOptions + @('--workspace','--prompt','--input','--input-json','--project','--revision','--expected-fingerprint','--request-id','--detach') }
+        elseif (__PRAGMA_DOLLAR__tokens -contains 'run') { __PRAGMA_DOLLAR__candidates = __PRAGMA_DOLLAR__globalOptions + @('--workspace','--prompt','--input','--input-json','--project','--revision','--expected-fingerprint','--request-id','--detach','--wait-timeout') }
         else { __PRAGMA_DOLLAR__candidates = __PRAGMA_DOLLAR__globalOptions + @('discover','describe','run') }
       }
       'expert' {
         if (__PRAGMA_DOLLAR__tokens -contains 'discover') { __PRAGMA_DOLLAR__candidates = __PRAGMA_DOLLAR__globalOptions + @('--project','--query','--status','--limit','--cursor') }
         elseif (__PRAGMA_DOLLAR__tokens -contains 'describe') { __PRAGMA_DOLLAR__candidates = __PRAGMA_DOLLAR__globalOptions + @('--revision') }
-        elseif (__PRAGMA_DOLLAR__tokens -contains 'run') { __PRAGMA_DOLLAR__candidates = __PRAGMA_DOLLAR__globalOptions + @('--workspace','--prompt','--input','--input-json','--project','--revision','--expected-fingerprint','--request-id','--detach') }
+        elseif (__PRAGMA_DOLLAR__tokens -contains 'run') { __PRAGMA_DOLLAR__candidates = __PRAGMA_DOLLAR__globalOptions + @('--workspace','--prompt','--input','--input-json','--project','--revision','--expected-fingerprint','--request-id','--detach','--wait-timeout') }
         else { __PRAGMA_DOLLAR__candidates = __PRAGMA_DOLLAR__globalOptions + @('discover','describe','run') }
       }
       'flow' {
         if (__PRAGMA_DOLLAR__tokens -contains 'discover') { __PRAGMA_DOLLAR__candidates = __PRAGMA_DOLLAR__globalOptions + @('--project','--query','--status','--limit','--cursor') }
         elseif (__PRAGMA_DOLLAR__tokens -contains 'describe') { __PRAGMA_DOLLAR__candidates = __PRAGMA_DOLLAR__globalOptions + @('--revision') }
-        elseif (__PRAGMA_DOLLAR__tokens -contains 'run') { __PRAGMA_DOLLAR__candidates = __PRAGMA_DOLLAR__globalOptions + @('--workspace','--prompt','--input','--input-json','--project','--revision','--expected-fingerprint','--request-id','--detach') }
+        elseif (__PRAGMA_DOLLAR__tokens -contains 'run') { __PRAGMA_DOLLAR__candidates = __PRAGMA_DOLLAR__globalOptions + @('--workspace','--prompt','--input','--input-json','--project','--revision','--expected-fingerprint','--request-id','--detach','--wait-timeout') }
         else { __PRAGMA_DOLLAR__candidates = __PRAGMA_DOLLAR__globalOptions + @('discover','describe','run') }
       }
       'mission' {
@@ -1009,17 +856,17 @@ function completionPowerShellScript(): string {
           if (__PRAGMA_DOLLAR__tokens -contains 'list') { __PRAGMA_DOLLAR__candidates = __PRAGMA_DOLLAR__globalOptions + @('--limit','--cursor') }
           elseif (__PRAGMA_DOLLAR__tokens -contains 'remove') { __PRAGMA_DOLLAR__candidates = __PRAGMA_DOLLAR__globalOptions + @('--request','--request-id','--ack-timeout') }
           elseif (__PRAGMA_DOLLAR__tokens -contains 'resume') { __PRAGMA_DOLLAR__candidates = __PRAGMA_DOLLAR__globalOptions + @('--request-id','--ack-timeout','--abandon-uncertain') }
-          elseif (__PRAGMA_DOLLAR__tokens -contains 'steer') { __PRAGMA_DOLLAR__candidates = __PRAGMA_DOLLAR__globalOptions + @('--request','--request-id','--expected-execution','--wait','--detach','--ack-timeout') }
+          elseif (__PRAGMA_DOLLAR__tokens -contains 'steer') { __PRAGMA_DOLLAR__candidates = __PRAGMA_DOLLAR__globalOptions + @('--request','--request-id','--expected-execution','--wait','--detach','--ack-timeout','--wait-timeout') }
           else { __PRAGMA_DOLLAR__candidates = __PRAGMA_DOLLAR__globalOptions + @('list','remove','resume','steer') }
         }
-        elseif (__PRAGMA_DOLLAR__tokens -contains 'list') { __PRAGMA_DOLLAR__candidates = __PRAGMA_DOLLAR__globalOptions + @('--status','--executor','--limit','--cursor') }
-        elseif (__PRAGMA_DOLLAR__tokens -contains 'get') { __PRAGMA_DOLLAR__candidates = __PRAGMA_DOLLAR__globalOptions + @('--view','--limit','--cursor') }
-        elseif (__PRAGMA_DOLLAR__tokens -contains 'watch') { __PRAGMA_DOLLAR__candidates = __PRAGMA_DOLLAR__watchGlobalOptions + @('--after','--replay','--until') }
+        elseif (__PRAGMA_DOLLAR__tokens -contains 'list') { __PRAGMA_DOLLAR__candidates = __PRAGMA_DOLLAR__globalOptions + @('--status','--executor','--limit','--cursor','--query','--workspace') }
+        elseif (__PRAGMA_DOLLAR__tokens -contains 'get') { __PRAGMA_DOLLAR__candidates = __PRAGMA_DOLLAR__globalOptions + @('--view','--limit','--cursor','--query-version','--recent-input','--source','--content-id','--fingerprint','--start','--max-bytes') }
+        elseif (__PRAGMA_DOLLAR__tokens -contains 'watch') { __PRAGMA_DOLLAR__candidates = __PRAGMA_DOLLAR__watchGlobalOptions + @('--after','--replay','--until','--wait-timeout') }
         elseif (__PRAGMA_DOLLAR__tokens -contains 'resume') { __PRAGMA_DOLLAR__candidates = __PRAGMA_DOLLAR__globalOptions + @('--project','--revision','--expected-fingerprint','--request-id','--detach') }
-        elseif (__PRAGMA_DOLLAR__tokens -contains 'send') { __PRAGMA_DOLLAR__candidates = __PRAGMA_DOLLAR__globalOptions + @('--prompt','--input','--request-id','--wait','--detach','--ack-timeout') }
-        elseif (__PRAGMA_DOLLAR__tokens -contains 'steer') { __PRAGMA_DOLLAR__candidates = __PRAGMA_DOLLAR__globalOptions + @('--prompt','--input','--expected-execution','--request-id','--wait','--detach','--ack-timeout') }
-        elseif (__PRAGMA_DOLLAR__tokens -contains 'respond') { __PRAGMA_DOLLAR__candidates = __PRAGMA_DOLLAR__globalOptions + @('--interaction','--answer','--choice','--answers-json','--request-id','--wait','--detach','--ack-timeout') }
-        elseif (__PRAGMA_DOLLAR__tokens -contains 'interrupt') { __PRAGMA_DOLLAR__candidates = __PRAGMA_DOLLAR__globalOptions + @('--expected-execution','--reason','--request-id','--wait','--detach','--ack-timeout') }
+        elseif (__PRAGMA_DOLLAR__tokens -contains 'send') { __PRAGMA_DOLLAR__candidates = __PRAGMA_DOLLAR__globalOptions + @('--prompt','--input','--request-id','--wait','--detach','--ack-timeout','--wait-timeout') }
+        elseif (__PRAGMA_DOLLAR__tokens -contains 'steer') { __PRAGMA_DOLLAR__candidates = __PRAGMA_DOLLAR__globalOptions + @('--prompt','--input','--expected-execution','--request-id','--wait','--detach','--ack-timeout','--wait-timeout') }
+        elseif (__PRAGMA_DOLLAR__tokens -contains 'respond') { __PRAGMA_DOLLAR__candidates = __PRAGMA_DOLLAR__globalOptions + @('--interaction','--answer','--choice','--answers-json','--request-id','--wait','--detach','--ack-timeout','--wait-timeout') }
+        elseif (__PRAGMA_DOLLAR__tokens -contains 'interrupt') { __PRAGMA_DOLLAR__candidates = __PRAGMA_DOLLAR__globalOptions + @('--expected-execution','--reason','--request-id','--wait','--detach','--ack-timeout','--wait-timeout') }
         elseif (__PRAGMA_DOLLAR__tokens -contains 'board') { __PRAGMA_DOLLAR__candidates = __PRAGMA_DOLLAR__globalOptions + @('list','read','search') }
         else { __PRAGMA_DOLLAR__candidates = __PRAGMA_DOLLAR__globalOptions + @('list','get','resume','watch','send','steer','respond','interrupt','board','queue') }
       }
@@ -1041,4 +888,16 @@ function completionPowerShellScript(): string {
 
 function replaceShellDollar(script: string, separator: string): string {
   return script.replaceAll("__PRAGMA_DOLLAR__", "$").trimStart() + separator;
+}
+
+function assertBoardReadProgress(result: {
+  item: { contentRange: { start: number; nextStart?: number | undefined } };
+}): void {
+  const range = result.item.contentRange;
+  if (range.nextStart !== undefined && range.nextStart <= range.start)
+    throw toIntegrationError({
+      code: "INVALID_ARGUMENT",
+      message:
+        "The byte budget cannot fit the next UTF-8 character. Increase --max-bytes to at least 4.",
+    });
 }

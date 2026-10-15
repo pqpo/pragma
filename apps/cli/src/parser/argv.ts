@@ -11,6 +11,7 @@ export interface GlobalCliOptions {
   readonly format: OutputFormat;
   readonly color: ColorMode;
   readonly interactive: InteractiveMode;
+  readonly outputView?: "full" | "compact" | undefined;
 }
 
 export type ParsedCommand =
@@ -48,6 +49,7 @@ export type ParsedCommand =
     }
   | {
       readonly kind: "executor-run";
+      readonly waitTimeoutSeconds?: number | undefined;
       readonly executorKind: ExecutorKind;
       readonly ref: string;
       readonly workspace: string;
@@ -62,6 +64,8 @@ export type ParsedCommand =
     }
   | {
       readonly kind: "mission-list";
+      readonly query?: string | undefined;
+      readonly workspace?: string | undefined;
       readonly status?: MissionStatusFilter | undefined;
       readonly executor?: string | undefined;
       readonly limit: number;
@@ -69,6 +73,9 @@ export type ParsedCommand =
     }
   | {
       readonly kind: "mission-get";
+      readonly content?: import("@pragma/shared/integration").ContentSelector | undefined;
+      readonly queryVersion?: 1 | 2 | undefined;
+      readonly includeRecentInput?: boolean | undefined;
       readonly missionId: string;
       readonly view: MissionView;
       readonly limit: number;
@@ -76,6 +83,7 @@ export type ParsedCommand =
     }
   | {
       readonly kind: "mission-watch";
+      readonly waitTimeoutSeconds?: number | undefined;
       readonly missionId: string;
       readonly after?: string | undefined;
       readonly replay?: number | undefined;
@@ -98,6 +106,7 @@ export type ParsedCommand =
       readonly expectedExecutionId?: string | undefined;
       readonly requestId?: string | undefined;
       readonly wait: boolean;
+      readonly waitTimeoutSeconds?: number | undefined;
       readonly detach: boolean;
       readonly ackTimeoutSeconds: number;
     }
@@ -110,6 +119,7 @@ export type ParsedCommand =
       readonly answersPath?: string | undefined;
       readonly requestId?: string | undefined;
       readonly wait: boolean;
+      readonly waitTimeoutSeconds?: number | undefined;
       readonly detach: boolean;
       readonly ackTimeoutSeconds: number;
     }
@@ -120,6 +130,7 @@ export type ParsedCommand =
       readonly reason?: string | undefined;
       readonly requestId?: string | undefined;
       readonly wait: boolean;
+      readonly waitTimeoutSeconds?: number | undefined;
       readonly detach: boolean;
       readonly ackTimeoutSeconds: number;
     }
@@ -144,6 +155,7 @@ export type ParsedCommand =
       readonly expectedExecutionId?: string | undefined;
       readonly requestId?: string | undefined;
       readonly wait: boolean;
+      readonly waitTimeoutSeconds?: number | undefined;
       readonly detach: boolean;
       readonly ackTimeoutSeconds: number;
     }
@@ -184,7 +196,7 @@ export type CompletionShell = "bash" | "zsh" | "fish" | "powershell";
 export type ExecutorStatus = "ready" | "needs_attention" | "unavailable";
 export type MissionStatusFilter =
   "active" | "completed" | "queued" | "running" | "waiting" | "succeeded" | "failed" | "cancelled";
-export type MissionView = "summary" | "result" | "chat" | "work" | "events";
+export type MissionView = "summary" | "result" | "chat" | "work" | "events" | "content";
 
 const DEFAULT_LIMIT = 50;
 const DEFAULT_BOARD_MAX_BYTES = 64_000;
@@ -221,10 +233,11 @@ Mission control:
   steer and queue steer are strict active-target operations and never enqueue a fallback.
   resume --project <ID> --revision <N> is the exact, one-time historical pin backfill path.
   --ack-timeout <SECONDS> controls command acknowledgement (default: 30).
+  --wait-timeout <SECONDS> (1..86400) implies --wait for send/steer/respond/interrupt/queue steer; expiry returns accepted/exit 0 with waitExpired and recovery commands, never an implicit cancel.
   queue list reads the Core ExpertSession prompt queue, not the command Inbox.
 
 Mission watch:
-  --format text|jsonl only; --after <CURSOR> or --replay <COUNT>; --until terminal|input-required.
+  --format text|jsonl only; --after <CURSOR> or --replay <COUNT>; --until terminal|input-required; --wait-timeout SECONDS.
   Ctrl-C detaches the local watcher and leaves the Mission owner untouched.
 
 Run semantics:
@@ -241,6 +254,7 @@ Output:
   --format text|json|jsonl   Output protocol (default: text)
   --json                     Alias for --format json
   --stream-json              Alias for --format jsonl
+  --output-view full|compact Full v2 (default) or compact v3 machine output; compact results appear once, with bounded content references.
 `;
 
 export class CliParseError extends Error {
@@ -305,7 +319,7 @@ Example: pragma ${command} discover "memory"`;
     if (subcommand === "describe") {
       return `Usage: pragma ${command} describe ${command}:<ID> [--revision N]
 
-Prints the resolved executor descriptor. Use --format=json for automation.
+Prints the resolved executor descriptor, required input fields and an authoring template. Use --json --output-view full for the complete Schema.
 The canonical ref is stable input for run; JSON is unchanged for scripts.
 
 Example: pragma ${command} describe ${command}:abcdefghjkmnpqrs`;
@@ -313,7 +327,7 @@ Example: pragma ${command} describe ${command}:abcdefghjkmnpqrs`;
     if (subcommand === "run") {
       return `Usage: pragma ${command} run ${command}:<ID> --workspace ABSOLUTE_PATH (--prompt TEXT | --input FILE|-)
 
-Runs to a terminal result by default; --detach returns after the durable command is persisted.
+Runs to a terminal result by default. --wait-timeout SECONDS bounds waiting after a durable owner receipt; --detach returns after that receipt. Both use a per-invocation owner process so caller exit does not cancel work. Questions return for explicit response; --wait-timeout conflicts with --interactive always and --detach.
 --request-id is optional and is generated when omitted. Reusing it with a different payload is a conflict.
 Output: text keeps the agent result readable; --format=json or --format=jsonl preserves the v2 machine protocol.
 
@@ -322,26 +336,27 @@ Example: pragma ${command} run ${command}:abcdefghjkmnpqrs --workspace "$PWD" --
   }
   if (command === "mission") {
     if (subcommand === "list") {
-      return `Usage: pragma mission list [--status STATUS] [--executor REF] [--limit N] [--cursor CURSOR]
+      return `Usage: pragma mission list [--query TEXT] [--workspace PATH] [--status STATUS] [--executor REF] [--limit N] [--cursor CURSOR]
 
-Lists Mission summaries. Text output includes Mission ID, status, executor, updated time, and workspace.
+Lists Mission summaries with title, status and workspace. --query searches titles; --workspace matches a canonical path. Host filtering and stable ordering own pagination; a changed list returns CURSOR_EXPIRED.
 Use the printed continuation command to fetch the next page; JSON/JSONL output is protocol-only.
 
 Example: pragma mission list --status active`;
     }
     if (subcommand === "get") {
-      return `Usage: pragma mission get MISSION_ID [--view summary|result|events] [--limit N] [--cursor CURSOR]
+      return `Usage: pragma mission get MISSION_ID [--view summary|result|events|content] [--query-version 1|2] [--recent-input] [--limit N] [--cursor CURSOR]
 
-summary is the compact default, result is the latest execution state, and events is an ascending durable event page.
+summary is the default semantic v2 view (title unavailable is explicit); --query-version 1 retains strict v1. --recent-input adds the latest durable input preview. result is the latest execution, events is an ascending durable event page.
+Large text/compact bodies carry content references. Read one with --view content --source result|event|queue --content-id ID --fingerprint sha256:HASH --start BYTE --max-bytes BYTES (4..64000). UTF-8 byte ranges are [start,end).
 chat and work are not available yet; use --view events or mission watch instead.
 Output: text uses a view-specific renderer; JSON/JSONL preserve the v2 envelope.
 
 Example: pragma mission get MISSION_ID --view events --limit 20`;
     }
     if (subcommand === "watch") {
-      return `Usage: pragma mission watch MISSION_ID [--after CURSOR | --replay COUNT] [--until terminal|input-required]
+      return `Usage: pragma mission watch MISSION_ID [--after CURSOR | --replay COUNT] [--until terminal|input-required] [--wait-timeout SECONDS]
 
-Follows Mission events until the requested condition; Ctrl-C detaches locally. Text and jsonl are supported.
+Follows Mission events until the requested condition or the wait deadline; timeout and Ctrl-C stop observation without cancelling. Text and jsonl are supported.
 
 Example: pragma mission watch MISSION_ID --until terminal`;
     }
@@ -353,9 +368,9 @@ Example: pragma mission watch MISSION_ID --until terminal`;
 Lists the shared Mission Board. Text output prints a continuation command when another page exists.`;
       }
       if (boardCommand === "read") {
-        return `Usage: pragma mission board read MISSION_ID CONTEXT_ID [--start BYTE] [--offset BYTES]
+        return `Usage: pragma mission board read MISSION_ID CONTEXT_ID [--start BYTE] [--max-bytes BYTES]
 
-Reads a bounded Board item range. Use --format=json for structured content and ranges.`;
+Reads a UTF-8 byte range [start,end). --max-bytes bounds the read; --offset is its legacy alias. Partial text includes the next read command.`;
       }
       if (boardCommand === "search") {
         return `Usage: pragma mission board search MISSION_ID QUERY [--case-sensitive] [--context-lines N] [--max-results N]
@@ -499,6 +514,11 @@ function createCliProgram(setCommand: ParsedCommandSink): Command {
       ),
     )
     .addOption(
+      new Option("--output-view <view>").argParser((value) =>
+        parseEnum(value, ["full", "compact"], "--output-view"),
+      ),
+    )
+    .addOption(
       new Option("--interactive <mode>").argParser((value) =>
         parseEnum(value, ["auto", "always", "never"], "--interactive"),
       ),
@@ -566,6 +586,7 @@ function createCliProgram(setCommand: ParsedCommandSink): Command {
         { flags: "--prompt <prompt>" },
         { flags: "--input <path>" },
         { flags: "--input-json <path>" },
+        { flags: "--wait-timeout <seconds>" },
         { flags: "--project <project>" },
         { flags: "--revision <revision>" },
         { flags: "--expected-fingerprint <fingerprint>" },
@@ -591,6 +612,8 @@ function registerMissionCommands(mission: Command, setCommand: ParsedCommandSink
     mission,
     "list",
     [
+      { flags: "--query <keyword>" },
+      { flags: "--workspace <path>" },
       { flags: "--status <status>" },
       { flags: "--executor <executor>" },
       { flags: "--limit <limit>" },
@@ -602,7 +625,18 @@ function registerMissionCommands(mission: Command, setCommand: ParsedCommandSink
   addLeaf(
     mission,
     "get",
-    [{ flags: "--view <view>" }, { flags: "--limit <limit>" }, { flags: "--cursor <cursor>" }],
+    [
+      { flags: "--query-version <version>" },
+      { flags: "--recent-input" },
+      { flags: "--source <source>" },
+      { flags: "--content-id <id>" },
+      { flags: "--fingerprint <hash>" },
+      { flags: "--start <byte>" },
+      { flags: "--max-bytes <bytes>" },
+      { flags: "--view <view>" },
+      { flags: "--limit <limit>" },
+      { flags: "--cursor <cursor>" },
+    ],
     (positionals, values) => parseMissionCommand("get", positionals, values),
     setCommand,
   );
@@ -613,6 +647,7 @@ function registerMissionCommands(mission: Command, setCommand: ParsedCommandSink
       { flags: "--after <cursor>" },
       { flags: "--replay <count>" },
       { flags: "--until <condition>" },
+      { flags: "--wait-timeout <seconds>" },
     ],
     (positionals, values) => parseMissionCommand("watch", positionals, values),
     setCommand,
@@ -638,6 +673,7 @@ function registerMissionCommands(mission: Command, setCommand: ParsedCommandSink
     { flags: "--wait" },
     { flags: "--detach" },
     { flags: "--ack-timeout <seconds>" },
+    { flags: "--wait-timeout <seconds>" },
   ];
   addLeaf(
     mission,
@@ -665,6 +701,7 @@ function registerMissionCommands(mission: Command, setCommand: ParsedCommandSink
       { flags: "--wait" },
       { flags: "--detach" },
       { flags: "--ack-timeout <seconds>" },
+      { flags: "--wait-timeout <seconds>" },
     ],
     (positionals, values) => parseMissionCommand("respond", positionals, values),
     setCommand,
@@ -679,6 +716,7 @@ function registerMissionCommands(mission: Command, setCommand: ParsedCommandSink
       { flags: "--wait" },
       { flags: "--detach" },
       { flags: "--ack-timeout <seconds>" },
+      { flags: "--wait-timeout <seconds>" },
     ],
     (positionals, values) => parseMissionCommand("interrupt", positionals, values),
     setCommand,
@@ -695,7 +733,7 @@ function registerMissionCommands(mission: Command, setCommand: ParsedCommandSink
   addLeaf(
     board,
     "read",
-    [{ flags: "--start <start>" }, { flags: "--offset <bytes>" }],
+    [{ flags: "--start <start>" }, { flags: "--max-bytes <bytes>" }, { flags: "--offset <bytes>" }],
     (positionals, values) => parseBoardCommand(["read", ...positionals], values),
     setCommand,
   );
@@ -755,6 +793,7 @@ function registerMissionCommands(mission: Command, setCommand: ParsedCommandSink
       { flags: "--wait" },
       { flags: "--detach" },
       { flags: "--ack-timeout <seconds>" },
+      { flags: "--wait-timeout <seconds>" },
     ],
     (positionals, values) => parseQueueCommand(["steer", ...positionals], values),
     setCommand,
@@ -827,11 +866,13 @@ function globalOptionsFrom(program: Command): GlobalCliOptions {
     readonly streamJson?: boolean | undefined;
     readonly color?: ColorMode | undefined;
     readonly interactive?: InteractiveMode | undefined;
+    readonly outputView?: "full" | "compact" | undefined;
   };
   return {
     format: values.format ?? (values.json ? "json" : values.streamJson ? "jsonl" : "text"),
     color: values.color ?? "auto",
     interactive: values.interactive ?? "auto",
+    outputView: values.outputView ?? "full",
   };
 }
 
@@ -960,11 +1001,16 @@ function commandPathForHelp(argv: readonly string[]): readonly string[] {
     if (token === undefined || token === "--help" || token === "-h") continue;
     if (token === "--") break;
     if (token === "--json" || token === "--stream-json") continue;
-    if (token === "--format" || token === "--color" || token === "--interactive") {
+    if (
+      token === "--format" ||
+      token === "--color" ||
+      token === "--interactive" ||
+      token === "--output-view"
+    ) {
       index += 1;
       continue;
     }
-    if (/^--(?:format|color|interactive)=/u.test(token)) continue;
+    if (/^--(?:format|color|interactive|output-view)=/u.test(token)) continue;
     if (token.startsWith("-")) continue;
     path.push(token);
     if (path.length === 3) break;
@@ -1095,6 +1141,9 @@ function parseExecutorRunCommand(
     throw new Error("--request-id must be a UUID.");
   return {
     kind: "executor-run",
+    ...(parseWaitTimeout(values) === undefined
+      ? {}
+      : { waitTimeoutSeconds: parseWaitTimeout(values) }),
     executorKind,
     ref,
     workspace,
@@ -1111,6 +1160,11 @@ function parseExecutorRunCommand(
 
 function validateRunOptions(options: GlobalCliOptions, command: ParsedCommand): void {
   const detached = "detach" in command && command.detach === true;
+  const finite = "waitTimeoutSeconds" in command && command.waitTimeoutSeconds !== undefined;
+  if (finite && (detached || options.interactive === "always"))
+    throw new Error(
+      "--wait-timeout cannot be combined with --detach or --interactive always; questions are returned for explicit response.",
+    );
   if (detached && options.interactive === "always") {
     throw new Error("--detach and --interactive always are mutually exclusive.");
   }
@@ -1122,11 +1176,17 @@ function parseMissionCommand(
   values: ReadonlyMap<string, OptionValue>,
 ): ParsedCommand {
   if (subcommand === "list") {
-    assertOnlyOptions(values, ["status", "executor", "limit", "cursor"], "mission list");
+    assertOnlyOptions(
+      values,
+      ["status", "executor", "limit", "cursor", "query", "workspace"],
+      "mission list",
+    );
     if (positionals.length !== 0)
       throw new Error("mission list does not accept positional arguments.");
     return {
       kind: "mission-list",
+      query: optionalValue(values, "query"),
+      workspace: optionalValue(values, "workspace"),
       status: optionalEnum(values, "status", [
         "active",
         "completed",
@@ -1143,19 +1203,67 @@ function parseMissionCommand(
     };
   }
   if (subcommand === "get") {
-    assertOnlyOptions(values, ["view", "limit", "cursor"], "mission get");
+    assertOnlyOptions(
+      values,
+      [
+        "view",
+        "limit",
+        "cursor",
+        "query-version",
+        "recent-input",
+        "source",
+        "content-id",
+        "fingerprint",
+        "start",
+        "max-bytes",
+      ],
+      "mission get",
+    );
     if (positionals.length !== 1) throw new Error("mission get requires a Mission ID.");
+    if (
+      optionalValue(values, "view") !== "content" &&
+      ["source", "content-id", "fingerprint", "start", "max-bytes"].some((key) => values.has(key))
+    )
+      throw new Error("Content selectors and byte ranges require --view content.");
+    const content =
+      optionalValue(values, "view") === "content"
+        ? {
+            source: requiredOption(values, "source") as "result" | "event" | "queue",
+            id: requiredOption(values, "content-id"),
+            fingerprint: requiredOption(values, "fingerprint"),
+            start: optionalNonNegativeInteger(values, "start") ?? 0,
+            maxBytes: optionalPositiveInteger(values, "max-bytes") ?? 8000,
+          }
+        : undefined;
+    if (
+      content !== undefined &&
+      (!["result", "event", "queue"].includes(content.source) ||
+        !/^sha256:[0-9a-f]{64}$/u.test(content.fingerprint) ||
+        content.maxBytes < 4 ||
+        content.maxBytes > 64000)
+    )
+      throw new Error("Invalid content selector; --max-bytes must be 4..64000.");
+
     return {
       kind: "mission-get",
+      ...(content === undefined ? {} : { content }),
+      queryVersion: Number(optionalEnum(values, "query-version", ["1", "2"]) ?? "2") as 1 | 2,
+      includeRecentInput: values.get("recent-input") === true,
       missionId: positionals[0]!,
-      view: (optionalEnum(values, "view", ["summary", "result", "chat", "work", "events"]) ??
-        "summary") as MissionView,
+      view: (optionalEnum(values, "view", [
+        "summary",
+        "result",
+        "chat",
+        "work",
+        "events",
+        "content",
+      ]) ?? "summary") as MissionView,
       limit: optionalPositiveInteger(values, "limit") ?? DEFAULT_LIMIT,
       cursor: optionalValue(values, "cursor"),
     };
   }
   if (subcommand === "watch") {
-    assertOnlyOptions(values, ["after", "replay", "until"], "mission watch");
+    assertOnlyOptions(values, ["after", "replay", "until", "wait-timeout"], "mission watch");
     if (positionals.length !== 1) throw new Error("mission watch requires a Mission ID.");
     const after = optionalValue(values, "after");
     const replay = optionalNonNegativeInteger(values, "replay");
@@ -1167,6 +1275,9 @@ function parseMissionCommand(
     }
     return {
       kind: "mission-watch",
+      ...(parseWaitTimeout(values) === undefined
+        ? {}
+        : { waitTimeoutSeconds: parseWaitTimeout(values) }),
       missionId: positionals[0]!,
       ...(after === undefined ? {} : { after }),
       ...(replay === undefined ? {} : { replay }),
@@ -1232,6 +1343,7 @@ function parseMissionMessageCommand(
       "wait",
       "detach",
       "ack-timeout",
+      "wait-timeout",
     ],
     "mission " + subcommand,
   );
@@ -1246,7 +1358,7 @@ function parseMissionMessageCommand(
   }
   const requestId = optionalRequestId(values, "request-id");
   const expectedExecutionId = optionalUuidOption(values, "expected-execution");
-  const wait = values.get("wait") === true;
+  const wait = values.get("wait") === true || parseWaitTimeout(values) !== undefined;
   const detach = values.get("detach") === true;
   if (wait && detach) throw new Error("--wait and --detach are mutually exclusive.");
   return {
@@ -1257,6 +1369,9 @@ function parseMissionMessageCommand(
     ...(expectedExecutionId === undefined ? {} : { expectedExecutionId }),
     ...(requestId === undefined ? {} : { requestId }),
     wait,
+    ...(parseWaitTimeout(values) === undefined
+      ? {}
+      : { waitTimeoutSeconds: parseWaitTimeout(values) }),
     detach,
     ackTimeoutSeconds: parseAckTimeout(values),
   };
@@ -1277,6 +1392,7 @@ function parseMissionRespondCommand(
       "wait",
       "detach",
       "ack-timeout",
+      "wait-timeout",
     ],
     "mission respond",
   );
@@ -1294,7 +1410,7 @@ function parseMissionRespondCommand(
   }
   if (answer !== undefined && answer.trim() === "") throw new Error("--answer must not be empty.");
   const requestId = optionalRequestId(values, "request-id");
-  const wait = values.get("wait") === true;
+  const wait = values.get("wait") === true || parseWaitTimeout(values) !== undefined;
   const detach = values.get("detach") === true;
   if (wait && detach) throw new Error("--wait and --detach are mutually exclusive.");
   return {
@@ -1306,6 +1422,9 @@ function parseMissionRespondCommand(
     ...(answersPath === undefined ? {} : { answersPath }),
     ...(requestId === undefined ? {} : { requestId }),
     wait,
+    ...(parseWaitTimeout(values) === undefined
+      ? {}
+      : { waitTimeoutSeconds: parseWaitTimeout(values) }),
     detach,
     ackTimeoutSeconds: parseAckTimeout(values),
   };
@@ -1317,7 +1436,7 @@ function parseMissionInterruptCommand(
 ): ParsedCommand {
   assertOnlyOptions(
     values,
-    ["request-id", "expected-execution", "reason", "wait", "detach", "ack-timeout"],
+    ["request-id", "expected-execution", "reason", "wait", "detach", "ack-timeout", "wait-timeout"],
     "mission interrupt",
   );
   if (positionals.length !== 1) throw new Error("mission interrupt requires a Mission ID.");
@@ -1325,7 +1444,7 @@ function parseMissionInterruptCommand(
   const expectedExecutionId = optionalUuidOption(values, "expected-execution");
   const reason = optionalValue(values, "reason");
   if (reason !== undefined && reason.trim() === "") throw new Error("--reason must not be empty.");
-  const wait = values.get("wait") === true;
+  const wait = values.get("wait") === true || parseWaitTimeout(values) !== undefined;
   const detach = values.get("detach") === true;
   if (wait && detach) throw new Error("--wait and --detach are mutually exclusive.");
   return {
@@ -1335,6 +1454,9 @@ function parseMissionInterruptCommand(
     ...(reason === undefined ? {} : { reason }),
     ...(requestId === undefined ? {} : { requestId }),
     wait,
+    ...(parseWaitTimeout(values) === undefined
+      ? {}
+      : { waitTimeoutSeconds: parseWaitTimeout(values) }),
     detach,
     ackTimeoutSeconds: parseAckTimeout(values),
   };
@@ -1356,12 +1478,17 @@ function parseBoardCommand(
     };
   }
   if (subcommand === "read") {
-    assertOnlyOptions(values, ["start", "offset"], "mission board read");
+    assertOnlyOptions(values, ["start", "offset", "max-bytes"], "mission board read");
     if (positionals.length !== 3)
       throw new Error("mission board read requires a Mission ID and context ID.");
-    const maxBytes = optionalPositiveInteger(values, "offset") ?? DEFAULT_BOARD_MAX_BYTES;
+    if (values.has("offset") && values.has("max-bytes"))
+      throw new Error("Use only one of --max-bytes and its legacy alias --offset.");
+    const maxBytes =
+      optionalPositiveInteger(values, "max-bytes") ??
+      optionalPositiveInteger(values, "offset") ??
+      DEFAULT_BOARD_MAX_BYTES;
     if (maxBytes > DEFAULT_BOARD_MAX_BYTES) {
-      throw new Error(`--offset must be at most ${DEFAULT_BOARD_MAX_BYTES}.`);
+      throw new Error(`--max-bytes (--offset) must be at most ${DEFAULT_BOARD_MAX_BYTES}.`);
     }
     return {
       kind: "board-read",
@@ -1439,14 +1566,22 @@ function parseQueueCommand(
   if (subcommand === "steer") {
     assertOnlyOptions(
       values,
-      ["request", "expected-execution", "request-id", "wait", "detach", "ack-timeout"],
+      [
+        "request",
+        "expected-execution",
+        "request-id",
+        "wait",
+        "detach",
+        "ack-timeout",
+        "wait-timeout",
+      ],
       "mission queue steer",
     );
     if (positionals.length !== 2) throw new Error("mission queue steer requires a Mission ID.");
     const requestIdToSteer = requiredUuidOption(values, "request");
     const expectedExecutionId = optionalUuidOption(values, "expected-execution");
     const requestId = optionalRequestId(values, "request-id");
-    const wait = values.get("wait") === true;
+    const wait = values.get("wait") === true || parseWaitTimeout(values) !== undefined;
     const detach = values.get("detach") === true;
     if (wait && detach) throw new Error("--wait and --detach are mutually exclusive.");
     return {
@@ -1456,6 +1591,9 @@ function parseQueueCommand(
       ...(expectedExecutionId === undefined ? {} : { expectedExecutionId }),
       ...(requestId === undefined ? {} : { requestId }),
       wait,
+      ...(parseWaitTimeout(values) === undefined
+        ? {}
+        : { waitTimeoutSeconds: parseWaitTimeout(values) }),
       detach,
       ackTimeoutSeconds: parseAckTimeout(values),
     };
@@ -1604,4 +1742,11 @@ function formatForGlobalOptionError(argv: readonly string[]): OutputFormat {
     }
   }
   return "text";
+}
+
+function parseWaitTimeout(values: ReadonlyMap<string, OptionValue>): number | undefined {
+  const timeout = optionalPositiveInteger(values, "wait-timeout");
+  if (timeout !== undefined && timeout > 86400)
+    throw new Error("--wait-timeout must be 1..86400 seconds.");
+  return timeout;
 }

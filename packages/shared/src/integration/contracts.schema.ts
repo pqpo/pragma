@@ -631,3 +631,11 @@ export type HumanInteractionResponseEnvelope = z.infer<
 >;
 export type CliResult = z.infer<typeof CliResultSchema>;
 export type CliEvent = z.infer<typeof CliEventSchema>;
+
+export const ExecutorSummaryDescriptorSchema = ExecutorDescriptorSchema.omit({
+  inputSchema: true,
+}).extend({
+  schemaVersion: z.literal("pragma.integration-executor-summary/v1"),
+  schemaReadCommand: z.string().optional(),
+  descriptionTruncated: z.boolean().optional(),
+});
