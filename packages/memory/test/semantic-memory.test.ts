@@ -774,6 +774,44 @@ describe("Semantic Memory", () => {
     module.close();
   });
 
+  it("does not send private or expired facts to another Expert or widen bindings through deduplication", async () => {
+    const extractor = fakeExtractor((input) => ({
+      normalizedValue: input.executionId === "expired" ? "expired" : "same-value",
+      ...(input.executionId === "expired" ? { expiresAt: "2026-08-03T11:00:00.000Z" } : {}),
+    }));
+    const module = await createSemanticMemoryModule({
+      pragmaHome: await temporaryRoot(),
+      extractor,
+      now: () => new Date("2026-08-04T00:00:00.000Z"),
+    });
+    for (const [executionId, expertId] of [
+      ["a", "expert-a"],
+      ["expired", "expert-b"],
+      ["b", "expert-b"],
+    ]) {
+      await module.registerExecutionSubjects({
+        executionId: executionId!,
+        subjectRefs: [ref("pragma.user", "local-user")],
+      });
+      await module.consume(
+        executionEvidence(executionId!, "Stable preference for this user.", expertId!),
+      );
+      await module.runBackgroundOnce?.();
+    }
+    const input = extractor.extract.mock.calls.at(-1)![0] as SemanticExtractionInput;
+    expect(input.currentFacts).toEqual([]);
+    const facts = await module.store.list();
+    expect(facts).toHaveLength(3);
+    expect(facts.every((fact) => fact.bindings.length === 1)).toBe(true);
+    expect(
+      facts.find(
+        (fact) =>
+          fact.normalizedValue === "same-value" && fact.bindings[0]!.consumerRef.id === "expert-a",
+      )?.conflictsWith,
+    ).toEqual([]);
+    module.close();
+  });
+
   it("isolates bindings across Experts and excludes expired facts from recall", async () => {
     const now = new Date("2026-08-03T18:00:01.000Z");
     const extractor = fakeExtractor((input) => ({

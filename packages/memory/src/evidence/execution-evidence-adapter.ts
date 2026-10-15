@@ -9,6 +9,7 @@ import {
   MemorySafeExecutionMessagePayloadSchema,
   MemorySafeTerminalPayloadSchema,
   MemorySafeToolEventPayloadSchema,
+  MemoryToolContentPayloadSchema,
   type AgentMessage,
   type CanonicalEventEnvelope,
   type EffectiveMemoryPolicy,
@@ -17,6 +18,8 @@ import {
   type MemorySubjectRef,
 } from "@pragma/shared";
 
+import type { MemoryExtractionSettingsStore } from "../pipeline/extraction-settings.ts";
+import { redactMemoryValue } from "./redact.ts";
 import type { MemoryEvidencePublisher } from "./evidence-feed.ts";
 import type {
   MemoryConsumerCheckpointStore,
@@ -41,6 +44,7 @@ export function createExecutionEvidenceAdapter(options: {
   readonly checkpoints: MemoryConsumerCheckpointStore;
   readonly deadLetters: MemoryDeadLetterStore;
   readonly policies: Pick<MemoryPolicyStore, "resolveAt">;
+  readonly extractionSettings?: Pick<MemoryExtractionSettingsStore, "get"> | undefined;
   readonly batchSize?: number | undefined;
   readonly now?: (() => Date) | undefined;
   readonly activity?:
@@ -57,6 +61,13 @@ export function createExecutionEvidenceAdapter(options: {
       if (page.nextCursor.sequence === state.sequence) {
         return { published: 0, skipped: 0 };
       }
+      // Configuration failures must leave the canonical checkpoint intact for replay.
+      const settings = await options.extractionSettings?.get().catch((cause: unknown) => {
+        throw Object.assign(new Error("memory_extraction_settings_unavailable", { cause }), {
+          code: "memory_extraction_settings_unavailable",
+          retryable: true,
+        });
+      });
       const evidence: MemoryEvidenceEnvelope[] = [];
       const captureDecisions: MemoryCaptureDecision[] = [];
       let skipped = 0;
@@ -126,6 +137,27 @@ export function createExecutionEvidenceAdapter(options: {
             skipped += 1;
           } else {
             evidence.push(mapped);
+            const allowedModules = (["episodic", "semantic"] as const).filter(
+              (module) => settings?.allowToolAssisted[module] === true,
+            );
+            if (allowedModules.length > 0) {
+              const content = toolContent(item.event);
+              if (content !== undefined) {
+                const text = String(redactMemoryValue(content.text));
+                evidence.push({
+                  ...mapped,
+                  messageId: `${mapped.messageId}:tool-content:v1`,
+                  topic: "execution.tool.content",
+                  schemaRef: "pragma.memory.tool-content/v1",
+                  payload: MemoryToolContentPayloadSchema.parse({
+                    ...content,
+                    text: text.slice(0, 64000),
+                    completeness: text.length > 64000 ? "truncated" : content.completeness,
+                    allowedModules,
+                  }),
+                });
+              }
+            }
             addCaptureDecision(captureDecisions, item.event, "published", "evidence_published");
           }
         } catch {
@@ -387,4 +419,64 @@ function eventAttribution(canonical: CanonicalEventEnvelope): {
 
 function uniqueRefs(refs: readonly MemorySubjectRef[]): MemorySubjectRef[] {
   return [...new Map(refs.map((ref) => [`${ref.type}\0${ref.id}`, ref])).values()];
+}
+
+function toolContent(canonical: CanonicalEventEnvelope):
+  | {
+      toolCallId: string;
+      toolName: string;
+      phase: "started" | "completed" | "failed";
+      text: string;
+      completeness: "full" | "preview";
+    }
+  | undefined {
+  const event = ExecutionEventSchema.parse(canonical.payload);
+  if (event.type === "invocation.message.appended") {
+    const message = InvocationMessageAppendedEventSchema.parse(event).data.message;
+    if (message.role !== "toolResult") return undefined;
+    const text = message.content
+      .filter((part) => part.type === "text")
+      .map((part) => part.text)
+      .join("\n");
+    return {
+      toolCallId: message.toolCallId,
+      toolName: message.toolName,
+      phase: message.isError ? "failed" : "completed",
+      text,
+      completeness: "full",
+    };
+  }
+  if (event.type !== "runtime.event") return undefined;
+  const runtime = ExpertAgentStreamEventSchema.parse(event.data);
+  if (runtime.type === "tool.started" && runtime.payload.inputPreview !== undefined)
+    return {
+      toolCallId: runtime.payload.toolCallId,
+      toolName: runtime.payload.toolName,
+      phase: "started",
+      text:
+        typeof runtime.payload.inputPreview === "string"
+          ? runtime.payload.inputPreview
+          : JSON.stringify(redactMemoryValue(runtime.payload.inputPreview)),
+      completeness: "preview",
+    };
+  if (runtime.type === "tool.completed" && runtime.payload.outputPreview !== undefined)
+    return {
+      toolCallId: runtime.payload.toolCallId,
+      toolName: runtime.payload.toolName,
+      phase: "completed",
+      text:
+        typeof runtime.payload.outputPreview === "string"
+          ? runtime.payload.outputPreview
+          : JSON.stringify(redactMemoryValue(runtime.payload.outputPreview)),
+      completeness: "preview",
+    };
+  if (runtime.type === "tool.failed")
+    return {
+      toolCallId: runtime.payload.toolCallId,
+      toolName: runtime.payload.toolName,
+      phase: "failed",
+      text: runtime.payload.message,
+      completeness: "preview",
+    };
+  return undefined;
 }

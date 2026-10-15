@@ -1,3 +1,5 @@
+import { hasMemoryExtractionReceipt } from "../pipeline/extraction-session/store.ts";
+import { createMemoryExtractionSessionStore } from "../pipeline/extraction-session.ts";
 import {
   blocksAutomaticExtractionRetry,
   MAX_EXTRACTION_ATTEMPTS,
@@ -463,11 +465,13 @@ export async function createEpisodicMemoryStore(
         }
         const canSettleLocally =
           current.status === "running" &&
-          data
+          (data
             .prepare(
               "SELECT 1 FROM episodes WHERE conversation_key = ? AND json_extract(record_json, '$.terminalMessageId') = ?",
             )
-            .get(conversationKey(current.conversationRef), current.terminalMessageId) !== undefined;
+            .get(conversationKey(current.conversationRef), current.terminalMessageId) !==
+            undefined ||
+            hasMemoryExtractionReceipt(options, "episodic", current.id, current.inputWatermark));
         const replayBlocked =
           !canSettleLocally &&
           blocksAutomaticExtractionRetry(current.lastFailure, current.attempts);
@@ -995,6 +999,8 @@ export async function createEpisodicMemoryStore(
         throw new Error("memory_extraction_job_revision_conflict");
       }
       if (job.status !== "needs_attention") throw new Error("memory_extraction_job_not_retryable");
+      if (job.lastErrorCode !== "memory_curator_budget_exhausted")
+        await createMemoryExtractionSessionStore(options).deleteJobs("episodic", [job.id]);
       writeJob(
         EpisodicExtractionJobSchema.parse({
           ...job,
@@ -1064,6 +1070,7 @@ export async function createEpisodicMemoryStore(
     async deleteJob(input) {
       const job = readJob(state, input.id);
       assertManageableJob(job, input.expectedRevision, ["needs_attention"]);
+      await createMemoryExtractionSessionStore(options).deleteJobs("episodic", [job.id]);
       deleteExtractionJobState(state, job, input.now);
     },
 
@@ -1082,6 +1089,7 @@ export async function createEpisodicMemoryStore(
     },
 
     async maintain(now) {
+      await createMemoryExtractionSessionStore({ ...options, now: () => now }).maintain();
       const result = maintainJobs(state, now);
       maintainEpisodicData(data, now);
       const cutoff = now.getTime() - DEFAULT_MEMORY_STORAGE_POLICY.jobRecordRetentionMs;
@@ -1097,6 +1105,7 @@ export async function createEpisodicMemoryStore(
     },
 
     async deleteExecutionState(executionIds, now = new Date()) {
+      await createMemoryExtractionSessionStore(options).deleteExecutions(executionIds);
       deleteExecutionState(state, executionIds, now);
     },
 

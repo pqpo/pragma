@@ -21,7 +21,10 @@ import {
   PragmaExpertResourceSchema,
   PragmaResourceSchema,
 } from "@pragma/interpreter/ast";
-import { MEMORY_CURATOR_REF as MEMORY_PLANE_CURATOR_REF } from "@pragma/memory";
+import {
+  MEMORY_CURATOR_REF as MEMORY_PLANE_CURATOR_REF,
+  MemoryExtractionToolSchemas,
+} from "@pragma/memory";
 import { describe, expect, it, vi } from "vitest";
 
 import { BUILT_IN_AGENT_FILES } from "../src/builtin.generated.ts";
@@ -102,7 +105,16 @@ describe("built-in Pragma Agent DSL", () => {
         .listResources()
         .map((resource) => resource.kind)
         .toSorted(),
-    ).toEqual(["Capability", "Capability", "Expert", "Expert", "Expert", "Expert", "Expert"]);
+    ).toEqual([
+      "Capability",
+      "Capability",
+      "Capability",
+      "Expert",
+      "Expert",
+      "Expert",
+      "Expert",
+      "Expert",
+    ]);
 
     const unavailable = async (): Promise<never> => {
       throw new Error("This compile-only test does not execute Pragma tools.");
@@ -236,6 +248,22 @@ describe("built-in Pragma Agent DSL", () => {
           environmentId: "test",
           projectRoot: dirname(entry),
           async resolveBinding(bindingRef) {
+            if (bindingRef === "binding:pragma.memory-curator")
+              return {
+                ref: bindingRef,
+                revision: "1",
+                fingerprint: "f".repeat(64),
+                value: {
+                  contribution: {
+                    tools: Object.keys(MemoryExtractionToolSchemas).map((name) => ({
+                      name,
+                      description: name,
+                      inputSchema: { type: "object", properties: {} },
+                      call: async () => ({ text: "unused" }),
+                    })),
+                  },
+                },
+              };
             if (bindingRef === "binding:pragma.management") {
               return {
                 ref: bindingRef,
@@ -255,7 +283,11 @@ describe("built-in Pragma Agent DSL", () => {
         },
       });
       expect(hidden.value.id).toBe(ref.slice("expert:".length));
-      expect(hidden.value.tools ?? []).toEqual([]);
+      if (ref === MEMORY_CURATOR_REF)
+        expect(hidden.value.tools?.map((tool) => tool.name).sort()).toEqual(
+          Object.keys(MemoryExtractionToolSchemas).sort(),
+        );
+      else expect(hidden.value.tools ?? []).toEqual([]);
     }
 
     let approved = false;
@@ -508,7 +540,7 @@ describe("built-in Pragma Agent DSL", () => {
     );
     expect(
       project.listResources().filter((candidate) => candidate.kind === "Capability"),
-    ).toHaveLength(3);
+    ).toHaveLength(4);
     expect(await project.validate()).toEqual([]);
   });
 
@@ -617,6 +649,22 @@ describe("built-in Pragma Agent DSL", () => {
           environmentId: "ignored-external-id",
           projectRoot: root,
           async resolveBinding(bindingRef) {
+            if (bindingRef === "binding:pragma.memory-curator")
+              return {
+                ref: bindingRef,
+                revision: "1",
+                fingerprint: "f".repeat(64),
+                value: {
+                  contribution: {
+                    tools: Object.keys(MemoryExtractionToolSchemas).map((name) => ({
+                      name,
+                      description: name,
+                      inputSchema: { type: "object", properties: {} },
+                      call: async () => ({ text: "unused" }),
+                    })),
+                  },
+                },
+              };
             if (bindingRef === "binding:pragma.management") {
               return {
                 ref: bindingRef,

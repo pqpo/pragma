@@ -107,7 +107,10 @@ const BUILT_IN_AGENT_DEPENDENCY_PATHS: Readonly<Record<BuiltInAgentRef, readonly
       PRAGMA_SKILL_PREFIXES.some((prefix) => path.startsWith(prefix)),
     ),
   ],
-  [MEMORY_CURATOR_REF]: [BUILT_IN_AGENT_PATHS[MEMORY_CURATOR_REF]],
+  [MEMORY_CURATOR_REF]: [
+    BUILT_IN_AGENT_PATHS[MEMORY_CURATOR_REF],
+    "capabilities/0000000000memt00.pragma.yaml",
+  ],
   [STORE_REVISION_EXPERT_REF]: [
     BUILT_IN_AGENT_PATHS[STORE_REVISION_EXPERT_REF],
     "capabilities/0000000000manage.pragma.yaml",

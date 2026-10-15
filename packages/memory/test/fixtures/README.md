@@ -21,3 +21,15 @@ archives only the threshold rejection as a completed job and leaves the actionab
 validation failures beside genuine configuration failures. Their v2 → v3 migrations requeue only
 the candidate failures so the new per-candidate filters can salvage valid siblings, while actionable
 configuration failures remain unchanged.
+
+`extraction-data/*.sql` are unmodified schema/data dumps from real historical Store writers:
+
+- `semantic-v2.sql`: `createSemanticMemoryStore` from commit `ae0003f8`.
+- `semantic-v3.sql` and `episodic-v3.sql`: corresponding Store writers from commit `6aeca6e8`.
+
+Generation used `git archive <commit> packages/memory`, a temporary directory with installed workspace
+Core/Shared dependencies, and `tsx` to import the historical `src/<module>/store.ts`, invoke its
+`create*MemoryStore({ pragmaHome: temporaryHome })`, and close it. Python SQLite `iterdump()` exported
+the resulting database; its actual `PRAGMA user_version` was appended and checked (2 or 3).
+No current database was downgraded and no tables were dropped. Tests insert their applied-job scenario
+into the genuine v2 schema before opening the current reader.

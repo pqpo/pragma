@@ -3,6 +3,7 @@ import {
   MemorySafeExecutionMessagePayloadSchema,
   MemorySafeTerminalPayloadSchema,
   MemorySafeToolEventPayloadSchema,
+  MemoryToolContentPayloadSchema,
   type MemoryEvidenceEnvelope,
 } from "@pragma/shared";
 import { z } from "zod";
@@ -34,6 +35,11 @@ export class MemorySchemaRegistry {
 
 export function createBuiltInMemorySchemaRegistry(): MemorySchemaRegistry {
   const registry = new MemorySchemaRegistry();
+  registry.register({
+    topic: "execution.tool.content",
+    schemaRef: "pragma.memory.tool-content/v1",
+    schema: MemoryToolContentPayloadSchema,
+  });
   registry.register({
     topic: "execution.message.appended",
     schemaRef: "pragma.memory.execution-message/v1",

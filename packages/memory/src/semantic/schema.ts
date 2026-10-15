@@ -1,3 +1,4 @@
+import type { MemoryExtractorOptions } from "../pipeline/extraction-session.ts";
 import {
   MemoryEvidenceEnvelopeSchema,
   MemoryExtractionFailureDiagnosticSchema,
@@ -151,9 +152,20 @@ export type SemanticExecutionSubjectContext = z.infer<typeof SemanticExecutionSu
 export type SemanticGovernanceEvent = z.infer<typeof SemanticGovernanceEventSchema>;
 
 export interface SemanticMemoryExtractor {
+  recover?(
+    jobId: string,
+    watermark: string,
+    input?: SemanticExtractionInput,
+  ): Promise<
+    | {
+        readonly output: SemanticExtractionOutput;
+        readonly provenance: z.infer<typeof SemanticFactExtractorProvenanceSchema>;
+      }
+    | undefined
+  >;
   extract(
     input: SemanticExtractionInput,
-    options?: { readonly signal?: AbortSignal },
+    options?: MemoryExtractorOptions,
   ): Promise<{
     readonly output: SemanticExtractionOutput;
     readonly provenance: z.infer<typeof SemanticFactExtractorProvenanceSchema>;

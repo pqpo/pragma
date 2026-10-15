@@ -18,6 +18,8 @@ import {
   MEMORY_CURATOR_REF as BUILT_IN_MEMORY_CURATOR_REF,
   builtInAgentFingerprint,
   createBuiltInMemoryCurator,
+  createMemoryCuratorTools,
+  builtInAgentResource,
 } from "@pragma/built-in-agents";
 import {
   MEMORY_CURATOR_PROMPT_VERSION,
@@ -28,6 +30,7 @@ import {
   type SemanticMemoryExtractor,
   type MemoryExtractorProfile,
   type MemoryExtractorProfileStore,
+  type MemoryExtractionSession,
 } from "@pragma/memory";
 import type { MemoryExtractionFailureDiagnostic } from "@pragma/shared";
 
@@ -103,6 +106,7 @@ export function createDesktopMemoryCurator(options: {
     },
   });
   const activeRuns = new Map<string, DesktopMemoryExtractionRun>();
+  const activeSessions = new Map<string, MemoryExtractionSession>();
   const runChatListeners = new Set<(update: DesktopMemoryExtractionRunChatUpdate) => void>();
   options.application.subscribeChat(({ update }) => {
     const run = activeRuns.get(update.missionId);
@@ -156,9 +160,72 @@ export function createDesktopMemoryCurator(options: {
     readonly pragmaHome: string;
     readonly loggerProvider?: PragmaLoggerProvider | undefined;
   }): Promise<LocalHostSystemExecutorSource> => {
-    const runtime = await resolveRuntime(await options.profiles.get(), input.runtimes);
+    const activeRun = activeRuns.get(input.missionId);
+    if (activeRun === undefined) throw new Error("memory_curator_run_unavailable");
+    const mission = await options.missions.get(input.missionId);
+    const runtime = {
+      runtimeId: activeRun.runtimeId,
+      modelSelection:
+        mission.modelOverride === undefined
+          ? undefined
+          : {
+              model: {
+                providerId: mission.modelOverride.providerId,
+                modelId: mission.modelOverride.modelId,
+              },
+              ...(mission.modelOverride.thinkingLevel === undefined
+                ? {}
+                : { thinkingLevel: mission.modelOverride.thinkingLevel }),
+            },
+    };
+    const session = activeSessions.get(input.missionId);
+    if (session === undefined) throw new Error("memory_curator_session_unavailable");
+    await session.assertCurrent();
+    const resource = builtInAgentResource(BUILT_IN_MEMORY_CURATOR_REF);
+    for (const capability of resource.spec.capabilities) {
+      if (capability.kind === "tools") capability.tools = [...session.toolNames];
+    }
+
     return {
       ref: BUILT_IN_MEMORY_CURATOR_REF,
+      expertResource: resource,
+      adapterHost: {
+        environmentId: "desktop",
+        projectRoot: input.workspace,
+        async resolveBinding(ref) {
+          return ref === "binding:pragma.memory-curator"
+            ? {
+                ref,
+                revision: "1",
+                fingerprint: session.key,
+                value: {
+                  contribution: {
+                    tools: createMemoryCuratorTools(session, async () => {
+                      const snapshot = await options.application.getInternalContextWindow(
+                        input.missionId,
+                      );
+                      const usage = snapshot.contextWindow?.usage;
+                      if (usage !== undefined) {
+                        await session.setContextBudget(usage.contextWindowTokens - 12000);
+                        if (
+                          usage.usedTokens !== null &&
+                          usage.contextWindowTokens - usage.usedTokens < 4000
+                        )
+                          await session.setContextBudget(1);
+                      }
+                    }),
+                  },
+                },
+              }
+            : undefined;
+        },
+        async resolveArtifact() {
+          throw new Error("memory_curator_artifact_denied");
+        },
+        async resolveSecret() {
+          return undefined;
+        },
+      },
       environmentId: "desktop",
       definitionStateRoot: join(input.pragmaHome, "cache", "built-in-agents", "definitions"),
       workspace: input.workspace,
@@ -177,11 +244,24 @@ export function createDesktopMemoryCurator(options: {
 
   const curator = createBuiltInMemoryCurator({
     profiles: options.profiles,
+    pragmaHome: options.pragmaHome,
     now,
     execution: {
       async run(input) {
         const runtime = await resolveRuntime(input.profile);
-        const result = await runCuratorMission({
+        await input.session.setProvenance({
+          curatorRef: MEMORY_CURATOR_REF,
+          promptVersion:
+            input.module === "semantic"
+              ? SEMANTIC_MEMORY_CURATOR_PROMPT_VERSION
+              : MEMORY_CURATOR_PROMPT_VERSION,
+          profileRevision: input.profile.revision,
+          runtimeId: runtime.runtimeId,
+          providerId: runtime.modelSelection?.model.providerId ?? "runtime-managed",
+          modelId: runtime.modelSelection?.model.modelId ?? "runtime-default",
+          extractedAt: now().toISOString(),
+        });
+        await runCuratorMission({
           options,
           runtime,
           jobId: input.jobId,
@@ -191,13 +271,9 @@ export function createDesktopMemoryCurator(options: {
           signal: input.signal,
           runArchive,
           activeRuns,
+          activeSessions,
+          session: input.session,
         });
-        return {
-          ...result,
-          runtimeId: runtime.runtimeId,
-          providerId: runtime.modelSelection?.model.providerId ?? "runtime-managed",
-          modelId: runtime.modelSelection?.model.modelId ?? "runtime-default",
-        };
       },
     },
   });
@@ -305,7 +381,7 @@ export function createDesktopMemoryCurator(options: {
 async function runCuratorMission(input: {
   readonly options: Pick<
     Parameters<typeof createDesktopMemoryCurator>[0],
-    "project" | "missions" | "application" | "workspace" | "pragmaHome" | "loggerProvider"
+    "project" | "missions" | "application" | "workspace" | "pragmaHome" | "loggerProvider" | "now"
   >;
   readonly runtime: {
     readonly runtimeId: string;
@@ -318,12 +394,9 @@ async function runCuratorMission(input: {
   readonly signal?: AbortSignal | undefined;
   readonly runArchive: MemoryExtractionRunArchive;
   readonly activeRuns: Map<string, DesktopMemoryExtractionRun>;
-}): Promise<{
-  readonly content: string;
-  readonly responseModel?: string | undefined;
-  readonly finishReason?: "stop" | "length" | "toolUse" | "error" | "aborted" | undefined;
-  readonly usage?: import("@pragma/shared").AgentMessageUsage | undefined;
-}> {
+  readonly activeSessions: Map<string, MemoryExtractionSession>;
+  readonly session: MemoryExtractionSession;
+}): Promise<void> {
   input.signal?.throwIfAborted();
   const project = await input.options.project.ensurePublished();
   const mission = await input.options.missions.create({
@@ -371,6 +444,8 @@ async function runCuratorMission(input: {
           modelId: input.runtime.modelSelection.model.modelId,
         }),
   };
+  await input.session.bindMission(mission.id);
+  input.activeSessions.set(mission.id, input.session);
   input.activeRuns.set(mission.id, activeRun);
   let failure: MemoryExtractionFailureDiagnostic | undefined;
   let finalStatus: DesktopMemoryExtractionRun["status"] = "failed";
@@ -384,6 +459,7 @@ async function runCuratorMission(input: {
   try {
     await registerCuratorMission(pragmaHome, mission.id, input.jobId);
     input.signal?.throwIfAborted();
+    await input.session.assertCurrent();
     // Once admitted, provider execution/billing may have happened even if a later read fails.
     executionRequested = true;
     await input.options.application.startRun(mission.id);
@@ -415,25 +491,48 @@ async function runCuratorMission(input: {
       throw error;
     }
     resultReadRequested = true;
-    const { content, runtimeOutput } = await readCuratorResultWithRetry(
-      input.options.application,
-      mission.id,
-      (snapshot) => {
-        resultChat = snapshot;
-      },
-      input.signal,
-    );
+    const receipt = await input.session.receipt();
+    if (receipt === undefined)
+      throw Object.assign(
+        new Error((await input.session.failure()) ?? "memory_curator_result_unavailable"),
+        { retryable: false },
+      );
+    let responseModel: string | undefined;
+    try {
+      responseModel = (
+        await readCuratorResultWithRetry(
+          () => input.options.application.getTerminalRuntimeOutputDiagnostic(mission.id),
+          input.signal,
+        )
+      )?.responseModel;
+    } catch (error) {
+      input.signal?.throwIfAborted();
+      logger.warn(
+        "desktop.memory_curator_provenance_read_failed",
+        "Extraction completed; supplementary Runtime provenance could not be read.",
+        { error, missionId: mission.id },
+      );
+    }
+    await input.session.setProvenance({
+      ...receipt.provenance,
+      ...(responseModel === undefined ? {} : { responseModel }),
+      extractedAt:
+        finished.execution.finishedAt ?? (input.options.now?.() ?? new Date()).toISOString(),
+    });
+    try {
+      resultChat = await readCuratorResultWithRetry(
+        () => input.options.application.getInternalConversationSnapshot(mission.id),
+        input.signal,
+      );
+    } catch (error) {
+      logger.warn(
+        "desktop.memory_curator_archive_read_failed",
+        "Extraction completed; its transcript could not be read for archiving.",
+        { error, missionId: mission.id },
+      );
+    }
     finalStatus = "succeeded";
-    return {
-      content,
-      ...(runtimeOutput?.responseModel === undefined
-        ? {}
-        : { responseModel: runtimeOutput.responseModel }),
-      ...(runtimeOutput?.finishReason === undefined
-        ? {}
-        : { finishReason: runtimeOutput.finishReason }),
-      ...(runtimeOutput?.usage === undefined ? {} : { usage: runtimeOutput.usage }),
-    };
+    return;
   } catch (error) {
     let failureError = error;
     if (executionRequested) {
@@ -482,6 +581,7 @@ async function runCuratorMission(input: {
         );
       });
     input.activeRuns.delete(mission.id);
+    input.activeSessions.delete(mission.id);
     if (
       archived &&
       chat !== undefined &&
@@ -545,24 +645,14 @@ function redactCuratorDiagnosticText(value: string): string {
 }
 
 /** Retry only reads of the completed execution; never rerun the model for a read failure. */
-async function readCuratorResultWithRetry(
-  application: LocalHostMissionApplication,
-  missionId: string,
-  onSnapshot: (snapshot: MissionConversationSnapshot) => void,
+async function readCuratorResultWithRetry<T>(
+  read: () => Promise<T>,
   signal?: AbortSignal,
-) {
+): Promise<T> {
   for (let attempt = 0; ; attempt += 1) {
     signal?.throwIfAborted();
     try {
-      const chat = await application.getInternalConversationSnapshot(missionId);
-      onSnapshot(chat);
-      const content = chat.entries
-        .filter((entry) => entry.kind === "assistant")
-        .map((entry) => entry.content)
-        .at(-1);
-      if (content === undefined) throw new Error("memory_curator_output_missing");
-      const runtimeOutput = await application.getTerminalRuntimeOutputDiagnostic(missionId);
-      return { content, runtimeOutput };
+      return await read();
     } catch (error) {
       signal?.throwIfAborted();
       if (attempt >= 3) throw error;

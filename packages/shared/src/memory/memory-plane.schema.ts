@@ -274,3 +274,19 @@ export type MemoryPolicyRevision = z.infer<typeof MemoryPolicyRevisionSchema>;
 export type EffectiveMemoryPolicy = z.infer<typeof EffectiveMemoryPolicySchema>;
 export type MemoryFeedCursor = z.infer<typeof MemoryFeedCursorSchema>;
 export type MemoryModuleDiagnostic = z.infer<typeof MemoryModuleDiagnosticSchema>;
+
+/** Optional tool text, admitted separately from structural events. Old evidence is never reinterpreted. */
+export const MemoryToolContentPayloadSchema = z
+  .object({
+    toolCallId: z.string().min(1),
+    toolName: z.string().min(1),
+    phase: z.enum(["started", "completed", "failed"]),
+    text: z.string().max(64_000),
+    completeness: z.enum(["full", "preview", "truncated"]),
+    allowedModules: z
+      .array(z.enum(["episodic", "semantic"]))
+      .min(1)
+      .max(2),
+  })
+  .strict();
+export type MemoryToolContentPayload = z.infer<typeof MemoryToolContentPayloadSchema>;

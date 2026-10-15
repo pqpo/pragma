@@ -5923,6 +5923,12 @@ export function createLocalHostMissionExecutionService(
         id,
       );
     },
+    async getInternalContextWindow(id) {
+      const mission = await options.missions.get(id);
+      if (mission.origin.type !== "system-memory")
+        throw new Error("Internal Memory context access requires a system-memory Mission.");
+      return await getContextWindowSnapshot(id, "internal");
+    },
     async getConversationState(id) {
       return await getConversationState(id);
     },
