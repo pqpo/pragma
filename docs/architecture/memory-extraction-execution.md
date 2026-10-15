@@ -63,3 +63,7 @@ and before materialization. `read_evidence` batches adjacent passages within the
 budget, with both a next-evidence handle and a character cursor. Property handles revalidate their
 Fact before use. Terminal diagnostic reads share the bounded same-Mission read retry; the receipt
 is updated with `responseModel` when supplied and completion time before the Module consumes it.
+Runtime diagnostics are supplementary: after bounded read retries, failure records a warning,
+retains the existing provenance fields, and still applies the Mission completion time. It cannot
+invalidate a durable receipt, fail the extraction job, or authorize another model admission.
+Cancellation remains effective during diagnostic reads.

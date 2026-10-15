@@ -5,12 +5,18 @@ import { join } from "node:path";
 
 import {
   createFileMemoryExtractorProfileStore,
+  createEpisodicMemoryModule,
+  createSemanticMemoryModule,
   createMemoryExtractionSessionStore,
   MEMORY_CURATOR_ID,
   MEMORY_CURATOR_REF,
 } from "@pragma/memory";
-import { MemoryEvidenceEnvelopeSchema, MissionExecutorRefSchema } from "@pragma/shared";
-import { createStaticRuntimeResolver } from "@pragma/core";
+import {
+  MemoryEvidenceEnvelopeSchema,
+  MissionExecutorRefSchema,
+  type PragmaLogRecord,
+} from "@pragma/shared";
+import { createStaticRuntimeResolver, createLoggerProvider } from "@pragma/core";
 import { defineRuntimeTestDriver } from "@pragma/core/testing";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
@@ -20,6 +26,12 @@ import { createDesktopMemoryCurator } from "./memory-curator.ts";
 import { createPragmaProjectStore } from "../projects/pragma-project-store.ts";
 import type { LocalHostMissionApplication } from "@pragma/local-host";
 import { MissionConversationSnapshotSchema } from "../../../shared/contracts/index.ts";
+
+// Exercise retry counts without waiting for the Local Host helper's separately owned delay.
+vi.mock("@pragma/local-host", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@pragma/local-host")>()),
+  waitForInternalMissionRetry: vi.fn(async () => undefined),
+}));
 
 const roots: string[] = [];
 
@@ -230,6 +242,220 @@ describe("Desktop Memory Curator", () => {
       } else expect(deleteMission).toHaveBeenCalledTimes(1);
     },
     30_000,
+  );
+
+  it.each(["semantic", "episodic"] as const)(
+    "materializes %s and preserves its receipt when terminal diagnostics never become readable",
+    async (kind) => {
+      const root = await mkdtemp(join(tmpdir(), "pragma-curator-diagnostic-failed-"));
+      roots.push(root);
+      const missions = createMissionStore({ missionsPath: join(root, "missions") });
+      const runtimes = createStaticRuntimeResolver({
+        defaultRuntimeId: "fake",
+        runtimes: [
+          defineRuntimeTestDriver<never, { id: string }>({
+            descriptor: { id: "fake", kind: "fake", displayName: "Fake" },
+            createSession: () => ({ id: "runtime" }),
+            readSession: () => ({ runtimeSessionId: "runtime" }),
+            startTurn: () => ({ outputText: "unused", runtimeSessionId: "runtime" }),
+            mapEvent: () => ({ events: [] }),
+          }),
+        ],
+      });
+      const finishedAt = "2026-10-15T10:00:00.000Z";
+      const startRun = vi.fn(async (id: string) => {
+        const mission = await missions.get(id);
+        const source = await curator.source({
+          missionId: id,
+          runtimes,
+          workspace: root,
+          pragmaHome: root,
+        });
+        const binding = await source.adapterHost!.resolveBinding("binding:pragma.memory-curator");
+        const tools = (
+          binding!.value as {
+            contribution: {
+              tools: import("@pragma/core").ExpertAgentManagedTool<
+                string,
+                import("@pragma/core").ExpertAgentToolCallResult
+              >[];
+            };
+          }
+        ).contribution.tools;
+        const call = async (name: string, args: unknown) => {
+          const result = await tools.find((tool) => tool.name === name)!.call(args, undefined);
+          expect(result.isError).not.toBe(true);
+        };
+        if (kind === "semantic")
+          await call("submit_fact", {
+            statement: "User prefers Chinese",
+            subjects: ["user"],
+            property: { predicate: "user.preference.language", conflictMode: "exclusive" },
+            value: "zh-Hans",
+            confidence: 0.8,
+            evidence: ["e1"],
+          });
+        else {
+          for (const part of ["goal", "summary"])
+            await call("submit_episode_part", {
+              part,
+              text: "User stated a lasting language preference",
+              evidence: ["e1"],
+            });
+          await call("submit_episode_part", {
+            part: "outcome",
+            status: "succeeded",
+            summary: "Preference recorded",
+            evidence: ["e1"],
+          });
+        }
+        await call(
+          "finish_extraction",
+          kind === "semantic"
+            ? { retain: true }
+            : { retain: true, language: "en", valueScore: 0.8 },
+        );
+        return await missions.updateExecution(id, {
+          id: randomUUID(),
+          inputMessageId: mission.initialMessageId,
+          status: "succeeded",
+          startedAt: "2026-10-15T09:59:00.000Z",
+          finishedAt,
+        });
+      });
+      const getTerminalRuntimeOutputDiagnostic = vi.fn(async () => {
+        throw new Error("persistent diagnostic read failure");
+      });
+      const application = {
+        startRun,
+        getTerminalRuntimeOutputDiagnostic,
+        subscribeChat: () => () => undefined,
+        getInternalContextWindow: async () => ({ missionId: "test", revision: 1 }),
+        getInternalConversationSnapshot: async (id: string) =>
+          MissionConversationSnapshotSchema.parse({
+            missionId: id,
+            revision: 1,
+            entries: [],
+            page: {},
+            pendingInteractions: [],
+            queue: { state: "idle", pendingCount: 0, supportsSteer: false, items: [] },
+          }),
+        delete: vi.fn(async () => undefined),
+        interrupt: vi.fn(async () => undefined),
+      } as unknown as LocalHostMissionApplication;
+      const logs: PragmaLogRecord[] = [];
+      const curator = createDesktopMemoryCurator({
+        missions,
+        application,
+        runtimes,
+        pragmaHome: root,
+        workspace: root,
+        project: createPragmaProjectStore({ projectsPath: join(root, "projects") }),
+        profiles: createFileMemoryExtractorProfileStore({ pragmaHome: root }),
+        loggerProvider: createLoggerProvider({
+          handler: { write: (record) => logs.push(record) },
+          minimumLevel: "debug",
+        }),
+      });
+      const openModule = async () =>
+        kind === "semantic"
+          ? await createSemanticMemoryModule({
+              pragmaHome: root,
+              extractor: curator.semanticExtractor,
+            })
+          : await createEpisodicMemoryModule({
+              pragmaHome: root,
+              extractor: curator.episodicExtractor,
+            });
+      let module = await openModule();
+      try {
+        if ("registerExecutionSubjects" in module)
+          await module.registerExecutionSubjects({
+            executionId: "source",
+            subjectRefs: [{ type: "pragma.user", id: "user" }],
+          });
+        const message = MemoryEvidenceEnvelopeSchema.parse({
+          schemaVersion: "pragma.memory-evidence/v1",
+          messageId: "source-message",
+          topic: "execution.message.appended",
+          schemaRef: "pragma.memory.execution-message/v2",
+          sourceRef: { type: "pragma.execution-event", id: "event", canonicalEventId: "canonical" },
+          subjectRefs: [{ type: "pragma.execution", id: "source" }],
+          correlationId: "source",
+          occurredAt: "2026-10-14T00:00:00.000Z",
+          visibility: { mode: "host-private" },
+          sensitivity: "internal",
+          bindings: [{ consumerRef: { type: "pragma.expert", id: "expert" }, access: "allow" }],
+          attribution: { rootRef: { type: "pragma.expert", id: "expert" }, producerRefs: [] },
+          policySnapshot: {
+            capture: true,
+            recall: true,
+            learning: "local-candidates",
+            appliedRevisions: [],
+          },
+          payload: {
+            message: {
+              role: "user",
+              text: "Please remember that I prefer concise answers in Simplified Chinese for all future tasks.",
+            },
+          },
+        });
+        await module.consume([
+          message,
+          {
+            ...message,
+            messageId: "terminal",
+            topic: "execution.execution.terminal",
+            schemaRef: "pragma.memory.execution-terminal/v2",
+            payload: { outcome: "succeeded" },
+          },
+        ]);
+        await module.setConversationState({
+          conversationRef: { type: "pragma.execution", id: "source" },
+          state: "completed",
+          now: new Date(),
+        });
+        await module.runBackgroundOnce?.();
+        const job = (await module.store.listExtractionJobs())[0]!;
+        expect(job).toMatchObject({ status: "completed", completion: "retained", attempts: 1 });
+        const records = await module.store.list();
+        expect(records).toHaveLength(1);
+        expect(records[0]!.extractor).toMatchObject({
+          runtimeId: "fake",
+          providerId: "runtime-managed",
+          modelId: "runtime-default",
+          extractedAt: finishedAt,
+        });
+        expect(records[0]!.extractor.responseModel).toBeUndefined();
+        const receipt = await createMemoryExtractionSessionStore({ pragmaHome: root }).recover(
+          kind,
+          job.id,
+          job.inputWatermark,
+        );
+        expect(receipt?.output.retain).toBe(true);
+        expect(receipt?.provenance).toEqual(records[0]!.extractor);
+        expect(getTerminalRuntimeOutputDiagnostic).toHaveBeenCalledTimes(4);
+        expect(application.delete).toHaveBeenCalledOnce();
+        expect(
+          logs.some((record) => record.event === "desktop.memory_curator_archive_read_failed"),
+        ).toBe(false);
+        expect(logs).toEqual(
+          expect.arrayContaining([
+            expect.objectContaining({
+              level: "warn",
+              event: "desktop.memory_curator_provenance_read_failed",
+            }),
+          ]),
+        );
+        module.close();
+        module = await openModule();
+        await module.runBackgroundOnce?.();
+        expect(await module.store.list()).toHaveLength(1);
+        expect(startRun).toHaveBeenCalledOnce();
+      } finally {
+        module.close();
+      }
+    },
   );
 
   it.each(["before-start", "during-compilation"])(

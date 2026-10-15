@@ -47,3 +47,22 @@
 本轮没有再次执行真实模型冒烟。此前真实 Runtime 验证记录仍保留。
 
 评论中将 Desktop 编排下沉至共享 Local Host 的建议被明确标为非阻塞后续工作；本次不扩大重构范围。
+
+## 二次评审：诊断不可读不影响已持久化结果
+
+来源：[新增 P1 评论](https://github.com/pqpo/pragma/pull/403#issuecomment-6189207989)。问题属实：
+终态诊断连续读取失败原本会使 Job 进入 `needs_attention`，手动重试可能删除已有回执并重跑模型。
+
+诊断现在是 best-effort：最多读取 4 次，失败记录 `desktop.memory_curator_provenance_read_failed`
+warning，保留原 provenance 和已有 `responseModel`，继续使用 Mission 的 `finishedAt` 更新
+`extractedAt` 并正常交付回执；取消信号仍向外传播。
+
+增加 Semantic / Episodic 两条真实 Module、Mission 与 SQLite 持久化边界回归：诊断始终抛错，
+模型工具已生成 retained receipt，仍应完成 Fact / Episode 落库；重新打开 Store 可恢复回执，
+重启 Module 后仍只有一次 Runtime admission。补充校验诊断重试恰好 4 次、warning 可见和正常归档。
+这两条测试在修复前均复现 `needs_attention`，修复后通过。
+
+Desktop Curator 共 14 项测试通过；相关 lint、TypeScript、Desktop 打包及 main/preload/storage-worker
+验证通过。本轮只重跑受影响边界，没有运行仓库全量测试或真实模型。
+测试仅替换 Local Host 的重试等待函数，仍执行真实 Mission / Memory 持久化和诊断重试次数，
+避免为这些回归增加固定的 15 秒等待。

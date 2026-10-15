@@ -497,15 +497,25 @@ async function runCuratorMission(input: {
         new Error((await input.session.failure()) ?? "memory_curator_result_unavailable"),
         { retryable: false },
       );
-    const runtimeOutput = await readCuratorResultWithRetry(
-      () => input.options.application.getTerminalRuntimeOutputDiagnostic(mission.id),
-      input.signal,
-    );
+    let responseModel: string | undefined;
+    try {
+      responseModel = (
+        await readCuratorResultWithRetry(
+          () => input.options.application.getTerminalRuntimeOutputDiagnostic(mission.id),
+          input.signal,
+        )
+      )?.responseModel;
+    } catch (error) {
+      input.signal?.throwIfAborted();
+      logger.warn(
+        "desktop.memory_curator_provenance_read_failed",
+        "Extraction completed; supplementary Runtime provenance could not be read.",
+        { error, missionId: mission.id },
+      );
+    }
     await input.session.setProvenance({
       ...receipt.provenance,
-      ...(runtimeOutput?.responseModel === undefined
-        ? {}
-        : { responseModel: runtimeOutput.responseModel }),
+      ...(responseModel === undefined ? {} : { responseModel }),
       extractedAt:
         finished.execution.finishedAt ?? (input.options.now?.() ?? new Date()).toISOString(),
     });
