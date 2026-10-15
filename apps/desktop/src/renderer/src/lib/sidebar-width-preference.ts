@@ -38,6 +38,24 @@ export const SIDEBAR_WIDTH_PREFERENCES = {
     minWidth: 200,
     maxWidth: 420,
   },
+  memoryNavigation: {
+    storageKey: "pragma.desktop.sidebar.width.memory-navigation",
+    defaultWidth: 200,
+    minWidth: 200,
+    maxWidth: 420,
+  },
+  memory: {
+    storageKey: "pragma.desktop.sidebar.width.memory",
+    defaultWidth: 320,
+    minWidth: 240,
+    maxWidth: 520,
+  },
+  memoryTasks: {
+    storageKey: "pragma.desktop.sidebar.width.memory-tasks",
+    defaultWidth: 280,
+    minWidth: 200,
+    maxWidth: 420,
+  },
   memoryFiles: {
     storageKey: "pragma.desktop.sidebar.width.memory-files",
     defaultWidth: 240,

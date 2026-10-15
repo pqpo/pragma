@@ -39,3 +39,5 @@ export * from "./retrieval/vector-index.ts";
 export * from "./retrieval/indexer.ts";
 
 export * from "./pipeline/extraction-session.ts";
+
+export * from "./pipeline/completed-job-retention.ts";

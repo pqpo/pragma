@@ -19,6 +19,34 @@ const FIRST_PAGES: ListDesktopMemoryExtractionJobs = {
 };
 
 describe("listDesktopMemoryExtractionJobs", () => {
+  it("resolves built-in expert names for knowledge tasks in both the board and detail", async () => {
+    const job = knowledgeJob(1, "2026-08-05T00:00:01.000Z");
+    const emptyPage = async () => ({ jobs: [], total: 0 });
+    const plane = {
+      episodicStore: { listExtractionJobsPage: emptyPage },
+      semanticStore: { listExtractionJobsPage: emptyPage },
+      knowledgeLearningStore: {
+        listJobsPage: async (input: { statuses: readonly string[] }) =>
+          input.statuses.includes(job.status) ? { jobs: [job], total: 1 } : emptyPage(),
+        listJobs: async () => [job],
+        listFailureAttempts: async () => [],
+      },
+    } as unknown as Parameters<typeof listDesktopMemoryExtractionJobs>[0];
+    const options = {
+      ...emptyTitleOptions(),
+      project: { get: async () => ({ resources: [] }) },
+      systemExperts: { list: () => [{ id: job.rootRef.id, name: "Pragma" }] },
+      curator: { listRuns: async () => [] },
+    } as unknown as Parameters<typeof getDesktopMemoryExtractionTaskDetail>[1];
+    const board = await listDesktopMemoryExtractionJobs(plane, options, FIRST_PAGES);
+    expect(board.lanes.completed.tasks[0]?.title).toBe("Pragma");
+    const detail = await getDesktopMemoryExtractionTaskDetail(plane, options, {
+      module: "knowledge",
+      id: job.id,
+    });
+    expect(detail.task.title).toBe("Pragma");
+  });
+
   it("queries and returns only the current cursor page for every lane", async () => {
     const jobs = Array.from({ length: 12 }, (_, index) =>
       episodicJob(index, new Date(Date.UTC(2026, 7, 5, 0, 0, 11 - index)).toISOString()),
@@ -319,7 +347,7 @@ describe("listDesktopMemoryExtractionJobs", () => {
     });
   });
 
-  it("lists every active task without inheriting the board page size", async () => {
+  it("lists waiting, running and attention tasks without the board page limit", async () => {
     const active = Array.from({ length: 12 }, (_, index) => ({
       ...episodicJob(index, new Date(Date.UTC(2026, 7, 5, 0, 0, index)).toISOString()),
       status: "running" as const,
@@ -327,15 +355,27 @@ describe("listDesktopMemoryExtractionJobs", () => {
     const tasks = await listDesktopMemoryExtractionActiveTasks(
       {
         episodicStore: { listExtractionJobs: vi.fn(async () => active) },
-        semanticStore: { listExtractionJobs: vi.fn(async () => []) },
+        semanticStore: {
+          listExtractionJobs: vi.fn(async () =>
+            (["waiting_idle", "pending", "needs_attention", "completed"] as const).map(
+              (status, index) => ({
+                ...semanticJob(index, "2026-08-05T00:00:00.000Z"),
+                status,
+              }),
+            ),
+          ),
+        },
         knowledgeLearningStore: { listJobs: vi.fn(async () => []) },
         skillLearningStore: { listJobs: vi.fn(async () => []) },
       } as unknown as Parameters<typeof listDesktopMemoryExtractionActiveTasks>[0],
       emptyTitleOptions(),
     );
 
-    expect(tasks).toHaveLength(12);
-    expect(tasks.every((task) => task.lane === "running")).toBe(true);
+    expect(tasks).toHaveLength(15);
+    expect(tasks.filter((task) => task.lane === "running")).toHaveLength(12);
+    expect(tasks.filter((task) => task.lane === "attention")).toHaveLength(1);
+    expect(tasks.filter((task) => task.lane === "waiting")).toHaveLength(2);
+    expect(tasks.some((task) => task.lane === "completed")).toBe(false);
   });
 });
 

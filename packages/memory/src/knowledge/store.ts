@@ -1,4 +1,8 @@
 import {
+  pruneCompletedMemoryJobs,
+  type CompletedMemoryJobCursor,
+} from "../pipeline/completed-job-retention.ts";
+import {
   blocksAutomaticExtractionRetry,
   MAX_EXTRACTION_ATTEMPTS,
   EXTRACTION_RETRY_DELAY_MS,
@@ -54,6 +58,7 @@ export interface KnowledgeLearningStore {
     readonly sourceDigest: string;
     readonly now: Date;
   }): Promise<KnowledgeExtractionJob | undefined>;
+  discardJob(input: { readonly id: string; readonly expectedRevision: number }): Promise<boolean>;
   claimDueJob(now: Date): Promise<KnowledgeExtractionJob | undefined>;
   isClaimCurrent(job: KnowledgeExtractionJob): Promise<boolean>;
   completeRejected(job: KnowledgeExtractionJob, now: Date): Promise<void>;
@@ -87,7 +92,7 @@ export interface KnowledgeLearningStore {
   listJobsPage(
     input: MemoryJobPageInput<KnowledgeExtractionJob["status"]>,
   ): Promise<MemoryJobPage<KnowledgeExtractionJob>>;
-  maintain(now: Date): Promise<{ readonly deletedJobs: number }>;
+  pruneCompletedJobs(before: CompletedMemoryJobCursor): Promise<number>;
   inspect(): Promise<KnowledgeLearningStoreDiagnostic>;
   close(): void;
 }
@@ -330,6 +335,27 @@ export async function createKnowledgeLearningStore(
       writeJob(interrupted);
       return interrupted;
     },
+    async discardJob(input) {
+      database.exec("BEGIN IMMEDIATE;");
+      try {
+        const job = readJob(database, input.id);
+        if (
+          job === undefined ||
+          job.revision !== input.expectedRevision ||
+          job.status === "completed"
+        ) {
+          database.exec("COMMIT;");
+          return false;
+        }
+        deleteExtractionFailureAttempts(database, job.id);
+        database.prepare("DELETE FROM jobs WHERE id=?").run(job.id);
+        database.exec("COMMIT;");
+        return true;
+      } catch (error) {
+        database.exec("ROLLBACK;");
+        throw error;
+      }
+    },
     async deleteJob(input) {
       const job = readJob(database, input.id);
       assertManageableJob(job, input.expectedRevision, ["needs_attention"]);
@@ -371,28 +397,8 @@ export async function createKnowledgeLearningStore(
     async listJobsPage(input) {
       return queryMemoryJobPage(database, input, parseJob);
     },
-    async maintain(now) {
-      const cutoff = now.getTime() - DEFAULT_MEMORY_STORAGE_POLICY.jobRecordRetentionMs;
-      const completed = database
-        .prepare("SELECT id, job_json FROM jobs WHERE status='completed'")
-        .all() as { id: string; job_json: string }[];
-      const expired = completed.filter(
-        (row) => Date.parse(parseJob(row.job_json).updatedAt) < cutoff,
-      );
-      if (expired.length === 0) return { deletedJobs: 0 };
-      const remove = database.prepare("DELETE FROM jobs WHERE id=?");
-      database.exec("BEGIN IMMEDIATE;");
-      try {
-        for (const row of expired) {
-          deleteExtractionFailureAttempts(database, row.id);
-          remove.run(row.id);
-        }
-        database.exec("COMMIT;");
-      } catch (error) {
-        database.exec("ROLLBACK;");
-        throw error;
-      }
-      return { deletedJobs: expired.length };
+    async pruneCompletedJobs(before) {
+      return pruneCompletedMemoryJobs(database, "knowledge", before);
     },
     async inspect() {
       const rows = database

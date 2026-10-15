@@ -1,4 +1,8 @@
 import {
+  pruneCompletedMemoryJobs,
+  type CompletedMemoryJobCursor,
+} from "../pipeline/completed-job-retention.ts";
+import {
   blocksAutomaticExtractionRetry,
   MAX_EXTRACTION_ATTEMPTS,
   EXTRACTION_RETRY_DELAY_MS,
@@ -76,7 +80,7 @@ export interface SkillLearningStore {
   listJobsPage(
     input: MemoryJobPageInput<SkillLearningJob["status"]>,
   ): Promise<MemoryJobPage<SkillLearningJob>>;
-  maintain(now: Date): Promise<{ readonly deletedJobs: number }>;
+  pruneCompletedJobs(before: CompletedMemoryJobCursor): Promise<number>;
   inspect(): Promise<{
     readonly jobs: number;
     readonly pending: number;
@@ -356,25 +360,8 @@ export async function createSkillLearningStore(
     async listJobsPage(input) {
       return queryMemoryJobPage(database, input, parse);
     },
-    async maintain(now) {
-      const cutoff = now.getTime() - DEFAULT_MEMORY_STORAGE_POLICY.jobRecordRetentionMs;
-      const rows = database
-        .prepare("SELECT id, job_json FROM jobs WHERE status='completed'")
-        .all() as { id: string; job_json: string }[];
-      const expired = rows.filter((row) => Date.parse(parse(row.job_json).updatedAt) < cutoff);
-      const remove = database.prepare("DELETE FROM jobs WHERE id=?");
-      database.exec("BEGIN IMMEDIATE;");
-      try {
-        for (const row of expired) {
-          deleteExtractionFailureAttempts(database, row.id);
-          remove.run(row.id);
-        }
-        database.exec("COMMIT;");
-      } catch (error) {
-        database.exec("ROLLBACK;");
-        throw error;
-      }
-      return { deletedJobs: expired.length };
+    async pruneCompletedJobs(before) {
+      return pruneCompletedMemoryJobs(database, "skill", before);
     },
     async inspect() {
       const rows = database

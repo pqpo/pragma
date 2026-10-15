@@ -312,9 +312,9 @@
   font-size: 9px;
 }
 
-.context-browser-markdown {
+.context-browser-markdown.markdown-preview {
   min-height: 0;
-  padding: 22px 26px 36px;
+  padding: 24px;
   overflow-y: auto;
   overscroll-behavior: contain;
 }
@@ -477,10 +477,13 @@
   color: var(--text);
 }
 
-.markdown-code-block pre {
+.markdown-code-block pre,
+.markdown-preview .markdown-code-block pre {
   overflow-x: auto;
   margin: 0;
-  padding: 13px 14px 15px;
+  padding: 16px;
+  border: 0;
+  border-radius: 0;
   background: transparent;
   color: #26312a;
   font-family: "SFMono-Regular", Consolas, monospace;

@@ -6,9 +6,10 @@ import {
   MemoryActionWithTooltip,
   MemoryDegradedAlert,
   MemoryExtractionJobs,
+  MemoryExtractionTaskDetails,
   MemoryHealth,
+  MemoryItemContent,
   MemoryPage,
-  canRunMemoryAction,
   formatMemorySubjectRefs,
   memoryExtractionPollDelay,
 } from "./MemoryPage.tsx";
@@ -18,7 +19,7 @@ afterEach(async () => {
 });
 
 describe("MemoryPage", () => {
-  it("shows human-readable subject names while preserving canonical memory references", () => {
+  it("shows subject names and a readable fallback without exposing resource references", () => {
     expect(
       formatMemorySubjectRefs(
         [
@@ -27,8 +28,56 @@ describe("MemoryPage", () => {
         ],
         { "pragma.expert-team:r5pjstt2yftkg8dx": "AI研发团队" },
       ),
-    ).toBe("AI研发团队(pragma.expert-team:r5pjstt2yftkg8dx), pragma.expert:missing");
+    ).toBe("AI研发团队, Unavailable resource");
     expect(formatMemorySubjectRefs([])).toBe("—");
+  });
+
+  it("renders a fact once as readable body text without a duplicate heading", () => {
+    const statement = "Screenshot callbacks notify the registered listeners.";
+    const html = renderToStaticMarkup(
+      <MemoryItemContent
+        item={{ module: "semantic", title: statement, summary: statement, status: "active" }}
+      />,
+    );
+    expect(html.split(statement)).toHaveLength(2);
+    expect(html).not.toContain("<h2>");
+    expect(html).toContain("Active");
+  });
+
+  it("shows fact confidence and human verification separately", () => {
+    const fact = {
+      module: "semantic" as const,
+      title: "A fact",
+      summary: "A fact",
+      status: "active" as const,
+      confidence: 0.85,
+    };
+    const html = renderToStaticMarkup(<MemoryItemContent item={fact} />);
+    expect(html).toContain("Confidence 85%");
+    expect(html).not.toContain("Manually verified");
+    const verified = renderToStaticMarkup(
+      <MemoryItemContent item={{ ...fact, confidence: 1, verifiedAt: "2026-10-15T00:00:00Z" }} />,
+    );
+    expect(verified).toContain("Confidence 100%");
+    expect(verified).toContain("Manually verified");
+  });
+
+  it("keeps a distinct episode title but omits a title repeated by the summary", () => {
+    const item = {
+      module: "episodic" as const,
+      title: "Investigate screenshots",
+      summary: "The callback is separate from image saving.",
+      status: "invalidated" as const,
+    };
+    const html = renderToStaticMarkup(<MemoryItemContent item={item} />);
+    expect(html).toContain("<h2>Investigate screenshots</h2>");
+    expect(html).toContain(item.summary);
+    expect(html).toContain("Invalidated");
+    const repeated = renderToStaticMarkup(
+      <MemoryItemContent item={{ ...item, title: ` ${item.summary} ` }} />,
+    );
+    expect(repeated).not.toContain("<h2>");
+    expect(repeated.split(item.summary)).toHaveLength(2);
   });
 
   it("polls active extraction work quickly and terminal boards at a lower idle cadence", () => {
@@ -54,27 +103,31 @@ describe("MemoryPage", () => {
     ).toBe(10_000);
   });
 
-  it("requires a reason for Memory governance actions", () => {
-    expect(canRunMemoryAction("")).toBe(false);
-    expect(canRunMemoryAction("confirmed by the user")).toBe(true);
-  });
-
-  it("renders the first-level layered Memory management entry", () => {
+  it("renders vertical memory navigation with independent navigation and list resize handles", () => {
     const html = renderToStaticMarkup(<MemoryPage />);
 
-    expect(html).toContain("<h1>Memory</h1>");
-    expect(html).toContain("Episodes");
-    expect(html).toContain("Facts");
+    expect(html).toContain("<h1>All memories</h1>");
+    expect(html).toContain('role="combobox" aria-label="Memory type"');
+    expect(html).toContain("All memories");
+    expect(html).not.toContain(">Episodes</button>");
+    expect(html).not.toContain(">Facts</button>");
     expect(html).toContain("Health");
     expect(html).toContain("Search memory");
+    expect(html.match(/role="separator"/g)).toHaveLength(2);
+    expect(html).toContain('class="memory-navigation"');
+    expect(html).toContain('class="memory-content"');
+    expect(html).not.toContain("memory-tabs");
+    expect(html).toContain('aria-label="Resize memory list"');
   });
 
   it("provides Simplified Chinese copy", async () => {
     await i18n.changeLanguage("zh-Hans");
     const html = renderToStaticMarkup(<MemoryPage />);
 
-    expect(html).toContain("<h1>记忆</h1>");
-    expect(html).toContain("情景记忆");
+    expect(html).toContain("<h1>全部记忆</h1>");
+    expect(html).toContain("全部记忆");
+    expect(html).not.toContain(">情景记忆</button>");
+    expect(html).not.toContain(">事实</button>");
     expect(html).toContain("健康状态");
   });
 
@@ -117,6 +170,16 @@ describe("MemoryPage", () => {
               updatedAt: "2026-08-05T00:00:00.000Z",
             },
           ],
+          hostDelivery: [
+            { moduleId: "pragma.mission-deletion", state: "healthy", pending: 0 },
+            { moduleId: "pragma.mission-delivery", state: "healthy", pending: 615 },
+            {
+              moduleId: "pragma.local-host-usage",
+              state: "degraded",
+              pending: 2,
+              errorCode: "USAGE_DELIVERY_RETRY_PENDING",
+            },
+          ],
           maintenance: {
             deletedEvents: 0,
             reclaimedBytes: 0,
@@ -136,6 +199,19 @@ describe("MemoryPage", () => {
     expect(html).toContain("Episodic memory");
     expect(html).toContain("pragma.memory.episodic@1.0.0");
     expect(html).toContain('aria-label="Storage usage"');
+    const services = html.slice(html.indexOf('<section class="memory-health-services"'));
+    const modules = html.slice(0, html.indexOf('<section class="memory-health-services"'));
+    expect(services).toContain("Background services");
+    expect(services).toContain("Task cleanup");
+    expect(services).toContain("Task result syncing");
+    expect(services).toContain("Usage accounting");
+    expect(services).toContain("Pending items");
+    expect(services).toContain("<td>615</td>");
+    expect(services).toContain("Needs attention");
+    expect(services).toContain("USAGE_DELIVERY_RETRY_PENDING");
+    expect(services).not.toContain("<td>—</td>");
+    expect(services).not.toContain("pragma.mission-delivery");
+    expect(modules).not.toContain("Task result syncing");
   });
 
   it("describes governance actions with an accessible tooltip", () => {
@@ -153,7 +229,45 @@ describe("MemoryPage", () => {
     expect(html).toContain("Only root asset principals");
   });
 
-  it("renders the four-lane extraction board with compact, human-readable tasks", () => {
+  it("shows only running and attention tasks in task details", () => {
+    const html = renderToStaticMarkup(
+      <MemoryExtractionTaskDetails
+        tasks={(["waiting", "attention", "running", "completed"] as const).map((lane) => ({
+          module: "episodic",
+          id: `${lane}-job`,
+          revision: 1,
+          lane,
+          title: `${lane} task title`,
+          updatedAt: "2026-10-15T00:00:00.000Z",
+        }))}
+      />,
+    );
+    expect(html).toContain("--sidebar-width:280px");
+    expect(html).toContain('role="separator" aria-label="Resize task list"');
+    expect(html).toContain('aria-valuemin="200" aria-valuemax="420" aria-valuenow="280"');
+    expect(html).toContain("attention task title");
+    expect(html).toContain("running task title");
+    expect(html).not.toContain("waiting task title");
+    expect(html).not.toContain("completed task title");
+
+    const empty = renderToStaticMarkup(
+      <MemoryExtractionTaskDetails
+        tasks={[
+          {
+            module: "episodic",
+            id: "waiting-job",
+            revision: 1,
+            lane: "waiting",
+            updatedAt: "2026-10-15T00:00:00.000Z",
+          },
+        ]}
+      />,
+    );
+    expect(empty).toContain("There are no active refinements or tasks needing attention.");
+    expect(empty).not.toContain("memory-task-detail-item");
+  });
+
+  it("keeps waiting tasks and the expedite action available alongside other lanes", () => {
     const html = renderToStaticMarkup(
       <MemoryExtractionJobs
         board={{
@@ -204,8 +318,10 @@ describe("MemoryPage", () => {
     );
 
     expect(html).toContain("Waiting for idle");
+    expect(html).toContain("memory-extraction-lane is-waiting");
     expect(html).toContain("Review and manage queued, active, and completed memory refinements.");
-    expect(html).not.toContain(">Extraction jobs</");
+    expect(html).toContain("<h1>Extraction jobs</h1>");
+    expect(html.match(/<h1>/g)).toHaveLength(1);
     expect(html).toContain("Needs attention");
     expect(html).toContain("In progress");
     expect(html).toContain("Completed");
@@ -269,8 +385,9 @@ describe("MemoryPage", () => {
 
   it("shows extraction failures without requiring the Health tab", async () => {
     await i18n.changeLanguage("zh-Hans");
-    const html = renderToStaticMarkup(
+    const alert = (
       <MemoryDegradedAlert
+        onViewTasks={() => undefined}
         health={{
           state: "degraded",
           feed: {
@@ -320,9 +437,11 @@ describe("MemoryPage", () => {
             deadLetterBytes: 0,
           },
         }}
-      />,
+      />
     );
 
+    const html = renderToStaticMarkup(alert);
+    expect(html).toContain("查看提炼任务");
     expect(html).toContain('role="alert"');
     expect(html).toContain("记忆提取需要处理");
     expect(html).toContain('aria-label="关闭提示"');

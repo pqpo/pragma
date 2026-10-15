@@ -1,3 +1,7 @@
+import {
+  pruneCompletedMemoryJobs,
+  type CompletedMemoryJobCursor,
+} from "../pipeline/completed-job-retention.ts";
 import { hasMemoryExtractionReceipt } from "../pipeline/extraction-session/store.ts";
 import { createMemoryExtractionSessionStore } from "../pipeline/extraction-session.ts";
 import {
@@ -220,6 +224,7 @@ export interface EpisodicMemoryStore {
     readonly expectedRevision: number;
     readonly now: Date;
   }): Promise<void>;
+  pruneCompletedJobs(before: CompletedMemoryJobCursor): Promise<number>;
   listExtractionJobs(): Promise<readonly EpisodicExtractionJob[]>;
   listFailureAttempts(jobId: string): Promise<readonly MemoryExtractionFailureAttempt[]>;
   listExtractionJobsPage(
@@ -1074,6 +1079,14 @@ export async function createEpisodicMemoryStore(
       deleteExtractionJobState(state, job, input.now);
     },
 
+    async pruneCompletedJobs(before) {
+      return pruneCompletedMemoryJobs(state, "episodic", before, (json) => {
+        const job = EpisodicExtractionJobSchema.parse(JSON.parse(json));
+        const removeStats = state.prepare("DELETE FROM capture_stats WHERE execution_id = ?");
+        for (const executionId of job.sourceExecutionIds) removeStats.run(executionId);
+      });
+    },
+
     async listExtractionJobs() {
       return readJobRows(state);
     },
@@ -1635,15 +1648,11 @@ function maintainJobs(
         expired += 1;
         continue;
       }
-      const terminalAt = job.status === "completed" ? job.completedAt : job.expiredAt;
-      const retention =
-        job.status === "completed"
-          ? DEFAULT_MEMORY_STORAGE_POLICY.jobRecordRetentionMs
-          : DEFAULT_MEMORY_STORAGE_POLICY.expiredDiagnosticRetentionMs;
       if (
-        terminalAt !== undefined &&
-        ["completed", "expired"].includes(job.status) &&
-        timestamp - Date.parse(terminalAt) >= retention
+        job.status === "expired" &&
+        job.expiredAt !== undefined &&
+        timestamp - Date.parse(job.expiredAt) >=
+          DEFAULT_MEMORY_STORAGE_POLICY.expiredDiagnosticRetentionMs
       ) {
         deleteExtractionFailureAttempts(database, job.id);
         database.prepare("DELETE FROM jobs WHERE id = ?").run(job.id);

@@ -40,6 +40,140 @@ afterEach(async () => {
 });
 
 describe("Knowledge learning jobs", () => {
+  it.each(["pending", "running", "needs_attention"] as const)(
+    "removes source-less %s jobs before pagination, including after restart",
+    async (status) => {
+      const pragmaHome = await temporaryRoot();
+      const store = await createKnowledgeLearningStore({ pragmaHome });
+      const job = await store.schedule({
+        rootRef: ref("pragma.expert", "expert-a"),
+        sourceDigest,
+        now,
+      });
+      if (status !== "pending") {
+        const claim = (await store.claimDueJob(due))!;
+        if (status === "needs_attention") {
+          await store.fail({
+            job: claim,
+            diagnostic: failureDiagnostic("missing_configuration"),
+            retry: "configuration",
+            now: due,
+          });
+        }
+      }
+      store.close();
+      const plan = vi.fn();
+      let available: readonly KnowledgeSourceSnapshot[] = [];
+      const module = await createKnowledgeMemoryModule({
+        pragmaHome,
+        sourceReader: { listEligibleSources: async () => available },
+        planner: { plan },
+        learningSink: { submit: vi.fn() },
+        now: () => now,
+      });
+      const page = await module.store.listJobsPage({
+        statuses: [status],
+        limit: 10,
+        sortKeyPrefix: "knowledge",
+      });
+      expect(page).toEqual({ jobs: [], total: 0 });
+      await module.runBackgroundOnce?.();
+      expect(plan).not.toHaveBeenCalled();
+      expect(await module.store.listFailureAttempts(job!.id)).toEqual([]);
+      // A later valid source can schedule new work after the obsolete row is removed.
+      available = sources();
+      await module.scheduleRoot(ref("pragma.expert", "expert-a"));
+      expect(await module.store.listJobs()).toHaveLength(1);
+      module.close();
+    },
+  );
+
+  it("discards a running plan when its sources disappear before submission", async () => {
+    let available = sources();
+    const submit = vi.fn();
+    const module = await createKnowledgeMemoryModule({
+      pragmaHome: await temporaryRoot(),
+      sourceReader: { listEligibleSources: async () => available },
+      planner: {
+        plan: async () => {
+          available = [];
+          return { action: "apply", name: "Obsolete knowledge", description: "Removed source" };
+        },
+      },
+      learningSink: { submit },
+      now: () => due,
+    });
+    await module.store.schedule({
+      rootRef: ref("pragma.expert", "expert-a"),
+      sourceDigest: digestSources(available),
+      now,
+    });
+    await module.runBackgroundOnce?.();
+    expect(submit).not.toHaveBeenCalled();
+    expect(await module.store.listJobs()).toEqual([]);
+    module.close();
+  });
+
+  it("does not discard a job changed by another claim or a completed job", async () => {
+    const store = await createKnowledgeLearningStore({ pragmaHome: await temporaryRoot() });
+    const job = (await store.schedule({
+      rootRef: ref("pragma.expert", "expert-a"),
+      sourceDigest,
+      now,
+    }))!;
+    const claim = (await store.claimDueJob(due))!;
+    expect(await store.discardJob({ id: job.id, expectedRevision: job.revision })).toBe(false);
+    expect(await store.isClaimCurrent(claim)).toBe(true);
+    await store.completeRejected(claim, due);
+    const completed = (await store.listJobs())[0]!;
+    expect(await store.discardJob({ id: completed.id, expectedRevision: completed.revision })).toBe(
+      false,
+    );
+    store.close();
+  });
+
+  it("removes an obsolete source snapshot even when other eligible sources remain", async () => {
+    let available = sources();
+    const module = await createKnowledgeMemoryModule({
+      pragmaHome: await temporaryRoot(),
+      sourceReader: { listEligibleSources: async () => available },
+      learningSink: { submit: vi.fn() },
+      now: () => now,
+    });
+    await module.scheduleRoot(ref("pragma.expert", "expert-a"));
+    available = available.slice(0, 1);
+    expect(
+      await module.store.listJobsPage({
+        statuses: ["pending"],
+        limit: 10,
+        sortKeyPrefix: "knowledge",
+      }),
+    ).toEqual({ jobs: [], total: 0 });
+    await module.scheduleRoot(ref("pragma.expert", "expert-a"));
+    expect(await module.store.listJobs()).toHaveLength(1);
+    module.close();
+  });
+
+  it("preserves valid queued work and completed history when sources disappear", async () => {
+    const module = await createKnowledgeMemoryModule({
+      pragmaHome: await temporaryRoot(),
+      sourceReader: {
+        listEligibleSources: async ({ rootRef }) => (rootRef.id === "expert-a" ? sources() : []),
+      },
+      learningSink: { submit: vi.fn() },
+      now: () => now,
+    });
+    await module.store.schedule({ rootRef: ref("pragma.expert", "history"), sourceDigest, now });
+    const claim = (await module.store.claimDueJob(due))!;
+    await module.store.completeRejected(claim, due);
+    await module.scheduleRoot(ref("pragma.expert", "expert-a"));
+    expect((await module.store.listJobs()).map((job) => job.status).sort()).toEqual([
+      "completed",
+      "pending",
+    ]);
+    module.close();
+  });
+
   it("persists the three-retry budget and five-second deadline across restart", async () => {
     const root = await temporaryRoot();
     let clock = new Date(now.getTime() + 6 * 60 * 60_000);
@@ -391,18 +525,18 @@ describe("Knowledge learning jobs", () => {
     store.close();
   });
 
-  it("purges only completed job diagnostics after the fixed retention window", async () => {
+  it("retains old completed jobs until they fall outside the count limit", async () => {
     const store = await temporaryStore();
     const job = await claimedJob(store);
     await store.completeRejected(job, now);
 
-    expect(await store.maintain(new Date("2026-09-03T08:00:00.000Z"))).toEqual({
-      deletedJobs: 0,
-    });
-    expect(await store.maintain(new Date("2026-09-05T08:00:00.001Z"))).toEqual({
-      deletedJobs: 1,
-    });
-    expect(await store.listJobs()).toEqual([]);
+    expect(
+      await store.pruneCompletedJobs({
+        updatedAt: (await store.listJobs())[0]!.updatedAt,
+        tieBreaker: `knowledge:${job.id}`,
+      }),
+    ).toBe(0);
+    expect(await store.listJobs()).toHaveLength(1);
     store.close();
   });
 

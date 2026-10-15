@@ -1,8 +1,26 @@
-import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
 import {
+  useCallback,
+  useEffect,
+  useId,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+  type CSSProperties,
+  type ReactNode,
+} from "react";
+import {
+  BellSlash,
+  LockSimple,
+  PencilSimple,
+  Prohibit,
   ArrowClockwise,
   ArrowCounterClockwise,
   CheckCircle,
+  CaretLeft,
+  CaretRight,
+  Copy,
+  Gear,
   Cube,
   Database,
   FileText,
@@ -14,6 +32,7 @@ import {
   WarningCircle,
   X,
 } from "@phosphor-icons/react";
+import { createPortal } from "react-dom";
 import { useTranslation } from "react-i18next";
 
 import type {
@@ -29,10 +48,18 @@ import type {
 import { classifyDesktopMemoryProblem } from "../../../../shared/memory-problem.ts";
 import { ConfirmationDialog, Dialog } from "../../components/Dialog.tsx";
 import { SelectMenu } from "../../components/SelectMenu.tsx";
+import { StudioActionButton } from "../../components/StudioActionButton.tsx";
+import { SidebarResizeHandle } from "../../components/SidebarResizeHandle.tsx";
+import { i18n } from "../../i18n/index.ts";
+import {
+  SIDEBAR_WIDTH_PREFERENCES,
+  usePersistentSidebarWidth,
+} from "../../lib/sidebar-width-preference.ts";
 import { MissionChatEntryView } from "../missions/MissionsPage.tsx";
 import { applyMissionChatPatches } from "../missions/mission-conversation-model.ts";
 
-type MemoryView = "all" | "episodic" | "semantic" | "extractions" | "health" | "taskDetails";
+type MemoryView = "all" | "extractions" | "health" | "taskDetails";
+type MemoryTypeFilter = "all" | DesktopMemoryItem["module"];
 const MEMORY_EXTRACTION_LANES = ["waiting", "attention", "running", "completed"] as const;
 type MemoryExtractionLane = (typeof MEMORY_EXTRACTION_LANES)[number];
 type MemoryExtractionPageCursor = NonNullable<
@@ -48,6 +75,33 @@ const INITIAL_MEMORY_EXTRACTION_PAGES: ListDesktopMemoryExtractionJobs["pages"] 
 export function MemoryPage(props: { readonly onConfigureExtraction?: () => void } = {}) {
   const { t } = useTranslation("memory");
   const [view, setView] = useState<MemoryView>("all");
+  const [memoryType, setMemoryType] = useState<MemoryTypeFilter>("all");
+  const [navigationWidth, setNavigationWidth] = usePersistentSidebarWidth(
+    SIDEBAR_WIDTH_PREFERENCES.memoryNavigation,
+  );
+  const browserRef = useRef<HTMLDivElement>(null);
+  const [browserWidth, setBrowserWidth] = useState(1040);
+  const [preferredListWidth, setListWidth] = usePersistentSidebarWidth(
+    SIDEBAR_WIDTH_PREFERENCES.memory,
+  );
+  const listWidthPreference = {
+    ...SIDEBAR_WIDTH_PREFERENCES.memory,
+    maxWidth: Math.max(
+      SIDEBAR_WIDTH_PREFERENCES.memory.minWidth,
+      Math.min(SIDEBAR_WIDTH_PREFERENCES.memory.maxWidth, browserWidth - 360),
+    ),
+  };
+  const listWidth = Math.min(preferredListWidth, listWidthPreference.maxWidth);
+
+  useEffect(() => {
+    const browser = browserRef.current;
+    if (browser === null) return;
+    const observer = new ResizeObserver(() => setBrowserWidth(browser.clientWidth));
+    setBrowserWidth(browser.clientWidth);
+    observer.observe(browser);
+    return () => observer.disconnect();
+  }, [view]);
+
   const [query, setQuery] = useState("");
   const [items, setItems] = useState<readonly DesktopMemoryItem[]>([]);
   const [selectedId, setSelectedId] = useState<string>();
@@ -57,7 +111,17 @@ export function MemoryPage(props: { readonly onConfigureExtraction?: () => void 
     readonly DesktopMemoryExtractionTask[]
   >([]);
   const [evidence, setEvidence] = useState<DesktopMemoryEvidence>();
-  const [reason, setReason] = useState("");
+  const reason = "User confirmed a memory governance action in Desktop";
+  const [pendingAction, setPendingAction] = useState<{
+    readonly action: "verify" | "invalidate" | "disableRecall" | "restrictVisibility";
+    readonly description: string;
+    readonly operation: () => Promise<unknown>;
+  }>();
+  const requestAction = (
+    action: NonNullable<typeof pendingAction>["action"],
+    description: string,
+    operation: () => Promise<unknown>,
+  ) => setPendingAction({ action, description, operation });
   const [dialog, setDialog] = useState<"revise" | "forget">();
   const [revisionDraft, setRevisionDraft] = useState("");
   const [actionBusy, setActionBusy] = useState(false);
@@ -77,10 +141,10 @@ export function MemoryPage(props: { readonly onConfigureExtraction?: () => void 
       if (!silent && !hasLoaded.current) setLoading(true);
       try {
         const [records, status, extractionJobs, activeTasks] = await Promise.all([
-          view === "extractions" || view === "taskDetails"
+          view !== "all"
             ? Promise.resolve([])
             : window.pragmaDesktop.listMemoryItems({
-                module: view === "health" ? "all" : view,
+                module: memoryType,
                 status: "all",
                 query,
                 limit: 200,
@@ -93,6 +157,7 @@ export function MemoryPage(props: { readonly onConfigureExtraction?: () => void 
             ? window.pragmaDesktop.listActiveMemoryExtractionTasks()
             : Promise.resolve([]),
         ]);
+        if (requestVersion !== extractionRequestVersion.current) return undefined;
         setItems(records);
         setHealth(status);
         if (extractionJobs !== undefined && requestVersion === extractionRequestVersion.current) {
@@ -127,19 +192,24 @@ export function MemoryPage(props: { readonly onConfigureExtraction?: () => void 
         setError(undefined);
         return extractionJobs;
       } catch {
-        setError(t("loadError"));
+        if (requestVersion === extractionRequestVersion.current) setError(t("loadError"));
         return undefined;
       } finally {
-        hasLoaded.current = true;
-        setLoading(false);
+        if (requestVersion === extractionRequestVersion.current) {
+          hasLoaded.current = true;
+          setLoading(false);
+        }
       }
     },
-    [extractionPages, query, t, view],
+    [extractionPages, memoryType, query, t, view],
   );
 
   useEffect(() => {
     const timer = setTimeout(() => void reload(), 120);
-    return () => clearTimeout(timer);
+    return () => {
+      clearTimeout(timer);
+      extractionRequestVersion.current += 1;
+    };
   }, [reload]);
 
   useEffect(() => {
@@ -168,11 +238,9 @@ export function MemoryPage(props: { readonly onConfigureExtraction?: () => void 
   );
 
   const run = async (operation: () => Promise<unknown>) => {
-    if (!canRunMemoryAction(reason)) return false;
     setActionBusy(true);
     try {
       await operation();
-      setReason("");
       setEvidence(undefined);
       await reload();
       return true;
@@ -226,295 +294,409 @@ export function MemoryPage(props: { readonly onConfigureExtraction?: () => void 
   };
 
   return (
-    <section className="memory-page">
-      <header className="memory-page-header">
-        <div>
-          <h1>{t("title")}</h1>
-          <p>{t("description")}</p>
-        </div>
-        <label className="memory-search">
-          <MagnifyingGlass size={18} aria-hidden="true" />
-          <span className="sr-only">{t("search")}</span>
-          <input
-            value={query}
-            onChange={(event) => setQuery(event.target.value)}
-            placeholder={t("search")}
-          />
-        </label>
-      </header>
-
-      <nav className="memory-tabs" aria-label={t("title")}>
-        {(["all", "episodic", "semantic", "extractions", "health", "taskDetails"] as const).map(
-          (id) => (
-            <button
-              key={id}
-              type="button"
-              className={view === id ? "is-active" : undefined}
-              aria-current={view === id ? "page" : undefined}
-              onClick={() => setView(id)}
-            >
-              {t(id === "episodic" ? "episodes" : id === "semantic" ? "facts" : id)}
-            </button>
-          ),
-        )}
+    <section
+      className="memory-page"
+      style={{ "--sidebar-width": `${navigationWidth}px` } as CSSProperties}
+    >
+      <nav className="memory-navigation" aria-label={t("title")}>
+        {(["all", "extractions", "taskDetails", "health"] as const).map((id) => (
+          <button
+            key={id}
+            type="button"
+            className={view === id ? "memory-nav-item is-active" : "memory-nav-item"}
+            aria-current={view === id ? "page" : undefined}
+            onClick={() => setView(id)}
+          >
+            {t(id)}
+          </button>
+        ))}
       </nav>
+      <SidebarResizeHandle
+        label={t("navigation.resize", { ns: "common" })}
+        width={navigationWidth}
+        preference={SIDEBAR_WIDTH_PREFERENCES.memoryNavigation}
+        onResize={setNavigationWidth}
+      />
+      <div className="memory-content">
+        {view !== "extractions" ? (
+          <header className="memory-page-header">
+            <div>
+              <h1>{t(view)}</h1>
+              <p>
+                {t(
+                  view === "all"
+                    ? "description"
+                    : view === "health"
+                      ? "healthDescription"
+                      : "taskDetailsDescription",
+                )}
+              </p>
+            </div>
+            {view === "all" ? (
+              <label className="memory-search">
+                <MagnifyingGlass size={18} aria-hidden="true" />
+                <span className="sr-only">{t("search")}</span>
+                <input
+                  value={query}
+                  onChange={(event) => setQuery(event.target.value)}
+                  placeholder={t("search")}
+                />
+              </label>
+            ) : null}
+          </header>
+        ) : null}
 
-      {error !== undefined ? (
-        <div className="memory-error" role="alert">
-          <WarningCircle size={18} aria-hidden="true" /> {error}
-        </div>
-      ) : null}
-      <MemoryDegradedAlert health={health} onViewTasks={() => setView("extractions")} />
+        {error !== undefined ? (
+          <div className="memory-error" role="alert">
+            <WarningCircle size={18} aria-hidden="true" /> {error}
+          </div>
+        ) : null}
+        {view === "all" ? (
+          <MemoryDegradedAlert health={health} onViewTasks={() => setView("extractions")} />
+        ) : null}
 
-      {view === "health" ? (
-        <MemoryHealth health={health} />
-      ) : view === "taskDetails" ? (
-        <MemoryExtractionTaskDetails tasks={activeExtractionTasks} />
-      ) : view === "extractions" ? (
-        <MemoryExtractionJobs
-          board={extractionBoard}
-          loading={loading && extractionBoard === undefined}
-          busyTask={busyExtractionTask}
-          onRefresh={() => void reload(true)}
-          onAction={manageExtraction}
-          onPageChange={changeExtractionPage}
-          onConfigureExtraction={props.onConfigureExtraction}
-        />
-      ) : (
-        <div className="memory-browser">
-          <aside className="memory-list">
-            {loading ? <p>{t("loading")}</p> : null}
-            {!loading && items.length === 0 ? <p>{t("empty")}</p> : null}
-            {items.map((item) => (
-              <button
-                key={key(item)}
-                type="button"
-                className={
-                  key(item) === selectedId ? "memory-list-item is-active" : "memory-list-item"
-                }
-                onClick={() => {
-                  setSelectedId(key(item));
-                  setEvidence(undefined);
-                }}
-              >
-                <span>
-                  {item.module === "episodic"
-                    ? t("episodes")
-                    : item.module === "semantic"
-                      ? t("facts")
-                      : t("knowledge")}
-                </span>
-                <strong>{item.title}</strong>
-                <small>
-                  {t("revision", { revision: item.revision })} · {item.status}
-                </small>
-              </button>
-            ))}
-          </aside>
-          <main className="memory-detail">
-            {selected === undefined ? (
-              <p>{t("select")}</p>
-            ) : (
-              <>
-                <header>
-                  <span className={`memory-status is-${selected.status}`}>{selected.status}</span>
-                  <h2>{selected.title}</h2>
-                  <p>{selected.summary}</p>
-                </header>
-                <section>
-                  <h3>{t("provenance")}</h3>
-                  <dl>
-                    <dt>{t("module")}</dt>
-                    <dd>{selected.module}</dd>
-                    <dt>{t("id")}</dt>
-                    <dd>{selected.id}</dd>
-                    <dt>{t("root")}</dt>
-                    <dd>{formatMemorySubjectRefs(selected.rootRefs, selected.subjectNames)}</dd>
-                    <dt>{t("producers")}</dt>
-                    <dd>{formatMemorySubjectRefs(selected.producerRefs, selected.subjectNames)}</dd>
-                    <dt>{t("visibility")}</dt>
-                    <dd>{selected.visibility.mode}</dd>
-                    <dt>{t("sensitivity")}</dt>
-                    <dd>{selected.sensitivity}</dd>
-                  </dl>
-                </section>
-                <section>
-                  <h3>{t("bindings")}</h3>
-                  <p className="memory-note">{t("permissionNote")}</p>
-                  {selected.bindings.map((binding) => (
-                    <div
-                      className="memory-binding"
-                      key={`${binding.consumerRef.type}:${binding.consumerRef.id}`}
-                    >
-                      <span>
-                        {formatMemorySubjectRefs([binding.consumerRef], selected.subjectNames)}
-                      </span>
-                      <span>
-                        {t("recall")} {binding.recall} · {t("export")} {binding.export} · p
-                        {binding.permissionRevision}
-                      </span>
+        {view === "health" ? (
+          <MemoryHealth health={health} />
+        ) : view === "taskDetails" ? (
+          <MemoryExtractionTaskDetails tasks={activeExtractionTasks} />
+        ) : view === "extractions" ? (
+          <MemoryExtractionJobs
+            board={extractionBoard}
+            loading={loading && extractionBoard === undefined}
+            busyTask={busyExtractionTask}
+            onRefresh={() => void reload(true)}
+            onAction={manageExtraction}
+            onPageChange={changeExtractionPage}
+            onConfigureExtraction={props.onConfigureExtraction}
+          />
+        ) : (
+          <div
+            className="memory-browser"
+            ref={browserRef}
+            style={{ "--sidebar-width": `${listWidth}px` } as CSSProperties}
+          >
+            <aside className="memory-list">
+              <div className="memory-list-filter">
+                <SelectMenu<MemoryTypeFilter>
+                  ariaLabel={t("memoryType")}
+                  value={memoryType}
+                  onChange={(value) => {
+                    setMemoryType(value);
+                    setEvidence(undefined);
+                  }}
+                  options={[
+                    { value: "all", label: t("allMemoryTypes") },
+                    { value: "episodic", label: t("episodes") },
+                    { value: "semantic", label: t("extractionTaskTypes.semantic") },
+                  ]}
+                />
+              </div>
+              {loading ? <p>{t("loading")}</p> : null}
+              {!loading && items.length === 0 ? <p>{t("empty")}</p> : null}
+              {items.map((item) => (
+                <button
+                  key={key(item)}
+                  type="button"
+                  className={
+                    key(item) === selectedId ? "memory-list-item is-active" : "memory-list-item"
+                  }
+                  aria-current={key(item) === selectedId ? "true" : undefined}
+                  onClick={() => {
+                    setSelectedId(key(item));
+                    setEvidence(undefined);
+                  }}
+                >
+                  <span className="memory-list-preview">
+                    <span className="memory-list-meta">
+                      {t(item.module === "episodic" ? "episodes" : "facts")}
+                    </span>{" "}
+                    {item.title}
+                  </span>
+                </button>
+              ))}
+            </aside>
+            <SidebarResizeHandle
+              label={t("resizeList")}
+              width={listWidth}
+              preference={listWidthPreference}
+              onResize={setListWidth}
+            />
+            <main className="memory-detail">
+              {selected === undefined ? (
+                <p>{t("select")}</p>
+              ) : (
+                <>
+                  <MemoryItemContent item={selected} />
+                  <dl className="memory-provenance">
+                    <div>
+                      <dt>{t("provenance")}</dt>
+                      <dd>{formatMemorySubjectRefs(selected.rootRefs, selected.subjectNames)}</dd>
                     </div>
-                  ))}
-                </section>
-                <section>
-                  <h3>{t("evidence")}</h3>
-                  <div className="memory-evidence-list">
-                    {selected.evidenceRefs.map((evidenceId) => (
-                      <button
-                        key={evidenceId}
-                        type="button"
-                        onClick={() =>
-                          void window.pragmaDesktop
-                            .getMemoryEvidence({
+                    <div>
+                      <dt>{t("visibility")}</dt>
+                      <dd>{t(`visibilityLabels.${selected.visibility.mode}`)}</dd>
+                    </div>
+                    <div>
+                      <dt>{t("sensitivity")}</dt>
+                      <dd>{t(`sensitivityLabels.${selected.sensitivity}`)}</dd>
+                    </div>
+                  </dl>
+                  <div className="memory-detail-disclosures">
+                    <details
+                      className="memory-detail-disclosure is-bindings"
+                      key={`bindings:${selectedId}`}
+                    >
+                      <summary>
+                        {t("bindings")} · {selected.bindings.length}
+                      </summary>
+                      <p className="memory-note">{t("permissionNote")}</p>
+                      {selected.bindings.map((binding) => (
+                        <div
+                          className="memory-binding"
+                          key={`${binding.consumerRef.type}:${binding.consumerRef.id}`}
+                        >
+                          <span>
+                            {formatMemorySubjectRefs([binding.consumerRef], selected.subjectNames)}
+                          </span>
+                          <span>
+                            {t("recall")} {binding.recall} · {t("export")} {binding.export} · p
+                            {binding.permissionRevision}
+                          </span>
+                        </div>
+                      ))}
+                    </details>
+                    <details
+                      className="memory-detail-disclosure is-evidence"
+                      key={`evidence:${selectedId}`}
+                    >
+                      <summary>
+                        {t("evidence")} · {selected.evidenceRefs.length}
+                      </summary>
+                      <div className="memory-evidence-list">
+                        {selected.evidenceRefs.map((evidenceId, index) => (
+                          <button
+                            key={evidenceId}
+                            type="button"
+                            onClick={() =>
+                              void window.pragmaDesktop
+                                .getMemoryEvidence({
+                                  module: selected.module,
+                                  id: selected.id,
+                                  evidenceId,
+                                })
+                                .then(setEvidence)
+                                .catch(() => {
+                                  setError(t("loadEvidenceError"));
+                                })
+                            }
+                          >
+                            {t("evidenceNumber", { number: index + 1 })}
+                          </button>
+                        ))}
+                      </div>
+                      {evidence !== undefined ? (
+                        <pre>{JSON.stringify(evidence.payload, null, 2)}</pre>
+                      ) : null}
+                    </details>
+                    <details
+                      className="memory-detail-disclosure is-technical"
+                      key={`technical:${selectedId}`}
+                    >
+                      <summary>{t("technicalDetails")}</summary>
+                      <dl>
+                        <dt>{t("module")}</dt>
+                        <dd>{selected.module}</dd>
+                        <dt>{t("id")}</dt>
+                        <dd>{selected.id}</dd>
+                        <dt>{t("revisionLabel")}</dt>
+                        <dd>{selected.revision}</dd>
+                        {selected.module === "semantic" && selected.verifiedAt !== undefined ? (
+                          <>
+                            <dt>{t("verifiedAt")}</dt>
+                            <dd>{new Date(selected.verifiedAt).toLocaleString(i18n.language)}</dd>
+                          </>
+                        ) : null}
+                        {selected.producerRefs.length > 0 ? (
+                          <>
+                            <dt>{t("producers")}</dt>
+                            <dd>
+                              {formatMemorySubjectRefs(
+                                selected.producerRefs,
+                                selected.subjectNames,
+                              )}
+                            </dd>
+                          </>
+                        ) : null}
+                        <dt>{t("visibility")}</dt>
+                        <dd>{selected.visibility.mode}</dd>
+                        <dt>{t("sensitivity")}</dt>
+                        <dd>{selected.sensitivity}</dd>
+                      </dl>
+                    </details>
+                  </div>
+                  <div className="memory-actions">
+                    {selected.module === "semantic" ? (
+                      <>
+                        <MemoryActionWithTooltip
+                          disabled={actionBusy}
+                          onClick={() =>
+                            requestAction(
+                              "verify",
+                              t("verifyTooltip"),
+                              async () =>
+                                await window.pragmaDesktop.verifySemanticFact({
+                                  id: selected.id,
+                                  expectedRevision: selected.revision,
+                                  reason,
+                                }),
+                            )
+                          }
+                          label={t("verify")}
+                          tooltip={t("verifyTooltip")}
+                          icon={<ShieldCheck size={18} aria-hidden="true" />}
+                        />
+                        <MemoryActionWithTooltip
+                          disabled={actionBusy}
+                          onClick={() => {
+                            setRevisionDraft(selected.statement);
+                            setDialog("revise");
+                          }}
+                          label={t("revise")}
+                          tooltip={t("reviseTooltip")}
+                          icon={<PencilSimple size={18} aria-hidden="true" />}
+                        />
+                      </>
+                    ) : null}
+                    <MemoryActionWithTooltip
+                      disabled={actionBusy || selected.status === "invalidated"}
+                      onClick={() =>
+                        requestAction(
+                          "invalidate",
+                          t("invalidateTooltip"),
+                          async () =>
+                            await window.pragmaDesktop.invalidateMemoryItem({
                               module: selected.module,
                               id: selected.id,
-                              evidenceId,
-                            })
-                            .then(setEvidence)
-                            .catch(() => {
-                              setError(t("loadEvidenceError"));
-                            })
-                        }
-                      >
-                        {evidenceId}
-                      </button>
-                    ))}
-                  </div>
-                  {evidence !== undefined ? (
-                    <pre>{JSON.stringify(evidence.payload, null, 2)}</pre>
-                  ) : null}
-                </section>
-                <label className="memory-reason">
-                  <span>{t("reason")}</span>
-                  <input value={reason} onChange={(event) => setReason(event.target.value)} />
-                </label>
-                <div className="memory-actions">
-                  {selected.module === "semantic" ? (
-                    <>
-                      <button
-                        type="button"
-                        disabled={reason.trim() === "" || actionBusy}
-                        onClick={() =>
-                          void run(
-                            async () =>
-                              await window.pragmaDesktop.verifySemanticFact({
-                                id: selected.id,
-                                expectedRevision: selected.revision,
-                                reason,
+                              expectedRevision: selected.revision,
+                              reason,
+                            }),
+                        )
+                      }
+                      label={t("invalidate")}
+                      tooltip={t("invalidateTooltip")}
+                      icon={<Prohibit size={18} aria-hidden="true" />}
+                    />
+                    {selected.bindings.map((binding) =>
+                      binding.recall === "allow" ? (
+                        <MemoryActionWithTooltip
+                          key={`${binding.consumerRef.type}:${binding.consumerRef.id}`}
+                          disabled={actionBusy}
+                          label={t("disableRecall")}
+                          icon={<BellSlash size={18} aria-hidden="true" />}
+                          tooltip={t("disableRecallTooltip", {
+                            consumer: formatMemorySubjectRefs(
+                              [binding.consumerRef],
+                              selected.subjectNames,
+                            ),
+                          })}
+                          onClick={() =>
+                            requestAction(
+                              "disableRecall",
+                              t("disableRecallTooltip", {
+                                consumer: formatMemorySubjectRefs(
+                                  [binding.consumerRef],
+                                  selected.subjectNames,
+                                ),
                               }),
-                          )
-                        }
-                      >
-                        <ShieldCheck size={17} aria-hidden="true" /> {t("verify")}
-                      </button>
-                      <button
-                        type="button"
-                        disabled={reason.trim() === "" || actionBusy}
-                        onClick={() => {
-                          setRevisionDraft(selected.statement);
-                          setDialog("revise");
-                        }}
-                      >
-                        {t("revise")}
-                      </button>
-                    </>
-                  ) : null}
-                  <button
-                    type="button"
-                    disabled={
-                      reason.trim() === "" || actionBusy || selected.status === "invalidated"
-                    }
-                    onClick={() =>
-                      void run(
-                        async () =>
-                          await window.pragmaDesktop.invalidateMemoryItem({
-                            module: selected.module,
-                            id: selected.id,
-                            expectedRevision: selected.revision,
-                            reason,
-                          }),
-                      )
-                    }
-                  >
-                    {t("invalidate")}
-                  </button>
-                  <button
-                    className="is-danger"
-                    type="button"
-                    disabled={reason.trim() === "" || actionBusy}
-                    onClick={() => setDialog("forget")}
-                  >
-                    <Trash size={17} aria-hidden="true" /> {t("forget")}
-                  </button>
-                  {selected.bindings.map((binding) =>
-                    binding.recall === "allow" ? (
+                              async () =>
+                                await window.pragmaDesktop.tightenMemoryAccess({
+                                  module: selected.module,
+                                  id: selected.id,
+                                  expectedRevision: selected.revision,
+                                  reason,
+                                  bindings: selected.bindings.map((candidate) =>
+                                    candidate === binding
+                                      ? {
+                                          ...candidate,
+                                          recall: "deny",
+                                          permissionRevision: candidate.permissionRevision + 1,
+                                        }
+                                      : candidate,
+                                  ),
+                                }),
+                            )
+                          }
+                        />
+                      ) : null,
+                    )}
+                    {selected.visibility.mode === "restricted" ||
+                    selected.rootRefs.length === 0 ? null : (
                       <MemoryActionWithTooltip
-                        key={`${binding.consumerRef.type}:${binding.consumerRef.id}`}
-                        disabled={reason.trim() === "" || actionBusy}
-                        label={t("disableRecall")}
-                        tooltip={t("disableRecallTooltip", {
-                          consumer: formatMemorySubjectRefs(
-                            [binding.consumerRef],
+                        disabled={actionBusy}
+                        label={t("restrictVisibility")}
+                        icon={<LockSimple size={18} aria-hidden="true" />}
+                        tooltip={t("restrictVisibilityTooltip", {
+                          principals: formatMemorySubjectRefs(
+                            selected.rootRefs,
                             selected.subjectNames,
                           ),
                         })}
                         onClick={() =>
-                          void run(
+                          requestAction(
+                            "restrictVisibility",
+                            t("restrictVisibilityTooltip", {
+                              principals: formatMemorySubjectRefs(
+                                selected.rootRefs,
+                                selected.subjectNames,
+                              ),
+                            }),
                             async () =>
                               await window.pragmaDesktop.tightenMemoryAccess({
                                 module: selected.module,
                                 id: selected.id,
                                 expectedRevision: selected.revision,
                                 reason,
-                                bindings: selected.bindings.map((candidate) =>
-                                  candidate === binding
-                                    ? {
-                                        ...candidate,
-                                        recall: "deny",
-                                        permissionRevision: candidate.permissionRevision + 1,
-                                      }
-                                    : candidate,
-                                ),
+                                visibility: {
+                                  mode: "restricted",
+                                  principals: selected.rootRefs,
+                                },
                               }),
                           )
                         }
                       />
-                    ) : null,
-                  )}
-                  {selected.visibility.mode === "restricted" ||
-                  selected.rootRefs.length === 0 ? null : (
+                    )}
                     <MemoryActionWithTooltip
-                      disabled={reason.trim() === "" || actionBusy}
-                      label={t("restrictVisibility")}
-                      tooltip={t("restrictVisibilityTooltip", {
-                        principals: formatMemorySubjectRefs(
-                          selected.rootRefs,
-                          selected.subjectNames,
-                        ),
-                      })}
-                      onClick={() =>
-                        void run(
-                          async () =>
-                            await window.pragmaDesktop.tightenMemoryAccess({
-                              module: selected.module,
-                              id: selected.id,
-                              expectedRevision: selected.revision,
-                              reason,
-                              visibility: {
-                                mode: "restricted",
-                                principals: selected.rootRefs,
-                              },
-                            }),
-                        )
-                      }
+                      tone="danger"
+                      disabled={actionBusy}
+                      onClick={() => setDialog("forget")}
+                      label={t("forget")}
+                      tooltip={t("forgetTooltip")}
+                      icon={<Trash size={18} aria-hidden="true" />}
                     />
-                  )}
-                </div>
-              </>
-            )}
-          </main>
-        </div>
-      )}
+                  </div>
+                </>
+              )}
+            </main>
+          </div>
+        )}
+      </div>
+      {pendingAction !== undefined ? (
+        <ConfirmationDialog
+          title={t(pendingAction.action)}
+          description={pendingAction.description}
+          cancelLabel={t("cancel")}
+          confirmLabel={t(pendingAction.action)}
+          busyLabel={t("saving")}
+          busy={actionBusy}
+          tone={pendingAction.action === "verify" ? "primary" : "danger"}
+          onCancel={() => setPendingAction(undefined)}
+          onConfirm={() => {
+            void run(pendingAction.operation).then((saved) => {
+              if (saved) setPendingAction(undefined);
+            });
+          }}
+        />
+      ) : null}
       {dialog === "revise" && selected?.module === "semantic" ? (
         <Dialog
           title={t("revisedStatement")}
@@ -602,10 +784,6 @@ export function MemoryPage(props: { readonly onConfigureExtraction?: () => void 
   );
 }
 
-export function canRunMemoryAction(reason: string): boolean {
-  return reason.trim() !== "";
-}
-
 export function memoryExtractionPollDelay(board: DesktopMemoryExtractionBoard | undefined): number {
   return board !== undefined &&
     (board.lanes.waiting.totalTasks > 0 || board.lanes.running.totalTasks > 0)
@@ -624,22 +802,89 @@ export function MemoryActionWithTooltip(props: {
   readonly disabled: boolean;
   readonly label: string;
   readonly tooltip: string;
+  readonly icon?: ReactNode;
+  readonly tone?: "danger";
   readonly onClick: () => void;
 }) {
   const tooltipId = useId();
+  const anchorRef = useRef<HTMLSpanElement>(null);
+  const tooltipRef = useRef<HTMLSpanElement>(null);
+  const [hovered, setHovered] = useState(false);
+  const [focused, setFocused] = useState(false);
+  const [position, setPosition] = useState<{ left: number; top: number }>();
+  const open = hovered || focused;
+
+  useLayoutEffect(() => {
+    if (!open) return;
+    const updatePosition = () => {
+      const anchor = anchorRef.current?.getBoundingClientRect();
+      const tooltip = tooltipRef.current?.getBoundingClientRect();
+      if (anchor === undefined || tooltip === undefined) return;
+      const gutter = 12;
+      const left = Math.max(
+        gutter,
+        Math.min(
+          anchor.left + (anchor.width - tooltip.width) / 2,
+          window.innerWidth - tooltip.width - gutter,
+        ),
+      );
+      const below = anchor.bottom + 8;
+      const top =
+        below + tooltip.height <= window.innerHeight - gutter
+          ? below
+          : Math.max(gutter, anchor.top - tooltip.height - 8);
+      setPosition({ left, top });
+    };
+    updatePosition();
+    window.addEventListener("resize", updatePosition);
+    window.addEventListener("scroll", updatePosition, true);
+    return () => {
+      window.removeEventListener("resize", updatePosition);
+      window.removeEventListener("scroll", updatePosition, true);
+    };
+  }, [open, props.tooltip]);
+
+  const tooltip = (
+    <span
+      ref={tooltipRef}
+      id={tooltipId}
+      className="memory-action-tooltip"
+      role="tooltip"
+      style={{
+        left: position?.left ?? 0,
+        top: position?.top ?? 0,
+        visibility: open && position !== undefined ? "visible" : "hidden",
+      }}
+    >
+      {props.tooltip}
+    </span>
+  );
   return (
-    <span className="memory-action-with-tooltip">
+    <span
+      ref={anchorRef}
+      className="memory-action-with-tooltip"
+      onMouseEnter={() => setHovered(true)}
+      onMouseLeave={() => setHovered(false)}
+      onFocus={() => setFocused(true)}
+      onBlur={() => setFocused(false)}
+      onKeyDown={(event) => {
+        if (event.key === "Escape") {
+          setHovered(false);
+          setFocused(false);
+        }
+      }}
+    >
       <button
         type="button"
+        className={props.tone === "danger" ? "is-danger" : undefined}
         aria-describedby={tooltipId}
         disabled={props.disabled}
         onClick={props.onClick}
       >
+        {props.icon}
         {props.label}
       </button>
-      <span id={tooltipId} className="memory-action-tooltip" role="tooltip">
-        {props.tooltip}
-      </span>
+      {typeof document === "undefined" ? tooltip : createPortal(tooltip, document.body)}
     </span>
   );
 }
@@ -667,16 +912,17 @@ export function MemoryExtractionJobs(props: {
 
   return (
     <section className="memory-health memory-extraction-jobs">
-      <header className="memory-extraction-jobs-header">
-        <p>{t("extractionsDescription")}</p>
-        <button
-          className="memory-extraction-refresh"
-          type="button"
+      <header className="memory-page-header memory-extraction-jobs-header">
+        <div>
+          <h1>{t("extractions")}</h1>
+          <p>{t("extractionsDescription")}</p>
+        </div>
+        <StudioActionButton
+          label={t("refresh")}
+          icon={<ArrowClockwise size={18} aria-hidden="true" />}
           disabled={props.loading}
           onClick={props.onRefresh}
-        >
-          <ArrowClockwise size={17} aria-hidden="true" /> {t("refresh")}
-        </button>
+        />
       </header>
       {props.loading ? <p>{t("loading")}</p> : null}
       {!props.loading ? (
@@ -733,89 +979,71 @@ export function MemoryExtractionJobs(props: {
                         {lane !== "completed" ? (
                           <footer>
                             {lane === "waiting" ? (
-                              <button
-                                className="is-primary"
-                                type="button"
+                              <StudioActionButton
+                                label={t("extractNow")}
+                                icon={<Play size={18} aria-hidden="true" />}
                                 disabled={busy}
                                 onClick={() => void props.onAction(task, "expedite")}
-                              >
-                                <Play size={16} aria-hidden="true" /> {t("extractNow")}
-                              </button>
+                              />
                             ) : null}
                             {lane === "attention" ? (
                               <>
                                 {problem?.kind === "configuration" ? (
-                                  <button
-                                    className="is-primary"
-                                    type="button"
+                                  <StudioActionButton
+                                    label={t("configureExtraction")}
+                                    icon={<Gear size={18} aria-hidden="true" />}
                                     disabled={busy || props.onConfigureExtraction === undefined}
-                                    onClick={props.onConfigureExtraction}
-                                  >
-                                    {t("configureExtraction")}
-                                  </button>
+                                    onClick={() => props.onConfigureExtraction?.()}
+                                  />
                                 ) : problem?.kind === "dependency" ? (
-                                  <button
-                                    className="is-primary"
-                                    type="button"
+                                  <StudioActionButton
+                                    label={t("refresh")}
+                                    icon={<ArrowClockwise size={18} aria-hidden="true" />}
                                     disabled={busy}
                                     onClick={props.onRefresh}
-                                  >
-                                    <ArrowClockwise size={16} aria-hidden="true" /> {t("refresh")}
-                                  </button>
+                                  />
                                 ) : (
-                                  <button
-                                    className="is-primary"
-                                    type="button"
+                                  <StudioActionButton
+                                    label={t("retryExtraction")}
+                                    icon={<ArrowCounterClockwise size={18} aria-hidden="true" />}
                                     disabled={busy}
                                     onClick={() => void props.onAction(task, "retry")}
-                                  >
-                                    <ArrowCounterClockwise size={16} aria-hidden="true" />
-                                    {t("retryExtraction")}
-                                  </button>
+                                  />
                                 )}
                                 {problem?.kind === "configuration" ||
                                 problem?.kind === "capacity" ? (
-                                  <button
-                                    className="is-secondary"
-                                    type="button"
+                                  <StudioActionButton
+                                    label={t("retryExtraction")}
+                                    icon={<ArrowCounterClockwise size={18} aria-hidden="true" />}
                                     disabled={busy}
                                     onClick={() => void props.onAction(task, "retry")}
-                                  >
-                                    <ArrowCounterClockwise size={16} aria-hidden="true" />
-                                    {t("retryExtraction")}
-                                  </button>
+                                  />
                                 ) : null}
                                 {problem?.kind === "invalid_output" &&
                                 props.onConfigureExtraction !== undefined ? (
-                                  <button
-                                    className="is-secondary"
-                                    type="button"
+                                  <StudioActionButton
+                                    label={t("configureExtraction")}
+                                    icon={<Gear size={18} aria-hidden="true" />}
                                     disabled={busy}
-                                    onClick={props.onConfigureExtraction}
-                                  >
-                                    {t("configureExtraction")}
-                                  </button>
+                                    onClick={() => props.onConfigureExtraction?.()}
+                                  />
                                 ) : null}
-                                <button
-                                  className="is-danger"
-                                  type="button"
+                                <StudioActionButton
+                                  label={t("abandonExtraction")}
+                                  icon={<Trash size={18} aria-hidden="true" />}
+                                  tone="danger"
                                   disabled={busy}
                                   onClick={() => setPendingDelete(task)}
-                                >
-                                  <Trash size={16} aria-hidden="true" /> {t("abandonExtraction")}
-                                </button>
+                                />
                               </>
                             ) : null}
                             {lane === "running" ? (
-                              <button
-                                className="is-secondary"
-                                type="button"
+                              <StudioActionButton
+                                label={t("interruptExtraction")}
+                                icon={<StopCircle size={18} aria-hidden="true" />}
                                 disabled={busy}
                                 onClick={() => void props.onAction(task, "interrupt")}
-                              >
-                                <StopCircle size={16} aria-hidden="true" />
-                                {t("interruptExtraction")}
-                              </button>
+                              />
                             ) : null}
                           </footer>
                         ) : null}
@@ -830,26 +1058,24 @@ export function MemoryExtractionJobs(props: {
                       lane: t(`extractionLanes.${lane}`),
                     })}
                   >
-                    <button
-                      type="button"
+                    <StudioActionButton
+                      label={t("previousPage")}
+                      icon={<CaretLeft size={18} aria-hidden="true" />}
                       disabled={page.pageIndex === 0}
                       onClick={() => changeLanePage(lane, page.pageIndex - 1)}
-                    >
-                      {t("previousPage")}
-                    </button>
+                    />
                     <span>
                       {t("pageStatus", {
                         page: page.pageIndex + 1,
                         total: page.pageCount,
                       })}
                     </span>
-                    <button
-                      type="button"
+                    <StudioActionButton
+                      label={t("nextPage")}
+                      icon={<CaretRight size={18} aria-hidden="true" />}
                       disabled={page.pageIndex === page.pageCount - 1}
                       onClick={() => changeLanePage(lane, page.pageIndex + 1)}
-                    >
-                      {t("nextPage")}
-                    </button>
+                    />
                   </nav>
                 ) : null}
               </section>
@@ -895,35 +1121,62 @@ function MemoryTechnicalDetails(props: {
     <details className="memory-technical-details">
       <summary>{t("technicalDetails")}</summary>
       <code>{props.code}</code>
-      <button type="button" onClick={() => void window.navigator.clipboard.writeText(diagnostic)}>
+      <button
+        className="text-button memory-copy-diagnostics"
+        type="button"
+        onClick={() => void window.navigator.clipboard.writeText(diagnostic)}
+      >
+        <Copy size={16} aria-hidden="true" />
         {t("copyDiagnostics")}
       </button>
     </details>
   );
 }
 
-function MemoryExtractionTaskDetails(props: {
+export function MemoryExtractionTaskDetails(props: {
   readonly tasks: readonly DesktopMemoryExtractionTask[];
 }) {
   const { t } = useTranslation("memory");
-  const tasks = props.tasks;
+  const [preferredListWidth, setListWidth] = usePersistentSidebarWidth(
+    SIDEBAR_WIDTH_PREFERENCES.memoryTasks,
+  );
+  const containerRef = useRef<HTMLElement>(null);
+  const [containerWidth, setContainerWidth] = useState(1040);
+  const listWidthPreference = {
+    ...SIDEBAR_WIDTH_PREFERENCES.memoryTasks,
+    maxWidth: Math.max(
+      SIDEBAR_WIDTH_PREFERENCES.memoryTasks.minWidth,
+      Math.min(SIDEBAR_WIDTH_PREFERENCES.memoryTasks.maxWidth, containerWidth - 360),
+    ),
+  };
+  const listWidth = Math.min(preferredListWidth, listWidthPreference.maxWidth);
+
+  useEffect(() => {
+    const container = containerRef.current;
+    if (container === null) return;
+    const observer = new ResizeObserver(() => setContainerWidth(container.clientWidth));
+    setContainerWidth(container.clientWidth);
+    observer.observe(container);
+    return () => observer.disconnect();
+  }, []);
+
+  const tasks = props.tasks.filter((task) => task.lane === "attention" || task.lane === "running");
   const [selectedKey, setSelectedKey] = useState<string>();
   const [detail, setDetail] = useState<DesktopMemoryExtractionTaskDetail>();
   const [selectedRunId, setSelectedRunId] = useState<string>();
   const [chat, setChat] = useState<MissionConversationSnapshot>();
   const [loadError, setLoadError] = useState(false);
   const detailRequestVersion = useRef(0);
+  const chatRequestVersion = useRef(0);
   const detailLoadingKey = useRef<string | undefined>(undefined);
   const selected = tasks.find((task) => `${task.module}:${task.id}` === selectedKey) ?? tasks[0];
 
   useEffect(() => {
-    if (selected === undefined) {
-      setSelectedKey(undefined);
-      setDetail(undefined);
-      setChat(undefined);
-      return;
-    }
-    setSelectedKey(`${selected.module}:${selected.id}`);
+    setDetail(undefined);
+    setSelectedRunId(undefined);
+    setChat(undefined);
+    setLoadError(false);
+    setSelectedKey(selected === undefined ? undefined : `${selected.module}:${selected.id}`);
   }, [selected?.id, selected?.module]);
 
   const loadDetail = useCallback(async () => {
@@ -963,19 +1216,26 @@ function MemoryExtractionTaskDetails(props: {
   }, [loadDetail]);
 
   const loadChat = useCallback(async () => {
+    const requestVersion = ++chatRequestVersion.current;
     if (selectedRunId === undefined) {
       setChat(undefined);
       return;
     }
     try {
-      setChat(await window.pragmaDesktop.getMemoryExtractionRunChat({ runId: selectedRunId }));
+      const next = await window.pragmaDesktop.getMemoryExtractionRunChat({ runId: selectedRunId });
+      if (requestVersion === chatRequestVersion.current) setChat(next);
     } catch {
-      setChat(detail?.runs.find((run) => run.runId === selectedRunId)?.chat);
+      if (requestVersion === chatRequestVersion.current) {
+        setChat(detail?.runs.find((run) => run.runId === selectedRunId)?.chat);
+      }
     }
   }, [detail?.runs, selectedRunId]);
 
   useEffect(() => {
     void loadChat();
+    return () => {
+      chatRequestVersion.current += 1;
+    };
   }, [loadChat]);
 
   useEffect(
@@ -998,12 +1258,13 @@ function MemoryExtractionTaskDetails(props: {
 
   const selectedRun = detail?.runs.find((run) => run.runId === selectedRunId);
   return (
-    <section className="memory-task-details" aria-label={t("taskDetails")}>
+    <section
+      ref={containerRef}
+      className="memory-task-details"
+      aria-label={t("taskDetails")}
+      style={{ "--sidebar-width": `${listWidth}px` } as CSSProperties}
+    >
       <aside className="memory-task-details-list">
-        <header>
-          <h2>{t("taskDetails")}</h2>
-          <p>{t("taskDetailsDescription")}</p>
-        </header>
         {tasks.length === 0 ? <p className="memory-note">{t("noActiveExtractionTasks")}</p> : null}
         {tasks.map((task) => {
           const taskKey = `${task.module}:${task.id}`;
@@ -1026,6 +1287,12 @@ function MemoryExtractionTaskDetails(props: {
           );
         })}
       </aside>
+      <SidebarResizeHandle
+        label={t("resizeTaskList")}
+        width={listWidth}
+        preference={listWidthPreference}
+        onResize={setListWidth}
+      />
       <main className="memory-task-details-stream">
         {selected === undefined ? (
           <p>{t("selectExtractionTask")}</p>
@@ -1033,7 +1300,9 @@ function MemoryExtractionTaskDetails(props: {
           <p className="memory-error" role="alert">
             {t("taskDetailsLoadError")}
           </p>
-        ) : detail === undefined ? (
+        ) : detail === undefined ||
+          detail.task.id !== selected.id ||
+          detail.task.module !== selected.module ? (
           <p>{t("loading")}</p>
         ) : (
           <>
@@ -1064,49 +1333,51 @@ function MemoryExtractionTaskDetails(props: {
                 </div>
               ) : null}
             </header>
-            {detail.lastFailure === undefined ? null : (
-              <section className="memory-task-failure" role="status">
-                <strong>{detail.lastFailure.code}</strong>
-                <p>{detail.lastFailure.message}</p>
-                <dl>
-                  <dt>{t("failurePhase")}</dt>
-                  <dd>{detail.lastFailure.phase}</dd>
-                  <dt>HTTP</dt>
-                  <dd>{detail.lastFailure.transport?.httpStatus ?? "—"}</dd>
-                  <dt>{t("duration")}</dt>
-                  <dd>
-                    {detail.lastFailure.durationMs === undefined
-                      ? "—"
-                      : `${detail.lastFailure.durationMs} ms`}
-                  </dd>
-                  <dt>{t("runtimeTarget")}</dt>
-                  <dd>
-                    {[detail.lastFailure.runtime?.runtimeId, detail.lastFailure.runtime?.modelId]
-                      .filter(Boolean)
-                      .join(" / ") || "—"}
-                  </dd>
-                </dl>
-              </section>
-            )}
-            <section className="memory-task-message-stream" aria-live="polite">
-              {selectedRun === undefined ? (
-                <p className="memory-note">{t("noExtractionMessages")}</p>
-              ) : chat === undefined ? (
-                <p>{t("loadingMessages")}</p>
-              ) : chat.entries.length === 0 ? (
-                <p className="memory-note">{t("noExtractionMessages")}</p>
-              ) : (
-                chat.entries.map((entry) => (
-                  <MissionChatEntryView
-                    entry={entry}
-                    key={entry.id}
-                    missionId={chat.missionId}
-                    paintExecutionId={entry.executionId ?? chat.execution?.id}
-                    showExecutorLabel
-                  />
-                ))
+            <div className="memory-task-details-body">
+              {detail.lastFailure === undefined ? null : (
+                <section className="memory-task-failure" role="status">
+                  <strong>{detail.lastFailure.code}</strong>
+                  <p>{detail.lastFailure.message}</p>
+                  <dl>
+                    <dt>{t("failurePhase")}</dt>
+                    <dd>{detail.lastFailure.phase}</dd>
+                    <dt>HTTP</dt>
+                    <dd>{detail.lastFailure.transport?.httpStatus ?? "—"}</dd>
+                    <dt>{t("duration")}</dt>
+                    <dd>
+                      {detail.lastFailure.durationMs === undefined
+                        ? "—"
+                        : `${detail.lastFailure.durationMs} ms`}
+                    </dd>
+                    <dt>{t("runtimeTarget")}</dt>
+                    <dd>
+                      {[detail.lastFailure.runtime?.runtimeId, detail.lastFailure.runtime?.modelId]
+                        .filter(Boolean)
+                        .join(" / ") || "—"}
+                    </dd>
+                  </dl>
+                </section>
               )}
-            </section>
+              <section className="memory-task-message-stream" aria-live="polite">
+                {selectedRun === undefined ? (
+                  <p className="memory-note">{t("noExtractionMessages")}</p>
+                ) : chat === undefined ? (
+                  <p>{t("loadingMessages")}</p>
+                ) : chat.entries.length === 0 ? (
+                  <p className="memory-note">{t("noExtractionMessages")}</p>
+                ) : (
+                  chat.entries.map((entry) => (
+                    <MissionChatEntryView
+                      entry={entry}
+                      key={entry.id}
+                      missionId={chat.missionId}
+                      paintExecutionId={entry.executionId ?? chat.execution?.id}
+                      showExecutorLabel
+                    />
+                  ))
+                )}
+              </section>
+            </div>
           </>
         )}
       </main>
@@ -1178,32 +1449,6 @@ export function MemoryHealth(props: { readonly health?: DesktopMemoryPlaneStatus
       </header>
 
       <div className="memory-health-details">
-        <section className="memory-health-feed" aria-labelledby="memory-health-feed-title">
-          <h3 id="memory-health-feed-title">{t("feedStorage")}</h3>
-          <div className="memory-health-capacity">
-            <span>{t("feedUsage")}</span>
-            <strong>
-              {formatHealthBytes(props.health.feed.logicalBytes)}
-              <small> / {formatHealthBytes(targetBytes)}</small>
-            </strong>
-            <span>{formatHealthPercent(usagePercent)}</span>
-            <progress max={100} value={usagePercent} aria-label={t("feedUsage")} />
-            <small>{t("feedCapacity", { capacity: formatHealthBytes(targetBytes) })}</small>
-          </div>
-          <dl className="memory-health-feed-metrics">
-            <div>
-              <ShieldCheck size={24} aria-hidden="true" />
-              <dt>{t("safeThrough")}</dt>
-              <dd>{props.health.feed.safeThroughSequence}</dd>
-            </div>
-            <div>
-              <Database size={24} aria-hidden="true" />
-              <dt>{t("durableBlocked")}</dt>
-              <dd>{formatHealthBytes(props.health.feed.blockedBytes)}</dd>
-            </div>
-          </dl>
-        </section>
-
         <section className="memory-health-modules" aria-labelledby="memory-health-modules-title">
           <h3 id="memory-health-modules-title">{t("moduleStatus")}</h3>
           <div className="memory-health-module-table-wrap">
@@ -1268,36 +1513,96 @@ export function MemoryHealth(props: { readonly health?: DesktopMemoryPlaneStatus
                     </tr>
                   );
                 })}
-                {(props.health.hostDelivery ?? []).map((delivery) => (
-                  <tr key={delivery.moduleId}>
-                    <th scope="row">
-                      <strong>{delivery.moduleId}</strong>
-                      {delivery.errorCode === undefined ? null : (
-                        <MemoryTechnicalDetails
-                          code={delivery.errorCode}
-                          module={delivery.moduleId}
-                        />
-                      )}
-                    </th>
-                    <td>
-                      <span className={`memory-health-status is-${delivery.state}`}>
-                        {t(`moduleStatuses.${delivery.state}`)}
-                      </span>
-                    </td>
-                    <td>{delivery.pending}</td>
-                    <td>—</td>
-                    <td>—</td>
-                    <td>—</td>
-                    <td>—</td>
-                  </tr>
-                ))}
               </tbody>
             </table>
           </div>
         </section>
+        <section className="memory-health-feed" aria-labelledby="memory-health-feed-title">
+          <h3 id="memory-health-feed-title">{t("feedStorage")}</h3>
+          <div className="memory-health-capacity">
+            <span>{t("feedUsage")}</span>
+            <strong>
+              {formatHealthBytes(props.health.feed.logicalBytes)}
+              <small> / {formatHealthBytes(targetBytes)}</small>
+            </strong>
+            <span>{formatHealthPercent(usagePercent)}</span>
+            <progress max={100} value={usagePercent} aria-label={t("feedUsage")} />
+            <small>{t("feedCapacity", { capacity: formatHealthBytes(targetBytes) })}</small>
+          </div>
+          <dl className="memory-health-feed-metrics">
+            <div>
+              <ShieldCheck size={24} aria-hidden="true" />
+              <dt>{t("safeThrough")}</dt>
+              <dd>{props.health.feed.safeThroughSequence}</dd>
+            </div>
+            <div>
+              <Database size={24} aria-hidden="true" />
+              <dt>{t("durableBlocked")}</dt>
+              <dd>{formatHealthBytes(props.health.feed.blockedBytes)}</dd>
+            </div>
+          </dl>
+        </section>
+
+        {(props.health.hostDelivery?.length ?? 0) > 0 ? (
+          <section
+            className="memory-health-services"
+            aria-labelledby="memory-health-services-title"
+          >
+            <h3 id="memory-health-services-title">{t("backgroundServices.title")}</h3>
+            <div className="memory-health-module-table-wrap">
+              <table className="memory-health-service-table">
+                <thead>
+                  <tr>
+                    <th scope="col">{t("backgroundServices.service")}</th>
+                    <th scope="col">{t("moduleTable.status")}</th>
+                    <th scope="col">{t("backgroundServices.pending")}</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {props.health.hostDelivery?.map((delivery) => {
+                    const nameKey = memoryBackgroundServiceNameKey(delivery.moduleId);
+                    return (
+                      <tr key={delivery.moduleId}>
+                        <th scope="row">
+                          <span className="memory-health-service-name">
+                            {t(`backgroundServices.names.${nameKey}`)}
+                          </span>
+                          <span className="memory-health-service-description">
+                            {t(`backgroundServices.descriptions.${nameKey}`)}
+                          </span>
+                          {delivery.errorCode === undefined ? null : (
+                            <MemoryTechnicalDetails
+                              code={delivery.errorCode}
+                              module={delivery.moduleId}
+                            />
+                          )}
+                        </th>
+                        <td>
+                          <span className={`memory-health-status is-${delivery.state}`}>
+                            {t(`backgroundServices.statuses.${delivery.state}`)}
+                          </span>
+                        </td>
+                        <td>{delivery.pending}</td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          </section>
+        ) : null}
       </div>
     </section>
   );
+}
+
+function memoryBackgroundServiceNameKey(
+  moduleId: string,
+): "missionDeletion" | "missionDelivery" | "usage" | "other" {
+  if (moduleId === "pragma.mission-deletion") return "missionDeletion";
+  if (moduleId === "pragma.mission-delivery") return "missionDelivery";
+  if (moduleId === "pragma.local-host-usage") return "usage";
+  return "other";
 }
 
 function formatHealthBytes(bytes: number): string {
@@ -1387,6 +1692,36 @@ function isNonExtractionPipelineError(code: string | undefined): boolean {
   ].includes(code ?? "");
 }
 
+export function MemoryItemContent({
+  item,
+}: {
+  readonly item: Pick<DesktopMemoryItem, "module" | "title" | "summary" | "status"> & {
+    readonly confidence?: number | undefined;
+    readonly verifiedAt?: string | undefined;
+  };
+}) {
+  const { t } = useTranslation("memory");
+  const hasDistinctTitle = item.module !== "semantic" && item.title.trim() !== item.summary.trim();
+  return (
+    <header className="memory-item-content">
+      <div className="memory-item-meta">
+        <span>{t(item.module === "episodic" ? "episodes" : "facts")}</span>
+        <span className={`memory-status is-${item.status}`}>
+          {t(`itemStatuses.${item.status}`)}
+        </span>
+        {item.module === "semantic" && item.confidence !== undefined ? (
+          <span>{t("confidenceValue", { value: Math.round(item.confidence * 100) })}</span>
+        ) : null}
+        {item.module === "semantic" && item.verifiedAt !== undefined ? (
+          <span>{t("manuallyVerified")}</span>
+        ) : null}
+      </div>
+      {hasDistinctTitle ? <h2>{item.title}</h2> : null}
+      <p>{item.summary}</p>
+    </header>
+  );
+}
+
 function key(item: DesktopMemoryItem): string {
   return `${item.module}:${item.id}`;
 }
@@ -1400,7 +1735,7 @@ export function formatMemorySubjectRefs(
       .map((value) => {
         const ref = `${value.type}:${value.id}`;
         const name = names[ref];
-        return name === undefined ? ref : `${name}(${ref})`;
+        return name ?? i18n.t("memory:unavailableSubject");
       })
       .join(", ") || "—"
   );

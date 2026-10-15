@@ -8,6 +8,7 @@ import {
 } from "@pragma/core";
 import {
   MemoryModuleRegistry,
+  retainMemoryExtractionHistory,
   createEpisodicMemoryModule,
   createExecutionEvidenceAdapter,
   createFileMemoryExtractionSettingsStore,
@@ -131,11 +132,23 @@ export async function createLocalHostMemoryDataPlane(options: {
   });
   const identities = createLocalHostMemorySubjectIdentityStore(options);
   const paths = new PragmaPaths(options);
+  const retainCompletedJobs = async () =>
+    await withFileLock(
+      join(paths.memoryStateRoot(), "completed-jobs.lock"),
+      async () =>
+        await retainMemoryExtractionHistory({
+          episodicStore: episodic.store,
+          semanticStore: semantic.store,
+          knowledgeLearningStore: knowledge.store,
+          skillLearningStore: skill.store,
+        }),
+    );
   const flushDelivery = async () =>
     await withFileLock(join(paths.memoryStateRoot(), "delivery.lock"), async () => {
       await executionStore.recoverPendingCanonicalEvents();
       const adapted = await adapter.runOnce();
       await scheduler.runOnce({ background: false });
+      await retainCompletedJobs();
       return adapted;
     });
   const registerExecutionContext = async (input: {
@@ -191,6 +204,7 @@ export async function createLocalHostMemoryDataPlane(options: {
     activity,
     scheduler,
     flushDelivery,
+    retainCompletedJobs,
     registerExecutionContext,
     setConversationState,
   };

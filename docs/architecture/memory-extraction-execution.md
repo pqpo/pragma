@@ -46,6 +46,13 @@ inspection within the existing 30-day job retention window. Reading that retaine
 starts a model. Failed-run inspection prefers the retained live transcript when available, with the
 archived transcript as a fallback. Candidate submission failures remain visible in the tool transcript.
 
+Completed extraction task history retains the newest 50 jobs across Episodic, Semantic, Knowledge
+and Skill modules combined, ordered by update time and a stable module/job tie breaker. Completed
+jobs have no age-based expiry. The Host applies this limit after delivery and background extraction,
+and during storage maintenance. Pruning removes only completed job records and their failure
+diagnostics; published memories, knowledge and skills remain unchanged. Pending, running and
+needs-attention work does not count toward the limit.
+
 Cache hits, model-catalog validation and routine chat reads are debug diagnostics. Failures and
 meaningful execution lifecycle transitions remain visible at normal logging levels.
 

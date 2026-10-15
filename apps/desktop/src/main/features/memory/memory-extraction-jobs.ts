@@ -49,6 +49,7 @@ interface LoadedLanePage {
 interface ExtractionTaskTitleOptions {
   readonly missions: Pick<MissionStore, "get" | "resolveExecutionTitles">;
   readonly project: Pick<PragmaProjectStore, "get">;
+  readonly systemExperts?: { list(): readonly { readonly id: string; readonly name: string }[] };
 }
 
 export async function listDesktopMemoryExtractionJobs(
@@ -154,9 +155,12 @@ async function loadTaskTitles(
   missionResults.forEach((result, index) => {
     if (result.status === "fulfilled") missionTitles.set(missionIds[index]!, result.value.title);
   });
-  const resourceTitles = new Map(
-    project?.resources.map((resource) => [resource.metadata.id, resource.metadata.name]) ?? [],
-  );
+  const resourceTitles = new Map([
+    ...(project?.resources.map(
+      (resource) => [resource.metadata.id, resource.metadata.name] as const,
+    ) ?? []),
+    ...(options.systemExperts?.list().map((expert) => [expert.id, expert.name] as const) ?? []),
+  ]);
   return { missionTitles, executionTitles, resourceTitles };
 }
 
@@ -165,9 +169,7 @@ export async function getDesktopMemoryExtractionTaskDetail(
     DesktopMemoryPlane,
     "episodicStore" | "semanticStore" | "knowledgeLearningStore" | "skillLearningStore"
   >,
-  options: {
-    readonly missions: Pick<MissionStore, "get" | "resolveExecutionTitles">;
-    readonly project: Pick<PragmaProjectStore, "get">;
+  options: ExtractionTaskTitleOptions & {
     readonly curator: Pick<DesktopMemoryCurator, "listRuns">;
   },
   input: DesktopMemoryExtractionTaskRef,
@@ -205,6 +207,9 @@ export async function getDesktopMemoryExtractionTaskDetail(
     const project = await options.project.get();
     for (const resource of project.resources) {
       resourceTitles.set(resource.metadata.id, resource.metadata.name);
+    }
+    for (const expert of options.systemExperts?.list() ?? []) {
+      resourceTitles.set(expert.id, expert.name);
     }
   }
   const [attempts, runs] = await Promise.all([

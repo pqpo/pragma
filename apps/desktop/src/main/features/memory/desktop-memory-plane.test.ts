@@ -35,6 +35,37 @@ afterEach(async () => {
 });
 
 describe("DesktopMemoryPlane", { timeout: 30_000 }, () => {
+  it("retains the newest 50 completed task records without age expiry", async () => {
+    const pragmaHome = await temporaryRoot("pragma-memory-completed-retention-");
+    const plane = await createDesktopMemoryPlane({
+      pragmaHome,
+      logger: createPragmaLogger(undefined, { component: "desktop.memory-test" }),
+    });
+    try {
+      const old = new Date("2020-01-01T00:00:00.000Z");
+      for (let index = 0; index < 55; index++) {
+        await plane.knowledgeLearningStore.schedule({
+          rootRef: { type: "pragma.expert", id: `expert-${index}` },
+          sourceDigest: "a".repeat(64),
+          now: old,
+        });
+        const finishedAt = new Date(old.getTime() + 24 * 60 * 60_000 + index * 1_000);
+        const job = await plane.knowledgeLearningStore.claimDueJob(finishedAt);
+        expect(job).toBeDefined();
+        await plane.knowledgeLearningStore.completeRejected(job!, finishedAt);
+      }
+      await plane.maintainStorage();
+      const jobs = await plane.knowledgeLearningStore.listJobs();
+      expect(jobs).toHaveLength(50);
+      expect(jobs.map((job) => job.rootRef.id)).not.toContain("expert-0");
+      expect(jobs.map((job) => job.rootRef.id)).toContain("expert-54");
+      await plane.maintainStorage();
+      expect(await plane.knowledgeLearningStore.listJobs()).toHaveLength(50);
+    } finally {
+      await plane.stop();
+    }
+  });
+
   it("keeps Memory healthy without optional embedding configuration and diagnoses incomplete opt-in", async () => {
     const pragmaHome = await temporaryRoot("pragma-desktop-memory-optional-retrieval-");
     const unexpectedSecretAccess = vi.fn(async (): Promise<never> => {

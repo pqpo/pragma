@@ -718,6 +718,60 @@ describe("Semantic Memory", () => {
     module.close();
   });
 
+  it("prunes completed job context atomically while preserving memories and other jobs", async () => {
+    const pragmaHome = await temporaryRoot();
+    let clock = new Date("2026-08-04T00:00:00.000Z");
+    const module = await createSemanticMemoryModule({
+      pragmaHome,
+      extractor: fakeExtractor(),
+      now: () => clock,
+    });
+    const database = new DatabaseSync(
+      join(
+        new PragmaPaths({ pragmaHome }).memoryModuleStateRoot("pragma.memory.semantic"),
+        "jobs.sqlite",
+      ),
+    );
+    try {
+      for (const executionId of ["old-completed", "new-completed", "still-waiting"]) {
+        await module.registerExecutionSubjects({
+          executionId,
+          subjectRefs: [ref("pragma.user", "local-user")],
+        });
+        await module.consume(executionEvidence(executionId, "Use concise Chinese answers."));
+        if (executionId !== "still-waiting") await module.runBackgroundOnce?.();
+        clock = new Date(clock.getTime() + 1_000);
+      }
+      const jobs = await module.store.listExtractionJobs();
+      const old = jobs.find((job) => job.executionId === "old-completed")!;
+      const newer = jobs.find((job) => job.executionId === "new-completed")!;
+      expect(old.status).toBe("completed");
+      expect(newer.status).toBe("completed");
+      const facts = await module.store.list();
+      expect(facts.length).toBeGreaterThan(0);
+      const cursor = { updatedAt: newer.updatedAt, tieBreaker: `semantic:${newer.id}` };
+
+      database.exec(
+        "CREATE TRIGGER reject_prune BEFORE DELETE ON jobs BEGIN SELECT RAISE(ABORT, 'blocked'); END",
+      );
+      await expect(module.store.pruneCompletedJobs(cursor)).rejects.toThrow("blocked");
+      expect(await module.store.getSubjectContext(old.executionId)).toBeDefined();
+      expect(await module.store.listExtractionJobs()).toHaveLength(3);
+      database.exec("DROP TRIGGER reject_prune");
+
+      expect(await module.store.pruneCompletedJobs(cursor)).toBe(1);
+      expect(await module.store.getSubjectContext(old.executionId)).toBeUndefined();
+      expect(await module.store.getSubjectContext(newer.executionId)).toBeDefined();
+      expect(await module.store.getSubjectContext("still-waiting")).toBeDefined();
+      expect(await module.store.listExtractionJobs()).toHaveLength(2);
+      expect(await module.store.list()).toEqual(facts);
+      expect(await module.store.pruneCompletedJobs(cursor)).toBe(0);
+    } finally {
+      database.close();
+      module.close();
+    }
+  });
+
   it("expedites, interrupts, and deletes semantic input and subject context", async () => {
     const module = await createSemanticMemoryModule({ pragmaHome: await temporaryRoot() });
     const now = new Date("2026-08-05T08:00:00.000Z");

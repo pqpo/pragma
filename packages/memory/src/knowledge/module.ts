@@ -62,6 +62,37 @@ export async function createKnowledgeMemoryModule(options: {
   let planner = options.planner;
   const running = new Map<string, AbortController>();
 
+  // Recheck persisted work on access as well as in the background, including
+  // jobs left behind by an earlier process before the source was invalidated.
+  const reconcileJobs = async (rootRef?: MemorySubjectRef): Promise<void> => {
+    const jobs = (await store.listJobs()).filter(
+      (job) =>
+        job.status !== "completed" &&
+        (rootRef === undefined ||
+          (job.rootRef.type === rootRef.type && job.rootRef.id === rootRef.id)),
+    );
+    const roots = new Map(jobs.map((job) => [JSON.stringify(job.rootRef), job.rootRef]));
+    for (const root of roots.values()) {
+      const sources = boundSources(
+        await options.sourceReader.listEligibleSources({
+          rootRef: root,
+          limit: MAX_SOURCE_REVISIONS,
+          now: now(),
+        }),
+      );
+      const currentDigest = digest("knowledge-sources", ...sources.map(sourceDigestKey).toSorted());
+      for (const job of jobs.filter(
+        (candidate) =>
+          candidate.rootRef.type === root.type &&
+          candidate.rootRef.id === root.id &&
+          (sources.length === 0 || candidate.sourceDigest !== currentDigest),
+      )) {
+        if (await store.discardJob({ id: job.id, expectedRevision: job.revision }))
+          running.get(job.id)?.abort();
+      }
+    }
+  };
+
   const scheduleRoot = async (rootRef: MemorySubjectRef): Promise<void> => {
     const sources = boundSources(
       await options.sourceReader.listEligibleSources({
@@ -70,12 +101,31 @@ export async function createKnowledgeMemoryModule(options: {
         now: now(),
       }),
     );
-    if (sources.length === 0) return;
+    if (sources.length === 0) {
+      await reconcileJobs(rootRef);
+      return;
+    }
     await store.schedule({
       rootRef,
       sourceDigest: digest("knowledge-sources", ...sources.map(sourceDigestKey).toSorted()),
       now: now(),
     });
+  };
+
+  const managedStore: KnowledgeLearningStore = {
+    ...store,
+    async listJobs() {
+      await reconcileJobs();
+      return store.listJobs();
+    },
+    async listJobsPage(input) {
+      await reconcileJobs();
+      return store.listJobsPage(input);
+    },
+    async inspect() {
+      await reconcileJobs();
+      return store.inspect();
+    },
   };
 
   return {
@@ -104,6 +154,7 @@ export async function createKnowledgeMemoryModule(options: {
       return {};
     },
     async runBackgroundOnce() {
+      await reconcileJobs();
       if (planner === undefined) return;
       const job = await store.claimDueJob(now());
       if (job === undefined) return;
@@ -120,7 +171,7 @@ export async function createKnowledgeMemoryModule(options: {
         });
         const sources = boundSources(available);
         if (sources.length === 0) {
-          await store.completeRejected(job, now());
+          await store.discardJob({ id: job.id, expectedRevision: job.revision });
           return;
         }
         const sourceDigest = digest(
@@ -128,7 +179,7 @@ export async function createKnowledgeMemoryModule(options: {
           ...sources.map(sourceDigestKey).toSorted(),
         );
         if (job.sourceDigest !== sourceDigest) {
-          await store.completeRejected(job, now());
+          await store.discardJob({ id: job.id, expectedRevision: job.revision });
           return;
         }
         const expertRefs = new Set(
@@ -165,7 +216,9 @@ export async function createKnowledgeMemoryModule(options: {
             sources: expertSources,
             signal: controller.signal,
           });
+          await reconcileJobs(job.rootRef);
           controller.signal.throwIfAborted();
+          if (!(await store.isClaimCurrent(job))) return;
           if (plan.action === "skip") continue;
           phase = "revision_submit";
           await options.learningSink.submit({
@@ -207,9 +260,9 @@ export async function createKnowledgeMemoryModule(options: {
       const interrupted = await store.interruptJob(input);
       running.get(interrupted.id)?.abort();
     },
-    store,
+    store: managedStore,
     close() {
-      store.close();
+      managedStore.close();
     },
   };
 }

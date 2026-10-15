@@ -60,7 +60,7 @@
   border: 0;
   border-radius: var(--ui-radius-md);
   background: transparent;
-  color: #454c47;
+  color: var(--ui-navigation-text);
   cursor: pointer;
   font-size: 13px;
   font-weight: 500;

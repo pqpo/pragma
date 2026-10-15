@@ -212,6 +212,7 @@ export async function createDesktopMemoryPlane(options: {
     activity,
     scheduler,
     flushDelivery,
+    retainCompletedJobs,
     registerExecutionContext,
     setConversationState,
   } = data;
@@ -321,10 +322,9 @@ export async function createDesktopMemoryPlane(options: {
       });
       await Promise.all([
         episodic.store.maintain(maintenanceNow),
-        knowledge.store.maintain(maintenanceNow),
-        skill.store.maintain(maintenanceNow),
         semantic.store.maintain(maintenanceNow),
       ]);
+      await retainCompletedJobs();
       const pipeline = await state.maintain(maintenanceNow);
       const deadLetters = await state.inspectDeadLetters();
       blockedBytes = feed.blockedBytes;
@@ -404,6 +404,7 @@ export async function createDesktopMemoryPlane(options: {
       nextPollDelayMs = learningEnabled ? (options.pollIntervalMs ?? 1_000) : 30_000;
       const adapted = await flushDelivery();
       await scheduler.runBackgroundOnce();
+      await retainCompletedJobs();
       void attention?.retrieval.tick();
       await options.onTick?.();
       if (Date.now() - lastMaintenanceAtMs >= DEFAULT_MEMORY_STORAGE_POLICY.maintenanceIntervalMs) {
