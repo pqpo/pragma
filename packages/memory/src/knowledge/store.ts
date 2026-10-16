@@ -88,6 +88,7 @@ export interface KnowledgeLearningStore {
   deleteJob(input: { readonly id: string; readonly expectedRevision: number }): Promise<void>;
   wakeNeedsAttention(now: Date, reason?: "configuration" | "manual"): Promise<void>;
   listJobs(): Promise<readonly KnowledgeExtractionJob[]>;
+  getJob(id: string): Promise<KnowledgeExtractionJob | undefined>;
   listFailureAttempts(jobId: string): Promise<readonly MemoryExtractionFailureAttempt[]>;
   listJobsPage(
     input: MemoryJobPageInput<KnowledgeExtractionJob["status"]>,
@@ -390,6 +391,9 @@ export async function createKnowledgeLearningStore(
           job_json: string;
         }[]
       ).map((row) => parseJob(row.job_json));
+    },
+    async getJob(id) {
+      return readJob(database, id);
     },
     async listFailureAttempts(jobId) {
       return listExtractionFailureAttempts(database, jobId);

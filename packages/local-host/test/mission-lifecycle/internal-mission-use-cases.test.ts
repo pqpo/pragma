@@ -85,6 +85,35 @@ it("cancels polling without waiting for the next interval or deleting durable hi
   expect((await store.get(mission.id)).execution?.status).toBe("running");
 });
 
+it("waits for the continuation execution instead of accepting the previous terminal turn", async () => {
+  const { store, mission } = await missionFixture();
+  const old = (await store.get(mission.id)).execution!;
+  const nextId = randomUUID();
+  const read = vi.fn(async () => {
+    const reads = read.mock.calls.length;
+    return {
+      ...mission,
+      execution:
+        reads === 1
+          ? { ...old, status: "succeeded" as const }
+          : {
+              ...old,
+              id: nextId,
+              status: reads === 2 ? ("running" as const) : ("succeeded" as const),
+            },
+    };
+  });
+  const result = await waitForInternalMissionTerminal({
+    missionId: mission.id,
+    executionId: nextId,
+    getMission: read,
+    pollIntervalMs: 1,
+    timeoutMessage: "unexpected_timeout",
+  });
+  expect(result.execution?.id).toBe(nextId);
+  expect(read).toHaveBeenCalledTimes(3);
+});
+
 it("preserves the consumer timeout diagnostic and does not change execution", async () => {
   const { store, mission } = await missionFixture();
   await expect(

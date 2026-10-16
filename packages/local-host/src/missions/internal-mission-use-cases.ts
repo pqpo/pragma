@@ -4,6 +4,7 @@ import type { Mission } from "@pragma/shared";
 export async function waitForInternalMissionTerminal(input: {
   readonly getMission: (id: string) => Promise<Mission>;
   readonly missionId: string;
+  readonly executionId?: string | undefined;
   readonly signal?: AbortSignal | undefined;
   readonly timeoutMessage: string;
   readonly timeoutMs?: number | undefined;
@@ -16,6 +17,7 @@ export async function waitForInternalMissionTerminal(input: {
     input.signal?.throwIfAborted();
     if (
       mission.execution !== undefined &&
+      (input.executionId === undefined || mission.execution.id === input.executionId) &&
       ["succeeded", "failed", "cancelled"].includes(mission.execution.status)
     )
       return mission;

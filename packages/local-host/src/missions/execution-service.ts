@@ -1,4 +1,5 @@
 import { defineLocalHostMissionMessageFormat } from "../mission-command-admission.ts";
+import { MEMORY_CURATOR_REF } from "@pragma/memory";
 import { type LocalHostMissionPromptAdmissionHook } from "../mission-command-admission.ts";
 import {
   createMissionExecutionKernel,
@@ -1258,7 +1259,11 @@ export function createLocalHostMissionExecutionService(
         ...(input.modelSelection === undefined ? {} : { modelSelection: input.modelSelection }),
       },
       resumeOptions: { ...resumeOptions, environment },
-      successorOnMismatch: input.createSuccessorOnMismatch,
+      successorOnMismatch:
+        input.mission.origin.type === "system-memory" &&
+        input.mission.executor.ref === MEMORY_CURATOR_REF
+          ? false
+          : input.createSuccessorOnMismatch,
     };
   };
 
@@ -2638,6 +2643,15 @@ export function createLocalHostMissionExecutionService(
       sessionService.successorRequired(mission.id) ||
       missionContextMountsNeedSuccessor(mission, contextMountsFingerprint) ||
       (memoryBindingsChanged && !lifecycleService.hasActive(mission.id));
+    if (
+      mission.origin.type === "system-memory" &&
+      mission.executor.ref === MEMORY_CURATOR_REF &&
+      (definitionChanged || contextStoresChanged)
+    ) {
+      throw Object.assign(new Error("memory_curator_session_environment_changed"), {
+        retryable: false,
+      });
+    }
     if (
       (session === undefined || definitionChanged || contextStoresChanged) &&
       compiled === undefined
@@ -5866,6 +5880,48 @@ export function createLocalHostMissionExecutionService(
     },
     async invalidateContextBindings(id) {
       await invalidateContextBindings(id);
+    },
+    async continueInternalMemoryMission(input) {
+      const mission = await options.missions.get(input.id);
+      if (mission.origin.type !== "system-memory" || mission.executor.ref !== MEMORY_CURATOR_REF)
+        throw new Error("memory_curator_internal_access_denied");
+      const receiptReader =
+        controllerFactResources?.controller ??
+        createMissionControllerStore({
+          missionsPath:
+            options.missions.storagePath === undefined
+              ? new PragmaPaths({ pragmaHome: options.pragmaHome }).missionsRoot()
+              : dirname(options.missions.storagePath(input.id)),
+          ...(options.missions.storagePath === undefined
+            ? {}
+            : { missionPath: options.missions.storagePath }),
+        });
+      const prior = await receiptReader.getOperation({
+        missionId: input.id,
+        requestId: input.requestId,
+      });
+      if (prior === undefined) {
+        if (
+          mission.execution?.id !== input.previousExecutionId ||
+          !["succeeded", "failed", "cancelled"].includes(mission.execution.status)
+        )
+          throw new Error("memory_curator_execution_unconfirmed");
+        const context = await readMissionRootContext(mission);
+        if (context?.snapshot === undefined || mission.execution.sessionId === undefined)
+          throw new Error("memory_curator_session_unavailable");
+      }
+      const { operation } = await submitMissionCommand({
+        missionId: input.id,
+        requestId: input.requestId,
+        kind: "send",
+        payload: { kind: "send", input: { prompt: input.content, attachments: [] } },
+      });
+      const current = await options.missions.get(input.id);
+      const executionId = operation.result?.["executionId"];
+      if (typeof executionId === "string") return { executionId };
+      if (current.execution === undefined || current.execution.id === input.previousExecutionId)
+        throw new Error("memory_curator_continuation_unconfirmed");
+      return { executionId: current.execution.id };
     },
     async sendMessage(input) {
       const mode = input.mode ?? "enqueue";

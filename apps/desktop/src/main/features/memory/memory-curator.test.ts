@@ -5,6 +5,8 @@ import { join } from "node:path";
 
 import {
   createFileMemoryExtractorProfileStore,
+  createConversationMemoryExtractionCoordinator,
+  conversationExtractionJobId,
   createEpisodicMemoryModule,
   createSemanticMemoryModule,
   createMemoryExtractionSessionStore,
@@ -35,6 +37,364 @@ vi.mock("@pragma/local-host", async (importOriginal) => ({
 
 const roots: string[] = [];
 
+it.each([
+  "completed",
+  "local-settlement-first",
+  "manual-continuation",
+  "manual-cancelled",
+  "manual-nonretryable",
+  "retryable-failure",
+  "exhausted",
+  "session-lost",
+  "cancelled",
+  "budget-exhausted",
+] as const)(
+  "shares one Mission and evidence read while continuing pending types: %s",
+  async (scenario) => {
+    const root = await mkdtemp(join(tmpdir(), "pragma-shared-curator-"));
+    roots.push(root);
+    const missions = createMissionStore({ missionsPath: join(root, "missions") });
+    const runtimes = createStaticRuntimeResolver({
+      defaultRuntimeId: "fake",
+      runtimes: [
+        defineRuntimeTestDriver<never, { id: string }>({
+          descriptor: { id: "fake", kind: "fake", displayName: "Fake" },
+          createSession: () => ({ id: "native" }),
+          readSession: () => ({ runtimeSessionId: "native" }),
+          startTurn: () => ({ outputText: "unused", runtimeSessionId: "native" }),
+          mapEvent: () => ({ events: [] }),
+        }),
+      ],
+    });
+    const sessionId = randomUUID();
+    let readCount = 0;
+    let manualContinuation = false;
+    let cachedTools:
+      | import("@pragma/core").ExpertAgentManagedTool<
+          string,
+          import("@pragma/core").ExpertAgentToolCallResult
+        >[]
+      | undefined;
+    const runTurn = async (id: string, continued: boolean) => {
+      const mission = await missions.get(id);
+      const source = await curator.source({
+        missionId: id,
+        runtimes,
+        workspace: root,
+        pragmaHome: root,
+      });
+      const binding = await source.adapterHost!.resolveBinding("binding:pragma.memory-curator");
+      const resolvedTools = (
+        binding!.value as {
+          contribution: {
+            tools: import("@pragma/core").ExpertAgentManagedTool<
+              string,
+              import("@pragma/core").ExpertAgentToolCallResult
+            >[];
+          };
+        }
+      ).contribution.tools;
+      const tools = (cachedTools ??= resolvedTools);
+      expect(tools.find((tool) => tool.name === "finish_extraction")!.inputSchema).toMatchObject({
+        type: "object",
+        required: expect.arrayContaining(["retain", "type"]),
+        properties: { type: { enum: ["episodic", "semantic"] } },
+      });
+      const call = async (name: string, args: unknown) => {
+        if (name === "read_evidence") readCount++;
+        const result = await tools.find((tool) => tool.name === name)!.call(args, undefined);
+        expect(result.isError, result.text).not.toBe(true);
+      };
+      if (!continued) {
+        await call("read_evidence", { evidence: "e1" });
+        await call("submit_fact", {
+          statement: "User prefers concise Chinese answers",
+          subjects: ["user"],
+          property: { predicate: "user.preference.language", conflictMode: "exclusive" },
+          value: "zh-Hans",
+          confidence: 0.8,
+          evidence: ["e1"],
+        });
+        await call("finish_extraction", { type: "semantic", retain: true });
+        if (scenario === "budget-exhausted") {
+          const session = (await createMemoryExtractionSessionStore({
+            pragmaHome: root,
+          }).forMission(id))!;
+          await session.setContextBudget(1);
+          await expect(
+            tools
+              .find((tool) => tool.name === "read_evidence")!
+              .call({ evidence: "e1" }, undefined),
+          ).rejects.toThrow("budget_exhausted");
+        }
+      } else if (
+        manualContinuation ||
+        scenario === "completed" ||
+        scenario === "local-settlement-first" ||
+        scenario === "retryable-failure"
+      ) {
+        if (manualContinuation) {
+          const blocked = await tools
+            .find((tool) => tool.name === "submit_fact")!
+            .call(
+              {
+                statement: "unused",
+                subjects: ["user"],
+                property: { predicate: "user.preference.language", conflictMode: "exclusive" },
+                value: "unused",
+                confidence: 0.8,
+                evidence: ["e1"],
+              },
+              undefined,
+            );
+          expect(blocked.text).toContain("memory_curator_type_unavailable");
+        }
+        await call("finish_extraction", { type: "episodic", retain: false, reason: "low-value" });
+      }
+      const executionId = randomUUID();
+      await missions.updateExecution(id, {
+        id: executionId,
+        sessionId,
+        inputMessageId: mission.initialMessageId,
+        status:
+          !continued && (scenario === "cancelled" || scenario === "manual-cancelled")
+            ? "cancelled"
+            : !continued && (scenario === "retryable-failure" || scenario === "manual-nonretryable")
+              ? "failed"
+              : "succeeded",
+        startedAt: new Date().toISOString(),
+        finishedAt: new Date().toISOString(),
+      });
+      return { executionId };
+    };
+    const startRun = vi.fn(async (id: string) => {
+      await runTurn(id, false);
+      return await missions.get(id);
+    });
+    const continueMission = vi.fn(
+      async (input: {
+        id: string;
+        content: string;
+        requestId: string;
+        previousExecutionId: string;
+      }) => {
+        expect(input.content).toContain("SAME conversation");
+        expect(input.content).not.toContain("Pending types: semantic");
+        expect((await missions.get(input.id)).execution?.sessionId).toBe(sessionId);
+        if (scenario === "session-lost") throw new Error("memory_curator_session_unavailable");
+        return await runTurn(input.id, true);
+      },
+    );
+    const application = {
+      startRun,
+      continueInternalMemoryMission: continueMission,
+      subscribeChat: () => () => {},
+      getInternalContextWindow: async () => ({ missionId: "test", revision: 1 }),
+      getTerminalRuntimeFailure: async () => ({
+        code: "provider_temporary",
+        message: "Temporary",
+        retryable: scenario !== "manual-nonretryable",
+        failedAt: new Date().toISOString(),
+      }),
+      getTerminalRuntimeOutputDiagnostic: async () => undefined,
+      getInternalConversationSnapshot: async (id: string) =>
+        MissionConversationSnapshotSchema.parse({
+          missionId: id,
+          revision: 1,
+          entries: [],
+          page: {},
+          pendingInteractions: [],
+          queue: { state: "idle", pendingCount: 0, supportsSteer: false, items: [] },
+        }),
+      delete: vi.fn(async () => {}),
+      interrupt: vi.fn(async () => {}),
+    } as unknown as LocalHostMissionApplication;
+    const curator = createDesktopMemoryCurator({
+      missions,
+      application,
+      runtimes,
+      pragmaHome: root,
+      workspace: root,
+      project: createPragmaProjectStore({ projectsPath: join(root, "projects") }),
+      profiles: createFileMemoryExtractorProfileStore({ pragmaHome: root }),
+    });
+    const episodic = await createEpisodicMemoryModule({
+      pragmaHome: root,
+      extractor: curator.episodicExtractor,
+    });
+    const semantic = await createSemanticMemoryModule({
+      pragmaHome: root,
+      extractor: curator.semanticExtractor,
+    });
+    try {
+      await semantic.registerExecutionSubjects({
+        executionId: "source",
+        subjectRefs: [{ type: "pragma.user", id: "user" }],
+      });
+      const message = MemoryEvidenceEnvelopeSchema.parse({
+        schemaVersion: "pragma.memory-evidence/v1",
+        messageId: "source-message",
+        topic: "execution.message.appended",
+        schemaRef: "pragma.memory.execution-message/v2",
+        sourceRef: { type: "pragma.execution-event", id: "event", canonicalEventId: "canonical" },
+        subjectRefs: [{ type: "pragma.execution", id: "source" }],
+        correlationId: "source",
+        occurredAt: new Date().toISOString(),
+        visibility: { mode: "host-private" },
+        sensitivity: "internal",
+        bindings: [],
+        attribution: { rootRef: { type: "pragma.expert", id: "expert" }, producerRefs: [] },
+        policySnapshot: {
+          capture: true,
+          recall: true,
+          learning: "local-candidates",
+          appliedRevisions: [],
+        },
+        payload: {
+          message: {
+            role: "user",
+            text: "Please remember that I prefer concise answers in Simplified Chinese for all future engineering tasks. This is a lasting preference, not a one-off request.",
+          },
+        },
+      });
+      if (scenario === "local-settlement-first") {
+        const earlier = {
+          ...message,
+          messageId: "earlier-message",
+          correlationId: "earlier-source",
+          subjectRefs: [{ type: "pragma.execution", id: "earlier-source" }],
+          occurredAt: "2026-10-14T00:00:00.000Z",
+          payload: { message: { role: "user", text: "Hi" } },
+        };
+        await episodic.consume([
+          earlier,
+          {
+            ...earlier,
+            messageId: "earlier-terminal",
+            topic: "execution.execution.terminal",
+            schemaRef: "pragma.memory.execution-terminal/v2",
+            payload: { outcome: "succeeded" },
+          },
+        ]);
+        await episodic.setConversationState({
+          conversationRef: { type: "pragma.execution", id: "earlier-source" },
+          state: "completed",
+          now: new Date("2026-10-15T00:00:00.000Z"),
+        });
+      }
+      const evidence = [
+        message,
+        {
+          ...message,
+          messageId: "terminal",
+          topic: "execution.execution.terminal",
+          schemaRef: "pragma.memory.execution-terminal/v2",
+          payload: { outcome: "succeeded" },
+        },
+      ];
+      for (const module of [episodic, semantic]) {
+        await module.consume(evidence);
+        await module.setConversationState({
+          conversationRef: { type: "pragma.execution", id: "source" },
+          state: "completed",
+          now: new Date(),
+        });
+      }
+      const coordinator = createConversationMemoryExtractionCoordinator({
+        pragmaHome: root,
+        episodic,
+        semantic,
+      });
+      coordinator.setExtractor(curator.conversationExtractor);
+      await coordinator.runOnce();
+      if (scenario === "local-settlement-first") {
+        expect(startRun).not.toHaveBeenCalled();
+        await coordinator.runOnce();
+      }
+      if (scenario.startsWith("manual-")) {
+        const failed = (await episodic.store.listExtractionJobs()).find(
+          (job) => job.executionId === "source",
+        )!;
+        expect(failed.status).toBe("needs_attention");
+        expect(continueMission).toHaveBeenCalledTimes(scenario === "manual-continuation" ? 3 : 0);
+        await createMemoryExtractionSessionStore({ pragmaHome: root }).retryConversation(
+          conversationExtractionJobId(failed.conversationRef, failed.inputWatermark),
+        );
+        await episodic.store.retryJob({
+          id: failed.id,
+          expectedRevision: failed.revision,
+          now: new Date(),
+          preserveSession: true,
+        });
+        manualContinuation = true;
+        await coordinator.runOnce();
+        expect(new Set(continueMission.mock.calls.map(([request]) => request.requestId)).size).toBe(
+          scenario === "manual-continuation" ? 4 : 1,
+        );
+      }
+      expect(startRun).toHaveBeenCalledOnce();
+      expect(readCount).toBe(1);
+      if (scenario === "budget-exhausted") expect(application.interrupt).toHaveBeenCalledOnce();
+      expect(continueMission).toHaveBeenCalledTimes(
+        scenario === "cancelled" || scenario === "budget-exhausted"
+          ? 0
+          : scenario === "exhausted"
+            ? 3
+            : scenario === "manual-continuation"
+              ? 4
+              : 1,
+      );
+      expect(new Set(continueMission.mock.calls.map(([input]) => input.id)).size).toBe(
+        scenario === "cancelled" || scenario === "budget-exhausted" ? 0 : 1,
+      );
+      expect(await semantic.store.list()).toHaveLength(1);
+      const episodeJob = (await episodic.store.listExtractionJobs()).find(
+        (job) => job.executionId === "source",
+      );
+      if (scenario === "budget-exhausted")
+        expect(episodeJob?.lastErrorCode).toBe("memory_curator_budget_exhausted");
+      expect(episodeJob?.status).toBe(
+        scenario === "completed" ||
+          scenario.startsWith("manual-") ||
+          scenario === "local-settlement-first" ||
+          scenario === "retryable-failure"
+          ? "completed"
+          : "needs_attention",
+      );
+      expect((await semantic.store.listExtractionJobs())[0]?.status).toBe("completed");
+      const runs = await curator.listRuns({
+        module: "conversation",
+        jobId: conversationExtractionJobId(episodeJob!.conversationRef, episodeJob!.inputWatermark),
+      });
+      expect(runs).toHaveLength(scenario.startsWith("manual-") ? 2 : 1);
+      expect(new Set(runs.map((run) => run.missionId)).size).toBe(1);
+      expect(runs[0]!.continuations).toBe(
+        scenario === "cancelled" || scenario === "budget-exhausted"
+          ? 0
+          : scenario === "exhausted"
+            ? 3
+            : 1,
+      );
+      if (scenario === "session-lost") {
+        const id = conversationExtractionJobId(
+          episodeJob!.conversationRef,
+          episodeJob!.inputWatermark,
+        );
+        vi.mocked(application.delete).mockRejectedValue(new Error("Native stop unconfirmed"));
+        await expect(curator.retireJobs([id])).rejects.toThrow("retirement_unconfirmed");
+        expect(startRun).toHaveBeenCalledOnce();
+        vi.mocked(application.delete).mockResolvedValue(undefined);
+        await curator.retireJobs([id]);
+        expect(await semantic.store.list()).toHaveLength(1);
+      }
+    } finally {
+      episodic.close();
+      semantic.close();
+    }
+  },
+  30_000,
+);
+
 afterEach(async () => {
   await Promise.all(
     roots.splice(0).map(async (root) => await rm(root, { recursive: true, force: true })),
@@ -44,6 +404,7 @@ afterEach(async () => {
 describe("Desktop Memory Curator", () => {
   it.each([
     "success",
+    "tool-recovered",
     "read-recovered",
     "read-failed",
     "missing-output",
@@ -90,6 +451,14 @@ describe("Desktop Memory Curator", () => {
               };
             }
           ).contribution.tools;
+          if (scenario === "tool-recovered") {
+            const invalid = await tools
+              .find((tool) => tool.name === "finish_extraction")!
+              .call({ retain: false }, undefined);
+            expect(invalid).toMatchObject({ isError: true });
+            expect(invalid.text).toContain("Correction:");
+            expect(invalid.text).toContain("Continue in this extraction");
+          }
           const result = await tools
             .find((tool) => tool.name === "finish_extraction")!
             .call({ retain: false, reason: "low-value" }, undefined);

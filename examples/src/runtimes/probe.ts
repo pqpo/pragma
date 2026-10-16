@@ -574,11 +574,19 @@ async function runSessionProbe(
       if (operation === "resume") {
         await session.refreshRuntimeSessions();
         const resumed = await session.prompt(
-          "Reply with RESUME_PROBE_OK_3187 and the exact prior marker RESUME_MEMORY_6249.",
+          "Reply with RESUME_PROBE_OK_3187 followed by the exact marker you were asked to remember in the preceding turn. Do not use tools.",
           { requestId: `probe-resume-second-${Date.now()}` },
         );
         const resumedOutput = String(await resumed.result);
+        const resumedState = await session.getState();
+        const resumedContext = resumedState.contexts[resumedState.rootContextId];
+        const identityPreserved =
+          rootContext?.snapshot !== undefined &&
+          resumedState.rootContextId === sessionState.rootContextId &&
+          resumedContext?.snapshot?.systemSessionId === rootContext.snapshot.systemSessionId &&
+          resumedContext?.snapshot?.runtimeSession.id === rootContext.snapshot.runtimeSession.id;
         const passed =
+          identityPreserved &&
           resumedOutput.includes("RESUME_PROBE_OK_3187") &&
           resumedOutput.includes("RESUME_MEMORY_6249");
         paths.assertions.push(
@@ -589,10 +597,13 @@ async function runSessionProbe(
             passed ? "passed" : "failed",
             passed
               ? "Native Session identity resumed after refresh."
-              : "The resumed turn did not recall the marker.",
+              : "The resumed turn did not preserve Native identity and recall the prior marker.",
           ),
         );
-        if (!passed) throw new Error("The resumed turn did not recall the marker.");
+        if (!passed)
+          throw new Error(
+            "The resumed turn did not preserve Native identity and recall the prior marker.",
+          );
       }
     }
   } catch (error) {

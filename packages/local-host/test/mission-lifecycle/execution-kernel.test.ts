@@ -43,6 +43,65 @@ afterEach(async () => {
 });
 
 describe("shared Mission execution kernel with durable Core stores", { timeout: 15_000 }, () => {
+  it("continues a released extraction Session with the original Native identity and refuses a successor", async () => {
+    const f = await fixture(undefined, true);
+    const session = await f.app.experts.createSession(f.expert);
+    f.openSessions.push(session);
+    const first = await session.prompt("read evidence and stage a fact", {
+      requestId: "initial-extraction",
+    });
+    await first.result;
+    const before = (await f.sessions.get(session.sessionId))!;
+    const root = before.contexts[before.rootContextId]!;
+    await session.releaseAfterTerminal({ waitForIdle: true });
+    const preparation = {
+      subject: {
+        missionId: "memory-mission",
+        sessionId: session.sessionId,
+        intent: "recover" as const,
+        request: { requestId: "repair-extraction" },
+      },
+      resources: {
+        kind: "session" as const,
+        app: f.app,
+        definition: f.expert,
+        successorOnMismatch: false,
+      },
+      definitionChanged: false,
+      contextStoresChanged: false,
+      hasActive: false,
+    };
+    const restored = await f.kernel.preparePromptSession(preparation);
+    f.openSessions.push(restored.session);
+    expect(restored.session.sessionId).toBe(session.sessionId);
+    const repaired = await restored.session.prompt("finish only the pending episode", {
+      requestId: "repair-extraction",
+    });
+    await repaired.result;
+    const duplicate = await restored.session.prompt("finish only the pending episode", {
+      requestId: "repair-extraction",
+    });
+    await duplicate.result;
+    expect(duplicate.executionId).toBe(repaired.executionId);
+    expect(f.created).toHaveBeenCalledOnce();
+    expect(f.restored).toHaveBeenCalledOnce();
+    expect(f.dispatched.mock.calls.map(([, nativeId]) => nativeId)).toEqual([
+      root.snapshot!.runtimeSession.id,
+      root.snapshot!.runtimeSession.id,
+    ]);
+    const after = (await f.sessions.get(session.sessionId))!;
+    expect(after.rootContextId).toBe(before.rootContextId);
+    expect(after.contexts[after.rootContextId]!.snapshot).toEqual(root.snapshot);
+    await expect(
+      f.kernel.preparePromptSession({
+        ...preparation,
+        session: restored.session,
+        definitionChanged: true,
+      }),
+    ).rejects.toThrow("session_environment_changed");
+    expect(f.dispatched).toHaveBeenCalledTimes(2);
+    expect(f.created).toHaveBeenCalledOnce();
+  });
   it("replays uncertain Core acceptance without publishing a message or rereading deleted drafts", async () => {
     const f = await fixture();
     const missionsPath = new PragmaPaths({ pragmaHome: f.home }).missionsRoot();
@@ -1019,11 +1078,13 @@ describe("shared Mission execution kernel with durable Core stores", { timeout: 
 
 async function fixture(
   beforeTurn?: (query: string, context: RuntimeNativeSessionContext) => Promise<void>,
+  supportsRestore = false,
 ) {
   const home = await mkdtemp(join(tmpdir(), "pragma-execution-kernel-"));
   const executions = createSqliteExecutionStore({ pragmaHome: home });
   const sessions = createFileExpertSessionStore({ pragmaHome: home, executions });
   const created = vi.fn();
+  const restored = vi.fn();
   const closed = vi.fn();
   const dispatched = vi.fn<(query: string, nativeId: string) => Promise<void>>(
     async () => undefined,
@@ -1037,6 +1098,17 @@ async function fixture(
       created(context.systemSessionId);
       return { id: context.systemSessionId, context };
     },
+    ...(supportsRestore
+      ? {
+          restoreSession: (context: RuntimeNativeSessionContext) => {
+            restored(context.systemSessionId);
+            return {
+              id: context.persistence.restoredRuntimeSessionId ?? context.systemSessionId,
+              context,
+            };
+          },
+        }
+      : {}),
     readSession: (session) => ({ runtimeSessionId: session.id }),
     closeSession: () => {
       closed();
@@ -1076,6 +1148,7 @@ async function fixture(
     executions,
     sessions,
     created,
+    restored,
     closed,
     dispatched,
     openSessions: [] as ExpertSession[],

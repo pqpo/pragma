@@ -2,7 +2,8 @@ import { createHash, randomUUID } from "node:crypto";
 import { mkdir, readFile, readdir, rename, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
-import { PragmaPaths } from "@pragma/core";
+import { PragmaPaths, withFileLock } from "@pragma/core";
+import { migrateMemoryExtractionRunV1ToV2 } from "./migrations/run-archive/v1-to-v2.ts";
 
 import {
   DesktopMemoryExtractionRunSchema,
@@ -13,7 +14,7 @@ const RUN_ARCHIVE_RETENTION_MS = 30 * 24 * 60 * 60_000;
 const RUN_ARCHIVE_MAX_RECORDS = 1_000;
 const LEGACY_RUN_FILE_PATTERN = /^[0-9a-f-]{36}\.json$/u;
 const RUN_FILE_PATTERN =
-  /^(episodic|semantic|knowledge|skill)\.[a-f0-9]{64}\.[0-9a-f-]{36}\.json$/u;
+  /^(episodic|semantic|conversation|knowledge|skill)\.[a-f0-9]{64}\.[0-9a-f-]{36}\.json$/u;
 
 export interface MemoryExtractionRunArchive {
   save(run: DesktopMemoryExtractionRun): Promise<void>;
@@ -40,9 +41,31 @@ export function createMemoryExtractionRunArchive(
     `${run.module}.${jobIdDigest(run.jobId)}.${run.runId}.json`;
   const readName = async (name: string): Promise<DesktopMemoryExtractionRun | undefined> => {
     try {
-      return DesktopMemoryExtractionRunSchema.parse(
-        JSON.parse(await readFile(join(root, name), "utf8")),
-      );
+      return await withFileLock(`${join(root, name)}.lock`, async () => {
+        const path = join(root, name);
+        const text = await readFile(path, "utf8");
+        const raw: unknown = JSON.parse(text);
+        if (
+          (raw as { schemaVersion?: unknown })?.schemaVersion !==
+          "pragma.desktop-memory-extraction-run/v1"
+        )
+          return DesktopMemoryExtractionRunSchema.parse(raw);
+        const migrated = migrateMemoryExtractionRunV1ToV2(raw);
+        // Single-file migration: immutable backup followed by atomic replacement; safe to replay.
+        await writeFile(`${path}.v1.backup`, text, { mode: 0o600, flag: "wx" }).catch(
+          (error: NodeJS.ErrnoException) => {
+            if (error.code !== "EEXIST") throw error;
+          },
+        );
+        const temporary = `${path}.${randomUUID()}.tmp`;
+        try {
+          await writeFile(temporary, `${JSON.stringify(migrated)}\n`, { mode: 0o600 });
+          await rename(temporary, path);
+        } finally {
+          await rm(temporary, { force: true });
+        }
+        return migrated;
+      });
     } catch (error) {
       if (isNotFound(error)) return undefined;
       throw error;
@@ -143,7 +166,10 @@ async function pruneRunArchive(
         (entry, index) =>
           index >= RUN_ARCHIVE_MAX_RECORDS || Date.parse(entry.run.startedAt) < cutoff,
       )
-      .map(async (entry) => await rm(join(root, entry.name), { force: true })),
+      .map(async (entry) => {
+        await rm(join(root, entry.name), { force: true });
+        await rm(join(root, `${entry.name}.v1.backup`), { force: true });
+      }),
   );
 }
 

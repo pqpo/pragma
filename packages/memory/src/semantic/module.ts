@@ -1,5 +1,12 @@
+import {
+  prepareMemoryExtraction,
+  MemoryExtractionDeferred,
+  type PreparedMemoryExtraction,
+} from "../pipeline/prepare-extraction.ts";
+import { hasPendingMemoryExtractionContinuation } from "../pipeline/extraction-session/store.ts";
 import { extractionEvidenceAccessGuard } from "../pipeline/extraction-settings.ts";
 import { redactMemoryValue } from "../evidence/redact.ts";
+import type { ExtractionMemoryReader } from "../retrieval/extraction-memory.ts";
 import type {
   MemoryEvidenceEnvelope,
   MemoryExtractionFailurePhase,
@@ -26,6 +33,16 @@ import { MemoryRecallScopeSchema, type MemoryModule } from "../pipeline/memory-m
 import { mergeMemoryEvidenceOmissionStats } from "../storage/bounded-evidence.ts";
 
 export interface SemanticMemoryModule extends MemoryModule {
+  prepareBackgroundOnce(
+    conversationRef?: MemorySubjectRef,
+  ): Promise<
+    | PreparedMemoryExtraction<
+        Parameters<SemanticMemoryExtractor["extract"]>[0],
+        Awaited<ReturnType<SemanticMemoryExtractor["extract"]>>
+      >
+    | undefined
+  >;
+  setMemoryReader(reader: ExtractionMemoryReader): void;
   readonly store: SemanticMemoryStore;
   setExtractor(extractor: SemanticMemoryExtractor | undefined): Promise<void>;
   setConversationState(input: {
@@ -64,6 +81,7 @@ export async function createSemanticMemoryModule(
   const store = await createSemanticMemoryStore(options);
   const now = options.now ?? (() => new Date());
   let extractor = options.extractor;
+  let memoryReader: ExtractionMemoryReader | undefined;
   const running = new Map<string, AbortController>();
   const unadmittedClaims = new Set<AbortController>();
   let projectionNotificationAttempts = 0;
@@ -88,6 +106,209 @@ export async function createSemanticMemoryModule(
       projectionNotificationError = error;
       throw error;
     }
+  };
+
+  const runBackgroundOnce = async (
+    selectedExtractor = extractor,
+    conversationRef?: MemorySubjectRef,
+    deferAdmission = false,
+  ): Promise<void> => {
+    await drainProjectionNotification();
+    if (selectedExtractor === undefined) return;
+    const claim = await store.claimDueJob(now(), conversationRef);
+    if (claim === undefined) return;
+    const { localRecoveryOnly, ...job } = claim;
+    const key = conversationKey(job.conversationRef);
+    const controller = new AbortController();
+    let shouldDrainProjectionNotification = false;
+    running.set(key, controller);
+    if (
+      localRecoveryOnly !== true &&
+      !hasPendingMemoryExtractionContinuation(options, "semantic", job.id, job.inputWatermark)
+    )
+      unadmittedClaims.add(controller);
+    const startedAt = now();
+    const lease = deferAdmission
+      ? setInterval(() => {
+          void store.renewClaimLease(job, now()).catch((error: unknown) => controller.abort(error));
+        }, 60_000)
+      : undefined;
+    lease?.unref();
+    let phase: MemoryExtractionFailurePhase = "source_read";
+    try {
+      if (await store.hasAppliedJob(job)) {
+        await store.completePreviouslyApplied(job, now());
+        return;
+      }
+      let recovered = await selectedExtractor.recover?.(job.id, job.inputWatermark);
+      if (localRecoveryOnly === true && recovered === undefined) {
+        phase = "storage";
+        throw Object.assign(new Error("memory_extraction_recovery_result_unavailable"), {
+          retryable: false,
+        });
+      }
+      const subjectContext = await store.getSubjectContext(job.executionId);
+      if (subjectContext === undefined) throw new Error("semantic_subject_context_missing");
+      const capturedEvidence = await store.readEvidenceForJob(job);
+      const allowToolAssisted =
+        (await options.extractionSettings?.get())?.allowToolAssisted.semantic ?? false;
+      const selectedEvidence = selectMemoryExtractionEvidence(
+        capturedEvidence,
+        allowToolAssisted,
+        "semantic",
+      );
+      const evidence = sanitizeEvidence(selectedEvidence.retained);
+      const assertAccess = extractionEvidenceAccessGuard(
+        evidence,
+        "semantic",
+        options.extractionSettings,
+      );
+      const omittedEvidence = mergeMemoryEvidenceOmissionStats(
+        await store.readOmissionStatsForJob(job),
+        selectedEvidence.omittedStats,
+      );
+      if (evidence.some((item) => item.sensitivity === "restricted")) {
+        await store.completeRejected(job, "sensitive", now());
+        return;
+      }
+      if (!hasTextEvidence(evidence)) {
+        await store.completeRejected(job, "insufficient-evidence", now());
+        return;
+      }
+      const visibility = strictestVisibility(evidence);
+      if (visibility === undefined) {
+        await store.completeRejected(job, "policy", now());
+        return;
+      }
+      const attribution = resolveAttribution(evidence);
+      const allowedSubjectRefs = uniqueRefs([
+        ...subjectContext.subjectRefs,
+        attribution.rootRef,
+        ...attribution.producerRefs,
+      ]);
+      const allowedSubjectKeys = new Set(allowedSubjectRefs.map(refKey));
+      const recallScope = MemoryRecallScopeSchema.parse({
+        rootRef: attribution.rootRef,
+        principalRefs: subjectContext.subjectRefs,
+      });
+      const recallAllowed = evidence.every((item) => item.policySnapshot.recall);
+      const factsBeforeExtraction = !recallAllowed
+        ? []
+        : await store.searchCandidatesForRecall(recallScope, "", 100, now());
+      const currentFacts = boundCurrentFacts(
+        factsBeforeExtraction
+          .filter(
+            (fact) =>
+              fact.status === "active" &&
+              fact.conflictMode === "exclusive" &&
+              fact.subjectRefs.every((ref) => allowedSubjectKeys.has(refKey(ref))),
+          )
+          .map((fact) => ({
+            id: fact.id,
+            revision: fact.revision,
+            statement: fact.statement,
+            subjectRefs: fact.subjectRefs,
+            predicate: fact.predicate,
+            normalizedValue: fact.normalizedValue,
+            conflictMode: fact.conflictMode,
+            observedAt: fact.observedAt,
+          })),
+      );
+      const input = SemanticExtractionInputSchema.parse({
+        schemaVersion: "pragma.memory-semantic-extraction-input/v3",
+        jobId: job.id,
+        executionId: job.executionId,
+        allowedSubjectRefs,
+        currentFacts,
+        evidence,
+        omittedEvidence,
+      });
+      if (recovered !== undefined)
+        recovered = await selectedExtractor.recover?.(job.id, job.inputWatermark, input);
+      if (!(await store.isClaimCurrent(job))) return;
+      controller.signal.throwIfAborted();
+      phase = "curator_run";
+      if (!deferAdmission) unadmittedClaims.delete(controller);
+      const extracted =
+        recovered ??
+        (await selectedExtractor.extract(input, {
+          signal: controller.signal,
+          watermark: job.inputWatermark,
+          conversationRef: job.conversationRef,
+          onAdmission: () => {
+            unadmittedClaims.delete(controller);
+          },
+          isCurrent: () => store.isClaimCurrent(job),
+          assertAccess,
+          assertEvidenceAccess: async (snapshot, type) =>
+            await extractionEvidenceAccessGuard(snapshot, type, options.extractionSettings)(),
+          memory: memoryReader?.bind(
+            recallScope,
+            allowedSubjectRefs,
+            recallAllowed,
+            attribution.producerRefs,
+          ),
+          findFacts: async (query) =>
+            (!recallAllowed
+              ? []
+              : await store.searchCandidatesForRecall(recallScope, query, 10, now())
+            ).filter((fact) =>
+              fact.subjectRefs.every((ref) => allowedSubjectKeys.has(refKey(ref))),
+            ),
+          canUseFact: async (id, revision) => {
+            if (!recallAllowed) return false;
+            const fact = await store.getForRecall(recallScope, id, now());
+            return fact?.revision === revision;
+          },
+        }));
+      controller.signal.throwIfAborted();
+      phase = "validation";
+      await assertAccess();
+      const output = SemanticExtractionOutputSchema.parse(extracted.output);
+      if (!output.retain) {
+        await store.completeRejected(job, output.reason, now());
+        return;
+      }
+      assertCandidateRefs(output.facts, evidence, allowedSubjectRefs);
+      await store.completeRetained({
+        job,
+        candidates: output.facts,
+        evidence,
+        rootRef: attribution.rootRef,
+        principalRefs: subjectContext.subjectRefs,
+        producerRefs: attribution.producerRefs,
+        visibility,
+        sensitivity: strictestSensitivity(evidence),
+        extractor: extracted.provenance,
+        now: now(),
+      });
+      shouldDrainProjectionNotification = true;
+    } catch (error) {
+      if (error instanceof MemoryExtractionDeferred) {
+        await store.releaseUnadmittedClaim(job, now(), unadmittedClaims.has(controller));
+        return;
+      }
+      const failure = extractionFailureDiagnostic(error, "semantic_extraction", {
+        phase,
+        startedAt,
+        now: now(),
+      });
+      await store.fail({
+        job,
+        ...failure,
+        diagnostic:
+          localRecoveryOnly === true
+            ? { ...failure.diagnostic, retryable: false }
+            : failure.diagnostic,
+        now: new Date(failure.diagnostic.failedAt),
+        retry: isConfigurationError(error) ? "configuration" : "transient",
+      });
+    } finally {
+      if (lease !== undefined) clearInterval(lease);
+      unadmittedClaims.delete(controller);
+      if (running.get(key) === controller) running.delete(key);
+    }
+    if (shouldDrainProjectionNotification) await drainProjectionNotification();
   };
 
   return {
@@ -132,174 +353,16 @@ export async function createSemanticMemoryModule(
       await store.ingest(envelopes);
       return {};
     },
-    async runBackgroundOnce() {
-      await drainProjectionNotification();
-      if (extractor === undefined) return;
-      const claim = await store.claimDueJob(now());
-      if (claim === undefined) return;
-      const { localRecoveryOnly, ...job } = claim;
-      const key = conversationKey(job.conversationRef);
-      const controller = new AbortController();
-      let shouldDrainProjectionNotification = false;
-      running.set(key, controller);
-      if (localRecoveryOnly !== true) unadmittedClaims.add(controller);
-      const startedAt = now();
-      let phase: MemoryExtractionFailurePhase = "source_read";
-      try {
-        if (await store.hasAppliedJob(job)) {
-          await store.completePreviouslyApplied(job, now());
-          return;
-        }
-        let recovered = await extractor.recover?.(job.id, job.inputWatermark);
-        if (localRecoveryOnly === true && recovered === undefined) {
-          phase = "storage";
-          throw Object.assign(new Error("memory_extraction_recovery_result_unavailable"), {
-            retryable: false,
-          });
-        }
-        const subjectContext = await store.getSubjectContext(job.executionId);
-        if (subjectContext === undefined) throw new Error("semantic_subject_context_missing");
-        const capturedEvidence = await store.readEvidenceForJob(job);
-        const allowToolAssisted =
-          (await options.extractionSettings?.get())?.allowToolAssisted.semantic ?? false;
-        const selectedEvidence = selectMemoryExtractionEvidence(
-          capturedEvidence,
-          allowToolAssisted,
-          "semantic",
-        );
-        const evidence = sanitizeEvidence(selectedEvidence.retained);
-        const assertAccess = extractionEvidenceAccessGuard(
-          evidence,
-          "semantic",
-          options.extractionSettings,
-        );
-        const omittedEvidence = mergeMemoryEvidenceOmissionStats(
-          await store.readOmissionStatsForJob(job),
-          selectedEvidence.omittedStats,
-        );
-        if (evidence.some((item) => item.sensitivity === "restricted")) {
-          await store.completeRejected(job, "sensitive", now());
-          return;
-        }
-        if (!hasTextEvidence(evidence)) {
-          await store.completeRejected(job, "insufficient-evidence", now());
-          return;
-        }
-        const visibility = strictestVisibility(evidence);
-        if (visibility === undefined) {
-          await store.completeRejected(job, "policy", now());
-          return;
-        }
-        const attribution = resolveAttribution(evidence);
-        const allowedSubjectRefs = uniqueRefs([
-          ...subjectContext.subjectRefs,
-          attribution.rootRef,
-          ...attribution.producerRefs,
-        ]);
-        const allowedSubjectKeys = new Set(allowedSubjectRefs.map(refKey));
-        const recallScope = MemoryRecallScopeSchema.parse({
-          rootRef: attribution.rootRef,
-          principalRefs: subjectContext.subjectRefs,
-        });
-        const factsBeforeExtraction = await store.searchCandidatesForRecall(
-          recallScope,
-          "",
-          100,
-          now(),
-        );
-        const currentFacts = boundCurrentFacts(
-          factsBeforeExtraction
-            .filter(
-              (fact) =>
-                fact.status === "active" &&
-                fact.conflictMode === "exclusive" &&
-                fact.subjectRefs.every((ref) => allowedSubjectKeys.has(refKey(ref))),
-            )
-            .map((fact) => ({
-              id: fact.id,
-              revision: fact.revision,
-              statement: fact.statement,
-              subjectRefs: fact.subjectRefs,
-              predicate: fact.predicate,
-              normalizedValue: fact.normalizedValue,
-              conflictMode: fact.conflictMode,
-              observedAt: fact.observedAt,
-            })),
-        );
-        const input = SemanticExtractionInputSchema.parse({
-          schemaVersion: "pragma.memory-semantic-extraction-input/v3",
-          jobId: job.id,
-          executionId: job.executionId,
-          allowedSubjectRefs,
-          currentFacts,
-          evidence,
-          omittedEvidence,
-        });
-        if (recovered !== undefined)
-          recovered = await extractor.recover?.(job.id, job.inputWatermark, input);
-        if (!(await store.isClaimCurrent(job))) return;
-        controller.signal.throwIfAborted();
-        phase = "curator_run";
-        unadmittedClaims.delete(controller);
-        const extracted =
-          recovered ??
-          (await extractor.extract(input, {
-            signal: controller.signal,
-            watermark: job.inputWatermark,
-            isCurrent: () => store.isClaimCurrent(job),
-            assertAccess,
-            findFacts: async (query) =>
-              (await store.searchCandidatesForRecall(recallScope, query, 10, now())).filter(
-                (fact) => fact.subjectRefs.every((ref) => allowedSubjectKeys.has(refKey(ref))),
-              ),
-            canUseFact: async (id, revision) => {
-              const fact = await store.getForRecall(recallScope, id, now());
-              return fact?.revision === revision;
-            },
-          }));
-        controller.signal.throwIfAborted();
-        phase = "validation";
-        await assertAccess();
-        const output = SemanticExtractionOutputSchema.parse(extracted.output);
-        if (!output.retain) {
-          await store.completeRejected(job, output.reason, now());
-          return;
-        }
-        assertCandidateRefs(output.facts, evidence, allowedSubjectRefs);
-        await store.completeRetained({
-          job,
-          candidates: output.facts,
-          evidence,
-          rootRef: attribution.rootRef,
-          principalRefs: subjectContext.subjectRefs,
-          producerRefs: attribution.producerRefs,
-          visibility,
-          sensitivity: strictestSensitivity(evidence),
-          extractor: extracted.provenance,
-          now: now(),
-        });
-        shouldDrainProjectionNotification = true;
-      } catch (error) {
-        const failure = extractionFailureDiagnostic(error, "semantic_extraction", {
-          phase,
-          startedAt,
-          now: now(),
-        });
-        await store.fail({
-          job,
-          ...failure,
-          diagnostic:
-            localRecoveryOnly === true
-              ? { ...failure.diagnostic, retryable: false }
-              : failure.diagnostic,
-          now: new Date(failure.diagnostic.failedAt),
-          retry: isConfigurationError(error) ? "configuration" : "transient",
-        });
-      } finally {
-        unadmittedClaims.delete(controller);
-        if (running.get(key) === controller) running.delete(key);
-      }
-      if (shouldDrainProjectionNotification) await drainProjectionNotification();
+    runBackgroundOnce,
+    async prepareBackgroundOnce(conversationRef) {
+      if (extractor === undefined) return undefined;
+      const current = extractor;
+      return await prepareMemoryExtraction((extract) =>
+        runBackgroundOnce({ ...current, extract }, conversationRef, true),
+      );
+    },
+    setMemoryReader(reader) {
+      memoryReader = reader;
     },
     async setExtractor(next) {
       extractor = next;

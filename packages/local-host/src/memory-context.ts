@@ -57,6 +57,7 @@ export function createLocalHostMemoryContextService(options: {
   const settings = createMemoryAttentionSettingsStore(options);
   const limit = createMemoryAttentionRequestLimiter();
   const retrieval = createLocalHostMemoryRetrieval({ ...options, requestLimiter: limit });
+  options.data.setExtractionVectorSearch(retrieval.searchForExtraction);
   const retrievalConfigured = async () => {
     const current = await retrieval.settings.get();
     return current.enabled && current.providerId !== undefined && current.modelId !== undefined;
@@ -793,6 +794,7 @@ export function createLocalHostMemoryContextService(options: {
       contexts.clear();
       tasks.clear();
       await controller.stop();
+      options.data.setExtractionVectorSearch(undefined);
       await retrieval.stop();
       await Promise.allSettled([...operations.values()].flatMap((tasks) => [...tasks]));
       await Promise.all(

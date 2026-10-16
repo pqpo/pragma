@@ -58,6 +58,7 @@ it.each([false, true])(
       pragmaHome: root,
       secrets: {} as SecretStore,
       data: {
+        setExtractionVectorSearch: vi.fn(),
         executionStore,
         activity: { getExecutionContext: async () => ({ principalRefs: [] }) },
         policies: { getGlobal: async () => ({ policy: { enabled: "enabled" } }) },

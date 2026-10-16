@@ -37,7 +37,12 @@ export * from "./retrieval/embedding.ts";
 export * from "./retrieval/projection.ts";
 export * from "./retrieval/vector-index.ts";
 export * from "./retrieval/indexer.ts";
+export * from "./retrieval/extraction-memory.ts";
+export * from "./retrieval/extraction-query.ts";
+export * from "./retrieval/rank-fusion.ts";
 
 export * from "./pipeline/extraction-session.ts";
+export * from "./pipeline/conversation-extraction.ts";
+export * from "./pipeline/conversation-extraction-jobs.ts";
 
 export * from "./pipeline/completed-job-retention.ts";

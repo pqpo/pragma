@@ -2066,6 +2066,9 @@ export async function createDesktopApplicationContainer(
       mainLogger.warn("desktop.evaluation_queue_failed", message, { error }),
   });
   installEvaluationHandlers(evaluationService, pragmaProjectStore);
+  await memoryPlane.setConversationExtractor(memoryCurator.conversationExtractor, {
+    retireJobs: (ids) => memoryCurator.retireJobs(ids),
+  });
   await Promise.all([
     memoryPlane.setEpisodicExtractor(memoryCurator.episodicExtractor),
     memoryPlane.setSemanticExtractor(memoryCurator.semanticExtractor),

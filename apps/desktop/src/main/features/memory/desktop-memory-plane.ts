@@ -1,10 +1,18 @@
-import { readExecutionRunScope, type DurableExecutionStore, type PragmaLogger } from "@pragma/core";
+import { join } from "node:path";
+import {
+  readExecutionRunScope,
+  PragmaPaths,
+  withFileLock,
+  type DurableExecutionStore,
+  type PragmaLogger,
+} from "@pragma/core";
 import {
   createFederatedMemoryContextStore,
   DEFAULT_MEMORY_STORAGE_POLICY,
   EXECUTION_EVIDENCE_ADAPTER_ID,
   MemoryRecallScopeSchema,
   type EpisodicMemoryExtractor,
+  type ConversationMemoryExtractor,
   type EpisodicMemoryStore,
   type KnowledgeLearningPlanner,
   type KnowledgeLearningSink,
@@ -21,6 +29,7 @@ import {
   type SkillLearningSink,
   type SkillLearningTargetReader,
   type SkillMemoryModule,
+  createMemoryExtractionSessionStore,
 } from "@pragma/memory";
 
 import {
@@ -30,6 +39,7 @@ import {
   resolveMemoryRecallScope,
 } from "@pragma/local-host";
 import { createMemoryCleanupJournal } from "./memory-cleanup-journal.ts";
+import { groupConversationExtractionJobs } from "./memory-extraction-jobs.ts";
 
 export type DesktopMemoryMutationResult =
   | {
@@ -56,6 +66,9 @@ export interface DesktopMemoryContextStoreViewInput {
 export type DesktopMemoryContextStoreViewStatus = "available" | "empty" | "recall_disabled";
 
 export interface DesktopMemoryPlane {
+  readonly conversationExtractionJobs: ReturnType<
+    typeof import("@pragma/memory").createConversationExtractionJobReader
+  >;
   readonly canonical: import("@pragma/core").CanonicalEventFeed;
   readonly executionStore: DurableExecutionStore;
   readonly policies: MemoryPolicyStore;
@@ -91,6 +104,10 @@ export interface DesktopMemoryPlane {
   ): Promise<RetrievalRecord | undefined>;
   setEpisodicExtractor(extractor: EpisodicMemoryExtractor | undefined): Promise<void>;
   setSemanticExtractor(extractor: SemanticMemoryExtractor | undefined): Promise<void>;
+  setConversationExtractor(
+    extractor: ConversationMemoryExtractor | undefined,
+    lifecycle?: { readonly retireJobs: (jobIds: readonly string[]) => Promise<void> },
+  ): Promise<void>;
   setKnowledgePlanner(planner: KnowledgeLearningPlanner | undefined): Promise<void>;
   setSkillPlanner(planner: SkillLearningPlanner | undefined): Promise<void>;
   registerMemoryExecutionContext(input: {
@@ -132,8 +149,8 @@ export interface DesktopMemoryPlane {
   wakeRevisionLearningJobs(): Promise<void>;
   wakePipeline(): void;
   manageMemoryJob(input: {
-    readonly module: "episodic" | "semantic" | "knowledge" | "skill";
-    readonly action: "expedite" | "retry" | "interrupt" | "delete";
+    readonly module: "episodic" | "semantic" | "conversation" | "knowledge" | "skill";
+    readonly action: "expedite" | "retry" | "restart" | "interrupt" | "delete";
     readonly id: string;
     readonly expectedRevision: number;
   }): Promise<void>;
@@ -197,6 +214,8 @@ export async function createDesktopMemoryPlane(options: {
   readonly skillLearningTargetReader?: SkillLearningTargetReader | undefined;
 }): Promise<DesktopMemoryPlane> {
   const data = await createLocalHostMemoryDataPlane(options);
+  let curatorLifecycle:
+    { readonly retireJobs: (jobIds: readonly string[]) => Promise<void> } | undefined;
   const {
     canonical,
     executionStore,
@@ -492,8 +511,128 @@ export async function createDesktopMemoryPlane(options: {
     return { scope, available: policy.recall };
   };
 
+  const manageMemoryJob: DesktopMemoryPlane["manageMemoryJob"] = async (input) => {
+    // Older callers may address a delivery row. Route it to the same logical task in shared mode.
+    if (
+      data.conversationExtraction.enabled &&
+      (input.module === "episodic" || input.module === "semantic")
+    ) {
+      const [episodes, facts] = await Promise.all([
+        episodic.store.listExtractionJobs(),
+        semantic.store.listExtractionJobs(),
+      ]);
+      const source = (input.module === "episodic" ? episodes : facts).find(
+        (job) => job.id === input.id,
+      );
+      if (source === undefined) throw new Error("memory_extraction_job_not_found");
+      if (source.revision !== input.expectedRevision)
+        throw new Error("memory_extraction_job_revision_conflict");
+      const task = groupConversationExtractionJobs(episodes, facts).find((entry) =>
+        entry.members.some(
+          (member) => member.module === input.module && member.job.id === input.id,
+        ),
+      )!;
+      input = {
+        ...input,
+        module: "conversation",
+        id: task.job.id,
+        expectedRevision: task.job.revision,
+      };
+    }
+    await withFileLock(
+      join(new PragmaPaths(options).memoryStateRoot(), "conversation-management.lock"),
+      async () => {
+        if (input.module === "conversation") {
+          const [episodes, facts] = await Promise.all([
+            episodic.store.listExtractionJobs(),
+            semantic.store.listExtractionJobs(),
+          ]);
+          const task = groupConversationExtractionJobs(episodes, facts).find(
+            ({ job }) => job.id === input.id,
+          );
+          if (task === undefined) throw new Error("memory_extraction_job_not_found");
+          if (task.job.revision !== input.expectedRevision)
+            throw new Error("memory_extraction_job_revision_conflict");
+          const requiredLane =
+            input.action === "expedite"
+              ? "waiting"
+              : input.action === "interrupt"
+                ? "running"
+                : "attention";
+          if (task.lane !== requiredLane)
+            throw new Error("memory_extraction_job_action_unavailable");
+          if (input.action === "restart" || input.action === "delete") {
+            if (curatorLifecycle === undefined)
+              throw new Error("memory_curator_lifecycle_unavailable");
+            await curatorLifecycle.retireJobs([input.id, ...task.members.map(({ job }) => job.id)]);
+          }
+          if (input.action === "retry" || input.action === "restart")
+            await createMemoryExtractionSessionStore(options).retryConversation(
+              input.id,
+              input.action === "restart",
+              task.members
+                .filter(({ job }) => job.status !== "completed")
+                .map(({ module }) => module),
+            );
+          for (const { module, job } of task.members) {
+            if (job.status === "completed") continue;
+            const store = module === "episodic" ? episodic.store : semantic.store;
+            const command = { id: job.id, expectedRevision: job.revision, now: new Date() };
+            if (
+              (input.action === "retry" || input.action === "restart") &&
+              job.status === "needs_attention"
+            ) {
+              if (input.action === "restart")
+                await createMemoryExtractionSessionStore(options).deleteJobs(module, [job.id]);
+              await store.retryJob({ ...command, preserveSession: true });
+            } else if (
+              input.action === "expedite" &&
+              (job.status === "pending" || job.status === "waiting_idle")
+            )
+              await store.expediteJob(command);
+            else if (input.action === "interrupt" && job.status === "running")
+              await (module === "episodic" ? episodic : semantic).interruptExtractionJob(command);
+            else if (input.action === "delete")
+              await store.deleteJob({ ...command, includePending: true });
+          }
+          wakePipeline();
+          return;
+        }
+        if (input.action === "restart") throw new Error("memory_extraction_restart_unsupported");
+        const command = {
+          id: input.id,
+          expectedRevision: input.expectedRevision,
+          now: new Date(),
+        };
+        const store =
+          input.module === "episodic"
+            ? episodic.store
+            : input.module === "semantic"
+              ? semantic.store
+              : input.module === "knowledge"
+                ? knowledge.store
+                : skill.store;
+        if (input.action === "expedite") await store.expediteJob(command);
+        else if (input.action === "retry") await store.retryJob(command);
+        else if (input.action === "delete") await store.deleteJob(command);
+        else if (input.action === "interrupt") {
+          // Interrupt routes through the Module so the persisted transition and in-flight abort agree.
+          if (input.module === "episodic") await episodic.interruptExtractionJob(command);
+          else if (input.module === "semantic") await semantic.interruptExtractionJob(command);
+          else if (input.module === "knowledge") await knowledge.interruptExtractionJob(command);
+          else await skill.interruptExtractionJob(command);
+        } else {
+          const unsupported: never = input.action;
+          throw new Error(`memory_extraction_job_action_unsupported:${String(unsupported)}`);
+        }
+        wakePipeline();
+      },
+    );
+  };
+
   return {
     canonical,
+    conversationExtractionJobs: data.conversationExtractionJobs,
     executionStore,
     policies,
     extractorProfiles,
@@ -543,6 +682,11 @@ export async function createDesktopMemoryPlane(options: {
     },
     async setEpisodicExtractor(extractor) {
       await episodic.setExtractor(extractor);
+      wakePipeline();
+    },
+    async setConversationExtractor(extractor, lifecycle) {
+      curatorLifecycle = lifecycle;
+      data.conversationExtraction.setExtractor(extractor);
       wakePipeline();
     },
     async setSemanticExtractor(extractor) {
@@ -635,35 +779,7 @@ export async function createDesktopMemoryPlane(options: {
       wakePipeline();
     },
     wakePipeline,
-    async manageMemoryJob(input) {
-      const command = {
-        id: input.id,
-        expectedRevision: input.expectedRevision,
-        now: new Date(),
-      };
-      const store =
-        input.module === "episodic"
-          ? episodic.store
-          : input.module === "semantic"
-            ? semantic.store
-            : input.module === "knowledge"
-              ? knowledge.store
-              : skill.store;
-      if (input.action === "expedite") await store.expediteJob(command);
-      else if (input.action === "retry") await store.retryJob(command);
-      else if (input.action === "delete") await store.deleteJob(command);
-      else if (input.action === "interrupt") {
-        // Interrupt routes through the Module so the persisted transition and in-flight abort agree.
-        if (input.module === "episodic") await episodic.interruptExtractionJob(command);
-        else if (input.module === "semantic") await semantic.interruptExtractionJob(command);
-        else if (input.module === "knowledge") await knowledge.interruptExtractionJob(command);
-        else await skill.interruptExtractionJob(command);
-      } else {
-        const unsupported: never = input.action;
-        throw new Error(`memory_extraction_job_action_unsupported:${String(unsupported)}`);
-      }
-      wakePipeline();
-    },
+    manageMemoryJob,
     async deleteExecutionState(executionIds) {
       await cleanup.cleanup(executionIds);
       // Global retention belongs to the periodic background loop, not owner deletion.

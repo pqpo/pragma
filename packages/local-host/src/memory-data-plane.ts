@@ -22,6 +22,10 @@ import {
   createMemoryEvidencePublisher,
   createMemoryPipelineScheduler,
   createSemanticMemoryModule,
+  createConversationMemoryExtractionCoordinator,
+  createExtractionMemoryReader,
+  createConversationExtractionJobReader,
+  type ExtractionVectorSearch,
   createSkillMemoryModule,
   createSkillSourceReader,
   type KnowledgeLearningSink,
@@ -109,6 +113,31 @@ export async function createLocalHostMemoryDataPlane(options: {
       } satisfies SkillLearningSink),
   });
   const activity = createMemoryActivityStore({ pragmaHome: options.pragmaHome });
+  let extractionVectorSearch: ExtractionVectorSearch | undefined;
+  const memoryReader = createExtractionMemoryReader({
+    semantic: semantic.store,
+    episodic: episodic.store,
+    async assertAccess(scope, producerRefs) {
+      const policy = await policies.resolveAt({
+        rootRef: scope.rootRef,
+        producerRefs: [
+          ...producerRefs,
+          ...(scope.expertRef === undefined ? [] : [scope.expertRef]),
+        ],
+        occurredAt: new Date().toISOString(),
+      });
+      if (!policy.recall) throw new Error("memory_curator_recall_denied");
+    },
+    vectorSearch: async (...args) =>
+      extractionVectorSearch === undefined
+        ? { state: "disabled", hits: [], reason: "embedding_disabled" }
+        : await extractionVectorSearch(...args),
+  });
+  semantic.setMemoryReader(memoryReader);
+  episodic.setMemoryReader(
+    memoryReader,
+    async (executionId) => (await activity.getExecutionContext(executionId))?.principalRefs ?? [],
+  );
   registry.register(episodic);
   registry.register(knowledge);
   registry.register(semantic);
@@ -122,6 +151,11 @@ export async function createLocalHostMemoryDataPlane(options: {
     extractionSettings,
     activity,
   });
+  const conversationExtraction = createConversationMemoryExtractionCoordinator({
+    pragmaHome: options.pragmaHome,
+    episodic,
+    semantic,
+  });
   const scheduler = createMemoryPipelineScheduler({
     registry,
     feed: createMemoryEvidenceFeed(canonical),
@@ -129,6 +163,12 @@ export async function createLocalHostMemoryDataPlane(options: {
     checkpoints: state,
     deadLetters: state,
     outbox: state,
+    async runModuleBackground(module) {
+      if (conversationExtraction.enabled && (module === episodic || module === semantic)) return;
+      await module.runBackgroundOnce?.();
+    },
+    afterBackground: () => conversationExtraction.runOnce(),
+    afterBackgroundModuleIds: [episodic.descriptor.id, semantic.descriptor.id],
   });
   const identities = createLocalHostMemorySubjectIdentityStore(options);
   const paths = new PragmaPaths(options);
@@ -190,6 +230,9 @@ export async function createLocalHostMemoryDataPlane(options: {
     ]);
   };
   return {
+    setExtractionVectorSearch(search: ExtractionVectorSearch | undefined) {
+      extractionVectorSearch = search;
+    },
     canonical,
     executionStore,
     state,
@@ -203,6 +246,8 @@ export async function createLocalHostMemoryDataPlane(options: {
     skill,
     activity,
     scheduler,
+    conversationExtraction,
+    conversationExtractionJobs: createConversationExtractionJobReader(options),
     flushDelivery,
     retainCompletedJobs,
     registerExecutionContext,

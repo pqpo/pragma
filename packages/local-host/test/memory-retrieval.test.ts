@@ -113,6 +113,141 @@ async function fixture() {
   };
 }
 describe("Memory retrieval across Hosts", () => {
+  it("applies the extraction scope intersection before the vector index Top-K cutoff", async () => {
+    const f = await fixture();
+    const a = { rootRef: { type: "pragma.expert", id: "expert-a" } };
+    const b = { rootRef: { type: "pragma.expert", id: "expert-b" } };
+    const commonId = "fact-ffffffffffffffffffffffff";
+    const db = new DatabaseSync(
+      join(f.paths.memoryModuleDataRoot("pragma.memory.semantic"), "facts.sqlite"),
+    );
+    try {
+      const original = (await f.semantic.listCandidatesForRecall(a, new Date()))[0]!;
+      const insert = db.prepare(
+        "INSERT INTO current_facts(id,revision,status,updated_at,record_json) VALUES(?,?,?,?,?)",
+      );
+      for (let index = 0; index < 12; index++) {
+        const record = { ...original, id: `fact-${index.toString(16).padStart(24, "0")}` };
+        insert.run(
+          record.id,
+          record.revision,
+          record.status,
+          record.updatedAt,
+          JSON.stringify(record),
+        );
+      }
+      const common = {
+        ...original,
+        id: commonId,
+        bindings: [...original.bindings, { ...original.bindings[0]!, consumerRef: b.rootRef }],
+      };
+      insert.run(
+        common.id,
+        common.revision,
+        common.status,
+        common.updatedAt,
+        JSON.stringify(common),
+      );
+      await f.desktop.tick();
+      const identities = vi.spyOn(f.semantic, "listExtractionIdentities");
+      const reader = memory.createExtractionMemoryReader({
+        semantic: f.semantic,
+        episodic: f.episodic,
+        assertAccess: async () => {},
+        vectorSearch: f.desktop.searchForExtraction,
+      });
+      const subjects = [{ type: "pragma.user", id: "local-user" }];
+      const bound = reader.bind(a, subjects).intersect([reader.bind(b, subjects)]);
+      const result = await bound.search({
+        query: "Chinese",
+        type: "semantic",
+        mode: "vector",
+        limit: 1,
+      });
+      expect(result.items.map((item) => item.memory.record.id)).toEqual([commonId]);
+      expect(identities).toHaveBeenCalledWith(
+        expect.objectContaining({ scopes: [a, b] }),
+        expect.any(Date),
+      );
+    } finally {
+      db.close();
+      await f.desktop.stop();
+      f.episodic.close();
+      f.semantic.close();
+    }
+  });
+  it("shares configured vector retrieval with extraction and returns explicit disabled-mode status", async () => {
+    const f = await fixture();
+    try {
+      await f.desktop.tick();
+      const scope = { rootRef: { type: "pragma.expert" as const, id: "expert-a" } };
+      const reader = memory.createExtractionMemoryReader({
+        semantic: f.semantic,
+        episodic: f.episodic,
+        assertAccess: async () => {
+          if (!(await f.resolveAt()).recall) throw new Error("memory_curator_recall_denied");
+        },
+        vectorSearch: f.desktop.searchForExtraction,
+      });
+      const bound = reader.bind(scope, [{ type: "pragma.user", id: "local-user" }]);
+      const result = await bound.search({
+        query: "语言偏好",
+        mode: "vector",
+        type: "all",
+        limit: 20,
+      });
+      expect(result.mode).toBe("vector");
+      expect(result.items.length).toBeGreaterThan(0);
+      expect(result.items.every((item) => item.matchedBy.includes("vector"))).toBe(true);
+      const [first] = result.items;
+      expect(await bound.get(memory.extractionMemoryHandle(first!.memory))).toEqual(first!.memory);
+      const queriesBefore = f.fetcher.mock.calls.length;
+      await f.desktop.search(scope, "语言偏好", 20);
+      expect(f.fetcher).toHaveBeenCalledTimes(queriesBefore); // Same embedding query cache.
+      await f.desktop.settings.update({ expectedRevision: 1, enabled: false });
+      expect(
+        await bound.search({ query: "Chinese", mode: "hybrid", type: "semantic", limit: 10 }),
+      ).toMatchObject({ mode: "keyword", reason: "embedding_disabled" });
+      await expect(
+        bound.search({ query: "Chinese", mode: "vector", type: "semantic", limit: 10 }),
+      ).rejects.toThrow("embedding_disabled");
+      f.revokeRecall();
+      await expect(bound.list("all")).rejects.toThrow("recall_denied");
+    } finally {
+      await f.desktop.stop();
+      f.episodic.close();
+      f.semantic.close();
+    }
+  });
+  it("reports unavailable extraction retrieval when the provider changes during a query", async () => {
+    const f = await fixture();
+    try {
+      await f.desktop.tick();
+      f.fetcher.mockImplementationOnce(async (_url, options) => {
+        const request = JSON.parse(String(options?.body));
+        f.provider.baseUrl = "https://another-provider.example/v1";
+        f.provider.revision++;
+        await writeFile(f.paths.modelProviders(), JSON.stringify(f.config));
+        return Response.json({
+          model: request.model,
+          data: request.input.map((_: unknown, index: number) => ({ index, embedding: [1, 0] })),
+        });
+      });
+      expect(
+        await f.desktop.searchForExtraction(
+          { rootRef: { type: "pragma.expert", id: "expert-a" } },
+          "query while switching provider",
+          ["semantic"],
+          10,
+          new AbortController().signal,
+        ),
+      ).toEqual({ state: "unavailable", hits: [], reason: "embedding_cancelled" });
+    } finally {
+      await f.desktop.stop();
+      f.episodic.close();
+      f.semantic.close();
+    }
+  });
   it("reports disabled optional retrieval without a missing-model error or provider requests", async () => {
     const f = await fixture();
     try {

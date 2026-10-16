@@ -39,6 +39,43 @@ afterEach(async () => {
 });
 
 describe("Episodic Memory", () => {
+  it("refunds a claim cancelled while resolving extraction recall subjects before model admission", async () => {
+    const clock = new Date("2026-08-04T00:00:00.000Z");
+    const extractor = fakeExtractor();
+    const module = await createEpisodicMemoryModule({
+      pragmaHome: await temporaryRoot(),
+      extractor,
+      now: () => clock,
+    });
+    try {
+      await module.consume(executionEvidence("subject-cancel"));
+      const [job] = await module.store.listExtractionJobs();
+      module.setMemoryReader(
+        {
+          bind: () => {
+            throw new Error("cancelled lookup must not bind");
+          },
+        },
+        async () => {
+          await module.setConversationState({
+            conversationRef: job!.conversationRef,
+            state: "active",
+            now: clock,
+          });
+          return [];
+        },
+      );
+      await module.runBackgroundOnce?.();
+      expect(extractor.extract).not.toHaveBeenCalled();
+      expect((await module.store.listExtractionJobs())[0]).toMatchObject({
+        status: "waiting_idle",
+        attempts: 0,
+        totalAttempts: 0,
+      });
+    } finally {
+      module.close();
+    }
+  });
   it("does not refund an unconfirmed fourth claim after restart", async () => {
     const root = await temporaryRoot();
     let clock = new Date("2026-08-04T00:00:00.000Z");

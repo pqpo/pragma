@@ -76,6 +76,7 @@ export interface SkillLearningStore {
   deleteJob(input: { readonly id: string; readonly expectedRevision: number }): Promise<void>;
   wakeNeedsAttention(now: Date, reason?: "configuration" | "manual"): Promise<void>;
   listJobs(): Promise<readonly SkillLearningJob[]>;
+  getJob(id: string): Promise<SkillLearningJob | undefined>;
   listFailureAttempts(jobId: string): Promise<readonly MemoryExtractionFailureAttempt[]>;
   listJobsPage(
     input: MemoryJobPageInput<SkillLearningJob["status"]>,
@@ -353,6 +354,9 @@ export async function createSkillLearningStore(
           job_json: string;
         }[]
       ).map((row) => parse(row.job_json));
+    },
+    async getJob(id) {
+      return read(id);
     },
     async listFailureAttempts(jobId) {
       return listExtractionFailureAttempts(database, jobId);

@@ -1,10 +1,12 @@
-import { mkdtemp, readdir, rm, writeFile } from "node:fs/promises";
+import { copyFile, mkdir, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { afterEach, describe, expect, it } from "vitest";
 
 import { createMemoryExtractionRunArchive } from "./memory-extraction-run-archive.ts";
+import { PragmaPaths } from "@pragma/core";
+import { migrateMemoryExtractionRunV1ToV2 } from "./migrations/run-archive/v1-to-v2.ts";
 
 const roots: string[] = [];
 
@@ -15,6 +17,48 @@ afterEach(async () => {
 });
 
 describe("Memory extraction run archive", () => {
+  it.each([false, true])(
+    "upgrades a historical writer output and replays an interrupted replacement (interrupted=%s)",
+    async (interrupted) => {
+      const root = await mkdtemp(join(tmpdir(), "pragma-memory-archive-upgrade-"));
+      roots.push(root);
+      const directory = join(
+        new PragmaPaths({ pragmaHome: root }).archivesRoot(),
+        "memory-extraction-runs",
+      );
+      await mkdir(directory, { recursive: true });
+      const name = "11111111-1111-4111-a111-111111111111.json";
+      const path = join(directory, name);
+      await copyFile(new URL("./fixtures/extraction-run-v1.json", import.meta.url), path);
+      const original = await readFile(path, "utf8");
+      if (interrupted) {
+        await writeFile(`${path}.v1.backup`, original);
+        await writeFile(
+          `${path}.interrupted.tmp`,
+          JSON.stringify(migrateMemoryExtractionRunV1ToV2(JSON.parse(original))),
+        );
+      }
+      const archive = createMemoryExtractionRunArchive(root);
+      expect(await archive.get("11111111-1111-4111-a111-111111111111")).toMatchObject({
+        schemaVersion: "pragma.desktop-memory-extraction-run/v2",
+        module: "episodic",
+        status: "failed",
+        continuations: 0,
+      });
+      expect(await readFile(`${path}.v1.backup`, "utf8")).toBe(original);
+      const upgraded = await readFile(path, "utf8");
+      await archive.get("11111111-1111-4111-a111-111111111111");
+      expect(await readFile(path, "utf8")).toBe(upgraded);
+      await writeFile(
+        path,
+        JSON.stringify({
+          ...JSON.parse(upgraded),
+          schemaVersion: "pragma.desktop-memory-extraction-run/v99",
+        }),
+      );
+      await expect(archive.get("11111111-1111-4111-a111-111111111111")).rejects.toThrow();
+    },
+  );
   it("persists a bounded read-only transcript independently from the temporary Mission", async () => {
     const root = await mkdtemp(join(tmpdir(), "pragma-memory-run-archive-"));
     roots.push(root);
@@ -24,7 +68,8 @@ describe("Memory extraction run archive", () => {
     const finishedAt = new Date();
     const startedAt = new Date(finishedAt.getTime() - 30_000);
     await archive.save({
-      schemaVersion: "pragma.desktop-memory-extraction-run/v1",
+      schemaVersion: "pragma.desktop-memory-extraction-run/v2" as const,
+      continuations: 0,
       runId,
       missionId,
       module: "skill",
@@ -130,7 +175,8 @@ function runRecord(input: {
 }) {
   const finishedAt = new Date();
   return {
-    schemaVersion: "pragma.desktop-memory-extraction-run/v1" as const,
+    schemaVersion: "pragma.desktop-memory-extraction-run/v2" as const,
+    continuations: 0 as const,
     ...input,
     status: "succeeded" as const,
     startedAt: new Date(finishedAt.getTime() - 30_000).toISOString(),
