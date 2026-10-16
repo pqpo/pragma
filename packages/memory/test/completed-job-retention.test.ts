@@ -4,6 +4,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import {
   pruneCompletedMemoryJobs,
   retainCompletedMemoryJobs,
+  retainMemoryExtractionHistory,
 } from "../src/pipeline/completed-job-retention.ts";
 import { queryMemoryJobPage } from "../src/pipeline/memory-job-page.ts";
 import { initializeExtractionFailureAttempts } from "../src/pipeline/extraction-failure-store.ts";
@@ -60,6 +61,60 @@ function completedCount(database: DatabaseSync) {
 }
 
 describe("completed memory job retention", () => {
+  it("counts a completed pair once and protects the completed half of unfinished work", async () => {
+    const episodic = store("episodic", 60);
+    const semantic = store("semantic", 60);
+    const knowledge = store("knowledge", 0);
+    const skill = store("skill", 0);
+    episodic.database
+      .prepare("INSERT INTO jobs VALUES (?,?,?)")
+      .run(
+        "half",
+        "completed",
+        JSON.stringify({ id: "half", updatedAt: "2000-01-01T00:00:00.000Z" }),
+      );
+    semantic.database
+      .prepare("INSERT INTO jobs VALUES (?,?,?)")
+      .run(
+        "half",
+        "pending",
+        JSON.stringify({ id: "half", updatedAt: "2000-01-01T00:00:00.000Z" }),
+      );
+    const delivery = (entry: ReturnType<typeof store>) => ({
+      listExtractionJobs: async () =>
+        entry.database
+          .prepare("SELECT status, job_json FROM jobs")
+          .all()
+          .map((row) => {
+            const job = JSON.parse(row["job_json"] as string) as { id: string; updatedAt: string };
+            return {
+              ...job,
+              status: row["status"],
+              conversationRef: { type: "pragma.execution", id: job.id },
+              inputWatermark: job.id,
+            };
+          }),
+      pruneCompletedJobs: async (
+        before: Parameters<typeof pruneCompletedMemoryJobs>[2],
+        keep: readonly string[] = [],
+      ) => pruneCompletedMemoryJobs(entry.database, entry.module, before, undefined, keep),
+    });
+    await retainMemoryExtractionHistory({
+      episodicStore: delivery(episodic),
+      semanticStore: delivery(semantic),
+      knowledgeLearningStore: { listJobsPage: knowledge.list, pruneCompletedJobs: knowledge.prune },
+      skillLearningStore: { listJobsPage: skill.list, pruneCompletedJobs: skill.prune },
+    } as unknown as Parameters<typeof retainMemoryExtractionHistory>[0]);
+    expect(completedCount(episodic.database)).toBe(51);
+    expect(completedCount(semantic.database)).toBe(50);
+    expect(episodic.database.prepare("SELECT id FROM jobs WHERE id='half'").get()).toBeDefined();
+    expect(
+      episodic.database.prepare("SELECT id FROM jobs WHERE id='job-009'").get(),
+    ).toBeUndefined();
+    expect(
+      semantic.database.prepare("SELECT id FROM jobs WHERE id='job-009'").get(),
+    ).toBeUndefined();
+  });
   it("keeps 50 newest records across all four modules and preserves pending work", async () => {
     const stores = ["episodic", "semantic", "knowledge", "skill"].map((module) =>
       store(module, 30),

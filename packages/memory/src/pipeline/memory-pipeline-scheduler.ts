@@ -30,6 +30,9 @@ export function createMemoryPipelineScheduler(options: {
   readonly checkpoints: MemoryConsumerCheckpointStore;
   readonly deadLetters: MemoryDeadLetterStore;
   readonly outbox: MemoryDerivedEventOutboxStore;
+  readonly runModuleBackground?: ((module: MemoryModule) => Promise<void>) | undefined;
+  readonly afterBackground?: (() => Promise<void>) | undefined;
+  readonly afterBackgroundModuleIds?: readonly string[] | undefined;
   readonly batchSize?: number | undefined;
   readonly pollIntervalMs?: number | undefined;
   readonly now?: (() => Date) | undefined;
@@ -56,11 +59,34 @@ export function createMemoryPipelineScheduler(options: {
     }, delay);
   };
 
+  const afterBackground = async (): Promise<void> => {
+    try {
+      await options.afterBackground?.();
+    } catch (error) {
+      await Promise.all(
+        options.registry
+          .list()
+          .filter((module) => options.afterBackgroundModuleIds?.includes(module.descriptor.id))
+          .map((module) =>
+            recordUnavailableDiagnostic({
+              module,
+              registry: options.registry,
+              feed: options.feed,
+              checkpoints: options.checkpoints,
+              now,
+              error,
+            }),
+          ),
+      );
+      throw error;
+    }
+  };
   const runBackgroundOnce = async (): Promise<void> => {
     await Promise.all(
       options.registry.list().map(async (module) => {
         try {
-          await module.runBackgroundOnce?.();
+          if (options.runModuleBackground !== undefined) await options.runModuleBackground(module);
+          else await module.runBackgroundOnce?.();
         } catch (error) {
           await recordUnavailableDiagnostic({
             module,
@@ -73,6 +99,7 @@ export function createMemoryPipelineScheduler(options: {
         }
       }),
     );
+    await afterBackground();
   };
   const runOnce = async (input: { readonly background?: boolean } = {}): Promise<void> => {
     if (running !== undefined) return await running;
@@ -102,7 +129,9 @@ export function createMemoryPipelineScheduler(options: {
         }
         if (input.background !== false && module.runBackgroundOnce !== undefined) {
           try {
-            await module.runBackgroundOnce();
+            if (options.runModuleBackground !== undefined)
+              await options.runModuleBackground(module);
+            else await module.runBackgroundOnce();
           } catch (error) {
             await recordUnavailableDiagnostic({
               module,
@@ -115,7 +144,9 @@ export function createMemoryPipelineScheduler(options: {
           }
         }
       }),
-    ).then(() => undefined);
+    ).then(async () => {
+      if (input.background !== false) await afterBackground();
+    });
     try {
       await running;
     } finally {

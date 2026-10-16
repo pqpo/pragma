@@ -26,8 +26,10 @@ import {
   SEMANTIC_MEMORY_CURATOR_PROMPT_VERSION,
   MEMORY_CURATOR_REF,
   DEFAULT_MEMORY_STORAGE_POLICY,
+  createMemoryExtractionSessionStore,
   type EpisodicMemoryExtractor,
   type SemanticMemoryExtractor,
+  type ConversationMemoryExtractor,
   type MemoryExtractorProfile,
   type MemoryExtractorProfileStore,
   type MemoryExtractionSession,
@@ -62,6 +64,7 @@ const CuratorMissionRegistrySchema = z.object({
 });
 
 export interface DesktopMemoryCurator {
+  readonly conversationExtractor: ConversationMemoryExtractor;
   readonly episodicExtractor: EpisodicMemoryExtractor;
   readonly semanticExtractor: SemanticMemoryExtractor;
   source(input: {
@@ -73,6 +76,7 @@ export interface DesktopMemoryCurator {
   }): Promise<LocalHostSystemExecutorSource>;
   fingerprint(): Promise<string>;
   recoverOrphans(): Promise<number>;
+  retireJobs(jobIds: readonly string[]): Promise<void>;
   listRuns(input: {
     readonly module: DesktopMemoryExtractionRun["module"];
     readonly jobId: string;
@@ -118,6 +122,7 @@ export function createDesktopMemoryCurator(options: {
   const resolveRuntime = async (
     profile: MemoryExtractorProfile,
     runtimes: RuntimeResolver = options.runtimes,
+    inheritedRuntimeId?: string,
   ) => {
     if (
       profile.mode === "pinned" &&
@@ -128,7 +133,9 @@ export function createDesktopMemoryCurator(options: {
       throw new Error("memory_extractor_profile_invalid");
     }
     const runtimeId: string =
-      profile.mode === "pinned" ? profile.runtimeId! : await runtimes.getDefaultRuntimeId();
+      profile.mode === "pinned"
+        ? profile.runtimeId!
+        : (inheritedRuntimeId ?? (await runtimes.getDefaultRuntimeId()));
     const requested: RuntimeModelSelection | undefined =
       profile.mode === "pinned"
         ? {
@@ -185,6 +192,14 @@ export function createDesktopMemoryCurator(options: {
     for (const capability of resource.spec.capabilities) {
       if (capability.kind === "tools") capability.tools = [...session.toolNames];
     }
+    // A warm compiled Expert retains its tools across prompts. Resolve the live admission on
+    // every call, rather than retaining a finished claim's cancellation/permission closures.
+    const currentSession = (): MemoryExtractionSession => {
+      const current = activeSessions.get(input.missionId);
+      if (current === undefined || current.key !== session.key)
+        throw new Error("memory_curator_session_unavailable");
+      return current;
+    };
 
     return {
       ref: BUILT_IN_MEMORY_CURATOR_REF,
@@ -200,20 +215,29 @@ export function createDesktopMemoryCurator(options: {
                 fingerprint: session.key,
                 value: {
                   contribution: {
-                    tools: createMemoryCuratorTools(session, async () => {
-                      const snapshot = await options.application.getInternalContextWindow(
-                        input.missionId,
-                      );
-                      const usage = snapshot.contextWindow?.usage;
-                      if (usage !== undefined) {
-                        await session.setContextBudget(usage.contextWindowTokens - 12000);
-                        if (
-                          usage.usedTokens !== null &&
-                          usage.contextWindowTokens - usage.usedTokens < 4000
-                        )
-                          await session.setContextBudget(1);
-                      }
-                    }),
+                    tools: createMemoryCuratorTools(
+                      {
+                        module: session.module,
+                        toolNames: session.toolNames,
+                        call: (name, args) => currentSession().call(name, args),
+                      },
+                      async () => {
+                        const current = currentSession();
+                        await current.assertCurrent();
+                        const snapshot = await options.application.getInternalContextWindow(
+                          input.missionId,
+                        );
+                        const usage = snapshot.contextWindow?.usage;
+                        if (usage !== undefined) {
+                          await current.setContextBudget(usage.contextWindowTokens - 12000);
+                          if (
+                            usage.usedTokens !== null &&
+                            usage.contextWindowTokens - usage.usedTokens < 4000
+                          )
+                            await current.setContextBudget(1);
+                        }
+                      },
+                    ),
                   },
                 },
               }
@@ -248,38 +272,149 @@ export function createDesktopMemoryCurator(options: {
     now,
     execution: {
       async run(input) {
-        const runtime = await resolveRuntime(input.profile);
-        await input.session.setProvenance({
-          curatorRef: MEMORY_CURATOR_REF,
-          promptVersion:
-            input.module === "semantic"
-              ? SEMANTIC_MEMORY_CURATOR_PROMPT_VERSION
-              : MEMORY_CURATOR_PROMPT_VERSION,
-          profileRevision: input.profile.revision,
-          runtimeId: runtime.runtimeId,
-          providerId: runtime.modelSelection?.model.providerId ?? "runtime-managed",
-          modelId: runtime.modelSelection?.model.modelId ?? "runtime-default",
-          extractedAt: now().toISOString(),
-        });
-        await runCuratorMission({
-          options,
-          runtime,
-          jobId: input.jobId,
-          module: input.module,
-          title: input.title,
-          goal: input.prompt,
-          signal: input.signal,
-          runArchive,
-          activeRuns,
-          activeSessions,
-          session: input.session,
-        });
+        const persisted = await input.session.executionState();
+        let admitted = persisted.admitted;
+        try {
+          const savedMission =
+            persisted.missionId === undefined
+              ? undefined
+              : await options.missions.get(persisted.missionId);
+          const profile =
+            savedMission === undefined || persisted.provenance === undefined
+              ? input.profile
+              : savedMission.modelOverride === undefined
+                ? {
+                    schemaVersion: input.profile.schemaVersion,
+                    revision: persisted.provenance.profileRevision,
+                    mode: "inherit-default" as const,
+                    updatedAt: input.profile.updatedAt,
+                  }
+                : {
+                    ...input.profile,
+                    mode: "pinned" as const,
+                    runtimeId: persisted.provenance.runtimeId,
+                    providerId: savedMission.modelOverride.providerId,
+                    modelId: savedMission.modelOverride.modelId,
+                    thinkingLevel: savedMission.modelOverride.thinkingLevel,
+                  };
+          const runtime = await resolveRuntime(
+            profile,
+            options.runtimes,
+            persisted.provenance?.runtimeId,
+          );
+          if (persisted.provenance === undefined)
+            await input.session.setProvenance({
+              curatorRef: MEMORY_CURATOR_REF,
+              promptVersion:
+                input.module === "semantic"
+                  ? SEMANTIC_MEMORY_CURATOR_PROMPT_VERSION
+                  : MEMORY_CURATOR_PROMPT_VERSION,
+              profileRevision: input.profile.revision,
+              runtimeId: runtime.runtimeId,
+              providerId: runtime.modelSelection?.model.providerId ?? "runtime-managed",
+              modelId: runtime.modelSelection?.model.modelId ?? "runtime-default",
+              extractedAt: now().toISOString(),
+            });
+          await runCuratorMission({
+            options,
+            runtime,
+            jobId: input.jobId,
+            module: input.module,
+            title: input.title,
+            goal: input.prompt,
+            signal: input.signal,
+            runArchive,
+            activeRuns,
+            activeSessions,
+            session: input.session,
+            onAdmission() {
+              admitted = true;
+              input.onAdmission?.();
+            },
+          });
+        } catch (error) {
+          if (!admitted && error instanceof Error) Object.assign(error, { preAdmission: true });
+          throw error;
+        }
       },
     },
   });
 
   return {
     source,
+    async retireJobs(jobIds) {
+      const entries = (await readCuratorMissionRegistry(options.pragmaHome)).filter((entry) =>
+        jobIds.includes(entry.jobId),
+      );
+      for (const entry of entries) {
+        let mission;
+        try {
+          mission = await options.missions.get(entry.missionId);
+        } catch (error) {
+          if (error instanceof MissionStoreError && error.code === "mission_not_found") {
+            await unregisterCuratorMission(options.pragmaHome, entry.missionId);
+            continue;
+          }
+          throw error;
+        }
+        if (
+          mission.execution !== undefined &&
+          ["queued", "running", "waiting"].includes(mission.execution.status)
+        )
+          await options.application.interrupt(entry.missionId);
+        const archived = (
+          await Promise.all(
+            (["episodic", "semantic", "conversation"] as const).map((module) =>
+              runArchive.listForJob({ module, jobId: entry.jobId }),
+            ),
+          )
+        )
+          .flat()
+          .find((run) => run.missionId === entry.missionId);
+        if (archived?.chat === undefined) {
+          const chat = await readCuratorResultWithRetry(() =>
+            options.application.getInternalConversationSnapshot(entry.missionId),
+          );
+          const snapshot = await createMemoryExtractionSessionStore(options).forMission(
+            entry.missionId,
+          );
+          const state = await snapshot?.executionState();
+          if (archived === undefined && state?.provenance === undefined)
+            throw new Error("memory_curator_archive_unavailable");
+          const provenance = state?.provenance;
+          await runArchive.save(
+            archived === undefined
+              ? {
+                  schemaVersion: "pragma.desktop-memory-extraction-run/v2",
+                  runId: randomUUID(),
+                  missionId: entry.missionId,
+                  module: snapshot!.module,
+                  jobId: entry.jobId,
+                  status: (await snapshot!.completed()) ? "succeeded" : "failed",
+                  startedAt: entry.createdAt,
+                  finishedAt: now().toISOString(),
+                  runtimeId: provenance!.runtimeId,
+                  providerId: provenance!.providerId,
+                  modelId: provenance!.modelId,
+                  continuations: state!.continuations,
+                  chat,
+                }
+              : { ...archived, chat },
+          );
+        }
+        // The shared deletion owner graph refuses uncertain Native teardown. The transcript is
+        // already durable, so a fresh admission cannot overlap a previous billable owner.
+        if (
+          !(await cleanupInternalMission({
+            missionId: entry.missionId,
+            deleteMission: (id) => options.application.delete(id),
+            interruptMission: (id) => options.application.interrupt(id),
+          }))
+        )
+          throw new Error("memory_curator_retirement_unconfirmed");
+        await unregisterCuratorMission(options.pragmaHome, entry.missionId);
+      }
+    },
     async listRuns(input) {
       const archived = await runArchive.listForJob(input);
       const active = [...activeRuns.values()].filter(
@@ -342,8 +477,8 @@ export function createDesktopMemoryCurator(options: {
         if (!terminal && !stale) continue;
         const archived = (
           await Promise.all(
-            (["episodic", "semantic", "knowledge", "skill"] as const).map((module) =>
-              runArchive.listForJob({ module, jobId: entry.jobId }),
+            (["episodic", "semantic", "conversation", "knowledge", "skill"] as const).map(
+              (module) => runArchive.listForJob({ module, jobId: entry.jobId }),
             ),
           )
         )
@@ -375,6 +510,7 @@ export function createDesktopMemoryCurator(options: {
     },
     episodicExtractor: curator.episodicExtractor,
     semanticExtractor: curator.semanticExtractor,
+    conversationExtractor: curator.conversationExtractor,
   };
 }
 
@@ -388,7 +524,7 @@ async function runCuratorMission(input: {
     readonly modelSelection?: RuntimeModelSelection | undefined;
   };
   readonly jobId: string;
-  readonly module: "episodic" | "semantic" | "knowledge" | "skill";
+  readonly module: "episodic" | "semantic" | "conversation" | "knowledge" | "skill";
   readonly title: string;
   readonly goal: string;
   readonly signal?: AbortSignal | undefined;
@@ -396,32 +532,37 @@ async function runCuratorMission(input: {
   readonly activeRuns: Map<string, DesktopMemoryExtractionRun>;
   readonly activeSessions: Map<string, MemoryExtractionSession>;
   readonly session: MemoryExtractionSession;
+  readonly onAdmission?: (() => void) | undefined;
 }): Promise<void> {
   input.signal?.throwIfAborted();
   const project = await input.options.project.ensurePublished();
-  const mission = await input.options.missions.create({
-    workspace: {
-      path: input.options.workspace,
-      basename: basename(input.options.workspace),
-    },
-    goal: input.goal,
-    title: input.title,
-    project: { id: project.projectId, revision: project.revision },
-    executor: { kind: "expert", ref: MEMORY_CURATOR_REF, name: "Memory Curator" },
-    origin: { type: "system-memory", jobId: input.jobId },
-    toolPermissionMode: "request-approval",
-    ...(input.runtime.modelSelection === undefined
-      ? {}
-      : {
-          modelOverride: {
-            providerId: input.runtime.modelSelection.model.providerId,
-            modelId: input.runtime.modelSelection.model.modelId,
-            ...(input.runtime.modelSelection.thinkingLevel === undefined
-              ? {}
-              : { thinkingLevel: input.runtime.modelSelection.thinkingLevel }),
+  const prior = input.module === "conversation" ? await input.session.executionState() : undefined;
+  const mission =
+    prior?.missionId === undefined
+      ? await input.options.missions.create({
+          workspace: {
+            path: input.options.workspace,
+            basename: basename(input.options.workspace),
           },
-        }),
-  });
+          goal: input.goal,
+          title: input.title,
+          project: { id: project.projectId, revision: project.revision },
+          executor: { kind: "expert", ref: MEMORY_CURATOR_REF, name: "Memory Curator" },
+          origin: { type: "system-memory", jobId: input.jobId },
+          toolPermissionMode: "request-approval",
+          ...(input.runtime.modelSelection === undefined
+            ? {}
+            : {
+                modelOverride: {
+                  providerId: input.runtime.modelSelection.model.providerId,
+                  modelId: input.runtime.modelSelection.model.modelId,
+                  ...(input.runtime.modelSelection.thinkingLevel === undefined
+                    ? {}
+                    : { thinkingLevel: input.runtime.modelSelection.thinkingLevel }),
+                },
+              }),
+        })
+      : await input.options.missions.get(prior.missionId);
   const pragmaHome = input.options.pragmaHome;
   const logger = createPragmaLogger(input.options.loggerProvider, {
     component: "desktop.memory-curator",
@@ -429,7 +570,7 @@ async function runCuratorMission(input: {
   const runId = randomUUID();
   const startedAt = new Date().toISOString();
   const activeRun: DesktopMemoryExtractionRun = {
-    schemaVersion: "pragma.desktop-memory-extraction-run/v1",
+    schemaVersion: "pragma.desktop-memory-extraction-run/v2",
     runId,
     missionId: mission.id,
     module: input.module,
@@ -437,6 +578,7 @@ async function runCuratorMission(input: {
     status: "running",
     startedAt,
     runtimeId: input.runtime.runtimeId,
+    continuations: prior?.continuations ?? 0,
     ...(input.runtime.modelSelection === undefined
       ? {}
       : {
@@ -456,21 +598,93 @@ async function runCuratorMission(input: {
     void input.options.application.interrupt(mission.id).catch(() => undefined);
   };
   input.signal?.addEventListener("abort", interrupt, { once: true });
+  const reserveRepair = async (previousExecutionId: string): Promise<void> => {
+    const code = await input.session.failure();
+    if (code !== undefined && /budget|capacity|denied|stale|unavailable|claim|snapshot/u.test(code))
+      throw Object.assign(new Error(code), { retryable: false });
+    const missing = await input.session.pendingTypes();
+    await input.session.reserveContinuation({
+      previousExecutionId,
+      prompt: [
+        `Continue this memory extraction in the SAME conversation. Pending types: ${missing.join(", ")}.`,
+        "Preserve completed receipts and staged candidates. Do not restart the task or reread completed evidence. Use list_evidence to locate unread passages only when needed; use find_existing_memory to inspect staged work. Correct the unfinished results, then call finish_extraction with type for each pending type. Each type can be skipped independently if there is no supported memory worth retaining.",
+        code === undefined
+          ? "The previous turn ended without all required durable receipts."
+          : `Last validation error: ${code.slice(0, 2000)}`,
+      ].join("\n"),
+    });
+    input.activeRuns.set(mission.id, {
+      ...activeRun,
+      continuations: (await input.session.executionState()).continuations,
+    });
+  };
   try {
     await registerCuratorMission(pragmaHome, mission.id, input.jobId);
     input.signal?.throwIfAborted();
     await input.session.assertCurrent();
     // Once admitted, provider execution/billing may have happened even if a later read fails.
     executionRequested = true;
-    await input.options.application.startRun(mission.id);
-    await waitForInternalMissionTerminal({
-      getMission: (id) => input.options.missions.get(id),
-      missionId: mission.id,
-      timeoutMessage: "memory_curator_timeout",
-      signal: input.signal,
-    });
-    const finished = await input.options.missions.get(mission.id);
-    if (finished.execution?.status !== "succeeded") {
+    if (prior?.missionId === undefined || !prior.admitted) {
+      await input.session.markAdmitted();
+      input.onAdmission?.();
+      await input.options.application.startRun(mission.id);
+    } else if (
+      prior.pendingContinuation === undefined &&
+      (mission.execution === undefined ||
+        ["queued", "running", "waiting"].includes(mission.execution.status))
+    )
+      throw Object.assign(new Error("memory_curator_execution_unconfirmed"), { retryable: false });
+    else if (input.module === "conversation" && prior.pendingContinuation === undefined) {
+      // Reopening an attention task authorizes continuation. Crash recovery reaches
+      // this path only with its already reserved command; it must not revive a cancelled turn.
+      await reserveRepair(mission.execution!.id);
+    }
+    let finished;
+    for (;;) {
+      const state = await input.session.executionState();
+      let expectedExecutionId: string | undefined;
+      if (input.module === "conversation" && state.pendingContinuation !== undefined) {
+        const pending = state.pendingContinuation;
+        await waitForInternalMissionRetry(
+          Math.max(0, Date.parse(pending.retryAt) - Date.now()),
+          input.signal,
+        );
+        await input.session.assertCurrent();
+        input.onAdmission?.();
+        const continued = await input.options.application.continueInternalMemoryMission({
+          id: mission.id,
+          content: pending.prompt,
+          requestId: pending.requestId,
+          previousExecutionId: pending.previousExecutionId,
+        });
+        expectedExecutionId = continued.executionId;
+        await input.session.acknowledgeContinuation(pending.requestId);
+      }
+      await waitForInternalMissionTerminal({
+        getMission: (id) => input.options.missions.get(id),
+        missionId: mission.id,
+        timeoutMessage: "memory_curator_timeout",
+        signal: input.signal,
+        executionId: expectedExecutionId,
+      });
+      finished = await input.options.missions.get(mission.id);
+      if (input.module !== "conversation" || (await input.session.completed())) break;
+      const runtimeFailure =
+        finished.execution?.status === "failed"
+          ? await input.options.application.getTerminalRuntimeFailure(mission.id)
+          : undefined;
+      if (
+        finished.execution?.status === "cancelled" ||
+        (finished.execution?.status === "failed" && runtimeFailure?.retryable !== true)
+      )
+        break;
+      if (finished.execution === undefined) throw new Error("memory_curator_execution_unconfirmed");
+      await reserveRepair(finished.execution.id);
+    }
+    if (
+      finished.execution?.status !== "succeeded" &&
+      !(input.module === "conversation" && (await input.session.completed()))
+    ) {
       const runtimeFailure = await input.options.application.getTerminalRuntimeFailure(mission.id);
       const message =
         runtimeFailure?.message ?? finished.execution?.error ?? "Memory Curator failed.";
@@ -517,7 +731,7 @@ async function runCuratorMission(input: {
       ...receipt.provenance,
       ...(responseModel === undefined ? {} : { responseModel }),
       extractedAt:
-        finished.execution.finishedAt ?? (input.options.now?.() ?? new Date()).toISOString(),
+        finished.execution?.finishedAt ?? (input.options.now?.() ?? new Date()).toISOString(),
     });
     try {
       resultChat = await readCuratorResultWithRetry(
@@ -562,9 +776,14 @@ async function runCuratorMission(input: {
           .getInternalConversationSnapshot(mission.id)
           .catch(() => undefined);
     let archived = false;
+    const continuations = await input.session
+      .executionState()
+      .then((state) => state.continuations)
+      .catch(() => input.activeRuns.get(mission.id)?.continuations ?? activeRun.continuations);
     await input.runArchive
       .save({
         ...activeRun,
+        continuations,
         status: finalStatus,
         finishedAt: new Date().toISOString(),
         ...(failure === undefined ? {} : { failure }),

@@ -143,7 +143,7 @@ export const DesktopMemoryProblemSchema = z
 
 export const DesktopMemoryExtractionTaskSchema = z
   .object({
-    module: z.enum(["episodic", "semantic", "knowledge", "skill"]),
+    module: z.enum(["episodic", "semantic", "conversation", "knowledge", "skill"]),
     id: z.string().min(1),
     revision: z.number().int().positive(),
     lane: z.enum(["waiting", "attention", "running", "completed"]),
@@ -151,6 +151,13 @@ export const DesktopMemoryExtractionTaskSchema = z
     completion: z.enum(["retained", "rejected"]).optional(),
     problem: DesktopMemoryProblemSchema.optional(),
     updatedAt: z.string().datetime(),
+    results: z
+      .object({
+        episodic: z.enum(["pending", "retained", "rejected", "failed"]).optional(),
+        semantic: z.enum(["pending", "retained", "rejected", "failed"]).optional(),
+      })
+      .strict()
+      .optional(),
   })
   .superRefine((task, context) => {
     if (task.completion !== undefined && task.lane !== "completed") {
@@ -233,8 +240,8 @@ export const DesktopMemoryExtractionActiveTaskListSchema = z
 
 export const ManageDesktopMemoryExtractionTaskSchema = z
   .object({
-    module: z.enum(["episodic", "semantic", "knowledge", "skill"]),
-    action: z.enum(["expedite", "retry", "interrupt", "delete"]),
+    module: z.enum(["episodic", "semantic", "conversation", "knowledge", "skill"]),
+    action: z.enum(["expedite", "retry", "restart", "interrupt", "delete"]),
     id: z.string().min(1),
     expectedRevision: z.number().int().positive(),
   })
@@ -249,7 +256,7 @@ export const DesktopMemoryExtractionTaskRefSchema = z
 
 export const DesktopMemoryExtractionRunSchema = z
   .object({
-    schemaVersion: z.literal("pragma.desktop-memory-extraction-run/v1"),
+    schemaVersion: z.literal("pragma.desktop-memory-extraction-run/v2"),
     runId: z.string().uuid(),
     missionId: z.string().uuid(),
     module: DesktopMemoryExtractionTaskSchema.shape.module,
@@ -262,6 +269,7 @@ export const DesktopMemoryExtractionRunSchema = z
     modelId: z.string().min(1).optional(),
     failure: MemoryExtractionFailureDiagnosticSchema.optional(),
     chat: MissionConversationSnapshotSchema.optional(),
+    continuations: z.number().int().min(0).max(3),
   })
   .strict();
 

@@ -26,6 +26,7 @@ import {
 } from "./schema.ts";
 import {
   evidenceText,
+  evidenceTypesLabel,
   deliver,
   boundedPrefix,
   record,
@@ -40,6 +41,12 @@ export async function callTool(
   raw: unknown,
   guard: MemoryExtractionSessionGuard,
 ): Promise<string> {
+  const active = (type: "episodic" | "semantic") =>
+    guard.activeTypes === undefined || guard.activeTypes.includes(type);
+  const canDeliver = (messageId: string) =>
+    !("evidenceTypes" in state.input) ||
+    guard.activeTypes === undefined ||
+    state.input.evidenceTypes[messageId]?.some(active) === true;
   switch (name) {
     case "list_evidence": {
       const args = MemoryExtractionToolSchemas.list_evidence.parse(raw);
@@ -62,6 +69,7 @@ export async function callTool(
         .map((item, index) => ({ item, index, ...evidenceText(item) }))
         .filter(
           (row) =>
+            canDeliver(row.item.messageId) &&
             (!args.role || row.role === args.role) &&
             (!args.query || row.text.toLocaleLowerCase().includes(args.query.toLocaleLowerCase())),
         );
@@ -69,7 +77,7 @@ export async function callTool(
       const lines: string[] = [];
       for (const { item, index, role, text } of selected) {
         const progress = readProgress(state, `e${index + 1}`);
-        const line = `[e${index + 1}] ${role} · ${item.occurredAt} · ${progress >= text.length ? "read fully" : `unread from cursor ${progress}`} · ${text.slice(0, 60).replaceAll("\n", " ")}`;
+        const line = `[e${index + 1}] ${role} · ${item.occurredAt}${evidenceTypesLabel(state, item.messageId)} · ${progress >= text.length ? "read fully" : `unread from cursor ${progress}`} · ${text.slice(0, 60).replaceAll("\n", " ")}`;
         if (defaultRuntimeTokenCounter.countText(lines.concat(line).join("\n")).tokens > 1700)
           break;
         lines.push(line);
@@ -87,6 +95,7 @@ export async function callTool(
       const index = Number(/^e([1-9]\d*)$/u.exec(args.evidence)?.[1]) - 1;
       const item = state.input.evidence[index];
       if (item === undefined) fail("memory_curator_evidence_ref_invalid");
+      if (!canDeliver(item.messageId)) fail("memory_curator_evidence_type_denied");
       if (args.cursor > evidenceText(item).text.length) fail("memory_curator_cursor_invalid");
       const passages: string[] = [];
       let nextIndex = index;
@@ -95,8 +104,13 @@ export async function callTool(
       for (let count = 0; count < MEMORY_EXTRACTION_LIMITS.pageSize; count++) {
         const current = state.input.evidence[nextIndex];
         if (current === undefined) break;
+        if (!canDeliver(current.messageId)) {
+          nextIndex++;
+          nextCursor = 0;
+          continue;
+        }
         const { role, text } = evidenceText(current);
-        const header = `[e${nextIndex + 1}] ${role} · ${current.occurredAt}\n`;
+        const header = `[e${nextIndex + 1}] ${role} · ${current.occurredAt}${evidenceTypesLabel(state, current.messageId)}\n`;
         const remaining =
           MEMORY_EXTRACTION_LIMITS.responseTokens -
           200 -
@@ -138,6 +152,7 @@ export async function callTool(
       const handle = args.memory ?? (args.fact?.startsWith("memory:") ? args.fact : undefined);
       if (handle !== undefined) return await readExistingMemory(state, guard, handle, args.cursor);
       if (args.fact !== undefined) {
+        if (!active("semantic") && guard.memory === undefined) fail("memory_curator_recall_denied");
         const fact = /^f[1-9]\d*$/u.test(args.fact)
           ? await existingFact(state, guard, args.fact)
           : undefined;
@@ -153,15 +168,23 @@ export async function callTool(
           `[${args.fact}] Existing memory, not new evidence.\n${fragment}\nNext cursor: ${next < text.length ? next : "end"}`,
         );
       }
-      const staged =
-        state.module === "semantic"
+      const staged = [
+        ...(active("semantic") &&
+        state.module !== "episodic" &&
+        state.results.semantic === undefined
           ? Object.entries(state.candidates).map(([key, value]) => `${key}: ${value.statement}`)
-          : Object.entries(state.parts).map(
+          : []),
+        ...(active("episodic") &&
+        state.module !== "semantic" &&
+        state.results.episodic === undefined
+          ? Object.entries(state.parts).map(
               ([key, value]) =>
                 `${key}: ${Object.values(record(value))
                   .filter((v) => typeof v === "string")
                   .join(" · ")}`,
-            );
+            )
+          : []),
+      ];
       const stagedText = staged
         .filter((text) => text.toLocaleLowerCase().includes(args.query.toLocaleLowerCase()))
         .slice(0, 10)
@@ -173,7 +196,12 @@ export async function callTool(
       if (guard.memory !== undefined && args.query.trim() !== "")
         return await searchExistingMemory(state, guard, args, stagedPrefix);
       if (args.mode === "vector") fail("embedding_search_unavailable");
-      if (state.module === "episodic") {
+      if (
+        state.module === "episodic" ||
+        (state.module === "conversation" && args.type === "episodic")
+      ) {
+        if (!active("episodic") && guard.memory === undefined)
+          return deliver(state, stagedPrefix + "No accessible previous episode.");
         const previous = "previousEpisode" in state.input ? state.input.previousEpisode : undefined;
         if (previous === undefined) return deliver(state, stagedPrefix + "No previous episode.");
         if (
@@ -204,7 +232,7 @@ export async function callTool(
       }
       const found =
         guard.findFacts === undefined
-          ? "currentFacts" in state.input
+          ? "currentFacts" in state.input && (active("semantic") || guard.memory !== undefined)
             ? state.input.currentFacts
                 .filter((fact) =>
                   JSON.stringify(fact).toLocaleLowerCase().includes(args.query.toLocaleLowerCase()),
@@ -241,6 +269,10 @@ export async function callTool(
       );
     }
     case "submit_fact": {
+      if (!active("semantic")) fail("memory_curator_type_unavailable");
+      if ("targets" in state.input && !state.input.targets.includes("semantic"))
+        fail("memory_curator_type_unavailable");
+      if (state.results.semantic !== undefined) fail("memory_curator_type_already_finished");
       const args = MemoryExtractionToolSchemas.submit_fact.parse(raw);
       const existingProperty =
         typeof args.property === "string"
@@ -269,7 +301,7 @@ export async function callTool(
         if (subject === undefined) fail("memory_curator_subject_ref_invalid");
         return subject.ref;
       });
-      const evidenceRefs = refs(state, args.evidence);
+      const evidenceRefs = refs(state, args.evidence, "semantic");
       if (replacement !== undefined) {
         const key = (items: typeof subjectRefs) =>
           JSON.stringify(items.map((ref) => `${ref.type}:${ref.id}`).sort());
@@ -329,8 +361,12 @@ export async function callTool(
       return `Candidate ${id} validated and staged. Memory has not been committed.`;
     }
     case "submit_episode_part": {
+      if (!active("episodic")) fail("memory_curator_type_unavailable");
+      if ("targets" in state.input && !state.input.targets.includes("episodic"))
+        fail("memory_curator_type_unavailable");
+      if (state.results.episodic !== undefined) fail("memory_curator_type_already_finished");
       const args = MemoryExtractionToolSchemas.submit_episode_part.parse(raw);
-      const evidenceRefs = refs(state, args.evidence);
+      const evidenceRefs = refs(state, args.evidence, "episodic");
       const digest = createHash("sha256").update(JSON.stringify(args)).digest("hex").slice(0, 16);
       const multiple = args.part === "attempt" || args.part === "recovery";
       const id = multiple ? (args.candidate ?? `${args.part}:${digest}`) : args.part;
@@ -354,9 +390,18 @@ export async function callTool(
     }
     case "finish_extraction": {
       const args = MemoryExtractionToolSchemas.finish_extraction.parse(raw);
-      if (!allRead(state)) fail("memory_curator_evidence_incomplete");
+      const type = args.type ?? (state.module === "conversation" ? undefined : state.module);
+      if (type === undefined) fail("memory_curator_type_required");
+      if (!active(type)) fail("memory_curator_type_unavailable");
+      if (state.module !== "conversation" && type !== state.module)
+        fail("memory_curator_type_unavailable");
+      if ("targets" in state.input && !state.input.targets.includes(type))
+        fail("memory_curator_type_unavailable");
+      if (state.results[type] !== undefined)
+        return `The ${type} receipt is already durable. Continue only the unfinished type.`;
+      if (!allRead(state, type)) fail("memory_curator_evidence_incomplete");
       if (state.provenance === undefined) fail("memory_curator_provenance_missing");
-      for (const candidate of Object.values(state.candidates)) {
+      for (const candidate of type === "semantic" ? Object.values(state.candidates) : []) {
         const target = candidate.replacementTarget;
         if (
           target !== undefined &&
@@ -373,10 +418,11 @@ export async function callTool(
         )
           fail("memory_curator_fact_stale_or_denied");
       }
-      let output: unknown = args;
+      const result = { ...args };
+      delete result.type;
+      let output: unknown = result;
       if (args.retain) {
-        if (state.module === "semantic")
-          output = { retain: true, facts: Object.values(state.candidates) };
+        if (type === "semantic") output = { retain: true, facts: Object.values(state.candidates) };
         else
           output = {
             retain: true,
@@ -393,18 +439,23 @@ export async function callTool(
               .map(([, v]) => v),
           };
       }
-      if (state.module === "episodic" && args.retain) {
+      if (type === "episodic" && args.retain) {
         const evidenceRefs = new Set<string>();
         for (const part of Object.values(state.parts)) {
           for (const ref of record(part)["evidenceRefs"] as string[]) evidenceRefs.add(ref);
         }
         EpisodicMemoryRecordSchema.shape.evidenceRefs.parse([...evidenceRefs]);
       }
-      state.output =
-        state.module === "semantic"
-          ? SemanticExtractionOutputSchema.parse(output)
-          : EpisodicExtractionOutputSchema.parse(output);
-      return "Extraction completed. A durable result receipt has been saved; the Host will commit Memory.";
+      if (type === "semantic")
+        state.results.semantic = SemanticExtractionOutputSchema.parse(output);
+      else state.results.episodic = EpisodicExtractionOutputSchema.parse(output);
+      state.resultProvenance[type] = state.provenance;
+      const targets = "targets" in state.input ? state.input.targets : [state.module];
+      if (
+        targets.every((target) => target !== "conversation" && state.results[target] !== undefined)
+      )
+        state.output = state.results[type];
+      return `${type} extraction completed. A durable result receipt has been saved; the Host will commit Memory. ${state.output === undefined ? "Continue the unfinished type in this conversation." : "All requested types are finished."}`;
     }
   }
 }

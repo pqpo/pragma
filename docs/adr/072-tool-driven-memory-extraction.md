@@ -1,6 +1,7 @@
 # ADR 072: Tool-driven Memory extraction
 
 - Status: Accepted
+- Superseded in part by: [ADR 073](./073-shared-conversation-memory-extraction.md) for shared conversation admission, partial receipts and continuation budgets. Tool-driven evidence access and validation remain in force.
 - Date: 2026-10-15
 - Extends: ADR 033, ADR 034, ADR 036
 

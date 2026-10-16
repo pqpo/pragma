@@ -22,6 +22,7 @@ import {
   createMemoryEvidencePublisher,
   createMemoryPipelineScheduler,
   createSemanticMemoryModule,
+  createConversationMemoryExtractionCoordinator,
   createExtractionMemoryReader,
   type ExtractionVectorSearch,
   createSkillMemoryModule,
@@ -149,6 +150,11 @@ export async function createLocalHostMemoryDataPlane(options: {
     extractionSettings,
     activity,
   });
+  const conversationExtraction = createConversationMemoryExtractionCoordinator({
+    pragmaHome: options.pragmaHome,
+    episodic,
+    semantic,
+  });
   const scheduler = createMemoryPipelineScheduler({
     registry,
     feed: createMemoryEvidenceFeed(canonical),
@@ -156,6 +162,12 @@ export async function createLocalHostMemoryDataPlane(options: {
     checkpoints: state,
     deadLetters: state,
     outbox: state,
+    async runModuleBackground(module) {
+      if (conversationExtraction.enabled && (module === episodic || module === semantic)) return;
+      await module.runBackgroundOnce?.();
+    },
+    afterBackground: () => conversationExtraction.runOnce(),
+    afterBackgroundModuleIds: [episodic.descriptor.id, semantic.descriptor.id],
   });
   const identities = createLocalHostMemorySubjectIdentityStore(options);
   const paths = new PragmaPaths(options);
@@ -233,6 +245,7 @@ export async function createLocalHostMemoryDataPlane(options: {
     skill,
     activity,
     scheduler,
+    conversationExtraction,
     flushDelivery,
     retainCompletedJobs,
     registerExecutionContext,

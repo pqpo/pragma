@@ -1,3 +1,9 @@
+import {
+  prepareMemoryExtraction,
+  MemoryExtractionDeferred,
+  type PreparedMemoryExtraction,
+} from "../pipeline/prepare-extraction.ts";
+import { hasPendingMemoryExtractionContinuation } from "../pipeline/extraction-session/store.ts";
 import { extractionEvidenceAccessGuard } from "../pipeline/extraction-settings.ts";
 import { redactMemoryValue } from "../evidence/redact.ts";
 import type { ExtractionMemoryReader } from "../retrieval/extraction-memory.ts";
@@ -27,6 +33,15 @@ import { MemoryRecallScopeSchema, type MemoryModule } from "../pipeline/memory-m
 import { mergeMemoryEvidenceOmissionStats } from "../storage/bounded-evidence.ts";
 
 export interface EpisodicMemoryModule extends MemoryModule {
+  prepareBackgroundOnce(
+    conversationRef?: MemorySubjectRef,
+  ): Promise<
+    | PreparedMemoryExtraction<
+        Parameters<EpisodicMemoryExtractor["extract"]>[0],
+        Awaited<ReturnType<EpisodicMemoryExtractor["extract"]>>
+      >
+    | undefined
+  >;
   setMemoryReader(
     reader: ExtractionMemoryReader,
     resolveSubjects: (executionId: string) => Promise<readonly MemorySubjectRef[]>,
@@ -67,6 +82,201 @@ export async function createEpisodicMemoryModule(
     ((executionId: string) => Promise<readonly MemorySubjectRef[]>) | undefined;
   const running = new Map<string, AbortController>();
   const unadmittedClaims = new Set<AbortController>();
+
+  const runBackgroundOnce = async (
+    selectedExtractor = extractor,
+    conversationRef?: MemorySubjectRef,
+    deferAdmission = false,
+  ): Promise<void> => {
+    if (selectedExtractor === undefined) return;
+    const claim = await store.claimDueJob(now(), conversationRef);
+    if (claim === undefined) return;
+    const { localRecoveryOnly, ...job } = claim;
+    const key = conversationKey(job.conversationRef);
+    const controller = new AbortController();
+    running.set(key, controller);
+    if (
+      localRecoveryOnly !== true &&
+      !hasPendingMemoryExtractionContinuation(options, "episodic", job.id, job.inputWatermark)
+    )
+      unadmittedClaims.add(controller);
+    const startedAt = now();
+    let phase: MemoryExtractionFailurePhase = "source_read";
+    try {
+      let recovered = await selectedExtractor.recover?.(job.id, job.inputWatermark);
+      if (localRecoveryOnly === true && recovered === undefined) {
+        phase = "storage";
+        const retained = await store.getByConversation(job.conversationRef);
+        if (retained?.terminalMessageId !== job.terminalMessageId) {
+          throw Object.assign(new Error("memory_extraction_recovery_result_unavailable"), {
+            retryable: false,
+          });
+        }
+        await store.completeRetained({
+          job,
+          record: retained,
+          evidence: await store.readEvidenceForJob(job),
+          now: now(),
+        });
+        return;
+      }
+      const capturedEvidence = await store.readEvidenceForJob(job);
+      const allowToolAssisted =
+        (await options.extractionSettings?.get())?.allowToolAssisted.episodic ?? false;
+      const selectedEvidence = selectMemoryExtractionEvidence(
+        capturedEvidence,
+        allowToolAssisted,
+        "episodic",
+      );
+      const evidence = sanitizeEvidence(selectedEvidence.retained);
+      const assertAccess = extractionEvidenceAccessGuard(
+        evidence,
+        "episodic",
+        options.extractionSettings,
+      );
+      const omittedEvidence = mergeMemoryEvidenceOmissionStats(
+        await store.readOmissionStatsForJob(job),
+        selectedEvidence.omittedStats,
+      );
+      if (evidence.length === 0) {
+        await store.completeRejected(job, "insufficient-evidence", now());
+        return;
+      }
+      if (evidence.some((item) => item.sensitivity === "restricted")) {
+        await store.completeRejected(job, "sensitive", now());
+        return;
+      }
+      if (isLowValue(evidence)) {
+        await store.completeRejected(job, "low-value", now());
+        return;
+      }
+      const visibility = strictestVisibility(evidence);
+      if (visibility === undefined) {
+        await store.completeRejected(job, "policy", now());
+        return;
+      }
+      const previousEpisode = await store.getByConversation(job.conversationRef);
+      if (previousEpisode?.terminalMessageId === job.terminalMessageId) {
+        await store.completeRetained({ job, record: previousEpisode, evidence, now: now() });
+        return;
+      }
+      const input = EpisodicExtractionInputSchema.parse({
+        schemaVersion: "pragma.memory-episodic-extraction-input/v2",
+        jobId: job.id,
+        executionId: job.executionId,
+        ...(previousEpisode === undefined ? {} : { previousEpisode }),
+        evidence,
+        omittedEvidence,
+      });
+      if (recovered !== undefined)
+        recovered = await selectedExtractor.recover?.(job.id, job.inputWatermark, input);
+      const attribution = resolveAttribution(evidence);
+      const principals =
+        recovered === undefined ? ((await resolveMemorySubjects?.(job.executionId)) ?? []) : [];
+      const memorySubjects = uniqueRefs([
+        ...principals,
+        attribution.rootRef,
+        ...attribution.producerRefs,
+      ]);
+      if (!(await store.isClaimCurrent(job))) return;
+      controller.signal.throwIfAborted();
+      phase = "curator_run";
+      if (!deferAdmission) unadmittedClaims.delete(controller);
+      const extracted =
+        recovered ??
+        (await selectedExtractor.extract(input, {
+          signal: controller.signal,
+          watermark: job.inputWatermark,
+          conversationRef: job.conversationRef,
+          onAdmission: () => {
+            unadmittedClaims.delete(controller);
+          },
+          isCurrent: () => store.isClaimCurrent(job),
+          assertAccess,
+          assertEvidenceAccess: async (snapshot, type) =>
+            await extractionEvidenceAccessGuard(snapshot, type, options.extractionSettings)(),
+          memory: memoryReader?.bind(
+            MemoryRecallScopeSchema.parse({
+              rootRef: attribution.rootRef,
+              principalRefs: principals,
+            }),
+            memorySubjects,
+            evidence.every((item) => item.policySnapshot.recall),
+            attribution.producerRefs,
+          ),
+        }));
+      controller.signal.throwIfAborted();
+      phase = "validation";
+      await assertAccess();
+      const output = EpisodicExtractionOutputSchema.parse(extracted.output);
+      if (!output.retain) {
+        await store.completeRejected(job, output.reason, now());
+        return;
+      }
+      assertEvidenceRefs(output, new Set(evidence.map((item) => item.messageId)));
+      const completedAt = now();
+      const timestamp = completedAt.toISOString();
+      const record = EpisodicMemoryRecordSchema.parse({
+        schemaVersion: "pragma.memory-episodic/v3",
+        id: episodicMemoryId(job.conversationRef),
+        revision: (previousEpisode?.revision ?? 0) + 1,
+        conversationRef: job.conversationRef,
+        sourceExecutionIds: job.sourceExecutionIds,
+        sourceUpdatedAt: job.sourceUpdatedAt,
+        executionId: job.executionId,
+        terminalMessageId: job.terminalMessageId,
+        rootRefs: [attribution.rootRef],
+        producerRefs: attribution.producerRefs,
+        language: output.language,
+        goal: output.goal,
+        summary: output.summary,
+        attempts: output.attempts,
+        failuresAndRecoveries: output.failuresAndRecoveries,
+        outcome: output.outcome,
+        artifactRefs: artifactRefs(evidence),
+        evidenceRefs: collectEvidenceRefs(output),
+        visibility,
+        sensitivity: strictestSensitivity(evidence),
+        bindings: [
+          {
+            consumerRef: attribution.rootRef,
+            recall: "allow",
+            export: "deny",
+            permissionRevision: 1,
+          },
+        ],
+        valueScore: output.valueScore,
+        status: "active",
+        extractor: extracted.provenance,
+        createdAt: previousEpisode?.createdAt ?? timestamp,
+        updatedAt: timestamp,
+      });
+      await store.completeRetained({ job, record, evidence, now: completedAt });
+    } catch (error) {
+      if (error instanceof MemoryExtractionDeferred) {
+        await store.releaseUnadmittedClaim(job, now(), unadmittedClaims.has(controller));
+        return;
+      }
+      const failure = extractionFailureDiagnostic(error, "episodic_extraction", {
+        phase,
+        startedAt,
+        now: now(),
+      });
+      await store.fail({
+        job,
+        ...failure,
+        diagnostic:
+          localRecoveryOnly === true
+            ? { ...failure.diagnostic, retryable: false }
+            : failure.diagnostic,
+        now: new Date(failure.diagnostic.failedAt),
+        retry: isConfigurationError(error) ? "configuration" : "transient",
+      });
+    } finally {
+      unadmittedClaims.delete(controller);
+      if (running.get(key) === controller) running.delete(key);
+    }
+  };
 
   return {
     descriptor: {
@@ -117,181 +327,13 @@ export async function createEpisodicMemoryModule(
       await store.ingest(envelopes);
       return {};
     },
-    async runBackgroundOnce() {
-      if (extractor === undefined) return;
-      const claim = await store.claimDueJob(now());
-      if (claim === undefined) return;
-      const { localRecoveryOnly, ...job } = claim;
-      const key = conversationKey(job.conversationRef);
-      const controller = new AbortController();
-      running.set(key, controller);
-      if (localRecoveryOnly !== true) unadmittedClaims.add(controller);
-      const startedAt = now();
-      let phase: MemoryExtractionFailurePhase = "source_read";
-      try {
-        let recovered = await extractor.recover?.(job.id, job.inputWatermark);
-        if (localRecoveryOnly === true && recovered === undefined) {
-          phase = "storage";
-          const retained = await store.getByConversation(job.conversationRef);
-          if (retained?.terminalMessageId !== job.terminalMessageId) {
-            throw Object.assign(new Error("memory_extraction_recovery_result_unavailable"), {
-              retryable: false,
-            });
-          }
-          await store.completeRetained({
-            job,
-            record: retained,
-            evidence: await store.readEvidenceForJob(job),
-            now: now(),
-          });
-          return;
-        }
-        const capturedEvidence = await store.readEvidenceForJob(job);
-        const allowToolAssisted =
-          (await options.extractionSettings?.get())?.allowToolAssisted.episodic ?? false;
-        const selectedEvidence = selectMemoryExtractionEvidence(
-          capturedEvidence,
-          allowToolAssisted,
-          "episodic",
-        );
-        const evidence = sanitizeEvidence(selectedEvidence.retained);
-        const assertAccess = extractionEvidenceAccessGuard(
-          evidence,
-          "episodic",
-          options.extractionSettings,
-        );
-        const omittedEvidence = mergeMemoryEvidenceOmissionStats(
-          await store.readOmissionStatsForJob(job),
-          selectedEvidence.omittedStats,
-        );
-        if (evidence.length === 0) {
-          await store.completeRejected(job, "insufficient-evidence", now());
-          return;
-        }
-        if (evidence.some((item) => item.sensitivity === "restricted")) {
-          await store.completeRejected(job, "sensitive", now());
-          return;
-        }
-        if (isLowValue(evidence)) {
-          await store.completeRejected(job, "low-value", now());
-          return;
-        }
-        const visibility = strictestVisibility(evidence);
-        if (visibility === undefined) {
-          await store.completeRejected(job, "policy", now());
-          return;
-        }
-        const previousEpisode = await store.getByConversation(job.conversationRef);
-        if (previousEpisode?.terminalMessageId === job.terminalMessageId) {
-          await store.completeRetained({ job, record: previousEpisode, evidence, now: now() });
-          return;
-        }
-        const input = EpisodicExtractionInputSchema.parse({
-          schemaVersion: "pragma.memory-episodic-extraction-input/v2",
-          jobId: job.id,
-          executionId: job.executionId,
-          ...(previousEpisode === undefined ? {} : { previousEpisode }),
-          evidence,
-          omittedEvidence,
-        });
-        if (recovered !== undefined)
-          recovered = await extractor.recover?.(job.id, job.inputWatermark, input);
-        const attribution = resolveAttribution(evidence);
-        const principals =
-          recovered === undefined ? ((await resolveMemorySubjects?.(job.executionId)) ?? []) : [];
-        const memorySubjects = uniqueRefs([
-          ...principals,
-          attribution.rootRef,
-          ...attribution.producerRefs,
-        ]);
-        if (!(await store.isClaimCurrent(job))) return;
-        controller.signal.throwIfAborted();
-        phase = "curator_run";
-        unadmittedClaims.delete(controller);
-        const extracted =
-          recovered ??
-          (await extractor.extract(input, {
-            signal: controller.signal,
-            watermark: job.inputWatermark,
-            isCurrent: () => store.isClaimCurrent(job),
-            assertAccess,
-            memory: memoryReader?.bind(
-              MemoryRecallScopeSchema.parse({
-                rootRef: attribution.rootRef,
-                principalRefs: principals,
-              }),
-              memorySubjects,
-              evidence.every((item) => item.policySnapshot.recall),
-              attribution.producerRefs,
-            ),
-          }));
-        controller.signal.throwIfAborted();
-        phase = "validation";
-        await assertAccess();
-        const output = EpisodicExtractionOutputSchema.parse(extracted.output);
-        if (!output.retain) {
-          await store.completeRejected(job, output.reason, now());
-          return;
-        }
-        assertEvidenceRefs(output, new Set(evidence.map((item) => item.messageId)));
-        const completedAt = now();
-        const timestamp = completedAt.toISOString();
-        const record = EpisodicMemoryRecordSchema.parse({
-          schemaVersion: "pragma.memory-episodic/v3",
-          id: episodicMemoryId(job.conversationRef),
-          revision: (previousEpisode?.revision ?? 0) + 1,
-          conversationRef: job.conversationRef,
-          sourceExecutionIds: job.sourceExecutionIds,
-          sourceUpdatedAt: job.sourceUpdatedAt,
-          executionId: job.executionId,
-          terminalMessageId: job.terminalMessageId,
-          rootRefs: [attribution.rootRef],
-          producerRefs: attribution.producerRefs,
-          language: output.language,
-          goal: output.goal,
-          summary: output.summary,
-          attempts: output.attempts,
-          failuresAndRecoveries: output.failuresAndRecoveries,
-          outcome: output.outcome,
-          artifactRefs: artifactRefs(evidence),
-          evidenceRefs: collectEvidenceRefs(output),
-          visibility,
-          sensitivity: strictestSensitivity(evidence),
-          bindings: [
-            {
-              consumerRef: attribution.rootRef,
-              recall: "allow",
-              export: "deny",
-              permissionRevision: 1,
-            },
-          ],
-          valueScore: output.valueScore,
-          status: "active",
-          extractor: extracted.provenance,
-          createdAt: previousEpisode?.createdAt ?? timestamp,
-          updatedAt: timestamp,
-        });
-        await store.completeRetained({ job, record, evidence, now: completedAt });
-      } catch (error) {
-        const failure = extractionFailureDiagnostic(error, "episodic_extraction", {
-          phase,
-          startedAt,
-          now: now(),
-        });
-        await store.fail({
-          job,
-          ...failure,
-          diagnostic:
-            localRecoveryOnly === true
-              ? { ...failure.diagnostic, retryable: false }
-              : failure.diagnostic,
-          now: new Date(failure.diagnostic.failedAt),
-          retry: isConfigurationError(error) ? "configuration" : "transient",
-        });
-      } finally {
-        unadmittedClaims.delete(controller);
-        if (running.get(key) === controller) running.delete(key);
-      }
+    runBackgroundOnce,
+    async prepareBackgroundOnce(conversationRef) {
+      if (extractor === undefined) return undefined;
+      const current = extractor;
+      return await prepareMemoryExtraction((extract) =>
+        runBackgroundOnce({ ...current, extract }, conversationRef, true),
+      );
     },
     setMemoryReader(reader, resolveSubjects) {
       memoryReader = reader;

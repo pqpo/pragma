@@ -1,12 +1,42 @@
 # Memory extraction execution and retry boundaries
 
+## Shared conversation extraction
+
+See [ADR 073](../adr/073-shared-conversation-memory-extraction.md). Desktop prepares Episodic and
+Semantic deliveries together and admits one Curator Mission for the same conversation/watermark.
+The model reads a shared evidence directory and calls `finish_extraction` separately with
+`type=episodic` and `type=semantic`. Either type can retain or skip. Each validated receipt can be
+materialized immediately; the other type continues without regenerating completed work.
+Per-type source permissions still restrict candidate citations, and historical Memory discovery
+uses the intersection of the participating source scopes.
+
+A terminal missing receipt or explicitly retryable Runtime failure allows up to three repair
+prompts, five seconds apart, in the original Mission/ExpertSession/Native Runtime Context. The
+Host sends only pending-type/error guidance, preserving read ranges, candidates and completed
+receipts. Automatic continuations share the 64-call and 32,000-delivered-token limits. Reservations,
+deterministic command UUIDs, retry generations and pending prompt text survive restart. Only a
+reserved idempotent continuation can resume automatically; unknown in-flight work parks for
+inspection. The terminal observer follows the continuation's execution id. Runtime loss, cancellation,
+budget exhaustion and non-retryable failures never create a new conversation automatically.
+
+The UI groups both delivery records into one task, exposes both outcomes and the continuation
+count, and distinguishes continuation from an explicit fresh restart. Restart regenerates only
+unfinished types and preserves published Memory. Completed-history limits count the logical task,
+and do not evict a successful half while its companion remains unfinished. Module delivery
+counters are not a count of fresh model conversations. The shared Session owns model admission.
+
+The existing Session database upgrades lazily to SQLite version 2 and
+`pragma.memory-curator-session/v2`; its existing filename is retained. Desktop run archives upgrade
+on access to `pragma.desktop-memory-extraction-run/v2`. Both upgrades preserve backups and reject
+future versions. Authority Fact/Episode schemas remain unchanged.
+
 Memory Curator runs as a hidden `system-memory` Mission. The public Mission chat, state and context
 window methods reject this origin. Main-process Memory consumers use
 `LocalHostMissionApplication.getInternalConversationSnapshot`, which checks the system origin and reuses the same
 chat projection without opening public Mission IPC access.
 
-Extraction jobs allow three automatic retries after the initial attempt (four total execution
-attempts), with a fixed five-second delay after each retryable failure. All four Memory job stores
+Knowledge and Skill revision jobs allow three automatic retries after the initial attempt (four total execution
+attempts), with a fixed five-second delay after each retryable failure. Their job stores
 persist the attempt counter and retry deadline. Claiming, configuration wakeups, conversation
 lifecycle refreshes and process restarts cannot reset or bypass an exhausted budget. The explicit
 manual retry action resets the budget; genuinely new Evidence can create new eligible work.
@@ -71,7 +101,7 @@ result instead requires reporting the budget failure, not rejecting the source a
 is introduced: outer job retries remain for retryable execution failures, and an execution that ends
 without a durable receipt remains non-retryable automatically.
 
-The receipt and snapshot live in `state/memory/curator-sessions-v1.sqlite`. Module recovery reads receipts before admitting any model execution. Retained outputs still go through the existing Module transaction and applied-job marker. Transcript reads are archive operations; an unreadable transcript cannot invalidate a durable extraction receipt or authorize another model call. The original Mission remains available when its transcript could not be archived.
+The receipt and snapshot live in `state/memory/curator-sessions-v1.sqlite` (database version 2). Module recovery reads receipts before admitting any model execution. Retained outputs still go through the existing Module transaction and applied-job marker. Transcript reads are archive operations; an unreadable transcript cannot invalidate a durable extraction receipt or authorize another model call. The original Mission remains available when its transcript could not be archived.
 
 ### Existing Memory discovery and reconciliation
 

@@ -2,7 +2,10 @@ import {
   pruneCompletedMemoryJobs,
   type CompletedMemoryJobCursor,
 } from "../pipeline/completed-job-retention.ts";
-import { hasMemoryExtractionReceipt } from "../pipeline/extraction-session/store.ts";
+import {
+  hasMemoryExtractionReceipt,
+  hasPendingMemoryExtractionContinuation,
+} from "../pipeline/extraction-session/store.ts";
 import { createMemoryExtractionSessionStore } from "../pipeline/extraction-session.ts";
 import {
   blocksAutomaticExtractionRetry,
@@ -129,10 +132,16 @@ export interface EpisodicMemoryStore {
   ): Promise<readonly { id: string; revision: number }[]>;
   ingest(envelopes: readonly MemoryEvidenceEnvelope[]): Promise<void>;
   /** localRecoveryOnly is an in-process admission constraint, never persisted as provider proof. */
+  peekDueJob(
+    now: Date,
+    conversationRef?: MemorySubjectRef,
+  ): Promise<EpisodicExtractionJob | undefined>;
   claimDueJob(
     now: Date,
+    conversationRef?: MemorySubjectRef,
   ): Promise<(EpisodicExtractionJob & { readonly localRecoveryOnly?: true }) | undefined>;
   isClaimCurrent(job: EpisodicExtractionJob): Promise<boolean>;
+  releaseUnadmittedClaim(job: EpisodicExtractionJob, now: Date, refund: boolean): Promise<void>;
   bindExecutionConversation(input: {
     readonly executionId: string;
     readonly conversationRef: MemorySubjectRef;
@@ -212,6 +221,7 @@ export interface EpisodicMemoryStore {
     readonly id: string;
     readonly expectedRevision: number;
     readonly now: Date;
+    readonly preserveSession?: boolean;
   }): Promise<void>;
   expediteJob(input: {
     readonly id: string;
@@ -227,8 +237,12 @@ export interface EpisodicMemoryStore {
     readonly id: string;
     readonly expectedRevision: number;
     readonly now: Date;
+    readonly includePending?: boolean;
   }): Promise<void>;
-  pruneCompletedJobs(before: CompletedMemoryJobCursor): Promise<number>;
+  pruneCompletedJobs(
+    before: CompletedMemoryJobCursor,
+    keepIds?: readonly string[],
+  ): Promise<number>;
   listExtractionJobs(): Promise<readonly EpisodicExtractionJob[]>;
   listFailureAttempts(jobId: string): Promise<readonly MemoryExtractionFailureAttempt[]>;
   listExtractionJobsPage(
@@ -288,6 +302,35 @@ export async function createEpisodicMemoryStore(
     tryClose(state);
     throw error;
   }
+
+  const readDueJob = (
+    now: Date,
+    conversationRef?: MemorySubjectRef,
+  ): EpisodicExtractionJob | undefined => {
+    const row = state
+      .prepare(
+        `SELECT job.job_json AS jobJson FROM jobs AS job
+             WHERE (? IS NULL OR job.conversation_key = ?) AND (((job.status = 'pending' AND (job.retry_at IS NULL OR job.retry_at <= ?))
+                OR (job.status = 'waiting_idle' AND job.retry_at <= ?))
+                OR (job.status = 'running' AND job.lease_until <= ?))
+               AND NOT EXISTS (
+                 SELECT 1 FROM conversation_activity AS activity
+                 WHERE activity.conversation_key = job.conversation_key
+                   AND activity.state = 'running'
+               )
+             ORDER BY job.retry_at IS NOT NULL, job.retry_at, job.id LIMIT 1`,
+      )
+      .get(
+        conversationRef === undefined ? null : conversationKey(conversationRef),
+        conversationRef === undefined ? null : conversationKey(conversationRef),
+        now.toISOString(),
+        now.toISOString(),
+        now.toISOString(),
+      ) as unknown as { readonly jobJson: string } | undefined;
+    return row === undefined
+      ? undefined
+      : EpisodicExtractionJobSchema.parse(JSON.parse(row.jobJson));
+  };
 
   const writeJob = (job: EpisodicExtractionJob): void => {
     state
@@ -445,29 +488,17 @@ export async function createEpisodicMemoryStore(
       }
     },
 
-    async claimDueJob(now) {
+    async peekDueJob(now, conversationRef) {
+      return readDueJob(now, conversationRef);
+    },
+    async claimDueJob(now, conversationRef) {
       state.exec("BEGIN IMMEDIATE;");
       try {
-        const row = state
-          .prepare(
-            `SELECT job.job_json AS jobJson FROM jobs AS job
-             WHERE (((job.status = 'pending' AND (job.retry_at IS NULL OR job.retry_at <= ?))
-                OR (job.status = 'waiting_idle' AND job.retry_at <= ?))
-                OR (job.status = 'running' AND job.lease_until <= ?))
-               AND NOT EXISTS (
-                 SELECT 1 FROM conversation_activity AS activity
-                 WHERE activity.conversation_key = job.conversation_key
-                   AND activity.state = 'running'
-               )
-             ORDER BY job.retry_at IS NOT NULL, job.retry_at, job.id LIMIT 1`,
-          )
-          .get(now.toISOString(), now.toISOString(), now.toISOString()) as unknown as
-          { readonly jobJson: string } | undefined;
-        if (row === undefined) {
+        const current = readDueJob(now, conversationRef);
+        if (current === undefined) {
           state.exec("COMMIT;");
           return undefined;
         }
-        const current = EpisodicExtractionJobSchema.parse(JSON.parse(row.jobJson));
         if (current.sourceExecutionIds.some(isFenced)) {
           state.exec("COMMIT;");
           return undefined;
@@ -481,10 +512,20 @@ export async function createEpisodicMemoryStore(
             .get(conversationKey(current.conversationRef), current.terminalMessageId) !==
             undefined ||
             hasMemoryExtractionReceipt(options, "episodic", current.id, current.inputWatermark));
+        const canContinue =
+          current.status === "running" &&
+          hasPendingMemoryExtractionContinuation(
+            options,
+            "episodic",
+            current.id,
+            current.inputWatermark,
+          );
         const replayBlocked =
           !canSettleLocally &&
+          !canContinue &&
           blocksAutomaticExtractionRetry(current.lastFailure, current.attempts);
-        const executionUnconfirmed = current.status === "running" && !canSettleLocally;
+        const executionUnconfirmed =
+          current.status === "running" && !canSettleLocally && !canContinue;
         if (replayBlocked || executionUnconfirmed) {
           const diagnostic =
             current.lastFailure === undefined || executionUnconfirmed
@@ -519,8 +560,8 @@ export async function createEpisodicMemoryStore(
           ...current,
           revision: current.revision + 1,
           status: "running",
-          attempts: current.attempts + (canSettleLocally ? 0 : 1),
-          totalAttempts: current.totalAttempts + (canSettleLocally ? 0 : 1),
+          attempts: current.attempts + (canSettleLocally || canContinue ? 0 : 1),
+          totalAttempts: current.totalAttempts + (canSettleLocally || canContinue ? 0 : 1),
           retryAt: undefined,
           leaseUntil: new Date(now.getTime() + 5 * 60_000).toISOString(),
           updatedAt: now.toISOString(),
@@ -534,6 +575,28 @@ export async function createEpisodicMemoryStore(
       }
     },
 
+    async releaseUnadmittedClaim(job, now, refund) {
+      state.exec("BEGIN IMMEDIATE;");
+      try {
+        if (!job.sourceExecutionIds.some(isFenced) && isCurrentRunningJob(state, job))
+          writeJob(
+            EpisodicExtractionJobSchema.parse({
+              ...job,
+              revision: job.revision + 1,
+              status: "pending",
+              attempts: Math.max(0, job.attempts - (refund ? 1 : 0)),
+              totalAttempts: Math.max(0, job.totalAttempts - (refund ? 1 : 0)),
+              leaseUntil: undefined,
+              retryAt: new Date(now.getTime() + EXTRACTION_RETRY_DELAY_MS).toISOString(),
+              updatedAt: now.toISOString(),
+            }),
+          );
+        state.exec("COMMIT;");
+      } catch (error) {
+        rollback(state);
+        throw error;
+      }
+    },
     async isClaimCurrent(job) {
       return !job.sourceExecutionIds.some(isFenced) && isCurrentRunningJob(state, job);
     },
@@ -1018,7 +1081,7 @@ export async function createEpisodicMemoryStore(
         throw new Error("memory_extraction_job_revision_conflict");
       }
       if (job.status !== "needs_attention") throw new Error("memory_extraction_job_not_retryable");
-      if (job.lastErrorCode !== "memory_curator_budget_exhausted")
+      if (!input.preserveSession && job.lastErrorCode !== "memory_curator_budget_exhausted")
         await createMemoryExtractionSessionStore(options).deleteJobs("episodic", [job.id]);
       writeJob(
         EpisodicExtractionJobSchema.parse({
@@ -1088,17 +1151,27 @@ export async function createEpisodicMemoryStore(
 
     async deleteJob(input) {
       const job = readJob(state, input.id);
-      assertManageableJob(job, input.expectedRevision, ["needs_attention"]);
-      await createMemoryExtractionSessionStore(options).deleteJobs("episodic", [job.id]);
+      assertManageableJob(
+        job,
+        input.expectedRevision,
+        input.includePending ? ["needs_attention", "pending", "waiting_idle"] : ["needs_attention"],
+      );
+      await createMemoryExtractionSessionStore(options).deleteJobs("episodic", [job.id], true);
       deleteExtractionJobState(state, job, input.now);
     },
 
-    async pruneCompletedJobs(before) {
-      return pruneCompletedMemoryJobs(state, "episodic", before, (json) => {
-        const job = EpisodicExtractionJobSchema.parse(JSON.parse(json));
-        const removeStats = state.prepare("DELETE FROM capture_stats WHERE execution_id = ?");
-        for (const executionId of job.sourceExecutionIds) removeStats.run(executionId);
-      });
+    async pruneCompletedJobs(before, keepIds) {
+      return pruneCompletedMemoryJobs(
+        state,
+        "episodic",
+        before,
+        (json) => {
+          const job = EpisodicExtractionJobSchema.parse(JSON.parse(json));
+          const removeStats = state.prepare("DELETE FROM capture_stats WHERE execution_id = ?");
+          for (const executionId of job.sourceExecutionIds) removeStats.run(executionId);
+        },
+        keepIds,
+      );
     },
 
     async listExtractionJobs() {

@@ -116,6 +116,13 @@ export interface MissionExecutionUseCases {
     readonly attachments?: readonly ExpertPromptAttachment[] | undefined;
     readonly mode?: "enqueue" | "steer" | undefined;
   }): Promise<MissionMessageApplicationResult>;
+  /** Internal system-memory continuation. Must reuse the existing owned Runtime Context. */
+  continueInternalMemoryMission(input: {
+    readonly id: string;
+    readonly content: string;
+    readonly requestId: string;
+    readonly previousExecutionId: string;
+  }): Promise<{ readonly executionId: string }>;
   steerQueuedMessage(input: { readonly id: string; readonly requestId: string }): Promise<Mission>;
   removeQueuedMessage(input: { readonly id: string; readonly requestId: string }): Promise<Mission>;
   getChatPage(input: MissionChatPageQuery): Promise<MissionChatPage>;

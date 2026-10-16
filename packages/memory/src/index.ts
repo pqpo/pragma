@@ -41,5 +41,6 @@ export * from "./retrieval/extraction-memory.ts";
 export * from "./retrieval/rank-fusion.ts";
 
 export * from "./pipeline/extraction-session.ts";
+export * from "./pipeline/conversation-extraction.ts";
 
 export * from "./pipeline/completed-job-retention.ts";

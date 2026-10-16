@@ -1,5 +1,9 @@
 import type { ExpertAgentManagedTool, ExpertAgentToolCallResult } from "@pragma/core";
-import { MemoryExtractionToolSchemas, type MemoryExtractionSession } from "@pragma/memory";
+import {
+  MemoryExtractionToolSchemas,
+  MemoryExtractionTypeSchema,
+  type MemoryExtractionSession,
+} from "@pragma/memory";
 import { z } from "zod";
 
 const [claim, attempt, recovery, outcome] = MemoryExtractionToolSchemas.submit_episode_part.options;
@@ -31,6 +35,7 @@ const inputSchemas = {
   finish_extraction: z
     .object({
       retain: z.boolean(),
+      type: retain.shape.type,
       language: retain.shape.language,
       valueScore: retain.shape.valueScore,
       reason: reject.shape.reason.optional(),
@@ -52,10 +57,18 @@ const descriptions = {
   submit_episode_part:
     "Stage a goal, summary, attempt, recovery or outcome supported by read evidence. Always supply part and evidence. For goal/summary supply text; for attempt supply description and optional result; for recovery supply failure and optional recovery; for outcome supply status and summary. Only supply fields for the selected part. Repeated goal/summary/outcome replaces that part; correct attempts/recoveries using the returned candidate handle.",
   finish_extraction:
-    "Finish only after reading the available source passages. Persist the validated result receipt. Set retain=true to retain; for retained episodes also supply language and valueScore (0..1), without reason. Set retain=false to reject and supply reason only. If source is incomplete, continue reading; do not claim insufficient evidence because of a budget limit.",
+    "Finish one memory type after reading its available source passages. Supply type=semantic or episodic. Each type needs its own durable receipt; continue the unfinished type in this conversation. Set retain=true to retain; for episodes also supply language and valueScore (0..1), without reason. Set retain=false and supply the appropriate reason to skip a type with nothing worth retaining. Never skip because of a budget limit.",
 } as const;
 
 const correctionHints: Readonly<Record<string, string>> = {
+  memory_curator_type_required:
+    "Supply type=semantic or episodic to finish that type. Both types require a decision; reuse the same read evidence.",
+  memory_curator_type_unavailable:
+    "Finish only the requested types listed in the task. An unrequested type has already been handled or is not eligible.",
+  memory_curator_type_already_finished:
+    "This type has already been saved. Continue only the unfinished type; do not modify completed results.",
+  memory_curator_evidence_type_denied:
+    "This source passage is not authorized for that memory type. Use only evidence allowed for the submitted type.",
   memory_curator_recall_denied:
     "Existing Memory recall is disabled or no longer authorized for this source task. Do not repeat lookups or propose replacements. You may continue extracting only from the supplied source evidence.",
   memory_curator_evidence_not_read:
@@ -132,13 +145,18 @@ function toolError(
     .join("\n");
 }
 export function createMemoryCuratorTools(
-  session: MemoryExtractionSession,
+  session: Pick<MemoryExtractionSession, "toolNames" | "module" | "call">,
   beforeCall?: (() => Promise<void>) | undefined,
 ): ExpertAgentManagedTool<string, ExpertAgentToolCallResult>[] {
   return session.toolNames.map((name) => ({
     name,
     description: descriptions[name],
-    inputSchema: z.toJSONSchema(inputSchemas[name], { io: "input" }),
+    inputSchema: z.toJSONSchema(
+      name === "finish_extraction" && session.module === "conversation"
+        ? inputSchemas.finish_extraction.extend({ type: MemoryExtractionTypeSchema })
+        : inputSchemas[name],
+      { io: "input" },
+    ),
     approval: { mode: "none" as const },
     async call(args, signal) {
       signal?.throwIfAborted();

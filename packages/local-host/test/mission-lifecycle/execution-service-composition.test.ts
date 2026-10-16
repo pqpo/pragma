@@ -21,9 +21,73 @@ import {
 import { createMissionControllerStore } from "../../src/missions/controller/mission-controller-store.ts";
 import { createMissionOwnerScope } from "../../src/missions/controller/owner-scope.ts";
 import { createMissionControlApplication } from "../../src/missions/controller/mission-control.ts";
-import type { MissionStore } from "../../src/missions/repository/mission-store.ts";
+import {
+  createMissionStore,
+  type MissionStore,
+} from "../../src/missions/repository/mission-store.ts";
+import { MEMORY_CURATOR_REF } from "@pragma/memory";
 
 describe("execution service composition", () => {
+  it.each(["succeeded", "failed", "cancelled"] as const)(
+    "requires an owned Native snapshot before explicitly continuing a %s memory turn",
+    async (status) => {
+      const home = await mkdtemp(join(tmpdir(), "pragma-memory-continuation-snapshot-"));
+      const executions = createSqliteExecutionStore({ pragmaHome: home });
+      const missions = createMissionStore({ missionsPath: join(home, "missions") });
+      const dispatched = vi.fn(async () => ({ outputText: "unexpected" }));
+      const runtimes = createStaticRuntimeResolver({
+        runtimes: [
+          defineRuntimeTestDriver({
+            descriptor: { id: "fake", kind: "fake", displayName: "Fake" },
+            createSession: () => ({}),
+            startTurn: dispatched,
+            mapEvent: () => ({ events: [] }),
+          }),
+        ],
+        defaultRuntimeId: "fake",
+      });
+      const service = createLocalHostMissionExecutionService({
+        pragmaHome: home,
+        executionStore: executions,
+        executionOwner: new MissionExecutionOwner(),
+        missions,
+        runtimes,
+        resourcePorts: {
+          createCompileService: () => ({}),
+        } as LocalHostMissionExecutionResourcePorts,
+      });
+      try {
+        const mission = await missions.create({
+          workspace: { path: home, basename: "workspace" },
+          goal: "extract",
+          project: { id: "studio", revision: 1 },
+          executor: { kind: "expert", ref: MEMORY_CURATOR_REF, name: "Memory Curator" },
+          origin: { type: "system-memory", jobId: "job" },
+        });
+        const executionId = crypto.randomUUID();
+        await missions.updateExecution(mission.id, {
+          id: executionId,
+          sessionId: crypto.randomUUID(),
+          inputMessageId: mission.initialMessageId,
+          status,
+          startedAt: new Date().toISOString(),
+          finishedAt: new Date().toISOString(),
+        });
+        await expect(
+          service.continueInternalMemoryMission({
+            id: mission.id,
+            content: "Continue",
+            requestId: crypto.randomUUID(),
+            previousExecutionId: executionId,
+          }),
+        ).rejects.toThrow("memory_curator_session_unavailable");
+        expect(dispatched).not.toHaveBeenCalled();
+      } finally {
+        await executions.close();
+        await rm(home, { recursive: true, force: true });
+      }
+    },
+  );
   it.each([false, true])(
     "cancels a controller-only Core Flow and retains teardown identity (blocked=%s)",
     async (blocked) => {

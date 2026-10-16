@@ -37,6 +37,7 @@ export const memory = {
     completed: "Completed",
   },
   extractionTaskTypes: {
+    conversation: "Memory extraction",
     episodic: "Episodic memory",
     semantic: "Fact memory",
     knowledge: "Knowledge memory",
@@ -54,6 +55,14 @@ export const memory = {
   unknownMission: "Deleted mission",
   unknownAsset: "Deleted asset",
   extractNow: "Extract now",
+  extractionContinuationCount: "Conversation continuations: {{count}} / 3",
+  restartExtraction: "Start extraction over",
+  extractionResults: {
+    pending: "Pending",
+    retained: "Saved",
+    rejected: "Skipped",
+    failed: "Needs attention",
+  },
   retryExtraction: "Retry extraction",
   configureExtraction: "Check extraction settings",
   interruptExtraction: "Interrupt",

@@ -1,4 +1,8 @@
-import type { EpisodicExtractionJob, SemanticExtractionJob } from "@pragma/memory";
+import {
+  conversationExtractionJobId,
+  type EpisodicExtractionJob,
+  type SemanticExtractionJob,
+} from "@pragma/memory";
 import type { KnowledgeExtractionJob } from "@pragma/shared";
 import type { SkillLearningJob } from "@pragma/shared";
 
@@ -23,6 +27,15 @@ const MEMORY_EXTRACTION_LANES = ["waiting", "attention", "running", "completed"]
 type MemoryExtractionLane = (typeof MEMORY_EXTRACTION_LANES)[number];
 type ConversationExtractionJob = EpisodicExtractionJob | SemanticExtractionJob;
 type PagedExtractionJob =
+  | {
+      readonly module: "conversation";
+      readonly lane: MemoryExtractionLane;
+      readonly job: ConversationExtractionJob;
+      readonly members: readonly {
+        module: "episodic" | "semantic";
+        job: ConversationExtractionJob;
+      }[];
+    }
   | {
       readonly module: "episodic" | "semantic";
       readonly lane: MemoryExtractionLane;
@@ -60,8 +73,9 @@ export async function listDesktopMemoryExtractionJobs(
   options: ExtractionTaskTitleOptions,
   input: ListDesktopMemoryExtractionJobs,
 ): Promise<DesktopMemoryExtractionBoard> {
-  const loadedPages = await Promise.all(
-    MEMORY_EXTRACTION_LANES.map(async (lane) => loadLanePage(plane, lane, input.pages[lane])),
+  const snapshot = await loadAllExtractionJobs(plane);
+  const loadedPages = MEMORY_EXTRACTION_LANES.map((lane) =>
+    loadLanePage(snapshot, lane, input.pages[lane]),
   );
   const jobs = loadedPages.flatMap((page) => page.jobs);
   const { missionTitles, executionTitles, resourceTitles } = await loadTaskTitles(jobs, options);
@@ -105,12 +119,7 @@ export async function listDesktopMemoryExtractionActiveTasks(
     plane.skillLearningStore.listJobs(),
   ]);
   const jobs: PagedExtractionJob[] = [
-    ...episodic
-      .filter((job) => job.status !== "expired")
-      .map((job) => ({ module: "episodic" as const, lane: laneForStatus(job.status), job })),
-    ...semantic
-      .filter((job) => job.status !== "expired")
-      .map((job) => ({ module: "semantic" as const, lane: laneForStatus(job.status), job })),
+    ...groupConversationExtractionJobs(episodic, semantic),
     ...knowledge.map((job) => ({
       module: "knowledge" as const,
       lane: laneForStatus(job.status),
@@ -131,8 +140,10 @@ async function loadTaskTitles(
   options: ExtractionTaskTitleOptions,
 ) {
   const conversationJobs = jobs.filter(
-    (entry): entry is Extract<PagedExtractionJob, { module: "episodic" | "semantic" }> =>
-      entry.module === "episodic" || entry.module === "semantic",
+    (
+      entry,
+    ): entry is Extract<PagedExtractionJob, { module: "episodic" | "semantic" | "conversation" }> =>
+      entry.module === "episodic" || entry.module === "semantic" || entry.module === "conversation",
   );
   const missionIds = [
     ...new Set(
@@ -174,6 +185,42 @@ export async function getDesktopMemoryExtractionTaskDetail(
   },
   input: DesktopMemoryExtractionTaskRef,
 ): Promise<DesktopMemoryExtractionTaskDetail> {
+  if (input.module === "conversation") {
+    const [episodic, semantic] = await Promise.all([
+      plane.episodicStore.listExtractionJobs(),
+      plane.semanticStore.listExtractionJobs(),
+    ]);
+    const entry = groupConversationExtractionJobs(episodic, semantic).find(
+      ({ job }) => job.id === input.id,
+    );
+    if (entry === undefined) throw new Error("memory_extraction_job_not_found");
+    const details = await Promise.all(
+      entry.members.map(({ module, job }) =>
+        getDesktopMemoryExtractionTaskDetail(plane, options, { module, id: job.id }),
+      ),
+    );
+    const { missionTitles, executionTitles, resourceTitles } = await loadTaskTitles(
+      [entry],
+      options,
+    );
+    const runs = [
+      ...(await options.curator.listRuns({ module: "conversation", jobId: input.id })),
+      ...details.flatMap((detail) => detail.runs),
+    ];
+    const problem = details.find((detail) => detail.task.lane === "attention");
+    return DesktopMemoryExtractionTaskDetailSchema.parse({
+      task: toDesktopTask(entry, missionTitles, executionTitles, resourceTitles),
+      lastErrorMessage: problem?.lastErrorMessage,
+      lastFailure: problem?.lastFailure,
+      attempts: details.flatMap((detail) => detail.attempts).slice(-20),
+      runs: runs
+        .filter(
+          (run, index) => runs.findIndex((candidate) => candidate.runId === run.runId) === index,
+        )
+        .toSorted((a, b) => b.startedAt.localeCompare(a.startedAt))
+        .slice(0, 20),
+    });
+  }
   const jobs =
     input.module === "episodic"
       ? await plane.episodicStore.listExtractionJobs()
@@ -193,7 +240,11 @@ export async function getDesktopMemoryExtractionTaskDetail(
   const missionTitles = new Map<string, string>();
   const executionTitles = new Map<string, string>();
   const resourceTitles = new Map<string, string>();
-  if (entry.module === "episodic" || entry.module === "semantic") {
+  if (
+    entry.module === "episodic" ||
+    entry.module === "semantic" ||
+    entry.module === "conversation"
+  ) {
     if (entry.job.conversationRef.type === "pragma.mission") {
       const mission = await options.missions
         .get(entry.job.conversationRef.id)
@@ -247,92 +298,101 @@ function laneForStatus(status: PagedExtractionJob["job"]["status"]): MemoryExtra
   }
 }
 
-async function loadLanePage(
+async function loadAllExtractionJobs(
   plane: Pick<DesktopMemoryPlane, "episodicStore" | "semanticStore" | "knowledgeLearningStore"> &
     Partial<Pick<DesktopMemoryPlane, "skillLearningStore">>,
+): Promise<PagedExtractionJob[]> {
+  const [episodic, semantic, knowledge, skill] = await Promise.all([
+    plane.episodicStore.listExtractionJobs(),
+    plane.semanticStore.listExtractionJobs(),
+    plane.knowledgeLearningStore.listJobs(),
+    plane.skillLearningStore?.listJobs() ?? Promise.resolve([]),
+  ]);
+  return [
+    ...groupConversationExtractionJobs(episodic, semantic),
+    ...knowledge.map((job) => ({
+      module: "knowledge" as const,
+      lane: laneForStatus(job.status),
+      job,
+    })),
+    ...skill.map((job) => ({ module: "skill" as const, lane: laneForStatus(job.status), job })),
+  ];
+}
+
+function loadLanePage(
+  snapshot: readonly PagedExtractionJob[],
   lane: MemoryExtractionLane,
   request: ListDesktopMemoryExtractionJobs["pages"][MemoryExtractionLane],
-): Promise<LoadedLanePage> {
-  const query = async (cursor: typeof request.cursor) => {
-    const common = {
-      limit: DESKTOP_MEMORY_EXTRACTION_PAGE_SIZE,
-      ...(cursor === undefined ? {} : { before: cursor }),
-    };
-    const [episodic, semantic, knowledge, skill] = await Promise.all([
-      plane.episodicStore.listExtractionJobsPage({
-        ...common,
-        statuses: conversationStatuses(lane),
-        sortKeyPrefix: "episodic",
-      }),
-      plane.semanticStore.listExtractionJobsPage({
-        ...common,
-        statuses: conversationStatuses(lane),
-        sortKeyPrefix: "semantic",
-      }),
-      plane.knowledgeLearningStore.listJobsPage({
-        ...common,
-        statuses: knowledgeStatuses(lane),
-        sortKeyPrefix: "knowledge",
-      }),
-      plane.skillLearningStore?.listJobsPage({
-        ...common,
-        statuses: knowledgeStatuses(lane),
-        sortKeyPrefix: "skill",
-      }) ?? Promise.resolve({ jobs: [], total: 0 }),
-    ]);
-    const jobs: PagedExtractionJob[] = [
-      ...episodic.jobs.map((job) => ({ module: "episodic" as const, lane, job })),
-      ...semantic.jobs.map((job) => ({ module: "semantic" as const, lane, job })),
-      ...knowledge.jobs.map((job) => ({ module: "knowledge" as const, lane, job })),
-      ...skill.jobs.map((job) => ({ module: "skill" as const, lane, job })),
-    ];
-    return {
-      jobs: jobs.toSorted(compareJobs).slice(0, DESKTOP_MEMORY_EXTRACTION_PAGE_SIZE),
-      totalTasks: episodic.total + semantic.total + knowledge.total + skill.total,
-    };
+): LoadedLanePage {
+  const jobs = snapshot.filter((entry) => entry.lane === lane).toSorted(compareJobs);
+  const pageCount = Math.max(1, Math.ceil(jobs.length / DESKTOP_MEMORY_EXTRACTION_PAGE_SIZE));
+  const before = request.cursor;
+  let remaining =
+    before === undefined
+      ? jobs
+      : jobs.filter(
+          (entry) =>
+            entry.job.updatedAt < before.updatedAt ||
+            (entry.job.updatedAt === before.updatedAt && jobTieBreaker(entry) < before.tieBreaker),
+        );
+  const reset = request.pageIndex >= pageCount || (request.pageIndex > 0 && remaining.length === 0);
+  if (reset) remaining = jobs;
+  return {
+    jobs: remaining.slice(0, DESKTOP_MEMORY_EXTRACTION_PAGE_SIZE),
+    totalTasks: jobs.length,
+    pageCount,
+    pageIndex: reset ? 0 : request.pageIndex,
   };
+}
 
-  let result = await query(request.cursor);
-  const pageCount = Math.max(1, Math.ceil(result.totalTasks / DESKTOP_MEMORY_EXTRACTION_PAGE_SIZE));
-  if (request.pageIndex >= pageCount || (request.pageIndex > 0 && result.jobs.length === 0)) {
-    result = await query(undefined);
+export function groupConversationExtractionJobs(
+  episodic: readonly EpisodicExtractionJob[],
+  semantic: readonly SemanticExtractionJob[],
+): Extract<PagedExtractionJob, { module: "conversation" }>[] {
+  const groups = new Map<
+    string,
+    { module: "episodic" | "semantic"; job: ConversationExtractionJob }[]
+  >();
+  for (const [module, jobs] of [
+    ["episodic", episodic],
+    ["semantic", semantic],
+  ] as const) {
+    for (const job of jobs) {
+      if (job.status === "expired") continue;
+      const id = conversationExtractionJobId(job.conversationRef, job.inputWatermark);
+      const members = groups.get(id) ?? [];
+      members.push({ module, job });
+      groups.set(id, members);
+    }
+  }
+  const rank = { completed: 0, waiting: 1, running: 3, attention: 2 };
+  return [...groups].map(([id, members]) => {
+    const representative = members.toSorted(
+      (a, b) => rank[laneForStatus(b.job.status)] - rank[laneForStatus(a.job.status)],
+    )[0]!.job;
+    const lane = laneForStatus(representative.status);
     return {
-      ...result,
-      pageIndex: 0,
-      pageCount: Math.max(1, Math.ceil(result.totalTasks / DESKTOP_MEMORY_EXTRACTION_PAGE_SIZE)),
+      module: "conversation",
+      lane,
+      members,
+      job: {
+        ...representative,
+        id,
+        revision: members.reduce((total, member) => total + member.job.revision, 0),
+        updatedAt: members
+          .map(({ job }) => job.updatedAt)
+          .toSorted()
+          .at(-1)!,
+        ...(lane === "completed"
+          ? {
+              completion: members.some(({ job }) => job.completion === "retained")
+                ? "retained"
+                : "rejected",
+            }
+          : {}),
+      },
     };
-  }
-  return { ...result, pageIndex: request.pageIndex, pageCount };
-}
-
-function conversationStatuses(
-  lane: MemoryExtractionLane,
-): readonly ConversationExtractionJob["status"][] {
-  switch (lane) {
-    case "waiting":
-      return ["waiting_idle", "pending"];
-    case "attention":
-      return ["needs_attention"];
-    case "running":
-      return ["running"];
-    case "completed":
-      return ["completed"];
-  }
-}
-
-function knowledgeStatuses(
-  lane: MemoryExtractionLane,
-): readonly KnowledgeExtractionJob["status"][] {
-  switch (lane) {
-    case "waiting":
-      return ["pending"];
-    case "attention":
-      return ["needs_attention"];
-    case "running":
-      return ["running"];
-    case "completed":
-      return ["completed"];
-  }
+  });
 }
 
 function compareJobs(left: PagedExtractionJob, right: PagedExtractionJob): number {
@@ -380,5 +440,19 @@ function toDesktopTask(
         }
       : {}),
     updatedAt: entry.job.updatedAt,
+    ...(entry.module === "conversation"
+      ? {
+          results: Object.fromEntries(
+            entry.members.map(({ module, job }) => [
+              module,
+              job.status === "completed"
+                ? (job.completion ?? "rejected")
+                : job.status === "needs_attention"
+                  ? "failed"
+                  : "pending",
+            ]),
+          ),
+        }
+      : {}),
   };
 }

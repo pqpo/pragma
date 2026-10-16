@@ -1,4 +1,8 @@
-import type { EpisodicExtractionJob, SemanticExtractionJob } from "@pragma/memory";
+import {
+  conversationExtractionJobId,
+  type EpisodicExtractionJob,
+  type SemanticExtractionJob,
+} from "@pragma/memory";
 import type { KnowledgeExtractionJob, SkillLearningJob } from "@pragma/shared";
 import { describe, expect, it, vi } from "vitest";
 
@@ -18,272 +22,151 @@ const FIRST_PAGES: ListDesktopMemoryExtractionJobs = {
   },
 };
 
-describe("listDesktopMemoryExtractionJobs", () => {
-  it("resolves built-in expert names for knowledge tasks in both the board and detail", async () => {
-    const job = knowledgeJob(1, "2026-08-05T00:00:01.000Z");
-    const emptyPage = async () => ({ jobs: [], total: 0 });
-    const plane = {
-      episodicStore: { listExtractionJobsPage: emptyPage },
-      semanticStore: { listExtractionJobsPage: emptyPage },
-      knowledgeLearningStore: {
-        listJobsPage: async (input: { statuses: readonly string[] }) =>
-          input.statuses.includes(job.status) ? { jobs: [job], total: 1 } : emptyPage(),
-        listJobs: async () => [job],
-        listFailureAttempts: async () => [],
-      },
-    } as unknown as Parameters<typeof listDesktopMemoryExtractionJobs>[0];
-    const options = {
-      ...emptyTitleOptions(),
-      project: { get: async () => ({ resources: [] }) },
-      systemExperts: { list: () => [{ id: job.rootRef.id, name: "Pragma" }] },
-      curator: { listRuns: async () => [] },
-    } as unknown as Parameters<typeof getDesktopMemoryExtractionTaskDetail>[1];
-    const board = await listDesktopMemoryExtractionJobs(plane, options, FIRST_PAGES);
-    expect(board.lanes.completed.tasks[0]?.title).toBe("Pragma");
-    const detail = await getDesktopMemoryExtractionTaskDetail(plane, options, {
-      module: "knowledge",
-      id: job.id,
+describe("unified memory extraction tasks", () => {
+  it("shows one task with two independent outcomes and source names", async () => {
+    const episode = {
+      ...episodicJob(1, "2026-08-05T00:00:03.000Z"),
+      completion: "retained" as const,
+    };
+    const fact = { ...semanticJob(1, "2026-08-05T00:00:02.000Z"), completion: "rejected" as const };
+    const plane = planeFor([episode], [fact]);
+    const board = await listDesktopMemoryExtractionJobs(plane, emptyTitleOptions(), FIRST_PAGES);
+    expect(board.lanes.completed.totalTasks).toBe(1);
+    expect(board.lanes.completed.tasks[0]).toMatchObject({
+      module: "conversation",
+      revision: 2,
+      title: "Release mission",
+      completion: "retained",
+      results: { episodic: "retained", semantic: "rejected" },
     });
-    expect(detail.task.title).toBe("Pragma");
+    expect(plane.episodicStore.listExtractionJobs).toHaveBeenCalledOnce();
+    const detail = await getDesktopMemoryExtractionTaskDetail(
+      plane,
+      { ...emptyTitleOptions(), curator: { listRuns: async () => [] } },
+      { module: "conversation", id: board.lanes.completed.tasks[0]!.id },
+    );
+    expect(detail.task.results).toEqual({ episodic: "retained", semantic: "rejected" });
   });
 
-  it("queries and returns only the current cursor page for every lane", async () => {
-    const jobs = Array.from({ length: 12 }, (_, index) =>
-      episodicJob(index, new Date(Date.UTC(2026, 7, 5, 0, 0, 11 - index)).toISOString()),
+  it("groups before counting and paginating, with stable continuation cursors", async () => {
+    const episodes = Array.from({ length: 12 }, (_, i) =>
+      episodicJob(i, new Date(Date.UTC(2026, 7, 5, 0, 0, 12 - i)).toISOString()),
     );
-    const listExtractionJobsPage = vi.fn(
-      (input: {
-        readonly statuses: readonly string[];
-        readonly limit: number;
-        readonly before?: { readonly tieBreaker: string } | undefined;
-      }) => {
-        if (!input.statuses.includes("completed")) return Promise.resolve({ jobs: [], total: 0 });
-        return Promise.resolve({
-          jobs: input.before === undefined ? jobs.slice(0, 10) : jobs.slice(10),
-          total: jobs.length,
-        });
-      },
-    );
-    const semanticPage = vi.fn(async (input: { readonly statuses: readonly string[] }) => {
-      void input;
-      return { jobs: [], total: 0 };
-    });
-    const knowledgePage = vi.fn(async (input: { readonly statuses: readonly string[] }) => {
-      void input;
-      return { jobs: [], total: 0 };
-    });
-    const plane = {
-      episodicStore: { listExtractionJobsPage },
-      semanticStore: { listExtractionJobsPage: semanticPage },
-      knowledgeLearningStore: { listJobsPage: knowledgePage },
-    } as unknown as Parameters<typeof listDesktopMemoryExtractionJobs>[0];
-    const options = {
-      missions: {
-        get: vi.fn(async (id: string) => ({ id, title: "Release mission" })),
-        resolveExecutionTitles: vi.fn(async () => new Map<string, string>()),
-      },
-      project: { get: vi.fn() },
-    } as unknown as Parameters<typeof listDesktopMemoryExtractionJobs>[1];
-
-    const first = await listDesktopMemoryExtractionJobs(plane, options, FIRST_PAGES);
+    const facts = episodes.map((job, i) => ({
+      ...semanticJob(i, job.updatedAt),
+      completion: "rejected" as const,
+    }));
+    const plane = planeFor(episodes, facts);
+    const first = await listDesktopMemoryExtractionJobs(plane, emptyTitleOptions(), FIRST_PAGES);
+    expect(first.lanes.completed).toMatchObject({ totalTasks: 12, pageCount: 2, pageIndex: 0 });
     expect(first.lanes.completed.tasks).toHaveLength(10);
-    expect(first.lanes.completed.totalTasks).toBe(12);
-    expect(first.lanes.completed.pageCount).toBe(2);
-    expect(first.lanes.completed.tasks[0]?.id).toBe("job-00");
-    expect(first.lanes.completed.nextCursor).toEqual({
-      updatedAt: jobs[9]!.updatedAt,
-      tieBreaker: "episodic:job-09",
-    });
-    expect(listExtractionJobsPage).toHaveBeenCalledTimes(4);
-    expect(listExtractionJobsPage.mock.calls.every(([input]) => input.limit === 10)).toBe(true);
-    expect(listExtractionJobsPage.mock.calls.map(([input]) => input.statuses)).toEqual([
-      ["waiting_idle", "pending"],
-      ["needs_attention"],
-      ["running"],
-      ["completed"],
-    ]);
-    expect(knowledgePage.mock.calls.map(([input]) => input.statuses)).toEqual([
-      ["pending"],
-      ["needs_attention"],
-      ["running"],
-      ["completed"],
-    ]);
-
-    const second = await listDesktopMemoryExtractionJobs(plane, options, {
+    const second = await listDesktopMemoryExtractionJobs(plane, emptyTitleOptions(), {
       pages: {
         ...FIRST_PAGES.pages,
         completed: { pageIndex: 1, cursor: first.lanes.completed.nextCursor! },
       },
     });
-    expect(second.lanes.completed.tasks.map((task) => task.id)).toEqual(["job-10", "job-11"]);
-    expect(second.lanes.completed.pageIndex).toBe(1);
+    expect(second.lanes.completed.tasks.map((task) => task.id)).toEqual(
+      episodes
+        .slice(10)
+        .map((job) => conversationExtractionJobId(job.conversationRef, job.inputWatermark)),
+    );
     expect(second.lanes.completed.nextCursor).toBeUndefined();
-  });
-
-  it("recomputes the page count when an invalid cursor page falls back to the first page", async () => {
-    const firstPageJobs = Array.from({ length: 10 }, (_, index) =>
-      episodicJob(index, new Date(Date.UTC(2026, 7, 5, 0, 0, 20 - index)).toISOString()),
-    );
-    const episodicPage = vi.fn(
-      async (input: { readonly statuses: readonly string[]; readonly before?: unknown }) =>
-        input.statuses.includes("completed")
-          ? input.before === undefined
-            ? { jobs: firstPageJobs, total: 25 }
-            : { jobs: [], total: 11 }
-          : { jobs: [], total: 0 },
-    );
-    const emptyPage = vi.fn(async () => ({ jobs: [], total: 0 }));
-
-    const board = await listDesktopMemoryExtractionJobs(
-      {
-        episodicStore: { listExtractionJobsPage: episodicPage },
-        semanticStore: { listExtractionJobsPage: emptyPage },
-        knowledgeLearningStore: { listJobsPage: emptyPage },
-      } as unknown as Parameters<typeof listDesktopMemoryExtractionJobs>[0],
-      emptyTitleOptions(),
-      {
-        pages: {
-          ...FIRST_PAGES.pages,
-          completed: {
-            pageIndex: 5,
-            cursor: {
-              updatedAt: "2026-08-04T00:00:00.000Z",
-              tieBreaker: "episodic:missing",
-            },
-          },
+    const reset = await listDesktopMemoryExtractionJobs(plane, emptyTitleOptions(), {
+      pages: {
+        ...FIRST_PAGES.pages,
+        completed: {
+          pageIndex: 5,
+          cursor: { updatedAt: "2026-01-01T00:00:00.000Z", tieBreaker: "missing" },
         },
       },
-    );
-
-    expect(board.lanes.completed.pageIndex).toBe(0);
-    expect(board.lanes.completed.pageCount).toBe(3);
-    expect(board.lanes.completed.totalTasks).toBe(25);
-    expect(board.lanes.completed.tasks).toHaveLength(10);
+    });
+    expect(reset.lanes.completed).toMatchObject({ totalTasks: 12, pageCount: 2, pageIndex: 0 });
   });
 
-  it("merges mixed-module pages in stable global update order", async () => {
-    const episodic = episodicJob(1, "2026-08-05T00:00:03.000Z");
-    const semantic = semanticJob(1, "2026-08-05T00:00:02.000Z");
-    const knowledge = knowledgeJob(1, "2026-08-05T00:00:01.000Z");
-    const byCompleted = <T>(jobs: readonly T[]) =>
-      vi.fn(async (input: { readonly statuses: readonly string[] }) =>
-        input.statuses.includes("completed")
-          ? { jobs, total: jobs.length }
-          : { jobs: [] as readonly T[], total: 0 },
-      );
+  it("preserves partial success and puts the shared task in its actionable lane", async () => {
+    const episode = {
+      ...episodicJob(1, "2026-08-05T00:00:01.000Z"),
+      completion: "retained" as const,
+    };
+    const fact = {
+      ...semanticJob(1, "2026-08-05T00:00:02.000Z"),
+      status: "needs_attention" as const,
+      lastErrorCode: "extractor_evidence_ref_invalid",
+      failureClass: "transient-exhausted" as const,
+    };
+    const plane = planeFor([episode], [fact]);
+    const board = await listDesktopMemoryExtractionJobs(plane, emptyTitleOptions(), FIRST_PAGES);
+    expect(board.lanes.completed.totalTasks).toBe(0);
+    expect(board.lanes.attention.tasks[0]).toMatchObject({
+      module: "conversation",
+      results: { episodic: "retained", semantic: "failed" },
+      problem: { kind: "invalid_output", technicalCode: "extractor_evidence_ref_invalid" },
+    });
+    expect(await listDesktopMemoryExtractionActiveTasks(plane, emptyTitleOptions())).toHaveLength(
+      1,
+    );
+  });
 
+  it("keeps different source watermarks distinct and interleaves knowledge tasks", async () => {
+    const episode = episodicJob(1, "2026-08-05T00:00:03.000Z");
+    const fact = semanticJob(2, "2026-08-05T00:00:02.000Z");
+    const knowledge = knowledgeJob(1, "2026-08-05T00:00:01.000Z");
+    const options = {
+      ...emptyTitleOptions(),
+      project: {
+        get: async () => ({
+          resources: [{ metadata: { id: "resource-1", name: "Knowledge source" } }],
+        }),
+      },
+    } as unknown as Parameters<typeof listDesktopMemoryExtractionJobs>[1];
     const board = await listDesktopMemoryExtractionJobs(
-      {
-        episodicStore: { listExtractionJobsPage: byCompleted([episodic]) },
-        semanticStore: { listExtractionJobsPage: byCompleted([semantic]) },
-        knowledgeLearningStore: { listJobsPage: byCompleted([knowledge]) },
-      } as unknown as Parameters<typeof listDesktopMemoryExtractionJobs>[0],
-      {
-        ...emptyTitleOptions(),
-        project: {
-          get: vi.fn(async () => ({
-            resources: [{ metadata: { id: "resource-1", name: "Knowledge source" } }],
-          })),
-        },
-      } as unknown as Parameters<typeof listDesktopMemoryExtractionJobs>[1],
+      planeFor([episode], [fact], [knowledge]),
+      options,
       FIRST_PAGES,
     );
-
-    expect(board.lanes.completed.tasks.map((task) => task.module)).toEqual([
-      "episodic",
-      "semantic",
-      "knowledge",
-    ]);
-    expect(board.lanes.completed.tasks.map((task) => task.title)).toEqual([
-      "Release mission",
-      "Release mission",
-      "Knowledge source",
+    expect(board.lanes.completed.tasks.map((task) => [task.module, task.title])).toEqual([
+      ["conversation", "Release mission"],
+      ["conversation", "Release mission"],
+      ["knowledge", "Knowledge source"],
     ]);
   });
 
-  it("exposes a completed Skill rejection without an error code", async () => {
-    const completed = <T>(jobs: readonly T[]) =>
-      vi.fn(async (input: { readonly statuses: readonly string[] }) =>
-        input.statuses.includes("completed")
-          ? { jobs, total: jobs.length }
-          : { jobs: [] as readonly T[], total: 0 },
-      );
-    const emptyPage = completed([]);
+  it("retains built-in names and Skill rejections without technical IDs in user-facing names", async () => {
+    const knowledge = knowledgeJob(1, "2026-08-05T00:00:01.000Z");
     const skill: SkillLearningJob = {
       schemaVersion: "pragma.memory-skill-job/v2",
       id: "skill-job",
-      revision: 5,
-      rootRef: { type: "pragma.expert", id: "resource-1" },
+      revision: 1,
+      rootRef: knowledge.rootRef,
       sourceDigest: "a".repeat(64),
       status: "completed",
-      attempts: 3,
+      attempts: 1,
       completion: "rejected",
-      createdAt: "2026-08-05T00:00:00.000Z",
-      updatedAt: "2026-08-05T00:00:03.000Z",
+      createdAt: knowledge.updatedAt,
+      updatedAt: knowledge.updatedAt,
     };
-
-    const board = await listDesktopMemoryExtractionJobs(
-      {
-        episodicStore: { listExtractionJobsPage: emptyPage },
-        semanticStore: { listExtractionJobsPage: emptyPage },
-        knowledgeLearningStore: { listJobsPage: emptyPage },
-        skillLearningStore: { listJobsPage: completed([skill]) },
-      } as unknown as Parameters<typeof listDesktopMemoryExtractionJobs>[0],
-      {
-        ...emptyTitleOptions(),
-        project: {
-          get: vi.fn(async () => ({
-            resources: [{ metadata: { id: "resource-1", name: "Research team" } }],
-          })),
-        },
-      } as unknown as Parameters<typeof listDesktopMemoryExtractionJobs>[1],
-      FIRST_PAGES,
+    const options = {
+      ...emptyTitleOptions(),
+      project: { get: async () => ({ resources: [] }) },
+      systemExperts: { list: () => [{ id: knowledge.rootRef.id, name: "Pragma" }] },
+      curator: { listRuns: async () => [] },
+    } as unknown as Parameters<typeof getDesktopMemoryExtractionTaskDetail>[1];
+    const plane = planeFor([], [], [knowledge], [skill]);
+    const board = await listDesktopMemoryExtractionJobs(plane, options, FIRST_PAGES);
+    expect(board.lanes.completed.tasks.map((task) => task.title)).toEqual(["Pragma", "Pragma"]);
+    expect(board.lanes.completed.tasks.find((task) => task.module === "skill")?.completion).toBe(
+      "rejected",
     );
-
-    expect(board.lanes.completed.tasks).toEqual([
-      expect.objectContaining({
-        module: "skill",
-        title: "Research team",
-        completion: "rejected",
-      }),
-    ]);
-    expect(board.lanes.completed.tasks[0]).not.toHaveProperty("lastErrorCode");
+    expect(
+      (
+        await getDesktopMemoryExtractionTaskDetail(plane, options, {
+          module: "knowledge",
+          id: knowledge.id,
+        })
+      ).task.title,
+    ).toBe("Pragma");
   });
-
-  it("exposes a classified problem instead of a user-facing error code", async () => {
-    const failed: KnowledgeExtractionJob = {
-      ...knowledgeJob(1, "2026-08-05T00:00:01.000Z"),
-      status: "needs_attention",
-      attempts: 3,
-      lastErrorCode: "extractor_evidence_ref_invalid",
-      failureClass: "transient-exhausted",
-    };
-    const attention = vi.fn(async (input: { readonly statuses: readonly string[] }) =>
-      input.statuses.includes("needs_attention")
-        ? { jobs: [failed], total: 1 }
-        : { jobs: [], total: 0 },
-    );
-    const emptyPage = vi.fn(async () => ({ jobs: [], total: 0 }));
-
-    const board = await listDesktopMemoryExtractionJobs(
-      {
-        episodicStore: { listExtractionJobsPage: emptyPage },
-        semanticStore: { listExtractionJobsPage: emptyPage },
-        knowledgeLearningStore: { listJobsPage: attention },
-      } as unknown as Parameters<typeof listDesktopMemoryExtractionJobs>[0],
-      emptyTitleOptions(),
-      FIRST_PAGES,
-    );
-
-    expect(board.lanes.attention.tasks[0]).toMatchObject({
-      problem: {
-        kind: "invalid_output",
-        technicalCode: "extractor_evidence_ref_invalid",
-      },
-    });
-    expect(board.lanes.attention.tasks[0]).not.toHaveProperty("lastErrorCode");
-  });
-
   it("returns the actionable failure history and read-only run records for a task", async () => {
     const diagnostic = {
       schemaVersion: "pragma.memory-extraction-failure/v1" as const,
@@ -346,39 +229,33 @@ describe("listDesktopMemoryExtractionJobs", () => {
       runs: [],
     });
   });
-
-  it("lists waiting, running and attention tasks without the board page limit", async () => {
-    const active = Array.from({ length: 12 }, (_, index) => ({
-      ...episodicJob(index, new Date(Date.UTC(2026, 7, 5, 0, 0, index)).toISOString()),
-      status: "running" as const,
-    }));
-    const tasks = await listDesktopMemoryExtractionActiveTasks(
-      {
-        episodicStore: { listExtractionJobs: vi.fn(async () => active) },
-        semanticStore: {
-          listExtractionJobs: vi.fn(async () =>
-            (["waiting_idle", "pending", "needs_attention", "completed"] as const).map(
-              (status, index) => ({
-                ...semanticJob(index, "2026-08-05T00:00:00.000Z"),
-                status,
-              }),
-            ),
-          ),
-        },
-        knowledgeLearningStore: { listJobs: vi.fn(async () => []) },
-        skillLearningStore: { listJobs: vi.fn(async () => []) },
-      } as unknown as Parameters<typeof listDesktopMemoryExtractionActiveTasks>[0],
-      emptyTitleOptions(),
-    );
-
-    expect(tasks).toHaveLength(15);
-    expect(tasks.filter((task) => task.lane === "running")).toHaveLength(12);
-    expect(tasks.filter((task) => task.lane === "attention")).toHaveLength(1);
-    expect(tasks.filter((task) => task.lane === "waiting")).toHaveLength(2);
-    expect(tasks.some((task) => task.lane === "completed")).toBe(false);
-  });
 });
 
+function planeFor(
+  episodes: readonly EpisodicExtractionJob[] = [],
+  facts: readonly SemanticExtractionJob[] = [],
+  knowledge: readonly KnowledgeExtractionJob[] = [],
+  skills: readonly SkillLearningJob[] = [],
+) {
+  return {
+    episodicStore: {
+      listExtractionJobs: vi.fn(async () => episodes),
+      listFailureAttempts: async () => [],
+    },
+    semanticStore: {
+      listExtractionJobs: vi.fn(async () => facts),
+      listFailureAttempts: async () => [],
+    },
+    knowledgeLearningStore: {
+      listJobs: vi.fn(async () => knowledge),
+      listFailureAttempts: async () => [],
+    },
+    skillLearningStore: {
+      listJobs: vi.fn(async () => skills),
+      listFailureAttempts: async () => [],
+    },
+  } as unknown as Parameters<typeof listDesktopMemoryExtractionJobs>[0];
+}
 function emptyTitleOptions(): Parameters<typeof listDesktopMemoryExtractionJobs>[1] {
   return {
     missions: {

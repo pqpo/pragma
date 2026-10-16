@@ -334,6 +334,10 @@ export function createMissionExecutionKernel(options: {
     readonly previousEnvironmentAvailable?: boolean | undefined;
   }): Promise<{ readonly session: ExpertSession; readonly replaced: boolean }> => {
     const successor = input.definitionChanged || (input.contextStoresChanged && !input.hasActive);
+    if (successor && input.resources?.successorOnMismatch === false)
+      throw Object.assign(new Error("memory_curator_session_environment_changed"), {
+        retryable: false,
+      });
     if (input.definitionChanged && input.previousEnvironmentAvailable === false)
       throw createIntegrationError({
         code: "COMMAND_REJECTED",

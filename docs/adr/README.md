@@ -108,3 +108,4 @@ ADR 的数字来自项目演进历史，早期曾出现同号记录。链接文�
 - [Execution 管理 CLI 与内置 Skill（cutover 待验收）](./067-execution-management-cli-and-built-in-skills.md)
 
 - [ADR 072: Tool-driven Memory extraction](./072-tool-driven-memory-extraction.md)
+- [ADR 073: Shared conversation Memory extraction and continuation](./073-shared-conversation-memory-extraction.md)

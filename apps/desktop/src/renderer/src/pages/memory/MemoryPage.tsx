@@ -254,7 +254,7 @@ export function MemoryPage(props: { readonly onConfigureExtraction?: () => void 
 
   const manageExtraction = async (
     task: DesktopMemoryExtractionTask,
-    action: "expedite" | "retry" | "interrupt" | "delete",
+    action: "expedite" | "retry" | "restart" | "interrupt" | "delete",
   ) => {
     const key = `${task.module}:${task.id}`;
     setBusyExtractionTask(key);
@@ -896,7 +896,7 @@ export function MemoryExtractionJobs(props: {
   readonly onRefresh: () => void;
   readonly onAction: (
     task: DesktopMemoryExtractionTask,
-    action: "expedite" | "retry" | "interrupt" | "delete",
+    action: "expedite" | "retry" | "restart" | "interrupt" | "delete",
   ) => Promise<void>;
   readonly onPageChange: (lane: MemoryExtractionLane, pageIndex: number) => void;
   readonly onConfigureExtraction?: (() => void) | undefined;
@@ -959,6 +959,16 @@ export function MemoryExtractionJobs(props: {
                           <span className={`memory-extraction-type is-${task.module}`}>
                             {t(`extractionTaskTypes.${task.module}`)}
                           </span>
+                          {task.results === undefined
+                            ? null
+                            : (["episodic", "semantic"] as const).map((type) =>
+                                task.results?.[type] === undefined ? null : (
+                                  <span key={type} className="memory-extraction-completion">
+                                    {t(`extractionTaskTypes.${type}`)}:{" "}
+                                    {t(`extractionResults.${task.results[type]}`)}
+                                  </span>
+                                ),
+                              )}
                           {lane === "completed" && task.completion !== undefined ? (
                             <span className="memory-extraction-completion">
                               {t(`extractionCompletions.${task.completion}`)}
@@ -988,6 +998,14 @@ export function MemoryExtractionJobs(props: {
                             ) : null}
                             {lane === "attention" ? (
                               <>
+                                {task.module === "conversation" ? (
+                                  <StudioActionButton
+                                    label={t("restartExtraction")}
+                                    icon={<ArrowCounterClockwise size={18} aria-hidden="true" />}
+                                    disabled={busy}
+                                    onClick={() => void props.onAction(task, "restart")}
+                                  />
+                                ) : null}
                                 {problem?.kind === "configuration" ? (
                                   <StudioActionButton
                                     label={t("configureExtraction")}
@@ -1312,6 +1330,26 @@ export function MemoryExtractionTaskDetails(props: {
                   {t(`extractionTaskTypes.${detail.task.module}`)}
                 </span>
                 <h2>{detail.task.title ?? detail.task.id}</h2>
+                {detail.task.results === undefined ? null : (
+                  <div className="memory-extraction-task-statuses">
+                    {(["episodic", "semantic"] as const).map((type) =>
+                      detail.task.results?.[type] === undefined ? null : (
+                        <span key={type}>
+                          {t(`extractionTaskTypes.${type}`)}:{" "}
+                          {t(`extractionResults.${detail.task.results[type]}`)}
+                        </span>
+                      ),
+                    )}
+                  </div>
+                )}
+                {detail.task.module === "conversation" ? (
+                  <p>
+                    {t("extractionContinuationCount", {
+                      count:
+                        detail.runs.find((run) => run.runId === selectedRunId)?.continuations ?? 0,
+                    })}
+                  </p>
+                ) : null}
                 <p>{t("readOnlyTaskMessages")}</p>
               </div>
               {detail.runs.length > 1 ? (

@@ -1,3 +1,4 @@
+import { conversationExtractionJobId } from "./conversation-extraction.ts";
 import type { DatabaseSync } from "node:sqlite";
 
 import { deleteExtractionFailureAttempts } from "./extraction-failure-store.ts";
@@ -62,6 +63,7 @@ export function pruneCompletedMemoryJobs(
   module: string,
   before: CompletedMemoryJobCursor,
   onRemove?: (jobJson: string) => void,
+  keepIds: readonly string[] = [],
 ): number {
   database.exec("BEGIN IMMEDIATE;");
   try {
@@ -77,13 +79,17 @@ export function pruneCompletedMemoryJobs(
       readonly jobJson: string;
     }[];
     const remove = database.prepare("DELETE FROM jobs WHERE id=?");
+    const keep = new Set(keepIds);
+    let removed = 0;
     for (const row of rows) {
+      if (keep.has(row.id)) continue;
+      removed++;
       onRemove?.(row.jobJson);
       deleteExtractionFailureAttempts(database, row.id);
       remove.run(row.id);
     }
     database.exec("COMMIT;");
-    return rows.length;
+    return removed;
   } catch (error) {
     database.exec("ROLLBACK;");
     throw error;
@@ -93,11 +99,11 @@ export function pruneCompletedMemoryJobs(
 export async function retainMemoryExtractionHistory(stores: {
   readonly episodicStore: Pick<
     import("../episodic/store.ts").EpisodicMemoryStore,
-    "listExtractionJobsPage" | "pruneCompletedJobs"
+    "listExtractionJobs" | "pruneCompletedJobs"
   >;
   readonly semanticStore: Pick<
     import("../semantic/store.ts").SemanticMemoryStore,
-    "listExtractionJobsPage" | "pruneCompletedJobs"
+    "listExtractionJobs" | "pruneCompletedJobs"
   >;
   readonly knowledgeLearningStore: Pick<
     import("../knowledge/store.ts").KnowledgeLearningStore,
@@ -108,26 +114,73 @@ export async function retainMemoryExtractionHistory(stores: {
     "listJobsPage" | "pruneCompletedJobs"
   >;
 }): Promise<void> {
-  await retainCompletedMemoryJobs([
-    {
-      module: "episodic",
-      list: (input) => stores.episodicStore.listExtractionJobsPage(input),
-      prune: (before) => stores.episodicStore.pruneCompletedJobs(before),
-    },
-    {
-      module: "semantic",
-      list: (input) => stores.semanticStore.listExtractionJobsPage(input),
-      prune: (before) => stores.semanticStore.pruneCompletedJobs(before),
-    },
-    {
-      module: "knowledge",
-      list: (input) => stores.knowledgeLearningStore.listJobsPage(input),
-      prune: (before) => stores.knowledgeLearningStore.pruneCompletedJobs(before),
-    },
-    {
-      module: "skill",
-      list: (input) => stores.skillLearningStore.listJobsPage(input),
-      prune: (before) => stores.skillLearningStore.pruneCompletedJobs(before),
-    },
+  const [episodic, semantic, knowledge, skill] = await Promise.all([
+    stores.episodicStore.listExtractionJobs(),
+    stores.semanticStore.listExtractionJobs(),
+    stores.knowledgeLearningStore.listJobsPage({
+      statuses: ["completed"],
+      limit: COMPLETED_MEMORY_JOB_LIMIT,
+      sortKeyPrefix: "knowledge",
+    }),
+    stores.skillLearningStore.listJobsPage({
+      statuses: ["completed"],
+      limit: COMPLETED_MEMORY_JOB_LIMIT,
+      sortKeyPrefix: "skill",
+    }),
   ]);
+  const groups = new Map<
+    string,
+    { module: "episodic" | "semantic"; id: string; completed: boolean; updatedAt: string }[]
+  >();
+  for (const [module, jobs] of [
+    ["episodic", episodic],
+    ["semantic", semantic],
+  ] as const)
+    for (const job of jobs) {
+      if (job.status === "expired") continue;
+      const key = conversationExtractionJobId(job.conversationRef, job.inputWatermark);
+      const members = groups.get(key) ?? [];
+      members.push({
+        module,
+        id: job.id,
+        completed: job.status === "completed",
+        updatedAt: job.updatedAt,
+      });
+      groups.set(key, members);
+    }
+  const conversation = [...groups]
+    .filter(([, members]) => members.every((member) => member.completed))
+    .map(([id, members]) => ({
+      updatedAt: members
+        .map((member) => member.updatedAt)
+        .toSorted()
+        .at(-1)!,
+      tieBreaker: `conversation:${id}`,
+    }));
+  if (conversation.length + knowledge.total + skill.total <= COMPLETED_MEMORY_JOB_LIMIT) return;
+  const newest = [
+    ...conversation,
+    ...knowledge.jobs.map((job) => ({
+      updatedAt: job.updatedAt,
+      tieBreaker: `knowledge:${job.id}`,
+    })),
+    ...skill.jobs.map((job) => ({ updatedAt: job.updatedAt, tieBreaker: `skill:${job.id}` })),
+  ]
+    .toSorted(
+      (a, b) => b.updatedAt.localeCompare(a.updatedAt) || b.tieBreaker.localeCompare(a.tieBreaker),
+    )
+    .slice(0, COMPLETED_MEMORY_JOB_LIMIT);
+  const retained = new Set(newest.map((job) => job.tieBreaker));
+  const keep = { episodic: [] as string[], semantic: [] as string[] };
+  for (const [id, members] of groups) {
+    // A completed half of an unfinished task is never a completed-history eviction candidate.
+    if (!members.every((member) => member.completed) || retained.has(`conversation:${id}`))
+      for (const member of members) keep[member.module].push(member.id);
+  }
+  const all = { updatedAt: "9999-12-31T23:59:59.999Z", tieBreaker: "~" };
+  await stores.episodicStore.pruneCompletedJobs(all, keep.episodic);
+  await stores.semanticStore.pruneCompletedJobs(all, keep.semantic);
+  const before = newest.at(-1)!;
+  await stores.knowledgeLearningStore.pruneCompletedJobs(before);
+  await stores.skillLearningStore.pruneCompletedJobs(before);
 }
