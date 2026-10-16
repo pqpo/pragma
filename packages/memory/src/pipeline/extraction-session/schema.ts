@@ -1,4 +1,9 @@
 import { z } from "zod";
+import {
+  ExtractionMemoryTypeSchema,
+  ExtractionSearchModeSchema,
+  type ExtractionMemoryAccess,
+} from "../../retrieval/extraction-memory.ts";
 import { SemanticFactExtractorProvenanceSchema } from "@pragma/shared";
 import {
   EpisodicExtractionInputSchema,
@@ -35,9 +40,37 @@ export const MemoryExtractionToolSchemas = {
     .object({
       query: z.string().max(200).default(""),
       fact: z.string().optional(),
+      memory: z.string().optional(),
+      mode: ExtractionSearchModeSchema.default("hybrid"),
+      type: ExtractionMemoryTypeSchema.default("all"),
+      limit: z.number().int().min(1).max(20).default(10),
       cursor: z.number().int().nonnegative().default(0),
     })
     .strict(),
+  list_existing_memory: z
+    .object({
+      directory: z.enum(["properties", "facts", "episodes"]).default("properties"),
+      subject: z.string().optional(),
+      property: z.string().max(200).optional(),
+      conversation: z.string().optional(),
+      pageCursor: z.string().max(4096).optional(),
+      limit: z.number().int().min(1).max(20).default(20),
+    })
+    .strict()
+    .superRefine((args, context) => {
+      if (args.directory === "episodes" && args.property !== undefined)
+        context.addIssue({
+          code: "custom",
+          path: ["property"],
+          message: "property filters facts/properties, not episodes.",
+        });
+      if (args.directory !== "episodes" && args.conversation !== undefined)
+        context.addIssue({
+          code: "custom",
+          path: ["conversation"],
+          message: "conversation filters episodes only.",
+        });
+    }),
   submit_fact: z
     .object({
       candidate: z.string().optional(),
@@ -155,6 +188,7 @@ export interface MemoryExtractionSession {
   setContextBudget(tokens: number): Promise<void>;
 }
 export interface MemoryExtractionSessionGuard {
+  readonly memory?: ExtractionMemoryAccess | undefined;
   readonly assertAccess?: (() => Promise<void>) | undefined;
   readonly signal?: AbortSignal | undefined;
   readonly isCurrent?: (() => Promise<boolean>) | undefined;

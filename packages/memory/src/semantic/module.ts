@@ -1,5 +1,6 @@
 import { extractionEvidenceAccessGuard } from "../pipeline/extraction-settings.ts";
 import { redactMemoryValue } from "../evidence/redact.ts";
+import type { ExtractionMemoryReader } from "../retrieval/extraction-memory.ts";
 import type {
   MemoryEvidenceEnvelope,
   MemoryExtractionFailurePhase,
@@ -26,6 +27,7 @@ import { MemoryRecallScopeSchema, type MemoryModule } from "../pipeline/memory-m
 import { mergeMemoryEvidenceOmissionStats } from "../storage/bounded-evidence.ts";
 
 export interface SemanticMemoryModule extends MemoryModule {
+  setMemoryReader(reader: ExtractionMemoryReader): void;
   readonly store: SemanticMemoryStore;
   setExtractor(extractor: SemanticMemoryExtractor | undefined): Promise<void>;
   setConversationState(input: {
@@ -64,6 +66,7 @@ export async function createSemanticMemoryModule(
   const store = await createSemanticMemoryStore(options);
   const now = options.now ?? (() => new Date());
   let extractor = options.extractor;
+  let memoryReader: ExtractionMemoryReader | undefined;
   const running = new Map<string, AbortController>();
   const unadmittedClaims = new Set<AbortController>();
   let projectionNotificationAttempts = 0;
@@ -201,12 +204,10 @@ export async function createSemanticMemoryModule(
           rootRef: attribution.rootRef,
           principalRefs: subjectContext.subjectRefs,
         });
-        const factsBeforeExtraction = await store.searchCandidatesForRecall(
-          recallScope,
-          "",
-          100,
-          now(),
-        );
+        const recallAllowed = evidence.every((item) => item.policySnapshot.recall);
+        const factsBeforeExtraction = !recallAllowed
+          ? []
+          : await store.searchCandidatesForRecall(recallScope, "", 100, now());
         const currentFacts = boundCurrentFacts(
           factsBeforeExtraction
             .filter(
@@ -248,11 +249,21 @@ export async function createSemanticMemoryModule(
             watermark: job.inputWatermark,
             isCurrent: () => store.isClaimCurrent(job),
             assertAccess,
+            memory: memoryReader?.bind(
+              recallScope,
+              allowedSubjectRefs,
+              recallAllowed,
+              attribution.producerRefs,
+            ),
             findFacts: async (query) =>
-              (await store.searchCandidatesForRecall(recallScope, query, 10, now())).filter(
-                (fact) => fact.subjectRefs.every((ref) => allowedSubjectKeys.has(refKey(ref))),
+              (!recallAllowed
+                ? []
+                : await store.searchCandidatesForRecall(recallScope, query, 10, now())
+              ).filter((fact) =>
+                fact.subjectRefs.every((ref) => allowedSubjectKeys.has(refKey(ref))),
               ),
             canUseFact: async (id, revision) => {
+              if (!recallAllowed) return false;
               const fact = await store.getForRecall(recallScope, id, now());
               return fact?.revision === revision;
             },
@@ -300,6 +311,9 @@ export async function createSemanticMemoryModule(
         if (running.get(key) === controller) running.delete(key);
       }
       if (shouldDrainProjectionNotification) await drainProjectionNotification();
+    },
+    setMemoryReader(reader) {
+      memoryReader = reader;
     },
     async setExtractor(next) {
       extractor = next;

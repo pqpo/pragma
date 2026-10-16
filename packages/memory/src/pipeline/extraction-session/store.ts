@@ -132,6 +132,7 @@ export function createMemoryExtractionSessionStore(
       "list_evidence",
       "read_evidence",
       "find_existing_memory",
+      "list_existing_memory",
       initial.module === "semantic" ? "submit_fact" : "submit_episode_part",
       "finish_extraction",
     ];
@@ -194,17 +195,85 @@ export function createMemoryExtractionSessionStore(
           throw error;
         }
         if (!toolNames.includes(name)) fail("memory_curator_tool_unavailable");
+        // Reserve calls before embedding I/O without holding the shared Session lock.
+        let reserved = false;
+        let prepared:
+          | {
+              result: Awaited<
+                ReturnType<NonNullable<MemoryExtractionSessionGuard["memory"]>["search"]>
+              >;
+            }
+          | { error: unknown }
+          | undefined;
+        const search =
+          name === "find_existing_memory"
+            ? MemoryExtractionToolSchemas.find_existing_memory.safeParse(args)
+            : undefined;
+        if (
+          guard.memory !== undefined &&
+          search?.success &&
+          search.data.query.trim() !== "" &&
+          search.data.memory === undefined &&
+          search.data.fact === undefined
+        ) {
+          reserved = await transaction((db) => {
+            const state = read(db, initial.key)!;
+            if (state.output !== undefined || state.calls >= MEMORY_EXTRACTION_LIMITS.calls)
+              return false;
+            state.calls++;
+            state.updatedAt = now().toISOString();
+            save(db, state);
+            return true;
+          });
+          if (reserved) {
+            try {
+              prepared = {
+                result: await guard.memory.search({
+                  query: search.data.query,
+                  mode: search.data.mode,
+                  type: search.data.type,
+                  limit: search.data.limit,
+                  signal: guard.signal,
+                }),
+              };
+            } catch (error) {
+              prepared = { error };
+            }
+          }
+        }
+        const cached = prepared;
+        const operationGuard =
+          cached === undefined || guard.memory === undefined
+            ? guard
+            : {
+                ...guard,
+                memory: {
+                  assertAccess: () => guard.memory!.assertAccess(),
+                  fingerprint: guard.memory.fingerprint,
+                  subjects: guard.memory.subjects,
+                  list: (type: Parameters<typeof guard.memory.list>[0]) => guard.memory!.list(type),
+                  get: (handle: string) => guard.memory!.get(handle),
+                  async search() {
+                    if ("error" in cached) throw cached.error;
+                    return cached.result;
+                  },
+                },
+              };
         const outcome = await transaction(async (db) => {
           const state = read(db, initial.key)!;
           if (state.output !== undefined)
             return { text: "Extraction already finished. The durable receipt is available." };
           const before = State.parse(state);
-          state.calls++;
+          if (!reserved) state.calls++;
           try {
-            if (state.calls > MEMORY_EXTRACTION_LIMITS.calls && name !== "finish_extraction")
+            if (
+              !reserved &&
+              state.calls > MEMORY_EXTRACTION_LIMITS.calls &&
+              name !== "finish_extraction"
+            )
               fail("memory_curator_budget_exhausted");
             const parsed = MemoryExtractionToolSchemas[name].parse(args);
-            const text = await callTool(state, name, parsed, guard);
+            const text = await callTool(state, name, parsed, operationGuard);
             await guardCurrent(guard);
             delete state.lastError;
             state.updatedAt = now().toISOString();

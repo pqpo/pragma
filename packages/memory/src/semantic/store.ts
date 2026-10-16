@@ -241,6 +241,7 @@ export interface SemanticMemoryStore {
   history(id: string): Promise<readonly SemanticFact[]>;
   sourceExecutionIds(id: string): Promise<readonly string[]>;
   listForRecall(scope: MemoryRecallScope, now: Date): Promise<readonly SemanticFact[]>;
+  listCandidatesForRecall(scope: MemoryRecallScope, now: Date): Promise<readonly SemanticFact[]>;
   searchForRecall(
     scope: MemoryRecallScope,
     query: string,
@@ -1326,6 +1327,16 @@ export async function createSemanticMemoryStore(
       return rows.map((row) => row.executionId);
     },
 
+    async listCandidatesForRecall(scope, now) {
+      const access = recallPredicate("current_facts", scope, now);
+      return readFactRows(
+        data
+          .prepare(
+            `SELECT record_json AS recordJson FROM current_facts WHERE ${access.sql} ORDER BY id`,
+          )
+          .all(...access.parameters),
+      );
+    },
     async listForRecall(scope, now) {
       const access = recallPredicate("current_facts", scope, now);
       return hotFacts(

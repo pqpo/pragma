@@ -17,6 +17,7 @@ import {
   type MemoryVectorIndex,
   type MemoryRecallScope,
   type MemoryAttentionCandidate,
+  type ExtractionVectorResult,
 } from "@pragma/memory";
 import { z } from "zod";
 import { createModelProviderReader } from "./model-providers/reader.ts";
@@ -322,6 +323,57 @@ export function createLocalHostMemoryRetrieval(options: {
       .slice(0, limit);
   };
   return {
+    async searchForExtraction(
+      scope: MemoryRecallScope,
+      query: string,
+      modules: readonly ("semantic" | "episodic")[],
+      limit: number,
+      signal: AbortSignal,
+    ): Promise<ExtractionVectorResult> {
+      const combinedSignal = AbortSignal.any([signal, abort.signal, AbortSignal.timeout(3000)]);
+      try {
+        const selected = await settings.get();
+        if (!selected.enabled) return { state: "disabled", hits: [], reason: "embedding_disabled" };
+        const provider = await getProvider();
+        if (provider === undefined)
+          return { state: "unavailable", hits: [], reason: "embedding_model_unavailable" };
+        const binding = await (await getIndex()).binding();
+        if (
+          binding === undefined ||
+          binding.profile.baseUrl !== provider.profile.baseUrl ||
+          binding.profile.providerId !== provider.profile.providerId
+        )
+          return { state: "unavailable", hits: [], reason: "embedding_index_building" };
+        const hits = await vectorSearch(
+          scope,
+          redactMemoryProjection(query),
+          modules,
+          limit,
+          combinedSignal,
+        );
+        combinedSignal.throwIfAborted();
+        const live = await getProvider();
+        if (
+          live === undefined ||
+          live.profile.baseUrl !== binding.profile.baseUrl ||
+          live.profile.providerId !== binding.profile.providerId
+        )
+          return { state: "unavailable", hits: [], reason: "embedding_cancelled" };
+        if (queryErrorCode !== undefined) {
+          queryErrorCode = undefined;
+          options.onDiagnostic?.(errorCode);
+        }
+        return { state: "ready", hits };
+      } catch (error) {
+        signal.throwIfAborted();
+        report(error, true);
+        return {
+          state: "unavailable",
+          hits: [],
+          reason: queryErrorCode ?? "embedding_search_unavailable",
+        };
+      }
+    },
     async bindingRevision() {
       const current = await settings.get();
       if (!current.enabled) return String(current.revision);

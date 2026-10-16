@@ -155,6 +155,10 @@ export interface EpisodicMemoryStore {
   history(id: string): Promise<readonly EpisodicMemoryRecord[]>;
   list(): Promise<readonly EpisodicMemoryRecord[]>;
   listForRecall(scope: MemoryRecallScope, now?: Date): Promise<readonly EpisodicMemoryRecord[]>;
+  listCandidatesForRecall(
+    scope: MemoryRecallScope,
+    now?: Date,
+  ): Promise<readonly EpisodicMemoryRecord[]>;
   searchForRecall(
     scope: MemoryRecallScope,
     query: string,
@@ -675,6 +679,16 @@ export async function createEpisodicMemoryStore(
       );
     },
 
+    async listCandidatesForRecall(scope) {
+      const access = recallPredicate("episodes", scope);
+      return readEpisodeRows(
+        data
+          .prepare(
+            `SELECT record_json AS recordJson FROM episodes WHERE status = 'active' AND ${access.sql} ORDER BY id`,
+          )
+          .all(...access.parameters),
+      );
+    },
     async listForRecall(scope, now = new Date()) {
       const access = recallPredicate("episodes", scope);
       return hotEpisodes(

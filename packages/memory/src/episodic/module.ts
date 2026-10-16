@@ -1,5 +1,6 @@
 import { extractionEvidenceAccessGuard } from "../pipeline/extraction-settings.ts";
 import { redactMemoryValue } from "../evidence/redact.ts";
+import type { ExtractionMemoryReader } from "../retrieval/extraction-memory.ts";
 import type {
   MemoryEvidenceEnvelope,
   MemoryExtractionFailurePhase,
@@ -22,10 +23,14 @@ import {
   selectMemoryExtractionEvidence,
   type MemoryExtractionSettingsStore,
 } from "../pipeline/extraction-settings.ts";
-import type { MemoryModule } from "../pipeline/memory-module.ts";
+import { MemoryRecallScopeSchema, type MemoryModule } from "../pipeline/memory-module.ts";
 import { mergeMemoryEvidenceOmissionStats } from "../storage/bounded-evidence.ts";
 
 export interface EpisodicMemoryModule extends MemoryModule {
+  setMemoryReader(
+    reader: ExtractionMemoryReader,
+    resolveSubjects: (executionId: string) => Promise<readonly MemorySubjectRef[]>,
+  ): void;
   setExtractor(extractor: EpisodicMemoryExtractor | undefined): Promise<void>;
   setConversationState(input: {
     readonly conversationRef: MemorySubjectRef;
@@ -57,6 +62,9 @@ export async function createEpisodicMemoryModule(
   const store = await createEpisodicMemoryStore(options);
   const now = options.now ?? (() => new Date());
   let extractor = options.extractor;
+  let memoryReader: ExtractionMemoryReader | undefined;
+  let resolveMemorySubjects:
+    ((executionId: string) => Promise<readonly MemorySubjectRef[]>) | undefined;
   const running = new Map<string, AbortController>();
   const unadmittedClaims = new Set<AbortController>();
 
@@ -188,6 +196,14 @@ export async function createEpisodicMemoryModule(
         });
         if (recovered !== undefined)
           recovered = await extractor.recover?.(job.id, job.inputWatermark, input);
+        const attribution = resolveAttribution(evidence);
+        const principals =
+          recovered === undefined ? ((await resolveMemorySubjects?.(job.executionId)) ?? []) : [];
+        const memorySubjects = uniqueRefs([
+          ...principals,
+          attribution.rootRef,
+          ...attribution.producerRefs,
+        ]);
         if (!(await store.isClaimCurrent(job))) return;
         controller.signal.throwIfAborted();
         phase = "curator_run";
@@ -199,6 +215,15 @@ export async function createEpisodicMemoryModule(
             watermark: job.inputWatermark,
             isCurrent: () => store.isClaimCurrent(job),
             assertAccess,
+            memory: memoryReader?.bind(
+              MemoryRecallScopeSchema.parse({
+                rootRef: attribution.rootRef,
+                principalRefs: principals,
+              }),
+              memorySubjects,
+              evidence.every((item) => item.policySnapshot.recall),
+              attribution.producerRefs,
+            ),
           }));
         controller.signal.throwIfAborted();
         phase = "validation";
@@ -211,7 +236,6 @@ export async function createEpisodicMemoryModule(
         assertEvidenceRefs(output, new Set(evidence.map((item) => item.messageId)));
         const completedAt = now();
         const timestamp = completedAt.toISOString();
-        const attribution = resolveAttribution(evidence);
         const record = EpisodicMemoryRecordSchema.parse({
           schemaVersion: "pragma.memory-episodic/v3",
           id: episodicMemoryId(job.conversationRef),
@@ -268,6 +292,10 @@ export async function createEpisodicMemoryModule(
         unadmittedClaims.delete(controller);
         if (running.get(key) === controller) running.delete(key);
       }
+    },
+    setMemoryReader(reader, resolveSubjects) {
+      memoryReader = reader;
+      resolveMemorySubjects = resolveSubjects;
     },
     async setExtractor(next) {
       extractor = next;

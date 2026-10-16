@@ -1,4 +1,12 @@
 import { createHash } from "node:crypto";
+import { extractionMemoryRef } from "../../retrieval/extraction-memory.ts";
+import {
+  existingFact,
+  projectExistingFact,
+  listExistingMemory,
+  readExistingMemory,
+  searchExistingMemory,
+} from "./memory-tools.ts";
 import { defaultRuntimeTokenCounter } from "@pragma/core";
 import {
   EpisodicExtractionOutputSchema,
@@ -11,7 +19,6 @@ import {
 import {
   MemoryExtractionToolSchemas,
   MEMORY_EXTRACTION_LIMITS,
-  Fact,
   fail,
   type MemoryExtractionToolName,
   type MemoryExtractionSessionGuard,
@@ -37,7 +44,7 @@ export async function callTool(
     case "list_evidence": {
       const args = MemoryExtractionToolSchemas.list_evidence.parse(raw);
       if (args.directory === "subjects") {
-        const available = subjects(state).filter(
+        const available = subjects(state, guard.memory?.subjects).filter(
           (subject) => !args.query || `${subject.alias} ${subject.ref.type}`.includes(args.query),
         );
         const page = available.slice(args.cursor, args.cursor + MEMORY_EXTRACTION_LIMITS.pageSize);
@@ -119,10 +126,21 @@ export async function callTool(
         `${passages.join("\n\n")}\nNext evidence: ${next}; Next cursor: ${next === "end" ? "end" : nextCursor}.`,
       );
     }
+    case "list_existing_memory":
+      return await listExistingMemory(
+        state,
+        guard,
+        MemoryExtractionToolSchemas.list_existing_memory.parse(raw),
+      );
     case "find_existing_memory": {
       const args = MemoryExtractionToolSchemas.find_existing_memory.parse(raw);
+      await guard.memory?.assertAccess();
+      const handle = args.memory ?? (args.fact?.startsWith("memory:") ? args.fact : undefined);
+      if (handle !== undefined) return await readExistingMemory(state, guard, handle, args.cursor);
       if (args.fact !== undefined) {
-        const fact = state.facts[Number(/^f([1-9]\d*)$/u.exec(args.fact)?.[1]) - 1];
+        const fact = /^f[1-9]\d*$/u.test(args.fact)
+          ? await existingFact(state, guard, args.fact)
+          : undefined;
         if (fact === undefined) fail("memory_curator_fact_ref_invalid");
         if (guard.canUseFact !== undefined && !(await guard.canUseFact(fact.id, fact.revision)))
           fail("memory_curator_fact_stale_or_denied");
@@ -152,9 +170,19 @@ export async function callTool(
       const stagedPrefix = stagedText
         ? `Staged work from this snapshot (not committed):\n${boundedPrefix(stagedText, 600)}\n\n`
         : "";
+      if (guard.memory !== undefined && args.query.trim() !== "")
+        return await searchExistingMemory(state, guard, args, stagedPrefix);
+      if (args.mode === "vector") fail("embedding_search_unavailable");
       if (state.module === "episodic") {
         const previous = "previousEpisode" in state.input ? state.input.previousEpisode : undefined;
         if (previous === undefined) return deliver(state, stagedPrefix + "No previous episode.");
+        if (
+          guard.memory !== undefined &&
+          (await guard.memory.get(
+            extractionMemoryRef("episodic", previous.id, previous.revision),
+          )) === undefined
+        )
+          fail("memory_curator_memory_stale_or_denied");
         const text = [
           `Goal: ${previous.goal.text}`,
           `Summary: ${previous.summary.text}`,
@@ -186,6 +214,12 @@ export async function callTool(
           : await guard.findFacts(args.query);
       const lines: string[] = [];
       for (const fact of found.slice(0, 10)) {
+        if (
+          guard.memory !== undefined &&
+          (await guard.memory.get(extractionMemoryRef("semantic", fact.id, fact.revision))) ===
+            undefined
+        )
+          continue;
         let index = state.facts.findIndex(
           (item) => item.id === fact.id && item.revision === fact.revision,
         );
@@ -196,7 +230,7 @@ export async function callTool(
         const line = `[f${index + 1}] Property p${index + 1}: ${fact.predicate} (${fact.conflictMode}); value excerpt: ${fact.normalizedValue.slice(0, 160)}\nStatement excerpt: ${fact.statement.slice(0, 240)}\nRead full text with fact=f${index + 1}.`;
         if (defaultRuntimeTokenCounter.countText(lines.concat(line).join("\n\n")).tokens > 1100)
           break;
-        if (index === state.facts.length) state.facts.push(Fact.parse(fact));
+        if (index === state.facts.length) state.facts.push(projectExistingFact(fact));
         lines.push(line);
       }
       return deliver(
@@ -210,7 +244,7 @@ export async function callTool(
       const args = MemoryExtractionToolSchemas.submit_fact.parse(raw);
       const existingProperty =
         typeof args.property === "string"
-          ? state.facts[Number(/^p([1-9]\d*)$/u.exec(args.property)?.[1]) - 1]
+          ? await existingFact(state, guard, args.property)
           : undefined;
       const property = typeof args.property === "string" ? existingProperty : args.property;
       if (property === undefined) fail("memory_curator_property_ref_invalid");
@@ -221,9 +255,7 @@ export async function callTool(
       )
         fail("memory_curator_fact_stale_or_denied");
       const replacement =
-        args.replaces === undefined
-          ? undefined
-          : state.facts[Number(/^f([1-9]\d*)$/u.exec(args.replaces)?.[1]) - 1];
+        args.replaces === undefined ? undefined : await existingFact(state, guard, args.replaces);
       if (args.replaces !== undefined && replacement === undefined)
         fail("memory_curator_fact_ref_invalid");
       if (
@@ -326,6 +358,14 @@ export async function callTool(
       if (state.provenance === undefined) fail("memory_curator_provenance_missing");
       for (const candidate of Object.values(state.candidates)) {
         const target = candidate.replacementTarget;
+        if (
+          target !== undefined &&
+          guard.memory !== undefined &&
+          (await guard.memory.get(
+            extractionMemoryRef("semantic", target.factId, target.expectedRevision),
+          )) === undefined
+        )
+          fail("memory_curator_fact_stale_or_denied");
         if (
           target !== undefined &&
           guard.canUseFact !== undefined &&

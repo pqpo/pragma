@@ -44,6 +44,7 @@ afterEach(async () => {
 describe("Desktop Memory Curator", () => {
   it.each([
     "success",
+    "tool-recovered",
     "read-recovered",
     "read-failed",
     "missing-output",
@@ -90,6 +91,14 @@ describe("Desktop Memory Curator", () => {
               };
             }
           ).contribution.tools;
+          if (scenario === "tool-recovered") {
+            const invalid = await tools
+              .find((tool) => tool.name === "finish_extraction")!
+              .call({ retain: false }, undefined);
+            expect(invalid).toMatchObject({ isError: true });
+            expect(invalid.text).toContain("Correction:");
+            expect(invalid.text).toContain("Continue in this extraction");
+          }
           const result = await tools
             .find((tool) => tool.name === "finish_extraction")!
             .call({ retain: false, reason: "low-value" }, undefined);

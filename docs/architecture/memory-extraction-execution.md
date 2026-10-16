@@ -60,7 +60,57 @@ meaningful execution lifecycle transitions remain visible at normal logging leve
 
 See [ADR 072](../adr/072-tool-driven-memory-extraction.md). Curator Missions receive a short task and dedicated tools, not an inline Evidence JSON dump. Evidence is listed and read using task-scoped handles and bounded plain-text pages. Candidates are submitted individually; `finish_extraction` persists a validated receipt before returning success. Assistant chat text is only a transcript.
 
+Argument validation and correctable evidence/reference errors include explicit correction guidance.
+The Curator repairs those calls within the same execution and its existing call/context budgets;
+successful staged parts remain available, and corrections reuse candidate handles. A failed
+`finish_extraction` must be repaired before the Agent claims completion. Permission, stale-claim,
+capacity and budget failures do not invite repeated tool calls. After evidence-delivery budget
+exhaustion, already read Evidence may still support staging missing candidates and finishing once;
+call-budget exhaustion permits only finishing already staged work. Unread evidence or an incomplete
+result instead requires reporting the budget failure, not rejecting the source as low-value. No additional execution retry loop
+is introduced: outer job retries remain for retryable execution failures, and an execution that ends
+without a durable receipt remains non-retryable automatically.
+
 The receipt and snapshot live in `state/memory/curator-sessions-v1.sqlite`. Module recovery reads receipts before admitting any model execution. Retained outputs still go through the existing Module transaction and applied-job marker. Transcript reads are archive operations; an unreadable transcript cannot invalidate a durable extraction receipt or authorize another model call. The original Mission remains available when its transcript could not be archived.
+
+### Existing Memory discovery and reconciliation
+
+`find_existing_memory` accepts a natural-language `query`, `mode` (`hybrid` by default,
+`keyword`, or `vector`), `type` (`all` by default, `semantic`, or `episodic`), and `limit`
+(default 10, maximum 20). Hybrid search uses the same Host embedding service, index generation,
+query cache and limiter as Context Store search; both paths share reciprocal-rank fusion.
+Keyword matching uses Memory projection text rather than internal record JSON. Responses name
+the actual retrieval mode, match sources and any vector-unavailability reason. Hybrid mode can
+continue with keywords; explicit vector mode reports a stable error instead of claiming a
+successful empty search. Results are ranked candidates, never an exhaustive conflict check.
+
+Pass a returned `memory` handle and optional character `cursor` to read complete Memory text.
+Semantic handles can also be used as `submit_fact.property` or `replaces`. They contain the Memory
+type, identity and revision and are checked against current authority on every read and replacement;
+they never grant access. Historical Episodes are untrusted background, not new Evidence or authority
+for a fact replacement. Source-task subject restrictions, recall policy snapshots and live policies
+apply to discovery as well as reading. Revoked, expired, invalidated, deleted or revised records cannot
+be recovered from vector excerpts or old handles. Records with `sensitivity=restricted` are excluded
+from search, enumeration and handle reads, matching the Context Store projection boundary.
+
+`list_existing_memory` provides complete scoped enumeration, independent of relevance scores and
+hot-memory selection. `directory=properties` lists open predicates, subject aliases, fact counts,
+conflict modes and illustrative statements; `facts` accepts an exact `property` name and optional
+`subject` alias; `episodes` accepts an optional `conversation` ID. Follow `pageCursor` until `end`.
+Pages contain at most 20 entries and respect the 2,000-token response budget, advancing only past
+emitted entries. Cursors bind the extraction, scope, filters and record-revision snapshot; changed
+snapshots return `memory_curator_cursor_stale`, requiring a new enumeration rather than a new
+extraction. Property discovery encourages reuse but does not invent definitions, merge synonyms or
+rewrite existing facts. Before delivery, each emitted entry and every fact contributing to an emitted
+property aggregate is checked again against current authority; stale entries require restarting the listing.
+
+The Curator searches first, discovers existing properties when needed, then lists all facts for the
+same subjects and exact property before submitting a new or replacement fact. Existing duplicate,
+conflict and authoritative replacement rules remain unchanged. Vector requests reserve the existing
+call budget before network I/O, run outside the shared Session lock, and revalidate results before
+delivery. Enumeration and new handles do not populate the legacy 100-fact Session cache. Existing
+`fN`/`pN` aliases, empty-query previous-Episode/staged-work reads and character cursors remain
+supported; persisted Session, Evidence and Memory schemas are unchanged.
 
 Fact lookup, merge and replacement use the source task's authorization, including restricted principals and expiry. Every tool call checks the claim and cancellation signal. Budget failures and incomplete retained evidence park the job with a stable code; they are never reported as generated Memory or a completed low-value rejection.
 

@@ -29,8 +29,11 @@ export function evidenceText(item: MemoryEvidenceEnvelope): { role: string; text
       .join(" · "),
   };
 }
-export function subjects(state: SessionState) {
-  const refs = "allowedSubjectRefs" in state.input ? state.input.allowedSubjectRefs : [];
+export function subjects(
+  state: SessionState,
+  fallback: readonly import("@pragma/shared").MemorySubjectRef[] = [],
+) {
+  const refs = "allowedSubjectRefs" in state.input ? state.input.allowedSubjectRefs : fallback;
   const counts = new Map<string, number>();
   return refs.map((ref) => {
     const prefix =

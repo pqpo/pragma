@@ -25,6 +25,7 @@ import {
   type MemoryRecallScope,
 } from "../pipeline/memory-module.ts";
 import { memoryQueryDigest, type MemoryActivityStore } from "../activity/memory-activity-store.ts";
+import { fuseMemoryRanks } from "../retrieval/rank-fusion.ts";
 
 export const MEMORY_CONTEXT_NAMESPACE = "memory";
 export const MEMORY_GUIDE_CONTEXT_ID = "guide.md";
@@ -240,22 +241,10 @@ export function createFederatedMemoryContextStore(
         });
         return recallDenied("search");
       }
-      const combined = new Map<
-        string,
-        { value: ExpertAgentContextItemSearchMatch; score: number }
-      >();
-      for (const ranked of [lexical, vectors])
-        ranked.forEach((value, i) => {
-          const previous = combined.get(value.id);
-          combined.set(value.id, {
-            value: previous?.value ?? value,
-            score: (previous?.score ?? 0) + 1 / (60 + i + 1),
-          });
-        });
-      const matches = [...combined.values()]
-        .toSorted((a, b) => b.score - a.score || a.value.id.localeCompare(b.value.id))
-        .slice(0, input.maxResults ?? 20)
-        .map((value) => value.value);
+      const matches = fuseMemoryRanks([lexical, vectors], (value) => value.id).slice(
+        0,
+        input.maxResults ?? 20,
+      );
       await recordRecall(options.activity, input.context, {
         operation: "search",
         target: "memory",
