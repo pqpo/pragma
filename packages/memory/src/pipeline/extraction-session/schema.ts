@@ -270,6 +270,7 @@ export interface MemoryExtractionSession {
   prompt(): string;
   assertCurrent(): Promise<void>;
   call(name: MemoryExtractionToolName, args: unknown): Promise<string>;
+  deliverErrorResponse(text: string): Promise<string>;
   bindMission(missionId: string): Promise<void>;
   setProvenance(value: z.infer<typeof Provenance>): Promise<void>;
   receipt(): Promise<MemoryExtractionReceipt | undefined>;

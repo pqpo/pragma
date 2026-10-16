@@ -18,7 +18,7 @@ import {
   type MemoryExtractionSessionGuard,
   type MemoryExtractionToolName,
 } from "./schema.ts";
-import { renderTask, markInlineRead } from "./evidence.ts";
+import { renderTask, markInlineRead, boundedPrefix, deliver } from "./evidence.ts";
 import { callTool } from "./tools.ts";
 import { CURATOR_SESSION_MIGRATIONS } from "../../storage/migrations/curator-sessions/index.ts";
 import { CuratorSessionV1Schema } from "../../storage/migrations/curator-sessions/schemas/v1.ts";
@@ -431,6 +431,9 @@ export function createMemoryExtractionSessionStore(
             : {
                 ...guard,
                 memory: {
+                  intersect: (
+                    others: readonly import("../../retrieval/extraction-memory.ts").ExtractionMemoryAccess[],
+                  ) => guard.memory!.intersect(others),
                   assertAccess: () => guard.memory!.assertAccess(),
                   fingerprint: guard.memory.fingerprint,
                   subjects: guard.memory.subjects,
@@ -480,6 +483,32 @@ export function createMemoryExtractionSessionStore(
           }
         }
         return outcome.text;
+      },
+      async deliverErrorResponse(text) {
+        const outcome = await transaction((db) => {
+          const state = read(db, initial.key)!;
+          const remaining = state.tokenLimit - state.deliveredTokens;
+          if (state.lastError === "memory_curator_budget_exhausted" || remaining <= 1) {
+            state.lastError = "memory_curator_budget_exhausted";
+            save(db, state);
+            return undefined;
+          }
+          const bounded = boundedPrefix(
+            text,
+            Math.min(remaining, MEMORY_EXTRACTION_LIMITS.responseTokens),
+          );
+          if (bounded.length === 0) {
+            state.lastError = "memory_curator_budget_exhausted";
+            save(db, state);
+            return undefined;
+          }
+          const response = deliver(state, bounded);
+          state.updatedAt = now().toISOString();
+          save(db, state);
+          return response;
+        });
+        if (outcome === undefined) fail("memory_curator_budget_exhausted");
+        return outcome;
       },
     };
   }

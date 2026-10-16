@@ -107,48 +107,7 @@ export function createBuiltInMemoryCurator(options: {
         const memory =
           primary === undefined || accesses.length !== entries.length
             ? undefined
-            : {
-                subjects: primary.subjects,
-                fingerprint: createHash("sha256")
-                  .update(JSON.stringify(accesses.map((access) => access.fingerprint)))
-                  .digest("hex"),
-                async assertAccess() {
-                  for (const access of accesses) await access.assertAccess();
-                },
-                async get(handle: string) {
-                  const found = await Promise.all(accesses.map((access) => access.get(handle)));
-                  return found.every((item) => item !== undefined) ? found[0] : undefined;
-                },
-                async list(type: Parameters<typeof primary.list>[0]) {
-                  const results = await Promise.all(accesses.map((access) => access.list(type)));
-                  return results[0]!.filter((item) =>
-                    results.every((items) =>
-                      items.some(
-                        (candidate) =>
-                          candidate.module === item.module &&
-                          candidate.record.id === item.record.id &&
-                          candidate.record.revision === item.record.revision,
-                      ),
-                    ),
-                  );
-                },
-                async search(query: Parameters<typeof primary.search>[0]) {
-                  for (const access of accesses) await access.assertAccess();
-                  const found = await primary.search(query);
-                  const permitted = await this.list(query.type);
-                  return {
-                    ...found,
-                    items: found.items.filter(({ memory: item }) =>
-                      permitted.some(
-                        (candidate) =>
-                          candidate.module === item.module &&
-                          candidate.record.id === item.record.id &&
-                          candidate.record.revision === item.record.revision,
-                      ),
-                    ),
-                  };
-                },
-              };
+            : primary.intersect(accesses.slice(1));
         const session = await sessions.create({
           module: "conversation",
           activeTypes: entries.map(({ type }) => type),

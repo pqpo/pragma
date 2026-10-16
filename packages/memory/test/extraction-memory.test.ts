@@ -13,6 +13,7 @@ import {
   type ExtractionVectorSearch,
 } from "../src/retrieval/extraction-memory.ts";
 import { createMemoryExtractionSessionStore } from "../src/pipeline/extraction-session/store.ts";
+import { memoryProjectionFields } from "../src/retrieval/projection.ts";
 import { EpisodicMemoryRecordSchema } from "../src/episodic/schema.ts";
 import { createSemanticMemoryStore } from "../src/semantic/store.ts";
 import { createEpisodicMemoryStore } from "../src/episodic/store.ts";
@@ -51,14 +52,46 @@ function catalog(vectorSearch?: ExtractionVectorSearch) {
     );
   const reader = createExtractionMemoryReader({
     semantic: {
-      listCandidatesForRecall: async (requested) =>
-        state.facts.filter((item) => visible(item.bindings, requested)),
+      queryForExtraction: async ({ filter, query, limit, afterId }) =>
+        state.facts
+          .filter(
+            (item) =>
+              filter.scopes.every((requested) => visible(item.bindings, requested)) &&
+              item.status === "active" &&
+              item.sensitivity !== "restricted" &&
+              (item.expiresAt === undefined || item.expiresAt > timestamp().toISOString()) &&
+              item.subjectRefs.every((ref) =>
+                filter.subjects.some(
+                  (allowed) => allowed.type === ref.type && allowed.id === ref.id,
+                ),
+              ) &&
+              (afterId === undefined || item.id > afterId) &&
+              (query === undefined ||
+                memoryProjectionFields({ module: "semantic", record: item }).some((field) =>
+                  field.text.toLocaleLowerCase().includes(query.toLocaleLowerCase()),
+                )),
+          )
+          .toSorted((a, b) => a.id.localeCompare(b.id))
+          .slice(0, limit),
       peekForRecall: async (requested, id) =>
         state.facts.find((item) => item.id === id && visible(item.bindings, requested)),
     },
     episodic: {
-      listCandidatesForRecall: async (requested) =>
-        state.episodes.filter((item) => visible(item.bindings, requested)),
+      queryForExtraction: async ({ filter, query, limit, afterId }) =>
+        state.episodes
+          .filter(
+            (item) =>
+              filter.scopes.every((requested) => visible(item.bindings, requested)) &&
+              item.status === "active" &&
+              item.sensitivity !== "restricted" &&
+              (afterId === undefined || item.id > afterId) &&
+              (query === undefined ||
+                memoryProjectionFields({ module: "episodic", record: item }).some((field) =>
+                  field.text.toLocaleLowerCase().includes(query.toLocaleLowerCase()),
+                )),
+          )
+          .toSorted((a, b) => a.id.localeCompare(b.id))
+          .slice(0, limit),
       peekForRecall: async (requested, id) =>
         state.episodes.find((item) => item.id === id && visible(item.bindings, requested)),
     },
@@ -109,6 +142,110 @@ it("combines natural-language vector matches with keyword matches and labels the
   });
   expect(keywords.items).toHaveLength(1);
   expect(vector).not.toHaveBeenCalled();
+});
+
+it("filters a large authority catalog before Top-K and parses only bounded keyword/vector results", async () => {
+  const root = await mkdtemp(join(tmpdir(), "pragma-large-extraction-search-"));
+  roots.push(root);
+  const semantic = await createSemanticMemoryStore({ pragmaHome: root });
+  const episodic = await createEpisodicMemoryStore({ pragmaHome: root });
+  const database = new DatabaseSync(
+    join(
+      new PragmaPaths({ pragmaHome: root }).memoryModuleDataRoot("pragma.memory.semantic"),
+      "facts.sqlite",
+    ),
+  );
+  const other: MemoryRecallScope = { rootRef: { type: "pragma.expert", id: "expert-b" } };
+  const count = 10000;
+  const commonId = `fact-${(count - 1).toString(16).padStart(24, "0")}`;
+  try {
+    database.exec("BEGIN");
+    const insert = database.prepare(
+      "INSERT INTO current_facts(id,revision,status,updated_at,record_json) VALUES(?,?,?,?,?)",
+    );
+    for (let index = 0; index < count; index++) {
+      const current = {
+        ...fact,
+        id: `fact-${index.toString(16).padStart(24, "0")}`,
+        statement: "The user prefers concise Chinese answers.",
+        bindings:
+          index === count - 1
+            ? [...fact.bindings, { ...fact.bindings[0]!, consumerRef: other.rootRef }]
+            : fact.bindings,
+      };
+      insert.run(
+        current.id,
+        current.revision,
+        current.status,
+        current.updatedAt,
+        JSON.stringify(current),
+      );
+    }
+    database.exec("COMMIT");
+    const vector = vi.fn<ExtractionVectorSearch>(
+      async (_scope, _query, _modules, limit, _signal, filter) => ({
+        state: "ready",
+        hits: (await semantic.listExtractionIdentities(filter!, timestamp()))
+          .slice(0, limit)
+          .map((record) => ({
+            module: "semantic",
+            memoryId: record.id,
+            revision: record.revision,
+          })),
+      }),
+    );
+    const reader = createExtractionMemoryReader({
+      semantic,
+      episodic,
+      assertAccess: async () => {},
+      now: timestamp,
+      vectorSearch: vector,
+    });
+    const access = reader.bind(scope, subjects).intersect([reader.bind(other, subjects)]);
+    const list = vi
+      .spyOn(access, "list")
+      .mockRejectedValue(new Error("search must not enumerate the catalog"));
+    const query = vi.spyOn(semantic, "queryForExtraction");
+    const parses = vi.spyOn(SemanticFactSchema, "parse");
+    try {
+      for (const mode of ["keyword", "hybrid", "vector"] as const) {
+        query.mockClear();
+        parses.mockClear();
+        const started = performance.now();
+        const result = await access.search({ query: "Chinese", type: "semantic", mode, limit: 1 });
+        const elapsed = performance.now() - started;
+        expect(result.items.map((item) => item.memory.record.id)).toEqual([commonId]);
+        expect(list).not.toHaveBeenCalled();
+        expect(parses.mock.calls.length).toBeLessThanOrEqual(6);
+        expect(query).toHaveBeenCalledTimes(mode === "vector" ? 0 : 1);
+        expect(elapsed).toBeLessThan(5000);
+        console.info(
+          `Extraction ${mode}: ${count} facts, ${parses.mock.calls.length} parsed authority records, ${elapsed.toFixed(1)}ms`,
+        );
+      }
+      query.mockClear();
+      parses.mockClear();
+      await expect(
+        access.search({
+          query: "Chinese",
+          type: "semantic",
+          mode: "keyword",
+          limit: 1,
+          signal: AbortSignal.abort(),
+        }),
+      ).rejects.toThrow();
+      expect(query).not.toHaveBeenCalled();
+      expect(parses).not.toHaveBeenCalled();
+    } finally {
+      list.mockRestore();
+      query.mockRestore();
+      parses.mockRestore();
+    }
+  } finally {
+    database.close();
+    semantic.close();
+    episodic.close();
+  }
 });
 it("falls back explicitly for hybrid search but rejects unavailable vector-only search", async () => {
   const vector = vi.fn<ExtractionVectorSearch>(async () => {

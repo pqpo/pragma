@@ -1,5 +1,5 @@
 import {
-  conversationExtractionJobId,
+  groupConversationExtractionJobs,
   type EpisodicExtractionJob,
   type SemanticExtractionJob,
 } from "@pragma/memory";
@@ -68,14 +68,17 @@ interface ExtractionTaskTitleOptions {
 export async function listDesktopMemoryExtractionJobs(
   plane: Pick<
     DesktopMemoryPlane,
-    "episodicStore" | "semanticStore" | "knowledgeLearningStore" | "skillLearningStore"
+    | "episodicStore"
+    | "semanticStore"
+    | "knowledgeLearningStore"
+    | "skillLearningStore"
+    | "conversationExtractionJobs"
   >,
   options: ExtractionTaskTitleOptions,
   input: ListDesktopMemoryExtractionJobs,
 ): Promise<DesktopMemoryExtractionBoard> {
-  const snapshot = await loadAllExtractionJobs(plane);
-  const loadedPages = MEMORY_EXTRACTION_LANES.map((lane) =>
-    loadLanePage(snapshot, lane, input.pages[lane]),
+  const loadedPages = await Promise.all(
+    MEMORY_EXTRACTION_LANES.map((lane) => loadLanePage(plane, lane, input.pages[lane])),
   );
   const jobs = loadedPages.flatMap((page) => page.jobs);
   const { missionTitles, executionTitles, resourceTitles } = await loadTaskTitles(jobs, options);
@@ -178,7 +181,11 @@ async function loadTaskTitles(
 export async function getDesktopMemoryExtractionTaskDetail(
   plane: Pick<
     DesktopMemoryPlane,
-    "episodicStore" | "semanticStore" | "knowledgeLearningStore" | "skillLearningStore"
+    | "episodicStore"
+    | "semanticStore"
+    | "knowledgeLearningStore"
+    | "skillLearningStore"
+    | "conversationExtractionJobs"
   >,
   options: ExtractionTaskTitleOptions & {
     readonly curator: Pick<DesktopMemoryCurator, "listRuns">;
@@ -186,13 +193,7 @@ export async function getDesktopMemoryExtractionTaskDetail(
   input: DesktopMemoryExtractionTaskRef,
 ): Promise<DesktopMemoryExtractionTaskDetail> {
   if (input.module === "conversation") {
-    const [episodic, semantic] = await Promise.all([
-      plane.episodicStore.listExtractionJobs(),
-      plane.semanticStore.listExtractionJobs(),
-    ]);
-    const entry = groupConversationExtractionJobs(episodic, semantic).find(
-      ({ job }) => job.id === input.id,
-    );
+    const entry = await plane.conversationExtractionJobs.getTask(input.id);
     if (entry === undefined) throw new Error("memory_extraction_job_not_found");
     const details = await Promise.all(
       entry.members.map(({ module, job }) =>
@@ -221,15 +222,14 @@ export async function getDesktopMemoryExtractionTaskDetail(
         .slice(0, 20),
     });
   }
-  const jobs =
+  const job =
     input.module === "episodic"
-      ? await plane.episodicStore.listExtractionJobs()
+      ? await plane.episodicStore.getExtractionJob(input.id)
       : input.module === "semantic"
-        ? await plane.semanticStore.listExtractionJobs()
+        ? await plane.semanticStore.getExtractionJob(input.id)
         : input.module === "knowledge"
-          ? await plane.knowledgeLearningStore.listJobs()
-          : await plane.skillLearningStore.listJobs();
-  const job = jobs.find((candidate) => candidate.id === input.id);
+          ? await plane.knowledgeLearningStore.getJob(input.id)
+          : await plane.skillLearningStore.getJob(input.id);
   if (job === undefined) throw new Error("memory_extraction_job_not_found");
 
   const entry = {
@@ -298,102 +298,59 @@ function laneForStatus(status: PagedExtractionJob["job"]["status"]): MemoryExtra
   }
 }
 
-async function loadAllExtractionJobs(
-  plane: Pick<DesktopMemoryPlane, "episodicStore" | "semanticStore" | "knowledgeLearningStore"> &
-    Partial<Pick<DesktopMemoryPlane, "skillLearningStore">>,
-): Promise<PagedExtractionJob[]> {
-  const [episodic, semantic, knowledge, skill] = await Promise.all([
-    plane.episodicStore.listExtractionJobs(),
-    plane.semanticStore.listExtractionJobs(),
-    plane.knowledgeLearningStore.listJobs(),
-    plane.skillLearningStore?.listJobs() ?? Promise.resolve([]),
-  ]);
-  return [
-    ...groupConversationExtractionJobs(episodic, semantic),
-    ...knowledge.map((job) => ({
-      module: "knowledge" as const,
-      lane: laneForStatus(job.status),
-      job,
-    })),
-    ...skill.map((job) => ({ module: "skill" as const, lane: laneForStatus(job.status), job })),
-  ];
-}
-
-function loadLanePage(
-  snapshot: readonly PagedExtractionJob[],
+async function loadLanePage(
+  plane: Pick<
+    DesktopMemoryPlane,
+    "conversationExtractionJobs" | "knowledgeLearningStore" | "skillLearningStore"
+  >,
   lane: MemoryExtractionLane,
   request: ListDesktopMemoryExtractionJobs["pages"][MemoryExtractionLane],
-): LoadedLanePage {
-  const jobs = snapshot.filter((entry) => entry.lane === lane).toSorted(compareJobs);
-  const pageCount = Math.max(1, Math.ceil(jobs.length / DESKTOP_MEMORY_EXTRACTION_PAGE_SIZE));
-  const before = request.cursor;
-  let remaining =
-    before === undefined
-      ? jobs
-      : jobs.filter(
-          (entry) =>
-            entry.job.updatedAt < before.updatedAt ||
-            (entry.job.updatedAt === before.updatedAt && jobTieBreaker(entry) < before.tieBreaker),
-        );
-  const reset = request.pageIndex >= pageCount || (request.pageIndex > 0 && remaining.length === 0);
-  if (reset) remaining = jobs;
-  return {
-    jobs: remaining.slice(0, DESKTOP_MEMORY_EXTRACTION_PAGE_SIZE),
-    totalTasks: jobs.length,
-    pageCount,
-    pageIndex: reset ? 0 : request.pageIndex,
+): Promise<LoadedLanePage> {
+  const query = async (cursor: typeof request.cursor) => {
+    const common = {
+      limit: DESKTOP_MEMORY_EXTRACTION_PAGE_SIZE,
+      ...(cursor === undefined ? {} : { before: cursor }),
+    };
+    const statuses = [
+      lane === "waiting" ? "pending" : lane === "attention" ? "needs_attention" : lane,
+    ] as const;
+    const [conversation, knowledge, skill] = await Promise.all([
+      plane.conversationExtractionJobs.listJobsPage({
+        ...common,
+        statuses: [lane],
+        sortKeyPrefix: "conversation",
+      }),
+      plane.knowledgeLearningStore.listJobsPage({
+        ...common,
+        statuses,
+        sortKeyPrefix: "knowledge",
+      }),
+      plane.skillLearningStore.listJobsPage({ ...common, statuses, sortKeyPrefix: "skill" }),
+    ]);
+    const jobs: PagedExtractionJob[] = [
+      ...conversation.jobs,
+      ...knowledge.jobs.map((job) => ({ module: "knowledge" as const, lane, job })),
+      ...skill.jobs.map((job) => ({ module: "skill" as const, lane, job })),
+    ];
+    return {
+      jobs: jobs.toSorted(compareJobs).slice(0, DESKTOP_MEMORY_EXTRACTION_PAGE_SIZE),
+      totalTasks: conversation.total + knowledge.total + skill.total,
+    };
   };
+  let result = await query(request.cursor);
+  const pageCount = Math.max(1, Math.ceil(result.totalTasks / DESKTOP_MEMORY_EXTRACTION_PAGE_SIZE));
+  if (request.pageIndex >= pageCount || (request.pageIndex > 0 && result.jobs.length === 0)) {
+    result = await query(undefined);
+    return {
+      ...result,
+      pageIndex: 0,
+      pageCount: Math.max(1, Math.ceil(result.totalTasks / DESKTOP_MEMORY_EXTRACTION_PAGE_SIZE)),
+    };
+  }
+  return { ...result, pageIndex: request.pageIndex, pageCount };
 }
 
-export function groupConversationExtractionJobs(
-  episodic: readonly EpisodicExtractionJob[],
-  semantic: readonly SemanticExtractionJob[],
-): Extract<PagedExtractionJob, { module: "conversation" }>[] {
-  const groups = new Map<
-    string,
-    { module: "episodic" | "semantic"; job: ConversationExtractionJob }[]
-  >();
-  for (const [module, jobs] of [
-    ["episodic", episodic],
-    ["semantic", semantic],
-  ] as const) {
-    for (const job of jobs) {
-      if (job.status === "expired") continue;
-      const id = conversationExtractionJobId(job.conversationRef, job.inputWatermark);
-      const members = groups.get(id) ?? [];
-      members.push({ module, job });
-      groups.set(id, members);
-    }
-  }
-  const rank = { completed: 0, waiting: 1, running: 3, attention: 2 };
-  return [...groups].map(([id, members]) => {
-    const representative = members.toSorted(
-      (a, b) => rank[laneForStatus(b.job.status)] - rank[laneForStatus(a.job.status)],
-    )[0]!.job;
-    const lane = laneForStatus(representative.status);
-    return {
-      module: "conversation",
-      lane,
-      members,
-      job: {
-        ...representative,
-        id,
-        revision: members.reduce((total, member) => total + member.job.revision, 0),
-        updatedAt: members
-          .map(({ job }) => job.updatedAt)
-          .toSorted()
-          .at(-1)!,
-        ...(lane === "completed"
-          ? {
-              completion: members.some(({ job }) => job.completion === "retained")
-                ? "retained"
-                : "rejected",
-            }
-          : {}),
-      },
-    };
-  });
-}
+export { groupConversationExtractionJobs } from "@pragma/memory";
 
 function compareJobs(left: PagedExtractionJob, right: PagedExtractionJob): number {
   return (

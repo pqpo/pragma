@@ -101,6 +101,12 @@ export async function createEpisodicMemoryModule(
     )
       unadmittedClaims.add(controller);
     const startedAt = now();
+    const lease = deferAdmission
+      ? setInterval(() => {
+          void store.renewClaimLease(job, now()).catch((error: unknown) => controller.abort(error));
+        }, 60_000)
+      : undefined;
+    lease?.unref();
     let phase: MemoryExtractionFailurePhase = "source_read";
     try {
       let recovered = await selectedExtractor.recover?.(job.id, job.inputWatermark);
@@ -273,6 +279,7 @@ export async function createEpisodicMemoryModule(
         retry: isConfigurationError(error) ? "configuration" : "transient",
       });
     } finally {
+      if (lease !== undefined) clearInterval(lease);
       unadmittedClaims.delete(controller);
       if (running.get(key) === controller) running.delete(key);
     }

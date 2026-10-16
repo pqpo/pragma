@@ -66,6 +66,9 @@ export interface DesktopMemoryContextStoreViewInput {
 export type DesktopMemoryContextStoreViewStatus = "available" | "empty" | "recall_disabled";
 
 export interface DesktopMemoryPlane {
+  readonly conversationExtractionJobs: ReturnType<
+    typeof import("@pragma/memory").createConversationExtractionJobReader
+  >;
   readonly canonical: import("@pragma/core").CanonicalEventFeed;
   readonly executionStore: DurableExecutionStore;
   readonly policies: MemoryPolicyStore;
@@ -629,6 +632,7 @@ export async function createDesktopMemoryPlane(options: {
 
   return {
     canonical,
+    conversationExtractionJobs: data.conversationExtractionJobs,
     executionStore,
     policies,
     extractorProfiles,

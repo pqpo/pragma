@@ -146,6 +146,7 @@ export function createLocalHostMemoryRetrieval(options: {
     modules: readonly ("episodic" | "semantic")[],
     limit: number,
     signal: AbortSignal,
+    extractionFilter?: import("@pragma/memory").ExtractionRecallFilter,
   ): Promise<MemoryAttentionCandidate[]> => {
     const desired = await getProvider();
     if (desired === undefined) return [];
@@ -198,9 +199,15 @@ export function createLocalHostMemoryRetrieval(options: {
     for (const module of modules)
       allowedByModule.set(
         module,
-        await (
-          module === "episodic" ? options.data.episodic.store : options.data.semantic.store
-        ).listRecallIdentities(scope, new Date()),
+        await (extractionFilter === undefined
+          ? (module === "episodic"
+              ? options.data.episodic.store
+              : options.data.semantic.store
+            ).listRecallIdentities(scope, new Date())
+          : (module === "episodic"
+              ? options.data.episodic.store
+              : options.data.semantic.store
+            ).listExtractionIdentities(extractionFilter, new Date())),
       );
     if ([...allowedByModule.values()].every((ids) => ids.length === 0)) return [];
     const key = createHash("sha256")
@@ -329,6 +336,7 @@ export function createLocalHostMemoryRetrieval(options: {
       modules: readonly ("semantic" | "episodic")[],
       limit: number,
       signal: AbortSignal,
+      filter?: import("@pragma/memory").ExtractionRecallFilter,
     ): Promise<ExtractionVectorResult> {
       const combinedSignal = AbortSignal.any([signal, abort.signal, AbortSignal.timeout(3000)]);
       try {
@@ -350,6 +358,7 @@ export function createLocalHostMemoryRetrieval(options: {
           modules,
           limit,
           combinedSignal,
+          filter,
         );
         combinedSignal.throwIfAborted();
         const live = await getProvider();

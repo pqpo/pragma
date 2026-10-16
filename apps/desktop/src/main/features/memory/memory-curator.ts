@@ -111,6 +111,7 @@ export function createDesktopMemoryCurator(options: {
   });
   const activeRuns = new Map<string, DesktopMemoryExtractionRun>();
   const activeSessions = new Map<string, MemoryExtractionSession>();
+  const budgetStops = new Set<string>();
   const runChatListeners = new Set<(update: DesktopMemoryExtractionRunChatUpdate) => void>();
   options.application.subscribeChat(({ update }) => {
     const run = activeRuns.get(update.missionId);
@@ -220,6 +221,30 @@ export function createDesktopMemoryCurator(options: {
                         module: session.module,
                         toolNames: session.toolNames,
                         call: (name, args) => currentSession().call(name, args),
+                        async deliverErrorResponse(text) {
+                          try {
+                            return await currentSession().deliverErrorResponse(text);
+                          } catch (error) {
+                            if (
+                              error instanceof Error &&
+                              error.message === "memory_curator_budget_exhausted" &&
+                              !budgetStops.has(input.missionId)
+                            ) {
+                              budgetStops.add(input.missionId);
+                              // Do not await Native teardown from inside its pending tool call.
+                              void options.application
+                                .interrupt(input.missionId)
+                                .catch((failure: unknown) =>
+                                  logger.warn(
+                                    "desktop.memory_curator_budget_stop_unconfirmed",
+                                    "Memory Curator budget was exhausted but Native cancellation could not be confirmed.",
+                                    { missionId: input.missionId, error: failure },
+                                  ),
+                                );
+                            }
+                            throw error;
+                          }
+                        },
                       },
                       async () => {
                         const current = currentSession();
@@ -335,6 +360,8 @@ export function createDesktopMemoryCurator(options: {
         } catch (error) {
           if (!admitted && error instanceof Error) Object.assign(error, { preAdmission: true });
           throw error;
+        } finally {
+          for (const id of budgetStops) if (!activeRuns.has(id)) budgetStops.delete(id);
         }
       },
     },
@@ -601,7 +628,7 @@ async function runCuratorMission(input: {
   const reserveRepair = async (previousExecutionId: string): Promise<void> => {
     const code = await input.session.failure();
     if (code !== undefined && /budget|capacity|denied|stale|unavailable|claim|snapshot/u.test(code))
-      throw Object.assign(new Error(code), { retryable: false });
+      throw Object.assign(new Error(code), { code, retryable: false });
     const missing = await input.session.pendingTypes();
     await input.session.reserveContinuation({
       previousExecutionId,
@@ -681,6 +708,14 @@ async function runCuratorMission(input: {
       if (finished.execution === undefined) throw new Error("memory_curator_execution_unconfirmed");
       await reserveRepair(finished.execution.id);
     }
+    if (
+      !(await input.session.completed()) &&
+      (await input.session.failure()) === "memory_curator_budget_exhausted"
+    )
+      throw Object.assign(new Error("memory_curator_budget_exhausted"), {
+        code: "memory_curator_budget_exhausted",
+        retryable: false,
+      });
     if (
       finished.execution?.status !== "succeeded" &&
       !(input.module === "conversation" && (await input.session.completed()))

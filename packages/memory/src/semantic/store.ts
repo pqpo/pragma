@@ -19,6 +19,12 @@ import {
   type MemoryIndexChange,
 } from "../retrieval/outbox.ts";
 import { createHash, randomUUID } from "node:crypto";
+import {
+  extractionSubjectPredicate,
+  type ExtractionCatalogQuery,
+  type ExtractionRecallFilter,
+} from "../retrieval/extraction-query.ts";
+import { redactMemoryProjection } from "../retrieval/projection.ts";
 import { mkdir } from "node:fs/promises";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
@@ -146,6 +152,11 @@ export interface SemanticGovernanceInput {
 }
 
 export interface SemanticMemoryStore {
+  queryForExtraction(input: ExtractionCatalogQuery, now: Date): Promise<readonly SemanticFact[]>;
+  listExtractionIdentities(
+    filter: ExtractionRecallFilter,
+    now: Date,
+  ): Promise<readonly { id: string; revision: number }[]>;
   readIndexRemovals(limit: number): Promise<readonly MemoryIndexChange[]>;
   readIndexChanges(limit: number): Promise<readonly MemoryIndexChange[]>;
   acknowledgeIndexChange(change: MemoryIndexChange): Promise<void>;
@@ -175,6 +186,7 @@ export interface SemanticMemoryStore {
   ): Promise<(SemanticExtractionJob & { readonly localRecoveryOnly?: true }) | undefined>;
   isClaimCurrent(job: SemanticExtractionJob): Promise<boolean>;
   releaseUnadmittedClaim(job: SemanticExtractionJob, now: Date, refund: boolean): Promise<void>;
+  renewClaimLease(job: SemanticExtractionJob, now: Date): Promise<void>;
   bindExecutionConversation(input: {
     readonly executionId: string;
     readonly conversationRef: MemorySubjectRef;
@@ -243,6 +255,7 @@ export interface SemanticMemoryStore {
     keepIds?: readonly string[],
   ): Promise<number>;
   listExtractionJobs(): Promise<readonly SemanticExtractionJob[]>;
+  getExtractionJob(id: string): Promise<SemanticExtractionJob | undefined>;
   listFailureAttempts(jobId: string): Promise<readonly MemoryExtractionFailureAttempt[]>;
   listExtractionJobsPage(
     input: MemoryJobPageInput<SemanticExtractionJob["status"]>,
@@ -318,6 +331,14 @@ export async function createSemanticMemoryStore(
   const data = new DatabaseSync(dataPath);
   const state = new DatabaseSync(statePath);
   try {
+    data.function("pragma_extraction_contains", { deterministic: true }, (text, query) =>
+      redactMemoryProjection(String(text))
+        .toLocaleLowerCase()
+        .includes(String(query).toLocaleLowerCase())
+        ? 1
+        : 0,
+    );
+
     await withFileLock(`${dataPath}.migration.lock`, async () => {
       if (readDatabaseVersion(data) === 0) {
         assertFreshSqliteDatabase(data, "pragma.memory-semantic-store");
@@ -493,6 +514,40 @@ export async function createSemanticMemoryStore(
         )
         .all(afterId ?? "", Math.max(1, Math.min(limit, 200))) as { recordJson: string }[];
       return rows.map((row) => SemanticFactSchema.parse(JSON.parse(row.recordJson)));
+    },
+    async queryForExtraction(input, now) {
+      const predicates = input.filter.scopes.map((scope) =>
+        recallPredicate("current_facts", scope, now),
+      );
+      const subjects = extractionSubjectPredicate("current_facts", input.filter.subjects);
+      const rows = data
+        .prepare(
+          `SELECT record_json AS recordJson FROM current_facts
+        WHERE status='active' AND json_extract(record_json,'$.sensitivity') <> 'restricted'
+        AND ${predicates.map((p) => `(${p.sql})`).join(" AND ") || "0"} AND ${subjects.sql}
+        ${input.query === undefined ? "" : "AND pragma_extraction_contains('Statement: ' || json_extract(record_json,'$.statement') || char(10) || 'Predicate: ' || json_extract(record_json,'$.predicate') || char(10) || 'Value: ' || json_extract(record_json,'$.normalizedValue'), ?)"}
+        AND id > ? ORDER BY id ${input.limit === undefined ? "" : "LIMIT ?"}`,
+        )
+        .all(
+          ...predicates.flatMap((p) => p.parameters),
+          ...subjects.parameters,
+          ...(input.query === undefined ? [] : [input.query]),
+          input.afterId ?? "",
+          ...(input.limit === undefined ? [] : [Math.max(1, Math.min(80, input.limit))]),
+        );
+      return readFactRows(rows);
+    },
+    async listExtractionIdentities(filter, now) {
+      const predicates = filter.scopes.map((scope) => recallPredicate("current_facts", scope, now));
+      const subjects = extractionSubjectPredicate("current_facts", filter.subjects);
+      return data
+        .prepare(
+          `SELECT id, revision FROM current_facts WHERE status='active' AND json_extract(record_json,'$.sensitivity') <> 'restricted' AND ${predicates.map((p) => `(${p.sql})`).join(" AND ") || "0"} AND ${subjects.sql} ORDER BY id`,
+        )
+        .all(...predicates.flatMap((p) => p.parameters), ...subjects.parameters) as {
+        id: string;
+        revision: number;
+      }[];
     },
     async peekForRecall(scope, id, now = new Date()) {
       const access = recallPredicate("current_facts", scope, now);
@@ -738,6 +793,20 @@ export async function createSemanticMemoryStore(
               updatedAt: now.toISOString(),
             }),
           );
+        state.exec("COMMIT;");
+      } catch (error) {
+        rollback(state);
+        throw error;
+      }
+    },
+    async renewClaimLease(job, now) {
+      state.exec("BEGIN IMMEDIATE;");
+      try {
+        if (!job.sourceExecutionIds.some(isFenced) && isCurrentRunningJob(state, job))
+          writeJob({
+            ...readJob(state, job.id)!,
+            leaseUntil: new Date(now.getTime() + 5 * 60_000).toISOString(),
+          });
         state.exec("COMMIT;");
       } catch (error) {
         rollback(state);
@@ -1328,6 +1397,9 @@ export async function createSemanticMemoryStore(
 
     async listExtractionJobs() {
       return readJobRows(state);
+    },
+    async getExtractionJob(id) {
+      return readJob(state, id);
     },
 
     async listFailureAttempts(jobId) {

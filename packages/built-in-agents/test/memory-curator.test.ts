@@ -10,6 +10,7 @@ import { createBuiltInMemoryCurator } from "../src/memory-curator.ts";
 import { createMemoryCuratorTools } from "../src/memory-curator-tools.ts";
 import { MemoryEvidenceEnvelopeSchema } from "@pragma/shared";
 import { z } from "zod";
+import { defaultRuntimeTokenCounter } from "@pragma/core";
 const roots: string[] = [];
 afterEach(async () => {
   await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true })));
@@ -233,15 +234,12 @@ it("executes through scoped tools and recovers a durable result without parsing 
       expect(unread.text).toContain("read the cited passages with read_evidence");
       expect((await submit.call(args, undefined)).isError).not.toBe(true);
       await session.setContextBudget(1);
-      const budget = await tools
-        .find((tool) => tool.name === "read_evidence")!
-        .call({ evidence: "e1" }, undefined);
-      expect(budget).toMatchObject({ isError: true });
-      expect(budget.text).toContain("Do not repeat reads or failed submissions");
-      expect(budget.text).toContain("call finish_extraction once");
+      await expect(
+        tools.find((tool) => tool.name === "read_evidence")!.call({ evidence: "e1" }, undefined),
+      ).rejects.toThrow("budget_exhausted");
       const finish = tools.find((tool) => tool.name === "finish_extraction")!;
-      expect((await finish.call({ retain: true, reason: "low-value" }, undefined)).isError).toBe(
-        true,
+      await expect(finish.call({ retain: true, reason: "low-value" }, undefined)).rejects.toThrow(
+        "budget_exhausted",
       );
       expect(await session.receipt()).toBeUndefined();
       expect((await finish.call({ retain: true }, undefined)).isError).not.toBe(true);
@@ -249,6 +247,7 @@ it("executes through scoped tools and recovers a durable result without parsing 
         retain: true,
         facts: [{ statement: "User prefers Chinese" }],
       });
+      await session.setContextBudget(32000);
       const denied = createMemoryCuratorTools(session, async () => {
         throw new Error("memory_curator_tool_content_denied");
       }).find((tool) => tool.name === "submit_fact")!;
@@ -278,4 +277,22 @@ it("executes through scoped tools and recovers a durable result without parsing 
       "other",
     ),
   ).toBeUndefined();
+  const sessions = createMemoryExtractionSessionStore({ pragmaHome: root });
+  const errors = await sessions.create({
+    module: "semantic",
+    input: { ...input, jobId: "error-accounting" },
+    watermark: "w",
+  });
+  await errors.bindMission("error-accounting-mission");
+  const tool = createMemoryCuratorTools(errors).find((entry) => entry.name === "submit_fact")!;
+  const firstError = await tool.call({ wrong: true }, undefined);
+  const used = defaultRuntimeTokenCounter.countText(firstError.text).tokens;
+  expect(used).toBeGreaterThan(0);
+  await errors.setContextBudget(used + 1);
+  const restored = (await sessions.forMission("error-accounting-mission"))!;
+  const restoredTool = createMemoryCuratorTools(restored).find(
+    (entry) => entry.name === "submit_fact",
+  )!;
+  await expect(restoredTool.call({ wrong: true }, undefined)).rejects.toThrow("budget_exhausted");
+  expect(await restored.failure()).toBe("memory_curator_budget_exhausted");
 });

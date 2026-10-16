@@ -47,6 +47,7 @@ it.each([
   "exhausted",
   "session-lost",
   "cancelled",
+  "budget-exhausted",
 ] as const)(
   "shares one Mission and evidence read while continuing pending types: %s",
   async (scenario) => {
@@ -115,6 +116,17 @@ it.each([
           evidence: ["e1"],
         });
         await call("finish_extraction", { type: "semantic", retain: true });
+        if (scenario === "budget-exhausted") {
+          const session = (await createMemoryExtractionSessionStore({
+            pragmaHome: root,
+          }).forMission(id))!;
+          await session.setContextBudget(1);
+          await expect(
+            tools
+              .find((tool) => tool.name === "read_evidence")!
+              .call({ evidence: "e1" }, undefined),
+          ).rejects.toThrow("budget_exhausted");
+        }
       } else if (
         manualContinuation ||
         scenario === "completed" ||
@@ -322,8 +334,9 @@ it.each([
       }
       expect(startRun).toHaveBeenCalledOnce();
       expect(readCount).toBe(1);
+      if (scenario === "budget-exhausted") expect(application.interrupt).toHaveBeenCalledOnce();
       expect(continueMission).toHaveBeenCalledTimes(
-        scenario === "cancelled"
+        scenario === "cancelled" || scenario === "budget-exhausted"
           ? 0
           : scenario === "exhausted"
             ? 3
@@ -332,12 +345,14 @@ it.each([
               : 1,
       );
       expect(new Set(continueMission.mock.calls.map(([input]) => input.id)).size).toBe(
-        scenario === "cancelled" ? 0 : 1,
+        scenario === "cancelled" || scenario === "budget-exhausted" ? 0 : 1,
       );
       expect(await semantic.store.list()).toHaveLength(1);
       const episodeJob = (await episodic.store.listExtractionJobs()).find(
         (job) => job.executionId === "source",
       );
+      if (scenario === "budget-exhausted")
+        expect(episodeJob?.lastErrorCode).toBe("memory_curator_budget_exhausted");
       expect(episodeJob?.status).toBe(
         scenario === "completed" ||
           scenario.startsWith("manual-") ||
@@ -354,7 +369,11 @@ it.each([
       expect(runs).toHaveLength(scenario.startsWith("manual-") ? 2 : 1);
       expect(new Set(runs.map((run) => run.missionId)).size).toBe(1);
       expect(runs[0]!.continuations).toBe(
-        scenario === "cancelled" ? 0 : scenario === "exhausted" ? 3 : 1,
+        scenario === "cancelled" || scenario === "budget-exhausted"
+          ? 0
+          : scenario === "exhausted"
+            ? 3
+            : 1,
       );
       if (scenario === "session-lost") {
         const id = conversationExtractionJobId(

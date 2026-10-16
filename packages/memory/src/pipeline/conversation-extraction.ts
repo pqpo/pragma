@@ -5,7 +5,7 @@ import type { SemanticMemoryModule } from "../semantic/module.ts";
 import type { PreparedMemoryExtraction } from "./prepare-extraction.ts";
 import { createHash } from "node:crypto";
 import type { MemorySubjectRef } from "@pragma/shared";
-import { PragmaPaths, withFileLock } from "@pragma/core";
+import { PragmaPaths, withFileLock, FileLockTimeoutError } from "@pragma/core";
 import { join } from "node:path";
 
 export function conversationExtractionJobId(ref: MemorySubjectRef, watermark: string): string {
@@ -84,56 +84,73 @@ export function createConversationMemoryExtractionCoordinator(options: {
       if (running !== undefined) return await running;
       const current = extractor;
       if (current === undefined) return;
-      running = withFileLock(
-        join(new PragmaPaths(options).memoryStateRoot(), "conversation-extraction.lock"),
-        async () => {
-          const now = options.now?.() ?? new Date();
-          const conversationRef = await nextConversation(now);
-          if (conversationRef === undefined) return;
-          const episodic = await options.episodic.prepareBackgroundOnce(conversationRef);
-          let semantic: ConversationExtractionBatch["semantic"];
-          try {
-            semantic = await options.semantic.prepareBackgroundOnce(conversationRef);
-            if (episodic === undefined || semantic === undefined) {
-              const jobs = await Promise.all([
-                options.episodic.store.listExtractionJobs(),
-                options.semantic.store.listExtractionJobs(),
-              ]);
-              if (
-                [episodic, semantic].some(
-                  (work, index) =>
-                    work === undefined &&
-                    jobs[index]!.some(
-                      (job) =>
-                        job.conversationRef.type === conversationRef.type &&
-                        job.conversationRef.id === conversationRef.id &&
-                        job.status !== "completed" &&
-                        job.status !== "expired",
-                    ),
-                )
-              ) {
-                await Promise.all([episodic?.defer(), semantic?.defer()]);
-                return;
+      const lock = join(new PragmaPaths(options).memoryStateRoot(), "conversation-extraction.lock");
+      const failBatch = async (batch: ConversationExtractionBatch, error: unknown) => {
+        const failure = Object.assign(
+          new Error(error instanceof Error ? error.message : String(error), { cause: error }),
+          { retryable: (error as { preAdmission?: boolean } | null)?.preAdmission === true },
+        );
+        await Promise.all([batch.episodic?.fail(failure), batch.semantic?.fail(failure)]);
+      };
+      running = (async () => {
+        const batch = await withFileLock(
+          lock,
+          async () => {
+            const now = options.now?.() ?? new Date();
+            const conversationRef = await nextConversation(now);
+            if (conversationRef === undefined) return;
+            const episodic = await options.episodic.prepareBackgroundOnce(conversationRef);
+            let semantic: ConversationExtractionBatch["semantic"];
+            try {
+              semantic = await options.semantic.prepareBackgroundOnce(conversationRef);
+              if (episodic === undefined || semantic === undefined) {
+                const jobs = await Promise.all([
+                  options.episodic.store.listExtractionJobs(),
+                  options.semantic.store.listExtractionJobs(),
+                ]);
+                if (
+                  [episodic, semantic].some(
+                    (work, index) =>
+                      work === undefined &&
+                      jobs[index]!.some(
+                        (job) =>
+                          job.conversationRef.type === conversationRef.type &&
+                          job.conversationRef.id === conversationRef.id &&
+                          job.status !== "completed" &&
+                          job.status !== "expired",
+                      ),
+                  )
+                ) {
+                  await Promise.all([episodic?.defer(), semantic?.defer()]);
+                  return;
+                }
               }
+              if (
+                episodic !== undefined &&
+                semantic !== undefined &&
+                episodic.options?.watermark !== semantic.options?.watermark
+              )
+                throw new Error("memory_curator_snapshot_scope_changed");
+              if (episodic === undefined && semantic === undefined) return;
+              return { episodic, semantic };
+            } catch (error) {
+              // Model admission/retry belongs exclusively to the shared Session. Never replay a delivery.
+              await failBatch({ episodic, semantic }, error);
             }
-            if (
-              episodic !== undefined &&
-              semantic !== undefined &&
-              episodic.options?.watermark !== semantic.options?.watermark
-            )
-              throw new Error("memory_curator_snapshot_scope_changed");
-            if (episodic === undefined && semantic === undefined) return;
-            await current.extract({ episodic, semantic });
+          },
+          { timeoutMs: 0, operation: "memory-conversation-admission" },
+        ).catch((error: unknown) => {
+          if (error instanceof FileLockTimeoutError && error.lockDir === lock) return undefined;
+          throw error;
+        });
+        if (batch !== undefined) {
+          try {
+            await current.extract(batch);
           } catch (error) {
-            // Model admission/retry belongs exclusively to the shared Session. Never replay a delivery.
-            const failure = Object.assign(
-              new Error(error instanceof Error ? error.message : String(error), { cause: error }),
-              { retryable: (error as { preAdmission?: boolean } | null)?.preAdmission === true },
-            );
-            await Promise.all([episodic?.fail(failure), semantic?.fail(failure)]);
+            await failBatch(batch, error);
           }
-        },
-      );
+        }
+      })();
       try {
         await running;
       } finally {

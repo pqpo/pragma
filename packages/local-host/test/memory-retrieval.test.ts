@@ -113,6 +113,69 @@ async function fixture() {
   };
 }
 describe("Memory retrieval across Hosts", () => {
+  it("applies the extraction scope intersection before the vector index Top-K cutoff", async () => {
+    const f = await fixture();
+    const a = { rootRef: { type: "pragma.expert", id: "expert-a" } };
+    const b = { rootRef: { type: "pragma.expert", id: "expert-b" } };
+    const commonId = "fact-ffffffffffffffffffffffff";
+    const db = new DatabaseSync(
+      join(f.paths.memoryModuleDataRoot("pragma.memory.semantic"), "facts.sqlite"),
+    );
+    try {
+      const original = (await f.semantic.listCandidatesForRecall(a, new Date()))[0]!;
+      const insert = db.prepare(
+        "INSERT INTO current_facts(id,revision,status,updated_at,record_json) VALUES(?,?,?,?,?)",
+      );
+      for (let index = 0; index < 12; index++) {
+        const record = { ...original, id: `fact-${index.toString(16).padStart(24, "0")}` };
+        insert.run(
+          record.id,
+          record.revision,
+          record.status,
+          record.updatedAt,
+          JSON.stringify(record),
+        );
+      }
+      const common = {
+        ...original,
+        id: commonId,
+        bindings: [...original.bindings, { ...original.bindings[0]!, consumerRef: b.rootRef }],
+      };
+      insert.run(
+        common.id,
+        common.revision,
+        common.status,
+        common.updatedAt,
+        JSON.stringify(common),
+      );
+      await f.desktop.tick();
+      const identities = vi.spyOn(f.semantic, "listExtractionIdentities");
+      const reader = memory.createExtractionMemoryReader({
+        semantic: f.semantic,
+        episodic: f.episodic,
+        assertAccess: async () => {},
+        vectorSearch: f.desktop.searchForExtraction,
+      });
+      const subjects = [{ type: "pragma.user", id: "local-user" }];
+      const bound = reader.bind(a, subjects).intersect([reader.bind(b, subjects)]);
+      const result = await bound.search({
+        query: "Chinese",
+        type: "semantic",
+        mode: "vector",
+        limit: 1,
+      });
+      expect(result.items.map((item) => item.memory.record.id)).toEqual([commonId]);
+      expect(identities).toHaveBeenCalledWith(
+        expect.objectContaining({ scopes: [a, b] }),
+        expect.any(Date),
+      );
+    } finally {
+      db.close();
+      await f.desktop.stop();
+      f.episodic.close();
+      f.semantic.close();
+    }
+  });
   it("shares configured vector retrieval with extraction and returns explicit disabled-mode status", async () => {
     const f = await fixture();
     try {

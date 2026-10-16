@@ -1,5 +1,7 @@
 import {
   conversationExtractionJobId,
+  groupConversationExtractionJobs,
+  type MemoryJobPageInput,
   type EpisodicExtractionJob,
   type SemanticExtractionJob,
 } from "@pragma/memory";
@@ -39,7 +41,8 @@ describe("unified memory extraction tasks", () => {
       completion: "retained",
       results: { episodic: "retained", semantic: "rejected" },
     });
-    expect(plane.episodicStore.listExtractionJobs).toHaveBeenCalledOnce();
+    expect(plane.episodicStore.listExtractionJobs).not.toHaveBeenCalled();
+    expect(plane.knowledgeLearningStore.listJobs).not.toHaveBeenCalled();
     const detail = await getDesktopMemoryExtractionTaskDetail(
       plane,
       { ...emptyTitleOptions(), curator: { listRuns: async () => [] } },
@@ -206,6 +209,7 @@ describe("unified memory extraction tasks", () => {
       {
         skillLearningStore: {
           listJobs: vi.fn(async () => [skill]),
+          getJob: vi.fn(async () => skill),
           listFailureAttempts: vi.fn(async () => [failureAttempt]),
         },
       } as unknown as Parameters<typeof getDesktopMemoryExtractionTaskDetail>[0],
@@ -237,21 +241,68 @@ function planeFor(
   knowledge: readonly KnowledgeExtractionJob[] = [],
   skills: readonly SkillLearningJob[] = [],
 ) {
+  const page = <T>(
+    items: readonly T[],
+    input: MemoryJobPageInput<string>,
+    prefix: string,
+    fields: (item: T) => { id: string; updatedAt: string; status: string },
+  ) => {
+    const all = items
+      .filter((item) => input.statuses.includes(fields(item).status))
+      .toSorted(
+        (a, b) =>
+          fields(b).updatedAt.localeCompare(fields(a).updatedAt) ||
+          fields(b).id.localeCompare(fields(a).id),
+      );
+    return {
+      total: all.length,
+      jobs: all
+        .filter(
+          (item) =>
+            input.before === undefined ||
+            fields(item).updatedAt < input.before.updatedAt ||
+            (fields(item).updatedAt === input.before.updatedAt &&
+              `${prefix}:${fields(item).id}` < input.before.tieBreaker),
+        )
+        .slice(0, input.limit),
+    };
+  };
   return {
+    conversationExtractionJobs: {
+      getTask: vi.fn(async (id: string) =>
+        groupConversationExtractionJobs(episodes, facts).find((item) => item.job.id === id),
+      ),
+      listJobsPage: vi.fn(async (input: MemoryJobPageInput<string>) =>
+        page(groupConversationExtractionJobs(episodes, facts), input, "conversation", (item) => ({
+          ...item.job,
+          status: item.lane,
+        })),
+      ),
+    },
     episodicStore: {
       listExtractionJobs: vi.fn(async () => episodes),
+      getExtractionJob: vi.fn(async (id: string) => episodes.find((job) => job.id === id)),
       listFailureAttempts: async () => [],
     },
     semanticStore: {
       listExtractionJobs: vi.fn(async () => facts),
+      getExtractionJob: vi.fn(async (id: string) => facts.find((job) => job.id === id)),
       listFailureAttempts: async () => [],
     },
     knowledgeLearningStore: {
       listJobs: vi.fn(async () => knowledge),
+      getJob: vi.fn(async (id: string) => knowledge.find((job) => job.id === id)),
+      listJobsPage: vi.fn(async (input: MemoryJobPageInput<string>) =>
+        page(knowledge, input, "knowledge", (job) => job),
+      ),
       listFailureAttempts: async () => [],
     },
     skillLearningStore: {
       listJobs: vi.fn(async () => skills),
+      getJob: vi.fn(async (id: string) => skills.find((job) => job.id === id)),
+      listJobsPage: vi.fn(async (input: MemoryJobPageInput<string>) =>
+        page(skills, input, "skill", (job) => job),
+      ),
       listFailureAttempts: async () => [],
     },
   } as unknown as Parameters<typeof listDesktopMemoryExtractionJobs>[0];

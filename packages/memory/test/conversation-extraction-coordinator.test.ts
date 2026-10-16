@@ -1,6 +1,8 @@
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { spawn } from "node:child_process";
+import { fileURLToPath } from "node:url";
 import { afterEach, expect, it, vi } from "vitest";
 import {
   createConversationMemoryExtractionCoordinator,
@@ -236,3 +238,106 @@ it.each(["episodic", "semantic"] as const)(
     }
   },
 );
+
+it("lets a competing process skip a live admission without waiting for its model turn", async () => {
+  const f = await fixture();
+  await f.seed("multi-host");
+  const child = spawn(
+    process.execPath,
+    [
+      "--import",
+      "tsx",
+      fileURLToPath(new URL("./support/conversation-coordinator-process.ts", import.meta.url)),
+      f.pragmaHome,
+    ],
+    { stdio: ["ignore", "ignore", "pipe", "ipc"] },
+  );
+  let diagnostics = "";
+  child.stderr!.on("data", (chunk) => {
+    diagnostics += String(chunk);
+  });
+  const exited = new Promise<number | null>((resolve) => child.once("exit", resolve));
+  try {
+    await new Promise<void>((resolve, reject) => {
+      child.once("error", reject);
+      child.once("message", () => resolve());
+      child.once("exit", () => reject(new Error(diagnostics)));
+    });
+    const before = await f.modules.episodic.store.listExtractionJobs();
+    const extract = vi.fn(async () => {
+      throw new Error("duplicate model admission");
+    });
+    const competitor = createConversationMemoryExtractionCoordinator({
+      pragmaHome: f.pragmaHome,
+      now: f.now,
+      ...f.modules,
+    });
+    competitor.setExtractor({ extract });
+    const started = performance.now();
+    await expect(competitor.runOnce()).resolves.toBeUndefined();
+    expect(performance.now() - started).toBeLessThan(2000);
+    expect(extract).not.toHaveBeenCalled();
+    expect(await f.modules.episodic.store.listExtractionJobs()).toEqual(before);
+  } finally {
+    if (child.connected) child.send("release");
+    expect(await exited, diagnostics).toBe(0);
+    f.close();
+  }
+}, 20_000);
+
+it("renews a live claim without changing its fence and refuses stale lease renewal", async () => {
+  const f = await fixture();
+  vi.useFakeTimers({ toFake: ["setInterval", "clearInterval"] });
+  let finish: (() => void) | undefined;
+  let running: Promise<void> | undefined;
+  try {
+    await f.seed("renewal");
+    let admitted!: () => void;
+    const ready = new Promise<void>((resolve) => {
+      admitted = resolve;
+    });
+    const gate = new Promise<void>((resolve) => {
+      finish = resolve;
+    });
+    const coordinator = createConversationMemoryExtractionCoordinator({
+      pragmaHome: f.pragmaHome,
+      now: f.now,
+      ...f.modules,
+    });
+    coordinator.setExtractor({
+      async extract(batch) {
+        batch.episodic!.options?.onAdmission?.();
+        batch.semantic!.options?.onAdmission?.();
+        admitted();
+        await gate;
+        await batch.episodic!.settle({
+          output: { retain: false, reason: "low-value" },
+          provenance,
+        });
+        await batch.semantic!.settle({
+          output: { retain: false, reason: "no-stable-fact" },
+          provenance,
+        });
+      },
+    });
+    running = coordinator.runOnce();
+    await ready;
+    const before = (await f.modules.episodic.store.listExtractionJobs())[0]!;
+    f.advance(6 * 60_000);
+    await vi.advanceTimersByTimeAsync(60_000);
+    const renewed = (await f.modules.episodic.store.listExtractionJobs())[0]!;
+    expect(renewed.revision).toBe(before.revision);
+    expect(renewed.leaseUntil! > f.now().toISOString()).toBe(true);
+    expect(await f.modules.episodic.store.claimDueJob(f.now())).toBeUndefined();
+    finish!();
+    await running;
+    const completed = (await f.modules.episodic.store.listExtractionJobs())[0]!;
+    await f.modules.episodic.store.renewClaimLease(before, f.now());
+    expect((await f.modules.episodic.store.listExtractionJobs())[0]).toEqual(completed);
+  } finally {
+    finish?.();
+    await running;
+    vi.useRealTimers();
+    f.close();
+  }
+});

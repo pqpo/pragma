@@ -20,7 +20,10 @@ Their existing materializers retain authority over permission checks, CAS, appli
 learning notifications. This avoids introducing a transaction spanning both Memory authorities.
 The shared Session is the durable authority for the source snapshot, Mission attachment, staged
 work, read coverage, completed type receipts and model continuation budget. A cross-process
-coordinator lock prevents competing Hosts from admitting the same work concurrently.
+coordinator lock covers only selection and claim preparation. Contending Hosts skip a busy admission
+without reporting a Module failure; no global lock is held during model execution. Per-source leases
+renew during an active extraction without changing claim fences, preventing another Host from
+recovering a healthy long-running conversation.
 Both unfinished deliveries must be due and successfully prepared before model admission. A delayed
 or attention-blocked companion does not block unrelated conversations. If preparation fails after
 the other claim was reserved, that unadmitted claim is released without consuming an attempt.
@@ -52,7 +55,10 @@ An uncertain pending command keeps its original reservation across manual contin
 receipt is reconciled. Cached Native tools resolve the current claim and permission guards on each
 call rather than retaining closures from the preceding admission.
 The 64-call and 32,000-delivered-token budgets are shared across automatic continuations and are
-not reset by reopening the Session. Already staged work and source-read coverage remain available.
+not reset by reopening the Session. Correction/error responses consume the same delivered-token
+budget and are bounded by its remaining allowance. Exhaustion requests Native interruption once
+and parks unfinished types with a stable budget code. Already committed results remain valid.
+Already staged work and source-read coverage remain available.
 
 Cancellation, exhausted budgets, missing Native state, an unknown billing outcome and non-retryable
 failures require attention. They never authorize a fresh model conversation. A pending idempotent
@@ -89,6 +95,18 @@ Historical fixtures were written by the pre-change writers at
 decisions, partial delivery, duplicate continuation admission, budget persistence, source-scope
 restrictions, migration rollback/replay, current-version no-op and future-version refusal.
 The Host kernel test releases and restores a real Core Session with a test Runtime driver, checks
-Native identity, and verifies that duplicate requests do not dispatch another turn. A real provider
-smoke and measured Usage comparison remain release validation; driver tests do not establish
-provider billing savings. Native continuation can still charge for earlier context.
+Native identity, and verifies that duplicate requests do not dispatch another turn. A real
+two-turn Codex provider smoke also passed after Runtime refresh: the Native Context, system Session
+and provider Session identities remained unchanged, and the second prompt recalled a marker supplied
+only in the first turn. This validates Native continuation, not the full Curator provider tool flow.
+A measured Usage comparison remains release validation; these tests do not establish provider billing
+savings. Native continuation can still charge for earlier context.
+
+## Local Host convergence follow-up
+
+Move the Desktop `runCuratorMission` continuation loop, Runtime selection, transcript/archive
+lifecycle and Mission cleanup behind Local Host built-in executor ports. Desktop should supply
+platform resources and UI adapters; CLI and Linux headless execution should reuse the same Mission
+application and execution owner, without another consumer or retry implementation. This follow-up
+requires shared-kernel tests covering continuation, cancellation, archive failure and restart from
+both Host compositions. It is not required for the current retrieval and admission fixes.

@@ -19,6 +19,11 @@ import {
   type MemoryIndexChange,
 } from "../retrieval/outbox.ts";
 import { createHash, randomUUID } from "node:crypto";
+import type {
+  ExtractionCatalogQuery,
+  ExtractionRecallFilter,
+} from "../retrieval/extraction-query.ts";
+import { redactMemoryProjection } from "../retrieval/projection.ts";
 import { mkdir } from "node:fs/promises";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
@@ -107,6 +112,14 @@ export type EpisodicRejectionReason =
   "low-value" | "insufficient-evidence" | "sensitive" | "policy";
 
 export interface EpisodicMemoryStore {
+  queryForExtraction(
+    input: ExtractionCatalogQuery,
+    now: Date,
+  ): Promise<readonly EpisodicMemoryRecord[]>;
+  listExtractionIdentities(
+    filter: ExtractionRecallFilter,
+    now: Date,
+  ): Promise<readonly { id: string; revision: number }[]>;
   readIndexRemovals(limit: number): Promise<readonly MemoryIndexChange[]>;
   readIndexChanges(limit: number): Promise<readonly MemoryIndexChange[]>;
   acknowledgeIndexChange(change: MemoryIndexChange): Promise<void>;
@@ -142,6 +155,7 @@ export interface EpisodicMemoryStore {
   ): Promise<(EpisodicExtractionJob & { readonly localRecoveryOnly?: true }) | undefined>;
   isClaimCurrent(job: EpisodicExtractionJob): Promise<boolean>;
   releaseUnadmittedClaim(job: EpisodicExtractionJob, now: Date, refund: boolean): Promise<void>;
+  renewClaimLease(job: EpisodicExtractionJob, now: Date): Promise<void>;
   bindExecutionConversation(input: {
     readonly executionId: string;
     readonly conversationRef: MemorySubjectRef;
@@ -244,6 +258,7 @@ export interface EpisodicMemoryStore {
     keepIds?: readonly string[],
   ): Promise<number>;
   listExtractionJobs(): Promise<readonly EpisodicExtractionJob[]>;
+  getExtractionJob(id: string): Promise<EpisodicExtractionJob | undefined>;
   listFailureAttempts(jobId: string): Promise<readonly MemoryExtractionFailureAttempt[]>;
   listExtractionJobsPage(
     input: MemoryJobPageInput<EpisodicExtractionJob["status"]>,
@@ -269,6 +284,14 @@ export async function createEpisodicMemoryStore(
   const data = new DatabaseSync(dataPath);
   const state = new DatabaseSync(statePath);
   try {
+    data.function("pragma_extraction_contains", { deterministic: true }, (text, query) =>
+      redactMemoryProjection(String(text))
+        .toLocaleLowerCase()
+        .includes(String(query).toLocaleLowerCase())
+        ? 1
+        : 0,
+    );
+
     await withFileLock(`${dataPath}.migration.lock`, async () => {
       if (readVersion(data) === 0) {
         assertFreshSqliteDatabase(data, "pragma.memory-episodic-store");
@@ -391,6 +414,34 @@ export async function createEpisodicMemoryStore(
         .prepare("SELECT record_json AS recordJson FROM episodes WHERE id > ? ORDER BY id LIMIT ?")
         .all(afterId ?? "", Math.max(1, Math.min(limit, 200))) as { recordJson: string }[];
       return rows.map((row) => EpisodicMemoryRecordSchema.parse(JSON.parse(row.recordJson)));
+    },
+    async queryForExtraction(input) {
+      const predicates = input.filter.scopes.map((scope) => recallPredicate("episodes", scope));
+      const match = `pragma_extraction_contains('Goal: ' || json_extract(record_json,'$.goal.text') || char(10) || 'Summary: ' || json_extract(record_json,'$.summary.text') || char(10) || 'Outcome: ' || json_extract(record_json,'$.outcome.summary'), ?)
+        OR EXISTS (SELECT 1 FROM json_each(record_json,'$.attempts') AS part WHERE pragma_extraction_contains('Goal: ' || json_extract(record_json,'$.goal.text') || char(10) || 'Attempt: ' || json_extract(part.value,'$.description') || char(10) || 'Result: ' || coalesce(json_extract(part.value,'$.result'),'Not recorded'), ?))
+        OR EXISTS (SELECT 1 FROM json_each(record_json,'$.failuresAndRecoveries') AS part WHERE pragma_extraction_contains('Goal: ' || json_extract(record_json,'$.goal.text') || char(10) || 'Failure: ' || json_extract(part.value,'$.failure') || char(10) || 'Recovery: ' || coalesce(json_extract(part.value,'$.recovery'),'Not recorded'), ?))`;
+      return readEpisodeRows(
+        data
+          .prepare(
+            `SELECT record_json AS recordJson FROM episodes WHERE status='active' AND json_extract(record_json,'$.sensitivity') <> 'restricted'
+        AND ${predicates.map((p) => `(${p.sql})`).join(" AND ") || "0"}
+        ${input.query === undefined ? "" : `AND (${match})`} AND id > ? ORDER BY id ${input.limit === undefined ? "" : "LIMIT ?"}`,
+          )
+          .all(
+            ...predicates.flatMap((p) => p.parameters),
+            ...(input.query === undefined ? [] : [input.query, input.query, input.query]),
+            input.afterId ?? "",
+            ...(input.limit === undefined ? [] : [Math.max(1, Math.min(80, input.limit))]),
+          ),
+      );
+    },
+    async listExtractionIdentities(filter) {
+      const predicates = filter.scopes.map((scope) => recallPredicate("episodes", scope));
+      return data
+        .prepare(
+          `SELECT id,revision FROM episodes WHERE status='active' AND json_extract(record_json,'$.sensitivity') <> 'restricted' AND ${predicates.map((p) => `(${p.sql})`).join(" AND ") || "0"} ORDER BY id`,
+        )
+        .all(...predicates.flatMap((p) => p.parameters)) as { id: string; revision: number }[];
     },
     async peekForRecall(scope, id) {
       const access = recallPredicate("episodes", scope);
@@ -591,6 +642,20 @@ export async function createEpisodicMemoryStore(
               updatedAt: now.toISOString(),
             }),
           );
+        state.exec("COMMIT;");
+      } catch (error) {
+        rollback(state);
+        throw error;
+      }
+    },
+    async renewClaimLease(job, now) {
+      state.exec("BEGIN IMMEDIATE;");
+      try {
+        if (!job.sourceExecutionIds.some(isFenced) && isCurrentRunningJob(state, job))
+          writeJob({
+            ...readJob(state, job.id)!,
+            leaseUntil: new Date(now.getTime() + 5 * 60_000).toISOString(),
+          });
         state.exec("COMMIT;");
       } catch (error) {
         rollback(state);
@@ -1176,6 +1241,9 @@ export async function createEpisodicMemoryStore(
 
     async listExtractionJobs() {
       return readJobRows(state);
+    },
+    async getExtractionJob(id) {
+      return readJob(state, id);
     },
 
     async listFailureAttempts(jobId) {

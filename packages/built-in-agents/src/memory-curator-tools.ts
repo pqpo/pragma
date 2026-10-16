@@ -145,7 +145,7 @@ function toolError(
     .join("\n");
 }
 export function createMemoryCuratorTools(
-  session: Pick<MemoryExtractionSession, "toolNames" | "module" | "call">,
+  session: Pick<MemoryExtractionSession, "toolNames" | "module" | "call" | "deliverErrorResponse">,
   beforeCall?: (() => Promise<void>) | undefined,
 ): ExpertAgentManagedTool<string, ExpertAgentToolCallResult>[] {
   return session.toolNames.map((name) => ({
@@ -168,7 +168,12 @@ export function createMemoryCuratorTools(
         return { text };
       } catch (error) {
         if (signal?.aborted) throw error;
-        return { text: toolError(name, session.module, error, canCorrect), isError: true };
+        return {
+          text: await session.deliverErrorResponse(
+            toolError(name, session.module, error, canCorrect),
+          ),
+          isError: true,
+        };
       }
     },
   }));

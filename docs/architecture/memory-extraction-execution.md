@@ -8,7 +8,9 @@ The model reads a shared evidence directory and calls `finish_extraction` separa
 `type=episodic` and `type=semantic`. Either type can retain or skip. Each validated receipt can be
 materialized immediately; the other type continues without regenerating completed work.
 Per-type source permissions still restrict candidate citations, and historical Memory discovery
-uses the intersection of the participating source scopes.
+uses the intersection of the participating source scopes. The global admission lock ends before
+model execution. Active per-source leases renew without changing their claim fences; another Host
+skips a busy admission without degrading the Module.
 
 A terminal missing receipt or explicitly retryable Runtime failure allows up to three repair
 prompts, five seconds apart, in the original Mission/ExpertSession/Native Runtime Context. The
@@ -18,6 +20,9 @@ deterministic command UUIDs, retry generations and pending prompt text survive r
 reserved idempotent continuation can resume automatically; unknown in-flight work parks for
 inspection. The terminal observer follows the continuation's execution id. Runtime loss, cancellation,
 budget exhaustion and non-retryable failures never create a new conversation automatically.
+
+The task board aggregates lightweight source-job metadata in SQLite, applies lane/cursor/limit in
+the database, and parses full job records only for the selected page. Task details use point reads.
 
 The UI groups both delivery records into one task, exposes both outcomes and the continuation
 count, and distinguishes continuation from an explicit fresh restart. Restart regenerates only
@@ -94,12 +99,13 @@ Argument validation and correctable evidence/reference errors include explicit c
 The Curator repairs those calls within the same execution and its existing call/context budgets;
 successful staged parts remain available, and corrections reuse candidate handles. A failed
 `finish_extraction` must be repaired before the Agent claims completion. Permission, stale-claim,
-capacity and budget failures do not invite repeated tool calls. After evidence-delivery budget
-exhaustion, already read Evidence may still support staging missing candidates and finishing once;
-call-budget exhaustion permits only finishing already staged work. Unread evidence or an incomplete
-result instead requires reporting the budget failure, not rejecting the source as low-value. No additional execution retry loop
-is introduced: outer job retries remain for retryable execution failures, and an execution that ends
-without a durable receipt remains non-retryable automatically.
+capacity and budget failures do not invite repeated tool calls. Correction/error text also consumes
+and respects the delivered-token budget. When no correction response fits, tools throw the stable
+budget error and the Host requests Native interruption once, preserving completed type receipts.
+The Session layer can still validate already staged work locally, but it does not deliver unlimited
+stop guidance or authorize another model turn. Unread evidence or an incomplete result requires
+attention with the budget failure, not rejection of the source as low-value. Shared conversation
+continuation follows the bounded rules above; Knowledge/Skill outer retries retain their own policy.
 
 The receipt and snapshot live in `state/memory/curator-sessions-v1.sqlite` (database version 2). Module recovery reads receipts before admitting any model execution. Retained outputs still go through the existing Module transaction and applied-job marker. Transcript reads are archive operations; an unreadable transcript cannot invalidate a durable extraction receipt or authorize another model call. The original Mission remains available when its transcript could not be archived.
 
@@ -109,7 +115,10 @@ The receipt and snapshot live in `state/memory/curator-sessions-v1.sqlite` (data
 `keyword`, or `vector`), `type` (`all` by default, `semantic`, or `episodic`), and `limit`
 (default 10, maximum 20). Hybrid search uses the same Host embedding service, index generation,
 query cache and limiter as Context Store search; both paths share reciprocal-rank fusion.
-Keyword matching uses Memory projection text rather than internal record JSON. Responses name
+Keyword matching uses Memory projection text rather than internal record JSON. Authority stores
+apply all participating scopes and subject restrictions before the bounded candidate limit. Vector
+search receives filtered identity/revision sets and point-reads only ranked candidates; search does
+not enumerate and parse the full Memory catalog. Explicit enumeration remains a separate API. Responses name
 the actual retrieval mode, match sources and any vector-unavailability reason. Hybrid mode can
 continue with keywords; explicit vector mode reports a stable error instead of claiming a
 successful empty search. Results are ranked candidates, never an exhaustive conflict check.
