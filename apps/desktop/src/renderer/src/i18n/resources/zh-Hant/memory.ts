@@ -11,6 +11,8 @@ export const memory = {
   description: "檢視 Agent 透過分層 ContextStore 可以發現的記憶。",
   memoryType: "記憶類型",
   allMemoryTypes: "全部記憶",
+  loadMore: "載入更多",
+  retryLoad: "重試",
   all: "全部記憶",
   episodes: "情境記憶",
   facts: "事實",

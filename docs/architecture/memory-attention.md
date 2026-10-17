@@ -42,4 +42,6 @@ CLI → Desktop 测试通过真实 Canonical Feed 和 Memory job 完成后续提
 
 向量索引是 `cache/memory/retrieval/vectors.sqlite` 中的可重建 Float32 BLOB，authority 事务 outbox 驱动增量，持久 cursor 驱动全量回填。详情见 ADR 061。后台候选读取不增加实际 recall 计数。Lens 展示选中历史片段或完整语义事实，片段路径、Unicode 范围与文本 hash 必须对应当前修订；标题不替代正文，Evidence 正文不嵌入。
 
+Desktop「全部记忆」搜索复用 Local Host 的向量检索链路（相同 Embedding 配置、索引 generation、查询缓存、请求限流、超时和正文 hash 校验），关键词使用 Context Store 的 Episode/Fact 正文渲染函数覆盖尝试、恢复与结构化事实字段，并使用相同的 reciprocal-rank fusion 合并关键词与向量结果。该入口属于本机管理视图，向量候选按所选 Module 在全局目录内选取；Agent 的 Context Store 仍按 RecallScope 授权。仅 active、未过期且非 restricted 的记录参与向量检索，关键词搜索保留管理页原有的状态筛选范围。向量服务未配置或不可用时回退关键词；空查询不请求 Embedding，继续按更新时间浏览。融合后再次核对当前记录修订、类型和状态，再截取结果上限。 全部记忆与任务详情列表每页展示 30 条，IPC 使用 offset/limit 并多读一条判断后续页；触底追加，失败保留已加载内容并允许重试。搜索始终使用固定 200 个向量候选上限后融合，再截取页面，避免翻页大小改变排序。任务详情在分页前筛选 running/attention，并在轮询时刷新所有已加载页面，保留仍然存在的选中任务。
+
 新增迁移、worker、授权、generation 切换与跨 Host 测试及性能结果见 [验证记录](../validation/issue-326-memory-retrieval.md)。

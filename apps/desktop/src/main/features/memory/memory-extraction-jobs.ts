@@ -8,6 +8,8 @@ import type { SkillLearningJob } from "@pragma/shared";
 
 import {
   DESKTOP_MEMORY_EXTRACTION_PAGE_SIZE,
+  ListDesktopMemoryExtractionActiveTasksSchema,
+  type ListDesktopMemoryExtractionActiveTasks,
   DesktopMemoryExtractionBoardSchema,
   type DesktopMemoryExtractionBoard,
   type DesktopMemoryExtractionTask,
@@ -114,7 +116,9 @@ export async function listDesktopMemoryExtractionActiveTasks(
     "episodicStore" | "semanticStore" | "knowledgeLearningStore" | "skillLearningStore"
   >,
   options: ExtractionTaskTitleOptions,
+  input: ListDesktopMemoryExtractionActiveTasks = {},
 ): Promise<readonly DesktopMemoryExtractionTask[]> {
+  const page = ListDesktopMemoryExtractionActiveTasksSchema.parse(input);
   const [episodic, semantic, knowledge, skill] = await Promise.all([
     plane.episodicStore.listExtractionJobs(),
     plane.semanticStore.listExtractionJobs(),
@@ -130,8 +134,9 @@ export async function listDesktopMemoryExtractionActiveTasks(
     })),
     ...skill.map((job) => ({ module: "skill" as const, lane: laneForStatus(job.status), job })),
   ]
-    .filter((entry) => entry.lane !== "completed")
-    .toSorted(compareJobs);
+    .filter((entry) => entry.lane !== "completed" && page.lanes.includes(entry.lane))
+    .toSorted(compareJobs)
+    .slice(page.offset, page.offset + page.limit);
   const { missionTitles, executionTitles, resourceTitles } = await loadTaskTitles(jobs, options);
   return DesktopMemoryExtractionActiveTaskListSchema.parse(
     jobs.map((entry) => toDesktopTask(entry, missionTitles, executionTitles, resourceTitles)),

@@ -1,3 +1,4 @@
+import { fuseMemoryRanks, renderEpisode, renderSemanticFact } from "@pragma/memory";
 import {
   UpdateMemoryRetrievalSettingsSchema,
   MemoryAttentionStatusSchema,
@@ -38,6 +39,7 @@ import {
   DesktopMemoryExtractionTaskRefSchema,
   DesktopMemoryExtractionTaskDetailSchema,
   DesktopMemoryExtractionActiveTaskListSchema,
+  ListDesktopMemoryExtractionActiveTasksSchema,
   DesktopMemoryExtractionRunRefSchema,
   MissionConversationSnapshotSchema,
 } from "../../../shared/contracts/index.ts";
@@ -168,9 +170,13 @@ export function installMemoryPolicyHandlers(
   ipcMain.handle("memory-extraction-jobs:manage", async (_event, input: unknown) => {
     await plane.manageMemoryJob(ManageDesktopMemoryExtractionTaskSchema.parse(input));
   });
-  ipcMain.handle("memory-extraction-active-tasks:list", async () =>
+  ipcMain.handle("memory-extraction-active-tasks:list", async (_event, input: unknown) =>
     DesktopMemoryExtractionActiveTaskListSchema.parse(
-      await listDesktopMemoryExtractionActiveTasks(plane, options),
+      await listDesktopMemoryExtractionActiveTasks(
+        plane,
+        options,
+        ListDesktopMemoryExtractionActiveTasksSchema.parse(input ?? {}),
+      ),
     ),
   );
   ipcMain.handle("memory-extraction-task-detail:get", async (_event, input: unknown) => {
@@ -220,6 +226,11 @@ export function installMemoryPolicyHandlers(
   });
   ipcMain.handle("memory-items:list", async (_event, input: unknown) => {
     const parsed = ListDesktopMemoryItemsSchema.parse(input ?? {});
+    const query = parsed.query.trim();
+    const modules = parsed.module === "all" ? (["episodic", "semantic"] as const) : [parsed.module];
+    // Keep the candidate window fixed so page size/offset cannot change fused ranking.
+    const vectors =
+      query === "" ? [] : ((await plane.retrieval?.searchCatalog(query, modules, 200)) ?? []);
     const [episodes, facts, subjectNameIndex] = await Promise.all([
       parsed.module === "all" || parsed.module === "episodic"
         ? plane.episodicStore.list()
@@ -229,18 +240,42 @@ export function installMemoryPolicyHandlers(
         : Promise.resolve([]),
       loadSubjectNameIndex(),
     ]);
+    const key = (item: { module: string; id: string }) => `${item.module}/${item.id}`;
     const items = [
       ...episodes.map((record) => toDesktopEpisode(record, subjectNameIndex)),
       ...facts.map((record) => toDesktopFact(record, subjectNameIndex)),
     ]
       .filter((item) => parsed.status === "all" || item.status === parsed.status)
-      .filter((item) => {
-        const query = parsed.query.toLocaleLowerCase();
-        return query === "" || `${item.title}\n${item.summary}`.toLocaleLowerCase().includes(query);
-      })
-      .toSorted((left, right) => right.updatedAt.localeCompare(left.updatedAt))
-      .slice(0, parsed.limit);
-    return DesktopMemoryItemListSchema.parse(items);
+      .toSorted(
+        (left, right) =>
+          right.updatedAt.localeCompare(left.updatedAt) || key(left).localeCompare(key(right)),
+      );
+    if (query === "")
+      return DesktopMemoryItemListSchema.parse(
+        items.slice(parsed.offset, parsed.offset + parsed.limit),
+      );
+    const current = new Map(items.map((item) => [key(item), item]));
+    const normalizedQuery = query.toLocaleLowerCase();
+    const keywordIds = new Set<string>();
+    for (const record of episodes) {
+      if (renderEpisode(record).toLocaleLowerCase().includes(normalizedQuery))
+        keywordIds.add(`episodic/${record.id}`);
+    }
+    for (const record of facts) {
+      if (renderSemanticFact(record).toLocaleLowerCase().includes(normalizedQuery))
+        keywordIds.add(`semantic/${record.id}`);
+    }
+    const lexical = items.filter((item) => keywordIds.has(key(item)));
+    const vectorMatches = vectors.flatMap((hit) => {
+      const item = current.get(key({ module: hit.module, id: hit.memoryId }));
+      return item !== undefined && item.revision === hit.revision ? [item] : [];
+    });
+    return DesktopMemoryItemListSchema.parse(
+      fuseMemoryRanks([lexical, vectorMatches], key).slice(
+        parsed.offset,
+        parsed.offset + parsed.limit,
+      ),
+    );
   });
   ipcMain.handle("memory-items:get", async (_event, input: unknown) => {
     const parsed = DesktopMemoryItemRefSchema.parse(input);

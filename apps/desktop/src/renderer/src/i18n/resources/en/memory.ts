@@ -9,6 +9,8 @@ export const memory = {
   description: "Review the memories agents can discover through the layered ContextStore.",
   memoryType: "Memory type",
   allMemoryTypes: "All memories",
+  loadMore: "Load more",
+  retryLoad: "Retry",
   all: "All memories",
   episodes: "Episodes",
   facts: "Facts",

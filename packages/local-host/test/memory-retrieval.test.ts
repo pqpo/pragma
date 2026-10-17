@@ -113,6 +113,86 @@ async function fixture() {
   };
 }
 describe("Memory retrieval across Hosts", () => {
+  it("searches the management catalog across owners while Agent recall stays scoped", async () => {
+    const f = await fixture();
+    try {
+      await f.desktop.tick();
+      const hits = await f.desktop.searchCatalog("an unrelated paraphrase", ["semantic"], 30);
+      expect(hits.length).toBeGreaterThan(0);
+      expect(hits.every((hit) => hit.module === "semantic")).toBe(true);
+      expect(new Set(hits.map((hit) => hit.memoryId)).size).toBe(hits.length);
+      expect(
+        await f.desktop.search(
+          { rootRef: { type: "pragma.expert", id: "unrelated-owner" } },
+          "an unrelated paraphrase",
+          30,
+        ),
+      ).toEqual([]);
+      expect(f.resolveAt).not.toHaveBeenCalled();
+      const stale = hits[0]!;
+      const get = f.semantic.get.bind(f.semantic);
+      const changed = vi.spyOn(f.semantic, "get").mockImplementation(async (id) => {
+        const record = await get(id);
+        return id === stale.memoryId && record !== undefined
+          ? { ...record, revision: record.revision + 1 }
+          : record;
+      });
+      expect(
+        (await f.desktop.searchCatalog("an unrelated paraphrase", ["semantic"], 30)).some(
+          (hit) => hit.memoryId === stale.memoryId,
+        ),
+      ).toBe(false);
+      changed.mockRestore();
+      f.disable();
+      expect(await f.desktop.searchCatalog("paraphrase", ["semantic"], 30)).toEqual([]);
+    } finally {
+      await f.desktop.stop();
+      f.episodic.close();
+      f.semantic.close();
+    }
+  });
+
+  it("keeps catalog candidates beyond the Agent recall window available for paging", async () => {
+    const f = await fixture();
+    const db = new DatabaseSync(
+      join(f.paths.memoryModuleDataRoot("pragma.memory.semantic"), "facts.sqlite"),
+    );
+    try {
+      const original = (
+        await f.semantic.listCandidatesForRecall(
+          { rootRef: { type: "pragma.expert", id: "expert-a" } },
+          new Date(),
+        )
+      )[0]!;
+      const insert = db.prepare(
+        "INSERT INTO current_facts(id,revision,status,updated_at,record_json) VALUES(?,?,?,?,?)",
+      );
+      for (let index = 0; index < 145; index++) {
+        const record = { ...original, id: `fact-${index.toString(16).padStart(24, "0")}` };
+        insert.run(
+          record.id,
+          record.revision,
+          record.status,
+          record.updatedAt,
+          JSON.stringify(record),
+        );
+      }
+      await f.desktop.tick();
+      const hits = await f.desktop.searchCatalog(
+        "a paraphrase without keyword overlap",
+        ["semantic"],
+        200,
+      );
+      expect(hits.length).toBeGreaterThanOrEqual(145);
+      expect(new Set(hits.map((hit) => hit.memoryId)).size).toBe(hits.length);
+    } finally {
+      db.close();
+      await f.desktop.stop();
+      f.episodic.close();
+      f.semantic.close();
+    }
+  });
+
   it("applies the extraction scope intersection before the vector index Top-K cutoff", async () => {
     const f = await fixture();
     const a = { rootRef: { type: "pragma.expert", id: "expert-a" } };

@@ -178,13 +178,13 @@ function renderIndex(episodes: readonly EpisodicMemoryRecord[], scope: MemoryRec
   ].join("\n");
 }
 
-function renderEpisode(episode: EpisodicMemoryRecord, scope: MemoryRecallScope): string {
+export function renderEpisode(episode: EpisodicMemoryRecord, scope?: MemoryRecallScope): string {
   return [
     `# Episode ${episode.id}`,
     "",
     `- Execution: ${episode.executionId}`,
     `- Terminal Evidence: ${episode.terminalMessageId}`,
-    `- Memory scope: ${viewLabel(episode, scope)}`,
+    ...(scope === undefined ? [] : [`- Memory scope: ${viewLabel(episode, scope)}`]),
     `- Owned by: ${episode.rootRefs.map(refLabel).join(", ")}`,
     `- Producers: ${episode.producerRefs.map(refLabel).join(", ") || "unknown"}`,
     `- Outcome: ${episode.outcome.status}`,

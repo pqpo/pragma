@@ -1,3 +1,4 @@
+import type { ListDesktopMemoryExtractionActiveTasks } from "./memory.ts";
 import type { DesktopTerminalIntegration } from "./terminal-integration.ts";
 import type {
   MemoryRetrievalStatus,
@@ -334,7 +335,9 @@ export interface PragmaDesktopAPI {
   listMemoryExtractionJobs: (
     input: ListDesktopMemoryExtractionJobs,
   ) => Promise<DesktopMemoryExtractionBoard>;
-  listActiveMemoryExtractionTasks: () => Promise<DesktopMemoryExtractionActiveTaskList>;
+  listActiveMemoryExtractionTasks: (
+    input?: ListDesktopMemoryExtractionActiveTasks,
+  ) => Promise<DesktopMemoryExtractionActiveTaskList>;
   manageMemoryExtractionTask: (input: ManageDesktopMemoryExtractionTask) => Promise<void>;
   getMemoryExtractionTaskDetail: (
     input: DesktopMemoryExtractionTaskRef,

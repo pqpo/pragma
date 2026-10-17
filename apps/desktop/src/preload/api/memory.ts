@@ -40,6 +40,7 @@ import {
   DesktopMemoryExtractionTaskRefSchema,
   DesktopMemoryExtractionTaskDetailSchema,
   DesktopMemoryExtractionActiveTaskListSchema,
+  ListDesktopMemoryExtractionActiveTasksSchema,
   DesktopMemoryExtractionRunRefSchema,
   DesktopMemoryExtractionRunChatUpdateSchema,
 } from "../../shared/contracts/memory.ts";
@@ -136,9 +137,12 @@ export const memoryApi = {
       ManageDesktopMemoryExtractionTaskSchema.parse(input),
     );
   },
-  listActiveMemoryExtractionTasks: async () =>
+  listActiveMemoryExtractionTasks: async (input = {}) =>
     DesktopMemoryExtractionActiveTaskListSchema.parse(
-      await ipcRenderer.invoke("memory-extraction-active-tasks:list"),
+      await ipcRenderer.invoke(
+        "memory-extraction-active-tasks:list",
+        ListDesktopMemoryExtractionActiveTasksSchema.parse(input),
+      ),
     ),
   getMemoryExtractionTaskDetail: async (input) =>
     DesktopMemoryExtractionTaskDetailSchema.parse(

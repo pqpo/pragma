@@ -87,6 +87,35 @@ describe("unified memory extraction tasks", () => {
     expect(reset.lanes.completed).toMatchObject({ totalTasks: 12, pageCount: 2, pageIndex: 0 });
   });
 
+  it("filters task-detail lanes before pagination and keeps ties deterministic", async () => {
+    const episodes = Array.from({ length: 75 }, (_, index) => ({
+      ...episodicJob(index, "2026-08-05T00:00:03.000Z"),
+      status: index % 3 === 0 ? ("pending" as const) : ("running" as const),
+    }));
+    const plane = planeFor(episodes);
+    const options = emptyTitleOptions();
+    const all = await listDesktopMemoryExtractionActiveTasks(plane, options, {
+      lanes: ["running", "attention"],
+    });
+    const first = await listDesktopMemoryExtractionActiveTasks(plane, options, {
+      lanes: ["running", "attention"],
+      offset: 0,
+      limit: 31,
+    });
+    const second = await listDesktopMemoryExtractionActiveTasks(plane, options, {
+      lanes: ["running", "attention"],
+      offset: 30,
+      limit: 31,
+    });
+    expect(all).toHaveLength(50);
+    expect(first).toHaveLength(31);
+    expect(second).toHaveLength(20);
+    expect([...first.slice(0, 30), ...second]).toEqual(all);
+    expect(
+      await listDesktopMemoryExtractionActiveTasks(plane, options, { offset: 75, limit: 31 }),
+    ).toEqual([]);
+  });
+
   it("preserves partial success and puts the shared task in its actionable lane", async () => {
     const episode = {
       ...episodicJob(1, "2026-08-05T00:00:01.000Z"),

@@ -141,7 +141,7 @@ export function createLocalHostMemoryRetrieval(options: {
     options.onDiagnostic?.(queryErrorCode ?? errorCode);
   };
   const vectorSearch = async (
-    scope: MemoryRecallScope,
+    scope: MemoryRecallScope | undefined,
     query: string,
     modules: readonly ("episodic" | "semantic")[],
     limit: number,
@@ -180,13 +180,14 @@ export function createLocalHostMemoryRetrieval(options: {
             live === undefined ||
             live.profile.baseUrl !== binding.profile.baseUrl ||
             live.profile.providerId !== binding.profile.providerId ||
-            !(
-              await options.data.policies.resolveAt({
-                rootRef: scope.rootRef,
-                ...(scope.expertRef === undefined ? {} : { producerRefs: [scope.expertRef] }),
-                occurredAt: new Date().toISOString(),
-              })
-            ).recall
+            (scope !== undefined &&
+              !(
+                await options.data.policies.resolveAt({
+                  rootRef: scope.rootRef,
+                  ...(scope.expertRef === undefined ? {} : { producerRefs: [scope.expertRef] }),
+                  occurredAt: new Date().toISOString(),
+                })
+              ).recall)
           )
             throw new Error("embedding_cancelled");
         },
@@ -199,15 +200,21 @@ export function createLocalHostMemoryRetrieval(options: {
     for (const module of modules)
       allowedByModule.set(
         module,
-        await (extractionFilter === undefined
-          ? (module === "episodic"
-              ? options.data.episodic.store
-              : options.data.semantic.store
-            ).listRecallIdentities(scope, new Date())
-          : (module === "episodic"
-              ? options.data.episodic.store
-              : options.data.semantic.store
-            ).listExtractionIdentities(extractionFilter, new Date())),
+        await (scope === undefined
+          ? (module === "episodic" ? options.data.episodic.store : options.data.semantic.store)
+              .list()
+              .then((records) =>
+                records.filter(isCatalogCandidate).map(({ id, revision }) => ({ id, revision })),
+              )
+          : extractionFilter === undefined
+            ? (module === "episodic"
+                ? options.data.episodic.store
+                : options.data.semantic.store
+              ).listRecallIdentities(scope, new Date())
+            : (module === "episodic"
+                ? options.data.episodic.store
+                : options.data.semantic.store
+              ).listExtractionIdentities(extractionFilter, new Date())),
       );
     if ([...allowedByModule.values()].every((ids) => ids.length === 0)) return [];
     const key = createHash("sha256")
@@ -229,10 +236,15 @@ export function createLocalHostMemoryRetrieval(options: {
     }
     if (embedded.dimensions !== binding.dimensions || embedded.model !== binding.responseModel)
       throw new Error("embedding_space_changed");
-    const result: MemoryAttentionCandidate[] = [];
-    for (const module of modules) {
+    const readRecord = async (module: "episodic" | "semantic", id: string) => {
       const store =
         module === "episodic" ? options.data.episodic.store : options.data.semantic.store;
+      if (scope !== undefined) return await store.peekForRecall(scope, id, new Date());
+      const record = await store.get(id);
+      return record !== undefined && isCatalogCandidate(record) ? record : undefined;
+    };
+    const result: MemoryAttentionCandidate[] = [];
+    for (const module of modules) {
       const allowed = allowedByModule.get(module) ?? [];
       const hits = await cache.search(
         {
@@ -240,14 +252,14 @@ export function createLocalHostMemoryRetrieval(options: {
           module,
           vector: embedded.vector,
           allowed,
-          limit: Math.min(limit * 4, 120),
+          limit: scope === undefined ? Math.min(limit, 300) : Math.min(limit * 4, 120),
         },
         signal,
       );
       const seen = new Set<string>();
       for (const hit of hits) {
         if (seen.has(hit.memoryId)) continue;
-        const record = await store.peekForRecall(scope, hit.memoryId, new Date());
+        const record = await readRecord(module, hit.memoryId);
         if (
           record === undefined ||
           record.revision !== hit.revision ||
@@ -258,11 +270,11 @@ export function createLocalHostMemoryRetrieval(options: {
           module === "episodic"
             ? {
                 module,
-                record: await options.data.episodic.store.peekForRecall(scope, hit.memoryId),
+                record: await readRecord("episodic", hit.memoryId),
               }
             : {
                 module,
-                record: await options.data.semantic.store.peekForRecall(scope, hit.memoryId),
+                record: await readRecord("semantic", hit.memoryId),
               };
         if (
           source.record === undefined ||
@@ -317,9 +329,7 @@ export function createLocalHostMemoryRetrieval(options: {
       return [];
     const validated: MemoryAttentionCandidate[] = [];
     for (const candidate of result) {
-      const store =
-        candidate.module === "episodic" ? options.data.episodic.store : options.data.semantic.store;
-      const record = await store.peekForRecall(scope, candidate.memoryId, new Date());
+      const record = await readRecord(candidate.module, candidate.memoryId);
       if (record?.revision === candidate.revision && record.sensitivity !== "restricted")
         validated.push(candidate);
     }
@@ -330,6 +340,31 @@ export function createLocalHostMemoryRetrieval(options: {
       .slice(0, limit);
   };
   return {
+    // Administrative catalog access is separate from Agent recall authorization.
+    async searchCatalog(
+      query: string,
+      modules: readonly ("episodic" | "semantic")[],
+      limit: number,
+    ) {
+      const signal = AbortSignal.any([abort.signal, AbortSignal.timeout(3_000)]);
+      try {
+        const result = await vectorSearch(
+          undefined,
+          redactMemoryProjection(query),
+          modules,
+          limit,
+          signal,
+        );
+        if (queryErrorCode !== undefined) {
+          queryErrorCode = undefined;
+          options.onDiagnostic?.(errorCode);
+        }
+        return result;
+      } catch (error) {
+        if (!signal.aborted) report(error, true);
+        return [];
+      }
+    },
     async searchForExtraction(
       scope: MemoryRecallScope,
       query: string,
@@ -589,4 +624,16 @@ export function createLocalHostMemoryRetrieval(options: {
       await index?.close();
     },
   };
+}
+
+function isCatalogCandidate(record: {
+  status: string;
+  sensitivity: string;
+  expiresAt?: string | undefined;
+}) {
+  return (
+    record.status === "active" &&
+    record.sensitivity !== "restricted" &&
+    (record.expiresAt === undefined || Date.parse(record.expiresAt) > Date.now())
+  );
 }

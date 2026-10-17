@@ -10,6 +10,7 @@ import {
   MemoryHealth,
   MemoryItemContent,
   MemoryPage,
+  MemoryListLoadMore,
   formatMemorySubjectRefs,
   memoryExtractionPollDelay,
 } from "./MemoryPage.tsx";
@@ -19,6 +20,22 @@ afterEach(async () => {
 });
 
 describe("MemoryPage", () => {
+  it("offers keyboard loading and retry while announcing pagination state", () => {
+    const props = { loading: false, hasMore: true, error: false, loadMore: async () => {} };
+    const more = renderToStaticMarkup(<MemoryListLoadMore {...props} />);
+    expect(more).toContain("Load more");
+    expect(more).toContain('type="button"');
+    const loading = renderToStaticMarkup(<MemoryListLoadMore {...props} loading />);
+    expect(loading).toContain('role="status"');
+    expect(loading).not.toContain("Load more");
+    expect(loading).toContain('aria-disabled="true"');
+    const retry = renderToStaticMarkup(<MemoryListLoadMore {...props} error />);
+    expect(retry).toContain('role="alert"');
+    expect(retry).toContain("Retry");
+    const end = renderToStaticMarkup(<MemoryListLoadMore {...props} hasMore={false} />);
+    expect(end).not.toContain("<button");
+  });
+
   it("shows subject names and a readable fallback without exposing resource references", () => {
     expect(
       formatMemorySubjectRefs(
@@ -335,7 +352,7 @@ describe("MemoryPage", () => {
       html.indexOf("knowledge_candidate_capacity_exceeded"),
     );
     expect(html).toContain("Extract now");
-    expect(html).toContain("Retry extraction");
+    expect(html.match(/aria-label="Retry extraction"/g)).toHaveLength(1);
     expect(html).not.toContain("Review candidates");
     expect(html).toContain("Abandon this extraction");
     expect(html).not.toContain("internal-job-a");

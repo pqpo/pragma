@@ -14,13 +14,13 @@ import {
   LockSimple,
   PencilSimple,
   Prohibit,
-  ArrowClockwise,
-  ArrowCounterClockwise,
+  ArrowsDownUp,
+  ClockCounterClockwise,
   CheckCircle,
   CaretLeft,
   CaretRight,
   Copy,
-  Gear,
+  SlidersHorizontal,
   Cube,
   Database,
   FileText,
@@ -57,6 +57,8 @@ import {
 } from "../../lib/sidebar-width-preference.ts";
 import { MissionChatEntryView } from "../missions/MissionsPage.tsx";
 import { applyMissionChatPatches } from "../missions/mission-conversation-model.ts";
+
+import { useMemoryListPages } from "./use-memory-list-pages.ts";
 
 type MemoryView = "all" | "extractions" | "health" | "taskDetails";
 type MemoryTypeFilter = "all" | DesktopMemoryItem["module"];
@@ -103,13 +105,33 @@ export function MemoryPage(props: { readonly onConfigureExtraction?: () => void 
   }, [view]);
 
   const [query, setQuery] = useState("");
-  const [items, setItems] = useState<readonly DesktopMemoryItem[]>([]);
+  const fetchMemoryPage = useCallback(
+    (offset: number, limit: number) =>
+      window.pragmaDesktop.listMemoryItems({
+        module: memoryType,
+        status: "all",
+        query,
+        offset,
+        limit,
+      }),
+    [memoryType, query],
+  );
+  const memoryPages = useMemoryListPages({
+    enabled: view === "all",
+    fetchPage: fetchMemoryPage,
+    key,
+  });
+  const items = memoryPages.items;
+  const taskPages = useMemoryListPages({
+    enabled: view === "taskDetails",
+    fetchPage: fetchActiveTaskPage,
+    key: extractionTaskKey,
+    pollInterval: 2_000,
+  });
   const [selectedId, setSelectedId] = useState<string>();
   const [health, setHealth] = useState<DesktopMemoryPlaneStatus>();
   const [extractionBoard, setExtractionBoard] = useState<DesktopMemoryExtractionBoard>();
-  const [activeExtractionTasks, setActiveExtractionTasks] = useState<
-    readonly DesktopMemoryExtractionTask[]
-  >([]);
+
   const [evidence, setEvidence] = useState<DesktopMemoryEvidence>();
   const reason = "User confirmed a memory governance action in Desktop";
   const [pendingAction, setPendingAction] = useState<{
@@ -140,25 +162,13 @@ export function MemoryPage(props: { readonly onConfigureExtraction?: () => void 
       const requestVersion = (extractionRequestVersion.current += 1);
       if (!silent && !hasLoaded.current) setLoading(true);
       try {
-        const [records, status, extractionJobs, activeTasks] = await Promise.all([
-          view !== "all"
-            ? Promise.resolve([])
-            : window.pragmaDesktop.listMemoryItems({
-                module: memoryType,
-                status: "all",
-                query,
-                limit: 200,
-              }),
+        const [status, extractionJobs] = await Promise.all([
           window.pragmaDesktop.getMemoryPlaneStatus(),
           view === "extractions"
             ? window.pragmaDesktop.listMemoryExtractionJobs({ pages: extractionPages })
             : Promise.resolve(undefined),
-          view === "taskDetails"
-            ? window.pragmaDesktop.listActiveMemoryExtractionTasks()
-            : Promise.resolve([]),
         ]);
         if (requestVersion !== extractionRequestVersion.current) return undefined;
-        setItems(records);
         setHealth(status);
         if (extractionJobs !== undefined && requestVersion === extractionRequestVersion.current) {
           setExtractionBoard(extractionJobs);
@@ -178,17 +188,6 @@ export function MemoryPage(props: { readonly onConfigureExtraction?: () => void 
             });
           }
         }
-        if (view === "taskDetails" && requestVersion === extractionRequestVersion.current) {
-          setActiveExtractionTasks(activeTasks);
-        }
-        const selectableIds = records.map(key);
-        setSelectedId((current) =>
-          current !== undefined && selectableIds.includes(current)
-            ? current
-            : selectableIds[0] === undefined
-              ? undefined
-              : selectableIds[0],
-        );
         setError(undefined);
         return extractionJobs;
       } catch {
@@ -201,7 +200,7 @@ export function MemoryPage(props: { readonly onConfigureExtraction?: () => void 
         }
       }
     },
-    [extractionPages, memoryType, query, t, view],
+    [extractionPages, t, view],
   );
 
   useEffect(() => {
@@ -213,16 +212,13 @@ export function MemoryPage(props: { readonly onConfigureExtraction?: () => void 
   }, [reload]);
 
   useEffect(() => {
-    if (view !== "extractions" && view !== "taskDetails") return;
+    if (view !== "extractions") return;
     let cancelled = false;
     let timer: ReturnType<typeof setTimeout> | undefined;
     const poll = async () => {
       const board = await reload(true);
       if (!cancelled) {
-        timer = setTimeout(
-          () => void poll(),
-          view === "taskDetails" ? 2_000 : memoryExtractionPollDelay(board),
-        );
+        timer = setTimeout(() => void poll(), memoryExtractionPollDelay(board));
       }
     };
     timer = setTimeout(() => void poll(), 2_000);
@@ -231,6 +227,16 @@ export function MemoryPage(props: { readonly onConfigureExtraction?: () => void 
       if (timer !== undefined) clearTimeout(timer);
     };
   }, [reload, view]);
+
+  useEffect(() => {
+    setSelectedId((current) =>
+      items.some((item) => key(item) === current)
+        ? current
+        : items[0] === undefined
+          ? undefined
+          : key(items[0]),
+    );
+  }, [items]);
 
   const selected = useMemo(
     () => items.find((item) => key(item) === selectedId),
@@ -242,7 +248,7 @@ export function MemoryPage(props: { readonly onConfigureExtraction?: () => void 
     try {
       await operation();
       setEvidence(undefined);
-      await reload();
+      await Promise.all([reload(), memoryPages.refresh()]);
       return true;
     } catch {
       setError(t("actionError"));
@@ -358,7 +364,7 @@ export function MemoryPage(props: { readonly onConfigureExtraction?: () => void 
         {view === "health" ? (
           <MemoryHealth health={health} />
         ) : view === "taskDetails" ? (
-          <MemoryExtractionTaskDetails tasks={activeExtractionTasks} />
+          <MemoryExtractionTaskDetails tasks={taskPages.items} pagination={taskPages} />
         ) : view === "extractions" ? (
           <MemoryExtractionJobs
             board={extractionBoard}
@@ -391,8 +397,7 @@ export function MemoryPage(props: { readonly onConfigureExtraction?: () => void 
                   ]}
                 />
               </div>
-              {loading ? <p>{t("loading")}</p> : null}
-              {!loading && items.length === 0 ? <p>{t("empty")}</p> : null}
+              {!memoryPages.loading && items.length === 0 ? <p>{t("empty")}</p> : null}
               {items.map((item) => (
                 <button
                   key={key(item)}
@@ -414,6 +419,7 @@ export function MemoryPage(props: { readonly onConfigureExtraction?: () => void 
                   </span>
                 </button>
               ))}
+              <MemoryListLoadMore {...memoryPages} />
             </aside>
             <SidebarResizeHandle
               label={t("resizeList")}
@@ -919,7 +925,7 @@ export function MemoryExtractionJobs(props: {
         </div>
         <StudioActionButton
           label={t("refresh")}
-          icon={<ArrowClockwise size={18} aria-hidden="true" />}
+          icon={<ArrowsDownUp size={18} aria-hidden="true" />}
           disabled={props.loading}
           onClick={props.onRefresh}
         />
@@ -1001,7 +1007,7 @@ export function MemoryExtractionJobs(props: {
                                 {task.module === "conversation" ? (
                                   <StudioActionButton
                                     label={t("restartExtraction")}
-                                    icon={<ArrowCounterClockwise size={18} aria-hidden="true" />}
+                                    icon={<ClockCounterClockwise size={18} aria-hidden="true" />}
                                     disabled={busy}
                                     onClick={() => void props.onAction(task, "restart")}
                                   />
@@ -1009,30 +1015,29 @@ export function MemoryExtractionJobs(props: {
                                 {problem?.kind === "configuration" ? (
                                   <StudioActionButton
                                     label={t("configureExtraction")}
-                                    icon={<Gear size={18} aria-hidden="true" />}
+                                    icon={<SlidersHorizontal size={18} aria-hidden="true" />}
                                     disabled={busy || props.onConfigureExtraction === undefined}
                                     onClick={() => props.onConfigureExtraction?.()}
                                   />
                                 ) : problem?.kind === "dependency" ? (
                                   <StudioActionButton
                                     label={t("refresh")}
-                                    icon={<ArrowClockwise size={18} aria-hidden="true" />}
+                                    icon={<ArrowsDownUp size={18} aria-hidden="true" />}
                                     disabled={busy}
                                     onClick={props.onRefresh}
                                   />
                                 ) : (
                                   <StudioActionButton
                                     label={t("retryExtraction")}
-                                    icon={<ArrowCounterClockwise size={18} aria-hidden="true" />}
+                                    icon={<Play size={18} aria-hidden="true" />}
                                     disabled={busy}
                                     onClick={() => void props.onAction(task, "retry")}
                                   />
                                 )}
-                                {problem?.kind === "configuration" ||
-                                problem?.kind === "capacity" ? (
+                                {problem?.kind === "configuration" ? (
                                   <StudioActionButton
                                     label={t("retryExtraction")}
-                                    icon={<ArrowCounterClockwise size={18} aria-hidden="true" />}
+                                    icon={<Play size={18} aria-hidden="true" />}
                                     disabled={busy}
                                     onClick={() => void props.onAction(task, "retry")}
                                   />
@@ -1041,7 +1046,7 @@ export function MemoryExtractionJobs(props: {
                                 props.onConfigureExtraction !== undefined ? (
                                   <StudioActionButton
                                     label={t("configureExtraction")}
-                                    icon={<Gear size={18} aria-hidden="true" />}
+                                    icon={<SlidersHorizontal size={18} aria-hidden="true" />}
                                     disabled={busy}
                                     onClick={() => props.onConfigureExtraction?.()}
                                   />
@@ -1153,6 +1158,12 @@ function MemoryTechnicalDetails(props: {
 
 export function MemoryExtractionTaskDetails(props: {
   readonly tasks: readonly DesktopMemoryExtractionTask[];
+  readonly pagination?: {
+    loading: boolean;
+    hasMore: boolean;
+    error: boolean;
+    loadMore: () => Promise<void>;
+  };
 }) {
   const { t } = useTranslation("memory");
   const [preferredListWidth, setListWidth] = usePersistentSidebarWidth(
@@ -1283,7 +1294,9 @@ export function MemoryExtractionTaskDetails(props: {
       style={{ "--sidebar-width": `${listWidth}px` } as CSSProperties}
     >
       <aside className="memory-task-details-list">
-        {tasks.length === 0 ? <p className="memory-note">{t("noActiveExtractionTasks")}</p> : null}
+        {tasks.length === 0 && !props.pagination?.loading ? (
+          <p className="memory-note">{t("noActiveExtractionTasks")}</p>
+        ) : null}
         {tasks.map((task) => {
           const taskKey = `${task.module}:${task.id}`;
           return (
@@ -1304,6 +1317,7 @@ export function MemoryExtractionTaskDetails(props: {
             </button>
           );
         })}
+        {props.pagination === undefined ? null : <MemoryListLoadMore {...props.pagination} />}
       </aside>
       <SidebarResizeHandle
         label={t("resizeTaskList")}
@@ -1776,5 +1790,59 @@ export function formatMemorySubjectRefs(
         return name ?? i18n.t("memory:unavailableSubject");
       })
       .join(", ") || "—"
+  );
+}
+
+function extractionTaskKey(task: DesktopMemoryExtractionTask) {
+  return `${task.module}:${task.id}`;
+}
+
+function fetchActiveTaskPage(offset: number, limit: number) {
+  return window.pragmaDesktop.listActiveMemoryExtractionTasks({
+    offset,
+    limit,
+    lanes: ["attention", "running"],
+  });
+}
+
+export function MemoryListLoadMore(props: {
+  loading: boolean;
+  hasMore: boolean;
+  error: boolean;
+  loadMore: () => Promise<void>;
+}) {
+  const { t } = useTranslation("memory");
+  const sentinel = useRef<HTMLDivElement>(null);
+  const { loading, hasMore, error, loadMore } = props;
+  useEffect(() => {
+    const element = sentinel.current;
+    if (element === null || !hasMore || loading || error) return;
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (entries.some((entry) => entry.isIntersecting)) void loadMore();
+      },
+      { root: element.parentElement, rootMargin: "120px" },
+    );
+    observer.observe(element);
+    return () => observer.disconnect();
+  }, [loading, hasMore, error, loadMore]);
+  return (
+    <div ref={sentinel} className="memory-list-pagination" aria-live="polite">
+      {error && !loading ? <span role="alert">{t("loadError")}</span> : null}
+      {hasMore || error || loading ? (
+        <button
+          type="button"
+          className="memory-list-load-more"
+          aria-disabled={loading}
+          onClick={() => {
+            if (!loading) void loadMore();
+          }}
+        >
+          <span role={loading ? "status" : undefined}>
+            {t(loading ? "loading" : error ? "retryLoad" : "loadMore")}
+          </span>
+        </button>
+      ) : null}
+    </div>
   );
 }

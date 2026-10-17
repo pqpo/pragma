@@ -234,6 +234,19 @@ export const DesktopMemoryExtractionBoardSchema = z.object({
     .strict(),
 });
 
+export const ListDesktopMemoryExtractionActiveTasksSchema = z
+  .object({
+    offset: z.number().int().nonnegative().default(0),
+    limit: z.number().int().min(1).max(1_000).default(1_000),
+    lanes: z
+      .array(z.enum(["waiting", "attention", "running"]))
+      .default(["waiting", "attention", "running"]),
+  })
+  .strict();
+export type ListDesktopMemoryExtractionActiveTasks = z.input<
+  typeof ListDesktopMemoryExtractionActiveTasksSchema
+>;
+
 export const DesktopMemoryExtractionActiveTaskListSchema = z
   .array(DesktopMemoryExtractionTaskSchema)
   .max(1_000);
@@ -435,6 +448,7 @@ export const ListDesktopMemoryItemsSchema = z
     status: z.enum(["active", "invalidated", "withdrawn", "all"]).default("active"),
     query: z.string().trim().max(2_000).default(""),
     limit: z.number().int().min(1).max(200).default(100),
+    offset: z.number().int().nonnegative().default(0),
   })
   .strict();
 
