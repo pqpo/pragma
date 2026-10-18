@@ -48,6 +48,12 @@ it("uses the Store Revision Agent for a read-only plan and removes its Mission",
   const missionId = randomUUID();
   const create = vi.fn(async () => ({ id: missionId }));
   const remove = vi.fn(async () => undefined);
+  const readInternal = vi.fn(async () => ({
+    entries: [{ kind: "assistant", content: '{"action":"skip"}' }],
+  }));
+  const readUserChat = vi.fn(async () => {
+    throw new Error("Internal Missions are not available on the Mission surface.");
+  });
   const planners = createMemoryRevisionLearningPlanners({
     pragmaHome: root,
     missions: {
@@ -56,7 +62,8 @@ it("uses the Store Revision Agent for a read-only plan and removes its Mission",
     } as unknown as MissionStore,
     application: {
       startRun: async () => undefined,
-      getChatPage: async () => ({ entries: [{ kind: "assistant", content: '{"action":"skip"}' }] }),
+      getChatPage: readUserChat,
+      getInternalConversationSnapshot: readInternal,
       delete: remove,
     } as unknown as LocalHostMissionApplication,
     project: {
@@ -72,6 +79,8 @@ it("uses the Store Revision Agent for a read-only plan and removes its Mission",
       signal: new AbortController().signal,
     }),
   ).toEqual({ action: "skip" });
+  expect(readInternal).toHaveBeenCalledWith(missionId);
+  expect(readUserChat).not.toHaveBeenCalled();
   expect(create).toHaveBeenCalledWith(
     expect.objectContaining({
       executor: expect.objectContaining({ ref: "expert:0000000000st0rev" }),

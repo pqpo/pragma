@@ -101,7 +101,7 @@ export function createMemoryRevisionLearningPlanners(options: {
           },
         );
       }
-      const chat = await options.application.getChatPage({ id: mission.id, limit: 50 });
+      const chat = await options.application.getInternalConversationSnapshot(mission.id);
       const content = chat.entries.filter((entry) => entry.kind === "assistant").at(-1)?.content;
       if (content === undefined) throw new Error("memory_revision_plan_missing");
       return JSON.parse(extractStructuredJson(content));

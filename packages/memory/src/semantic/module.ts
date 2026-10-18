@@ -147,8 +147,6 @@ export async function createSemanticMemoryModule(
           retryable: false,
         });
       }
-      const subjectContext = await store.getSubjectContext(job.executionId);
-      if (subjectContext === undefined) throw new Error("semantic_subject_context_missing");
       const capturedEvidence = await store.readEvidenceForJob(job);
       const allowToolAssisted =
         (await options.extractionSettings?.get())?.allowToolAssisted.semantic ?? false;
@@ -180,6 +178,8 @@ export async function createSemanticMemoryModule(
         await store.completeRejected(job, "policy", now());
         return;
       }
+      const subjectContext = await store.getSubjectContext(job.executionId);
+      if (subjectContext === undefined) throw new Error("semantic_subject_context_missing");
       const attribution = resolveAttribution(evidence);
       const allowedSubjectRefs = uniqueRefs([
         ...subjectContext.subjectRefs,

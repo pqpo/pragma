@@ -1,4 +1,16 @@
 export const memory = {
+  showCompletedTasks: "Show completed tasks",
+  hideCompletedTasks: "Hide completed tasks",
+  extractionSource: "Source: {{name}}",
+  extractionTopics: "{{title}} · {{count}} topics",
+  extractionFallbackTitles: {
+    knowledge: "Knowledge extraction",
+    skill: "Skill extraction",
+    conversation: "Memory extraction",
+  },
+  extractionDraftCreated: "Review draft created",
+  learningDisabled:
+    "Knowledge and Skill learning is disabled. Enable learning in Memory settings to continue.",
   itemStatuses: { active: "Active", invalidated: "Invalidated" },
   evidenceNumber: "Evidence {{number}}",
   unavailableSubject: "Unavailable resource",
@@ -30,7 +42,7 @@ export const memory = {
   importedKnowledgePersists:
     "This Knowledge was imported from a Bundle and remains after that Bundle installation is discarded.",
   extractions: "Extraction jobs",
-  extractionsDescription: "Review and manage queued, active, and completed memory refinements.",
+  extractionsDescription: "Track refinement progress and manage tasks that need your attention.",
   refresh: "Refresh",
   extractionLanes: {
     waiting: "Waiting for idle",
@@ -42,12 +54,12 @@ export const memory = {
     conversation: "Memory extraction",
     episodic: "Episodic memory",
     semantic: "Fact memory",
-    knowledge: "Knowledge memory",
+    knowledge: "Knowledge extraction",
     skill: "Skill learning",
   },
   extractionCompletions: {
-    retained: "Processed",
-    rejected: "No change this time",
+    retained: "Saved",
+    rejected: "Nothing new to save",
   },
   emptyExtractionLane: "No tasks in this state.",
   extractionPagination: "{{lane}} pagination",

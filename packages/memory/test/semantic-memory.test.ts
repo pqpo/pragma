@@ -40,6 +40,85 @@ afterEach(async () => {
 });
 
 describe("Semantic Memory", () => {
+  it("retains facts without scheduling learning when the captured learning policy is disabled", async () => {
+    const onProjectionChanged = vi.fn(async () => undefined);
+    const module = await createSemanticMemoryModule({
+      pragmaHome: await temporaryRoot(),
+      extractor: fakeExtractor(),
+      onProjectionChanged,
+    });
+    try {
+      await module.registerExecutionSubjects({
+        executionId: "learning-disabled",
+        subjectRefs: [ref("pragma.user", "local-user")],
+      });
+      await module.consume(
+        executionEvidence("learning-disabled", "Use concise Chinese answers.").map((item) => ({
+          ...item,
+          policySnapshot: { ...item.policySnapshot, learning: "disabled" as const },
+        })),
+      );
+      await module.runBackgroundOnce?.();
+      expect(await module.store.list()).toHaveLength(1);
+      expect(onProjectionChanged).not.toHaveBeenCalled();
+    } finally {
+      module.close();
+    }
+  });
+  it.each([false, true])("skips terminal-only queued cancellation (retry=%s)", async (retry) => {
+    const extractor = fakeExtractor();
+    const now = new Date("2026-08-04T00:00:00.000Z");
+    const module = await createSemanticMemoryModule({
+      pragmaHome: await temporaryRoot(),
+      extractor,
+      now: () => now,
+    });
+    try {
+      const terminal = executionEvidence("queued-cancel", "unused")[1]!;
+      await module.consume([{ ...terminal, payload: { outcome: "cancelled" } }]);
+      if (retry) {
+        const job = await module.store.claimDueJob(now);
+        await module.store.fail({
+          job: job!,
+          diagnostic: {
+            ...failureDiagnostic("semantic_subject_context_missing"),
+            phase: "source_read",
+          },
+          retry: "configuration",
+          now,
+        });
+        const failed = (await module.store.listExtractionJobs())[0]!;
+        await module.store.retryJob({ id: failed.id, expectedRevision: failed.revision, now });
+      }
+      await module.runBackgroundOnce?.();
+      expect(extractor.extract).not.toHaveBeenCalled();
+      expect((await module.store.inspect()).needsAttention).toBe(0);
+      expect((await module.store.inspect()).rejectedByReason["insufficient-evidence"]).toBe(1);
+    } finally {
+      module.close();
+    }
+  });
+
+  it("still requires execution subjects when evidence contains text", async () => {
+    const extractor = fakeExtractor();
+    const module = await createSemanticMemoryModule({
+      pragmaHome: await temporaryRoot(),
+      extractor,
+      now: () => new Date("2026-08-04T00:00:00.000Z"),
+    });
+    try {
+      await module.consume(executionEvidence("missing-subject", "Use concise Chinese answers."));
+      await module.runBackgroundOnce?.();
+      expect(extractor.extract).not.toHaveBeenCalled();
+      expect((await module.store.listExtractionJobs())[0]).toMatchObject({
+        status: "needs_attention",
+        lastErrorCode: "semantic_subject_context_missing",
+      });
+    } finally {
+      module.close();
+    }
+  });
+
   it("does not refund an unconfirmed fourth claim after restart", async () => {
     const root = await temporaryRoot();
     let clock = new Date("2026-08-04T00:00:00.000Z");

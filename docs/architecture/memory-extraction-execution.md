@@ -24,6 +24,16 @@ budget exhaustion and non-retryable failures never create a new conversation aut
 The task board aggregates lightweight source-job metadata in SQLite, applies lane/cursor/limit in
 the database, and parses full job records only for the selected page. Task details use point reads.
 
+Learning-task cards use content topics as titles, with the source resource name and creation time
+as secondary information. Source topics are captured when scheduling; validated plans replace
+them with the proposed knowledge/Skill names. The disposable
+`cache/memory/task-presentations-v1.sqlite` catalog is keyed by module, job ID and source digest,
+holds at most 100 snapshots, and bounds each snapshot to 100 titles of at most 160 UTF-16 units.
+It never authorizes execution or recovery. Cache failure, eviction or missing historical metadata
+falls back to the localized task kind and immutable creation time, without querying current
+Memory to invent a historical title. The card limits titles to two lines and shows one aggregate
+result; per-type outcomes remain available in task details.
+
 The UI groups both delivery records into one task, exposes both outcomes and the continuation
 count, and distinguishes continuation from an explicit fresh restart. Restart regenerates only
 unfinished types and preserves published Memory. Completed-history limits count the logical task,

@@ -599,19 +599,22 @@ function MissionRowPreviewCard(props: {
       }
     >
       <div className="mission-row-preview-heading">
-        <strong>{props.mission.title}</strong>
-        <button
-          type="button"
-          className="mission-row-preview-edit"
-          aria-label={t("renameNamed", { title: props.mission.title })}
-          title={t("renameMission")}
-          onClick={(event) => {
-            event.stopPropagation();
-            props.onRename();
-          }}
-        >
-          <PencilSimple size={16} aria-hidden="true" />
-        </button>
+        <strong>
+          {props.mission.title}
+          {"\u2060"}
+          <button
+            type="button"
+            className="mission-row-preview-edit"
+            aria-label={t("renameNamed", { title: props.mission.title })}
+            title={t("renameMission")}
+            onClick={(event) => {
+              event.stopPropagation();
+              props.onRename();
+            }}
+          >
+            <PencilSimple size={14} aria-hidden="true" />
+          </button>
+        </strong>
       </div>
       <dl>
         <div>

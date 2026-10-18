@@ -14,9 +14,10 @@ import {
   LockSimple,
   PencilSimple,
   Prohibit,
-  ArrowsDownUp,
+  ArrowClockwise,
   ClockCounterClockwise,
   CheckCircle,
+  Checks,
   CaretLeft,
   CaretRight,
   Copy,
@@ -62,6 +63,7 @@ import { useMemoryListPages } from "./use-memory-list-pages.ts";
 
 type MemoryView = "all" | "extractions" | "health" | "taskDetails";
 type MemoryTypeFilter = "all" | DesktopMemoryItem["module"];
+const SHOW_COMPLETED_EXTRACTIONS_STORAGE_KEY = "pragma.desktop.memory.extractions.show-completed";
 const MEMORY_EXTRACTION_LANES = ["waiting", "attention", "running", "completed"] as const;
 type MemoryExtractionLane = (typeof MEMORY_EXTRACTION_LANES)[number];
 type MemoryExtractionPageCursor = NonNullable<
@@ -129,6 +131,7 @@ export function MemoryPage(props: { readonly onConfigureExtraction?: () => void 
     pollInterval: 2_000,
   });
   const [selectedId, setSelectedId] = useState<string>();
+  const detailDisclosureGroup = useId();
   const [health, setHealth] = useState<DesktopMemoryPlaneStatus>();
   const [extractionBoard, setExtractionBoard] = useState<DesktopMemoryExtractionBoard>();
 
@@ -150,6 +153,23 @@ export function MemoryPage(props: { readonly onConfigureExtraction?: () => void 
   const [error, setError] = useState<string>();
   const [loading, setLoading] = useState(true);
   const [busyExtractionTask, setBusyExtractionTask] = useState<string>();
+  const [learningEnabled, setLearningEnabled] = useState(false);
+  const [showCompletedExtractions, setShowCompletedExtractions] = useState(() => {
+    try {
+      return window.localStorage.getItem(SHOW_COMPLETED_EXTRACTIONS_STORAGE_KEY) === "true";
+    } catch {
+      return false;
+    }
+  });
+  const toggleCompletedExtractions = () => {
+    const next = !showCompletedExtractions;
+    setShowCompletedExtractions(next);
+    try {
+      window.localStorage.setItem(SHOW_COMPLETED_EXTRACTIONS_STORAGE_KEY, String(next));
+    } catch {
+      // Storage failures must not prevent toggling the list for the current session.
+    }
+  };
   const [extractionPages, setExtractionPages] = useState(INITIAL_MEMORY_EXTRACTION_PAGES);
   const [extractionPageCursors, setExtractionPageCursors] = useState<
     Record<MemoryExtractionLane, readonly (MemoryExtractionPageCursor | undefined)[]>
@@ -162,14 +182,18 @@ export function MemoryPage(props: { readonly onConfigureExtraction?: () => void 
       const requestVersion = (extractionRequestVersion.current += 1);
       if (!silent && !hasLoaded.current) setLoading(true);
       try {
-        const [status, extractionJobs] = await Promise.all([
+        const [status, extractionJobs, policy] = await Promise.all([
           window.pragmaDesktop.getMemoryPlaneStatus(),
           view === "extractions"
             ? window.pragmaDesktop.listMemoryExtractionJobs({ pages: extractionPages })
             : Promise.resolve(undefined),
+          window.pragmaDesktop.getGlobalMemoryPolicy(),
         ]);
         if (requestVersion !== extractionRequestVersion.current) return undefined;
         setHealth(status);
+        setLearningEnabled(
+          policy.policy.enabled === "enabled" && policy.policy.learning !== "disabled",
+        );
         if (extractionJobs !== undefined && requestVersion === extractionRequestVersion.current) {
           setExtractionBoard(extractionJobs);
           const resetLanes = MEMORY_EXTRACTION_LANES.filter(
@@ -273,8 +297,14 @@ export function MemoryPage(props: { readonly onConfigureExtraction?: () => void 
         expectedRevision: task.revision,
       });
       await reload(true);
-    } catch {
-      setError(t("extractionActionError"));
+    } catch (error) {
+      setError(
+        t(
+          error instanceof Error && error.message.includes("memory_learning_disabled")
+            ? "learningDisabled"
+            : "extractionActionError",
+        ),
+      );
     } finally {
       setBusyExtractionTask(undefined);
     }
@@ -367,9 +397,12 @@ export function MemoryPage(props: { readonly onConfigureExtraction?: () => void 
           <MemoryExtractionTaskDetails tasks={taskPages.items} pagination={taskPages} />
         ) : view === "extractions" ? (
           <MemoryExtractionJobs
+            showCompleted={showCompletedExtractions}
+            onToggleCompleted={toggleCompletedExtractions}
             board={extractionBoard}
             loading={loading && extractionBoard === undefined}
             busyTask={busyExtractionTask}
+            learningEnabled={learningEnabled}
             onRefresh={() => void reload(true)}
             onAction={manageExtraction}
             onPageChange={changeExtractionPage}
@@ -450,6 +483,7 @@ export function MemoryPage(props: { readonly onConfigureExtraction?: () => void 
                   <div className="memory-detail-disclosures">
                     <details
                       className="memory-detail-disclosure is-bindings"
+                      name={detailDisclosureGroup}
                       key={`bindings:${selectedId}`}
                     >
                       <summary>
@@ -473,6 +507,7 @@ export function MemoryPage(props: { readonly onConfigureExtraction?: () => void 
                     </details>
                     <details
                       className="memory-detail-disclosure is-evidence"
+                      name={detailDisclosureGroup}
                       key={`evidence:${selectedId}`}
                     >
                       <summary>
@@ -506,6 +541,7 @@ export function MemoryPage(props: { readonly onConfigureExtraction?: () => void 
                     </details>
                     <details
                       className="memory-detail-disclosure is-technical"
+                      name={detailDisclosureGroup}
                       key={`technical:${selectedId}`}
                     >
                       <summary>{t("technicalDetails")}</summary>
@@ -895,7 +931,31 @@ export function MemoryActionWithTooltip(props: {
   );
 }
 
+function extractionTaskTime(value: string): string {
+  return new Intl.DateTimeFormat(i18n.language, {
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+  }).format(new Date(value));
+}
+
+export function memoryExtractionTaskTitle(task: DesktopMemoryExtractionTask): string {
+  if (task.title !== undefined)
+    return (task.topicCount ?? 1) > 1
+      ? i18n.t("extractionTopics", { ns: "memory", title: task.title, count: task.topicCount })
+      : task.title;
+  const kind =
+    task.module === "knowledge" ? "knowledge" : task.module === "skill" ? "skill" : "conversation";
+  const title = i18n.t(`extractionFallbackTitles.${kind}`, { ns: "memory" });
+  return task.createdAt === undefined ? title : `${title} · ${extractionTaskTime(task.createdAt)}`;
+}
+
 export function MemoryExtractionJobs(props: {
+  readonly showCompleted: boolean;
+  readonly onToggleCompleted: () => void;
+  readonly learningEnabled?: boolean;
   readonly board?: DesktopMemoryExtractionBoard | undefined;
   readonly loading: boolean;
   readonly busyTask?: string | undefined;
@@ -923,17 +983,27 @@ export function MemoryExtractionJobs(props: {
           <h1>{t("extractions")}</h1>
           <p>{t("extractionsDescription")}</p>
         </div>
-        <StudioActionButton
-          label={t("refresh")}
-          icon={<ArrowsDownUp size={18} aria-hidden="true" />}
-          disabled={props.loading}
-          onClick={props.onRefresh}
-        />
+        <div className="memory-extraction-jobs-actions">
+          <StudioActionButton
+            label={t(props.showCompleted ? "hideCompletedTasks" : "showCompletedTasks")}
+            icon={<Checks size={18} aria-hidden="true" />}
+            pressed={props.showCompleted}
+            onClick={props.onToggleCompleted}
+          />
+          <StudioActionButton
+            label={t("refresh")}
+            icon={<ArrowClockwise size={18} aria-hidden="true" />}
+            disabled={props.loading}
+            onClick={props.onRefresh}
+          />
+        </div>
       </header>
       {props.loading ? <p>{t("loading")}</p> : null}
       {!props.loading ? (
-        <div className="memory-extraction-board">
-          {MEMORY_EXTRACTION_LANES.map((lane) => {
+        <div className={`memory-extraction-board${props.showCompleted ? " has-completed" : ""}`}>
+          {MEMORY_EXTRACTION_LANES.filter(
+            (lane) => props.showCompleted || lane !== "completed",
+          ).map((lane) => {
             const page = props.board?.lanes[lane] ?? EMPTY_MEMORY_EXTRACTION_LANE;
             return (
               <section className={`memory-extraction-lane is-${lane}`} key={lane}>
@@ -955,32 +1025,50 @@ export function MemoryExtractionJobs(props: {
                     const taskKey = `${task.module}:${task.id}`;
                     const busy = props.busyTask === taskKey;
                     const problem = task.problem;
+                    const learningPaused =
+                      props.learningEnabled === false &&
+                      (task.module === "knowledge" || task.module === "skill");
                     return (
                       <article className="memory-extraction-task" key={taskKey}>
-                        <strong>
-                          {task.title ??
-                            t(task.module === "knowledge" ? "unknownAsset" : "unknownMission")}
+                        <strong
+                          className="memory-extraction-task-title"
+                          title={memoryExtractionTaskTitle(task)}
+                        >
+                          {memoryExtractionTaskTitle(task)}
                         </strong>
+                        {task.sourceName !== undefined ||
+                        (task.title !== undefined && task.createdAt !== undefined) ? (
+                          <p className="memory-extraction-task-meta">
+                            {[
+                              task.sourceName === undefined
+                                ? undefined
+                                : t("extractionSource", { name: task.sourceName }),
+                              task.title === undefined || task.createdAt === undefined
+                                ? undefined
+                                : extractionTaskTime(task.createdAt),
+                            ]
+                              .filter(Boolean)
+                              .join(" · ")}
+                          </p>
+                        ) : null}
                         <div className="memory-extraction-task-statuses">
                           <span className={`memory-extraction-type is-${task.module}`}>
                             {t(`extractionTaskTypes.${task.module}`)}
                           </span>
-                          {task.results === undefined
-                            ? null
-                            : (["episodic", "semantic"] as const).map((type) =>
-                                task.results?.[type] === undefined ? null : (
-                                  <span key={type} className="memory-extraction-completion">
-                                    {t(`extractionTaskTypes.${type}`)}:{" "}
-                                    {t(`extractionResults.${task.results[type]}`)}
-                                  </span>
-                                ),
-                              )}
                           {lane === "completed" && task.completion !== undefined ? (
                             <span className="memory-extraction-completion">
-                              {t(`extractionCompletions.${task.completion}`)}
+                              {task.completion === "retained" &&
+                              (task.module === "knowledge" || task.module === "skill")
+                                ? t("extractionDraftCreated")
+                                : t(`extractionCompletions.${task.completion}`)}
                             </span>
                           ) : null}
                         </div>
+                        {learningPaused && lane !== "completed" ? (
+                          <p className="memory-note" role="status">
+                            {t("learningDisabled")}
+                          </p>
+                        ) : null}
                         {lane === "attention" && problem !== undefined ? (
                           <section className={`memory-extraction-problem is-${problem.kind}`}>
                             <strong>{t(`extractionProblems.${problem.kind}.title`)}</strong>
@@ -998,7 +1086,7 @@ export function MemoryExtractionJobs(props: {
                               <StudioActionButton
                                 label={t("extractNow")}
                                 icon={<Play size={18} aria-hidden="true" />}
-                                disabled={busy}
+                                disabled={busy || learningPaused}
                                 onClick={() => void props.onAction(task, "expedite")}
                               />
                             ) : null}
@@ -1022,7 +1110,7 @@ export function MemoryExtractionJobs(props: {
                                 ) : problem?.kind === "dependency" ? (
                                   <StudioActionButton
                                     label={t("refresh")}
-                                    icon={<ArrowsDownUp size={18} aria-hidden="true" />}
+                                    icon={<ArrowClockwise size={18} aria-hidden="true" />}
                                     disabled={busy}
                                     onClick={props.onRefresh}
                                   />
@@ -1030,7 +1118,7 @@ export function MemoryExtractionJobs(props: {
                                   <StudioActionButton
                                     label={t("retryExtraction")}
                                     icon={<Play size={18} aria-hidden="true" />}
-                                    disabled={busy}
+                                    disabled={busy || learningPaused}
                                     onClick={() => void props.onAction(task, "retry")}
                                   />
                                 )}
@@ -1038,7 +1126,7 @@ export function MemoryExtractionJobs(props: {
                                   <StudioActionButton
                                     label={t("retryExtraction")}
                                     icon={<Play size={18} aria-hidden="true" />}
-                                    disabled={busy}
+                                    disabled={busy || learningPaused}
                                     onClick={() => void props.onAction(task, "retry")}
                                   />
                                 ) : null}
@@ -1110,9 +1198,7 @@ export function MemoryExtractionJobs(props: {
         <ConfirmationDialog
           title={t("abandonExtractionTitle")}
           description={t("abandonExtractionDescription", {
-            title:
-              pendingDelete.title ??
-              t(pendingDelete.module === "knowledge" ? "unknownAsset" : "unknownMission"),
+            title: memoryExtractionTaskTitle(pendingDelete),
           })}
           cancelLabel={t("cancel")}
           confirmLabel={t("abandonExtraction")}
@@ -1311,7 +1397,7 @@ export function MemoryExtractionTaskDetails(props: {
               onClick={() => setSelectedKey(taskKey)}
             >
               <span>{t(`extractionTaskTypes.${task.module}`)}</span>
-              <strong>{task.title ?? task.id}</strong>
+              <strong>{memoryExtractionTaskTitle(task)}</strong>
               <small>{t(`extractionLanes.${task.lane}`)}</small>
               <small>{new Date(task.updatedAt).toLocaleString()}</small>
             </button>
@@ -1343,7 +1429,7 @@ export function MemoryExtractionTaskDetails(props: {
                 <span className={`memory-extraction-type is-${detail.task.module}`}>
                   {t(`extractionTaskTypes.${detail.task.module}`)}
                 </span>
-                <h2>{detail.task.title ?? detail.task.id}</h2>
+                <h2>{memoryExtractionTaskTitle(detail.task)}</h2>
                 {detail.task.results === undefined ? null : (
                   <div className="memory-extraction-task-statuses">
                     {(["episodic", "semantic"] as const).map((type) =>

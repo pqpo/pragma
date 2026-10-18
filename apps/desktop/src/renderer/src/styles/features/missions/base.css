@@ -1116,19 +1116,20 @@
 }
 
 .mission-row-preview-heading {
-  display: flex;
-  align-items: flex-start;
-  gap: 8px;
+  overflow-wrap: anywhere;
+  font-size: 14px;
+  line-height: 1.45;
 }
 
 .mission-row-preview-edit {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  flex: 0 0 32px;
   width: 32px;
   height: 32px;
+  margin-block: -8px;
   padding: 0;
+  vertical-align: -0.125em;
   border: 0;
   border-radius: var(--ui-radius-sm);
   background: transparent;
@@ -1137,20 +1138,11 @@
 }
 
 .mission-row-preview-edit:hover {
-  background: var(--ui-surface-subtle);
   color: var(--ui-text);
 }
 
 .mission-row-preview-heading > strong {
-  flex: 1;
-  min-width: 0;
-  display: -webkit-box;
-  overflow: hidden;
-  font-size: 14px;
   font-weight: 600;
-  line-height: 1.45;
-  -webkit-box-orient: vertical;
-  -webkit-line-clamp: 3;
 }
 
 .mission-row-preview dl {

@@ -13,6 +13,8 @@ import { extractionFailureDiagnostic } from "../pipeline/extraction-error-code.t
 import type { MemoryModule } from "../pipeline/memory-module.ts";
 import { DEFAULT_MEMORY_STORAGE_POLICY } from "../storage/memory-storage-policy.ts";
 import type { KnowledgeLearningPlan } from "../learning/revision-plan.ts";
+import { createMemoryLearningPolicyGuard } from "../learning/learning-policy.ts";
+import { writeMemoryLearningTaskPresentation } from "../learning/task-presentation.ts";
 
 const MAX_SOURCE_REVISIONS = 100;
 
@@ -59,6 +61,7 @@ export async function createKnowledgeMemoryModule(options: {
 }): Promise<KnowledgeMemoryModule> {
   const store = await createKnowledgeLearningStore(options);
   const now = options.now ?? (() => new Date());
+  const canLearn = createMemoryLearningPolicyGuard({ ...options, now });
   let planner = options.planner;
   const running = new Map<string, AbortController>();
 
@@ -94,6 +97,7 @@ export async function createKnowledgeMemoryModule(options: {
   };
 
   const scheduleRoot = async (rootRef: MemorySubjectRef): Promise<void> => {
+    if (!(await canLearn(rootRef))) return;
     const sources = boundSources(
       await options.sourceReader.listEligibleSources({
         rootRef,
@@ -105,11 +109,13 @@ export async function createKnowledgeMemoryModule(options: {
       await reconcileJobs(rootRef);
       return;
     }
-    await store.schedule({
+    const job = await store.schedule({
       rootRef,
       sourceDigest: digest("knowledge-sources", ...sources.map(sourceDigestKey).toSorted()),
       now: now(),
     });
+    if (job !== undefined)
+      writeMemoryLearningTaskPresentation(options, { module: "knowledge", ...job }, { sources });
   };
 
   const managedStore: KnowledgeLearningStore = {
@@ -154,6 +160,7 @@ export async function createKnowledgeMemoryModule(options: {
       return {};
     },
     async runBackgroundOnce() {
+      if (!(await canLearn())) return;
       await reconcileJobs();
       if (planner === undefined) return;
       const job = await store.claimDueJob(now());
@@ -182,6 +189,7 @@ export async function createKnowledgeMemoryModule(options: {
           await store.discardJob({ id: job.id, expectedRevision: job.revision });
           return;
         }
+        writeMemoryLearningTaskPresentation(options, { module: "knowledge", ...job }, { sources });
         const expertRefs = new Set(
           sources
             .flatMap((source) => source.producerRefs)
@@ -200,6 +208,20 @@ export async function createKnowledgeMemoryModule(options: {
           );
           const expertSources = producerSources.length > 0 ? producerSources : sources;
           if (!knowledgeSourceSelectionEligible(expertSources)) continue;
+          const producers = expertSources.flatMap((source) => source.producerRefs);
+          if (!(await canLearn(job.rootRef, producers))) {
+            // A policy pause must yield even after the original debounce deadline.
+            const pausedAt = now();
+            await store.interruptJob({
+              id: job.id,
+              expectedRevision: job.revision,
+              now: pausedAt,
+              retryAt: new Date(
+                pausedAt.getTime() + DEFAULT_MEMORY_STORAGE_POLICY.extractionIdleMs,
+              ),
+            });
+            return;
+          }
           if (!(await store.isClaimCurrent(job))) return;
           controller.signal.throwIfAborted();
           const expertDigest = digest(
@@ -216,10 +238,28 @@ export async function createKnowledgeMemoryModule(options: {
             sources: expertSources,
             signal: controller.signal,
           });
+          if (!(await canLearn(job.rootRef, producers))) {
+            // A policy pause must yield even after the original debounce deadline.
+            const pausedAt = now();
+            await store.interruptJob({
+              id: job.id,
+              expectedRevision: job.revision,
+              now: pausedAt,
+              retryAt: new Date(
+                pausedAt.getTime() + DEFAULT_MEMORY_STORAGE_POLICY.extractionIdleMs,
+              ),
+            });
+            return;
+          }
           await reconcileJobs(job.rootRef);
           controller.signal.throwIfAborted();
           if (!(await store.isClaimCurrent(job))) return;
           if (plan.action === "skip") continue;
+          writeMemoryLearningTaskPresentation(
+            options,
+            { module: "knowledge", ...job },
+            { sources, plannedTitles: [plan.name] },
+          );
           phase = "revision_submit";
           await options.learningSink.submit({
             rootRef: job.rootRef,

@@ -10,6 +10,7 @@ export function StudioActionButton(props: {
   readonly tone?: StudioActionButtonTone | undefined;
   readonly disabled?: boolean | undefined;
   readonly busy?: boolean | undefined;
+  readonly pressed?: boolean | undefined;
   readonly onClick: () => void;
 }) {
   const tooltipId = useId();
@@ -27,6 +28,7 @@ export function StudioActionButton(props: {
         type="button"
         aria-label={props.label}
         aria-describedby={tooltipId}
+        aria-pressed={props.pressed}
         disabled={props.disabled}
         onClick={props.onClick}
       >

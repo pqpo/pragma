@@ -160,8 +160,29 @@ describe("unified memory extraction tasks", () => {
     expect(board.lanes.completed.tasks.map((task) => [task.module, task.title])).toEqual([
       ["conversation", "Release mission"],
       ["conversation", "Release mission"],
-      ["knowledge", "Knowledge source"],
+      ["knowledge", undefined],
     ]);
+  });
+
+  it("separates a saved topic from its source expert without displaying semantic IDs", async () => {
+    const knowledge = knowledgeJob(1, "2026-08-05T00:00:01.000Z");
+    const plane = planeFor([], [], [knowledge]);
+    vi.spyOn(plane.knowledgeLearningStore, "getPresentation").mockReturnValue({
+      schemaVersion: "pragma.memory-task-presentation/v1",
+      titles: ["ContextStore token savings"],
+      topicCount: 1,
+      planned: true,
+    });
+    const options = {
+      ...emptyTitleOptions(),
+      systemExperts: { list: () => [{ id: knowledge.rootRef.id, name: "Pragma" }] },
+    };
+    const board = await listDesktopMemoryExtractionJobs(plane, options, FIRST_PAGES);
+    expect(board.lanes.completed.tasks[0]).toMatchObject({
+      title: "ContextStore token savings",
+      sourceName: "Pragma",
+      createdAt: knowledge.createdAt,
+    });
   });
 
   it("retains built-in names and Skill rejections without technical IDs in user-facing names", async () => {
@@ -186,7 +207,10 @@ describe("unified memory extraction tasks", () => {
     } as unknown as Parameters<typeof getDesktopMemoryExtractionTaskDetail>[1];
     const plane = planeFor([], [], [knowledge], [skill]);
     const board = await listDesktopMemoryExtractionJobs(plane, options, FIRST_PAGES);
-    expect(board.lanes.completed.tasks.map((task) => task.title)).toEqual(["Pragma", "Pragma"]);
+    expect(board.lanes.completed.tasks.map((task) => task.sourceName)).toEqual([
+      "Pragma",
+      "Pragma",
+    ]);
     expect(board.lanes.completed.tasks.find((task) => task.module === "skill")?.completion).toBe(
       "rejected",
     );
@@ -196,7 +220,7 @@ describe("unified memory extraction tasks", () => {
           module: "knowledge",
           id: knowledge.id,
         })
-      ).task.title,
+      ).task.sourceName,
     ).toBe("Pragma");
   });
   it("returns the actionable failure history and read-only run records for a task", async () => {
@@ -237,6 +261,7 @@ describe("unified memory extraction tasks", () => {
     const detail = await getDesktopMemoryExtractionTaskDetail(
       {
         skillLearningStore: {
+          getPresentation: () => undefined,
           listJobs: vi.fn(async () => [skill]),
           getJob: vi.fn(async () => skill),
           listFailureAttempts: vi.fn(async () => [failureAttempt]),
@@ -255,7 +280,7 @@ describe("unified memory extraction tasks", () => {
     );
 
     expect(detail).toMatchObject({
-      task: { module: "skill", lane: "attention", title: "Research team" },
+      task: { module: "skill", lane: "attention", sourceName: "Research team" },
       lastErrorMessage: "429 rate limit exceeded",
       lastFailure: { transport: { httpStatus: 429 } },
       attempts: [{ diagnostic: { code: "rate_limit_exceeded" } }],
@@ -319,6 +344,7 @@ function planeFor(
       listFailureAttempts: async () => [],
     },
     knowledgeLearningStore: {
+      getPresentation: () => undefined,
       listJobs: vi.fn(async () => knowledge),
       getJob: vi.fn(async (id: string) => knowledge.find((job) => job.id === id)),
       listJobsPage: vi.fn(async (input: MemoryJobPageInput<string>) =>
@@ -327,6 +353,7 @@ function planeFor(
       listFailureAttempts: async () => [],
     },
     skillLearningStore: {
+      getPresentation: () => undefined,
       listJobs: vi.fn(async () => skills),
       getJob: vi.fn(async (id: string) => skills.find((job) => job.id === id)),
       listJobsPage: vi.fn(async (input: MemoryJobPageInput<string>) =>

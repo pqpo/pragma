@@ -1131,12 +1131,13 @@ export async function createSemanticMemoryStore(
             data
               .prepare(
                 `INSERT OR IGNORE INTO projection_notifications(id, root_ref_json, created_at, learning_eligible)
-                 VALUES (?, ?, ?, 1)`,
+                 VALUES (?, ?, ?, ?)`,
               )
               .run(
                 `${input.job.id}:${input.job.inputWatermark}`,
                 JSON.stringify(input.rootRef),
                 input.now.toISOString(),
+                input.evidence.every((item) => item.policySnapshot.learning !== "disabled") ? 1 : 0,
               );
           }
           data.exec("COMMIT;");

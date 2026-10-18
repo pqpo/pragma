@@ -512,6 +512,21 @@ export async function createDesktopMemoryPlane(options: {
   };
 
   const manageMemoryJob: DesktopMemoryPlane["manageMemoryJob"] = async (input) => {
+    if (
+      (input.module === "knowledge" || input.module === "skill") &&
+      (input.action === "expedite" || input.action === "retry")
+    ) {
+      const occurredAt = new Date().toISOString();
+      if ((await policies.resolveAt({ occurredAt })).learning === "disabled")
+        throw new Error("memory_learning_disabled");
+      const jobs = await (input.module === "knowledge" ? knowledge.store : skill.store).listJobs();
+      const job = jobs.find((job) => job.id === input.id);
+      if (
+        job !== undefined &&
+        (await policies.resolveAt({ rootRef: job.rootRef, occurredAt })).learning === "disabled"
+      )
+        throw new Error("memory_learning_disabled");
+    }
     // Older callers may address a delivery row. Route it to the same logical task in shared mode.
     if (
       data.conversationExtraction.enabled &&

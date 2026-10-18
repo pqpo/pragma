@@ -12,6 +12,10 @@ import { createHash } from "node:crypto";
 import { mkdir } from "node:fs/promises";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
+import {
+  readMemoryLearningTaskPresentation,
+  type MemoryLearningTaskPresentation,
+} from "../learning/task-presentation.ts";
 
 import { PragmaPaths, withFileLock } from "@pragma/core";
 import {
@@ -43,6 +47,7 @@ const MODULE_ID = "pragma.memory.skill-learning";
 const LEASE_MS = 5 * 60_000;
 
 export interface SkillLearningStore {
+  getPresentation(job: SkillLearningJob): MemoryLearningTaskPresentation | undefined;
   schedule(input: {
     readonly rootRef: MemorySubjectRef;
     readonly sourceDigest: string;
@@ -159,6 +164,9 @@ export async function createSkillLearningStore(
     });
 
   return {
+    getPresentation(job) {
+      return readMemoryLearningTaskPresentation(options, { module: "skill", ...job });
+    },
     async schedule(input) {
       if (!/^[a-f0-9]{64}$/u.test(input.sourceDigest))
         throw new Error("skill_source_digest_invalid");

@@ -90,7 +90,7 @@ export async function listDesktopMemoryExtractionJobs(
       MEMORY_EXTRACTION_LANES.map((lane, index) => {
         const page = loadedPages[index]!;
         const tasks = page.jobs.map((entry) =>
-          toDesktopTask(entry, missionTitles, executionTitles, resourceTitles),
+          toDesktopTask(entry, missionTitles, executionTitles, resourceTitles, plane),
         );
         return [
           lane,
@@ -139,7 +139,9 @@ export async function listDesktopMemoryExtractionActiveTasks(
     .slice(page.offset, page.offset + page.limit);
   const { missionTitles, executionTitles, resourceTitles } = await loadTaskTitles(jobs, options);
   return DesktopMemoryExtractionActiveTaskListSchema.parse(
-    jobs.map((entry) => toDesktopTask(entry, missionTitles, executionTitles, resourceTitles)),
+    jobs.map((entry) =>
+      toDesktopTask(entry, missionTitles, executionTitles, resourceTitles, plane),
+    ),
   );
 }
 
@@ -215,7 +217,7 @@ export async function getDesktopMemoryExtractionTaskDetail(
     ];
     const problem = details.find((detail) => detail.task.lane === "attention");
     return DesktopMemoryExtractionTaskDetailSchema.parse({
-      task: toDesktopTask(entry, missionTitles, executionTitles, resourceTitles),
+      task: toDesktopTask(entry, missionTitles, executionTitles, resourceTitles, plane),
       lastErrorMessage: problem?.lastErrorMessage,
       lastFailure: problem?.lastFailure,
       attempts: details.flatMap((detail) => detail.attempts).slice(-20),
@@ -279,7 +281,7 @@ export async function getDesktopMemoryExtractionTaskDetail(
     options.curator.listRuns({ module: input.module, jobId: input.id }),
   ]);
   return DesktopMemoryExtractionTaskDetailSchema.parse({
-    task: toDesktopTask(entry, missionTitles, executionTitles, resourceTitles),
+    task: toDesktopTask(entry, missionTitles, executionTitles, resourceTitles, plane),
     ...(job.lastErrorMessage === undefined ? {} : { lastErrorMessage: job.lastErrorMessage }),
     ...(job.lastFailure === undefined ? {} : { lastFailure: job.lastFailure }),
     attempts,
@@ -380,10 +382,17 @@ function toDesktopTask(
   missionTitles: ReadonlyMap<string, string>,
   executionTitles: ReadonlyMap<string, string>,
   resourceTitles: ReadonlyMap<string, string>,
+  plane: Pick<DesktopMemoryPlane, "knowledgeLearningStore" | "skillLearningStore">,
 ): DesktopMemoryExtractionTask {
+  const presentation =
+    entry.module === "knowledge"
+      ? plane.knowledgeLearningStore.getPresentation(entry.job)
+      : entry.module === "skill"
+        ? plane.skillLearningStore.getPresentation(entry.job)
+        : undefined;
   const title =
     entry.module === "knowledge" || entry.module === "skill"
-      ? resourceTitles.get(entry.job.rootRef.id)
+      ? presentation?.titles[0]
       : entry.job.conversationRef.type === "pragma.mission"
         ? missionTitles.get(entry.job.conversationRef.id)
         : executionTitles.get(entry.job.conversationRef.id);
@@ -393,6 +402,13 @@ function toDesktopTask(
     revision: entry.job.revision,
     lane: entry.lane,
     ...(title === undefined ? {} : { title }),
+    ...(entry.module === "knowledge" || entry.module === "skill"
+      ? {
+          sourceName: resourceTitles.get(entry.job.rootRef.id),
+          createdAt: entry.job.createdAt,
+          ...(presentation === undefined ? {} : { topicCount: presentation.topicCount }),
+        }
+      : { createdAt: entry.job.sourceUpdatedAt }),
     ...(entry.job.status === "completed" && entry.job.completion !== undefined
       ? { completion: entry.job.completion }
       : {}),

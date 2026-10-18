@@ -8,7 +8,11 @@ import { PragmaPaths } from "@pragma/core";
 import type { MemorySubjectRef, SkillLearningJob, SkillSourceSnapshot } from "@pragma/shared";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { createSkillMemoryModule, type SkillLearningSink } from "../src/index.ts";
+import {
+  createFileMemoryPolicyStore,
+  createSkillMemoryModule,
+  type SkillLearningSink,
+} from "../src/index.ts";
 import { createSkillLearningStore } from "../src/skill/store.ts";
 
 const roots: string[] = [];
@@ -21,6 +25,90 @@ afterEach(async () => {
 });
 
 describe("Skill learning revision planning", () => {
+  it("keeps terminal delivery successful when optional title sources cannot be read", async () => {
+    const sourceReader = {
+      listEligibleSources: vi.fn(async () => {
+        throw new Error("source unavailable");
+      }),
+    };
+    const module = await createSkillMemoryModule({
+      pragmaHome: await temporaryRoot(),
+      now: () => now,
+      sourceReader,
+      targetReader: { listTargets: async () => [] },
+      learningSink: { submit: vi.fn() },
+    });
+    try {
+      await expect(
+        module.consume([
+          {
+            topic: "execution.execution.terminal",
+            messageId: "terminal",
+            attribution: { rootRef: ref("pragma.expert", "expert-a") },
+          } as unknown as import("@pragma/shared").MemoryEvidenceEnvelope,
+        ]),
+      ).resolves.toEqual({});
+      expect(sourceReader.listEligibleSources).toHaveBeenCalledOnce();
+      expect(await module.store.listJobs()).toHaveLength(1);
+    } finally {
+      module.close();
+    }
+  });
+
+  it.each(["global", "memory", "asset", "during-plan"] as const)(
+    "honors disabled learning policy at %s before planning or submitting",
+    async (boundary) => {
+      const pragmaHome = await temporaryRoot();
+      const policies = createFileMemoryPolicyStore({ pragmaHome, now: () => now });
+      const disable = async () => {
+        if (boundary === "asset") {
+          await policies.updateOverride({
+            targetRef: ref("pragma.expert", "expert-a"),
+            expectedRevision: 0,
+            policy: { capture: "inherit", recall: "inherit", learning: "disabled" },
+          });
+        } else {
+          const current = await policies.getGlobal();
+          await policies.updateGlobal({
+            expectedRevision: current.revision,
+            policy: {
+              ...current.policy,
+              ...(boundary === "memory" ? { enabled: "disabled" } : { learning: "disabled" }),
+            },
+          });
+        }
+      };
+      const plan = vi.fn(async () => {
+        if (boundary === "during-plan") await disable();
+        return {
+          action: "apply" as const,
+          changes: [
+            {
+              name: "Workflow",
+              description: "Reusable workflow",
+              normalizedKey: "workflow.example",
+              sourceRefs: sources()
+                .slice(0, 3)
+                .map((source) => source.ref),
+              target: { type: "create" as const },
+            },
+          ],
+        };
+      });
+      const submit = vi.fn(async () => undefined);
+      const module = await createModule(sources(), { pragmaHome, plan, submit });
+      try {
+        if (boundary !== "during-plan") await disable();
+        await schedule(module, sources());
+        await module.runBackgroundOnce?.();
+        expect(plan).toHaveBeenCalledTimes(boundary === "during-plan" ? 1 : 0);
+        expect(submit).not.toHaveBeenCalled();
+        expect((await module.store.listJobs())[0]?.status).toBe("pending");
+      } finally {
+        module.close();
+      }
+    },
+  );
   it("persists the three-retry budget and five-second deadline across restart", async () => {
     const root = await temporaryRoot();
     let clock = new Date(now.getTime() + 6 * 60 * 60_000);
@@ -411,13 +499,14 @@ describe("Skill learning store v3 migration", () => {
 async function createModule(
   sourceRevisions: readonly SkillSourceSnapshot[],
   overrides: {
+    readonly pragmaHome?: string;
     readonly plan: NonNullable<Parameters<typeof createSkillMemoryModule>[0]["planner"]>["plan"];
     readonly submit?: SkillLearningSink["submit"];
     readonly targets?: readonly import("@pragma/shared").ExistingMemorySkillTarget[];
   },
 ) {
   return await createSkillMemoryModule({
-    pragmaHome: await temporaryRoot(),
+    pragmaHome: overrides.pragmaHome ?? (await temporaryRoot()),
     sourceReader: { listEligibleSources: async () => sourceRevisions },
     targetReader: { listTargets: async () => overrides.targets ?? [] },
     planner: { plan: overrides.plan },
@@ -540,5 +629,17 @@ function ref(type: string, id: string): MemorySubjectRef {
 async function temporaryRoot(): Promise<string> {
   const root = await mkdtemp(join(tmpdir(), "pragma-skill-learning-"));
   roots.push(root);
+  await createFileMemoryPolicyStore({
+    pragmaHome: root,
+    now: () => new Date("2026-08-01T00:00:00.000Z"),
+  }).updateGlobal({
+    expectedRevision: 0,
+    policy: {
+      enabled: "enabled",
+      capture: "enabled",
+      recall: "enabled",
+      learning: "local-candidates",
+    },
+  });
   return root;
 }

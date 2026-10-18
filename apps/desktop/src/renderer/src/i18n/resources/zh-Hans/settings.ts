@@ -137,8 +137,8 @@ export const settings = {
   },
   navigationLabel: "设置分类",
   bundleSources: {
-    navigation: "Bundle 源",
-    title: "Bundle 源",
+    navigation: "源",
+    title: "源",
     description: "添加遵循 Pragma Bundle Source 格式的 Git 仓库。",
     name: "源名称",
     remote: "Git 远端地址",

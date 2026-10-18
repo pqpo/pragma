@@ -13,6 +13,7 @@ import {
   MemoryListLoadMore,
   formatMemorySubjectRefs,
   memoryExtractionPollDelay,
+  memoryExtractionTaskTitle,
 } from "./MemoryPage.tsx";
 
 afterEach(async () => {
@@ -20,6 +21,64 @@ afterEach(async () => {
 });
 
 describe("MemoryPage", () => {
+  it.each([false, true])("shows the completed lane only when selected (%s)", (showCompleted) => {
+    const empty = { tasks: [], pageIndex: 0, pageCount: 1, totalTasks: 0 };
+    const html = renderToStaticMarkup(
+      <MemoryExtractionJobs
+        showCompleted={showCompleted}
+        onToggleCompleted={() => undefined}
+        loading={false}
+        onRefresh={() => undefined}
+        onAction={async () => undefined}
+        onPageChange={() => undefined}
+        board={{
+          lanes: {
+            waiting: empty,
+            attention: empty,
+            running: empty,
+            completed: {
+              ...empty,
+              totalTasks: 1,
+              tasks: [
+                {
+                  module: "conversation",
+                  id: "old",
+                  revision: 1,
+                  lane: "completed",
+                  title: "An old task",
+                  updatedAt: "2026-10-18T01:20:00.000Z",
+                },
+              ],
+            },
+          },
+        }}
+      />,
+    );
+    expect(html.includes("An old task")).toBe(showCompleted);
+    expect(html.includes("memory-extraction-lane is-completed")).toBe(showCompleted);
+    expect(html).toContain(`aria-pressed="${showCompleted}"`);
+    expect(html).toContain(showCompleted ? "Hide completed tasks" : "Show completed tasks");
+  });
+
+  it("uses topics as task titles and distinguishes historical learning tasks by creation time", () => {
+    const task = {
+      module: "knowledge" as const,
+      id: "job",
+      revision: 1,
+      lane: "completed" as const,
+      updatedAt: "2026-10-18T14:00:00.000Z",
+      createdAt: "2026-10-18T01:20:00.000Z",
+      sourceName: "Pragma",
+    };
+    expect(
+      memoryExtractionTaskTitle({ ...task, title: "ContextStore token savings", topicCount: 3 }),
+    ).toBe("ContextStore token savings · 3 topics");
+    expect(memoryExtractionTaskTitle(task)).toContain("Knowledge extraction");
+    expect(memoryExtractionTaskTitle(task)).not.toContain("Pragma");
+    expect(memoryExtractionTaskTitle({ ...task, updatedAt: "2026-10-18T15:00:00.000Z" })).toBe(
+      memoryExtractionTaskTitle(task),
+    );
+  });
   it("offers keyboard loading and retry while announcing pagination state", () => {
     const props = { loading: false, hasMore: true, error: false, loadMore: async () => {} };
     const more = renderToStaticMarkup(<MemoryListLoadMore {...props} />);
@@ -284,9 +343,50 @@ describe("MemoryPage", () => {
     expect(empty).not.toContain("memory-task-detail-item");
   });
 
+  it("explains and disables a queued knowledge action when learning is off", () => {
+    const empty = { tasks: [], pageIndex: 0, pageCount: 1, totalTasks: 0 };
+    const html = renderToStaticMarkup(
+      <MemoryExtractionJobs
+        showCompleted={true}
+        onToggleCompleted={() => undefined}
+        learningEnabled={false}
+        loading={false}
+        onRefresh={() => undefined}
+        onAction={async () => undefined}
+        onPageChange={() => undefined}
+        board={{
+          lanes: {
+            waiting: {
+              ...empty,
+              totalTasks: 1,
+              tasks: [
+                {
+                  module: "knowledge",
+                  id: "job",
+                  revision: 1,
+                  lane: "waiting",
+                  title: "Store Revision Agent",
+                  updatedAt: "2026-10-18T14:01:33.844Z",
+                },
+              ],
+            },
+            attention: empty,
+            running: empty,
+            completed: empty,
+          },
+        }}
+      />,
+    );
+    expect(html).toContain("Knowledge and Skill learning is disabled.");
+    expect(html).toContain('role="status"');
+    expect(html.match(/<button[^>]*disabled=""/g)).toHaveLength(1);
+  });
+
   it("keeps waiting tasks and the expedite action available alongside other lanes", () => {
     const html = renderToStaticMarkup(
       <MemoryExtractionJobs
+        showCompleted={true}
+        onToggleCompleted={() => undefined}
         board={{
           lanes: {
             waiting: {
@@ -336,7 +436,7 @@ describe("MemoryPage", () => {
 
     expect(html).toContain("Waiting for idle");
     expect(html).toContain("memory-extraction-lane is-waiting");
-    expect(html).toContain("Review and manage queued, active, and completed memory refinements.");
+    expect(html).toContain("Track refinement progress and manage tasks that need your attention.");
     expect(html).toContain("<h1>Extraction jobs</h1>");
     expect(html.match(/<h1>/g)).toHaveLength(1);
     expect(html).toContain("Needs attention");
@@ -344,7 +444,7 @@ describe("MemoryPage", () => {
     expect(html).toContain("Completed");
     expect(html).toContain("Prepare the release");
     expect(html).toContain("Episodic memory");
-    expect(html).toContain("Knowledge memory");
+    expect(html).toContain("Knowledge extraction");
     expect(html).toContain("Memory capacity needs attention");
     expect(html).toContain("Technical details");
     expect(html).toContain("knowledge_candidate_capacity_exceeded");
@@ -363,6 +463,8 @@ describe("MemoryPage", () => {
     await i18n.changeLanguage("zh-Hans");
     const html = renderToStaticMarkup(
       <MemoryExtractionJobs
+        showCompleted={true}
+        onToggleCompleted={() => undefined}
         board={{
           lanes: {
             waiting: { tasks: [], pageIndex: 0, pageCount: 1, totalTasks: 0 },
@@ -394,7 +496,7 @@ describe("MemoryPage", () => {
     );
 
     expect(html).toContain("研发专家团");
-    expect(html).toContain("本次无变更");
+    expect(html).toContain("未产生新内容");
     expect(html).not.toContain("skill_source_threshold_not_met");
     expect(html).not.toContain("重新提炼");
     expect(html).not.toContain(">删除<");

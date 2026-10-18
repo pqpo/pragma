@@ -16,6 +16,8 @@ import type { SkillSourceReader } from "./source-reader.ts";
 import { createSkillLearningStore, type SkillLearningStore } from "./store.ts";
 import { skillSourceThresholdMet } from "./validation.ts";
 import type { SkillLearningPlan } from "../learning/revision-plan.ts";
+import { createMemoryLearningPolicyGuard } from "../learning/learning-policy.ts";
+import { writeMemoryLearningTaskPresentation } from "../learning/task-presentation.ts";
 
 const MAX_SOURCE_REVISIONS = 100;
 
@@ -65,6 +67,7 @@ export async function createSkillMemoryModule(options: {
 }): Promise<SkillMemoryModule> {
   const store = await createSkillLearningStore(options);
   const now = options.now ?? (() => new Date());
+  const canLearn = createMemoryLearningPolicyGuard({ ...options, now });
   let planner = options.planner;
   const running = new Map<string, AbortController>();
   return {
@@ -96,7 +99,8 @@ export async function createSkillMemoryModule(options: {
     },
     async consume(envelopes) {
       for (const [rootKey, group] of groupTerminalSignals(envelopes)) {
-        await store.schedule({
+        if (!(await canLearn(group[0]!.attribution!.rootRef))) continue;
+        const job = await store.schedule({
           rootRef: group[0]!.attribution!.rootRef,
           sourceDigest: digest(
             "terminal-signal",
@@ -105,10 +109,25 @@ export async function createSkillMemoryModule(options: {
           ),
           now: now(),
         });
+        if (job !== undefined) {
+          try {
+            const sources = boundSources(
+              await options.sourceReader.listEligibleSources({
+                rootRef: job.rootRef,
+                limit: MAX_SOURCE_REVISIONS,
+                now: now(),
+              }),
+            );
+            writeMemoryLearningTaskPresentation(options, { module: "skill", ...job }, { sources });
+          } catch {
+            // Display metadata is optional; the scheduled job retries source reads in the background.
+          }
+        }
       }
       return {};
     },
     async runBackgroundOnce() {
+      if (!(await canLearn())) return;
       if (planner === undefined) return;
       const job = await store.claimDueJob(now());
       if (job === undefined) return;
@@ -127,11 +146,14 @@ export async function createSkillMemoryModule(options: {
         const sources = boundSources(available);
         const sourceDigest = digest("skill-sources", ...sources.map(sourceKey).toSorted());
         if (job.sourceDigest !== sourceDigest) {
-          await store.schedule({ rootRef: job.rootRef, sourceDigest, now: now() });
+          const next = await store.schedule({ rootRef: job.rootRef, sourceDigest, now: now() });
+          if (next !== undefined)
+            writeMemoryLearningTaskPresentation(options, { module: "skill", ...next }, { sources });
           await store.complete(job, "rejected", now());
           return;
         }
         const expertRefs = producerExpertRefs(job.rootRef, sources);
+        writeMemoryLearningTaskPresentation(options, { module: "skill", ...job }, { sources });
         if (expertRefs.length === 0) {
           await store.complete(job, "rejected", now());
           return;
@@ -147,6 +169,11 @@ export async function createSkillMemoryModule(options: {
           return;
         }
         for (const { expertRef, sources: expertSources } of eligibleExpertSources) {
+          const producers = expertSources.flatMap((source) => source.producerRefs);
+          if (!(await canLearn(job.rootRef, producers))) {
+            await store.interruptJob({ id: job.id, expectedRevision: job.revision, now: now() });
+            return;
+          }
           phase = "target_read";
           const existingTargets = await options.targetReader.listTargets({ expertRef });
           if (!(await store.isClaimCurrent(job))) return;
@@ -161,6 +188,10 @@ export async function createSkillMemoryModule(options: {
             existingTargets,
             signal: controller.signal,
           });
+          if (!(await canLearn(job.rootRef, producers))) {
+            await store.interruptJob({ id: job.id, expectedRevision: job.revision, now: now() });
+            return;
+          }
           phase = "validation";
           if (plan.action === "skip") continue;
           if (
@@ -191,6 +222,11 @@ export async function createSkillMemoryModule(options: {
             );
           });
           if (!valid) throw new Error("skill_learning_plan_invalid");
+          writeMemoryLearningTaskPresentation(
+            options,
+            { module: "skill", ...job },
+            { sources, plannedTitles: plan.changes.map((change) => change.name) },
+          );
           phase = "revision_submit";
           await options.learningSink.submit({
             rootRef: job.rootRef,

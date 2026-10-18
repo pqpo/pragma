@@ -1,6 +1,13 @@
 import type { DesktopTranslationResource } from "../en/index.ts";
 
 export const memory = {
+  showCompletedTasks: "顯示已完成",
+  hideCompletedTasks: "隱藏已完成",
+  extractionSource: "來源：{{name}}",
+  extractionTopics: "{{title}}等 {{count}} 個主題",
+  extractionFallbackTitles: { knowledge: "知識沉澱", skill: "技能提煉", conversation: "記憶提煉" },
+  extractionDraftCreated: "已建立待審核草稿",
+  learningDisabled: "學習沉澱已停用。在記憶設定中啟用後，才能繼續處理知識與技能沉澱任務。",
   itemStatuses: { active: "有效", invalidated: "已失效" },
   evidenceNumber: "證據 {{number}}",
   unavailableSubject: "資源無法使用",
@@ -30,7 +37,7 @@ export const memory = {
   withdraw: "撤回",
   importedKnowledgePersists: "這筆知識來自 Bundle；即使捨棄該 Bundle 安裝，它仍會保留。",
   extractions: "提煉任務",
-  extractionsDescription: "查看和管理等待、需要處理、正在提煉及已完成的記憶提煉任務。",
+  extractionsDescription: "查看提煉進展，管理需要處理的任務。",
   refresh: "重新整理",
   extractionLanes: {
     waiting: "等待閒置",
@@ -42,12 +49,12 @@ export const memory = {
     conversation: "記憶提煉",
     episodic: "情景記憶",
     semantic: "事實記憶",
-    knowledge: "知識記憶",
+    knowledge: "知識沉澱",
     skill: "技能提煉",
   },
   extractionCompletions: {
-    retained: "已處理",
-    rejected: "本次無變更",
+    retained: "已儲存",
+    rejected: "未產生新內容",
   },
   emptyExtractionLane: "目前狀態暫無任務。",
   extractionPagination: "{{lane}}分頁",

@@ -22,7 +22,11 @@ const failureDiagnostic = (code: string) =>
     failedAt: "2026-08-01T00:00:00.000Z",
   }) as const;
 
-import { createKnowledgeMemoryModule, knowledgeSourceSelectionEligible } from "../src/index.ts";
+import {
+  createKnowledgeMemoryModule,
+  knowledgeSourceSelectionEligible,
+  createFileMemoryPolicyStore,
+} from "../src/index.ts";
 import {
   createKnowledgeLearningStore,
   type KnowledgeLearningStore,
@@ -40,6 +44,109 @@ afterEach(async () => {
 });
 
 describe("Knowledge learning jobs", () => {
+  it("does not let an overdue disabled root starve another root", async () => {
+    const pragmaHome = await temporaryRoot();
+    let clock = now;
+    const disabledRoot = ref("pragma.expert", "expert-disabled");
+    const enabledRoot = ref("pragma.expert", "expert-a");
+    await createFileMemoryPolicyStore({ pragmaHome, now: () => now }).updateOverride({
+      targetRef: disabledRoot,
+      expectedRevision: 0,
+      policy: { capture: "inherit", recall: "inherit", learning: "disabled" },
+    });
+    const plan = vi.fn(async () => ({ action: "skip" as const }));
+    const module = await createKnowledgeMemoryModule({
+      pragmaHome,
+      now: () => clock,
+      sourceReader: { listEligibleSources: async () => sources() },
+      planner: { plan },
+      learningSink: { submit: vi.fn() },
+    });
+    try {
+      for (const rootRef of [disabledRoot, enabledRoot]) {
+        await module.store.schedule({
+          rootRef,
+          sourceDigest: digestSources(sources()),
+          now: new Date(now.getTime() - 24 * 60 * 60_000),
+        });
+      }
+      await module.runBackgroundOnce?.();
+      await module.runBackgroundOnce?.();
+      expect(plan).toHaveBeenCalledOnce();
+      expect(plan).toHaveBeenCalledWith(expect.objectContaining({ rootRef: enabledRoot }));
+      expect(
+        (await module.store.listJobs()).find((job) => job.rootRef.id === disabledRoot.id),
+      ).toMatchObject({ status: "pending" });
+      clock = new Date(now.getTime() + 6 * 60 * 60_000);
+      await createFileMemoryPolicyStore({ pragmaHome, now: () => clock }).updateOverride({
+        targetRef: disabledRoot,
+        expectedRevision: 1,
+        policy: { capture: "inherit", recall: "inherit", learning: "inherit" },
+      });
+      await module.runBackgroundOnce?.();
+      expect(plan).toHaveBeenCalledTimes(2);
+      expect(plan).toHaveBeenLastCalledWith(expect.objectContaining({ rootRef: disabledRoot }));
+    } finally {
+      module.close();
+    }
+  });
+
+  it.each(["global", "memory", "asset", "during-plan"] as const)(
+    "honors disabled learning policy at %s and keeps existing work pending",
+    async (boundary) => {
+      const pragmaHome = await temporaryRoot();
+      const policies = createFileMemoryPolicyStore({ pragmaHome, now: () => now });
+      const disable = async () => {
+        if (boundary === "asset") {
+          await policies.updateOverride({
+            targetRef: ref("pragma.expert", "expert-a"),
+            expectedRevision: 0,
+            policy: { capture: "inherit", recall: "inherit", learning: "disabled" },
+          });
+        } else {
+          const current = await policies.getGlobal();
+          await policies.updateGlobal({
+            expectedRevision: current.revision,
+            policy: {
+              ...current.policy,
+              ...(boundary === "memory" ? { enabled: "disabled" } : { learning: "disabled" }),
+            },
+          });
+        }
+      };
+      const plan = vi.fn(async () => {
+        if (boundary === "during-plan") await disable();
+        return { action: "apply" as const, name: "Knowledge", description: "Guidance" };
+      });
+      const submit = vi.fn(async () => undefined);
+      const module = await createKnowledgeMemoryModule({
+        pragmaHome,
+        now: () => now,
+        sourceReader: { listEligibleSources: async () => sources() },
+        planner: { plan },
+        learningSink: { submit },
+      });
+      try {
+        if (boundary !== "during-plan") await disable();
+        if (boundary !== "during-plan") {
+          await module.scheduleRoot(ref("pragma.expert", "expert-a"));
+          expect(await module.store.listJobs()).toHaveLength(0);
+        }
+        // Persisted jobs from an earlier version must also obey the current setting.
+        await module.store.schedule({
+          rootRef: ref("pragma.expert", "expert-a"),
+          sourceDigest: digestSources(sources()),
+          now: new Date(now.getTime() - 6 * 60 * 60_000),
+        });
+        await module.runBackgroundOnce?.();
+        expect(plan).toHaveBeenCalledTimes(boundary === "during-plan" ? 1 : 0);
+        expect(submit).not.toHaveBeenCalled();
+        expect((await module.store.listJobs())[0]?.status).toBe("pending");
+      } finally {
+        module.close();
+      }
+    },
+  );
   it.each(["pending", "running", "needs_attention"] as const)(
     "removes source-less %s jobs before pagination, including after restart",
     async (status) => {
@@ -571,6 +678,10 @@ describe("Knowledge learning jobs", () => {
       sources: sourceRevisions,
     });
     expect(await module.store.inspect()).toMatchObject({ jobs: 1, completed: 1 });
+    expect(module.store.getPresentation((await module.store.listJobs())[0]!)).toMatchObject({
+      titles: [plan.name],
+      planned: true,
+    });
     module.close();
   });
 
@@ -792,6 +903,18 @@ function ref(type: string, id: string): MemorySubjectRef {
 async function temporaryRoot(): Promise<string> {
   const root = await mkdtemp(join(tmpdir(), "pragma-knowledge-learning-"));
   roots.push(root);
+  await createFileMemoryPolicyStore({
+    pragmaHome: root,
+    now: () => new Date("2026-08-01T00:00:00.000Z"),
+  }).updateGlobal({
+    expectedRevision: 0,
+    policy: {
+      enabled: "enabled",
+      capture: "enabled",
+      recall: "enabled",
+      learning: "local-candidates",
+    },
+  });
   return root;
 }
 

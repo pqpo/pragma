@@ -12,6 +12,10 @@ import { createHash } from "node:crypto";
 import { mkdir } from "node:fs/promises";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
+import {
+  readMemoryLearningTaskPresentation,
+  type MemoryLearningTaskPresentation,
+} from "../learning/task-presentation.ts";
 
 import { PragmaPaths, withFileLock } from "@pragma/core";
 import {
@@ -53,6 +57,7 @@ export interface KnowledgeLearningStoreDiagnostic {
 }
 
 export interface KnowledgeLearningStore {
+  getPresentation(job: KnowledgeExtractionJob): MemoryLearningTaskPresentation | undefined;
   schedule(input: {
     readonly rootRef: MemorySubjectRef;
     readonly sourceDigest: string;
@@ -84,6 +89,7 @@ export interface KnowledgeLearningStore {
     readonly id: string;
     readonly expectedRevision: number;
     readonly now: Date;
+    readonly retryAt?: Date;
   }): Promise<KnowledgeExtractionJob>;
   deleteJob(input: { readonly id: string; readonly expectedRevision: number }): Promise<void>;
   wakeNeedsAttention(now: Date, reason?: "configuration" | "manual"): Promise<void>;
@@ -140,6 +146,9 @@ export async function createKnowledgeLearningStore(
   };
 
   const store: KnowledgeLearningStore = {
+    getPresentation(job) {
+      return readMemoryLearningTaskPresentation(options, { module: "knowledge", ...job });
+    },
     async schedule(input) {
       const sourceDigest = assertDigest(input.sourceDigest);
       const rootKey = refKey(input.rootRef);
@@ -326,12 +335,14 @@ export async function createKnowledgeLearningStore(
       assertManageableJob(job, input.expectedRevision, ["running"]);
       const interrupted = KnowledgeExtractionJobSchema.parse({
         ...resetPendingJob(job, input.now),
-        retryAt: new Date(
-          Math.min(
-            input.now.getTime() + DEFAULT_MEMORY_STORAGE_POLICY.extractionIdleMs,
-            Date.parse(job.deadlineAt),
-          ),
-        ).toISOString(),
+        retryAt:
+          input.retryAt?.toISOString() ??
+          new Date(
+            Math.min(
+              input.now.getTime() + DEFAULT_MEMORY_STORAGE_POLICY.extractionIdleMs,
+              Date.parse(job.deadlineAt),
+            ),
+          ).toISOString(),
       });
       writeJob(interrupted);
       return interrupted;

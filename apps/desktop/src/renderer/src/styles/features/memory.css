@@ -1064,10 +1064,25 @@
   display: grid;
   min-height: 0;
   flex: 1;
-  grid-template-columns: repeat(4, minmax(220px, 1fr));
+  grid-template-columns: repeat(3, minmax(220px, 1fr));
   gap: 24px;
   overflow-x: auto;
   margin-top: 16px;
+}
+
+.memory-extraction-board.has-completed {
+  grid-template-columns: repeat(4, minmax(220px, 1fr));
+}
+
+.memory-extraction-jobs-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.memory-extraction-jobs .studio-action-button[aria-pressed="true"] {
+  background: var(--ui-selection);
+  color: var(--ui-accent-strong);
 }
 
 .memory-extraction-lane {
@@ -1159,14 +1174,23 @@
   transform: none;
 }
 
-.memory-extraction-task strong {
+.memory-extraction-task-title {
   display: -webkit-box;
+  max-width: 100%;
   overflow: hidden;
   font-size: 0.9rem;
   line-height: 1.35;
   overflow-wrap: anywhere;
   -webkit-box-orient: vertical;
   -webkit-line-clamp: 2;
+}
+
+.memory-extraction-task-meta {
+  margin: 0;
+  color: var(--ui-text-secondary);
+  font-size: 12px;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
 }
 
 .memory-extraction-type {

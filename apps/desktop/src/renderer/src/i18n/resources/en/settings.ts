@@ -142,8 +142,8 @@ export const settings = {
   },
   navigationLabel: "Settings sections",
   bundleSources: {
-    navigation: "Bundle Sources",
-    title: "Bundle Sources",
+    navigation: "Sources",
+    title: "Sources",
     description: "Add Git repositories that follow the Pragma Bundle Source format. ",
     name: "Source name",
     remote: "Git remote",

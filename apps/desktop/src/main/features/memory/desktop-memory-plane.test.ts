@@ -254,6 +254,30 @@ describe("DesktopMemoryPlane", { timeout: 30_000 }, () => {
     await plane.stop();
   });
 
+  it.each(["knowledge", "skill"] as const)(
+    "rejects manual %s learning while disabled",
+    async (module) => {
+      const plane = await createDesktopMemoryPlane({
+        pragmaHome: await temporaryRoot("pragma-learning-disabled-action-"),
+        logger: createPragmaLogger(undefined, { component: "desktop.memory-test" }),
+      });
+      try {
+        for (const action of ["expedite", "retry"] as const) {
+          await expect(
+            plane.manageMemoryJob({
+              module,
+              action,
+              id: "job",
+              expectedRevision: 1,
+            }),
+          ).rejects.toThrow("memory_learning_disabled");
+        }
+      } finally {
+        await plane.stop();
+      }
+    },
+  );
+
   it("reports extraction jobs that need attention as a degraded user-visible status", async () => {
     const pragmaHome = await temporaryRoot("pragma-desktop-memory-extraction-failed-");
     const logs: PragmaLogRecord[] = [];
