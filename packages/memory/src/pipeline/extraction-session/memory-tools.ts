@@ -7,7 +7,7 @@ import {
   type ExtractionMemoryRecord,
 } from "../../retrieval/extraction-memory.ts";
 import { memoryProjectionFields, redactMemoryProjection } from "../../retrieval/projection.ts";
-import { boundedPrefix, deliver, subjects } from "./evidence.ts";
+import { boundedPrefix, deliver, subjects, responseContentTokens } from "./evidence.ts";
 import {
   MemoryExtractionToolSchemas,
   Fact,
@@ -67,10 +67,14 @@ export async function existingFact(
   if (memory?.module !== "semantic") fail("memory_curator_fact_stale_or_denied");
   return projectExistingFact(memory.record);
 }
-function summary(memory: ExtractionMemoryRecord, aliases: ReturnType<typeof subjects>): string {
+function summary(
+  memory: ExtractionMemoryRecord,
+  aliases: ReturnType<typeof subjects>,
+  contract: 1 | 2,
+): string {
   const handle = extractionMemoryHandle(memory);
   return memory.module === "semantic"
-    ? `${handle} · semantic · Subjects: ${memory.record.subjectRefs.map((ref) => aliases.find((alias) => alias.ref.type === ref.type && alias.ref.id === ref.id)?.alias ?? ref.type).join(", ")} · Property ${memory.record.predicate} (${memory.record.conflictMode}); value: ${redactMemoryProjection(memory.record.normalizedValue).slice(0, 100)}; ${redactMemoryProjection(memory.record.statement).slice(0, 120)}; conflicts: ${memory.record.conflictsWith.length}. Use this memory handle as property or replaces when submitting a fact.`
+    ? `${handle} · semantic · Subjects: ${memory.record.subjectRefs.map((ref) => aliases.find((alias) => alias.ref.type === ref.type && alias.ref.id === ref.id)?.alias ?? ref.type).join(", ")} · Property ${memory.record.predicate} (${memory.record.conflictMode}); value: ${redactMemoryProjection(memory.record.normalizedValue).slice(0, 100)}; ${redactMemoryProjection(memory.record.statement).slice(0, 120)}; conflicts: ${memory.record.conflictsWith.length}. ${contract === 1 ? "Use this memory handle as property or replaces when submitting a fact." : "Use this handle with read_existing_memory or replaces; reuse the listed predicate and conflictMode."}`
     : `${handle} · episodic · Historical background, not new evidence · Conversation ${memory.record.conversationRef.id}; ${redactMemoryProjection(memory.record.goal.text).slice(0, 120)}`;
 }
 export async function readExistingMemory(
@@ -89,20 +93,23 @@ export async function readExistingMemory(
       ? `\nConfidence: ${memory.record.confidence}\nObserved at: ${memory.record.observedAt}\nReview at: ${memory.record.reviewAt ?? "none"}\nExpires at: ${memory.record.expiresAt ?? "none"}\nConflict IDs: ${memory.record.conflictsWith.join(", ")}`
       : `\nOutcome status: ${memory.record.outcome.status}`);
   if (cursor > text.length) fail("memory_curator_cursor_invalid");
-  const fragment = boundedPrefix(text.slice(cursor), 1400),
+  const fragment = boundedPrefix(text.slice(cursor), responseContentTokens(state) - 600),
     next = cursor + fragment.length;
   // Revalidate after preparing the response as well as on entry.
   if ((await access(guard).get(handle)) === undefined)
     fail("memory_curator_memory_stale_or_denied");
   return deliver(
     state,
-    `${summary(memory, subjects(state, guard.memory?.subjects))}\nExisting memory is context, not new evidence.\n${fragment}\nNext cursor: ${next < text.length ? next : "end"}`,
+    `${summary(memory, subjects(state, guard.memory?.subjects), state.toolContractVersion)}\nExisting memory is context, not new evidence.\n${fragment}\nNext cursor: ${next < text.length ? next : "end"}`,
   );
 }
 export async function searchExistingMemory(
   state: SessionState,
   guard: MemoryExtractionSessionGuard,
-  args: z.infer<typeof MemoryExtractionToolSchemas.find_existing_memory>,
+  args: Pick<
+    z.infer<typeof MemoryExtractionToolSchemas.find_existing_memory>,
+    "query" | "mode" | "type" | "limit"
+  >,
   stagedPrefix = "",
 ): Promise<string> {
   const result = await access(guard).search({
@@ -121,8 +128,12 @@ export async function searchExistingMemory(
   for (const item of result.items) {
     if ((await access(guard).get(extractionMemoryHandle(item.memory))) === undefined) continue;
     available++;
-    const line = `${summary(item.memory, subjects(state, guard.memory?.subjects))} · matched by ${item.matchedBy.join("+")}`;
-    if (defaultRuntimeTokenCounter.countText([...lines, line].join("\n")).tokens > 1800) break;
+    const line = `${summary(item.memory, subjects(state, guard.memory?.subjects), state.toolContractVersion)} · matched by ${item.matchedBy.join("+")}`;
+    if (
+      defaultRuntimeTokenCounter.countText([...lines, line].join("\n")).tokens >
+      responseContentTokens(state) - 200
+    )
+      break;
     lines.push(line);
   }
   if (lines.length === 3 && available > 0) fail("memory_curator_memory_item_too_large");
@@ -188,7 +199,7 @@ export async function listExistingMemory(
   } else
     rows = items.map((memory) => ({
       key: extractionMemoryHandle(memory),
-      text: summary(memory, aliases),
+      text: summary(memory, aliases, state.toolContractVersion),
       memories: [memory],
     }));
   rows.sort((a, b) => a.key.localeCompare(b.key));
@@ -222,7 +233,8 @@ export async function listExistingMemory(
     if (
       defaultRuntimeTokenCounter.countText(
         [...emitted.map((item) => item.text), row.text].join("\n"),
-      ).tokens > 1400
+      ).tokens >
+      responseContentTokens(state) - 600
     )
       break;
     emitted.push(row);

@@ -95,9 +95,9 @@ it.each([
         }
       ).contribution.tools;
       const tools = (cachedTools ??= resolvedTools);
-      expect(tools.find((tool) => tool.name === "finish_extraction")!.inputSchema).toMatchObject({
+      expect(tools.find((tool) => tool.name === "skip_extraction")!.inputSchema).toMatchObject({
         type: "object",
-        required: expect.arrayContaining(["retain", "type"]),
+        required: expect.arrayContaining(["reason", "type"]),
         properties: { type: { enum: ["episodic", "semantic"] } },
       });
       const call = async (name: string, args: unknown) => {
@@ -110,12 +110,13 @@ it.each([
         await call("submit_fact", {
           statement: "User prefers concise Chinese answers",
           subjects: ["user"],
-          property: { predicate: "user.preference.language", conflictMode: "exclusive" },
+          predicate: "user.preference.language",
+          conflictMode: "exclusive",
           value: "zh-Hans",
           confidence: 0.8,
           evidence: ["e1"],
         });
-        await call("finish_extraction", { type: "semantic", retain: true });
+        await call("finish_semantic_extraction", {});
         if (scenario === "budget-exhausted") {
           const session = (await createMemoryExtractionSessionStore({
             pragmaHome: root,
@@ -140,7 +141,8 @@ it.each([
               {
                 statement: "unused",
                 subjects: ["user"],
-                property: { predicate: "user.preference.language", conflictMode: "exclusive" },
+                predicate: "user.preference.language",
+                conflictMode: "exclusive",
                 value: "unused",
                 confidence: 0.8,
                 evidence: ["e1"],
@@ -149,7 +151,7 @@ it.each([
             );
           expect(blocked.text).toContain("memory_curator_type_unavailable");
         }
-        await call("finish_extraction", { type: "episodic", retain: false, reason: "low-value" });
+        await call("skip_extraction", { type: "episodic", reason: "no-supported-memory" });
       }
       const executionId = randomUUID();
       await missions.updateExecution(id, {
@@ -453,15 +455,16 @@ describe("Desktop Memory Curator", () => {
           ).contribution.tools;
           if (scenario === "tool-recovered") {
             const invalid = await tools
-              .find((tool) => tool.name === "finish_extraction")!
-              .call({ retain: false }, undefined);
+              .find((tool) => tool.name === "skip_extraction")!
+              .call({}, undefined);
             expect(invalid).toMatchObject({ isError: true });
             expect(invalid.text).toContain("Correction:");
-            expect(invalid.text).toContain("Continue in this extraction");
+            expect(invalid.text).toContain("Preserve staged work");
           }
+          await tools.find((tool) => tool.name === "read_evidence")!.call({}, undefined);
           const result = await tools
-            .find((tool) => tool.name === "finish_extraction")!
-            .call({ retain: false, reason: "low-value" }, undefined);
+            .find((tool) => tool.name === "skip_extraction")!
+            .call({ type: "episodic", reason: "no-supported-memory" }, undefined);
           expect(result.text).toContain("durable");
         }
         return await missions.updateExecution(id, {
@@ -655,11 +658,13 @@ describe("Desktop Memory Curator", () => {
           const result = await tools.find((tool) => tool.name === name)!.call(args, undefined);
           expect(result.isError).not.toBe(true);
         };
+        await call("read_evidence", {});
         if (kind === "semantic")
           await call("submit_fact", {
             statement: "User prefers Chinese",
             subjects: ["user"],
-            property: { predicate: "user.preference.language", conflictMode: "exclusive" },
+            predicate: "user.preference.language",
+            conflictMode: "exclusive",
             value: "zh-Hans",
             confidence: 0.8,
             evidence: ["e1"],
@@ -679,10 +684,8 @@ describe("Desktop Memory Curator", () => {
           });
         }
         await call(
-          "finish_extraction",
-          kind === "semantic"
-            ? { retain: true }
-            : { retain: true, language: "en", valueScore: 0.8 },
+          kind === "semantic" ? "finish_semantic_extraction" : "finish_episodic_extraction",
+          kind === "semantic" ? {} : { language: "en", valueScore: 0.8 },
         );
         return await missions.updateExecution(id, {
           id: randomUUID(),

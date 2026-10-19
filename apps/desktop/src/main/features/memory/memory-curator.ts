@@ -19,7 +19,7 @@ import {
   builtInAgentFingerprint,
   createBuiltInMemoryCurator,
   createMemoryCuratorTools,
-  builtInAgentResource,
+  memoryCuratorResource,
 } from "@pragma/built-in-agents";
 import {
   MEMORY_CURATOR_PROMPT_VERSION,
@@ -189,10 +189,14 @@ export function createDesktopMemoryCurator(options: {
     const session = activeSessions.get(input.missionId);
     if (session === undefined) throw new Error("memory_curator_session_unavailable");
     await session.assertCurrent();
-    const resource = builtInAgentResource(BUILT_IN_MEMORY_CURATOR_REF);
+    const resource = memoryCuratorResource(session.toolContractVersion);
     for (const capability of resource.spec.capabilities) {
       if (capability.kind === "tools") capability.tools = [...session.toolNames];
     }
+    resource.spec.toolPolicy = {
+      ...resource.spec.toolPolicy,
+      allowedTools: [...session.toolNames],
+    };
     // A warm compiled Expert retains its tools across prompts. Resolve the live admission on
     // every call, rather than retaining a finished claim's cancellation/permission closures.
     const currentSession = (): MemoryExtractionSession => {
@@ -213,17 +217,19 @@ export function createDesktopMemoryCurator(options: {
             ? {
                 ref,
                 revision: "1",
-                fingerprint: session.key,
+                fingerprint: `${session.key}:tools-v${session.toolContractVersion}`,
                 value: {
                   contribution: {
                     tools: createMemoryCuratorTools(
                       {
                         module: session.module,
+                        toolContractVersion: session.toolContractVersion,
                         toolNames: session.toolNames,
+                        subjectAliases: session.subjectAliases,
                         call: (name, args) => currentSession().call(name, args),
-                        async deliverErrorResponse(text) {
+                        async deliverErrorResponse(text, feedback) {
                           try {
-                            return await currentSession().deliverErrorResponse(text);
+                            return await currentSession().deliverErrorResponse(text, feedback);
                           } catch (error) {
                             if (
                               error instanceof Error &&
@@ -330,10 +336,7 @@ export function createDesktopMemoryCurator(options: {
           if (persisted.provenance === undefined)
             await input.session.setProvenance({
               curatorRef: MEMORY_CURATOR_REF,
-              promptVersion:
-                input.module === "semantic"
-                  ? SEMANTIC_MEMORY_CURATOR_PROMPT_VERSION
-                  : MEMORY_CURATOR_PROMPT_VERSION,
+              promptVersion: input.session.promptVersion,
               profileRevision: input.profile.revision,
               runtimeId: runtime.runtimeId,
               providerId: runtime.modelSelection?.model.providerId ?? "runtime-managed",
@@ -629,16 +632,9 @@ async function runCuratorMission(input: {
     const code = await input.session.failure();
     if (code !== undefined && /budget|capacity|denied|stale|unavailable|claim|snapshot/u.test(code))
       throw Object.assign(new Error(code), { code, retryable: false });
-    const missing = await input.session.pendingTypes();
     await input.session.reserveContinuation({
       previousExecutionId,
-      prompt: [
-        `Continue this memory extraction in the SAME conversation. Pending types: ${missing.join(", ")}.`,
-        "Preserve completed receipts and staged candidates. Do not restart the task or reread completed evidence. Use list_evidence to locate unread passages only when needed; use find_existing_memory to inspect staged work. Correct the unfinished results, then call finish_extraction with type for each pending type. Each type can be skipped independently if there is no supported memory worth retaining.",
-        code === undefined
-          ? "The previous turn ended without all required durable receipts."
-          : `Last validation error: ${code.slice(0, 2000)}`,
-      ].join("\n"),
+      prompt: await input.session.continuationPrompt(),
     });
     input.activeRuns.set(mission.id, {
       ...activeRun,

@@ -1,3 +1,4 @@
+import { createLegacyExtractionSessionStore as createMemoryExtractionSessionStore } from "./support/legacy-extraction.ts";
 import { copyFile, mkdtemp, mkdir, readFile, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
@@ -5,7 +6,6 @@ import { DatabaseSync } from "node:sqlite";
 import { PragmaPaths } from "@pragma/core";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
-  createMemoryExtractionSessionStore,
   ConversationExtractionInputSchema,
 } from "../src/pipeline/extraction-session.ts";
 import { hasMemoryExtractionReceipt } from "../src/pipeline/extraction-session/store.ts";

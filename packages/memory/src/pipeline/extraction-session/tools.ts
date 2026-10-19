@@ -20,7 +20,7 @@ import {
   MemoryExtractionToolSchemas,
   MEMORY_EXTRACTION_LIMITS,
   fail,
-  type MemoryExtractionToolName,
+  type MemoryExtractionV1ToolName,
   type MemoryExtractionSessionGuard,
   type SessionState,
 } from "./schema.ts";
@@ -28,6 +28,7 @@ import {
   evidenceText,
   evidenceTypesLabel,
   deliver,
+  responseContentTokens,
   boundedPrefix,
   record,
   refs,
@@ -37,7 +38,7 @@ import {
 } from "./evidence.ts";
 export async function callTool(
   state: SessionState,
-  name: MemoryExtractionToolName,
+  name: MemoryExtractionV1ToolName,
   raw: unknown,
   guard: MemoryExtractionSessionGuard,
 ): Promise<string> {
@@ -59,7 +60,8 @@ export async function callTool(
           state,
           [
             ...page.map(
-              (subject) => `${subject.alias}: ${subject.ref.type.replace("pragma.", "")}`,
+              (subject) =>
+                `subjects=["${subject.alias}"] · resource type: ${subject.ref.type.replace("pragma.", "")}`,
             ),
             `Next cursor: ${args.cursor + page.length < available.length ? args.cursor + page.length : "end"}`,
           ].join("\n"),
@@ -78,7 +80,10 @@ export async function callTool(
       for (const { item, index, role, text } of selected) {
         const progress = readProgress(state, `e${index + 1}`);
         const line = `[e${index + 1}] ${role} · ${item.occurredAt}${evidenceTypesLabel(state, item.messageId)} · ${progress >= text.length ? "read fully" : `unread from cursor ${progress}`} · ${text.slice(0, 60).replaceAll("\n", " ")}`;
-        if (defaultRuntimeTokenCounter.countText(lines.concat(line).join("\n")).tokens > 1700)
+        if (
+          defaultRuntimeTokenCounter.countText(lines.concat(line).join("\n")).tokens >
+          responseContentTokens(state) - 300
+        )
           break;
         lines.push(line);
       }
@@ -92,14 +97,27 @@ export async function callTool(
     }
     case "read_evidence": {
       const args = MemoryExtractionToolSchemas.read_evidence.parse(raw);
-      const index = Number(/^e([1-9]\d*)$/u.exec(args.evidence)?.[1]) - 1;
+      const index =
+        args.evidence === undefined
+          ? state.input.evidence.findIndex(
+              (item, i) =>
+                canDeliver(item.messageId) &&
+                readProgress(state, `e${i + 1}`) < evidenceText(item).text.length,
+            )
+          : Number(/^e([1-9]\d*)$/u.exec(args.evidence)?.[1]) - 1;
+      if (args.evidence === undefined && index === -1)
+        return deliver(
+          state,
+          "All available source passages have been read. Stage supported candidates and finish each pending type.\nNext evidence: end; Next cursor: end.",
+        );
       const item = state.input.evidence[index];
       if (item === undefined) fail("memory_curator_evidence_ref_invalid");
       if (!canDeliver(item.messageId)) fail("memory_curator_evidence_type_denied");
       if (args.cursor > evidenceText(item).text.length) fail("memory_curator_cursor_invalid");
       const passages: string[] = [];
       let nextIndex = index;
-      let nextCursor = args.cursor;
+      let nextCursor =
+        args.evidence === undefined ? readProgress(state, `e${index + 1}`) : args.cursor;
       // Pack adjacent source passages, including short structural events, into one bounded delivery.
       for (let count = 0; count < MEMORY_EXTRACTION_LIMITS.pageSize; count++) {
         const current = state.input.evidence[nextIndex];
@@ -110,9 +128,17 @@ export async function callTool(
           continue;
         }
         const { role, text } = evidenceText(current);
+        if (args.evidence === undefined) {
+          nextCursor = readProgress(state, `e${nextIndex + 1}`);
+          if (nextCursor >= text.length) {
+            nextIndex++;
+            nextCursor = 0;
+            continue;
+          }
+        }
         const header = `[e${nextIndex + 1}] ${role} · ${current.occurredAt}${evidenceTypesLabel(state, current.messageId)}\n`;
         const remaining =
-          MEMORY_EXTRACTION_LIMITS.responseTokens -
+          responseContentTokens(state) -
           200 -
           defaultRuntimeTokenCounter.countText(passages.join("\n\n") + header).tokens;
         if (remaining < 100) break;
@@ -122,7 +148,7 @@ export async function callTool(
         // Count the packed result as well, since token boundaries may cross separators.
         if (
           defaultRuntimeTokenCounter.countText(passages.concat(passage).join("\n\n")).tokens >
-          MEMORY_EXTRACTION_LIMITS.responseTokens - 150
+          responseContentTokens(state) - 150
         )
           break;
         passages.push(passage);
@@ -161,7 +187,7 @@ export async function callTool(
           fail("memory_curator_fact_stale_or_denied");
         const text = `${fact.predicate} (${fact.conflictMode})\nValue: ${fact.normalizedValue}\nStatement: ${fact.statement}`;
         if (args.cursor > text.length) fail("memory_curator_cursor_invalid");
-        const fragment = boundedPrefix(text.slice(args.cursor), 1700);
+        const fragment = boundedPrefix(text.slice(args.cursor), responseContentTokens(state) - 300);
         const next = args.cursor + fragment.length;
         return deliver(
           state,
@@ -223,7 +249,7 @@ export async function callTool(
           `Outcome (${previous.outcome.status}): ${previous.outcome.summary}`,
         ].join("\n\n");
         if (args.cursor > text.length) fail("memory_curator_cursor_invalid");
-        const fragment = boundedPrefix(text.slice(args.cursor), 1100);
+        const fragment = boundedPrefix(text.slice(args.cursor), responseContentTokens(state) - 900);
         const next = args.cursor + fragment.length;
         return deliver(
           state,
@@ -256,7 +282,10 @@ export async function callTool(
           index = state.facts.length;
         }
         const line = `[f${index + 1}] Property p${index + 1}: ${fact.predicate} (${fact.conflictMode}); value excerpt: ${fact.normalizedValue.slice(0, 160)}\nStatement excerpt: ${fact.statement.slice(0, 240)}\nRead full text with fact=f${index + 1}.`;
-        if (defaultRuntimeTokenCounter.countText(lines.concat(line).join("\n\n")).tokens > 1100)
+        if (
+          defaultRuntimeTokenCounter.countText(lines.concat(line).join("\n\n")).tokens >
+          responseContentTokens(state) - 900
+        )
           break;
         if (index === state.facts.length) state.facts.push(projectExistingFact(fact));
         lines.push(line);
@@ -278,7 +307,12 @@ export async function callTool(
         typeof args.property === "string"
           ? await existingFact(state, guard, args.property)
           : undefined;
-      const property = typeof args.property === "string" ? existingProperty : args.property;
+      const property =
+        args.property === undefined
+          ? { predicate: args.predicate!, conflictMode: args.conflictMode! }
+          : typeof args.property === "string"
+            ? existingProperty
+            : args.property;
       if (property === undefined) fail("memory_curator_property_ref_invalid");
       if (
         existingProperty !== undefined &&
@@ -353,7 +387,7 @@ export async function callTool(
         .digest("hex")
         .slice(0, 16);
       const id = args.candidate ?? `c${digest}`;
-      if (args.candidate !== undefined && state.candidates[id] === undefined)
+      if (args.candidate !== undefined && !Object.hasOwn(state.candidates, id))
         fail("memory_curator_candidate_ref_invalid");
       if (state.candidates[id] === undefined && Object.keys(state.candidates).length >= 50)
         fail("memory_curator_candidate_capacity");
@@ -373,7 +407,7 @@ export async function callTool(
       if (
         multiple &&
         args.candidate !== undefined &&
-        (!id.startsWith(`${args.part}:`) || state.parts[id] === undefined)
+        (!id.startsWith(`${args.part}:`) || !Object.hasOwn(state.parts, id))
       )
         fail("memory_curator_candidate_ref_invalid");
       if (
@@ -439,6 +473,9 @@ export async function callTool(
               .map(([, v]) => v),
           };
       }
+      if (type === "semantic")
+        state.results.semantic = SemanticExtractionOutputSchema.parse(output);
+      else state.results.episodic = EpisodicExtractionOutputSchema.parse(output);
       if (type === "episodic" && args.retain) {
         const evidenceRefs = new Set<string>();
         for (const part of Object.values(state.parts)) {
@@ -446,9 +483,6 @@ export async function callTool(
         }
         EpisodicMemoryRecordSchema.shape.evidenceRefs.parse([...evidenceRefs]);
       }
-      if (type === "semantic")
-        state.results.semantic = SemanticExtractionOutputSchema.parse(output);
-      else state.results.episodic = EpisodicExtractionOutputSchema.parse(output);
       state.resultProvenance[type] = state.provenance;
       const targets = "targets" in state.input ? state.input.targets : [state.module];
       if (

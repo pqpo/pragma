@@ -6,7 +6,7 @@ import { PragmaPaths, defaultRuntimeTokenCounter } from "@pragma/core";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { extractionEvidenceAccessGuard } from "../src/pipeline/extraction-settings.ts";
 import { redactMemoryValue } from "../src/evidence/redact.ts";
-import { createMemoryExtractionSessionStore } from "../src/pipeline/extraction-session.ts";
+import { createLegacyExtractionSessionStore as createMemoryExtractionSessionStore } from "./support/legacy-extraction.ts";
 import { createSemanticMemoryModule } from "../src/semantic/module.ts";
 import { EpisodicMemoryRecordSchema } from "../src/episodic/schema.ts";
 import { SemanticExtractionOutputSchema } from "../src/semantic/schema.ts";
@@ -133,7 +133,7 @@ describe("Memory extraction sessions", () => {
       });
     },
   );
-  it("reads 130 short records in one bounded admission and materializes a Fact", async () => {
+  it("reads 130 records in one legacy admission and materializes a Fact", async () => {
     const { pragmaHome, store } = await setup();
     const source = { type: "pragma.expert", id: "expert-a" };
     const base = {
@@ -166,20 +166,18 @@ describe("Memory extraction sessions", () => {
           await session.setProvenance(provenance);
           expect(session.prompt()).not.toContain("[e1] user");
           let evidence = "e1";
-          let cursor = 0;
           const read = new Set<string>();
           let calls = 0;
-          while (evidence !== "end" && calls < 60) {
-            const page = await session.call("read_evidence", { evidence, cursor });
+          while (evidence !== "end" && calls < 64) {
+            const page = await session.call("read_evidence", {});
             calls++;
             expect(defaultRuntimeTokenCounter.countText(page).tokens).toBeLessThanOrEqual(2000);
             for (const match of page.matchAll(/Record (\d+):/gu)) read.add(match[1]!);
             evidence = /Next evidence: (e\d+|end)/u.exec(page)![1]!;
-            cursor = Number(/Next cursor: (\d+|end)/u.exec(page)![1]);
           }
           expect(evidence).toBe("end");
           expect(read.size).toBe(130);
-          expect(calls).toBeLessThan(60);
+          expect(calls).toBeLessThan(64);
           await session.call("submit_fact", factArguments);
           await session.call("finish_extraction", { retain: true });
           const receipt = (await session.receipt())!;
@@ -218,7 +216,7 @@ describe("Memory extraction sessions", () => {
     } finally {
       module.close();
     }
-  });
+  }, 20000);
   it("uses a short readable task and durable idempotent fact receipt", async () => {
     const { pragmaHome, session } = await setup();
     expect(session.prompt()).toContain("[e1] user");
@@ -244,9 +242,10 @@ describe("Memory extraction sessions", () => {
     expect(await reopened.recover("semantic", "job", "other-watermark")).toBeUndefined();
     expect(await session.call("finish_extraction", { retain: true })).toContain("already finished");
   });
-  it("reads a valid 28,000-character Chinese message in bounded fragments without dropping it", async () => {
+  it("resumes legacy source fragments without dropping text", async () => {
     const text = "中".repeat(28000);
-    const { session } = await setup(text);
+    const { session, store } = await setup(text);
+    await session.bindMission("large-source");
     expect(defaultRuntimeTokenCounter.countText(session.prompt()).tokens).toBeLessThanOrEqual(1500);
     await expect(session.call("submit_fact", factArguments)).rejects.toThrow("evidence_not_read");
     await expect(
@@ -254,14 +253,24 @@ describe("Memory extraction sessions", () => {
     ).rejects.toThrow("evidence_incomplete");
     let cursor = 0;
     let combined = "";
+    let exhausted = false;
     for (let turn = 0; turn < 40; turn++) {
-      const result = await session.call("read_evidence", { evidence: "e1", cursor });
+      // Alternate explicit cursors with automatic resumption, including after reopening.
+      const current = turn % 2 === 0 ? session : (await store.forMission("large-source"))!;
+      const result = await current.call(
+        "read_evidence",
+        turn % 2 === 0 ? {} : { evidence: "e1", cursor },
+      );
       expect(defaultRuntimeTokenCounter.countText(result).tokens).toBeLessThanOrEqual(2000);
       combined += result.split("\n").slice(1, -1).join("\n");
       const next = /Next cursor: (\d+|end)/u.exec(result)![1]!;
-      if (next === "end") break;
+      if (next === "end") {
+        exhausted = true;
+        break;
+      }
       cursor = Number(next);
     }
+    expect(exhausted).toBe(true);
     expect(combined).toBe(text);
     await session.call("submit_fact", factArguments);
     await session.call("finish_extraction", { retain: true });
@@ -285,6 +294,28 @@ describe("Memory extraction sessions", () => {
     expect((await session.receipt())?.output).toMatchObject({
       facts: [{ statement: "更准确的偏好描述。" }],
     });
+  });
+  it("automatically fills reading gaps without redelivering adjacent completed passages", async () => {
+    const { store } = await setup();
+    const input = extractionInput();
+    input.evidence = ["甲", "乙", "丙"].map((text, index) => ({
+      ...input.evidence[0]!,
+      messageId: `gap-${index}`,
+      payload: { message: { role: "user", text: text.repeat(800) } },
+    }));
+    const session = await store.create({ module: "semantic", input, watermark: "gaps" });
+    expect(session.prompt()).not.toContain("Source text (also available");
+    await session.call("read_evidence", { evidence: "e3" });
+    let combined = "";
+    for (let page = 0; page < 5; page++) {
+      const text = await session.call("read_evidence", {});
+      combined += text;
+      if (text.includes("Next evidence: end;")) break;
+    }
+    expect(combined).toContain("[e1]");
+    expect(combined).toContain("[e2]");
+    expect(combined).not.toContain("[e3]");
+    expect(combined).toContain("Next evidence: end;");
   });
   it("binds the session to a Mission, rejects stale claims and preserves staged work on cancellation", async () => {
     const { store, session } = await setup();

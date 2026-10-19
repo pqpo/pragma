@@ -392,3 +392,12 @@ function customizedBuiltInSource(
   }
   return source;
 }
+
+/** Historical Native conversations keep their original tool vocabulary until explicitly restarted. */
+export function memoryCuratorResource(contract: 1 | 2): PragmaExpertResource {
+  return contract === 1
+    ? PragmaExpertResourceSchema.parse(
+        parsePragmaYaml(BUILT_IN_AGENT_FILES["legacy/memory-curator-v1.pragma.yaml"]!),
+      )
+    : builtInAgentResource(MEMORY_CURATOR_REF);
+}

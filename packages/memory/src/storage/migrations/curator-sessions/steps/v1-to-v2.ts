@@ -1,6 +1,6 @@
 import type { DatabaseSync } from "node:sqlite";
 import { CuratorSessionV1Schema } from "../schemas/v1.ts";
-import { State } from "../../../../pipeline/extraction-session/schema.ts";
+import { CuratorSessionV2Schema } from "../schemas/v2.ts";
 
 export function migrateCuratorSessionsV1ToV2(db: DatabaseSync): void {
   db.exec("BEGIN IMMEDIATE");
@@ -16,7 +16,7 @@ export function migrateCuratorSessionsV1ToV2(db: DatabaseSync): void {
           "SELECT mission_id FROM missions WHERE session_key = ? ORDER BY mission_id LIMIT 1",
         )
         .get(row.key) as { mission_id: string } | undefined;
-      const next = State.parse({
+      const next = CuratorSessionV2Schema.parse({
         ...old,
         schemaVersion: "pragma.memory-curator-session/v2",
         results: old.output === undefined ? {} : { [old.module]: old.output },

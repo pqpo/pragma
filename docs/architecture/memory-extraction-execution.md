@@ -4,8 +4,8 @@
 
 See [ADR 073](../adr/073-shared-conversation-memory-extraction.md). Desktop prepares Episodic and
 Semantic deliveries together and admits one Curator Mission for the same conversation/watermark.
-The model reads a shared evidence directory and calls `finish_extraction` separately with
-`type=episodic` and `type=semantic`. Either type can retain or skip. Each validated receipt can be
+New conversations use tool contract 2: the model reads shared evidence and saves independent decisions
+with `finish_episodic_extraction`, `finish_semantic_extraction`, or `skip_extraction`. Each validated receipt can be
 materialized immediately; the other type continues without regenerating completed work.
 Per-type source permissions still restrict candidate citations, and historical Memory discovery
 uses the intersection of the participating source scopes. The global admission lock ends before
@@ -15,7 +15,9 @@ skips a busy admission without degrading the Module.
 A terminal missing receipt or explicitly retryable Runtime failure allows up to three repair
 prompts, five seconds apart, in the original Mission/ExpertSession/Native Runtime Context. The
 Host sends only pending-type/error guidance, preserving read ranges, candidates and completed
-receipts. Automatic continuations share the 64-call and 32,000-delivered-token limits. Reservations,
+receipts. Automatic continuations share a source-sized budget: at least 64 calls and 32,000 delivered
+tokens, with room for one complete traversal plus discovery/corrections, capped at 256,000 delivered
+tokens and tightened by the Runtime context window. Reopening never resets consumed counters. Reservations,
 deterministic command UUIDs, retry generations and pending prompt text survive restart. Only a
 reserved idempotent continuation can resume automatically; unknown in-flight work parks for
 inspection. The terminal observer follows the continuation's execution id. Runtime loss, cancellation,
@@ -40,8 +42,11 @@ unfinished types and preserves published Memory. Completed-history limits count 
 and do not evict a successful half while its companion remains unfinished. Module delivery
 counters are not a count of fresh model conversations. The shared Session owns model admission.
 
-The existing Session database upgrades lazily to SQLite version 2 and
-`pragma.memory-curator-session/v2`; its existing filename is retained. Desktop run archives upgrade
+The existing Session database upgrades lazily through SQLite versions 1 → 2 → 3 to
+`pragma.memory-curator-session/v3`; its existing filename is retained. The aggregate records
+`toolContractVersion`. Migrated sessions retain contract 1, original tools/DSL and Native conversation;
+new sessions and explicitly restarted generations use contract 2. Read ranges, staged candidates,
+receipts, original provenance and pending continuation commands survive migration. Desktop run archives upgrade
 on access to `pragma.desktop-memory-extraction-run/v2`. Both upgrades preserve backups and reject
 future versions. Authority Fact/Episode schemas remain unchanged.
 
@@ -103,21 +108,53 @@ meaningful execution lifecycle transitions remain visible at normal logging leve
 
 ## Tool-driven extraction
 
-See [ADR 072](../adr/072-tool-driven-memory-extraction.md). Curator Missions receive a short task and dedicated tools, not an inline Evidence JSON dump. Evidence is listed and read using task-scoped handles and bounded plain-text pages. Candidates are submitted individually; `finish_extraction` persists a validated receipt before returning success. Assistant chat text is only a transcript.
+See [ADR 072](../adr/072-tool-driven-memory-extraction.md). Curator Missions receive a short task and dedicated tools, not an inline Evidence JSON dump. Evidence is listed and read using task-scoped handles and bounded plain-text pages. Candidates are submitted individually; each finish/skip tool persists a validated receipt before returning success. Assistant chat text is only a transcript.
 
 Argument validation and correctable evidence/reference errors include explicit correction guidance.
 The Curator repairs those calls within the same execution and its existing call/context budgets;
 successful staged parts remain available, and corrections reuse candidate handles. A failed
-`finish_extraction` must be repaired before the Agent claims completion. Permission, stale-claim,
+finish/skip call must be repaired before the Agent claims completion. Permission, stale-claim,
 capacity and budget failures do not invite repeated tool calls. Correction/error text also consumes
 and respects the delivered-token budget. When no correction response fits, tools throw the stable
 budget error and the Host requests Native interruption once, preserving completed type receipts.
+
 The Session layer can still validate already staged work locally, but it does not deliver unlimited
 stop guidance or authorize another model turn. Unread evidence or an incomplete result requires
 attention with the budget failure, not rejection of the source as low-value. Shared conversation
 continuation follows the bounded rules above; Knowledge/Skill outer retries retain their own policy.
 
-The receipt and snapshot live in `state/memory/curator-sessions-v1.sqlite` (database version 2). Module recovery reads receipts before admitting any model execution. Retained outputs still go through the existing Module transaction and applied-job marker. Transcript reads are archive operations; an unreadable transcript cannot invalidate a durable extraction receipt or authorize another model call. The original Mission remains available when its transcript could not be archived.
+Tool contract 2 has twelve tools: `list_evidence`, `read_evidence`, `find_existing_memory`,
+`read_existing_memory`, `list_existing_memory`, `get_extraction_status`, `read_staged_candidate`,
+`submit_fact`, `submit_episode_part`, `finish_semantic_extraction`,
+`finish_episodic_extraction`, and `skip_extraction`. Only mutation tools for requested types are exposed.
+
+`read_evidence({})` resumes the first unread character and batches adjacent passages. Directory
+navigation is optional. Every response includes a model-visible `Feedback:` JSON header validated
+by `MemoryExtractionFeedbackSchema`, followed by readable text. The header provides status,
+authoritative progress, and an executable `nextCall` only when its arguments are known. Responses
+including errors, staging acknowledgements and final receipts consume the delivered-token budget.
+The total reserves 1,024 tokens for correction/staging/finalization; every response is at most 2,000
+tokens. When a pending type has complete read coverage and staged work, budget feedback permits
+finishing it within that reserve (`nextCall` is supplied for Semantic finish). Incomplete source or
+staged work remains blocked. Exhaustion never produces a skip decision.
+
+`submit_fact` requires separate scalar `predicate` and `conflictMode`; contract 2 has no `property`
+argument. Subjects advertise the exact task alias enum. `submit_episode_part` remains one tool with
+five branches: goal/summary require `text`, attempt requires `description`, recovery requires
+`failure`, and outcome requires `status` plus `summary`. Provider-facing schemas have object roots;
+authoritative branch validation remains in Memory. Error feedback includes required fields and
+branch examples, never invented source facts. `get_extraction_status` enumerates all pending
+candidates, and `read_staged_candidate` returns complete editable arguments over bounded pages.
+Fact/attempt/recovery edits reuse the candidate handle; goal/summary/outcome overwrite that part.
+Semantic finish takes `{}`, Episodic finish takes `language` and `valueScore`. `skip_extraction`
+uses type-independent reasons: `no-supported-memory`, `insufficient-evidence`, or `sensitive`.
+The adapter maps those to existing per-module authority outputs.
+
+The snapshot and receipts live in `state/memory/curator-sessions-v1.sqlite` (database version 3).
+Module recovery reads receipts before admitting a model. Retained outputs still go through existing
+Module transactions and applied-job markers. Transcript failure cannot invalidate a durable receipt
+or authorize another model call. Historical contract 1 keeps its original vocabulary and budget
+semantics until explicitly restarted; it is a supported recovery boundary, not a new-session option.
 
 ### Existing Memory discovery and reconciliation
 
@@ -133,8 +170,8 @@ the actual retrieval mode, match sources and any vector-unavailability reason. H
 continue with keywords; explicit vector mode reports a stable error instead of claiming a
 successful empty search. Results are ranked candidates, never an exhaustive conflict check.
 
-Pass a returned `memory` handle and optional character `cursor` to read complete Memory text.
-Semantic handles can also be used as `submit_fact.property` or `replaces`. They contain the Memory
+Pass a returned `memory` handle and optional character `cursor` to `read_existing_memory` for
+complete Memory text. Semantic handles can also be used as `submit_fact.replaces`. They contain the Memory
 type, identity and revision and are checked against current authority on every read and replacement;
 they never grant access. Historical Episodes are untrusted background, not new Evidence or authority
 for a fact replacement. Source-task subject restrictions, recall policy snapshots and live policies
@@ -157,9 +194,10 @@ The Curator searches first, discovers existing properties when needed, then list
 same subjects and exact property before submitting a new or replacement fact. Existing duplicate,
 conflict and authoritative replacement rules remain unchanged. Vector requests reserve the existing
 call budget before network I/O, run outside the shared Session lock, and revalidate results before
-delivery. Enumeration and new handles do not populate the legacy 100-fact Session cache. Existing
-`fN`/`pN` aliases, empty-query previous-Episode/staged-work reads and character cursors remain
-supported; persisted Session, Evidence and Memory schemas are unchanged.
+delivery. Enumeration and new handles do not populate the legacy 100-fact Session cache. Contract 1 recovery retains
+`fN`/`pN` aliases and its overloaded empty-query/full-read operations. Contract 2 requires a nonempty
+search query and separates full Memory reads from staged candidate reads. Evidence and authority
+Memory schemas remain unchanged.
 
 Fact lookup, merge and replacement use the source task's authorization, including restricted principals and expiry. Every tool call checks the claim and cancellation signal. Budget failures and incomplete retained evidence park the job with a stable code; they are never reported as generated Memory or a completed low-value rejection.
 
@@ -173,3 +211,92 @@ Runtime diagnostics are supplementary: after bounded read retries, failure recor
 retains the existing provenance fields, and still applies the Mission completion time. It cannot
 invalidate a durable receipt, fail the extraction job, or authorize another model admission.
 Cancellation remains effective during diagnostic reads.
+
+### Real Runtime acceptance
+
+The reproducible Desktop composition probe is `apps/desktop/scripts/verify-memory-curator.mjs`.
+It runs the default PI Runtime with real credentials, the built-in tools, conversation coordinator,
+authority materialization and receipt recovery in a fresh temporary home per run. It accepts only
+explicit Evidence snapshots and optional read-only seed homes; it never writes to production homes.
+It does not exercise Electron UI or the complete Mission application entry. Reports distinguish
+those limits and positive vector search from the keyword/embedding-disabled cases actually run.
+
+Build the workspace dependencies first. Set `PRAGMA_MODEL_PROVIDER`, `PRAGMA_MODEL_NAME`,
+`PRAGMA_MODEL_BASE_API`, `PRAGMA_MODEL_API_KEY` and optional `PRAGMA_MODEL_API` through the
+environment or an external env file. A case manifest outside the repository contains:
+
+```json
+[
+  {
+    "name": "short",
+    "evidence": "/private/snapshots/short.json",
+    "subjects": [{ "type": "pragma.user", "id": "the-source-user" }],
+    "exercise": true,
+    "injectInvalidEvidence": true
+  }
+]
+```
+
+`evidence` is a JSON array of captured `MemoryEvidenceEnvelope` records. `seedHome` optionally
+points to previously materialized Memory; SQLite backup reads it without modifying it. Exercise
+mode asks the real Agent to discover/read Memory and inspect/edit staged work; absent branches
+remain uncovered. `reserveAfterStaging=true` deliberately leaves only 1,024 tokens after status
+inspection, testing control-reserve finalization with the real Agent. Invalid-evidence injection alters only one tool argument, never source content.
+
+```sh
+node apps/desktop/scripts/verify-memory-curator.mjs --cases /private/cases.json --env-file /private/model.env --repeat 3
+```
+
+The probe writes private call traces and a coverage report under a printed temporary directory.
+Do not commit source text, credentials or traces. A successful run requires completed Module jobs,
+durable recoverable receipts and one model admission. Injected errors must recover within two
+resubmissions; coverage is recorded separately from success.
+
+Acceptance on 2026-10-19 used default PI (`cloud-pi-agent`) and DeepSeek v4 Flash with
+embedding disabled. Captured local Evidence was replayed into disposable homes; private source
+files and call traces remain outside the repository.
+
+| Case                                                                    | Captured / selected Evidence | Runs completed | Calls per run | Tool errors                              |
+| ----------------------------------------------------------------------- | ---------------------------- | -------------- | ------------- | ---------------------------------------- |
+| Short conversation                                                      | 56 / 45                      | 3 / 3          | 14, 14, 12    | 0, 0, 0                                  |
+| Long conversation                                                       | 570 / 397                    | 3 / 3          | 49, 59, 53    | 0, 2, 0                                  |
+| Existing Memory, candidate inspection/edit, invalid-reference injection | 56 / 45                      | 1 / 1          | 26            | 1 injected; repaired by one resubmission |
+| Transient request with no lasting information                           | 2 / 2                        | 3 / 3          | 3, 3, 2       | 0; no Memory created                     |
+
+Together these runs exercised all twelve tools and all five episode branches. All observed visible
+responses were below 1,400 tokens (the enforced ceiling is 2,000). The long run's two errors were unread citation and premature finish;
+the Agent resumed reading and completed both receipts in the same admission. Existing Memory
+full reads, staged candidate full reads and correction with the same candidate handle completed.
+Completed receipts were reopened without another model admission. Eligibility may reject a type
+locally before admission; such a decision correctly has no model receipt and must not be counted
+as model-generated Memory. The probe checks recovered receipts for admitted types only.
+
+These are workflow/materialization results, not an extraction-quality benchmark: the short case
+retained facts in two runs and skipped facts in one. Positive vector retrieval, other models and
+runtimes, the remote machine, Electron UI and the full Mission application entry were not covered
+by these real-model runs. Separate automated Desktop/Local Host tests cover their changed wiring.
+
+### Follow-up code review
+
+The implementation review reproduced and corrected six issue classes:
+
+- V2 cursor/candidate metadata was inferred from untrusted body text. Only a tool's Host-generated
+  trailing pagination footer is parsed now, and only submission acknowledgements can provide a
+  candidate handle. Evidence/Memory lines containing the same labels remain intact.
+- Reopening a dedicated Semantic/Episodic v2 session reset consumed counters and diagnostics.
+  The original reset behavior is now limited to legacy contract 1; v2 resumes retain the budget.
+- The legacy advertised property Schema rejected the original object branch. Migrated Native
+  conversations again accept that branch through provider-facing validation; v2 keeps flat fields.
+- Inherited object names could be mistaken for staged handles or branch examples. Candidate
+  membership uses own properties, and malformed `part` values cannot throw during error formatting.
+- Snapshot scope comparison treated JSON object-key order as a data change. Resume/recovery compare
+  JSON values while preserving array order and rejecting real evidence/subject changes.
+- Acceptance counted unrelated or already-parallel submissions as injected-error recovery. It now
+  requires the intended invalid-reference failure, matching fact/candidate identity, and a retry
+  started after the error returned. Requested injection must actually trigger to pass.
+
+Regression tests cover those reproductions, including the actual historical writer fixture and
+provider-facing Schema, raw source labels, authority Memory pagination, persisted counters and
+unchanged-versus-changed snapshots. `pnpm --filter @pragma/desktop test:memory-curator-acceptance`
+runs the acceptance-verdict tests without a model. The full Desktop test command includes them.
+Private real-model verification artifacts remain outside the repository.
