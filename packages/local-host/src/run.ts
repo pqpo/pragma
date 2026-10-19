@@ -299,7 +299,16 @@ export function createLocalHostRunApplication(options: {
     validateExecutorPin(request, executor.descriptor);
     validateExecutorAvailability(executor.descriptor);
     const validated = await options.executors.validateInput?.({ request, executor });
-    const runRequest = validated === undefined ? request : { ...request, input: validated.input };
+    const project = executor.descriptor.project;
+    const runRequest: LocalHostRunRequest = {
+      ...request,
+      ...(validated === undefined ? {} : { input: validated.input }),
+      // Resolution has already validated explicit constraints. Persist and pass the
+      // exact selected revision even when the caller omitted --project/--revision.
+      ...(project === undefined
+        ? {}
+        : { project: { projectId: project.projectId, revision: project.revision } }),
+    };
     const canonicalRequest = {
       command: runRequest.command,
       workspace: runRequest.workspace,
@@ -328,7 +337,11 @@ export function createLocalHostRunApplication(options: {
     const current = await options.mission.controller.readSnapshot({
       missionId: reservation.missionId,
     });
-    if (findMissionPinnedBinding(current.events) === undefined) {
+    const freshReservation =
+      target.kind === "allocate" &&
+      reservation.disposition === "reserved" &&
+      current.events.length === 0;
+    if (!freshReservation && findMissionPinnedBinding(current.events) === undefined) {
       assertUnpinnedRunRetryAllowed({
         missionId: reservation.missionId,
         request,

@@ -2,7 +2,7 @@
 
 ## Status
 
-Accepted for Issue #399 stage 1 (2026-10-19).
+Accepted for Issue #399 stage 1 and shared configuration closeout (2026-10-19).
 
 ## Decision
 
@@ -84,6 +84,32 @@ to own its canonical editor identities and default/system-resource selection rul
 The baseline explicitly rejects Bundle Plugin dependencies, despite older documentation claiming
 otherwise. The user confirmed retaining that restriction for this stage. Plugin package installation
 and configuration writes are shared, but Plugin Bundle import/export is not enabled implicitly.
+
+## CLI configuration closeout
+
+Desktop and CLI construct model-provider and Runtime Environment stores through
+`createLocalHostRuntimeConfiguration`. Desktop injects its existing SecretStore and historical
+Electron decryptor; CLI uses the same home-scoped SecretStore with the existing native OS keychain.
+CLI does not decrypt historical Electron ciphertext or introduce a credential backend. Concrete
+adapter factories remain in each app, reading the same saved process-environment policy; PI receives
+the shared model-provider registry. CLI binds new contexts through the Environment service and
+resolves persisted bindings by exact revision and fingerprint. Mission permission modes select the
+adapter permissions without changing Runtime identity. Missing configuration remains an explicit
+failure, including model-catalog diagnostics, rather than a fallback to the former fixed adapter list.
+
+A newly allocated run with no prior events can pin its resolved project revision even when CLI
+project options were omitted. Existing reservations, attached historical Missions and retries still
+require their existing proof rules; resolving the latest project cannot repair a historical binding.
+Older CLI Contexts used `createLocalHostRuntimeResolver` static fingerprints (including the original
+`codex` → `codex-local` alias). A resolve-only reader retains that exact authority: it is attempted
+only for revision 1 after the saved Environment binding is unavailable, and succeeds only when the
+historical descriptor/model-catalog fingerprint matches. New bindings always use the Environment
+service. Current model/authentication errors, future revisions and unproven fingerprints never use
+this reader. No Session identity is rewritten, and there is no hot migration to another Harness.
+The historical binding fixture was written by the `eb458180` resolver and concrete adapter with a
+deterministic catalog port, rather than by changing a current Environment's version or fingerprint.
+
+No persistent or wire schema changes are introduced by this closeout.
 
 ## Verification
 

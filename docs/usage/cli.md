@@ -8,6 +8,28 @@ Desktop 不共享进程内 owner；同一个 Mission 由当前 owner 消费持�
 命令或只读事件。因此关闭 Desktop 后，CLI 仍可恢复已被证明可恢复的 Mission；CLI 退出也不会
 让 Desktop 的 owner 被中断。
 
+## 使用 Desktop 已保存的配置
+
+先在 Desktop 配置 Runtime Environment、模型连接和凭据，导入需要运行的资源；两端使用同一
+操作系统用户和同一 `PRAGMA_HOME`（默认 `~/.pragma`）。关闭 Desktop 后，CLI 仍可用这些配置
+运行已导入的 Expert、ExpertTeam 或 Flow，再通过 `mission get --view result` 查询终态。
+
+CLI 与 Desktop 共用 Environment Store 和模型连接 Store。PI 从连接的 SecretRef 读取现有
+SecretStore；Harness 保持原生登录方式，进程环境继续受已保存的环境变量策略过滤。CLI 不会
+继承全部宿主变量，也不会因模型、连接或凭据缺失静默切换 Runtime/模型。迁移前的 Electron
+凭据必须先由当前 Desktop 完成升级；CLI 报告迁移要求。钥匙串不可用、锁定、Runtime 不可用和
+模型配置不匹配应按返回诊断处理，再重试原请求。既有 Session 按原 Runtime identity、Environment
+revision 和 fingerprint 恢复；更新 Environment head 不会改写旧 Session。
+
+新建项目任务可省略 `--project` / `--revision`，Host 将解析结果中的精确 Revision 传给执行链路并
+持久 pin；显式参数仍受一致性检查。历史 Mission 缺少 pin 时仍须按下文显式恢复，不能以新建任务
+的默认选择替代历史身份。
+
+本轮不提供 CLI 独立环境配置、Bundle 导入/修复命令或 Linux 支持。Memory 的 Evidence 采集、
+持久提炼任务入队和已有记忆召回继续保留；提炼、索引维护和 Learning 由同一 home 下存活且满足
+配置条件的 Desktop 处理。入队不等于生成记忆，`pragma run` 退出后不会持续消费这些后台任务，
+Knowledge/Skill 发布仍需人工批准。
+
 ## 命令
 
 ```text

@@ -1,3 +1,4 @@
+import { createIntegrationError } from "@pragma/shared/integration";
 import type {
   PragmaLogger,
   ResolvedRuntime,
@@ -86,7 +87,10 @@ export function createRuntimeEnvironmentService(options: {
     const ref = factoryRef(definition.adapter.id, definition.adapter.version);
     const factory = factories.get(ref);
     if (factory === undefined)
-      throw new Error(`Runtime adapter factory is not registered: ${ref}.`);
+      throw runtimeUnavailable(
+        "adapter_factory_missing",
+        `Runtime adapter factory is not registered: ${ref}.`,
+      );
     const factoryContext =
       effectiveToolPermissionMode === undefined
         ? undefined
@@ -196,7 +200,10 @@ export function createRuntimeEnvironmentService(options: {
   ): Promise<void> => {
     if (selection === undefined) return;
     if (resolved.adapter.listModels === undefined) {
-      throw new Error(`Runtime does not expose a model catalog: ${resolved.binding.runtimeId}.`);
+      throw runtimeUnavailable(
+        "model_catalog_unavailable",
+        `Runtime does not expose a model catalog: ${resolved.binding.runtimeId}.`,
+      );
     }
     const discoveryStartedAt = performance.now();
     let catalog = modelCatalogs.get(resolved.adapter);
@@ -234,7 +241,8 @@ export function createRuntimeEnvironmentService(options: {
         candidate.provider.id === selection.model.providerId,
     );
     if (model === undefined) {
-      throw new Error(
+      throw runtimeUnavailable(
+        "model_unavailable",
         `Runtime model is unavailable: ${resolved.binding.runtimeId}/${selection.model.providerId}/${selection.model.modelId}.`,
       );
     }
@@ -242,7 +250,8 @@ export function createRuntimeEnvironmentService(options: {
       selection.thinkingLevel !== undefined &&
       !model.thinking?.supportedLevels.some((level) => level.value === selection.thinkingLevel)
     ) {
-      throw new Error(
+      throw runtimeUnavailable(
+        "thinking_level_unavailable",
         `Runtime thinking level is unavailable: ${resolved.binding.runtimeId}/${selection.model.modelId}/${selection.thinkingLevel}.`,
       );
     }
@@ -254,7 +263,10 @@ export function createRuntimeEnvironmentService(options: {
       const runtimeId = request.runtimeId ?? (await options.store.getDefaultRuntimeId());
       const revision = await options.store.getRevision(runtimeId);
       if (revision === undefined || revision.status !== "active") {
-        throw new Error(`Runtime Environment is not active: ${runtimeId}.`);
+        throw runtimeUnavailable(
+          "environment_inactive",
+          `Runtime Environment is not active: ${runtimeId}.`,
+        );
       }
       const resolved = await materialize(revision, toolPermissionMode);
       await validateModelSelection(resolved, request.modelSelection);
@@ -267,7 +279,8 @@ export function createRuntimeEnvironmentService(options: {
         revision.status !== "active" ||
         revision.fingerprint !== binding.fingerprint
       ) {
-        throw new Error(
+        throw runtimeUnavailable(
+          "environment_binding_unavailable",
           `Runtime Environment binding is unavailable: ${binding.runtimeId}@${binding.revision}.`,
         );
       }
@@ -311,4 +324,16 @@ function factoryRef(id: string, version: string): string {
 }
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : "Runtime Environment is invalid.";
+}
+
+function runtimeUnavailable(diagnosticCode: string, message: string) {
+  return Object.assign(
+    new Error(message),
+    createIntegrationError({
+      code: "RUNTIME_UNAVAILABLE",
+      category: "dependency",
+      message,
+      details: { diagnosticCode },
+    }),
+  );
 }

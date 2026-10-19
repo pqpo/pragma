@@ -43,6 +43,28 @@ compiled CLI and one native keychain dependency only; it does not
 download a payload, install a second Node.js runtime, or publish a consumer
 lockfile.
 
+## Shared Desktop configuration
+
+Configure Runtime Environments, model connections and credentials, and import resources in Desktop
+first. Use the same OS user and `PRAGMA_HOME` for both apps, then close Desktop and run an imported
+Expert, Team or Flow with the CLI. The CLI reads the saved Environment revisions and model connections;
+PI uses the saved SecretRefs through the existing OS keychain, while Harness runtimes retain their
+native authentication. Model or credential failures are reported instead of selecting another model.
+If credentials require migration, open the current Desktop once and resolve the reported migration
+before retrying. Existing Sessions retain their pinned Runtime identity and Environment revision.
+
+```bash
+pragma expert discover --format=json --interactive=never
+pragma expert run expert:<16-char-id> --workspace /absolute/workspace \
+  --prompt "Complete the task" --format=json --interactive=never
+pragma mission get <MISSION_ID> --view result --format=json
+```
+
+No CLI environment editor, Bundle manager or alternative credential backend is added. Memory Evidence
+capture, durable enrichment queueing and recall remain available when policy permits. Enrichment,
+index maintenance and Learning require a live, configured Desktop on the same home; capturing Evidence
+does not mean a Memory was generated. Knowledge/Skill publication still requires approval.
+
 ## Use
 
 Run `pragma --help` for the current command list. Read-only Mission and Board
