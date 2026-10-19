@@ -98,7 +98,10 @@ import type { PragmaProjectStore } from "../projects/pragma-project-store.ts";
 import { referencedPragmaResourceRefs } from "../projects/pragma-resource-references.ts";
 import type { WorkflowLayoutStore } from "../projects/workflow-layout-store.ts";
 import { writeBundleAtomically } from "./pragma-bundle-file.ts";
-import { BundlePluginUnavailableError } from "./pragma-bundle-errors.ts";
+import {
+  BundleInstallationConflictError,
+  BundlePluginUnavailableError,
+} from "./pragma-bundle-errors.ts";
 import {
   assertUniqueResolutionRefs,
   collectCapabilities,
@@ -455,7 +458,7 @@ export function createPragmaBundleService(options: {
     const update = installation.knowledgeBaseUpdate;
     if (installation.rootKind !== "ContextStore" || update === undefined) {
       throw new Error(
-        "The previous import was interrupted. Import the bundle again to retry safely, or discard this installation.",
+        "This legacy installation has no recoverable write journal. Try safe discard before importing again. If cleanup is blocked, preserve its data and restore the project from a known backup before retrying.",
       );
     }
     const archive = await readDesktopBundle(
@@ -851,6 +854,18 @@ export function createPragmaBundleService(options: {
           "An imported knowledge base was revised and cannot be discarded automatically.",
         );
     const createdRefs = new Set(installation.createdResourceRefs);
+    const consumers = (await readCatalog()).installations.filter(
+      (candidate) =>
+        candidate.id !== installation.id &&
+        candidate.projectId === installation.projectId &&
+        candidate.resourceRefs.some((ref) => createdRefs.has(ref)),
+    );
+    if (consumers.length > 0) {
+      throw new BundleInstallationConflictError(
+        "installation_in_use",
+        "Imported resources are reused by another installation and cannot be discarded.",
+      );
+    }
     const retainedResources = snapshot.resources.filter(
       (resource) => !createdRefs.has(canonicalPragmaResourceRef(resource)),
     );
@@ -1829,11 +1844,9 @@ export function createPragmaBundleService(options: {
             known?.transaction !== undefined &&
             known.transaction.requestFingerprint !== fingerprint
           )
-            throw Object.assign(
-              new Error(
-                "This installation request ID was already used with different deployment decisions.",
-              ),
-              { code: "installation_request_conflict" },
+            throw new BundleInstallationConflictError(
+              "installation_request_conflict",
+              "This installation request ID was already used with different deployment decisions.",
             );
           if (known?.transaction?.phase === "completed") return known;
           const archive = await readDesktopBundle(
@@ -1863,6 +1876,20 @@ export function createPragmaBundleService(options: {
             );
           }
           const catalog = await readCatalog();
+          const legacy = catalog.installations.find(
+            (record) =>
+              record.projectId === options.project.projectId &&
+              record.transaction === undefined &&
+              (record.status === "installing" || record.status === "failed") &&
+              record.bundleFingerprint === archive.manifest.bundleFingerprint &&
+              record.sourceRootRef === archive.manifest.root.ref,
+          );
+          if (known === undefined && legacy !== undefined) {
+            throw new BundleInstallationConflictError(
+              "installation_legacy_incomplete",
+              "An interrupted legacy installation exists. Recheck it or safely discard it before starting a new import.",
+            );
+          }
           const request = { ...input, sourcePath: undefined, secrets: undefined };
           const requestFingerprint = sha256(stableStringify(request));
           const existing =
@@ -1879,11 +1906,9 @@ export function createPragmaBundleService(options: {
                 );
           const transaction = existing?.transaction;
           if (transaction !== undefined && transaction.requestFingerprint !== requestFingerprint) {
-            throw Object.assign(
-              new Error(
-                "This installation request ID was already used with different deployment decisions.",
-              ),
-              { code: "installation_request_conflict" },
+            throw new BundleInstallationConflictError(
+              "installation_request_conflict",
+              "This installation request ID was already used with different deployment decisions.",
             );
           }
           if (existing !== undefined && transaction?.phase === "completed") return existing;
@@ -1927,11 +1952,9 @@ export function createPragmaBundleService(options: {
             head.revision !== transaction.baseRevision &&
             priorPublication === undefined
           ) {
-            throw Object.assign(
-              new Error(
-                "The project changed during the interrupted installation; inspect the conflict before retrying.",
-              ),
-              { code: "installation_target_conflict" },
+            throw new BundleInstallationConflictError(
+              "installation_target_conflict",
+              "The project changed during the interrupted installation; inspect the conflict before retrying.",
             );
           }
           if (priorPublication !== undefined && head.revision !== priorPublication.revision) {
@@ -1943,11 +1966,9 @@ export function createPragmaBundleService(options: {
                 (resource) => canonicalPragmaResourceRef(resource) === ref,
               );
               if (stableStringify(old) !== stableStringify(latest))
-                throw Object.assign(
-                  new Error(
-                    "An installed resource changed after publication. Resolve the conflict before recovery.",
-                  ),
-                  { code: "installation_target_conflict" },
+                throw new BundleInstallationConflictError(
+                  "installation_target_conflict",
+                  "An installed resource changed after publication. Resolve the conflict before recovery.",
                 );
             }
           }
@@ -3136,14 +3157,17 @@ export function createPragmaBundleService(options: {
           }
           if (
             (installation.status === "installing" || installation.status === "failed") &&
-            installation.transaction === undefined &&
-            installation.knowledgeBaseUpdate !== undefined
+            installation.transaction === undefined
           ) {
             await recoverKnowledgeBaseInstallation(installation).catch(async (error) => {
               await updateInstallation(installation.id, (record) => ({
                 ...record,
                 status: "failed",
                 error: error instanceof Error ? error.message : String(error),
+                errorCode:
+                  installation.knowledgeBaseUpdate === undefined
+                    ? "installation_legacy_recovery_unavailable"
+                    : installationErrorCode(error),
               }));
             });
             return (await readCatalogFile()).installations.find(

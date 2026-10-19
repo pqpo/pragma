@@ -47,7 +47,8 @@ Before asset writes, the installation owns an archive, typed resource mapping an
 IDs/names. Replay reuses these allocations and verifies existing content instead of generating
 another asset. Project publication uses a stable publication UUID so a lost completion response
 cannot publish twice. Target conflicts stop recovery; newer edits are not rolled back. Copy cleanup
-checks resource revisions, DSL references and retained physical asset bindings before deletion.
+checks resource revisions, other installations' resource references, DSL references and retained
+physical asset bindings before deletion.
 For transaction-backed installations, readiness rechecks preserve the last owned publication
 revision; a lost publication receipt is recovered by its stable UUID before cleanup comparisons.
 Updates are never automatically discarded.
@@ -55,6 +56,9 @@ Updates are never automatically discarded.
 Recovery runs on access to the selected installation. Construction and initialization do not scan
 and take over all installations. Legacy interrupted knowledge-base operations retain their existing
 recovery algorithm; unsupported legacy interruptions remain visible with explicit retry/cleanup.
+Fresh request UUIDs cannot bypass an unfinished legacy owner. Desktop routes such owners through
+recheck and offers confirmed safe cleanup; unrecoverable journals retain their data and explain
+backup recovery rather than silently creating another installation.
 Binding repair has a separate `pragma.bundle-binding-repair/v1` journal, recording validated upserts,
 installation mappings and the publication UUID before publication. It contains no plaintext secrets.
 

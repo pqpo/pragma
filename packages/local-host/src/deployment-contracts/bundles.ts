@@ -473,6 +473,16 @@ export const PragmaBundleInstallationSchema = z
     }
   });
 
+export function isInterruptedBundleInstallation(
+  installation: z.infer<typeof PragmaBundleInstallationSchema>,
+): boolean {
+  return (
+    installation.status === "installing" ||
+    installation.status === "failed" ||
+    (installation.transaction !== undefined && installation.transaction.phase !== "completed")
+  );
+}
+
 export const ResolvePragmaBundleInstallationSchema = z
   .object({
     installationId: z.string().uuid(),

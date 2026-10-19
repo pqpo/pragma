@@ -91,6 +91,17 @@
 
 **剩余边界：** 本阶段无 CLI 新部署入口、Memory Headless 或 Linux 适配。真实模型/Harness 执行、系统钥匙串、交互式 Desktop 全流程和 macOS/Windows 发布包验收尚未执行，留待相应平台和阶段 4 验收；本次工程测试不能替代这些验收。CI 性能目标同样尚未验收；本次已记录本地超出目标的计时，未将其标作通过。
 
+**PR #408 评论复核与修复（2026-10-19）：** 完整读取普通评论、审核正文及行内评论，确认三个 P1 均成立，已修复并独立验证。原提交 `0e6acee8` 的 GitHub CI 质量、业务与 CLI 包验证已通过；以下为修复后的本机证据。
+
+- Desktop 将没有 transaction 的历史 installing/failed 记录也识别为中断安装，直接进入恢复结果页并调用共享 recheck。共享入口阻止新 UUID 绕过未完成历史记录；缺少可恢复 journal 时保留记录，明确报告安全清理或备份恢复路径。
+- 失败安装结果页增加确认后的安全清理入口，成功后重新 inspection 并生成新 requestId；清理受阻时保留原记录、展示原因及人工处理提示。共享安装冲突使用明确错误类型，Desktop IPC 保留稳定冲突码。
+- 清理前检查同 Project 中其他 Installation 的 resourceRefs；keep_local 复用根或依赖时拒绝删除创建者，保留共用资源及消费者的 readiness。
+- 新增真实 v8 installing/failed owner fixture、历史恢复/损坏 journal/持久冲突的生产 IPC 回归，以及真实 Chromium 对话框测试入口 `pnpm --filter @pragma/desktop test:bundle-recovery-ui`。
+
+验证：根目录 `pnpm lint`、`pnpm typecheck`、`pnpm build` 各 19/19 任务通过；编译后共享部署及边界 76/76、Core 历史迁移 8/8、CLI adapter 165/165、Desktop 相关 14 个文件 236/236，共 485 项通过且无跳过。Chromium 另有 3 组交互场景通过，覆盖无 transaction 的两类历史状态、确认/取消、拒绝清理时展示服务端原因、重新 inspection 和新 UUID。浏览器交互使用受控 Bridge，生产 IPC 测试另行验证真实 Project/ContextStore/归档和历史迁移边界，两者不冒充真实 Runtime 验收。已检查简中 1440×900/100%、英文 1080×700/125%、繁中 1080×700/150% 的正常与焦点态截图；Tab 验证真实焦点移动，隐藏 macOS 窗口的焦点态截图使用 DevTools 强制 focus-visible。临时截图保留在仓库外，未提交。
+
+非阻断建议已核对：当前模型编辑已有 provider revision CAS，实际消费者影响预览及 expectedImpact 接线留待后续；Bundle application service 内部按规划/事务/恢复/绑定修复拆分属于后续维护，不在本次缺陷修复中扩大重构。阶段 2、3、5 和真实 Runtime/平台验收的未完成状态保持不变。
+
 ## 阶段 2 CLI 独立部署入口
 
 **已完成：** CLI 已有 Runtime 装配、Mission 运行与恢复、查询、分页、诊断、有限等待和机器输出；Agent 管理 CLI 已完成迁移。

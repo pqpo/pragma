@@ -27,7 +27,11 @@ import type {
   PragmaBundleModuleOptions,
   PragmaProjectSnapshot,
 } from "../../../../shared/contracts/index.ts";
-import { DesktopMutationErrorSchema } from "@pragma/local-host/deployment-contracts";
+import {
+  DesktopMutationErrorSchema,
+  isInterruptedBundleInstallation,
+} from "@pragma/local-host/deployment-contracts";
+import { ConfirmationDialog } from "../../components/Dialog.tsx";
 import { ExpertAvatar } from "../../components/ExpertAvatar.tsx";
 import { SelectMenu } from "../../components/SelectMenu.tsx";
 import { isBundlePluginUnavailableError } from "../../lib/bundle-errors.ts";
@@ -496,6 +500,7 @@ function BundleImportDialog(props: {
   const [dragging, setDragging] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [confirmClose, setConfirmClose] = useState(false);
+  const [confirmDiscard, setConfirmDiscard] = useState(false);
   const dialogRef = useRef<HTMLElement | null>(null);
   const displayError = (cause: unknown): string =>
     bundleErrorMessage(cause, (key, options) => (options === undefined ? t(key) : t(key, options)));
@@ -564,9 +569,7 @@ function BundleImportDialog(props: {
         : ((await api.listPragmaBundleInstallations()).find(
             (candidate) =>
               candidate.id === next.alreadyInstalledId &&
-              (candidate.status === "needs_setup" ||
-                (candidate.transaction !== undefined &&
-                  candidate.transaction.phase !== "completed")),
+              (candidate.status === "needs_setup" || isInterruptedBundleInstallation(candidate)),
           ) ?? null);
     installRequestId.current = recoverable?.transaction?.requestId ?? crypto.randomUUID();
     setInspection(next);
@@ -722,6 +725,11 @@ function BundleImportDialog(props: {
 
   const nextFromSelect = () => {
     if (inspection === null) return;
+    if (recovery !== null && isInterruptedBundleInstallation(recovery)) {
+      setInstallation(recovery);
+      setStep("result");
+      return;
+    }
     if (recovery === null && inspection.conflicts.length + inspection.assetConflicts.length > 0)
       setStep("conflicts");
     else if (requirements.length > 0) setStep("bindings");
@@ -838,7 +846,7 @@ function BundleImportDialog(props: {
               contextStores,
               secrets,
             })
-          : recovery.transaction !== undefined && recovery.transaction.phase !== "completed"
+          : isInterruptedBundleInstallation(recovery)
             ? await api.recheckPragmaBundleInstallation({ installationId: recovery.id })
             : await api.resolvePragmaBundleInstallation({
                 installationId: recovery.id,
@@ -874,9 +882,40 @@ function BundleImportDialog(props: {
     }
   };
 
+  const discardInstallation = async () => {
+    const api = desktopApi();
+    if (api === undefined || installation === null || inspection === null) return;
+    setConfirmDiscard(false);
+    setBusy(true);
+    setError(null);
+    try {
+      await api.discardPragmaBundleInstallation({ installationId: installation.id });
+      setInstallation(null);
+      setRecovery(null);
+      setInspection(null);
+      setStep("select");
+      await resetForInspection(
+        await api.inspectPragmaBundle({
+          sourcePath: inspection.sourcePath,
+          rootRef: inspection.root.ref,
+        }),
+      );
+      await props.onChanged();
+    } catch (cause) {
+      const parsed = DesktopMutationErrorSchema.safeParse(cause);
+      setError(
+        t("bundleDiscardBlocked", {
+          reason: parsed.success ? parsed.data.message : displayError(cause),
+        }),
+      );
+    } finally {
+      setBusy(false);
+    }
+  };
+
   const footer = (() => {
     if (step === "result") {
-      if (installation?.transaction !== undefined && installation.transaction.phase !== "completed")
+      if (installation !== null && isInterruptedBundleInstallation(installation))
         return (
           <>
             <button
@@ -886,6 +925,14 @@ function BundleImportDialog(props: {
               onClick={props.onClose}
             >
               {t("done")}
+            </button>
+            <button
+              className="danger-button"
+              type="button"
+              disabled={busy}
+              onClick={() => setConfirmDiscard(true)}
+            >
+              {t("bundleDiscardImport")}
             </button>
             <button
               className="primary-button"
@@ -1209,6 +1256,19 @@ function BundleImportDialog(props: {
           </p>
         ) : null}
       </BundleDialogShell>
+      {confirmDiscard ? (
+        <ConfirmationDialog
+          title={t("bundleDiscardImport")}
+          description={t("bundleDiscardInstallationDescription")}
+          className="pragma-bundle-discard-dialog"
+          cancelLabel={t("cancel")}
+          confirmLabel={t("bundleDiscardImport")}
+          busyLabel={t("bundleDiscardImport")}
+          busy={busy}
+          onCancel={() => setConfirmDiscard(false)}
+          onConfirm={() => void discardInstallation()}
+        />
+      ) : null}
       {confirmClose ? (
         <div className="capability-confirm-backdrop pragma-bundle-confirm-backdrop">
           <section className="capability-confirm-dialog" role="alertdialog" aria-modal="true">

@@ -35,3 +35,12 @@ Preserve original bytes when extending the supported migration chain.
   home, performs the adjacent catalog upgrade, rechecks readiness and reads the original
   knowledge snapshot while preserving its Project revision. This standalone ContextStore
   Bundle has no executable root; it does not establish real Runtime acceptance.
+
+- `bundle-installation-v8-interrupted.json` was captured on 2026-10-19 by running the
+  same unmodified baseline Desktop writers at `e1b6d427e923c3f1b001a471e0aaba0e1e97b7cd`.
+  The injected Project publication port captures the complete owner immediately before
+  throwing; the writer then records the failure and a second capture is taken. Thus the
+  `installing` and `failed` catalogs, original archive and ContextStore files are actual
+  historical writer bytes, not current records with modified versions. Desktop IPC
+  regressions restore both owners, migrate them and resume the same installation without
+  duplicating assets. A separate explicitly damaged-journal case checks safe diagnostics.

@@ -1477,6 +1477,38 @@ describe("PragmaBundleService", { timeout: 30_000 }, () => {
     ).toBe(second.rootRef);
   });
 
+  it("preserves resources reused by another keep_local installation when discarding their creator", async () => {
+    const source = await createFixture("installation-owner-source");
+    const path = join(source.root, "shared.pragma");
+    await source.service.exportTo(exportInput(source.projectRevision), path);
+    const target = await createFixture("installation-owner-target", {
+      expertId: "2qh4nx7rx26mb3e7",
+      runtimeResourceId: "3qh4nx7rx26mb3e7",
+    });
+    await target.project.publish({ expectedRevision: target.projectRevision, resources: [] });
+    const first = await target.service.inspect(path);
+    const owner = await target.service.startImport(
+      importInput(path, first.bundleFingerprint, first.projectFingerprint, first.projectRevision),
+    );
+    expect(owner.status).toBe("ready");
+    expect(owner.createdResourceRefs).toHaveLength(2);
+    const next = await target.service.inspect(path);
+    const reused = await target.service.startImport({
+      ...importInput(path, next.bundleFingerprint, next.projectFingerprint, next.projectRevision),
+      conflicts: next.conflicts.map((value) => ({ resourceRef: value.ref, action: "keep_local" })),
+    });
+    expect(reused.status).toBe("ready");
+    expect(reused.createdResourceRefs).toEqual([]);
+    expect(reused.resourceRefs.toSorted()).toEqual(owner.resourceRefs.toSorted());
+    const before = await target.project.get();
+    await expect(target.restartService().discardInstallation(owner.id)).rejects.toMatchObject({
+      code: "installation_in_use",
+    });
+    expect(await target.project.get()).toEqual(before);
+    expect(await target.service.listInstallations()).toHaveLength(2);
+    expect(await target.service.recheckInstallation(reused.id)).toMatchObject({ status: "ready" });
+  });
+
   it("CR: preserves an owned knowledge asset still bound by a different resource", async () => {
     const source = await createFixture("shared-asset-source", { realContextStores: true });
     const asset = await source.contextStores.createFromSnapshot({

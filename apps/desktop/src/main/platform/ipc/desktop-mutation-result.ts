@@ -10,6 +10,7 @@ import { ExpertDefinitionStoreError } from "../../features/experts/expert-defini
 import { MissionStoreError } from "@pragma/local-host";
 import { ContextStoreStoreError } from "@pragma/local-host/deployment";
 import {
+  BundleInstallationConflictError,
   BundlePluginUnavailableError,
   BundleSetupRequiredError,
 } from "@pragma/local-host/deployment";
@@ -33,6 +34,15 @@ export async function runDesktopMutation<T>(
 }
 
 function serializeDesktopMutationError(error: unknown): DesktopMutationErrorData {
+  if (error instanceof BundleInstallationConflictError) {
+    return DesktopMutationErrorSchema.parse({
+      code: error.code,
+      message: error.message,
+      category: "conflict",
+      retryable: false,
+      diagnostics: [],
+    });
+  }
   const integrationError = IntegrationErrorSchema.safeParse(error);
   if (integrationError.success) {
     return DesktopMutationErrorSchema.parse({

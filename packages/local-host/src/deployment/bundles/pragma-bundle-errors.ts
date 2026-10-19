@@ -3,6 +3,20 @@ import {
   type PragmaBundleDependencyReadiness,
 } from "../../deployment-contracts/index.ts";
 
+export class BundleInstallationConflictError extends Error {
+  constructor(
+    readonly code:
+      | "installation_request_conflict"
+      | "installation_target_conflict"
+      | "installation_legacy_incomplete"
+      | "installation_in_use",
+    message: string,
+  ) {
+    super(message);
+    this.name = "BundleInstallationConflictError";
+  }
+}
+
 export class BundleSetupRequiredError extends Error {
   readonly code = "bundle_setup_required" as const;
 
