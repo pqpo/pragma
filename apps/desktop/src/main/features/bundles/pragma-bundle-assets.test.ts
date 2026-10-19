@@ -1,7 +1,7 @@
 import { PragmaResourceRefSchema } from "@pragma/interpreter/ast";
 import { describe, expect, it } from "vitest";
 
-import { findBundleAssetConflicts, nextBundleAssetCopyName } from "./pragma-bundle-assets.ts";
+import { findBundleAssetConflicts, nextBundleAssetCopyName } from "@pragma/local-host/deployment";
 
 describe("Bundle asset conflicts", () => {
   it("matches every same-name local asset independently of Project membership", () => {

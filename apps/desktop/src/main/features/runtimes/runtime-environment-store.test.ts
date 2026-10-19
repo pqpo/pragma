@@ -9,8 +9,8 @@ import { RuntimeEnvironmentCatalogSchema } from "../../../shared/contracts/index
 import {
   RuntimeEnvironmentCatalogV1Schema,
   runtimeEnvironmentCatalogMigrationChain,
-} from "./migrations/index.ts";
-import { createRuntimeEnvironmentStore } from "./runtime-environment-store.ts";
+} from "@pragma/local-host/deployment";
+import { createRuntimeEnvironmentStore } from "@pragma/local-host/deployment";
 
 const catalogV1Fixture = new URL("./fixtures/runtime-environment-catalog-v1.json", import.meta.url);
 const piRevisionV1Fixture = new URL(

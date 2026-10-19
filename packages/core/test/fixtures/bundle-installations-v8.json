@@ -1,0 +1,63 @@
+{
+  "schemaVersion": "pragma.bundle-installations/v8",
+  "installations": [
+    {
+      "schemaVersion": "pragma.bundle-installation/v8",
+      "bundleVersion": "pragma.bundle/v3",
+      "sourceProjectFingerprint": "e2e653be24f958452fdb763e67e3f84b27678a17fff1393800aa53b43b94fc6f",
+      "id": "06b32096-9bc7-490e-974b-6de4febdc196",
+      "bundleFingerprint": "b2afa63eeb4d29a87628e28780374e918b5f96fec10d86b8f4ef6d4778e73274",
+      "projectId": "studio",
+      "projectRevision": 1,
+      "sourceRootRef": "context-store:kqh4nx7rx26mb3e7",
+      "rootRef": "context-store:kqh4nx7rx26mb3e7",
+      "rootName": "Historical handbook",
+      "rootKind": "ContextStore",
+      "resourceRefs": [
+        "context-store:kqh4nx7rx26mb3e7"
+      ],
+      "createdResourceRefs": [
+        "context-store:kqh4nx7rx26mb3e7"
+      ],
+      "createdCapabilityIds": [],
+      "createdContextStoreIds": [
+        "8f5b1f3e-c774-43b0-bd3c-43be80794b3f"
+      ],
+      "createdPluginRefs": [],
+      "conflictResolutions": [],
+      "assetConflictResolutions": [],
+      "resourceMappings": [
+        {
+          "sourceRef": "context-store:kqh4nx7rx26mb3e7",
+          "targetRef": "context-store:kqh4nx7rx26mb3e7"
+        }
+      ],
+      "knowledgeBaseUpdate": {
+        "sourceRef": "context-store:kqh4nx7rx26mb3e7",
+        "targetRef": "context-store:kqh4nx7rx26mb3e7",
+        "storeId": "8f5b1f3e-c774-43b0-bd3c-43be80794b3f",
+        "importedSnapshotHash": "9546373af2ce384adda2d84d145385bd05556fed1952a2c11d8750b9b1e5a7dd",
+        "importedName": "Historical handbook",
+        "importedDescription": "Historical writer fixture.",
+        "phase": "applied"
+      },
+      "status": "ready",
+      "pending": [],
+      "readiness": [
+        {
+          "id": "context-store:context-store:kqh4nx7rx26mb3e7",
+          "kind": "context-store",
+          "resourceRef": "context-store:kqh4nx7rx26mb3e7",
+          "name": "Historical handbook",
+          "status": "ready",
+          "code": "ready",
+          "action": "none",
+          "message": "Knowledge base is ready.",
+          "targetId": "8f5b1f3e-c774-43b0-bd3c-43be80794b3f"
+        }
+      ],
+      "createdAt": "2026-10-19T08:35:23.664Z",
+      "updatedAt": "2026-10-19T08:35:23.930Z"
+    }
+  ]
+}

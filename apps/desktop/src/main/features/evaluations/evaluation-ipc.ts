@@ -11,7 +11,7 @@ import {
 } from "../../../shared/contracts/index.ts";
 import { runDesktopMutation } from "../../platform/ipc/desktop-mutation-result.ts";
 import type { EvaluationService } from "./evaluation-service.ts";
-import type { PragmaProjectStore } from "../projects/pragma-project-store.ts";
+import type { PragmaProjectStore } from "@pragma/local-host/deployment";
 
 export function installEvaluationHandlers(
   service: EvaluationService,

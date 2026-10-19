@@ -84,13 +84,10 @@ import {
   type MissionChatUpdate,
 } from "../../../shared/contracts/index.ts";
 import type { CapabilityCredentialStore } from "../capabilities/capability-credential-store.ts";
-import type { CapabilityStore } from "../capabilities/capability-store.ts";
+import type { CapabilityStore } from "@pragma/local-host/deployment";
 import { createContextStoreRevisionService } from "../context-stores/context-store-revision-service.ts";
-import {
-  createContextStoreStore,
-  type ContextStoreStore,
-} from "../context-stores/context-store-store.ts";
-import { createPragmaProjectStore } from "../projects/pragma-project-store.ts";
+import { createContextStoreStore, type ContextStoreStore } from "@pragma/local-host/deployment";
+import { createPragmaProjectStore } from "@pragma/local-host/deployment";
 import { desktopCapabilityBindingRef } from "../../platform/bindings/desktop-binding-ref.ts";
 import type { DesktopUsageStore } from "../usage/usage-store.ts";
 import { createCodexQueuePeer } from "./fixtures/codex-queue-peer.ts";

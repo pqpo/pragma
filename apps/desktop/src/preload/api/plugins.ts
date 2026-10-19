@@ -9,7 +9,7 @@ import {
   PluginZipInspectionSchema,
   SetPluginSecretsSchema,
   UpdatePluginDefaultsSchema,
-} from "../../shared/contracts/plugins.ts";
+} from "@pragma/local-host/deployment-contracts";
 import { PickWorkspaceResultSchema } from "../../shared/contracts/settings.ts";
 import type { PragmaDesktopAPI } from "../../shared/contracts/api.ts";
 export const pluginsApi = {

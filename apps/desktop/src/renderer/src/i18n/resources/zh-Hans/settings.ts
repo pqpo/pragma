@@ -341,6 +341,7 @@ export const settings = {
     },
   },
   models: {
+    sharedConnectionImpact: "修改将影响所有使用此共享连接的资源。",
     kind: "模型类型",
     generation: "生成模型",
     embedding: "向量模型",

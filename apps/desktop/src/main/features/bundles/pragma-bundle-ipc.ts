@@ -10,7 +10,7 @@ import {
   StartPragmaBundleImportSchema,
 } from "../../../shared/contracts/index.ts";
 import { runDesktopMutation } from "../../platform/ipc/desktop-mutation-result.ts";
-import type { PragmaBundleService } from "./pragma-bundle-service.ts";
+import type { PragmaBundleService } from "@pragma/local-host/deployment";
 
 export function installPragmaBundleHandlers(
   service: PragmaBundleService,

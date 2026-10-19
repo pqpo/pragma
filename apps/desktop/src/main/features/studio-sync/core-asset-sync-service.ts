@@ -1,4 +1,4 @@
-import { inspectAssetReadiness } from "../asset-transfer/asset-transfer-readiness.ts";
+import { inspectAssetReadiness } from "@pragma/local-host/deployment";
 import {
   createAssetTransferService,
   AssetTransferConflictError,
@@ -6,9 +6,9 @@ import {
   type CollectedItems,
   type CoreAssetSyncNameResolutionIssue,
 } from "../asset-transfer/asset-transfer-service.ts";
-import type { PluginStore } from "../plugins/plugin-store.ts";
+import type { PluginStore } from "@pragma/local-host/deployment";
 import { fingerprint } from "../asset-transfer/asset-transfer-fingerprint.ts";
-import { KnowledgeDataSchema } from "../asset-transfer/asset-transfer-payloads.ts";
+import { KnowledgeDataSchema } from "@pragma/local-host/deployment";
 import {
   encodeSyncRepository,
   readSyncRepository,
@@ -42,9 +42,9 @@ import {
   type DesktopRuntimeAvailability,
   type UpdateCoreAssetSyncConfiguration,
 } from "../../../shared/contracts/index.ts";
-import type { CapabilityStore } from "../capabilities/capability-store.ts";
+import type { CapabilityStore } from "@pragma/local-host/deployment";
 
-import type { ContextStoreStore } from "../context-stores/context-store-store.ts";
+import type { ContextStoreStore } from "@pragma/local-host/deployment";
 
 import { redactGitDiagnostic } from "../../../shared/git-diagnostics.ts";
 import {
@@ -55,9 +55,9 @@ import {
   desktopContextResourceId,
 } from "../../platform/bindings/desktop-bound-resource-policy.ts";
 import { assertAssetGitIdentity, runAssetGit } from "../asset-git/asset-git-command.ts";
-import type { PragmaProjectStore } from "../projects/pragma-project-store.ts";
-import { referencedPragmaResourceRefs } from "../projects/pragma-resource-references.ts";
-import type { WorkflowLayoutStore } from "../projects/workflow-layout-store.ts";
+import type { PragmaProjectStore } from "@pragma/local-host/deployment";
+import { referencedPragmaResourceRefs } from "@pragma/local-host/deployment";
+import type { WorkflowLayoutStore } from "@pragma/local-host/deployment";
 
 import { StateSchema, JournalSchema, type SyncState } from "./asset-sync-state.ts";
 import { upgradeAssetSyncOwner, readCurrentAssetSyncOwner } from "./asset-sync-upgrade.ts";

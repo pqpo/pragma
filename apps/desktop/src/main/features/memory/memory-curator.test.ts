@@ -25,7 +25,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { createMissionStore } from "@pragma/local-host";
 
 import { createDesktopMemoryCurator } from "./memory-curator.ts";
-import { createPragmaProjectStore } from "../projects/pragma-project-store.ts";
+import { createPragmaProjectStore } from "@pragma/local-host/deployment";
 import type { LocalHostMissionApplication } from "@pragma/local-host";
 import { MissionConversationSnapshotSchema } from "../../../shared/contracts/index.ts";
 

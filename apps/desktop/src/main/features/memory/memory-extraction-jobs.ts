@@ -20,7 +20,7 @@ import {
   type DesktopMemoryExtractionTaskRef,
 } from "../../../shared/contracts/index.ts";
 import type { MissionStore } from "@pragma/local-host";
-import type { PragmaProjectStore } from "../projects/pragma-project-store.ts";
+import type { PragmaProjectStore } from "@pragma/local-host/deployment";
 import { classifyDesktopMemoryProblem } from "../../../shared/memory-problem.ts";
 import type { DesktopMemoryPlane } from "./desktop-memory-plane.ts";
 import type { DesktopMemoryCurator } from "./memory-curator.ts";

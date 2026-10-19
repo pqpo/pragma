@@ -35,9 +35,9 @@ import type {
   UpdateBuiltInExpertDefinition,
   UpdateExpertDefinition,
 } from "../../../shared/contracts/index.ts";
-import { createWorkflowLayoutStore } from "./workflow-layout-store.ts";
+import { createWorkflowLayoutStore } from "@pragma/local-host/deployment";
 import { createExpertDefinitionStore } from "../experts/expert-definition-store.ts";
-import { createPragmaProjectStore, PragmaProjectStoreError } from "./pragma-project-store.ts";
+import { createPragmaProjectStore, PragmaProjectStoreError } from "@pragma/local-host/deployment";
 import { createDesktopSystemExpertRegistry } from "../experts/system-expert-registry.ts";
 import {
   desktopCapabilityBindingRef,

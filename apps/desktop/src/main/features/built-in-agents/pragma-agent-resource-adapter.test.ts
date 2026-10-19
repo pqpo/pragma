@@ -9,7 +9,7 @@ import {
 } from "@pragma/built-in-agents";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { createContextStoreStore } from "../context-stores/context-store-store.ts";
+import { createContextStoreStore } from "@pragma/local-host/deployment";
 import { createHomeProjectStore } from "../missions/home-project-store.ts";
 import { createHomeExecutorPreferenceStore } from "../missions/home-executor-preference-store.ts";
 import { createWorkspaceHistoryStore } from "../workspaces/workspace-history-store.ts";

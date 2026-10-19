@@ -35,6 +35,8 @@ export type PragmaBundleBinarySource =
   | { readonly kind: "bytes"; readonly bytes: Uint8Array };
 
 export interface DecodedPragmaBundle {
+  /** Exact validated source bytes for a Host-owned durable installation journal. */
+  readonly sourceBytes: Uint8Array;
   readonly manifest: PragmaBundleManifest;
   /** Includes bundle.json so callers can preserve or inspect the exact archive contents. */
   readonly files: ReadonlyMap<string, Uint8Array>;
@@ -310,7 +312,7 @@ export async function decodePragmaBundle(
       );
     }
   }
-  return { manifest, files, archiveBytes: raw.byteLength };
+  return { manifest, files, archiveBytes: raw.byteLength, sourceBytes: raw };
 }
 
 function formatManifestMigrationError(error: unknown): string {

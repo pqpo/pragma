@@ -5,7 +5,7 @@ import {
   GetWorkflowLayoutSchema,
   WorkflowLayoutSchema,
 } from "../../../shared/contracts/index.ts";
-import type { WorkflowLayoutStore } from "./workflow-layout-store.ts";
+import type { WorkflowLayoutStore } from "@pragma/local-host/deployment";
 
 export function installWorkflowLayoutHandlers(store: WorkflowLayoutStore): void {
   ipcMain.handle("workflow-layout:get", (_event, input: unknown) =>

@@ -9,7 +9,7 @@ import {
   type ContextStoreRevisionGenerator,
   type ContextStoreRevisionService,
 } from "./context-store-revision-service.ts";
-import { createContextStoreStore } from "./context-store-store.ts";
+import { createContextStoreStore } from "@pragma/local-host/deployment";
 
 const directories: string[] = [];
 

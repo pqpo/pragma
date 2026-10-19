@@ -5,7 +5,7 @@ import { ok } from "@pragma/core";
 
 import { createTeamMemoryContextStoreBrowserService } from "./team-memory-context-store-browser.ts";
 import type { DesktopMemoryPlane } from "./desktop-memory-plane.ts";
-import type { PragmaProjectStore } from "../projects/pragma-project-store.ts";
+import type { PragmaProjectStore } from "@pragma/local-host/deployment";
 
 describe("team Memory ContextStore browser", () => {
   it("exposes separate Team, coordinator, and member scopes", async () => {

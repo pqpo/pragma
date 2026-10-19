@@ -90,14 +90,14 @@ import { createLocalHostPragmaMissionPort } from "@pragma/local-host";
 import { installBundleRegistryHandlers } from "../features/bundle-registry/bundle-registry-ipc.ts";
 import { createDesktopBundleRegistrySourceService } from "../features/bundle-registry/bundle-registry-source-service.ts";
 import { createBundleSourcePublishingService } from "../features/bundle-registry/bundle-source-publishing-service.ts";
-import { BundleSetupRequiredError } from "../features/bundles/pragma-bundle-errors.ts";
+import { BundleSetupRequiredError } from "@pragma/local-host/deployment";
 import { installPragmaBundleHandlers } from "../features/bundles/pragma-bundle-ipc.ts";
-import { createPragmaBundleService } from "../features/bundles/pragma-bundle-service.ts";
+import { createPragmaBundleService } from "@pragma/local-host/deployment";
 import { createCapabilityCredentialStore } from "../features/capabilities/capability-credential-store.ts";
 import { installCapabilityHandlers } from "../features/capabilities/capability-ipc.ts";
-import { createCapabilityRevisionCoordinator } from "../features/capabilities/capability-revision-coordinator.ts";
-import { createCapabilityStore } from "../features/capabilities/capability-store.ts";
-import { createCapabilityVerifier } from "../features/capabilities/capability-verifier.ts";
+import { createCapabilityRevisionCoordinator } from "@pragma/local-host/deployment";
+import { createCapabilityStore } from "@pragma/local-host/deployment";
+import { createCapabilityVerifier } from "@pragma/local-host/deployment";
 import {
   createDesktopSkillAgents,
   type DesktopSkillAgents,
@@ -114,7 +114,7 @@ import {
   type ContextStoreRevisionGenerator,
   type ContextStoreRevisionService,
 } from "../features/context-stores/context-store-revision-service.ts";
-import { createContextStoreStore } from "../features/context-stores/context-store-store.ts";
+import { createContextStoreStore } from "@pragma/local-host/deployment";
 import { createDesktopKnowledgeRevisionSubmissionPort } from "../features/context-stores/knowledge-revision-capability.ts";
 import {
   createDesktopStoreRevisionAgent,
@@ -166,15 +166,15 @@ import { MissionStatusService } from "@pragma/local-host";
 import { createFencedMissionStore } from "@pragma/local-host";
 import { createMissionStore, MissionStoreError } from "@pragma/local-host";
 import { installModelProviderHandlers } from "../features/model-providers/model-provider-ipc.ts";
-import { createModelProviderStore } from "../features/model-providers/model-provider-store.ts";
+import { createModelProviderStore } from "@pragma/local-host/deployment";
 import { createPluginCredentialStore } from "../features/plugins/plugin-credential-store.ts";
 import { installPluginHandlers } from "../features/plugins/plugin-ipc.ts";
-import { createPluginStore } from "../features/plugins/plugin-store.ts";
+import { createPluginStore } from "@pragma/local-host/deployment";
 import { createDesktopPragmaBlueprintCacheStore } from "../features/projects/pragma-blueprint-cache-store.ts";
 import { installPragmaProjectHandlers } from "../features/projects/pragma-project-ipc.ts";
-import { createPragmaProjectStore } from "../features/projects/pragma-project-store.ts";
+import { createPragmaProjectStore } from "@pragma/local-host/deployment";
 import { installWorkflowLayoutHandlers } from "../features/projects/workflow-layout-ipc.ts";
-import { createWorkflowLayoutStore } from "../features/projects/workflow-layout-store.ts";
+import { createWorkflowLayoutStore } from "@pragma/local-host/deployment";
 import { createDesktopRuntimeProcessEnvironment } from "../features/runtimes/desktop-runtime-process-environment.ts";
 import {
   getRuntimeAvailability,
@@ -185,7 +185,7 @@ import {
   createBuiltInRuntimeFactories,
   createRuntimeEnvironmentService,
 } from "../features/runtimes/runtime-environment-service.ts";
-import { createRuntimeEnvironmentStore } from "../features/runtimes/runtime-environment-store.ts";
+import { createRuntimeEnvironmentStore } from "@pragma/local-host/deployment";
 import { installRuntimeHandlers } from "../features/runtimes/runtime-ipc.ts";
 import { createAutomaticToolPermissionHandler } from "../features/runtimes/tool-permission-policy.ts";
 import { installDesktopSettingsHandlers } from "../features/settings/desktop-settings-ipc.ts";
@@ -2266,12 +2266,9 @@ export async function createDesktopApplicationContainer(
   );
   installModelProviderHandlers(modelProviderStore, {
     beforeConnectionChange: () => memoryPlane.retrieval?.cancel(),
-    isProviderReferenced: async (providerId) =>
-      (await pragmaProjectStore.get()).resources.some(
-        (resource) =>
-          resource.kind === "RuntimeProfile" &&
-          (resource.spec.config as Record<string, unknown>).providerId === providerId,
-      ),
+    externalResources: () => systemExperts.listResources(),
+    project: pragmaProjectStore,
+    runtimes,
   });
   const storageCapacityInspection = createStorageCapacityInspection({
     paths: pragmaPaths,

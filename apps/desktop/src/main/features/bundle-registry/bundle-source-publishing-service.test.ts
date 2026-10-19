@@ -4,7 +4,7 @@ import { join } from "node:path";
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import type { PragmaBundleService } from "../bundles/pragma-bundle-service.ts";
+import type { PragmaBundleService } from "@pragma/local-host/deployment";
 import { createBundleSourcePublishingService } from "./bundle-source-publishing-service.ts";
 import type { DesktopBundleRegistrySourceService } from "./bundle-registry-source-service.ts";
 

@@ -466,7 +466,7 @@ apps/desktop
 
 - main 可以依赖 Desktop 允许的 Core、Interpreter、Built-in Agents 和具体 Runtime。
 - preload、renderer 和跨层 shared 代码只允许依赖 `@pragma/shared` 与浏览器安全的
-  `@pragma/interpreter/ast`、`@pragma/evaluation/ast`、`@pragma/built-in-agents/contracts`，不得导入
+  `@pragma/interpreter/ast`、`@pragma/evaluation/ast`、`@pragma/built-in-agents/contracts`、`@pragma/local-host/deployment-contracts`，不得导入
   Interpreter 或 Built-in Agents 主入口及其他 Node-only `@pragma/*` package。
 - preload 使用的 workspace TypeScript 必须在构建阶段完成转换；生产产物必须自包含，运行时只允许外部加载
   Electron 和 Node 内置模块，不得直接加载仓库 `.ts` 文件。
@@ -483,9 +483,9 @@ apps/desktop
   主进程日志并显示可操作的错误页，不得静默白屏。
 - Desktop 本地 Capability、ContextStore 与 RuntimeProfile 的 Host 绑定资源统一通过
   `apps/desktop/src/main/platform/bindings/desktop-bound-resource-policy.ts` 分类、创建和重绑定；Feature
-  模块不得各自派生 ID、重建 metadata 或按资源数组顺序选择身份。该策略属于 Desktop Host，不下沉到
+  模块不得各自派生 ID、重建 metadata 或按资源数组顺序选择身份。编辑器、默认资源与系统专家身份策略属于 Desktop Host；通用安装与重绑定使用 Local Host。不得将产品身份策略下沉到
   Core、Shared 或 Interpreter。
-- ready Capability 新修订必须通过 Desktop Capability mutation coordinator 激活：先验证当前 Expert 的
+- ready Capability 新修订必须通过 Local Host Capability mutation coordinator 激活：先验证当前 Expert 的
   工具白名单，再以稳定 journal 提交 Capability 与凭据状态。Project、System Expert 与普通 Expert 只保存
   Capability ID，不传播修订号；运行时解析 active revision，并在 Execution 中记录实际修订与 fingerprint。
   历史 Project Revision 与 Mission 中的旧 binding 只保留 Capability identity，不继续 pin revision；恢复或继续

@@ -5,11 +5,8 @@ import { join } from "node:path";
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { CapabilityStoreError, type CapabilityStore } from "../capabilities/capability-store.ts";
-import {
-  ContextStoreStoreError,
-  type ContextStoreStore,
-} from "../context-stores/context-store-store.ts";
+import { CapabilityStoreError, type CapabilityStore } from "@pragma/local-host/deployment";
+import { ContextStoreStoreError, type ContextStoreStore } from "@pragma/local-host/deployment";
 import type { SkillRevisionService } from "../capabilities/skill-revision-service.ts";
 import type { ContextStoreRevisionService } from "../context-stores/context-store-revision-service.ts";
 import { createMemoryLearningRevisions } from "./memory-learning-revisions.ts";

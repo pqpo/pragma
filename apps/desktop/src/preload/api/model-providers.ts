@@ -12,7 +12,7 @@ import {
   ModelProviderSettingsSnapshotSchema,
   ResetModelProvidersResultSchema,
   UpdateModelProviderSchema,
-} from "../../shared/contracts/model-provider.ts";
+} from "@pragma/local-host/deployment-contracts";
 import type { PragmaDesktopAPI } from "../../shared/contracts/api.ts";
 export const modelProvidersApi = {
   getModelProviderSettings: async () =>

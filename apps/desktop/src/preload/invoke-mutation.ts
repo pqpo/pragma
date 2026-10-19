@@ -1,6 +1,6 @@
 import { ipcRenderer } from "electron";
 
-import { DesktopMutationResultSchema } from "../shared/contracts/mutation.ts";
+import { DesktopMutationResultSchema } from "@pragma/local-host/deployment-contracts";
 
 export async function invokeMutation(
   channel: string,

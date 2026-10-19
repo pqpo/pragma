@@ -1,7 +1,7 @@
 import { z } from "zod";
 import { PragmaExpertRefSchema, PragmaExpertTeamRefSchema } from "@pragma/interpreter/ast";
 
-import { ContextStoreContentMetadataSchema } from "./context-stores.ts";
+import { ContextStoreContentMetadataSchema } from "@pragma/local-host/deployment-contracts";
 import { MissionIdSchema } from "./mission-base.ts";
 
 export const MissionContextStoreIdSchema = z

@@ -27,7 +27,7 @@ import type {
   PragmaBundleModuleOptions,
   PragmaProjectSnapshot,
 } from "../../../../shared/contracts/index.ts";
-import { DesktopMutationErrorSchema } from "../../../../shared/contracts/mutation.ts";
+import { DesktopMutationErrorSchema } from "@pragma/local-host/deployment-contracts";
 import { ExpertAvatar } from "../../components/ExpertAvatar.tsx";
 import { SelectMenu } from "../../components/SelectMenu.tsx";
 import { isBundlePluginUnavailableError } from "../../lib/bundle-errors.ts";
@@ -563,8 +563,12 @@ function BundleImportDialog(props: {
         ? null
         : ((await api.listPragmaBundleInstallations()).find(
             (candidate) =>
-              candidate.id === next.alreadyInstalledId && candidate.status === "needs_setup",
+              candidate.id === next.alreadyInstalledId &&
+              (candidate.status === "needs_setup" ||
+                (candidate.transaction !== undefined &&
+                  candidate.transaction.phase !== "completed")),
           ) ?? null);
+    installRequestId.current = recoverable?.transaction?.requestId ?? crypto.randomUUID();
     setInspection(next);
     setRecovery(recoverable);
     setConflicts(
@@ -587,6 +591,7 @@ function BundleImportDialog(props: {
     setStep("select");
   }, []);
 
+  const installRequestId = useRef<string>(crypto.randomUUID());
   const initialPathInspected = useRef(false);
   useEffect(() => {
     const api = desktopApi();
@@ -790,6 +795,7 @@ function BundleImportDialog(props: {
       const next =
         recovery === null
           ? await api.importPragmaBundle({
+              requestId: installRequestId.current,
               sourcePath: inspection.sourcePath,
               rootRef: inspection.root.ref,
               expectedFingerprint: inspection.bundleFingerprint,
@@ -832,14 +838,16 @@ function BundleImportDialog(props: {
               contextStores,
               secrets,
             })
-          : await api.resolvePragmaBundleInstallation({
-              installationId: recovery.id,
-              baseRevision: inspection.projectRevision,
-              runtimes,
-              capabilities,
-              contextStores,
-              secrets,
-            });
+          : recovery.transaction !== undefined && recovery.transaction.phase !== "completed"
+            ? await api.recheckPragmaBundleInstallation({ installationId: recovery.id })
+            : await api.resolvePragmaBundleInstallation({
+                installationId: recovery.id,
+                baseRevision: inspection.projectRevision,
+                runtimes,
+                capabilities,
+                contextStores,
+                secrets,
+              });
       setInstallation(next);
       setStep("result");
       await props.onChanged();
@@ -850,8 +858,46 @@ function BundleImportDialog(props: {
     }
   };
 
+  const refreshInstallation = async () => {
+    const api = desktopApi();
+    if (api === undefined || installation === null) return;
+    setBusy(true);
+    setError(null);
+    try {
+      const next = await api.recheckPragmaBundleInstallation({ installationId: installation.id });
+      setInstallation(next);
+      await props.onChanged();
+    } catch (cause) {
+      setError(displayError(cause));
+    } finally {
+      setBusy(false);
+    }
+  };
+
   const footer = (() => {
     if (step === "result") {
+      if (installation?.transaction !== undefined && installation.transaction.phase !== "completed")
+        return (
+          <>
+            <button
+              className="secondary-button"
+              type="button"
+              disabled={busy}
+              onClick={props.onClose}
+            >
+              {t("done")}
+            </button>
+            <button
+              className="primary-button"
+              type="button"
+              disabled={busy}
+              onClick={() => void refreshInstallation()}
+            >
+              <ArrowsClockwise size={16} />
+              {t("bundleRecheck")}
+            </button>
+          </>
+        );
       if (installation?.status === "needs_setup" && pendingResultReadiness.length > 0) {
         return (
           <>
@@ -1083,9 +1129,20 @@ function BundleImportDialog(props: {
               <p className="pragma-bundle-success" role="status">
                 {t("bundleReady", { name: installation.rootName })}
               </p>
-            ) : installation.status === "failed" ? (
+            ) : installation.status === "failed" || installation.status === "installing" ? (
               <p className="form-error" role="alert">
-                {t("bundleImportFailed")}
+                {installation.error ??
+                  t(
+                    installation.status === "installing"
+                      ? "bundleImportIncomplete"
+                      : "bundleImportFailed",
+                  )}
+                {installation.errorCode === undefined ? null : (
+                  <>
+                    <br />
+                    <code>{installation.errorCode}</code>
+                  </>
+                )}
               </p>
             ) : (
               <div className="pragma-bundle-result-content" role="status">
@@ -1124,19 +1181,7 @@ function BundleImportDialog(props: {
                     className="secondary-button"
                     type="button"
                     disabled={busy}
-                    onClick={() => {
-                      const api = desktopApi();
-                      if (api === undefined) return;
-                      setBusy(true);
-                      void api
-                        .recheckPragmaBundleInstallation({ installationId: installation.id })
-                        .then(async (next) => {
-                          setInstallation(next);
-                          await props.onChanged();
-                        })
-                        .catch((cause: unknown) => setError(displayError(cause)))
-                        .finally(() => setBusy(false));
-                    }}
+                    onClick={() => void refreshInstallation()}
                   >
                     <ArrowsClockwise size={16} />
                     {t("bundleRecheck")}

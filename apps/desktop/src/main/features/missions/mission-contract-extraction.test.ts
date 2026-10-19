@@ -11,7 +11,7 @@ import {
 import { describe, expect, it } from "vitest";
 import { parse } from "yaml";
 
-import { ExpertModelConfigSchema } from "../../../shared/contracts/capabilities.ts";
+import { ExpertModelConfigSchema } from "@pragma/local-host/deployment-contracts";
 import {
   MissionIdSchema,
   MissionModelOverrideSchema,

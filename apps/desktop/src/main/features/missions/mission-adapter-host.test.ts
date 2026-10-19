@@ -20,7 +20,7 @@ import { createSecretStore } from "@pragma/local-host";
 import { createLocalHostResourceResolvers } from "@pragma/local-host/resources";
 
 import { createDesktopAdapterHost } from "./mission-adapter-host.ts";
-import { createContextStoreStore } from "../context-stores/context-store-store.ts";
+import { createContextStoreStore } from "@pragma/local-host/deployment";
 import { desktopContextBindingRef } from "../../platform/bindings/desktop-binding-ref.ts";
 
 const temporaryRoots: string[] = [];

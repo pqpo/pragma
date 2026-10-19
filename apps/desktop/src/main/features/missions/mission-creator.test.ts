@@ -15,8 +15,8 @@ import { createMissionCreator } from "./mission-creator.ts";
 import type { MissionExecutorCatalog } from "./mission-executor-catalog.ts";
 import type { LocalHostMissionApplication } from "@pragma/local-host";
 import { createMissionStore } from "@pragma/local-host";
-import { createPragmaProjectStore } from "../projects/pragma-project-store.ts";
-import { createContextStoreStore } from "../context-stores/context-store-store.ts";
+import { createPragmaProjectStore } from "@pragma/local-host/deployment";
+import { createContextStoreStore } from "@pragma/local-host/deployment";
 
 // Workspace validation uses real filesystem access; Electron IPC is unused here.
 vi.mock("electron", () => ({ BrowserWindow: class {}, dialog: {}, ipcMain: {} }));

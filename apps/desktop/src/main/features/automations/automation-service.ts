@@ -41,7 +41,7 @@ import { nextScheduleOccurrence, previewScheduleOccurrences } from "./automation
 import type { MissionCreator } from "../missions/mission-creator.ts";
 import type { LocalHostMissionApplication } from "@pragma/local-host";
 import { MissionStoreError, type MissionStore } from "@pragma/local-host";
-import type { PragmaProjectStore } from "../projects/pragma-project-store.ts";
+import type { PragmaProjectStore } from "@pragma/local-host/deployment";
 import { validateHostWorkspace as validateWorkspace } from "@pragma/local-host";
 
 const SCHEDULE_ADAPTER = "pragma.automation.schedule@v1";

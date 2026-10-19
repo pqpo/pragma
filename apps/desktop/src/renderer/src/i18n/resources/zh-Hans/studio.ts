@@ -1688,6 +1688,7 @@ export const studio = {
   bundleSaveBindings: "保存绑定",
   bundleSavingBindings: "正在保存…",
   bundleReady: "“{{name}}”已经可以运行。",
+  bundleImportIncomplete: "安装尚未完成，请重新检查状态以继续。",
   bundleImportFailed: "Bundle 导入失败。",
   bundleDiscardImport: "放弃本次导入",
   bundleContinue: "继续",

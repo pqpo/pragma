@@ -7,7 +7,7 @@ import {
 } from "@pragma/built-in-agents";
 import { canonicalPragmaResourceRef } from "@pragma/interpreter/ast";
 import { createDesktopRuntimeOptionResource } from "../../platform/bindings/desktop-bound-resource-policy.ts";
-import { createPragmaProjectStore } from "../projects/pragma-project-store.ts";
+import { createPragmaProjectStore } from "@pragma/local-host/deployment";
 
 /** Real Project repository and shared authoring use cases for boundary tests and native Runtime evidence. */
 export function createManagementCommandTestFixture(root: string, withAuthoringCatalog = false) {

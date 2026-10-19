@@ -12,7 +12,7 @@ travel with it:
 
 - **Capabilities** includes portable Skills and service definitions. For a Skill root, its active
   ready revision and complete file tree are mandatory and cannot be disabled.
-- **Plugins** includes user-installed plugin packages when available.
+- **Plugins** remains reserved in the module selection contract. This release rejects Bundle import/export with Plugin dependencies; standalone Plugin installation and configuration remain available.
 - **Knowledge bases** includes their Markdown content and is off by default for callable roots.
   For a knowledge-base root, its current published snapshot is mandatory and cannot be disabled.
 - **Flow layouts** includes canvas positions and viewport state.
@@ -42,7 +42,7 @@ Import is prepared as a wizard before one final confirmation:
 
 1. Select and validate the Bundle.
 2. Resolve every resource conflict independently. **Import as a copy** creates a new identity for
-   that resource; **Update matching resource** retains its local identity. Desktop chooses the
+   that resource; **Update matching resource** retains its local identity. Local Host chooses the
    identities and Interpreter rewrites all typed references in a localized project copy.
 3. Bind one unresolved dependency at a time.
 4. Review the complete import and commit it.
@@ -63,12 +63,13 @@ semantic resource and a new managed Store at revision 1. Inspection records the 
 revision and snapshot hash; import applies changes with snapshot CAS and asks for a fresh inspection
 if the target changed.
 
-If Desktop closes during import, the installation is marked failed at the next startup. Selecting
-the same archive and root again performs a fresh validated retry. Incomplete copy imports can also be
+Interrupted installations retain their request and allocated identities. Accessing the selected
+installation resumes its persisted transaction; initialization does not scan and take over all imports.
+Repeating a completed request returns its installation rather than creating another copy. Incomplete copy imports can also be
 discarded from the import dialog; update imports are not automatically rolled back because doing so
 could overwrite later project work.
 
-Desktop stores installation state as `pragma.bundle-installation/v8`. Archive identity
+Desktop stores installation state as `pragma.bundle-installation/v9`. Archive identity
 (`bundleFingerprint`) and portable content identity (`sourceProjectFingerprint`) are distinct: the
 former protects the inspected bytes and retry transaction, while the latter supports advisory
 content comparison without silently merging installations.

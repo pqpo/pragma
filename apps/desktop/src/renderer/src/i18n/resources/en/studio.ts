@@ -1779,6 +1779,7 @@ export const studio = {
   bundleSaveBindings: "Save bindings",
   bundleSavingBindings: "Saving…",
   bundleReady: "“{{name}}” is ready to run.",
+  bundleImportIncomplete: "The installation has not completed. Check its state again to continue.",
   bundleImportFailed: "The bundle could not be imported.",
   bundleDiscardImport: "Discard import",
   bundleContinue: "Continue",

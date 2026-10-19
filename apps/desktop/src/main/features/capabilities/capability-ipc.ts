@@ -24,7 +24,7 @@ import {
   UpdateCapabilitySchema,
   type PickWorkspaceResult,
 } from "../../../shared/contracts/index.ts";
-import { CapabilityStoreError, type CapabilityStore } from "./capability-store.ts";
+import { CapabilityStoreError, type CapabilityStore } from "@pragma/local-host/deployment";
 import {
   BUILT_IN_PRAGMA_MANAGEMENT_CAPABILITY,
   isBuiltInCapabilityId,

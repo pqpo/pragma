@@ -24,97 +24,7 @@ export const LocalRuntimeCapabilitySchema = z.object({
   status: z.enum(["available", "not_configured"]),
 });
 
-export const DesktopRuntimeIdSchema = z.string().trim().min(1).max(200);
-
-export const RuntimeEnvironmentDefinitionSchema = z.object({
-  schemaVersion: z.literal("pragma.runtime-environment/v1"),
-  id: DesktopRuntimeIdSchema,
-  adapter: z.object({
-    id: z.string().trim().min(1).max(200),
-    version: z.string().trim().min(1).max(100),
-  }),
-  displayName: z.string().trim().min(1).max(200),
-  origin: z.enum(["built-in", "registered"]),
-  config: z.record(z.string(), z.unknown()),
-});
-
-export const RuntimeEnvironmentRevisionSchema = z.object({
-  schemaVersion: z.literal("pragma.runtime-environment-revision/v1"),
-  runtimeId: DesktopRuntimeIdSchema,
-  revision: z.number().int().positive(),
-  fingerprint: z.string().regex(/^[a-f0-9]{64}$/),
-  definition: RuntimeEnvironmentDefinitionSchema,
-  status: z.enum(["active", "deleted"]),
-  createdAt: z.string().datetime(),
-});
-
-export const RuntimeEnvironmentCatalogEntrySchema = z.object({
-  runtimeId: DesktopRuntimeIdSchema,
-  latestRevision: z.number().int().positive(),
-});
-
-export const RuntimeEnvironmentCatalogSchema = z.object({
-  schemaVersion: z.literal("pragma.runtime-environment-catalog/v2"),
-  entries: z.array(z.unknown()),
-});
-
-export const RuntimeThinkingLevelSchema = z.object({
-  value: z.string().trim().min(1).max(100),
-  label: z.string().trim().min(1).max(200),
-  description: z.string().max(2_000).optional(),
-});
-
-export const RuntimeModelThinkingSchema = z
-  .object({
-    supportedLevels: z.array(RuntimeThinkingLevelSchema).min(1),
-    defaultLevel: z.string().trim().min(1).max(100).optional(),
-  })
-  .superRefine((value, context) => {
-    if (
-      value.defaultLevel !== undefined &&
-      !value.supportedLevels.some((level) => level.value === value.defaultLevel)
-    ) {
-      context.addIssue({
-        code: "custom",
-        path: ["defaultLevel"],
-        message: "The default thinking level must be supported by the model.",
-      });
-    }
-  });
-
-export const DesktopRuntimeModelSchema = z.object({
-  id: z.string().trim().min(1).max(200),
-  displayName: z.string().trim().min(1).max(200),
-  provider: z.object({
-    kind: z.enum(["runtime-managed", "registered"]),
-    id: z.string().trim().min(1).max(200),
-    displayName: z.string().trim().min(1).max(200),
-  }),
-  default: z.boolean().optional(),
-  inputModalities: z.array(z.string().trim().min(1).max(100)).optional(),
-  thinking: RuntimeModelThinkingSchema.optional(),
-});
-
-export const DesktopRuntimeAvailabilitySchema = z.object({
-  id: DesktopRuntimeIdSchema,
-  revision: z.number().int().positive().optional(),
-  origin: z.enum(["built-in", "registered"]).optional(),
-  adapter: z.object({ id: z.string().trim().min(1), version: z.string().trim().min(1) }).optional(),
-  isDefault: z.boolean(),
-  kind: z.string().trim().min(1).max(200),
-  displayName: z.string().trim().min(1).max(200),
-  status: z.enum(["available", "unavailable"]),
-  executablePath: z.string().optional(),
-  version: z.string().optional(),
-  reason: z.string().optional(),
-  models: z.array(DesktopRuntimeModelSchema).optional(),
-  modelDiscoveryError: z.string().optional(),
-});
-
-export const GetDesktopRuntimeAvailabilityOptionsSchema = z.object({
-  runtimeId: DesktopRuntimeIdSchema.optional(),
-  forceRefresh: z.boolean().optional(),
-});
+export * from "@pragma/local-host/deployment-contracts";
 
 export const DesktopRuntimeProcessEnvironmentStatusSchema = z
   .object({
@@ -134,10 +44,6 @@ export const DesktopRuntimeProcessEnvironmentStatusSchema = z
       .optional(),
   })
   .strict();
-
-export type GetDesktopRuntimeAvailabilityOptions = z.infer<
-  typeof GetDesktopRuntimeAvailabilityOptionsSchema
->;
 
 export const DesktopBridgeStartupSchema = z.discriminatedUnion("status", [
   z.object({ status: z.literal("ready") }).strict(),

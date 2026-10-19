@@ -18,12 +18,12 @@ import {
   EnsurePragmaSkillBindingSchema,
   ValidatePragmaResourceSchema,
   ValidatePragmaYamlSchema,
-} from "../../shared/contracts/projects.ts";
+} from "@pragma/local-host/deployment-contracts";
 import {
   DeleteWorkflowLayoutSchema,
   GetWorkflowLayoutSchema,
   WorkflowLayoutSchema,
-} from "../../shared/contracts/workflow-layout.ts";
+} from "@pragma/local-host/deployment-contracts";
 import type { PragmaDesktopAPI } from "../../shared/contracts/api.ts";
 import { invokeMutation } from "../invoke-mutation.ts";
 export const projectsApi = {

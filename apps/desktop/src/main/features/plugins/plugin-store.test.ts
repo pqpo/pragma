@@ -8,7 +8,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { PragmaPaths, withFileLock } from "@pragma/core";
 
 import type { PluginCredentialStore } from "./plugin-credential-store.ts";
-import { createPluginStore } from "./plugin-store.ts";
+import { createPluginStore } from "@pragma/local-host/deployment";
 
 const roots: string[] = [];
 

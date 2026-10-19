@@ -8,7 +8,7 @@ import {
   RetryAgentEvaluationTaskSchema,
   UpdateEvaluationQueueSettingsSchema,
 } from "../../shared/contracts/evaluations.ts";
-import { PragmaProjectSnapshotSchema } from "../../shared/contracts/projects.ts";
+import { PragmaProjectSnapshotSchema } from "@pragma/local-host/deployment-contracts";
 import { invokeMutation } from "../invoke-mutation.ts";
 
 export const evaluationsApi = {

@@ -30,10 +30,10 @@ import {
   resolveDesktopContextResource,
 } from "../../platform/bindings/desktop-bound-resource-policy.ts";
 import { runDesktopMutation } from "../../platform/ipc/desktop-mutation-result.ts";
-import type { CapabilityStore } from "../capabilities/capability-store.ts";
-import type { ContextStoreStore } from "../context-stores/context-store-store.ts";
+import type { CapabilityStore } from "@pragma/local-host/deployment";
+import type { ContextStoreStore } from "@pragma/local-host/deployment";
 import type { DesktopUsageStore } from "../usage/usage-store.ts";
-import type { PragmaProjectStore } from "./pragma-project-store.ts";
+import type { PragmaProjectStore } from "@pragma/local-host/deployment";
 
 export function installPragmaProjectHandlers(
   store: PragmaProjectStore,

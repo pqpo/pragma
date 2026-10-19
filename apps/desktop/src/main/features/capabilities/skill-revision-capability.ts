@@ -16,7 +16,7 @@ import {
 
 import { paginateManagementItems } from "../built-in-agents/management-pagination.ts";
 import { reservedRevisionResourceId } from "../built-in-agents/revision-resource-id.ts";
-import type { CapabilityStore } from "./capability-store.ts";
+import type { CapabilityStore } from "@pragma/local-host/deployment";
 import type { SkillRevisionService } from "./skill-revision-service.ts";
 
 export function createDesktopSkillRevisionSubmissionPort(options: {

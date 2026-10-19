@@ -1,5 +1,5 @@
-import type { WorkflowLayoutStore } from "../projects/workflow-layout-store.ts";
-import type { CapabilityVerifier } from "../capabilities/capability-verification.ts";
+import type { WorkflowLayoutStore } from "@pragma/local-host/deployment";
+import type { CapabilityVerifier } from "@pragma/local-host/deployment";
 import {
   createDesktopCapabilityResource,
   createDesktopContextResource,
@@ -20,24 +20,21 @@ import {
   createContextStoreStore,
   hashSnapshotContent,
   type ContextStoreStore,
-} from "../context-stores/context-store-store.ts";
-import {
-  createPragmaProjectStore,
-  type PragmaProjectStore,
-} from "../projects/pragma-project-store.ts";
-import { createWorkflowLayoutStore } from "../projects/workflow-layout-store.ts";
-import { createCapabilityStore, type CapabilityStore } from "../capabilities/capability-store.ts";
+} from "@pragma/local-host/deployment";
+import { createPragmaProjectStore, type PragmaProjectStore } from "@pragma/local-host/deployment";
+import { createWorkflowLayoutStore } from "@pragma/local-host/deployment";
+import { createCapabilityStore, type CapabilityStore } from "@pragma/local-host/deployment";
 import { createCapabilityCredentialStore } from "../capabilities/capability-credential-store.ts";
 import {
   createCapabilityRevisionCoordinator,
   type CapabilityRevisionCoordinator,
-} from "../capabilities/capability-revision-coordinator.ts";
+} from "@pragma/local-host/deployment";
 import { createDesktopSystemExpertRegistry } from "../experts/system-expert-registry.ts";
 import { createTestSecretStore } from "../credentials/test-secret-store.ts";
 import { createCoreAssetSyncService } from "./core-asset-sync-service.ts";
 import { readSyncRepository, writeSyncRepository } from "./asset-sync-repository.ts";
 import { CoreAssetSyncItemSchema } from "../../../shared/contracts/index.ts";
-import { appendTransferredKnowledge } from "../asset-transfer/asset-transfer-payloads.ts";
+import { appendTransferredKnowledge } from "@pragma/local-host/deployment";
 
 const exec = promisify(execFile);
 const temporary: string[] = [];

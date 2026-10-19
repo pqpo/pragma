@@ -1,4 +1,4 @@
-import { skillRevisionFileChanges, readSkillReviewFile } from "./skill-revision-files.ts";
+import { skillRevisionFileChanges, readSkillReviewFile } from "@pragma/local-host/deployment";
 import { createHash, randomUUID } from "node:crypto";
 import {
   access,
@@ -40,7 +40,7 @@ import {
   type SkillRevisionReview,
   type SkillRevisionReviewFile,
 } from "../../../shared/contracts/index.ts";
-import { copySkillSource, type CapabilityStore } from "./capability-store.ts";
+import { copySkillSource, type CapabilityStore } from "@pragma/local-host/deployment";
 import {
   SkillWorkingTreeError,
   assertSkillCopyTarget,
@@ -50,7 +50,7 @@ import {
   scanSkillWorkingTree,
   type SkillWorkingTreeSnapshot,
   type SkillWorkingTreeEntry,
-} from "./skill-revision-draft-store.ts";
+} from "@pragma/local-host/deployment";
 import {
   SkillRevisionDraftV1Schema,
   SkillRevisionDraftV2StoredSchema,

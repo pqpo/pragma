@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { encodePragmaPathSegment } from "@pragma/core";
 import { afterEach, describe, expect, it } from "vitest";
 
-import { createWorkflowLayoutStore } from "./workflow-layout-store.ts";
+import { createWorkflowLayoutStore } from "@pragma/local-host/deployment";
 
 const directories: string[] = [];
 

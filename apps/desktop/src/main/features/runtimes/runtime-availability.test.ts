@@ -7,7 +7,7 @@ import { describe, expect, it } from "vitest";
 
 import { getRuntimeAvailability, getTargetRuntimeAvailability } from "./runtime-availability.ts";
 import { createRuntimeEnvironmentService } from "./runtime-environment-service.ts";
-import { createRuntimeEnvironmentStore } from "./runtime-environment-store.ts";
+import { createRuntimeEnvironmentStore } from "@pragma/local-host/deployment";
 
 describe("getRuntimeAvailability", () => {
   it("isolates adapter health and reports model catalogs", async () => {

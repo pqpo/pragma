@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, expect, it, vi } from "vitest";
 import { STORE_REVISION_EXPERT_REF } from "@pragma/built-in-agents";
-import { createContextStoreStore } from "../context-stores/context-store-store.ts";
+import { createContextStoreStore } from "@pragma/local-host/deployment";
 import { createContextStoreRevisionService } from "../context-stores/context-store-revision-service.ts";
 import { createMissionStore } from "@pragma/local-host";
 import { MissionUpdateSchema } from "../../../shared/contracts/index.ts";

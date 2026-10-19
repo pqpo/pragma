@@ -18,10 +18,13 @@ import { strToU8, zipSync } from "fflate";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type { CapabilityCredentialStore } from "./capability-credential-store.ts";
-import { createCapabilityVerifier } from "./capability-verifier.ts";
-import type { CapabilityVerifier } from "./capability-verification.ts";
-import { createCapabilityStore, type CapabilityRevisionPublishInput } from "./capability-store.ts";
-import { copySkillTree, scanSkillWorkingTree } from "./skill-revision-draft-store.ts";
+import { createCapabilityVerifier } from "@pragma/local-host/deployment";
+import type { CapabilityVerifier } from "@pragma/local-host/deployment";
+import {
+  createCapabilityStore,
+  type CapabilityRevisionPublishInput,
+} from "@pragma/local-host/deployment";
+import { copySkillTree, scanSkillWorkingTree } from "@pragma/local-host/deployment";
 
 const directories: string[] = [];
 

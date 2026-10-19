@@ -3,7 +3,7 @@ import {
   ContextStoreRevisionDiffSchema,
   type ContextStoreRevisionDiff,
 } from "../../../shared/contracts/index.ts";
-import type { ContextStoreStore } from "./context-store-store.ts";
+import type { ContextStoreStore } from "@pragma/local-host/deployment";
 
 export async function getContextStoreRevisionDiff(
   store: ContextStoreStore,

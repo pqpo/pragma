@@ -1,0 +1,486 @@
+import { createHash, randomUUID } from "node:crypto";
+import { mkdir, readFile, readdir, rename, rm, rmdir, writeFile } from "node:fs/promises";
+import { dirname, join } from "node:path";
+
+import { encodePragmaPathSegment, withFileLock } from "@pragma/core";
+import {
+  canonicalPragmaResourceRef,
+  type PragmaExpertResource,
+  type PragmaResource,
+} from "@pragma/interpreter/ast";
+import { classifyHostCapabilityResource } from "../bindings.ts";
+import type { ExpertCapabilityReference } from "@pragma/shared";
+export interface CapabilityConsumerCatalog {
+  listResources(): readonly PragmaResource[];
+  list(): readonly { readonly ref: string; readonly name: string }[];
+  get(ref: string): { readonly capabilities: readonly ExpertCapabilityReference[] } | undefined;
+}
+
+import type { PragmaProjectStore } from "../projects/pragma-project-store.ts";
+import { referencedPragmaResourceRefs } from "../projects/pragma-resource-references.ts";
+import {
+  CapabilityStoreError,
+  type CapabilityMutationService,
+  type CapabilityRepository,
+} from "./capability-store.ts";
+import type { Capability } from "../../deployment-contracts/index.ts";
+import type { CapabilityCredentialStore } from "../../resources/capability-credential-store.ts";
+import {
+  CapabilityMutationJournalSchema as JournalSchema,
+  migrateCapabilityMutationJournal,
+  type CapabilityMutationJournal as Journal,
+} from "./capability-mutation-journal.ts";
+
+export interface CapabilityRevisionCoordinator extends CapabilityMutationService {
+  recover(): Promise<void>;
+}
+
+export function createCapabilityRevisionCoordinator(options: {
+  readonly journalRoot: string;
+  readonly capabilities: CapabilityRepository;
+  readonly project: PragmaProjectStore;
+  readonly systemExperts: CapabilityConsumerCatalog;
+  readonly credentials: CapabilityCredentialStore;
+  readonly onDeleted?: ((capabilityId: string) => Promise<void>) | undefined;
+  readonly warn?: ((message: string, error: unknown) => void) | undefined;
+}): CapabilityRevisionCoordinator {
+  const capabilityDirectory = (id: string) =>
+    join(options.journalRoot, encodePragmaPathSegment(id));
+  const journalPath = (id: string, revision: number) =>
+    join(capabilityDirectory(id), `${revision}.json`);
+  const lockPath = (id: string) => join(options.journalRoot, `${encodePragmaPathSegment(id)}.lock`);
+  const prepareLockRoot = async (): Promise<void> => {
+    await mkdir(options.journalRoot, { recursive: true, mode: 0o700 });
+  };
+
+  const writeJournal = async (journal: Journal): Promise<void> => {
+    const path = journalPath(journal.capabilityId, journal.targetRevision);
+    await mkdir(dirname(path), { recursive: true, mode: 0o700 });
+    const temporaryPath = `${path}.${randomUUID()}.tmp`;
+    await writeFile(temporaryPath, `${JSON.stringify(JournalSchema.parse(journal), null, 2)}\n`, {
+      mode: 0o600,
+    });
+    await rename(temporaryPath, path);
+  };
+
+  const readJournal = async (path: string): Promise<Journal> => {
+    const raw = JSON.parse(await readFile(path, "utf8")) as unknown;
+    const current = JournalSchema.safeParse(raw);
+    if (current.success) return current.data;
+    const migrated = migrateCapabilityMutationJournal(raw);
+    await writeJournal(migrated);
+    return migrated;
+  };
+
+  const advance = async (journal: Journal, stage: Journal["stage"]): Promise<Journal> => {
+    const next = JournalSchema.parse({
+      ...journal,
+      stage,
+      updatedAt: new Date().toISOString(),
+    });
+    await writeJournal(next);
+    return next;
+  };
+
+  const finishJournal = async (journal: Journal, candidate: Capability): Promise<void> => {
+    let current = journal;
+    const prepared =
+      current.credentialMutation ?? (await options.credentials.pending(current.capabilityId));
+    if (candidate.health.status !== "ready") {
+      if (prepared !== undefined) await options.credentials.rollback(prepared);
+      if (current.stage === "revision-pending") {
+        current = await advance(current, "revision-written");
+      }
+      await rm(journalPath(current.capabilityId, current.targetRevision), { force: true });
+      return;
+    }
+    if (current.stage === "revision-pending") {
+      if (prepared !== undefined) {
+        if (current.credentialMutation === undefined) {
+          current = JournalSchema.parse({ ...current, credentialMutation: prepared });
+          await writeJournal(current);
+        }
+        await options.credentials.activate(prepared);
+      }
+      current = await advance(current, "revision-written");
+    }
+    if (current.stage === "revision-written") {
+      await options.capabilities.ensureActiveRevision(current.capabilityId, current.targetRevision);
+      if (current.credentialMutation !== undefined) {
+        await options.credentials.finalize(current.credentialMutation);
+      }
+      await rm(journalPath(current.capabilityId, current.targetRevision), { force: true });
+    }
+  };
+
+  const deletionBindings = async (id: string) => {
+    const snapshot = await options.project.get();
+    const refs = snapshot.resources.flatMap((resource) =>
+      classifyHostCapabilityResource(resource)?.id === id
+        ? [canonicalPragmaResourceRef(resource)]
+        : [],
+    );
+    const dependencies = referencedPragmaResourceRefs([
+      ...snapshot.resources,
+      ...options.systemExperts.listResources(),
+    ]);
+    const systemReferenced = options.systemExperts
+      .list()
+      .some((summary) =>
+        options.systemExperts
+          .get(summary.ref)
+          ?.capabilities.some((reference) => reference.capabilityId === id),
+      );
+    if (refs.some((ref) => dependencies.has(ref)) || systemReferenced) {
+      throw new CapabilityStoreError(
+        "capability_referenced",
+        "This capability is used by one or more Experts. Remove it from those Experts before deleting it.",
+      );
+    }
+    return { snapshot, refs };
+  };
+  const removeDeletionBindings = async (id: string): Promise<void> => {
+    const { snapshot, refs } = await deletionBindings(id);
+    if (refs.length > 0) {
+      await options.project.apply({ baseRevision: snapshot.revision, upserts: [], removals: refs });
+    }
+  };
+
+  const recoverCapabilityLocked = async (id: string): Promise<void> => {
+    let entries: string[];
+    try {
+      entries = (await readdir(capabilityDirectory(id)))
+        .filter((entry) => /^\d+\.json$/.test(entry))
+        .toSorted((left, right) => Number(left.slice(0, -5)) - Number(right.slice(0, -5)));
+    } catch (error) {
+      if (isNodeError(error, "ENOENT")) return;
+      throw error;
+    }
+    for (const entry of entries) {
+      const path = join(capabilityDirectory(id), entry);
+      const journal = await readJournal(path);
+      if (journal.mutationType === "delete") {
+        await removeDeletionBindings(id);
+        await options.capabilities.completeRemoval(id, journal.targetRevision);
+        continue;
+      }
+      const latest = await options.capabilities.get(id);
+      if (
+        journal.stage === "revision-pending" &&
+        latest.manifest.latestRevision < journal.targetRevision
+      ) {
+        await options.capabilities.discardUnpublishedRevision(
+          id,
+          journal.targetRevision,
+          journal.previousHealth,
+        );
+        const prepared =
+          journal.credentialMutation ?? (await options.credentials.pending(journal.capabilityId));
+        if (prepared !== undefined) await options.credentials.rollback(prepared);
+        await rm(path, { force: true });
+        continue;
+      }
+      if (
+        journal.stage === "revision-pending" &&
+        journal.targetHealth !== undefined &&
+        JSON.stringify(latest.health) !== JSON.stringify(journal.targetHealth)
+      ) {
+        const prepared =
+          journal.credentialMutation ?? (await options.credentials.pending(journal.capabilityId));
+        if (prepared !== undefined) await options.credentials.rollback(prepared);
+        await rm(path, { force: true });
+        continue;
+      }
+      let candidate: Capability;
+      try {
+        candidate = await options.capabilities.get(id, journal.targetRevision);
+      } catch (error) {
+        if (
+          journal.stage === "revision-pending" &&
+          error instanceof CapabilityStoreError &&
+          error.code === "capability_not_found"
+        ) {
+          await rm(path, { force: true });
+          continue;
+        }
+        throw error;
+      }
+      if (
+        candidate.health.status === "ready" &&
+        (journal.stage === "revision-pending" || journal.stage === "revision-written")
+      ) {
+        await assertCompatible(candidate);
+      }
+      await finishJournal(journal, candidate);
+    }
+  };
+
+  const assertCompatible = async (candidate: Capability): Promise<void> => {
+    const snapshot = await options.project.get();
+    assertProjectCompatible(candidate, snapshot.resources);
+    assertSystemCompatible(candidate);
+  };
+
+  const assertProjectCompatible = (
+    candidate: Capability,
+    resources: readonly PragmaResource[],
+  ): void => {
+    const availableTools = new Set(capabilityToolNames(candidate));
+    if (candidate.definition.kind === "skill") return;
+    const incompatible: string[] = [];
+    const boundRefs = new Set(
+      resources.flatMap((resource) => {
+        const binding = classifyHostCapabilityResource(resource);
+        return binding?.id === candidate.manifest.id ? [canonicalPragmaResourceRef(resource)] : [];
+      }),
+    );
+    for (const expert of resources.filter(
+      (resource): resource is PragmaExpertResource => resource.kind === "Expert",
+    )) {
+      for (const reference of expert.spec.capabilities) {
+        if (reference.kind !== "tools" || !boundRefs.has(reference.ref)) continue;
+        const missing = (reference.tools ?? []).filter((tool) => !availableTools.has(tool));
+        if (missing.length > 0) {
+          incompatible.push(
+            `${expert.metadata.name} (${canonicalPragmaResourceRef(expert)}): ${missing.join(", ")}`,
+          );
+        }
+      }
+    }
+    if (incompatible.length > 0) throwIncompatible(incompatible);
+  };
+
+  const assertSystemCompatible = (candidate: Capability): void => {
+    if (candidate.definition.kind === "skill") return;
+    const availableTools = new Set(capabilityToolNames(candidate));
+    const incompatible: string[] = [];
+    for (const summary of options.systemExperts.list()) {
+      const expert = options.systemExperts.get(summary.ref);
+      for (const reference of expert?.capabilities ?? []) {
+        if (reference.capabilityId !== candidate.manifest.id || reference.kind !== "tools") {
+          continue;
+        }
+        const missing = reference.toolNames.filter((tool) => !availableTools.has(tool));
+        if (missing.length > 0)
+          incompatible.push(`${summary.name} (${summary.ref}): ${missing.join(", ")}`);
+      }
+    }
+    if (incompatible.length > 0) throwIncompatible(incompatible);
+  };
+
+  const cleanupCapabilityDirectory = async (id: string): Promise<void> => {
+    try {
+      await rmdir(capabilityDirectory(id));
+    } catch (error) {
+      if (isNodeError(error, "ENOENT") || isNodeError(error, "ENOTEMPTY")) return;
+      options.warn?.("An empty Capability revision journal directory could not be removed.", error);
+    }
+  };
+
+  return {
+    async mutate(input) {
+      await prepareLockRoot();
+      await withFileLock(lockPath(input.id), async () => {
+        await recoverCapabilityLocked(input.id);
+        const latest = await options.capabilities.get(input.id);
+        if (latest.manifest.latestRevision !== input.expectedRevision) {
+          throw new CapabilityStoreError(
+            "revision_conflict",
+            `Capability revision changed from ${input.expectedRevision} to ${latest.manifest.latestRevision}.`,
+          );
+        }
+        await input.validateCurrent?.();
+        if (input.mutationType === "delete") {
+          await deletionBindings(input.id);
+          const timestamp = new Date().toISOString();
+          const journal = JournalSchema.parse({
+            schemaVersion: "pragma.capability-mutation/v3",
+            mutationId: randomUUID(),
+            mutationType: "delete",
+            capabilityId: input.id,
+            baseRevision: input.expectedRevision,
+            targetRevision: input.expectedRevision,
+            targetRevisionRange: { from: input.expectedRevision, to: input.expectedRevision },
+            candidateContentHash: hashContent(`delete:${input.id}:${input.expectedRevision}`),
+            stage: "revision-pending",
+            createdAt: timestamp,
+            updatedAt: timestamp,
+            previousHealth: latest.health,
+          });
+          await writeJournal(journal);
+          await removeDeletionBindings(input.id);
+          await input.commit();
+          return;
+        }
+        await input.commit();
+      });
+      if (input.mutationType === "delete") {
+        await options.onDeleted?.(input.id);
+        await rm(journalPath(input.id, input.expectedRevision), { force: true });
+      }
+      await cleanupCapabilityDirectory(input.id);
+    },
+    async publishHealth(input) {
+      await prepareLockRoot();
+      return await withFileLock(lockPath(input.id), async () => {
+        await recoverCapabilityLocked(input.id);
+        const latest = await options.capabilities.get(input.id);
+        if (latest.manifest.latestRevision !== input.expectedRevision) {
+          throw new CapabilityStoreError(
+            "revision_conflict",
+            `Capability revision changed from ${input.expectedRevision} to ${latest.manifest.latestRevision}.`,
+          );
+        }
+        await input.validateCurrent?.();
+        if (input.prepareCredentials === undefined) return await input.commit();
+        if (input.targetHealth === undefined) {
+          throw new CapabilityStoreError(
+            "config_invalid",
+            "A credential mutation requires its exact target health snapshot.",
+          );
+        }
+        const timestamp = new Date().toISOString();
+        let journal = JournalSchema.parse({
+          schemaVersion: "pragma.capability-mutation/v3",
+          mutationId: randomUUID(),
+          mutationType: "update",
+          capabilityId: input.id,
+          baseRevision: input.expectedRevision,
+          targetRevision: input.expectedRevision,
+          targetRevisionRange: { from: input.expectedRevision, to: input.expectedRevision },
+          candidateContentHash: hashContent(JSON.stringify(input.targetHealth)),
+          stage: "revision-pending",
+          createdAt: timestamp,
+          updatedAt: timestamp,
+          previousHealth: latest.health,
+          targetHealth: input.targetHealth,
+        });
+        await writeJournal(journal);
+        const prepared = await input.prepareCredentials();
+        if (prepared !== undefined) {
+          journal = JournalSchema.parse({ ...journal, credentialMutation: prepared });
+          await writeJournal(journal);
+        }
+        const committed = await input.commit();
+        await finishJournal(journal, committed);
+        return await options.capabilities.get(input.id, input.expectedRevision);
+      });
+    },
+    async publish(input) {
+      const id = input.candidate.manifest.id;
+      await prepareLockRoot();
+      try {
+        return await withFileLock(lockPath(id), async () => {
+          await recoverCapabilityLocked(id);
+          const latest = await options.capabilities.get(id);
+          if (
+            latest.manifest.latestRevision !== input.current.manifest.latestRevision ||
+            latest.health.revision !== input.current.health.revision
+          ) {
+            throw new CapabilityStoreError(
+              "revision_conflict",
+              `Capability revision changed from ${input.current.manifest.latestRevision} to ${latest.manifest.latestRevision}.`,
+            );
+          }
+          await input.validateCurrent?.();
+          if (input.candidate.health.status === "ready") await assertCompatible(input.candidate);
+          const timestamp = new Date().toISOString();
+          let journal = JournalSchema.parse({
+            schemaVersion: "pragma.capability-mutation/v3",
+            mutationId: randomUUID(),
+            mutationType: input.mutationType ?? "update",
+            capabilityId: id,
+            baseRevision: input.current.manifest.latestRevision,
+            targetRevision: input.candidate.manifest.latestRevision,
+            targetRevisionRange: {
+              from:
+                input.targetRevisionFrom ??
+                Math.min(
+                  input.current.manifest.latestRevision + 1,
+                  input.candidate.manifest.latestRevision,
+                ),
+              to: input.candidate.manifest.latestRevision,
+            },
+            candidateContentHash: hashContent(JSON.stringify(input.candidate.definition)),
+            stage: "revision-pending",
+            createdAt: timestamp,
+            updatedAt: timestamp,
+            previousHealth: input.current.health,
+            targetHealth: input.candidate.health,
+          });
+          await writeJournal(journal);
+          const prepared = await input.prepareCredentials?.();
+          if (prepared !== undefined) {
+            journal = JournalSchema.parse({ ...journal, credentialMutation: prepared });
+            await writeJournal(journal);
+          }
+          await input.commit();
+          await finishJournal(journal, input.candidate);
+          return await options.capabilities.get(id, input.candidate.manifest.latestRevision);
+        });
+      } finally {
+        await cleanupCapabilityDirectory(id);
+      }
+    },
+    async recover() {
+      let directories;
+      try {
+        directories = await readdir(options.journalRoot, { withFileTypes: true });
+      } catch (error) {
+        if (isNodeError(error, "ENOENT")) return;
+        throw error;
+      }
+      for (const directory of directories.filter((entry) => entry.isDirectory())) {
+        try {
+          const firstJournal = (await readdir(join(options.journalRoot, directory.name))).find(
+            (entry) => /^\d+\.json$/.test(entry),
+          );
+          if (firstJournal === undefined) {
+            await rmdir(join(options.journalRoot, directory.name)).catch(() => undefined);
+            continue;
+          }
+          const journal = await readJournal(
+            join(options.journalRoot, directory.name, firstJournal),
+          );
+          await withFileLock(lockPath(journal.capabilityId), async () => {
+            await recoverCapabilityLocked(journal.capabilityId);
+          });
+          if (journal.mutationType === "delete") {
+            await options.onDeleted?.(journal.capabilityId);
+            await rm(journalPath(journal.capabilityId, journal.targetRevision), { force: true });
+          }
+          await cleanupCapabilityDirectory(journal.capabilityId);
+        } catch (error) {
+          options.warn?.("Capability revision propagation could not be recovered.", error);
+        }
+      }
+    },
+  };
+}
+
+function hashContent(value: string): string {
+  return `sha256:${createHash("sha256").update(value).digest("hex")}`;
+}
+
+export function capabilityToolNames(capability: Capability): string[] {
+  switch (capability.definition.kind) {
+    case "skill":
+      return [];
+    case "code_service":
+      return [capability.definition.tool.name];
+    case "mcp_server":
+    case "http_service":
+      return capability.definition.tools.map((tool) => tool.name);
+  }
+}
+
+function throwIncompatible(incompatible: readonly string[]): never {
+  throw new CapabilityStoreError(
+    "capability_incompatible",
+    `Capability update removes tools selected by current Experts: ${incompatible.join("; ")}. Update those Experts first.`,
+  );
+}
+
+function isNodeError(error: unknown, code: string): boolean {
+  return error instanceof Error && "code" in error && error.code === code;
+}

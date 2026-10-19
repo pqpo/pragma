@@ -13,12 +13,9 @@ import type { KnowledgeLearningPlan, SkillLearningPlan } from "@pragma/memory";
 import { z } from "zod";
 
 import type { ContextStoreRevisionService } from "../context-stores/context-store-revision-service.ts";
-import {
-  ContextStoreStoreError,
-  type ContextStoreStore,
-} from "../context-stores/context-store-store.ts";
+import { ContextStoreStoreError, type ContextStoreStore } from "@pragma/local-host/deployment";
 import type { SkillRevisionService } from "../capabilities/skill-revision-service.ts";
-import { CapabilityStoreError, type CapabilityStore } from "../capabilities/capability-store.ts";
+import { CapabilityStoreError, type CapabilityStore } from "@pragma/local-host/deployment";
 import { ContextStoreSnapshotFileSchema } from "../../../shared/contracts/index.ts";
 
 const KnowledgeBindingSchema = z

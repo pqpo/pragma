@@ -20,6 +20,16 @@
     "./management": {
       "types": "./dist/management.d.ts",
       "default": "./dist/management.js"
+    },
+    "./deployment": {
+      "types": "./src/deployment/index.ts",
+      "pragma-source": "./src/deployment/index.ts",
+      "default": "./dist/deployment/index.js"
+    },
+    "./deployment-contracts": {
+      "types": "./src/deployment-contracts/index.ts",
+      "pragma-source": "./src/deployment-contracts/index.ts",
+      "default": "./dist/deployment-contracts/index.js"
     }
   },
   "scripts": {
@@ -44,7 +54,8 @@
     "zod": "latest",
     "@pragma/memory": "workspace:*",
     "@pragma/evaluation": "workspace:*",
-    "@modelcontextprotocol/client": "2.3.1"
+    "@modelcontextprotocol/client": "2.3.1",
+    "fflate": "^0.8.2"
   },
   "devDependencies": {
     "@pragma/tsconfig": "workspace:*",

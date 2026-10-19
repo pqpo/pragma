@@ -11,13 +11,10 @@ import { canonicalPragmaResourceRef, type PragmaResource } from "@pragma/interpr
 import type { Capability } from "../../../shared/contracts/index.ts";
 import { createDesktopCapabilityResource } from "../../platform/bindings/desktop-bound-resource-policy.ts";
 import type { DesktopSystemExpertRegistry } from "../experts/system-expert-registry.ts";
-import {
-  PragmaProjectStoreError,
-  type PragmaProjectStore,
-} from "../projects/pragma-project-store.ts";
+import { PragmaProjectStoreError, type PragmaProjectStore } from "@pragma/local-host/deployment";
 import type { CapabilityCredentialStore } from "./capability-credential-store.ts";
-import { CapabilityStoreError, type CapabilityStore } from "./capability-store.ts";
-import { createCapabilityRevisionCoordinator as createCapabilityRevisionCoordinatorImpl } from "./capability-revision-coordinator.ts";
+import { CapabilityStoreError, type CapabilityStore } from "@pragma/local-host/deployment";
+import { createCapabilityRevisionCoordinator as createCapabilityRevisionCoordinatorImpl } from "@pragma/local-host/deployment";
 
 const CAPABILITY_ID = "751a410b-4f80-4d0f-9db4-0efbe86afea7";
 const roots: string[] = [];

@@ -17,8 +17,8 @@ import { LocalHostResourceUnavailableError } from "@pragma/local-host/resources"
 import { prepareDesktopPragmaCommand } from "../built-in-agents/pragma-command-distribution.ts";
 
 import type { CapabilityCredentialStore } from "../capabilities/capability-credential-store.ts";
-import type { CapabilityStore } from "../capabilities/capability-store.ts";
-import type { ContextStoreStore } from "../context-stores/context-store-store.ts";
+import type { CapabilityStore } from "@pragma/local-host/deployment";
+import type { ContextStoreStore } from "@pragma/local-host/deployment";
 import { resolveExpertCapabilities } from "../experts/desktop-expert-factory.ts";
 import {
   parseDesktopCapabilityBindingRef,

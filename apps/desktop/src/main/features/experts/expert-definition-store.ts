@@ -21,7 +21,7 @@ import {
   type UpdateExpertDefinition,
   type UpdateBuiltInExpertDefinition,
 } from "../../../shared/contracts/index.ts";
-import type { PragmaProjectStore } from "../projects/pragma-project-store.ts";
+import type { PragmaProjectStore } from "@pragma/local-host/deployment";
 import type { DesktopSystemExpertRegistry } from "./system-expert-registry.ts";
 import { parseDesktopModelProviderBindingRef } from "../../platform/bindings/desktop-binding-ref.ts";
 import {
@@ -34,8 +34,8 @@ import {
 import {
   referencedPragmaResourceRefs,
   referencingPragmaResources,
-} from "../projects/pragma-resource-references.ts";
-import { findPragmaInvocableDependencyCycle } from "../projects/pragma-invocable-dependency-graph.ts";
+} from "@pragma/local-host/deployment";
+import { findPragmaInvocableDependencyCycle } from "@pragma/local-host/deployment";
 
 export interface ExpertDefinitionStore {
   list(): Promise<ExpertSummary[]>;

@@ -14,7 +14,7 @@ import {
   type UpdateHomeExecutorPreference,
 } from "../../../shared/contracts/index.ts";
 import type { DesktopSystemExpertRegistry } from "../experts/system-expert-registry.ts";
-import type { PragmaProjectStore } from "../projects/pragma-project-store.ts";
+import type { PragmaProjectStore } from "@pragma/local-host/deployment";
 import type { ValidateWorkspaceResult } from "../../../shared/contracts/index.ts";
 import type { MissionExecutorCatalog } from "./mission-executor-catalog.ts";
 import type {
@@ -52,8 +52,8 @@ export function createHomeExecutorCatalog(options: {
             favoriteWorkspace: {
               path: entry.favoriteWorkspace,
               basename: basename(entry.favoriteWorkspace),
-          },
-        }),
+            },
+          }),
       ...(entry?.favoriteRank === undefined ? {} : { favoriteRank: entry.favoriteRank }),
       ...(entry?.lastWorkspace === undefined
         ? {}
@@ -116,9 +116,7 @@ export function createHomeExecutorCatalog(options: {
               ref: input.ref,
               favoriteScope: "global",
               hidden: false,
-              ...(input.favoriteRank === undefined
-                ? {}
-                : { favoriteRank: input.favoriteRank }),
+              ...(input.favoriteRank === undefined ? {} : { favoriteRank: input.favoriteRank }),
               ...(input.clearLastWorkspace === true ? { clearLastWorkspace: true } : {}),
             }
           : input,

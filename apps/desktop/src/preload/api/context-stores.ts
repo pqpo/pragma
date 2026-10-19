@@ -26,7 +26,7 @@ import {
   GetContextStoreEditorDraftSchema,
   CommitContextStoreEditorDraftSchema,
   DiscardContextStoreEditorDraftSchema,
-} from "../../shared/contracts/context-stores.ts";
+} from "@pragma/local-host/deployment-contracts";
 import {
   ContextStoreRevisionJobRefSchema,
   ContextStoreDraftRebaseInspectionSchema,

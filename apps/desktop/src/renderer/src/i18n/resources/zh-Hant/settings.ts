@@ -341,6 +341,7 @@ export const settings = {
     },
   },
   models: {
+    sharedConnectionImpact: "修改將影響所有使用此共用連線的資源。",
     kind: "模型類型",
     generation: "生成模型",
     embedding: "向量模型",

@@ -18,7 +18,7 @@ import {
   type RetryAgentEvaluationTask,
   type UpdateEvaluationQueueSettings,
 } from "../../../shared/contracts/index.ts";
-import type { PragmaProjectStore } from "../projects/pragma-project-store.ts";
+import type { PragmaProjectStore } from "@pragma/local-host/deployment";
 import type { EvaluationStore } from "./evaluation-store.ts";
 
 export interface AgentEvaluationCaseExecutor {

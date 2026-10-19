@@ -7,8 +7,8 @@ import { afterEach, describe, expect, it } from "vitest";
 import { createAssetGitState } from "./asset-git-state.ts";
 import { assetGitV1ToV2Step } from "./migrations/index.ts";
 import { createAssetGitService } from "./asset-git-service.ts";
-import { createContextStoreStore } from "../context-stores/context-store-store.ts";
-import type { CapabilityStore } from "../capabilities/capability-store.ts";
+import { createContextStoreStore } from "@pragma/local-host/deployment";
+import type { CapabilityStore } from "@pragma/local-host/deployment";
 
 const fixtureRoot = join(import.meta.dirname, "fixtures/v1");
 const roots: string[] = [];

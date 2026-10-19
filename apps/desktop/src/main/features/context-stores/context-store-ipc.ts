@@ -34,7 +34,7 @@ import {
   DiscardContextStoreEditorDraftSchema,
   type PickWorkspaceResult,
 } from "../../../shared/contracts/index.ts";
-import type { ContextStoreStore } from "./context-store-store.ts";
+import type { ContextStoreStore } from "@pragma/local-host/deployment";
 import type { ContextStoreRevisionService } from "./context-store-revision-service.ts";
 import type { ContextStoreEditorDraftService } from "./context-store-editor-draft-service.ts";
 import { getContextStoreRevisionDiff } from "./context-store-revision-diff.ts";

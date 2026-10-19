@@ -28,9 +28,9 @@ import {
   classifyDesktopContextResource,
   createDesktopContextResource,
 } from "../../platform/bindings/desktop-bound-resource-policy.ts";
-import type { PragmaProjectStore } from "../projects/pragma-project-store.ts";
+import type { PragmaProjectStore } from "@pragma/local-host/deployment";
 import type { ContextStoreRevisionService } from "./context-store-revision-service.ts";
-import type { ContextStoreStore } from "./context-store-store.ts";
+import type { ContextStoreStore } from "@pragma/local-host/deployment";
 import { paginateManagementItems } from "../built-in-agents/management-pagination.ts";
 import { reservedRevisionResourceId } from "../built-in-agents/revision-resource-id.ts";
 

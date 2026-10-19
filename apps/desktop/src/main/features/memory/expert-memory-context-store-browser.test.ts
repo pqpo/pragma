@@ -5,7 +5,7 @@ import { describe, expect, it, vi } from "vitest";
 
 import type { DesktopMemoryPlane } from "./desktop-memory-plane.ts";
 import type { DesktopSystemExpertRegistry } from "../experts/system-expert-registry.ts";
-import type { PragmaProjectStore } from "../projects/pragma-project-store.ts";
+import type { PragmaProjectStore } from "@pragma/local-host/deployment";
 import { createExpertMemoryContextStoreBrowserService } from "./expert-memory-context-store-browser.ts";
 
 const expertResource: PragmaExpertResource = {

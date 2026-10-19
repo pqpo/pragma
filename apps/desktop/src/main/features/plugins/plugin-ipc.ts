@@ -11,7 +11,7 @@ import {
   UpdatePluginDefaultsSchema,
   type PickWorkspaceResult,
 } from "../../../shared/contracts/index.ts";
-import type { PluginStore } from "./plugin-store.ts";
+import type { PluginStore } from "@pragma/local-host/deployment";
 
 export function installPluginHandlers(
   store: PluginStore,

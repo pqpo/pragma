@@ -31,10 +31,10 @@ import {
 import { expect, it, vi } from "vitest";
 
 import { missionExecutorSnapshot } from "../../../shared/contracts/index.ts";
-import type { CapabilityStore } from "../capabilities/capability-store.ts";
+import type { CapabilityStore } from "@pragma/local-host/deployment";
 import type { CapabilityCredentialStore } from "../capabilities/capability-credential-store.ts";
-import type { PluginStore } from "../plugins/plugin-store.ts";
-import { createPragmaProjectStore } from "../projects/pragma-project-store.ts";
+import type { PluginStore } from "@pragma/local-host/deployment";
+import { createPragmaProjectStore } from "@pragma/local-host/deployment";
 import {
   createDesktopMissionTestApplication,
   type DesktopMissionTestApplication,
