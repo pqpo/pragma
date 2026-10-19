@@ -46,13 +46,13 @@
     "vitest": "latest"
   },
   "dependencies": {
-    "@agentclientprotocol/sdk": "1.7.0",
+    "@agentclientprotocol/sdk": "1.9.0",
     "@cfworker/json-schema": "^4.1.1",
     "@jitl/quickjs-singlefile-cjs-release-sync": "^0.32.0",
     "@modelcontextprotocol/client": "2.3.1",
     "@modelcontextprotocol/server": "2.3.1",
     "@pragma/shared": "workspace:*",
-    "gpt-tokenizer": "^4.0.0",
+    "gpt-tokenizer": "^4.0.3",
     "quickjs-emscripten-core": "^0.32.0",
     "zod": "latest"
   }
