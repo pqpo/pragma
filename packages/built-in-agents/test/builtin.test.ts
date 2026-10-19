@@ -23,7 +23,7 @@ import {
 } from "@pragma/interpreter/ast";
 import {
   MEMORY_CURATOR_REF as MEMORY_PLANE_CURATOR_REF,
-  MemoryExtractionToolSchemas,
+  MemoryExtractionV2ToolSchemas,
 } from "@pragma/memory";
 import { describe, expect, it, vi } from "vitest";
 
@@ -255,7 +255,7 @@ describe("built-in Pragma Agent DSL", () => {
                 fingerprint: "f".repeat(64),
                 value: {
                   contribution: {
-                    tools: Object.keys(MemoryExtractionToolSchemas).map((name) => ({
+                    tools: Object.keys(MemoryExtractionV2ToolSchemas).map((name) => ({
                       name,
                       description: name,
                       inputSchema: { type: "object", properties: {} },
@@ -285,7 +285,7 @@ describe("built-in Pragma Agent DSL", () => {
       expect(hidden.value.id).toBe(ref.slice("expert:".length));
       if (ref === MEMORY_CURATOR_REF)
         expect(hidden.value.tools?.map((tool) => tool.name).sort()).toEqual(
-          Object.keys(MemoryExtractionToolSchemas).sort(),
+          Object.keys(MemoryExtractionV2ToolSchemas).sort(),
         );
       else expect(hidden.value.tools ?? []).toEqual([]);
     }
@@ -656,7 +656,7 @@ describe("built-in Pragma Agent DSL", () => {
                 fingerprint: "f".repeat(64),
                 value: {
                   contribution: {
-                    tools: Object.keys(MemoryExtractionToolSchemas).map((name) => ({
+                    tools: Object.keys(MemoryExtractionV2ToolSchemas).map((name) => ({
                       name,
                       description: name,
                       inputSchema: { type: "object", properties: {} },

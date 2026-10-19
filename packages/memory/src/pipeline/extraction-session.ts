@@ -14,3 +14,11 @@ export {
   type MemoryExtractorOptions,
   type ExtractionExistingFact,
 } from "./extraction-session/schema.ts";
+
+export {
+  MemoryExtractionV2ToolSchemas,
+  MemoryExtractionFeedbackSchema,
+  EPISODE_PART_EXAMPLES,
+  type MemoryExtractionFeedback,
+  type MemoryExtractionFeedbackInput,
+} from "./extraction-session/contract-v2.ts";

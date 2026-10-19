@@ -1,3 +1,4 @@
+import type { MemoryExtractionV2ToolName, MemoryExtractionFeedbackInput } from "./contract-v2.ts";
 import { z } from "zod";
 import {
   ExtractionMemoryTypeSchema,
@@ -18,6 +19,7 @@ export const MEMORY_EXTRACTION_LIMITS = Object.freeze({
   initialTokens: 1500,
   responseTokens: 2000,
   deliveredTokens: 32000,
+  maxDeliveredTokens: 256000,
   calls: 64,
   pageSize: 20,
   factLimit: 10,
@@ -90,7 +92,10 @@ export const MemoryExtractionToolSchemas = {
     })
     .strict(),
   read_evidence: z
-    .object({ evidence: z.string().min(1), cursor: z.number().int().nonnegative().default(0) })
+    .object({
+      evidence: z.string().min(1).optional(),
+      cursor: z.number().int().nonnegative().default(0),
+    })
     .strict(),
   find_existing_memory: z
     .object({
@@ -132,15 +137,19 @@ export const MemoryExtractionToolSchemas = {
       candidate: z.string().optional(),
       statement: z.string().min(1).max(4000),
       subjects: z.array(z.string()).min(1).max(20),
-      property: z.union([
-        z.string().min(1),
-        z
-          .object({
-            predicate: SemanticFactCandidateSchema.shape.predicate,
-            conflictMode: z.enum(["exclusive", "compatible"]),
-          })
-          .strict(),
-      ]),
+      property: z
+        .union([
+          z.string().min(1),
+          z
+            .object({
+              predicate: SemanticFactCandidateSchema.shape.predicate,
+              conflictMode: z.enum(["exclusive", "compatible"]),
+            })
+            .strict(),
+        ])
+        .optional(),
+      predicate: SemanticFactCandidateSchema.shape.predicate.optional(),
+      conflictMode: SemanticFactCandidateSchema.shape.conflictMode.optional(),
       value: z.string().min(1).max(2000),
       confidence: z.number().min(0).max(0.95),
       evidence: RefList,
@@ -148,7 +157,20 @@ export const MemoryExtractionToolSchemas = {
       reviewAt: z.string().datetime().optional(),
       expiresAt: z.string().datetime().optional(),
     })
-    .strict(),
+    .strict()
+    .superRefine((args, context) => {
+      if (
+        args.property !== undefined
+          ? args.predicate !== undefined || args.conflictMode !== undefined
+          : args.predicate === undefined || args.conflictMode === undefined
+      )
+        context.addIssue({
+          code: "custom",
+          path: ["property"],
+          message:
+            "Supply either property (an existing handle), or predicate and conflictMode for a property declaration; do not mix them.",
+        });
+    }),
   submit_episode_part: z.discriminatedUnion("part", [
     z.object({ part: z.enum(["goal", "summary"]), ...Claim.shape }).strict(),
     z
@@ -196,7 +218,8 @@ export const MemoryExtractionToolSchemas = {
       .strict(),
   ]),
 } as const;
-export type MemoryExtractionToolName = keyof typeof MemoryExtractionToolSchemas;
+export type MemoryExtractionV1ToolName = keyof typeof MemoryExtractionToolSchemas;
+export type MemoryExtractionToolName = MemoryExtractionV1ToolName | MemoryExtractionV2ToolName;
 export type MemoryExtractionInput =
   | z.infer<typeof EpisodicExtractionInputSchema>
   | z.infer<typeof SemanticExtractionInputSchema>
@@ -215,7 +238,8 @@ export const ConversationExtractionOutputSchema = z
 export const Provenance = SemanticFactExtractorProvenanceSchema;
 export const State = z
   .object({
-    schemaVersion: z.literal("pragma.memory-curator-session/v2"),
+    schemaVersion: z.literal("pragma.memory-curator-session/v3"),
+    toolContractVersion: z.union([z.literal(1), z.literal(2)]),
     key: z.string(),
     module: z.enum(["episodic", "semantic", "conversation"]),
     jobId: z.string(),
@@ -265,12 +289,16 @@ export type MemoryExtractionReceipt = {
 };
 export interface MemoryExtractionSession {
   readonly key: string;
+  readonly toolContractVersion: 1 | 2;
+  readonly promptVersion: string;
   readonly module: "episodic" | "semantic" | "conversation";
   readonly toolNames: readonly MemoryExtractionToolName[];
+  readonly subjectAliases: readonly string[];
   prompt(): string;
   assertCurrent(): Promise<void>;
   call(name: MemoryExtractionToolName, args: unknown): Promise<string>;
-  deliverErrorResponse(text: string): Promise<string>;
+  deliverErrorResponse(text: string, feedback?: MemoryExtractionFeedbackInput): Promise<string>;
+  continuationPrompt(): Promise<string>;
   bindMission(missionId: string): Promise<void>;
   setProvenance(value: z.infer<typeof Provenance>): Promise<void>;
   receipt(): Promise<MemoryExtractionReceipt | undefined>;

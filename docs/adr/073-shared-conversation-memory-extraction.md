@@ -4,6 +4,9 @@
 - Date: 2026-10-16
 - Partially supersedes: ADR 072 (separate Curator admissions and per-admission retry budgets)
 
+Tool interface and Session storage upgrades for new conversations are specified by
+[ADR 074](./074-memory-curator-tool-contract-v2.md); historical conversations preserve this vocabulary.
+
 ## Context
 
 The Desktop admitted an Episodic Mission and a Semantic Mission for the same source conversation.
@@ -54,7 +57,8 @@ resetting the three-prompt allowance, so it cannot replay the previous generatio
 An uncertain pending command keeps its original reservation across manual continuation until its
 receipt is reconciled. Cached Native tools resolve the current claim and permission guards on each
 call rather than retaining closures from the preceding admission.
-The 64-call and 32,000-delivered-token budgets are shared across automatic continuations and are
+Source-sized call and delivery budgets (at least 64 calls / 32,000 tokens, capped at 256,000 delivered
+tokens and constrained by the Runtime context window) are shared across automatic continuations and are
 not reset by reopening the Session. Correction/error responses consume the same delivered-token
 budget and are bounded by its remaining allowance. Exhaustion requests Native interruption once
 and parks unfinished types with a stable budget code. Already committed results remain valid.

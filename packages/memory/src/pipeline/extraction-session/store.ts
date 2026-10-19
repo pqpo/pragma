@@ -1,5 +1,6 @@
 import { existsSync } from "node:fs";
 import { createHash } from "node:crypto";
+import { isDeepStrictEqual } from "node:util";
 import { mkdir } from "node:fs/promises";
 import { dirname } from "node:path";
 import { DatabaseSync } from "node:sqlite";
@@ -18,10 +19,16 @@ import {
   type MemoryExtractionSessionGuard,
   type MemoryExtractionToolName,
 } from "./schema.ts";
-import { renderTask, markInlineRead, boundedPrefix, deliver } from "./evidence.ts";
+import { renderTask, markInlineRead, boundedPrefix, deliver, subjects } from "./evidence.ts";
 import { callTool } from "./tools.ts";
+import { extractionBudget } from "./budget.ts";
 import { CURATOR_SESSION_MIGRATIONS } from "../../storage/migrations/curator-sessions/index.ts";
-import { CuratorSessionV1Schema } from "../../storage/migrations/curator-sessions/schemas/v1.ts";
+import { parseCuratorSessionProof } from "../../storage/migrations/curator-sessions/receipt-proof.ts";
+import { MemoryExtractionV2ToolSchemas, type MemoryExtractionV2ToolName } from "./contract-v2.ts";
+import { formatExtractionFeedback, extractionProgress } from "./feedback.ts";
+import { callV2Tool, v2ToolNames } from "./tools-v2.ts";
+import { memoryCuratorPromptVersion } from "../../curator.ts";
+import { ZodError, type ZodType } from "zod";
 import { runAdjacentSqliteMigrations } from "../../storage/sqlite-migration-backup.ts";
 function keyFor(module: string, jobId: string, watermark: string): string {
   return createHash("sha256")
@@ -29,12 +36,23 @@ function keyFor(module: string, jobId: string, watermark: string): string {
     .digest("hex");
 }
 
+/** Compare persisted JSON values; object key order is not part of snapshot identity. */
+function sameSnapshotValue(left: unknown, right: unknown): boolean {
+  const leftJson = JSON.stringify(left);
+  const rightJson = JSON.stringify(right);
+  if (leftJson === rightJson) return true;
+  if (leftJson === undefined || rightJson === undefined) return false;
+  return isDeepStrictEqual(JSON.parse(leftJson), JSON.parse(rightJson));
+}
+
 function assertSnapshotScope(state: SessionState, input: MemoryExtractionInput): void {
   if (
-    JSON.stringify(state.input.evidence) !== JSON.stringify(input.evidence) ||
+    !sameSnapshotValue(state.input.evidence, input.evidence) ||
     ("allowedSubjectRefs" in state.input &&
-      JSON.stringify(state.input.allowedSubjectRefs) !==
-        JSON.stringify("allowedSubjectRefs" in input ? input.allowedSubjectRefs : []))
+      !sameSnapshotValue(
+        state.input.allowedSubjectRefs,
+        "allowedSubjectRefs" in input ? input.allowedSubjectRefs : [],
+      ))
   ) {
     fail("memory_curator_snapshot_scope_changed");
   }
@@ -53,7 +71,12 @@ function sourceReceipt(
     )
     .get(jobId, watermark) as { state_json: string } | undefined;
   if (row === undefined) return undefined;
-  const state = State.parse(JSON.parse(row.state_json));
+  const proof = parseCuratorSessionProof(
+    row.state_json,
+    (db.prepare("PRAGMA user_version").get() as { user_version: number }).user_version,
+  );
+  if (!("results" in proof)) fail("memory_curator_session_version_invalid");
+  const state = proof;
   if (input !== undefined && "evidenceTypes" in state.input) {
     const snapshot = state.input;
     const evidence = snapshot.evidence.filter((item) =>
@@ -63,15 +86,17 @@ function sourceReceipt(
       evidence.length !== input.evidence.length ||
       input.evidence.some(
         (item) =>
-          JSON.stringify(evidence.find((candidate) => candidate.messageId === item.messageId)) !==
-          JSON.stringify(item),
+          !sameSnapshotValue(
+            evidence.find((candidate) => candidate.messageId === item.messageId),
+            item,
+          ),
       )
     )
       fail("memory_curator_snapshot_scope_changed");
     if (
       module === "semantic" &&
       "allowedSubjectRefs" in input &&
-      JSON.stringify(snapshot.allowedSubjectRefs) !== JSON.stringify(input.allowedSubjectRefs)
+      !sameSnapshotValue(snapshot.allowedSubjectRefs, input.allowedSubjectRefs)
     )
       fail("memory_curator_snapshot_scope_changed");
   }
@@ -94,15 +119,15 @@ export function hasPendingMemoryExtractionContinuation(
     const version = (db.prepare("PRAGMA user_version").get() as { user_version: number })
       .user_version;
     if (version < 2) return false;
-    if (version > 2) fail("memory_curator_session_version_unsupported");
+    if (version > 3) fail("memory_curator_session_version_unsupported");
     const row = db
       .prepare(
         `SELECT state_json FROM sessions WHERE module = 'conversation' AND json_extract(state_json, '$.input.jobs.${module}.jobId') = ? AND json_extract(state_json, '$.input.jobs.${module}.watermark') = ? ORDER BY json_extract(state_json, '$.retryGeneration') DESC, rowid DESC LIMIT 1`,
       )
       .get(jobId, watermark) as { state_json: string } | undefined;
-    return (
-      row !== undefined && State.parse(JSON.parse(row.state_json)).pendingContinuation !== undefined
-    );
+    if (row === undefined) return false;
+    const proof = parseCuratorSessionProof(row.state_json, version);
+    return "pendingContinuation" in proof && proof.pendingContinuation !== undefined;
   } finally {
     db.close();
   }
@@ -126,15 +151,14 @@ export function hasMemoryExtractionReceipt(
       db.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table'").get() === undefined
     )
       return false;
-    if (version !== 1 && version !== 2) fail("memory_curator_session_version_unsupported");
+    if (version !== 1 && version !== 2 && version !== 3)
+      fail("memory_curator_session_version_unsupported");
     const row = db
       .prepare("SELECT state_json FROM sessions WHERE key = ?")
       .get(keyFor(module, jobId, watermark)) as { state_json: string } | undefined;
     if (row === undefined)
-      return version === 2 && sourceReceipt(db, module, jobId, watermark) !== undefined;
-    const state = (version === 1 ? CuratorSessionV1Schema : State).parse(
-      JSON.parse(row.state_json),
-    );
+      return version >= 2 && sourceReceipt(db, module, jobId, watermark) !== undefined;
+    const state = parseCuratorSessionProof(row.state_json, version);
     return state.output !== undefined && state.provenance !== undefined;
   } finally {
     db.close();
@@ -161,15 +185,15 @@ export function createMemoryExtractionSessionStore(
           if (db.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table'").get())
             fail("memory_curator_session_version_invalid");
           db.exec(
-            "BEGIN IMMEDIATE; CREATE TABLE sessions (key TEXT PRIMARY KEY, module TEXT NOT NULL, job_id TEXT NOT NULL, updated_at TEXT NOT NULL, state_json TEXT NOT NULL); CREATE TABLE missions (mission_id TEXT PRIMARY KEY, session_key TEXT NOT NULL REFERENCES sessions(key) ON DELETE CASCADE); PRAGMA user_version = 2; COMMIT;",
+            "BEGIN IMMEDIATE; CREATE TABLE sessions (key TEXT PRIMARY KEY, module TEXT NOT NULL, job_id TEXT NOT NULL, updated_at TEXT NOT NULL, state_json TEXT NOT NULL); CREATE TABLE missions (mission_id TEXT PRIMARY KEY, session_key TEXT NOT NULL REFERENCES sessions(key) ON DELETE CASCADE); PRAGMA user_version = 3; COMMIT;",
           );
         } else {
-          if (version > 2) fail("memory_curator_session_version_unsupported");
+          if (version > 3) fail("memory_curator_session_version_unsupported");
           await runAdjacentSqliteMigrations({
             database: db,
             databasePath: path,
             family: "memory-curator-sessions",
-            targetVersion: 2,
+            targetVersion: 3,
             migrations: CURATOR_SESSION_MIGRATIONS,
           });
         }
@@ -225,6 +249,13 @@ export function createMemoryExtractionSessionStore(
     initial: SessionState,
     guard: MemoryExtractionSessionGuard,
   ): MemoryExtractionSession {
+    const budget =
+      initial.toolContractVersion === 1
+        ? {
+            calls: MEMORY_EXTRACTION_LIMITS.calls,
+            tokens: MEMORY_EXTRACTION_LIMITS.deliveredTokens,
+          }
+        : extractionBudget(initial.input);
     const toolNames: MemoryExtractionToolName[] = [
       "list_evidence",
       "read_evidence",
@@ -234,11 +265,43 @@ export function createMemoryExtractionSessionStore(
       "finish_extraction",
     ];
     if (initial.module === "conversation") toolNames.splice(toolNames.length - 1, 0, "submit_fact");
+    if (initial.toolContractVersion === 2)
+      toolNames.splice(0, toolNames.length, ...v2ToolNames(initial));
+    const schemas: Readonly<Record<string, ZodType>> =
+      initial.toolContractVersion === 2
+        ? MemoryExtractionV2ToolSchemas
+        : MemoryExtractionToolSchemas;
+    const isFinish = (name: string) =>
+      [
+        "finish_extraction",
+        "finish_semantic_extraction",
+        "finish_episodic_extraction",
+        "skip_extraction",
+      ].includes(name);
     return {
       key: initial.key,
+      toolContractVersion: initial.toolContractVersion,
+      promptVersion: memoryCuratorPromptVersion(initial.toolContractVersion, initial.module),
       module: initial.module,
       toolNames,
+      subjectAliases: subjects(initial, guard.memory?.subjects).map((subject) => subject.alias),
       prompt: () => renderTask(initial),
+      async continuationPrompt() {
+        await guardCurrent(guard, initial);
+        return await transaction((db) => {
+          const state = read(db, initial.key)!;
+          return [
+            "Continue in this SAME conversation. Preserve staged work, read coverage and completed receipts.",
+            renderTask(state),
+            initial.toolContractVersion === 2
+              ? `Current progress: ${JSON.stringify(extractionProgress(state, budget.calls))}`
+              : "Use find_existing_memory to inspect staged work. Finish pending types with finish_extraction.",
+            state.lastError === undefined ? "" : `Last error: ${state.lastError.slice(0, 1000)}`,
+          ]
+            .filter(Boolean)
+            .join("\n\n");
+        });
+      },
       assertCurrent: async () => await guardCurrent(guard, initial),
       async bindMission(missionId) {
         await transaction((db) => {
@@ -281,10 +344,7 @@ export function createMemoryExtractionSessionStore(
           const state = read(db, initial.key)!;
           if (state.pendingContinuation !== undefined) return state.pendingContinuation;
           if (state.continuations >= 3) fail("memory_curator_continuations_exhausted");
-          if (
-            state.calls >= MEMORY_EXTRACTION_LIMITS.calls ||
-            state.deliveredTokens >= state.tokenLimit
-          )
+          if (state.calls >= budget.calls || state.deliveredTokens >= state.tokenLimit)
             fail("memory_curator_budget_exhausted");
           state.continuations++;
           const digest = createHash("sha256")
@@ -346,7 +406,7 @@ export function createMemoryExtractionSessionStore(
       async setContextBudget(tokens) {
         await transaction((db) => {
           const state = read(db, initial.key)!;
-          state.tokenLimit = Math.max(1, Math.min(32000, Math.floor(tokens)));
+          state.tokenLimit = Math.max(1, Math.min(budget.tokens, Math.floor(tokens)));
           save(db, state);
         });
       },
@@ -390,19 +450,21 @@ export function createMemoryExtractionSessionStore(
           | undefined;
         const search =
           name === "find_existing_memory"
-            ? MemoryExtractionToolSchemas.find_existing_memory.safeParse(args)
+            ? (initial.toolContractVersion === 2
+                ? MemoryExtractionV2ToolSchemas.find_existing_memory
+                : MemoryExtractionToolSchemas.find_existing_memory
+              ).safeParse(args)
             : undefined;
         if (
           guard.memory !== undefined &&
           search?.success &&
           search.data.query.trim() !== "" &&
-          search.data.memory === undefined &&
-          search.data.fact === undefined
+          (!("memory" in search.data) || search.data.memory === undefined) &&
+          (!("fact" in search.data) || search.data.fact === undefined)
         ) {
           reserved = await transaction((db) => {
             const state = read(db, initial.key)!;
-            if (state.output !== undefined || state.calls >= MEMORY_EXTRACTION_LIMITS.calls)
-              return false;
+            if (state.output !== undefined || state.calls >= budget.calls) return false;
             state.calls++;
             state.updatedAt = now().toISOString();
             save(db, state);
@@ -447,19 +509,55 @@ export function createMemoryExtractionSessionStore(
               };
         const outcome = await transaction(async (db) => {
           const state = read(db, initial.key)!;
-          if (state.output !== undefined)
-            return { text: "Extraction already finished. The durable receipt is available." };
+          if (state.output !== undefined) {
+            if (state.toolContractVersion === 2) state.calls++;
+            const text =
+              state.toolContractVersion === 2
+                ? formatExtractionFeedback(
+                    state,
+                    "Extraction already finished. The durable receipt is available.",
+                    { status: "ok" },
+                    true,
+                    budget.calls,
+                  )
+                : "Extraction already finished. The durable receipt is available.";
+            save(db, state);
+            return { text };
+          }
           const before = State.parse(state);
           if (!reserved) state.calls++;
           try {
-            if (
-              !reserved &&
-              state.calls > MEMORY_EXTRACTION_LIMITS.calls &&
-              name !== "finish_extraction"
-            )
+            if (!reserved && state.calls > budget.calls && !isFinish(name))
               fail("memory_curator_budget_exhausted");
-            const parsed = MemoryExtractionToolSchemas[name].parse(args);
-            const text = await callTool(state, name, parsed, operationGuard);
+            const parsed = schemas[name]!.parse(args);
+            let text: string;
+            if (state.toolContractVersion === 2) {
+              const result = await callV2Tool(
+                state,
+                name as MemoryExtractionV2ToolName,
+                parsed,
+                operationGuard,
+                budget.calls,
+              );
+              text = formatExtractionFeedback(
+                state,
+                result.text,
+                {
+                  status: "ok",
+                  ...(result.candidate === undefined ? {} : { candidate: result.candidate }),
+                  ...(result.nextCall === undefined ? {} : { nextCall: result.nextCall }),
+                },
+                name.startsWith("submit_") || isFinish(name),
+                budget.calls,
+              );
+            } else {
+              text = await callTool(
+                state,
+                name as keyof typeof MemoryExtractionToolSchemas,
+                parsed,
+                operationGuard,
+              );
+            }
             await guardCurrent(guard, initial);
             delete state.lastError;
             state.updatedAt = now().toISOString();
@@ -469,14 +567,18 @@ export function createMemoryExtractionSessionStore(
             await guardCurrent(guard, initial);
             before.calls = state.calls;
             before.lastError =
-              error instanceof Error ? error.message : "memory_curator_tool_failed";
+              state.toolContractVersion === 2 && error instanceof ZodError
+                ? "memory_curator_arguments_invalid"
+                : error instanceof Error
+                  ? error.message
+                  : "memory_curator_tool_failed";
             before.updatedAt = now().toISOString();
             save(db, before);
             return { error };
           }
         });
         if ("error" in outcome) throw outcome.error;
-        if (name === "finish_extraction" && guard.onResult !== undefined) {
+        if (isFinish(name) && guard.onResult !== undefined) {
           for (const type of ["episodic", "semantic"] as const) {
             const receipt = await this.receiptFor(type);
             if (receipt !== undefined) await guard.onResult(type, receipt);
@@ -484,9 +586,29 @@ export function createMemoryExtractionSessionStore(
         }
         return outcome.text;
       },
-      async deliverErrorResponse(text) {
+      async deliverErrorResponse(text, feedback) {
         const outcome = await transaction((db) => {
           const state = read(db, initial.key)!;
+          if (state.toolContractVersion === 2) {
+            try {
+              const formatted = formatExtractionFeedback(
+                state,
+                text,
+                feedback ?? { status: "blocked", code: "memory_curator_tool_failed" },
+                true,
+                budget.calls,
+              );
+              state.updatedAt = now().toISOString();
+              save(db, state);
+              return formatted;
+            } catch (error) {
+              if (!(error instanceof Error) || error.message !== "memory_curator_budget_exhausted")
+                throw error;
+              state.lastError = "memory_curator_budget_exhausted";
+              save(db, state);
+              return undefined;
+            }
+          }
           const remaining = state.tokenLimit - state.deliveredTokens;
           if (state.lastError === "memory_curator_budget_exhausted" || remaining <= 1) {
             state.lastError = "memory_curator_budget_exhausted";
@@ -572,7 +694,7 @@ export function createMemoryExtractionSessionStore(
             for (const type of input.input.targets) {
               const requested = input.input.jobs[type];
               const stored = existing.input.jobs[type];
-              if (requested === undefined || JSON.stringify(requested) !== JSON.stringify(stored))
+              if (requested === undefined || !sameSnapshotValue(requested, stored))
                 fail("memory_curator_snapshot_scope_changed");
               const subset = {
                 ...input.input,
@@ -585,7 +707,11 @@ export function createMemoryExtractionSessionStore(
               sourceReceipt(db, type, requested.jobId, requested.watermark, subset);
             }
           } else assertSnapshotScope(existing, input.input);
-          if (existing.output === undefined && existing.module !== "conversation") {
+          if (
+            existing.toolContractVersion === 1 &&
+            existing.output === undefined &&
+            existing.module !== "conversation"
+          ) {
             existing.calls = 0;
             existing.deliveredTokens = 0;
             delete existing.lastError;
@@ -609,7 +735,8 @@ export function createMemoryExtractionSessionStore(
           fail("memory_curator_session_capacity");
         const timestamp = now().toISOString();
         const state = State.parse({
-          schemaVersion: "pragma.memory-curator-session/v2",
+          schemaVersion: "pragma.memory-curator-session/v3",
+          toolContractVersion: 2,
           key,
           module: input.module,
           jobId: input.input.jobId,
@@ -621,7 +748,7 @@ export function createMemoryExtractionSessionStore(
           read: {},
           calls: 0,
           deliveredTokens: 0,
-          tokenLimit: 32000,
+          tokenLimit: extractionBudget(input.input).tokens,
           candidates: {},
           parts: {},
           results: {},

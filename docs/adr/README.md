@@ -109,3 +109,5 @@ ADR 的数字来自项目演进历史，早期曾出现同号记录。链接文�
 
 - [ADR 072: Tool-driven Memory extraction](./072-tool-driven-memory-extraction.md)
 - [ADR 073: Shared conversation Memory extraction and continuation](./073-shared-conversation-memory-extraction.md)
+
+- [ADR 074: Explicit Memory Curator tool contract and resumable feedback](./074-memory-curator-tool-contract-v2.md)
