@@ -51,7 +51,7 @@
     "@eslint/js": "latest",
     "eslint": "latest",
     "globals": "latest",
-    "prettier": "3.9.9",
+    "prettier": "3.9.10",
     "tsx": "latest",
     "turbo": "latest",
     "typescript": "latest",
@@ -70,7 +70,7 @@
     "overrides": {
       "typescript": "6.0.3",
       "eslint": "10.12.0",
-      "typescript-eslint": "8.71.1",
+      "typescript-eslint": "8.71.2",
       "turbo": "2.11.7",
       "@types/node": "26.6.5",
       "tsx": "4.23.15",
