@@ -8,6 +8,7 @@ import {
 } from "../../retrieval/extraction-memory.ts";
 import { memoryProjectionFields, redactMemoryProjection } from "../../retrieval/projection.ts";
 import { boundedPrefix, deliver, subjects, responseContentTokens } from "./evidence.ts";
+import { paginatedToolResult, type ExtractionToolResult } from "./tool-result.ts";
 import {
   MemoryExtractionToolSchemas,
   Fact,
@@ -82,7 +83,7 @@ export async function readExistingMemory(
   guard: MemoryExtractionSessionGuard,
   handle: string,
   cursor: number,
-): Promise<string> {
+): Promise<ExtractionToolResult> {
   const memory = await access(guard).get(handle);
   if (memory === undefined) fail("memory_curator_memory_stale_or_denied");
   const text =
@@ -98,9 +99,11 @@ export async function readExistingMemory(
   // Revalidate after preparing the response as well as on entry.
   if ((await access(guard).get(handle)) === undefined)
     fail("memory_curator_memory_stale_or_denied");
-  return deliver(
+  return paginatedToolResult(
     state,
-    `${summary(memory, subjects(state, guard.memory?.subjects), state.toolContractVersion)}\nExisting memory is context, not new evidence.\n${fragment}\nNext cursor: ${next < text.length ? next : "end"}`,
+    `${summary(memory, subjects(state, guard.memory?.subjects), state.toolContractVersion)}\nExisting memory is context, not new evidence.\n${fragment}`,
+    `Next cursor: ${next < text.length ? next : "end"}`,
+    next < text.length ? { cursor: next } : {},
   );
 }
 export async function searchExistingMemory(
@@ -144,7 +147,7 @@ export async function listExistingMemory(
   state: SessionState,
   guard: MemoryExtractionSessionGuard,
   args: z.infer<typeof MemoryExtractionToolSchemas.list_existing_memory>,
-): Promise<string> {
+): Promise<ExtractionToolResult> {
   const reader = access(guard);
   const aliases = subjects(state, reader.subjects);
   const subject =
@@ -260,8 +263,10 @@ export async function listExistingMemory(
           }),
         ).toString("base64url")
       : "end";
-  return deliver(
+  return paginatedToolResult(
     state,
-    `Directory: ${args.directory}. Complete scoped enumeration, not ranked search. Existing memory is not new evidence.\n${emitted.map((item) => item.text).join("\n") || "No accessible entries."}\nNext pageCursor: ${next}`,
+    `Directory: ${args.directory}. Complete scoped enumeration, not ranked search. Existing memory is not new evidence.\n${emitted.map((item) => item.text).join("\n") || "No accessible entries."}`,
+    `Next pageCursor: ${next}`,
+    next === "end" ? {} : { pageCursor: next },
   );
 }

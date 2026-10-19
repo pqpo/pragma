@@ -4,12 +4,12 @@
 import { z } from "zod";
 import {
   MemoryEvidenceEnvelopeSchema,
+  MemoryEvidenceOmissionStatsSchema,
   MemorySensitivitySchema,
   MemorySubjectRefSchema,
   MemoryRevisionBindingSchema,
   MemoryVisibilityPolicySchema,
-} from "@pragma/shared";
-import { MemoryEvidenceOmissionStatsSchema } from "../../../../storage/bounded-evidence.ts";
+} from "./evidence-v1.ts";
 const EPISODIC_MEMORY_SCHEMA_VERSION = "pragma.memory-episodic/v3";
 const SemanticFactExtractorProvenanceSchema = z
   .object({

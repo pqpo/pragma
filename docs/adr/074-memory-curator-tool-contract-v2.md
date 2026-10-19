@@ -25,9 +25,16 @@ It reports fresh progress and known next-call arguments; errors report stable co
 fields and examples. Full candidate reads preserve every editable field and evidence alias over
 bounded pages. Permission failures omit progress and source-derived fields. All visible responses
 are token-counted through Core; a 1,024-token control reserve is inside the source-sized budget.
+Within that reserve, each pending type owns 256 tokens for its bounded finish acknowledgement.
+Submissions, error feedback and duplicate finishes cannot consume another type's allocation;
+successful completion releases only the allocation for the type whose receipt was saved.
 When source coverage and staged work are complete, budget feedback permits finishing that type
 within the reserve, including an executable Semantic finish call. Incomplete work stays blocked.
 No tool error or capacity limit authorizes a skip decision or a new model admission.
+
+Internal operation results carry candidate handles and pagination cursors as structured fields.
+The historical adapter renders its original footers; contract 2 uses the structured fields in
+Feedback without parsing presentation text or interpreting source text as control metadata.
 
 ## Upgrade and recovery
 
@@ -38,6 +45,8 @@ version 3 with contract 1; pending continuation commands, read coverage, staged 
 mission links and original provenance remain intact. Read-only admission proofs validate the
 matching historical schema before normal aggregate migration. Future database/aggregate/contract
 versions fail closed. Version 1 upgrades through both steps.
+Nested Evidence, subject, visibility, sensitivity, policy, binding and omission-statistics schemas
+are frozen from the actual historical commits too; historical validation imports no live domain schemas.
 
 Contract 1's original DSL/tool adapter and budget semantics remain available solely for historical
 conversations. A new session or explicit new retry generation uses contract 2. No authority Memory,

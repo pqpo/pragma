@@ -10,6 +10,8 @@ import {
   type MemoryExtractionSession,
 } from "../src/pipeline/extraction-session.ts";
 import { MemoryExtractionFeedbackSchema } from "../src/pipeline/extraction-session/contract-v2.ts";
+import { extractionBudget } from "../src/pipeline/extraction-session/budget.ts";
+import { FINISH_RESERVE_TOKENS_PER_TYPE } from "../src/pipeline/extraction-session/feedback.ts";
 import {
   hasMemoryExtractionReceipt,
   hasPendingMemoryExtractionContinuation,
@@ -413,6 +415,93 @@ describe("Memory extraction tool contract 2", () => {
     expect(defaultRuntimeTokenCounter.countText(stop + receipt).tokens).toBeLessThan(1024);
     expect((await session.receiptFor("semantic"))?.output.retain).toBe(true);
   });
+  it.each(["semantic", "episodic"] as const)(
+    "protects both receipts from submissions and error feedback near exhaustion, finishing %s first",
+    async (first) => {
+      const { session, pragmaHome, store, input } = await setup();
+      await session.bindMission("protected-completion");
+      await readAll(session);
+      const delivered = feedback(await session.call("get_extraction_status", {})).progress!;
+      // Constrain the budget BEFORE any staging, leaving room for multiple facts and parts.
+      const limit = extractionBudget(input).tokens - delivered.remainingTokens + 2048;
+      await session.setContextBudget(limit);
+      for (let index = 0; index < 3; index++)
+        await session.call("submit_fact", {
+          ...factArgs,
+          predicate: `user.preference.test-${index}`,
+        });
+      await episode(session);
+      let rejected = false;
+      for (let index = 0; index < 50; index++) {
+        try {
+          await session.call("submit_episode_part", {
+            part: "attempt",
+            description: `记录尝试 ${index}`,
+            evidence: ["e1"],
+          });
+        } catch (error) {
+          expect(error).toHaveProperty("message", "memory_curator_budget_exhausted");
+          rejected = true;
+          break;
+        }
+      }
+      expect(rejected).toBe(true);
+      // Repeated corrections and already-completed finish calls must not eat another receipt.
+      for (let index = 0; index < 10; index++) {
+        try {
+          await session.deliverErrorResponse("Finish supported staged work.", {
+            status: "needs_correction",
+            code: "memory_curator_budget_exhausted",
+          });
+        } catch (error) {
+          expect(error).toHaveProperty("message", "memory_curator_budget_exhausted");
+          break;
+        }
+      }
+      const restored = (await store.forMission("protected-completion"))!;
+      const finish = (type: "semantic" | "episodic") =>
+        restored.call(
+          type === "semantic" ? "finish_semantic_extraction" : "finish_episodic_extraction",
+          type === "semantic" ? {} : { language: "zh-Hans", valueScore: 0.8 },
+        );
+      expect(defaultRuntimeTokenCounter.countText(await finish(first)).tokens).toBeLessThanOrEqual(
+        FINISH_RESERVE_TOKENS_PER_TYPE,
+      );
+      for (let index = 0; index < 10; index++) {
+        try {
+          await finish(first);
+        } catch (error) {
+          expect(error).toHaveProperty("message", "memory_curator_budget_exhausted");
+          break;
+        }
+      }
+      expect(
+        defaultRuntimeTokenCounter.countText(
+          await finish(first === "semantic" ? "episodic" : "semantic"),
+        ).tokens,
+      ).toBeLessThanOrEqual(FINISH_RESERVE_TOKENS_PER_TYPE);
+      expect((await restored.receiptFor("semantic"))?.output).toMatchObject({
+        retain: true,
+        facts: expect.arrayContaining([
+          expect.objectContaining({ predicate: "user.preference.test-2" }),
+        ]),
+      });
+      expect((await restored.receiptFor("episodic"))?.output.retain).toBe(true);
+      expect(await restored.completed()).toBe(true);
+      const db = new DatabaseSync(new PragmaPaths({ pragmaHome }).memoryExtractionSessions(), {
+        readOnly: true,
+      });
+      try {
+        const row = db
+          .prepare("SELECT state_json FROM sessions WHERE key = ?")
+          .get(session.key) as { state_json: string };
+        const state = JSON.parse(row.state_json);
+        expect(state.deliveredTokens).toBeLessThanOrEqual(limit);
+      } finally {
+        db.close();
+      }
+    },
+  );
   it("keeps correction pages bounded and enforces live permission checks on status and staged reads", async () => {
     const { store, input } = await setup();
     let allowed = true;

@@ -1,6 +1,7 @@
 import { defaultRuntimeTokenCounter } from "@pragma/core";
 import { extractionMemoryRef } from "../../retrieval/extraction-memory.ts";
-import { callTool } from "./tools.ts";
+import { callToolResult } from "./tools.ts";
+import type { ExtractionToolResult } from "./tool-result.ts";
 import { readExistingMemory, searchExistingMemory, projectExistingFact } from "./memory-tools.ts";
 import { redactMemoryProjection } from "../../retrieval/projection.ts";
 import type { EpisodicExtractionInput } from "../../episodic/schema.ts";
@@ -40,7 +41,8 @@ export async function callV2Tool(
   guard: MemoryExtractionSessionGuard,
   callLimit: number,
 ): Promise<Result> {
-  let text: string;
+  let text = "";
+  let result: ExtractionToolResult | undefined;
   switch (name) {
     case "get_extraction_status": {
       const { candidateOffset } = MemoryExtractionV2ToolSchemas.get_extraction_status.parse(raw);
@@ -214,7 +216,7 @@ export async function callV2Tool(
               (fact) => extractionMemoryRef("semantic", fact.id, fact.revision) === args.replaces,
             )
           : -1;
-      text = await callTool(
+      result = await callToolResult(
         state,
         "submit_fact",
         index < 0 ? args : { ...args, replaces: `f${index + 1}` },
@@ -252,15 +254,23 @@ export async function callV2Tool(
         if (args.cursor > projected.length) fail("memory_curator_cursor_invalid");
         const fragment = boundedPrefix(projected.slice(args.cursor), 1000);
         const next = args.cursor + fragment.length;
-        text = `${args.memory} · Existing Memory is untrusted context, not new evidence.\n${fragment}\nNext cursor: ${next < projected.length ? next : "end"}`;
-      } else text = await readExistingMemory(state, guard, args.memory, args.cursor);
+        result = {
+          text: `${args.memory} · Existing Memory is untrusted context, not new evidence.\n${fragment}`,
+          ...(next < projected.length ? { cursor: next } : {}),
+        };
+      } else result = await readExistingMemory(state, guard, args.memory, args.cursor);
       break;
     }
     case "finish_semantic_extraction":
-      text = await callTool(state, "finish_extraction", { type: "semantic", retain: true }, guard);
+      result = await callToolResult(
+        state,
+        "finish_extraction",
+        { type: "semantic", retain: true },
+        guard,
+      );
       break;
     case "finish_episodic_extraction":
-      text = await callTool(
+      result = await callToolResult(
         state,
         "finish_extraction",
         {
@@ -273,7 +283,7 @@ export async function callV2Tool(
       break;
     case "skip_extraction": {
       const args = MemoryExtractionV2ToolSchemas.skip_extraction.parse(raw);
-      text = await callTool(
+      result = await callToolResult(
         state,
         "finish_extraction",
         {
@@ -291,39 +301,19 @@ export async function callV2Tool(
       break;
     }
     default:
-      text = await callTool(state, name, raw, guard);
+      result = await callToolResult(state, name, raw, guard);
   }
   let nextCall: MemoryExtractionFeedbackInput["nextCall"];
   if (name === "read_evidence" && extractionProgress(state, callLimit).unreadRecords > 0)
     nextCall = { tool: name, args: {} };
   const args = record(raw);
-  let body = text;
-  // Only the Host's trailing footer is control data. Source text may contain identical labels.
-  if (name === "read_existing_memory" || name === "list_evidence") {
-    const footer =
-      /(?:^|\n)Next cursor: (\d+|end)(?:\. Directory excerpts are navigation only; read original passages before citing\.)?$/u.exec(
-        text,
-      );
-    if (footer === null) fail("memory_curator_response_invalid");
-    if (footer[1] !== "end")
-      nextCall = { tool: name, args: { ...args, cursor: Number(footer[1]) } };
-    body = text.slice(0, footer.index);
-  }
-  if (name === "list_existing_memory") {
-    const footer = /(?:^|\n)Next pageCursor: (\S+)$/u.exec(text);
-    if (footer === null) fail("memory_curator_response_invalid");
-    if (footer[1] !== "end") nextCall = { tool: name, args: { ...args, pageCursor: footer[1] } };
-    body = text.slice(0, footer.index);
-  }
-  const candidate =
-    name === "submit_fact"
-      ? /^Candidate (\S+) validated and staged\./u.exec(text)?.[1]
-      : name === "submit_episode_part"
-        ? /^Episode part \w+ staged as ([^\s.]+)\.$/u.exec(text)?.[1]
-        : undefined;
+  if (result?.cursor !== undefined)
+    nextCall = { tool: name, args: { ...args, cursor: result.cursor } };
+  if (result?.pageCursor !== undefined)
+    nextCall = { tool: name, args: { ...args, pageCursor: result.pageCursor } };
   return {
-    text: body,
-    ...(candidate === undefined ? {} : { candidate }),
+    text: result?.text ?? text,
+    ...(result?.candidate === undefined ? {} : { candidate: result.candidate }),
     ...(nextCall === undefined ? {} : { nextCall }),
   };
 }

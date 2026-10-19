@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { paginatedToolResult, type ExtractionToolResult } from "./tool-result.ts";
 import { extractionMemoryRef } from "../../retrieval/extraction-memory.ts";
 import {
   existingFact,
@@ -42,6 +43,23 @@ export async function callTool(
   raw: unknown,
   guard: MemoryExtractionSessionGuard,
 ): Promise<string> {
+  return (await callToolResult(state, name, raw, guard)).text;
+}
+export async function callToolResult(
+  state: SessionState,
+  name: MemoryExtractionV1ToolName,
+  raw: unknown,
+  guard: MemoryExtractionSessionGuard,
+): Promise<ExtractionToolResult> {
+  const result = await executeTool(state, name, raw, guard);
+  return typeof result === "string" ? { text: result } : result;
+}
+async function executeTool(
+  state: SessionState,
+  name: MemoryExtractionV1ToolName,
+  raw: unknown,
+  guard: MemoryExtractionSessionGuard,
+): Promise<string | ExtractionToolResult> {
   const active = (type: "episodic" | "semantic") =>
     guard.activeTypes === undefined || guard.activeTypes.includes(type);
   const canDeliver = (messageId: string) =>
@@ -56,15 +74,17 @@ export async function callTool(
           (subject) => !args.query || `${subject.alias} ${subject.ref.type}`.includes(args.query),
         );
         const page = available.slice(args.cursor, args.cursor + MEMORY_EXTRACTION_LIMITS.pageSize);
-        return deliver(
+        const next = args.cursor + page.length;
+        return paginatedToolResult(
           state,
-          [
-            ...page.map(
+          page
+            .map(
               (subject) =>
                 `subjects=["${subject.alias}"] · resource type: ${subject.ref.type.replace("pragma.", "")}`,
-            ),
-            `Next cursor: ${args.cursor + page.length < available.length ? args.cursor + page.length : "end"}`,
-          ].join("\n"),
+            )
+            .join("\n"),
+          `Next cursor: ${next < available.length ? next : "end"}`,
+          next < available.length ? { cursor: next } : {},
         );
       }
       const rows = state.input.evidence
@@ -87,12 +107,12 @@ export async function callTool(
           break;
         lines.push(line);
       }
-      return deliver(
+      const next = args.cursor + lines.length;
+      return paginatedToolResult(
         state,
-        [
-          ...lines,
-          `Next cursor: ${args.cursor + lines.length < rows.length ? args.cursor + lines.length : "end"}. Directory excerpts are navigation only; read original passages before citing.`,
-        ].join("\n"),
+        lines.join("\n"),
+        `Next cursor: ${next < rows.length ? next : "end"}. Directory excerpts are navigation only; read original passages before citing.`,
+        next < rows.length ? { cursor: next } : {},
       );
     }
     case "read_evidence": {
@@ -189,9 +209,11 @@ export async function callTool(
         if (args.cursor > text.length) fail("memory_curator_cursor_invalid");
         const fragment = boundedPrefix(text.slice(args.cursor), responseContentTokens(state) - 300);
         const next = args.cursor + fragment.length;
-        return deliver(
+        return paginatedToolResult(
           state,
-          `[${args.fact}] Existing memory, not new evidence.\n${fragment}\nNext cursor: ${next < text.length ? next : "end"}`,
+          `[${args.fact}] Existing memory, not new evidence.\n${fragment}`,
+          `Next cursor: ${next < text.length ? next : "end"}`,
+          next < text.length ? { cursor: next } : {},
         );
       }
       const staged = [
@@ -251,9 +273,11 @@ export async function callTool(
         if (args.cursor > text.length) fail("memory_curator_cursor_invalid");
         const fragment = boundedPrefix(text.slice(args.cursor), responseContentTokens(state) - 900);
         const next = args.cursor + fragment.length;
-        return deliver(
+        return paginatedToolResult(
           state,
-          `${stagedPrefix}Previous episode (context, not new evidence):\n${fragment}\nNext cursor: ${next < text.length ? next : "end"}`,
+          `${stagedPrefix}Previous episode (context, not new evidence):\n${fragment}`,
+          `Next cursor: ${next < text.length ? next : "end"}`,
+          next < text.length ? { cursor: next } : {},
         );
       }
       const found =
@@ -392,7 +416,10 @@ export async function callTool(
       if (state.candidates[id] === undefined && Object.keys(state.candidates).length >= 50)
         fail("memory_curator_candidate_capacity");
       state.candidates[id] = candidate;
-      return `Candidate ${id} validated and staged. Memory has not been committed.`;
+      return {
+        text: `Candidate ${id} validated and staged. Memory has not been committed.`,
+        candidate: id,
+      };
     }
     case "submit_episode_part": {
       if (!active("episodic")) fail("memory_curator_type_unavailable");
@@ -420,7 +447,7 @@ export async function callTool(
       delete value["candidate"];
       delete value["evidence"];
       state.parts[id] = { ...value, evidenceRefs };
-      return `Episode part ${part} staged as ${id}.`;
+      return { text: `Episode part ${part} staged as ${id}.`, candidate: id };
     }
     case "finish_extraction": {
       const args = MemoryExtractionToolSchemas.finish_extraction.parse(raw);

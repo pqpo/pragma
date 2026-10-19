@@ -133,8 +133,11 @@ navigation is optional. Every response includes a model-visible `Feedback:` JSON
 by `MemoryExtractionFeedbackSchema`, followed by readable text. The header provides status,
 authoritative progress, and an executable `nextCall` only when its arguments are known. Responses
 including errors, staging acknowledgements and final receipts consume the delivered-token budget.
-The total reserves 1,024 tokens for correction/staging/finalization; every response is at most 2,000
-tokens. When a pending type has complete read coverage and staged work, budget feedback permits
+The total reserves 1,024 tokens for correction/staging/finalization; each pending type owns 256
+tokens within it for its bounded finish acknowledgement. Staging, error feedback and duplicate
+finishes cannot consume another pending type's allocation. Each saved receipt releases only its
+own allocation, including after reopening the Session. Every response is at most 2,000 tokens.
+When a pending type has complete read coverage and staged work, budget feedback permits
 finishing it within that reserve (`nextCall` is supplied for Semantic finish). Incomplete source or
 staged work remains blocked. Exhaustion never produces a skip decision.
 
@@ -280,9 +283,9 @@ by these real-model runs. Separate automated Desktop/Local Host tests cover thei
 
 The implementation review reproduced and corrected six issue classes:
 
-- V2 cursor/candidate metadata was inferred from untrusted body text. Only a tool's Host-generated
-  trailing pagination footer is parsed now, and only submission acknowledgements can provide a
-  candidate handle. Evidence/Memory lines containing the same labels remain intact.
+- V2 cursor/candidate metadata was inferred from untrusted body text. Internal operations now
+  return structured cursor/candidate fields; v2 never parses presentation text for control data.
+  The historical adapter keeps its original footers. Evidence/Memory labels remain intact.
 - Reopening a dedicated Semantic/Episodic v2 session reset consumed counters and diagnostics.
   The original reset behavior is now limited to legacy contract 1; v2 resumes retain the budget.
 - The legacy advertised property Schema rejected the original object branch. Migrated Native
@@ -300,3 +303,10 @@ provider-facing Schema, raw source labels, authority Memory pagination, persiste
 unchanged-versus-changed snapshots. `pnpm --filter @pragma/desktop test:memory-curator-acceptance`
 runs the acceptance-verdict tests without a model. The full Desktop test command includes them.
 Private real-model verification artifacts remain outside the repository.
+
+PR review additionally reproduced submissions/error feedback consuming the final receipt budget.
+Combined Semantic/Episodic regression cases set the limit before staging multiple facts and episode
+parts, exhaust submission/correction space, reopen, and save both receipts in either order.
+Duplicate finish calls cannot consume the companion receipt allocation. Frozen v1/v2 migration
+dependencies are copied from their actual writer commits; historical fixture validation is tested
+with the live Shared and omission-statistics modules unavailable.

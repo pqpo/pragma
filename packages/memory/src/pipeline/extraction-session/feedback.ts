@@ -13,6 +13,9 @@ import {
 } from "./schema.ts";
 
 export const CONTROL_RESERVE_TOKENS = 1024;
+// Finish acknowledgements contain only a fixed message and bounded progress, never candidates.
+// Each pending type owns this allocation; staging, corrections and duplicate finishes cannot use it.
+export const FINISH_RESERVE_TOKENS_PER_TYPE = 256;
 export function requestedTypes(state: SessionState): MemoryExtractionType[] {
   return "targets" in state.input
     ? state.input.targets
@@ -96,9 +99,13 @@ export function formatExtractionFeedback(
     tokens = next;
   }
   tokens = defaultRuntimeTokenCounter.countText(text).tokens;
+  const finishReserve =
+    requestedTypes(state).filter((type) => state.results[type] === undefined).length *
+    FINISH_RESERVE_TOKENS_PER_TYPE;
   if (
     tokens > MEMORY_EXTRACTION_LIMITS.responseTokens ||
-    state.deliveredTokens + tokens > state.tokenLimit - (control ? 0 : CONTROL_RESERVE_TOKENS)
+    state.deliveredTokens + tokens >
+      state.tokenLimit - (control ? finishReserve : CONTROL_RESERVE_TOKENS)
   )
     fail("memory_curator_budget_exhausted");
   state.deliveredTokens += tokens;
