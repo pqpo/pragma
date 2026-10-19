@@ -3,6 +3,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import { createLocalHostRuntimeConfiguration } from "@pragma/local-host/deployment";
+import * as localHost from "@pragma/local-host";
+import * as nodeApplication from "@pragma/local-host/node-application";
 import * as codex from "@pragma/runtime-codex";
 import { createProductionLocalHost } from "../src/composition/default.ts";
 
@@ -21,12 +23,45 @@ describe("CLI saved Runtime composition", () => {
     vi.spyOn(codex, "createCodexRuntime").mockImplementation((options) =>
       create({ ...options, listModels }),
     );
+    const composition = vi.spyOn(nodeApplication, "createLocalHostNodeApplication");
     const host = createProductionLocalHost();
     try {
       const resolver = host.runtimeResolver();
       const restored = await resolver.resolve({ binding: fixture.binding });
       expect(restored.binding).toEqual(fixture.binding);
       expect(restored.adapter.descriptor).toEqual(fixture.descriptor);
+      const permissionResolver = composition.mock.calls.at(-1)?.[0].runtimesForToolPermissionMode;
+      expect(permissionResolver).toBeTypeOf("function");
+      const fullAccess = await permissionResolver!("full-access").resolve({
+        binding: fixture.binding,
+      });
+      expect(fullAccess.binding).toEqual(fixture.binding);
+      expect(codex.createCodexRuntime).toHaveBeenLastCalledWith(
+        expect.objectContaining({ sandboxMode: "danger-full-access", approvalPolicy: "never" }),
+      );
+      const settings = localHost.createRuntimeProcessEnvironmentSettingsStore({ pragmaHome: home });
+      vi.stubEnv("PRAGMA_LEGACY_POLICY_CANARY", "policy-value");
+      await settings.updatePolicy({
+        expectedRevision: 0,
+        policy: { mode: "filtered", allowlist: ["PRAGMA_LEGACY_POLICY_CANARY"], blocklist: [] },
+      });
+      await resolver.resolve({ binding: fixture.binding });
+      expect(codex.createCodexRuntime).toHaveBeenLastCalledWith(
+        expect.objectContaining({
+          env: expect.objectContaining({ PRAGMA_LEGACY_POLICY_CANARY: "policy-value" }),
+          sandboxMode: "workspace-write",
+          approvalPolicy: "on-request",
+        }),
+      );
+      await settings.updatePolicy({
+        expectedRevision: 1,
+        policy: { mode: "filtered", allowlist: [], blocklist: ["PRAGMA_LEGACY_POLICY_CANARY"] },
+      });
+      const tightened = await resolver.resolve({ binding: fixture.binding });
+      expect(tightened.binding).toEqual(fixture.binding);
+      expect(vi.mocked(codex.createCodexRuntime).mock.calls.at(-1)?.[0]?.env).not.toHaveProperty(
+        "PRAGMA_LEGACY_POLICY_CANARY",
+      );
       const current = await resolver.bind({ runtimeId: "codex" });
       expect(current.adapter.descriptor.id).toBe("codex");
       expect(current.binding.fingerprint).not.toBe(fixture.binding.fingerprint);
@@ -48,6 +83,47 @@ describe("CLI saved Runtime composition", () => {
       await expect(
         resolver.resolve({ binding: { ...fixture.binding, revision: 2 } }),
       ).rejects.toMatchObject({ code: "RUNTIME_UNAVAILABLE" });
+    } finally {
+      await host.dispose?.();
+      vi.restoreAllMocks();
+      vi.unstubAllEnvs();
+      await rm(home, { recursive: true, force: true });
+    }
+  });
+
+  it("uses one policy snapshot for the adapter and its cache identity", async () => {
+    const home = await mkdtemp(join(tmpdir(), "pragma-cli-runtime-policy-snapshot-"));
+    vi.stubEnv("PRAGMA_HOME", home);
+    vi.stubEnv("PRAGMA_POLICY_SNAPSHOT_CANARY", "explicitly-allowed");
+    const store = localHost.createRuntimeProcessEnvironmentSettingsStore({ pragmaHome: home });
+    const filtered = store.getSync();
+    const allowed = {
+      ...filtered,
+      revision: 1,
+      policy: { ...filtered.policy, allowlist: ["PRAGMA_POLICY_SNAPSHOT_CANARY"] },
+    };
+    const getSync = vi.fn().mockReturnValue(allowed).mockReturnValueOnce(filtered);
+    vi.spyOn(localHost, "createRuntimeProcessEnvironmentSettingsStore").mockReturnValue({
+      ...store,
+      getSync,
+    });
+    const factory = vi.spyOn(codex, "createCodexRuntime");
+    const host = createProductionLocalHost();
+    try {
+      const resolver = host.runtimeResolver();
+      await resolver.bind({ runtimeId: "codex" });
+      expect(factory.mock.calls.at(-1)?.[0]?.env).not.toHaveProperty(
+        "PRAGMA_POLICY_SNAPSHOT_CANARY",
+      );
+      expect(getSync).toHaveBeenCalledTimes(1);
+      await resolver.bind({ runtimeId: "codex" });
+      expect(factory.mock.calls.at(-1)?.[0]?.env).toHaveProperty(
+        "PRAGMA_POLICY_SNAPSHOT_CANARY",
+        "explicitly-allowed",
+      );
+      expect(factory).toHaveBeenCalledTimes(2);
+      await resolver.bind({ runtimeId: "codex" });
+      expect(factory).toHaveBeenCalledTimes(2);
     } finally {
       await host.dispose?.();
       vi.restoreAllMocks();

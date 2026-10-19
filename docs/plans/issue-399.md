@@ -168,8 +168,8 @@ PRAGMA_HOME=/tmp/pragma399-acceptance/home node apps/cli/dist/pragma.js \
   `74e0ab79-35c1-4362-8c92-636d629ce1f1` 返回 `PRAGMA399-WORKER-OK` / `succeeded`。
   该固定副本 `cli.js` SHA-256 为 `a4f87b57b37fc704189509d28d6c0fed5bf95eaf6a345ae91ff0abbf024fd0bb`。
 
-**最终构建产物的追加验收：** `cli-closeout-artifact/cli.js` SHA-256
-`cf2aea73df12c145a843116fc021bd892a76b6cbc61a0af10113d1aa6384eafe`，与最终构建的
+**收尾提交 `8e775bef` 构建产物的追加验收：** `cli-closeout-artifact/cli.js` SHA-256
+`cf2aea73df12c145a843116fc021bd892a76b6cbc61a0af10113d1aa6384eafe`，与该次构建的
 `apps/cli/dist/cli.js` 一致。
 
 - 不传 `--project` / `--revision`，使用 `--wait-timeout 120 --interactive never --json`，Mission
@@ -224,3 +224,32 @@ SecretStore 凭据和独立 Mission 查询；验证认证 canary 不进入 stdou
 safeStorage 读取未能在无人值守下完成；没有绕过钥匙串、复制明文凭据或更换后端。Windows、Apple Silicon、
 真实 Team/Flow、人工 Desktop UI、独立安装 tarball 及所有 Harness 组合未在本轮真实环境验收。
 Linux 与 Memory Headless 仍为暂缓项，不能将此轮结果用于声称原始 Linux 独立部署目标完成。
+
+### 收尾提交的追加 CR 与修复（2026-10-19）
+
+人工逐项审查 `8e775bef` 的配置、Mission 提交、编译错误、Desktop 接线及历史 Session 恢复改动，
+确认并修复两项问题：
+
+- P2：旧 CLI Session 的恢复 resolver 固定采用 `request-approval`，且永久缓存初次读取的环境变量
+  策略。现在按 Mission 权限模式分别缓存，并在策略版本改变后重建 adapter；恢复继续校验真实历史
+  descriptor / catalog fingerprint，不改写 Runtime binding。回归覆盖 `full-access`、恢复默认权限、
+  显式允许变量与后续 blocklist 收紧。
+- P2：新 Runtime 的缓存键与 adapter 构造分别读取策略，跨进程更新可能使 adapter 缓存到错误策略
+  版本下。现在通过 factory `prepare` 捕获同一策略快照，缓存键和构造闭包共同使用它。回归模拟
+  连续读取间策略变化，验证首次过滤、下次允许及相同版本缓存复用。
+
+新增回归在原提交上复现为 2 项失败，在修复后为 3/3 通过。未发现其他已确认而未修复的问题；
+本次 CR 不改变上文的真实平台、模型和安装验收限制。
+
+修复后重新运行全仓 `pnpm lint`、`pnpm typecheck`、`pnpm build`，均为 19/19 任务通过；
+CLI 全量 adapter 为 22 文件、168/168 通过；生产 CLI / owner Worker / 原生 SecretStore 配置
+集成为 1/1 通过。此次只改 CLI composition，未改共享 Mission 内核；上文完整内核门禁未重复运行。
+
+CR 后固定 CLI 产物 `cli-cr-artifact/cli.js` SHA-256 为
+`d8b93aa2db1e89e56e54786f1bbe9866e4e61192512dce1e6c416f4e75778de3`。
+用它继续同一旧 Mission `f960f853-b47c-4b97-b09e-ade392c1fedd`，Execution
+`6efba6c9-71c3-4e72-8bb3-d0e9fc76aa7f` 成功返回 `PRAGMA399-CR-RESTORED-OK`，独立
+`mission get --view result` 同样成功。持久 Session、根 Context、原静态 fingerprint 及
+`openai/gpt-5.6-sol` 均与上文旧版恢复验收一致。记录为仓库外 `cli-cr-legacy.json` 与
+`cli-cr-legacy-result.json`。固定副本首次未链接原生依赖目录的启动失败未计入通过结果；
+补齐与此前验收一致的 `node_modules` 链接后完成以上验收，未改变源码或凭据。

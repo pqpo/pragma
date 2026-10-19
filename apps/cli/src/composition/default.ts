@@ -1,3 +1,4 @@
+import type { ToolPermissionMode } from "@pragma/shared";
 import { randomUUID } from "node:crypto";
 import { access, realpath, stat } from "node:fs/promises";
 import { homedir } from "node:os";
@@ -48,108 +49,132 @@ export function createProductionLocalHost(): CliLocalHost {
   const factories: readonly RuntimeEnvironmentAdapterFactory[] = DEFAULT_RUNTIME_ENVIRONMENTS.map(
     ({ adapter }) => ({
       ...adapter,
-      create: (environment, context) => {
-        assertEmptyBuiltInRuntimeConfig(environment);
-        const mode = context?.toolPermissionMode ?? "request-approval";
-        const permissionMode =
-          mode === "request-approval"
-            ? "default"
-            : mode === "auto-approve"
-              ? "auto"
-              : "bypassPermissions";
-        const common = {
-          descriptor: { id: environment.id, displayName: environment.displayName },
-          env: resolveLocalHostRuntimeProcessEnvironment(
-            process.env,
-            adapter.id,
-            environmentSettings.getSync().policy,
-          ),
-          tokenCounter,
-          modelCatalogCacheRoot: join(pragmaHome, "cache"),
+      prepare: (environment, context) => {
+        const settings = environmentSettings.getSync();
+        return {
+          cacheKey: JSON.stringify(settings),
+          create: () => createAdapter(environment, context, settings.policy),
         };
-        switch (adapter.id) {
-          case "pragma.runtime.pi":
-            return createPiRuntime({ ...common, modelProviders: configuration.modelProviders });
-          case "pragma.runtime.codex":
-            return createCodexRuntime({
-              ...common,
-              sandboxMode: mode === "full-access" ? "danger-full-access" : "workspace-write",
-              approvalPolicy: mode === "full-access" ? "never" : "on-request",
-            });
-          case "pragma.runtime.opencode":
-            return createOpenCodeRuntime({ ...common, permissionMode: mode });
-          case "pragma.runtime.claude-code":
-            return createClaudeCodeRuntime({ ...common, permissionMode });
-          case "pragma.runtime.qodercli":
-            return createQoderCliRuntime({ ...common, permissionMode });
-          case "pragma.runtime.antigravity":
-            return createAntigravityRuntime({
-              ...common,
-              permissionMode: mode,
-              authenticationMode: "auto",
-            });
-          default:
-            throw new Error(`Runtime adapter factory is not registered: ${adapter.id}.`);
-        }
       },
+      create: (environment, context) =>
+        createAdapter(environment, context, environmentSettings.getSync().policy),
     }),
   );
+
+  function createAdapter(
+    environment: Parameters<RuntimeEnvironmentAdapterFactory["create"]>[0],
+    context: Parameters<RuntimeEnvironmentAdapterFactory["create"]>[1],
+    policy: ReturnType<typeof environmentSettings.getSync>["policy"],
+  ) {
+    const adapter = environment.adapter;
+    assertEmptyBuiltInRuntimeConfig(environment);
+    const mode = context?.toolPermissionMode ?? "request-approval";
+    const permissionMode =
+      mode === "request-approval"
+        ? "default"
+        : mode === "auto-approve"
+          ? "auto"
+          : "bypassPermissions";
+    const common = {
+      descriptor: { id: environment.id, displayName: environment.displayName },
+      env: resolveLocalHostRuntimeProcessEnvironment(process.env, adapter.id, policy),
+      tokenCounter,
+      modelCatalogCacheRoot: join(pragmaHome, "cache"),
+    };
+    switch (adapter.id) {
+      case "pragma.runtime.pi":
+        return createPiRuntime({ ...common, modelProviders: configuration.modelProviders });
+      case "pragma.runtime.codex":
+        return createCodexRuntime({
+          ...common,
+          sandboxMode: mode === "full-access" ? "danger-full-access" : "workspace-write",
+          approvalPolicy: mode === "full-access" ? "never" : "on-request",
+        });
+      case "pragma.runtime.opencode":
+        return createOpenCodeRuntime({ ...common, permissionMode: mode });
+      case "pragma.runtime.claude-code":
+        return createClaudeCodeRuntime({ ...common, permissionMode });
+      case "pragma.runtime.qodercli":
+        return createQoderCliRuntime({ ...common, permissionMode });
+      case "pragma.runtime.antigravity":
+        return createAntigravityRuntime({
+          ...common,
+          permissionMode: mode,
+          authenticationMode: "auto",
+        });
+      default:
+        throw new Error(`Runtime adapter factory is not registered: ${adapter.id}.`);
+    }
+  }
   const runtimes = createRuntimeEnvironmentService({
     store: configuration.environments,
     factories,
-    getMaterializationCacheKey: () => JSON.stringify(environmentSettings.getSync()),
   });
 
   // Read support for Contexts written by the previous CLI composition. This is
   // lazy and resolve-only: it cannot create new static bindings or change IDs.
-  let legacy: ReturnType<typeof createLocalHostRuntimeResolver> | undefined;
-  const legacyRuntimes = () =>
-    (legacy ??= createLocalHostRuntimeResolver({
+  const legacy = new Map<
+    ToolPermissionMode,
+    { key: string; resolver: ReturnType<typeof createLocalHostRuntimeResolver> }
+  >();
+  const legacyRuntimes = (mode: ToolPermissionMode) => {
+    const settings = environmentSettings.getSync();
+    const key = JSON.stringify(settings);
+    const cached = legacy.get(mode);
+    if (cached?.key === key) return cached.resolver;
+    const legacyEnvironment = (id: string) =>
+      resolveLocalHostRuntimeProcessEnvironment(process.env, id, settings.policy);
+    const permissionMode =
+      mode === "request-approval"
+        ? "default"
+        : mode === "auto-approve"
+          ? "auto"
+          : "bypassPermissions";
+    const resolver = createLocalHostRuntimeResolver({
       defaultRuntimeId: "codex-local",
       runtimeAliases: { codex: "codex-local" },
       runtimes: [
         createCodexRuntime({
           env: legacyEnvironment("pragma.runtime.codex"),
           tokenCounter,
-          sandboxMode: "workspace-write",
-          approvalPolicy: "on-request",
+          sandboxMode: mode === "full-access" ? "danger-full-access" : "workspace-write",
+          approvalPolicy: mode === "full-access" ? "never" : "on-request",
         }),
         createOpenCodeRuntime({
           env: legacyEnvironment("pragma.runtime.opencode"),
           tokenCounter,
-          permissionMode: "request-approval",
+          permissionMode: mode,
         }),
         createClaudeCodeRuntime({
           env: legacyEnvironment("pragma.runtime.claude-code"),
           tokenCounter,
-          permissionMode: "default",
+          permissionMode,
         }),
         createQoderCliRuntime({
           env: legacyEnvironment("pragma.runtime.qodercli"),
           tokenCounter,
-          permissionMode: "default",
+          permissionMode,
         }),
         createAntigravityRuntime({
           env: legacyEnvironment("pragma.runtime.antigravity"),
           tokenCounter,
-          permissionMode: "request-approval",
+          permissionMode: mode,
         }),
         createPiRuntime({ env: legacyEnvironment("pragma.runtime.pi"), tokenCounter }),
       ],
-    }));
-  const legacyEnvironment = (id: string) =>
-    resolveLocalHostRuntimeProcessEnvironment(
-      process.env,
-      id,
-      environmentSettings.getSync().policy,
-    );
-  const compatible = (current: Parameters<typeof withExactLegacyRuntimeBindings>[0]["current"]) =>
-    withExactLegacyRuntimeBindings({ current, legacy: legacyRuntimes });
+    });
+    legacy.set(mode, { key, resolver });
+    return resolver;
+  };
+  const compatible = (
+    current: Parameters<typeof withExactLegacyRuntimeBindings>[0]["current"],
+    mode: ToolPermissionMode = "request-approval",
+  ) => withExactLegacyRuntimeBindings({ current, legacy: () => legacyRuntimes(mode) });
 
   return createLocalHostNodeApplication({
     pragmaHome,
     runtimes: compatible(runtimes),
-    runtimesForToolPermissionMode: (mode) => compatible(runtimes.forToolPermissionMode(mode)),
+    runtimesForToolPermissionMode: (mode) => compatible(runtimes.forToolPermissionMode(mode), mode),
     projectId: process.env["PRAGMA_PROJECT_ID"]?.trim() || undefined,
     client: {
       surface: "cli",
