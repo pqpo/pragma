@@ -18,19 +18,16 @@ import {
   WorkflowLayoutSchema,
   type CoreAssetSyncItem,
 } from "../../../shared/contracts/index.ts";
-import type { CapabilityStore } from "../capabilities/capability-store.ts";
-import { scanSkillWorkingTree } from "../capabilities/skill-revision-draft-store.ts";
-import type { ContextStoreStore } from "../context-stores/context-store-store.ts";
-import { hashSnapshotContent } from "../context-stores/context-store-store.ts";
-import { referencedPragmaResourceRefs } from "../projects/pragma-resource-references.ts";
-import {
-  PragmaProjectStoreError,
-  type PragmaProjectStore,
-} from "../projects/pragma-project-store.ts";
+import type { CapabilityStore } from "@pragma/local-host/deployment";
+import { scanSkillWorkingTree } from "@pragma/local-host/deployment";
+import type { ContextStoreStore } from "@pragma/local-host/deployment";
+import { hashSnapshotContent } from "@pragma/local-host/deployment";
+import { referencedPragmaResourceRefs } from "@pragma/local-host/deployment";
+import { PragmaProjectStoreError, type PragmaProjectStore } from "@pragma/local-host/deployment";
 import {
   WorkflowLayoutConflictError,
   type WorkflowLayoutStore,
-} from "../projects/workflow-layout-store.ts";
+} from "@pragma/local-host/deployment";
 
 import {
   bindExistingDesktopCapabilityResource,
@@ -49,7 +46,7 @@ import {
   appendTransferredKnowledge,
   SkillDataSchema,
   KnowledgeDataSchema,
-} from "./asset-transfer-payloads.ts";
+} from "@pragma/local-host/deployment";
 import { fingerprint } from "./asset-transfer-fingerprint.ts";
 export const NAME_RESOLUTION_ERROR_CODE = "core_asset_sync.name_unresolved";
 export interface CoreAssetSyncNameResolutionIssue {

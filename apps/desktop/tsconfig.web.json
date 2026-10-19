@@ -8,6 +8,7 @@
   "include": [
     "src/renderer/src/**/*",
     "scripts/fixtures/mission-rename-ui.tsx",
+    "scripts/fixtures/bundle-recovery-ui.tsx",
     "src/preload/index.d.ts",
     "src/shared/**/*"
   ]

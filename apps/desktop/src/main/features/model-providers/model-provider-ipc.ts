@@ -3,7 +3,10 @@ import { listPiCompatibilityProfiles } from "@pragma/runtime-pi";
 
 import { testProviderModel } from "./model-connectivity.ts";
 import { discoverProviderModels } from "./model-discovery.ts";
-import { ModelProviderStoreError, type ModelProviderStore } from "./model-provider-store.ts";
+import {
+  createModelConnectionService,
+  type ModelProviderStore,
+} from "@pragma/local-host/deployment";
 import {
   CreateModelProviderSchema,
   DeleteModelProviderSchema,
@@ -15,83 +18,38 @@ import {
 export function installModelProviderHandlers(
   store: ModelProviderStore,
   options: {
+    readonly runtimes?: import("@pragma/local-host/deployment").RuntimeEnvironmentService;
+    readonly project?: Pick<import("@pragma/local-host/deployment").PragmaProjectStore, "get">;
+    readonly externalResources?: () => readonly import("@pragma/interpreter/ast").PragmaResource[];
     readonly beforeConnectionChange?: () => void;
-    readonly isProviderReferenced?: (providerId: string) => Promise<boolean>;
   } = {},
 ): void {
+  const service = createModelConnectionService({
+    store,
+    discover: discoverProviderModels,
+    test: testProviderModel,
+    ...options,
+  });
   ipcMain.handle("model-providers:settings", () => store.getSnapshot());
   ipcMain.handle("model-providers:compatibility-profiles", () => listPiCompatibilityProfiles());
   ipcMain.handle("model-providers:list", () => store.list());
   ipcMain.handle("model-providers:create", (_event, input: unknown) =>
-    store.create(CreateModelProviderSchema.parse(input)),
+    service.create(CreateModelProviderSchema.parse(input)),
   );
-  ipcMain.handle("model-providers:update", async (_event, input: unknown) => {
-    const parsed = UpdateModelProviderSchema.parse(input);
-    options.beforeConnectionChange?.();
-    return await store.update(parsed);
-  });
-  ipcMain.handle("model-providers:delete", async (_event, input: unknown) => {
-    const id = DeleteModelProviderSchema.parse(input).id;
-    if (await options.isProviderReferenced?.(id)) {
-      throw new Error("This provider is used by a Runtime Profile and cannot be deleted.");
-    }
-    options.beforeConnectionChange?.();
-    await store.remove(id);
-  });
-  ipcMain.handle("model-providers:reset", async () => {
-    options.beforeConnectionChange?.();
-    return await store.reset();
-  });
-  ipcMain.handle("model-providers:discover", async (_event, input: unknown) => {
-    const request = DiscoverProviderModelsSchema.parse(input);
-    let apiKey = request.apiKey ?? "";
-    if (apiKey === "" && request.providerId !== undefined) {
-      try {
-        apiKey = await store.resolveDiscoveryApiKey(request.providerId, request);
-      } catch (error) {
-        if (error instanceof ModelProviderStoreError && error.code === "provider_not_found") {
-          return {
-            ok: false,
-            models: [],
-            message:
-              "This provider was removed while it was being configured. Return to the provider list and add or select it again.",
-            source: "manual" as const,
-          };
-        }
-        throw error;
-      }
-    }
-    return await discoverProviderModels({ ...request, apiKey });
-  });
-  ipcMain.handle("model-providers:test", async (_event, input: unknown) => {
-    const request = ModelConnectionTestRequestSchema.parse(input);
-    try {
-      const resolved = await store.resolveProviderWithRevision(request.providerId);
-      const provider = resolved.provider;
-      const model =
-        request.modelId === undefined
-          ? provider.models[0]
-          : provider.models.find((candidate) => candidate.id === request.modelId);
-      if (model === undefined) {
-        return {
-          ok: false,
-          code: "model_unavailable" as const,
-          message: "The model is not configured for this provider.",
-        };
-      }
-      const result = await testProviderModel({
-        provider,
-        model: { ...model, capabilitiesSource: "provider" },
-        ...(request.thinkingLevel === undefined ? {} : { thinkingLevel: request.thinkingLevel }),
-      });
-      await store.recordVerification(request.providerId, resolved.revision, result);
-      return result;
-    } catch (error) {
-      return {
-        ok: false,
-        code: "not_configured" as const,
-        message: error instanceof Error ? error.message : "The provider could not be loaded.",
-      };
-    }
-  });
+  ipcMain.handle("model-providers:update", (_event, input: unknown) =>
+    service.update(UpdateModelProviderSchema.parse(input), { scope: "shared" }),
+  );
+  ipcMain.handle("model-providers:delete", (_event, input: unknown) =>
+    service.remove(DeleteModelProviderSchema.parse(input).id),
+  );
+  ipcMain.handle("model-providers:reset", () => service.reset());
+  ipcMain.handle("model-providers:discover", (_event, input: unknown) =>
+    service.discover({
+      ...DiscoverProviderModelsSchema.parse(input),
+      apiKey: DiscoverProviderModelsSchema.parse(input).apiKey ?? "",
+    }),
+  );
+  ipcMain.handle("model-providers:test", (_event, input: unknown) =>
+    service.test(ModelConnectionTestRequestSchema.parse(input)),
+  );
 }

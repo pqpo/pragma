@@ -1690,8 +1690,13 @@ export const studio = {
   bundleSaveBindings: "儲存綁定",
   bundleSavingBindings: "正在儲存…",
   bundleReady: "「{{name}}」已經可以執行。",
+  bundleImportIncomplete: "安裝尚未完成，請重新檢查狀態以繼續。",
   bundleImportFailed: "Bundle 匯入失敗。",
   bundleDiscardImport: "放棄本次匯入",
+  bundleDiscardInstallationDescription:
+    "僅清理本次匯入建立的資料，然後重新檢查 Bundle 並選擇設定。資源已被編輯、更新過既有資料或仍被使用時，清理會停止。",
+  bundleDiscardBlocked:
+    "清理或重新檢查未能完成：{{reason}} 若清理被阻止，安裝記錄仍會保留。請在工作室檢查相關資源，或還原已知的專案備份；請勿手動刪除儲存檔案。",
   bundleContinue: "繼續",
   bundleBack: "返回",
   bundleReview: "檢查匯入內容",

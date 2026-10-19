@@ -14,9 +14,9 @@ import {
   createDesktopCapabilityResource,
   createDesktopRuntimeOptionResource,
 } from "../../platform/bindings/desktop-bound-resource-policy.ts";
-import type { CapabilityStore } from "../capabilities/capability-store.ts";
+import type { CapabilityStore } from "@pragma/local-host/deployment";
 import { listCapabilitiesWithBuiltIns } from "../capabilities/built-in-capabilities.ts";
-import type { PragmaProjectStore } from "../projects/pragma-project-store.ts";
+import type { PragmaProjectStore } from "@pragma/local-host/deployment";
 import { getRuntimeAvailability } from "../runtimes/runtime-availability.ts";
 import type { RuntimeEnvironmentService } from "../runtimes/runtime-environment-service.ts";
 import type { DesktopSystemExpertRegistry } from "../experts/system-expert-registry.ts";

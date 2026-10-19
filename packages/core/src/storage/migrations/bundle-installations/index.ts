@@ -1,8 +1,15 @@
-import { defineStateMigrationChain } from "../../state-migration.ts";
 import {
-  BundleInstallationsCatalogV8Schema,
-  type BundleInstallationsCatalogV8,
-} from "./schemas/v8.ts";
+  BundleInstallationsCatalogV9Schema,
+  type BundleInstallationsCatalogV9,
+} from "./schemas/v9.ts";
+import { bundleInstallationsV8ToV9Step } from "./steps/v8-to-v9.ts";
+export {
+  BundleInstallationsCatalogV9Schema,
+  BundleInstallationTransactionSchema,
+} from "./schemas/v9.ts";
+export { bundleInstallationsV8ToV9Step } from "./steps/v8-to-v9.ts";
+import { defineStateMigrationChain } from "../../state-migration.ts";
+
 import { bundleInstallationsV1ToV2Step } from "./steps/v1-to-v2.ts";
 import { bundleInstallationsV2ToV3Step } from "./steps/v2-to-v3.ts";
 import { bundleInstallationsV3ToV4Step } from "./steps/v3-to-v4.ts";
@@ -28,10 +35,10 @@ export { bundleInstallationsV6ToV7Step } from "./steps/v6-to-v7.ts";
 export { bundleInstallationsV7ToV8Step } from "./steps/v7-to-v8.ts";
 
 export const bundleInstallationsMigrationChain =
-  defineStateMigrationChain<BundleInstallationsCatalogV8>({
+  defineStateMigrationChain<BundleInstallationsCatalogV9>({
     family: "pragma.bundle-installations",
-    currentVersion: 8,
-    currentSchema: BundleInstallationsCatalogV8Schema,
+    currentVersion: 9,
+    currentSchema: BundleInstallationsCatalogV9Schema,
     steps: [
       bundleInstallationsV1ToV2Step,
       bundleInstallationsV2ToV3Step,
@@ -40,5 +47,6 @@ export const bundleInstallationsMigrationChain =
       bundleInstallationsV5ToV6Step,
       bundleInstallationsV6ToV7Step,
       bundleInstallationsV7ToV8Step,
+      bundleInstallationsV8ToV9Step,
     ],
   });

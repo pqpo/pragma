@@ -1,7 +1,7 @@
 import { MissionExecutorRefSchema, PRAGMA_TEXT_LIMITS, pragmaUnicodeLength } from "@pragma/shared";
 import { z } from "zod";
 
-import { ContextStoreIdSchema } from "./context-stores.ts";
+import { ContextStoreIdSchema } from "@pragma/local-host/deployment-contracts";
 import { MissionWorkspaceSchema } from "./mission-base.ts";
 
 // Home projects are task presets, independent of the DSL Project revision aggregate.

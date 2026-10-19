@@ -14,12 +14,12 @@ import {
   PragmaExpertResourceSchema,
   canonicalPragmaResourceRef,
 } from "@pragma/interpreter/ast";
-import { createPragmaProjectStore } from "../projects/pragma-project-store.ts";
+import { createPragmaProjectStore } from "@pragma/local-host/deployment";
 import { createMissionCreator } from "../missions/mission-creator.ts";
 import { createDesktopMissionExecutionResources } from "../missions/desktop-mission-execution-resources.ts";
 import { createAutomationStore } from "../automations/automation-store.ts";
 import { createAutomationService } from "../automations/automation-service.ts";
-import { createContextStoreStore } from "../context-stores/context-store-store.ts";
+import { createContextStoreStore } from "@pragma/local-host/deployment";
 import { createHomeProjectStore } from "../missions/home-project-store.ts";
 import { createWorkspaceHistoryStore } from "../workspaces/workspace-history-store.ts";
 import { createDesktopPragmaAgentResourceCatalogPort } from "./pragma-agent-resource-adapter.ts";

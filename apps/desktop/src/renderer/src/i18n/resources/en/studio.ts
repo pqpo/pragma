@@ -1779,8 +1779,13 @@ export const studio = {
   bundleSaveBindings: "Save bindings",
   bundleSavingBindings: "Saving…",
   bundleReady: "“{{name}}” is ready to run.",
+  bundleImportIncomplete: "The installation has not completed. Check its state again to continue.",
   bundleImportFailed: "The bundle could not be imported.",
   bundleDiscardImport: "Discard import",
+  bundleDiscardInstallationDescription:
+    "Remove only data created by this import, then inspect the Bundle again to choose new settings. Cleanup will stop if resources were edited, updated existing data, or are still in use.",
+  bundleDiscardBlocked:
+    "Cleanup or reinspection could not finish: {{reason}} If cleanup was blocked, the installation is preserved. Review its resources in Studio, or restore a known project backup; do not delete its storage manually.",
   bundleContinue: "Continue",
   bundleBack: "Back",
   bundleReview: "Review import",

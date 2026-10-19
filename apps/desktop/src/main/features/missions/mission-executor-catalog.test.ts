@@ -5,8 +5,8 @@ import type { PragmaResource } from "@pragma/interpreter/ast";
 import { describe, expect, it } from "vitest";
 
 import { createMissionExecutorCatalog } from "./mission-executor-catalog.ts";
-import { ModelProviderStoreError } from "../model-providers/model-provider-store.ts";
-import type { PragmaProjectStore } from "../projects/pragma-project-store.ts";
+import { ModelProviderStoreError } from "@pragma/local-host/deployment";
+import type { PragmaProjectStore } from "@pragma/local-host/deployment";
 import type { DesktopSystemExpertRegistry } from "../experts/system-expert-registry.ts";
 
 describe("Mission executor model options", () => {

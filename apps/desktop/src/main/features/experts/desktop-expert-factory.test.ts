@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import type { Capability, ExpertDefinition } from "../../../shared/contracts/index.ts";
 import type { CapabilityCredentialStore } from "../capabilities/capability-credential-store.ts";
-import type { CapabilityStore } from "../capabilities/capability-store.ts";
+import type { CapabilityStore } from "@pragma/local-host/deployment";
 import {
   assertSelectedMcpToolsAvailable,
   resolveExpertCapabilities,

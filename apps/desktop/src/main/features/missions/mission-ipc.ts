@@ -66,7 +66,7 @@ import {
 import {
   ContextStoreMissionMountCheckSchema,
   ContextStoreMissionMountCheckResultSchema,
-} from "../../../shared/contracts/context-stores.ts";
+} from "@pragma/local-host/deployment-contracts";
 import { canonicalPragmaResourceRef, type PragmaExpertTeamResource } from "@pragma/interpreter/ast";
 import type {
   MissionCommandOutcomeNotification,
@@ -76,7 +76,7 @@ import { MissionStoreError, type MissionStore } from "@pragma/local-host";
 import {
   withOpenPragmaProjectRevision,
   type PragmaProjectStore,
-} from "../projects/pragma-project-store.ts";
+} from "@pragma/local-host/deployment";
 import type { DesktopSystemExpertRegistry } from "../experts/system-expert-registry.ts";
 import {
   expertTeamCoordinatorMentionCandidate,

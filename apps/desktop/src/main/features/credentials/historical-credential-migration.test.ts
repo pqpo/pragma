@@ -13,7 +13,7 @@ import {
   writeHistoricalPluginCredentialsV1,
 } from "./historical-credential-writers.fixture.ts";
 import { createCapabilityCredentialStore } from "../capabilities/capability-credential-store.ts";
-import { createModelProviderStore } from "../model-providers/model-provider-store.ts";
+import { createModelProviderStore } from "@pragma/local-host/deployment";
 import { createPluginCredentialStore } from "../plugins/plugin-credential-store.ts";
 import { TestKeychain, createTestSecretStore } from "./test-secret-store.ts";
 

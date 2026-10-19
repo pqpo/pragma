@@ -85,6 +85,43 @@ async function lintStdin(source: string, filename: string): Promise<string> {
 }
 
 describe("Local Host boundary guards", () => {
+  it("keeps deployment contracts browser-safe while exposing only their safe renderer entry", async () => {
+    const file = "packages/local-host/src/deployment-contracts/boundary.ts";
+    for (const dependency of [
+      "node:fs",
+      "fs",
+      "@pragma/core",
+      "@pragma/local-host/deployment",
+      "../deployment/index.ts",
+      "./nested/../../deployment/index.ts",
+    ]) {
+      expect(await lintStdin(`import ${JSON.stringify(dependency)};\n`, file)).toContain(
+        "Deployment contracts must remain browser-safe",
+      );
+    }
+    for (const dependency of [
+      "zod",
+      "@pragma/shared",
+      "@pragma/interpreter/ast",
+      "@pragma/built-in-agents/contracts",
+      "./bundles.ts",
+    ]) {
+      expect(await lintStdin(`import ${JSON.stringify(dependency)};\n`, file)).toBe("");
+    }
+    expect(
+      await lintStdin(
+        'import "@pragma/local-host/deployment-contracts";\n',
+        "apps/desktop/src/renderer/legal.ts",
+      ),
+    ).toBe("");
+    expect(
+      await lintStdin(
+        'import "@pragma/local-host/deployment";\n',
+        "apps/desktop/src/renderer/illegal.ts",
+      ),
+    ).toContain("Desktop preload, renderer, and shared code");
+  });
+
   it("rejects a concrete Runtime import from Local Host", async () => {
     expect(
       await lintStdin('import "@pragma/runtime-codex";\n', "packages/local-host/src/illegal.ts"),

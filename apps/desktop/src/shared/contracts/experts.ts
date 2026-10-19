@@ -14,9 +14,12 @@ import {
   ExpertInstructionsSchema,
   ExpertModelConfigSchema,
   ExpertScopeSchema,
-} from "./capabilities.ts";
-import { ExpertContextStoreMountSchema } from "./context-stores.ts";
-import { ExpertPluginReferenceSchema, ExpertToolApprovalModeSchema } from "./plugins.ts";
+} from "@pragma/local-host/deployment-contracts";
+import { ExpertContextStoreMountSchema } from "@pragma/local-host/deployment-contracts";
+import {
+  ExpertPluginReferenceSchema,
+  ExpertToolApprovalModeSchema,
+} from "@pragma/local-host/deployment-contracts";
 
 export const ExpertExecutionProfileSchema = z.discriminatedUnion("mode", [
   z.object({ mode: z.literal("pinned"), model: ExpertModelConfigSchema }),

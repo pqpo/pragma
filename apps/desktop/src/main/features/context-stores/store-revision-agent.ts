@@ -17,7 +17,7 @@ import type { ContextStoreRevisionProfile } from "../../../shared/contracts/inde
 import { resolveSystemExpertRuntimeDefaults } from "../experts/system-expert-runtime.ts";
 import type { LocalHostMissionApplication } from "@pragma/local-host";
 import type { MissionStore } from "@pragma/local-host";
-import type { PragmaProjectStore } from "../projects/pragma-project-store.ts";
+import type { PragmaProjectStore } from "@pragma/local-host/deployment";
 import type { ContextStoreRevisionGenerator } from "./context-store-revision-service.ts";
 
 export interface DesktopStoreRevisionAgent {

@@ -39,7 +39,7 @@ import {
   ContextStoreStoreError,
   hashSnapshotContent,
   type ContextStoreStore,
-} from "./context-store-store.ts";
+} from "@pragma/local-host/deployment";
 import {
   ContextStoreRevisionJobV1Schema,
   ContextStoreRevisionJobV2Schema,

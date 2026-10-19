@@ -9,7 +9,7 @@ import { describe, expect, it, vi } from "vitest";
 
 import { MissionSchema } from "../../../shared/contracts/index.ts";
 import type { DesktopMemoryPlane } from "../memory/desktop-memory-plane.ts";
-import type { PragmaProjectStore } from "../projects/pragma-project-store.ts";
+import type { PragmaProjectStore } from "@pragma/local-host/deployment";
 import type { DesktopSystemExpertRegistry } from "../experts/system-expert-registry.ts";
 import type { LocalHostMissionApplication } from "@pragma/local-host";
 import type { MissionStore } from "@pragma/local-host";

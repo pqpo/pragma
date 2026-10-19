@@ -4,7 +4,7 @@ import {
   CreateContextStoreFileSchema,
   CreateContextStoreFolderSchema,
   RenameContextStoreEntrySchema,
-} from "./context-stores.ts";
+} from "@pragma/local-host/deployment-contracts";
 
 const STORE_ID = "ec827580-bcab-4f25-b03b-7126b8d3e828";
 

@@ -1,12 +1,12 @@
 import { z } from "zod";
 import { MAX_SKILL_PACKAGE_BYTES } from "@pragma/shared";
 
-import { CapabilityIdSchema } from "./capabilities.ts";
+import { CapabilityIdSchema } from "@pragma/local-host/deployment-contracts";
 import {
   CONTEXT_STORE_FILE_MAX_BYTES,
   ContextStoreIdSchema,
   ContextStoreSnapshotFileSchema,
-} from "./context-stores.ts";
+} from "@pragma/local-host/deployment-contracts";
 import {
   DesktopBundleRegistryBranchSchema,
   DesktopBundleRegistryRemoteSchema,

@@ -1,0 +1,503 @@
+import { BundleInstallationTransactionSchema } from "@pragma/shared";
+import {
+  PragmaBundleRootRefSchema,
+  PragmaContextStoreRefSchema,
+  PragmaResourceRefSchema,
+} from "@pragma/interpreter/ast";
+import { PRAGMA_TEXT_LIMITS, PragmaAvatarIdSchema } from "@pragma/shared";
+import { z } from "zod";
+
+import { CapabilityIdSchema } from "./capabilities.ts";
+import { ContextStoreIdSchema } from "./context-stores.ts";
+
+export const PragmaBundleModuleOptionsSchema = z
+  .object({
+    capabilities: z.boolean().default(true),
+    plugins: z.boolean().default(true),
+    knowledgeBases: z.boolean().default(false),
+    flowLayouts: z.boolean().default(true),
+  })
+  .strict();
+
+export const PreparePragmaBundleExportSchema = z
+  .object({
+    rootRef: PragmaBundleRootRefSchema,
+    projectRevision: z.number().int().positive(),
+  })
+  .strict();
+
+export const PragmaBundleExportPreviewSchema = z
+  .object({
+    root: z
+      .object({
+        ref: PragmaBundleRootRefSchema,
+        kind: z.enum(["Expert", "ExpertTeam", "Flow", "ContextStore", "Capability"]),
+        name: z.string().trim().min(1).max(200),
+        description: z.string().trim().min(1).max(8_000),
+        tags: z
+          .array(z.string().trim().min(1).max(PRAGMA_TEXT_LIMITS.defaultMetadata.tag))
+          .max(PRAGMA_TEXT_LIMITS.defaultMetadata.tags),
+        avatarId: PragmaAvatarIdSchema.optional(),
+        activeRevision: z.number().int().positive().optional(),
+      })
+      .strict(),
+    projectRevision: z.number().int().positive(),
+    resourceCount: z.number().int().positive(),
+    capabilityCount: z.number().int().nonnegative(),
+    pluginCount: z.number().int().nonnegative(),
+    knowledgeBaseCount: z.number().int().nonnegative(),
+    hasFlowLayouts: z.boolean(),
+    defaults: PragmaBundleModuleOptionsSchema,
+  })
+  .strict();
+
+export const ExportPragmaBundleSchema = PreparePragmaBundleExportSchema.extend({
+  modules: PragmaBundleModuleOptionsSchema,
+}).strict();
+
+export const PragmaBundleExportResultSchema = z
+  .object({
+    cancelled: z.boolean(),
+    path: z.string().trim().min(1).max(2_000).optional(),
+    bundleFingerprint: z
+      .string()
+      .regex(/^[a-f0-9]{64}$/)
+      .optional(),
+    projectFingerprint: z
+      .string()
+      .regex(/^[a-f0-9]{64}$/)
+      .optional(),
+  })
+  .strict();
+
+export const InspectPragmaBundleSchema = z
+  .object({
+    sourcePath: z.string().trim().min(1).max(2_000),
+    rootRef: PragmaBundleRootRefSchema.optional(),
+  })
+  .strict();
+
+export const PragmaBundlePickResultSchema = z
+  .object({
+    cancelled: z.boolean(),
+    path: z.string().trim().min(1).max(2_000).optional(),
+  })
+  .strict();
+
+export const PragmaBundleConflictMatchSchema = z
+  .object({
+    kind: z.enum(["identity", "name"]),
+    localRef: PragmaResourceRefSchema,
+    localName: z.string().trim().min(1).max(200),
+  })
+  .strict();
+
+export const PragmaBundleConflictSchema = z
+  .object({
+    ref: PragmaResourceRefSchema,
+    resourceKind: z.enum([
+      "Expert",
+      "ExpertTeam",
+      "Flow",
+      "Evaluation",
+      "Automation",
+      "Capability",
+      "ContextStore",
+      "RuntimeProfile",
+      "Evaluation",
+    ]),
+    importedName: z.string().trim().min(1).max(200),
+    matches: z.array(PragmaBundleConflictMatchSchema).min(1).max(2),
+    updateAllowed: z.boolean(),
+    updateBlockedReason: z.string().trim().min(1).max(2_000).optional(),
+    targetRevision: z.number().int().positive().optional(),
+    targetSnapshotHash: z
+      .string()
+      .regex(/^[a-f0-9]{64}$/)
+      .optional(),
+  })
+  .strict()
+  .superRefine((conflict, context) => {
+    if ((conflict.targetRevision === undefined) !== (conflict.targetSnapshotHash === undefined)) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["targetRevision"],
+        message: "Knowledge-base target revision and snapshot hash must be provided together.",
+      });
+    }
+  });
+
+export const PragmaBundleAssetConflictCandidateSchema = z
+  .object({
+    assetId: z.union([CapabilityIdSchema, ContextStoreIdSchema]),
+    name: z.string().trim().min(1).max(200),
+    revision: z.number().int().positive(),
+    fingerprint: z.string().regex(/^[a-f0-9]{64}$/),
+    boundResourceRef: PragmaResourceRefSchema.optional(),
+  })
+  .strict();
+
+export const PragmaBundleAssetConflictSchema = z
+  .object({
+    resourceRef: PragmaResourceRefSchema,
+    assetKind: z.enum(["skill", "knowledge_base"]),
+    importedName: z.string().trim().min(1).max(200),
+    importedFingerprint: z.string().regex(/^[a-f0-9]{64}$/),
+    candidates: z.array(PragmaBundleAssetConflictCandidateSchema).min(1),
+  })
+  .strict();
+
+export const PragmaBundleDependencySummarySchema = z
+  .object({
+    kind: z.enum(["runtime", "capability", "context-store", "plugin", "secret"]),
+    ref: z.string().trim().min(1).max(500),
+    name: z.string().trim().min(1).max(200),
+    included: z.boolean(),
+  })
+  .strict();
+
+export const PragmaBundleDependencyStatusSchema = z.enum([
+  "ready",
+  "missing",
+  "invalid",
+  "action_required",
+]);
+
+export const PragmaBundleDependencyActionSchema = z.enum([
+  "none",
+  "choose_runtime",
+  "choose_capability",
+  "configure_capability",
+  "choose_knowledge_base",
+  "install_plugin",
+  "enter_secret",
+  "restore_or_replace",
+]);
+
+export const PragmaBundleDependencyReadinessSchema = z
+  .object({
+    id: z.string().trim().min(1).max(500),
+    kind: z.enum(["runtime", "capability", "context-store", "plugin", "secret"]),
+    resourceRef: z.string().trim().min(1).max(500),
+    name: z.string().trim().min(1).max(200),
+    status: PragmaBundleDependencyStatusSchema,
+    code: z.string().trim().min(1).max(100),
+    action: PragmaBundleDependencyActionSchema,
+    message: z.string().trim().min(1).max(4_000),
+    installationId: z.string().uuid().optional(),
+    capabilityKind: z.enum(["skill", "mcp_server", "http_service", "code_service"]).optional(),
+    targetId: z.string().trim().min(1).max(200).optional(),
+  })
+  .strict();
+
+export const PragmaBundleImportInspectionSchema = z
+  .object({
+    sourcePath: z.string().trim().min(1).max(2_000),
+    sourceName: z.string().trim().min(1).max(500),
+    bundleFingerprint: z.string().regex(/^[a-f0-9]{64}$/),
+    projectFingerprint: z.string().regex(/^[a-f0-9]{64}$/),
+    projectRevision: z.number().int().nonnegative(),
+    root: z
+      .object({
+        ref: PragmaBundleRootRefSchema,
+        kind: z.enum(["Expert", "ExpertTeam", "Flow", "ContextStore", "Capability"]),
+        name: z.string().trim().min(1).max(200),
+      })
+      .strict(),
+    roots: z
+      .array(
+        z
+          .object({
+            ref: PragmaBundleRootRefSchema,
+            kind: z.enum(["Expert", "ExpertTeam", "Flow", "ContextStore", "Capability"]),
+            name: z.string().trim().min(1).max(200),
+          })
+          .strict(),
+      )
+      .min(1),
+    createdAt: z.string().datetime(),
+    archiveBytes: z.number().int().positive(),
+    unpackedBytes: z.number().int().positive(),
+    fileCount: z.number().int().positive(),
+    resources: z.number().int().positive(),
+    dependencies: z.array(PragmaBundleDependencySummarySchema),
+    conflicts: z.array(PragmaBundleConflictSchema),
+    assetConflicts: z.array(PragmaBundleAssetConflictSchema).default([]),
+    requirements: z.array(
+      z
+        .object({
+          id: z.string().trim().min(1).max(500),
+          kind: z.enum(["runtime", "capability", "context-store", "plugin", "secret"]),
+          resourceRef: z.string().trim().min(1).max(500),
+          name: z.string().trim().min(1).max(200),
+          message: z.string().trim().min(1).max(4_000),
+          required: z.boolean(),
+          capabilityKind: z
+            .enum(["skill", "mcp_server", "http_service", "code_service"])
+            .optional(),
+          runtimeRequest: z
+            .object({
+              runtimeId: z.string().trim().min(1).max(200).optional(),
+              providerId: z.string().trim().min(1).max(200).optional(),
+              modelId: z.string().trim().min(1).max(200).optional(),
+              thinkingLevel: z.string().trim().min(1).max(100).optional(),
+            })
+            .strict()
+            .optional(),
+        })
+        .strict(),
+    ),
+    readiness: z.array(PragmaBundleDependencyReadinessSchema).default([]),
+    sameContentInstallationIds: z.array(z.string().uuid()),
+    alreadyInstalledId: z.string().uuid().optional(),
+  })
+  .strict();
+
+export const PragmaBundleConflictResolutionSchema = z
+  .object({
+    resourceRef: PragmaResourceRefSchema,
+    action: z.enum(["update", "copy", "keep_local"]),
+    expectedTargetRevision: z.number().int().positive().optional(),
+    expectedTargetSnapshotHash: z
+      .string()
+      .regex(/^[a-f0-9]{64}$/)
+      .optional(),
+  })
+  .strict()
+  .superRefine((resolution, context) => {
+    if (
+      (resolution.expectedTargetRevision === undefined) !==
+      (resolution.expectedTargetSnapshotHash === undefined)
+    ) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["expectedTargetRevision"],
+        message: "Knowledge-base CAS revision and snapshot hash must be provided together.",
+      });
+    }
+  });
+
+export const PragmaBundleAssetConflictResolutionSchema = z
+  .object({
+    resourceRef: PragmaResourceRefSchema,
+    assetKind: z.enum(["skill", "knowledge_base"]),
+    action: z.enum(["update", "copy", "keep_local"]),
+    targetAssetId: z.union([CapabilityIdSchema, ContextStoreIdSchema]).optional(),
+    expectedTarget: z
+      .object({
+        revision: z.number().int().positive(),
+        fingerprint: z.string().regex(/^[a-f0-9]{64}$/),
+      })
+      .strict()
+      .optional(),
+  })
+  .strict()
+  .superRefine((resolution, context) => {
+    const targetsExisting = resolution.action === "update" || resolution.action === "keep_local";
+    if (targetsExisting && resolution.targetAssetId === undefined) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["targetAssetId"],
+        message: "An existing local asset must be selected.",
+      });
+    }
+    if (targetsExisting && resolution.expectedTarget === undefined) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["expectedTarget"],
+        message: "The selected local asset version is required.",
+      });
+    }
+    if (
+      !targetsExisting &&
+      (resolution.targetAssetId !== undefined || resolution.expectedTarget !== undefined)
+    ) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["targetAssetId"],
+        message: "Copy imports cannot target an existing local asset.",
+      });
+    }
+  });
+
+const PragmaBundleKnowledgeBaseUpdateSchema = z
+  .object({
+    sourceRef: PragmaContextStoreRefSchema,
+    targetRef: PragmaContextStoreRefSchema,
+    storeId: z.string().uuid(),
+    baseRevision: z.number().int().positive().optional(),
+    baseSnapshotHash: z
+      .string()
+      .regex(/^[a-f0-9]{64}$/)
+      .optional(),
+    importedSnapshotHash: z.string().regex(/^[a-f0-9]{64}$/),
+    importedName: z.string().trim().min(1).max(200).optional(),
+    importedDescription: z.string().trim().max(2_000).optional(),
+    phase: z.enum(["prepared", "applied"]),
+  })
+  .strict()
+  .superRefine((update, context) => {
+    if ((update.baseRevision === undefined) !== (update.baseSnapshotHash === undefined)) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["baseRevision"],
+        message: "Knowledge-base update baseline revision and snapshot hash must be paired.",
+      });
+    }
+  });
+
+export const BundleRuntimeResolutionSchema = z
+  .object({
+    requirementId: z.string().trim().min(1).max(160),
+    resourceRef: PragmaResourceRefSchema,
+    runtimeId: z.string().trim().min(1).max(200),
+    providerId: z.string().trim().min(1).max(200),
+    modelId: z.string().trim().min(1).max(200),
+    thinkingLevel: z.string().trim().min(1).max(100).optional(),
+  })
+  .strict();
+
+export const BundleCapabilityResolutionSchema = z
+  .object({
+    requirementId: z.string().trim().min(1).max(160),
+    resourceRef: PragmaResourceRefSchema,
+    capabilityId: CapabilityIdSchema,
+  })
+  .strict();
+
+export const BundleContextStoreResolutionSchema = z
+  .object({
+    requirementId: z.string().trim().min(1).max(160),
+    resourceRef: PragmaResourceRefSchema,
+    storeId: z.string().uuid(),
+  })
+  .strict();
+
+export const StartPragmaBundleImportSchema = z
+  .object({
+    requestId: z.string().uuid().optional(),
+    sourcePath: z.string().trim().min(1).max(2_000),
+    rootRef: PragmaBundleRootRefSchema,
+    expectedFingerprint: z.string().regex(/^[a-f0-9]{64}$/),
+    expectedProjectFingerprint: z.string().regex(/^[a-f0-9]{64}$/),
+    expectedProjectRevision: z.number().int().nonnegative(),
+    conflicts: z.array(PragmaBundleConflictResolutionSchema).default([]),
+    assetConflicts: z.array(PragmaBundleAssetConflictResolutionSchema).optional(),
+    runtimes: z.array(BundleRuntimeResolutionSchema).default([]),
+    capabilities: z.array(BundleCapabilityResolutionSchema).default([]),
+    contextStores: z.array(BundleContextStoreResolutionSchema).default([]),
+    secrets: z.record(z.string(), z.string().min(1).max(10_000)).default({}),
+  })
+  .strict();
+
+export const PragmaBundlePendingDependencySchema = z
+  .object({
+    id: z.string().trim().min(1).max(500),
+    kind: z.enum(["runtime", "capability", "context-store", "plugin", "secret"]),
+    resourceRef: z.string().trim().min(1).max(500),
+    name: z.string().trim().min(1).max(200),
+    message: z.string().trim().min(1).max(4_000),
+    capabilityKind: z.enum(["skill", "mcp_server", "http_service", "code_service"]).optional(),
+    status: PragmaBundleDependencyStatusSchema.optional(),
+    code: z.string().trim().min(1).max(100).optional(),
+    action: PragmaBundleDependencyActionSchema.optional(),
+    targetId: z.string().trim().min(1).max(200).optional(),
+  })
+  .strict();
+
+export const PragmaBundleInstallationSchema = z
+  .object({
+    schemaVersion: z.literal("pragma.bundle-installation/v9"),
+    transaction: BundleInstallationTransactionSchema.optional(),
+    bundleVersion: z.enum([
+      "pragma.desktop-bundle/v1",
+      "pragma.bundle/v1",
+      "pragma.bundle/v2",
+      "pragma.bundle/v3",
+    ]),
+    sourceProjectFingerprint: z
+      .string()
+      .regex(/^[a-f0-9]{64}$/)
+      .optional(),
+    id: z.string().uuid(),
+    bundleFingerprint: z.string().regex(/^[a-f0-9]{64}$/),
+    projectId: z.string().trim().min(1).max(120),
+    projectRevision: z.number().int().nonnegative(),
+    sourceRootRef: PragmaBundleRootRefSchema,
+    rootRef: PragmaBundleRootRefSchema,
+    rootName: z.string().trim().min(1).max(200),
+    rootKind: z.enum(["Expert", "ExpertTeam", "Flow", "ContextStore", "Capability"]),
+    resourceRefs: z.array(PragmaResourceRefSchema),
+    createdResourceRefs: z.array(PragmaResourceRefSchema),
+    createdCapabilityIds: z.array(CapabilityIdSchema).default([]),
+    createdContextStoreIds: z.array(z.string().uuid()).default([]),
+    createdPluginRefs: z.array(z.string().trim().min(1).max(500)).default([]),
+    conflictResolutions: z.array(PragmaBundleConflictResolutionSchema).default([]),
+    assetConflictResolutions: z.array(PragmaBundleAssetConflictResolutionSchema).default([]),
+    resourceMappings: z
+      .array(
+        z
+          .object({
+            sourceRef: PragmaResourceRefSchema,
+            targetRef: PragmaResourceRefSchema,
+          })
+          .strict(),
+      )
+      .default([]),
+    knowledgeBaseUpdate: PragmaBundleKnowledgeBaseUpdateSchema.optional(),
+    status: z.enum(["installing", "needs_setup", "ready", "failed"]),
+    pending: z.array(PragmaBundlePendingDependencySchema),
+    readiness: z.array(PragmaBundleDependencyReadinessSchema).default([]),
+    error: z.string().max(10_000).optional(),
+    errorCode: z
+      .string()
+      .regex(/^[a-z][a-z0-9_.-]{0,199}$/)
+      .optional(),
+    createdAt: z.string().datetime(),
+    updatedAt: z.string().datetime(),
+  })
+  .strict()
+  .superRefine((installation, context) => {
+    const update = installation.knowledgeBaseUpdate;
+    if (update === undefined) return;
+    if (
+      installation.rootKind !== "ContextStore" ||
+      update.sourceRef !== installation.sourceRootRef ||
+      update.targetRef !== installation.rootRef
+    ) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["knowledgeBaseUpdate"],
+        message: "Knowledge-base update journal must describe the installation root.",
+      });
+    }
+  });
+
+export function isInterruptedBundleInstallation(
+  installation: z.infer<typeof PragmaBundleInstallationSchema>,
+): boolean {
+  return (
+    installation.status === "installing" ||
+    installation.status === "failed" ||
+    (installation.transaction !== undefined && installation.transaction.phase !== "completed")
+  );
+}
+
+export const ResolvePragmaBundleInstallationSchema = z
+  .object({
+    installationId: z.string().uuid(),
+    baseRevision: z.number().int().nonnegative(),
+    runtimes: z.array(BundleRuntimeResolutionSchema).default([]),
+    capabilities: z.array(BundleCapabilityResolutionSchema).default([]),
+    contextStores: z.array(BundleContextStoreResolutionSchema).default([]),
+    secrets: z.record(z.string(), z.string().min(1).max(10_000)).default({}),
+  })
+  .strict();
+
+export const PragmaBundleInstallationActionSchema = z
+  .object({
+    installationId: z.string().uuid(),
+  })
+  .strict();
+
+export const RecheckPragmaBundleInstallationSchema = PragmaBundleInstallationActionSchema;

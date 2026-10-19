@@ -26,11 +26,11 @@ import {
 import { formatPragmaYaml, parsePragmaYaml } from "@pragma/interpreter";
 
 import type { Capability } from "../../../shared/contracts/index.ts";
-import { createPragmaProjectStore } from "../projects/pragma-project-store.ts";
+import { createPragmaProjectStore } from "@pragma/local-host/deployment";
 import { createDesktopPragmaAgentProjectPort } from "./pragma-agent-project-adapter.ts";
 import { createExpertDefinitionStore } from "../experts/expert-definition-store.ts";
 import { createDesktopSystemExpertRegistry } from "../experts/system-expert-registry.ts";
-import type { CapabilityStore } from "../capabilities/capability-store.ts";
+import type { CapabilityStore } from "@pragma/local-host/deployment";
 import type { RuntimeEnvironmentService } from "../runtimes/runtime-environment-service.ts";
 
 const temporaryRoots: string[] = [];

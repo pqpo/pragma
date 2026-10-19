@@ -38,7 +38,7 @@ import {
 import {
   withOpenPragmaProjectRevision,
   type PragmaProjectStore,
-} from "../projects/pragma-project-store.ts";
+} from "@pragma/local-host/deployment";
 import type { LocalHostMissionApplication } from "@pragma/local-host";
 import type { MissionStore } from "@pragma/local-host";
 

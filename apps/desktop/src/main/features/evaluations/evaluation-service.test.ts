@@ -6,7 +6,7 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 
 import { AgentEvaluationRunSchema } from "../../../shared/contracts/index.ts";
-import type { PragmaProjectStore } from "../projects/pragma-project-store.ts";
+import type { PragmaProjectStore } from "@pragma/local-host/deployment";
 import { createEvaluationService } from "./evaluation-service.ts";
 import { createEvaluationStore } from "./evaluation-store.ts";
 

@@ -6,7 +6,7 @@ import {
 } from "@pragma/evaluation/ast";
 import { PragmaAgentJudgeEvaluationResourceSchema } from "@pragma/interpreter/ast";
 
-import { ExpertModelConfigSchema } from "./capabilities.ts";
+import { ExpertModelConfigSchema } from "@pragma/local-host/deployment-contracts";
 
 const EvaluationTargetRefSchema = z.string().regex(/^(expert|team):[0-9a-hjkmnp-tv-z]{16}$/);
 

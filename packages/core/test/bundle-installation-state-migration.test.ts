@@ -30,13 +30,13 @@ describe("Bundle installation state migration", () => {
 
     expect(upgraded).toMatchObject({
       fromVersion: 1,
-      toVersion: 8,
+      toVersion: 9,
       migrated: true,
       value: {
-        schemaVersion: "pragma.bundle-installations/v8",
+        schemaVersion: "pragma.bundle-installations/v9",
         installations: [
           {
-            schemaVersion: "pragma.bundle-installation/v8",
+            schemaVersion: "pragma.bundle-installation/v9",
             bundleVersion: "pragma.desktop-bundle/v1",
             id: "00000000-0000-4000-8000-000000000001",
             rootName: "Writer",
@@ -65,10 +65,10 @@ describe("Bundle installation state migration", () => {
     const upgraded = bundleInstallationsMigrationChain.upgrade(v2Catalog());
 
     expect(upgraded.fromVersion).toBe(2);
-    expect(upgraded.toVersion).toBe(8);
+    expect(upgraded.toVersion).toBe(9);
     expect(upgraded.migrated).toBe(true);
     expect(upgraded.value.installations[0]).toMatchObject({
-      schemaVersion: "pragma.bundle-installation/v8",
+      schemaVersion: "pragma.bundle-installation/v9",
       bundleVersion: "pragma.desktop-bundle/v1",
       readiness: [
         {
@@ -88,22 +88,37 @@ describe("Bundle installation state migration", () => {
     );
     const upgraded = bundleInstallationsMigrationChain.upgrade(fixture);
 
-    expect(upgraded).toMatchObject({ fromVersion: 4, toVersion: 8, migrated: true });
+    expect(upgraded).toMatchObject({ fromVersion: 4, toVersion: 9, migrated: true });
     expect(upgraded.value.installations[0]).toMatchObject({
-      schemaVersion: "pragma.bundle-installation/v8",
+      schemaVersion: "pragma.bundle-installation/v9",
       bundleVersion: "pragma.desktop-bundle/v1",
       rootKind: "Expert",
     });
   });
 
+  it("upgrades actual baseline v8 writer output without inventing request identity", async () => {
+    const fixture = JSON.parse(
+      await readFile(join(import.meta.dirname, "fixtures", "bundle-installations-v8.json"), "utf8"),
+    );
+    const upgraded = bundleInstallationsMigrationChain.upgrade(fixture);
+    expect(upgraded).toMatchObject({ fromVersion: 8, toVersion: 9, migrated: true });
+    expect(upgraded.value.installations[0]).not.toHaveProperty("transaction");
+    const record = {
+      ...upgraded.value.installations[0],
+      schemaVersion: "pragma.bundle-installation/v8",
+    };
+    expect(record).toEqual(fixture.installations[0]);
+  });
+
   it("treats current state as a no-op and rejects future state", () => {
-    const current = bundleInstallationsMigrationChain.upgrade(v8Catalog());
+    const upgraded = bundleInstallationsMigrationChain.upgrade(v8Catalog()).value;
+    const current = bundleInstallationsMigrationChain.upgrade(upgraded);
 
     expect(current.migrated).toBe(false);
-    expect(current.value).toEqual(v8Catalog());
+    expect(current.value).toEqual(upgraded);
     expect(() =>
       bundleInstallationsMigrationChain.upgrade({
-        schemaVersion: "pragma.bundle-installations/v9",
+        schemaVersion: "pragma.bundle-installations/v10",
         installations: [],
       }),
     ).toThrow(StateVersionTooNewError);

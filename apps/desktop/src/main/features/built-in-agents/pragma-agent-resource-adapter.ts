@@ -8,7 +8,7 @@ import type {
   PragmaAgentWorkspace,
 } from "@pragma/built-in-agents";
 
-import type { ContextStoreStore } from "../context-stores/context-store-store.ts";
+import type { ContextStoreStore } from "@pragma/local-host/deployment";
 import type { HomeProjectStore } from "../missions/home-project-store.ts";
 import type { HomeExecutorPreferenceStore } from "../missions/home-executor-preference-store.ts";
 import type { MissionExecutorCatalog } from "../missions/mission-executor-catalog.ts";

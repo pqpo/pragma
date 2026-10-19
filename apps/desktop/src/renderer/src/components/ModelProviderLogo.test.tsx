@@ -1,7 +1,7 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 
-import { MODEL_PROVIDER_PRESETS } from "../../../shared/model-provider-presets.ts";
+import { MODEL_PROVIDER_PRESETS } from "@pragma/local-host/deployment-contracts";
 import { hasModelProviderLogo, ModelProviderLogo } from "./ModelProviderLogo.tsx";
 
 describe("ModelProviderLogo", () => {

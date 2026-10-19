@@ -25,9 +25,9 @@ import {
   type ExpertMentionCandidate,
   type PragmaProjectSnapshot,
 } from "../../../shared/contracts/index.ts";
-import type { PragmaProjectStore } from "../projects/pragma-project-store.ts";
+import type { PragmaProjectStore } from "@pragma/local-host/deployment";
 import type { DesktopSystemExpertRegistry } from "../experts/system-expert-registry.ts";
-import { ModelProviderStoreError } from "../model-providers/model-provider-store.ts";
+import { ModelProviderStoreError } from "@pragma/local-host/deployment";
 
 export interface MissionExecutorCatalog {
   list(): Promise<readonly MissionExecutorOption[]>;

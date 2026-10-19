@@ -7,7 +7,7 @@ import {
 import {
   ContextStoreMissionMountCheckSchema,
   ContextStoreMissionMountCheckResultSchema,
-} from "../../shared/contracts/context-stores.ts";
+} from "@pragma/local-host/deployment-contracts";
 import { ipcRenderer, type IpcRendererEvent } from "electron";
 
 import {

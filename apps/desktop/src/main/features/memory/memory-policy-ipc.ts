@@ -50,7 +50,7 @@ import {
 } from "./mission-memory-content.ts";
 import type { DesktopMemoryPlane } from "./desktop-memory-plane.ts";
 import type { MissionStore } from "@pragma/local-host";
-import type { PragmaProjectStore } from "../projects/pragma-project-store.ts";
+import type { PragmaProjectStore } from "@pragma/local-host/deployment";
 import type { DesktopSystemExpertRegistry } from "../experts/system-expert-registry.ts";
 import {
   getDesktopMemoryExtractionTaskDetail,

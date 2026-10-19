@@ -26,10 +26,10 @@ import {
 } from "@pragma/interpreter/ast";
 import { createPragmaLogger } from "@pragma/core";
 import { missionExecutorSnapshot } from "../../../shared/contracts/index.ts";
-import { createPragmaProjectStore } from "../projects/pragma-project-store.ts";
+import { createPragmaProjectStore } from "@pragma/local-host/deployment";
 import { createMissionStore } from "@pragma/local-host";
 import { createDesktopMissionTestApplication } from "./fixtures/desktop-mission-test-application.ts";
-import type { CapabilityStore } from "../capabilities/capability-store.ts";
+import type { CapabilityStore } from "@pragma/local-host/deployment";
 import type { CapabilityCredentialStore } from "../capabilities/capability-credential-store.ts";
 const roots: string[] = [];
 const stores: ReturnType<typeof createSqliteExecutionStore>[] = [];

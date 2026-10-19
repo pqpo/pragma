@@ -34,8 +34,8 @@ examples    -> runtime-* / plugin-* / core -> shared
 
 | Source                     | Allowed dependencies                                                                                                                                                                                       |
 | -------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `apps/cli`                 | `@pragma/local-host`, browser-safe wire Schemas/DTOs from `@pragma/shared` (including `/integration`), concrete `@pragma/runtime-*` at its composition root                                                                                                   |
-| `apps/desktop`             | `@pragma/local-host` (Main only), `@pragma/shared`, `@pragma/core`, `@pragma/evaluation`, `@pragma/interpreter`, `@pragma/built-in-agents`, concrete `@pragma/runtime-*` packages                                                            |
+| `apps/cli`                 | `@pragma/local-host`, browser-safe wire Schemas/DTOs from `@pragma/shared` (including `/integration`), concrete `@pragma/runtime-*` at its composition root                                                |
+| `apps/desktop`             | `@pragma/local-host` (Main only), `@pragma/shared`, `@pragma/core`, `@pragma/evaluation`, `@pragma/interpreter`, `@pragma/built-in-agents`, concrete `@pragma/runtime-*` packages                          |
 | `packages/local-host`      | `@pragma/shared`, `@pragma/core`, `@pragma/interpreter`, `@pragma/evaluation`, `@pragma/built-in-agents`, `@pragma/memory`, `@pragma/context-filesystem`; Node built-ins and runtime-neutral third parties |
 | `plugins/*`                | `@pragma/shared`, `@pragma/core`; no app, server, client, or concrete runtime dependencies                                                                                                                 |
 | `examples`                 | `@pragma/core`, concrete `@pragma/runtime-*`, and concrete `@pragma/plugin-*` packages                                                                                                                     |
@@ -59,14 +59,13 @@ Desktop must not implement another command consumer or strict-target resolver. R
 compile service owns pinned Revision reuse, executor resolution, binding/fingerprint identity,
 stability retries, owner compilation cache and target readiness. Desktop, CLI and built-in sources
 provide resource ports; Interpreter retains the actual DSL compiler. `@pragma/local-host/resources`
-provides Node resource readers and credential access; OS interaction, mutation and approval remain
-Host adapters. R1–R3 are merged through #353/#354/#355. R4 removes full-kernel overrides,
+provides Node resource readers and credential access; OS interaction and approval remain Host adapters. `@pragma/local-host/deployment` owns shared resource mutation, Bundle installation/export and environment services ([ADR 075: Shared deployment and environment services](../adr/075-shared-deployment-and-environments.md)). R1–R3 are merged through #353/#354/#355. R4 removes full-kernel overrides,
 Runner forwarding and internal execution bypasses. Real model, OS credential and full product
 performance acceptance remain open; see [R4 implementation status](local-host-kernel-r4-implementation.md).
 `@pragma/shared`, Core, Interpreter, Evaluation, Built-in Agents, Memory,
 Context Filesystem, Runtime packages, plugins, and examples may not depend on
 `@pragma/local-host` or `@pqpo/pragma`. Desktop preload/renderer/shared code remains browser-safe and
-may consume `@pragma/shared/integration` but never Local Host.
+may consume `@pragma/shared/integration` and the browser-safe `@pragma/local-host/deployment-contracts` entry, but never Local Host Node entries.
 
 `@pragma/shared/integration` is the sole cross-process wire source. The former
 `@pragma/local-host/wire` forwarding subpath was removed; CLI/IPC adapters import integration

@@ -11,8 +11,8 @@ import { createMissionBranchContext, prepareMissionBranchHistory } from "@pragma
 import { createMissionStore } from "@pragma/local-host";
 import { createNoopLoggerProvider } from "@pragma/core";
 import { createDesktopMissionTestApplication } from "./fixtures/desktop-mission-test-application.ts";
-import { createPragmaProjectStore } from "../projects/pragma-project-store.ts";
-import type { CapabilityStore } from "../capabilities/capability-store.ts";
+import { createPragmaProjectStore } from "@pragma/local-host/deployment";
+import type { CapabilityStore } from "@pragma/local-host/deployment";
 import type { CapabilityCredentialStore } from "../capabilities/capability-credential-store.ts";
 
 describe("createMissionBranchContext", () => {

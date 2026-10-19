@@ -10,7 +10,7 @@ import type {
   PragmaProjectSnapshot,
 } from "../../../shared/contracts/index.ts";
 import type { DesktopSystemExpertRegistry } from "../experts/system-expert-registry.ts";
-import type { PragmaProjectStore } from "../projects/pragma-project-store.ts";
+import type { PragmaProjectStore } from "@pragma/local-host/deployment";
 import { createHomeExecutorCatalog } from "./home-executor-catalog.ts";
 import type { HomeExecutorPreferenceStore } from "./home-executor-preference-store.ts";
 import type { MissionExecutorCatalog } from "./mission-executor-catalog.ts";

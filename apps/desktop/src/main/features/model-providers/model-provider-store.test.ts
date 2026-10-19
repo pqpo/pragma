@@ -4,7 +4,7 @@ import { dirname, join } from "node:path";
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { createModelProviderStore, ModelProviderStoreError } from "./model-provider-store.ts";
+import { createModelProviderStore, ModelProviderStoreError } from "@pragma/local-host/deployment";
 import { createTestSecretStore } from "../credentials/test-secret-store.ts";
 import * as localHost from "@pragma/local-host";
 import { ModelProvidersV5Schema, modelProvidersV5ToV6Step } from "@pragma/local-host";

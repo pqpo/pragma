@@ -1,4 +1,4 @@
-import { DesktopMutationErrorSchema } from "../../../shared/contracts/mutation.ts";
+import { DesktopMutationErrorSchema } from "@pragma/local-host/deployment-contracts";
 
 import { localizedBundleMutationError } from "./bundle-errors.ts";
 import { errorMessage } from "./errors.ts";

@@ -8,16 +8,17 @@ import {
 import { IntegrationErrorSchema } from "@pragma/shared/integration";
 import { ExpertDefinitionStoreError } from "../../features/experts/expert-definition-store.ts";
 import { MissionStoreError } from "@pragma/local-host";
-import { ContextStoreStoreError } from "../../features/context-stores/context-store-store.ts";
+import { ContextStoreStoreError } from "@pragma/local-host/deployment";
 import {
+  BundleInstallationConflictError,
   BundlePluginUnavailableError,
   BundleSetupRequiredError,
-} from "../../features/bundles/pragma-bundle-errors.ts";
-import { CapabilityStoreError } from "../../features/capabilities/capability-store.ts";
+} from "@pragma/local-host/deployment";
+import { CapabilityStoreError } from "@pragma/local-host/deployment";
 import {
   PragmaProjectRevisionUnavailableError,
   PragmaProjectStoreError,
-} from "../../features/projects/pragma-project-store.ts";
+} from "@pragma/local-host/deployment";
 
 export async function runDesktopMutation<T>(
   operation: () => Promise<T>,
@@ -33,6 +34,15 @@ export async function runDesktopMutation<T>(
 }
 
 function serializeDesktopMutationError(error: unknown): DesktopMutationErrorData {
+  if (error instanceof BundleInstallationConflictError) {
+    return DesktopMutationErrorSchema.parse({
+      code: error.code,
+      message: error.message,
+      category: "conflict",
+      retryable: false,
+      diagnostics: [],
+    });
+  }
   const integrationError = IntegrationErrorSchema.safeParse(error);
   if (integrationError.success) {
     return DesktopMutationErrorSchema.parse({

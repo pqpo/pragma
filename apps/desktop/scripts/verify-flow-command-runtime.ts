@@ -38,7 +38,7 @@ import { createClaudeCodeRuntime } from "@pragma/runtime-claude-code";
 import { createQoderCliRuntime } from "@pragma/runtime-qodercli";
 import { createAntigravityRuntime } from "@pragma/runtime-antigravity";
 import { createOpenCodeRuntime } from "@pragma/runtime-opencode";
-import { createModelProviderStore } from "../src/main/features/model-providers/model-provider-store.ts";
+import { createModelProviderStore } from "@pragma/local-host/deployment";
 import { createManagementCommandTestFixture } from "../src/main/features/built-in-agents/management-command-test-fixture.ts";
 
 const [runtimeName = "pi", scenario = "flow", variant = "after"] = process.argv.slice(2);

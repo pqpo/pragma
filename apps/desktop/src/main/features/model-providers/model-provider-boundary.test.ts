@@ -8,7 +8,10 @@ describe("model provider dependency boundary", () => {
   it("keeps Core contracts and provider storage independent from concrete runtimes", async () => {
     const sources = await Promise.all(
       [
-        new URL("./model-provider-store.ts", import.meta.url),
+        new URL(
+          "./model-providers/model-provider-store.js",
+          import.meta.resolve("@pragma/local-host/deployment"),
+        ),
         new URL(
           "../../../../../../packages/core/src/model-provider/model-provider.ts",
           import.meta.url,

@@ -18,7 +18,7 @@ import {
 } from "../../../shared/contracts/index.ts";
 import type { DesktopSystemExpertRegistry } from "../experts/system-expert-registry.ts";
 import type { DesktopMemoryPlane } from "./desktop-memory-plane.ts";
-import type { PragmaProjectStore } from "../projects/pragma-project-store.ts";
+import type { PragmaProjectStore } from "@pragma/local-host/deployment";
 
 const MEMORY_STORE_ID = "memory";
 

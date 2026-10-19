@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 
 import { createContextStoreEditorDraftService } from "./context-store-editor-draft-service.ts";
-import { createContextStoreStore } from "./context-store-store.ts";
+import { createContextStoreStore } from "@pragma/local-host/deployment";
 
 const roots: string[] = [];
 

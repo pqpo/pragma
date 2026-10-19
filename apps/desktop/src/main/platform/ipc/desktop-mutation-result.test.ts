@@ -2,13 +2,13 @@ import { describe, expect, it } from "vitest";
 import { createIntegrationError } from "@pragma/shared/integration";
 
 import { runDesktopMutation } from "./desktop-mutation-result.ts";
-import { BundleSetupRequiredError } from "../../features/bundles/pragma-bundle-errors.ts";
+import { BundleSetupRequiredError } from "@pragma/local-host/deployment";
 import { MissionStoreError } from "@pragma/local-host";
-import { ContextStoreStoreError } from "../../features/context-stores/context-store-store.ts";
+import { ContextStoreStoreError } from "@pragma/local-host/deployment";
 import {
   PragmaProjectRevisionUnavailableError,
   PragmaProjectStoreError,
-} from "../../features/projects/pragma-project-store.ts";
+} from "@pragma/local-host/deployment";
 
 const knowledgeBaseDeleteErrorCases = [
   { code: "draft_unreadable", message: "A knowledge revision draft could not be read." },

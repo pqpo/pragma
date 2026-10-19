@@ -1,4 +1,4 @@
-import { ContextStoreStoreError } from "../features/context-stores/context-store-store.ts";
+import { ContextStoreStoreError } from "@pragma/local-host/deployment";
 import { MissionStoreError } from "@pragma/local-host";
 
 export function toContextStoreMissionDeletionError(

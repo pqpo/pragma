@@ -360,6 +360,7 @@ export const settings = {
     },
   },
   models: {
+    sharedConnectionImpact: "Changes apply to every resource using this shared connection.",
     kind: "Model type",
     generation: "Generation",
     embedding: "Embedding",

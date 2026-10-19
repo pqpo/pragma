@@ -8,7 +8,7 @@ import { afterEach, expect, it, vi } from "vitest";
 import type { LocalHostMissionApplication } from "@pragma/local-host";
 import type { MissionStore } from "@pragma/local-host";
 import { MissionStoreError } from "@pragma/local-host";
-import type { PragmaProjectStore } from "../projects/pragma-project-store.ts";
+import type { PragmaProjectStore } from "@pragma/local-host/deployment";
 import { createMemoryRevisionLearningPlanners } from "./memory-revision-learning-planners.ts";
 
 const roots: string[] = [];

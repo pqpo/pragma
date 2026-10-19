@@ -1,3 +1,7 @@
+export {
+  bindExistingDesktopCapabilityResource,
+  bindExistingDesktopContextResource,
+} from "@pragma/local-host/deployment";
 import { derivePragmaResourceId } from "@pragma/core";
 import {
   PRAGMA_MANAGEMENT_BINDING_REF,
@@ -9,7 +13,6 @@ import {
   PRAGMA_DSL_WRITE_API_VERSION,
   PragmaCapabilityResourceSchema,
   PragmaContextStoreResourceSchema,
-  PragmaForwardCompatibleResourceSchema,
   PragmaRuntimeProfileResourceSchema,
   canonicalPragmaResourceRef,
   type PragmaCapabilityResource,
@@ -139,32 +142,6 @@ export function createDesktopCapabilityResource(input: {
   });
 }
 
-export function bindExistingDesktopCapabilityResource(
-  resource: PragmaCapabilityResource,
-  binding: DesktopCapabilityBindingIdentity,
-  metadata?: { readonly name: string; readonly description: string },
-): PragmaCapabilityResource {
-  return PragmaCapabilityResourceSchema.parse({
-    ...resource,
-    metadata: {
-      ...resource.metadata,
-      ...(metadata === undefined
-        ? {}
-        : {
-            name: metadata.name,
-            description: metadata.description.trim() || resource.metadata.description,
-          }),
-      tags: unique([...resource.metadata.tags, "desktop-managed"]),
-    },
-    spec: {
-      ...resource.spec,
-      adapter: "pragma.capability.host@v1",
-      binding: desktopCapabilityBindingRef(binding.id),
-      config: { ...(resource.spec.config ?? {}), key: binding.id },
-    },
-  });
-}
-
 export function resolveDesktopCapabilityResource(input: {
   readonly capabilityId: string;
   readonly resources: readonly PragmaResource[];
@@ -219,34 +196,6 @@ export function createDesktopContextResource(input: {
       config: { key: input.storeId },
     },
   });
-}
-
-export function bindExistingDesktopContextResource(
-  resource: PragmaContextStoreResource,
-  storeId: string,
-  metadata?: { readonly name: string; readonly description: string },
-): PragmaContextStoreResource {
-  const bound = PragmaForwardCompatibleResourceSchema.parse({
-    ...resource,
-    metadata: {
-      ...resource.metadata,
-      ...(metadata === undefined
-        ? {}
-        : {
-            name: metadata.name,
-            description: metadata.description.trim() || resource.metadata.description,
-          }),
-      tags: unique([...resource.metadata.tags, "desktop-managed"]),
-    },
-    spec: {
-      ...resource.spec,
-      adapter: "pragma.context.host@v1",
-      binding: desktopContextBindingRef(storeId),
-      config: { ...(resource.spec.config ?? {}), key: storeId },
-    },
-  });
-  if (bound.kind !== "ContextStore") throw new Error("Expected a ContextStore binding.");
-  return bound;
 }
 
 export function resolveDesktopContextResource(input: {
@@ -390,10 +339,6 @@ function runtimeConfig(model: CreateExpertDefinition["model"]): Record<string, u
     model: model.modelId,
     ...(model.thinkingLevel === undefined ? {} : { thinkingLevel: model.thinkingLevel }),
   };
-}
-
-function unique(values: readonly string[]): string[] {
-  return [...new Set(values)];
 }
 
 function ambiguousBinding(

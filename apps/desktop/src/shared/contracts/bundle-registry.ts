@@ -11,7 +11,7 @@ import {
   PragmaAvatarIdSchema,
 } from "@pragma/shared";
 import { z } from "zod";
-import { PragmaBundleModuleOptionsSchema } from "./bundles.ts";
+import { PragmaBundleModuleOptionsSchema } from "@pragma/local-host/deployment-contracts";
 
 export const DesktopBundleRegistryRemoteSchema = z
   .string()

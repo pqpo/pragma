@@ -5,12 +5,12 @@ import {
   ExpertAdditionalInstructionsSchema,
   ExpertCapabilityReferenceSchema,
   ExpertModelConfigSchema,
-} from "../../../../../../shared/contracts/capabilities.ts";
-import { ExpertContextStoreMountSchema } from "../../../../../../shared/contracts/context-stores.ts";
+} from "@pragma/local-host/deployment-contracts";
+import { ExpertContextStoreMountSchema } from "@pragma/local-host/deployment-contracts";
 import {
   ExpertPluginReferenceSchema,
   ExpertToolApprovalModeSchema,
-} from "../../../../../../shared/contracts/plugins.ts";
+} from "@pragma/local-host/deployment-contracts";
 
 // Aggregate snapshot from b4b3cc1ca537046e5324138efcbacbaf47a3fa3d. Leaf contracts are unchanged.
 export const SystemExpertCustomizationConfigV8Schema = z.object({

@@ -57,19 +57,19 @@ import {
   parseLegacyDesktopCapabilityBindingRef,
 } from "../../platform/bindings/desktop-binding-ref.ts";
 import type { CapabilityCredentialStore } from "../capabilities/capability-credential-store.ts";
-import type { CapabilityStore } from "../capabilities/capability-store.ts";
+import type { CapabilityStore } from "@pragma/local-host/deployment";
 import type { ContextStoreRevisionService } from "../context-stores/context-store-revision-service.ts";
 import {
   withContextStoreRevisionLocks,
   type ContextStoreStore,
-} from "../context-stores/context-store-store.ts";
+} from "@pragma/local-host/deployment";
 import { DynamicContextStore } from "../context-stores/dynamic-context-store.ts";
 import { createDesktopKnowledgeRevisionSubmissionPort } from "../context-stores/knowledge-revision-capability.ts";
-import type { PluginStore } from "../plugins/plugin-store.ts";
+import type { PluginStore } from "@pragma/local-host/deployment";
 import {
   withOpenPragmaProjectRevision,
   type PragmaProjectStore,
-} from "../projects/pragma-project-store.ts";
+} from "@pragma/local-host/deployment";
 import type { DesktopUsageStore } from "../usage/usage-store.ts";
 import { createDesktopAdapterHost } from "./mission-adapter-host.ts";
 import { createMissionBranchContext } from "@pragma/local-host";

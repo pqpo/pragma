@@ -38,7 +38,7 @@ import type { MemoryExtractionFailureDiagnostic } from "@pragma/shared";
 
 import type { LocalHostMissionApplication } from "@pragma/local-host";
 import { MissionStoreError, type MissionStore } from "@pragma/local-host";
-import type { PragmaProjectStore } from "../projects/pragma-project-store.ts";
+import type { PragmaProjectStore } from "@pragma/local-host/deployment";
 import { z } from "zod";
 import type {
   DesktopMemoryExtractionRun,

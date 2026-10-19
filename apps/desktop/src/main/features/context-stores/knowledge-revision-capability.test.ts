@@ -2,10 +2,10 @@ import { describe, expect, it, vi } from "vitest";
 import { PRAGMA_DSL_WRITE_API_VERSION, PragmaExpertResourceSchema } from "@pragma/interpreter/ast";
 
 import { createDesktopContextResource } from "../../platform/bindings/desktop-bound-resource-policy.ts";
-import type { PragmaProjectStore } from "../projects/pragma-project-store.ts";
+import type { PragmaProjectStore } from "@pragma/local-host/deployment";
 import { createDesktopKnowledgeRevisionSubmissionPort } from "./knowledge-revision-capability.ts";
 import type { ContextStoreRevisionService } from "./context-store-revision-service.ts";
-import type { ContextStoreStore } from "./context-store-store.ts";
+import type { ContextStoreStore } from "@pragma/local-host/deployment";
 
 const TEAM_ID = "0000000000000001";
 const EXPERT_ID = "0000000000000002";

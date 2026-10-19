@@ -44,3 +44,4 @@ export * from "./resources/plugin.schema.ts";
 export * from "./resources/context-store.schema.ts";
 
 export * from "./mission/mission-repository.schema.ts";
+export * from "./deployment-transaction.schema.ts";

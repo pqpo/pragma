@@ -17,7 +17,7 @@ import type { KnowledgeSourceSnapshot, SkillSourceSnapshot } from "@pragma/share
 
 import type { LocalHostMissionApplication } from "@pragma/local-host";
 import { MissionStoreError, type MissionStore } from "@pragma/local-host";
-import type { PragmaProjectStore } from "../projects/pragma-project-store.ts";
+import type { PragmaProjectStore } from "@pragma/local-host/deployment";
 
 const MAX_SOURCE_BYTES = 40_000;
 

@@ -15,13 +15,13 @@ import {
   type ContextStoreEntry,
   type ContextStoreSnapshot,
 } from "../../../shared/contracts/index.ts";
-import { isGitMetadataPath } from "../../../shared/git-metadata-path.ts";
+import { isGitMetadataPath } from "@pragma/local-host/deployment-contracts";
 import {
   contextStoreDraftFileRevision,
   contextStoreOverlayBetween,
   materializeDraftSnapshot,
 } from "./context-store-draft-store.ts";
-import { hashSnapshotContent, type ContextStoreStore } from "./context-store-store.ts";
+import { hashSnapshotContent, type ContextStoreStore } from "@pragma/local-host/deployment";
 
 export interface ContextStoreEditorDraftService {
   get(storeId: string): Promise<ContextStoreEditorDraft | undefined>;

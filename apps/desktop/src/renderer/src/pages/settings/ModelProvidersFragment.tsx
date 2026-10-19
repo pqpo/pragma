@@ -24,26 +24,21 @@ import type {
 import {
   MODEL_PROVIDER_PRESETS,
   findModelProviderPreset,
-} from "../../../../shared/model-provider-presets.ts";
+} from "@pragma/local-host/deployment-contracts";
 import { ModelProviderLogo } from "../../components/ModelProviderLogo.tsx";
 import { ConfirmationDialog } from "../../components/Dialog.tsx";
 import { SelectMenu } from "../../components/SelectMenu.tsx";
 import { errorMessage } from "../../lib/errors.ts";
 import { SettingsScreenFrame } from "./SettingsScreenFrame.tsx";
 
-const THINKING_LEVELS = ["off", "minimal", "low", "medium", "high", "xhigh", "max"] as const;
+import {
+  modelProviderDraft,
+  saveProviderDraft,
+  type ProviderDraft,
+} from "../../../../shared/model-provider-draft.ts";
+export type { ProviderDraft } from "../../../../shared/model-provider-draft.ts";
 
-export type ProviderDraft = {
-  readonly id?: string;
-  readonly presetId: string;
-  readonly name: string;
-  readonly protocol: ModelProvider["protocol"];
-  readonly baseUrl: string;
-  readonly apiKey: string;
-  readonly requiresApiKey: boolean;
-  readonly compatibilityProfileId: string;
-  readonly models: readonly ModelProviderModel[];
-};
+const THINKING_LEVELS = ["off", "minimal", "low", "medium", "high", "xhigh", "max"] as const;
 
 type ProviderEditorMode = "create" | "edit";
 type ProviderEditorStep = "provider" | "connection" | "models";
@@ -174,24 +169,7 @@ export function ProviderEditor(props: {
     }
     setBusy(true);
     try {
-      const input = {
-        presetId: draft.presetId,
-        name: draft.name,
-        protocol: draft.protocol,
-        baseUrl: draft.baseUrl,
-        requiresApiKey: draft.requiresApiKey,
-        ...(draft.compatibilityProfileId === ""
-          ? {}
-          : { compatibilityProfileId: draft.compatibilityProfileId }),
-        models: [...draft.models],
-      };
-      const saved = isEditing
-        ? await window.pragmaDesktop.updateModelProvider({
-            ...input,
-            id: draft.id,
-            ...(draft.apiKey.trim() === "" ? {} : { apiKey: draft.apiKey }),
-          })
-        : await window.pragmaDesktop.createModelProvider({ ...input, apiKey: draft.apiKey });
+      const saved = await saveProviderDraft(draft, props.mode, window.pragmaDesktop);
       if (verify) {
         await window.pragmaDesktop.testModelConnection({
           providerId: saved.id,
@@ -225,6 +203,7 @@ export function ProviderEditor(props: {
 
   return (
     <div className="provider-editor provider-wizard">
+      {isEditing ? <p>{t("models.sharedConnectionImpact", { ns: "settings" })}</p> : null}
       <ol
         className={
           props.mode === "edit" ? "provider-wizard-steps is-edit" : "provider-wizard-steps"
@@ -1298,17 +1277,7 @@ export function ModelProvidersFragment() {
             onEdit={() =>
               setEditor({
                 mode: "edit",
-                draft: {
-                  id: provider.id,
-                  presetId: provider.presetId,
-                  name: provider.name,
-                  protocol: provider.protocol,
-                  baseUrl: provider.baseUrl,
-                  apiKey: "",
-                  requiresApiKey: provider.requiresApiKey,
-                  compatibilityProfileId: provider.compatibilityProfileId ?? "",
-                  models: provider.models,
-                },
+                draft: modelProviderDraft(provider),
               })
             }
             onDelete={() => {

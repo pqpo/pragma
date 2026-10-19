@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 
-import type { CapabilityStore } from "./capability-store.ts";
+import type { CapabilityStore } from "@pragma/local-host/deployment";
 import { createDesktopSkillRevisionSubmissionPort } from "./skill-revision-capability.ts";
 import type { SkillRevisionService } from "./skill-revision-service.ts";
 

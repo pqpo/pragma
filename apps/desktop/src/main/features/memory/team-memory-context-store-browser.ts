@@ -19,7 +19,7 @@ import {
   type TeamMemoryContextStoreEntry,
   type TeamMemoryContextStoreSearchMatch,
 } from "../../../shared/contracts/index.ts";
-import type { PragmaProjectStore } from "../projects/pragma-project-store.ts";
+import type { PragmaProjectStore } from "@pragma/local-host/deployment";
 import type { DesktopMemoryPlane } from "./desktop-memory-plane.ts";
 import {
   defineTeamMemoryScopes,

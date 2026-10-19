@@ -18,7 +18,7 @@ import {
 import type { MissionCreator } from "../missions/mission-creator.ts";
 import type { LocalHostMissionApplication } from "@pragma/local-host";
 import type { MissionStore } from "@pragma/local-host";
-import type { PragmaProjectStore } from "../projects/pragma-project-store.ts";
+import type { PragmaProjectStore } from "@pragma/local-host/deployment";
 
 afterEach(() => {
   vi.useRealTimers();

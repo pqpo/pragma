@@ -15,8 +15,6 @@ import {
   DeletePragmaResourceSchema,
   PragmaProjectChangesSchema,
   PragmaProjectChangesValidationResultSchema,
-  PragmaProjectSnapshotSchema,
-  PragmaYamlValidationResultSchema,
   PublishPragmaProjectSchema,
   RunPragmaEvaluationSchema,
   UpsertPragmaResourceSchema,
@@ -24,7 +22,7 @@ import {
   DesktopPragmaContextStoreBindingSchema,
   DesktopPragmaSkillBindingSchema,
   ValidatePragmaResourceSchema,
-} from "./projects.ts";
+} from "@pragma/local-host/deployment-contracts";
 import {
   AutomationAdapterOptionSchema,
   AutomationBindingSchema,
@@ -36,20 +34,13 @@ import {
   SaveAutomationSchema,
 } from "./automations.ts";
 import {
-  ExportPragmaBundleSchema,
   InspectPragmaBundleSchema,
-  PragmaBundleDependencyReadinessSchema,
-  PragmaBundleExportPreviewSchema,
   PragmaBundleExportResultSchema,
-  PragmaBundleImportInspectionSchema,
   PragmaBundlePickResultSchema,
   PragmaBundleInstallationActionSchema,
-  PragmaBundleInstallationSchema,
   PragmaBundleModuleOptionsSchema,
   PreparePragmaBundleExportSchema,
-  ResolvePragmaBundleInstallationSchema,
-  StartPragmaBundleImportSchema,
-} from "./bundles.ts";
+} from "@pragma/local-host/deployment-contracts";
 import {
   AddDesktopBundleRegistrySourceSchema,
   DesktopBundleRegistrySourceRefSchema,
@@ -66,48 +57,16 @@ import {
   UpdateDesktopBundleRegistrySourceSchema,
 } from "./bundle-registry.ts";
 import {
-  CapabilityDefinitionSchema,
   CapabilityDeleteResultSchema,
-  CapabilityHealthSchema,
-  CapabilityManifestSchema,
-  CapabilitySchema,
-  CapabilityTestRequestSchema,
-  CapabilityTestResultSchema,
-  CreateCapabilitySchema,
   ExpertCapabilityReferenceSchema,
   ExpertModelConfigSchema,
-  GetSkillDocumentSchema,
-  GetSkillFileSchema,
-  SaveSkillFilesSchema,
   SkillFileOperationSchema,
   GetSkillRevisionReviewFileSchema,
-  ImportSkillCapabilitySchema,
   ImportSkillRevisionSchema,
   SubmitSkillRevisionSchema,
-  ListSkillFilesSchema,
-  PreviewCodeServiceRequestSchema,
-  PreviewCodeServiceResultSchema,
-  SkillDocumentSchema,
-  SkillFileContentSchema,
-  SkillFileEntrySchema,
-  SkillRevisionReviewSchema,
-  SkillManualRevisionRecordSchema,
-  ListSkillManualRevisionsSchema,
-  GetSkillManualRevisionFileSchema,
-  SkillManualRevisionFileSchema,
-  SkillRevisionReviewFileSchema,
-  UpdateCapabilitySchema,
-} from "./capabilities.ts";
+} from "@pragma/local-host/deployment-contracts";
 import {
-  ContextStoreContentMetadataSchema,
-  ContextStoreContentSchema,
   ContextStoreContentSummarySchema,
-  ContextStoreChangeSetSchema,
-  ContextStoreEntrySchema,
-  ContextStoreImportInspectionSchema,
-  ContextStoreSchema,
-  ContextStoreSnapshotSchema,
-  ContextStoreRevisionRecordSchema,
   GetContextStoreRevisionDiffSchema,
   ContextStoreRevisionDiffSchema,
   ContextStoreEditorDraftSchema,
@@ -116,7 +75,6 @@ import {
   GetContextStoreEditorDraftSchema,
   CreateContextStoreFileSchema,
   CreateContextStoreFolderSchema,
-  CreateContextStoreSchema,
   DeleteContextStoreEntrySchema,
   DeleteContextStoreRevisionRecordSchema,
   DeleteContextStoreSchema,
@@ -128,7 +86,7 @@ import {
   ListContextStoreRevisionRecordsSchema,
   RenameContextStoreEntrySchema,
   UpdateContextStoreFileSchema,
-} from "./context-stores.ts";
+} from "@pragma/local-host/deployment-contracts";
 import {
   ContextStoreDraftRebaseInspectionSchema,
   ContextStoreDraftRefSchema,
@@ -232,39 +190,21 @@ import {
   UpdateMissionOptionsSchema,
 } from "./missions.ts";
 import {
-  CreateModelProviderSchema,
   DeleteModelProviderSchema,
   DiscoverProviderModelsSchema,
   ModelCompatibilityProfileDescriptorSchema,
   ModelConnectionTestRequestSchema,
-  ModelConnectionTestResultSchema,
-  ModelDiscoveryResultSchema,
-  ModelProviderModelSchema,
-  ModelProviderSchema,
-  ModelProviderSettingsSnapshotSchema,
-  ModelProviderVerificationSchema,
-  ResetModelProvidersResultSchema,
-  UpdateModelProviderSchema,
-} from "./model-provider.ts";
-import {
-  DeleteWorkflowLayoutSchema,
-  GetWorkflowLayoutSchema,
-  WorkflowLayoutSchema,
-} from "./workflow-layout.ts";
+} from "@pragma/local-host/deployment-contracts";
+
 import {
   DesktopAppInfoSchema,
   DesktopBridgeSnapshotSchema,
-  DesktopRuntimeAvailabilitySchema,
   DesktopRuntimeModelSchema,
   DesktopRuntimeProcessEnvironmentStatusSchema,
   RuntimeProcessEnvironmentPolicySchema,
   RuntimeProcessEnvironmentSettingsSchema,
   UpdateRuntimeProcessEnvironmentPolicySchema,
   LocalRuntimeCapabilitySchema,
-  RuntimeEnvironmentCatalogSchema,
-  RuntimeEnvironmentCatalogEntrySchema,
-  RuntimeEnvironmentDefinitionSchema,
-  RuntimeEnvironmentRevisionSchema,
   RuntimeGatewayConfigSchema,
 } from "./runtime.ts";
 import {
@@ -279,12 +219,8 @@ import {
 } from "./settings.ts";
 import {
   DesktopPluginManifestSchema,
-  DesktopPluginSchema,
   ExpertPluginReferenceSchema,
-  ImportPluginZipSchema,
-  PluginZipInspectionSchema,
-  UpdatePluginDefaultsSchema,
-} from "./plugins.ts";
+} from "@pragma/local-host/deployment-contracts";
 import {
   ExpertMentionCandidateSchema,
   HomeExecutorFavoriteScopeSchema,
@@ -344,16 +280,12 @@ import {
 export type DesktopAppInfo = z.infer<typeof DesktopAppInfoSchema>;
 export type PragmaBundleModuleOptions = z.infer<typeof PragmaBundleModuleOptionsSchema>;
 export type PreparePragmaBundleExport = z.infer<typeof PreparePragmaBundleExportSchema>;
-export type PragmaBundleExportPreview = z.infer<typeof PragmaBundleExportPreviewSchema>;
-export type ExportPragmaBundle = z.infer<typeof ExportPragmaBundleSchema>;
+
 export type PragmaBundleExportResult = z.infer<typeof PragmaBundleExportResultSchema>;
 export type InspectPragmaBundle = z.infer<typeof InspectPragmaBundleSchema>;
-export type PragmaBundleImportInspection = z.infer<typeof PragmaBundleImportInspectionSchema>;
-export type PragmaBundleDependencyReadiness = z.infer<typeof PragmaBundleDependencyReadinessSchema>;
+
 export type PragmaBundlePickResult = z.infer<typeof PragmaBundlePickResultSchema>;
-export type StartPragmaBundleImport = z.infer<typeof StartPragmaBundleImportSchema>;
-export type PragmaBundleInstallation = z.infer<typeof PragmaBundleInstallationSchema>;
-export type ResolvePragmaBundleInstallation = z.infer<typeof ResolvePragmaBundleInstallationSchema>;
+
 export type PragmaBundleInstallationAction = z.infer<typeof PragmaBundleInstallationActionSchema>;
 export type DesktopBundleRegistrySourceStatus = z.infer<
   typeof DesktopBundleRegistrySourceStatusSchema
@@ -376,7 +308,7 @@ export type PublishBundleSource = z.infer<typeof PublishBundleSourceSchema>;
 export type BundleSourcePublicationResult = z.infer<typeof BundleSourcePublicationResultSchema>;
 export type RuntimeGatewayConfig = z.infer<typeof RuntimeGatewayConfigSchema>;
 export type LocalRuntimeCapability = z.infer<typeof LocalRuntimeCapabilitySchema>;
-export type DesktopRuntimeAvailability = z.infer<typeof DesktopRuntimeAvailabilitySchema>;
+
 export type DesktopRuntimeModel = z.infer<typeof DesktopRuntimeModelSchema>;
 export type DesktopRuntimeProcessEnvironmentStatus = z.infer<
   typeof DesktopRuntimeProcessEnvironmentStatusSchema
@@ -388,10 +320,7 @@ export type RuntimeProcessEnvironmentSettings = z.infer<
 export type UpdateRuntimeProcessEnvironmentPolicy = z.infer<
   typeof UpdateRuntimeProcessEnvironmentPolicySchema
 >;
-export type RuntimeEnvironmentDefinition = z.infer<typeof RuntimeEnvironmentDefinitionSchema>;
-export type RuntimeEnvironmentRevision = z.infer<typeof RuntimeEnvironmentRevisionSchema>;
-export type RuntimeEnvironmentCatalogEntry = z.infer<typeof RuntimeEnvironmentCatalogEntrySchema>;
-export type RuntimeEnvironmentCatalog = z.infer<typeof RuntimeEnvironmentCatalogSchema>;
+
 export type DesktopBridgeSnapshot = z.infer<typeof DesktopBridgeSnapshotSchema>;
 export type DesktopLocalePreference = z.infer<typeof DesktopLocalePreferenceSchema>;
 export type DesktopResolvedLocale = z.infer<typeof DesktopResolvedLocaleSchema>;
@@ -457,25 +386,17 @@ export type DesktopMemoryExtractionRunRef = z.infer<typeof DesktopMemoryExtracti
 export type DesktopMemoryExtractionRunChatUpdate = z.infer<
   typeof DesktopMemoryExtractionRunChatUpdateSchema
 >;
-export type ModelProviderModel = z.infer<typeof ModelProviderModelSchema>;
+
 export type ModelCompatibilityProfileDescriptor = z.infer<
   typeof ModelCompatibilityProfileDescriptorSchema
 >;
-export type ModelProviderVerification = z.infer<typeof ModelProviderVerificationSchema>;
-export type ModelProvider = z.infer<typeof ModelProviderSchema>;
-export type CreateModelProvider = z.infer<typeof CreateModelProviderSchema>;
-export type UpdateModelProvider = z.infer<typeof UpdateModelProviderSchema>;
+
 export type DeleteModelProvider = z.infer<typeof DeleteModelProviderSchema>;
 export type ModelConnectionTestRequest = z.infer<typeof ModelConnectionTestRequestSchema>;
-export type ModelConnectionTestResult = z.infer<typeof ModelConnectionTestResultSchema>;
+
 export type DiscoverProviderModels = z.infer<typeof DiscoverProviderModelsSchema>;
-export type ModelDiscoveryResult = z.infer<typeof ModelDiscoveryResultSchema>;
-export type ModelProviderSettingsSnapshot = z.infer<typeof ModelProviderSettingsSnapshotSchema>;
-export type ResetModelProvidersResult = z.infer<typeof ResetModelProvidersResultSchema>;
-export type ContextStore = z.infer<typeof ContextStoreSchema>;
-export type ContextStoreSnapshot = z.infer<typeof ContextStoreSnapshotSchema>;
-export type ContextStoreChangeSet = z.infer<typeof ContextStoreChangeSetSchema>;
-export type ContextStoreRevisionRecord = z.infer<typeof ContextStoreRevisionRecordSchema>;
+export type { ModelDiscoveryResult } from "@pragma/local-host/deployment-contracts";
+
 export type ListContextStoreRevisionRecords = z.infer<typeof ListContextStoreRevisionRecordsSchema>;
 export type DeleteContextStoreRevisionRecord = z.infer<
   typeof DeleteContextStoreRevisionRecordSchema
@@ -500,16 +421,15 @@ export type ContextStoreRevisionJob = z.infer<typeof ContextStoreRevisionJobSche
 export type ListContextStoreRevisionJobs = z.infer<typeof ListContextStoreRevisionJobsSchema>;
 export type ContextStoreRevisionJobRef = z.infer<typeof ContextStoreRevisionJobRefSchema>;
 export type ContextStoreRevisionProfile = z.infer<typeof ContextStoreRevisionProfileSchema>;
-export type CreateContextStore = z.infer<typeof CreateContextStoreSchema>;
+
 export type DeleteContextStore = z.infer<typeof DeleteContextStoreSchema>;
 export type ContextStoreMissionMountCheck = z.infer<typeof ContextStoreMissionMountCheckSchema>;
 export type InspectContextStoreImport = z.infer<typeof InspectContextStoreImportSchema>;
-export type ContextStoreImportInspection = z.infer<typeof ContextStoreImportInspectionSchema>;
-export type ContextStoreContentMetadata = z.infer<typeof ContextStoreContentMetadataSchema>;
+
 export type ContextStoreContentSummary = z.infer<typeof ContextStoreContentSummarySchema>;
-export type ContextStoreContent = z.infer<typeof ContextStoreContentSchema>;
+
 export type GetContextStoreContent = z.infer<typeof GetContextStoreContentSchema>;
-export type ContextStoreEntry = z.infer<typeof ContextStoreEntrySchema>;
+
 export type ListContextStoreEntries = z.infer<typeof ListContextStoreEntriesSchema>;
 export type CreateContextStoreFolder = z.infer<typeof CreateContextStoreFolderSchema>;
 export type CreateContextStoreFile = z.infer<typeof CreateContextStoreFileSchema>;
@@ -557,10 +477,7 @@ export type TeamMemoryContextStoreSearchMatch = z.infer<
   typeof TeamMemoryContextStoreSearchMatchSchema
 >;
 export type DesktopPluginManifest = z.infer<typeof DesktopPluginManifestSchema>;
-export type DesktopPlugin = z.infer<typeof DesktopPluginSchema>;
-export type PluginZipInspection = z.infer<typeof PluginZipInspectionSchema>;
-export type ImportPluginZip = z.infer<typeof ImportPluginZipSchema>;
-export type UpdatePluginDefaults = z.infer<typeof UpdatePluginDefaultsSchema>;
+
 export type ExpertPluginReference = z.infer<typeof ExpertPluginReferenceSchema>;
 export type ExpertDefinition = z.infer<typeof ExpertDefinitionSchema>;
 export type ExpertExecutionProfile = z.infer<typeof ExpertExecutionProfileSchema>;
@@ -569,7 +486,7 @@ export type ExpertSummary = z.infer<typeof ExpertSummarySchema>;
 export type CreateExpertDefinition = z.infer<typeof CreateExpertDefinitionSchema>;
 export type UpdateExpertDefinition = z.infer<typeof UpdateExpertDefinitionSchema>;
 export type UpdateBuiltInExpertDefinition = z.infer<typeof UpdateBuiltInExpertDefinitionSchema>;
-export type PragmaProjectSnapshot = z.infer<typeof PragmaProjectSnapshotSchema>;
+
 export type PublishPragmaProject = z.infer<typeof PublishPragmaProjectSchema>;
 export type UpsertPragmaResource = z.infer<typeof UpsertPragmaResourceSchema>;
 export type UpsertPragmaExpertTeam = z.infer<typeof UpsertPragmaExpertTeamSchema>;
@@ -583,13 +500,11 @@ export type PragmaProjectChangesValidationResult = z.infer<
   typeof PragmaProjectChangesValidationResultSchema
 >;
 export type DeletePragmaResource = z.infer<typeof DeletePragmaResourceSchema>;
-export type PragmaYamlValidationResult = z.infer<typeof PragmaYamlValidationResultSchema>;
+
 export type ValidatePragmaResource = z.infer<typeof ValidatePragmaResourceSchema>;
 export type RunPragmaEvaluation = z.infer<typeof RunPragmaEvaluationSchema>;
 export type PragmaFlowRunDrySuiteResult = z.infer<typeof PragmaFlowRunDrySuiteResultSchema>;
-export type WorkflowLayout = z.infer<typeof WorkflowLayoutSchema>;
-export type GetWorkflowLayout = z.infer<typeof GetWorkflowLayoutSchema>;
-export type DeleteWorkflowLayout = z.infer<typeof DeleteWorkflowLayoutSchema>;
+
 export type Mission = z.infer<typeof MissionSchema>;
 export type MissionContextMount = z.infer<typeof MissionContextMountSchema>;
 export type MissionBranchSource = z.infer<typeof MissionBranchSourceSchema>;
@@ -666,36 +581,83 @@ export type MissionContextWindowState = z.infer<typeof MissionContextWindowState
 export type MissionChatPatch = z.infer<typeof MissionChatPatchSchema>;
 export type MissionChatUpdate = z.infer<typeof MissionChatUpdateSchema>;
 export type RespondMissionHumanInteraction = z.infer<typeof RespondMissionHumanInteractionSchema>;
-export type Capability = z.infer<typeof CapabilitySchema>;
-export type CapabilityManifest = z.infer<typeof CapabilityManifestSchema>;
-export type CapabilityHealth = z.infer<typeof CapabilityHealthSchema>;
-export type CapabilityDefinition = z.infer<typeof CapabilityDefinitionSchema>;
+
 export type ExpertCapabilityReference = z.infer<typeof ExpertCapabilityReferenceSchema>;
-export type ImportSkillCapability = z.infer<typeof ImportSkillCapabilitySchema>;
+
 export type ImportSkillRevision = z.infer<typeof ImportSkillRevisionSchema>;
 export type SubmitSkillRevision = z.infer<typeof SubmitSkillRevisionSchema>;
-export type CreateCapability = z.infer<typeof CreateCapabilitySchema>;
-export type UpdateCapability = z.infer<typeof UpdateCapabilitySchema>;
+
 export type CapabilityDeleteResult = z.infer<typeof CapabilityDeleteResultSchema>;
-export type GetSkillDocument = z.infer<typeof GetSkillDocumentSchema>;
-export type SkillDocument = z.infer<typeof SkillDocumentSchema>;
-export type SkillManualRevisionRecord = z.infer<typeof SkillManualRevisionRecordSchema>;
-export type ListSkillManualRevisions = z.infer<typeof ListSkillManualRevisionsSchema>;
-export type GetSkillManualRevisionFile = z.infer<typeof GetSkillManualRevisionFileSchema>;
-export type SkillManualRevisionFile = z.infer<typeof SkillManualRevisionFileSchema>;
-export type SkillRevisionReview = z.infer<typeof SkillRevisionReviewSchema>;
+
 export type GetSkillRevisionReviewFile = z.infer<typeof GetSkillRevisionReviewFileSchema>;
-export type SkillRevisionReviewFile = z.infer<typeof SkillRevisionReviewFileSchema>;
-export type ListSkillFiles = z.infer<typeof ListSkillFilesSchema>;
-export type SkillFileEntry = z.infer<typeof SkillFileEntrySchema>;
+
 export type SkillFileOperation = z.infer<typeof SkillFileOperationSchema>;
-export type SaveSkillFiles = z.infer<typeof SaveSkillFilesSchema>;
-export type GetSkillFile = z.infer<typeof GetSkillFileSchema>;
-export type SkillFileContent = z.infer<typeof SkillFileContentSchema>;
-export type CapabilityTestRequest = z.infer<typeof CapabilityTestRequestSchema>;
-export type CapabilityTestResult = z.infer<typeof CapabilityTestResultSchema>;
-export type PreviewCodeServiceRequest = z.infer<typeof PreviewCodeServiceRequestSchema>;
-export type PreviewCodeServiceResult = z.infer<typeof PreviewCodeServiceResultSchema>;
 
 export type GetContextStoreRevisionDiff = z.infer<typeof GetContextStoreRevisionDiffSchema>;
 export type ContextStoreRevisionDiff = z.infer<typeof ContextStoreRevisionDiffSchema>;
+
+export type {
+  Capability,
+  CapabilityDefinition,
+  CapabilityHealth,
+  CapabilityManifest,
+  CapabilityTestRequest,
+  CapabilityTestResult,
+  ContextStore,
+  ContextStoreChangeSet,
+  ContextStoreContent,
+  ContextStoreContentMetadata,
+  ContextStoreEntry,
+  ContextStoreImportInspection,
+  ContextStoreRevisionRecord,
+  ContextStoreSnapshot,
+  CreateCapability,
+  CreateContextStore,
+  CreateModelProvider,
+  DeleteWorkflowLayout,
+  DesktopPlugin,
+  DesktopRuntimeAvailability,
+  ExportPragmaBundle,
+  GetSkillDocument,
+  GetSkillFile,
+  GetSkillManualRevisionFile,
+  GetWorkflowLayout,
+  ImportPluginZip,
+  ImportSkillCapability,
+  ListSkillFiles,
+  ListSkillManualRevisions,
+  ModelConnectionTestResult,
+  ModelProvider,
+  ModelProviderModel,
+  ModelProviderSettingsSnapshot,
+  ModelProviderVerification,
+  PluginZipInspection,
+  PragmaBundleDependencyReadiness,
+  PragmaBundleExportPreview,
+  PragmaBundleImportInspection,
+  PragmaBundleInstallation,
+  PragmaProjectSnapshot,
+  PragmaYamlValidationResult,
+  PreviewCodeServiceRequest,
+  PreviewCodeServiceResult,
+  ResetModelProvidersResult,
+  ResolvePragmaBundleInstallation,
+  RuntimeEnvironmentCatalog,
+  RuntimeEnvironmentCatalogEntry,
+  RuntimeEnvironmentDefinition,
+  RuntimeEnvironmentRevision,
+  SaveSkillFiles,
+  SkillDocument,
+  SkillFileContent,
+  SkillFileEntry,
+  SkillManualRevisionFile,
+  SkillManualRevisionRecord,
+  SkillRevisionReview,
+  SkillRevisionReviewFile,
+  StartPragmaBundleImport,
+  UpdateCapability,
+  UpdateModelProvider,
+  UpdatePluginDefaults,
+  WorkflowLayout,
+  GetDesktopRuntimeAvailabilityOptions,
+} from "@pragma/local-host/deployment-contracts";

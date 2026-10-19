@@ -534,6 +534,9 @@ importers:
       '@pragma/shared':
         specifier: workspace:*
         version: link:../shared
+      fflate:
+        specifier: ^0.8.2
+        version: 0.8.3
       yaml:
         specifier: ^2.9.1
         version: 2.9.1

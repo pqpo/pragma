@@ -8,17 +8,11 @@ import { promisify } from "node:util";
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import {
-  hashSnapshotContent,
-  type ContextStoreStore,
-} from "../context-stores/context-store-store.ts";
-import type { CapabilityStore } from "../capabilities/capability-store.ts";
-import type { PragmaProjectStore } from "../projects/pragma-project-store.ts";
-import {
-  createPragmaProjectStore,
-  PragmaProjectStoreError,
-} from "../projects/pragma-project-store.ts";
-import type { WorkflowLayoutStore } from "../projects/workflow-layout-store.ts";
+import { hashSnapshotContent, type ContextStoreStore } from "@pragma/local-host/deployment";
+import type { CapabilityStore } from "@pragma/local-host/deployment";
+import type { PragmaProjectStore } from "@pragma/local-host/deployment";
+import { createPragmaProjectStore, PragmaProjectStoreError } from "@pragma/local-host/deployment";
+import type { WorkflowLayoutStore } from "@pragma/local-host/deployment";
 import { createCoreAssetSyncService } from "./core-asset-sync-service.ts";
 import { unavailableCoreAssetRuntimeBindings } from "./core-asset-sync-service.ts";
 import {

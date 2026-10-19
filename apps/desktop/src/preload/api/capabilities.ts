@@ -34,7 +34,7 @@ import {
   SkillRevisionReviewSchema,
   SkillRevisionReviewFileSchema,
   UpdateCapabilitySchema,
-} from "../../shared/contracts/capabilities.ts";
+} from "@pragma/local-host/deployment-contracts";
 import { PickWorkspaceResultSchema } from "../../shared/contracts/settings.ts";
 import type { PragmaDesktopAPI } from "../../shared/contracts/api.ts";
 export const capabilitiesApi = {

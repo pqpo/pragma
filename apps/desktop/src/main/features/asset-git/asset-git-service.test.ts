@@ -16,12 +16,9 @@ import { promisify } from "node:util";
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { createCapabilityStore, type CapabilityStore } from "../capabilities/capability-store.ts";
-import { scanSkillWorkingTree } from "../capabilities/skill-revision-draft-store.ts";
-import {
-  createContextStoreStore,
-  hashSnapshotContent,
-} from "../context-stores/context-store-store.ts";
+import { createCapabilityStore, type CapabilityStore } from "@pragma/local-host/deployment";
+import { scanSkillWorkingTree } from "@pragma/local-host/deployment";
+import { createContextStoreStore, hashSnapshotContent } from "@pragma/local-host/deployment";
 import { createAssetGitService } from "./asset-git-service.ts";
 
 const execFileAsync = promisify(execFile);

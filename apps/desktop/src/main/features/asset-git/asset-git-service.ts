@@ -37,10 +37,10 @@ import {
   type AssetGitTarget,
   type ContextStoreSnapshot,
 } from "../../../shared/contracts/index.ts";
-import type { CapabilityStore } from "../capabilities/capability-store.ts";
-import type { ContextStoreStore } from "../context-stores/context-store-store.ts";
-import { scanSkillWorkingTree } from "../capabilities/skill-revision-draft-store.ts";
-import { hashSnapshotContent } from "../context-stores/context-store-store.ts";
+import type { CapabilityStore } from "@pragma/local-host/deployment";
+import type { ContextStoreStore } from "@pragma/local-host/deployment";
+import { scanSkillWorkingTree } from "@pragma/local-host/deployment";
+import { hashSnapshotContent } from "@pragma/local-host/deployment";
 import { assertAssetGitIdentity, runAssetGit } from "./asset-git-command.ts";
 
 import type { AssetGitRecord as Record } from "./asset-git-state-schema.ts";

@@ -7,7 +7,7 @@ import { createPiModelProviderConverter } from "@pragma/runtime-pi";
 import { describe, expect, it, vi } from "vitest";
 
 import type { DesktopToolPermissionMode } from "../../../shared/contracts/index.ts";
-import type { ModelProviderStore } from "../model-providers/model-provider-store.ts";
+import type { ModelProviderStore } from "@pragma/local-host/deployment";
 import { createDesktopSettingsStore } from "../settings/desktop-settings-store.ts";
 import {
   antigravityRuntimePermissionForMode,
@@ -17,7 +17,7 @@ import {
   qoderRuntimePermissionForMode,
   type RuntimeEnvironmentAdapterFactory,
 } from "./runtime-environment-service.ts";
-import { createRuntimeEnvironmentStore } from "./runtime-environment-store.ts";
+import { createRuntimeEnvironmentStore } from "@pragma/local-host/deployment";
 
 const desktopSettingsV1Fixture = new URL(
   "../settings/fixtures/desktop-settings-v1.json",

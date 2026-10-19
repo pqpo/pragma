@@ -18,9 +18,9 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { createMissionStore } from "@pragma/local-host";
 
 import { createSkillRevisionMissionRestorer } from "./skill-revision-mission-restore.ts";
-import type { CapabilityStore } from "./capability-store.ts";
+import type { CapabilityStore } from "@pragma/local-host/deployment";
 import { createDesktopSkillRevisionSubmissionPort } from "./skill-revision-capability.ts";
-import { copySkillTree } from "./skill-revision-draft-store.ts";
+import { copySkillTree } from "@pragma/local-host/deployment";
 import {
   SkillRevisionDraftV4StoredSchema,
   SkillRevisionJobV4StoredSchema,

@@ -8,7 +8,7 @@ import {
 } from "@pragma/local-host";
 
 import { createCapabilityCredentialStore } from "../capabilities/capability-credential-store.ts";
-import { createModelProviderStore } from "../model-providers/model-provider-store.ts";
+import { createModelProviderStore } from "@pragma/local-host/deployment";
 import { createPluginCredentialStore } from "../plugins/plugin-credential-store.ts";
 import { createElectronSafeStorageLegacyDecryptor } from "../../platform/security/electron-safe-storage-legacy-decryptor.ts";
 

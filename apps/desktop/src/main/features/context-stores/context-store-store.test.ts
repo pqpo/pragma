@@ -12,7 +12,7 @@ import {
   hashSnapshotContent,
   withContextStoreRevisionLocks,
   type ContextStoreStore,
-} from "./context-store-store.ts";
+} from "@pragma/local-host/deployment";
 
 const directories: string[] = [];
 

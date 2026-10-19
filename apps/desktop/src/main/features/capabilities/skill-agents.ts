@@ -18,7 +18,7 @@ import type { DesktopSystemExpertRegistry } from "../experts/system-expert-regis
 import { resolveSystemExpertRuntimeDefaults } from "../experts/system-expert-runtime.ts";
 import type { LocalHostMissionApplication } from "@pragma/local-host";
 import { MissionStoreError, type MissionStore } from "@pragma/local-host";
-import type { PragmaProjectStore } from "../projects/pragma-project-store.ts";
+import type { PragmaProjectStore } from "@pragma/local-host/deployment";
 import type { SkillRevisionGenerator } from "./skill-revision-service.ts";
 
 export interface DesktopSkillAgents {

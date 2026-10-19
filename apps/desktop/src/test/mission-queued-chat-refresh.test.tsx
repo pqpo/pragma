@@ -26,7 +26,7 @@ import {
 } from "../renderer/src/pages/missions/mission-conversation-model.ts";
 import { conversationFromPage } from "../renderer/src/pages/missions/use-mission-conversation.ts";
 import { MissionChatEntryView } from "../renderer/src/pages/missions/mission-chat-presentation.tsx";
-import { createPragmaProjectStore } from "../main/features/projects/pragma-project-store.ts";
+import { createPragmaProjectStore } from "@pragma/local-host/deployment";
 import { createDesktopMissionTestApplication } from "../main/features/missions/fixtures/desktop-mission-test-application.ts";
 import { createMissionStore } from "@pragma/local-host";
 import { forwardMissionChatNotification } from "../main/features/missions/mission-renderer-update-forwarder.ts";

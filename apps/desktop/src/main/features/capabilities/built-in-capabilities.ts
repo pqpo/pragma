@@ -22,7 +22,7 @@ import {
   type CapabilityTestRequest,
   type CapabilityTestResult,
 } from "../../../shared/contracts/index.ts";
-import type { CapabilityStore } from "./capability-store.ts";
+import type { CapabilityStore } from "@pragma/local-host/deployment";
 
 const BUILT_IN_TIMESTAMP = "1970-01-01T00:00:00.000Z";
 

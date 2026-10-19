@@ -10,9 +10,9 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { AgentEvaluationRunSchema, type Mission } from "../../../shared/contracts/index.ts";
 import type { LocalHostMissionApplication } from "@pragma/local-host";
 import type { MissionStore } from "@pragma/local-host";
-import type { PragmaProjectStore } from "../projects/pragma-project-store.ts";
+import type { PragmaProjectStore } from "@pragma/local-host/deployment";
 import type { EvaluationStore } from "./evaluation-store.ts";
-import type { CapabilityStore } from "../capabilities/capability-store.ts";
+import type { CapabilityStore } from "@pragma/local-host/deployment";
 import { desktopCapabilityBindingRef } from "../../platform/bindings/desktop-binding-ref.ts";
 import {
   createEvaluationMockAdapterRegistry,

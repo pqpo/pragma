@@ -1,0 +1,1834 @@
+import {
+  readStorageFile as readFile,
+  writeStorageFile as writeFile,
+  replaceStorageFile as rename,
+} from "@pragma/core";
+import { createWorkflowLayoutStore } from "./workflow-layout-store.ts";
+import { createHash, randomUUID } from "node:crypto";
+import { mkdir, mkdtemp, readdir, rm, rmdir, stat } from "node:fs/promises";
+import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
+import { isDeepStrictEqual } from "node:util";
+
+import {
+  PragmaDslMigrationError,
+  PRAGMA_COMPILER_MIGRATION_CHAIN_VERSION,
+  PragmaProjectRevisionConflictError,
+  PragmaProjectService,
+  PragmaProjectValidationError,
+  loadPragmaProject,
+  migratePragmaCompilerProjectToCurrent,
+  migratePragmaDslProjectToCurrent,
+  parsePragmaYaml,
+  type PragmaProject,
+  type PragmaProjectRevisionLocation,
+  type PragmaProjectSourceRepository,
+  type PragmaBlueprintCacheStore,
+  type PragmaProjectChangeSetInput,
+  type PragmaCompilerProjectMigrationResult,
+  type PragmaResourceIdentityMigration,
+} from "@pragma/interpreter";
+import type { PragmaLoggerProvider } from "@pragma/core";
+import {
+  PragmaDiagnosticSchema,
+  PragmaExpertIdSchema,
+  PRAGMA_COMPILER_WRITE_VERSION,
+  PragmaForwardCompatibleResourceSchema,
+  canonicalPragmaResourceRef,
+  isPragmaCompilerVersionDirectlyReadable,
+  isPragmaCompilerVersionUpgradeable,
+  type PragmaDiagnostic,
+  type PragmaResource,
+} from "@pragma/interpreter/ast";
+import { z } from "zod";
+import { ContentAddressedStore, withFileLock } from "@pragma/core";
+
+import {
+  LocalHostProjectManifestSchema as ProjectManifestSchema,
+  LocalHostProjectRevisionManifestSchema as ProjectRevisionManifestSchema,
+} from "../../index.ts";
+import {
+  PragmaProjectSnapshotSchema,
+  type DesktopMutationReferencedResource,
+  type PragmaProjectSnapshot,
+  type PragmaYamlValidationResult,
+} from "../../deployment-contracts/index.ts";
+import { referencingPragmaResources } from "./pragma-resource-references.ts";
+import { findPragmaInvocableDependencyCycle } from "./pragma-invocable-dependency-graph.ts";
+import {
+  desktopCapabilityBindingRef,
+  parseLegacyDesktopCapabilityBindingRef,
+} from "../bindings.ts";
+
+const ProjectIdentityMigrationManifestSchema = z
+  .object({
+    schemaVersion: z.literal("pragma.desktop-project-identity-migrations/v1"),
+    projectId: z.string().min(1),
+    migrations: z.array(
+      z
+        .object({
+          kind: z.enum([
+            "Expert",
+            "ExpertTeam",
+            "Flow",
+            "Automation",
+            "Capability",
+            "ContextStore",
+            "RuntimeProfile",
+          ]),
+          sourceId: z.string().min(1),
+          targetId: z.string().min(1),
+        })
+        .strict(),
+    ),
+  })
+  .strict();
+
+export interface PragmaProjectStore {
+  get(): Promise<PragmaProjectSnapshot>;
+  /** Read one exact immutable revision without consulting the project head. */
+  getRevision(revision: number): Promise<PragmaProjectSnapshot>;
+  ensurePublished(): Promise<PragmaProjectSnapshot>;
+  publish(input: {
+    readonly publicationId?: string | undefined;
+    readonly expectedRevision: number;
+    readonly resources: readonly PragmaResource[];
+    readonly artifacts?: ReadonlyMap<string, string> | undefined;
+  }): Promise<PragmaProjectSnapshot>;
+  upsert(input: {
+    readonly baseRevision: number;
+    readonly resource: PragmaResource;
+    readonly requiredUnchangedRefs?: readonly string[] | undefined;
+  }): Promise<PragmaProjectSnapshot>;
+  apply(input: PragmaProjectChangeSetInput): Promise<PragmaProjectSnapshot>;
+  applyTransactional(
+    input: PragmaProjectChangeSetInput,
+    publicationId: string,
+  ): Promise<PragmaProjectSnapshot>;
+  findRevisionByPublicationId(publicationId: string): Promise<PragmaProjectSnapshot | undefined>;
+  remove(input: {
+    readonly baseRevision: number;
+    readonly ref: string;
+  }): Promise<PragmaProjectSnapshot>;
+  validateYaml(source: string): Promise<PragmaYamlValidationResult>;
+  validateCandidate(input: {
+    readonly baseRevision: number;
+    readonly resource: PragmaResource;
+    readonly requiredUnchangedRefs?: readonly string[] | undefined;
+  }): Promise<PragmaYamlValidationResult>;
+  previewChanges(input: PragmaProjectChangeSetInput): Promise<{
+    readonly upserts: readonly PragmaResource[];
+    readonly diagnostics: readonly PragmaDiagnostic[];
+  }>;
+  validateChanges(input: PragmaProjectChangeSetInput): Promise<readonly PragmaDiagnostic[]>;
+  openRevision(revision: number): Promise<PragmaProject>;
+  readArtifacts(revision: number): Promise<ReadonlyMap<string, string>>;
+  renderProjectFiles(input: {
+    readonly resources: readonly PragmaResource[];
+    readonly artifacts?: ReadonlyMap<string, string> | undefined;
+  }): Promise<ReadonlyMap<string, string>>;
+  readIdentityMigrations(): Promise<readonly PragmaResourceIdentityMigration[]>;
+  readonly projectId: string;
+}
+
+export class PragmaProjectStoreError extends Error {
+  constructor(
+    readonly code:
+      | "project_invalid"
+      | "revision_conflict"
+      | "resource_not_found"
+      | "resource_referenced"
+      | "built_in_readonly"
+      | "project_io"
+      | "unsupported_format",
+    message: string,
+    readonly diagnostics: readonly PragmaDiagnostic[] = [],
+    readonly conflict:
+      | {
+          readonly baseRevision: number;
+          readonly currentRevision: number;
+          readonly conflictingRefs: readonly string[];
+          readonly retryable: boolean;
+        }
+      | undefined = undefined,
+    readonly referencedBy: readonly DesktopMutationReferencedResource[] = [],
+  ) {
+    super(message);
+    this.name = "PragmaProjectStoreError";
+  }
+}
+
+export async function withOpenPragmaProjectRevision<T>(
+  store: Pick<PragmaProjectStore, "openRevision">,
+  revision: number,
+  operation: (project: PragmaProject) => Promise<T>,
+): Promise<T> {
+  const project = await store.openRevision(revision);
+  try {
+    return await operation(project);
+  } finally {
+    await project.dispose();
+  }
+}
+
+export type PragmaProjectRevisionUnavailableStage =
+  "manifest" | "compiler-migration" | "validation" | "io";
+
+export class PragmaProjectRevisionUnavailableError extends Error {
+  readonly code = "project_revision_unavailable";
+
+  constructor(
+    readonly projectId: string,
+    readonly revision: number,
+    readonly stage: PragmaProjectRevisionUnavailableStage,
+    message: string,
+    readonly sourceCompilerVersion: string | undefined,
+    readonly targetCompilerVersion: string | undefined,
+    readonly diagnostics: readonly PragmaDiagnostic[] = [],
+    readonly retryable = false,
+    options?: ErrorOptions,
+  ) {
+    super(message, options);
+    this.name = "PragmaProjectRevisionUnavailableError";
+  }
+}
+
+export function createPragmaProjectStore(options: {
+  readonly onPublished?: (() => void) | undefined;
+  readonly projectsPath: string;
+  readonly objectsPath?: string | undefined;
+  readonly projectViewsPath?: string | undefined;
+  readonly projectId?: string;
+  readonly reservedResourceRefs?: ReadonlySet<string> | undefined;
+  readonly fixedResources?: readonly PragmaResource[] | undefined;
+  readonly externalResources?: (() => readonly PragmaResource[]) | undefined;
+  readonly loggerProvider?: PragmaLoggerProvider | undefined;
+  readonly blueprintCache?: PragmaBlueprintCacheStore | undefined;
+}): PragmaProjectStore {
+  const projectId = options.projectId ?? "studio";
+  const fixedResources = new Map(
+    (options.fixedResources ?? []).map(
+      (resource) => [canonicalPragmaResourceRef(resource), resource] as const,
+    ),
+  );
+  const objectsPath = options.objectsPath ?? join(options.projectsPath, ".storage", "objects");
+  const projectViewsPath =
+    options.projectViewsPath ?? join(options.projectsPath, ".cache", "views");
+  const sourceRepository = createDesktopProjectSourceRepository({
+    projectsPath: options.projectsPath,
+    objectsPath,
+    projectViewsPath,
+  });
+  const migrationRenderer = new PragmaProjectService({
+    repository: sourceRepository,
+    externalResourceRefs: options.reservedResourceRefs,
+    loggerProvider: options.loggerProvider,
+  });
+  const repository = createCompilerMigratingProjectSourceRepository({
+    source: sourceRepository,
+    projectViewsPath,
+    renderMigration: async (migration) =>
+      await migrationRenderer.renderCompilerMigration(migration),
+  });
+  const service = new PragmaProjectService({
+    repository,
+    blueprintCache: options.blueprintCache,
+    externalResourceRefs: options.reservedResourceRefs,
+    loggerProvider: options.loggerProvider,
+  });
+  const legacyV4Repository = createDesktopProjectSourceRepository({
+    projectsPath: options.projectsPath,
+    objectsPath,
+    projectViewsPath,
+    writeStorageVersion: 4,
+  });
+  const legacyV4Service = new PragmaProjectService({
+    repository: legacyV4Repository,
+    externalResourceRefs: options.reservedResourceRefs,
+    loggerProvider: options.loggerProvider,
+  });
+  let migrationReady: Promise<void> | undefined;
+  const runRequiredStorageRecovery = async (): Promise<void> => {
+    await recoverInterruptedDesktopProjectStorageV4ToV5({
+      projectsPath: options.projectsPath,
+      projectId,
+    });
+    await migrateDesktopProjectStorageV3ToV4({
+      projectsPath: options.projectsPath,
+      objectsPath,
+      projectId,
+      publish: async (expectedRevision, resources, artifacts) => {
+        await legacyV4Service.publish({
+          projectId,
+          expectedRevision,
+          resources,
+          artifacts,
+          forceRevision: true,
+        });
+      },
+    });
+  };
+  const ensureMigrated = async (): Promise<void> => {
+    migrationReady ??= runRequiredStorageRecovery().catch((error: unknown) => {
+      migrationReady = undefined;
+      throw error;
+    });
+    await migrationReady;
+  };
+
+  const layouts = createWorkflowLayoutStore({ projectsPath: options.projectsPath });
+  const recoverLayoutRemovals = async () => {
+    const pending = await readdir(
+      join(options.projectsPath, projectId, "layouts", ".removals"),
+    ).catch((error: unknown) => {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") return [];
+      throw error;
+    });
+    if (!pending.some((entry) => entry.endsWith(".json"))) return;
+    // Keep the head stable until layout cleanup completes. Publications take the
+    // same owner lock, so restoring a Flow cannot race a pending deletion replay.
+    await withFileLock(
+      join(options.projectsPath, projectId, ".commit.lock"),
+      async () =>
+        await layouts.recoverRemovals(projectId, async () => {
+          const current = PragmaProjectSnapshotSchema.parse(await service.get(projectId));
+          return {
+            revision: current.revision,
+            flowIds: current.resources
+              .filter((resource) => resource.kind === "Flow")
+              .map((resource) => resource.metadata.id),
+          };
+        }),
+    );
+  };
+  const prepareLayoutRemovals = async (
+    resources: readonly PragmaResource[],
+    retained: readonly PragmaResource[],
+    baseRevision: number,
+  ) => {
+    const refs = new Set(retained.map(canonicalPragmaResourceRef));
+    for (const resource of resources) {
+      if (resource.kind === "Flow" && !refs.has(canonicalPragmaResourceRef(resource)))
+        await layouts.prepareRemoval({ projectId, flowId: resource.metadata.id }, baseRevision);
+    }
+  };
+  let bindingMigration: Promise<PragmaProjectSnapshot> | undefined;
+  const get = async (): Promise<PragmaProjectSnapshot> => {
+    await ensureMigrated();
+    await recoverLayoutRemovals();
+    const current = PragmaProjectSnapshotSchema.parse(await service.get(projectId));
+    const migratedResources = migrateCapabilityBindings(current.resources);
+    if (migratedResources === undefined) return current;
+    bindingMigration ??= (async () => {
+      const artifacts =
+        current.revision === 0
+          ? new Map<string, string>()
+          : await readRevisionArtifacts(repository, projectId, current.revision, current);
+      return PragmaProjectSnapshotSchema.parse(
+        await service.publish({
+          projectId,
+          expectedRevision: current.revision,
+          resources: migratedResources,
+          artifacts,
+        }),
+      );
+    })().finally(() => {
+      bindingMigration = undefined;
+    });
+    return await bindingMigration;
+  };
+
+  const readIdentityMigrations = async (): Promise<readonly PragmaResourceIdentityMigration[]> => {
+    await ensureMigrated();
+    try {
+      const manifest = ProjectIdentityMigrationManifestSchema.parse(
+        JSON.parse(
+          await readFile(join(options.projectsPath, projectId, "identity-migrations.json"), "utf8"),
+        ) as unknown,
+      );
+      if (manifest.projectId !== projectId) {
+        throw new PragmaProjectStoreError(
+          "project_invalid",
+          `Project identity migration index belongs to ${manifest.projectId}, expected ${projectId}.`,
+        );
+      }
+      return manifest.migrations;
+    } catch (error) {
+      if (errorCode(error) === "ENOENT") return [];
+      throw error;
+    }
+  };
+
+  const normalizeError = (error: unknown): never => {
+    if (error instanceof PragmaProjectRevisionConflictError) {
+      throw new PragmaProjectStoreError("revision_conflict", error.message, [], {
+        baseRevision: error.baseRevision,
+        currentRevision: error.currentRevision,
+        conflictingRefs: error.conflictingRefs,
+        retryable: error.retryable,
+      });
+    }
+    if (error instanceof PragmaProjectValidationError) {
+      throw new PragmaProjectStoreError("project_invalid", error.message, error.diagnostics);
+    }
+    throw error;
+  };
+  const assertNotReserved = (resources: readonly PragmaResource[]): void => {
+    const reserved = resources.find((resource) =>
+      options.reservedResourceRefs?.has(canonicalPragmaResourceRef(resource)),
+    );
+    if (reserved !== undefined) {
+      throw new PragmaProjectStoreError(
+        "built_in_readonly",
+        `Built-in resource refs are reserved: ${canonicalPragmaResourceRef(reserved)}.`,
+      );
+    }
+  };
+  const assertFixedResources = (resources: readonly PragmaResource[]): void => {
+    const changed = resources.find((resource) => {
+      const fixed = fixedResources.get(canonicalPragmaResourceRef(resource));
+      return fixed !== undefined && !isDeepStrictEqual(resource, fixed);
+    });
+    if (changed === undefined) return;
+    throw new PragmaProjectStoreError(
+      "built_in_readonly",
+      `Built-in resource cannot be modified: ${canonicalPragmaResourceRef(changed)}.`,
+    );
+  };
+  const assertCombinedInvocableGraph = (resources: readonly PragmaResource[]): void => {
+    const cycle = findPragmaInvocableDependencyCycle([
+      ...resources,
+      ...(options.externalResources?.() ?? []),
+    ]);
+    if (cycle === undefined) return;
+    throw new PragmaProjectStoreError(
+      "project_invalid",
+      `Invocable resources contain a cyclic dependency: ${cycle.join(" -> ")}.`,
+    );
+  };
+  const assertExternalReferencesPreserved = (
+    resources: readonly PragmaResource[],
+    removalRefs: readonly string[],
+  ): void => {
+    const retainedRefs = new Set(resources.map(canonicalPragmaResourceRef));
+    for (const removalRef of removalRefs) {
+      if (retainedRefs.has(removalRef)) continue;
+      const referencedBy = referencingPragmaResources(
+        options.externalResources?.() ?? [],
+        removalRef,
+      ).map((resource) => ({
+        ref: canonicalPragmaResourceRef(resource),
+        name: resource.metadata.name,
+      }));
+      if (referencedBy.length === 0) continue;
+      throw new PragmaProjectStoreError(
+        "resource_referenced",
+        "This resource is used by a System Expert. Remove that dependency before deleting it.",
+        [],
+        undefined,
+        referencedBy,
+      );
+    }
+  };
+
+  const previewChanges = async (
+    input: PragmaProjectChangeSetInput,
+  ): Promise<{
+    readonly upserts: readonly PragmaResource[];
+    readonly diagnostics: readonly PragmaDiagnostic[];
+  }> => {
+    try {
+      await ensureMigrated();
+      const candidate = await service.materializeChangeSet(projectId, input);
+      const upsertRefs = (input.upserts ?? [])
+        .map((resource) => PragmaForwardCompatibleResourceSchema.parse(resource))
+        .map(canonicalPragmaResourceRef);
+      const candidateByRef = new Map(
+        candidate.resources.map((resource) => [canonicalPragmaResourceRef(resource), resource]),
+      );
+      const upserts = upsertRefs.map((ref) => {
+        const resource = candidateByRef.get(ref);
+        if (resource === undefined) {
+          throw new Error(`Materialized Pragma resource not found: ${ref}`);
+        }
+        return resource;
+      });
+      return {
+        upserts,
+        diagnostics: [
+          ...desktopExpertAuthoringDiagnostics(candidate.resources),
+          ...(await service.validate({
+            resources: candidate.resources,
+            artifacts: candidate.artifacts,
+          })),
+        ],
+      };
+    } catch (error) {
+      return normalizeError(error);
+    }
+  };
+
+  const validateChanges = async (
+    input: PragmaProjectChangeSetInput,
+  ): Promise<readonly PragmaDiagnostic[]> => (await previewChanges(input)).diagnostics;
+
+  const applyChangeSet = async (
+    input: PragmaProjectChangeSetInput,
+    publicationId?: string,
+  ): Promise<PragmaProjectSnapshot> => {
+    try {
+      await ensureMigrated();
+      const upserts = (input.upserts ?? []).map((resource) =>
+        PragmaForwardCompatibleResourceSchema.parse(resource),
+      );
+      assertNotReserved(upserts);
+      assertFixedResources(upserts);
+      if (input.removals?.some((ref) => options.reservedResourceRefs?.has(ref)) === true) {
+        throw new PragmaProjectStoreError(
+          "built_in_readonly",
+          "Built-in resource refs cannot be removed.",
+        );
+      }
+      const candidate = await service.materializeChangeSet(projectId, { ...input, upserts });
+      const orphanedFlowRuntimeProfiles = new Set(
+        candidate.resources
+          .filter(
+            (resource) =>
+              resource.kind === "RuntimeProfile" &&
+              resource.metadata.tags.includes("flow-runtime-override") &&
+              referencingPragmaResources(candidate.resources, canonicalPragmaResourceRef(resource))
+                .length === 0,
+          )
+          .map(canonicalPragmaResourceRef),
+      );
+      const effectiveChangeSet = {
+        ...input,
+        upserts: upserts.filter(
+          (resource) => !orphanedFlowRuntimeProfiles.has(canonicalPragmaResourceRef(resource)),
+        ),
+        removals: [...new Set([...(input.removals ?? []), ...orphanedFlowRuntimeProfiles])],
+      } satisfies PragmaProjectChangeSetInput;
+      const effectiveCandidate = await service.materializeChangeSet(projectId, effectiveChangeSet);
+      assertDesktopExpertAuthoring(effectiveCandidate.resources);
+      assertCombinedInvocableGraph(effectiveCandidate.resources);
+      assertExternalReferencesPreserved(
+        effectiveCandidate.resources,
+        effectiveChangeSet.removals ?? [],
+      );
+      const previous = PragmaProjectSnapshotSchema.parse(await service.get(projectId));
+      await prepareLayoutRemovals(
+        previous.resources,
+        effectiveCandidate.resources,
+        input.baseRevision,
+      );
+      const published = PragmaProjectSnapshotSchema.parse(
+        await service.applyChangeSet({ projectId, changeSet: effectiveChangeSet, publicationId }),
+      );
+      await recoverLayoutRemovals();
+      options.onPublished?.();
+      return published;
+    } catch (error) {
+      return normalizeError(error);
+    }
+  };
+  const apply = async (input: PragmaProjectChangeSetInput): Promise<PragmaProjectSnapshot> =>
+    await applyChangeSet(input);
+
+  const publish = async (input: {
+    readonly publicationId?: string | undefined;
+    readonly expectedRevision: number;
+    readonly resources: readonly PragmaResource[];
+    readonly artifacts?: ReadonlyMap<string, string> | undefined;
+  }): Promise<PragmaProjectSnapshot> => {
+    try {
+      assertNotReserved(input.resources);
+      assertFixedResources(input.resources);
+      assertDesktopExpertAuthoring(input.resources);
+      assertCombinedInvocableGraph(input.resources);
+      const current = input.expectedRevision === 0 ? undefined : await get();
+      if (current !== undefined) {
+        const nextRefs = new Set(input.resources.map(canonicalPragmaResourceRef));
+        assertExternalReferencesPreserved(
+          input.resources,
+          current.resources.map(canonicalPragmaResourceRef).filter((ref) => !nextRefs.has(ref)),
+        );
+      }
+      const artifacts =
+        input.artifacts ??
+        (input.expectedRevision === 0
+          ? new Map<string, string>()
+          : await readRevisionArtifacts(repository, projectId, input.expectedRevision, current!));
+      await prepareLayoutRemovals(
+        current?.resources ?? [],
+        input.resources,
+        input.expectedRevision,
+      );
+      const published = PragmaProjectSnapshotSchema.parse(
+        await service.publish({ projectId, ...input, artifacts }),
+      );
+      await recoverLayoutRemovals();
+      options.onPublished?.();
+      return published;
+    } catch (error) {
+      return normalizeError(error);
+    }
+  };
+
+  const ensurePublished = async (): Promise<PragmaProjectSnapshot> => {
+    const current = await get();
+    if (current.revision > 0) return current;
+
+    try {
+      return await publish({ expectedRevision: current.revision, resources: current.resources });
+    } catch (error) {
+      if (error instanceof PragmaProjectStoreError && error.code === "revision_conflict") {
+        const latest = await get();
+        if (latest.revision > 0) return latest;
+      }
+      throw error;
+    }
+  };
+
+  return {
+    projectId,
+    get,
+    async getRevision(revision) {
+      await ensureMigrated();
+      return PragmaProjectSnapshotSchema.parse(await service.get(projectId, revision));
+    },
+    ensurePublished,
+    publish,
+    async upsert(input) {
+      return await apply({
+        baseRevision: input.baseRevision,
+        upserts: [input.resource],
+        requiredUnchangedRefs:
+          input.requiredUnchangedRefs === undefined ? undefined : [...input.requiredUnchangedRefs],
+      });
+    },
+    apply,
+    async applyTransactional(input, publicationId) {
+      return await applyChangeSet(input, z.string().uuid().parse(publicationId));
+    },
+    async findRevisionByPublicationId(publicationId) {
+      await ensureMigrated();
+      const location = await sourceRepository.getRevisionByPublicationId?.(
+        projectId,
+        z.string().uuid().parse(publicationId),
+      );
+      return location === undefined
+        ? undefined
+        : PragmaProjectSnapshotSchema.parse(await service.get(projectId, location.revision));
+    },
+    async remove(input) {
+      const snapshot = await get();
+      const resource = snapshot.resources.find(
+        (candidate) => canonicalPragmaResourceRef(candidate) === input.ref,
+      );
+      if (resource === undefined) {
+        throw new PragmaProjectStoreError("resource_not_found", `Resource not found: ${input.ref}`);
+      }
+      const referencedBy = referencingPragmaResources(snapshot.resources, input.ref).map(
+        (referencingResource) => ({
+          ref: canonicalPragmaResourceRef(referencingResource),
+          name: referencingResource.metadata.name,
+        }),
+      );
+      if (referencedBy.length > 0) {
+        throw new PragmaProjectStoreError(
+          "resource_referenced",
+          "This resource is used by another Expert, Expert Team, Flow, or Evaluation. Remove those dependencies before deleting it.",
+          [],
+          undefined,
+          referencedBy,
+        );
+      }
+      return await apply({
+        baseRevision: input.baseRevision,
+        upserts: [],
+        removals: [input.ref],
+      });
+    },
+    async validateYaml(source) {
+      try {
+        const parsed = PragmaForwardCompatibleResourceSchema.safeParse(parsePragmaYaml(source));
+        if (!parsed.success) return { diagnostics: issuesToDiagnostics(parsed.error.issues) };
+        const diagnostics = await service.validate({ resources: [parsed.data] });
+        return {
+          resource: parsed.data,
+          diagnostics: [...desktopExpertAuthoringDiagnostics([parsed.data]), ...diagnostics],
+        };
+      } catch (error) {
+        return {
+          diagnostics: [
+            PragmaDiagnosticSchema.parse({
+              severity: "error",
+              code: "source.parse",
+              message: error instanceof Error ? error.message : String(error),
+              path: [],
+            }),
+          ],
+        };
+      }
+    },
+    async validateCandidate(input) {
+      const resource = PragmaForwardCompatibleResourceSchema.parse(input.resource);
+      return {
+        resource,
+        diagnostics: [
+          ...(await validateChanges({
+            baseRevision: input.baseRevision,
+            upserts: [resource],
+            requiredUnchangedRefs:
+              input.requiredUnchangedRefs === undefined
+                ? undefined
+                : [...input.requiredUnchangedRefs],
+          })),
+        ],
+      };
+    },
+    previewChanges,
+    validateChanges,
+    async openRevision(revision) {
+      await ensureMigrated();
+      let location = await repository.getRevision(projectId, revision);
+      if (location === undefined) {
+        throw new PragmaProjectStoreError(
+          "project_invalid",
+          `Pragma project revision not found: ${projectId}@${revision}`,
+        );
+      }
+      if (location.snapshotHash === undefined) {
+        throw new PragmaProjectStoreError(
+          "project_invalid",
+          `Pragma project revision has no snapshot identity: ${projectId}@${revision}`,
+        );
+      }
+      let lease: string | undefined;
+      let leaseDirectory = "";
+      let viewLock = "";
+      while (lease === undefined) {
+        const viewName = basename(location.rootDir);
+        leaseDirectory = join(dirname(projectViewsPath), "project-view-leases", viewName);
+        viewLock = join(dirname(projectViewsPath), "project-view-locks", viewName);
+        const markerName =
+          viewName === location.snapshotHash ? ".pragma-snapshot" : ".pragma-compiler-view";
+        lease = await withFileLock(viewLock, async () =>
+          location !== undefined &&
+          (await hasSnapshotMarker(join(location.rootDir, markerName), location.snapshotHash ?? ""))
+            ? await createProjectViewLease(leaseDirectory)
+            : undefined,
+        );
+        if (lease === undefined) {
+          location = await repository.getRevision(projectId, revision);
+          if (location === undefined)
+            throw new PragmaProjectStoreError(
+              "project_invalid",
+              `Pragma project revision not found: ${projectId}@${revision}`,
+            );
+          if (location.snapshotHash === undefined)
+            throw new PragmaProjectStoreError(
+              "project_invalid",
+              `Pragma project revision has no snapshot identity: ${projectId}@${revision}`,
+            );
+        }
+      }
+      const release = async () =>
+        await withFileLock(viewLock, async () => {
+          await rm(lease, { force: true });
+          await removeEmptyDirectory(leaseDirectory);
+        });
+      try {
+        const project = await loadPragmaProject(location.entryFile, {
+          rootDir: location.rootDir,
+          externalResourceRefs: options.reservedResourceRefs,
+          requireLock: true,
+          ...(location.compilerVersion === undefined
+            ? {}
+            : { revisionCompilerVersion: location.compilerVersion }),
+          sourceIdentity: location.snapshotHash ?? location.projectFingerprint,
+          blueprintCache: options.blueprintCache,
+        });
+        const dispose = project.dispose.bind(project);
+        let disposed = false;
+        project.dispose = async () => {
+          if (disposed) return;
+          disposed = true;
+          try {
+            await dispose();
+          } finally {
+            await release();
+          }
+        };
+        return project;
+      } catch (error) {
+        await release();
+        throw error;
+      }
+    },
+    async readArtifacts(revision) {
+      await ensureMigrated();
+      const snapshot = await service.get(projectId, revision);
+      if (snapshot.revision !== revision) {
+        throw new PragmaProjectStoreError(
+          "resource_not_found",
+          `Pragma project revision not found: ${projectId}@${revision}`,
+        );
+      }
+      return await readRevisionArtifacts(repository, projectId, revision, snapshot);
+    },
+    async renderProjectFiles(input) {
+      return await service.renderProjectFiles(input);
+    },
+    readIdentityMigrations,
+  };
+}
+
+function assertDesktopExpertAuthoring(resources: readonly PragmaResource[]): void {
+  const diagnostics = desktopExpertAuthoringDiagnostics(resources);
+  if (diagnostics.length === 0) return;
+  throw new PragmaProjectStoreError(
+    "project_invalid",
+    "The Expert definition is incomplete or invalid.",
+    diagnostics,
+  );
+}
+
+function migrateCapabilityBindings(
+  resources: readonly PragmaResource[],
+): PragmaResource[] | undefined {
+  let changed = false;
+  const migrated = resources.map((resource) => {
+    if (resource.kind !== "Capability") return resource;
+    const legacy = parseLegacyDesktopCapabilityBindingRef(resource.spec.binding ?? "");
+    if (legacy === undefined) return resource;
+    changed = true;
+    return {
+      ...resource,
+      spec: { ...resource.spec, binding: desktopCapabilityBindingRef(legacy.id) },
+    };
+  });
+  return changed ? migrated : undefined;
+}
+
+function desktopExpertAuthoringDiagnostics(
+  resources: readonly PragmaResource[],
+): PragmaDiagnostic[] {
+  const runtimes = new Map(
+    resources
+      .filter((resource) => resource.kind === "RuntimeProfile")
+      .map((resource) => [canonicalPragmaResourceRef(resource), resource] as const),
+  );
+  const diagnostics: PragmaDiagnostic[] = [];
+  const add = (message: string, path: readonly (string | number)[]) => {
+    diagnostics.push(
+      PragmaDiagnosticSchema.parse({
+        severity: "error",
+        code: "desktop.expert.required",
+        message,
+        path,
+      }),
+    );
+  };
+
+  for (const resource of resources) {
+    if (resource.kind !== "Expert") continue;
+    const id = PragmaExpertIdSchema.safeParse(resource.metadata.id);
+    if (!id.success) {
+      for (const issue of id.error.issues) {
+        add(issue.message, [resource.metadata.id, "metadata", "id"]);
+      }
+    }
+    if (resource.spec.runtime === undefined) {
+      add("Runtime is required.", [resource.metadata.id, "spec", "runtime"]);
+      continue;
+    }
+    const runtime = runtimes.get(resource.spec.runtime.ref);
+    if (runtime === undefined) continue;
+    const config = runtime.spec.config as Record<string, unknown>;
+    if (typeof config.runtimeId !== "string" || config.runtimeId.trim() === "") {
+      add("Runtime ID is required.", [runtime.metadata.id, "spec", "config", "runtimeId"]);
+    }
+    if (typeof config.providerId !== "string" || config.providerId.trim() === "") {
+      add("Model provider is required.", [runtime.metadata.id, "spec", "config", "providerId"]);
+    }
+    if (typeof config.model !== "string" || config.model.trim() === "") {
+      add("Model is required.", [runtime.metadata.id, "spec", "config", "model"]);
+    }
+  }
+  return diagnostics;
+}
+
+function createDesktopProjectSourceRepository(options: {
+  readonly projectsPath: string;
+  readonly objectsPath: string;
+  readonly projectViewsPath: string;
+  readonly writeStorageVersion?: 4 | 5;
+}): PragmaProjectSourceRepository {
+  const writeStorageVersion = options.writeStorageVersion ?? 5;
+  const projectPath = (projectId: string) => join(options.projectsPath, projectId);
+  const manifestPath = (projectId: string) => join(projectPath(projectId), "project.json");
+  const revisionManifestPath = (projectId: string, revision: number) =>
+    join(projectPath(projectId), "revisions", `${revision}.json`);
+  const commitLockPath = (projectId: string) => join(projectPath(projectId), ".commit.lock");
+  const objects = new ContentAddressedStore(options.objectsPath);
+  const projectViewsPath = options.projectViewsPath;
+  const projectViewLeasesPath = join(dirname(projectViewsPath), "project-view-leases");
+  const projectViewLocksPath = join(dirname(projectViewsPath), "project-view-locks");
+
+  const readManifest = async (projectId: string) => {
+    try {
+      const raw = JSON.parse(await readFile(manifestPath(projectId), "utf8")) as unknown;
+      const current = ProjectManifestSchema.safeParse(raw);
+      if (current.success) return current.data;
+      const legacy = LegacyProjectV4ManifestSchema.safeParse(raw);
+      if (!legacy.success) {
+        throw new PragmaProjectStoreError(
+          "unsupported_format",
+          "This Desktop project uses an unsupported pre-v2 format. Remove it manually or export it before upgrading.",
+        );
+      }
+      return legacy.data;
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
+      throw error;
+    }
+  };
+
+  const readRevisionManifest = async (projectId: string, revision: number) => {
+    try {
+      const raw = JSON.parse(
+        await readFile(revisionManifestPath(projectId, revision), "utf8"),
+      ) as unknown;
+      const current = ProjectRevisionManifestSchema.safeParse(raw);
+      if (current.success) return current.data;
+      const legacy = LegacyProjectRevisionV4ManifestSchema.safeParse(raw);
+      if (!legacy.success) {
+        throw new PragmaProjectStoreError(
+          "unsupported_format",
+          `Project revision manifest is invalid: ${projectId}@${revision}.`,
+        );
+      }
+      return legacy.data;
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
+      throw error;
+    }
+  };
+
+  const ensureView = async (snapshotHash: string): Promise<string> => {
+    const target = join(projectViewsPath, snapshotHash);
+    const marker = join(target, ".pragma-snapshot");
+    return await withFileLock(
+      join(projectViewLocksPath, snapshotHash),
+      async () => {
+        if (await hasSnapshotMarker(marker, snapshotHash)) return target;
+        await rm(target, { recursive: true, force: true });
+        const temporary = join(projectViewsPath, `.${snapshotHash}.${randomUUID()}.tmp`);
+        await rm(temporary, { recursive: true, force: true });
+        await mkdir(temporary, { recursive: true, mode: 0o700 });
+        try {
+          await objects.materializeTree(snapshotHash, temporary, { touchObjects: true });
+          await writeFile(join(temporary, ".pragma-snapshot"), `${snapshotHash}\n`, {
+            mode: 0o600,
+          });
+          await mkdir(projectViewsPath, { recursive: true, mode: 0o700 });
+          try {
+            await rename(temporary, target);
+          } catch (error) {
+            const code = errorCode(error);
+            if (
+              (code !== "EEXIST" && code !== "ENOTEMPTY") ||
+              !(await hasSnapshotMarker(marker, snapshotHash))
+            ) {
+              throw error;
+            }
+          }
+          return target;
+        } finally {
+          await rm(temporary, { recursive: true, force: true });
+        }
+      },
+      { timeoutMs: 30_000, staleMs: 300_000 },
+    );
+  };
+
+  const location = async (
+    projectId: string,
+    revision: number,
+  ): Promise<PragmaProjectRevisionLocation | undefined> => {
+    const manifest = await readRevisionManifest(projectId, revision);
+    if (manifest === undefined) return undefined;
+    const rootDir = await ensureView(manifest.snapshotHash);
+    return {
+      projectId,
+      revision,
+      rootDir,
+      entryFile: join(rootDir, "pragma.yaml"),
+      snapshotHash: manifest.snapshotHash,
+      projectFingerprint: manifest.projectFingerprint,
+      compilerVersion: manifest.compilerVersion,
+      updatedAt: manifest.createdAt,
+      publicationId:
+        manifest.schemaVersion === "pragma.project-revision/v5"
+          ? manifest.publicationId
+          : undefined,
+    };
+  };
+
+  const requireLocation = async (
+    projectId: string,
+    revision: number,
+  ): Promise<PragmaProjectRevisionLocation> => {
+    const committed = await location(projectId, revision);
+    if (committed === undefined) {
+      throw new PragmaProjectStoreError(
+        "project_io",
+        `Project revision ${projectId}@${revision} was committed but could not be read back.`,
+      );
+    }
+    return committed;
+  };
+
+  const findRevisionByPublicationId = async (
+    projectId: string,
+    publicationId: string,
+  ): Promise<PragmaProjectRevisionLocation | undefined> => {
+    const manifest = await readManifest(projectId);
+    if (manifest === undefined) return undefined;
+    for (let revision = manifest.headRevision; revision >= 1; revision -= 1) {
+      const candidate = await readRevisionManifest(projectId, revision);
+      if (
+        candidate?.schemaVersion === "pragma.project-revision/v5" &&
+        candidate.publicationId === publicationId
+      ) {
+        return await requireLocation(projectId, revision);
+      }
+    }
+    return undefined;
+  };
+
+  return {
+    async withCheckout(project, operation) {
+      const snapshotHash = project.snapshotHash;
+      if (snapshotHash === undefined) return await operation(project);
+      const viewName = basename(project.rootDir);
+      const leaseDirectory = join(projectViewLeasesPath, viewName);
+      const viewLock = join(projectViewLocksPath, viewName);
+      let lease: string | undefined;
+      while (lease === undefined) {
+        lease = await withFileLock(viewLock, async () =>
+          viewName !== snapshotHash ||
+          (await hasSnapshotMarker(join(project.rootDir, ".pragma-snapshot"), snapshotHash))
+            ? await createProjectViewLease(leaseDirectory)
+            : undefined,
+        );
+        if (lease === undefined) await ensureView(snapshotHash);
+      }
+      try {
+        return await operation(project);
+      } finally {
+        await withFileLock(viewLock, async () => {
+          await rm(lease, { force: true });
+          await removeEmptyDirectory(leaseDirectory);
+        });
+      }
+    },
+    async getHead(projectId) {
+      const manifest = await readManifest(projectId);
+      return manifest === undefined ? undefined : await location(projectId, manifest.headRevision);
+    },
+    async getRevision(projectId, revision) {
+      if (!Number.isInteger(revision) || revision < 1) return undefined;
+      return await location(projectId, revision);
+    },
+    async getRevisionByPublicationId(projectId, publicationId) {
+      return await findRevisionByPublicationId(projectId, publicationId);
+    },
+    async readFiles(project) {
+      const files = await readTextFiles(project.rootDir);
+      return new Map([...files].filter(([path]) => path !== ".pragma-snapshot"));
+    },
+    async commit(input) {
+      return await withFileLock(
+        commitLockPath(input.projectId),
+        async () => {
+          const current = await readManifest(input.projectId);
+          const actualRevision = current?.headRevision ?? 0;
+          if (actualRevision !== input.expectedRevision) {
+            if (input.publicationId !== undefined) {
+              const published = await findRevisionByPublicationId(
+                input.projectId,
+                input.publicationId,
+              );
+              if (published !== undefined) return published;
+            }
+            throw new PragmaProjectRevisionConflictError(input.expectedRevision, actualRevision);
+          }
+          const snapshotFiles = new Map<string, Uint8Array>();
+          for (const [relativePath, contents] of input.files) {
+            assertProjectRelativePath(relativePath);
+            snapshotFiles.set(relativePath, Buffer.from(contents, "utf8"));
+          }
+          const snapshot = await objects.putSnapshot(snapshotFiles);
+          const previous =
+            actualRevision === 0
+              ? undefined
+              : await readRevisionManifest(input.projectId, actualRevision);
+          if (
+            input.publicationId === undefined &&
+            input.forceRevision !== true &&
+            previous?.snapshotHash === snapshot.root.hash
+          ) {
+            return await requireLocation(input.projectId, actualRevision);
+          }
+          const lockSource = input.files.get("pragma.lock.yaml");
+          if (lockSource === undefined)
+            throw new Error("Project snapshot is missing pragma.lock.yaml.");
+          const lock = z
+            .object({
+              compilerVersion: z.string().min(1),
+              projectFingerprint: z.string().regex(/^[a-f0-9]{64}$/),
+            })
+            .passthrough()
+            .parse(parsePragmaYaml(lockSource));
+          const revision = actualRevision + 1;
+          const createdAt = new Date().toISOString();
+          const revisionManifest = ProjectRevisionManifestSchema.parse({
+            schemaVersion: "pragma.project-revision/v5",
+            projectId: input.projectId,
+            revision,
+            ...(actualRevision === 0 ? {} : { parentRevision: actualRevision }),
+            snapshotHash: snapshot.root.hash,
+            projectFingerprint: lock.projectFingerprint,
+            compilerVersion: lock.compilerVersion,
+            createdAt,
+            ...(input.publicationId === undefined ? {} : { publicationId: input.publicationId }),
+          });
+          const storedRevisionManifest =
+            writeStorageVersion === 4
+              ? LegacyProjectRevisionV4ManifestSchema.parse({
+                  ...revisionManifest,
+                  schemaVersion: "pragma.project-revision/v4",
+                })
+              : revisionManifest;
+          await writeAtomically(
+            revisionManifestPath(input.projectId, revision),
+            `${JSON.stringify(storedRevisionManifest, undefined, 2)}\n`,
+          );
+          await writeAtomically(
+            manifestPath(input.projectId),
+            `${JSON.stringify(
+              writeStorageVersion === 4
+                ? LegacyProjectV4ManifestSchema.parse({
+                    schemaVersion: "pragma.desktop-project/v4",
+                    projectId: input.projectId,
+                    headRevision: revision,
+                    updatedAt: createdAt,
+                  })
+                : ProjectManifestSchema.parse({
+                    schemaVersion: "pragma.desktop-project/v5",
+                    projectId: input.projectId,
+                    headRevision: revision,
+                    updatedAt: createdAt,
+                  }),
+              undefined,
+              2,
+            )}\n`,
+          );
+          return await requireLocation(input.projectId, revision);
+        },
+        { timeoutMs: 30_000, staleMs: 300_000 },
+      );
+    },
+  };
+}
+
+function createCompilerMigratingProjectSourceRepository(options: {
+  readonly source: PragmaProjectSourceRepository;
+  readonly projectViewsPath: string;
+  readonly renderMigration: (
+    migration: PragmaCompilerProjectMigrationResult,
+  ) => Promise<ReadonlyMap<string, string>>;
+}): PragmaProjectSourceRepository {
+  const markerName = ".pragma-compiler-view";
+  const locksPath = join(dirname(options.projectViewsPath), "project-compiler-view-locks");
+
+  const resolveLocation = async (
+    location: PragmaProjectRevisionLocation | undefined,
+  ): Promise<PragmaProjectRevisionLocation | undefined> => {
+    if (location === undefined) return undefined;
+    const compilerVersion = location.compilerVersion;
+    if (compilerVersion !== undefined && isPragmaCompilerVersionDirectlyReadable(compilerVersion)) {
+      return location;
+    }
+    if (compilerVersion === undefined || !isPragmaCompilerVersionUpgradeable(compilerVersion)) {
+      throw new PragmaProjectRevisionUnavailableError(
+        location.projectId,
+        location.revision,
+        "compiler-migration",
+        compilerVersion === undefined
+          ? `Project revision ${location.projectId}@${location.revision} does not declare a compiler version.`
+          : `Project revision ${location.projectId}@${location.revision} uses unsupported compiler ${compilerVersion}.`,
+        compilerVersion,
+        undefined,
+      );
+    }
+
+    const sourceIdentity = location.snapshotHash ?? location.projectFingerprint;
+    if (sourceIdentity === undefined) {
+      throw new PragmaProjectRevisionUnavailableError(
+        location.projectId,
+        location.revision,
+        "manifest",
+        `Project revision ${location.projectId}@${location.revision} has no immutable source identity.`,
+        compilerVersion,
+        PRAGMA_COMPILER_WRITE_VERSION,
+      );
+    }
+    const cacheKey = createHash("sha256")
+      .update(
+        JSON.stringify({
+          sourceIdentity,
+          sourceCompilerVersion: compilerVersion,
+          targetCompilerVersion: PRAGMA_COMPILER_WRITE_VERSION,
+          migrationChainVersion: PRAGMA_COMPILER_MIGRATION_CHAIN_VERSION,
+        }),
+      )
+      .digest("hex");
+    const target = join(options.projectViewsPath, `compiler-${cacheKey}`);
+    const marker = join(target, markerName);
+    const migratedLocation = (): PragmaProjectRevisionLocation => ({
+      ...location,
+      rootDir: target,
+      entryFile: join(target, "pragma.yaml"),
+      snapshotHash: cacheKey,
+      compilerVersion: PRAGMA_COMPILER_WRITE_VERSION,
+    });
+
+    try {
+      if ((await readOptionalText(marker))?.trim() === cacheKey) {
+        return migratedLocation();
+      }
+      await withFileLock(
+        join(locksPath, cacheKey),
+        async () => {
+          if ((await readOptionalText(marker))?.trim() === cacheKey) return;
+          let migration: PragmaCompilerProjectMigrationResult;
+          try {
+            migration = migratePragmaCompilerProjectToCurrent({
+              files: await withRepositoryCheckout(
+                options.source,
+                location,
+                async (checkedOut) => await options.source.readFiles(checkedOut),
+              ),
+              revisionCompilerVersion: compilerVersion,
+            });
+          } catch (error) {
+            throw revisionUnavailable(location, "compiler-migration", error, compilerVersion);
+          }
+          let files: ReadonlyMap<string, string>;
+          try {
+            files = await options.renderMigration(migration);
+          } catch (error) {
+            throw revisionUnavailable(
+              location,
+              "validation",
+              error,
+              compilerVersion,
+              migration.targetCompilerVersion,
+            );
+          }
+          if (files.has(markerName)) {
+            throw new PragmaProjectRevisionUnavailableError(
+              location.projectId,
+              location.revision,
+              "validation",
+              `Project revision ${location.projectId}@${location.revision} uses the reserved compiler view metadata path: ${markerName}.`,
+              compilerVersion,
+              migration.targetCompilerVersion,
+            );
+          }
+          const temporary = join(
+            options.projectViewsPath,
+            `.compiler-${cacheKey}.${randomUUID()}.tmp`,
+          );
+          await rm(temporary, { recursive: true, force: true });
+          await mkdir(temporary, { recursive: true, mode: 0o700 });
+          try {
+            for (const [relativePath, contents] of files) {
+              assertProjectRelativePath(relativePath);
+              const path = join(temporary, relativePath);
+              await mkdir(dirname(path), { recursive: true, mode: 0o700 });
+              await writeFile(path, contents, { mode: 0o600 });
+            }
+            await writeFile(join(temporary, markerName), `${cacheKey}\n`, { mode: 0o600 });
+            await mkdir(options.projectViewsPath, { recursive: true, mode: 0o700 });
+            await rm(target, { recursive: true, force: true });
+            await rename(temporary, target);
+          } finally {
+            await rm(temporary, { recursive: true, force: true });
+          }
+        },
+        { timeoutMs: 30_000, staleMs: 300_000 },
+      );
+    } catch (error) {
+      throw revisionUnavailable(
+        location,
+        "io",
+        error,
+        compilerVersion,
+        PRAGMA_COMPILER_WRITE_VERSION,
+      );
+    }
+
+    return migratedLocation();
+  };
+
+  return {
+    async getHead(projectId) {
+      try {
+        return await resolveLocation(await options.source.getHead(projectId));
+      } catch (error) {
+        throw revisionUnavailable(
+          {
+            projectId,
+            revision: 0,
+            rootDir: "",
+            entryFile: "",
+          },
+          "manifest",
+          error,
+          undefined,
+        );
+      }
+    },
+    async getRevision(projectId, revision) {
+      try {
+        return await resolveLocation(await options.source.getRevision(projectId, revision));
+      } catch (error) {
+        throw revisionUnavailable(
+          {
+            projectId,
+            revision,
+            rootDir: "",
+            entryFile: "",
+          },
+          "manifest",
+          error,
+          undefined,
+        );
+      }
+    },
+    async getRevisionByPublicationId(projectId, publicationId) {
+      const location = await options.source.getRevisionByPublicationId?.(projectId, publicationId);
+      return await resolveLocation(location);
+    },
+    async readFiles(location) {
+      const files = await options.source.readFiles(location);
+      return basename(location.rootDir).startsWith("compiler-")
+        ? new Map([...files].filter(([path]) => path !== markerName))
+        : files;
+    },
+    async withCheckout(location, operation) {
+      return options.source.withCheckout === undefined
+        ? await operation(location)
+        : await options.source.withCheckout(location, operation);
+    },
+    async commit(input) {
+      return await resolveRequiredLocation(await options.source.commit(input));
+    },
+  };
+
+  async function resolveRequiredLocation(
+    location: PragmaProjectRevisionLocation,
+  ): Promise<PragmaProjectRevisionLocation> {
+    return (await resolveLocation(location))!;
+  }
+}
+
+function revisionUnavailable(
+  location: PragmaProjectRevisionLocation,
+  stage: PragmaProjectRevisionUnavailableStage,
+  error: unknown,
+  sourceCompilerVersion: string | undefined,
+  targetCompilerVersion?: string,
+): PragmaProjectRevisionUnavailableError {
+  if (error instanceof PragmaProjectRevisionUnavailableError) return error;
+  const diagnostics = error instanceof PragmaProjectValidationError ? error.diagnostics : [];
+  return new PragmaProjectRevisionUnavailableError(
+    location.projectId,
+    location.revision,
+    error instanceof PragmaProjectValidationError ? "validation" : stage,
+    `Project revision ${location.projectId}@${location.revision} is unavailable: ${
+      error instanceof Error ? error.message : String(error)
+    }`,
+    sourceCompilerVersion,
+    targetCompilerVersion,
+    diagnostics,
+    errorCode(error) === "EBUSY" || errorCode(error) === "ETIMEDOUT",
+    { cause: error },
+  );
+}
+
+async function readOptionalText(path: string): Promise<string | undefined> {
+  try {
+    return await readFile(path, "utf8");
+  } catch (error) {
+    if (errorCode(error) === "ENOENT") return undefined;
+    throw error;
+  }
+}
+
+async function hasSnapshotMarker(marker: string, snapshotHash: string): Promise<boolean> {
+  try {
+    return (await readFile(marker, "utf8")).trim() === snapshotHash;
+  } catch (error) {
+    if (errorCode(error) === "ENOENT") return false;
+    throw error;
+  }
+}
+
+function assertProjectRelativePath(path: string): void {
+  const root = resolve("/pragma-desktop-project");
+  const target = resolve(root, path);
+  const child = relative(root, target);
+  if (path.trim() === "" || isAbsolute(path) || child.startsWith("..") || isAbsolute(child)) {
+    throw new PragmaProjectStoreError(
+      "project_invalid",
+      `Project file path escapes its root: ${path}`,
+    );
+  }
+  if (path === ".pragma-snapshot" || path === ".pragma-compiler-view") {
+    throw new PragmaProjectStoreError(
+      "project_invalid",
+      `Project file path is reserved for checkout metadata: ${path}`,
+    );
+  }
+}
+
+async function readRevisionArtifacts(
+  repository: PragmaProjectSourceRepository,
+  projectId: string,
+  revision: number,
+  snapshot: {
+    readonly lock?: PragmaProjectSnapshot["lock"] | undefined;
+    readonly resources: readonly PragmaResource[];
+  },
+): Promise<ReadonlyMap<string, string>> {
+  const location = await repository.getRevision(projectId, revision);
+  if (location === undefined) return new Map();
+  const managed = new Set([
+    ".pragma-snapshot",
+    "pragma.yaml",
+    "pragma.lock.yaml",
+    ...(snapshot.lock?.resources.map((resource) => resource.source) ?? []),
+    ...snapshot.resources.map(
+      (resource) => `${resourceDirectory(resource)}/${resource.metadata.id}.pragma.yaml`,
+    ),
+  ]);
+  return await withRepositoryCheckout(repository, location, async (checkedOut) => {
+    return new Map(
+      [...(await repository.readFiles(checkedOut))].filter(([path]) => !managed.has(path)),
+    );
+  });
+}
+
+async function withRepositoryCheckout<T>(
+  repository: PragmaProjectSourceRepository,
+  location: PragmaProjectRevisionLocation,
+  operation: (location: PragmaProjectRevisionLocation) => Promise<T>,
+): Promise<T> {
+  return repository.withCheckout === undefined
+    ? await operation(location)
+    : await repository.withCheckout(location, operation);
+}
+
+function resourceDirectory(resource: PragmaResource): string {
+  if (resource.kind === "Expert") return "experts";
+  if (resource.kind === "ExpertTeam") return "teams";
+  if (resource.kind === "Flow") return "flows";
+  if (resource.kind === "Capability") return "capabilities";
+  if (resource.kind === "ContextStore") return "context-stores";
+  if (resource.kind === "Automation") return "automations";
+  if (resource.kind === "Evaluation") return "evaluations";
+  return "runtime-profiles";
+}
+
+const LegacyProjectManifestSchema = z
+  .object({
+    schemaVersion: z.literal("pragma.desktop-project/v3"),
+    projectId: z.string().min(1),
+    headRevision: z.number().int().positive(),
+  })
+  .passthrough();
+
+const LegacyProjectRevisionManifestSchema = z
+  .object({
+    schemaVersion: z.literal("pragma.project-revision/v3"),
+    snapshotHash: z.string().regex(/^[a-f0-9]{64}$/),
+  })
+  .passthrough();
+
+const LegacyProjectV4ManifestSchema = z
+  .object({
+    schemaVersion: z.literal("pragma.desktop-project/v4"),
+    projectId: z.string().min(1),
+    headRevision: z.number().int().positive(),
+    updatedAt: z.string().datetime(),
+  })
+  .strict();
+
+const LegacyProjectRevisionV4ManifestSchema = z
+  .object({
+    schemaVersion: z.literal("pragma.project-revision/v4"),
+    projectId: z.string().min(1),
+    revision: z.number().int().positive(),
+    parentRevision: z.number().int().positive().optional(),
+    snapshotHash: z.string().regex(/^[a-f0-9]{64}$/),
+    projectFingerprint: z.string().regex(/^[a-f0-9]{64}$/),
+    compilerVersion: z.string().min(1),
+    createdAt: z.string().datetime(),
+  })
+  .strict();
+
+type LegacyProjectRevision = ReturnType<typeof migratePragmaDslProjectToCurrent>;
+async function migrateDesktopProjectStorageV3ToV4(input: {
+  readonly projectsPath: string;
+  readonly objectsPath: string;
+  readonly projectId: string;
+  readonly publish: (
+    expectedRevision: number,
+    resources: readonly PragmaResource[],
+    artifacts: ReadonlyMap<string, string>,
+  ) => Promise<void>;
+}): Promise<void> {
+  const projectPath = join(input.projectsPath, input.projectId);
+  const manifestPath = join(projectPath, "project.json");
+  const journalPath = join(input.projectsPath, `.${input.projectId}.v3-to-v4.json`);
+  await withFileLock(`${projectPath}.v3-to-v4.lock`, async () => {
+    const pending = await readV3ProjectMigrationJournal(journalPath, input.projectId);
+    if (pending !== undefined) {
+      if (!(await pathExists(pending.backupPath))) {
+        throw new PragmaProjectStoreError(
+          "unsupported_format",
+          `Cannot recover project migration because its backup is missing: ${pending.backupPath}`,
+        );
+      }
+      await rm(projectPath, { recursive: true, force: true });
+      await rename(pending.backupPath, projectPath);
+      await rm(journalPath, { force: true });
+    }
+    let rawManifest: unknown;
+    try {
+      rawManifest = JSON.parse(await readFile(manifestPath, "utf8")) as unknown;
+    } catch (error) {
+      if (errorCode(error) === "ENOENT") return;
+      throw error;
+    }
+    if (
+      typeof rawManifest === "object" &&
+      rawManifest !== null &&
+      "schemaVersion" in rawManifest &&
+      (rawManifest.schemaVersion === "pragma.desktop-project/v4" ||
+        rawManifest.schemaVersion === "pragma.desktop-project/v5")
+    ) {
+      await rm(journalPath, { force: true });
+      return;
+    }
+    const legacyManifest = LegacyProjectManifestSchema.parse(rawManifest);
+    const objects = new ContentAddressedStore(input.objectsPath);
+    const revisions: LegacyProjectRevision[] = [];
+    for (let revision = 1; revision <= legacyManifest.headRevision; revision += 1) {
+      const legacyRevision = LegacyProjectRevisionManifestSchema.parse(
+        JSON.parse(
+          await readFile(join(projectPath, "revisions", `${revision}.json`), "utf8"),
+        ) as unknown,
+      );
+      const temporary = await mkdtemp(join(input.projectsPath, ".project-v3-view-"));
+      try {
+        await objects.materializeTree(legacyRevision.snapshotHash, temporary);
+        try {
+          revisions.push(
+            migratePragmaDslProjectToCurrent({
+              projectId: input.projectId,
+              files: await readTextFiles(temporary),
+            }),
+          );
+        } catch (error) {
+          if (error instanceof PragmaDslMigrationError) {
+            throw new PragmaProjectStoreError("unsupported_format", error.message);
+          }
+          throw error;
+        }
+      } finally {
+        await rm(temporary, { recursive: true, force: true });
+      }
+    }
+    const legacyLayouts = await readOptionalDirectoryFiles(join(projectPath, "layouts"));
+
+    const backupPath = `${projectPath}.v3-backup-${new Date().toISOString().replace(/[:.]/g, "-")}`;
+    await writeAtomically(
+      journalPath,
+      `${JSON.stringify(
+        {
+          schemaVersion: "pragma.desktop-project-migration/v1",
+          projectId: input.projectId,
+          sourceSchema: "pragma.desktop-project/v3",
+          targetSchema: "pragma.desktop-project/v4",
+          backupPath,
+        },
+        undefined,
+        2,
+      )}\n`,
+    );
+    await rename(projectPath, backupPath);
+    try {
+      for (let revision = 0; revision < revisions.length; revision += 1) {
+        const migrated = revisions[revision]!;
+        await input.publish(revision, migrated.resources, migrated.artifacts);
+      }
+      await writeLegacyProjectIdentityMigrationIndex(
+        projectPath,
+        input.projectId,
+        revisions.flatMap((revision) => revision.identityMigrations),
+      );
+      await migrateLegacyFlowLayouts(
+        legacyLayouts,
+        projectPath,
+        revisions.flatMap((revision) => revision.identityMigrations),
+      );
+      await rm(journalPath, { force: true });
+    } catch (error) {
+      await rm(projectPath, { recursive: true, force: true });
+      await rename(backupPath, projectPath);
+      await rm(journalPath, { force: true });
+      throw error;
+    }
+  });
+}
+
+async function recoverInterruptedDesktopProjectStorageV4ToV5(input: {
+  readonly projectsPath: string;
+  readonly projectId: string;
+}): Promise<void> {
+  const projectPath = join(input.projectsPath, input.projectId);
+  const journalPath = join(input.projectsPath, `.${input.projectId}.v4-to-v5.json`);
+  await withFileLock(`${projectPath}.v4-to-v5.lock`, async () => {
+    const pending = await readV4ProjectMigrationJournal(journalPath, input.projectId);
+    if (pending === undefined) return;
+    if (!(await pathExists(pending.backupPath))) {
+      throw new PragmaProjectRevisionUnavailableError(
+        input.projectId,
+        0,
+        "io",
+        `Cannot recover the interrupted project compiler migration because its backup is missing: ${pending.backupPath}`,
+        "pragma.dsl/v2",
+        PRAGMA_COMPILER_WRITE_VERSION,
+      );
+    }
+    await rm(projectPath, { recursive: true, force: true });
+    await rename(pending.backupPath, projectPath);
+    await rm(journalPath, { force: true });
+  });
+}
+
+async function writeLegacyProjectIdentityMigrationIndex(
+  projectPath: string,
+  projectId: string,
+  identities: readonly {
+    readonly kind: PragmaResource["kind"];
+    readonly sourceId: string;
+    readonly targetId: string;
+  }[],
+): Promise<void> {
+  const unique = new Map<string, (typeof identities)[number]>();
+  for (const identity of identities) {
+    unique.set(`${identity.kind}:${identity.sourceId}:${identity.targetId}`, identity);
+  }
+  if (unique.size === 0) return;
+  await writeAtomically(
+    join(projectPath, "identity-migrations.json"),
+    `${JSON.stringify(
+      {
+        schemaVersion: "pragma.desktop-project-identity-migrations/v1",
+        projectId,
+        migrations: [...unique.values()],
+      },
+      undefined,
+      2,
+    )}\n`,
+  );
+}
+
+async function readV3ProjectMigrationJournal(
+  journalPath: string,
+  projectId: string,
+): Promise<{ readonly backupPath: string } | undefined> {
+  let value: unknown;
+  try {
+    value = JSON.parse(await readFile(journalPath, "utf8")) as unknown;
+  } catch (error) {
+    if (errorCode(error) === "ENOENT") return undefined;
+    throw error;
+  }
+  const parsed = z
+    .object({
+      schemaVersion: z.literal("pragma.desktop-project-migration/v1"),
+      projectId: z.literal(projectId),
+      sourceSchema: z.literal("pragma.desktop-project/v3"),
+      targetSchema: z.literal("pragma.desktop-project/v4"),
+      backupPath: z.string().min(1),
+    })
+    .parse(value);
+  return { backupPath: parsed.backupPath };
+}
+
+async function readV4ProjectMigrationJournal(
+  journalPath: string,
+  projectId: string,
+): Promise<{ readonly backupPath: string } | undefined> {
+  let value: unknown;
+  try {
+    value = JSON.parse(await readFile(journalPath, "utf8")) as unknown;
+  } catch (error) {
+    if (errorCode(error) === "ENOENT") return undefined;
+    throw error;
+  }
+  const parsed = z
+    .object({
+      schemaVersion: z.literal("pragma.desktop-project-migration/v1"),
+      projectId: z.literal(projectId),
+      sourceSchema: z.literal("pragma.desktop-project/v4"),
+      targetSchema: z.literal("pragma.desktop-project/v5"),
+      backupPath: z.string().min(1),
+    })
+    .parse(value);
+  return { backupPath: parsed.backupPath };
+}
+
+async function pathExists(path: string): Promise<boolean> {
+  try {
+    await stat(path);
+    return true;
+  } catch (error) {
+    if (errorCode(error) === "ENOENT") return false;
+    throw error;
+  }
+}
+
+async function readOptionalDirectoryFiles(path: string): Promise<ReadonlyMap<string, string>> {
+  try {
+    return await readTextFiles(path);
+  } catch (error) {
+    if (errorCode(error) === "ENOENT") return new Map();
+    throw error;
+  }
+}
+
+async function migrateLegacyFlowLayouts(
+  files: ReadonlyMap<string, string>,
+  projectPath: string,
+  identities: readonly {
+    readonly kind: PragmaResource["kind"];
+    readonly sourceId: string;
+    readonly targetId: string;
+  }[],
+): Promise<void> {
+  const flowIds = new Map(
+    identities
+      .filter((identity) => identity.kind === "Flow")
+      .map((identity) => [identity.sourceId, identity.targetId]),
+  );
+  for (const source of files.values()) {
+    const value = JSON.parse(source) as Record<string, unknown>;
+    if (
+      value["schemaVersion"] !== "pragma.desktop-flow-layout/v1" ||
+      typeof value["flowId"] !== "string"
+    ) {
+      continue;
+    }
+    const flowId = flowIds.get(value["flowId"]);
+    if (flowId === undefined) continue;
+    delete value["flowVersion"];
+    value["schemaVersion"] = "pragma.desktop-flow-layout/v2";
+    value["flowId"] = flowId;
+    await writeAtomically(
+      join(projectPath, "layouts", "flows", `${flowId}.json`),
+      `${JSON.stringify(value, undefined, 2)}\n`,
+    );
+  }
+}
+
+async function readTextFiles(root: string, base = root): Promise<ReadonlyMap<string, string>> {
+  const files = new Map<string, string>();
+  for (const entry of await readdir(root, { withFileTypes: true })) {
+    const path = join(root, entry.name);
+    if (entry.isDirectory()) {
+      for (const [child, contents] of await readTextFiles(path, base)) files.set(child, contents);
+    } else if (entry.isFile()) {
+      files.set(relative(base, path).split(sep).join("/"), await readFile(path, "utf8"));
+    }
+  }
+  return files;
+}
+
+async function createProjectViewLease(directory: string): Promise<string> {
+  while (true) {
+    try {
+      await mkdir(directory, { recursive: true, mode: 0o700 });
+    } catch (error) {
+      // A concurrent checkout may remove the empty lease directory while mkdir is
+      // still resolving it. Retry the same way we do when the lease write loses
+      // that race.
+      if (errorCode(error) === "ENOENT") continue;
+      throw error;
+    }
+    const lease = join(directory, `${randomUUID()}.lease`);
+    try {
+      await writeFile(
+        lease,
+        `${JSON.stringify({ pid: process.pid, createdAt: new Date().toISOString() })}\n`,
+        { mode: 0o600 },
+      );
+      return lease;
+    } catch (error) {
+      const code = errorCode(error);
+      if (code !== "ENOENT" && code !== "EINVAL") throw error;
+    }
+  }
+}
+
+async function removeEmptyDirectory(path: string): Promise<void> {
+  try {
+    await rmdir(path);
+  } catch (error) {
+    const code = errorCode(error);
+    if (code !== "ENOENT" && code !== "ENOTEMPTY" && code !== "EEXIST") throw error;
+  }
+}
+
+function errorCode(error: unknown): unknown {
+  return typeof error === "object" && error !== null && "code" in error
+    ? (error as NodeJS.ErrnoException).code
+    : undefined;
+}
+
+function issuesToDiagnostics(issues: readonly z.core.$ZodIssue[]): PragmaDiagnostic[] {
+  return issues.map((issue) =>
+    PragmaDiagnosticSchema.parse({
+      severity: "error",
+      code: "schema.invalid",
+      message: issue.message,
+      path: issue.path.map((segment) =>
+        typeof segment === "symbol" ? (segment.description ?? "symbol") : segment,
+      ),
+    }),
+  );
+}
+
+async function writeAtomically(path: string, contents: string): Promise<void> {
+  await mkdir(dirname(path), { recursive: true, mode: 0o700 });
+  const temporaryPath = `${path}.${randomUUID()}.tmp`;
+  await writeFile(temporaryPath, contents, { mode: 0o600 });
+  await rename(temporaryPath, path);
+}

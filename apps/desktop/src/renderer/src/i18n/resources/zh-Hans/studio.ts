@@ -1688,8 +1688,13 @@ export const studio = {
   bundleSaveBindings: "保存绑定",
   bundleSavingBindings: "正在保存…",
   bundleReady: "“{{name}}”已经可以运行。",
+  bundleImportIncomplete: "安装尚未完成，请重新检查状态以继续。",
   bundleImportFailed: "Bundle 导入失败。",
   bundleDiscardImport: "放弃本次导入",
+  bundleDiscardInstallationDescription:
+    "仅清理本次导入创建的数据，然后重新检查 Bundle 并选择设置。资源已被编辑、更新过已有数据或仍被使用时，清理会停止。",
+  bundleDiscardBlocked:
+    "清理或重新检查未能完成：{{reason}} 若清理被阻止，安装记录仍会保留。请在工作室检查相关资源，或恢复已知的项目备份；请勿手动删除存储文件。",
   bundleContinue: "继续",
   bundleBack: "返回",
   bundleReview: "检查导入内容",

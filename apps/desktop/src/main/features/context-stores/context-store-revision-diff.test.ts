@@ -2,7 +2,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { createContextStoreStore } from "./context-store-store.ts";
+import { createContextStoreStore } from "@pragma/local-host/deployment";
 import { getContextStoreRevisionDiff } from "./context-store-revision-diff.ts";
 
 const paths: string[] = [];

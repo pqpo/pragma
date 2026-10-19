@@ -13,7 +13,7 @@ import {
   type PrepareBundleSourcePublication,
   type PublishBundleSource,
 } from "../../../shared/contracts/index.ts";
-import type { PragmaBundleService } from "../bundles/pragma-bundle-service.ts";
+import type { PragmaBundleService } from "@pragma/local-host/deployment";
 import {
   readSystemGitIdentity,
   type DesktopBundleRegistrySourceService,

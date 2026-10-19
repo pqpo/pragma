@@ -1,3 +1,4 @@
+import { modelProviderDraft, saveProviderDraft } from "../../../shared/model-provider-draft.ts";
 import { access, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -11,7 +12,7 @@ import {
   createModelProviderStore,
   ModelProviderStoreError,
   type ModelProviderStore,
-} from "./model-provider-store.ts";
+} from "@pragma/local-host/deployment";
 
 const electron = vi.hoisted(() => ({
   handlers: new Map<string, (...args: unknown[]) => unknown>(),
@@ -32,6 +33,74 @@ afterEach(async () => {
 });
 
 describe("model provider IPC", () => {
+  it("rejects a stale Desktop editor through the real IPC and credential persistence boundary", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "pragma-model-editor-cas-"));
+    directories.push(directory);
+    const configPath = join(directory, "model-providers.json");
+    const { secretStore } = createTestSecretStore(join(directory, "secrets"));
+    const store = createModelProviderStore({ configPath, secretStore });
+    const input = {
+      presetId: "custom-openai",
+      name: "Original connection",
+      protocol: "openai-completions",
+      baseUrl: "https://example.test/v1",
+      requiresApiKey: true,
+      apiKey: "original-secret",
+      models: [
+        {
+          kind: "embedding" as const,
+          id: "embedding-test",
+          name: "Embedding",
+          api: "openai-embeddings" as const,
+          maxInputTokens: 8192,
+          maxBatchInputs: 1,
+          cost: { input: 0 },
+          capabilitiesSource: "manual" as const,
+        },
+      ],
+    };
+    const provider = await store.create(input);
+    const staleDraft = {
+      ...modelProviderDraft(provider),
+      name: "Stale editor",
+      apiKey: "rejected-secret",
+    };
+    await store.update({
+      ...input,
+      id: provider.id,
+      name: "Concurrent change",
+      apiKey: "current-secret",
+    });
+    installModelProviderHandlers(store);
+    const api = {
+      updateModelProvider: async (request: Parameters<ModelProviderStore["update"]>[0]) =>
+        (await electron.handlers.get("model-providers:update")!({}, request)) as Awaited<
+          ReturnType<ModelProviderStore["update"]>
+        >,
+      createModelProvider: async (request: Parameters<ModelProviderStore["create"]>[0]) =>
+        (await electron.handlers.get("model-providers:create")!({}, request)) as Awaited<
+          ReturnType<ModelProviderStore["create"]>
+        >,
+    };
+    await expect(saveProviderDraft(staleDraft, "edit", api)).rejects.toMatchObject({
+      code: "connection_changed",
+    });
+    expect((await store.list())[0]).toMatchObject({ name: "Concurrent change", revision: 2 });
+    expect((await store.resolveProviderWithRevision(provider.id)).provider.apiKey).toBe(
+      "current-secret",
+    );
+    expect(await readFile(configPath, "utf8")).not.toContain("rejected-secret");
+    const saved = await saveProviderDraft(
+      { ...modelProviderDraft((await store.list())[0]!), name: "Fresh editor" },
+      "edit",
+      api,
+    );
+    expect(saved).toMatchObject({ name: "Fresh editor", revision: 3 });
+    expect((await store.resolveProviderWithRevision(provider.id)).provider.apiKey).toBe(
+      "current-secret",
+    );
+  });
+
   beforeEach(() => {
     electron.handlers.clear();
     electron.handle.mockClear();

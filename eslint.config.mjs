@@ -14,9 +14,9 @@ const commonRestrictedPatterns = [
 
 const desktopBrowserSafePragmaRestriction = {
   regex:
-    "^(?:@pqpo/pragma(?:/.*)?|@pragma/(?!shared(?:/integration)?$|interpreter/ast$|evaluation/ast$|built-in-agents/contracts$).+)",
+    "^(?:@pqpo/pragma(?:/.*)?|@pragma/(?!shared(?:/integration)?$|interpreter/ast$|evaluation/ast$|built-in-agents/contracts$|local-host/deployment-contracts$).+)",
   message:
-    "Desktop preload, renderer, and shared code may only import browser-safe @pragma/shared, @pragma/interpreter/ast, @pragma/evaluation/ast, or @pragma/built-in-agents/contracts.",
+    "Desktop preload, renderer, and shared code may only import browser-safe @pragma/shared, @pragma/interpreter/ast, @pragma/evaluation/ast, @pragma/built-in-agents/contracts, or @pragma/local-host/deployment-contracts.",
 };
 
 const localHostReverseImportRestriction = {
@@ -171,6 +171,24 @@ const config = tseslint.config(
               group: ["@pragma/runtime-*", "@pragma/server-*", "apps/*", "next/*"],
               message:
                 "Local Host is a Node application layer and must not depend on apps, Electron, client/server, or concrete Runtime adapters.",
+            },
+          ],
+        },
+      ],
+    },
+  },
+  {
+    files: ["packages/local-host/src/deployment-contracts/**/*.{ts,tsx}"],
+    rules: {
+      "no-restricted-imports": [
+        "error",
+        {
+          patterns: [
+            {
+              regex:
+                "^(?!(?:\\./|zod$|@pragma/shared(?:/integration)?$|@pragma/interpreter/ast$|@pragma/built-in-agents/contracts$)).+|(?:^|/)\\.\\.(?:/|$)",
+              message:
+                "Deployment contracts must remain browser-safe and cannot import the Node application layer.",
             },
           ],
         },

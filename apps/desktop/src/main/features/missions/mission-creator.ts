@@ -18,9 +18,9 @@ import {
   withContextStoreRevisionLocks,
   ContextStoreStoreError,
   type ContextStoreStore,
-} from "../context-stores/context-store-store.ts";
+} from "@pragma/local-host/deployment";
 import type { ContextStoreRevisionService } from "../context-stores/context-store-revision-service.ts";
-import type { PragmaProjectStore } from "../projects/pragma-project-store.ts";
+import type { PragmaProjectStore } from "@pragma/local-host/deployment";
 import { validateHostWorkspace as validateWorkspace } from "@pragma/local-host";
 
 export interface MissionCreator {

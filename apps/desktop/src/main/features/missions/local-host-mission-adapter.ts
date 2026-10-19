@@ -18,7 +18,7 @@ import type {
   PragmaProjectSnapshot,
 } from "../../../shared/contracts/index.ts";
 import type { MissionExecutorCatalog } from "./mission-executor-catalog.ts";
-import type { PragmaProjectStore } from "../projects/pragma-project-store.ts";
+import type { PragmaProjectStore } from "@pragma/local-host/deployment";
 
 /**
  * Converts the Desktop Mission identity into the canonical Local Host run
