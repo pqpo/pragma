@@ -60,6 +60,8 @@ export interface RuntimeEnvironmentService extends RuntimeResolver {
 export function createRuntimeEnvironmentService(options: {
   readonly store: RuntimeEnvironmentStore;
   readonly factories: readonly RuntimeEnvironmentAdapterFactory[];
+  /** Retired IDs apply only when no persisted Environment owns that identity. */
+  readonly bindAliases?: Readonly<Record<string, string>> | undefined;
   readonly logger?: Pick<PragmaLogger, "info" | "debug" | "warn"> | undefined;
   readonly getToolPermissionMode?:
     (() => ToolPermissionMode | Promise<ToolPermissionMode>) | undefined;
@@ -260,8 +262,13 @@ export function createRuntimeEnvironmentService(options: {
   const createResolver = (toolPermissionMode?: ToolPermissionMode): RuntimeResolver => ({
     getDefaultRuntimeId: async () => await options.store.getDefaultRuntimeId(),
     bind: async (request = {}) => {
-      const runtimeId = request.runtimeId ?? (await options.store.getDefaultRuntimeId());
-      const revision = await options.store.getRevision(runtimeId);
+      let runtimeId = request.runtimeId ?? (await options.store.getDefaultRuntimeId());
+      let revision = await options.store.getRevision(runtimeId);
+      const alias = options.bindAliases?.[runtimeId];
+      if (revision === undefined && alias !== undefined) {
+        runtimeId = alias;
+        revision = await options.store.getRevision(runtimeId);
+      }
       if (revision === undefined || revision.status !== "active") {
         throw runtimeUnavailable(
           "environment_inactive",

@@ -210,11 +210,9 @@ import {
 import {
   DesktopLocalePreferenceSchema,
   DesktopResolvedLocaleSchema,
-  DesktopSettingsSchema,
   DesktopSettingsSnapshotSchema,
   DesktopToolPermissionModeSchema,
   PickWorkspaceResultSchema,
-  UpdateDesktopSettingsSchema,
   ValidateWorkspaceResultSchema,
 } from "./settings.ts";
 import {
@@ -324,9 +322,11 @@ export type UpdateRuntimeProcessEnvironmentPolicy = z.infer<
 export type DesktopBridgeSnapshot = z.infer<typeof DesktopBridgeSnapshotSchema>;
 export type DesktopLocalePreference = z.infer<typeof DesktopLocalePreferenceSchema>;
 export type DesktopResolvedLocale = z.infer<typeof DesktopResolvedLocaleSchema>;
-export type DesktopSettings = z.infer<typeof DesktopSettingsSchema>;
+export type {
+  DesktopSettings,
+  UpdateDesktopSettings,
+} from "@pragma/local-host/deployment-contracts";
 export type DesktopSettingsSnapshot = z.infer<typeof DesktopSettingsSnapshotSchema>;
-export type UpdateDesktopSettings = z.infer<typeof UpdateDesktopSettingsSchema>;
 export type DesktopToolPermissionMode = z.infer<typeof DesktopToolPermissionModeSchema>;
 export type PickWorkspaceResult = z.infer<typeof PickWorkspaceResultSchema>;
 export type ValidateWorkspaceResult = z.infer<typeof ValidateWorkspaceResultSchema>;

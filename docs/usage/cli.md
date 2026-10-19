@@ -20,6 +20,9 @@ SecretStore；Harness 保持原生登录方式，进程环境继续受已保存�
 凭据必须先由当前 Desktop 完成升级；CLI 报告迁移要求。钥匙串不可用、锁定、Runtime 不可用和
 模型配置不匹配应按返回诊断处理，再重试原请求。既有 Session 按原 Runtime identity、Environment
 revision 和 fingerprint 恢复；更新 Environment head 不会改写旧 Session。
+PI 同时读取 Desktop 保存的工作上下文窗口预算；预算更新后重新装配 adapter，已有 binding 保持不变。
+历史 RuntimeProfile 的 `codex-local` 在新建绑定时指向共享 `codex` Environment；若同名 Environment
+已经注册，则以该配置为准，已删除的配置不会触发别名回退。旧 Session 仍按原 binding 精确恢复。
 
 新建项目任务可省略 `--project` / `--revision`，Host 将解析结果中的精确 Revision 传给执行链路并
 持久 pin；显式参数仍受一致性检查。历史 Mission 缺少 pin 时仍须按下文显式恢复，不能以新建任务

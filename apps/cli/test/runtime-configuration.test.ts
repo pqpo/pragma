@@ -5,6 +5,7 @@ import { describe, expect, it, vi } from "vitest";
 import { createLocalHostRuntimeConfiguration } from "@pragma/local-host/deployment";
 import * as localHost from "@pragma/local-host";
 import * as nodeApplication from "@pragma/local-host/node-application";
+import * as pi from "@pragma/runtime-pi";
 import * as codex from "@pragma/runtime-codex";
 import { createProductionLocalHost } from "../src/composition/default.ts";
 
@@ -65,6 +66,7 @@ describe("CLI saved Runtime composition", () => {
       const current = await resolver.bind({ runtimeId: "codex" });
       expect(current.adapter.descriptor.id).toBe("codex");
       expect(current.binding.fingerprint).not.toBe(fixture.binding.fingerprint);
+      expect((await resolver.bind({ runtimeId: "codex-local" })).binding).toEqual(current.binding);
       const discoveryCalls = listModels.mock.calls.length;
       await expect(
         resolver.resolve({
@@ -124,6 +126,38 @@ describe("CLI saved Runtime composition", () => {
       expect(factory).toHaveBeenCalledTimes(2);
       await resolver.bind({ runtimeId: "codex" });
       expect(factory).toHaveBeenCalledTimes(2);
+    } finally {
+      await host.dispose?.();
+      vi.restoreAllMocks();
+      vi.unstubAllEnvs();
+      await rm(home, { recursive: true, force: true });
+    }
+  });
+
+  it("shares Desktop PI context budgets and refreshes adapters without rebinding", async () => {
+    const home = await mkdtemp(join(tmpdir(), "pragma-cli-context-budget-"));
+    vi.stubEnv("PRAGMA_HOME", home);
+    const settings = localHost.createLocalHostSettingsStore({
+      settingsPath: join(home, "state", "desktop-settings.json"),
+    });
+    await settings.update({ agentContextWindow: 32_000 });
+    const factory = vi.spyOn(pi, "createPiRuntime");
+    const host = createProductionLocalHost();
+    try {
+      const resolver = host.runtimeResolver();
+      const first = await resolver.bind({ runtimeId: "pi" });
+      expect(factory).toHaveBeenLastCalledWith(
+        expect.objectContaining({ agentContextWindow: 32_000 }),
+      );
+      await resolver.resolve({ binding: first.binding });
+      expect(factory).toHaveBeenCalledTimes(1);
+      await settings.update({ agentContextWindow: 64_000 });
+      const refreshed = await resolver.resolve({ binding: first.binding });
+      expect(refreshed.binding).toEqual(first.binding);
+      expect(factory).toHaveBeenCalledTimes(2);
+      expect(factory).toHaveBeenLastCalledWith(
+        expect.objectContaining({ agentContextWindow: 64_000 }),
+      );
     } finally {
       await host.dispose?.();
       vi.restoreAllMocks();

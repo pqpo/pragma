@@ -344,7 +344,7 @@ export function createLocalHostRunApplication(options: {
     if (!freshReservation && findMissionPinnedBinding(current.events) === undefined) {
       assertUnpinnedRunRetryAllowed({
         missionId: reservation.missionId,
-        request,
+        request: runRequest,
         descriptor: executor.descriptor,
         events: current.events,
         allowEmptyReservationGap: current.events.length === 0,

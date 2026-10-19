@@ -118,3 +118,15 @@ Desktop tests exercise production composition and IPC adapters. Migration eviden
 historical writer output, current no-op, adjacent/chained upgrade, interrupted-journal replay and
 future-version rejection. Engineering tests do not establish real model, native keychain or platform
 acceptance; the stage report records those separately.
+
+### PR #409 复审补充
+
+Desktop 设置的持久读写、Schema 与既有 v1→v2 迁移链下沉到 Local Host；文件仍是
+`state/desktop-settings.json`，协议、journal、备份与锁路径不变。Desktop 继续负责 locale
+解析和 UI snapshot，CLI 只消费 PI 所需的工作上下文预算；预算参与 adapter preparation
+快照与缓存键，不引入 CLI 设置命令。
+
+历史静态 ID `codex-local` 仅在没有该 ID 的持久 Environment 时用于新绑定别名，目标是共享
+`codex` Environment。已注册或已删除的同名 Environment 都不被覆盖。旧 Session 的
+`resolve(binding)` 不做别名重写，继续要求原 fingerprint 精确匹配。停止恢复与正常执行
+选用同一 Mission 持久权限模式的 resolver，停止路径不准备当前工具、凭据和 mounts。

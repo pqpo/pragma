@@ -55,7 +55,7 @@ export function createLocalHostRuntimeResolver(options: {
  */
 export function withExactLegacyRuntimeBindings(options: {
   readonly current: RuntimeResolver;
-  readonly legacy: () => RuntimeResolver;
+  readonly legacy: () => RuntimeResolver | Promise<RuntimeResolver>;
 }): RuntimeResolver {
   return {
     getDefaultRuntimeId: () => options.current.getDefaultRuntimeId(),
@@ -72,7 +72,7 @@ export function withExactLegacyRuntimeBindings(options: {
         )
           throw error;
         try {
-          return await options.legacy().resolve(request);
+          return await (await options.legacy()).resolve(request);
         } catch {
           // No matching historical authority exists. Keep the original binding
           // failure rather than rebinding to the head or an alternative model.

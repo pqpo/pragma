@@ -253,3 +253,36 @@ CR 后固定 CLI 产物 `cli-cr-artifact/cli.js` SHA-256 为
 `openai/gpt-5.6-sol` 均与上文旧版恢复验收一致。记录为仓库外 `cli-cr-legacy.json` 与
 `cli-cr-legacy-result.json`。固定副本首次未链接原生依赖目录的启动失败未计入通过结果；
 补齐与此前验收一致的 `node_modules` 链接后完成以上验收，未改变源码或凭据。
+
+### PR #409 全量评论复核（2026-10-20）
+
+读取两条普通评论、一份审核正文与全部行内评论；维护者意见共 3 个 P2 和 1 个 P3，
+其中崩溃窗口问题与自动审核行内意见重复。四项均经代码和回归确认成立并修复：
+
+- 创建事件已写入而 pin 未写入的重试，使用规范化后的精确 project/revision；回归覆盖
+  无显式 project/revision、重新打开持久 controller、同 requestId 重放仅一次 Execution，
+  并验证解析到不同 revision 时仍拒绝幂等冲突。
+- 历史 RuntimeProfile 的 `codex-local` 新 Mission 使用共享 Environment 的 canonical binding，
+  不启用静态新绑定。别名只在持久 ID 不存在时生效；显式注册的同名配置优先，删除后明确失败。
+  回归通过真实发布/编译/Mission/持久 Session 边界检查 `codex` binding，CLI composition 也有接线断言。
+- Desktop/CLI 共用原设置存储及历史迁移，PI 读取相同 `agentContextWindow`；预算参与 preparation
+  快照和缓存键。CLI 回归验证 32K→64K 更新、缓存刷新以及原 binding 不变。Desktop 保留 UI/locale
+  转换；不改存储版本、文件、锁、journal 与备份语义。
+- stop-only 路径使用 Mission 权限对应的 resolver；覆盖 request-approval/full-access 持久模式，
+  并验证不触碰工具、Memory 或挂载准备。另在真实子进程 SIGKILL 后恢复/停止 Flow，验证不重发
+  Native Invocation，即使当前工具资源已删除仍可停止。
+
+修复前针对性回归复现崩溃重试、历史 ID 新绑定、PI 预算和停止权限选择失败；修复后分别验证。
+此前真实模型验收记录仍有效，但不将本轮工程测试表述为新增 PI/Windows/ARM64 真实验收。
+
+本轮 `pnpm check` 整体通过（lint/typecheck 各 19/19、Core 测试 4/4 任务）；`pnpm build`
+19/19 通过。Desktop 设置历史 fixture、升级恢复、未来版本拒绝、Runtime 和协议回归合计
+5 文件、103/103 通过；崩溃窗口、历史 ID 与停止资源针对性回归 20/20 通过，CLI 配置回归
+4/4 通过。完整共享内核门禁在本轮重新执行，最终计数与远程 CI 结果见 PR #409 最新验证记录。
+
+本轮固定 CLI `cli-pr409-comment-fixes/cli.js` SHA-256 为
+`269f2631eb47adcca0a1ab54676b111cffdc30ecc2113de6e4aa7b17054ee7a0`。
+同一旧 Mission 的 Execution `00daed20-23b5-447a-82c5-105149e07081` 成功返回
+`PRAGMA409-COMMENTS-OK`，独立查询成功；原 Session、根 Context、静态 fingerprint 与
+`openai/gpt-5.6-sol` 均保持不变。记录为仓库外 `cli-pr409-comments.json` 与
+`cli-pr409-comments-result.json`；没有新增真实 PI 或其他平台验收声明。

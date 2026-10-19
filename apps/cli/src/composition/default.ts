@@ -11,6 +11,7 @@ import { createPiRuntime } from "@pragma/runtime-pi";
 import { createOpenCodeRuntime } from "@pragma/runtime-opencode";
 import { createQoderCliRuntime } from "@pragma/runtime-qodercli";
 import {
+  createLocalHostSettingsStore,
   createRuntimeTokenCounter,
   createLocalHostRuntimeResolver,
   withExactLegacyRuntimeBindings,
@@ -45,19 +46,33 @@ export function createProductionLocalHost(): CliLocalHost {
   const pragmaHome = process.env["PRAGMA_HOME"]?.trim() || join(homedir(), ".pragma");
   const configuration = createLocalHostRuntimeConfiguration({ pragmaHome });
   const environmentSettings = createRuntimeProcessEnvironmentSettingsStore({ pragmaHome });
+  const hostSettings = createLocalHostSettingsStore({
+    settingsPath: join(pragmaHome, "state", "desktop-settings.json"),
+  });
   const tokenCounter = createRuntimeTokenCounter();
   const factories: readonly RuntimeEnvironmentAdapterFactory[] = DEFAULT_RUNTIME_ENVIRONMENTS.map(
     ({ adapter }) => ({
       ...adapter,
-      prepare: (environment, context) => {
+      prepare: async (environment, context) => {
+        const agentContextWindow =
+          environment.adapter.id === "pragma.runtime.pi"
+            ? (await hostSettings.get()).agentContextWindow
+            : undefined;
         const settings = environmentSettings.getSync();
         return {
-          cacheKey: JSON.stringify(settings),
-          create: () => createAdapter(environment, context, settings.policy),
+          cacheKey: JSON.stringify({ settings, agentContextWindow }),
+          create: () => createAdapter(environment, context, settings.policy, agentContextWindow),
         };
       },
-      create: (environment, context) =>
-        createAdapter(environment, context, environmentSettings.getSync().policy),
+      create: async (environment, context) =>
+        createAdapter(
+          environment,
+          context,
+          environmentSettings.getSync().policy,
+          environment.adapter.id === "pragma.runtime.pi"
+            ? (await hostSettings.get()).agentContextWindow
+            : undefined,
+        ),
     }),
   );
 
@@ -65,6 +80,7 @@ export function createProductionLocalHost(): CliLocalHost {
     environment: Parameters<RuntimeEnvironmentAdapterFactory["create"]>[0],
     context: Parameters<RuntimeEnvironmentAdapterFactory["create"]>[1],
     policy: ReturnType<typeof environmentSettings.getSync>["policy"],
+    agentContextWindow?: number,
   ) {
     const adapter = environment.adapter;
     assertEmptyBuiltInRuntimeConfig(environment);
@@ -83,7 +99,11 @@ export function createProductionLocalHost(): CliLocalHost {
     };
     switch (adapter.id) {
       case "pragma.runtime.pi":
-        return createPiRuntime({ ...common, modelProviders: configuration.modelProviders });
+        return createPiRuntime({
+          ...common,
+          modelProviders: configuration.modelProviders,
+          agentContextWindow,
+        });
       case "pragma.runtime.codex":
         return createCodexRuntime({
           ...common,
@@ -108,6 +128,7 @@ export function createProductionLocalHost(): CliLocalHost {
   }
   const runtimes = createRuntimeEnvironmentService({
     store: configuration.environments,
+    bindAliases: { "codex-local": "codex" },
     factories,
   });
 
@@ -117,9 +138,10 @@ export function createProductionLocalHost(): CliLocalHost {
     ToolPermissionMode,
     { key: string; resolver: ReturnType<typeof createLocalHostRuntimeResolver> }
   >();
-  const legacyRuntimes = (mode: ToolPermissionMode) => {
+  const legacyRuntimes = async (mode: ToolPermissionMode) => {
+    const { agentContextWindow } = await hostSettings.get();
     const settings = environmentSettings.getSync();
-    const key = JSON.stringify(settings);
+    const key = JSON.stringify({ settings, agentContextWindow });
     const cached = legacy.get(mode);
     if (cached?.key === key) return cached.resolver;
     const legacyEnvironment = (id: string) =>
@@ -160,16 +182,24 @@ export function createProductionLocalHost(): CliLocalHost {
           tokenCounter,
           permissionMode: mode,
         }),
-        createPiRuntime({ env: legacyEnvironment("pragma.runtime.pi"), tokenCounter }),
+        createPiRuntime({
+          env: legacyEnvironment("pragma.runtime.pi"),
+          tokenCounter,
+          agentContextWindow,
+        }),
       ],
     });
     legacy.set(mode, { key, resolver });
     return resolver;
   };
   const compatible = (
-    current: Parameters<typeof withExactLegacyRuntimeBindings>[0]["current"],
+    shared: Parameters<typeof withExactLegacyRuntimeBindings>[0]["current"],
     mode: ToolPermissionMode = "request-approval",
-  ) => withExactLegacyRuntimeBindings({ current, legacy: () => legacyRuntimes(mode) });
+  ) =>
+    withExactLegacyRuntimeBindings({
+      current: shared,
+      legacy: () => legacyRuntimes(mode),
+    });
 
   return createLocalHostNodeApplication({
     pragmaHome,

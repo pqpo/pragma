@@ -95,21 +95,6 @@ export function createLocalHostNodeExecutionResourcePorts(options: {
       purpose,
       assertExecutionOwnership,
     }) => {
-      if (purpose === "stop")
-        return {
-          runtimes: options.runtimes,
-          appOptions: {
-            pragmaHome: options.pragmaHome,
-            executionStore,
-            expertSessionStore,
-            runtimes: options.runtimes,
-            usageSink: options.usageSink,
-            loggerProvider: options.loggerProvider,
-          },
-          setToolPermissionMode: () => {
-            throw new Error("Cannot change tool permissions in a stop-only Mission context.");
-          },
-        };
       let toolPermissionMode = mission.toolPermissionMode;
       const resolver = () =>
         options.runtimesForToolPermissionMode?.(toolPermissionMode) ?? options.runtimes;
@@ -118,6 +103,21 @@ export function createLocalHostNodeExecutionResourcePorts(options: {
         bind: (request) => resolver().bind(request),
         resolve: (request) => resolver().resolve(request),
       };
+      if (purpose === "stop")
+        return {
+          runtimes,
+          appOptions: {
+            pragmaHome: options.pragmaHome,
+            executionStore,
+            expertSessionStore,
+            runtimes,
+            usageSink: options.usageSink,
+            loggerProvider: options.loggerProvider,
+          },
+          setToolPermissionMode: () => {
+            throw new Error("Cannot change tool permissions in a stop-only Mission context.");
+          },
+        };
       const memoryBindingId = randomUUID();
       let historyIds: Promise<ReadonlySet<string>> | undefined;
       const branchHistory = await options.missions.readBranchHistory(mission.id);
