@@ -1,3 +1,4 @@
+import type { MemoryExtractionProvenanceUpdate } from "../pipeline/extraction-session.ts";
 import {
   pruneCompletedMemoryJobs,
   type CompletedMemoryJobCursor,
@@ -112,6 +113,7 @@ export type EpisodicRejectionReason =
   "low-value" | "insufficient-evidence" | "sensitive" | "policy";
 
 export interface EpisodicMemoryStore {
+  enrichExtractionProvenance(input: MemoryExtractionProvenanceUpdate): Promise<void>;
   queryForExtraction(
     input: ExtractionCatalogQuery,
     now: Date,
@@ -382,6 +384,38 @@ export async function createEpisodicMemoryStore(
   };
 
   const store: EpisodicMemoryStore = {
+    async enrichExtractionProvenance(input) {
+      const previous = EpisodicMemoryRecordSchema.shape.extractor.parse(input.previous);
+      const next = EpisodicMemoryRecordSchema.shape.extractor.parse(input.next);
+      data.exec("BEGIN IMMEDIATE;");
+      try {
+        for (const ref of input.records) {
+          const row = data
+            .prepare("SELECT record_json AS json FROM episodes WHERE id = ? AND revision = ?")
+            .get(ref.id, ref.revision) as { json: string } | undefined;
+          if (row === undefined) continue;
+          const record = EpisodicMemoryRecordSchema.parse(JSON.parse(row.json));
+          // Supplement only the exact revision we published; governance or a newer
+          // extraction must never be overwritten by a late Runtime diagnostic.
+          if (JSON.stringify(record.extractor) !== JSON.stringify(previous)) continue;
+          const json = JSON.stringify(
+            EpisodicMemoryRecordSchema.parse({ ...record, extractor: next }),
+          );
+          data
+            .prepare("UPDATE episodes SET record_json = ? WHERE id = ? AND revision = ?")
+            .run(json, ref.id, ref.revision);
+          data
+            .prepare(
+              "UPDATE episode_revisions SET record_json = ? WHERE episode_id = ? AND revision = ?",
+            )
+            .run(json, ref.id, ref.revision);
+        }
+        data.exec("COMMIT;");
+      } catch (error) {
+        rollback(data);
+        throw error;
+      }
+    },
     ...memoryIndexOutbox(data, "episodes"),
     async relatedForRecall(scope, id, limit) {
       const access = recallPredicate("episodes", scope);

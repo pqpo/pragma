@@ -1,5 +1,7 @@
 # Local Host Kernel R3 CR 修复后串行性能对照
 
+> 历史测量/调研：结论只适用于记录中的提交、版本与环境，不是当前状态或开发规范。当前入口见[文档索引](../README.md)。
+
 2026-10-03。候选 `8387482a0374fd9ac466b387fbb8fd8b478254b2`；基线最新 `origin/main` / `921376a446d9da878b8d9fa5c9f1df69ab323272`。Node 24.18.0、pnpm 10.12.1，macOS x64 / Intel i7-9750H；同机、同 fixture、同存储格式。全部测试、构建和 Agent 工作结束后串行运行。
 
 结论：初始两组有四次指标触发，按场景追加两组每侧 40 次后，原触发项均未持续触发。追加 Capability 第一组的模型结束→Core terminal 指标另触发一次，第二组未持续。存储与准备基准的可比较指标未触发阈值。不证明尾部异常不存在；真实 provider、Electron 和正常后台负载仍未验收。
@@ -53,6 +55,6 @@ python3 docs/performance/local-host-kernel-r3-cr-analyze.py <外部采样目录>
 
 重新采集时，将 main 与候选置于独立 checkout，以 Node 24.18.0 分别安装同一 lockfile 并构建依赖；源码前后使用 `local-host-kernel-r3-source-digest.mjs <checkout>`。串行执行 `local-host-kernel-r2-compilation-probe.mjs --checkout <checkout> --samples 20 --lifecycle true --output <file>`，再分别运行该 checkout 的 `benchmark-execution-storage.mjs` 与 `benchmark-storage-preparation.mjs`。定向追加用 `--samples 40 --scenario <场景>`，每场景两组，所有命令串行；路径按实际 checkout 替换。
 
-完整工程门禁见 [CR 报告](../architecture/local-host-kernel-r3-code-review.md)。本报告不将 R3 阶段标记为完成。
+完整工程门禁见 [CR 报告](../archive/architecture/local-host-kernel-r3-code-review.md)。本报告不将 R3 阶段标记为完成。
 
 所有输出路径均使用仓库外目录；复算结果写入传入的采样目录。

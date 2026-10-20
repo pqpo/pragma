@@ -2,7 +2,8 @@
 
 ## Status
 
-Accepted.
+Accepted. Consolidates the former ADR 005 ownership/storage summary; lifecycle and leases remain
+defined by [ADR 006](006-runtime-session-ownership-and-leases.md).
 
 ## Context
 
@@ -34,6 +35,14 @@ fake Session records into the user's real `~/.pragma`.
   Unknown versions and malformed metadata fail closed without mutating the database.
 - Migration backups are retained for seven days by bounded post-window maintenance. Future catalog
   versions fail closed until an adjacent migration is registered.
+
+## Owner and recovery identity
+
+Runtime Session owners are either `{ type: "expert-session", ownerId, contextId }` or
+`{ type: "flow-execution", ownerId, invocationId }`. Native data stays below the encoded owner
+and system Session directories. Recovery must match owner, original `systemSessionId`, Expert,
+Runtime, `RuntimeSessionRef` and workspace history. Business readers do not retain old JSON
+manifest/claim branches after import.
 
 ## Consequences
 

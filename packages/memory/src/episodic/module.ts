@@ -107,6 +107,7 @@ export async function createEpisodicMemoryModule(
         }, 60_000)
       : undefined;
     lease?.unref();
+    let materialized: readonly { id: string; revision: number }[] = [];
     let phase: MemoryExtractionFailurePhase = "source_read";
     try {
       let recovered = await selectedExtractor.recover?.(job.id, job.inputWatermark);
@@ -194,6 +195,9 @@ export async function createEpisodicMemoryModule(
           signal: controller.signal,
           watermark: job.inputWatermark,
           conversationRef: job.conversationRef,
+          onProvenance: async (_type, previous, next) => {
+            await store.enrichExtractionProvenance({ records: materialized, previous, next });
+          },
           onAdmission: () => {
             unadmittedClaims.delete(controller);
           },
@@ -258,6 +262,7 @@ export async function createEpisodicMemoryModule(
         updatedAt: timestamp,
       });
       await store.completeRetained({ job, record, evidence, now: completedAt });
+      materialized = [record];
     } catch (error) {
       if (error instanceof MemoryExtractionDeferred) {
         await store.releaseUnadmittedClaim(job, now(), unadmittedClaims.has(controller));

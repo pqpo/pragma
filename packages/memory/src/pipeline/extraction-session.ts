@@ -9,6 +9,7 @@ export {
   type MemoryExtractionInput,
   type MemoryExtractionToolName,
   type MemoryExtractionReceipt,
+  type MemoryExtractionProvenanceUpdate,
   type MemoryExtractionSession,
   type MemoryExtractionSessionGuard,
   type MemoryExtractorOptions,

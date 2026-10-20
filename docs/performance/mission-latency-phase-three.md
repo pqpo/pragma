@@ -1,5 +1,7 @@
 # 首 token 延迟优化第三阶段实施报告
 
+> 历史测量/调研：结论只适用于记录中的提交、版本与环境，不是当前状态或开发规范。当前入口见[文档索引](../README.md)。
+
 日期：2026-10-01。架构决策见 [ADR 064](../adr/064-mission-durable-delivery-and-capacity-accounting.md)。
 
 ## 2026-10-01 页面加载回归与止损

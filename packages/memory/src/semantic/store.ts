@@ -1,3 +1,4 @@
+import type { MemoryExtractionProvenanceUpdate } from "../pipeline/extraction-session.ts";
 import {
   pruneCompletedMemoryJobs,
   type CompletedMemoryJobCursor,
@@ -152,6 +153,7 @@ export interface SemanticGovernanceInput {
 }
 
 export interface SemanticMemoryStore {
+  enrichExtractionProvenance(input: MemoryExtractionProvenanceUpdate): Promise<void>;
   queryForExtraction(input: ExtractionCatalogQuery, now: Date): Promise<readonly SemanticFact[]>;
   listExtractionIdentities(
     filter: ExtractionRecallFilter,
@@ -497,6 +499,34 @@ export async function createSemanticMemoryStore(
   };
 
   const store: SemanticMemoryStore = {
+    async enrichExtractionProvenance(input) {
+      const previous = SemanticFactSchema.shape.extractor.parse(input.previous);
+      const next = SemanticFactSchema.shape.extractor.parse(input.next);
+      data.exec("BEGIN IMMEDIATE;");
+      try {
+        for (const ref of input.records) {
+          const row = data
+            .prepare("SELECT record_json AS json FROM current_facts WHERE id = ? AND revision = ?")
+            .get(ref.id, ref.revision) as { json: string } | undefined;
+          if (row === undefined) continue;
+          const record = SemanticFactSchema.parse(JSON.parse(row.json));
+          // Supplement only the exact revision we published; governance or a newer
+          // extraction must never be overwritten by a late Runtime diagnostic.
+          if (JSON.stringify(record.extractor) !== JSON.stringify(previous)) continue;
+          const json = JSON.stringify(SemanticFactSchema.parse({ ...record, extractor: next }));
+          data
+            .prepare("UPDATE current_facts SET record_json = ? WHERE id = ? AND revision = ?")
+            .run(json, ref.id, ref.revision);
+          data
+            .prepare("UPDATE fact_revisions SET record_json = ? WHERE fact_id = ? AND revision = ?")
+            .run(json, ref.id, ref.revision);
+        }
+        data.exec("COMMIT;");
+      } catch (error) {
+        rollback(data);
+        throw error;
+      }
+    },
     ...memoryIndexOutbox(data, "current_facts"),
     async countIndexableRecords() {
       return (

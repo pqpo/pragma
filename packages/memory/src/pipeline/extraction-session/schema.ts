@@ -300,7 +300,10 @@ export interface MemoryExtractionSession {
   deliverErrorResponse(text: string, feedback?: MemoryExtractionFeedbackInput): Promise<string>;
   continuationPrompt(): Promise<string>;
   bindMission(missionId: string): Promise<void>;
-  setProvenance(value: z.infer<typeof Provenance>): Promise<void>;
+  setProvenance(
+    value: z.infer<typeof Provenance>,
+    completedTypes?: readonly MemoryExtractionType[],
+  ): Promise<void>;
   receipt(): Promise<MemoryExtractionReceipt | undefined>;
   receiptFor(type: MemoryExtractionType): Promise<MemoryExtractionReceipt | undefined>;
   completed(): Promise<boolean>;
@@ -312,6 +315,7 @@ export interface MemoryExtractionSession {
     >
   >;
   markAdmitted(): Promise<void>;
+  withdrawUnstartedAdmission(): Promise<void>;
   reserveContinuation(input: {
     previousExecutionId: string;
     prompt: string;
@@ -320,7 +324,20 @@ export interface MemoryExtractionSession {
   failure(): Promise<string | undefined>;
   setContextBudget(tokens: number): Promise<void>;
 }
+export interface MemoryExtractionProvenanceUpdate {
+  readonly records: readonly { readonly id: string; readonly revision: number }[];
+  readonly previous: MemoryExtractionReceipt["provenance"];
+  readonly next: MemoryExtractionReceipt["provenance"];
+}
 export interface MemoryExtractionSessionGuard {
+  /** Idempotent authority update; may be repeated after a failed or uncertain write. */
+  readonly onProvenance?:
+    | ((
+        type: MemoryExtractionType,
+        previous: MemoryExtractionReceipt["provenance"],
+        next: MemoryExtractionReceipt["provenance"],
+      ) => Promise<void>)
+    | undefined;
   readonly activeTypes?: readonly MemoryExtractionType[] | undefined;
   readonly assertEvidenceAccess?:
     | ((

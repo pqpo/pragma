@@ -28,14 +28,11 @@ ESLint enforces illegal dependency directions, browser and Node environment sepa
 Applications compose reusable domain packages, but application-specific HTTP clients and unimplemented
 future infrastructure do not receive placeholder packages.
 
-Shared packages remain portable across browser and Node environments.
+`@pragma/shared` remains portable across browser and Node environments. Other packages follow their
+[declared environment and dependency boundaries](../architecture/module-boundaries.md).
 
 Illegal imports fail during local lint and CI.
 
 ## Alternatives Considered
 
 Nx is not introduced yet. Turborepo is enough for workspace task orchestration at the current size.
-
-## Follow-Up
-
-If the dependency graph grows significantly, Pragma can introduce Nx for dependency graph visualization and stricter module-boundary tooling.

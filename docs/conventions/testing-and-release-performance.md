@@ -47,3 +47,19 @@ CI 的两条验证 lane 按耗时平衡：quality 负责静态检查、快速契
 原生 Desktop job 还原同一 CI 的 workspace-build 归档，包括用于原生审计的已编译 Core/Shared 模块；只传递运行环境中立的编译产物，不传递 node_modules。归档与 receipt 保留十四天，任一必需 artifact 缺失/过期都重新验证。
 
 workspace-build 的独立清单绑定提交、源码散列及整个归档的 SHA-256，消费者先校验再解包，覆盖业务测试与原生审计依赖的全部 workspace dist。Windows 构建和业务入口直接启动 pnpm JavaScript 入口，保留含空格的测试筛选参数。
+
+## 开发验证与回归要求
+
+- Host binding、工具协议或编译身份修改必须让 Host 实际生成的 binding 经过真实 Interpreter 编译校验，
+  并覆盖首次执行和失败后的手动重试；禁止只直接读取 `binding.value` 调工具或用手写合法 fingerprint
+  代替集成验证。fingerprint 纳入版本等新维度时必须重新计算 SHA-256，不能给摘要追加文本。
+  对应业务回归必须纳入 `test:business` 的所属 lane，不能仅留在未执行的测试文件中。
+
+- Bugfix 必须保留既有支持的用户入口；删除入口、收紧支持范围或把成功断言改为失败，必须在 PR 中列出明确的需求依据，禁止作为修复的隐含变化。
+- claim、恢复、删除与迁移修改必须同时验证正常首次使用和异常恢复路径。
+- 知识库修订修改执行 `pnpm test:revision`，独立于快速 `test:core`；PR CI 和 Desktop Release 必须执行该业务回归门禁。
+- 关键 Runtime 业务链路发布前记录真实 Runtime 的入口、目标、实际写入及审核结果，不能以 mock 成功代替。
+
+- 修改共享 Mission 控制、编译、执行、恢复或持久化时运行 `pnpm test:local-host-kernel`，不能用 adapter mocks 或 `test:core` 代替。Desktop 的 IPC、UI、平台接线与打包仍需对应验证。
+- 优先执行受影响模块的测试；清理废弃或重叠断言，保留真实边界、迁移和异常恢复证据。
+- 构建或应用入口改动运行对应 build；发行检查见[Desktop 发行](../usage/desktop-distribution.md)和[CLI 发行](../usage/cli-release.md)。

@@ -2,7 +2,8 @@
 
 ## Status
 
-Superseded in part by ADR 049
+Superseded in part by [ADR 049](049-runtime-session-sqlite-catalog-and-host-storage-binding.md) for storage and
+[Context-addressed collaboration](043-context-addressed-expert-collaboration.md) for delegation.
 
 ADR 016 extends this decision with owner-scoped deletion and separates Runtime process state from
 storage retention state. ADR 049 replaces the per-Session metadata and ownership-claim file layout.
@@ -14,11 +15,9 @@ Runtime Sessions until the Flow reaches a terminal state. `ExecutionController` 
 Runtime Sessions only for cancellation, steering, and human interaction.
 
 Runtime reuse is keyed exclusively by a stable identity containing `owner`, `contextId`,
-`expertId`, and `runtimeId`. `ContextIdResolver` is the single selection abstraction used by Flow
-Expert steps, ExpertTeam delegation, and standalone Expert delegation. The resolver is identified
-by `id/version`; it is synchronous and receives only persisted execution inputs, compatible prior
-Contexts, and a Core-generated fresh ID. Returning an existing ID reuses that Context; returning a
-new ID creates one. There is no separate `fresh/reuse` policy.
+`expertId`, and `runtimeId`. `ContextIdResolver` is the named/versioned selection abstraction for Flow Expert steps. Delegation
+uses explicit intent: `spawn_expert` creates a fresh Context and `continue_expert` reuses an
+explicit `contextId`; it does not accept a Context policy.
 
 `RuntimeContextRecord` is the sole persisted source for Context identity, lifecycle, and Runtime
 snapshot. Invocation and AgentInstance reference only `contextId`; neither stores a snapshot copy.
@@ -54,6 +53,6 @@ active, released on close, and may be reclaimed after expiration when a process 
 
 - Multiple prompts in one ExpertSession reuse the same root Context and native Runtime process until the Session closes.
 - A second Worker cannot concurrently resume and execute the same ExpertSession.
-- Flow and delegation default resolution uses `pragma.context.fresh@v1`; deliberate reuse must be expressed by an identified resolver.
+- Flow default resolution uses `pragma.context.fresh@v1`; delegation follows explicit spawn/continue identity.
 - Runtime cleanup failures are reported, and a Session is marked closed only after cleanup succeeds.
 - Runtime snapshots are stored only in validated RuntimeContext records, never copied into Invocation or AgentInstance.

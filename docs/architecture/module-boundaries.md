@@ -13,6 +13,7 @@ apps/desktop    -> interpreter -> evaluation -> core -> shared
 apps/desktop    -> runtime-* -> core -> shared
 plugins/*   -> core -> shared
 examples    -> runtime-* / plugin-* / core -> shared
+              (explicit Host composition roots may also use local-host)
 ```
 
 ## Layers
@@ -23,7 +24,7 @@ examples    -> runtime-* / plugin-* / core -> shared
 | `core`            | Expert Agent execution abstractions and Runtime Adapter contracts                                     |
 | `evaluation`      | Independent Run Dry and Agent Judge dataset contracts, assertions, sampling, and results              |
 | `interpreter`     | Pragma DSL AST, parser, validator, compiler, registries, and semantic dump                            |
-| `built-in-agents` | Six DSL-defined built-in Agents, their independent host ports, portable product logic, and contracts  |
+| `built-in-agents` | Five DSL-defined built-in Agents, their independent host ports, portable product logic, and contracts |
 | `runtime-*`       | Concrete Runtime Adapter implementations                                                              |
 | `local-host`      | Node-only device-local application services and Mission Board shared by Desktop Main and the CLI      |
 | `plugins/*`       | Expert extensions built on the core plugin API                                                        |
@@ -32,19 +33,21 @@ examples    -> runtime-* / plugin-* / core -> shared
 
 ## Dependency Matrix
 
-| Source                     | Allowed dependencies                                                                                                                                                                                       |
-| -------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `apps/cli`                 | `@pragma/local-host`, browser-safe wire Schemas/DTOs from `@pragma/shared` (including `/integration`), concrete `@pragma/runtime-*` at its composition root                                                |
-| `apps/desktop`             | `@pragma/local-host` (Main only), `@pragma/shared`, `@pragma/core`, `@pragma/evaluation`, `@pragma/interpreter`, `@pragma/built-in-agents`, concrete `@pragma/runtime-*` packages                          |
-| `packages/local-host`      | `@pragma/shared`, `@pragma/core`, `@pragma/interpreter`, `@pragma/evaluation`, `@pragma/built-in-agents`, `@pragma/memory`, `@pragma/context-filesystem`; Node built-ins and runtime-neutral third parties |
-| `plugins/*`                | `@pragma/shared`, `@pragma/core`; no app, server, client, or concrete runtime dependencies                                                                                                                 |
-| `examples`                 | `@pragma/core`, concrete `@pragma/runtime-*`, and concrete `@pragma/plugin-*` packages                                                                                                                     |
-| `packages/shared`          | Runtime-neutral dependencies only                                                                                                                                                                          |
-| `packages/core`            | `@pragma/shared`                                                                                                                                                                                           |
-| `packages/evaluation`      | `@pragma/core`; its `/ast` export remains browser-safe and never depends on Interpreter                                                                                                                    |
-| `packages/interpreter`     | `@pragma/shared`, `@pragma/core`, `@pragma/evaluation`; its `/ast` export remains browser-safe                                                                                                             |
-| `packages/built-in-agents` | `@pragma/shared`, `@pragma/core`, `@pragma/interpreter`, `@pragma/evaluation`, `@pragma/memory`; `/contracts` remains browser-safe                                                                         |
-| `packages/runtime/*`       | `@pragma/shared`, `@pragma/core`, and that runtime's own SDKs                                                                                                                                              |
+| Source                        | Allowed dependencies                                                                                                                                                                                       |
+| ----------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `apps/cli`                    | `@pragma/local-host`, browser-safe wire Schemas/DTOs from `@pragma/shared` (including `/integration`), concrete `@pragma/runtime-*` at its composition root                                                |
+| `apps/desktop`                | `@pragma/local-host` (Main only), `@pragma/shared`, `@pragma/core`, `@pragma/memory`, `@pragma/evaluation`, `@pragma/interpreter`, `@pragma/built-in-agents`, concrete `@pragma/runtime-*` packages        |
+| `packages/local-host`         | `@pragma/shared`, `@pragma/core`, `@pragma/interpreter`, `@pragma/evaluation`, `@pragma/built-in-agents`, `@pragma/memory`, `@pragma/context-filesystem`; Node built-ins and runtime-neutral third parties |
+| `plugins/*`                   | `@pragma/shared`, `@pragma/core`; no app, server, client, or concrete runtime dependencies                                                                                                                 |
+| `examples`                    | `@pragma/core`, concrete `@pragma/runtime-*`, and concrete `@pragma/plugin-*`; the three Host composition exceptions are listed below                                                                      |
+| `packages/shared`             | Runtime-neutral dependencies only                                                                                                                                                                          |
+| `packages/core`               | `@pragma/shared`                                                                                                                                                                                           |
+| `packages/evaluation`         | `@pragma/core`; its `/ast` export remains browser-safe and never depends on Interpreter                                                                                                                    |
+| `packages/interpreter`        | `@pragma/shared`, `@pragma/core`, `@pragma/evaluation`; its `/ast` export remains browser-safe                                                                                                             |
+| `packages/built-in-agents`    | `@pragma/shared`, `@pragma/core`, `@pragma/interpreter`, `@pragma/evaluation`, `@pragma/memory`; `/contracts` remains browser-safe                                                                         |
+| `packages/memory`             | `@pragma/shared`, `@pragma/core`; no Interpreter, Runtime, app or filesystem adapter dependencies                                                                                                          |
+| `packages/context-filesystem` | Core/Shared filesystem Context adapter for Hosts; never depends on apps or Local Host                                                                                                                      |
+| `packages/runtime/*`          | `@pragma/shared`, `@pragma/core`, and that runtime's own SDKs                                                                                                                                              |
 
 Cross-package imports must use `@pragma/*` names, not relative paths.
 
@@ -55,15 +58,13 @@ Electron, React/Next, or `@pragma/runtime-*`. Runtime factories
 or a Host-owned `RuntimeResolver` are injected by `apps/desktop` Main or `apps/cli` composition. A
 richer Host supplies concrete resource, interaction and platform ports to the same application factory. Mission
 commands use the factory-created Local Host Core control adapter and shared MissionExecutionOwner;
-Desktop must not implement another command consumer or strict-target resolver. R2's Local Host
+Desktop must not implement another command consumer or strict-target resolver. The Local Host
 compile service owns pinned Revision reuse, executor resolution, binding/fingerprint identity,
 stability retries, owner compilation cache and target readiness. Desktop, CLI and built-in sources
 provide resource ports; Interpreter retains the actual DSL compiler. `@pragma/local-host/resources`
-provides Node resource readers and credential access; OS interaction and approval remain Host adapters. `@pragma/local-host/deployment` owns shared resource mutation, Bundle installation/export and environment services ([ADR 075: Shared deployment and environment services](../adr/075-shared-deployment-and-environments.md)). R1–R3 are merged through #353/#354/#355. R4 removes full-kernel overrides,
-Runner forwarding and internal execution bypasses. Real model, OS credential and full product
-performance acceptance remain open; see [R4 implementation status](local-host-kernel-r4-implementation.md).
+provides Node resource readers and credential access; OS interaction and approval remain Host adapters. `@pragma/local-host/deployment` owns shared resource mutation, Bundle installation/export and environment services ([ADR 075: Shared deployment and environment services](../adr/075-shared-deployment-and-environments.md)). The factory owns the execution kernel; surfaces cannot inject a complete replacement command/run service.
 `@pragma/shared`, Core, Interpreter, Evaluation, Built-in Agents, Memory,
-Context Filesystem, Runtime packages, plugins, and examples may not depend on
+Context Filesystem, Runtime packages and plugins may not depend on
 `@pragma/local-host` or `@pqpo/pragma`. Desktop preload/renderer/shared code remains browser-safe and
 may consume `@pragma/shared/integration` and the browser-safe `@pragma/local-host/deployment-contracts` entry, but never Local Host Node entries.
 
@@ -79,6 +80,7 @@ Current runtime implementations:
 ```text
 packages/runtime/pi
 packages/runtime/codex
+packages/runtime/opencode
 packages/runtime/claude-code
 packages/runtime/qodercli
 packages/runtime/antigravity
@@ -111,7 +113,8 @@ identity source.
 
 Agent workspaces contain task inputs, repositories, artifacts, and task-authored files only. Runtime
 state, configuration, sessions, and installed plugin copies must never be derived from or written
-below the workspace. Agent plugin copies live under `~/.pragma/cache/agents/<agent>/plugins/`.
+below the workspace. Agent plugin packages are globally deduplicated under `~/.pragma/cache/plugins/sha256/`;
+`cache/agents/<agent>/` holds binding metadata only.
 
 `@pragma/core` belongs to the core agent layer. It may depend on `@pragma/shared`, but must not depend
 on `@pragma/interpreter`, concrete runtime packages, runtime SDKs such as PI agent, server internals,
@@ -119,7 +122,7 @@ client SDKs, Web UI, or database packages. `@pragma/interpreter` depends on Core
 to compile portable YAML declarations, while `@pragma/interpreter/ast` stays browser-safe. Concrete
 runtime packages depend on `@pragma/core` and are assembled by application entry points such as
 Desktop and CLI. The default runtime selection is an application-layer decision; Desktop currently registers
-PI, Codex, Claude Code, Qoder CLI, and Antigravity CLI runtimes and uses PI by default.
+PI, Codex, OpenCode, Claude Code, Qoder CLI, and Antigravity CLI runtimes and uses PI by default.
 
 `@pragma/built-in-agents` owns the five portable DSL-defined Agents: the editable Pragma, Store
 Revision, and Skill Revision Agents plus the internal Memory Curator and Evaluation Judge Agents.
@@ -165,14 +168,14 @@ apps/server/src/runtime-gateway
 
 Core's `defineAcpRuntimeDriver()` composes the existing private Session factory with the vendor-neutral ACP SDK. Concrete `runtime-*` adapters provide agent executables, session metadata and provider extensions. Claude-specific ACP code and its bundled worker stay in `@pragma/runtime-claude-code`; Core does not import `claude-agent-acp`. See [ADR 059](../adr/059-acp-runtime-driver.md).
 
-## Issue #348 R4：共享 Mission application
+## Detailed implementation constraints
 
-Desktop Main 与 CLI 通过 Local Host 同一 Mission application factory 构造控制、编译与执行内核。
-Automation、Pragma、Memory Curator、Store/Skill Revision、Evaluation 与 IPC mutation 使用共享用例。
-Desktop 保留平台资源、审批、展示、Electron 与 IPC adapter；CLI 保留 argv、TTY、presentation 和 Runtime composition。
-不得注入完整 command/run/execution service 恢复双内核。通用耐久投递编排归 Local Host，产品 payload 与通知归 Desktop。
+- [Package contracts](../conventions/package-contracts.md): Desktop build/IPC, Context, delegation, Memory and compiler constraints.
+- [Persistence and upgrades](../conventions/persistence-and-upgrades.md): storage, protocol and deletion rules.
+- [Runtime integration](../conventions/runtime-integration.md): token counting, isolation and capability acceptance.
+- [Testing and release](../conventions/testing-and-release-performance.md): shared-kernel and surface gates.
 
-CLI 测试入口执行完整 Local Host 业务门禁；Desktop/CLI composition 验证证明实际接入该实现。
-Desktop 的 UI、IPC、平台和打包测试继续独立。
-[ADR 066](../adr/066-unified-local-host-mission-application.md) 与 [R4 验证报告](local-host-kernel-r4-implementation.md)
-区分代码收敛、工程门禁与仍需真实模型/OS 凭据/完整产品场景的验收。
+Only `examples/src/support/example-kit.ts`, `examples/src/runtimes/probe.ts` and
+`examples/src/runtimes/shared/console-runtime-chat.ts` are explicit local Host composition roots
+allowed to inject Local Host's SQLite ExecutionStore. Other examples, Core and Runtime contract
+tests stay Host-independent and use an explicit in-memory test store from `@pragma/core/testing`.

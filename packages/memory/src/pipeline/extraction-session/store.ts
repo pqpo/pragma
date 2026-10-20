@@ -338,6 +338,15 @@ export function createMemoryExtractionSessionStore(
           save(db, state);
         });
       },
+      async withdrawUnstartedAdmission() {
+        await transaction((db) => {
+          const state = read(db, initial.key)!;
+          if (state.output !== undefined || state.pendingContinuation !== undefined)
+            fail("memory_curator_admission_already_completed");
+          state.admitted = false;
+          save(db, state);
+        });
+      },
       async reserveContinuation(input) {
         await guardCurrent(guard, initial);
         return await transaction((db) => {
@@ -393,10 +402,29 @@ export function createMemoryExtractionSessionStore(
             : { output, provenance };
         });
       },
-      async setProvenance(value) {
+      async setProvenance(value, completedTypes = ["episodic", "semantic"]) {
+        const next = Provenance.parse(value);
+        const changes = await transaction((db) => {
+          const state = read(db, initial.key)!;
+          const changes = completedTypes.flatMap((type) => {
+            const previous = state.resultProvenance[type];
+            if (previous === undefined || state.results[type] === undefined) return [];
+            return [{ type, previous }];
+          });
+          return changes;
+        });
+        // Authority writes are idempotent. Keep the old receipt until they succeed,
+        // so a failed or uncertain write can be retried with the same CAS source.
+        for (const { type, previous } of changes) await guard.onProvenance?.(type, previous, next);
         await transaction((db) => {
           const state = read(db, initial.key)!;
-          state.provenance = Provenance.parse(value);
+          for (const { type, previous } of changes) {
+            const current = JSON.stringify(state.resultProvenance[type]);
+            if (current !== JSON.stringify(previous) && current !== JSON.stringify(next))
+              fail("memory_curator_provenance_changed");
+            state.resultProvenance[type] = next;
+          }
+          state.provenance = next;
           save(db, state);
         });
       },
@@ -809,10 +837,19 @@ export function createMemoryExtractionSessionStore(
         }
       });
     },
+    async conversationRetryGenerations(jobId: string): Promise<Record<string, number>> {
+      return await transaction((db) => {
+        const rows = db
+          .prepare("SELECT key FROM sessions WHERE module = 'conversation' AND job_id = ?")
+          .all(jobId) as { key: string }[];
+        return Object.fromEntries(rows.map(({ key }) => [key, read(db, key)!.retryGeneration]));
+      });
+    },
     async retryConversation(
       jobId: string,
       restart = false,
       pendingTypes: readonly ("episodic" | "semantic")[] = [],
+      expectedGenerations?: Readonly<Record<string, number>>,
     ): Promise<void> {
       await transaction((db) => {
         const rows = db
@@ -820,6 +857,12 @@ export function createMemoryExtractionSessionStore(
           .all(jobId) as { key: string }[];
         for (const { key } of rows) {
           const state = read(db, key)!;
+          if (expectedGenerations !== undefined) {
+            const expected = expectedGenerations[key];
+            if (expected === undefined) fail("memory_curator_retry_generation_changed");
+            if (state.retryGeneration === expected + 1) continue;
+            if (state.retryGeneration !== expected) fail("memory_curator_retry_generation_changed");
+          }
           state.continuations = 0;
           state.retryGeneration++;
           if (restart) delete state.pendingContinuation;

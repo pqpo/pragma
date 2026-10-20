@@ -1,3 +1,4 @@
+import { replayConversationMemoryRetry } from "./conversation-retry.ts";
 import type { EpisodicMemoryExtractor } from "../episodic/schema.ts";
 import type { SemanticMemoryExtractor } from "../semantic/schema.ts";
 import type { EpisodicMemoryModule } from "../episodic/module.ts";
@@ -88,7 +89,12 @@ export function createConversationMemoryExtractionCoordinator(options: {
       const failBatch = async (batch: ConversationExtractionBatch, error: unknown) => {
         const failure = Object.assign(
           new Error(error instanceof Error ? error.message : String(error), { cause: error }),
-          { retryable: (error as { preAdmission?: boolean } | null)?.preAdmission === true },
+          {
+            retryable: (error as { preAdmission?: boolean } | null)?.preAdmission === true,
+            ...(typeof (error as { code?: unknown } | null)?.code === "string"
+              ? { code: (error as { code: string }).code }
+              : {}),
+          },
         );
         await Promise.all([batch.episodic?.fail(failure), batch.semantic?.fail(failure)]);
       };
@@ -96,6 +102,11 @@ export function createConversationMemoryExtractionCoordinator(options: {
         const batch = await withFileLock(
           lock,
           async () => {
+            await replayConversationMemoryRetry({
+              pragmaHome: options.pragmaHome,
+              episodic: options.episodic.store,
+              semantic: options.semantic.store,
+            });
             const now = options.now?.() ?? new Date();
             const conversationRef = await nextConversation(now);
             if (conversationRef === undefined) return;

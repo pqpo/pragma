@@ -9,7 +9,7 @@
 
 ## Packages
 
-- Every package is private and `type: "module"`.
+- Internal workspace packages are private and `type: "module"`; the public CLI package is publishable.
 - Every package exposes `lint`, `typecheck`, `test`, `build`, and `clean`.
 - Internal dependencies use `workspace:*`.
 - Cross-package imports use `@pragma/*` package names.
@@ -17,8 +17,8 @@
 ## Boundaries
 
 - Do not put shared logic in `apps`.
-- Do not let Web import database or Agent packages.
-- Do not let shared packages import Node, React, Fastify, Prisma, or Agent Runtime APIs.
+- Desktop preload/renderer/shared code consumes browser-safe entries only.
+- `@pragma/shared` must not import Node, React, Fastify, Prisma, or internal packages; other layers follow the [dependency matrix](../architecture/module-boundaries.md).
 - Define the target layer before creating a new package.
 
 ## Semantic Resource Identities
@@ -52,3 +52,10 @@
 
 - Runtime usage events are snapshots unless explicitly documented as deltas.
 - Follow [Runtime Usage Accounting](./runtime-usage-accounting.md) when parsing Claude Code, Codex, Qoder CLI, Antigravity CLI, or local transcript/session usage.
+
+## Imports and package shape
+
+- Source-relative imports use `.ts`; TypeScript rewrites them to `.js` at build time. Use `import type` for types.
+- Packages expose their public API with `exports`, inherit `@pragma/tsconfig`, and lint/typecheck independently.
+- Internal names use `@pragma/*`; the public CLI is `@pqpo/pragma`. Avoid vague package names and speculative packages.
+- Do not commit generated output, credentials or private traces. Temporary UI screenshots stay outside the repository unless the task explicitly requests them.

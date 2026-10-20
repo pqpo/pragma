@@ -57,6 +57,7 @@ import type {
 } from "@pragma/interpreter/ast";
 import {
   createLocalHostMissionApplication,
+  consumeUnstartedMissionPreparationFailure,
   createLocalHostMissionReadPorts,
   createControllerRunMissionPort,
   createLocalHostNodeMissionCompiler,
@@ -1718,6 +1719,66 @@ describe("Desktop Mission resource adapter contracts", { timeout: 30_000 }, () =
       }
     },
     60_000,
+  );
+
+  it.each(["readiness", "compilation"] as const)(
+    "proves a first-run %s failure did not invoke the Runtime and can start after repair",
+    async (stage) => {
+      const root = await mkdtemp(join(tmpdir(), "pragma-mission-preparation-proof-"));
+      temporaryPaths.push(root);
+      const project = createPragmaProjectStore({ projectsPath: join(root, "projects") });
+      const snapshot = await project.publish({
+        expectedRevision: 0,
+        resources: [runtimeFixture(), expertFixture()],
+      });
+      const missions = createMissionStore({ missionsPath: join(root, "missions") });
+      const mission = await missions.create({
+        workspace: { path: root, basename: "workspace" },
+        goal: "Start after repairing preparation",
+        project: { id: snapshot.projectId, revision: snapshot.revision },
+        executor: missionExecutorSnapshot(
+          snapshot.resources.find((resource) => resource.kind === "Expert")!,
+        ),
+      });
+      const failure = new Error("Preparation is unavailable");
+      const readiness = vi.fn(async () => undefined);
+      const open =
+        stage === "compilation"
+          ? vi.spyOn(project, "openRevision").mockRejectedValueOnce(failure)
+          : undefined;
+      if (stage === "readiness") readiness.mockRejectedValueOnce(failure);
+      const createSession = vi.fn(() => ({ id: "native" }));
+      const startTurn = vi.fn(() => ({ outputText: "done", runtimeSessionId: "native" }));
+      const runtime = defineRuntimeTestDriver<never, { id: string }>({
+        descriptor: { id: "fake", kind: "fake", displayName: "Fake" },
+        createSession,
+        readSession: (session) => ({ runtimeSessionId: session.id }),
+        startTurn,
+        mapEvent: () => ({ events: [] }),
+      });
+      const runner = createDesktopMissionTestApplication({
+        missions,
+        project,
+        capabilityStore: {} as CapabilityStore,
+        capabilityCredentials: {} as CapabilityCredentialStore,
+        capabilitiesPath: join(root, "capabilities"),
+        pragmaHome: join(root, "state"),
+        assertExecutorReady: readiness,
+        runtimes: createStaticRuntimeResolver({ runtimes: [runtime], defaultRuntimeId: "fake" }),
+      });
+      const error = await runner.startRun(mission.id).catch((error: unknown) => error);
+      expect(consumeUnstartedMissionPreparationFailure(error, mission.id)).toBe(true);
+      expect((await missions.get(mission.id)).execution).toBeUndefined();
+      expect(createSession).not.toHaveBeenCalled();
+      expect(startTurn).not.toHaveBeenCalled();
+      open?.mockRestore();
+      await runner.startRun(mission.id);
+      await vi.waitFor(
+        async () => expect((await missions.get(mission.id)).execution?.status).toBe("succeeded"),
+        { timeout: settlementTimeoutMs },
+      );
+      expect(startTurn).toHaveBeenCalledOnce();
+    },
   );
 
   it("skips compilation for a follow-up on the live Mission Session", async () => {

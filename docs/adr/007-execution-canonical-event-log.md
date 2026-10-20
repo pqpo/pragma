@@ -4,9 +4,9 @@
 
 Accepted.
 
-ADR 016 retains this canonical log while an Execution is active, then gzip-archives it after a
-Mission projection has been committed. The archive is bounded diagnostic history rather than the
-permanent Mission chat source.
+Event semantics remain active. [Host Execution storage](065-incremental-execution-storage.md)
+replaces the former file adapter and file-log storage mechanics; bounded diagnostic archives do
+not replace the Execution authority or the Mission read model.
 
 ## Decision
 
@@ -31,9 +31,8 @@ These semantic events share the Execution's monotonic cursor and form the only c
 There is no second parsed-output store and live token output cannot be replayed.
 
 Execution state, Invocation changes, and newly appended events may be submitted through one
-idempotent `ExecutionStore.commit()` operation. File storage uses a recoverable transaction journal;
-future server storage must provide equivalent database transaction, unique-event, and optimistic
-version semantics.
+idempotent `ExecutionStore.commit()` operation. Local Host SQLite commits authority records and canonical outbox atomically; future Host adapters
+must provide equivalent transaction, unique-event and optimistic-version semantics.
 
 Commit values must be JSON-safe because Execution state and events are cross-process durable
 protocols. Once an Execution or Invocation reaches `succeeded`, `failed`, or `cancelled`, a later
@@ -47,8 +46,8 @@ commit may enrich that final state but cannot replace it with a different status
 - Concurrent finalizers cannot overwrite an already finalized Execution or Invocation.
 - `getMessageHistory()` can preserve thinking, tool calls, tool results, and provider signatures
   without retaining token deltas.
-- File storage remains a local reference adapter; production storage should materialize indexed
-  Output and Trace projections where necessary.
+- Core requires an injected ExecutionStore. The retired file writer is retained only as historical
+  fixture provenance; Local Host owns the production SQLite adapter.
 - Persisted `runtime.stream` events and independently persisted Output events remain unsupported.
   Recoverable Execution snapshot schemas follow the forward-only migration policy in ADR 019;
   canonical event formats require explicit read upcasters when their schema changes.

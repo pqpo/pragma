@@ -29,6 +29,9 @@ export const common = {
     viewDetails: "View details",
   },
   navigation: {
+    more: "More",
+    pin: "Pin {{name}} to sidebar",
+    unpin: "Unpin {{name}} from sidebar",
     home: "Home",
     missions: "Missions",
     studio: "Studio",

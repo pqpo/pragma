@@ -1,5 +1,7 @@
 # Issue #348 R4：PR 评论修复后的性能对照
 
+> 历史测量/调研：结论只适用于记录中的提交、版本与环境，不是当前状态或开发规范。当前入口见[文档索引](../README.md)。
+
 2026-10-05，macOS x64，Node 24.18.0 / pnpm 10.12.1。同机 main→R4 串行测量；所有门禁和专项进程先结束。基线 `cc1103e`；R4 基于 `cf5f935` 的本次修复源码。
 
 生产源码 SHA-256：`4ff92e8dd60d7ca28e36b5a6f3f5dae5f07b3e0c3dbd0c10c5576443bdcf7539`，1160 文件；完整业务门禁、测量前后及追加复测后摘要相同。两组八场景，每侧每场景 20 次，共 640 次；全部 probe 完整通过、无 errors。SQLite 与 storage preparation 同样完成两组对照。
@@ -42,4 +44,4 @@ SQLite 第 2 组 canonical 开启、四 owner、5000 历史的 commit P95 初轮
 
 原始命令、probe、存储样本、源码身份、初轮及追加统计保存在仓库外 `/tmp/pragma-pr356-followup-performance/`；分析脚本 `/tmp/pragma-pr356-analyze.py`，编译追加 `/tmp/pragma-pr356-resample.py`，存储追加 `/tmp/pragma-pr356-storage-resample.py`。所有命令成功。
 
-本次只证明上述工程 fixture 对照未发现稳定回退。真实模型、OS Keychain、暖接入、模型完成→terminal、terminal→renderer paint、queue 控件四项产品性能验收仍待补齐；不标记 R4 或整体重构完成。评论、门禁与关闭边界见 [PR followup](../architecture/local-host-kernel-r4-pr-review-followup.md)。
+本次只证明上述工程 fixture 对照未发现稳定回退。真实模型、OS Keychain、暖接入、模型完成→terminal、terminal→renderer paint、queue 控件四项产品性能验收仍待补齐；不标记 R4 或整体重构完成。评论、门禁与关闭边界见 [PR followup](../archive/architecture/local-host-kernel-r4-pr-review-followup.md)。

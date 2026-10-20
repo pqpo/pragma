@@ -2,7 +2,9 @@
 
 ## Status
 
-Accepted.
+Accepted for capability declarations and revision-scoped derived views. The v2→v3 compiler and
+v4/v5 Host storage numbers below record the original upgrade; current supported generations come
+from the [compiler capability constants](../../packages/interpreter/src/ast/compiler-compatibility.ts).
 
 ## Context
 
@@ -19,8 +21,8 @@ validator finding in one unrelated Flow could consequently disable every project
 - The Interpreter exports one browser-safe compiler capability declaration. Project publication,
   lock generation, revision loading, Blueprint caching, Desktop IPC, and Mission compilation use
   that declaration.
-- New revisions write and directly read `pragma.dsl/v3`. `pragma.dsl/v2` is an upgrade source, not
-  a directly readable version.
+- New revisions use the declared write/direct-read version. At introduction this was `pragma.dsl/v3`,
+  with `pragma.dsl/v2` as an upgrade source; later adjacent generations retain the same policy.
 - The Interpreter owns the pure v2-to-v3 compiler migration. It validates the historical v2 lock
   and the exact historical `Flow.spec.runDry` shape, removes that abandoned field, and emits
   current resources. It does not create an `Evaluation` or retain a runtime compatibility branch.

@@ -1,3 +1,4 @@
+import { withMissionPreparationFailure } from "./preparation-failure.ts";
 import { defineLocalHostMissionMessageFormat } from "../mission-command-admission.ts";
 import { MEMORY_CURATOR_REF } from "@pragma/memory";
 import { type LocalHostMissionPromptAdmissionHook } from "../mission-command-admission.ts";
@@ -2121,7 +2122,9 @@ export function createLocalHostMissionExecutionService(
           "before loading its execution context",
         );
         const compileScope = compileService.createRequestScope(mission);
-        await options.assertExecutorReady?.(mission.executor.ref, compileScope);
+        await withMissionPreparationFailure(mission, async () =>
+          options.assertExecutorReady?.(mission.executor.ref, compileScope),
+        );
         if (mission.branch !== undefined && mission.execution === undefined) {
           throw new Error("Continue a branched Mission by sending a new message.");
         }
@@ -2152,7 +2155,9 @@ export function createLocalHostMissionExecutionService(
         );
         logMissionPhase(logger, id, "execution_context", executionContextStartedAt, acceptedAt);
         let phaseStartedAt = performance.now();
-        const stableCompilation = await compileService.compileStable(compileScope, runtimes);
+        const stableCompilation = await withMissionPreparationFailure(mission, () =>
+          compileService.compileStable(compileScope, runtimes),
+        );
         const {
           compiled,
           capabilities: resolvedCapabilities,

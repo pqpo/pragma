@@ -29,6 +29,9 @@ export const common = {
     viewDetails: "查看詳情",
   },
   navigation: {
+    more: "更多",
+    pin: "將{{name}}固定到側邊欄",
+    unpin: "取消固定{{name}}",
     home: "首頁",
     missions: "任務",
     studio: "工作室",

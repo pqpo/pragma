@@ -2,7 +2,8 @@
 
 ## Status
 
-Accepted.
+Superseded in part by [cross-Host SecretStore](044-cross-host-secret-store.md) for credentials
+and the current DSL capability declaration for language versions. Catalog and resolver boundaries remain active.
 
 ADR 016 changes expanded plugin storage to one global content-fingerprint cache. Agent cache entries
 are metadata bindings and no longer contain package copies.
@@ -39,12 +40,13 @@ Plugin execution uses an explicit trusted-host model. A plugin declares `runtime
 advisory disclosures for review and audit; they are not a sandbox and cannot constrain dishonest
 plugin code. Import and activation UI must state that the user is trusting arbitrary code.
 
-Desktop stores non-secret catalog defaults separately from plugin files. Secret values are encrypted
-through Electron `safeStorage`; Expert and catalog records contain only binding references. Effective
+Desktop stores non-secret catalog defaults separately from plugin files. Secret values use the Host-injected cross-Host SecretStore; Electron `safeStorage` is only a legacy
+Desktop migration source. Expert and catalog records contain only binding references. Effective
 configuration is merged in this order: manifest defaults, Desktop defaults, Expert overrides, then
 resolved secret bindings. Required values and declared types are validated after merging.
 
-The `pragma/v2` Expert DSL references plugins without local paths:
+Expert DSL references plugins without local paths (the following fragment originated in v2; full
+current documents use the [DSL capability declaration](../../packages/interpreter/src/ast/pragma-api-version.ts)):
 
 ```yaml
 plugins:

@@ -1,5 +1,7 @@
 # OpenCode ACP 切换调研
 
+> 历史测量/调研：结论只适用于记录中的提交、版本与环境，不是当前状态或开发规范。当前入口见[文档索引](../../README.md)。
+
 日期：2026-09-29。Pragma 基线：最新 `origin/main`，
 `d995fce49f2562bf4169954d6d114815d535fd8c`。
 本次先完成 ACP 与原生 steer 调研，随后实现 OpenCode 2.x 的 SDK steer、队列投递确认与恢复。

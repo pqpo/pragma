@@ -1,5 +1,7 @@
 # Issue #348 R2 同条件局部性能与 Native 验证
 
+> 历史测量/调研：结论只适用于记录中的提交、版本与环境，不是当前状态或开发规范。当前入口见[文档索引](../README.md)。
+
 日期：2026-10-03。结论：正式局部对照与追加复测完成；初轮 Capability 与最终源码 warm 场景各一次 P95 触发，分别追加两组 60 样本复测均未重复触发。真实 provider pilot 无有效样本，完整产品性能未验收，R2 阶段退出仍未通过。
 
 ## 证据保留策略
@@ -175,7 +177,7 @@ CR 批次结论、触发值与复测值保留本节，源码一致性见[摘要]
 
 ## PR #354 评论修复后的独立测量批次
 
-本批对应 [评论裁决与实现](../architecture/local-host-kernel-r2-pr-354-followup.md)，不覆盖此前 R2/CR 数据。冻结 production 摘要 `4502e1a76d1ed74014c80112a7406c0cd146e0fad9b2f148e131650962ecb55d`（1,149 文件），工程门禁、两组完整测量与两类追加复测前后均一致；基线仍为 `a2741325ab106b3cbc8f472d4feec98b1367ae55`，main 摘要 `d9c5a7f493826556a8443a07c2f6d28d498a420a1f2aa05ea3382cf1fe11159e`。Node 24.18.0，同一 unchanged probe、隔离真实存储/Interpreter、fake Runtime；测试与构建结束后 main→候选串行运行。每端每组 8 场景×20 样本，两组共 640 次准备操作；system 与 Capability 各追加两组每端 60 样本，共 480 次目标操作（另 8 个 setup cold 不计目标 P95）。所有命令退出 0，pin/cache/source assertions 通过。
+本批对应 [评论裁决与实现](../archive/architecture/local-host-kernel-r2-pr-354-followup.md)，不覆盖此前 R2/CR 数据。冻结 production 摘要 `4502e1a76d1ed74014c80112a7406c0cd146e0fad9b2f148e131650962ecb55d`（1,149 文件），工程门禁、两组完整测量与两类追加复测前后均一致；基线仍为 `a2741325ab106b3cbc8f472d4feec98b1367ae55`，main 摘要 `d9c5a7f493826556a8443a07c2f6d28d498a420a1f2aa05ea3382cf1fe11159e`。Node 24.18.0，同一 unchanged probe、隔离真实存储/Interpreter、fake Runtime；测试与构建结束后 main→候选串行运行。每端每组 8 场景×20 样本，两组共 640 次准备操作；system 与 Capability 各追加两组每端 60 样本，共 480 次目标操作（另 8 个 setup cold 不计目标 P95）。所有命令退出 0，pin/cache/source assertions 通过。
 
 | 场景                       | main/候选 准备 P95 组1 ms | main/候选 准备 P95 组2 ms | main/候选 编译 phase P95 组1/2 ms |
 | -------------------------- | ------------------------: | ------------------------: | --------------------------------- |
