@@ -547,6 +547,7 @@
 
 .square-content-dialog {
   width: min(640px, 100%);
+  max-height: min(560px, 80vh);
   grid-template-rows: auto minmax(0, 1fr) auto;
 }
 
