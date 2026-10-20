@@ -11,6 +11,7 @@ import {
   inspectSquareVersion,
   SquareDirectoryFragment,
   SquareItemVisual,
+  SquareBundleContents,
   normalizeSquareCategoryFilter,
   squareItemsForView,
   toggleSquareCategory,
@@ -119,6 +120,69 @@ describe("SquareDirectoryFragment", () => {
       "square-card-icon",
     );
   });
+
+  it.each(["Expert", "ExpertTeam"] as const)(
+    "summarizes %s models and dependencies without expanding ownership details",
+    (kind) => {
+      const inspection: PragmaBundleImportInspection = {
+        sourcePath: "/tmp/expert.pragma",
+        sourceName: "expert.pragma",
+        bundleFingerprint: "a".repeat(64),
+        projectFingerprint: "b".repeat(64),
+        projectRevision: 1,
+        root: {
+          ref: kind === "Expert" ? "expert:1xddvess309a6gme" : "team:p8cbn3cg2avyksn4",
+          kind,
+          name: kind === "Expert" ? "Writer" : "Reviewers",
+        },
+        roots: [],
+        createdAt: "2026-10-20T00:00:00.000Z",
+        resources: 3,
+        dependencies: [
+          {
+            kind: "runtime",
+            ref: "runtime-profile:zdkgs0fde4xt00vr",
+            name: "Built-in Runtime / qwen3.7-plus",
+            included: false,
+          },
+          {
+            kind: "capability",
+            ref: "capability:0000000000000001",
+            name: "Documentation search",
+            included: true,
+          },
+        ],
+        conflicts: [],
+        assetConflicts: [],
+        requirements: [],
+        readiness: [],
+        sameContentInstallationIds: [],
+        runtimeModels: {
+          "runtime-profile:zdkgs0fde4xt00vr": {
+            modelId: "qwen3.7-plus",
+            consumers:
+              kind === "Expert"
+                ? [{ name: "Writer", usage: "expert" }]
+                : [{ name: "Reviewers", usage: "team-delegation", targetName: "Writer" }],
+          },
+          "runtime-profile:0000000000000001": { modelId: "unused-model", consumers: [] },
+        },
+      };
+      const html = renderToStaticMarkup(<SquareBundleContents inspection={inspection} />);
+      expect(html).toContain("Model settings");
+      expect(html).toContain("qwen3.7-plus");
+      expect(html).toContain("Model settings: 1");
+      expect(html).toContain("Dependencies: 1");
+      expect(html).toContain('aria-haspopup="dialog"');
+      expect(html).not.toContain("Writer: expert model");
+      expect(html).not.toContain("model used when delegating");
+      expect(html).toContain("Documentation search");
+      expect(html).not.toContain("Capability · Included");
+      expect(html).not.toContain("Built-in Runtime");
+      expect(html).not.toContain("unused-model");
+      expect(html).not.toContain("Configure after import");
+    },
+  );
 
   it("downloads and inspects the selected version with the downloaded root", async () => {
     const item = squareItem("flow", "Release flow", SOURCE_B, "general", "2026-09-17");

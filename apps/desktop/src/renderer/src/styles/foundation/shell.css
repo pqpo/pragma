@@ -60,15 +60,15 @@
   place-items: center;
   margin-bottom: 4px;
   border-radius: 13px;
-  background: var(--ui-accent);
-  color: var(--ui-surface);
+  background: var(--ui-surface-subtle);
+  color: var(--ui-text-secondary);
   font-size: 28px;
   font-weight: 700;
   line-height: 1;
 }
 
 .desktop-fatal-error-eyebrow {
-  color: var(--ui-accent-strong);
+  color: var(--ui-text-secondary);
   font-size: 12px;
   font-weight: 700;
   letter-spacing: 0.08em;
@@ -96,7 +96,7 @@
   padding: 5px 9px;
   border-radius: 7px;
   background: var(--surface-muted);
-  color: var(--ui-accent-strong);
+  color: var(--ui-text);
   font-size: 12px;
 }
 
@@ -151,7 +151,7 @@
   bottom: 0;
   left: 3px;
   width: 2px;
-  background: var(--ui-accent);
+  background: var(--ui-surface-subtle);
   content: "";
   opacity: 0;
   transition: opacity 120ms ease;
@@ -273,25 +273,54 @@
   position: relative;
   display: flex;
   width: 100%;
-  height: 48px;
+  height: 44px;
   align-items: center;
-  gap: 17px;
-  padding: 0 18px;
+  gap: 12px;
+  padding: 0 16px;
   border: 0;
-  border-radius: 9px;
+  border-radius: var(--ui-radius-md);
   background: transparent;
   color: var(--muted);
+  cursor: pointer;
+  font-weight: 500;
   text-align: left;
 }
 
 .navigation-item.is-active {
-  background: var(--surface-muted);
+  background: var(--ui-selection);
   color: var(--ui-text);
+  box-shadow: none;
 }
 
-.navigation-item span {
-  font-size: 15px;
-  font-weight: 520;
+.navigation-label {
+  font-size: 13px;
+  font-weight: 500;
+}
+
+.navigation-tooltip {
+  position: absolute;
+  z-index: 100;
+  top: 50%;
+  left: calc(100% + 4px);
+  width: max-content;
+  padding: 8px 12px;
+  border-radius: var(--ui-radius-lg);
+  background: var(--ui-text);
+  color: var(--ui-surface);
+  box-shadow: var(--ui-shadow-overlay);
+  font-size: 13px;
+  font-weight: 500;
+  line-height: 1.4;
+  opacity: 0;
+  pointer-events: none;
+  transform: translateY(-50%);
+  visibility: hidden;
+}
+
+.navigation-item:hover .navigation-tooltip,
+.navigation-item:focus-visible .navigation-tooltip {
+  opacity: 1;
+  visibility: visible;
 }
 
 .desktop-shell.is-sidebar-collapsed .brand {
@@ -299,7 +328,7 @@
   padding: 0;
 }
 
-.desktop-shell.is-sidebar-collapsed .navigation-item span {
+.desktop-shell.is-sidebar-collapsed .navigation-label {
   display: none;
 }
 
@@ -358,7 +387,7 @@
   inset: -3px;
   padding: 2px;
   border-radius: inherit;
-  background: var(--ui-accent);
+  background: var(--ui-line-strong);
   content: "";
   mask:
     linear-gradient(#000 0 0) content-box,
@@ -377,7 +406,7 @@
   z-index: 2;
   top: -8px;
   right: -8px;
-  color: var(--ui-accent);
+  color: var(--ui-favorite);
   content: "✦";
   font-size: 13px;
   line-height: 1;
@@ -444,30 +473,9 @@
   border-color: var(--ui-line);
 }
 
-.navigation-item {
-  height: 44px;
-  gap: 12px;
-  padding: 0 16px;
-  border: 0;
-  border-radius: var(--ui-radius-md);
-  cursor: pointer;
-  font-weight: 500;
-}
-
 .navigation-item:hover:not(:disabled) {
   background: var(--ui-surface-subtle);
   color: var(--ui-text);
-}
-
-.navigation-item.is-active {
-  background: var(--ui-selection);
-  color: var(--ui-text);
-  box-shadow: none;
-}
-
-.navigation-item span {
-  font-size: 13px;
-  font-weight: 500;
 }
 
 .navigation-item:disabled {

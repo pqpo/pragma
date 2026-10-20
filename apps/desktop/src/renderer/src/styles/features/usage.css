@@ -188,7 +188,7 @@
 
 .usage-chart-line {
   fill: none;
-  stroke: var(--ui-accent);
+  stroke: var(--ui-text-secondary);
   stroke-linecap: round;
   stroke-linejoin: round;
   stroke-width: 1.8;
@@ -215,8 +215,8 @@
   height: 7px;
   border: 2px solid var(--ui-surface);
   border-radius: var(--ui-radius-round);
-  background: var(--ui-accent);
-  box-shadow: 0 0 0 1px var(--ui-accent);
+  background: var(--ui-text-secondary);
+  box-shadow: 0 0 0 1px var(--ui-text);
   transition: transform 120ms ease;
 }
 
@@ -325,7 +325,7 @@
 
 .usage-subject-tabs button.is-active {
   background: var(--ui-selection);
-  color: var(--ui-accent-strong);
+  color: var(--ui-text);
 }
 
 .usage-inclusive-note {
@@ -366,7 +366,7 @@
   display: block;
   height: 100%;
   border-radius: inherit;
-  background: var(--ui-accent);
+  background: var(--ui-text-secondary);
 }
 
 .usage-subject-list small {

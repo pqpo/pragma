@@ -135,7 +135,7 @@
 }
 
 .flow-validate-button {
-  color: var(--ui-accent-strong) !important;
+  color: var(--ui-text) !important;
 }
 
 .flow-editor-workspace {
@@ -257,7 +257,7 @@
   place-items: center;
   border-radius: 8px;
   background: var(--ui-surface-subtle);
-  color: var(--ui-accent-strong);
+  color: var(--ui-text-secondary);
 }
 
 .flow-palette-item > span {
@@ -307,13 +307,19 @@
 }
 
 .flow-step-node:hover,
+.flow-logic-node:hover {
+  border-color: var(--ui-line-strong);
+  box-shadow:
+    0 0 0 2px color-mix(in srgb, var(--ui-text) 13%, transparent),
+    0 8px 19px color-mix(in srgb, var(--ui-text) 12%, transparent);
+}
+
 .flow-step-node.is-selected,
-.flow-logic-node:hover,
 .flow-logic-node.is-selected {
   border-color: var(--ui-accent);
   box-shadow:
     0 0 0 2px color-mix(in srgb, var(--ui-accent) 13%, transparent),
-    0 8px 19px color-mix(in srgb, var(--ui-accent) 12%, transparent);
+    0 8px 19px rgb(var(--ui-shadow-rgb) / 12%);
 }
 
 .flow-step-node.is-invalid,
@@ -347,7 +353,13 @@
   color: #8a642b;
 }
 
-.flow-step-node.is-human:hover,
+.flow-step-node.is-human:hover {
+  border-color: var(--ui-line-strong);
+  box-shadow:
+    0 0 0 2px color-mix(in srgb, var(--ui-text) 13%, transparent),
+    0 8px 19px rgb(var(--ui-shadow-rgb) / 12%);
+}
+
 .flow-step-node.is-human.is-selected {
   border-color: var(--ui-accent);
   box-shadow:
@@ -355,7 +367,13 @@
     0 8px 19px rgb(var(--ui-shadow-rgb) / 12%);
 }
 
-.flow-logic-node:hover,
+.flow-logic-node:hover {
+  border-color: var(--ui-line-strong);
+  box-shadow:
+    0 0 0 2px color-mix(in srgb, var(--ui-text) 13%, transparent),
+    0 8px 19px rgb(var(--ui-shadow-rgb) / 12%);
+}
+
 .flow-logic-node.is-selected {
   border-color: var(--ui-accent);
   box-shadow:
@@ -753,9 +771,9 @@
 
 .flow-inspector-field > .flow-resource-picker-trigger:hover,
 .flow-inspector-field > .flow-resource-picker-trigger:focus-visible {
-  border-color: var(--ui-accent);
+  border-color: var(--ui-line-strong);
   outline: 0;
-  box-shadow: 0 0 0 3px var(--focus-ring);
+  box-shadow: 0 0 0 3px rgb(var(--ui-shadow-rgb) / 20%);
 }
 
 .flow-inspector-field .is-invalid {
@@ -776,11 +794,6 @@
   border: 1px solid var(--border);
   border-radius: 7px;
   background: var(--ui-surface);
-}
-
-.flow-timeout-control:focus-within {
-  border-color: var(--ui-accent);
-  box-shadow: 0 0 0 3px var(--focus-ring);
 }
 
 .flow-inspector-field .flow-timeout-control > input,
@@ -897,8 +910,7 @@
   font-size: 10px;
 }
 
-.flow-result-mapping-row select:focus-visible,
-.flow-result-mapping-row input:focus-visible {
+.flow-result-mapping-row select:focus-visible {
   border-color: var(--ui-accent);
   outline: 0;
   box-shadow: 0 0 0 3px var(--focus-ring);
@@ -1238,11 +1250,6 @@
   font: inherit;
 }
 
-.flow-logic-branch-value input:focus-visible {
-  border-color: var(--ui-accent);
-  box-shadow: 0 0 0 3px color-mix(in srgb, var(--ui-accent) 12%, transparent);
-}
-
 .flow-logic-branch-target {
   overflow: hidden;
   color: var(--muted);
@@ -1284,11 +1291,6 @@
   border: 1px solid var(--border);
   border-radius: 9px;
   background: white;
-}
-
-.flow-prompt-composer:focus-within {
-  border-color: var(--ui-line-strong);
-  box-shadow: 0 0 0 3px var(--focus-ring);
 }
 
 .flow-prompt-editor,
@@ -1356,7 +1358,7 @@
 }
 
 .flow-variable-chip button:hover {
-  background: color-mix(in srgb, var(--ui-accent) 10%, transparent);
+  background: var(--ui-surface-subtle);
 }
 
 .flow-prompt-tools {
@@ -1657,8 +1659,13 @@
 }
 
 .flow-step-node:hover,
+.flow-logic-node:hover {
+  border-color: var(--ui-line-strong);
+  box-shadow: 0 0 0 3px rgb(var(--ui-shadow-rgb) / 20%);
+  transform: none;
+}
+
 .flow-step-node.is-selected,
-.flow-logic-node:hover,
 .flow-logic-node.is-selected {
   border-color: var(--ui-accent);
   box-shadow: 0 0 0 3px var(--focus-ring);
@@ -1671,7 +1678,11 @@
   box-shadow: 0 0 0 3px rgb(201 107 95 / 12%);
 }
 
-.flow-logic-node:hover,
+.flow-logic-node:hover {
+  border-color: var(--ui-line-strong);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--ui-text) 13%, transparent);
+}
+
 .flow-logic-node.is-selected {
   border-color: var(--ui-accent);
   box-shadow: 0 0 0 3px color-mix(in srgb, var(--ui-accent) 13%, transparent);
@@ -1683,7 +1694,7 @@
 .flow-terminal-node > span {
   border-radius: var(--ui-radius-md);
   background: var(--ui-selection);
-  color: var(--ui-accent-strong);
+  color: var(--ui-text-secondary);
 }
 
 .flow-inspector-field input,
@@ -1692,13 +1703,6 @@
   border-color: var(--border);
   border-radius: var(--ui-radius-md);
   background: var(--ui-surface);
-}
-
-.flow-inspector-field input:focus,
-.flow-inspector-field textarea:focus {
-  border-color: var(--ui-accent);
-  outline: 0;
-  box-shadow: 0 0 0 3px var(--focus-ring);
 }
 
 .flow-validation-panel {

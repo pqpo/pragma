@@ -51,7 +51,6 @@ describe("StudioPage", () => {
     );
     const resourceIndex = html.indexOf("<span>Knowledge bases</span>");
     const capabilitiesIndex = html.indexOf("<span>Capabilities</span>");
-    const marketIndex = html.indexOf("<span>Market</span>");
 
     expect(html).toContain('class="studio-navigation"');
     expect(html).toContain('aria-label="Resize navigation"');
@@ -60,7 +59,7 @@ describe("StudioPage", () => {
     expect(html).not.toContain("<span>Plugins</span>");
     expect(resourceIndex).toBeGreaterThan(-1);
     expect(resourceIndex).toBeGreaterThan(capabilitiesIndex);
-    expect(marketIndex).toBeGreaterThan(resourceIndex);
+    expect(html).not.toContain("<span>Market</span>");
     expect(html).not.toContain('class="studio-distribution-actions"');
   });
 

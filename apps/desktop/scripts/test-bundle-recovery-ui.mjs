@@ -13,7 +13,7 @@ try {
     absWorkingDir: desktopRoot,
     stdin: {
       contents:
-        'import { runBundleRecoveryUiTests, prepareBundleRecoveryVisual, prepareBundleRuntimeVisual, prepareBundleConflictVisual, prepareBundleResumeVisual } from "./scripts/fixtures/bundle-recovery-ui.tsx"; Object.assign(window, { runBundleRecoveryUiTests, prepareBundleRecoveryVisual, prepareBundleRuntimeVisual, prepareBundleConflictVisual, prepareBundleResumeVisual });',
+        'import { runBundleRecoveryUiTests, prepareBundleRecoveryVisual, prepareBundleRuntimeVisual, prepareBundleConflictVisual, prepareBundleResumeVisual, prepareMarketModelsVisual } from "./scripts/fixtures/bundle-recovery-ui.tsx"; Object.assign(window, { runBundleRecoveryUiTests, prepareBundleRecoveryVisual, prepareBundleRuntimeVisual, prepareBundleConflictVisual, prepareBundleResumeVisual, prepareMarketModelsVisual });',
       resolveDir: desktopRoot,
     },
     outfile: join(temporaryRoot, "test.js"),
@@ -108,6 +108,44 @@ try {
           await win.webContents.executeJavaScript('window.prepareBundleResumeVisual(' + JSON.stringify(language) + ')');
           await frame();
           await fs.writeFile(${JSON.stringify(temporaryRoot)} + '/' + language + '-resume.png', (await win.webContents.capturePage()).toPNG());
+        }
+        for (const [language, width, height, zoom] of [['zh-Hans', 1440, 900, 1], ['zh-Hans', 1080, 700, 1], ['en', 1080, 700, 1.25], ['zh-Hant', 1080, 700, 1.5]]) {
+          win.setSize(width, height);
+          win.webContents.setZoomFactor(zoom);
+          for (const team of [false, true]) {
+            await win.webContents.executeJavaScript('window.prepareMarketModelsVisual(' + JSON.stringify(language) + ',' + team + ')');
+            await frame();
+            await win.webContents.executeJavaScript('document.activeElement.blur()');
+            await frame();
+            const marketName = language + '-market-' + (team ? 'team' : 'expert') + '-' + width;
+            await fs.writeFile(${JSON.stringify(temporaryRoot)} + '/' + marketName + '.png', (await win.webContents.capturePage()).toPNG());
+            await win.webContents.executeJavaScript('document.querySelector(".square-content-card:last-child").focus()');
+            const marketDocument = await win.webContents.debugger.sendCommand('DOM.getDocument');
+            const modelCard = await win.webContents.debugger.sendCommand('DOM.querySelector', { nodeId: marketDocument.root.nodeId, selector: '.square-content-card:last-child' });
+            await win.webContents.debugger.sendCommand('CSS.forcePseudoState', { nodeId: modelCard.nodeId, forcedPseudoClasses: ['focus', 'focus-visible'] });
+            await frame();
+            await fs.writeFile(${JSON.stringify(temporaryRoot)} + '/' + marketName + '-focused.png', (await win.webContents.capturePage()).toPNG());
+            await win.webContents.debugger.sendCommand('CSS.forcePseudoState', { nodeId: modelCard.nodeId, forcedPseudoClasses: [] });
+            win.webContents.focus();
+            win.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'Return' });
+            win.webContents.sendInputEvent({ type: 'char', keyCode: 'Return' });
+            win.webContents.sendInputEvent({ type: 'keyUp', keyCode: 'Return' });
+            await frame();
+            const modelOpen = await win.webContents.executeJavaScript('!!document.querySelector(".square-content-dialog")');
+            if (!modelOpen) throw new Error('Enter must open market details');
+            await fs.writeFile(${JSON.stringify(temporaryRoot)} + '/' + marketName + '-dialog.png', (await win.webContents.capturePage()).toPNG());
+            win.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'Escape' });
+            win.webContents.sendInputEvent({ type: 'keyUp', keyCode: 'Escape' });
+            await frame();
+            const modelClosed = await win.webContents.executeJavaScript('!document.querySelector(".square-content-dialog") && document.activeElement.matches(".square-content-card")');
+            if (!modelClosed) throw new Error('Escape must close market details and restore focus');
+            await win.webContents.executeJavaScript('document.querySelector(".square-content-card").click()');
+            await frame();
+            await fs.writeFile(${JSON.stringify(temporaryRoot)} + '/' + marketName + '-resources.png', (await win.webContents.capturePage()).toPNG());
+            win.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'Escape' });
+            win.webContents.sendInputEvent({ type: 'keyUp', keyCode: 'Escape' });
+            await frame();
+          }
         }
         console.log(JSON.stringify(result));
         app.exit(0);

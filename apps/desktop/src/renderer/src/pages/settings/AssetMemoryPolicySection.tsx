@@ -10,6 +10,8 @@ import { SelectMenu } from "../../components/SelectMenu.tsx";
 export function AssetMemoryPolicySection(props: {
   readonly targetRef: DesktopMemoryPolicyTarget;
   readonly compact?: boolean | undefined;
+  readonly plain?: boolean | undefined;
+  readonly showEffectiveSummary?: boolean | undefined;
 }) {
   const { t } = useTranslation("settings");
   const [snapshot, setSnapshot] = useState<DesktopAssetMemoryPolicySnapshot>();
@@ -55,13 +57,15 @@ export function AssetMemoryPolicySection(props: {
   };
 
   return (
-    <section className={props.compact ? "asset-memory-policy is-compact" : "asset-memory-policy"}>
+    <section
+      className={`asset-memory-policy${props.compact ? " is-compact" : ""}${props.plain ? " is-plain" : ""}`}
+    >
       <div className="asset-memory-policy-heading">
         <div>
           <h3>{t("memory.assetTitle")}</h3>
           <p>{t("memory.assetDescription")}</p>
         </div>
-        {snapshot === undefined ? null : (
+        {snapshot === undefined || props.showEffectiveSummary === false ? null : (
           <span className="memory-effective-summary">
             {t("memory.effectiveSummary", {
               capture: t(`memory.states.${snapshot.effective.capture ? "enabled" : "disabled"}`),

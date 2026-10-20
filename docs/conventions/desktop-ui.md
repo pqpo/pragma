@@ -19,8 +19,9 @@ Pragma 是长时间使用的 Agent 工作台，不是营销网站，也不是组
 
 保留现有产品辨识度：
 
-- 纯白画布、两阶中性灰导航、石墨色文字和蓝色主操作。
-- 左侧应用导航，以及 Home、Missions、Studio、Evaluations、Usage、Settings 的现有信息架构。
+- 纯白画布、浅灰导航、白色选中项、石墨色文字和蓝色主操作。
+- 左侧应用导航保持 Home、Missions、Studio、Memory；“更多”按 Market、Evaluations、Usage、Settings 排列。
+  市场使用独立主页面，不再出现在工作室二级导航中，支持沿用“更多”的固定入口操作。
 - Home 的单一 Mission composer、目录/详情分栏、Flow canvas 等已经形成产品心智的结构。
 
 所有页面遵循以下视觉优先级：
@@ -93,28 +94,29 @@ Pragma 是长时间使用的 Agent 工作台，不是营销网站，也不是组
 
 ### 4.1 颜色
 
-| Token                   | 值                      | 用途                                                     |
-| ----------------------- | ----------------------- | -------------------------------------------------------- |
-| `--ui-canvas`           | `#ffffff`               | 主体画布                                                 |
-| `--ui-rail`             | `#f6f6f6`               | 一级应用导航                                             |
-| `--ui-rail-secondary`   | `#fcfcfc`               | Missions、Studio、Evaluations、Memory、Settings 二级导航 |
-| `--ui-surface`          | `#ffffff`               | 输入区、独立对象、浮层                                   |
-| `--ui-surface-subtle`   | `#f6f6f6`               | hover、轻量分区                                          |
-| `--ui-selection`        | `#fefefe`               | 选中态，不表示成功                                       |
-| `--ui-text`             | `#262626`               | 标题和正文                                               |
-| `--ui-text-secondary`   | `#686868`               | 描述、元数据                                             |
-| `--ui-navigation-text`  | `#454545`               | 普通导航文字                                             |
-| `--ui-text-disabled`    | `#8d8d8d`               | 禁用或非信息性装饰，不用于正文                           |
-| `--ui-line`             | `#e5e5e5`               | 普通分隔                                                 |
-| `--ui-line-strong`      | `#d9d9d9`               | 输入边界、浮层边界                                       |
-| `--ui-accent`           | `#4f82ef`               | 发送、新建、Switch 开启等主操作和激活状态                |
-| `--ui-accent-strong`    | `#366bd8`               | hover、文字链接、强调文本                                |
-| `--ui-control-disabled` | `#cccccc`               | 禁用控件、关闭的 Switch 和滑轨                           |
-| `--ui-success`          | `#34704a`               | 成功、可用状态，与主题主色独立                           |
-| `--ui-success-subtle`   | `#eef6f1`               | 成功状态的浅色背景                                       |
-| `--ui-danger`           | `#9d3f34`               | 错误和破坏性操作                                         |
-| `--ui-danger-subtle`    | `#fff8f7`               | 错误背景                                                 |
-| `--ui-focus`            | `rgb(79 130 239 / 20%)` | 焦点外环                                                 |
+| Token                          | 值                      | 用途                                                       |
+| ------------------------------ | ----------------------- | ---------------------------------------------------------- |
+| `--ui-canvas`                  | `#ffffff`               | 主体画布                                                   |
+| `--ui-rail`                    | `#f6f6f6`               | 一级应用导航                                               |
+| `--ui-rail-secondary`          | `var(--ui-rail)`        | Missions、Studio、Evaluations、Memory、Settings 二级导航   |
+| `--ui-surface`                 | `#ffffff`               | 输入区、独立对象、浮层                                     |
+| `--ui-surface-subtle`          | `#f6f6f6`               | hover、轻量分区                                            |
+| `--ui-selection`               | `#ffffff`               | 选中态，不表示成功                                         |
+| `--ui-message-user-background` | `#e8f3fe`               | Mission 对话与工作抽屉中的用户消息背景，用于区分消息发送方 |
+| `--ui-text`                    | `#262626`               | 标题和正文                                                 |
+| `--ui-text-secondary`          | `#686868`               | 描述、元数据                                               |
+| `--ui-navigation-text`         | `#454545`               | 普通导航文字                                               |
+| `--ui-text-disabled`           | `#8d8d8d`               | 禁用或非信息性装饰，不用于正文                             |
+| `--ui-line`                    | `#e5e5e5`               | 普通分隔                                                   |
+| `--ui-line-strong`             | `#d9d9d9`               | 输入边界、浮层边界                                         |
+| `--ui-accent`                  | `#4f82ef`               | 发送、新建、Switch 开启等主操作和激活状态                  |
+| `--ui-accent-strong`           | `#366bd8`               | 主操作 hover、pressed                                      |
+| `--ui-control-disabled`        | `#cccccc`               | 禁用控件、关闭的 Switch 和滑轨                             |
+| `--ui-success`                 | `#34704a`               | 成功、可用状态，与主题主色独立                             |
+| `--ui-success-subtle`          | `#eef6f1`               | 成功状态的浅色背景                                         |
+| `--ui-danger`                  | `#9d3f34`               | 错误和破坏性操作                                           |
+| `--ui-danger-subtle`           | `#fff8f7`               | 错误背景                                                   |
+| `--ui-focus`                   | `rgb(79 130 239 / 20%)` | 焦点外环                                                   |
 
 现有 `--background`、`--sidebar`、`--surface`、`--text`、`--muted` 等 token 是对应语义 token 的别名。
 主题色统一引用语义 token，不再使用以绿色命名的旧主题别名。成功、警告、错误、品牌和有语义的数据分类
@@ -122,9 +124,18 @@ Pragma 是长时间使用的 Agent 工作台，不是营销网站，也不是组
 
 颜色使用规则：
 
-- 强调色只用于操作、选中标记和关键运行状态，不用于大面积装饰背景。
+- 蓝色强调色只用于需要用户识别或执行的关键交互：当前区域的主操作、Switch 开启、勾选控件、
+  未读/运行中等小型状态提示、文本选择和非文本控件的键盘焦点。Flow 的当前编辑节点、连接端口与拖放目标
+  可以使用小面积蓝色，避免选错操作对象；普通 hover 不沿用编辑选中态的蓝色描边或光晕。
+- 普通按钮、返回/关闭/展开、导航和 Tab 选中项、资源/模型图标、步骤条、标题、说明文字、计数、
+  类型标签、代码边框、普通列表行与容器背景默认使用中性色。不能因为元素可点击或已选中就自动标蓝。
+- 浮层标题图标、eyebrow、步骤编号和资源说明不得与主按钮同时抢占强调色。只有明确承担提醒职责的
+  标签或标记才使用强调色；普通来源、类型和数量不是提醒。
+- 数据图表可以使用可区分的数据色，但单序列折线、容量条和占比条默认使用灰阶，不直接借用主操作蓝。
+- 主操作保留实心蓝底与白字；普通文字按钮和辅助操作用正文色。真实正文链接通过明确的链接样式识别，
+  不把所有导航跳转都视作强调链接。
 - `--ui-text-secondary` 可以承载正文；`--ui-text-disabled` 只用于 disabled、placeholder 或非关键信息。
-- 状态不能只靠颜色表达，必须同时有文字、图标或形状变化。
+- 状态不能只靠颜色表达，必须同时有文字、图标或形状变化；成功、警告和错误继续使用独立语义色。
 - 品牌色只出现在品牌 logo/mark 内，不扩散为页面主题色。
 
 ### 4.2 字体与字号
@@ -314,7 +325,8 @@ box-shadow: var(--ui-shadow-overlay);
 ### 6.2 Input / Select / Textarea
 
 - 常规高度 `36–40px`，圆角 `6px`，背景为 surface，边框为 strong line。
-- focus 只显示一层 3px 外环；组件内部原生控件必须清除自己的 border、outline 和 shadow。
+- 文本、搜索、数字、密码输入框、textarea 和可编辑文本区域以光标表示聚焦；鼠标或键盘聚焦时，边框、背景和阴影均保持普通态，不新增蓝色边框、outline 或外环。组合输入区域的外层也遵循此规则，错误状态保留原有提示。
+- Select、按钮、开关、复选框和单选框继续提供清晰的键盘焦点；组合控件只显示一层焦点提示。
 - label 使用 `12–13px / 500`；帮助文本和错误文本使用 `12px / 400`。
 - 同一行不要同时出现永久 label、全大写 eyebrow、placeholder 和帮助文本来描述同一件事。
 - 空白新建表单初次展示时不显示校验错误，也不预先标记 `aria-invalid`；字段失焦或用户首次提交后再显示
@@ -382,7 +394,7 @@ box-shadow: var(--ui-shadow-overlay);
 
 - 正文和控件文字与背景至少满足 WCAG AA 的 4.5:1；大字至少 3:1。当前 `--ui-text-disabled`
   在白底对比度不足，只允许用于禁用或非信息性内容。
-- 所有交互都必须可键盘到达，并使用 `:focus-visible` 提供清晰焦点；不能只依赖 hover 暴露唯一操作。
+- 所有交互都必须可键盘到达；文本输入区域通过光标表示聚焦，其余控件使用 `:focus-visible` 提供清晰焦点；不能只依赖 hover 暴露唯一操作。
 - icon-only button 必须提供 `aria-label` 和 tooltip/title；状态变化需要可被辅助技术读取。
 - 表单错误与对应字段建立程序化关联，不能只在页面底部显示一段红字。
 - 在 `1440 × 900` 和最小 `1080 × 700` 下检查布局；另检查 125% 与 150% 缩放、英文、简体中文和
@@ -436,7 +448,7 @@ box-shadow: var(--ui-shadow-overlay);
 - [ ] 目录页进入详情后仍保留所属模块二级导航，且只替换右侧工作区内容。
 - [ ] 没有直接使用原生 `select`、系统弹窗或其他会暴露平台默认外观的业务控件。
 - [ ] 没有新增 raw color、任意字号、任意字重、任意圆角或 `!important`。
-- [ ] hover 不改变布局；focus-visible 清楚且只有一层。
+- [ ] hover 不改变布局；文本输入区域聚焦前后外观一致，其余控件的 focus-visible 清楚且只有一层。
 - [ ] 普通态、hover、键盘焦点、disabled、loading、empty、error 均已检查。
 - [ ] Enter 提交类输入框已用中文输入法验证候选确认不会误触发提交。
 - [ ] `1440 × 900`、`1080 × 700`、125%/150% 缩放和三种语言已检查。

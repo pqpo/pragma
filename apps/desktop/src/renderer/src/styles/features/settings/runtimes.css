@@ -208,7 +208,7 @@
   min-height: 0;
   padding: 0;
   overflow: hidden;
-  border: 1px solid transparent;
+  border: 1px solid var(--ui-line);
   color: inherit;
   cursor: pointer;
   text-align: left;
@@ -281,7 +281,7 @@
   place-items: center;
   border-radius: 14px;
   background: var(--ui-selection);
-  color: var(--ui-accent-strong);
+  color: var(--ui-text-secondary);
 }
 
 .runtime-detail-logo {
@@ -420,7 +420,7 @@
   padding: 0 8px;
   border-radius: 999px;
   background: var(--ui-selection);
-  color: var(--ui-accent-strong);
+  color: var(--ui-text-secondary);
   font-size: 12px;
   font-weight: 680;
 }
@@ -502,7 +502,7 @@
 .runtime-icon {
   border-radius: var(--ui-radius-md);
   background: var(--ui-selection);
-  color: var(--ui-accent-strong);
+  color: var(--ui-text-secondary);
 }
 
 .static-field input,

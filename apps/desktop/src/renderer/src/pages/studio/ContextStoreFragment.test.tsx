@@ -54,6 +54,9 @@ describe("knowledge base UI", () => {
       contextStoreDeleteCheckPending({ storeId: store.id, status: "checking" }, store.id),
     ).toBe(true);
     expect(contextStoreDeleteCheckPending(null, store.id)).toBe(true);
+    expect(contextStoreDeleteCheckPending({ storeId: store.id, status: "unknown" }, store.id)).toBe(
+      true,
+    );
     expect(
       contextStoreDeleteCheckPending(
         { storeId: "00000000-0000-4000-8000-000000000002", status: "mounted" },

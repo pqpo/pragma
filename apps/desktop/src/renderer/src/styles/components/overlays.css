@@ -188,7 +188,7 @@
 .date-time-days button:focus-visible {
   outline: 0;
   background: var(--ui-surface-subtle);
-  box-shadow: 0 0 0 3px var(--ui-focus);
+  box-shadow: 0 0 0 3px rgb(var(--ui-shadow-rgb) / 20%);
 }
 
 .date-time-weekdays,
@@ -216,7 +216,7 @@
 }
 
 .date-time-days button.is-today:not(.is-selected) {
-  color: var(--ui-accent-strong);
+  color: var(--ui-text);
   font-weight: 600;
 }
 

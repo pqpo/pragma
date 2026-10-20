@@ -302,9 +302,9 @@ describe("Bundle import inspection", () => {
       />,
     );
 
-    expect(html.match(/<article/g)).toHaveLength(3);
+    expect(html.match(/<article/g)).toHaveLength(2);
     expect(html).toContain("菜鸟 APP 查件业务专家");
-    expect(html).toContain("Codex / GPT-5.6-Sol");
+    expect(html).not.toContain("Codex / GPT-5.6-Sol");
     expect(html).toContain("capability:aone-km");
     expect(html).toContain("本地查件专家");
 
@@ -327,7 +327,37 @@ describe("Bundle import inspection", () => {
     expect(fileStepHtml).toContain("1 of 2 dependencies ready");
     expect(fileStepHtml).toContain("Knowledge base (name unavailable in legacy bundle)");
     expect(fileStepHtml).not.toContain("Context 26980318-cc35-4a16-95ae-fd8806492c4a");
-    expect(fileStepHtml).toContain("pragma-bundle-readiness-state");
+    expect(fileStepHtml).toContain('<th scope="col">Resource</th>');
+    expect(fileStepHtml).toContain('aria-label="Ready"');
+    expect(fileStepHtml).toContain("Choose a knowledge base");
+    expect(fileStepHtml).not.toContain("No action");
+
+    const readyHtml = renderToStaticMarkup(
+      <BundleFileStep
+        inspection={{
+          ...inspection,
+          readiness: inspection.readiness.slice(0, 1),
+          runtimeModels: {
+            "runtime-profile:codex": {
+              modelId: "source-model",
+              consumers: [{ name: "Review expert", usage: "expert" }],
+            },
+          },
+        }}
+        busy={true}
+        dragging={false}
+        onDragging={() => undefined}
+        onPick={() => undefined}
+        onDrop={() => undefined}
+        onRoot={() => undefined}
+      />,
+    );
+    expect(readyHtml).toContain('<th scope="col">Expert</th>');
+    expect(readyHtml).toContain('title="Review expert">Review expert</span>');
+    expect(readyHtml).toContain("1 model ready");
+    expect(readyHtml).not.toContain("No action");
+    expect(readyHtml).not.toContain("Model for Review expert");
+    expect(readyHtml).toContain('<button type="button" disabled="">Choose another</button>');
   });
 });
 

@@ -1,5 +1,5 @@
 import { ArrowLeft, User } from "@phosphor-icons/react";
-import { useState } from "react";
+import { useId, useState } from "react";
 import { useTranslation } from "react-i18next";
 import type { PragmaResource } from "@pragma/interpreter/ast";
 import {
@@ -49,6 +49,8 @@ export function ExpertEditorFragment(props: {
   readonly onCreated: (expert: ExpertRecord) => Promise<void>;
 }) {
   const { t } = useTranslation(["studio", "common"]);
+  const instructionsId = useId();
+  const foundationInstructionsId = useId();
   const [draft, setDraft] = useState(props.initialValue);
   const [step, setStep] = useState<ExpertEditorStep>(props.initialStep ?? "identity");
   const [error, setError] = useState<string | null>(null);
@@ -261,7 +263,9 @@ export function ExpertEditorFragment(props: {
             advance();
           }}
         >
-          <div className="creator-form-content">
+          <div
+            className={`creator-form-content${step === "instructions" ? " is-instructions" : ""}`}
+          >
             {step === "identity" ? (
               <>
                 <div className="creator-preview">
@@ -402,17 +406,38 @@ export function ExpertEditorFragment(props: {
             {step === "instructions" ? (
               <div className="instructions-editor">
                 {isBuiltIn ? (
-                  <label>
-                    {t("builtInFoundationInstructions", { ns: "studio" })}
-                    <textarea className="instructions-input" value={draft.instructions} readOnly />
-                    <small className="field-hint">
-                      <span>{t("builtInFoundationLocked", { ns: "studio" })}</span>
-                    </small>
-                  </label>
+                  <div className="instructions-field">
+                    <header>
+                      <h2>
+                        <label htmlFor={foundationInstructionsId}>
+                          {t("builtInFoundationInstructions", { ns: "studio" })}
+                        </label>
+                      </h2>
+                      <p>{t("builtInFoundationLocked", { ns: "studio" })}</p>
+                    </header>
+                    <textarea
+                      id={foundationInstructionsId}
+                      className="instructions-input"
+                      value={draft.instructions}
+                      readOnly
+                    />
+                  </div>
                 ) : null}
-                <label>
-                  {t(isBuiltIn ? "additionalInstructions" : "instructions", { ns: "studio" })}
+                <div className="instructions-field">
+                  <header>
+                    <h2>
+                      <label htmlFor={instructionsId}>
+                        {t(isBuiltIn ? "additionalInstructions" : "instructions", { ns: "studio" })}
+                      </label>
+                    </h2>
+                    <p>
+                      {t(isBuiltIn ? "additionalInstructionsHint" : "instructionsHint", {
+                        ns: "studio",
+                      })}
+                    </p>
+                  </header>
                   <textarea
+                    id={instructionsId}
                     className="instructions-input"
                     value={isBuiltIn ? draft.additionalInstructions : draft.instructions}
                     onChange={(event) =>
@@ -440,12 +465,7 @@ export function ExpertEditorFragment(props: {
                     maxLength={PRAGMA_TEXT_LIMITS.expert.instructions * 2}
                     autoFocus
                   />
-                  <small className="field-hint">
-                    <span>
-                      {t(isBuiltIn ? "additionalInstructionsHint" : "instructionsHint", {
-                        ns: "studio",
-                      })}
-                    </span>
+                  <small className="field-hint instructions-count">
                     <span>
                       {pragmaUnicodeLength(
                         (isBuiltIn ? draft.additionalInstructions : draft.instructions).trim(),
@@ -453,7 +473,7 @@ export function ExpertEditorFragment(props: {
                       /{PRAGMA_TEXT_LIMITS.expert.instructions}
                     </span>
                   </small>
-                </label>
+                </div>
               </div>
             ) : null}
             {step === "capabilities" ? (
@@ -594,6 +614,13 @@ export function ExpertEditorFragment(props: {
                     setDraft((current) => ({ ...current, toolApprovals }))
                   }
                 />
+                {isEditing && props.memoryEnabled ? (
+                  <AssetMemoryPolicySection
+                    targetRef={{ type: "pragma.expert", id: draft.id }}
+                    plain
+                    showEffectiveSummary={false}
+                  />
+                ) : null}
               </div>
             ) : null}
             {step === "review" ? (
@@ -635,9 +662,6 @@ export function ExpertEditorFragment(props: {
                     </dd>
                   </div>
                 </dl>
-                {isEditing && props.memoryEnabled ? (
-                  <AssetMemoryPolicySection targetRef={{ type: "pragma.expert", id: draft.id }} />
-                ) : null}
               </div>
             ) : null}
             {error ? (
@@ -646,7 +670,7 @@ export function ExpertEditorFragment(props: {
               </p>
             ) : null}
           </div>
-          <footer className="creator-actions">
+          <footer className={`creator-actions${step === "review" ? " is-review" : ""}`}>
             <button className="secondary-button" type="button" onClick={retreat} disabled={saving}>
               {index === 0 ? t("cancel", { ns: "studio" }) : t("back", { ns: "studio" })}
             </button>

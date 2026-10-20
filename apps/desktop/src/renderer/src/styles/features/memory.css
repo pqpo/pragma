@@ -105,6 +105,12 @@
   outline-offset: -2px;
 }
 
+.memory-task-details-empty {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+}
+
 .memory-task-details {
   flex: 1;
   display: grid;
@@ -366,12 +372,9 @@
   text-align: left;
 }
 
-.memory-list-item:hover {
-  background: var(--surface-subtle);
-}
-
+.memory-list-item:hover,
 .memory-list-item.is-active {
-  background: var(--ui-selection);
+  background: var(--ui-surface-subtle);
 }
 
 .memory-list-item:focus-visible,
@@ -496,7 +499,7 @@
   padding: 3px 8px;
   border-radius: 999px;
   background: var(--ui-selection);
-  color: var(--ui-accent-strong);
+  color: var(--ui-text-secondary);
   font-size: 12px;
 }
 
@@ -569,7 +572,7 @@
   overflow: hidden;
   padding: 7px 9px;
   border-radius: var(--ui-radius-md);
-  background: var(--ui-accent-strong);
+  background: var(--ui-text-secondary);
   color: var(--ui-surface);
   font-size: 12px;
   line-height: 1.45;
@@ -625,7 +628,7 @@
   flex: 0 0 auto;
   place-items: center;
   border-radius: 50%;
-  background: var(--ui-accent);
+  background: var(--ui-text-secondary);
   color: var(--ui-surface);
 }
 
@@ -689,7 +692,7 @@
   grid-column: 2;
   grid-row: 1;
   margin: 0;
-  color: var(--ui-accent-strong);
+  color: var(--ui-text-secondary);
   font-size: 1.45rem;
   font-variant-numeric: tabular-nums;
   font-weight: 600;
@@ -841,22 +844,20 @@
   border: 0;
   border-radius: 999px;
   appearance: none;
-  background: var(--surface-muted);
+  background: var(--ui-surface-subtle);
 }
 
 .memory-health-capacity progress::-webkit-progress-bar {
   border-radius: 999px;
-  background: var(--surface-muted);
+  background: var(--ui-surface-subtle);
 }
 
 .memory-health-capacity progress::-webkit-progress-value {
-  min-width: 5px;
   border-radius: 999px;
   background: var(--ui-accent);
 }
 
 .memory-health-capacity progress::-moz-progress-bar {
-  min-width: 5px;
   border-radius: 999px;
   background: var(--ui-accent);
 }
@@ -967,7 +968,7 @@
   place-items: center;
   border-radius: var(--ui-radius-md);
   background: var(--ui-selection);
-  color: var(--ui-accent-strong);
+  color: var(--ui-text-secondary);
 }
 
 .memory-health-module-table tbody th > span:last-child {
@@ -1082,7 +1083,7 @@
 
 .memory-extraction-jobs .studio-action-button[aria-pressed="true"] {
   background: var(--ui-selection);
-  color: var(--ui-accent-strong);
+  color: var(--ui-text);
 }
 
 .memory-extraction-lane {
@@ -1150,16 +1151,12 @@
   padding: 14px;
   border: 0;
   border-radius: var(--radius-card);
-  background: var(--surface);
+  background: color-mix(in srgb, var(--ui-surface-subtle) 48%, var(--surface));
   box-shadow: none;
 }
 
 .memory-extraction-lane.is-attention article.memory-extraction-task {
   background: color-mix(in srgb, var(--ui-danger) 10%, var(--ui-surface));
-}
-
-.memory-extraction-lane.is-running article.memory-extraction-task {
-  background: color-mix(in srgb, var(--ui-surface-subtle) 48%, var(--surface));
 }
 
 .memory-extraction-lane.is-completed article.memory-extraction-task {
@@ -1203,8 +1200,8 @@
 }
 
 .memory-extraction-type.is-semantic {
-  background: #eef1fa;
-  color: #48598f;
+  background: var(--ui-surface-subtle);
+  color: var(--ui-text-secondary);
 }
 
 .memory-extraction-type.is-knowledge {

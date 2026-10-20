@@ -228,7 +228,7 @@
 }
 
 .studio-asset-row:hover .studio-asset-copy strong {
-  color: var(--ui-accent-strong);
+  color: var(--ui-text);
 }
 
 .studio-asset-icon {
@@ -325,7 +325,7 @@
 
 .integration-tabs button.is-active {
   background: var(--ui-selection);
-  color: var(--ui-accent-strong);
+  color: var(--ui-text);
   box-shadow: 0 1px 2px rgb(var(--ui-shadow-rgb) / 7%);
 }
 
@@ -346,7 +346,7 @@
 }
 
 .connection-catalog article > svg {
-  color: var(--ui-accent-strong);
+  color: var(--ui-text-secondary);
 }
 
 .connection-catalog article p {
@@ -356,7 +356,7 @@
 }
 
 .connection-catalog article > strong {
-  color: var(--ui-accent-strong);
+  color: var(--ui-text);
   font-size: 12px;
 }
 
@@ -436,7 +436,7 @@
 .http-tool-actions button:focus-visible {
   background: var(--ui-surface);
   color: var(--text);
-  outline: 2px solid var(--focus-ring);
+  outline: 2px solid var(--ui-line-strong);
   outline-offset: 1px;
 }
 
@@ -526,7 +526,6 @@
   color: var(--faint);
 }
 
-.code-schema-control > input:focus-visible,
 .code-schema-control > select:focus-visible,
 .code-value-editor select:focus-visible {
   border-color: var(--ui-accent);
@@ -726,8 +725,8 @@
 }
 
 .drawer-steps li.is-active span {
-  border-color: var(--ui-accent);
-  background: var(--ui-accent);
+  border-color: var(--ui-line-strong);
+  background: var(--ui-text-secondary);
   color: var(--ui-surface);
 }
 
@@ -852,7 +851,7 @@
   border: 0;
   border-radius: 12px;
   background: transparent;
-  color: var(--ui-accent-strong);
+  color: var(--ui-text);
   cursor: pointer;
   text-align: left;
 }
@@ -891,11 +890,6 @@
   border-radius: 8px;
   background: var(--ui-surface-subtle);
   color: var(--ui-text-secondary);
-}
-
-.directory-search:focus-within {
-  border-color: var(--ui-accent);
-  box-shadow: 0 0 0 2px color-mix(in srgb, var(--ui-accent) 16%, transparent);
 }
 
 .directory-search input {
@@ -953,34 +947,36 @@
   font-size: 13px;
 }
 
-.instructions-input {
-  min-height: 280px !important;
+.creator-form .instructions-input {
+  min-height: 280px;
+  height: 100%;
   line-height: 1.6;
 }
 
 .review-summary dl {
   display: grid;
-  gap: 0;
-  margin: 8px 0 0;
+  gap: 24px;
+  margin: 16px 0 0;
 }
 
 .review-summary dl div {
   display: grid;
-  grid-template-columns: 130px 1fr;
-  gap: 18px;
-  padding: 13px 0;
-  border-bottom: 1px solid var(--border);
+  grid-template-columns: 130px minmax(0, 1fr);
+  gap: 24px;
+  align-items: baseline;
+  line-height: 1.6;
 }
 
 .review-summary dt {
   color: var(--ui-text-secondary);
-  font-size: 12px;
+  font-size: 13px;
 }
 
 .review-summary dd {
   margin: 0;
   color: var(--ui-text);
   font-size: 13px;
+  overflow-wrap: anywhere;
 }
 
 @media (max-width: 1360px) {
@@ -1040,13 +1036,31 @@
   padding: 3px 7px;
   border-radius: 5px;
   background: var(--surface-muted);
-  color: var(--ui-accent-strong);
+  color: var(--ui-text);
   font-size: 10px;
 }
 
 .instructions-editor {
   display: grid;
+  grid-auto-rows: minmax(min-content, 1fr);
   gap: 18px;
+}
+
+.instructions-field {
+  display: grid;
+  grid-template-rows: auto minmax(280px, 1fr) auto;
+  gap: 8px;
+  color: var(--ui-text);
+  font-size: 13px;
+}
+
+.instructions-field > header {
+  display: grid;
+  gap: 8px;
+}
+
+.creator-form .field-hint.instructions-count {
+  justify-content: flex-end;
 }
 
 .studio-page {
@@ -1072,7 +1086,7 @@
 .studio-nav-item.is-active {
   border-color: transparent;
   background: var(--ui-selection);
-  color: var(--ui-accent-strong);
+  color: var(--ui-text);
   font-weight: 500;
   box-shadow: none;
 }
@@ -1217,7 +1231,7 @@
 
 .markdown-preview :not(pre) > code {
   padding: 0.14em 0.38em;
-  border: 1px solid color-mix(in srgb, var(--ui-accent) 10%, transparent);
+  border: 1px solid var(--ui-line-strong);
   border-radius: 5px;
   background: rgb(var(--ui-shadow-rgb) / 8%);
   font-family: "SFMono-Regular", Consolas, monospace;

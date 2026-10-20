@@ -30,6 +30,7 @@ export function SelectMenu<Value extends string>(props: {
   readonly disabled?: boolean | undefined;
   readonly emptyLabel?: string | undefined;
   readonly icon?: ReactNode | undefined;
+  readonly indicator?: ReactNode | undefined;
   readonly menuClassName?: string | undefined;
   readonly menuMinWidth?: number | undefined;
   readonly onChange: (value: Value) => void;
@@ -319,7 +320,7 @@ export function SelectMenu<Value extends string>(props: {
       >
         {props.icon}
         <span className="ui-select-value">{selected?.label ?? props.ariaLabel}</span>
-        <CaretDown className="ui-select-caret" size={13} aria-hidden="true" />
+        {props.indicator ?? <CaretDown className="ui-select-caret" size={13} aria-hidden="true" />}
       </button>
       {!open || typeof document === "undefined" || props.portal === false
         ? menu

@@ -83,6 +83,21 @@ it("persists renames through the shared application and broadcasts the updated M
       getWindow: () => ({ webContents: { send } }),
       temporaryRoot: join(root, "tmp"),
     } as unknown as Parameters<typeof installMissionHandlers>[0]);
+    const countReferences = handlers.get("missions:context-store:reference-count")!;
+    const storeId = crypto.randomUUID();
+    await expect(countReferences({}, { storeId })).resolves.toBe(0);
+    await missions.updateContextMounts(mission.id, [{ kind: "context-store", storeId }]);
+    await missions.create({
+      workspace: mission.workspace,
+      goal: "Another linked Mission",
+      project: mission.project,
+      executor: mission.executor,
+      contextMounts: [{ kind: "context-store", storeId }],
+    });
+    await expect(countReferences({}, { storeId })).resolves.toBe(2);
+    await missions.updateContextMounts(mission.id, []);
+    await expect(countReferences({}, { storeId })).resolves.toBe(1);
+    await expect(countReferences({}, { storeId: "invalid" })).rejects.toThrow();
     const rename = handlers.get("missions:rename")!;
     await expect(
       rename({}, { id: mission.id, title: "  Manually renamed  " }),

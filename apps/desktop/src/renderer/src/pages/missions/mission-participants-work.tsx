@@ -26,7 +26,12 @@ import {
   type MissionRowPreviewPosition,
   type MissionRowPreviewRect,
 } from "./mission-rail.tsx";
-import { missionWorkRecordTitle, workRecordDepth, workStatusLabel } from "./mission-page-utils.ts";
+import {
+  missionWorkRecordSummary,
+  missionWorkRecordTitle,
+  workRecordDepth,
+  workStatusLabel,
+} from "./mission-page-utils.ts";
 
 interface MissionWorkGridEdge {
   readonly id: string;
@@ -197,7 +202,9 @@ export function MissionTeamParticipantPreviewCard(props: {
         )}
         <div>
           <dt>{t("expertPreviewTopic")}</dt>
-          <dd className="mission-team-participant-preview-topic">{props.record.summary}</dd>
+          <dd className="mission-team-participant-preview-topic">
+            {missionWorkRecordSummary(props.record)}
+          </dd>
         </div>
       </dl>
     </aside>
@@ -219,7 +226,7 @@ function MissionTeamParticipantItem(props: {
   const status = workStatusLabel(props.record.status, props.record.waitReason);
   const callOrderLabel =
     props.callOrder === undefined ? undefined : t("workCallOrder", { number: props.callOrder });
-  const accessibleLabel = [title, status, callOrderLabel, props.record.summary]
+  const accessibleLabel = [title, status, callOrderLabel, missionWorkRecordSummary(props.record)]
     .filter(Boolean)
     .join(", ");
 
@@ -561,7 +568,7 @@ export function MissionWorkGrid(props: {
                     {density === "single" ? (
                       <p className="mission-work-card-summary">
                         {formatExpertMentionDisplayText(
-                          record.summary,
+                          missionWorkRecordSummary(record),
                           props.mentionCandidates,
                           t("mentionUnavailable"),
                         )}

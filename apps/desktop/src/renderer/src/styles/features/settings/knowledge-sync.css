@@ -114,7 +114,7 @@
 
 .skill-sync-settings .knowledge-sync-feedback {
   margin: 16px 0 0;
-  color: var(--ui-accent-strong);
+  color: var(--ui-text);
   font-size: 13px;
 }
 
@@ -162,7 +162,7 @@
   display: flex;
   flex: 0 0 auto;
   margin-top: 0;
-  color: var(--ui-accent-strong);
+  color: var(--ui-text-secondary);
 }
 
 .skill-sync-summary.is-error .skill-sync-status-mark,
@@ -245,7 +245,7 @@
 
 .skill-sync-item-copy details summary {
   width: fit-content;
-  color: var(--ui-accent-strong);
+  color: var(--ui-text-secondary);
   cursor: pointer;
 }
 
@@ -321,7 +321,7 @@
 }
 
 .core-asset-sync-indicator.is-synced > svg {
-  color: var(--ui-accent-strong);
+  color: var(--ui-text-secondary);
 }
 
 .core-asset-sync-indicator.is-failed > svg {
@@ -347,7 +347,7 @@
 
 .core-asset-sync-disc {
   flex-shrink: 0;
-  color: var(--ui-accent);
+  color: var(--ui-text);
   animation: core-asset-sync-disc-spin 1.6s linear infinite;
 }
 

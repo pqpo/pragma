@@ -848,7 +848,7 @@ function FlowEditorCanvas(props: {
               position="bottom-right"
               className="flow-minimap"
               nodeColor={(node) =>
-                node.type === "terminal" ? "var(--ui-text-disabled)" : "var(--ui-accent)"
+                node.type === "terminal" ? "var(--ui-text-disabled)" : "var(--ui-text-secondary)"
               }
             />
             <Panel position="bottom-left" className="flow-canvas-hint">

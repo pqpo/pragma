@@ -1,4 +1,8 @@
-import { planBundleResources, collectBundleResourceClosure } from "./pragma-bundle-resources.ts";
+import {
+  planBundleResources,
+  collectBundleResourceClosure,
+  bundleRuntimeModels,
+} from "./pragma-bundle-resources.ts";
 import { resolveCapabilityForBinding } from "../capabilities/capability-verification.ts";
 import { capabilityToolNames } from "../capabilities/capability-revision-coordinator.ts";
 import { inspectAssetReadiness } from "../asset-transfer/asset-transfer-readiness.ts";
@@ -40,6 +44,7 @@ import {
 } from "@pragma/interpreter";
 import {
   PragmaBundleRootRefSchema,
+  PRAGMA_DSL_WRITE_API_VERSION,
   PragmaForwardCompatibleResourceSchema,
   PragmaInvocableResourceRefSchema,
   PragmaResourceRefSchema,
@@ -695,8 +700,64 @@ export function createPragmaBundleService(options: {
         `Project revision changed from ${projectRevision} to ${snapshot.revision}. Reopen the export dialog.`,
       );
     }
-    const project = await options.project.openRevision(projectRevision);
+    let project = await options.project.openRevision(projectRevision);
+    let exportRoot: string | undefined;
+    const dispose = async () => {
+      try {
+        await project.dispose();
+      } finally {
+        if (exportRoot !== undefined) await rm(exportRoot, { recursive: true, force: true });
+      }
+    };
     try {
+      // Export a derived project: caller-specific model overrides must not travel with Experts.
+      const sourceResources = project.listResourceClosure(PragmaBundleRootRefSchema.parse(rootRef));
+      const portableResources = structuredClone(sourceResources);
+      let changed = false;
+      for (const resource of portableResources) {
+        if (resource.kind === "ExpertTeam") {
+          changed ||= Object.keys(resource.spec.delegation.runtimes).length > 0;
+          resource.spec.delegation.runtimes = {};
+        } else if (resource.kind === "Expert") {
+          for (const tool of resource.spec.tools) {
+            if (tool.policy === undefined) continue;
+            changed ||= Object.keys(tool.policy.runtimes ?? {}).length > 0;
+            tool.policy.runtimes = {};
+          }
+        }
+      }
+      if (changed) {
+        const retained = collectBundleResourceClosure(portableResources, rootRef);
+        const artifactPaths = collectPragmaProjectArtifactPaths(retained);
+        exportRoot = await mkdtemp(join(tmpdir(), "pragma-bundle-export-"));
+        if (artifactPaths.length > 0) {
+          const artifacts = await options.project.readArtifacts(projectRevision);
+          for (const [path, contents] of artifacts) {
+            if (
+              !artifactPaths.some(
+                (prefix) => path === prefix || path.startsWith(`${prefix.replace(/\/+$/, "")}/`),
+              )
+            )
+              continue;
+            const destination = join(exportRoot, path);
+            await mkdir(dirname(destination), { recursive: true, mode: 0o700 });
+            await writeFile(destination, contents, { mode: 0o600 });
+          }
+        }
+        const entry = join(exportRoot, "pragma.yaml");
+        await writeFile(
+          entry,
+          stringifyYaml({
+            apiVersion: PRAGMA_DSL_WRITE_API_VERSION,
+            kind: "Bundle",
+            resources: retained,
+          }),
+          { mode: 0o600 },
+        );
+        const derived = await loadPragmaProject(entry);
+        await project.dispose();
+        project = derived;
+      }
       const resources = project.listResourceClosure(PragmaBundleRootRefSchema.parse(rootRef));
       const root = resources.find(
         (
@@ -739,9 +800,10 @@ export function createPragmaBundleService(options: {
         capabilities,
         contexts,
         flows,
+        dispose,
       };
     } catch (error) {
-      await project.dispose();
+      await dispose();
       throw error;
     }
   };
@@ -1389,7 +1451,7 @@ export function createPragmaBundleService(options: {
           },
         });
       } finally {
-        await prepared.project.dispose();
+        await prepared.dispose();
       }
     },
 
@@ -1583,7 +1645,7 @@ export function createPragmaBundleService(options: {
       } catch (error) {
         throwBundleExportValidationError(error);
       } finally {
-        await prepared.project.dispose();
+        await prepared.dispose();
       }
     },
 
@@ -1946,6 +2008,21 @@ export function createPragmaBundleService(options: {
         unpackedBytes: archive.unpackedBytes,
         fileCount: archive.fileCount,
         resources: archive.resources.length,
+        resourceDetails: archive.resources.map((resource) => ({
+          ref: canonicalPragmaResourceRef(resource),
+          kind: resource.kind,
+          name: resource.metadata.name,
+        })),
+        runtimeModels: {
+          ...bundleRuntimeModels(plan?.effective ?? archive.resources),
+          ...bundleRuntimeModels(
+            plan === undefined
+              ? archive.resources
+              : archive.resources.filter((resource) =>
+                  plan.sourceRefs.has(canonicalPragmaResourceRef(resource)),
+                ),
+          ),
+        },
         dependencies: [
           ...archive.manifest.dependencies.runtimes.map((item) => ({
             kind: "runtime" as const,
@@ -2046,6 +2123,9 @@ export function createPragmaBundleService(options: {
         roots: [root],
         createdAt: installation.createdAt,
         resources: installation.resourceRefs.length,
+        runtimeModels: bundleRuntimeModels(
+          collectBundleResourceClosure(snapshot.resources, installation.rootRef),
+        ),
         dependencies: [],
         conflicts: [],
         assetConflicts: [],

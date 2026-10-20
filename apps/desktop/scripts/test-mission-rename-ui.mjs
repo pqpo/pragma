@@ -40,7 +40,7 @@ try {
         await win.loadFile(${JSON.stringify(join(temporaryRoot, "index.html"))});
         const result = await win.webContents.executeJavaScript('window.runMissionRenameUiTests()');
         const frame = () => win.webContents.executeJavaScript('new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))');
-        // Exercise genuine Chromium keyboard modality before capturing the focus ring.
+        // Exercise genuine Chromium keyboard modality before checking the focused input.
         win.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'Tab' });
         win.webContents.sendInputEvent({ type: 'keyUp', keyCode: 'Tab' });
         win.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'Tab', modifiers: ['shift'] });
@@ -60,12 +60,15 @@ try {
           await win.webContents.debugger.sendCommand('CSS.forcePseudoState', { nodeId, forcedPseudoClasses: ['focus', 'focus-visible'] });
           await frame();
           await win.webContents.executeJavaScript('new Promise(resolve => setTimeout(resolve, 180))');
-          const shadow = await win.webContents.executeJavaScript('getComputedStyle(document.querySelector(".mission-rename-input")).boxShadow');
-          if (shadow === 'none') throw new Error('Keyboard focus ring is missing');
+          const readInputAppearance = '(() => { const style = getComputedStyle(document.querySelector(".mission-rename-input")); return JSON.stringify([style.borderColor, style.backgroundColor, style.boxShadow, style.outline]); })()';
+          const focusedAppearance = await win.webContents.executeJavaScript(readInputAppearance);
           await fs.writeFile(${JSON.stringify(temporaryRoot)} + '/' + language + '-focused.png' , (await win.webContents.capturePage()).toPNG());
           await win.webContents.debugger.sendCommand('CSS.forcePseudoState', { nodeId, forcedPseudoClasses: [] });
           await win.webContents.executeJavaScript('document.activeElement.blur()');
           await frame();
+          await win.webContents.executeJavaScript('new Promise(resolve => setTimeout(resolve, 180))');
+          const normalAppearance = await win.webContents.executeJavaScript(readInputAppearance);
+          if (focusedAppearance !== normalAppearance) throw new Error('Text input appearance changed on focus');
           await fs.writeFile(${JSON.stringify(temporaryRoot)} + '/' + language + '-normal.png', (await win.webContents.capturePage()).toPNG());
           await win.webContents.executeJavaScript('document.querySelector(".mission-rename-input").focus()');
         }

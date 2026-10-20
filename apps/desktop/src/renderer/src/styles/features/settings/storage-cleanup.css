@@ -119,7 +119,7 @@
 }
 
 .storage-cleanup-result {
-  color: var(--ui-accent-strong);
+  color: var(--ui-text);
   background: var(--ui-selection);
 }
 

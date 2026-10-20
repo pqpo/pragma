@@ -616,12 +616,12 @@ describe("ExpertEditorFragment", () => {
     expect(html).toContain("Let this expert call other Pragma resources");
   });
 
-  it("shows the memory policy on the review step when global memory is enabled", () => {
+  it("shows the memory policy on the capabilities step when global memory is enabled", () => {
     const html = renderToStaticMarkup(
       <ExpertEditorFragment
         mode="edit"
         initialValue={draft}
-        initialStep="review"
+        initialStep="capabilities"
         runtimes={[]}
         contextStores={[]}
         capabilities={[]}
@@ -636,12 +636,12 @@ describe("ExpertEditorFragment", () => {
     expect(html).toContain("Memory policy");
   });
 
-  it("hides the memory policy on the review step when global memory is disabled", () => {
+  it("hides the memory policy on the capabilities step when global memory is disabled", () => {
     const html = renderToStaticMarkup(
       <ExpertEditorFragment
         mode="edit"
         initialValue={draft}
-        initialStep="review"
+        initialStep="capabilities"
         runtimes={[]}
         contextStores={[]}
         capabilities={[]}

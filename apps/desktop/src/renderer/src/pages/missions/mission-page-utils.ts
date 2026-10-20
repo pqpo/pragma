@@ -86,6 +86,23 @@ export function workRecordDepth(
   return Math.min(depth, 6);
 }
 
+export function missionWorkRecordSummary(record: MissionWorkRecord): string {
+  try {
+    const value: unknown = JSON.parse(record.summary);
+    if (
+      typeof value === "object" &&
+      value !== null &&
+      "text" in value &&
+      typeof value.text === "string"
+    ) {
+      return value.text;
+    }
+  } catch {
+    // Plain-text summaries and truncated output remain readable as supplied.
+  }
+  return record.summary;
+}
+
 export function missionWorkRecordTitle(record: MissionWorkRecord): string {
   if (record.fallbackOrdinal === undefined) return record.title;
   return i18n.t("runtimeAgentFallbackName", {

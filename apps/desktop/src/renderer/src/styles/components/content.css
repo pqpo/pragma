@@ -145,10 +145,6 @@
   box-shadow: none;
 }
 
-.context-browser-search:focus-within {
-  box-shadow: 0 0 0 3px var(--ui-focus);
-}
-
 .context-browser-search input {
   min-width: 0;
   width: 100%;
@@ -212,7 +208,7 @@
 }
 
 .context-browser-file > small {
-  color: var(--ui-accent-strong);
+  color: var(--ui-text-secondary);
   font-size: 9px;
   white-space: nowrap;
 }
@@ -357,7 +353,7 @@
   border: 1px solid var(--border);
   border-radius: 7px;
   background: var(--surface);
-  color: var(--ui-accent-strong);
+  color: var(--ui-text);
   cursor: pointer;
 }
 
@@ -473,7 +469,7 @@
 .markdown-code-toolbar button:hover,
 .markdown-code-toolbar button:focus-visible {
   outline: 0;
-  background: color-mix(in srgb, var(--ui-accent) 8%, transparent);
+  background: var(--ui-surface-subtle);
   color: var(--text);
 }
 

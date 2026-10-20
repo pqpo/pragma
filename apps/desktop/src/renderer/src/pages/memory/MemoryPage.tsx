@@ -16,6 +16,7 @@ import {
   Prohibit,
   ArrowClockwise,
   ClockCounterClockwise,
+  ClipboardText,
   CheckCircle,
   Checks,
   CaretLeft,
@@ -1372,6 +1373,24 @@ export function MemoryExtractionTaskDetails(props: {
   );
 
   const selectedRun = detail?.runs.find((run) => run.runId === selectedRunId);
+  if (tasks.length === 0) {
+    return (
+      <section
+        ref={containerRef}
+        className="empty-state memory-task-details-empty"
+        aria-label={t("taskDetails")}
+      >
+        {!props.pagination?.loading && !props.pagination?.error && !props.pagination?.hasMore ? (
+          <>
+            <ClipboardText size={32} weight="light" aria-hidden="true" />
+            <p role="status">{t("noActiveExtractionTasks")}</p>
+          </>
+        ) : null}
+        {props.pagination === undefined ? null : <MemoryListLoadMore {...props.pagination} />}
+      </section>
+    );
+  }
+
   return (
     <section
       ref={containerRef}
@@ -1380,9 +1399,6 @@ export function MemoryExtractionTaskDetails(props: {
       style={{ "--sidebar-width": `${listWidth}px` } as CSSProperties}
     >
       <aside className="memory-task-details-list">
-        {tasks.length === 0 && !props.pagination?.loading ? (
-          <p className="memory-note">{t("noActiveExtractionTasks")}</p>
-        ) : null}
         {tasks.map((task) => {
           const taskKey = `${task.module}:${task.id}`;
           return (

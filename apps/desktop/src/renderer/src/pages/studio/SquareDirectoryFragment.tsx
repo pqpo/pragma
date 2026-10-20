@@ -2,11 +2,16 @@ import {
   ArrowLeft,
   ArrowsClockwise,
   Database,
+  CaretRight,
+  Cpu,
+  Stack,
   DownloadSimple,
+  Funnel,
   MagnifyingGlass,
   Package,
   SealCheck,
   Storefront,
+  SortDescending,
   UploadSimple,
   Wrench,
 } from "@phosphor-icons/react";
@@ -19,6 +24,7 @@ import type {
   PragmaDesktopAPI,
   PragmaBundleImportInspection,
 } from "../../../../shared/contracts/index.ts";
+import { Dialog } from "../../components/Dialog.tsx";
 import { ExpertAvatar } from "../../components/ExpertAvatar.tsx";
 import { MarkdownContent } from "../../components/MarkdownContent.tsx";
 import { SelectMenu } from "../../components/SelectMenu.tsx";
@@ -379,43 +385,7 @@ export function SquareDirectoryFragment(props: {
                   </button>
                 </div>
               ) : inspection === undefined ? null : (
-                <div className="square-detail-contents-grid">
-                  <div>
-                    <p className="square-detail-count">
-                      <Package size={18} />
-                      {t("square.resourceCount", { count: inspection.resources })}
-                    </p>
-                    {inspection.roots.length === 0 ? null : (
-                      <ul className="square-detail-roots">
-                        {inspection.roots.map((root) => (
-                          <li key={root.ref}>{root.name}</li>
-                        ))}
-                      </ul>
-                    )}
-                  </div>
-                  <div>
-                    <h3>{t("square.dependencies")}</h3>
-                    {inspection.dependencies.length === 0 ? (
-                      <p className="square-detail-status">{t("square.noDependencies")}</p>
-                    ) : (
-                      <ul className="square-detail-dependencies">
-                        {inspection.dependencies.map((dependency) => (
-                          <li key={`${dependency.kind}:${dependency.ref}`}>
-                            <span>{dependency.name}</span>
-                            <small>
-                              {t(`square.dependencyKinds.${dependency.kind}`)} ·{" "}
-                              {t(
-                                dependency.included
-                                  ? "square.dependencyIncluded"
-                                  : "square.dependencyRequired",
-                              )}
-                            </small>
-                          </li>
-                        ))}
-                      </ul>
-                    )}
-                  </div>
-                </div>
+                <SquareBundleContents key={version} inspection={inspection} />
               )}
             </section>
           </main>
@@ -478,22 +448,60 @@ export function SquareDirectoryFragment(props: {
         </header>
       }
     >
-      <div className="square-kind-tabs" role="tablist" aria-label={t("square.type")}>
-        {KINDS.map((item) => (
-          <button
-            type="button"
-            role="tab"
-            aria-selected={kind === item}
-            className={kind === item ? "is-active" : undefined}
-            key={item}
-            onClick={() => {
-              setKind(item);
-              setCategory("all");
-            }}
-          >
-            {t(`square.kinds.${item}`)}
-          </button>
-        ))}
+      <div className="square-toolbar">
+        <div className="square-kind-tabs" role="tablist" aria-label={t("square.type")}>
+          {KINDS.map((item) => (
+            <button
+              type="button"
+              role="tab"
+              aria-selected={kind === item}
+              className={kind === item ? "is-active" : undefined}
+              key={item}
+              onClick={() => {
+                setKind(item);
+                setCategory("all");
+              }}
+            >
+              {t(`square.kinds.${item}`)}
+            </button>
+          ))}
+        </div>
+        <div className="square-controls">
+          <label className="directory-search">
+            <MagnifyingGlass size={18} />
+            <span className="sr-only">{t("square.search")}</span>
+            <input
+              type="search"
+              value={query}
+              onChange={(event) => setQuery(event.target.value)}
+              placeholder={t("square.search")}
+            />
+          </label>
+          <SelectMenu
+            className="square-source-select"
+            indicator={<Funnel size={16} aria-hidden="true" />}
+            align="end"
+            ariaLabel={t("square.sourceFilter")}
+            value={sourceId}
+            options={[
+              { value: "all", label: t("square.allSources") },
+              ...catalog.sources.map((source) => ({ value: source.id, label: source.name })),
+            ]}
+            onChange={setSourceId}
+          />
+          <SelectMenu
+            className="square-sort-select"
+            indicator={<SortDescending size={16} aria-hidden="true" />}
+            align="end"
+            ariaLabel={t("square.sort")}
+            value={sort}
+            options={[
+              { value: "latest", label: t("square.sortLatest") },
+              { value: "name", label: t("square.sortName") },
+            ]}
+            onChange={(value) => setSort(value as SquareSort)}
+          />
+        </div>
       </div>
       <div
         className="square-category-strip"
@@ -511,38 +519,6 @@ export function SquareDirectoryFragment(props: {
             {localized(item.name, i18n.language)}
           </button>
         ))}
-      </div>
-      <div className="square-controls">
-        <label className="directory-search">
-          <MagnifyingGlass size={18} />
-          <span className="sr-only">{t("square.search")}</span>
-          <input
-            type="search"
-            value={query}
-            onChange={(event) => setQuery(event.target.value)}
-            placeholder={t("square.search")}
-          />
-        </label>
-        <SelectMenu
-          className="square-source-select"
-          ariaLabel={t("square.sourceFilter")}
-          value={sourceId}
-          options={[
-            { value: "all", label: t("square.allSources") },
-            ...catalog.sources.map((source) => ({ value: source.id, label: source.name })),
-          ]}
-          onChange={setSourceId}
-        />
-        <SelectMenu
-          className="square-sort-select"
-          ariaLabel={t("square.sort")}
-          value={sort}
-          options={[
-            { value: "latest", label: t("square.sortLatest") },
-            { value: "name", label: t("square.sortName") },
-          ]}
-          onChange={(value) => setSort(value as SquareSort)}
-        />
       </div>
       {error ? (
         <p className="form-error" role="alert">
@@ -651,4 +627,168 @@ function localized(
   locale: string,
 ): string {
   return value.translations?.[locale] ?? value.default;
+}
+
+export function SquareBundleContents(props: { readonly inspection: PragmaBundleImportInspection }) {
+  const { t } = useTranslation("studio");
+  const { inspection } = props;
+  const dependencies = inspection.dependencies.filter(
+    (dependency) => dependency.kind !== "runtime",
+  );
+  const models = Object.entries(inspection.runtimeModels ?? {}).filter(
+    ([, model]) => model.consumers.length > 0,
+  );
+  const hasModels =
+    models.length > 0 ||
+    inspection.dependencies.some((dependency) => dependency.kind === "runtime");
+  const [activeSection, setActiveSection] = useState<
+    "resources" | "dependencies" | "models" | null
+  >(null);
+  const resources = inspection.resourceDetails;
+  const previewResources =
+    resources ?? (inspection.roots.length > 0 ? inspection.roots : [inspection.root]);
+  const sections = [
+    {
+      id: "resources" as const,
+      title: t("square.resources"),
+      count: t("square.resourceCount", { count: inspection.resources }),
+      preview: previewResources
+        .slice(0, 3)
+        .map((root) => root.name)
+        .join(" · "),
+      icon: <Package size={18} />,
+    },
+    {
+      id: "dependencies" as const,
+      title: t("square.dependencies"),
+      count: t("square.dependencyCount", { count: dependencies.length }),
+      preview:
+        dependencies.length === 0
+          ? t("square.noDependencies")
+          : dependencies
+              .slice(0, 3)
+              .map((dependency) => dependency.name)
+              .join(" · "),
+      icon: <Stack size={18} />,
+    },
+    ...(hasModels
+      ? [
+          {
+            id: "models" as const,
+            title: t("square.models"),
+            count: t("square.modelCount", { count: models.length }),
+            preview:
+              models.length === 0
+                ? t("square.defaultModel")
+                : models
+                    .slice(0, 3)
+                    .map(([, model]) => model.modelId ?? t("square.defaultModel"))
+                    .join(" · "),
+            icon: <Cpu size={18} />,
+          },
+        ]
+      : []),
+  ];
+  const active = sections.find((section) => section.id === activeSection);
+  return (
+    <>
+      <div className="square-detail-contents-grid">
+        {sections.map((section) => (
+          <button
+            className="square-content-card"
+            type="button"
+            key={section.id}
+            aria-haspopup="dialog"
+            onClick={() => setActiveSection(section.id)}
+          >
+            <span className="square-content-card-heading">
+              {section.icon}
+              {section.title}
+            </span>
+            <span className="square-content-card-count">{section.count}</span>
+            <span className="square-content-card-preview">{section.preview}</span>
+            <span className="square-content-card-action">
+              {t("square.viewDetails")}
+              <CaretRight size={16} />
+            </span>
+          </button>
+        ))}
+      </div>
+      {active === undefined ? null : (
+        <Dialog
+          className="square-content-dialog"
+          title={active.title}
+          description={active.count}
+          onCancel={() => setActiveSection(null)}
+          footer={
+            <button
+              className="secondary-button"
+              type="button"
+              onClick={() => setActiveSection(null)}
+            >
+              {t("square.closeDetails")}
+            </button>
+          }
+        >
+          {activeSection === "resources" ? (
+            resources === undefined ? (
+              <p className="square-detail-status">{t("square.resourceDetailsUnavailable")}</p>
+            ) : (
+              <ul className="square-content-detail-list">
+                {resources.map((resource) => (
+                  <li key={resource.ref}>
+                    <span>{resource.name}</span>
+                    <small>{t(`square.resourceKinds.${resource.kind}`)}</small>
+                  </li>
+                ))}
+              </ul>
+            )
+          ) : activeSection === "dependencies" ? (
+            dependencies.length === 0 ? (
+              <p className="square-detail-status">{t("square.noDependencies")}</p>
+            ) : (
+              <ul className="square-content-detail-list">
+                {dependencies.map((dependency) => (
+                  <li key={`${dependency.kind}:${dependency.ref}`}>
+                    <span>{dependency.name}</span>
+                    <small>
+                      {t(`square.dependencyKinds.${dependency.kind}`)} ·{" "}
+                      {t(
+                        dependency.included
+                          ? "square.dependencyIncluded"
+                          : "square.dependencyRequired",
+                      )}
+                    </small>
+                  </li>
+                ))}
+              </ul>
+            )
+          ) : (
+            <>
+              <p className="square-content-dialog-hint">{t("square.modelsHint")}</p>
+              <ul className="square-content-detail-list">
+                {models.length === 0 ? (
+                  <li>{t("square.defaultModel")}</li>
+                ) : (
+                  models.map(([ref, model]) => (
+                    <li key={ref}>
+                      <span>{model.modelId ?? t("square.defaultModel")}</span>
+                      {model.consumers.map((consumer, index) => (
+                        <small key={index}>
+                          {t(`square.modelUsage.${consumer.usage}`, {
+                            name: consumer.name,
+                            target: consumer.targetName ?? t("square.modelTarget"),
+                          })}
+                        </small>
+                      ))}
+                    </li>
+                  ))
+                )}
+              </ul>
+            </>
+          )}
+        </Dialog>
+      )}
+    </>
+  );
 }

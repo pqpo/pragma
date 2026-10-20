@@ -1,5 +1,6 @@
 import { flushSync } from "react-dom";
 import { createRoot } from "react-dom/client";
+import { SquareBundleContents } from "../../src/renderer/src/pages/studio/SquareDirectoryFragment.tsx";
 import { PragmaBundleDialog } from "../../src/renderer/src/pages/studio/PragmaBundleDialog.tsx";
 import { i18n } from "../../src/renderer/src/i18n/index.ts";
 import type {
@@ -83,6 +84,7 @@ let inspectedInstallationId: string | undefined;
 let plannedConflicts: PragmaBundleImportInspection | undefined;
 let submittedCapabilities = -1;
 let submittedRuntimes = -1;
+let submittedRuntime: { runtimeId: string; providerId: string; modelId: string } | undefined;
 let lastConflictAction: string | undefined;
 let recheckError: unknown;
 let preservePending = false;
@@ -131,6 +133,7 @@ const api: Pick<
     submittedRequestId = input.requestId;
     submittedCapabilities = input.capabilities.length;
     submittedRuntimes = input.runtimes.length;
+    submittedRuntime = input.runtimes[0];
     installation = { ...modern, status: "ready" };
     return installation;
   },
@@ -274,10 +277,23 @@ export async function runBundleRecoveryUiTests() {
     "Fresh import must have a new UUID",
   );
   await prepareBundleRuntimeVisual("en");
-  const runtimeSelect = document.querySelector<HTMLButtonElement>('[aria-label="Runtime"]');
   assert(
-    runtimeSelect?.textContent?.includes("Built-in Runtime"),
-    "Existing Runtime must be preselected even when the source model is missing",
+    !document.body.textContent?.includes("Built-in Runtime"),
+    "Internal RuntimeProfile labels must not appear in the model replacement flow",
+  );
+  assert(
+    !document.querySelector('[aria-label="Runtime"]'),
+    "Expert model replacement must not expose a separate Runtime selector",
+  );
+  assert(
+    document.querySelector(".pragma-bundle-binding-step h3")?.textContent?.includes("Writer"),
+    "Model replacement must name the expert using it",
+  );
+  assert(
+    !document
+      .querySelector(".pragma-bundle-binding-step h3")
+      ?.textContent?.includes("Built-in Runtime"),
+    "Internal RuntimeProfile names must not be displayed as independent resources",
   );
   assert(document.body.textContent?.includes("source-model"), "Source model must be explained");
   assert(
@@ -287,21 +303,13 @@ export async function runBundleRecoveryUiTests() {
   await click(button("Set up later"));
   await click(button("Back"));
   await waitFor(() => document.querySelector(".pragma-bundle-binding-step") !== null);
-  await click(document.querySelector<HTMLButtonElement>('[aria-label="Runtime"]')!);
-  await click(
-    button("Built-in Runtime", document.querySelector('[role="listbox"]:not([hidden])')!),
-  );
-  assert(
-    button("Review import").disabled,
-    "Editing a deferred Runtime must require a complete model selection again",
-  );
   const modelSelect = document.querySelector<HTMLButtonElement>('[aria-label="Model"]');
   assert(
     modelSelect && !modelSelect.disabled,
     "Local model selection must be enabled without reselecting Runtime",
   );
   await click(modelSelect);
-  await click(button("Local Model · Local Account"));
+  await click(button("Other Model · Other Account"));
   await click(button("Review import"));
   assert(
     document.querySelector(".pragma-bundle-review"),
@@ -311,6 +319,15 @@ export async function runBundleRecoveryUiTests() {
   assert(
     !document.body.textContent?.includes("Needs setup"),
     "Review must not retain stale missing status",
+  );
+
+  await click(button("Import bundle"));
+  await waitFor(() => calls.start === 1);
+  assert(
+    submittedRuntime?.runtimeId === "codex" &&
+      submittedRuntime.providerId === "other-account" &&
+      submittedRuntime.modelId === "other-model",
+    "Selecting a replacement model must save its engine and account automatically",
   );
 
   await prepareBundleRuntimeVisual("en");
@@ -453,7 +470,7 @@ export async function runBundleRecoveryUiTests() {
     passed: 12,
     scenarios: [
       "use the expert current configuration before resuming setup",
-      "preselect Runtime and replace missing source model",
+      "replace expert model across runtimes without separate runtime binding",
       "legacy installing",
       "legacy failed",
       "confirmed cleanup, blocked cleanup and fresh retry",
@@ -479,6 +496,27 @@ export async function prepareBundleRuntimeVisual(language: string) {
   await i18n.changeLanguage(language);
   activeInspection = {
     ...inspection,
+    runtimeModels: {
+      "runtime-profile:0000000000000001": {
+        modelId: "source-model",
+        consumers: [{ name: "Writer", usage: "expert" }],
+      },
+    },
+    conflicts: [
+      {
+        ref: "runtime-profile:0000000000000001",
+        resourceKind: "RuntimeProfile",
+        importedName: "Built-in Runtime / source-model",
+        matches: [
+          {
+            kind: "identity",
+            localRef: "runtime-profile:0000000000000001",
+            localName: "Existing Runtime",
+          },
+        ],
+        updateAllowed: true,
+      },
+    ],
     readiness: [
       {
         id: "runtime-required",
@@ -515,6 +553,20 @@ export async function prepareBundleRuntimeVisual(language: string) {
           id: "local-model",
           displayName: "Local Model",
           provider: { kind: "registered", id: "local-account", displayName: "Local Account" },
+        },
+      ],
+    },
+    {
+      id: "codex",
+      isDefault: false,
+      kind: "local",
+      displayName: "Codex",
+      status: "available",
+      models: [
+        {
+          id: "other-model",
+          displayName: "Other Model",
+          provider: { kind: "registered", id: "other-account", displayName: "Other Account" },
         },
       ],
     },
@@ -625,4 +677,126 @@ export async function prepareBundleResumeVisual(language: string) {
       history.getBoundingClientRect().right <= window.innerWidth + 1,
     "Recovery history must fit the dialog viewport",
   );
+}
+
+export async function prepareMarketModelsVisual(language: string, team: boolean) {
+  await i18n.changeLanguage(language);
+  const modelRef = "runtime-profile:0000000000000001";
+  const writer = team ? "代码评审专家" : "菜鸟 APP 查件业务专家";
+  const item: PragmaBundleImportInspection = {
+    ...inspection,
+    root: {
+      ref: team ? "team:p8cbn3cg2avyksn4" : "expert:1xddvess309a6gme",
+      kind: team ? "ExpertTeam" : "Expert",
+      name: team ? "研发协作专家团" : writer,
+    },
+    roots: [],
+    resources: team ? 53 : 3,
+    resourceDetails: [
+      ...(team
+        ? [{ ref: "team:p8cbn3cg2avyksn4", kind: "ExpertTeam" as const, name: "研发协作专家团" }]
+        : []),
+      ...Array.from({ length: team ? 50 : 1 }, (_, index) => ({
+        ref: `expert:${String(index + 1).padStart(16, "0")}`,
+        kind: "Expert" as const,
+        name: team ? `${writer} ${index + 1}` : writer,
+      })),
+      { ref: modelRef, kind: "RuntimeProfile", name: "qwen3.7-plus" },
+      { ref: "capability:0000000000000001", kind: "Capability", name: "Documentation search" },
+    ],
+    dependencies: [
+      { kind: "runtime", ref: modelRef, name: "Built-in Runtime / qwen3.7-plus", included: false },
+      {
+        kind: "capability",
+        ref: "capability:0000000000000001",
+        name: "Documentation search",
+        included: true,
+      },
+    ],
+    runtimeModels: {
+      [modelRef]: {
+        modelId: "qwen3.7-plus",
+        consumers: team
+          ? Array.from({ length: 50 }, (_, index) => ({
+              name: "研发协作专家团",
+              usage: "team-delegation" as const,
+              targetName: `${writer} ${index + 1}`,
+            }))
+          : [{ name: writer, usage: "expert" }],
+      },
+    },
+  };
+  flushSync(() =>
+    root.render(
+      <main
+        className="square-detail-main"
+        style={{ padding: 32, width: Math.min(960, window.innerWidth), boxSizing: "border-box" }}
+      >
+        <section>
+          <h2>{item.root.name}</h2>
+          <SquareBundleContents inspection={item} />
+        </section>
+      </main>,
+    ),
+  );
+  await frames();
+  assert(
+    !document.body.textContent?.includes("Built-in Runtime"),
+    "Market details must not expose catalog runtime resources as independent dependencies",
+  );
+  assert(
+    document.body.textContent?.includes("qwen3.7-plus"),
+    "Market details must preserve the requested source model",
+  );
+  const resourceCard = document.querySelector<HTMLButtonElement>(".square-content-card");
+  assert(resourceCard, "Resource card must be available");
+  await click(resourceCard);
+  const resourcesDialog = document.querySelector<HTMLElement>(".square-content-dialog");
+  assert(resourcesDialog, "Resource details must open");
+  const entries = resourcesDialog.querySelectorAll(".square-content-detail-list li");
+  assert(entries.length === item.resources, "The resource count must match the complete inventory");
+  assert(
+    resourcesDialog.textContent?.includes("Documentation search"),
+    "Included capabilities must be listed",
+  );
+  assert(
+    [...entries].every((entry) => entry.querySelector("small")?.textContent),
+    "Every resource must show its type",
+  );
+  if (team) {
+    assert(resourcesDialog.textContent?.includes(`${writer} 50`), "All 50 experts must be listed");
+    const body = resourcesDialog.querySelector<HTMLElement>(".ui-dialog-body");
+    assert(
+      body && body.scrollHeight > body.clientHeight,
+      "The resource inventory must scroll within the dialog",
+    );
+    body.scrollTop = body.scrollHeight;
+  }
+  const close = resourcesDialog.querySelector<HTMLButtonElement>("button");
+  assert(close, "Resource details must offer a close button");
+  await click(close);
+  const card = document.querySelectorAll<HTMLButtonElement>(".square-content-card")[2];
+  assert(card, "Model overview card must be available");
+  assert(!card.textContent?.includes(writer), "The model card must not expand consumers");
+  card.focus();
+  await click(card);
+  const dialog = document.querySelector<HTMLElement>(".square-content-dialog");
+  assert(dialog, "Model details must open");
+  assert(dialog.textContent?.includes(writer), "The text dialog must name the model consumer");
+  if (team) {
+    assert(dialog.textContent?.includes(`${writer} 50`), "All 50 consumers must remain accessible");
+    const body = dialog.querySelector<HTMLElement>(".ui-dialog-body");
+    assert(
+      body && body.scrollHeight > body.clientHeight,
+      "Long details must scroll inside the dialog",
+    );
+    body.scrollTop = body.scrollHeight;
+  }
+  const bounds = dialog.getBoundingClientRect();
+  assert(bounds.top >= 0 && bounds.bottom <= window.innerHeight, "Details must fit the viewport");
+  assert(dialog.scrollWidth <= dialog.clientWidth, "Long text must wrap within the dialog");
+  dialog.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+  await frames();
+  assert(!document.querySelector(".square-content-dialog"), "Escape must close the details");
+  assert(document.activeElement === card, "Closing details must restore focus to its card");
 }

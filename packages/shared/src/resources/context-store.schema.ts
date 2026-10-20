@@ -266,6 +266,7 @@ export const DeleteContextStoreSchema = z.object({
 
 export const ContextStoreMissionMountCheckSchema = DeleteContextStoreSchema;
 export const ContextStoreMissionMountCheckResultSchema = z.boolean();
+export const ContextStoreMissionReferenceCountSchema = z.number().int().nonnegative();
 
 export const ContextStoreContentMetadataSchema = z.object({
   description: z.string().max(2_000).optional(),
