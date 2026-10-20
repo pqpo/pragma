@@ -9,6 +9,7 @@ import type {
 import {
   BundleFileStep,
   BundleInspection,
+  BundleReadinessList,
   filterBundleExportRoots,
   orderBundleExportRoots,
   PragmaBundleDialog,
@@ -327,5 +328,40 @@ describe("Bundle import inspection", () => {
     expect(fileStepHtml).toContain("Knowledge base (name unavailable in legacy bundle)");
     expect(fileStepHtml).not.toContain("Context 26980318-cc35-4a16-95ae-fd8806492c4a");
     expect(fileStepHtml).toContain("pragma-bundle-readiness-state");
+  });
+});
+
+describe("legacy Bundle resource names", () => {
+  it("keeps technical identities secondary and preserves readable capability names", () => {
+    const html = renderToStaticMarkup(
+      <BundleReadinessList
+        readiness={[
+          {
+            id: "legacy",
+            kind: "capability",
+            resourceRef: "capability:0000000000000001",
+            name: "Capability 009405fc-3ade-4df2-8e4b-eccab29e78c4",
+            status: "missing",
+            code: "capability_missing",
+            action: "choose_capability",
+            message: "Missing",
+          },
+          {
+            id: "named",
+            kind: "capability",
+            resourceRef: "capability:0000000000000002",
+            name: "Search documentation",
+            status: "ready",
+            code: "ready",
+            action: "none",
+            message: "Ready",
+          },
+        ]}
+      />,
+    );
+    expect(html).toContain("Capability (name unavailable in legacy bundle)");
+    expect(html).not.toContain("009405fc-3ade-4df2-8e4b-eccab29e78c4");
+    expect(html).toContain("Search documentation");
+    expect(html).toContain('title="capability:0000000000000001"');
   });
 });

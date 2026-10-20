@@ -13,7 +13,7 @@ try {
     absWorkingDir: desktopRoot,
     stdin: {
       contents:
-        'import { runBundleRecoveryUiTests, prepareBundleRecoveryVisual } from "./scripts/fixtures/bundle-recovery-ui.tsx"; Object.assign(window, { runBundleRecoveryUiTests, prepareBundleRecoveryVisual });',
+        'import { runBundleRecoveryUiTests, prepareBundleRecoveryVisual, prepareBundleRuntimeVisual, prepareBundleConflictVisual, prepareBundleResumeVisual } from "./scripts/fixtures/bundle-recovery-ui.tsx"; Object.assign(window, { runBundleRecoveryUiTests, prepareBundleRecoveryVisual, prepareBundleRuntimeVisual, prepareBundleConflictVisual, prepareBundleResumeVisual });',
       resolveDir: desktopRoot,
     },
     outfile: join(temporaryRoot, "test.js"),
@@ -65,6 +65,49 @@ try {
           await win.webContents.debugger.sendCommand('CSS.forcePseudoState', { nodeId, forcedPseudoClasses: ['focus', 'focus-visible'] });
           await frame();
           await fs.writeFile(${JSON.stringify(temporaryRoot)} + '/' + language + '-focused.png', (await win.webContents.capturePage()).toPNG());
+        }
+        win.setSize(1080, 700);
+        win.webContents.setZoomFactor(1);
+        await win.webContents.executeJavaScript('window.prepareBundleRuntimeVisual("zh-Hans")');
+        await frame();
+        await fs.writeFile(${JSON.stringify(temporaryRoot)} + '/runtime-normal.png', (await win.webContents.capturePage()).toPNG());
+        await win.webContents.executeJavaScript('document.querySelector("button[aria-label=模型]").focus()');
+        const runtimeDocument = await win.webContents.debugger.sendCommand('DOM.getDocument');
+        const runtimeModel = await win.webContents.debugger.sendCommand('DOM.querySelector', { nodeId: runtimeDocument.root.nodeId, selector: '[aria-label="模型"]' });
+        await win.webContents.debugger.sendCommand('CSS.forcePseudoState', { nodeId: runtimeModel.nodeId, forcedPseudoClasses: ['focus', 'focus-visible'] });
+        await frame();
+        await fs.writeFile(${JSON.stringify(temporaryRoot)} + '/runtime-focused.png', (await win.webContents.capturePage()).toPNG());
+        for (const [language, width, height, zoom] of [
+          ['zh-Hans', 1080, 800, 1], ['en', 1080, 800, 1.25], ['zh-Hant', 720, 800, 1],
+        ]) {
+          win.setSize(width, height);
+          win.webContents.setZoomFactor(zoom);
+          win.webContents.sendInputEvent({ type: 'mouseMove', x: 0, y: 0 });
+          await win.webContents.executeJavaScript('window.prepareBundleConflictVisual(' + JSON.stringify(language) + ')');
+          await frame();
+          await fs.writeFile(${JSON.stringify(temporaryRoot)} + '/' + language + '-conflicts-normal.png', (await win.webContents.capturePage()).toPNG());
+          const conflictDocument = await win.webContents.debugger.sendCommand('DOM.getDocument');
+          const conflictChoice = await win.webContents.debugger.sendCommand('DOM.querySelector', { nodeId: conflictDocument.root.nodeId, selector: '.pragma-bundle-conflict-choice button[aria-pressed="true"]' });
+          await win.webContents.debugger.sendCommand('CSS.forcePseudoState', { nodeId: conflictChoice.nodeId, forcedPseudoClasses: ['focus', 'focus-visible'] });
+          await frame();
+          await fs.writeFile(${JSON.stringify(temporaryRoot)} + '/' + language + '-conflicts-focused.png', (await win.webContents.capturePage()).toPNG());
+          await win.webContents.debugger.sendCommand('CSS.forcePseudoState', { nodeId: conflictChoice.nodeId, forcedPseudoClasses: [] });
+          const hoverPoint = await win.webContents.executeJavaScript('(() => { const rect = document.querySelector(".pragma-bundle-conflict-choice button").getBoundingClientRect(); return { x: rect.x + rect.width / 2, y: rect.y + rect.height / 2 }; })()');
+          win.webContents.sendInputEvent({ type: 'mouseMove', x: Math.round(hoverPoint.x * zoom), y: Math.round(hoverPoint.y * zoom) });
+          await win.webContents.executeJavaScript('new Promise(resolve => setTimeout(resolve, 180))');
+          const hoverVisible = await win.webContents.executeJavaScript('getComputedStyle(document.querySelector(".pragma-bundle-conflict-choice .studio-action-tooltip")).visibility === "visible"');
+          if (!hoverVisible) throw new Error('Conflict tooltip must appear on mouse hover');
+          const visibleTips = await win.webContents.executeJavaScript('[...document.querySelectorAll(".pragma-bundle-conflict-choice [role=tooltip]")].filter(node => getComputedStyle(node).visibility === "visible").length');
+          if (visibleTips !== 1) throw new Error('Only the hovered conflict tooltip should be visible');
+          await fs.writeFile(${JSON.stringify(temporaryRoot)} + '/' + language + '-conflicts-hover.png', (await win.webContents.capturePage()).toPNG());
+
+        }
+        for (const [language, zoom] of [['zh-Hans', 1], ['en', 1.25], ['zh-Hant', 1.5]]) {
+          win.setSize(1080, 700);
+          win.webContents.setZoomFactor(zoom);
+          await win.webContents.executeJavaScript('window.prepareBundleResumeVisual(' + JSON.stringify(language) + ')');
+          await frame();
+          await fs.writeFile(${JSON.stringify(temporaryRoot)} + '/' + language + '-resume.png', (await win.webContents.capturePage()).toPNG());
         }
         console.log(JSON.stringify(result));
         app.exit(0);

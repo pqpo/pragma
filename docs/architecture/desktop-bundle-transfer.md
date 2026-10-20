@@ -44,18 +44,34 @@ Import is prepared as a wizard before one final confirmation:
 2. Resolve every resource conflict independently. **Import as a copy** creates a new identity for
    that resource; **Update matching resource** retains its local identity. Local Host chooses the
    identities and Interpreter rewrites all typed references in a localized project copy.
-3. Bind one unresolved dependency at a time.
+3. Recompute the effective dependency closure after conflict decisions, then bind unresolved dependencies.
+   Keeping a local expert uses that expert's current dependencies; unreachable source dependencies are
+   neither requested nor installed.
 4. Review the complete import and commit it.
 
 Desktop automatically reuses exact Runtime/model, capability, knowledge-base, and plugin matches.
 Included portable payloads are installed automatically. Everything else appears in **Finish local
 setup**. Runtime and model are selected separately. Entering a Runtime binding refreshes local
 availability automatically; the same screen also has a manual refresh action and listens for
-background model-catalog updates.
+background model-catalog updates. If only the requested model is missing, the wizard keeps the
+matching available Runtime selected and explains that provider accounts do not travel with a Bundle.
+Legacy generated resource names are shown as localized missing-name labels with technical refs available
+in diagnostic tooltips.
 
 The imported object remains visible and persisted while setup is incomplete, but it cannot create
-or run a Mission. This gate also applies when another Flow reaches the pending object indirectly.
-Save all required bindings and secrets to move the installation to `ready`.
+or run a Mission. Readiness checks inspect only the requested executor’s transitive dependency
+closure, so an incomplete installation cannot block another expert merely because they share an available Runtime or capability.
+This gate also applies when another Flow reaches the pending object indirectly.
+An Expert's RuntimeProfile is the storage representation of its model selection, not a second model
+configuration. Rechecking an installation follows its root's current dependency closure. Replacing an
+Expert's model therefore replaces that requirement; an old imported profile which is no longer used
+cannot keep setup pending. Reopening unfinished setup rechecks current selections before asking for
+bindings again.
+Capability choices resolve the active local revision and must provide the expert's required tools.
+Runtime and capability bindings can explicitly be deferred; the review reflects selected bindings and
+retains unresolved readiness for deferred items. Save required bindings and secrets to move the
+installation to `ready`. A deleted installation root is reported as `installation_root_missing`,
+never as a ready installation, and its archive remains available for recovery or cleanup.
 
 For a knowledge-base conflict, update means append the imported snapshot as the next local revision
 while retaining the local ID, name, and history. Identical content is a no-op. Copy creates a new
@@ -63,10 +79,14 @@ semantic resource and a new managed Store at revision 1. Inspection records the 
 revision and snapshot hash; import applies changes with snapshot CAS and asks for a fresh inspection
 if the target changed.
 
+The empty import dialog lists unfinished installations. Continuing one inspects its retained record
+and archive rather than requiring the original download.
+
 Interrupted installations retain their request and allocated identities. Accessing the selected
 installation resumes its persisted transaction; initialization does not scan and take over all imports.
 Repeating a completed request returns its installation rather than creating another copy. Incomplete copy imports can also be
-discarded from the import dialog; update imports are not automatically rolled back because doing so
+discarded from the import dialog, including copies that borrow local dependencies (those dependencies
+are preserved); update imports are not automatically rolled back because doing so
 could overwrite later project work.
 
 Desktop stores installation state as `pragma.bundle-installation/v9`. Archive identity

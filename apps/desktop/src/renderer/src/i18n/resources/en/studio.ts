@@ -1697,8 +1697,9 @@ export const studio = {
   bundleKnowledgeBaseRequiredHint:
     "The root knowledge-base snapshot is always included and is not an attachment.",
   bundleModuleUnavailableHint: "This object has no corresponding content to export.",
-  bundleAppendKnowledgeRevision: "Append revision",
-  bundleAppendKnowledgeRevisionHint: "Keep local history and append the imported snapshot.",
+  bundleAppendKnowledgeRevision: "Add revision",
+  bundleAppendKnowledgeRevisionHint:
+    "Keep the local knowledge base identity and history, and append the bundled content as a new revision. Other experts using it will also be affected.",
   bundleFilterKnowledgeBases: "Knowledge bases",
   bundleFilterSkills: "Skills",
   bundleKnowledgeMemory: "Published Knowledge Memory",
@@ -1729,9 +1730,9 @@ export const studio = {
   bundleAssetSkill: "Skill",
   bundleAssetKnowledgeBase: "Knowledge base",
   bundleSelectLocalAsset: "Select the local asset to use",
-  bundleImportCopy: "Import as a copy",
+  bundleImportCopy: "Copy",
   bundleImportCopyHint: "Create new identities for all conflicts above and rewrite references.",
-  bundleUpdateExisting: "Update matching resources",
+  bundleUpdateExisting: "Update",
   bundleUpdateExistingHint: "Replace all matching local resources listed above.",
   bundleImportAction: "Import bundle",
   bundleImporting: "Importing…",
@@ -1749,7 +1750,7 @@ export const studio = {
   bundlePreflightTitle: "Dependency readiness",
   bundleRecheck: "Check again",
   bundleConfigureCapability: "Configure {{name}}",
-  bundleGenericError: "The Bundle operation could not be completed. Check the file and try again.",
+  bundleGenericError: "The Bundle operation could not be completed.",
   bundlePluginsUnavailable:
     "This item uses plugins, so Bundle operations are unavailable in this version.",
   bundleStatus: {
@@ -1773,6 +1774,32 @@ export const studio = {
   bundleChooseKnowledgeBase: "Choose knowledge base",
   bundleBindingOptional:
     "You can finish this later; the imported workflow cannot run until it is bound.",
+  bundleLegacyCapability: "Capability (name unavailable in legacy bundle)",
+  bundleLegacyRuntime: "Runtime configuration (name unavailable in legacy bundle)",
+  bundleRequestedModel:
+    "Requested model: {{model}}. Choose a model available on this computer; the source provider account is not included.",
+  bundleFileChanged: "The bundle changed. Select the file again.",
+  bundleDeferBinding: "Set up later",
+  bundleResumeTitle: "Unfinished imports",
+  bundleResumeAction: "Continue setup",
+  bundleRetainedAssetHint:
+    "Keeping the local resource also keeps its bound content. No separate content action is needed.",
+  bundleRequiredTools: "Required tools: {{tools}}",
+  bundleRootMissing:
+    "The imported entry was deleted. Discard this installation or import the bundle again.",
+  bundleProjectChanged:
+    "The project changed during import. Resume or discard this installation before trying again.",
+  bundleRequestChanged:
+    "This import request changed. Resume the previous installation or discard it to start again.",
+  bundleBindingHelp: {
+    runtime:
+      "The source Runtime or model is unavailable on this computer. Choose a local Runtime and model.",
+    capability:
+      "Choose a compatible local capability, or set it up later in Studio. Only capabilities with the required tools are listed.",
+    "context-store": "Choose a local knowledge base, or finish setup after importing.",
+    secret: "Enter the required secret. Secrets are not included in the bundle.",
+    plugin: "Install the required plugin before using this resource.",
+  },
   bundleLegacyKnowledgeBase: "Knowledge base (name unavailable in legacy bundle)",
   bundleEnterSecret: "Enter secret",
   bundleInstallPluginManually: "Install this plugin from Studio → Plugins, then save again.",
@@ -1809,16 +1836,19 @@ export const studio = {
   bundleDropNow: "Drop to inspect",
   bundleDropInvalid: "Drop exactly one .pragma file.",
   bundleVerified: "Verified",
+  bundleConflictActions: "Conflict action",
   bundleConflictPerResourceHint:
     "Choose independently for each resource. Copies are selected by default to protect local work.",
-  bundleAllCopies: "All as copies",
-  bundleAllUpdates: "Update all possible",
-  bundleAllKeepLocal: "Keep all local",
-  bundleImportCopyShortHint: "Create a new local identity.",
-  bundleUpdateExistingShortHint: "Replace the matching local resource.",
-  bundleKeepLocal: "Use local version",
+  bundleAllCopies: "Copy all",
+  bundleAllUpdates: "Update all",
+  bundleAllKeepLocal: "Keep all",
+  bundleImportCopyShortHint:
+    "Create an independent copy and keep the existing local resource. Imported references will use the new copy.",
+  bundleUpdateExistingShortHint:
+    "Update the matching local resource with the bundled content, keeping its identity. Other references to this resource will also be affected.",
+  bundleKeepLocal: "Keep local",
   bundleKeepLocalHint:
-    "Ignore this imported content and bind Bundle references to the local resource.",
+    "Use the existing local resource and its settings, ignoring this item in the bundle. Imported references will point to the local resource.",
   bundleUpdateBlocked: "Identity and name match different local resources.",
   bundleBindingProgress: "Resource {{current}} of {{total}}",
   bundleRefresh: "Refresh",

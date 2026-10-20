@@ -2,6 +2,8 @@ import {
   Archive,
   ArrowsClockwise,
   Check,
+  Copy,
+  HardDrive,
   Database,
   DownloadSimple,
   GitBranch,
@@ -12,7 +14,7 @@ import {
   Wrench,
 } from "@phosphor-icons/react";
 import { canonicalPragmaResourceRef } from "@pragma/interpreter/ast";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
 import type { ReactNode, RefObject } from "react";
 import { useTranslation } from "react-i18next";
 
@@ -34,7 +36,10 @@ import {
 import { ConfirmationDialog } from "../../components/Dialog.tsx";
 import { ExpertAvatar } from "../../components/ExpertAvatar.tsx";
 import { SelectMenu } from "../../components/SelectMenu.tsx";
-import { isBundlePluginUnavailableError } from "../../lib/bundle-errors.ts";
+import {
+  bundleDependencyDisplayName,
+  isBundlePluginUnavailableError,
+} from "../../lib/bundle-errors.ts";
 import { desktopApi } from "./studio-model.ts";
 
 type BundleMode = "export" | "import";
@@ -493,6 +498,8 @@ function BundleImportDialog(props: {
   const [capabilityBindings, setCapabilityBindings] = useState<Record<string, string>>({});
   const [contextBindings, setContextBindings] = useState<Record<string, string>>({});
   const [secrets, setSecrets] = useState<Record<string, string>>({});
+  const [deferredBindings, setDeferredBindings] = useState<ReadonlySet<string>>(new Set());
+  const [resumable, setResumable] = useState<readonly PragmaBundleInstallation[]>([]);
   const [recovery, setRecovery] = useState<PragmaBundleInstallation | null>(null);
   const [installation, setInstallation] = useState<PragmaBundleInstallation | null>(null);
   const [busy, setBusy] = useState(false);
@@ -525,7 +532,13 @@ function BundleImportDialog(props: {
               resourceRef: pending.resourceRef,
               name: pending.name,
               message: pending.message,
-              required: pending.kind !== "plugin",
+              required: pending.kind !== "plugin" && pending.kind !== "context-store",
+              ...(inspected?.compatibleCapabilityIds === undefined
+                ? {}
+                : { compatibleCapabilityIds: inspected.compatibleCapabilityIds }),
+              ...(inspected?.requiredTools === undefined
+                ? {}
+                : { requiredTools: inspected.requiredTools }),
               ...(pending.capabilityKind === undefined
                 ? {}
                 : { capabilityKind: pending.capabilityKind }),
@@ -563,14 +576,28 @@ function BundleImportDialog(props: {
 
   const resetForInspection = useCallback(async (next: PragmaBundleImportInspection) => {
     const api = desktopApi();
-    const recoverable =
+    let recoverable =
       api === undefined || next.alreadyInstalledId === undefined
         ? null
         : ((await api.listPragmaBundleInstallations()).find(
-            (candidate) =>
-              candidate.id === next.alreadyInstalledId &&
-              (candidate.status === "needs_setup" || isInterruptedBundleInstallation(candidate)),
+            (candidate) => candidate.id === next.alreadyInstalledId,
           ) ?? null);
+    let recheckFailed = false;
+    if (api !== undefined && recoverable?.status === "needs_setup") {
+      try {
+        recoverable = await api.recheckPragmaBundleInstallation({ installationId: recoverable.id });
+        if (recoverable.status === "needs_setup") {
+          next = await api.inspectPragmaBundle({ installationId: recoverable.id });
+        }
+      } catch (cause) {
+        recheckFailed = true;
+        setError(
+          bundleErrorMessage(cause, (key, options) =>
+            options === undefined ? t(key) : t(key, options),
+          ),
+        );
+      }
+    }
     installRequestId.current = recoverable?.transaction?.requestId ?? crypto.randomUUID();
     setInspection(next);
     setRecovery(recoverable);
@@ -590,9 +617,47 @@ function BundleImportDialog(props: {
     setCapabilityBindings({});
     setContextBindings({});
     setSecrets({});
-    setInstallation(null);
-    setStep("select");
+    setDeferredBindings(new Set());
+    const alreadyReady = recoverable?.status === "ready";
+    setInstallation(alreadyReady || recheckFailed ? recoverable : null);
+    setStep(alreadyReady || recheckFailed ? "result" : "select");
   }, []);
+
+  useEffect(() => {
+    const api = desktopApi();
+    if (api === undefined) return;
+    let active = true;
+    void api
+      .listPragmaBundleInstallations()
+      .then((values) => {
+        if (active) setResumable(values.filter((value) => value.status !== "ready"));
+      })
+      .catch((cause: unknown) => {
+        if (active)
+          setError(
+            bundleErrorMessage(cause, (key, options) =>
+              options === undefined ? t(key) : t(key, options),
+            ),
+          );
+      });
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  const resumeInstallation = async (installationId: string) => {
+    const api = desktopApi();
+    if (api === undefined) return;
+    setBusy(true);
+    setError(null);
+    try {
+      await resetForInspection(await api.inspectPragmaBundle({ installationId }));
+    } catch (cause) {
+      setError(displayError(cause));
+    } finally {
+      setBusy(false);
+    }
+  };
 
   const installRequestId = useRef<string>(crypto.randomUUID());
   const initialPathInspected = useRef(false);
@@ -678,34 +743,38 @@ function BundleImportDialog(props: {
   }, [refreshRuntimes, step]);
 
   useEffect(() => {
-    if (currentRequirement?.kind !== "runtime") return;
-    const request = currentRequirement.runtimeRequest;
     if (
-      request?.runtimeId === undefined ||
-      request.providerId === undefined ||
-      request.modelId === undefined ||
-      runtimeBindings[currentRequirement.id] !== undefined
-    ) {
+      step !== "bindings" ||
+      currentRequirement?.kind !== "runtime" ||
+      deferredBindings.has(currentRequirement.id)
+    )
+      return;
+    const request = currentRequirement.runtimeRequest;
+    if (request?.runtimeId === undefined || runtimeBindings[currentRequirement.id] !== undefined) {
       return;
     }
-    const runtime = props.runtimes.find(
+    const candidates = props.runtimes.filter(
       (candidate) => candidate.id === request.runtimeId && candidate.status === "available",
     );
+    const runtime = candidates.length === 1 ? candidates[0] : undefined;
     const model = runtime?.models?.find(
       (candidate) =>
         candidate.provider.id === request.providerId && candidate.id === request.modelId,
     );
-    if (runtime === undefined || model === undefined) return;
+    if (runtime === undefined) return;
     setRuntimeBindings((current) => ({
       ...current,
       [currentRequirement.id]: {
         runtimeId: runtime.id,
-        providerId: model.provider.id,
-        modelId: model.id,
-        ...(request.thinkingLevel === undefined ? {} : { thinkingLevel: request.thinkingLevel }),
+        providerId: model?.provider.id ?? "",
+        modelId: model?.id ?? "",
+        ...(request.thinkingLevel !== undefined &&
+        model?.thinking?.supportedLevels.some((level) => level.value === request.thinkingLevel)
+          ? { thinkingLevel: request.thinkingLevel }
+          : {}),
       },
     }));
-  }, [currentRequirement, props.runtimes, runtimeBindings]);
+  }, [currentRequirement, props.runtimes, runtimeBindings, deferredBindings, step]);
 
   const selectRoot = async (rootRef: string) => {
     const api = desktopApi();
@@ -723,22 +792,61 @@ function BundleImportDialog(props: {
     }
   };
 
+  const prepareBindings = async () => {
+    const api = desktopApi();
+    if (api === undefined || inspection === null) return;
+    if (recovery !== null) {
+      setStep(requirements.length > 0 ? "bindings" : "review");
+      return;
+    }
+    setBusy(true);
+    setError(null);
+    try {
+      const next = await api.inspectPragmaBundle({
+        sourcePath: inspection.sourcePath,
+        rootRef: inspection.root.ref,
+        decisions: {
+          conflicts: inspection.conflicts.map((value) => ({
+            resourceRef: value.ref,
+            action: conflicts[value.ref] ?? "copy",
+            ...(value.targetRevision === undefined
+              ? {}
+              : {
+                  expectedTargetRevision: value.targetRevision,
+                  expectedTargetSnapshotHash: value.targetSnapshotHash,
+                }),
+          })),
+        },
+      });
+      if (next.bundleFingerprint !== inspection.bundleFingerprint)
+        throw new Error(t("bundleFileChanged"));
+      setInspection(next);
+      setBindingIndex(0);
+      setStep(next.requirements.length > 0 ? "bindings" : "review");
+    } catch (cause) {
+      setError(displayError(cause));
+    } finally {
+      setBusy(false);
+    }
+  };
+
   const nextFromSelect = () => {
     if (inspection === null) return;
     if (recovery !== null && isInterruptedBundleInstallation(recovery)) {
       setInstallation(recovery);
       setStep("result");
-      return;
-    }
-    if (recovery === null && inspection.conflicts.length + inspection.assetConflicts.length > 0)
+    } else if (
+      recovery === null &&
+      inspection.conflicts.length + inspection.assetConflicts.length > 0
+    ) {
       setStep("conflicts");
-    else if (requirements.length > 0) setStep("bindings");
-    else setStep("review");
+    } else {
+      void prepareBindings();
+    }
   };
 
   const nextFromConflicts = () => {
-    if (requirements.length > 0) setStep("bindings");
-    else setStep("review");
+    void prepareBindings();
   };
 
   const previousFromBindings = () => {
@@ -764,7 +872,8 @@ function BundleImportDialog(props: {
   };
 
   const bindingIsComplete = (requirement: BindingRequirement | undefined): boolean => {
-    if (requirement === undefined || !requirement.required) return true;
+    if (requirement === undefined || !requirement.required || deferredBindings.has(requirement.id))
+      return true;
     if (requirement.kind === "runtime") {
       const value = runtimeBindings[requirement.id];
       return value !== undefined && value.runtimeId !== "" && value.modelId !== "";
@@ -778,6 +887,62 @@ function BundleImportDialog(props: {
     return requirement.kind !== "secret" || (secrets[requirement.id] ?? "").trim() !== "";
   };
 
+  const editBinding = (id: string) => {
+    setDeferredBindings((current) => {
+      if (!current.has(id)) return current;
+      const next = new Set(current);
+      next.delete(id);
+      return next;
+    });
+  };
+
+  const deferBinding = () => {
+    if (currentRequirement === undefined) return;
+    const id = currentRequirement.id;
+    setDeferredBindings((current) => new Set([...current, id]));
+    setRuntimeBindings((current) =>
+      Object.fromEntries(Object.entries(current).filter(([key]) => key !== id)),
+    );
+    setCapabilityBindings((current) =>
+      Object.fromEntries(Object.entries(current).filter(([key]) => key !== id)),
+    );
+    nextFromBindings();
+  };
+
+  const bindingWasSelected = (requirement: BindingRequirement): boolean => {
+    if (deferredBindings.has(requirement.id)) return false;
+    switch (requirement.kind) {
+      case "runtime":
+        return Boolean(runtimeBindings[requirement.id]?.modelId);
+      case "capability":
+        return Boolean(capabilityBindings[requirement.id]);
+      case "context-store":
+        return Boolean(contextBindings[requirement.id]);
+      case "secret":
+        return Boolean(secrets[requirement.id]?.trim());
+      default:
+        return false;
+    }
+  };
+  const reviewReadiness =
+    inspection?.readiness.map((dependency) => {
+      const requirement = requirements.find(
+        (value) =>
+          value.id === dependency.id ||
+          (value.kind === dependency.kind && value.resourceRef === dependency.resourceRef),
+      );
+      return requirement !== undefined &&
+        bindingIsComplete(requirement) &&
+        bindingWasSelected(requirement)
+        ? {
+            ...dependency,
+            status: "ready" as const,
+            code: "binding_selected",
+            action: "none" as const,
+          }
+        : dependency;
+    }) ?? [];
+
   const importBundle = async () => {
     const api = desktopApi();
     if (api === undefined || inspection === null) return;
@@ -789,7 +954,10 @@ function BundleImportDialog(props: {
       );
       const runtimes = Object.entries(runtimeBindings).flatMap(([requirementId, value]) => {
         const requirement = requirementsById.get(requirementId);
-        return requirement === undefined
+        return requirement === undefined ||
+          deferredBindings.has(requirementId) ||
+          value.runtimeId === "" ||
+          value.modelId === ""
           ? []
           : [{ requirementId, resourceRef: requirement.resourceRef, ...value }];
       });
@@ -894,12 +1062,17 @@ function BundleImportDialog(props: {
       setRecovery(null);
       setInspection(null);
       setStep("select");
-      await resetForInspection(
-        await api.inspectPragmaBundle({
-          sourcePath: inspection.sourcePath,
-          rootRef: inspection.root.ref,
-        }),
-      );
+      setResumable((values) => values.filter((value) => value.id !== installation.id));
+      try {
+        await resetForInspection(
+          await api.inspectPragmaBundle({
+            sourcePath: inspection.sourcePath,
+            rootRef: inspection.root.ref,
+          }),
+        );
+      } catch {
+        /* Cleanup succeeded; the retained archive may have been removed with its owner. */
+      }
       await props.onChanged();
     } catch (cause) {
       const parsed = DesktopMutationErrorSchema.safeParse(cause);
@@ -952,6 +1125,14 @@ function BundleImportDialog(props: {
               {t("bundleFinishSetupLater")}
             </button>
             <button
+              className="secondary-button"
+              type="button"
+              disabled={busy}
+              onClick={() => setConfirmDiscard(true)}
+            >
+              {t("bundleDiscardImport")}
+            </button>
+            <button
               className="primary-button"
               type="button"
               onClick={() => {
@@ -994,7 +1175,12 @@ function BundleImportDialog(props: {
           <button className="secondary-button" type="button" onClick={() => setStep("select")}>
             {t("bundleBack")}
           </button>
-          <button className="primary-button" type="button" onClick={nextFromConflicts}>
+          <button
+            className="primary-button"
+            type="button"
+            disabled={busy}
+            onClick={nextFromConflicts}
+          >
             {t("bundleContinue")}
           </button>
         </>
@@ -1006,6 +1192,11 @@ function BundleImportDialog(props: {
           <button className="secondary-button" type="button" onClick={previousFromBindings}>
             {t("bundleBack")}
           </button>
+          {currentRequirement?.kind === "capability" || currentRequirement?.kind === "runtime" ? (
+            <button className="secondary-button" type="button" onClick={deferBinding}>
+              {t("bundleDeferBinding")}
+            </button>
+          ) : null}
           <button
             className="primary-button"
             type="button"
@@ -1061,7 +1252,11 @@ function BundleImportDialog(props: {
         busy={busy}
         onClose={close}
         dialogRef={dialogRef}
-        className={step === "select" && inspection === null ? "is-awaiting-file" : undefined}
+        className={
+          step === "select" && inspection === null && resumable.length === 0
+            ? "is-awaiting-file"
+            : undefined
+        }
         footer={footer}
         bodyHeader={
           <BundleImportSteps
@@ -1076,6 +1271,24 @@ function BundleImportDialog(props: {
           />
         }
       >
+        {step === "select" && inspection === null && resumable.length > 0 ? (
+          <section className="pragma-bundle-resume-list" aria-label={t("bundleResumeTitle")}>
+            <h3>{t("bundleResumeTitle")}</h3>
+            {resumable.map((value) => (
+              <button
+                className="secondary-button"
+                type="button"
+                key={value.id}
+                disabled={busy}
+                onClick={() => void resumeInstallation(value.id)}
+              >
+                <ArrowsClockwise size={16} aria-hidden="true" />
+                <span>{value.rootName}</span>
+                <small>{t("bundleResumeAction")}</small>
+              </button>
+            ))}
+          </section>
+        ) : null}
         {step === "select" ? (
           <BundleFileStep
             inspection={inspection}
@@ -1089,6 +1302,7 @@ function BundleImportDialog(props: {
         ) : null}
         {step === "conflicts" && inspection !== null ? (
           <BundleConflictStep
+            busy={busy}
             inspection={inspection}
             selections={conflicts}
             assetSelections={assetConflicts}
@@ -1139,18 +1353,14 @@ function BundleImportDialog(props: {
             secret={secrets[currentRequirement.id] ?? ""}
             refreshingRuntimes={refreshingRuntimes}
             onRefreshRuntimes={() => void refreshRuntimes()}
-            onRuntime={(value) =>
-              setRuntimeBindings((current) => ({
-                ...current,
-                [currentRequirement.id]: value,
-              }))
-            }
-            onCapability={(value) =>
-              setCapabilityBindings((current) => ({
-                ...current,
-                [currentRequirement.id]: value,
-              }))
-            }
+            onRuntime={(value) => {
+              editBinding(currentRequirement.id);
+              setRuntimeBindings((current) => ({ ...current, [currentRequirement.id]: value }));
+            }}
+            onCapability={(value) => {
+              editBinding(currentRequirement.id);
+              setCapabilityBindings((current) => ({ ...current, [currentRequirement.id]: value }));
+            }}
             onContext={(value) =>
               setContextBindings((current) => ({
                 ...current,
@@ -1168,6 +1378,8 @@ function BundleImportDialog(props: {
             conflicts={recovery === null ? conflicts : {}}
             assetConflicts={recovery === null ? assetConflicts : {}}
             requirements={requirements}
+            readiness={reviewReadiness}
+            boundCount={requirements.filter(bindingWasSelected).length}
           />
         ) : null}
         {step === "result" && installation !== null ? (
@@ -1242,7 +1454,9 @@ function BundleImportDialog(props: {
                         key={`configure:${item.id}`}
                         onClick={() => props.onOpenCapability?.(item.targetId!)}
                       >
-                        {t("bundleConfigureCapability", { name: item.name })}
+                        {t("bundleConfigureCapability", {
+                          name: bundleDependencyDisplayName(item.kind, item.name, t),
+                        })}
                       </button>
                     ))}
                 </div>
@@ -1526,6 +1740,7 @@ export function BundleInspection(props: {
 }
 
 function BundleConflictStep(props: {
+  readonly busy?: boolean | undefined;
   readonly inspection: PragmaBundleImportInspection;
   readonly selections: Readonly<Record<string, "copy" | "update" | "keep_local">>;
   readonly assetSelections: Readonly<Record<string, AssetConflictSelection>>;
@@ -1536,7 +1751,7 @@ function BundleConflictStep(props: {
 }) {
   const { t } = useTranslation("studio");
   return (
-    <section className="pragma-bundle-conflict-step">
+    <section className="pragma-bundle-conflict-step" inert={props.busy}>
       <header>
         <div>
           <h3>
@@ -1554,6 +1769,7 @@ function BundleConflictStep(props: {
               props.onSetAllAssets("copy");
             }}
           >
+            <Copy size={16} aria-hidden="true" />
             {t("bundleAllCopies")}
           </button>
           <button
@@ -1563,6 +1779,7 @@ function BundleConflictStep(props: {
               props.onSetAllAssets("update");
             }}
           >
+            <ArrowsClockwise size={16} aria-hidden="true" />
             {t("bundleAllUpdates")}
           </button>
           <button
@@ -1572,6 +1789,7 @@ function BundleConflictStep(props: {
               props.onSetAllAssets("keep_local");
             }}
           >
+            <HardDrive size={16} aria-hidden="true" />
             {t("bundleAllKeepLocal")}
           </button>
         </div>
@@ -1586,42 +1804,41 @@ function BundleConflictStep(props: {
             <article key={`asset:${conflict.assetKind}:${conflict.resourceRef}`}>
               <header>
                 <div>
-                  <strong>{conflict.importedName}</strong>
+                  <strong title={conflict.resourceRef}>{conflict.importedName}</strong>
                   <small>
                     {conflict.assetKind === "skill"
                       ? t("bundleAssetSkill")
-                      : t("bundleAssetKnowledgeBase")}{" "}
-                    · {conflict.resourceRef}
+                      : t("bundleAssetKnowledgeBase")}
                   </small>
                 </div>
               </header>
-              <label>
-                <span>{t("bundleSelectLocalAsset")}</span>
-                <SelectMenu
-                  ariaLabel={t("bundleSelectLocalAsset")}
-                  className="form-select"
-                  value={selection.targetAssetId ?? ""}
-                  disabled={selection.action === "copy"}
-                  options={conflict.candidates.map((candidate) => ({
-                    value: candidate.assetId,
-                    label: `${candidate.name} · r${candidate.revision} · ${candidate.assetId.slice(-8)}`,
-                  }))}
-                  onChange={(targetAssetId) =>
-                    props.onAssetChange(conflict.resourceRef, {
-                      ...selection,
-                      targetAssetId,
-                    })
-                  }
-                />
-              </label>
-              <div className="pragma-bundle-conflict-choice" role="group">
-                {(["copy", "keep_local", "update"] as const).map((action) => (
-                  <button
-                    type="button"
-                    key={action}
-                    aria-pressed={selection.action === action}
-                    className={selection.action === action ? "is-selected" : ""}
-                    onClick={() =>
+              {props.selections[conflict.resourceRef] === "keep_local" ? (
+                <p>{t("bundleRetainedAssetHint")}</p>
+              ) : (
+                <>
+                  <label>
+                    <span>{t("bundleSelectLocalAsset")}</span>
+                    <SelectMenu
+                      ariaLabel={t("bundleSelectLocalAsset")}
+                      className="form-select"
+                      value={selection.targetAssetId ?? ""}
+                      disabled={selection.action === "copy"}
+                      options={conflict.candidates.map((candidate) => ({
+                        value: candidate.assetId,
+                        label: `${candidate.name} · r${candidate.revision}`,
+                      }))}
+                      onChange={(targetAssetId) =>
+                        props.onAssetChange(conflict.resourceRef, {
+                          ...selection,
+                          targetAssetId,
+                        })
+                      }
+                    />
+                  </label>
+                  <BundleConflictChoices
+                    value={selection.action}
+                    appendRevision={conflict.assetKind === "knowledge_base"}
+                    onChange={(action) =>
                       props.onAssetChange(conflict.resourceRef, {
                         action,
                         ...(action === "copy"
@@ -1632,17 +1849,9 @@ function BundleConflictStep(props: {
                             }),
                       })
                     }
-                  >
-                    <strong>
-                      {action === "copy"
-                        ? t("bundleImportCopy")
-                        : action === "keep_local"
-                          ? t("bundleKeepLocal")
-                          : t("bundleUpdateExisting")}
-                    </strong>
-                  </button>
-                ))}
-              </div>
+                  />
+                </>
+              )}
             </article>
           );
         })}
@@ -1650,10 +1859,8 @@ function BundleConflictStep(props: {
           <article key={conflict.ref}>
             <header>
               <div>
-                <strong>{conflict.importedName}</strong>
-                <small>
-                  {conflict.resourceKind} · {conflict.ref}
-                </small>
+                <strong title={conflict.ref}>{conflict.importedName}</strong>
+                <small>{conflict.resourceKind}</small>
               </div>
             </header>
             <ul>
@@ -1665,53 +1872,81 @@ function BundleConflictStep(props: {
                 </li>
               ))}
             </ul>
-            <div className="pragma-bundle-conflict-choice" role="group">
-              <button
-                type="button"
-                aria-pressed={props.selections[conflict.ref] === "copy"}
-                className={props.selections[conflict.ref] === "copy" ? "is-selected" : ""}
-                onClick={() => props.onChange(conflict.ref, "copy")}
-              >
-                <strong>{t("bundleImportCopy")}</strong>
-                <small>{t("bundleImportCopyShortHint")}</small>
-              </button>
-              <button
-                type="button"
-                disabled={!conflict.updateAllowed}
-                aria-pressed={props.selections[conflict.ref] === "keep_local"}
-                className={props.selections[conflict.ref] === "keep_local" ? "is-selected" : ""}
-                onClick={() => props.onChange(conflict.ref, "keep_local")}
-              >
-                <strong>{t("bundleKeepLocal")}</strong>
-                <small>
-                  {conflict.updateAllowed ? t("bundleKeepLocalHint") : t("bundleUpdateBlocked")}
-                </small>
-              </button>
-              <button
-                type="button"
-                disabled={!conflict.updateAllowed}
-                aria-pressed={props.selections[conflict.ref] === "update"}
-                className={props.selections[conflict.ref] === "update" ? "is-selected" : ""}
-                onClick={() => props.onChange(conflict.ref, "update")}
-              >
-                <strong>
-                  {conflict.resourceKind === "ContextStore"
-                    ? t("bundleAppendKnowledgeRevision")
-                    : t("bundleUpdateExisting")}
-                </strong>
-                <small>
-                  {conflict.updateAllowed
-                    ? conflict.resourceKind === "ContextStore"
-                      ? t("bundleAppendKnowledgeRevisionHint")
-                      : t("bundleUpdateExistingShortHint")
-                    : t("bundleUpdateBlocked")}
-                </small>
-              </button>
-            </div>
+            <BundleConflictChoices
+              value={props.selections[conflict.ref] ?? "copy"}
+              updateAllowed={conflict.updateAllowed}
+              appendRevision={conflict.resourceKind === "ContextStore"}
+              onChange={(action) => props.onChange(conflict.ref, action)}
+            />
           </article>
         ))}
       </div>
     </section>
+  );
+}
+
+function BundleConflictChoices(props: {
+  readonly value: "copy" | "keep_local" | "update";
+  readonly updateAllowed?: boolean | undefined;
+  readonly appendRevision?: boolean | undefined;
+  readonly onChange: (action: "copy" | "keep_local" | "update") => void;
+}) {
+  const { t } = useTranslation("studio");
+  const tooltipId = useId();
+  const choices = [
+    { action: "copy", Icon: Copy, label: "bundleImportCopy", hint: "bundleImportCopyShortHint" },
+    {
+      action: "keep_local",
+      Icon: HardDrive,
+      label: "bundleKeepLocal",
+      hint: "bundleKeepLocalHint",
+    },
+    {
+      action: "update",
+      Icon: ArrowsClockwise,
+      label: props.appendRevision ? "bundleAppendKnowledgeRevision" : "bundleUpdateExisting",
+      hint: props.appendRevision
+        ? "bundleAppendKnowledgeRevisionHint"
+        : "bundleUpdateExistingShortHint",
+    },
+  ] as const;
+  return (
+    <div
+      className="pragma-bundle-conflict-choice"
+      role="group"
+      aria-label={t("bundleConflictActions")}
+    >
+      {choices.map(({ action, Icon, label, hint }) => {
+        const disabled = action !== "copy" && props.updateAllowed === false;
+        const description = `${t(hint)}${disabled ? ` ${t("bundleUpdateBlocked")}` : ""}`;
+        const descriptionId = `${tooltipId}-${action}`;
+        return (
+          <span
+            key={action}
+            className="studio-action-with-tooltip"
+            tabIndex={disabled ? 0 : undefined}
+            role={disabled ? "group" : undefined}
+            aria-label={disabled ? t(label) : undefined}
+            aria-describedby={disabled ? descriptionId : undefined}
+          >
+            <button
+              type="button"
+              disabled={disabled}
+              aria-pressed={props.value === action}
+              aria-describedby={descriptionId}
+              className={props.value === action ? "is-selected" : ""}
+              onClick={() => props.onChange(action)}
+            >
+              <Icon size={16} aria-hidden="true" />
+              <span>{t(label)}</span>
+            </button>
+            <span id={descriptionId} className="studio-action-tooltip" role="tooltip">
+              {description}
+            </span>
+          </span>
+        );
+      })}
+    </div>
   );
 }
 
@@ -1735,11 +1970,7 @@ function BundleBindingStep(props: {
 }) {
   const { t } = useTranslation("studio");
   const requirement = props.requirement;
-  const requirementName = bundleDependencyDisplayName(
-    requirement.kind,
-    requirement.name,
-    t("bundleLegacyKnowledgeBase"),
-  );
+  const requirementName = bundleDependencyDisplayName(requirement.kind, requirement.name, t);
   const runtime = props.runtimes.find(
     (candidate) => candidate.id === props.runtimeBinding?.runtimeId,
   );
@@ -1755,8 +1986,14 @@ function BundleBindingStep(props: {
     <section className="pragma-bundle-binding-step">
       <header>
         <span>{t("bundleBindingProgress", { current: props.index + 1, total: props.total })}</span>
-        <h3>{requirementName}</h3>
-        <p>{requirement.message}</p>
+        <h3 title={requirement.resourceRef}>{requirementName}</h3>
+        <p>{t(`bundleBindingHelp.${requirement.kind}`)}</p>
+        {requirement.requiredTools?.length ? (
+          <p>{t("bundleRequiredTools", { tools: requirement.requiredTools.join(", ") })}</p>
+        ) : null}
+        {requirement.kind === "runtime" && requirement.runtimeRequest?.modelId ? (
+          <p>{t("bundleRequestedModel", { model: requirement.runtimeRequest.modelId })}</p>
+        ) : null}
       </header>
       {requirement.kind === "runtime" ? (
         <>
@@ -1884,10 +2121,11 @@ function BundleBindingStep(props: {
             options={[
               { value: "", label: t("bundleChooseCapability") },
               ...props.capabilities
-                .filter(
-                  (capability) =>
-                    requirement.capabilityKind === undefined ||
-                    capability.definition.kind === requirement.capabilityKind,
+                .filter((capability) =>
+                  requirement.compatibleCapabilityIds !== undefined
+                    ? requirement.compatibleCapabilityIds.includes(capability.manifest.id)
+                    : requirement.capabilityKind === undefined ||
+                      capability.definition.kind === requirement.capabilityKind,
                 )
                 .map((capability) => ({
                   value: capability.manifest.id,
@@ -1944,16 +2182,20 @@ function BundleReview(props: {
   readonly conflicts: Readonly<Record<string, "copy" | "update" | "keep_local">>;
   readonly assetConflicts: Readonly<Record<string, AssetConflictSelection>>;
   readonly requirements: readonly BindingRequirement[];
+  readonly readiness: readonly PragmaBundleDependencyReadiness[];
+  readonly boundCount: number;
 }) {
   const { t } = useTranslation("studio");
   const actions = [
     ...Object.values(props.conflicts),
-    ...Object.values(props.assetConflicts).map((selection) => selection.action),
+    ...Object.entries(props.assetConflicts)
+      .filter(([ref]) => props.conflicts[ref] !== "keep_local")
+      .map(([, selection]) => selection.action),
   ];
   const copies = actions.filter((value) => value === "copy").length;
   const updates = actions.filter((value) => value === "update").length;
   const kept = actions.filter((value) => value === "keep_local").length;
-  const deferred = props.requirements.filter((requirement) => !requirement.required).length;
+  const deferred = props.requirements.length - props.boundCount;
   return (
     <section className="pragma-bundle-review">
       <header>
@@ -1994,7 +2236,7 @@ function BundleReview(props: {
           {t("bundleReviewDeferredDependencies", { count: deferred })}
         </p>
       ) : null}
-      <BundleReadinessList readiness={props.inspection.readiness} />
+      <BundleReadinessList readiness={props.readiness} />
     </section>
   );
 }
@@ -2038,10 +2280,9 @@ export function BundleReadinessList(props: {
               )}
             </span>
             <span className="pragma-bundle-readiness-copy">
-              <strong>
-                {bundleDependencyDisplayName(item.kind, item.name, t("bundleLegacyKnowledgeBase"))}
+              <strong title={item.resourceRef}>
+                {bundleDependencyDisplayName(item.kind, item.name, t)}
               </strong>
-              <small title={item.resourceRef}>{item.resourceRef}</small>
             </span>
             <span className="pragma-bundle-readiness-state">
               <strong>{t(`bundleStatus.${item.status}`)}</strong>
@@ -2052,16 +2293,6 @@ export function BundleReadinessList(props: {
       </ul>
     </section>
   );
-}
-
-function bundleDependencyDisplayName(
-  kind: string,
-  name: string,
-  legacyKnowledgeBaseLabel: string,
-): string {
-  return kind === "context-store" && /^Context\s+[0-9a-f]{8}-[0-9a-f-]{27,}$/iu.test(name)
-    ? legacyKnowledgeBaseLabel
-    : name;
 }
 
 function installationReadiness(
@@ -2088,9 +2319,21 @@ function bundleErrorMessage(
 ): string {
   if (isBundlePluginUnavailableError(error)) return translate("bundlePluginsUnavailable");
   const parsed = DesktopMutationErrorSchema.safeParse(error);
-  if (!parsed.success) return translate("bundleGenericError");
-  if (parsed.data.code === "bundle_setup_required") return translate("bundleSetupDescription");
-  return translate("bundleGenericError");
+  const code = parsed.success ? parsed.data.code : undefined;
+  if (code === "bundle_setup_required") return translate("bundleSetupDescription");
+  if (code === "installation_root_missing") return translate("bundleRootMissing");
+  if (code === "installation_target_conflict") return translate("bundleProjectChanged");
+  if (code === "installation_request_conflict") return translate("bundleRequestChanged");
+  const details = parsed.success
+    ? parsed.data.message
+    : error instanceof Error
+      ? error.message
+      : typeof error === "string"
+        ? error
+        : "";
+  return details
+    ? `${translate("bundleGenericError")} ${details.slice(0, 1500)}`
+    : translate("bundleGenericError");
 }
 
 function BundleExportSteps(props: { readonly step: ExportStep }) {

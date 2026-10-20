@@ -1763,6 +1763,10 @@ describe("PragmaBundleService", { timeout: 30_000 }, () => {
       credentials: {},
     });
     const next = await target.service.inspect(path);
+    expect(next.requirements.find((value) => value.kind === "capability")).toMatchObject({
+      requiredTools: ["active_tool"],
+      compatibleCapabilityIds: [asset.manifest.id],
+    });
     const incompatible = await target.service.startImport({
       ...importInput(path, next.bundleFingerprint, next.projectFingerprint, next.projectRevision),
       conflicts: next.conflicts.map((value) => ({ resourceRef: value.ref, action: "copy" })),
@@ -2309,6 +2313,435 @@ describe("PragmaBundleService", { timeout: 30_000 }, () => {
     const advisory = await target.service.inspect(secondPath);
     expect(advisory.sameContentInstallationIds).toEqual([installation.id]);
     expect(advisory.alreadyInstalledId).toBeUndefined();
+  });
+
+  it("isolates pending Bundle dependencies from experts sharing a ready Runtime", async () => {
+    const source = await createFixture("isolated-pending-source");
+    const sourceSnapshot = await source.project.get();
+    const capability = portableCapability();
+    const writer = expert("Requires a local capability.");
+    writer.spec.capabilities = [{ ref: canonicalPragmaResourceRef(capability), kind: "tools" }];
+    const published = await source.project.publish({
+      expectedRevision: sourceSnapshot.revision,
+      resources: [writer, runtime("codex"), capability],
+    });
+    const path = join(source.root, "workflow.pragma");
+    const exported = await source.service.exportTo(exportInput(published.revision), path);
+    const target = await createFixture("isolated-pending-target");
+    const installation = await target.service.startImport({
+      ...importInput(
+        path,
+        exported.bundleFingerprint,
+        exported.projectFingerprint,
+        target.projectRevision,
+      ),
+      conflicts: [
+        { resourceRef: "expert:1xddvess309a6gme", action: "copy" },
+        { resourceRef: "runtime-profile:zdkgs0fde4xt00vr", action: "keep_local" },
+      ],
+    });
+    expect(installation.status).toBe("needs_setup");
+    expect(installation.pending).toContainEqual(expect.objectContaining({ kind: "capability" }));
+    const verifyIsolation = async (service: typeof target.service) => {
+      await expect(service.getReadinessForRef("expert:1xddvess309a6gme")).resolves.toEqual([]);
+      await expect(service.getReadinessForRef(installation.rootRef)).resolves.toEqual([
+        expect.objectContaining({ kind: "capability", installationId: installation.id }),
+      ]);
+      await expect(
+        service.isRefPending(canonicalPragmaResourceRef(flowCalling(installation.rootRef))),
+      ).resolves.toBe(true);
+    };
+    const snapshot = await target.project.get();
+    await target.project.publish({
+      expectedRevision: snapshot.revision,
+      resources: [...snapshot.resources, flowCalling(installation.rootRef)],
+    });
+    await verifyIsolation(target.service);
+    await verifyIsolation(target.restartService());
+
+    // Failed imports retain their pending diagnostics, but still only gate their own closure.
+    const catalogPath = target.paths.bundleInstallationsCatalog();
+    const catalog = JSON.parse(await readFile(catalogPath, "utf8")) as {
+      installations: Record<string, unknown>[];
+    };
+    catalog.installations[0] = {
+      ...catalog.installations[0],
+      status: "failed",
+      error: "Interrupted import",
+    };
+    await writeFile(catalogPath, JSON.stringify(catalog));
+    await verifyIsolation(target.restartService());
+  });
+
+  it("uses the expert's current model after replacement instead of the imported Runtime profile", async () => {
+    const source = await createFixture("replaced-model-source", {
+      runtimeId: "unavailable-source-runtime",
+    });
+    const path = join(source.root, "workflow.pragma");
+    const exported = await source.service.exportTo(exportInput(source.projectRevision), path);
+    const target = await createFixture("replaced-model-target", {
+      instructions: "Existing expert.",
+    });
+    const inspection = await target.service.inspect(path);
+    const installation = await target.service.startImport({
+      ...importInput(
+        path,
+        exported.bundleFingerprint,
+        exported.projectFingerprint,
+        inspection.projectRevision,
+      ),
+      conflicts: inspection.conflicts.map((conflict) => ({
+        resourceRef: conflict.ref,
+        action: "copy" as const,
+      })),
+    });
+    expect(installation.status).toBe("needs_setup");
+    const importedRuntimeRef = installation.resourceRefs.find((ref) =>
+      ref.startsWith("runtime-profile:"),
+    )!;
+    const replacement = runtime("codex", "v3b460tasfhyf22d");
+    replacement.metadata.name = "Writer replacement Runtime";
+    const snapshot = await target.project.get();
+    await target.project.publish({
+      expectedRevision: snapshot.revision,
+      resources: [
+        ...snapshot.resources.map((resource) => {
+          if (
+            canonicalPragmaResourceRef(resource) === importedRuntimeRef &&
+            resource.kind === "RuntimeProfile"
+          ) {
+            // Keep the original profile as an unrelated resource, as may happen with shared profiles.
+            return {
+              ...resource,
+              spec: {
+                ...resource.spec,
+                config: {
+                  runtimeId: "unavailable-source-runtime",
+                  providerId: "source-provider",
+                  model: "source-model",
+                },
+              },
+            };
+          }
+          return canonicalPragmaResourceRef(resource) === installation.rootRef &&
+            resource.kind === "Expert"
+            ? {
+                ...resource,
+                spec: {
+                  ...resource.spec,
+                  runtime: { ref: canonicalPragmaResourceRef(replacement) },
+                },
+              }
+            : resource;
+        }),
+        replacement,
+      ],
+    });
+    const service = target.restartService();
+    const ready = await service.recheckInstallation(installation.id);
+    expect(ready.status).toBe("ready");
+    expect(ready.pending).toEqual([]);
+    expect(ready.readiness).toContainEqual(
+      expect.objectContaining({
+        resourceRef: canonicalPragmaResourceRef(replacement),
+        kind: "runtime",
+        status: "ready",
+      }),
+    );
+    expect(
+      ready.readiness.some((dependency) => dependency.resourceRef === importedRuntimeRef),
+    ).toBe(false);
+    await expect(service.getReadinessForRef(installation.rootRef)).resolves.toEqual([]);
+
+    const configured = await target.project.get();
+    await target.project.publish({
+      expectedRevision: configured.revision,
+      resources: configured.resources.map((resource) =>
+        canonicalPragmaResourceRef(resource) === canonicalPragmaResourceRef(replacement) &&
+        resource.kind === "RuntimeProfile"
+          ? {
+              ...resource,
+              spec: {
+                ...resource.spec,
+                config: {
+                  runtimeId: "codex",
+                  providerId: "openai",
+                  model: "unavailable-replacement",
+                },
+              },
+            }
+          : resource,
+      ),
+    });
+    await expect(service.getReadinessForRef(installation.rootRef)).resolves.toEqual([
+      expect.objectContaining({
+        resourceRef: canonicalPragmaResourceRef(replacement),
+        status: "missing",
+        code: "model_missing",
+      }),
+    ]);
+    const missing = await service.recheckInstallation(installation.id);
+    expect(missing.status).toBe("needs_setup");
+    expect(missing.pending).toEqual([
+      expect.objectContaining({
+        resourceRef: canonicalPragmaResourceRef(replacement),
+        kind: "runtime",
+      }),
+    ]);
+    const recovered = await service.resolveInstallation({
+      installationId: installation.id,
+      baseRevision: (await target.project.get()).revision,
+      runtimes: [
+        {
+          requirementId: missing.pending[0]!.id,
+          resourceRef: canonicalPragmaResourceRef(replacement),
+          runtimeId: "codex",
+          providerId: "openai",
+          modelId: "gpt-test",
+        },
+      ],
+      capabilities: [],
+      contextStores: [],
+      secrets: {},
+    });
+    expect(recovered.status).toBe("ready");
+    expect(recovered.resourceRefs).toContain(canonicalPragmaResourceRef(replacement));
+    await expect(target.restartService().getReadinessForRef(installation.rootRef)).resolves.toEqual(
+      [],
+    );
+  });
+
+  it("prepares retained local bindings instead of requesting source models again", async () => {
+    const source = await createFixture("local-plan-source");
+    const path = join(source.root, "workflow.pragma");
+    await source.service.exportTo(exportInput(source.projectRevision), path);
+    const target = await createFixture("local-plan-target", {
+      instructions: "Keep local instructions.",
+      runtimeId: "pi",
+      runtimes: [
+        {
+          id: "pi",
+          isDefault: true,
+          kind: "local",
+          displayName: "Built-in Runtime",
+          status: "available",
+          models: [
+            {
+              id: "gpt-test",
+              displayName: "GPT Test",
+              provider: { kind: "registered", id: "openai", displayName: "OpenAI" },
+            },
+          ],
+        },
+      ],
+    });
+    const inspected = await target.service.inspect(path);
+    expect(inspected.requirements.some((value) => value.kind === "runtime")).toBe(true);
+    const conflicts = inspected.conflicts.map((value) => ({
+      resourceRef: value.ref,
+      action: "keep_local" as const,
+    }));
+    const planned = await target.service.inspect(path, undefined, { conflicts });
+    expect(planned.requirements).toEqual([]);
+    expect(planned.readiness.every((value) => value.status === "ready")).toBe(true);
+    const installation = await target.service.startImport({
+      ...importInput(
+        path,
+        planned.bundleFingerprint,
+        planned.projectFingerprint,
+        planned.projectRevision,
+      ),
+      conflicts,
+    });
+    expect(installation.status).toBe("ready");
+  });
+
+  it("skips source dependencies made unreachable by keeping the local expert", async () => {
+    const source = await createFixture("unreachable-source");
+    const writer = expert("Source expert needs an unavailable capability.");
+    const capability = portableCapability();
+    writer.spec.capabilities = [{ ref: canonicalPragmaResourceRef(capability), kind: "tools" }];
+    const published = await source.project.publish({
+      expectedRevision: source.projectRevision,
+      resources: [writer, runtime("codex"), capability],
+    });
+    const path = join(source.root, "workflow.pragma");
+    await source.service.exportTo(exportInput(published.revision), path);
+    const target = await createFixture("unreachable-target", { instructions: "Keep this expert." });
+    const inspected = await target.service.inspect(path);
+    const installation = await target.service.startImport({
+      ...importInput(
+        path,
+        inspected.bundleFingerprint,
+        inspected.projectFingerprint,
+        inspected.projectRevision,
+      ),
+      conflicts: inspected.conflicts.map((value) => ({
+        resourceRef: value.ref,
+        action: value.resourceKind === "Expert" ? ("keep_local" as const) : ("copy" as const),
+      })),
+    });
+    expect(installation.status).toBe("ready");
+    expect(installation.createdResourceRefs).toEqual([]);
+    expect((await target.project.get()).resources).toHaveLength(2);
+  });
+
+  it("discards a copy while preserving a reused local Runtime", async () => {
+    const source = await createFixture("borrowed-discard-source");
+    const path = join(source.root, "workflow.pragma");
+    await source.service.exportTo(exportInput(source.projectRevision), path);
+    const target = await createFixture("borrowed-discard-target", {
+      instructions: "Keep local expert.",
+    });
+    const inspected = await target.service.inspect(path);
+    const installation = await target.service.startImport({
+      ...importInput(
+        path,
+        inspected.bundleFingerprint,
+        inspected.projectFingerprint,
+        inspected.projectRevision,
+      ),
+      conflicts: inspected.conflicts.map((value) => ({
+        resourceRef: value.ref,
+        action:
+          value.resourceKind === "RuntimeProfile" ? ("keep_local" as const) : ("copy" as const),
+      })),
+    });
+    expect(installation.createdResourceRefs).toHaveLength(1);
+    await target.service.discardInstallation(installation.id);
+    expect((await target.project.get()).resources).toHaveLength(2);
+    expect(await target.service.listInstallations()).toEqual([]);
+  });
+
+  it("retains an unfinished archive when the installed root was deleted", async () => {
+    const source = await createFixture("missing-root-source");
+    const path = join(source.root, "workflow.pragma");
+    await source.service.exportTo(exportInput(source.projectRevision), path);
+    const target = await createFixture("missing-root-target", {
+      instructions: "Existing expert.",
+      runtimes: [],
+    });
+    const inspected = await target.service.inspect(path);
+    const installation = await target.service.startImport({
+      ...importInput(
+        path,
+        inspected.bundleFingerprint,
+        inspected.projectFingerprint,
+        inspected.projectRevision,
+      ),
+      conflicts: inspected.conflicts.map((value) => ({
+        resourceRef: value.ref,
+        action: "copy" as const,
+      })),
+    });
+    expect(installation.status).toBe("needs_setup");
+    const snapshot = await target.project.get();
+    await target.project.publish({
+      expectedRevision: snapshot.revision,
+      resources: snapshot.resources.filter(
+        (value) => canonicalPragmaResourceRef(value) !== installation.rootRef,
+      ),
+    });
+    await expect(target.service.recheckInstallation(installation.id)).rejects.toMatchObject({
+      code: "installation_root_missing",
+    });
+    await expect(
+      stat(target.paths.bundleInstallationArchive(installation.id)),
+    ).resolves.toBeDefined();
+    expect((await target.service.listInstallations())[0]?.status).toBe("needs_setup");
+    await target.service.discardInstallation(installation.id);
+    expect(await target.service.listInstallations()).toEqual([]);
+  });
+
+  it("does not block another expert sharing a Runtime when the imported entry was deleted", async () => {
+    const source = await createFixture("deleted-shared-source");
+    const capability = portableCapability();
+    const writer = expert("Requires unavailable search.");
+    writer.spec.capabilities = [{ ref: canonicalPragmaResourceRef(capability), kind: "tools" }];
+    const revision = await source.project.publish({
+      expectedRevision: source.projectRevision,
+      resources: [writer, runtime("codex"), capability],
+    });
+    const path = join(source.root, "workflow.pragma");
+    await source.service.exportTo(exportInput(revision.revision), path);
+    const target = await createFixture("deleted-shared-target", {
+      instructions: "Existing expert.",
+    });
+    const inspected = await target.service.inspect(path);
+    const installation = await target.service.startImport({
+      ...importInput(
+        path,
+        inspected.bundleFingerprint,
+        inspected.projectFingerprint,
+        inspected.projectRevision,
+      ),
+      conflicts: inspected.conflicts.map((value) => ({
+        resourceRef: value.ref,
+        action:
+          value.resourceKind === "RuntimeProfile" ? ("keep_local" as const) : ("copy" as const),
+      })),
+    });
+    expect(installation.status).toBe("needs_setup");
+    const snapshot = await target.project.get();
+    await target.project.publish({
+      expectedRevision: snapshot.revision,
+      resources: snapshot.resources.filter(
+        (value) => canonicalPragmaResourceRef(value) !== installation.rootRef,
+      ),
+    });
+    await expect(target.service.recheckInstallation(installation.id)).rejects.toMatchObject({
+      code: "installation_root_missing",
+    });
+    await expect(target.service.getReadinessForRef("expert:1xddvess309a6gme")).resolves.toEqual([]);
+  });
+
+  it("resumes a retained installation without the original download", async () => {
+    const source = await createFixture("resume-without-file-source");
+    const path = join(source.root, "workflow.pragma");
+    await source.service.exportTo(exportInput(source.projectRevision), path);
+    const target = await createFixture("resume-without-file-target", {
+      instructions: "Existing expert.",
+      failImportPublishOnce: true,
+    });
+    const inspected = await target.service.inspect(path);
+    const installation = await target.service.startImport({
+      ...importInput(
+        path,
+        inspected.bundleFingerprint,
+        inspected.projectFingerprint,
+        inspected.projectRevision,
+      ),
+      conflicts: inspected.conflicts.map((value) => ({
+        resourceRef: value.ref,
+        action: "copy" as const,
+      })),
+    });
+    expect(installation.status).toBe("failed");
+    await rm(path);
+    const recovery = await target.restartService().inspectInstallation(installation.id);
+    expect(recovery.alreadyInstalledId).toBe(installation.id);
+    // The initial durable record is written before localized references are recorded.
+    // A crash in that window must still expose a resumable installation.
+    const catalog = JSON.parse(
+      await readFile(target.paths.bundleInstallationsCatalog(), "utf8"),
+    ) as { installations: PragmaBundleInstallation[] };
+    catalog.installations = catalog.installations.map((record) =>
+      record.id !== installation.id
+        ? record
+        : {
+            ...record,
+            status: "installing",
+            resourceRefs: [],
+            createdResourceRefs: [],
+            resourceMappings: [],
+            transaction: { ...record.transaction!, phase: "assets" },
+          },
+    );
+    await writeFile(target.paths.bundleInstallationsCatalog(), JSON.stringify(catalog));
+    await expect(
+      target.restartService().inspectInstallation(installation.id),
+    ).resolves.toMatchObject({ resources: 0, alreadyInstalledId: installation.id });
+    expect((await target.service.recheckInstallation(installation.id)).status).toBe("ready");
   });
 
   it("keeps mission readiness checks read-only", async () => {

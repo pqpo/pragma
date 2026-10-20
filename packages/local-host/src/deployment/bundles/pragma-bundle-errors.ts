@@ -9,7 +9,8 @@ export class BundleInstallationConflictError extends Error {
       | "installation_request_conflict"
       | "installation_target_conflict"
       | "installation_legacy_incomplete"
-      | "installation_in_use",
+      | "installation_in_use"
+      | "installation_root_missing",
     message: string,
   ) {
     super(message);

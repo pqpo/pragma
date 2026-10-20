@@ -70,13 +70,6 @@ export const PragmaBundleExportResultSchema = z
   })
   .strict();
 
-export const InspectPragmaBundleSchema = z
-  .object({
-    sourcePath: z.string().trim().min(1).max(2_000),
-    rootRef: PragmaBundleRootRefSchema.optional(),
-  })
-  .strict();
-
 export const PragmaBundlePickResultSchema = z
   .object({
     cancelled: z.boolean(),
@@ -216,10 +209,10 @@ export const PragmaBundleImportInspectionSchema = z
       )
       .min(1),
     createdAt: z.string().datetime(),
-    archiveBytes: z.number().int().positive(),
-    unpackedBytes: z.number().int().positive(),
-    fileCount: z.number().int().positive(),
-    resources: z.number().int().positive(),
+    archiveBytes: z.number().int().positive().optional(),
+    unpackedBytes: z.number().int().positive().optional(),
+    fileCount: z.number().int().positive().optional(),
+    resources: z.number().int().nonnegative(),
     dependencies: z.array(PragmaBundleDependencySummarySchema),
     conflicts: z.array(PragmaBundleConflictSchema),
     assetConflicts: z.array(PragmaBundleAssetConflictSchema).default([]),
@@ -232,6 +225,8 @@ export const PragmaBundleImportInspectionSchema = z
           name: z.string().trim().min(1).max(200),
           message: z.string().trim().min(1).max(4_000),
           required: z.boolean(),
+          compatibleCapabilityIds: z.array(CapabilityIdSchema).optional(),
+          requiredTools: z.array(z.string().min(1).max(200)).optional(),
           capabilityKind: z
             .enum(["skill", "mcp_server", "http_service", "code_service"])
             .optional(),
@@ -389,6 +384,20 @@ export const StartPragmaBundleImportSchema = z
     secrets: z.record(z.string(), z.string().min(1).max(10_000)).default({}),
   })
   .strict();
+
+export const InspectPragmaBundleSchema = z
+  .object({
+    sourcePath: z.string().trim().min(1).max(2_000).optional(),
+    installationId: z.string().uuid().optional(),
+    rootRef: PragmaBundleRootRefSchema.optional(),
+    decisions: StartPragmaBundleImportSchema.pick({
+      conflicts: true,
+    }).optional(),
+  })
+  .strict()
+  .refine((input) => (input.sourcePath === undefined) !== (input.installationId === undefined), {
+    message: "Choose either a bundle file or an installation to resume.",
+  });
 
 export const PragmaBundlePendingDependencySchema = z
   .object({

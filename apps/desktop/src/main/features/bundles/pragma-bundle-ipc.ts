@@ -50,7 +50,9 @@ export function installPragmaBundleHandlers(
   });
   ipcMain.handle("pragma-bundles:inspect", (_event, input: unknown) => {
     const parsed = InspectPragmaBundleSchema.parse(input);
-    return service.inspect(parsed.sourcePath, parsed.rootRef);
+    return parsed.installationId === undefined
+      ? service.inspect(parsed.sourcePath!, parsed.rootRef, parsed.decisions)
+      : service.inspectInstallation(parsed.installationId);
   });
   ipcMain.handle("pragma-bundles:import", (_event, input: unknown) =>
     runDesktopMutation(() => service.startImport(StartPragmaBundleImportSchema.parse(input))),

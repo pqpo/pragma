@@ -145,6 +145,8 @@ export const missions = {
   errorInternalStateConflict: "任务状态发生了异常变化，请刷新任务后重试。",
   bundleSetupRequired:
     "该工作流还有 {{count}} 项本地依赖未完成设置：{{resources}}。请打开 Bundle 导入，重新选择原文件并完成绑定。",
+  bundleLegacyCapability: "能力（旧版 Bundle 未保留名称）",
+  bundleLegacyRuntime: "运行配置（旧版 Bundle 未保留名称）",
   bundleLegacyKnowledgeBase: "知识库（旧版 Bundle 未保留名称）",
   selectAnother: "请选择其他任务或创建新任务。",
   deleteTitle: "删除此任务？",

@@ -1,3 +1,4 @@
+import { planBundleResources, collectBundleResourceClosure } from "./pragma-bundle-resources.ts";
 import { resolveCapabilityForBinding } from "../capabilities/capability-verification.ts";
 import { capabilityToolNames } from "../capabilities/capability-revision-coordinator.ts";
 import { inspectAssetReadiness } from "../asset-transfer/asset-transfer-readiness.ts";
@@ -346,7 +347,12 @@ export interface PragmaBundleService {
     readonly bundleFingerprint: string;
     readonly projectFingerprint: string;
   }>;
-  inspect(sourcePath: string, rootRef?: string): Promise<PragmaBundleImportInspection>;
+  inspect(
+    sourcePath: string,
+    rootRef?: string,
+    decisions?: Pick<StartPragmaBundleImport, "conflicts">,
+  ): Promise<PragmaBundleImportInspection>;
+  inspectInstallation(installationId: string): Promise<PragmaBundleImportInspection>;
   startImport(input: StartPragmaBundleImport): Promise<PragmaBundleInstallation>;
   listInstallations(): Promise<readonly PragmaBundleInstallation[]>;
   recheckInstallation(installationId: string): Promise<PragmaBundleInstallation>;
@@ -740,17 +746,52 @@ export function createPragmaBundleService(options: {
     }
   };
 
+  const currentInstallationResources = async (
+    installation: PragmaBundleInstallation,
+    snapshot: DesktopProjectSnapshot,
+  ): Promise<readonly PragmaResource[]> => {
+    const project = await options.project.openRevision(snapshot.revision);
+    try {
+      if (
+        !snapshot.resources.some(
+          (resource) => canonicalPragmaResourceRef(resource) === installation.rootRef,
+        )
+      ) {
+        throw new BundleInstallationConflictError(
+          "installation_root_missing",
+          "The imported entry was deleted. Discard this installation or import the bundle again.",
+        );
+      }
+      return project.listResourceClosure(PragmaBundleRootRefSchema.parse(installation.rootRef));
+    } finally {
+      await project.dispose();
+    }
+  };
+
   const evaluateInstallation = async (
     installation: PragmaBundleInstallation,
     snapshot: DesktopProjectSnapshot,
     checkContextContent = true,
     runtimes?: readonly DesktopRuntimeAvailability[],
+    scopeRefs?: ReadonlySet<string>,
   ): Promise<{
     readonly readiness: PragmaBundleInstallation["readiness"];
     readonly pending: PragmaBundleInstallation["pending"];
   }> => {
-    const resources = snapshot.resources.filter((resource) =>
-      installation.resourceRefs.includes(canonicalPragmaResourceRef(resource)),
+    // Mission admission checks the requested executor, even if a different imported entry was deleted.
+    // Explicit recovery still requires the installation's own root to exist.
+    let resources =
+      scopeRefs !== undefined &&
+      !snapshot.resources.some(
+        (resource) => canonicalPragmaResourceRef(resource) === installation.rootRef,
+      )
+        ? snapshot.resources.filter((resource) =>
+            installation.resourceRefs.includes(canonicalPragmaResourceRef(resource)),
+          )
+        : await currentInstallationResources(installation, snapshot);
+    const currentRefs = new Set(resources.map(canonicalPragmaResourceRef));
+    resources = resources.filter(
+      (resource) => scopeRefs === undefined || scopeRefs.has(canonicalPragmaResourceRef(resource)),
     );
     const readiness = await inspectAssetReadiness(resources, {
       capabilities: options.capabilities,
@@ -763,16 +804,24 @@ export function createPragmaBundleService(options: {
       (installation.readiness.filter((dependency) => dependency.kind === "secret").length > 0
         ? installation.readiness.filter((dependency) => dependency.kind === "secret")
         : installation.pending.filter((dependency) => dependency.kind === "secret")
-      ).map(async (dependency): Promise<PragmaBundleDependencyReadiness> => {
-        const available = await options.plugins.hasSecret(`binding:pragma.bundle.${dependency.id}`);
-        return {
-          ...readinessFromPending(dependency),
-          status: available ? "ready" : "missing",
-          code: available ? "ready" : "secret_missing",
-          action: available ? "none" : "enter_secret",
-          message: available ? "Secret is ready." : "Enter the required secret.",
-        };
-      }),
+      )
+        .filter(
+          (dependency) =>
+            currentRefs.has(dependency.resourceRef as PragmaResourceRef) &&
+            (scopeRefs === undefined || scopeRefs.has(dependency.resourceRef)),
+        )
+        .map(async (dependency): Promise<PragmaBundleDependencyReadiness> => {
+          const available = await options.plugins.hasSecret(
+            `binding:pragma.bundle.${dependency.id}`,
+          );
+          return {
+            ...readinessFromPending(dependency),
+            status: available ? "ready" : "missing",
+            code: available ? "ready" : "secret_missing",
+            action: available ? "none" : "enter_secret",
+            message: available ? "Secret is ready." : "Enter the required secret.",
+          };
+        }),
     );
     const combinedReadiness = mergeReadiness(readiness, secretReadiness);
     const pending = mergePendingMetadata(
@@ -811,12 +860,30 @@ export function createPragmaBundleService(options: {
   const discardCreatedInstallation = async (
     installation: PragmaBundleInstallation,
   ): Promise<void> => {
-    if (installation.createdResourceRefs.length !== installation.resourceRefs.length) {
+    const snapshot = await options.project.get();
+    const borrowedRoots = installation.conflictResolutions
+      .filter((value) => value.action === "keep_local")
+      .map(
+        (value) =>
+          installation.resourceMappings.find((mapping) => mapping.sourceRef === value.resourceRef)
+            ?.targetRef ?? value.resourceRef,
+      );
+    const borrowed = new Set([
+      ...borrowedRoots,
+      ...borrowedRoots.flatMap((ref) =>
+        collectBundleResourceClosure(snapshot.resources, ref).map(canonicalPragmaResourceRef),
+      ),
+    ]);
+    const created = new Set(installation.createdResourceRefs);
+    if (
+      installation.resourceRefs.some((ref) => !created.has(ref) && !borrowed.has(ref)) ||
+      installation.conflictResolutions.some((value) => value.action === "update") ||
+      installation.assetConflictResolutions.some((value) => value.action === "update")
+    ) {
       throw new Error(
         "This import changed existing project resources. Automatic rollback would overwrite later work, so import it as a copy or restore the project explicitly.",
       );
     }
-    const snapshot = await options.project.get();
     const receipt =
       installation.transaction === undefined
         ? undefined
@@ -1146,9 +1213,10 @@ export function createPragmaBundleService(options: {
               canonicalPragmaResourceRef(resource) ===
               (context.localized.resourceMappings.get(record.rootRef) ?? record.rootRef),
           )?.metadata.name ?? record.rootName,
-        resourceRefs: record.resourceRefs.map(
-          (ref) => context.localized.resourceMappings.get(ref) ?? ref,
-        ),
+        resourceRefs: unique([
+          ...record.resourceRefs.map((ref) => context.localized.resourceMappings.get(ref) ?? ref),
+          ...context.localized.resources.map(canonicalPragmaResourceRef),
+        ]),
         createdResourceRefs: unique([
           ...record.createdResourceRefs.map(
             (ref) => context.localized.resourceMappings.get(ref) ?? ref,
@@ -1204,6 +1272,51 @@ export function createPragmaBundleService(options: {
     );
     return (await recoverBindingRepair(installation.id))!;
   };
+  const describeCapabilityChoices = async (
+    requirements: PragmaBundleImportInspection["requirements"],
+    resources: readonly PragmaResource[],
+  ) => {
+    if (!requirements.some((value) => value.kind === "capability")) return;
+    const capabilities = await Promise.all(
+      (await options.capabilities.list()).map(async (value) => {
+        try {
+          return await resolveCapabilityForBinding(options.capabilities, value.manifest.id);
+        } catch {
+          return undefined;
+        }
+      }),
+    );
+    for (const requirement of requirements) {
+      if (requirement.kind !== "capability") continue;
+      const references = resources.flatMap((resource) =>
+        resource.kind === "Expert"
+          ? resource.spec.capabilities.filter(
+              (reference) => reference.ref === requirement.resourceRef,
+            )
+          : [],
+      );
+      const requiredTools = unique(
+        references.flatMap((reference) =>
+          reference.kind === "tools" ? (reference.tools ?? []) : [],
+        ),
+      );
+      requirement.requiredTools = requiredTools;
+      requirement.compatibleCapabilityIds = capabilities
+        .filter(
+          (value) =>
+            value !== undefined &&
+            value.health.status === "ready" &&
+            (requirement.capabilityKind === undefined ||
+              value.definition.kind === requirement.capabilityKind) &&
+            references.every(
+              (reference) => (reference.kind === "skill") === (value.definition.kind === "skill"),
+            ) &&
+            requiredTools.every((tool) => capabilityToolNames(value).includes(tool)),
+        )
+        .map((value) => value!.manifest.id);
+    }
+  };
+
   const service: PragmaBundleService = {
     async initialize() {
       await ensureInitialized();
@@ -1474,7 +1587,7 @@ export function createPragmaBundleService(options: {
       }
     },
 
-    async inspect(sourcePath, rootRef) {
+    async inspect(sourcePath, rootRef, decisions) {
       const archive = await readDesktopBundle(sourcePath, rootRef);
       assertBundleHasNoPlugins(archive);
       const current = await options.project.get();
@@ -1627,6 +1740,27 @@ export function createPragmaBundleService(options: {
           };
         }),
       );
+      let plan: ReturnType<typeof planBundleResources> | undefined;
+      if (decisions !== undefined) {
+        const identities = resolveBundleIdentities(
+          archive.resources.filter((resource) => !isPragmaManagementCapability(resource)),
+          current.resources,
+          decisions.conflicts,
+        ).identities;
+        const localized = localizePragmaBundleResources({
+          resources: archive.resources,
+          manifest: archive.bundle.manifest,
+          identities,
+        });
+        plan = planBundleResources({
+          imported: localized.resources,
+          current: current.resources,
+          rootRef:
+            localized.resourceMappings.get(archive.manifest.root.ref) ?? archive.manifest.root.ref,
+          mappings: localized.resourceMappings,
+          conflicts: decisions.conflicts,
+        });
+      }
       const requirements: PragmaBundleImportInspection["requirements"] = [];
       const ambiguousRequirements = new Set<string>();
       for (const dependency of archive.manifest.dependencies.capabilities) {
@@ -1750,6 +1884,12 @@ export function createPragmaBundleService(options: {
           required: true,
         });
       }
+      if (plan !== undefined) {
+        for (let index = requirements.length - 1; index >= 0; index--) {
+          if (!plan.sourceRefs.has(requirements[index]!.resourceRef as PragmaResourceRef))
+            requirements.splice(index, 1);
+        }
+      }
       const installations = (await readCatalog()).installations;
       const incompleteInstallation = findIncompleteInstallation(
         installations,
@@ -1764,6 +1904,34 @@ export function createPragmaBundleService(options: {
         ambiguousRequirements.has(dependency.id)
           ? { ...dependency, status: "action_required" as const, code: "binding_ambiguous" }
           : dependency,
+      );
+      if (plan !== undefined) {
+        const writable = new Set(plan.resources.map(canonicalPragmaResourceRef));
+        const retained = await inspectAssetReadiness(
+          plan.effective.filter((resource) => !writable.has(canonicalPragmaResourceRef(resource))),
+          {
+            capabilities: options.capabilities,
+            contextStores: options.contextStores,
+            plugins: options.plugins,
+            runtimes,
+          },
+        );
+        readiness.splice(
+          0,
+          readiness.length,
+          ...readiness.filter((value) =>
+            plan.sourceRefs.has(value.resourceRef as PragmaResourceRef),
+          ),
+          ...retained,
+        );
+      }
+      await describeCapabilityChoices(
+        requirements,
+        plan === undefined
+          ? archive.resources
+          : archive.resources.filter((resource) =>
+              plan.sourceRefs.has(canonicalPragmaResourceRef(resource)),
+            ),
       );
       return PragmaBundleImportInspectionSchema.parse({
         sourcePath,
@@ -1818,6 +1986,73 @@ export function createPragmaBundleService(options: {
         ...(incompleteInstallation === undefined
           ? {}
           : { alreadyInstalledId: incompleteInstallation.id }),
+      });
+    },
+
+    async inspectInstallation(installationId) {
+      const installation = (await readCatalog()).installations.find(
+        (value) => value.id === installationId && value.projectId === options.project.projectId,
+      );
+      if (installation === undefined) throw new Error("Bundle installation not found.");
+      const snapshot = await options.project.get();
+      const root = {
+        ref: installation.sourceRootRef,
+        kind: installation.rootKind,
+        name: installation.rootName,
+      };
+      const requirements: PragmaBundleImportInspection["requirements"] = installation.pending.map(
+        (dependency) => {
+          const resource = snapshot.resources.find(
+            (value) => canonicalPragmaResourceRef(value) === dependency.resourceRef,
+          );
+          const config =
+            resource?.kind === "RuntimeProfile"
+              ? (resource.spec.config as Record<string, unknown>)
+              : undefined;
+          return {
+            id: dependency.id,
+            kind: dependency.kind,
+            resourceRef: dependency.resourceRef,
+            name: dependency.name,
+            message: dependency.message,
+            required: dependency.kind !== "context-store" && dependency.kind !== "plugin",
+            ...(dependency.capabilityKind === undefined
+              ? {}
+              : { capabilityKind: dependency.capabilityKind }),
+            ...(config === undefined
+              ? {}
+              : {
+                  runtimeRequest: {
+                    ...(typeof config.runtimeId === "string"
+                      ? { runtimeId: config.runtimeId }
+                      : {}),
+                    ...(typeof config.providerId === "string"
+                      ? { providerId: config.providerId }
+                      : {}),
+                    ...(typeof config.model === "string" ? { modelId: config.model } : {}),
+                  },
+                }),
+          };
+        },
+      );
+      await describeCapabilityChoices(requirements, snapshot.resources);
+      return PragmaBundleImportInspectionSchema.parse({
+        sourcePath: options.paths.bundleInstallationArchive(installation.id),
+        sourceName: installation.rootName,
+        bundleFingerprint: installation.bundleFingerprint,
+        projectFingerprint: installation.sourceProjectFingerprint ?? installation.bundleFingerprint,
+        projectRevision: snapshot.revision,
+        root,
+        roots: [root],
+        createdAt: installation.createdAt,
+        resources: installation.resourceRefs.length,
+        dependencies: [],
+        conflicts: [],
+        assetConflicts: [],
+        requirements,
+        readiness: installation.readiness,
+        sameContentInstallationIds: [],
+        alreadyInstalledId: installation.id,
       });
     },
 
@@ -1975,9 +2210,54 @@ export function createPragmaBundleService(options: {
           if (current.revision !== input.expectedProjectRevision) {
             throw new Error("The project changed. Inspect the Bundle again before importing.");
           }
+          const identityResolution =
+            transaction === undefined
+              ? resolveBundleIdentities(
+                  archive.resources.filter((resource) => !isPragmaManagementCapability(resource)),
+                  current.resources,
+                  input.conflicts,
+                )
+              : { identities: transaction.identities };
+          const localized = localizePragmaBundleResources({
+            resources: archive.resources,
+            manifest: archive.bundle.manifest,
+            identities: identityResolution.identities,
+          });
+          const plan = planBundleResources({
+            imported: localized.resources,
+            current: current.resources,
+            rootRef:
+              localized.resourceMappings.get(archive.manifest.root.ref) ??
+              archive.manifest.root.ref,
+            mappings: localized.resourceMappings,
+            conflicts: input.conflicts,
+          });
+          const dependencies = {
+            capabilities: archive.manifest.dependencies.capabilities.filter((value) =>
+              plan.sourceRefs.has(value.resourceRef as PragmaResourceRef),
+            ),
+            contextStores: archive.manifest.dependencies.contextStores.filter((value) =>
+              plan.sourceRefs.has(value.resourceRef as PragmaResourceRef),
+            ),
+            runtimes: archive.manifest.dependencies.runtimes.filter((value) =>
+              plan.sourceRefs.has(value.resourceRef as PragmaResourceRef),
+            ),
+            plugins: archive.manifest.dependencies.plugins.filter((value) =>
+              plan.sourceRefs.has(value.ownerRef as PragmaResourceRef),
+            ),
+            secrets: archive.manifest.dependencies.secrets.filter((value) =>
+              plan.sourceRefs.has(value.ownerRef as PragmaResourceRef),
+            ),
+            unsupported: archive.manifest.dependencies.unsupported.filter((value) =>
+              plan.sourceRefs.has(value.ownerRef as PragmaResourceRef),
+            ),
+          };
+          const activeAssetConflicts = (input.assetConflicts ?? []).filter((value) =>
+            plan.sourceRefs.has(value.resourceRef),
+          );
           const assetResolutionByRef = await validateBundleAssetResolutions({
-            archive,
-            resolutions: input.assetConflicts ?? [],
+            archive: { ...archive, manifest: { ...archive.manifest, dependencies } },
+            resolutions: activeAssetConflicts,
             capabilities: options.capabilities,
             contextStores: options.contextStores,
             allowAlreadyApplied: retryingInterruptedImport,
@@ -2052,19 +2332,6 @@ export function createPragmaBundleService(options: {
             ),
             "Knowledge-base requirement",
           );
-          const identityResolution =
-            transaction === undefined
-              ? resolveBundleIdentities(
-                  archive.resources.filter((resource) => !isPragmaManagementCapability(resource)),
-                  current.resources,
-                  input.conflicts,
-                )
-              : { identities: transaction.identities };
-          const localized = localizePragmaBundleResources({
-            resources: archive.resources,
-            manifest: archive.bundle.manifest,
-            identities: identityResolution.identities,
-          });
           const installationId = existing?.transaction === undefined ? randomUUID() : existing.id;
           const archivePath = options.paths.bundleInstallationArchive(installationId);
           await mkdir(dirname(archivePath), { recursive: true, mode: 0o700 });
@@ -2103,8 +2370,13 @@ export function createPragmaBundleService(options: {
                   createdCapabilityIds: [],
                   createdContextStoreIds: [],
                   createdPluginRefs: [],
-                  conflictResolutions: input.conflicts,
-                  assetConflictResolutions: input.assetConflicts ?? [],
+                  conflictResolutions: input.conflicts.filter((value) =>
+                    plan.refs.has(
+                      localized.resourceMappings.get(value.resourceRef as PragmaResourceRef) ??
+                        (value.resourceRef as PragmaResourceRef),
+                    ),
+                  ),
+                  assetConflictResolutions: activeAssetConflicts,
                   resourceMappings: [],
                   status: "installing",
                   pending: [],
@@ -2138,25 +2410,13 @@ export function createPragmaBundleService(options: {
             return allocated;
           };
           try {
-            let resources = localized.resources.map((resource) =>
+            let resources = plan.resources.map((resource) =>
               isPragmaManagementCapability(resource)
                 ? pragmaManagementCapabilityResource()
                 : resource,
             );
             const sourceToTarget = localized.resourceMappings;
-            const installationRefs = new Set(resources.map(canonicalPragmaResourceRef));
-            const keptLocalTargets = new Set(
-              input.conflicts
-                .filter((resolution) => resolution.action === "keep_local")
-                .map(
-                  (resolution) =>
-                    sourceToTarget.get(resolution.resourceRef as PragmaResourceRef) ??
-                    resolution.resourceRef,
-                ),
-            );
-            resources = resources.filter(
-              (resource) => !keptLocalTargets.has(canonicalPragmaResourceRef(resource)),
-            );
+            const installationRefs = new Set(plan.refs);
             const replacementRefs = new Set(resources.map(canonicalPragmaResourceRef));
             const currentRefs = new Set(current.resources.map(canonicalPragmaResourceRef));
             const createdResourceRefs = [...replacementRefs].filter((ref) => !currentRefs.has(ref));
@@ -2167,8 +2427,13 @@ export function createPragmaBundleService(options: {
               rootRef,
               resourceRefs: [...installationRefs],
               createdResourceRefs,
-              conflictResolutions: input.conflicts,
-              assetConflictResolutions: input.assetConflicts ?? [],
+              conflictResolutions: input.conflicts.filter((value) =>
+                plan.refs.has(
+                  localized.resourceMappings.get(value.resourceRef as PragmaResourceRef) ??
+                    (value.resourceRef as PragmaResourceRef),
+                ),
+              ),
+              assetConflictResolutions: activeAssetConflicts,
               resourceMappings: [...sourceToTarget].map(([sourceRef, targetRef]) => ({
                 sourceRef,
                 targetRef,
@@ -2179,9 +2444,9 @@ export function createPragmaBundleService(options: {
 
             const bundleCapabilityGroups = new Map<
               string,
-              (typeof archive.manifest.dependencies.capabilities)[number][]
+              (typeof dependencies.capabilities)[number][]
             >();
-            for (const dependency of archive.manifest.dependencies.capabilities) {
+            for (const dependency of dependencies.capabilities) {
               if (dependency.definition === undefined || !dependency.included) {
                 continue;
               }
@@ -2469,7 +2734,7 @@ export function createPragmaBundleService(options: {
               }
             }
 
-            for (const dependency of archive.manifest.dependencies.capabilities) {
+            for (const dependency of dependencies.capabilities) {
               const targetRef =
                 sourceToTarget.get(dependency.resourceRef) ?? dependency.resourceRef;
               const resource = resources.find(
@@ -2619,7 +2884,7 @@ export function createPragmaBundleService(options: {
               }
             }
 
-            for (const dependency of archive.manifest.dependencies.contextStores) {
+            for (const dependency of dependencies.contextStores) {
               const targetRef =
                 sourceToTarget.get(dependency.resourceRef) ?? dependency.resourceRef;
               const resource = resources.find(
@@ -2914,7 +3179,7 @@ export function createPragmaBundleService(options: {
             }
 
             const runtimes = await options.getRuntimes();
-            for (const dependency of archive.manifest.dependencies.runtimes) {
+            for (const dependency of dependencies.runtimes) {
               const targetRef =
                 sourceToTarget.get(dependency.resourceRef) ?? dependency.resourceRef;
               const resource = resources.find(
@@ -2957,10 +3222,7 @@ export function createPragmaBundleService(options: {
             }
 
             const secretById = new Map(
-              archive.manifest.dependencies.secrets.map((requirement) => [
-                requirement.id,
-                requirement,
-              ]),
+              dependencies.secrets.map((requirement) => [requirement.id, requirement]),
             );
             for (const requirementId of Object.keys(input.secrets)) {
               if (!secretById.has(requirementId)) {
@@ -2978,7 +3240,7 @@ export function createPragmaBundleService(options: {
               );
             }
             const secretReadiness = await Promise.all(
-              archive.manifest.dependencies.secrets.map(
+              dependencies.secrets.map(
                 async (requirement): Promise<PragmaBundleDependencyReadiness> => {
                   const binding = `binding:pragma.bundle.${requirement.id}`;
                   const available = await options.plugins.hasSecret(binding);
@@ -3078,9 +3340,7 @@ export function createPragmaBundleService(options: {
             }
 
             const verifiedReadiness = await inspectAssetReadiness(
-              published.resources.filter((resource) =>
-                installationRefs.has(canonicalPragmaResourceRef(resource)),
-              ),
+              collectBundleResourceClosure(published.resources, rootRef),
               {
                 capabilities: options.capabilities,
                 contextStores: options.contextStores,
@@ -3197,15 +3457,21 @@ export function createPragmaBundleService(options: {
           const snapshot = await options.project.get();
           if (snapshot.revision !== input.baseRevision)
             throw new Error("The project changed. Reload setup before rebinding.");
+          const bindingScope = new Set([
+            ...installation.resourceRefs,
+            ...(await currentInstallationResources(installation, snapshot)).map(
+              canonicalPragmaResourceRef,
+            ),
+          ]);
           const selected = new Set(
             [...input.runtimes, ...input.capabilities, ...input.contextStores].map(
               (value) => value.resourceRef,
             ),
           );
-          if ([...selected].some((ref) => !installation.resourceRefs.includes(ref)))
+          if ([...selected].some((ref) => !bindingScope.has(ref)))
             throw new Error("The binding is outside the selected installation.");
           const outside = snapshot.resources.filter(
-            (resource) => !installation.resourceRefs.includes(canonicalPragmaResourceRef(resource)),
+            (resource) => !bindingScope.has(canonicalPragmaResourceRef(resource)),
           );
           const otherInstallations = (await readCatalog()).installations.filter(
             (record) => record.id !== installation.id,
@@ -3232,8 +3498,7 @@ export function createPragmaBundleService(options: {
             changed = false;
             for (const resource of snapshot.resources) {
               const ref = canonicalPragmaResourceRef(resource);
-              if (!installation.resourceRefs.includes(ref) || cloning.has(ref) || !shared.has(ref))
-                continue;
+              if (!bindingScope.has(ref) || cloning.has(ref) || !shared.has(ref)) continue;
               if (
                 [...referencedPragmaResourceRefs([resource])].some((dependency) =>
                   cloning.has(dependency),
@@ -3245,7 +3510,7 @@ export function createPragmaBundleService(options: {
             }
           }
           const resources = snapshot.resources.filter((resource) =>
-            installation.resourceRefs.includes(canonicalPragmaResourceRef(resource)),
+            bindingScope.has(canonicalPragmaResourceRef(resource)),
           );
           const localized = remapPragmaResourceIdentities({
             resources,
@@ -3354,14 +3619,24 @@ export function createPragmaBundleService(options: {
         const readiness = await Promise.all(
           installations.map(async (installation) => {
             const current = isRecheckableInstallation(installation)
-              ? (await evaluateInstallation(installation, snapshot, false, input?.runtimes))
-                  .readiness
+              ? (
+                  await evaluateInstallation(
+                    installation,
+                    snapshot,
+                    false,
+                    input?.runtimes,
+                    closureRefs,
+                  )
+                ).readiness
               : mergeReadiness(
                   installation.readiness,
                   installation.pending.map(readinessFromPending),
                 );
             return current
-              .filter((dependency) => dependency.status !== "ready")
+              .filter(
+                (dependency) =>
+                  dependency.status !== "ready" && closureRefs.has(dependency.resourceRef),
+              )
               .map((dependency) => ({ ...dependency, installationId: installation.id }));
           }),
         );

@@ -1,3 +1,4 @@
+import { referencedPragmaResourceRefs } from "../../missions/resource-dependencies.ts";
 import { generatePragmaResourceId } from "@pragma/core";
 import {
   canonicalPragmaResourceRef,
@@ -159,4 +160,69 @@ export function artifactPathIsReferenced(
     (source) =>
       artifactPath === source || artifactPath.startsWith(`${source.replace(/\/+$/, "")}/`),
   );
+}
+
+/** Computes the graph that will actually exist after resource conflict decisions. */
+export function planBundleResources(input: {
+  readonly imported: readonly PragmaResource[];
+  readonly current: readonly PragmaResource[];
+  readonly rootRef: string;
+  readonly mappings: ReadonlyMap<
+    ReturnType<typeof canonicalPragmaResourceRef>,
+    ReturnType<typeof canonicalPragmaResourceRef>
+  >;
+  readonly conflicts: readonly {
+    readonly resourceRef: string;
+    readonly action: "copy" | "update" | "keep_local";
+  }[];
+}) {
+  const kept = new Set(
+    input.conflicts
+      .filter((value) => value.action === "keep_local")
+      .map(
+        (value) =>
+          input.mappings.get(value.resourceRef as ReturnType<typeof canonicalPragmaResourceRef>) ??
+          value.resourceRef,
+      ),
+  );
+  const imported = input.imported.filter((value) => !kept.has(canonicalPragmaResourceRef(value)));
+  const replacements = new Set(imported.map(canonicalPragmaResourceRef));
+  const effective = collectBundleResourceClosure(
+    [
+      ...input.current.filter((value) => !replacements.has(canonicalPragmaResourceRef(value))),
+      ...imported,
+    ],
+    input.rootRef,
+  );
+  const refs = new Set(effective.map(canonicalPragmaResourceRef));
+  return {
+    effective,
+    refs,
+    resources: imported.filter((value) => refs.has(canonicalPragmaResourceRef(value))),
+    sourceRefs: new Set(
+      [...input.mappings]
+        .filter(([, target]) => refs.has(target) && !kept.has(target))
+        .map(([source]) => source),
+    ),
+  };
+}
+
+export function collectBundleResourceClosure(
+  resources: readonly PragmaResource[],
+  rootRef: string,
+): readonly PragmaResource[] {
+  const indexed = new Map(resources.map((value) => [canonicalPragmaResourceRef(value), value]));
+  const visited = new Set<string>();
+  const result: PragmaResource[] = [];
+  const pending = [rootRef];
+  while (pending.length > 0) {
+    const ref = pending.pop()!;
+    if (visited.has(ref)) continue;
+    visited.add(ref);
+    const resource = indexed.get(ref as ReturnType<typeof canonicalPragmaResourceRef>);
+    if (resource === undefined) continue;
+    result.push(resource);
+    pending.push(...referencedPragmaResourceRefs([resource]));
+  }
+  return result;
 }
