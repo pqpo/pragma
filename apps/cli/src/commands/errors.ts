@@ -36,6 +36,9 @@ const HOST_ERROR_CODE_MAP: Readonly<Record<string, IntegrationErrorCode>> = {
   config_invalid: "STORAGE_CORRUPTED",
   unsupported_schema: "STORAGE_VERSION_UNSUPPORTED",
   dependency_unavailable: "DEPENDENCY_UNAVAILABLE",
+  migration_required: "SECRET_MIGRATION_REQUIRED",
+  provider_not_found: "DEPENDENCY_UNAVAILABLE",
+  secret_unavailable: "DEPENDENCY_UNAVAILABLE",
 };
 
 export function toIntegrationError(

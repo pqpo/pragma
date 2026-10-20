@@ -10,6 +10,22 @@ ExpertTeam 和 Flow，创建或继续 Mission，读取事件与 Mission Board，
 CLI 与 Desktop 使用相同的 `PRAGMA_HOME` 和 Local Host 语义，不要求 Desktop 进程持续运行。调用方负责
 自己的 workspace 隔离、mutation 授权、超时和用户确认；CLI 负责协议校验、持久提交与状态观察。
 
+## 配置与认证前提
+
+调用方应使用 Desktop 配置并导入过资源的同一 `PRAGMA_HOME` 和同一操作系统用户。Desktop
+关闭后可运行任务；CLI 从共享服务读取 Runtime Environment revision、模型连接和 SecretRef，
+沿用 SecretStore / Harness 原生认证及环境变量过滤策略，不新增配置或凭据后端。
+
+遇到 `SECRET_MIGRATION_REQUIRED`，由用户打开当前 Desktop 完成历史凭据升级；遇到
+`SECRET_STORE_LOCKED` / `KEYCHAIN_UNAVAILABLE`，修复钥匙串访问；`RUNTIME_UNAVAILABLE` 或
+`DEPENDENCY_UNAVAILABLE` 必须查看 message / diagnostics，区分模型配置、连接和其他依赖。
+不要自动改模型、替换 Runtime、重写 Session binding 或将此类错误解释为任务已完成。
+
+无 Desktop 的脚本验收应等待真实终态并查询结果，不能仅凭 `--detach` 回执认定运行成功。
+策略允许时，CLI 保留 Evidence 采集、持久提炼入队和已有记忆召回；提炼、索引与 Learning
+仍依赖同一 home 的 Desktop 生命周期。`pragma run` 退出不启动 Memory worker，Evidence 或
+队列数量不是成功生成记忆数，Knowledge/Skill 发布仍需人工批准。
+
 ## 协议基线
 
 | 项目     | 契约                                                                   |
@@ -36,13 +52,17 @@ CLI 与 Desktop 使用相同的 `PRAGMA_HOME` 和 Local Host 语义，不要求 
   Mission；
 - 输入优先走 stdin，避免把长 Prompt 或敏感内容放入 argv。
 
+当前 Node CLI 未提供内置 Pragma 的管理资源端口。请从 `discover` 结果选择已导入的 Expert /
+ExpertTeam / Flow；下面的示例 ID 需要替换为实际资源 ref。
+
 最小调用示例：
 
 ```bash
 RUN_REQUEST_ID=11111111-1111-4111-8111-111111111111
+EXPERT_REF='expert:1xddvess309a6gme' # 替换为 discover 返回的已导入 Expert ref
 
 printf '%s' '只回复 OK' |
-  pragma expert run expert:0000000000pragma \
+  pragma expert run "$EXPERT_REF" \
     --workspace "$PWD" \
     --input - \
     --request-id "$RUN_REQUEST_ID" \

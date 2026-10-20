@@ -14,7 +14,7 @@ import {
 } from "@pragma/core";
 import { BUILT_IN_AGENT_REFS, builtInAgentResources } from "@pragma/built-in-agents";
 import { createIntegrationError } from "@pragma/shared/integration";
-import type { Mission } from "@pragma/shared";
+import type { Mission, ToolPermissionMode } from "@pragma/shared";
 import type { LocalHostNodeMissionCompiler } from "./node-mission-compiler.ts";
 import type { createLocalHostRunMemory } from "./run-memory.ts";
 import { createLocalHostMissionBoardBindings } from "./mission-board.ts";
@@ -59,6 +59,8 @@ const identityManifest = z
 export function createLocalHostNodeExecutionResourcePorts(options: {
   readonly pragmaHome: string;
   readonly runtimes: RuntimeResolver;
+  readonly runtimesForToolPermissionMode?:
+    ((mode: ToolPermissionMode) => RuntimeResolver) | undefined;
   readonly compiler: LocalHostNodeMissionCompiler;
   readonly missions: MissionStore;
   readonly memory: ReturnType<typeof createLocalHostRunMemory>;
@@ -93,14 +95,22 @@ export function createLocalHostNodeExecutionResourcePorts(options: {
       purpose,
       assertExecutionOwnership,
     }) => {
+      let toolPermissionMode = mission.toolPermissionMode;
+      const resolver = () =>
+        options.runtimesForToolPermissionMode?.(toolPermissionMode) ?? options.runtimes;
+      const runtimes: RuntimeResolver = {
+        getDefaultRuntimeId: () => resolver().getDefaultRuntimeId(),
+        bind: (request) => resolver().bind(request),
+        resolve: (request) => resolver().resolve(request),
+      };
       if (purpose === "stop")
         return {
-          runtimes: options.runtimes,
+          runtimes,
           appOptions: {
             pragmaHome: options.pragmaHome,
             executionStore,
             expertSessionStore,
-            runtimes: options.runtimes,
+            runtimes,
             usageSink: options.usageSink,
             loggerProvider: options.loggerProvider,
           },
@@ -177,24 +187,28 @@ export function createLocalHostNodeExecutionResourcePorts(options: {
         ];
       };
       return {
-        runtimes: options.runtimes,
+        runtimes,
         appOptions: {
           pragmaHome: options.pragmaHome,
           executionStore,
           expertSessionStore,
-          runtimes: options.runtimes,
+          runtimes,
           usageSink: options.usageSink,
           loggerProvider: options.loggerProvider,
           hostContextBindings: await resolveHostContextBindings(),
           resolveHostContextBindings,
         },
         setToolPermissionMode: (mode) => {
-          if (mode !== mission.toolPermissionMode)
+          if (
+            options.runtimesForToolPermissionMode === undefined &&
+            mode !== mission.toolPermissionMode
+          )
             throw createIntegrationError({
               code: "COMMAND_REJECTED",
               category: "conflict",
               message: "Changing tool permissions requires a Node Runtime permission adapter.",
             });
+          toolPermissionMode = mode;
         },
       };
     },

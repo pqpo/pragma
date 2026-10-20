@@ -1,6 +1,6 @@
 import { PragmaPaths } from "@pragma/core";
 import { isMissionDeletionCommitted, readMissionDeletionRecord } from "./missions/deletion.ts";
-import type { Mission } from "@pragma/shared";
+import type { Mission, ToolPermissionMode } from "@pragma/shared";
 import { join } from "node:path";
 
 import {
@@ -59,6 +59,8 @@ export interface LocalHostNodeApplicationOptions {
   readonly pragmaHome: string;
   /** Concrete adapters are supplied by CLI; Desktop may inject its resolver. */
   readonly runtimes: readonly RuntimeAdapter[] | RuntimeResolver;
+  readonly runtimesForToolPermissionMode?:
+    ((mode: ToolPermissionMode) => RuntimeResolver) | undefined;
   readonly defaultRuntimeId?: string | undefined;
   readonly runtimeAliases?: Readonly<Record<string, string>> | undefined;
   readonly client: MissionControlClient;
@@ -437,6 +439,7 @@ export function createLocalHostNodeApplication(
         pragmaHome: options.pragmaHome,
         runtimes: runtimeResolver,
         compiler,
+        runtimesForToolPermissionMode: options.runtimesForToolPermissionMode,
         memory: runMemory,
         usageSink,
         loggerProvider,

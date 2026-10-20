@@ -166,7 +166,7 @@ import { MissionStatusService } from "@pragma/local-host";
 import { createFencedMissionStore } from "@pragma/local-host";
 import { createMissionStore, MissionStoreError } from "@pragma/local-host";
 import { installModelProviderHandlers } from "../features/model-providers/model-provider-ipc.ts";
-import { createModelProviderStore } from "@pragma/local-host/deployment";
+import { createLocalHostRuntimeConfiguration } from "@pragma/local-host/deployment";
 import { createPluginCredentialStore } from "../features/plugins/plugin-credential-store.ts";
 import { installPluginHandlers } from "../features/plugins/plugin-ipc.ts";
 import { createPluginStore } from "@pragma/local-host/deployment";
@@ -185,7 +185,6 @@ import {
   createBuiltInRuntimeFactories,
   createRuntimeEnvironmentService,
 } from "../features/runtimes/runtime-environment-service.ts";
-import { createRuntimeEnvironmentStore } from "@pragma/local-host/deployment";
 import { installRuntimeHandlers } from "../features/runtimes/runtime-ipc.ts";
 import { createAutomaticToolPermissionHandler } from "../features/runtimes/tool-permission-policy.ts";
 import { installDesktopSettingsHandlers } from "../features/settings/desktop-settings-ipc.ts";
@@ -260,7 +259,6 @@ export async function createDesktopApplicationContainer(
   const builtInDefaultWorkspace = pragmaPaths.workspaceRoot();
   const projectsPath = pragmaPaths.projectsRoot();
   const missionsPath = pragmaPaths.missionsRoot();
-  const modelProvidersPath = join(pragmaPaths.dataRoot(), "model-providers.json");
   const capabilityCredentialsPath = join(
     pragmaPaths.credentialsRoot(),
     "capability-credentials.json",
@@ -496,14 +494,12 @@ export async function createDesktopApplicationContainer(
       return activeIds;
     },
   );
-  const modelProviderStore = createModelProviderStore({
-    configPath: modelProvidersPath,
-    secretStore,
-    legacyDecryptor: legacyCredentialDecryptor,
-  });
-  const runtimeEnvironments = createRuntimeEnvironmentStore({
-    pragmaHome: pragmaPaths.root,
-  });
+  const { modelProviders: modelProviderStore, environments: runtimeEnvironments } =
+    createLocalHostRuntimeConfiguration({
+      pragmaHome: pragmaPaths.root,
+      secretStore,
+      legacyDecryptor: legacyCredentialDecryptor,
+    });
   const runtimeProcessEnvironmentSettings = createRuntimeProcessEnvironmentSettingsStore({
     pragmaHome: pragmaPaths.root,
   });

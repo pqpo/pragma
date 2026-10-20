@@ -39,7 +39,7 @@
 | 阶段                                       | 状态                   | 记录                                                                                                           |
 | ------------------------------------------ | ---------------------- | -------------------------------------------------------------------------------------------------------------- |
 | 阶段一：共享部署与环境服务                 | 已合并，验收边界见下文 | [PR 408](https://github.com/pqpo/pragma/pull/408)、[ADR 075](../adr/075-shared-deployment-and-environments.md) |
-| 最后收尾：配置接线、一致性验证、测试与文档 | 待实施                 | 完成后记录 PR、验证证据及限制                                                                                  |
+| 最后收尾：配置接线、一致性验证、测试与文档 | 本轮范围已完成         | 见下方收尾实施记录                                                                                             |
 | 原独立部署、Memory Headless、Linux 阶段    | 暂缓                   | 不计入本轮交付                                                                                                 |
 
 ## 阶段一实施与验证记录
@@ -114,3 +114,175 @@
 验证：根目录 `pnpm lint`、`pnpm typecheck`、`pnpm build` 各 19/19 任务通过；编译后共享部署及边界 76/76、Core 历史迁移 8/8、CLI adapter 165/165、Desktop 相关 14 个文件 236/236，共 485 项通过且无跳过。Chromium 另有 3 组交互场景通过，覆盖无 transaction 的两类历史状态、确认/取消、拒绝清理时展示服务端原因、重新 inspection 和新 UUID。浏览器交互使用受控 Bridge，生产 IPC 测试另行验证真实 Project/ContextStore/归档和历史迁移边界，两者不冒充真实 Runtime 验收。已检查简中 1440×900/100%、英文 1080×700/125%、繁中 1080×700/150% 的正常与焦点态截图；Tab 验证真实焦点移动，隐藏 macOS 窗口的焦点态截图使用 DevTools 强制 focus-visible。临时截图保留在仓库外，未提交。
 
 非阻断建议已核对：当前模型编辑已有 provider revision CAS，实际消费者影响预览及 expectedImpact 接线留待后续；Bundle application service 内部按规划/事务/恢复/绑定修复拆分属于后续维护，不在本次缺陷修复中扩大重构。上述记录仅代表阶段一的交付状态；当前后续范围以本文收尾阶段及 Issue 最新范围调整评论为准。
+
+## 收尾实施记录（2026-10-19）
+
+基于重新 fetch 的 `origin/main` `eb458180`，独立 worktree `pragma-issue-399-final`、分支
+`codex/issue-399-final` 实施。本轮未创建 PR，未修改持久协议版本。
+
+- Desktop / CLI 共用 `createLocalHostRuntimeConfiguration`，读取相同 Environment Store、模型连接和
+  SecretRef。CLI 的具体工厂使用保存的 Runtime identity、环境变量策略、模型目录缓存和统一 Token
+  counter，PI 注入共享 provider registry；既有 Environment revision / fingerprint 按精确绑定恢复。
+- 旧 CLI 静态绑定保留 resolve-only 精确读取：只在 Environment binding 不可用且旧静态 descriptor /
+  模型目录 fingerprint 完全匹配时恢复；新建 Session 始终使用共享 Environment。真实历史 resolver
+  fixture 验证 `codex` / `codex-local` 身份不被改写，当前配置错误与未来 revision 不走旧读取路径。
+- Mission 执行资源按持久权限模式取得 Runtime resolver，权限变化不改变 Runtime identity。缺失连接、
+  锁定钥匙串、迁移要求及 Runtime / 模型不可用保留机器错误和诊断，不改用其他模型。
+- 修复生产任务中发现的新建 Mission 接线：无事件的新分配任务可使用已解析的精确项目 Revision；后续
+  执行使用同一 Revision。旧 reservation、历史 Mission 和已有 Session 的证明 / pin 规则保持严格。
+- 编译错误映射新增模型连接错误与 Runtime 诊断。错误类使用独立叶子模块，源码子进程不再因连接 Store
+  与 Host barrel 的循环初始化而退出；真实 SIGKILL 恢复回归重新验证。
+- 保留既有 Memory Evidence 采集、持久入队与已有记忆召回。未增加 CLI 配置管理、Bundle 命令、Linux、
+  Memory Headless、凭据后端、Web 或 daemon。
+
+### 真实 Runtime 验收
+
+macOS Intel、Node 23.11.0、Electron 43.7.6；同一操作系统用户，隔离 home
+`/tmp/pragma399-acceptance/home`。真实 Electron Host 使用 Desktop 生产 application container 与真实
+IPC 导入 `real-task.pragma`，Installation `54c977ba-416e-4bd0-9fd7-2aff2fe9f83a` 为 `ready`，
+Project `studio@1`，Expert `expert:0000000000000400`。这条链路使用自动化隐藏窗口，未冒充人工 UI 操作。
+
+Electron PID 28215 已退出后，用实际构建的 npm CLI（`0.1.0-next.23`）执行：
+
+```bash
+PRAGMA_HOME=/tmp/pragma399-acceptance/home node apps/cli/dist/pragma.js \
+  expert run expert:0000000000000400 --project studio --revision 1 \
+  --workspace /tmp/pragma-399-real-workspace \
+  --prompt 'Compute 137 times 29. Return the product and one sentence of explanation. Do not call tools or modify files. End with PRAGMA399-REAL-20261019.' \
+  --interactive never --json
+
+PRAGMA_HOME=/tmp/pragma399-acceptance/home node apps/cli/dist/pragma.js \
+  mission get 63af2b67-de59-47f7-8900-accf2d853377 --view result --json
+```
+
+- Runtime `codex`、provider `openai`、模型 `gpt-5.6-sol`、Harness 原生认证；不是受控模型服务。
+- Mission `63af2b67-de59-47f7-8900-accf2d853377`，Execution
+  `e84567aa-3bc3-4383-9fac-6137f1b24320`；run 与独立结果查询均为 `succeeded`，返回 `3973` 和
+  `PRAGMA399-REAL-20261019`，实际报告 15956 tokens。
+- 持久 Session 根 Context 保存 `codex@1`，fingerprint
+  `30e4a83b0810584ab267572e34d2766ff06db4f6624711dd8c3fb3e8a9e56955`，模型仍为
+  `openai/gpt-5.6-sol`，未替换身份。原生 Codex rollout 的 `turn_context` 同时确认
+  `model=gpt-5.6-sol`、`approval_policy=on-request`、`sandbox_policy.type=workspace-write`。
+- 另以固定构建产物副本和 `--wait-timeout 120` 验证真实 owner Worker：Mission
+  `f668b354-6f1d-489e-9614-7d03bc282a36`、Execution
+  `74e0ab79-35c1-4362-8c92-636d629ce1f1` 返回 `PRAGMA399-WORKER-OK` / `succeeded`。
+  该固定副本 `cli.js` SHA-256 为 `a4f87b57b37fc704189509d28d6c0fed5bf95eaf6a345ae91ff0abbf024fd0bb`。
+
+**收尾提交 `8e775bef` 构建产物的追加验收：** `cli-closeout-artifact/cli.js` SHA-256
+`cf2aea73df12c145a843116fc021bd892a76b6cbc61a0af10113d1aa6384eafe`，与该次构建的
+`apps/cli/dist/cli.js` 一致。
+
+- 不传 `--project` / `--revision`，使用 `--wait-timeout 120 --interactive never --json`，Mission
+  `c8a95cfc-024e-4967-8a30-c8b8cf4f25df`、Execution `687db454-5f71-43ca-9dfd-59bfdf522bbe`
+  返回 `3973` / `PRAGMA399-CLOSEOUT-OK`；独立 `mission get --view result` 查询同样成功。
+- 继续早先的 `63af2b67-de59-47f7-8900-accf2d853377`，返回 `PRAGMA399-CONTINUED-OK`；根 Context
+  `5bd0312b-aed7-4e52-b077-76b49ba9ac59`、Environment binding 与模型选择不变，Native 记录为
+  `thread_resume` / `restored: true`。
+- 用修改前的真实 CLI 产物（静态 Runtime composition，SHA-256
+  `472b7f44677768cd1ec0cdd32b278df1e461cc3726a610cb43fa21c5813a54f9`）创建 Mission
+  `f960f853-b47c-4b97-b09e-ade392c1fedd`，成功返回 `PRAGMA399-LEGACY-CREATED`。再由最终 CLI
+  `mission send --wait` 继续，Execution `e92267b4-4dc5-4031-9b0e-fd2807e66dd8` 返回
+  `PRAGMA399-LEGACY-RESTORED`，独立结果查询成功。根 Context
+  `77b87d29-d7be-48a2-b590-9acf3ed0a5c3` 的原静态 fingerprint
+  `fc5a9a7360fa40064b7db50bb33999ab44d7af37703bbbe515c0e60444f6bac6`、`codex` binding 和
+  `openai/gpt-5.6-sol` 不变；Native adapter 仍为 `codex-local`，原 systemSessionId
+  `dbcfbae3-b7a1-47f7-bead-8fcdc863a3be` 得到恢复，没有热迁移或重建身份。
+
+原始验收记录、CLI 输出和临时 home 位于仓库外 `/tmp/pragma399-acceptance/`，不提交凭据或生成文件。
+首次并行构建期间的产物读取失败不计为通过；后续使用固定副本完成 Worker 验收。
+
+### 工程验证与限制
+
+工程测试和真实 Runtime 验收分开记录。本轮最终结果：
+
+| 验证                                                | 结果                                                                                                                                  |
+| --------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------- |
+| `pnpm lint`、`pnpm typecheck`、`pnpm build`         | 最后一轮各 19/19 任务通过，包含静态旧绑定读取；main 无外部 workspace import、preload 自包含、随包 CLI 与 storage Worker 验证通过      |
+| `pnpm test:local-host-kernel`                       | Core 文件锁 22/22；Host 111 个文件、1095 通过、1 项条件跳过，Host 阶段 709.48 秒                                                      |
+| `pnpm --filter @pqpo/pragma test:adapters:prepared` | 最后一轮 22 个文件、167/167 通过，包含历史静态绑定、未来 revision / fingerprint 拒绝和当前模型错误不走旧读取路径                      |
+| CLI 生产配置 / owner Worker / 原生 SecretStore      | 最后单独补跑 1/1 通过；真实临时持久存储、原生钥匙串、受控 HTTP 服务，覆盖成功、独立结果查询、删除 SecretRef、删除连接及凭据不进入输出 |
+| Desktop 接线                                        | Runtime Environment service/store 与模型 IPC 26/26，进程环境 / login shell 9/9，通过                                                  |
+| 新建 / 恢复相关补跑                                 | run / core-run / Node composition / shared configuration 33/33；真实 SIGKILL 安装恢复 2/2；执行内核 25/25                             |
+| `pnpm test:core`                                    | 4/4 任务通过，27.20 秒                                                                                                                |
+
+旧静态绑定的 resolve-only 读取另行通过 CLI 全量 adapter、生产入口 / Worker、历史 writer fixture
+与真实旧版 Session 恢复验收；未改变 Mission 持久化、队列或恢复内核。早期构建与
+产物测试并行造成的临时失败不计入上述通过结果；后续固定构建产物后完成验收。新增错误映射导致的
+源码循环初始化也已修复，并通过真实 SIGKILL 子进程恢复回归。
+
+全量共享门禁仍超过历史八分钟性能目标，本轮没有扩展为性能优化或 CI 冷 / 暖缓存验收。原生钥匙串
+独立平台专项仍按既有门禁规则排除；本轮新增生产 CLI 用例实际使用了 macOS 原生钥匙串测试凭据。
+
+受控 HTTP 模型服务 + 实际 CLI/owner Worker 验证 PI 使用保存的自定义 Environment、精确模型、原生
+SecretStore 凭据和独立 Mission 查询；验证认证 canary 不进入 stdout/stderr，删除连接后不再发送请求，
+准确返回依赖 / Runtime 诊断。这是工程集成测试，不是实际 PI 模型验收。
+
+当前 Node CLI 的内置 Pragma 仍缺少管理资源端口，会报告依赖不可用；本轮真实任务使用 Desktop
+导入的 Expert，没有扩展这些管理端口。
+
+真实 PI / 模型连接验收未完成：本机历史模型连接存在待恢复的 Electron credential migration，历史
+safeStorage 读取未能在无人值守下完成；没有绕过钥匙串、复制明文凭据或更换后端。Windows、Apple Silicon、
+真实 Team/Flow、人工 Desktop UI、独立安装 tarball 及所有 Harness 组合未在本轮真实环境验收。
+Linux 与 Memory Headless 仍为暂缓项，不能将此轮结果用于声称原始 Linux 独立部署目标完成。
+
+### 收尾提交的追加 CR 与修复（2026-10-19）
+
+人工逐项审查 `8e775bef` 的配置、Mission 提交、编译错误、Desktop 接线及历史 Session 恢复改动，
+确认并修复两项问题：
+
+- P2：旧 CLI Session 的恢复 resolver 固定采用 `request-approval`，且永久缓存初次读取的环境变量
+  策略。现在按 Mission 权限模式分别缓存，并在策略版本改变后重建 adapter；恢复继续校验真实历史
+  descriptor / catalog fingerprint，不改写 Runtime binding。回归覆盖 `full-access`、恢复默认权限、
+  显式允许变量与后续 blocklist 收紧。
+- P2：新 Runtime 的缓存键与 adapter 构造分别读取策略，跨进程更新可能使 adapter 缓存到错误策略
+  版本下。现在通过 factory `prepare` 捕获同一策略快照，缓存键和构造闭包共同使用它。回归模拟
+  连续读取间策略变化，验证首次过滤、下次允许及相同版本缓存复用。
+
+新增回归在原提交上复现为 2 项失败，在修复后为 3/3 通过。未发现其他已确认而未修复的问题；
+本次 CR 不改变上文的真实平台、模型和安装验收限制。
+
+修复后重新运行全仓 `pnpm lint`、`pnpm typecheck`、`pnpm build`，均为 19/19 任务通过；
+CLI 全量 adapter 为 22 文件、168/168 通过；生产 CLI / owner Worker / 原生 SecretStore 配置
+集成为 1/1 通过。此次只改 CLI composition，未改共享 Mission 内核；上文完整内核门禁未重复运行。
+
+CR 后固定 CLI 产物 `cli-cr-artifact/cli.js` SHA-256 为
+`d8b93aa2db1e89e56e54786f1bbe9866e4e61192512dce1e6c416f4e75778de3`。
+用它继续同一旧 Mission `f960f853-b47c-4b97-b09e-ade392c1fedd`，Execution
+`6efba6c9-71c3-4e72-8bb3-d0e9fc76aa7f` 成功返回 `PRAGMA399-CR-RESTORED-OK`，独立
+`mission get --view result` 同样成功。持久 Session、根 Context、原静态 fingerprint 及
+`openai/gpt-5.6-sol` 均与上文旧版恢复验收一致。记录为仓库外 `cli-cr-legacy.json` 与
+`cli-cr-legacy-result.json`。固定副本首次未链接原生依赖目录的启动失败未计入通过结果；
+补齐与此前验收一致的 `node_modules` 链接后完成以上验收，未改变源码或凭据。
+
+### PR #409 全量评论复核（2026-10-20）
+
+读取两条普通评论、一份审核正文与全部行内评论；维护者意见共 3 个 P2 和 1 个 P3，
+其中崩溃窗口问题与自动审核行内意见重复。四项均经代码和回归确认成立并修复：
+
+- 创建事件已写入而 pin 未写入的重试，使用规范化后的精确 project/revision；回归覆盖
+  无显式 project/revision、重新打开持久 controller、同 requestId 重放仅一次 Execution，
+  并验证解析到不同 revision 时仍拒绝幂等冲突。
+- 历史 RuntimeProfile 的 `codex-local` 新 Mission 使用共享 Environment 的 canonical binding，
+  不启用静态新绑定。别名只在持久 ID 不存在时生效；显式注册的同名配置优先，删除后明确失败。
+  回归通过真实发布/编译/Mission/持久 Session 边界检查 `codex` binding，CLI composition 也有接线断言。
+- Desktop/CLI 共用原设置存储及历史迁移，PI 读取相同 `agentContextWindow`；预算参与 preparation
+  快照和缓存键。CLI 回归验证 32K→64K 更新、缓存刷新以及原 binding 不变。Desktop 保留 UI/locale
+  转换；不改存储版本、文件、锁、journal 与备份语义。
+- stop-only 路径使用 Mission 权限对应的 resolver；覆盖 request-approval/full-access 持久模式，
+  并验证不触碰工具、Memory 或挂载准备。另在真实子进程 SIGKILL 后恢复/停止 Flow，验证不重发
+  Native Invocation，即使当前工具资源已删除仍可停止。
+
+修复前针对性回归复现崩溃重试、历史 ID 新绑定、PI 预算和停止权限选择失败；修复后分别验证。
+此前真实模型验收记录仍有效，但不将本轮工程测试表述为新增 PI/Windows/ARM64 真实验收。
+
+本轮 `pnpm check` 整体通过（lint/typecheck 各 19/19、Core 测试 4/4 任务）；`pnpm build`
+19/19 通过。Desktop 设置历史 fixture、升级恢复、未来版本拒绝、Runtime 和协议回归合计
+5 文件、103/103 通过；崩溃窗口、历史 ID 与停止资源针对性回归 20/20 通过，CLI 配置回归
+4/4 通过。完整共享内核门禁在本轮重新执行，最终计数与远程 CI 结果见 PR #409 最新验证记录。
+
+本轮固定 CLI `cli-pr409-comment-fixes/cli.js` SHA-256 为
+`269f2631eb47adcca0a1ab54676b111cffdc30ecc2113de6e4aa7b17054ee7a0`。
+同一旧 Mission 的 Execution `00daed20-23b5-447a-82c5-105149e07081` 成功返回
+`PRAGMA409-COMMENTS-OK`，独立查询成功；原 Session、根 Context、静态 fingerprint 与
+`openai/gpt-5.6-sol` 均保持不变。记录为仓库外 `cli-pr409-comments.json` 与
+`cli-pr409-comments-result.json`；没有新增真实 PI 或其他平台验收声明。
