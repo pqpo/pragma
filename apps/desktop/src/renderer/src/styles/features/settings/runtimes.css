@@ -5,8 +5,8 @@
   height: 40px;
   place-items: center;
   border-radius: 7px;
-  background: #eef1ed;
-  color: #56625b;
+  background: var(--ui-surface-subtle);
+  color: var(--ui-text-secondary);
 }
 
 .card-title-group h3,
@@ -30,9 +30,9 @@
   gap: 15px;
   margin-top: 30px;
   padding: 20px 22px;
-  border: 1px solid #c4d2c9;
+  border: 1px solid var(--ui-line-strong);
   border-radius: 13px;
-  background: #f2f6f2;
+  background: var(--ui-surface-subtle);
 }
 
 .device-summary p {
@@ -57,21 +57,21 @@
 }
 
 .runtime-icon {
-  color: #50695d;
+  color: var(--ui-text-secondary);
 }
 
 .status-badge {
   padding: 5px 9px;
   border-radius: 999px;
-  background: #eef0ee;
-  color: #7c847f;
+  background: var(--ui-surface-subtle);
+  color: var(--ui-text-secondary);
   font-size: 11px;
   font-weight: 670;
 }
 
 .status-badge.is-ready {
   background: #e5eee8;
-  color: var(--green-dark);
+  color: var(--ui-success);
 }
 
 .status-badge.is-probing {
@@ -80,8 +80,8 @@
   gap: 5px;
   padding: 5px 9px;
   border-radius: 999px;
-  background: #f0f2f0;
-  color: #7c847f;
+  background: var(--ui-surface-subtle);
+  color: var(--ui-text-secondary);
   font-size: 11px;
   font-weight: 670;
 }
@@ -95,8 +95,8 @@
   padding: 5px 10px;
   border: 0;
   border-radius: 999px;
-  background: #eef0ee;
-  color: #7c847f;
+  background: var(--ui-surface-subtle);
+  color: var(--ui-text-secondary);
   font-size: 11px;
   font-weight: 670;
   cursor: pointer;
@@ -107,17 +107,17 @@
 
 .status-badge-button.is-ready {
   background: #e5eee8;
-  color: var(--green-dark);
+  color: var(--ui-success);
 }
 
 .status-badge-button:hover {
-  background: #e0e4e1;
-  color: var(--fg-default, #222);
+  background: var(--ui-surface-subtle);
+  color: var(--ui-text);
 }
 
 .status-badge-button.is-ready:hover {
   background: #d4e5d9;
-  color: var(--green-dark);
+  color: var(--ui-success);
 }
 
 .status-badge-button .badge-hover-action {
@@ -151,10 +151,10 @@
   gap: 18px;
   margin-top: 17px;
   padding: 13px 14px;
-  border: 1px solid #d8ddd9;
+  border: 1px solid var(--ui-line);
   border-radius: 7px;
   background: var(--surface-soft);
-  color: #707a73;
+  color: var(--ui-text-secondary);
 }
 
 .runtime-command > div {
@@ -163,7 +163,7 @@
 }
 
 .runtime-command span {
-  color: #7a837d;
+  color: var(--ui-text-secondary);
   font-size: 10px;
   font-weight: 700;
   letter-spacing: 0.1em;
@@ -171,13 +171,13 @@
 }
 
 .runtime-command code {
-  color: #343b36;
+  color: var(--ui-text);
   font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
   font-size: 12px;
 }
 
 .runtime-version {
-  color: #667068 !important;
+  color: var(--ui-text-secondary) !important;
   text-align: right;
 }
 
@@ -229,7 +229,7 @@
 }
 
 .runtime-summary-card:focus-within {
-  border-color: var(--green);
+  border-color: var(--ui-accent);
   outline: 0;
   box-shadow: 0 0 0 3px var(--focus-ring);
 }
@@ -280,8 +280,8 @@
   height: 58px;
   place-items: center;
   border-radius: 14px;
-  background: var(--green-soft);
-  color: var(--green-dark);
+  background: var(--ui-selection);
+  color: var(--ui-accent-strong);
 }
 
 .runtime-detail-logo {
@@ -364,16 +364,16 @@
   width: 8px;
   height: 8px;
   border-radius: 50%;
-  background: #b7beb9;
+  background: var(--ui-control-disabled);
 }
 
 .runtime-detail-status.is-active {
-  color: var(--green-dark);
+  color: var(--ui-success);
 }
 
 .runtime-detail-status.is-active i {
-  background: var(--lime);
-  box-shadow: 0 0 0 3px rgb(184 226 62 / 17%);
+  background: var(--ui-success);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--ui-success) 17%, transparent);
 }
 
 .runtime-detail-diagnostic {
@@ -419,8 +419,8 @@
   place-items: center;
   padding: 0 8px;
   border-radius: 999px;
-  background: var(--green-soft);
-  color: var(--green-dark);
+  background: var(--ui-selection);
+  color: var(--ui-accent-strong);
   font-size: 12px;
   font-weight: 680;
 }
@@ -429,7 +429,7 @@
   overflow: hidden;
   border: 1px solid var(--border);
   border-radius: var(--radius-card);
-  background: #fff;
+  background: var(--ui-surface);
   box-shadow: var(--shadow-soft);
 }
 
@@ -501,8 +501,8 @@
 .device-icon,
 .runtime-icon {
   border-radius: var(--ui-radius-md);
-  background: var(--green-soft);
-  color: var(--green-dark);
+  background: var(--ui-selection);
+  color: var(--ui-accent-strong);
 }
 
 .static-field input,
@@ -520,7 +520,7 @@
 .device-summary {
   border-color: transparent;
   border-radius: var(--radius-card);
-  background: var(--green-soft);
+  background: var(--ui-selection);
 }
 
 .runtime-command {

@@ -446,8 +446,8 @@
   height: 64px;
   place-items: center;
   border-radius: var(--ui-radius-lg);
-  background: var(--green-soft);
-  color: var(--green-dark);
+  background: var(--ui-selection);
+  color: var(--ui-accent-strong);
 }
 
 .automation-detail-title {

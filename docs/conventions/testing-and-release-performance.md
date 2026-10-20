@@ -34,6 +34,8 @@
 
 Turbo 缓存包含上述完整副产物，按 OS/arch/Node/pnpm/lockfile 隔离；不共享 node_modules、原生依赖或整机钥匙串。Desktop 构建散列包含 source commit，因为内置 CLI 的 distribution.json 记录提交。根 `pnpm build` 自动提供该值。
 
+Desktop 开发模式允许从不含 Git 元数据的源码目录启动，此时内置 CLI 的 distribution.json 中 sourceCommit 为 null；正式构建与发行仍要求有效 Git HEAD，不允许缺失来源提交。
+
 Release 只接受本仓库 push main 的同 SHA 最新成功 CI 与验证 receipt，缺失时调用共享验证；已有运行未完成时等最多三十分钟，失败/取消直接阻止发布。产物过期时重建与验证。Desktop 在原生主机重新生成安装包、平台审计与许可证资料；CLI 发布前仍执行平台矩阵，发布后仍检查 Registry 完整性、公开安装与 provenance。
 
 ## 测量与验收

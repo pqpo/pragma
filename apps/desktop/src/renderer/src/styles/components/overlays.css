@@ -5,7 +5,7 @@
   display: grid;
   place-items: center;
   padding: 24px;
-  background: rgb(29 33 31 / 36%);
+  background: rgb(var(--ui-shadow-rgb) / 36%);
 }
 
 .ui-dialog {

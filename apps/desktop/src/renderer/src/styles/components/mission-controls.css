@@ -238,12 +238,12 @@
   padding: 10px 14px;
   border: 1px solid transparent;
   border-radius: 12px;
-  background: rgb(255 255 255 / 64%);
+  background: color-mix(in srgb, var(--ui-surface) 64%, transparent);
 }
 
 .mission-model-overrides label:focus-within {
-  border-color: rgb(88 121 104 / 28%);
-  background: #fff;
+  border-color: color-mix(in srgb, var(--ui-accent) 28%, transparent);
+  background: var(--ui-surface);
   box-shadow: 0 0 0 3px var(--focus-ring);
 }
 
@@ -413,7 +413,7 @@
 
 .mission-attachment-thumbnail:hover,
 .mission-attachment-thumbnail:focus-visible {
-  border-color: var(--green);
+  border-color: var(--ui-accent);
   box-shadow: 0 0 0 3px var(--ui-focus);
 }
 
@@ -432,10 +432,10 @@
   height: 18px;
   place-items: center;
   padding: 0;
-  border: 1px solid rgb(255 255 255 / 75%);
+  border: 1px solid color-mix(in srgb, var(--ui-surface) 75%, transparent);
   border-radius: 50%;
-  background: rgb(25 31 28 / 72%);
-  color: #fff;
+  background: rgb(var(--ui-shadow-rgb) / 72%);
+  color: var(--ui-surface);
   cursor: pointer;
   opacity: 0;
   visibility: hidden;

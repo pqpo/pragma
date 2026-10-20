@@ -19,7 +19,7 @@ Pragma 是长时间使用的 Agent 工作台，不是营销网站，也不是组
 
 保留现有产品辨识度：
 
-- 灰白画布、浅灰绿导航、石墨色文字和鼠尾草绿强调色。
+- 纯白画布、两阶中性灰导航、石墨色文字和蓝色主操作。
 - 左侧应用导航，以及 Home、Missions、Studio、Evaluations、Usage、Settings 的现有信息架构。
 - Home 的单一 Mission composer、目录/详情分栏、Flow canvas 等已经形成产品心智的结构。
 
@@ -93,26 +93,32 @@ Pragma 是长时间使用的 Agent 工作台，不是营销网站，也不是组
 
 ### 4.1 颜色
 
-| Token                 | 值                      | 用途                           |
-| --------------------- | ----------------------- | ------------------------------ |
-| `--ui-canvas`         | `#f8f9fb`               | 应用主画布                     |
-| `--ui-rail`           | `#f1f3f2`               | 应用导航和固定侧栏             |
-| `--ui-surface`        | `#ffffff`               | 输入区、独立对象、浮层         |
-| `--ui-surface-subtle` | `#f5f7f6`               | hover、轻量分区                |
-| `--ui-selection`      | `#e9f0ec`               | 选中态，不表示成功             |
-| `--ui-text`           | `#1d211f`               | 标题和正文                     |
-| `--ui-text-secondary` | `#67706a`               | 描述、元数据                   |
-| `--ui-text-disabled`  | `#919994`               | 禁用或非信息性装饰，不用于正文 |
-| `--ui-line`           | `#e4e8e5`               | 普通分隔                       |
-| `--ui-line-strong`    | `#d8ded9`               | 输入边界、浮层边界             |
-| `--ui-accent`         | `#587968`               | 主操作、交互强调               |
-| `--ui-accent-strong`  | `#456454`               | hover、文字链接、强调文本      |
-| `--ui-danger`         | `#9d3f34`               | 错误和破坏性操作               |
-| `--ui-danger-subtle`  | `#fff8f7`               | 错误背景                       |
-| `--ui-focus`          | `rgb(88 121 104 / 20%)` | 焦点外环                       |
+| Token                   | 值                      | 用途                                                     |
+| ----------------------- | ----------------------- | -------------------------------------------------------- |
+| `--ui-canvas`           | `#ffffff`               | 主体画布                                                 |
+| `--ui-rail`             | `#f6f6f6`               | 一级应用导航                                             |
+| `--ui-rail-secondary`   | `#fcfcfc`               | Missions、Studio、Evaluations、Memory、Settings 二级导航 |
+| `--ui-surface`          | `#ffffff`               | 输入区、独立对象、浮层                                   |
+| `--ui-surface-subtle`   | `#f6f6f6`               | hover、轻量分区                                          |
+| `--ui-selection`        | `#fefefe`               | 选中态，不表示成功                                       |
+| `--ui-text`             | `#262626`               | 标题和正文                                               |
+| `--ui-text-secondary`   | `#686868`               | 描述、元数据                                             |
+| `--ui-navigation-text`  | `#454545`               | 普通导航文字                                             |
+| `--ui-text-disabled`    | `#8d8d8d`               | 禁用或非信息性装饰，不用于正文                           |
+| `--ui-line`             | `#e5e5e5`               | 普通分隔                                                 |
+| `--ui-line-strong`      | `#d9d9d9`               | 输入边界、浮层边界                                       |
+| `--ui-accent`           | `#4f82ef`               | 发送、新建、Switch 开启等主操作和激活状态                |
+| `--ui-accent-strong`    | `#366bd8`               | hover、文字链接、强调文本                                |
+| `--ui-control-disabled` | `#cccccc`               | 禁用控件、关闭的 Switch 和滑轨                           |
+| `--ui-success`          | `#34704a`               | 成功、可用状态，与主题主色独立                           |
+| `--ui-success-subtle`   | `#eef6f1`               | 成功状态的浅色背景                                       |
+| `--ui-danger`           | `#9d3f34`               | 错误和破坏性操作                                         |
+| `--ui-danger-subtle`    | `#fff8f7`               | 错误背景                                                 |
+| `--ui-focus`            | `rgb(79 130 239 / 20%)` | 焦点外环                                                 |
 
-现有 `--background`、`--sidebar`、`--surface`、`--text`、`--muted`、`--green` 等 token 可以在迁移期
-作为别名保留。不要在一个改动中机械替换全文件。
+现有 `--background`、`--sidebar`、`--surface`、`--text`、`--muted` 等 token 是对应语义 token 的别名。
+主题色统一引用语义 token，不再使用以绿色命名的旧主题别名。成功、警告、错误、品牌和有语义的数据分类
+不随主操作蓝一起变色。
 
 颜色使用规则：
 
@@ -216,7 +222,7 @@ border: 1px solid var(--ui-line-strong);
 
 ```css
 box-shadow: 0 0 0 3px var(--ui-focus);
-box-shadow: 0 16px 40px rgb(20 31 25 / 12%);
+box-shadow: var(--ui-shadow-overlay);
 ```
 
 - 列表只在相邻行之间放分割线，不同时包外框。
@@ -250,7 +256,7 @@ box-shadow: 0 16px 40px rgb(20 31 25 / 12%);
 ### 5.3 Missions / Studio / Evaluations 目录页
 
 - 使用“目录栏 + 工作区”平面分栏。外层可以有一条边界，但内部列表不再逐项卡片化。
-- Missions、Studio、Evaluations、Settings 等固定二级导航统一使用 `--ui-rail`，相邻内容区使用 `--ui-canvas`；
+- Missions、Studio、Evaluations、Memory、Settings 等固定二级导航统一使用 `--ui-rail-secondary`，相邻内容区使用 `--ui-canvas`；
   背景色差已经表达分栏时，不再增加结构分割线或阴影。
 - 目录页的二级导航和内容工作区直接落在对应背景层上，不再套白色容器、面板边框或圆角卡片。
 - 固定二级导航项从顶部按紧凑行高依次排列，不随侧栏或窗口高度拉伸、平均分布；列表下方空间保持留白。

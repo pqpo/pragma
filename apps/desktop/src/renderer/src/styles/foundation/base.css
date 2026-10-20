@@ -60,7 +60,7 @@ p {
 /* Desktop visual-system migration layer. Keep touched selectors authoritative here. */
 
 ::selection {
-  background: rgb(68 90 79 / 18%);
+  background: color-mix(in srgb, var(--ui-accent) 18%, transparent);
 }
 
 button,

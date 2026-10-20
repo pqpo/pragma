@@ -30,6 +30,7 @@ export default defineConfig(({ command }) => ({
             throw new Error("Desktop main output directory is missing.");
           await buildDesktopCli(output.dir, {
             minify: command === "build" && process.env.PRAGMA_BUILD_MINIFY !== "0",
+            development: command === "serve",
           });
           // A self-contained worker requires only this file outside ASAR, without
           // changing the packaging policy for main or its shared chunks.

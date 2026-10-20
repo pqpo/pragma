@@ -40,8 +40,8 @@ export function createDesktopWindowManager(logger: PragmaLogger): DesktopWindowM
         ? { trafficLightPosition: { x: 18, y: 18 } }
         : {
             titleBarOverlay: {
-              color: "#f1f3f2",
-              symbolColor: "#67706a",
+              color: "#ffffff",
+              symbolColor: "#686868",
               height: 36,
             },
           }),

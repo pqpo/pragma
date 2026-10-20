@@ -161,7 +161,7 @@
   flex-direction: column;
   min-height: 0;
   padding: 16px 12px;
-  background: var(--ui-rail);
+  background: var(--ui-rail-secondary);
 }
 
 .asset-git-files-heading {
@@ -453,7 +453,7 @@
 
 .asset-git-code-editor .cm-panels {
   border: 0;
-  background: var(--ui-rail);
+  background: var(--ui-rail-secondary);
   color: var(--ui-text);
 }
 

@@ -80,7 +80,7 @@
 }
 
 .bundle-source-card small {
-  color: var(--ui-text-tertiary);
+  color: var(--ui-text-secondary);
 }
 
 .bundle-source-title,

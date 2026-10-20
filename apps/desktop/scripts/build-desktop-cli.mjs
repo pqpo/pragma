@@ -6,17 +6,31 @@ import { buildCliBundles } from "../../cli/scripts/build-bundles.mjs";
 
 export { RUNTIME_RESOURCE_EXTERNALS } from "../../cli/scripts/build-bundles.mjs";
 
-export async function buildDesktopCli(mainDirectory, { minify = true } = {}) {
+export function resolveDesktopSourceCommit(repositoryDirectory, { development = false } = {}) {
+  try {
+    return execFileSync("git", ["rev-parse", "HEAD"], {
+      cwd: repositoryDirectory,
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "pipe"],
+    }).trim();
+  } catch (cause) {
+    // Source archives have no Git metadata. Only development may omit provenance.
+    if (development) return null;
+    throw new Error("Desktop builds require a Git checkout with a valid HEAD.", { cause });
+  }
+}
+
+export async function buildDesktopCli(mainDirectory, { minify = true, development = false } = {}) {
   const cliPackage = JSON.parse(
     await readFile(new URL("../../cli/package.json", import.meta.url), "utf8"),
   );
   const desktopPackage = JSON.parse(
     await readFile(new URL("../package.json", import.meta.url), "utf8"),
   );
-  const sourceCommit = execFileSync("git", ["rev-parse", "HEAD"], {
-    cwd: fileURLToPath(new URL("../../../", import.meta.url)),
-    encoding: "utf8",
-  }).trim();
+  const sourceCommit = resolveDesktopSourceCommit(
+    fileURLToPath(new URL("../../../", import.meta.url)),
+    { development },
+  );
   const directory = join(mainDirectory, "desktop-cli");
   const bundles = await buildCliBundles({
     outputDirectory: directory,

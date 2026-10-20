@@ -64,7 +64,7 @@
 }
 
 .knowledge-sync-card small {
-  color: var(--ui-text-tertiary);
+  color: var(--ui-text-secondary);
 }
 
 @keyframes skill-sync-spin {
