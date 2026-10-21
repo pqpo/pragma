@@ -264,6 +264,10 @@ describe("DesktopSystemExpertRegistry", () => {
       resourceTools: [],
     });
     expect(customized).toMatchObject({ name: "Knowledge Editor", customized: true });
+    const instructions = registry.getResource(STORE_REVISION_EXPERT_REF)?.spec.instructions;
+    expect(instructions).toContain(original.instructions);
+    expect(instructions).toContain("character-for-character");
+    expect(instructions).toContain("Prefer short topic files.");
     expect(customized.opaqueCapabilities).toEqual(original.opaqueCapabilities);
     expect(registry.getResource(STORE_REVISION_EXPERT_REF)?.spec.capabilities).toEqual(
       expect.arrayContaining([expect.objectContaining({ ref: "capability:0000000000manage" })]),

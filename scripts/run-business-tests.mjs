@@ -61,6 +61,7 @@ async function vitest(pkg, files, extra = [], label = pkg) {
 if (!prepared) await run(["build"], "prepare");
 if (lane !== "desktop") {
   await vitest("@pragma/core", [
+    "test/context-tools.test.ts",
     "test/file-lock.test.ts",
     "test/runtime-stream-controller.test.ts",
     "test/bundle-installation-state-migration.test.ts",

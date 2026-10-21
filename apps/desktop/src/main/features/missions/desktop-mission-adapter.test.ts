@@ -2487,6 +2487,15 @@ describe("Desktop Mission resource adapter contracts", { timeout: 30_000 }, () =
         draftsPath: join(root, "drafts"),
         contextStores,
         generator: { generate },
+        onRevisionDetached: async ({ missionId, storeId, draftId, jobId }) => {
+          await missions.restoreManagedRevisionStore({
+            id: missionId,
+            storeId,
+            draftId,
+            revisionJobId: jobId,
+            preserveSession: true,
+          });
+        },
       });
       const realSmoke = process.env["PRAGMA_REVISION_REAL_SMOKE"] === "1";
       const preparedContent = "# Tracking\nPackage tracking instructions prepared by the caller.\n";
@@ -2505,6 +2514,7 @@ describe("Desktop Mission resource adapter contracts", { timeout: 30_000 }, () =
       let draftId: string | undefined;
       let teammateContextId: string | undefined;
       let reworkRound = 0;
+      let afterMerge = false;
 
       const fakeRuntime = defineRuntimeTestDriver<never, { context: RuntimeNativeSessionContext }>({
         descriptor: { id: "fake", kind: "fake", displayName: "Fake" },
@@ -2551,9 +2561,13 @@ describe("Desktop Mission resource adapter contracts", { timeout: 30_000 }, () =
               contextId: string;
             };
             teammateContextId ??= contextId;
-            await tools
+            const waited = await tools
               .find((tool) => tool.name === "wait_experts")!
               .call({ invocationIds: [invocationId] }, turn.signal, context);
+            expect(waited.details, waited.text).toMatchObject({
+              completed: [{ status: "succeeded" }],
+              pending: [],
+            });
             const read = session.context.agent
               .createDefaultTools()
               .find((tool) => tool.name === "read_expert_context")!;
@@ -2566,6 +2580,27 @@ describe("Desktop Mission resource adapter contracts", { timeout: 30_000 }, () =
               context,
             );
             expect(denied.isError).toBe(true);
+            if (afterMerge) {
+              expect(JSON.parse(denied.text)).toMatchObject({
+                error: { code: "permission_denied" },
+              });
+              const deniedWrite = await session.context.agent
+                .createDefaultTools()
+                .find((tool) => tool.name === "add_expert_context")!
+                .call(
+                  {
+                    namespace: activeMissionKnowledgeDraftNamespace(target.id),
+                    id: "items/forbidden.md",
+                    content: "Unauthorized",
+                  },
+                  turn.signal,
+                  context,
+                );
+              expect(deniedWrite.isError).toBe(true);
+              expect(JSON.parse(deniedWrite.text)).toMatchObject({
+                error: { code: "permission_denied" },
+              });
+            }
             return { outputText: "Delegated revision", runtimeSessionId: "runtime" };
           }
 
@@ -2615,14 +2650,145 @@ describe("Desktop Mission resource adapter contracts", { timeout: 30_000 }, () =
           expect(started.writableNamespace).toBe(activeMissionKnowledgeDraftNamespace(target.id));
           const replay = await call("knowledge_revision_start", startInput);
           expect(replay).toMatchObject({ jobId, draftId });
+          if (
+            !resuming &&
+            executorRef === "expert:0000000000pragma" &&
+            !cold &&
+            !delayedPublication
+          ) {
+            expect(session.context.agent.instructions).toContain("character-for-character");
+            const before = await revisions.getDraft(draftId);
+            const namespace = started.writableNamespace.replace(
+              /-[0-9a-f]{4}-([0-9a-f]{12})$/i,
+              "-$1",
+            );
+            expect(namespace).not.toBe(started.writableNamespace);
+            const defaults = session.context.agent.createDefaultTools();
+            const context = { execution: session.context.request.executionContext };
+            for (const [name, input] of [
+              ["list_expert_context", {}],
+              ["read_expert_context", { id: "items/tracking.md" }],
+              ["search_expert_context", { query: "Tracking" }],
+              ["add_expert_context", { id: "items/typo.md", content: "Must not be written" }],
+              [
+                "edit_expert_context",
+                { id: "items/tracking.md", mode: "replace", content: "Must not be written" },
+              ],
+              ["delete_expert_context", { id: "items/tracking.md" }],
+            ] as const) {
+              const failed = await defaults
+                .find((tool) => tool.name === name)!
+                .call({ ...input, namespace }, turn.signal, context);
+              expect(failed.isError, failed.text).toBe(true);
+              expect(JSON.parse(failed.text)).toMatchObject({
+                ok: false,
+                committed: false,
+                error: {
+                  code: "invalid_namespace",
+                  details: {
+                    namespace,
+                    expectedFormat: "mission-knowledge-draft:<UUID>",
+                    recoveryTools: [
+                      "knowledge_revision_list_drafts",
+                      "knowledge_revision_get_draft",
+                    ],
+                  },
+                },
+              });
+              expect(failed.text).toContain("writableNamespace");
+            }
+            expect(await revisions.getDraft(draftId)).toEqual(before);
+            const unavailable = await defaults
+              .find((tool) => tool.name === "read_expert_context")!
+              .call(
+                {
+                  namespace: activeMissionKnowledgeDraftNamespace(randomUUID()),
+                  id: "items/tracking.md",
+                },
+                turn.signal,
+                context,
+              );
+            expect(unavailable.isError).toBe(true);
+            expect(JSON.parse(unavailable.text)).toMatchObject({
+              error: { code: "store_unavailable" },
+            });
+            // Existing caller-safe behavior: a valid UUID without an active mount
+            // yields empty list/search results, never another draft's contents.
+            for (const name of ["list_expert_context", "search_expert_context"]) {
+              const empty = await defaults
+                .find((tool) => tool.name === name)!
+                .call(
+                  {
+                    namespace: activeMissionKnowledgeDraftNamespace(randomUUID()),
+                    ...(name === "search_expert_context" ? { query: "Tracking" } : {}),
+                  },
+                  turn.signal,
+                  context,
+                );
+              expect(empty.isError, empty.text).not.toBe(true);
+              expect(empty.text).toContain(
+                name === "list_expert_context"
+                  ? "Showing 0 of 0 Expert context items."
+                  : "No Expert context matches found.",
+              );
+            }
+            const corrected = await defaults
+              .find((tool) => tool.name === "list_expert_context")!
+              .call({ namespace: started.writableNamespace }, turn.signal, context);
+            expect(corrected.isError, corrected.text).not.toBe(true);
+          }
           const add = session.context.agent
             .createDefaultTools()
             .find((tool) => tool.name === "add_expert_context")!;
+          if (afterMerge) {
+            const defaults = session.context.agent.createDefaultTools();
+            const context = { execution: session.context.request.executionContext };
+            const currentDraft = await revisions.getDraft(draftId);
+            expect(currentDraft.baseRevision).toBe(
+              (await contextStores.getSnapshot(target.id)).revision,
+            );
+            expect(currentDraft.overlay.files).toEqual([]);
+            for (const [name, input] of [
+              ["list_expert_context", {}],
+              ["search_expert_context", { query: "Tracking" }],
+            ] as const) {
+              const result = await defaults
+                .find((tool) => tool.name === name)!
+                .call({ ...input, namespace: started.writableNamespace }, turn.signal, context);
+              expect(result.isError, result.text).not.toBe(true);
+              expect(result.text).toContain("items/tracking.md");
+            }
+            const read = await defaults
+              .find((tool) => tool.name === "read_expert_context")!
+              .call(
+                { namespace: started.writableNamespace, id: "items/tracking.md" },
+                turn.signal,
+                context,
+              );
+            expect(read.isError, read.text).not.toBe(true);
+            expect(read.text).toContain("Feedback 2");
+            const revision = read.text.match(/^\s*revision: (.+)$/m)?.[1];
+            expect(revision).toBeDefined();
+            const edited = await defaults
+              .find((tool) => tool.name === "edit_expert_context")!
+              .call(
+                {
+                  namespace: started.writableNamespace,
+                  id: "items/tracking.md",
+                  mode: "replace",
+                  content: `${preparedContent}After merge`,
+                  expectedRevision: revision,
+                },
+                turn.signal,
+                context,
+              );
+            expect(edited.isError, edited.text).not.toBe(true);
+          }
           if (!resuming) {
             const written = await add.call(
               {
                 namespace: started.writableNamespace,
-                id: "items/tracking.md",
+                id: afterMerge ? "items/after-merge.md" : "items/tracking.md",
                 content: preparedContent,
               },
               turn.signal,
@@ -2698,7 +2864,7 @@ describe("Desktop Mission resource adapter contracts", { timeout: 30_000 }, () =
             expect(denied.isError).toBe(true);
             expect(denied.text).toContain("another Runtime Context");
           }
-          if (!resuming && executorRef !== STORE_REVISION_EXPERT_REF) {
+          if (!resuming && !afterMerge && executorRef !== STORE_REVISION_EXPERT_REF) {
             return { outputText: "Draft saved for continuation", runtimeSessionId: "runtime" };
           }
           const inspection = (await call("knowledge_revision_get_draft", { draftId })) as {
@@ -2948,6 +3114,57 @@ describe("Desktop Mission resource adapter contracts", { timeout: 30_000 }, () =
           expect(
             await draft.store.readContext({ id: `items/rework-${reworkRound}.md` }),
           ).toMatchObject({ ok: true, value: { content: `Review feedback ${reworkRound}` } });
+        }
+        if (
+          !realSmoke &&
+          executorRef === "expert:0000000000pragma" &&
+          !cold &&
+          !delayedPublication
+        ) {
+          const pending = await revisions.get(job.id);
+          expect((await revisions.approve(pending.id, pending.revision)).state).toBe("merged");
+          const mergedSnapshot = await contextStores.getSnapshot(target.id);
+          expect((await missions.get(caller.id)).contextMounts).toEqual([
+            { kind: "context-store", storeId: target.id },
+          ]);
+          afterMerge = true;
+          reworkRound = 0;
+          jobId = undefined;
+          draftId = undefined;
+          await runner.sendMessage({
+            id: caller.id,
+            content: "Start another revision of the same Store after approval",
+            requestId: randomUUID(),
+          });
+          await vi.waitFor(
+            async () => {
+              const current = await missions.get(caller.id);
+              expect(current.execution?.status, current.execution?.error).toBe("succeeded");
+              expect(jobId).toBeDefined();
+              expect((await revisions.get(jobId!)).state).toBe("pending_review");
+            },
+            { timeout: 30_000, interval: 100 },
+          );
+          expect(jobId).not.toBe(job.id);
+          expect(draftId).not.toBe(job.draftId);
+          expect((await missions.get(caller.id)).execution?.sessionId).toBe(originalSessionId);
+          expect(teammateContextId).toBe(originalContextId);
+          expect(await readRevisionContexts()).toEqual(originalRevisionContexts);
+          expect(await missions.list()).toHaveLength(1);
+          expect(await revisions.list()).toHaveLength(2);
+          expect((await revisions.getDraft(job.draftId)).state).toBe("merged");
+          const nextDraft = await revisions.resolveDraft(draftId!);
+          expect(await nextDraft.store.readContext({ id: "items/tracking.md" })).toMatchObject({
+            ok: true,
+            value: { content: `${preparedContent}After merge` },
+          });
+          expect(await nextDraft.store.readContext({ id: "items/after-merge.md" })).toMatchObject({
+            ok: true,
+            value: { content: preparedContent },
+          });
+          expect((await contextStores.getSnapshot(target.id)).snapshotHash).toBe(
+            mergedSnapshot.snapshotHash,
+          );
         }
         await observedExecutions.close();
       }

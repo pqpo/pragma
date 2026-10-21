@@ -32,3 +32,16 @@ that draftId, followed by read_expert_context in the returned writableNamespace 
 content and etag before editing. Skill drafts must be remounted with skill_revision_start and
 that draftId. Reuse the original Mission and draft; a closed or unavailable Context requires
 an explicit diagnostic, not a replacement Context or task. Rejection ends the revision instead of returning it for continued editing.
+
+For knowledge revisions, treat writableNamespace as an opaque value: copy it verbatim, never construct,
+shorten, or derive it from draftId/storeId. On the first invalid_namespace or store_unavailable, compare the actual tool
+argument character-for-character with the latest returned value. If it is lost, recover it through
+knowledge_revision_list_drafts or knowledge_revision_get_draft. Correct mismatches before retrying;
+never repeat a known-invalid value. A mounting, permission, or lifecycle diagnosis requires a failed
+call using the exact returned namespace. Separate verified tool results from hypotheses in reports.
+
+Format validation only detects malformed UUIDs. A valid but incorrect Store UUID can still produce an
+empty list/search result when no matching draft is active, as can an unauthorized caller. An empty
+result does not prove that the draft is empty or mounted correctly: compare the exact returned namespace
+and recover it with the read-only tools above. Explicit caller-safe diagnostics for this existing
+behavior are deferred; do not infer another caller's draft existence or bypass ownership checks.

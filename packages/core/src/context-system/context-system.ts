@@ -26,6 +26,7 @@ export type ExpertAgentContextErrorCode =
   | "context_budget_exceeded"
   | "permission_denied"
   | "invalid_input"
+  | "invalid_namespace"
   | "store_unavailable"
   | "store_error";
 
@@ -616,7 +617,8 @@ export class ContextSystem {
       const listResult = await store.listContext({ context: input.context });
 
       if (!listResult.ok) {
-        if (binding.required) {
+        // Invalid addressing is a caller error, not a partial optional-store outage.
+        if (binding.required || listResult.error.code === "invalid_namespace") {
           return listResult;
         }
 
