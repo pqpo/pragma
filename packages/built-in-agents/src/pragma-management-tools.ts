@@ -965,25 +965,27 @@ function managementErrorResult(error: unknown, toolName: string): ExpertAgentToo
       ? error.code
       : parsedHostCode.success
         ? parsedHostCode.data
-        : hostCode === "invalid_state"
-          ? "unavailable"
-          : error instanceof z.ZodError
-            ? "invalid_input"
-            : rawMessage === "cursor_invalid" || rawMessage === "cursor_expired"
-              ? rawMessage
-              : rawMessage === "response_too_large"
-                ? "response_too_large"
-                : /stale|conflict/iu.test(rawMessage)
-                  ? "revision_conflict"
-                  : /not found|missing/iu.test(rawMessage)
-                    ? "not_found"
-                    : /permission|denied|not mounted/iu.test(rawMessage)
-                      ? "permission_denied"
-                      : /already.*attach/iu.test(rawMessage)
-                        ? "already_attached"
-                        : /unavailable/iu.test(rawMessage)
-                          ? "unavailable"
-                          : "internal_error";
+        : hostCode === "skill_revision_working_tree_changed"
+          ? "revision_conflict"
+          : hostCode === "invalid_state"
+            ? "unavailable"
+            : error instanceof z.ZodError
+              ? "invalid_input"
+              : rawMessage === "cursor_invalid" || rawMessage === "cursor_expired"
+                ? rawMessage
+                : rawMessage === "response_too_large"
+                  ? "response_too_large"
+                  : /stale|conflict/iu.test(rawMessage)
+                    ? "revision_conflict"
+                    : /not found|missing/iu.test(rawMessage)
+                      ? "not_found"
+                      : /permission|denied|not mounted/iu.test(rawMessage)
+                        ? "permission_denied"
+                        : /already.*attach/iu.test(rawMessage)
+                          ? "already_attached"
+                          : /unavailable/iu.test(rawMessage)
+                            ? "unavailable"
+                            : "internal_error";
   const payload = PragmaManagementErrorSchema.parse({
     schemaVersion: "pragma.management-error/v1",
     code,

@@ -7,6 +7,7 @@ import {
   readdir,
   rename,
   rm,
+  rmdir,
   stat,
   unlink,
   writeFile,
@@ -31,6 +32,7 @@ import {
   type SkillRevisionRequestV4,
 } from "@pragma/built-in-agents/contracts";
 import { SkillPackageSchema, type SkillPackage } from "@pragma/shared";
+import { readSkillFrontmatter } from "@pragma/local-host/deployment";
 import { z } from "zod";
 
 import {
@@ -75,6 +77,7 @@ import {
 import {
   prepareSkillRevisionWorkspace,
   resolveSkillRevisionDraftRootForRemoval,
+  retainSubmittedSkillRevisionWorkspace,
   resolveSkillRevisionWorkspacePath,
   skillRevisionWorkspacePaths,
 } from "./skill-revision-workspace.ts";
@@ -330,11 +333,11 @@ export function createSkillRevisionService(options: {
               journal = { ...journal, state: "committed" };
               await writeJsonAtomic(journalPath, journal);
             }
-            const removableDraftRoot = await resolveSkillRevisionDraftRootForRemoval(
+            await retainSubmittedSkillRevisionWorkspace(
               journal.workspacePath,
               journal.draftId,
+              journal.draftRevision,
             );
-            await rm(removableDraftRoot, { recursive: true, force: true });
             await writeJsonAtomic(journalPath, { ...journal, state: "completed" });
           } catch (error) {
             options.warn?.("Failed to recover a submitted Skill draft cleanup.", error);
@@ -373,10 +376,7 @@ export function createSkillRevisionService(options: {
       await writeJsonAtomic(journalPath, journal);
       submissionCleanupRecovery = undefined;
       try {
-        await rm(await resolveSkillRevisionDraftRootForRemoval(draft.workspacePath, draft.id), {
-          recursive: true,
-          force: true,
-        });
+        await retainSubmittedSkillRevisionWorkspace(draft.workspacePath, draft.id, draft.revision);
         await writeJsonAtomic(journalPath, { ...journal, state: "completed" });
       } catch (error) {
         submissionCleanupRecovery = undefined;
@@ -1232,6 +1232,9 @@ export function createSkillRevisionService(options: {
       if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
     }
     if (draft.revision < nextDraft.revision) {
+      // A stale native writer may have recreated the old path after cleanup.
+      // Keep those bytes before materializing the reviewed snapshot for rework.
+      await retainSubmittedSkillRevisionWorkspace(draft.workspacePath, draft.id, draft.revision);
       const prepared = await prepareSkillRevisionWorkspace(
         draft.workspacePath,
         draft.id,
@@ -1242,7 +1245,10 @@ export function createSkillRevisionService(options: {
         await copySkillTree(join(submissionsPath(draft.id), journal.submissionHash), replacement);
         if ((await scanSkillWorkingTree(replacement)).hash !== journal.submissionHash)
           throw coded("skill_revision_rework_conflict");
-        await rm(prepared.worktreePath, { recursive: true, force: true });
+        // Remove only an empty placeholder. A newly written file makes this fail safely.
+        await rmdir(prepared.worktreePath).catch((error: unknown) => {
+          if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+        });
         await rename(replacement, prepared.worktreePath);
       } finally {
         await rm(replacement, { recursive: true, force: true }).catch(() => undefined);
@@ -1990,42 +1996,6 @@ export function createSkillRevisionService(options: {
           return await requireRebaseForChangedBase(job, draft);
         }
       }
-      const candidateSnapshot = await readSkillPackage(
-        options.capabilities,
-        draft.capabilityId,
-        worktreePath(draft),
-        draft.operation === "create"
-          ? { name: draft.name, description: draft.resourceDescription! }
-          : undefined,
-        options.supportsExecutableBits ?? process.platform !== "win32",
-      );
-      const candidate = candidateSnapshot.package;
-      if (
-        draft.operation === "create" &&
-        (candidate.name !== draft.name || candidate.description !== draft.resourceDescription)
-      ) {
-        throw coded("skill_revision_metadata_mismatch");
-      }
-      const validation = validateSkillRevisionPackage(
-        candidate,
-        draft.operation,
-        job.request.source,
-        candidateSnapshot.executablePaths,
-        await unchangedLegacyExecutablePaths(
-          options.capabilities,
-          draft,
-          job.request.source,
-          candidate,
-          candidateSnapshot.entries,
-          options.supportsExecutableBits ?? process.platform !== "win32",
-        ),
-      );
-      if (!validation.passed) throw new SkillRevisionValidationError(validation);
-      const submission = await createStableSkillSubmission({
-        worktreePath: worktreePath(draft),
-        submissionsPath: submissionsPath(draft.id),
-        expectedHash: input.expectedWorkingTreeHash,
-      });
       const transaction = await withFileLock(
         lockPath,
         async () =>
@@ -2048,6 +2018,40 @@ export function createSkillRevisionService(options: {
                   throw coded("skill_revision_conflict");
                 }
                 requireOwner(currentDraft, input.missionId);
+                const submission = await createStableSkillSubmission({
+                  worktreePath: worktreePath(draft),
+                  submissionsPath: submissionsPath(draft.id),
+                  expectedHash: input.expectedWorkingTreeHash,
+                  validate: async (temporaryPath) => {
+                    const candidateSnapshot = await readSkillPackage(
+                      options.capabilities,
+                      draft.capabilityId,
+                      temporaryPath,
+                      draft.operation === "create"
+                        ? { name: draft.name, description: draft.resourceDescription! }
+                        : undefined,
+                      options.supportsExecutableBits ?? process.platform !== "win32",
+                    );
+                    const candidate = candidateSnapshot.package;
+                    const validation = validateSkillRevisionPackage(
+                      candidate,
+                      draft.operation,
+                      job.request.source,
+                      candidateSnapshot.executablePaths,
+                      await unchangedLegacyExecutablePaths(
+                        options.capabilities,
+                        draft,
+                        job.request.source,
+                        candidate,
+                        candidateSnapshot.entries,
+                        options.supportsExecutableBits ?? process.platform !== "win32",
+                      ),
+                    );
+                    if (!validation.passed) throw new SkillRevisionValidationError(validation);
+                    return candidate;
+                  },
+                });
+                const candidate = submission.validation;
                 const cleanupJournalPath = join(
                   submissionCleanupJournalsPath,
                   `${currentDraft.id}.json`,
@@ -2067,6 +2071,9 @@ export function createSkillRevisionService(options: {
                 await writeDraft(
                   SkillRevisionDraftSchema.parse({
                     ...currentDraft,
+                    ...(currentDraft.operation === "create"
+                      ? { name: candidate.name, resourceDescription: candidate.description }
+                      : {}),
                     revision: cleanupJournal.draftRevision,
                     state: "pending_review",
                     activeMissionId: undefined,
@@ -2094,20 +2101,9 @@ export function createSkillRevisionService(options: {
               }),
           ),
       );
-      try {
-        const removableDraftRoot = await resolveSkillRevisionDraftRootForRemoval(
-          transaction.cleanupJournal.workspacePath,
-          transaction.cleanupJournal.draftId,
-        );
-        await rm(removableDraftRoot, { recursive: true, force: true });
-        await writeJsonAtomic(transaction.cleanupJournalPath, {
-          ...transaction.cleanupJournal,
-          state: "completed",
-        });
-      } catch (error) {
-        submissionCleanupRecovery = undefined;
-        options.warn?.("Failed to remove a submitted Skill draft working directory.", error);
-      }
+      // Use the same locked, replayable cleanup for normal submission and recovery.
+      // Retain source inodes so a write after the last hash check cannot be erased.
+      await recoverSubmissionCleanupJournals();
       return transaction.nextJob;
     },
     async approve(id, expectedRevision) {
@@ -2338,6 +2334,8 @@ export function createSkillRevisionService(options: {
             });
             replacementDraft = SkillRevisionDraftSchema.parse({
               ...replacementDraft,
+              name: draft.name,
+              resourceDescription: draft.resourceDescription,
               revision: replacementDraft.revision + 1,
               state: "pending_review",
               submissionHash: submission.snapshot.hash,
@@ -2650,15 +2648,29 @@ async function readSkillPackage(
   }
   const skillDocument = files.find((file) => file.path === "SKILL.md")?.content ?? "";
   const metadata = readSkillFrontmatter(skillDocument);
+  const parsedPackage = SkillPackageSchema.safeParse({
+    name: metadata.name ?? creation?.name ?? capability!.definition.name,
+    description:
+      metadata.description ?? creation?.description ?? capability!.definition.description,
+    files,
+  });
+  if (!parsedPackage.success) {
+    throw new SkillRevisionValidationError({
+      passed: false,
+      diagnostics: parsedPackage.error.issues.map((issue) => ({
+        path:
+          issue.path[0] === "name" || issue.path[0] === "description"
+            ? `SKILL.md:${issue.path[0]}`
+            : issue.path.join("."),
+        code: issue.code,
+        message: issue.message,
+      })),
+    });
+  }
   return {
     hash: snapshot.hash,
     filesystemHash: filesystemSnapshot.hash,
-    package: SkillPackageSchema.parse({
-      name: metadata.name ?? creation?.name ?? capability!.definition.name,
-      description:
-        metadata.description ?? creation?.description ?? capability!.definition.description,
-      files,
-    }),
+    package: parsedPackage.data,
     executablePaths,
     entries: snapshot.entries,
   };
@@ -2680,16 +2692,6 @@ async function applyLegacyChangeSetToTree(
       await writeFile(path, operation.content, { mode: 0o600 });
     }
   }
-}
-
-function readSkillFrontmatter(content: string): { name?: string; description?: string } {
-  const frontmatter = /^---\s*\n([\s\S]*?)\n---/u.exec(content)?.[1] ?? "";
-  const name = /^name:\s*["']?([^\n"']+)["']?\s*$/mu.exec(frontmatter)?.[1]?.trim();
-  const description = /^description:\s*["']?([^\n"']+)["']?\s*$/mu.exec(frontmatter)?.[1]?.trim();
-  return {
-    ...(name === undefined ? {} : { name }),
-    ...(description === undefined ? {} : { description }),
-  };
 }
 
 function validateSkillRevisionPackage(

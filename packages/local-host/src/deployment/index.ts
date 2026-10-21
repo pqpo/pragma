@@ -14,6 +14,7 @@ export * from "./capabilities/capability-verification.ts";
 export * from "./capabilities/capability-mutation-journal.ts";
 export * from "./capabilities/capability-revision-coordinator.ts";
 export * from "./capabilities/skill-revision-files.ts";
+export * from "./capabilities/skill-frontmatter.ts";
 export * from "./capabilities/skill-revision-draft-store.ts";
 export * from "./context-stores/context-store-store.ts";
 export * from "./plugins/plugin-store.ts";

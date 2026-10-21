@@ -43,8 +43,9 @@ draft is claimed.
 - Formal revisions remain immutable and publication stays idempotent.
 - Conflicts are deterministic but require regenerating a new proposal.
 - A Mission's configured Workspace does not change when it creates or resumes a Skill draft.
-- Submitted editable trees do not remain in the user's Workspace; immutable review history remains
-  in authoritative Desktop storage.
+- Submission removes the active editable path; immutable review history remains in authoritative
+  Desktop storage. Source directories are retained as Workspace recovery artifacts to preserve
+  concurrent writes, as specified in [ADR 052](./052-synchronous-skill-validation.md).
 - Draft cleanup uses Host Trash; published revisions and completed history are never draft-deleted.
 
 ## Desktop manual edits and revision history

@@ -186,6 +186,13 @@ describe("Pragma management tools", () => {
       "revision_conflict",
       true,
     ],
+    [
+      Object.assign(new Error("Inspect the changed Skill draft before submitting again."), {
+        code: "skill_revision_working_tree_changed",
+      }),
+      "revision_conflict",
+      true,
+    ],
   ])("classifies revision errors explicitly: %s", async (error, code, retryable) => {
     const tools = createPragmaManagementTools({
       knowledgeRevisions: revisionPort({

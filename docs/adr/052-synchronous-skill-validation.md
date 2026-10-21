@@ -23,6 +23,15 @@ scripts or `node:test` files.
 
 Validation failure returns `invalid_input` with path-addressed diagnostics and leaves the draft
 editable. The Skill Revision Agent repairs the reported files and resubmits until validation passes.
+For new Skills, the creation request supplies initial metadata. A successful submission copies the
+validated SKILL.md name and description into the draft as part of the existing journaled transition;
+the original request remains the creation intent. Review, rework, recovery, and publication use the
+submitted draft metadata, including creation ID conflict recovery. Submission validates the immutable
+temporary snapshot before publishing its canonical hash directory, and submission and publication
+share the same YAML metadata parser. Invalid packages leave the editable draft metadata unchanged
+and their temporary snapshots are removed. An existing same-hash submission is never deleted by
+a failed validation. Edits made during validation return a working-tree conflict and remain editable.
+
 A successful submission enters `pending_review`; approval repeats deterministic validation against
 the immutable submission before publication. Memory-created and Memory-revised Skills follow the
 same manual-review rule and are never auto-published.
@@ -50,3 +59,20 @@ before atomic replacement, so users can reopen and resubmit instead of losing th
 - Human approval is required for both user-created and Memory-derived Skill changes.
 - Historical Skill Evaluation Mission origins remain readable only for persisted-history compatibility;
   no active code creates or executes them.
+
+## Concurrent writers during submission
+
+The Host serializes submission against Draft/Job control changes and rechecks the editable tree
+following temporary-snapshot validation. Runtime-native writers do not participate in Host file
+locks, so a final hash check cannot safely authorize unlinking their files. Successful submission
+and cleanup-journal replay therefore rename the Workspace draft root atomically to a sibling named
+`<draftId>.submitted-<revision>-<uuid>` instead of deleting it. This fences the old directory path
+and preserves writes through already-open file handles, including writes after the last hash check.
+The immutable submission remains the only review and publication input. Rework restores that
+submission to a fresh editable directory; retained source directories are recovery artifacts and
+are never overwritten or automatically deleted by submission or rework. They can be inspected and
+removed by the user after writers have stopped. Replay is idempotent when the source is already
+absent and preserves another directory if a stale writer recreated the source path.
+
+No record or journal schema changes: the existing cleanup journal still records removal of the
+original editable path; the retained sibling is a Workspace recovery artifact, not a new authority.
