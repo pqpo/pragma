@@ -3,6 +3,9 @@
 ## TypeScript
 
 - Use strict TypeScript.
+- Shared compiler options live in `packages/tsconfig/base.json`. Keep the config package
+  self-contained: relative `extends` paths must stay inside the package so pnpm links
+  resolve consistently in TypeScript and bundlers.
 - Export runtime schemas for cross-process contracts.
 - Derive DTO types from schemas instead of duplicating interfaces.
 - Keep source files ESM-compatible.

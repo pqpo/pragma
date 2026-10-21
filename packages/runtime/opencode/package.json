@@ -19,10 +19,10 @@
   "dependencies": {
     "@pragma/core": "workspace:*",
     "@pragma/shared": "workspace:*",
-    "@opencode-ai/sdk": "1.18.35",
-    "@opencode/client": "2.0.26",
+    "@opencode-ai/sdk": "1.19.2",
+    "@opencode/client": "2.0.30",
     "json5": "2.2.3",
-    "zod": "4.6.5"
+    "zod": "4.6.7"
   },
   "devDependencies": {
     "@pragma/tsconfig": "workspace:*",
