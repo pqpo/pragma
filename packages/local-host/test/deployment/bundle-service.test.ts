@@ -273,6 +273,159 @@ describe("PragmaBundleService", { timeout: 30_000 }, () => {
     },
   );
 
+  it.each(
+    ["0000000000000001", "2222222222222222"].flatMap((preferredId) =>
+      [false, true].flatMap((referenced) =>
+        ["none", "receipt", "catalog"].map((interruption) => ({
+          preferredId,
+          referenced,
+          interruption,
+        })),
+      ),
+    ),
+  )(
+    "preserves user-owned aliases on discard ($preferredId, referenced: $referenced, interruption: $interruption)",
+    async ({ preferredId, referenced, interruption }) => {
+      const source = await createFixture("user-alias-source");
+      const sourceAssets = createRealSkillCapabilityStore(join(source.root, "source-assets"));
+      const payload = join(source.root, "skill");
+      await mkdir(payload);
+      await writeFile(
+        join(payload, "SKILL.md"),
+        "---\nname: Local Skill\ndescription: User skill\n---\n\nUse this skill.\n",
+      );
+      const asset = await sourceAssets.publishNewSkillRevisionCandidate({
+        id: derivePragmaResourceId("user-owned-skill"),
+        name: "Local Skill",
+        description: "User skill",
+        sourcePath: payload,
+        candidateContentHash: (await scanSkillWorkingTree(payload)).hash,
+      });
+      const imported = portableCapability();
+      imported.metadata.id = "0000000000000001";
+      imported.spec.binding = desktopCapabilityBindingRef(asset.manifest.id);
+      imported.spec.config = { key: asset.manifest.id };
+      const sourceSnapshot = await source.project.get();
+      const published = await source.project.publish({
+        expectedRevision: sourceSnapshot.revision,
+        resources: [...sourceSnapshot.resources, imported],
+      });
+      const path = join(source.root, "skill.pragma");
+      await createPragmaBundleService({
+        paths: source.paths,
+        project: source.project,
+        capabilities: sourceAssets,
+        contextStores: source.contextStores,
+        plugins: { list: async () => [] } as unknown as PluginStore,
+        layouts: createWorkflowLayoutStore({ projectsPath: source.paths.projectsRoot() }),
+        getRuntimes: async () => [],
+      }).exportTo(
+        { ...exportInput(published.revision), rootRef: canonicalPragmaResourceRef(imported) },
+        path,
+      );
+      const assets = createRealSkillCapabilityStore(join(source.root, "target-assets"));
+      const localAsset = await assets.publishNewSkillRevisionCandidate({
+        id: derivePragmaResourceId("existing-user-skill"),
+        name: "Local Skill",
+        description: "User skill",
+        sourcePath: payload,
+        candidateContentHash: (await scanSkillWorkingTree(payload)).hash,
+      });
+      const target = await createFixture("user-alias-target", {
+        capabilities: assets,
+        canonicalCapabilityId: () => preferredId,
+        loseRepairReceiptOnce: interruption !== "none",
+      });
+      const local = structuredClone(imported);
+      local.metadata.id = "2222222222222222";
+      local.spec.binding = desktopCapabilityBindingRef(localAsset.manifest.id);
+      local.spec.config = { key: localAsset.manifest.id };
+      const initial = await target.project.get();
+      const initialResources = structuredClone(initial.resources);
+      if (referenced) {
+        const owner = initialResources.find((resource) => resource.kind === "Expert")!;
+        if (owner.kind !== "Expert") throw new Error("Missing Expert");
+        owner.spec.capabilities = [{ ref: canonicalPragmaResourceRef(local), kind: "skill" }];
+      }
+      await target.project.publish({
+        expectedRevision: initial.revision,
+        resources: [...initialResources, local],
+      });
+      const inspection = await target.service.inspect(path);
+      const installation = await target.service.startImport({
+        ...importInput(
+          path,
+          inspection.bundleFingerprint,
+          inspection.projectFingerprint,
+          inspection.projectRevision,
+        ),
+        rootRef: inspection.root.ref,
+        requestId: randomUUID(),
+        conflicts: [],
+        assetConflicts: inspection.assetConflicts.map((conflict) => ({
+          assetKind: conflict.assetKind,
+          resourceRef: conflict.resourceRef,
+          action: "copy" as const,
+        })),
+      });
+      expect(installation.status).toBe("ready");
+      const before = await target.project.get();
+      const originalCatalog = await readFile(target.paths.bundleInstallationsCatalog(), "utf8");
+      const repair = target.service.rebindInstallation({
+        installationId: installation.id,
+        baseRevision: before.revision,
+        capabilities: [
+          {
+            resourceRef: installation.rootRef,
+            requirementId: "explicit-skill",
+            capabilityId: localAsset.manifest.id,
+          },
+        ],
+        runtimes: [],
+        contextStores: [],
+        secrets: {},
+      });
+      if (interruption !== "none") {
+        await expect(repair).rejects.toThrow("lost repair receipt");
+        if (interruption === "catalog") {
+          // Replay a real pre-repair catalog against the committed Project receipt and journal,
+          // as if the process stopped before the atomic catalog replacement.
+          await writeFile(target.paths.bundleInstallationsCatalog(), originalCatalog);
+        }
+        const revision = (await target.project.get()).revision;
+        await target.restartService().recheckInstallation(installation.id);
+        expect((await target.project.get()).revision).toBe(revision);
+      } else await repair;
+      const record = (await target.service.listInstallations())[0]!;
+      expect((await target.service.recheckInstallation(record.id)).status).toBe("ready");
+      await target.service.exportTo(
+        { ...exportInput((await target.project.get()).revision), rootRef: record.rootRef },
+        join(target.root, "rebound.pragma"),
+      );
+      await target.restartService().discardInstallation(record.id);
+      const after = await target.project.get();
+      const retained = after.resources.find(
+        (resource) => canonicalPragmaResourceRef(resource) === `capability:${preferredId}`,
+      );
+      expect(retained).toMatchObject({ kind: "Capability", spec: local.spec });
+      expect(record.createdResourceRefs).not.toContain(`capability:${preferredId}`);
+      expect(await assets.exists(localAsset.manifest.id)).toBe(true);
+      expect(await target.service.listInstallations()).toEqual([]);
+      if (referenced) {
+        const owner = after.resources.find((resource) => resource.kind === "Expert")!;
+        if (owner.kind !== "Expert") throw new Error("Missing Expert");
+        expect(owner.spec.capabilities).toEqual([
+          { ref: `capability:${preferredId}`, kind: "skill" },
+        ]);
+        // Resolve the surviving user closure through the real Interpreter export path.
+        await target.service.exportTo(
+          exportInput(after.revision),
+          join(target.root, "local.pragma"),
+        );
+      }
+    },
+  );
+
   it("exports distinct same-name Host capabilities without name collisions or false merging", async () => {
     const assetsRoot = await mkdtemp(join(tmpdir(), "pragma-412-same-name-assets-"));
     directories.push(assetsRoot);

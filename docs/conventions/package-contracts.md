@@ -35,7 +35,7 @@
   Core、Shared 或 Interpreter。
 - Local Host 在显式保存和 Bundle 导出派生图中统一 Host 资源引用：等价 Capability 绑定在已有别名中优先复用 Host 目录身份并合并历史别名，RuntimeProfile 根据完整专家引用图命名。Desktop 继续拥有 ID 分配与目录创建策略；归一化不得改写不可变 Revision、拆分共享 Runtime 或覆盖不等价的资源配置。目录身份优先级由 Host 注入，读取和导出不得凭目录模板引入图中不存在的 ID；全量发布和增量保存使用同一归一化契约，Bundle 安装记录必须同步保存合并后的引用；环境重绑定不能因此重分配已有资源 ID，兼容扩展字段以存储中的定义为准。
 - Bundle 导出以全图决定身份和 Runtime 使用者名称，但仅校验目标闭包涉及的 Capability 身份组。
-- Bundle 重绑定跨安装合并资源别名时，必须在目录锁下协调全部受影响安装的引用与唯一资源所有权，以发布回执支持重放，避免失效根引用和互相阻塞撤销。
+- Bundle 重绑定跨安装合并资源别名时，必须在目录锁下协调全部受影响安装的引用与唯一资源所有权，以发布回执支持重放，避免失效根引用和互相阻塞撤销。合并组含有原本不属于任何安装的用户资源时，结果必须保留为本地借用资源，不得因旧别名或底层资产属于安装而获得创建所有权；重放与撤销继续保留该来源。
 - ready Capability 新修订必须通过 Local Host Capability mutation coordinator 激活：先验证当前 Expert 的
   工具白名单，再以稳定 journal 提交 Capability 与凭据状态。Project、System Expert 与普通 Expert 只保存
   Capability ID，不传播修订号；运行时解析 active revision，并在 Execution 中记录实际修订与 fingerprint。

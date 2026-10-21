@@ -1233,10 +1233,25 @@ export function createPragmaBundleService(options: {
       const records = catalog.installations.map((record) =>
         record.id === id ? journal.installation : record,
       );
-      // Keep a unique resource owner. Prefer the participating installation that owns the
-      // bound asset, then the retained identity's owner. This prevents mutual discard blockers.
+      // Ownership can move between installations, but cannot absorb any user-owned alias.
+      // Use the pre-publication graph and catalog, not the newly mapped installation claims.
+      const previouslyOwned = new Set(
+        catalog.installations
+          .filter((record) => record.projectId === options.project.projectId)
+          .flatMap((record) => record.createdResourceRefs),
+      );
+      const userOwnedTargets = new Set(
+        base.resources.flatMap((resource) => {
+          const ref = canonicalPragmaResourceRef(resource);
+          const target = mapRef(ref);
+          return mergedTargets.has(target) && !previouslyOwned.has(ref) ? [target] : [];
+        }),
+      );
+      // Keep a unique resource owner for groups composed entirely of installed resources.
+      // Prefer the bound asset owner to prevent mutual discard blockers.
       const owners = new Map<string, string>();
       for (const ref of mergedTargets) {
+        if (userOwnedTargets.has(ref)) continue;
         const assetId = classifyHostCapabilityResource(publishedByRef.get(ref))?.id;
         const participants = records.filter(
           (record) =>
@@ -1272,8 +1287,28 @@ export function createPragmaBundleService(options: {
             "installation_target_conflict",
             "Another installation changed after publication. Resolve its references before replaying this repair.",
           );
+        // Persist local reuse using the existing keep_local provenance, including after a
+        // restart. Never turn an explicit update into a safe-to-discard borrowed resource.
+        const borrowedSources = new Set(
+          record.resourceRefs
+            .filter((ref) => userOwnedTargets.has(mapRef(ref)))
+            .map(
+              (ref) =>
+                record.resourceMappings.find((mapping) => mapping.targetRef === ref)?.sourceRef ??
+                mapRef(ref),
+            ),
+        );
+        const conflictResolutions = record.conflictResolutions.map((resolution) =>
+          borrowedSources.has(resolution.resourceRef) && resolution.action !== "update"
+            ? { ...resolution, action: "keep_local" as const }
+            : resolution,
+        );
+        for (const resourceRef of borrowedSources)
+          if (!conflictResolutions.some((resolution) => resolution.resourceRef === resourceRef))
+            conflictResolutions.push({ resourceRef, action: "keep_local" });
         const mapped = PragmaBundleInstallationSchema.parse({
           ...record,
+          conflictResolutions,
           rootRef: mapRef(record.rootRef),
           rootName: publishedByRef.get(mapRef(record.rootRef))?.metadata.name ?? record.rootName,
           resourceRefs: unique(record.resourceRefs.map(mapRef)),
