@@ -63,6 +63,29 @@ describe("Expert context tools", () => {
     expect(readItemIds(first.text)).toEqual(["a.md"]);
     expect(readItemIds(second.text)).toEqual(["b.md"]);
   });
+  it.each(["invalid_namespace", "store_unavailable"] as const)(
+    "preserves optional-store diagnostics while surfacing invalid namespace input (%s)",
+    async (code) => {
+      const store = new InMemoryContextStore();
+      const failure = {
+        ok: false as const,
+        error: { code, message: "Store rejected the request." },
+      };
+      vi.spyOn(store, "listContext").mockResolvedValue(failure);
+      const system = new ContextSystem();
+      system.register({ namespace: "optional", store, required: false });
+      const result = await system.index({ namespace: "optional" });
+      if (code === "invalid_namespace") {
+        expect(result).toEqual(failure);
+      } else {
+        expect(result).toMatchObject({
+          ok: true,
+          value: { items: [], issues: [{ namespace: "optional", error: failure.error }] },
+        });
+      }
+    },
+  );
+
   it("resolves a Host-owned namespace allocated during an Invocation", async () => {
     const system = new ContextSystem();
     const store = new InMemoryContextStore();

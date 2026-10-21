@@ -487,7 +487,18 @@ export function createDesktopMissionExecutionResources(
               resolveStore: (namespace) => {
                 const storeId = namespace.slice(namespacePrefix.length);
                 const parsed = ContextStoreIdSchema.safeParse(storeId);
-                return parsed.success ? createActiveDraftStore(parsed.data) : undefined;
+                if (parsed.success) return createActiveDraftStore(parsed.data);
+                return new DynamicContextStore(async () =>
+                  error(
+                    "invalid_namespace",
+                    "The UUID in this draft namespace is invalid. Copy writableNamespace exactly from knowledge_revision_start; recover it with knowledge_revision_list_drafts or knowledge_revision_get_draft if needed. Do not retry the unchanged invalid namespace.",
+                    {
+                      namespace,
+                      expectedFormat: "mission-knowledge-draft:<UUID>",
+                      recoveryTool: "knowledge_revision_start",
+                    },
+                  ),
+                );
               },
               required: false,
               mutationApproval: "none" as const,

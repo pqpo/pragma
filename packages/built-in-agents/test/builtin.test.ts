@@ -693,6 +693,10 @@ describe("built-in Pragma Agent DSL", () => {
     const expertResource = PragmaExpertResourceSchema.parse({
       ...base,
       metadata: { ...base.metadata, name: "Customized Store Revision" },
+      spec: {
+        ...base.spec,
+        instructions: `${base.spec.instructions}\nKeep review summaries concise.`,
+      },
     });
     const runtimes = createStaticRuntimeResolver({
       defaultRuntimeId: "test-runtime",
@@ -736,6 +740,10 @@ describe("built-in Pragma Agent DSL", () => {
     });
 
     expect(compiled.value.name).toBe("Customized Store Revision");
+    expect(compiled.value.instructions).toBe(expertResource.spec.instructions);
+    expect(compiled.value.instructions).toContain("character-for-character");
+    expect(compiled.value.instructions).toContain("separate facts from hypotheses");
+    expect(compiled.value.instructions).toContain("Keep review summaries concise.");
   });
 
   it("preserves the Host file Context factory while wrapping a built-in Agent", async () => {

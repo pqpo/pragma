@@ -775,7 +775,11 @@ describe("asset Git Skill sync", () => {
     ).toBe("error");
     expect((await capabilities.get(target.id)).manifest.latestRevision).toBe(1);
     expect(await run(bare, ["show", "main:SKILL.md"])).toBe(skill);
-    decisions[0]!.content = skill.replace("# Review", "# Merged review");
+    decisions[0] = {
+      path: "SKILL.md",
+      choice: "manual",
+      content: skill.replace("# Review", "# Merged review"),
+    };
     expect(
       (await service.resolve({ target, snapshot: preview.snapshot, resolutions: decisions }))
         .status,
