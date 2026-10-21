@@ -1,5 +1,5 @@
 import { createLocalHostRuntimeReadiness, type LocalHostRuntimeReadiness } from "../../index.ts";
-import type { RuntimeCanUseResult } from "@pragma/core";
+import type { RuntimeAdapter, RuntimeCanUseResult } from "@pragma/core";
 import type {
   DesktopRuntimeAvailability,
   GetDesktopRuntimeAvailabilityOptions,
@@ -99,31 +99,9 @@ export async function getRuntimeAvailability(
         }
         const executablePath = stringDetail(availability.details, "executablePath");
         const version = stringDetail(availability.details, "version");
-        let models: DesktopRuntimeAvailability["models"];
-        let modelDiscoveryError: string | undefined;
-        if (availability.usable && adapter.listModels !== undefined) {
-          try {
-            const discoveredModels =
-              options?.forceRefresh === true
-                ? await adapter.listModels({ forceRefresh: true })
-                : await adapter.listModels();
-            models = discoveredModels.map(({ inputModalities, thinking, ...model }) => ({
-              ...model,
-              provider: { ...model.provider },
-              ...(inputModalities === undefined ? {} : { inputModalities: [...inputModalities] }),
-              ...(thinking === undefined
-                ? {}
-                : {
-                    thinking: {
-                      ...thinking,
-                      supportedLevels: thinking.supportedLevels.map((level) => ({ ...level })),
-                    },
-                  }),
-            }));
-          } catch (error) {
-            modelDiscoveryError = errorMessage(error);
-          }
-        }
+        const modelCatalog = availability.usable
+          ? await discoverRuntimeModels(adapter, options?.forceRefresh)
+          : {};
         return {
           id: adapter.descriptor.id,
           revision: revision!.revision,
@@ -141,8 +119,7 @@ export async function getRuntimeAvailability(
           ...(availability.usable || availability.reason === undefined
             ? {}
             : { reason: availability.reason }),
-          ...(models === undefined ? {} : { models }),
-          ...(modelDiscoveryError === undefined ? {} : { modelDiscoveryError }),
+          ...modelCatalog,
         };
       },
     );
@@ -218,25 +195,100 @@ function runtimeReadiness(runtimes: RuntimeEnvironmentService): LocalHostRuntime
   return readiness;
 }
 
-/** Execution readiness never enumerates or discovers unrelated Runtime models. */
+type RuntimeModelCatalog = Pick<DesktopRuntimeAvailability, "models" | "modelDiscoveryError">;
+
+async function discoverRuntimeModels(
+  adapter: RuntimeAdapter,
+  forceRefresh?: boolean,
+): Promise<RuntimeModelCatalog> {
+  if (adapter.listModels === undefined) return {};
+  try {
+    const models = await adapter.listModels(forceRefresh ? { forceRefresh: true } : undefined);
+    return {
+      models: models.map(({ inputModalities, thinking, ...model }) => ({
+        ...model,
+        provider: { ...model.provider },
+        ...(inputModalities === undefined ? {} : { inputModalities: [...inputModalities] }),
+        ...(thinking === undefined
+          ? {}
+          : {
+              thinking: {
+                ...thinking,
+                supportedLevels: thinking.supportedLevels.map((level) => ({ ...level })),
+              },
+            }),
+      })),
+    };
+  } catch (error) {
+    return { modelDiscoveryError: errorMessage(error) };
+  }
+}
+
+const targetModelCatalogs = new WeakMap<
+  RuntimeEnvironmentService,
+  Map<string, { adapter: RuntimeAdapter; expiresAt: number; value: Promise<RuntimeModelCatalog> }>
+>();
+
+/** Only probes requested Runtimes; model discovery is opt-in for dependency validation. */
 export async function getTargetRuntimeAvailability(
   runtimes: RuntimeEnvironmentService,
   runtimeIds: readonly string[],
+  options?: { readonly includeModels?: boolean },
 ): Promise<DesktopRuntimeAvailability[]> {
   const results = await runtimeReadiness(runtimes).get(runtimeIds);
   const defaultRuntimeId = await runtimes.getDefaultRuntimeId();
-  return results.map(({ runtimeId, resolved, availability }) => ({
-    id: runtimeId,
-    revision: resolved.binding.revision,
-    isDefault: runtimeId === defaultRuntimeId,
-    displayName: resolved.adapter.descriptor.displayName,
-    kind: resolved.adapter.descriptor.kind,
-    status: availability.usable ? "available" : "unavailable",
-    ...(availability.reason === undefined ? {} : { reason: availability.reason }),
-  }));
+  const environmentKey = options?.includeModels
+    ? await runtimes.getMaterializationCacheKey()
+    : undefined;
+  let catalogs = targetModelCatalogs.get(runtimes);
+  if (catalogs === undefined) {
+    catalogs = new Map();
+    targetModelCatalogs.set(runtimes, catalogs);
+  }
+  const cache = catalogs;
+  return await mapWithConcurrency(
+    results,
+    PROBE_CONCURRENCY_LIMIT,
+    async ({ runtimeId, resolved, availability }): Promise<DesktopRuntimeAvailability> => {
+      let modelCatalog: RuntimeModelCatalog = {};
+      if (options?.includeModels && availability.usable) {
+        const key = JSON.stringify([resolved.binding, environmentKey]);
+        let cached = cache.get(key);
+        if (
+          cached === undefined ||
+          cached.adapter !== resolved.adapter ||
+          cached.expiresAt <= Date.now()
+        ) {
+          const value = discoverRuntimeModels(resolved.adapter).then((catalog) => {
+            const entry = cache.get(key);
+            if (entry?.value === value) {
+              if (catalog.models === undefined) cache.delete(key);
+              else entry.expiresAt = Date.now() + 30_000;
+            }
+            return catalog;
+          });
+          cached = { adapter: resolved.adapter, expiresAt: Infinity, value };
+          cache.set(key, cached);
+          while (cache.size > 64) cache.delete(cache.keys().next().value!);
+        }
+        modelCatalog = await cached.value;
+      }
+      return {
+        id: runtimeId,
+        revision: resolved.binding.revision,
+        isDefault: runtimeId === defaultRuntimeId,
+        displayName: resolved.adapter.descriptor.displayName,
+        kind: resolved.adapter.descriptor.kind,
+        status: availability.usable ? "available" : "unavailable",
+        ...(availability.reason === undefined ? {} : { reason: availability.reason }),
+        ...modelCatalog,
+      };
+    },
+  );
 }
 
 export function invalidateTargetRuntimeAvailability(runtimes: RuntimeEnvironmentService): void {
   availabilityCaches.delete(runtimes);
+  targetModelCatalogs.delete(runtimes);
   runtimeReadiness(runtimes).invalidate();
 }

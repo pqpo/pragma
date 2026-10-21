@@ -2698,6 +2698,102 @@ describe("PragmaBundleService", { timeout: 30_000 }, () => {
     expect(installation.status).toBe("ready");
   });
 
+  it("keeps an existing team runnable after inspection and repeated keep-local imports with overlapping history", async () => {
+    const source = await createFixture("repeat-local-team-source");
+    const target = await createFixture("repeat-local-team-target");
+    const team = expertTeam();
+    const teamRef = canonicalPragmaResourceRef(team);
+    for (const fixture of [source, target]) {
+      const snapshot = await fixture.project.get();
+      await fixture.project.publish({
+        expectedRevision: snapshot.revision,
+        resources: [...snapshot.resources, team],
+      });
+    }
+    const revision = (await source.project.get()).revision;
+    const expertPath = join(source.root, "expert.pragma");
+    const teamPath = join(source.root, "team.pragma");
+    await source.service.exportTo(exportInput(revision), expertPath);
+    await source.service.exportTo({ ...exportInput(revision), rootRef: teamRef }, teamPath);
+    const importLocal = async (path: string) => {
+      const inspection = await target.service.inspect(path);
+      return await target.service.startImport({
+        ...importInput(
+          path,
+          inspection.bundleFingerprint,
+          inspection.projectFingerprint,
+          inspection.projectRevision,
+        ),
+        rootRef: inspection.root.ref,
+        conflicts: inspection.conflicts.map((conflict) => ({
+          resourceRef: conflict.ref,
+          action: "keep_local" as const,
+        })),
+      });
+    };
+    await importLocal(expertPath);
+    const firstTeam = await importLocal(teamPath);
+    const before = await target.project.get();
+    const installations = await target.service.listInstallations();
+    // Opening and closing before Next performs inspection only.
+    await target.service.inspect(teamPath);
+    expect(await target.project.get()).toEqual(before);
+    expect(await target.service.listInstallations()).toEqual(installations);
+    await expect(target.service.getReadinessForRef(teamRef)).resolves.toEqual([]);
+    const repeated = await importLocal(teamPath);
+    expect(repeated).toMatchObject({ status: "ready", pending: [] });
+    expect((await target.project.get()).resources).toEqual(before.resources);
+    await expect(target.service.getReadinessForRef(teamRef)).resolves.toEqual([]);
+
+    const snapshot = await target.project.get();
+    const runtimeAvailability: DesktopRuntimeAvailability = {
+      id: "codex",
+      isDefault: true,
+      kind: "local",
+      displayName: "Codex",
+      status: "available",
+    };
+    const read = () =>
+      target.service.getReadinessForRef(teamRef, { snapshot, runtimes: [runtimeAvailability] });
+    // Both team installations and the single Expert reference the same RuntimeProfile.
+    const catalogMissing = await read();
+    expect(catalogMissing).toEqual([
+      expect.objectContaining({ code: "model_catalog_unavailable" }),
+    ]);
+    const preferredId = [firstTeam.id, repeated.id].sort()[0];
+    expect(catalogMissing[0]?.installationId).toBe(preferredId);
+    const catalogPath = target.paths.bundleInstallationsCatalog();
+    const catalog = JSON.parse(await readFile(catalogPath, "utf8")) as {
+      installations: PragmaBundleInstallation[];
+    };
+    catalog.installations = catalog.installations.map((record) =>
+      record.id === preferredId ? { ...record, status: "failed" } : record,
+    );
+    await writeFile(catalogPath, JSON.stringify(catalog));
+    const repairableId = preferredId === firstTeam.id ? repeated.id : firstTeam.id;
+    expect((await read())[0]?.installationId).toBe(repairableId);
+    runtimeAvailability.modelDiscoveryError = "Authentication expired";
+    await expect(read()).resolves.toEqual([
+      expect.objectContaining({ code: "model_discovery_failed" }),
+    ]);
+    delete runtimeAvailability.modelDiscoveryError;
+    runtimeAvailability.models = [];
+    await expect(read()).resolves.toEqual([expect.objectContaining({ code: "model_missing" })]);
+    runtimeAvailability.models = [
+      {
+        id: "gpt-test",
+        displayName: "GPT Test",
+        provider: { kind: "registered", id: "openai", displayName: "OpenAI" },
+      },
+    ];
+    await expect(read()).resolves.toEqual([]);
+    // Explicit revalidation repairs current state without another import.
+    expect(await target.service.recheckInstallation(repairableId)).toMatchObject({
+      status: "ready",
+      pending: [],
+    });
+  });
+
   it("skips source dependencies made unreachable by keeping the local expert", async () => {
     const source = await createFixture("unreachable-source");
     const writer = expert("Source expert needs an unavailable capability.");
@@ -2998,6 +3094,65 @@ describe("PragmaBundleService", { timeout: 30_000 }, () => {
       expect.objectContaining({ id: installation.id, status: "failed" }),
     ]);
   });
+
+  it.each(["failed", "installing"] as const)(
+    "checks live dependencies instead of stale %s installation diagnostics without changing recovery state",
+    async (status) => {
+      const source = await createFixture(`stale-${status}-source`);
+      const runtimes: DesktopRuntimeAvailability[] = [];
+      const target = await createFixture(`stale-${status}-target`, { runtimes });
+      const path = join(source.root, "workflow.pragma");
+      await source.service.exportTo(exportInput(source.projectRevision), path);
+      const inspection = await target.service.inspect(path);
+      const installation = await target.service.startImport({
+        ...importInput(
+          path,
+          inspection.bundleFingerprint,
+          inspection.projectFingerprint,
+          inspection.projectRevision,
+        ),
+        conflicts: inspection.conflicts.map((conflict) => ({
+          resourceRef: conflict.ref,
+          action: "keep_local" as const,
+        })),
+      });
+      expect(installation).toMatchObject({
+        status: "needs_setup",
+        pending: [expect.objectContaining({ kind: "runtime" })],
+      });
+      const catalogPath = target.paths.bundleInstallationsCatalog();
+      const catalog = JSON.parse(await readFile(catalogPath, "utf8")) as {
+        installations: PragmaBundleInstallation[];
+      };
+      catalog.installations = catalog.installations.map((record) => ({ ...record, status }));
+      const before = JSON.stringify(catalog);
+      await writeFile(catalogPath, before);
+      const archivePath = target.paths.bundleInstallationArchive(installation.id);
+      await writeFile(archivePath, "retry archive");
+      runtimes.push({
+        id: "codex",
+        isDefault: true,
+        kind: "local",
+        displayName: "Codex",
+        status: "available",
+        models: [
+          {
+            id: "gpt-test",
+            displayName: "GPT Test",
+            provider: { kind: "registered", id: "openai", displayName: "OpenAI" },
+          },
+        ],
+      });
+      await expect(target.service.getReadinessForRef(installation.rootRef)).resolves.toEqual([]);
+      // Actual current failures still block, even if the historical reason is different.
+      runtimes[0]!.models = [];
+      await expect(target.service.getReadinessForRef(installation.rootRef)).resolves.toEqual([
+        expect.objectContaining({ code: "model_missing" }),
+      ]);
+      await expect(readFile(catalogPath, "utf8")).resolves.toBe(before);
+      await expect(readFile(archivePath, "utf8")).resolves.toBe("retry archive");
+    },
+  );
 
   it("checks the health of the active Capability revision", async () => {
     const capabilityId = "00000000-0000-4000-8000-000000000190";
