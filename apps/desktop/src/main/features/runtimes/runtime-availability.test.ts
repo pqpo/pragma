@@ -3,9 +3,13 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { defineRuntimeTestDriver } from "@pragma/core/testing";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
-import { getRuntimeAvailability, getTargetRuntimeAvailability } from "./runtime-availability.ts";
+import {
+  getRuntimeAvailability,
+  getTargetRuntimeAvailability,
+  invalidateTargetRuntimeAvailability,
+} from "./runtime-availability.ts";
 import { createRuntimeEnvironmentService } from "./runtime-environment-service.ts";
 import { createRuntimeEnvironmentStore } from "@pragma/local-host/deployment";
 
@@ -260,6 +264,163 @@ it("maps Local Host target readiness into the Desktop availability DTO", async (
       reason: "not configured",
     }),
   ]);
+});
+
+it("discovers only target models, coalesces concurrent reads and refreshes after expiry or invalidation", async () => {
+  const pragmaHome = await mkdtemp(join(tmpdir(), "pragma-target-models-"));
+  const listModels = vi.fn(async () => [
+    {
+      id: "model",
+      displayName: "Model",
+      provider: { kind: "runtime-managed" as const, id: "test", displayName: "Test" },
+    },
+  ]);
+  const unrelatedModels = vi.fn(async () => []);
+  const runtimes = createRuntimeEnvironmentService({
+    store: createRuntimeEnvironmentStore({
+      pragmaHome,
+      builtIns: [definition("pi", "Pi"), definition("other", "Other")],
+    }),
+    factories: [
+      {
+        id: "test.runtime",
+        version: "v1",
+        create: (environment) =>
+          defineRuntimeTestDriver({
+            descriptor: { id: environment.id, kind: "test", displayName: environment.displayName },
+            canUse: () => ({ usable: true }),
+            listModels: environment.id === "pi" ? listModels : unrelatedModels,
+            createSession: () => ({}),
+            startTurn: () => ({ outputText: "" }),
+            mapEvent: () => ({ events: [] }),
+          }),
+      },
+    ],
+  });
+  const read = () => getTargetRuntimeAvailability(runtimes, ["pi", "pi"], { includeModels: true });
+  expect((await getTargetRuntimeAvailability(runtimes, ["pi"]))[0]?.models).toBeUndefined();
+  expect(listModels).not.toHaveBeenCalled();
+  const [first, second] = await Promise.all([read(), read()]);
+  expect(first).toEqual(second);
+  expect(first).toHaveLength(1);
+  expect(first[0]?.models).toEqual(await listModels.mock.results[0]!.value);
+  expect(listModels).toHaveBeenCalledTimes(1);
+  expect(unrelatedModels).not.toHaveBeenCalled();
+  const realDateNow = Date.now.bind(Date);
+  const dateNow = vi.spyOn(Date, "now").mockImplementation(() => realDateNow() + 31_000);
+  try {
+    await read();
+    expect(listModels).toHaveBeenCalledTimes(2);
+  } finally {
+    dateNow.mockRestore();
+  }
+  invalidateTargetRuntimeAvailability(runtimes);
+  await read();
+  expect(listModels).toHaveBeenCalledTimes(3);
+  expect(unrelatedModels).not.toHaveBeenCalled();
+});
+
+it("preserves model discovery failures and retries them without reimporting", async () => {
+  const pragmaHome = await mkdtemp(join(tmpdir(), "pragma-target-discovery-failure-"));
+  let failed = true;
+  const listModels = vi.fn(async () => {
+    if (failed) throw new Error("Authentication expired");
+    return [];
+  });
+  const runtimes = createRuntimeEnvironmentService({
+    store: createRuntimeEnvironmentStore({ pragmaHome, builtIns: [definition("pi", "Pi")] }),
+    factories: [
+      {
+        id: "test.runtime",
+        version: "v1",
+        create: (environment) =>
+          defineRuntimeTestDriver({
+            descriptor: { id: environment.id, kind: "test", displayName: environment.displayName },
+            canUse: () => ({ usable: true }),
+            listModels,
+            createSession: () => ({}),
+            startTurn: () => ({ outputText: "" }),
+            mapEvent: () => ({ events: [] }),
+          }),
+      },
+    ],
+  });
+  await expect(
+    getTargetRuntimeAvailability(runtimes, ["pi"], { includeModels: true }),
+  ).resolves.toEqual([
+    expect.objectContaining({ status: "available", modelDiscoveryError: "Authentication expired" }),
+  ]);
+  failed = false;
+  const recovered = await getTargetRuntimeAvailability(runtimes, ["pi"], { includeModels: true });
+  expect(recovered[0]?.models).toEqual([]);
+  expect(recovered[0]?.modelDiscoveryError).toBeUndefined();
+  expect(listModels).toHaveBeenCalledTimes(2);
+});
+
+it("does not reuse an old adapter catalog when invalidation races with a target read", async () => {
+  const pragmaHome = await mkdtemp(join(tmpdir(), "pragma-target-catalog-race-"));
+  let selectedModel = "old";
+  let adapterCreated = false;
+  const runtimes = createRuntimeEnvironmentService({
+    store: createRuntimeEnvironmentStore({ pragmaHome, builtIns: [definition("pi", "Pi")] }),
+    factories: [
+      {
+        id: "test.runtime",
+        version: "v1",
+        create: (environment) => {
+          const model = selectedModel;
+          adapterCreated = true;
+          return defineRuntimeTestDriver({
+            descriptor: { id: environment.id, kind: "test", displayName: environment.displayName },
+            canUse: () => ({ usable: true }),
+            listModels: async () => [
+              {
+                id: model,
+                displayName: model,
+                provider: { kind: "runtime-managed", id: "test", displayName: "Test" },
+              },
+            ],
+            createSession: () => ({}),
+            startTurn: () => ({ outputText: "" }),
+            mapEvent: () => ({ events: [] }),
+          });
+        },
+      },
+    ],
+  });
+  const getKey = runtimes.getMaterializationCacheKey.bind(runtimes);
+  let intercepted = false;
+  let resume!: () => void;
+  let reached!: () => void;
+  const paused = new Promise<void>((resolve) => {
+    reached = resolve;
+  });
+  const released = new Promise<void>((resolve) => {
+    resume = resolve;
+  });
+  const keySpy = vi.spyOn(runtimes, "getMaterializationCacheKey").mockImplementation(async () => {
+    // Readiness first captures the adapter, then the model cache reads its environment key.
+    if (adapterCreated && !intercepted) {
+      intercepted = true;
+      reached();
+      await released;
+    }
+    return await getKey();
+  });
+  const oldRead = getTargetRuntimeAvailability(runtimes, ["pi"], { includeModels: true });
+  try {
+    await paused;
+    selectedModel = "new";
+    invalidateTargetRuntimeAvailability(runtimes);
+    resume();
+    expect((await oldRead)[0]?.models?.[0]?.id).toBe("old");
+    const current = await getTargetRuntimeAvailability(runtimes, ["pi"], { includeModels: true });
+    expect(current[0]?.models?.[0]?.id).toBe("new");
+  } finally {
+    resume();
+    await oldRead;
+    keySpy.mockRestore();
+  }
 });
 
 function definition(id: string, displayName: string) {

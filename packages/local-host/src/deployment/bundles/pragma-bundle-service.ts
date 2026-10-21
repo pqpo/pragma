@@ -3693,25 +3693,25 @@ export function createPragmaBundleService(options: {
         const closureRefs = new Set(
           project.listResourceClosure(parsed.data).map(canonicalPragmaResourceRef),
         );
-        const installations = (await readCatalog()).installations.filter((installation) =>
-          installation.resourceRefs.some((resourceRef) => closureRefs.has(resourceRef)),
-        );
+        const installations = (await readCatalog()).installations
+          .filter((installation) =>
+            installation.resourceRefs.some((resourceRef) => closureRefs.has(resourceRef)),
+          )
+          .sort(
+            (left, right) =>
+              Number(isRecheckableInstallation(right)) - Number(isRecheckableInstallation(left)) ||
+              Number(right.rootRef === parsed.data) - Number(left.rootRef === parsed.data) ||
+              left.id.localeCompare(right.id),
+          );
+        const runtimes =
+          input?.runtimes ?? (installations.length > 0 ? await options.getRuntimes() : []);
         const readiness = await Promise.all(
           installations.map(async (installation) => {
-            const current = isRecheckableInstallation(installation)
-              ? (
-                  await evaluateInstallation(
-                    installation,
-                    snapshot,
-                    false,
-                    input?.runtimes,
-                    closureRefs,
-                  )
-                ).readiness
-              : mergeReadiness(
-                  installation.readiness,
-                  installation.pending.map(readinessFromPending),
-                );
+            // Admission inspects live bindings even for interrupted imports. Persisted diagnostics
+            // describe the failed attempt, not the current resources; recovery remains explicit.
+            const current = (
+              await evaluateInstallation(installation, snapshot, false, runtimes, closureRefs)
+            ).readiness;
             return current
               .filter(
                 (dependency) =>
@@ -3720,7 +3720,20 @@ export function createPragmaBundleService(options: {
               .map((dependency) => ({ ...dependency, installationId: installation.id }));
           }),
         );
-        return readiness.flat();
+        // Installation history can overlap; admission reports each logical dependency once.
+        // Secrets have installation-owned identities, while plugins are scoped to their Expert.
+        const unique = new Map<string, PragmaBundleDependencyReadiness>();
+        for (const dependency of readiness.flat()) {
+          const key = JSON.stringify([
+            dependency.kind,
+            dependency.resourceRef,
+            dependency.kind === "secret" || dependency.kind === "plugin"
+              ? dependency.id
+              : undefined,
+          ]);
+          if (!unique.has(key)) unique.set(key, dependency);
+        }
+        return [...unique.values()];
       } finally {
         await project.dispose();
       }

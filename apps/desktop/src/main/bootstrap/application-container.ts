@@ -1,3 +1,4 @@
+import { createBundleExecutorReadiness } from "../features/bundles/bundle-executor-readiness.ts";
 import { createSkillRevisionMissionRestorer } from "../features/capabilities/skill-revision-mission-restore.ts";
 import {
   createLocalHostNodeMissionCompiler,
@@ -8,7 +9,6 @@ import {
   createMissionSessionAssociationResolver,
   findMissionPinnedBinding,
 } from "@pragma/local-host";
-import { PragmaProjectSnapshotSchema } from "../../shared/contracts/index.ts";
 import { createMissionAttentionRetirement } from "./mission-attention-retirement.ts";
 import {
   createMissionDeletionService,
@@ -40,7 +40,6 @@ import {
   createLocalHostMissionApplication,
   createLocalHostApplication,
 } from "@pragma/local-host";
-import { missionTargetRuntimeIds } from "@pragma/local-host";
 
 import {
   BUILT_IN_PRAGMA_REF,
@@ -90,7 +89,6 @@ import { createLocalHostPragmaMissionPort } from "@pragma/local-host";
 import { installBundleRegistryHandlers } from "../features/bundle-registry/bundle-registry-ipc.ts";
 import { createDesktopBundleRegistrySourceService } from "../features/bundle-registry/bundle-registry-source-service.ts";
 import { createBundleSourcePublishingService } from "../features/bundle-registry/bundle-source-publishing-service.ts";
-import { BundleSetupRequiredError } from "@pragma/local-host/deployment";
 import { installPragmaBundleHandlers } from "../features/bundles/pragma-bundle-ipc.ts";
 import { createPragmaBundleService } from "@pragma/local-host/deployment";
 import { createCapabilityCredentialStore } from "../features/capabilities/capability-credential-store.ts";
@@ -178,7 +176,6 @@ import { createWorkflowLayoutStore } from "@pragma/local-host/deployment";
 import { createDesktopRuntimeProcessEnvironment } from "../features/runtimes/desktop-runtime-process-environment.ts";
 import {
   getRuntimeAvailability,
-  getTargetRuntimeAvailability,
   invalidateTargetRuntimeAvailability,
 } from "../features/runtimes/runtime-availability.ts";
 import {
@@ -193,7 +190,6 @@ import { installDesktopStorageCleanupHandlers } from "../features/settings/deskt
 import { installCoreAssetSyncHandlers } from "../features/studio-sync/core-asset-sync-ipc.ts";
 import {
   createCoreAssetSyncService,
-  unavailableCoreAssetRuntimeBindings,
   type CoreAssetSyncService,
 } from "../features/studio-sync/core-asset-sync-service.ts";
 import { installUsageHandlers } from "../features/usage/usage-ipc.ts";
@@ -1207,68 +1203,13 @@ export async function createDesktopApplicationContainer(
     cacheRoot: join(pragmaPaths.cacheRoot(), "bundle-registry", "publications"),
   });
   installBundleRegistryHandlers(bundleRegistrySources, bundleSourcePublishing);
-  const assertBundleExecutorReady = async (
-    ref: string,
-    operation: "create_mission" | "run_mission",
-    scope?: import("@pragma/local-host").LocalHostMissionCompileScope<Mission>,
-  ): Promise<void> => {
-    const measure = async <T>(phase: string, read: () => Promise<T>): Promise<T> => {
-      const startedAt = performance.now();
-      try {
-        return await read();
-      } finally {
-        mainLogger.info("mission.readiness_phase", "Executor readiness phase completed", {
-          ref,
-          operation,
-          phase,
-          elapsedMs: performance.now() - startedAt,
-        });
-      }
-    };
-    const projectSnapshot = await measure("project_snapshot", async () =>
-      scope === undefined
-        ? await pragmaProjectStore.get()
-        : PragmaProjectSnapshotSchema.parse(await scope.getRevision()),
-    );
-    const runtimeIds = missionTargetRuntimeIds(ref, projectSnapshot.resources, (target) =>
-      systemExperts.getDependencyResource(target),
-    );
-    const runtimesAvailable = await measure("runtime_availability", () =>
-      getTargetRuntimeAvailability(runtimes, runtimeIds),
-    );
-    const dependencies = [
-      ...(await measure("bundle_readiness", () =>
-        bundleService.getReadinessForRef(ref, {
-          snapshot: projectSnapshot,
-          runtimes: runtimesAvailable,
-        }),
-      )),
-    ];
-    for (const missing of unavailableCoreAssetRuntimeBindings(
-      ref,
-      projectSnapshot.resources,
-      runtimesAvailable,
-      { validateModels: false },
-    )) {
-      dependencies.push({
-        id: `core-asset-runtime:${missing.ref}`,
-        kind: "runtime",
-        resourceRef: missing.ref,
-        name: missing.name,
-        status: "action_required",
-        code: "core_asset_runtime_binding_missing",
-        action: "choose_runtime",
-        message: "Choose an available local harness and model before running this asset.",
-      });
-    }
-    if (dependencies.length === 0) return;
-    throw new BundleSetupRequiredError(
-      ref,
-      operation,
-      dependencies,
-      dependencies.find((dependency) => dependency.installationId !== undefined)?.installationId,
-    );
-  };
+  const assertBundleExecutorReady = createBundleExecutorReadiness({
+    project: pragmaProjectStore,
+    runtimes,
+    bundles: bundleService,
+    getExternalResource: (ref) => systemExperts.getDependencyResource(ref),
+    logger: mainLogger,
+  });
   const missionCreator = createMissionCreator({
     logger: mainLogger,
     missions: missionStore,
