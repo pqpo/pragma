@@ -99,7 +99,7 @@ describe("Host bound resource normalization", () => {
     expect(result.resources).toEqual([
       {
         ...legacy,
-        metadata: { ...legacy.metadata, id: catalog.metadata.id, tags: ["default-agent-option"] },
+        metadata: { ...legacy.metadata, tags: ["default-agent-option"] },
       },
     ]);
   });

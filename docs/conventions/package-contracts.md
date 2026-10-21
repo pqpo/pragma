@@ -33,7 +33,7 @@
   `apps/desktop/src/main/platform/bindings/desktop-bound-resource-policy.ts` 分类、创建和重绑定；Feature
   模块不得各自派生 ID、重建 metadata 或按资源数组顺序选择身份。编辑器、默认资源与系统专家身份策略属于 Desktop Host；通用安装与重绑定使用 Local Host。不得将产品身份策略下沉到
   Core、Shared 或 Interpreter。
-- Local Host 在显式保存和 Bundle 导出派生图中统一 Host 资源引用：等价 Capability 绑定复用目录身份并合并历史别名，RuntimeProfile 根据完整专家引用图命名。Desktop 继续拥有 ID 分配与目录创建策略；归一化不得改写不可变 Revision、拆分共享 Runtime 或覆盖不等价的资源配置。目录身份优先级由 Host 注入；环境重绑定不能因此重分配已有资源 ID，兼容扩展字段以存储中的定义为准。
+- Local Host 在显式保存和 Bundle 导出派生图中统一 Host 资源引用：等价 Capability 绑定在已有别名中优先复用 Host 目录身份并合并历史别名，RuntimeProfile 根据完整专家引用图命名。Desktop 继续拥有 ID 分配与目录创建策略；归一化不得改写不可变 Revision、拆分共享 Runtime 或覆盖不等价的资源配置。目录身份优先级由 Host 注入，读取和导出不得凭目录模板引入图中不存在的 ID；全量发布和增量保存使用同一归一化契约，Bundle 安装记录必须同步保存合并后的引用；环境重绑定不能因此重分配已有资源 ID，兼容扩展字段以存储中的定义为准。
 - ready Capability 新修订必须通过 Local Host Capability mutation coordinator 激活：先验证当前 Expert 的
   工具白名单，再以稳定 journal 提交 Capability 与凭据状态。Project、System Expert 与普通 Expert 只保存
   Capability ID，不传播修订号；运行时解析 active revision，并在 Execution 中记录实际修订与 fingerprint。

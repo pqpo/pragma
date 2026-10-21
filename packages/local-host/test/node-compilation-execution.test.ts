@@ -282,7 +282,7 @@ async function fixture(
 }
 
 describe("default Node compilation reaches persisted Execution", { timeout: 15_000 }, () => {
-  it("compiles normalized Host aliases and retains the active binding on manual retry", async () => {
+  it.each([false, true])("executes stable Host IDs and manual retry (%s)", async (withAlias) => {
     const f = await fixture();
     const paths = new PragmaPaths({ pragmaHome: f.home });
     const { createPragmaProjectStore } =
@@ -299,17 +299,26 @@ describe("default Node compilation reaches persisted Execution", { timeout: 15_0
     const alias = structuredClone(original);
     alias.metadata.id = "20k21q9j9wexjv50";
     alias.metadata.name = `Capability ${f.capabilityId}`;
-    resources.push(alias);
+    if (withAlias) resources.push(alias);
     const selected = resources.find(
       (resource) => resource.kind === "Expert" && resource.metadata.id === f.expertId,
     )!;
     if (selected.kind !== "Expert") throw new Error("Missing Expert");
     selected.spec.capabilities = [
-      { ref: `capability:${alias.metadata.id}`, kind: "tools", tools: ["fixture_tool"] },
+      {
+        ref: `capability:${withAlias ? alias.metadata.id : original.metadata.id}`,
+        kind: "tools",
+        tools: ["fixture_tool"],
+      },
     ];
     const normalized = await normalizeHostBoundResources(resources, {
+      capabilityResources: [alias],
+      canonicalCapabilityId: () => alias.metadata.id,
       capabilityName: async () => "Fixture",
     });
+    expect(
+      normalized.resources.find((resource) => resource.kind === "Capability")?.metadata.id,
+    ).toBe(withAlias ? alias.metadata.id : original.metadata.id);
     expect(normalized.resources.filter((resource) => resource.kind === "Capability")).toHaveLength(
       1,
     );

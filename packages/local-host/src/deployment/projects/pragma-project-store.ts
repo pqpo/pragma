@@ -56,7 +56,6 @@ import {
 import { referencingPragmaResources } from "./pragma-resource-references.ts";
 import { findPragmaInvocableDependencyCycle } from "./pragma-invocable-dependency-graph.ts";
 import {
-  classifyHostCapabilityResource,
   desktopCapabilityBindingRef,
   parseLegacyDesktopCapabilityBindingRef,
 } from "../bindings.ts";
@@ -87,6 +86,10 @@ const ProjectIdentityMigrationManifestSchema = z
 
 export interface PragmaProjectStore {
   get(): Promise<PragmaProjectSnapshot>;
+  /** Derive the same graph used by all publication paths, with the Host identity policy. */
+  normalizeResources(
+    resources: readonly PragmaResource[],
+  ): ReturnType<typeof normalizeHostBoundResources>;
   /** Read one exact immutable revision without consulting the project head. */
   getRevision(revision: number): Promise<PragmaProjectSnapshot>;
   ensurePublished(): Promise<PragmaProjectSnapshot>;
@@ -434,6 +437,12 @@ export function createPragmaProjectStore(options: {
     }
   };
 
+  const normalizeResources = async (resources: readonly PragmaResource[]) =>
+    await normalizeHostBoundResources(resources, {
+      capabilityName: options.capabilityName,
+      canonicalCapabilityId: options.canonicalCapabilityId,
+    });
+
   // Derive changes against the complete graph so shared users and legacy aliases are handled
   // in the same optimistic transaction as the caller's edit. Historical Revisions stay immutable.
   const normalizeChanges = async (input: PragmaProjectChangeSetInput) => {
@@ -441,24 +450,7 @@ export function createPragmaProjectStore(options: {
     const requestedResources = (input.upserts ?? []).map((resource) =>
       PragmaForwardCompatibleResourceSchema.parse(resource),
     );
-    // A management caller may explicitly select a catalog dependency even when the
-    // repository Host supplies no identity policy. Keep that choice in this transaction.
-    const selectedCatalogIds = new Map(
-      requestedResources
-        .filter(
-          (resource) =>
-            resource.kind === "Capability" &&
-            resource.metadata.tags.includes("default-agent-option"),
-        )
-        .flatMap((resource) => {
-          const binding = classifyHostCapabilityResource(resource);
-          return binding === undefined ? [] : [[binding.id, resource.metadata.id] as const];
-        }),
-    );
-    const normalized = await normalizeHostBoundResources(candidate.resources, {
-      capabilityName: options.capabilityName,
-      canonicalCapabilityId: options.canonicalCapabilityId ?? ((id) => selectedCatalogIds.get(id)),
-    });
+    const normalized = await normalizeResources(candidate.resources);
     const byRef = new Map(
       candidate.resources.map((resource) => [canonicalPragmaResourceRef(resource), resource]),
     );
@@ -606,6 +598,10 @@ export function createPragmaProjectStore(options: {
     try {
       assertNotReserved(input.resources);
       assertFixedResources(input.resources);
+      const normalized = await normalizeResources(input.resources);
+      input = { ...input, resources: normalized.resources };
+      assertNotReserved(input.resources);
+      assertFixedResources(input.resources);
       assertDesktopExpertAuthoring(input.resources);
       assertCombinedInvocableGraph(input.resources);
       const current = input.expectedRevision === 0 ? undefined : await get();
@@ -655,6 +651,7 @@ export function createPragmaProjectStore(options: {
   return {
     projectId,
     get,
+    normalizeResources,
     async getRevision(revision) {
       await ensureMigrated();
       return PragmaProjectSnapshotSchema.parse(await service.get(projectId, revision));

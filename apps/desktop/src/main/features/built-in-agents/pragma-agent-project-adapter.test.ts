@@ -169,7 +169,7 @@ describe("Desktop PragmaAgent DSL project adapter", { timeout: 30_000 }, () => {
     expect((await editing.read("expert:1xddvess309a6gme")).name).toBe("Editor");
   });
 
-  it("normalizes historical aliases on read and save without rewriting the historical Revision", async () => {
+  it.each([false, true])("keeps Capability IDs stable on read/save (%s)", async (withAlias) => {
     const root = await temporaryRoot("pragma-412-authoring-");
     const project = createPragmaProjectStore({ projectsPath: join(root, "projects") });
     const hostCapability = capability("00000000-0000-4000-8000-000000000001", "ready", "code");
@@ -224,30 +224,46 @@ describe("Desktop PragmaAgent DSL project adapter", { timeout: 30_000 }, () => {
             config: { key: hostCapability.manifest.id },
           },
         }),
-        PragmaForwardCompatibleResourceSchema.parse({
-          apiVersion: PRAGMA_DSL_WRITE_API_VERSION,
-          kind: "Capability",
-          futureCapabilityMetadata: { preserve: true },
-          metadata: {
-            id: "0000000000000001",
-            name: "Copied code option",
-            description: "Copied option",
-            tags: ["desktop-managed", "default-agent-option"],
-          },
-          spec: {
-            adapter: "pragma.capability.host@v1",
-            binding,
-            config: { key: hostCapability.manifest.id },
-          },
-        }),
+        ...(withAlias
+          ? [
+              PragmaForwardCompatibleResourceSchema.parse({
+                apiVersion: PRAGMA_DSL_WRITE_API_VERSION,
+                kind: "Capability",
+                futureCapabilityMetadata: { preserve: true },
+                metadata: {
+                  id: "0000000000000001",
+                  name: "Copied code option",
+                  description: "Copied option",
+                  tags: ["desktop-managed", "default-agent-option"],
+                },
+                spec: {
+                  adapter: "pragma.capability.host@v1",
+                  binding,
+                  config: { key: hostCapability.manifest.id },
+                },
+              }),
+            ]
+          : []),
       ],
     });
+    const persistedCapabilityRef = historical.resources
+      .filter((resource) => resource.kind === "Capability")
+      .map(canonicalPragmaResourceRef)[0]!;
+    expect(persistedCapabilityRef).not.toBe(capOption.ref);
     const read = await adapter.read("expert:1xddvess309a6gme");
-    expect(read.source).toContain(capOption.ref);
-    expect(read.source).not.toContain(legacyRef);
-    expect((await adapter.read(legacyRef)).ref).toBe(capOption.ref);
-    expect((await adapter.read(legacyRef)).name).toBe("code");
-    expect((await adapter.read(legacyRef)).source).toContain("futureCapabilityMetadata:");
+    expect(read.source).toContain(persistedCapabilityRef);
+    if (withAlias) expect(read.source).not.toContain(legacyRef);
+    else expect(persistedCapabilityRef).toBe(legacyRef);
+    expect(
+      (await adapter.list({ limit: 100 })).items.some(
+        (item) => item.ref === persistedCapabilityRef,
+      ),
+    ).toBe(true);
+    expect((await adapter.read(persistedCapabilityRef)).ref).toBe(persistedCapabilityRef);
+    expect((await adapter.read(persistedCapabilityRef)).name).toBe("code");
+    expect((await adapter.read(persistedCapabilityRef)).source).toContain(
+      "futureCapabilityMetadata:",
+    );
     expect(await project.getRevision(historical.revision)).toEqual(historical);
     const saved = requirePrepared(
       await adapter.prepare({
@@ -261,7 +277,7 @@ describe("Desktop PragmaAgent DSL project adapter", { timeout: 30_000 }, () => {
       resources
         .filter((resource) => resource.kind === "Capability")
         .map(canonicalPragmaResourceRef),
-    ).toEqual([capOption.ref]);
+    ).toEqual([persistedCapabilityRef]);
     expect(resources.find((resource) => resource.kind === "RuntimeProfile")?.metadata.name).toBe(
       "Writer Runtime",
     );

@@ -45,21 +45,8 @@ export async function normalizeHostBoundResources(
     );
     // Catalogs select identity and display metadata; the stored definition owns compatible
     // extension fields. A catalog template must never replace or reject those fields.
-    let canonical = sorted[0]!;
-    if (
-      catalog !== undefined &&
-      preferredId !== undefined &&
-      canonical.metadata.id !== preferredId
-    ) {
-      if (resources.some((resource) => resource.metadata.id === preferredId)) {
-        throw new Error(
-          `Catalog Capability ${id} conflicts with existing resource ${preferredId}.`,
-        );
-      }
-      canonical = structuredClone(canonical);
-      canonical.metadata.id = preferredId;
-      resources.push(canonical);
-    }
+    // Identity preference selects an existing alias; reading or rebinding never allocates IDs.
+    const canonical = sorted[0]!;
     for (const resource of sorted) {
       // Unknown fields are part of the configuration too: do not silently discard future semantics.
       const definition = { ...resource, metadata: undefined };

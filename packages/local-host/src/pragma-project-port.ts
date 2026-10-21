@@ -294,8 +294,22 @@ export function createLocalHostPragmaProjectPort(options: {
       .flatMap(expertDependencyRefs)
       .flatMap((ref) => {
         if (knownRefs.has(ref)) return [];
-        const dependency = existingDependencies.get(ref) ?? catalog.resources.get(ref);
+        let dependency = existingDependencies.get(ref) ?? catalog.resources.get(ref);
         if (dependency === undefined) return [];
+        // An explicit catalog selection may introduce its ID in this write transaction.
+        // Preserve the stored definition's extension fields instead of replacing it with a template.
+        const binding = classifyHostCapabilityResource(dependency);
+        const stored =
+          binding === undefined
+            ? undefined
+            : normalizedSnapshot.resources.find(
+                (resource) => classifyHostCapabilityResource(resource)?.id === binding.id,
+              );
+        if (stored?.kind === "Capability") {
+          const copy = structuredClone(stored);
+          copy.metadata.id = dependency.metadata.id;
+          dependency = copy;
+        }
         knownRefs.add(ref);
         return [dependency];
       });

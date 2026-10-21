@@ -90,6 +90,7 @@ import {
   type DesktopRuntimeAvailability,
 } from "../../deployment-contracts/index.ts";
 import {
+  classifyHostCapabilityResource,
   bindExistingDesktopCapabilityResource,
   bindExistingDesktopContextResource,
 } from "../bindings.ts";
@@ -713,11 +714,20 @@ export function createPragmaBundleService(options: {
     };
     try {
       // Export a derived project: caller-specific model overrides must not travel with Experts.
-      const sourceResources = project.listResourceClosure(PragmaBundleRootRefSchema.parse(rootRef));
-      const { resources: portableResources } = await normalizeHostBoundResources(sourceResources, {
+      // Normalize the full revision before selecting the closure: an alias outside the
+      // requested root still participates in the same identity choice as an explicit save.
+      const normalized = await options.project.normalizeResources(snapshot.resources);
+      const named = await normalizeHostBoundResources(normalized.resources, {
+        canonicalCapabilityId: (id) =>
+          normalized.resources.find(
+            (resource) => classifyHostCapabilityResource(resource)?.id === id,
+          )?.metadata.id,
         capabilityName: async (id) =>
           (await options.capabilities.resolveActive(id).catch(() => undefined))?.definition.name,
       });
+      rootRef = normalized.aliases.get(rootRef) ?? rootRef;
+      const sourceResources = project.listResourceClosure(PragmaBundleRootRefSchema.parse(rootRef));
+      const portableResources = collectBundleResourceClosure(named.resources, rootRef);
       let changed = !isDeepStrictEqual(portableResources, sourceResources);
       for (const resource of portableResources) {
         if (resource.kind === "ExpertTeam") {
@@ -1111,10 +1121,54 @@ export function createPragmaBundleService(options: {
         },
         journal.publicationId,
       ));
-    const installation = await updateInstallation(id, () => ({
-      ...journal.installation,
-      projectRevision: published.revision,
-    }));
+    // A rebind can make two previously distinct resources equivalent. Resolve ownership
+    // against the actual publication receipt, including recovery after a lost receipt.
+    const base = await options.project.getRevision(journal.baseRevision);
+    const candidates = new Map(
+      [...base.resources, ...journal.upserts].map((resource) => [
+        canonicalPragmaResourceRef(resource),
+        resource,
+      ]),
+    );
+    const publishedRefs = new Set(published.resources.map(canonicalPragmaResourceRef));
+    const mapRef = (ref: string) => {
+      if (publishedRefs.has(ref)) return ref;
+      const candidate = candidates.get(ref);
+      const binding =
+        candidate === undefined ? undefined : classifyHostCapabilityResource(candidate);
+      const canonical =
+        binding === undefined
+          ? undefined
+          : published.resources.find(
+              (resource) => classifyHostCapabilityResource(resource)?.id === binding.id,
+            );
+      return canonical === undefined ? ref : canonicalPragmaResourceRef(canonical);
+    };
+    const owned = new Set(journal.installation.createdResourceRefs);
+    const baseRefs = new Set(base.resources.map(canonicalPragmaResourceRef));
+    const installation = await updateInstallation(id, () =>
+      PragmaBundleInstallationSchema.parse({
+        ...journal.installation,
+        rootRef: mapRef(journal.installation.rootRef),
+        resourceRefs: unique(journal.installation.resourceRefs.map(mapRef)),
+        createdResourceRefs: unique(journal.installation.createdResourceRefs.map(mapRef)).filter(
+          (ref) => !baseRefs.has(ref) || owned.has(ref),
+        ),
+        resourceMappings: journal.installation.resourceMappings.map((mapping) => ({
+          ...mapping,
+          targetRef: mapRef(mapping.targetRef),
+        })),
+        pending: journal.installation.pending.map((entry) => ({
+          ...entry,
+          resourceRef: mapRef(entry.resourceRef),
+        })),
+        readiness: journal.installation.readiness.map((entry) => ({
+          ...entry,
+          resourceRef: mapRef(entry.resourceRef),
+        })),
+        projectRevision: published.revision,
+      }),
+    );
     const result = await recheck(installation);
     await rm(bindingRepairPath(id), { force: true });
     return result;
@@ -2500,12 +2554,12 @@ export function createPragmaBundleService(options: {
                 ? pragmaManagementCapabilityResource()
                 : resource,
             );
-            const sourceToTarget = localized.resourceMappings;
+            const sourceToTarget = new Map(localized.resourceMappings);
             const installationRefs = new Set(plan.refs);
             const replacementRefs = new Set(resources.map(canonicalPragmaResourceRef));
             const currentRefs = new Set(current.resources.map(canonicalPragmaResourceRef));
-            const createdResourceRefs = [...replacementRefs].filter((ref) => !currentRefs.has(ref));
-            const rootRef =
+            let createdResourceRefs = [...replacementRefs].filter((ref) => !currentRefs.has(ref));
+            let rootRef =
               sourceToTarget.get(archive.manifest.root.ref) ?? archive.manifest.root.ref;
             await updateInstallation(initial.id, (record) => ({
               ...record,
@@ -3373,12 +3427,38 @@ export function createPragmaBundleService(options: {
                 ),
               ),
             ];
-            const combined = [
+            let combined = [
               ...current.resources.filter(
                 (resource) => !replacementRefs.has(canonicalPragmaResourceRef(resource)),
               ),
               ...resources,
             ];
+            const normalized = await options.project.normalizeResources(combined);
+            combined = normalized.resources;
+            const resolveRef = (ref: string) => normalized.aliases.get(ref) ?? ref;
+            for (const [source, target] of sourceToTarget)
+              sourceToTarget.set(source, resolveRef(target) as typeof target);
+            const normalizedRefs = [...installationRefs].map(resolveRef);
+            installationRefs.clear();
+            for (const ref of normalizedRefs) installationRefs.add(ref as PragmaResourceRef);
+            createdResourceRefs = unique(createdResourceRefs.map(resolveRef)).filter(
+              (ref) => !currentRefs.has(ref),
+            );
+            rootRef = resolveRef(rootRef) as typeof rootRef;
+            for (const dependency of [...pending, ...secretReadiness])
+              dependency.resourceRef = resolveRef(dependency.resourceRef);
+            // Persist the normalized ownership and mapping before publication. Replaying an
+            // interrupted transaction recomputes this deterministic graph from its base revision.
+            await updateInstallation(initial.id, (record) => ({
+              ...record,
+              rootRef,
+              resourceRefs: [...installationRefs],
+              createdResourceRefs,
+              resourceMappings: [...sourceToTarget].map(([sourceRef, targetRef]) => ({
+                sourceRef,
+                targetRef,
+              })),
+            }));
             const referencedArtifacts = collectPragmaProjectArtifactPaths(combined);
             const retainedCurrentArtifacts = [...currentArtifacts].filter(
               ([path]) =>
