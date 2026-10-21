@@ -9,6 +9,9 @@ import {
   inspectCredentialMigration,
   type CredentialDoctorFinding,
 } from "../src/secrets/credential-doctor.ts";
+import { createSecretStore } from "../src/secrets/secret-store.ts";
+import { modelProvidersV6ToV7Step } from "../src/model-providers/migrations/index.ts";
+import type { SecretRef } from "@pragma/shared/integration";
 import type { OsKeychain, SecretStore } from "../src/secrets/secret-store.ts";
 import {
   MODEL_PROVIDER_STORAGE_VERSION,
@@ -159,9 +162,9 @@ describe("credential doctor schema versions", () => {
       plugin: join(root, "plugin.json"),
     } as const;
     await Promise.all([
-      writeFile(paths["model-provider"], JSON.stringify({ schemaVersion: 5 })),
+      writeFile(paths["model-provider"], JSON.stringify({ schemaVersion: 5, providers: [] })),
       writeFile(paths.capability, JSON.stringify({ schemaVersion: 1 })),
-      writeFile(paths.plugin, JSON.stringify({ schemaVersion: 2 })),
+      writeFile(paths.plugin, JSON.stringify({ schemaVersion: 2, credentials: {} })),
     ]);
     const findings = await inspectCredentialMigration({
       secretStore: {
@@ -240,7 +243,7 @@ describe("credential doctor schema versions", () => {
     });
   });
 
-  it("does not report a terminal journal ready when its retained backup is missing", async () => {
+  it("warns about a missing historical backup without requiring migration", async () => {
     const root = await mkdtemp(join(tmpdir(), "pragma-credential-doctor-backup-"));
     roots.push(root);
     const file = join(root, "model-provider.json");
@@ -260,10 +263,50 @@ describe("credential doctor schema versions", () => {
 
     expect(findings.find((finding) => finding.module === "model-provider")).toEqual({
       module: "model-provider",
-      status: "degraded",
-      code: "SECRET_MIGRATION_REQUIRED",
+      status: "ready",
+      warnings: [
+        {
+          code: "LEGACY_CREDENTIAL_BACKUP_MISSING",
+          message: expect.stringContaining("reopening Desktop will not recreate it"),
+        },
+      ],
     });
   });
+
+  it.each(["unexpected-path", "directory"] as const)(
+    "rejects a %s backup instead of treating invalid recovery evidence as a missing-backup warning",
+    async (kind) => {
+      const root = await mkdtemp(join(tmpdir(), "pragma-doctor-backup-integrity-"));
+      roots.push(root);
+      const file = join(root, "model-provider.json");
+      await writeFile(file, JSON.stringify(currentDocuments["model-provider"]));
+      await writeMigrationJournal(file, "model-provider", "legacy_backup_retained");
+      const journalFile = `${file}.migration-journal.json`;
+      const journal = JSON.parse(await readFile(journalFile, "utf8")) as { backupPath: string };
+      if (kind === "directory") {
+        await rm(journal.backupPath);
+        await mkdir(journal.backupPath);
+      } else {
+        await writeFile(
+          journalFile,
+          JSON.stringify({ ...journal, backupPath: join(root, "unrelated-backup.json") }),
+        );
+      }
+      const findings = await inspectCredentialMigration({
+        secretStore: readySecretStore,
+        files: {
+          "model-provider": file,
+          capability: join(root, "missing-capability"),
+          plugin: join(root, "missing-plugin"),
+        },
+      });
+      expect(findings.find((finding) => finding.module === "model-provider")).toEqual({
+        module: "model-provider",
+        status: "degraded",
+        code: "STORAGE_CORRUPTED",
+      });
+    },
+  );
 
   it.each([
     ["malformed JSON", "{not-json", "STORAGE_CORRUPTED"],
@@ -362,6 +405,191 @@ describe("credential doctor schema versions", () => {
       ).toEqual({ module, status: "degraded", code: "SECRET_MIGRATION_REQUIRED" });
     },
   );
+
+  it.each(["model-provider", "capability", "plugin"] as const)(
+    "checks active %s secrets after migration, including rotation and credential failures",
+    async (module) => {
+      const root = await mkdtemp(join(tmpdir(), "pragma-doctor-active-"));
+      roots.push(root);
+      const keys = new Map<string, Uint8Array>();
+      const store = createSecretStore({
+        root: join(root, "secrets"),
+        keychain: {
+          ...readyKeychain,
+          get: async (_service, account) => keys.get(account) ?? null,
+          set: async (_service, account, value) => {
+            keys.set(account, value);
+          },
+        },
+      });
+      const providerId = "c47f532c-6c48-4dc3-917b-432728254b64";
+      const owner =
+        module === "model-provider"
+          ? { kind: "model-provider" as const, providerId }
+          : module === "capability"
+            ? { kind: "capability" as const, capabilityId: "aaaaaaaaaaaaaaaa", name: "token" }
+            : { kind: "plugin-binding" as const, bindingRef: "plugin/token" };
+      const original = await store.put({ owner, value: Buffer.from("must-not-leak") });
+      const file = join(root, `${module}.json`);
+      const files = {
+        "model-provider": join(root, "missing-model"),
+        capability: join(root, "missing-capability"),
+        plugin: join(root, "missing-plugin"),
+        [module]: file,
+      };
+      const writeCurrent = async (ref: SecretRef) => {
+        let document: unknown;
+        if (module === "model-provider") {
+          const historical = ModelProvidersV6Schema.parse(
+            JSON.parse(
+              await readFile(
+                new URL(
+                  "../../memory/test/fixtures/retrieval/model-providers-v6.json",
+                  import.meta.url,
+                ),
+                "utf8",
+              ),
+            ),
+          );
+          document = modelProvidersV6ToV7Step.migrate({
+            ...historical,
+            providers: historical.providers.map((provider) => ({
+              ...provider,
+              apiKeySecretRef: ref,
+            })),
+          });
+        } else {
+          document = {
+            schemaVersion: currentDocuments[module].schemaVersion,
+            credentials: {
+              "aaaaaaaaaaaaaaaa/token":
+                module === "capability" ? { generation: ref.revision, ref } : ref,
+            },
+          };
+        }
+        await writeFile(file, JSON.stringify(document));
+      };
+      await writeCurrent(original);
+      await writeMigrationJournal(file, module, "legacy_backup_retained", { writeBackup: false });
+      // A historical ref becomes stale after normal rotation. Doctor must use the live document.
+      const journalFile = `${file}.migration-journal.json`;
+      const journal = JSON.parse(await readFile(journalFile, "utf8"));
+      await writeFile(
+        journalFile,
+        JSON.stringify({
+          ...journal,
+          refs: [{ key: "old", ref: original, digest: "a".repeat(64) }],
+        }),
+      );
+      const rotated = await store.put({
+        owner,
+        value: Buffer.from("rotated-must-not-leak"),
+        expectedRevision: original.revision,
+      });
+      await writeCurrent(rotated);
+      const before = await readFile(file, "utf8");
+      const inspect = async () =>
+        (await inspectCredentialMigration({ secretStore: store, files })).find(
+          (finding) => finding.module === module,
+        )!;
+      const finding = await inspect();
+      expect(finding).toMatchObject({
+        status: "ready",
+        warnings: [{ code: "LEGACY_CREDENTIAL_BACKUP_MISSING" }],
+      });
+      expect(JSON.stringify(finding)).not.toContain("must-not-leak");
+      expect(await readFile(file, "utf8")).toBe(before);
+
+      await writeCurrent(original);
+      expect(await inspect()).toMatchObject({
+        status: "degraded",
+        code: "STORAGE_CORRUPTED",
+        reasonCode: "SECRET_REVISION_CONFLICT",
+      });
+      await expect(
+        store.put({
+          owner,
+          value: Buffer.from("replacement"),
+          expectedRevision: original.revision,
+        }),
+      ).rejects.toMatchObject({ code: "SECRET_REVISION_CONFLICT" });
+      await writeCurrent(rotated);
+      const savedKeys = new Map(keys);
+      keys.clear();
+      expect(await inspect()).toMatchObject({
+        status: "degraded",
+        code: "STORAGE_CORRUPTED",
+        reasonCode: "SECRET_MASTER_KEY_MISSING",
+      });
+      await expect(
+        store.put({ owner, value: Buffer.from("replacement"), expectedRevision: rotated.revision }),
+      ).rejects.toMatchObject({ code: "SECRET_MASTER_KEY_MISSING" });
+      for (const [account, key] of savedKeys) keys.set(account, key);
+      const envelopePath = join(
+        root,
+        "secrets",
+        "objects",
+        Buffer.from(rotated.secretId).toString("base64url"),
+        `${rotated.revision}.json`,
+      );
+      const envelope = await readFile(envelopePath, "utf8");
+      await writeFile(envelopePath, "{broken-envelope");
+      expect(await inspect()).toMatchObject({
+        status: "degraded",
+        reasonCode: "SECRET_STORE_CORRUPTED",
+      });
+      await writeFile(envelopePath, envelope);
+      await store.delete(rotated, rotated.revision);
+      expect(await inspect()).toMatchObject({ status: "degraded", reasonCode: "SECRET_NOT_FOUND" });
+      await rm(journalFile);
+      expect(await inspect()).toEqual({
+        module,
+        status: "degraded",
+        code: "STORAGE_CORRUPTED",
+        reasonCode: "SECRET_NOT_FOUND",
+      });
+    },
+  );
+
+  it("disposes validated secret handles without reading their values", async () => {
+    const root = await mkdtemp(join(tmpdir(), "pragma-doctor-handle-"));
+    roots.push(root);
+    const file = join(root, "plugin.json");
+    const ref = {
+      schemaVersion: "pragma.secret-ref/v1",
+      secretId: migrationDefinitions.plugin.id,
+      revision: migrationDefinitions.plugin.id,
+      owner: { kind: "plugin-binding", bindingRef: "token" },
+    };
+    await writeFile(file, JSON.stringify({ schemaVersion: 2, credentials: { token: ref } }));
+    let disposed = false;
+    const findings = await inspectCredentialMigration({
+      secretStore: {
+        ...readySecretStore,
+        get: async () => ({
+          bytes: () => {
+            throw new Error("must not read");
+          },
+          utf8: () => {
+            throw new Error("must not read");
+          },
+          dispose: () => {
+            disposed = true;
+          },
+        }),
+      },
+      files: {
+        "model-provider": join(root, "missing-model"),
+        capability: join(root, "missing-capability"),
+        plugin: file,
+      },
+    });
+    expect(findings.find((finding) => finding.module === "plugin")).toEqual({
+      module: "plugin",
+      status: "ready",
+    });
+    expect(disposed).toBe(true);
+  });
 });
 
 async function writeMigrationJournal(

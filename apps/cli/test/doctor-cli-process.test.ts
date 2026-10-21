@@ -6,6 +6,8 @@ import { afterEach, describe, expect, it } from "vitest";
 import {
   MODEL_PROVIDER_STORAGE_VERSION,
   ModelProvidersV5Schema,
+  ModelProvidersV6Schema,
+  modelProvidersV6ToV7Step,
   StoredModelProviderConfigSchema,
 } from "@pragma/local-host";
 import {
@@ -145,6 +147,108 @@ describe("pragma doctor executable", () => {
       expect(result.exitCode).toBe(7);
       expect(result.stdout).toContain(`${module}: degraded (STORAGE_VERSION_UNSUPPORTED)`);
       expect(result.stderr).toBe("");
+    },
+  );
+
+  it.each(["text", "json"] as const)(
+    "warns about a lost completed backup in %s output with success exit status",
+    async (format) => {
+      const home = await currentHome(true);
+      const file = credentialFiles(home)["model-provider"];
+      const journalFile = `${file}.migration-journal.json`;
+      const before = await readFile(journalFile, "utf8");
+      const journal = JSON.parse(before) as { backupPath: string };
+      await rm(journal.backupPath);
+      const result = await invoke(
+        process.execPath,
+        ["apps/cli/dist/pragma.js", "doctor", `--format=${format}`],
+        {
+          NODE_ENV: "test",
+          NODE_NO_WARNINGS: "1",
+          PRAGMA_HOME: home,
+          PRAGMA_CLI_TEST_KEYCHAIN_STATUS: "ready",
+        },
+      );
+      expect(result.exitCode).toBe(0);
+      expect(result.stdout).toContain("LEGACY_CREDENTIAL_BACKUP_MISSING");
+      expect(result.stdout).not.toContain("SECRET_MIGRATION_REQUIRED");
+      expect(result.stdout).not.toContain(journal.backupPath);
+      expect(result.stderr).toBe("");
+      if (format === "json")
+        expect(JSON.parse(result.stdout)).toMatchObject({
+          status: "succeeded",
+          result: {
+            credentials: expect.arrayContaining([
+              expect.objectContaining({
+                module: "model-provider",
+                status: "ready",
+                warnings: [
+                  { code: "LEGACY_CREDENTIAL_BACKUP_MISSING", message: expect.any(String) },
+                ],
+              }),
+            ]),
+          },
+        });
+      else expect(result.stdout).toContain("reopening Desktop will not recreate it");
+      expect(await readFile(journalFile, "utf8")).toBe(before);
+    },
+  );
+
+  it.each(["text", "json"] as const)(
+    "reports an actual credential failure with a lost backup in %s output",
+    async (format) => {
+      const home = await currentHome(true);
+      const file = credentialFiles(home)["model-provider"];
+      const historical = ModelProvidersV6Schema.parse(
+        JSON.parse(
+          await readFile(
+            new URL(
+              "../../../packages/memory/test/fixtures/retrieval/model-providers-v6.json",
+              import.meta.url,
+            ),
+            "utf8",
+          ),
+        ),
+      );
+      await writeFile(file, JSON.stringify(modelProvidersV6ToV7Step.migrate(historical)));
+      const journal = JSON.parse(await readFile(`${file}.migration-journal.json`, "utf8")) as {
+        backupPath: string;
+      };
+      await rm(journal.backupPath);
+      const result = await invoke(
+        process.execPath,
+        ["apps/cli/dist/pragma.js", "doctor", `--format=${format}`],
+        {
+          NODE_ENV: "test",
+          NODE_NO_WARNINGS: "1",
+          PRAGMA_HOME: home,
+          PRAGMA_CLI_TEST_KEYCHAIN_STATUS: "ready",
+        },
+      );
+      expect(result.exitCode).toBe(7);
+      expect(result.stdout).toContain("SECRET_MASTER_KEY_MISSING");
+      expect(result.stdout).toContain("LEGACY_CREDENTIAL_BACKUP_MISSING");
+      expect(result.stdout).toContain("Restore the original keychain key");
+      expect(result.stdout).not.toContain("SECRET_MIGRATION_REQUIRED");
+      expect(result.stdout).not.toContain("Open the upgraded Desktop");
+      expect(result.stdout).not.toContain(journal.backupPath);
+      expect(result.stderr).toBe("");
+      if (format === "json")
+        expect(JSON.parse(result.stdout)).toMatchObject({
+          status: "failed",
+          error: {
+            code: "STORAGE_CORRUPTED",
+            details: {
+              credentials: expect.arrayContaining([
+                expect.objectContaining({
+                  module: "model-provider",
+                  status: "degraded",
+                  reasonCode: "SECRET_MASTER_KEY_MISSING",
+                }),
+              ]),
+            },
+          },
+        });
     },
   );
 

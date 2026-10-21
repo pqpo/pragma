@@ -2,20 +2,37 @@ import { readFile, stat } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 
 import { PragmaPaths } from "@pragma/core";
-import { SecretRefSchema, type IntegrationErrorCode } from "@pragma/shared/integration";
+import {
+  SecretRefSchema,
+  type IntegrationErrorCode,
+  type SecretRef,
+} from "@pragma/shared/integration";
 import { z } from "zod";
 
-import { modelProviderStorageVersions } from "../model-providers/migrations/index.ts";
-import { capabilityCredentialStorageVersions } from "../resources/capability-credential-migrations/index.ts";
+import { StoredModelProviderConfigSchema } from "../model-providers/reader.ts";
+import {
+  ModelProvidersV5Schema,
+  ModelProvidersV6Schema,
+  modelProviderStorageVersions,
+} from "../model-providers/migrations/index.ts";
+import {
+  CapabilityCredentialsV2Schema,
+  CapabilityCredentialsV3Schema,
+  capabilityCredentialStorageVersions,
+} from "../resources/capability-credential-migrations/index.ts";
 import { pluginCredentialStorageVersions } from "../resources/plugin-credential-migrations/index.ts";
 import { createNativeOsKeychain } from "./native-os-keychain.ts";
 import type { SecretStore } from "./secret-store.ts";
-import { createSecretStore, type OsKeychain } from "./secret-store.ts";
+import { createSecretStore, SecretStoreError, type OsKeychain } from "./secret-store.ts";
 
 export type CredentialDoctorFinding = {
   readonly module: "model-provider" | "capability" | "plugin";
   readonly status: "ready" | "migration_required" | "degraded";
   readonly code?: IntegrationErrorCode | undefined;
+  readonly reasonCode?: SecretStoreError["code"] | undefined;
+  readonly warnings?:
+    | readonly { readonly code: "LEGACY_CREDENTIAL_BACKUP_MISSING"; readonly message: string }[]
+    | undefined;
 };
 
 // These historical journal targets stay fixed after later storage upgrades.
@@ -49,7 +66,7 @@ const CredentialStorageVersions = {
 /**
  * This is deliberately a local, metadata-only copy of the Desktop journal
  * contract. Local Host cannot depend on Desktop, and the doctor must validate
- * the journal without reading any legacy ciphertext or secret envelope.
+ * the journal without reading any legacy ciphertext.
  */
 const CredentialMigrationJournalSchema = z
   .object({
@@ -78,7 +95,7 @@ const CredentialMigrationJournalSchema = z
 
 type CredentialMigrationJournal = z.infer<typeof CredentialMigrationJournalSchema>;
 
-/** Metadata-only inspection suitable for a CLI doctor presenter. It never reads an envelope value. */
+/** Read-only inspection. Secret handles are immediately disposed and never exposed to callers. */
 export async function inspectCredentialMigration(input: {
   readonly secretStore: SecretStore;
   readonly files: Readonly<Record<CredentialDoctorFinding["module"], string>>;
@@ -105,9 +122,11 @@ export async function inspectCredentialMigration(input: {
             code: doctorErrorCode(error),
           };
         }
+        let document: unknown;
         let version: number | undefined;
         try {
-          version = await schemaVersion(file);
+          document = await readCredentialDocument(file);
+          version = document === undefined ? undefined : schemaVersion(document);
         } catch (error) {
           return { module, status: "degraded", code: doctorErrorCode(error) };
         }
@@ -126,7 +145,8 @@ export async function inspectCredentialMigration(input: {
           !(storageVersions.migratableVersions as readonly number[]).includes(version)
         )
           return { module, status: "degraded", code: "STORAGE_VERSION_UNSUPPORTED" };
-        if (journal === undefined) return { module, status: "ready" };
+        if (journal === undefined)
+          return await inspectCurrentCredentials(module, document, input.secretStore);
 
         if (
           journal.family !== definition.family ||
@@ -141,21 +161,32 @@ export async function inspectCredentialMigration(input: {
         if (!hasTargetSchema(journal.targetMetadata, definition.targetVersion))
           return { module, status: "degraded", code: "STORAGE_CORRUPTED" };
 
+        const finding = await inspectCurrentCredentials(module, document, input.secretStore);
         try {
           if (!(await hasRetainedBackup(file, journal)))
-            return { module, status: "degraded", code: "SECRET_MIGRATION_REQUIRED" };
+            return {
+              ...finding,
+              warnings: [
+                {
+                  code: "LEGACY_CREDENTIAL_BACKUP_MISSING",
+                  message:
+                    "Credential migration completed, but its historical backup is missing. Restore the backup from an archive if needed for recovery; reopening Desktop will not recreate it.",
+                },
+              ],
+            };
         } catch (error) {
+          if (finding.code !== undefined) return finding;
           return { module, status: "degraded", code: doctorErrorCode(error) };
         }
 
-        return { module, status: "ready" };
+        return finding;
       },
     ),
   );
 }
 
 /**
- * Builds the metadata-only credential diagnostic used by Node Hosts. The caller
+ * Builds the read-only credential diagnostic used by Node Hosts. The caller
  * may inject a keychain for a test composition; production callers use the
  * native macOS/Windows backend and never receive a secret value.
  */
@@ -231,13 +262,15 @@ async function hasRetainedBackup(
     join(dirname(file), "migrations", "backups", `${journal.id}.legacy.json`),
   );
   const backupPath = resolve(journal.backupPath);
-  if (backupPath !== expectedPath) return false;
+  if (backupPath !== expectedPath) throw new CredentialDoctorError("STORAGE_CORRUPTED");
   try {
-    return (await stat(backupPath)).isFile();
+    if (!(await stat(backupPath)).isFile()) throw new CredentialDoctorError("STORAGE_CORRUPTED");
+    return true;
   } catch (error) {
     const code = (error as NodeJS.ErrnoException).code;
     if (code === "EACCES" || code === "EPERM") throw new CredentialDoctorError("PERMISSION_DENIED");
-    return false;
+    if (code === "ENOENT") return false;
+    throw new CredentialDoctorError("STORAGE_CORRUPTED");
   }
 }
 
@@ -266,7 +299,7 @@ class CredentialDoctorError extends Error {
     super(code);
   }
 }
-async function schemaVersion(path: string): Promise<number | undefined> {
+async function readCredentialDocument(path: string): Promise<unknown> {
   let text: string;
   try {
     text = await readFile(path, "utf8");
@@ -276,12 +309,14 @@ async function schemaVersion(path: string): Promise<number | undefined> {
     if (code === "EACCES" || code === "EPERM") throw new CredentialDoctorError("PERMISSION_DENIED");
     throw new CredentialDoctorError("STORAGE_CORRUPTED");
   }
-  let value: unknown;
   try {
-    value = JSON.parse(text) as unknown;
+    return JSON.parse(text) as unknown;
   } catch {
     throw new CredentialDoctorError("STORAGE_CORRUPTED");
   }
+}
+
+function schemaVersion(value: unknown): number {
   if (
     typeof value !== "object" ||
     value === null ||
@@ -290,4 +325,61 @@ async function schemaVersion(path: string): Promise<number | undefined> {
     throw new CredentialDoctorError("STORAGE_CORRUPTED");
   }
   return (value as { schemaVersion: number }).schemaVersion;
+}
+
+async function inspectCurrentCredentials(
+  module: CredentialDoctorFinding["module"],
+  document: unknown,
+  store: SecretStore,
+): Promise<CredentialDoctorFinding> {
+  try {
+    // Inspect active references, not historical journal refs: credentials may have
+    // been rotated or removed since migration. Do not replay or rewrite storage.
+    for (const ref of currentRefs(module, document)) {
+      const handle = await store.get(ref);
+      handle.dispose();
+    }
+    return { module, status: "ready" };
+  } catch (error) {
+    if (error instanceof SecretStoreError) {
+      const code =
+        error.code === "KEYCHAIN_UNAVAILABLE" || error.code === "SECRET_STORE_LOCKED"
+          ? error.code
+          : "STORAGE_CORRUPTED";
+      return { module, status: "degraded", code, reasonCode: error.code };
+    }
+    return { module, status: "degraded", code: doctorErrorCode(error) };
+  }
+}
+
+function currentRefs(
+  module: CredentialDoctorFinding["module"],
+  document: unknown,
+): readonly SecretRef[] {
+  const version = schemaVersion(document);
+  if (module === "model-provider") {
+    const config =
+      version === 5
+        ? ModelProvidersV5Schema.parse(document)
+        : version === 6
+          ? ModelProvidersV6Schema.parse(document)
+          : StoredModelProviderConfigSchema.parse(document);
+    return config.providers.flatMap((provider) =>
+      provider.apiKeySecretRef === undefined
+        ? []
+        : [SecretRefSchema.parse(provider.apiKeySecretRef)],
+    );
+  }
+  if (module === "capability") {
+    return version === 2
+      ? Object.values(CapabilityCredentialsV2Schema.parse(document).credentials)
+      : Object.values(CapabilityCredentialsV3Schema.parse(document).credentials).map(
+          (binding) => binding.ref,
+        );
+  }
+  return Object.values(
+    z
+      .object({ schemaVersion: z.literal(2), credentials: z.record(z.string(), SecretRefSchema) })
+      .parse(document).credentials,
+  );
 }
