@@ -1,3 +1,4 @@
+import { desktopCapabilityResourceId } from "../platform/bindings/desktop-bound-resource-policy.ts";
 import { createBundleExecutorReadiness } from "../features/bundles/bundle-executor-readiness.ts";
 import { createSkillRevisionMissionRestorer } from "../features/capabilities/skill-revision-mission-restore.ts";
 import {
@@ -311,6 +312,9 @@ export async function createDesktopApplicationContainer(
   const blueprintCache = createDesktopPragmaBlueprintCacheStore(pragmaPaths);
   const assetSyncRef: { current?: AssetSyncCoordinator } = {};
   const pragmaProjectStore = createPragmaProjectStore({
+    canonicalCapabilityId: (id) => desktopCapabilityResourceId("default-agent-option", id),
+    capabilityName: async (id) =>
+      (await capabilityStore.resolveActive(id).catch(() => undefined))?.definition.name,
     onPublished: () => assetSyncRef.current?.scheduleCore("project-published"),
     projectsPath,
     objectsPath: pragmaPaths.contentObjectsRoot(),

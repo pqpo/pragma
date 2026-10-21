@@ -22,6 +22,7 @@ import {
   PragmaForwardCompatibleResourceSchema,
   PragmaFlowResourceSchema,
   PragmaRuntimeProfileResourceSchema,
+  canonicalPragmaResourceRef,
 } from "@pragma/interpreter/ast";
 import { formatPragmaYaml, parsePragmaYaml } from "@pragma/interpreter";
 
@@ -68,6 +69,262 @@ async function temporaryRoot(prefix: string): Promise<string> {
 }
 
 describe("Desktop PragmaAgent DSL project adapter", { timeout: 30_000 }, () => {
+  it("expires resource cursors when active Capability names change without a Project revision", async () => {
+    const root = await temporaryRoot("pragma-normalized-list-cursor-");
+    const project = createPragmaProjectStore({ projectsPath: join(root, "projects") });
+    const active = capability("00000000-0000-4000-8000-000000000001", "ready", "Before");
+    const adapter = createDesktopPragmaAgentProjectPort(
+      adapterOptions(project, join(root, "state"), [active]),
+    );
+    const runtimeRef = (
+      (await adapter.listExpertOptions({ category: "runtime-models", limit: 25 })).items[0] as {
+        runtimeProfileRef: string;
+      }
+    ).runtimeProfileRef;
+    const capRef = (
+      (await adapter.listExpertOptions({ category: "capabilities", limit: 25 })).items.find(
+        (item) =>
+          typeof item === "object" && item !== null && "name" in item && item.name === "Before",
+      ) as { ref: string }
+    ).ref;
+    const source = expert("Cursor regression", runtimeRef).replace(
+      "capabilities: []",
+      `capabilities:\n    - ref: ${capRef}\n      kind: skill`,
+    );
+    const prepared = requirePrepared(
+      await adapter.prepare({ expectedProjectRevision: 0, sources: [source] }),
+    );
+    await adapter.commit({ changeSetId: prepared.changeSetId, operationId: "cursor-base" });
+    const page = await adapter.list({ limit: 1 });
+    expect(page.nextCursor).toBeDefined();
+    await expect(adapter.list({ limit: 1, cursor: page.nextCursor })).resolves.toBeDefined();
+    active.definition.name = "After";
+    active.manifest.latestRevision = 2;
+    active.manifest.activeRevision = 2;
+    expect((await project.get()).revision).toBe(page.projectRevision);
+    await expect(adapter.list({ limit: 1, cursor: page.nextCursor })).rejects.toThrow(
+      "cursor_expired",
+    );
+  });
+
+  it("reviews all authored changes when repository preview also returns implicit Runtime changes", async () => {
+    const root = await temporaryRoot("pragma-review-implicit-order-");
+    const project = createPragmaProjectStore({ projectsPath: join(root, "projects") });
+    const adapter = createDesktopPragmaAgentProjectPort(
+      adapterOptions(project, join(root, "state")),
+    );
+    const runtimeRef = (
+      (await adapter.listExpertOptions({ category: "runtime-models", limit: 25 })).items[0] as {
+        runtimeProfileRef: string;
+      }
+    ).runtimeProfileRef;
+    const initial = requirePrepared(
+      await adapter.prepare({
+        expectedProjectRevision: 0,
+        sources: [expert("Original", runtimeRef)],
+      }),
+    );
+    await adapter.commit({ changeSetId: initial.changeSetId, operationId: "review-order-base" });
+    const reordered = new Proxy(project, {
+      get(target, property, receiver) {
+        if (property !== "previewChanges") return Reflect.get(target, property, receiver);
+        return async (...args: Parameters<typeof project.previewChanges>) => {
+          const preview = await target.previewChanges(...args);
+          return { ...preview, upserts: [...preview.upserts].reverse() };
+        };
+      },
+    });
+    const editing = createDesktopPragmaAgentProjectPort(
+      adapterOptions(reordered, join(root, "edit-state")),
+    );
+    const missionId = "ed1bcbb5-b1e6-4aa5-9357-7853ce745f6b";
+    const draft = await editing.startDslDraft({
+      missionId,
+      workspacePath: root,
+      targets: [{ mode: "edit", ref: "expert:1xddvess309a6gme" }],
+    });
+    await writeFile(
+      draft.resources[0]!.filePath!,
+      expert("Changed description", runtimeRef).replace("name: Writer", "name: Editor"),
+    );
+    const inspection = await editing.inspectDslDraft({ missionId, draftId: draft.draftId });
+    expect(inspection.review.fieldChanges).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          ref: "expert:1xddvess309a6gme",
+          path: ["metadata", "description"],
+        }),
+        expect.objectContaining({ ref: "expert:1xddvess309a6gme", path: ["metadata", "name"] }),
+      ]),
+    );
+    const prepared = requirePrepared(
+      await editing.prepareDslDraft({ missionId, draftId: draft.draftId }),
+    );
+    expect(prepared.review).toEqual(inspection.review);
+    await editing.commit({
+      missionId,
+      changeSetId: prepared.changeSetId,
+      operationId: "review-order-save",
+    });
+    expect((await editing.read("expert:1xddvess309a6gme")).name).toBe("Editor");
+  });
+
+  it.each([false, true])("keeps Capability IDs stable on read/save (%s)", async (withAlias) => {
+    const root = await temporaryRoot("pragma-412-authoring-");
+    const project = createPragmaProjectStore({ projectsPath: join(root, "projects") });
+    const hostCapability = capability("00000000-0000-4000-8000-000000000001", "ready", "code");
+    const adapter = createDesktopPragmaAgentProjectPort(
+      adapterOptions(project, join(root, "state"), [hostCapability]),
+    );
+    const runtimeOption = (
+      await adapter.listExpertOptions({ category: "runtime-models", limit: 25 })
+    ).items[0] as { runtimeProfileRef: string };
+    const capOption = (
+      await adapter.listExpertOptions({ category: "capabilities", limit: 25 })
+    ).items.find(
+      (item) => typeof item === "object" && item !== null && "name" in item && item.name === "code",
+    ) as { ref: string };
+    const first = requirePrepared(
+      await adapter.prepare({
+        expectedProjectRevision: 0,
+        sources: [expert("Initial", runtimeOption.runtimeProfileRef)],
+      }),
+    );
+    await adapter.commit({ changeSetId: first.changeSetId, operationId: "first-412" });
+    const current = await project.get();
+    const binding = `binding:desktop-capability.${Buffer.from(hostCapability.manifest.id).toString("base64url")}`;
+    const legacyRef = "capability:nv27faxmxpqnxwqr";
+    const historical = await project.publish({
+      expectedRevision: current.revision,
+      resources: [
+        ...current.resources.map((resource) =>
+          resource.kind === "Expert"
+            ? {
+                ...resource,
+                spec: {
+                  ...resource.spec,
+                  capabilities: [{ ref: legacyRef, kind: "skill" as const }],
+                },
+              }
+            : resource,
+        ),
+        PragmaForwardCompatibleResourceSchema.parse({
+          apiVersion: PRAGMA_DSL_WRITE_API_VERSION,
+          kind: "Capability",
+          futureCapabilityMetadata: { preserve: true },
+          metadata: {
+            id: "nv27faxmxpqnxwqr",
+            name: `Capability ${hostCapability.manifest.id}`,
+            description: "Legacy capability",
+            tags: ["desktop-managed"],
+          },
+          spec: {
+            adapter: "pragma.capability.host@v1",
+            binding,
+            config: { key: hostCapability.manifest.id },
+          },
+        }),
+        ...(withAlias
+          ? [
+              PragmaForwardCompatibleResourceSchema.parse({
+                apiVersion: PRAGMA_DSL_WRITE_API_VERSION,
+                kind: "Capability",
+                futureCapabilityMetadata: { preserve: true },
+                metadata: {
+                  id: "0000000000000001",
+                  name: "Copied code option",
+                  description: "Copied option",
+                  tags: ["desktop-managed", "default-agent-option"],
+                },
+                spec: {
+                  adapter: "pragma.capability.host@v1",
+                  binding,
+                  config: { key: hostCapability.manifest.id },
+                },
+              }),
+            ]
+          : []),
+      ],
+    });
+    const persistedCapabilityRef = historical.resources
+      .filter((resource) => resource.kind === "Capability")
+      .map(canonicalPragmaResourceRef)[0]!;
+    expect(persistedCapabilityRef).not.toBe(capOption.ref);
+    const read = await adapter.read("expert:1xddvess309a6gme");
+    expect(read.source).toContain(persistedCapabilityRef);
+    if (withAlias) expect(read.source).not.toContain(legacyRef);
+    else expect(persistedCapabilityRef).toBe(legacyRef);
+    expect(
+      (await adapter.list({ limit: 100 })).items.some(
+        (item) => item.ref === persistedCapabilityRef,
+      ),
+    ).toBe(true);
+    expect((await adapter.read(persistedCapabilityRef)).ref).toBe(persistedCapabilityRef);
+    expect((await adapter.read(persistedCapabilityRef)).name).toBe("code");
+    expect((await adapter.read(persistedCapabilityRef)).source).toContain(
+      "futureCapabilityMetadata:",
+    );
+    expect(await project.getRevision(historical.revision)).toEqual(historical);
+    const saved = requirePrepared(
+      await adapter.prepare({
+        expectedProjectRevision: historical.revision,
+        sources: [read.source],
+      }),
+    );
+    await adapter.commit({ changeSetId: saved.changeSetId, operationId: "save-412" });
+    const resources = (await project.get()).resources;
+    expect(
+      resources
+        .filter((resource) => resource.kind === "Capability")
+        .map(canonicalPragmaResourceRef),
+    ).toEqual([persistedCapabilityRef]);
+    expect(resources.find((resource) => resource.kind === "RuntimeProfile")?.metadata.name).toBe(
+      "Writer Runtime",
+    );
+    expect(await project.getRevision(historical.revision)).toEqual(historical);
+    const formProject = createPragmaProjectStore({ projectsPath: join(root, "form-projects") });
+    const forms = createExpertDefinitionStore({
+      project: formProject,
+      systemExperts: createDesktopSystemExpertRegistry(),
+      validateModel: async () => undefined,
+    });
+    await forms.create({
+      baseRevision: 0,
+      requiredUnchangedRefs: [],
+      name: "Writer",
+      description: "Form equivalent",
+      scope: "Write",
+      instructions: "Write",
+      tags: [],
+      model: { runtimeId: "test", providerId: "test", modelId: "model" },
+      capabilities: [],
+      contextStoreMounts: [],
+      plugins: [],
+      toolApprovals: {},
+    });
+    expect(
+      (await formProject.get()).resources.find((resource) => resource.kind === "RuntimeProfile")
+        ?.metadata.name,
+    ).toBe(resources.find((resource) => resource.kind === "RuntimeProfile")?.metadata.name);
+    const shared = requirePrepared(
+      await adapter.prepare({
+        expectedProjectRevision: (await project.get()).revision,
+        sources: [
+          expert("Reviewer", runtimeOption.runtimeProfileRef, "3sfd30h5017wd17d").replace(
+            "name: Writer",
+            "name: Reviewer",
+          ),
+        ],
+      }),
+    );
+    await adapter.commit({ changeSetId: shared.changeSetId, operationId: "shared-412" });
+    const sharedRuntimes = (await project.get()).resources.filter(
+      (resource) => resource.kind === "RuntimeProfile",
+    );
+    expect(sharedRuntimes).toHaveLength(1);
+    expect(sharedRuntimes[0]?.metadata.name).toBe("Writer / Reviewer Runtime");
+  });
+
   it("retains a CLI candidate submission when the final draft write fails, then recovers on inspect", async () => {
     const root = await temporaryRoot("pragma-cli-prepare-write-failure-");
     const project = createPragmaProjectStore({ projectsPath: join(root, "projects") });
@@ -1705,12 +1962,13 @@ describe("Desktop PragmaAgent DSL project adapter", { timeout: 30_000 }, () => {
     );
 
     expect(prepared.changes).toEqual([
+      expect.objectContaining({ ref: "expert:1xddvess309a6gme", kind: "created" }),
       expect.objectContaining({
-        ref: "expert:1xddvess309a6gme",
-        kind: "created",
+        ref: runtimeRef,
+        kind: "updated",
+        source: expect.stringContaining("name: Writer Runtime"),
       }),
     ]);
-    expect(prepared.changes.some((change) => change.ref === runtimeRef)).toBe(false);
   });
 
   it("creates a 16-character Expert that Desktop can list and open, and rejects 17", async () => {

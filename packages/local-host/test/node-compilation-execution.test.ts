@@ -1,3 +1,4 @@
+import { normalizeHostBoundResources } from "../src/deployment/projects/resource-normalization.ts";
 import {
   createLocalHostContextStoreReader,
   SNAPSHOT_STORAGE_MARKER,
@@ -281,6 +282,74 @@ async function fixture(
 }
 
 describe("default Node compilation reaches persisted Execution", { timeout: 15_000 }, () => {
+  it.each([false, true])("executes stable Host IDs and manual retry (%s)", async (withAlias) => {
+    const f = await fixture();
+    const paths = new PragmaPaths({ pragmaHome: f.home });
+    const { createPragmaProjectStore } =
+      await import("../src/deployment/projects/pragma-project-store.ts");
+    const project = createPragmaProjectStore({
+      projectsPath: paths.projectsRoot(),
+      objectsPath: paths.contentObjectsRoot(),
+      projectViewsPath: paths.projectViewsCacheRoot(),
+    });
+    const snapshot = await project.get();
+    const resources = structuredClone(snapshot.resources);
+    const original = resources.find((resource) => resource.kind === "Capability")!;
+    if (original.kind !== "Capability") throw new Error("Missing Capability");
+    const alias = structuredClone(original);
+    alias.metadata.id = "20k21q9j9wexjv50";
+    alias.metadata.name = `Capability ${f.capabilityId}`;
+    if (withAlias) resources.push(alias);
+    const selected = resources.find(
+      (resource) => resource.kind === "Expert" && resource.metadata.id === f.expertId,
+    )!;
+    if (selected.kind !== "Expert") throw new Error("Missing Expert");
+    selected.spec.capabilities = [
+      {
+        ref: `capability:${withAlias ? alias.metadata.id : original.metadata.id}`,
+        kind: "tools",
+        tools: ["fixture_tool"],
+      },
+    ];
+    const normalized = await normalizeHostBoundResources(resources, {
+      capabilityResources: [alias],
+      canonicalCapabilityId: () => alias.metadata.id,
+      capabilityName: async () => "Fixture",
+    });
+    expect(
+      normalized.resources.find((resource) => resource.kind === "Capability")?.metadata.id,
+    ).toBe(withAlias ? alias.metadata.id : original.metadata.id);
+    expect(normalized.resources.filter((resource) => resource.kind === "Capability")).toHaveLength(
+      1,
+    );
+    await writePublishedProjectFixture(f.home, normalized.resources);
+    const request = {
+      command: "expert.run" as const,
+      executor: { kind: "expert" as const, id: f.expertId },
+      project: { projectId: "studio", revision: 1 },
+      workspace: f.workspace,
+      prompt: "done",
+      detach: false,
+    };
+    const first = await f.app.run!.start({ ...request, requestId: randomUUID() });
+    expect((await first.outcome).status).toBe("succeeded");
+    f.startTurn.mockRejectedValueOnce(new Error("Injected retryable failure"));
+    const failed = await f.app.run!.start({ ...request, requestId: randomUUID() });
+    expect((await failed.outcome).status).toBe("failed");
+    const retry = await f.app.run!.start({ ...request, requestId: randomUUID() });
+    expect((await retry.outcome).status).toBe("succeeded");
+    const executions = createSqliteExecutionStore({ pragmaHome: f.home });
+    try {
+      for (const handle of [first, failed, retry]) {
+        expect((await executions.get(handle.executionId!))?.environment?.resources).toEqual([
+          expect.objectContaining({ kind: "capability", id: f.capabilityId, revision: 3 }),
+        ]);
+      }
+    } finally {
+      executions.close();
+    }
+  });
+
   it.each(["native", "paths"] as const)(
     "uses Mission-owned images for initial, follow-up, queued and recovered prompts (%s)",
     { timeout: 45_000 },

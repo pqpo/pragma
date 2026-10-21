@@ -1629,7 +1629,7 @@ describe("PragmaProjectStore", { timeout: 30_000 }, () => {
     } satisfies Partial<PragmaProjectStoreError>);
   });
 
-  it("reuses migrated desktop Capability identities when an Expert adds a skill", async () => {
+  it("canonicalizes migrated desktop Capability aliases when an Expert adds a skill", async () => {
     const { project, experts } = await stores();
     const existingCapabilityId = "009405fc-3ade-4df2-8e4b-eccab29e78c4";
     const removedCapabilityId = "15ce47d6-217c-44b1-a830-61b086e8c61a";
@@ -1692,9 +1692,17 @@ describe("PragmaProjectStore", { timeout: 30_000 }, () => {
           resource.kind === "Capability" &&
           resource.metadata.name === `Capability ${existingCapabilityId}`,
       ),
-    ).toEqual([
-      expect.objectContaining({ metadata: expect.objectContaining({ id: migratedResourceId }) }),
-    ]);
+    ).toEqual([]);
+    expect(resources.some((resource) => resource.metadata.id === migratedResourceId)).toBe(false);
+    expect(
+      resources
+        .filter((resource) => resource.kind === "Expert")
+        .every((resource) =>
+          resource.spec.capabilities.some(
+            (reference) => reference.ref === `capability:${optionResourceId}`,
+          ),
+        ),
+    ).toBe(true);
     expect(resources).toContainEqual(
       expect.objectContaining({
         kind: "Capability",
@@ -1765,9 +1773,17 @@ describe("PragmaProjectStore", { timeout: 30_000 }, () => {
           resource.kind === "Capability" &&
           resource.metadata.name === `Capability ${existingCapabilityId}`,
       ),
-    ).toEqual([
-      expect.objectContaining({ metadata: expect.objectContaining({ id: migratedResourceId }) }),
-    ]);
+    ).toEqual([]);
+    expect(resources.some((resource) => resource.metadata.id === migratedResourceId)).toBe(false);
+    expect(
+      resources
+        .filter((resource) => resource.kind === "Expert")
+        .every((resource) =>
+          resource.spec.capabilities.some(
+            (reference) => reference.ref === `capability:${optionResourceId}`,
+          ),
+        ),
+    ).toBe(true);
     expect(
       resources.find(
         (resource) => resource.kind === "Expert" && resource.metadata.id === created.id,
