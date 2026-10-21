@@ -59,6 +59,7 @@ import { FlowEditor } from "./flow-editor/FlowEditor.tsx";
 import { PragmaBundleDialog } from "./PragmaBundleDialog.tsx";
 import { BundleSourcePublishDialog } from "./BundleSourcePublishDialog.tsx";
 import { ContextStoreRevisionFragment } from "./ContextStoreRevisionFragment.tsx";
+import { activeContextStoreRevisionTaskCount } from "./context-store-revision-model.ts";
 import { User } from "@phosphor-icons/react";
 import { createEmptyFlow } from "./flow-editor/flow-model.ts";
 import {
@@ -300,10 +301,7 @@ export function StudioPage(props: {
       .listContextStoreRevisions()
       .then((jobs) => {
         if (!cancelled) {
-          setRevisionTaskCount(
-            jobs.filter((job) => !["completed", "rejected", "superseded"].includes(job.state))
-              .length,
-          );
+          setRevisionTaskCount(activeContextStoreRevisionTaskCount(jobs));
         }
       })
       .catch((loadError: unknown) => {

@@ -29,6 +29,7 @@ import { StudioScreenFrame } from "./StudioScreenFrame.tsx";
 import { desktopApi } from "./studio-model.ts";
 
 import {
+  activeContextStoreRevisionTaskCount,
   filterRevisionEntries,
   isDraftAwaitingConfirmation,
   revisionEntries,
@@ -171,9 +172,7 @@ export function ContextStoreRevisionFragment(props: {
             ? allJobsResult.value
             : undefined;
       if (globalJobs !== undefined) {
-        props.onCountChanged?.(
-          globalJobs.filter((job) => !["merged", "rejected"].includes(job.state)).length,
-        );
+        props.onCountChanged?.(activeContextStoreRevisionTaskCount(globalJobs));
       }
     }
     if (draftsResult.status === "fulfilled") setDrafts(draftsResult.value);

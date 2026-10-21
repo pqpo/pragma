@@ -5,6 +5,7 @@ import type {
   ContextStoreRevisionRecord,
 } from "../../../../shared/contracts/index.ts";
 import {
+  activeContextStoreRevisionTaskCount,
   filterRevisionEntries,
   revisionEntries,
   revisionPage,
@@ -40,6 +41,22 @@ const job: ContextStoreRevisionJob = {
 };
 
 describe("revision activity", () => {
+  it("counts unfinished knowledge revisions using knowledge lifecycle states", () => {
+    expect(
+      activeContextStoreRevisionTaskCount([
+        { state: "editing" },
+        { state: "running" },
+        { state: "pending_review" },
+        { state: "merging" },
+        { state: "needs_rebase" },
+        { state: "needs_attention" },
+        { state: "merged" },
+        { state: "rejected" },
+      ]),
+    ).toBe(6);
+    expect(activeContextStoreRevisionTaskCount([])).toBe(0);
+  });
+
   it("interleaves manual saves and jobs by modification time and excludes initialization and agent commits", () => {
     const entries = revisionEntries(
       [job, { ...job, id: "older", updatedAt: "2026-09-15T09:00:00.000Z" }],

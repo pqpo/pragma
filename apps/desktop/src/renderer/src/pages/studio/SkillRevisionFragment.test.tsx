@@ -47,7 +47,9 @@ describe("SkillRevisionEmptyState", () => {
   it("counts only non-terminal revision tasks", () => {
     expect(
       activeSkillRevisionTaskCount([
+        { job: { state: "editing" } },
         { job: { state: "running" } },
+        { job: { state: "publishing" } },
         { job: { state: "pending_review" } },
         { job: { state: "needs_rebase" } },
         { job: { state: "needs_attention" } },
@@ -55,7 +57,7 @@ describe("SkillRevisionEmptyState", () => {
         { job: { state: "rejected" } },
         { job: { state: "superseded" } },
       ]),
-    ).toBe(4);
+    ).toBe(6);
   });
 
   it("offers deletion for every revision state", () => {

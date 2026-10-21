@@ -11,6 +11,9 @@ import {
   ContextStoreRevisionDiffFragment,
   ContextStoreRevisionFragment,
 } from "./ContextStoreRevisionFragment.tsx";
+import { ContextStoreDirectoryFragment } from "./ContextStoreFragment.tsx";
+import { CapabilityDirectoryFragment } from "./CapabilityDirectoryFragment.tsx";
+import { StudioPage } from "./StudioPage.tsx";
 
 // Exercise the same hook/event boundary as the repository's settings interaction tests.
 const hooks = vi.hoisted(() => {
@@ -64,6 +67,7 @@ vi.mock("react", async (original) => ({
   useState: hooks.useState,
   useRef: hooks.useRef,
   useMemo: (factory: () => unknown) => factory(),
+  useCallback: (callback: unknown) => callback,
   useEffect: hooks.useEffect,
   useLayoutEffect: hooks.useEffect,
 }));
@@ -97,6 +101,55 @@ afterEach(async () => {
   vi.unstubAllGlobals();
   await i18n.changeLanguage("en");
 });
+
+it.each(["context-stores", "skills"] as const)(
+  "counts unfinished %s revisions on cold start without opening revision history",
+  async (activeView) => {
+    const knowledgeJobs = [
+      { state: "pending_review" },
+      { state: "needs_attention" },
+      ...Array.from({ length: 6 }, () => ({ state: "merged" })),
+      { state: "rejected" },
+    ];
+    const skillJobs = [
+      { job: { state: "pending_review" } },
+      { job: { state: "needs_attention" } },
+      ...Array.from({ length: 6 }, () => ({ job: { state: "completed" } })),
+      { job: { state: "rejected" } },
+      { job: { state: "superseded" } },
+    ];
+    vi.stubGlobal("window", {
+      pragmaDesktop: {
+        listExperts: async () => [],
+        getPragmaProject: async () => null,
+        listAutomations: async () => [],
+        listContextStores: async () => [],
+        listPragmaContextStoreBindings: async () => [],
+        listContextStoreRevisions: async () => knowledgeJobs,
+        listSkillRevisionJobs: async () => skillJobs,
+        listCapabilities: async () => [],
+        getRuntimeAvailability: async () => [],
+      },
+    });
+    const render = () => {
+      hooks.begin();
+      const tree = StudioPage({
+        memoryEnabled: true,
+        initialMemoryState: { activeView },
+        onUseInSession: () => undefined,
+      });
+      hooks.commit();
+      return tree;
+    };
+    render();
+    for (let i = 0; i < 12; i++) await Promise.resolve();
+    const directoryType =
+      activeView === "context-stores" ? ContextStoreDirectoryFragment : CapabilityDirectoryFragment;
+    const directory = elements(render()).find((node) => node.type === directoryType);
+    expect(directory).toBeDefined();
+    expect(directory!.props.revisionTaskCount).toBe(2);
+  },
+);
 
 it("opens rejected Store history and its Diff after review while keeping all continuation actions unavailable", async () => {
   hooks.reset();
@@ -173,9 +226,14 @@ it("opens rejected Store history and its Diff after review while keeping all con
       }),
     },
   });
+  const onCountChanged = vi.fn();
   const render = () => {
     hooks.begin();
-    const tree = ContextStoreRevisionFragment({ stores: [], onBack: () => undefined });
+    const tree = ContextStoreRevisionFragment({
+      stores: [],
+      onCountChanged,
+      onBack: () => undefined,
+    });
     hooks.commit();
     return tree;
   };
@@ -184,6 +242,7 @@ it("opens rejected Store history and its Diff after review while keeping all con
   };
   render();
   await flush();
+  expect(onCountChanged).toHaveBeenLastCalledWith(1);
   const open = () => {
     const button = elements(render()).find(
       (node) => node.props.className === "revision-task-open",
@@ -198,6 +257,7 @@ it("opens rejected Store history and its Diff after review while keeping all con
   review.onReject();
   await flush();
   expect(reject).toHaveBeenCalledOnce();
+  expect(onCountChanged).toHaveBeenLastCalledWith(0);
   const rejected = render().props as Parameters<typeof ContextStoreRevisionDiffFragment>[0];
   rejected.onBack();
   const history = elements(render());

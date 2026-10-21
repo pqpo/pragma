@@ -5,6 +5,12 @@ import type {
   ContextStoreRevisionDiff,
 } from "../../../../shared/contracts/index.ts";
 
+export function activeContextStoreRevisionTaskCount(
+  jobs: readonly Pick<ContextStoreRevisionJob, "state">[],
+): number {
+  return jobs.filter((job) => job.state !== "merged" && job.state !== "rejected").length;
+}
+
 export function unlinkedRevisionDrafts(
   drafts: readonly ContextStoreDraft[],
   jobs: readonly ContextStoreRevisionJob[],
