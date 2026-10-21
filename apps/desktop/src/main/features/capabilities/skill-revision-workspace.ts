@@ -53,6 +53,23 @@ export async function resolveSkillRevisionDraftRootForRemoval(
   return paths.draftRoot;
 }
 
+/** Rename instead of unlinking: even writers holding open file handles retain their bytes. */
+export async function retainSubmittedSkillRevisionWorkspace(
+  workspacePath: string,
+  draftId: string,
+  submittedRevision: number,
+): Promise<string | undefined> {
+  const source = await resolveSkillRevisionDraftRootForRemoval(workspacePath, draftId);
+  const retained = `${source}.submitted-${submittedRevision}-${randomUUID()}`;
+  try {
+    await rename(source, retained);
+    return retained;
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
+    throw error;
+  }
+}
+
 export async function prepareSkillRevisionWorkspace(
   requestedWorkspacePath: string,
   draftId: string,
