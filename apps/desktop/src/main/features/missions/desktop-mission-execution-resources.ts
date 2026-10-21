@@ -495,7 +495,10 @@ export function createDesktopMissionExecutionResources(
                     {
                       namespace,
                       expectedFormat: "mission-knowledge-draft:<UUID>",
-                      recoveryTool: "knowledge_revision_start",
+                      recoveryTools: [
+                        "knowledge_revision_list_drafts",
+                        "knowledge_revision_get_draft",
+                      ],
                     },
                   ),
                 );

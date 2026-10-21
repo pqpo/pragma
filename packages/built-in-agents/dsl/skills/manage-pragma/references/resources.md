@@ -39,3 +39,9 @@ argument character-for-character with the latest returned value. If it is lost, 
 knowledge_revision_list_drafts or knowledge_revision_get_draft. Correct mismatches before retrying;
 never repeat a known-invalid value. A mounting, permission, or lifecycle diagnosis requires a failed
 call using the exact returned namespace. Separate verified tool results from hypotheses in reports.
+
+Format validation only detects malformed UUIDs. A valid but incorrect Store UUID can still produce an
+empty list/search result when no matching draft is active, as can an unauthorized caller. An empty
+result does not prove that the draft is empty or mounted correctly: compare the exact returned namespace
+and recover it with the read-only tools above. Explicit caller-safe diagnostics for this existing
+behavior are deferred; do not infer another caller's draft existence or bypass ownership checks.
