@@ -11,6 +11,7 @@ import {
   Brain,
   RocketLaunch,
   TestTube,
+  Storefront,
   TerminalWindow,
 } from "@phosphor-icons/react";
 import { useId, useRef, useState } from "react";
@@ -20,7 +21,7 @@ import pragmaIcon from "../assets/pragma-icon.png";
 import { readPinnedNavigation, writePinnedNavigation } from "../lib/sidebar-preference.ts";
 
 export type AppView =
-  "home" | "missions" | "studio" | "evaluations" | "memory" | "usage" | "settings";
+  "home" | "missions" | "studio" | "market" | "evaluations" | "memory" | "usage" | "settings";
 
 const navigationItems: readonly {
   readonly id: AppView;
@@ -34,6 +35,7 @@ const navigationItems: readonly {
 ];
 
 const moreNavigationItems = [
+  { id: "market", labelKey: "navigation.market", icon: Storefront },
   { id: "evaluations", labelKey: "navigation.evaluations", icon: TestTube },
   { id: "usage", labelKey: "navigation.usage", icon: ChartLineUp },
   { id: "settings", labelKey: "navigation.settings", icon: GearSix },
@@ -80,11 +82,16 @@ export function Sidebar(props: {
               type="button"
               aria-current={isActive ? "page" : undefined}
               aria-label={label}
-              title={label}
+              title={props.collapsed ? undefined : label}
               onClick={() => props.onNavigate(item.id)}
             >
               <NavigationIcon size={22} aria-hidden="true" />
-              <span>{label}</span>
+              <span
+                className={props.collapsed ? "navigation-tooltip" : "navigation-label"}
+                role={props.collapsed ? "tooltip" : undefined}
+              >
+                {label}
+              </span>
             </button>
           );
         })}
@@ -126,7 +133,7 @@ export function Sidebar(props: {
             }}
           >
             <DotsThree size={22} aria-hidden="true" />
-            <span>{t("navigation.more")}</span>
+            <span className="navigation-label">{t("navigation.more")}</span>
           </button>
           {moreOpen && (
             <div className="navigation-more-popover">

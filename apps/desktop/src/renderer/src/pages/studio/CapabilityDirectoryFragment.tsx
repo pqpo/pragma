@@ -1,6 +1,7 @@
 import {
   Archive,
   CaretDown,
+  Circle,
   ClockCounterClockwise,
   Code,
   DotsThree,
@@ -10,11 +11,12 @@ import {
   PencilSimple,
   Plug,
   Plus,
+  RadioButton,
   Trash,
   Wrench,
   X,
 } from "@phosphor-icons/react";
-import { useState } from "react";
+import { useId, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { PRAGMA_TEXT_LIMITS, truncatePragmaTrimmedUnicode } from "@pragma/shared";
 
@@ -142,6 +144,7 @@ export function CapabilityDirectoryFragment(props: {
   const [menuOpen, setMenuOpen] = useState(false);
   const [mode, setMode] = useState<CapabilityMode | null>(null);
   const [skillSource, setSkillSource] = useState<"local" | "git">("local");
+  const skillSourceGroupId = useId();
   const [editingCapability, setEditingCapability] = useState<Capability | null>(null);
   const [mcp, setMcp] = useState(emptyMcp);
   const [http, setHttp] = useState(emptyHttp);
@@ -600,30 +603,61 @@ export function CapabilityDirectoryFragment(props: {
             </header>
             {mode === "skill" ? (
               <>
-                <div className="knowledge-create-modes">
-                  <button
-                    className={skillSource === "local" ? "is-selected" : ""}
-                    type="button"
-                    onClick={() => setSkillSource("local")}
-                  >
-                    <Archive size={23} />
-                    <span>
-                      <strong>{t("assetGit.localCreate")}</strong>
-                      <small>{t("uploadSkillDescription")}</small>
-                    </span>
-                  </button>
-                  <button
-                    className={skillSource === "git" ? "is-selected" : ""}
-                    type="button"
-                    onClick={() => setSkillSource("git")}
-                  >
-                    <GitBranch size={23} />
-                    <span>
-                      <strong>{t("assetGit.import")}</strong>
-                      <small>{t("assetGit.importDescription")}</small>
-                    </span>
-                  </button>
-                </div>
+                <fieldset className="knowledge-create-methods capability-import-sources">
+                  <legend>{t("creationMethod")}</legend>
+                  {(
+                    [
+                      {
+                        value: "local",
+                        icon: Archive,
+                        title: t("assetGit.localCreate"),
+                        description: t("uploadSkillDescription"),
+                      },
+                      {
+                        value: "git",
+                        icon: GitBranch,
+                        title: t("assetGit.import"),
+                        description: t("assetGit.importDescription"),
+                      },
+                    ] as const
+                  ).map((source) => {
+                    const selected = skillSource === source.value;
+                    const Icon = source.icon;
+                    return (
+                      <label
+                        className={`knowledge-create-method${selected ? " is-selected" : ""}`}
+                        key={source.value}
+                      >
+                        <input
+                          type="radio"
+                          name={skillSourceGroupId}
+                          value={source.value}
+                          checked={selected}
+                          onChange={() => setSkillSource(source.value)}
+                        />
+                        <Icon size={20} aria-hidden="true" />
+                        <span className="knowledge-create-method-copy">
+                          <span>{source.title}</span>
+                          <small>{source.description}</small>
+                        </span>
+                        {selected ? (
+                          <RadioButton
+                            className="knowledge-create-method-indicator"
+                            size={20}
+                            weight="fill"
+                            aria-hidden="true"
+                          />
+                        ) : (
+                          <Circle
+                            className="knowledge-create-method-indicator"
+                            size={20}
+                            aria-hidden="true"
+                          />
+                        )}
+                      </label>
+                    );
+                  })}
+                </fieldset>
                 {skillSource === "local" ? (
                   <div className="capability-upload">
                     <Archive size={34} />

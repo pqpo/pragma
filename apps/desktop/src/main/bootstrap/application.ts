@@ -19,6 +19,7 @@ import { registerMissionAttachmentScheme } from "../features/missions/mission-at
 import { createTerminalIntegration } from "../features/terminal-integration/terminal-integration.ts";
 
 export function startDesktopApplication(): void {
+  const startupStartedAt = performance.now();
   registerMissionAttachmentScheme();
   configureDesktopApplicationIdentity(app);
   let mainWindow = (): BrowserWindow | null => null;
@@ -125,7 +126,14 @@ export function startDesktopApplication(): void {
             remote: "git@github.com:pqpo/awesome-pragma.git",
           },
         }),
-      createWindow: windows.createWindow,
+      createWindow: async () => {
+        const windowStartedAt = performance.now();
+        await windows.createWindow();
+        logging.mainLogger.info("desktop.window_loaded", "Desktop window finished loading.", {
+          durationMs: Math.round(performance.now() - windowStartedAt),
+          startupDurationMs: Math.round(performance.now() - startupStartedAt),
+        });
+      },
       afterWindowCreated: async () => {
         try {
           const status = await terminalIntegration.initialize();
@@ -145,6 +153,9 @@ export function startDesktopApplication(): void {
         }
       },
       onContainerReady: (created) => {
+        logging.mainLogger.info("desktop.services_ready", "Desktop services are ready.", {
+          startupDurationMs: Math.round(performance.now() - startupStartedAt),
+        });
         installDesktopShutdown({
           app,
           dispose: created.dispose,

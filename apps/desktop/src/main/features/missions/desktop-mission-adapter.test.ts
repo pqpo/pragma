@@ -1250,6 +1250,82 @@ describe("Desktop Mission resource adapter contracts", { timeout: 30_000 }, () =
     await expect(contextStores.resolve(store.id)).resolves.toBeDefined();
   });
 
+  it("automatically unbinds over 100 historical Missions and retries interrupted Knowledge deletion", async () => {
+    const root = await mkdtemp(join(tmpdir(), "pragma-mission-idle-knowledge-mount-"));
+    temporaryPaths.push(root);
+    const project = createPragmaProjectStore({ projectsPath: join(root, "projects") });
+    const expert = expertFixture();
+    const snapshot = await project.publish({
+      expectedRevision: 0,
+      resources: [runtimeFixture(), expert],
+    });
+    let unmountAttempts = 0;
+    const contextStores = createContextStoreStore({
+      storesPath: join(root, "context-stores"),
+      removeMissionMounts: async (storeId) => {
+        for (const reference of await missions.listContextStoreReferences(storeId)) {
+          if (++unmountAttempts === 2) throw new Error("Interrupted during batch unbinding");
+          await runner.removeContextStoreMount({ id: reference.id, storeId });
+        }
+      },
+      hasMissionReferences: (storeId) => missions.isContextStoreReferenced(storeId),
+    });
+    const store = await contextStores.create({ mode: "blank", name: "Knowledge", description: "" });
+    const missions = createMissionStore({ missionsPath: join(root, "missions") });
+    const unrelatedMounts = [
+      { kind: "context-store" as const, storeId: randomUUID() },
+      { kind: "context-store-draft" as const, draftId: randomUUID() },
+    ];
+    const linkedMissions = [];
+    for (let index = 0; index < 105; index++) {
+      linkedMissions.push(
+        await missions.create({
+          workspace: { path: root, basename: "workspace" },
+          goal: "Remove an inactive Mission mount",
+          project: { id: snapshot.projectId, revision: snapshot.revision },
+          executor: missionExecutorSnapshot(expert),
+          contextMounts: [{ kind: "context-store", storeId: store.id }, ...unrelatedMounts],
+        }),
+      );
+    }
+    const runtime = defineRuntimeTestDriver<never, { id: string }>({
+      descriptor: { id: "fake", kind: "fake", displayName: "Fake" },
+      createSession: () => ({ id: "runtime" }),
+      readSession: (session) => ({ runtimeSessionId: session.id }),
+      startTurn: () => ({ outputText: "unused", runtimeSessionId: "runtime" }),
+      mapEvent: () => ({ events: [] }),
+    });
+    const runner = createDesktopMissionTestApplication({
+      missions,
+      project,
+      contextStores,
+      capabilityStore: {} as CapabilityStore,
+      capabilityCredentials: {} as CapabilityCredentialStore,
+      capabilitiesPath: join(root, "capabilities"),
+      pragmaHome: join(root, "state"),
+      runtimes: createStaticRuntimeResolver({ runtimes: [runtime], defaultRuntimeId: "fake" }),
+    });
+
+    expect(await missions.listContextStoreReferences(store.id)).toHaveLength(105);
+    await expect(contextStores.remove(store.id)).rejects.toMatchObject({
+      code: "mission_unmount_failed",
+    });
+    await expect(contextStores.resolve(store.id)).resolves.toBeDefined();
+    expect(await missions.listContextStoreReferences(store.id)).toHaveLength(104);
+
+    await expect(contextStores.remove(store.id)).resolves.toBeUndefined();
+    expect(await missions.listContextStoreReferences(store.id)).toHaveLength(0);
+    for (const mission of linkedMissions) {
+      await expect(missions.get(mission.id)).resolves.toMatchObject({
+        contextMounts: unrelatedMounts,
+        initialMessageId: mission.initialMessageId,
+      });
+    }
+    await expect(contextStores.resolve(store.id)).rejects.toMatchObject({
+      code: "store_not_found",
+    });
+  });
+
   it.each(["queued", "running", "waiting"] as const)(
     "rejects removing Mission Knowledge while its %s execution is active",
     async (status) => {

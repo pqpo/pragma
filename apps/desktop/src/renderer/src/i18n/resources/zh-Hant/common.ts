@@ -29,6 +29,7 @@ export const common = {
     viewDetails: "查看詳情",
   },
   navigation: {
+    market: "市場",
     more: "更多",
     pin: "將{{name}}固定到側邊欄",
     unpin: "取消固定{{name}}",

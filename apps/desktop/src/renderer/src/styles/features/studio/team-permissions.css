@@ -11,10 +11,10 @@
   align-items: center;
   gap: 6px;
   padding: 6px 10px;
-  border: 1px solid color-mix(in srgb, var(--ui-accent) 32%, transparent);
+  border: 1px solid var(--ui-line-strong);
   border-radius: var(--radius-control);
   background: var(--ui-selection);
-  color: var(--ui-accent-strong);
+  color: var(--ui-text);
   cursor: pointer;
   font: inherit;
   font-size: 11px;
@@ -22,8 +22,8 @@
 }
 
 .team-permissions-connect-all:hover:not(:disabled) {
-  border-color: color-mix(in srgb, var(--ui-accent) 48%, transparent);
-  background: color-mix(in srgb, var(--ui-selection) 78%, var(--ui-accent) 22%);
+  border-color: var(--ui-line-strong);
+  background: var(--ui-surface-subtle);
 }
 
 .team-permissions-connect-all:focus-visible {
@@ -122,7 +122,7 @@
 }
 
 .team-permission-members > button.is-active > svg {
-  color: var(--ui-accent-strong);
+  color: var(--ui-text-secondary);
 }
 
 .team-permission-members > button > span {
@@ -203,7 +203,7 @@
 }
 
 .team-permission-cards > button:hover {
-  border-color: color-mix(in srgb, var(--ui-accent) 35%, transparent);
+  border-color: var(--ui-line-strong);
   background: var(--surface-soft);
 }
 
@@ -241,7 +241,7 @@
 }
 
 .team-permission-card-summary b {
-  color: var(--ui-accent-strong);
+  color: var(--ui-text-secondary);
   font-size: 10px;
 }
 
@@ -265,7 +265,7 @@
   gap: 0.25rem;
   padding: 0.75rem 1rem;
   border-radius: 0.6rem;
-  background: color-mix(in srgb, var(--ui-accent) 9%, transparent);
+  background: var(--ui-surface-subtle);
 }
 
 .team-coordinator-authority span {

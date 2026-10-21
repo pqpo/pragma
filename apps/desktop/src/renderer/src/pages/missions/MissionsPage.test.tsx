@@ -326,7 +326,6 @@ describe("MissionsPage", () => {
     );
 
     expect(html).toContain('aria-label="Loading missions"');
-    expect(html).toContain("mission-skeleton-composer");
     expect(html).not.toContain(">Loading missions<");
   });
 
@@ -337,14 +336,21 @@ describe("MissionsPage", () => {
     expect(html).toContain('aria-label="Loading mission"');
     expect(html).not.toContain("mission-skeleton-heading");
     expect(html).toContain("mission-skeleton-meta");
-    expect(html).toContain("mission-skeleton-composer");
     expect(html).not.toContain(">Loading mission<");
   });
 
-  it("keeps the composer placeholder separate from the message placeholders", () => {
-    const html = renderToStaticMarkup(<MissionDetailSkeleton label="Loading mission" />);
+  it("keeps the same message skeleton across page, detail, and conversation loading", () => {
+    const label = "Loading conversation";
+    const chat = renderToStaticMarkup(<MissionChatSkeleton label={label} />);
+    const page = renderToStaticMarkup(<MissionsPageSkeleton label={label} railWidth={300} />);
+    const detail = renderToStaticMarkup(<MissionDetailSkeleton label={label} />);
 
-    expect(html).toMatch(/mission-skeleton-message is-short[^]*mission-skeleton-composer/);
+    expect(page).toContain(chat);
+    expect(detail).toContain(chat);
+    expect(page).not.toContain("mission-skeleton-message");
+    expect(detail).not.toContain("mission-skeleton-message");
+    expect(page).not.toContain("mission-skeleton-composer");
+    expect(detail).not.toContain("mission-skeleton-composer");
   });
 
   it("does not let a stale initial usage query overwrite a newer streaming update", () => {
@@ -2179,7 +2185,17 @@ describe("Mission work grid", () => {
     expect(html.match(/role="listitem"/g)).toHaveLength(2);
   });
 
-  it("uses a focused single-expert layout with a larger avatar and task summary", () => {
+  it.each([
+    [
+      "Coordinate the mission and prepare the final handoff.",
+      "Coordinate the mission and prepare the final handoff.",
+    ],
+    ['{ "text": "中断", "attachments": [] }', "中断"],
+    ['{"text":"Line one\\nLine two","attachments":[]}', "Line one\nLine two"],
+    ['{"text":"","attachments":[]}', ""],
+    ['{"text": "truncated', '{"text": "truncated'],
+    ['{"text":42}', '{"text":42}'],
+  ])("renders a single-expert card with readable summary %s", (summary, expected) => {
     const createdAt = "2026-07-21T00:00:00.000Z";
     const html = renderToStaticMarkup(
       <MissionWorkGrid
@@ -2193,7 +2209,7 @@ describe("Mission work grid", () => {
             origin: "core",
             status: "running",
             tasks: [],
-            summary: "Coordinate the mission and prepare the final handoff.",
+            summary,
             createdAt,
             updatedAt: createdAt,
           },
@@ -2206,7 +2222,14 @@ describe("Mission work grid", () => {
     expect(html).toContain('data-density="single"');
     expect(html).toContain("pragma-avatar-lg");
     expect(html).toContain("mission-work-card-summary");
-    expect(html).toContain("Coordinate the mission and prepare the final handoff.");
+    const summaryHtml = html.match(/<p class="mission-work-card-summary">(.*?)<\/p>/su)?.[1];
+    expect(summaryHtml).toBe(
+      expected
+        .replaceAll("&", "&amp;")
+        .replaceAll('"', "&quot;")
+        .replaceAll("<", "&lt;")
+        .replaceAll(">", "&gt;"),
+    );
     expect(html).not.toContain("mission-work-call-order");
   });
 

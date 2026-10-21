@@ -221,13 +221,13 @@
 
 .provider-wizard-steps li.is-current,
 .provider-wizard-steps li.is-complete {
-  color: var(--ui-accent-strong);
+  color: var(--ui-text);
 }
 
 .provider-wizard-steps li.is-current > .provider-wizard-step-index,
 .provider-wizard-steps li.is-complete > .provider-wizard-step-index {
-  border-color: var(--ui-accent);
-  background: var(--ui-accent);
+  border-color: var(--ui-line-strong);
+  background: var(--ui-text-secondary);
   color: var(--ui-surface);
 }
 
@@ -269,7 +269,7 @@
 }
 
 .provider-preset-card:hover {
-  border-color: var(--ui-accent);
+  border-color: var(--ui-line-strong);
   background: var(--ui-surface-subtle);
 }
 
@@ -335,12 +335,6 @@
   border-radius: var(--radius-control);
   background: var(--surface-soft);
   color: var(--muted);
-}
-
-.model-search-shell:focus-within,
-.key-input-wrap:focus-within {
-  border-color: var(--ui-accent);
-  box-shadow: 0 0 0 3px var(--focus-ring);
 }
 
 .model-search-shell input,
@@ -450,12 +444,6 @@
   background: var(--ui-surface);
   color: var(--text);
   font: inherit;
-}
-
-.model-token-limit-field input:focus-visible {
-  border-color: var(--ui-accent);
-  outline: 0;
-  box-shadow: 0 0 0 3px var(--focus-ring);
 }
 
 .thinking-default-field,
@@ -738,7 +726,7 @@
   border: 1px solid var(--ui-line);
   border-radius: 12px;
   background: var(--ui-surface-subtle);
-  color: var(--ui-accent-strong);
+  color: var(--ui-text-secondary);
 }
 
 .provider-editor-heading-copy {
@@ -747,7 +735,7 @@
 
 .provider-editor-eyebrow {
   display: block;
-  color: var(--ui-accent);
+  color: var(--ui-text-secondary);
   font-size: 11px;
   font-weight: 700;
   letter-spacing: 0.1em;
@@ -806,12 +794,12 @@
 .provider-wizard-steps li.is-current {
   border-color: var(--ui-line);
   background: var(--ui-surface);
-  color: var(--ui-accent-strong);
+  color: var(--ui-text);
   box-shadow: 0 1px 2px rgb(var(--ui-shadow-rgb) / 5%);
 }
 
 .provider-wizard-steps li.is-complete {
-  color: var(--ui-accent);
+  color: var(--ui-text);
 }
 
 .provider-wizard-steps li:not(:last-child)::after {
@@ -834,8 +822,8 @@
 
 .provider-wizard-steps li.is-current > .provider-wizard-step-index,
 .provider-wizard-steps li.is-complete > .provider-wizard-step-index {
-  border-color: var(--ui-accent);
-  background: var(--ui-accent);
+  border-color: var(--ui-line-strong);
+  background: var(--ui-text-secondary);
   color: var(--ui-surface);
 }
 
@@ -888,7 +876,7 @@
   border: 1px solid var(--ui-line);
   border-radius: 999px;
   background: var(--ui-surface-subtle);
-  color: var(--ui-accent-strong);
+  color: var(--ui-text-secondary);
   font-size: 11px;
   white-space: nowrap;
 }
@@ -1006,9 +994,7 @@
   background: var(--ui-surface-subtle);
 }
 
-.provider-editor .static-field input:focus,
-.provider-editor .static-field > select:focus,
-.provider-editor .key-input-wrap:focus-within {
+.provider-editor .static-field > select:focus {
   border-color: var(--ui-accent);
   background: var(--ui-surface);
   box-shadow: 0 0 0 3px var(--ui-focus);
@@ -1046,11 +1032,6 @@
   border: 1px solid var(--ui-line-strong);
   border-radius: 8px;
   background: var(--ui-surface);
-}
-
-.model-search-shell:focus-within {
-  border-color: var(--ui-accent);
-  box-shadow: 0 0 0 3px var(--ui-focus);
 }
 
 .model-search-shell input,
@@ -1122,8 +1103,8 @@
 }
 
 .model-support-tag.is-vision {
-  background: #eef5fb;
-  color: #40617b;
+  background: var(--ui-surface-subtle);
+  color: var(--ui-text-secondary);
 }
 
 .model-support-tag.is-reasoning {
@@ -1144,11 +1125,6 @@
   border: 1px solid var(--ui-line-strong);
   border-radius: 8px;
   background: var(--ui-surface);
-}
-
-.provider-editor .manual-model-row input:focus-visible {
-  border-color: var(--ui-accent);
-  box-shadow: 0 0 0 3px var(--ui-focus);
 }
 
 .selected-model-config {
@@ -1222,7 +1198,7 @@
   border: 1px solid var(--ui-line);
   border-radius: 9px;
   background: var(--ui-surface-subtle);
-  color: var(--ui-accent);
+  color: var(--ui-text-secondary);
 }
 
 .model-identity-copy {
@@ -1288,12 +1264,6 @@
   background: var(--ui-surface);
   color: var(--ui-text);
   font: inherit;
-}
-
-.model-token-limit-field input:focus-visible {
-  border-color: var(--ui-accent);
-  outline: 0;
-  box-shadow: 0 0 0 3px var(--ui-focus);
 }
 
 .model-token-limit-field > small {
@@ -1379,10 +1349,6 @@
 
 .capability-toggle > input:checked + .capability-toggle-indicator::after {
   border-color: var(--ui-surface);
-}
-
-.capability-toggle > input:focus-visible + .capability-toggle-indicator {
-  box-shadow: 0 0 0 3px var(--ui-focus);
 }
 
 .capability-toggle-copy {
@@ -1477,7 +1443,7 @@
 .provider-editor .thinking-level-options input:checked + span {
   border-color: var(--ui-line-strong);
   background: var(--ui-selection);
-  color: var(--ui-accent-strong);
+  color: var(--ui-text);
 }
 
 .provider-editor .thinking-level-options input:focus-visible + span {

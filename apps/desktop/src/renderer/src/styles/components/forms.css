@@ -175,7 +175,7 @@
 
 .ui-select-option[aria-selected="true"] {
   background: var(--ui-selection);
-  color: var(--ui-accent-strong);
+  color: var(--ui-text);
 }
 
 .ui-select-option:disabled {
@@ -410,7 +410,7 @@
   padding: 2px 5px;
   border-radius: 5px;
   background: var(--ui-surface-subtle);
-  color: var(--ui-accent);
+  color: var(--ui-text-secondary);
   font-size: 9px;
   font-weight: 700;
 }
@@ -582,7 +582,7 @@
 
 .mission-model-menu-option[aria-selected="true"] {
   background: var(--ui-selection);
-  color: var(--ui-accent-strong);
+  color: var(--ui-text);
 }
 
 .mission-model-menu-option[aria-selected="true"] > svg {
@@ -644,7 +644,7 @@
   padding: 1px 5px 1px 2px;
   border-radius: var(--ui-radius-md);
   background: var(--ui-selection);
-  color: var(--ui-accent-strong);
+  color: var(--ui-text);
   font-weight: 500;
   line-height: 1.4;
   vertical-align: middle;

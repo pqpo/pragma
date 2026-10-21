@@ -25,7 +25,7 @@ export function writeSidebarCollapsed(
 }
 
 const pinnedNavigationStorageKey = "pragma.desktop.sidebar.pinned-navigation";
-const pinnedNavigationSchema = z.array(z.enum(["evaluations", "usage", "settings"]));
+const pinnedNavigationSchema = z.array(z.enum(["market", "evaluations", "usage", "settings"]));
 type PinnedNavigation = z.infer<typeof pinnedNavigationSchema>;
 
 export function readPinnedNavigation(): PinnedNavigation {

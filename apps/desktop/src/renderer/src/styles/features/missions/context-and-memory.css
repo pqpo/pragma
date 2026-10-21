@@ -88,7 +88,7 @@
   border: 0;
   border-radius: var(--ui-radius-md);
   background: transparent;
-  color: var(--ui-accent-strong);
+  color: var(--ui-text);
   cursor: pointer;
   font: inherit;
   font-size: 12px;
@@ -99,7 +99,7 @@
 .mission-memory-back:focus-visible {
   outline: 0;
   background: var(--surface-soft);
-  box-shadow: 0 0 0 3px var(--ui-focus);
+  box-shadow: 0 0 0 3px rgb(var(--ui-shadow-rgb) / 20%);
 }
 
 .mission-memory-empty h2,
@@ -270,7 +270,7 @@
 }
 .mission-memory-row-action {
   flex: none;
-  color: var(--ui-accent-strong);
+  color: var(--ui-text);
   font-size: 13px;
   font-weight: 500;
 }
@@ -337,7 +337,7 @@
   padding: 0;
   border: 0;
   background: transparent;
-  color: var(--ui-accent-strong);
+  color: var(--ui-text);
   font-size: 14px;
   text-align: left;
   overflow-wrap: anywhere;
@@ -442,7 +442,7 @@
   border: 1px solid var(--ui-line);
   border-radius: 10px;
   background: var(--ui-surface-subtle);
-  color: var(--ui-accent-strong);
+  color: var(--ui-text);
   font-size: 12px;
 }
 
@@ -501,14 +501,14 @@
 }
 
 .mission-context-operation-tip {
-  color: var(--ui-accent-strong);
+  color: var(--ui-text-secondary);
 }
 
 .mission-context-window {
   position: relative;
   display: grid;
   place-items: center;
-  color: var(--ui-accent);
+  color: var(--ui-text);
 }
 
 .mission-context-trigger {
@@ -808,19 +808,19 @@
 }
 
 .mission-tool-entry summary:hover > span {
-  color: var(--ui-accent-strong);
+  color: var(--ui-text-secondary);
 }
 
 .mission-tool-entry.is-agent-lifecycle {
   padding: 1px 9px;
-  border: 1px solid color-mix(in srgb, var(--ui-accent) 17%, transparent);
+  border: 1px solid var(--ui-line-strong);
   border-radius: 9px;
   background: var(--ui-selection);
 }
 
 .mission-tool-entry.is-agent-lifecycle summary > svg:first-child,
 .mission-tool-entry.is-agent-lifecycle.mission-tool-static-row > svg:first-child {
-  color: var(--ui-accent-strong);
+  color: var(--ui-text-secondary);
 }
 
 .mission-tool-group > summary > span {
@@ -1053,11 +1053,6 @@
   line-height: 1.5;
 }
 
-.mission-human-composer textarea:focus-visible {
-  border-color: var(--ui-accent);
-  box-shadow: 0 0 0 3px var(--ui-focus);
-}
-
 .mission-human-options {
   display: grid;
   grid-template-columns: minmax(0, 1fr);
@@ -1092,9 +1087,9 @@
 
 .mission-human-options > button.is-selected,
 .mission-human-options > label.is-selected {
-  border-color: var(--ui-accent);
+  border-color: var(--ui-line-strong);
   background: var(--ui-selection);
-  color: var(--ui-accent-strong);
+  color: var(--ui-text-secondary);
 }
 
 .mission-human-options > button:focus-visible {
@@ -1175,11 +1170,6 @@
   color: var(--ui-text);
   font: inherit;
   font-size: 13px;
-}
-
-.mission-human-custom-answer:focus-within {
-  border-color: var(--ui-accent);
-  box-shadow: 0 0 0 3px var(--ui-focus);
 }
 
 .mission-human-custom-answer > input:focus-visible {
@@ -1363,11 +1353,11 @@
 
 .mission-work-card:hover,
 .mission-work-card:focus-visible {
-  border-color: color-mix(in srgb, var(--ui-accent) 32%, transparent);
+  border-color: var(--ui-line-strong);
   outline: 0;
   box-shadow:
-    0 0 0 3px var(--focus-ring),
-    0 12px 28px color-mix(in srgb, var(--ui-accent) 9%, transparent);
+    0 0 0 3px rgb(var(--ui-shadow-rgb) / 20%),
+    0 12px 28px color-mix(in srgb, var(--ui-text) 9%, transparent);
   transform: translateY(-2px);
 }
 
@@ -1386,10 +1376,10 @@
   height: 22px;
   place-items: center;
   padding-inline: 6px;
-  border: 1px solid color-mix(in srgb, var(--ui-accent) 18%, transparent);
+  border: 1px solid var(--ui-line-strong);
   border-radius: 999px;
   background: var(--surface-muted);
-  color: var(--ui-accent-strong);
+  color: var(--ui-text-secondary);
   font-size: 10px;
   font-weight: 720;
   letter-spacing: 0.03em;
@@ -1562,7 +1552,7 @@
 }
 
 .mission-work-drawer > header small {
-  color: var(--ui-accent-strong);
+  color: var(--ui-text);
   font-size: 10px;
   font-weight: 700;
   letter-spacing: 0.07em;
@@ -1615,7 +1605,7 @@
 .mission-work-drawer > header > button:focus-visible {
   outline: 0;
   background: var(--surface-muted);
-  box-shadow: 0 0 0 3px var(--focus-ring);
+  box-shadow: 0 0 0 3px rgb(var(--ui-shadow-rgb) / 20%);
 }
 
 .mission-work-drawer-body {

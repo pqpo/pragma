@@ -7,6 +7,7 @@ import {
 import {
   ContextStoreMissionMountCheckSchema,
   ContextStoreMissionMountCheckResultSchema,
+  ContextStoreMissionReferenceCountSchema,
 } from "@pragma/local-host/deployment-contracts";
 import { ipcRenderer, type IpcRendererEvent } from "electron";
 
@@ -95,6 +96,13 @@ export const missionsApi = {
     ContextStoreMissionMountCheckResultSchema.parse(
       await ipcRenderer.invoke(
         "missions:context-store:reference-check",
+        ContextStoreMissionMountCheckSchema.parse(input),
+      ),
+    ),
+  countContextStoreMissionReferences: async (input) =>
+    ContextStoreMissionReferenceCountSchema.parse(
+      await ipcRenderer.invoke(
+        "missions:context-store:reference-count",
         ContextStoreMissionMountCheckSchema.parse(input),
       ),
     ),
@@ -350,6 +358,7 @@ export const missionsApi = {
   PragmaDesktopAPI,
   | "listMissions"
   | "isContextStoreMountedInMission"
+  | "countContextStoreMissionReferences"
   | "listMissionExecutors"
   | "getHomeMissionExecutorCatalog"
   | "updateHomeExecutorPreference"

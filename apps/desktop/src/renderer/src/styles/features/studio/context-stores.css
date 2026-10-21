@@ -237,8 +237,8 @@
 }
 
 .store-type-options > button.is-selected {
-  border-color: var(--ui-accent);
-  box-shadow: 0 0 0 1px color-mix(in srgb, var(--ui-accent) 12%, transparent);
+  border-color: var(--ui-line-strong);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--ui-text) 12%, transparent);
 }
 
 .store-type-options > button:disabled {
@@ -453,7 +453,7 @@
 .knowledge-editor-toolbar button:hover,
 .knowledge-editor-toolbar button.is-active {
   background: var(--ui-selection);
-  color: var(--ui-accent-strong);
+  color: var(--ui-text);
 }
 
 .knowledge-file-tree {
@@ -553,7 +553,7 @@
 .knowledge-file-rename:hover,
 .knowledge-file-rename:focus-visible {
   background: var(--ui-surface-subtle);
-  color: var(--ui-accent-strong);
+  color: var(--ui-text);
 }
 
 .knowledge-tree-state,
@@ -590,7 +590,7 @@
 .knowledge-tree-empty button {
   border: 0;
   background: transparent;
-  color: var(--ui-accent-strong);
+  color: var(--ui-text);
   cursor: pointer;
   font-weight: 650;
 }
@@ -680,12 +680,6 @@
   line-height: 1.7;
 }
 
-.knowledge-markdown-editor:focus-visible {
-  border: 0;
-  outline: 0;
-  box-shadow: inset 0 0 0 1px var(--ui-focus);
-}
-
 .knowledge-markdown-preview {
   grid-row: 3;
   min-height: 0;
@@ -735,7 +729,7 @@
 .knowledge-metadata-help-button:hover,
 .knowledge-metadata-help-button[aria-expanded="true"] {
   background: var(--ui-selection);
-  color: var(--ui-accent-strong);
+  color: var(--ui-text);
 }
 
 .knowledge-metadata-tip {
@@ -776,48 +770,113 @@
   margin-top: 12px;
 }
 
-.knowledge-create-modes {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 12px;
-  margin-bottom: 20px;
+.knowledge-create-methods {
+  min-width: 0;
+  margin: 24px 0 0;
+  padding: 0;
+  border: 0;
 }
 
-.knowledge-create-modes > button,
+.knowledge-create-methods legend {
+  margin-bottom: 8px;
+  padding: 0;
+  color: var(--ui-text);
+  font-size: 13px;
+  font-weight: 500;
+}
+
+.knowledge-create-method {
+  position: relative;
+  display: flex;
+  min-height: 72px;
+  align-items: center;
+  gap: 16px;
+  padding: 12px 16px;
+  color: var(--ui-text);
+  cursor: pointer;
+}
+
+.knowledge-create-method + .knowledge-create-method {
+  border-top: 1px solid var(--ui-line);
+}
+
+.knowledge-create-method:hover:not(.is-selected) {
+  background: var(--ui-surface-subtle);
+}
+
+.knowledge-create-method:has(input:focus-visible) {
+  outline: 0;
+  box-shadow: 0 0 0 3px var(--ui-focus);
+  border-radius: var(--ui-radius-md);
+  z-index: 1;
+}
+
+.knowledge-create-method input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: 0;
+  opacity: 0;
+}
+
+.knowledge-create-method > svg {
+  flex: none;
+}
+
+.knowledge-create-method-copy {
+  display: grid;
+  flex: 1;
+  min-width: 0;
+  gap: 4px;
+  font-size: 14px;
+  font-weight: 500;
+  line-height: 1.45;
+}
+
+.knowledge-create-method-copy small {
+  color: var(--ui-text-secondary);
+  font-size: 12px;
+  font-weight: 400;
+  line-height: 1.45;
+}
+
+.knowledge-create-method-indicator {
+  color: var(--ui-text-secondary);
+}
+
+.knowledge-create-method.is-selected .knowledge-create-method-indicator {
+  color: var(--ui-accent);
+}
+
+.knowledge-create-location {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  margin: 0;
+  color: var(--ui-text-secondary);
+  font-size: 12px;
+  font-weight: 400;
+  line-height: 1.5;
+}
+
+.knowledge-create-location svg {
+  flex: none;
+}
+
 .store-type-options > div {
   display: flex;
   min-height: 96px;
   align-items: center;
   gap: 12px;
-  padding: 15px;
-  border: 1px solid var(--border-strong);
-  border-radius: 9px;
-  background: var(--surface);
+  padding: 16px;
   color: var(--text);
   text-align: left;
 }
 
-.knowledge-create-modes > button {
-  cursor: pointer;
-}
-
-.knowledge-create-modes > button.is-selected,
-.store-type-options > div.is-selected {
-  border-color: var(--ui-accent);
-  background: var(--ui-selection);
-  box-shadow: 0 0 0 2px color-mix(in srgb, var(--ui-accent) 12%, transparent);
-}
-
-.knowledge-create-modes span,
 .store-type-options > div > span {
   display: grid;
   flex: 1;
   gap: 4px;
-}
-
-.knowledge-create-modes small {
-  color: var(--muted);
-  font-size: 11px;
 }
 
 .knowledge-import-source {
@@ -980,7 +1039,7 @@
   column-gap: 24px;
   padding: 6px 10px 6px 12px;
   border-radius: var(--ui-radius-md);
-  background: color-mix(in srgb, var(--ui-accent) 70%, transparent);
+  background: var(--ui-surface);
 }
 
 .revision-task-pagination {
@@ -1227,7 +1286,7 @@
 
 .revision-task-icon-button:hover:not(:disabled) {
   background: var(--ui-selection);
-  color: var(--ui-accent-strong);
+  color: var(--ui-text-secondary);
 }
 
 .revision-task-icon-button.is-danger:hover:not(:disabled) {
@@ -1466,7 +1525,7 @@
 }
 
 .revision-diff-files button.is-active {
-  box-shadow: inset 2px 0 var(--ui-accent);
+  box-shadow: inset 2px 0 var(--ui-text);
 }
 
 .revision-diff-files button:focus-visible {
@@ -1686,7 +1745,7 @@
   padding: 0 6px;
   border-radius: var(--ui-radius-round);
   background: var(--ui-selection);
-  color: var(--ui-accent-strong);
+  color: var(--ui-text-secondary);
   font-size: 10px;
   font-weight: 700;
 }
@@ -1871,7 +1930,7 @@
   }
 
   .revision-diff-files button.is-active {
-    box-shadow: inset 0 -2px var(--ui-accent);
+    box-shadow: inset 0 -2px var(--ui-text);
   }
 }
 
@@ -2132,7 +2191,7 @@
 }
 
 .context-entity-list article small {
-  color: var(--ui-accent-strong);
+  color: var(--ui-text);
 }
 
 .studio-asset-icon,
@@ -2140,7 +2199,7 @@
 .expert-avatar {
   border-radius: 11px;
   background: var(--ui-selection);
-  color: var(--ui-accent-strong);
+  color: var(--ui-text-secondary);
 }
 
 .pragma-resource-form input,
@@ -2160,17 +2219,9 @@
   background: var(--ui-surface);
 }
 
-.pragma-resource-form input:focus,
 .pragma-resource-form select:focus,
-.pragma-resource-form textarea:focus,
-.capability-form input:focus,
 .capability-form select:focus,
-.capability-form textarea:focus,
-.store-config-form input:focus,
-.store-config-form textarea:focus,
 .store-config-form select:focus,
-.creator-form input:focus,
-.creator-form textarea:focus,
 .creator-form select:focus {
   border-color: var(--ui-accent);
   outline: 0;
@@ -2213,7 +2264,7 @@
 }
 
 .store-list-row.is-selected {
-  border-color: color-mix(in srgb, var(--ui-accent) 28%, transparent);
+  border-color: var(--ui-line-strong);
   background: var(--ui-selection);
 }
 
@@ -2231,12 +2282,11 @@
 .store-filter-tabs button.is-active,
 .capability-filters button.is-active {
   background: var(--ui-selection);
-  color: var(--ui-accent-strong);
+  color: var(--ui-text);
   box-shadow: 0 1px 3px rgb(var(--ui-shadow-rgb) / 6%);
 }
 
 .expert-capabilities > div,
-.review-summary dl div,
 .store-detail dl div,
 .store-review-list div,
 .expert-context-list > div {
@@ -2261,13 +2311,13 @@
 .store-type-options > button:hover,
 .trigger-options > label:hover,
 .capability-upload:hover {
-  border-color: color-mix(in srgb, var(--ui-accent) 24%, transparent);
+  border-color: var(--ui-line-strong);
   background: var(--ui-surface);
 }
 
 .store-type-options > button.is-selected,
 .trigger-options > label.is-selected {
-  border-color: var(--ui-accent);
+  border-color: var(--ui-line-strong);
   background: var(--ui-selection);
   box-shadow: none;
 }

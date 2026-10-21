@@ -92,7 +92,7 @@ html.is-resizing-sidebar * {
 
 .protocol-select-shell:hover > svg,
 .protocol-select-shell:focus-within > svg {
-  color: var(--ui-accent-strong);
+  color: var(--ui-text-secondary);
 }
 
 .protocol-select-shell:focus-within {
@@ -186,7 +186,7 @@ html.is-resizing-sidebar * {
   display: flex;
   align-items: center;
   gap: 7px;
-  color: var(--ui-accent-strong);
+  color: var(--ui-success);
   font-size: 12px;
   font-weight: 670;
 }
@@ -280,7 +280,7 @@ html.is-resizing-sidebar * {
 }
 
 .trigger-options > label.is-selected {
-  border-color: var(--ui-accent);
+  border-color: var(--ui-line-strong);
   background: var(--ui-selection);
 }
 
@@ -385,7 +385,7 @@ html.is-resizing-sidebar * {
   padding: 2px 4px;
   border: 2px solid var(--surface);
   border-radius: 999px;
-  background: var(--ui-accent-strong);
+  background: var(--ui-text-secondary);
   color: var(--ui-surface);
   font-size: 9px;
   font-weight: 760;

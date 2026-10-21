@@ -16,7 +16,7 @@
 
 .capability-sync-feedback {
   margin: 0 0 16px;
-  color: var(--ui-accent-strong);
+  color: var(--ui-text);
   font-size: 13px;
   line-height: 1.5;
 }
@@ -163,10 +163,10 @@
 .capability-built-in-chip {
   flex: 0 0 auto;
   padding: 1px 6px;
-  border: 1px solid color-mix(in srgb, var(--ui-accent) 22%, transparent);
+  border: 1px solid var(--ui-line-strong);
   border-radius: 999px;
   background: var(--ui-selection);
-  color: var(--ui-accent-strong);
+  color: var(--ui-text);
   font-size: 10px;
   font-weight: 600;
   line-height: 1.4;
@@ -242,7 +242,7 @@
   padding: 5px 7px;
   border: 0;
   background: transparent;
-  color: var(--ui-accent-strong);
+  color: var(--ui-text);
   cursor: pointer;
   font-size: 12px;
   font-weight: 650;
@@ -399,6 +399,10 @@
   padding-top: 24px;
 }
 
+.capability-import-sources + .asset-git-import-form {
+  margin-top: 24px;
+}
+
 .capability-upload {
   display: grid;
   place-items: center;
@@ -517,6 +521,7 @@
 .instructions-preview h2,
 .expert-capabilities h2,
 .capability-editor h2,
+.instructions-field h2,
 .review-summary h2 {
   font-size: 18px;
   font-weight: 690;
@@ -525,6 +530,7 @@
 
 .creator-preview p,
 .capability-editor > p,
+.instructions-field p,
 .review-summary > p {
   margin: 0;
   color: var(--muted);
@@ -777,7 +783,7 @@
 }
 
 .capability-tool-list-scroll > button.is-active {
-  box-shadow: inset 3px 0 var(--ui-accent);
+  box-shadow: inset 3px 0 var(--ui-text);
 }
 
 .capability-tool-list-scroll button strong {
@@ -879,12 +885,6 @@
   line-height: 1.55;
 }
 
-.capability-test-input:focus {
-  border-color: var(--ui-accent);
-  outline: 0;
-  box-shadow: 0 0 0 3px var(--focus-ring);
-}
-
 .capability-test-result {
   display: grid;
   gap: 8px;
@@ -928,7 +928,6 @@
   gap: 15px;
   margin-top: 10px;
   padding-top: 20px;
-  border-top: 1px solid var(--border);
 }
 
 .capability-section-heading {
@@ -958,7 +957,7 @@
   padding: 5px 9px;
   border-radius: 999px;
   background: var(--ui-selection);
-  color: var(--ui-accent-strong);
+  color: var(--ui-text-secondary);
   font-size: 11px;
   font-weight: 680;
 }
@@ -984,7 +983,7 @@
 }
 
 .capability-summary-card:hover {
-  border-color: color-mix(in srgb, var(--ui-accent) 26%, transparent);
+  border-color: var(--ui-line-strong);
   background: var(--ui-surface);
   box-shadow: var(--shadow-hover);
   transform: translateY(-1px);
@@ -1005,7 +1004,7 @@
   place-items: center;
   border-radius: 9px;
   background: var(--ui-selection);
-  color: var(--ui-accent-strong);
+  color: var(--ui-text-secondary);
 }
 
 .capability-summary-count {
@@ -1027,7 +1026,7 @@
 .expert-picker-heading > div > small {
   display: block;
   margin-bottom: 4px;
-  color: var(--ui-accent-strong);
+  color: var(--ui-text-secondary);
   font-size: 10px;
   font-weight: 720;
   letter-spacing: 0.08em;
@@ -1097,7 +1096,7 @@
   padding: 0;
   border: 0;
   background: transparent;
-  color: var(--ui-accent-strong);
+  color: var(--ui-text-secondary);
   cursor: pointer;
   font: inherit;
   font-size: 11px;
@@ -1404,7 +1403,7 @@
   place-items: center;
   border-radius: 9px;
   background: var(--ui-selection);
-  color: var(--ui-accent-strong);
+  color: var(--ui-text-secondary);
 }
 
 .plugin-declaration-group h3 {
@@ -1516,7 +1515,7 @@
 }
 
 .plugin-capability-declaration > header span {
-  color: var(--ui-accent-strong);
+  color: var(--ui-text);
 }
 
 .plugin-capability-declaration > p {

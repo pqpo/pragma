@@ -69,7 +69,7 @@
 
 .mission-executor-picker.is-open {
   z-index: 20;
-  border-color: color-mix(in srgb, var(--ui-accent) 24%, transparent);
+  border-color: var(--ui-line-strong);
   background: var(--ui-surface);
   box-shadow: 0 4px 16px rgb(var(--ui-shadow-rgb) / 6%);
 }
@@ -146,7 +146,7 @@
   border: 1px solid var(--border);
   border-radius: 8px;
   background: var(--ui-surface);
-  color: var(--ui-accent-strong);
+  color: var(--ui-text);
   font: inherit;
   font-size: 11px;
   font-weight: 650;
@@ -155,10 +155,10 @@
 
 .mission-executor-close-button:hover,
 .mission-executor-close-button:focus-visible {
-  border-color: var(--ui-accent);
+  border-color: var(--ui-line-strong);
   outline: 0;
   background: var(--ui-selection);
-  box-shadow: 0 0 0 3px var(--focus-ring);
+  box-shadow: 0 0 0 3px rgb(var(--ui-shadow-rgb) / 20%);
 }
 
 .mission-executor-search {
@@ -173,12 +173,6 @@
   border-radius: 9px;
   background: var(--surface-soft);
   color: var(--muted);
-}
-
-.mission-executor-search:focus-within {
-  border-color: var(--ui-accent);
-  background: var(--ui-surface);
-  box-shadow: 0 0 0 3px var(--focus-ring);
 }
 
 .mission-executor-search input {
@@ -227,10 +221,10 @@
 .mission-executor-views button:hover,
 .mission-executor-views button:focus-visible,
 .mission-executor-views button.is-active {
-  border-color: color-mix(in srgb, var(--ui-accent) 18%, transparent);
+  border-color: var(--ui-line-strong);
   outline: 0;
   background: var(--ui-selection);
-  color: var(--ui-accent-strong);
+  color: var(--ui-text);
 }
 
 .mission-executor-filters {
@@ -288,13 +282,13 @@
 
 .mission-executor-option:hover,
 .mission-executor-option:focus-within {
-  border-color: color-mix(in srgb, var(--ui-accent) 18%, transparent);
+  border-color: var(--ui-line-strong);
   outline: 0;
   background: var(--surface-soft);
 }
 
 .mission-executor-option.is-selected {
-  border-color: color-mix(in srgb, var(--ui-accent) 22%, transparent);
+  border-color: var(--ui-line-strong);
   background: var(--ui-selection);
 }
 
@@ -326,7 +320,7 @@
   place-items: center;
   border-radius: 9px;
   background: var(--ui-surface);
-  color: var(--ui-accent-strong);
+  color: var(--ui-text-secondary);
   box-shadow: 0 1px 3px rgb(var(--ui-shadow-rgb) / 6%);
 }
 
@@ -385,11 +379,8 @@
   gap: 5px;
 }
 
-.mission-executor-option-status > svg {
-  color: var(--ui-accent-strong);
-}
-
 .mission-executor-option-status > svg:not(.mission-executor-pinned-star) {
+  color: var(--ui-text-secondary);
   visibility: hidden;
 }
 
@@ -398,7 +389,7 @@
 }
 
 .mission-executor-pinned-star {
-  color: #b67817;
+  color: var(--ui-favorite);
 }
 
 .mission-executor-option-actions {
@@ -445,11 +436,11 @@
 .mission-executor-favorite-trigger:hover,
 .mission-executor-favorite-trigger:focus-visible,
 .mission-executor-favorite-trigger[aria-expanded="true"] {
-  border-color: var(--ui-accent);
+  border-color: var(--ui-line-strong);
   outline: 0;
   background: var(--ui-selection);
-  color: var(--ui-accent-strong);
-  box-shadow: 0 0 0 3px var(--focus-ring);
+  color: var(--ui-text);
+  box-shadow: 0 0 0 3px rgb(var(--ui-shadow-rgb) / 20%);
 }
 
 .mission-executor-favorite-trigger:disabled {
@@ -497,12 +488,12 @@
 .mission-executor-favorite-menu > button:focus-visible {
   outline: 0;
   background: var(--surface-soft);
-  color: var(--ui-accent-strong);
+  color: var(--ui-text);
 }
 
 .mission-executor-favorite-menu > button[aria-checked="true"] {
   background: var(--ui-selection);
-  color: var(--ui-accent-strong);
+  color: var(--ui-text);
   font-weight: 650;
 }
 
@@ -523,7 +514,7 @@
   margin-top: 3px;
   border-top: 1px solid var(--border);
   border-radius: 3px 3px 7px 7px;
-  color: var(--ui-accent-strong);
+  color: var(--ui-text);
 }
 
 .mission-executor-option-actions > button {
@@ -540,10 +531,10 @@
 
 .mission-executor-option-actions > button:hover,
 .mission-executor-option-actions > button:focus-visible {
-  border-color: var(--ui-accent);
+  border-color: var(--ui-line-strong);
   outline: 0;
-  color: var(--ui-accent-strong);
-  box-shadow: 0 0 0 3px var(--focus-ring);
+  color: var(--ui-text);
+  box-shadow: 0 0 0 3px rgb(var(--ui-shadow-rgb) / 20%);
 }
 
 .mission-executor-option-actions > button:disabled {
@@ -632,7 +623,7 @@
   outline: 0;
   background: var(--surface-soft);
   color: var(--text);
-  box-shadow: 0 0 0 3px var(--focus-ring);
+  box-shadow: 0 0 0 3px rgb(var(--ui-shadow-rgb) / 20%);
 }
 
 .mission-executor-manager-tools {
@@ -690,19 +681,12 @@
 }
 
 .mission-goal-composer:hover {
-  border-color: color-mix(in srgb, var(--ui-accent) 20%, transparent);
-}
-
-.mission-goal-composer:focus-within {
-  border-color: var(--ui-accent);
-  box-shadow:
-    0 0 0 3px var(--focus-ring),
-    var(--shadow-hover);
+  border-color: var(--ui-line-strong);
 }
 
 .mission-goal-composer > label {
   padding: 20px 22px 0;
-  color: var(--ui-accent-strong);
+  color: var(--ui-text-secondary);
   font-size: 11px;
   letter-spacing: 0.02em;
 }
@@ -765,7 +749,7 @@
 }
 
 .mission-prompt-tools > button.is-active {
-  color: var(--ui-accent-strong);
+  color: var(--ui-text);
   background: var(--ui-selection);
 }
 
@@ -879,18 +863,6 @@
   border-radius: 0 var(--ui-radius-lg) 0 0;
 }
 
-.home-mission-create .mission-goal-composer:focus-within {
-  border-color: var(--ui-line-strong);
-  box-shadow:
-    0 0 0 3px var(--ui-focus),
-    var(--ui-shadow-composer);
-}
-
-.home-mission-create .mission-goal-composer:has(.mission-schema-form):focus-within {
-  border-color: var(--ui-line-strong);
-  box-shadow: var(--ui-shadow-composer);
-}
-
 .mission-goal-field {
   display: grid;
   min-height: 0;
@@ -984,13 +956,6 @@
   color: var(--text);
   font: inherit;
   font-size: 12px;
-}
-
-.mission-schema-field > input:focus-visible,
-.mission-schema-array-item input:focus-visible {
-  border-color: var(--ui-accent);
-  outline: 0;
-  box-shadow: 0 0 0 3px var(--focus-ring);
 }
 
 .mission-schema-array,
@@ -1148,7 +1113,7 @@
   border: 0;
   background: transparent;
   color: var(--ui-text);
-  box-shadow: 0 0 0 3px var(--ui-focus);
+  box-shadow: 0 0 0 3px rgb(var(--ui-shadow-rgb) / 20%);
 }
 
 .home-workspace-context .mission-executor-menu > .mission-executor-search {
@@ -1564,11 +1529,6 @@
   padding-top: 7px;
 }
 
-.home-mission-create .mission-goal-composer:focus-within {
-  border-color: var(--ui-line-strong);
-  box-shadow: 0 12px 34px rgb(var(--ui-shadow-rgb) / 6%);
-}
-
 .home-mission-create .mission-goal-composer footer {
   min-height: 48px;
   padding: 8px 12px 8px 14px;
@@ -1621,7 +1581,7 @@
 .home-favorites-manage-button:focus-visible {
   outline: 0;
   color: var(--ui-text);
-  box-shadow: 0 0 0 3px var(--ui-focus);
+  box-shadow: 0 0 0 3px rgb(var(--ui-shadow-rgb) / 20%);
 }
 
 .home-favorites-list {
@@ -1934,7 +1894,7 @@
 .home-shortcuts-tabs > button[aria-selected="true"],
 .home-project-button.is-active {
   background: var(--ui-selection);
-  color: var(--ui-accent);
+  color: var(--ui-text);
 }
 
 .home-project-list {

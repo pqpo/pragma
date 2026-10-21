@@ -87,11 +87,6 @@
   box-shadow: none;
 }
 
-.mission-executor-dialog-search:focus-within {
-  border-color: var(--ui-accent);
-  box-shadow: 0 0 0 3px var(--ui-focus);
-}
-
 .mission-executor-kind-filter {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
@@ -117,12 +112,12 @@
 .mission-executor-kind-filter button:focus-visible {
   outline: 0;
   background: var(--ui-surface);
-  box-shadow: 0 0 0 3px var(--ui-focus);
+  box-shadow: 0 0 0 3px rgb(var(--ui-shadow-rgb) / 20%);
 }
 
 .mission-executor-kind-filter button.is-active {
   background: var(--ui-selection);
-  color: var(--ui-accent-strong);
+  color: var(--ui-text);
 }
 
 .mission-executor-dialog-results {
@@ -166,7 +161,7 @@
   width: 32px;
   height: 32px;
   place-items: center;
-  color: var(--ui-accent-strong);
+  color: var(--ui-text-secondary);
 }
 
 .mission-executor-dialog-row > span:nth-child(2) {
@@ -413,8 +408,8 @@
 
 .mission-attachment-thumbnail:hover,
 .mission-attachment-thumbnail:focus-visible {
-  border-color: var(--ui-accent);
-  box-shadow: 0 0 0 3px var(--ui-focus);
+  border-color: var(--ui-line-strong);
+  box-shadow: 0 0 0 3px rgb(var(--ui-shadow-rgb) / 20%);
 }
 
 .mission-attachment-thumbnail img {

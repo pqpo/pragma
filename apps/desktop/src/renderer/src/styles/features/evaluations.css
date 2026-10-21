@@ -273,7 +273,7 @@
 
 .agent-evaluation-dataset-grid article > span,
 .agent-evaluation-run-detail header span {
-  color: var(--ui-accent);
+  color: var(--ui-text-secondary);
   font-size: 12px;
   font-weight: 700;
   letter-spacing: 0.04em;
@@ -321,8 +321,8 @@
 }
 
 .agent-evaluation-run-list button.is-active {
-  border-color: var(--ui-accent);
-  box-shadow: 0 0 0 1px var(--ui-accent);
+  border-color: var(--ui-line-strong);
+  box-shadow: 0 0 0 1px var(--ui-text);
 }
 
 .agent-evaluation-run-detail > header > strong {
@@ -357,7 +357,7 @@
 }
 
 .agent-evaluation-status.is-resolved {
-  background: var(--ui-accent);
+  background: var(--ui-success);
 }
 .agent-evaluation-status.is-unresolved,
 .agent-evaluation-status.is-needs_attention {
@@ -486,7 +486,7 @@
   place-items: center;
   border-radius: 13px;
   background: var(--ui-selection);
-  color: var(--ui-accent-strong);
+  color: var(--ui-text-secondary);
 }
 
 .agent-evaluation-queue-layout:has(.agent-evaluation-empty-state.is-queue) {
@@ -542,7 +542,7 @@
 }
 
 .agent-evaluation-editor-tabs button.is-active {
-  border-bottom-color: var(--ui-accent);
+  border-bottom-color: var(--ui-line-strong);
   color: var(--ui-text);
   font-weight: 600;
 }
@@ -627,13 +627,6 @@
 .agent-evaluation-form-grid textarea {
   resize: vertical;
   line-height: 1.55;
-}
-
-.agent-evaluation-form-grid :is(input, textarea):focus,
-.agent-evaluation-criteria-list input:focus {
-  border-color: var(--ui-accent);
-  outline: 0;
-  box-shadow: 0 0 0 3px var(--ui-focus);
 }
 
 .agent-evaluation-form-grid [aria-invalid="true"],
@@ -762,7 +755,7 @@
 
 .agent-evaluation-yaml-guide summary {
   cursor: pointer;
-  color: var(--ui-accent-strong);
+  color: var(--ui-text-secondary);
   font-size: 12px;
   font-weight: 600;
 }
@@ -800,14 +793,14 @@
   border: 1px dashed var(--ui-line-strong);
   border-radius: var(--ui-radius-md);
   background: var(--ui-surface-subtle);
-  color: var(--ui-accent-strong);
+  color: var(--ui-text);
   cursor: pointer;
   font-size: 12px;
   font-weight: 600;
 }
 
 .agent-evaluation-file-picker:hover {
-  border-color: var(--ui-accent);
+  border-color: var(--ui-line-strong);
   background: var(--ui-selection);
 }
 
@@ -922,11 +915,6 @@
   transition:
     border-color 140ms ease,
     box-shadow 140ms ease;
-}
-
-.evaluation-target-search:focus-within {
-  border-color: var(--ui-accent);
-  box-shadow: 0 0 0 3px var(--focus-ring);
 }
 
 .evaluation-target-search input {
@@ -1045,7 +1033,7 @@
 }
 
 .evaluation-target-more:hover {
-  color: var(--ui-accent-strong);
+  color: var(--ui-text);
 }
 
 .evaluation-target-workspace {
@@ -1311,7 +1299,7 @@
 }
 
 .agent-evaluation-secondary-back:hover {
-  color: var(--ui-accent-strong);
+  color: var(--ui-text);
 }
 
 .agent-evaluation-secondary-back:focus-visible {
@@ -1676,12 +1664,6 @@
   font-family: ui-monospace, "SFMono-Regular", Consolas, "Liberation Mono", monospace;
   font-size: 13px;
   line-height: 1.55;
-}
-
-.flow-run-dry-editor :is(input, textarea):focus-visible {
-  border-color: var(--ui-accent);
-  outline: 0;
-  box-shadow: 0 0 0 3px var(--focus-ring);
 }
 
 .flow-run-dry-empty {

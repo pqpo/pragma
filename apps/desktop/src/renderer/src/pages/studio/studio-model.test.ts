@@ -102,7 +102,7 @@ describe("isBuiltInExpert", () => {
 });
 
 describe("studioSections", () => {
-  it("keeps Market and Knowledge bases in the same navigation group", () => {
+  it("keeps creation resources in Studio after Market moves to the main navigation", () => {
     expect(studioSections.map((section) => section.id)).toEqual([
       "experts",
       "teams",
@@ -111,7 +111,6 @@ describe("studioSections", () => {
       "connectors",
       "skills",
       "context-stores",
-      "square",
     ]);
   });
 });

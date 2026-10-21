@@ -31,7 +31,22 @@ tree hash, reject undeclared or missing files, and restore executable bits durin
 The asset key remains archive-local metadata rather than local identity. Skill roots without an
 active ready revision are rejected before export.
 
+Home model overrides belong to Missions and are not exported. Export also clears caller-specific
+model overrides in Expert tool policies (`spec.tools[].policy.runtimes`) and Team delegation
+policies (`spec.delegation.runtimes`) in a derived project, then recomputes the root's dependency
+closure. Override-only RuntimeProfiles are excluded; profiles explicitly used by an Expert's
+`spec.runtime` remain included, regardless of their names. Export preview and archive generation
+use the same derived closure. The saved source project and existing Bundle import behavior remain
+unchanged; this is an export selection policy, not a migration of stored resources.
+
 ## Import
+
+Market inspection returns `resources` as the archive resource count and optional `resourceDetails`
+as the complete archive inventory (resource ref, kind, and actual name). The inventory includes
+Experts, teams, and RuntimeProfile configuration records, not only export roots. Market shows a
+bounded preview and opens the full inventory in a scrolling text dialog. If an older inspection
+response has no inventory, the dialog asks the user to restart the app rather than presenting export roots as a complete list. This field is a transient inspection projection; bundle files and
+persisted installation data are unchanged.
 
 Use **Import** in Studio and choose or drag in one `.pragma` file. Import and export use separate
 dialogs. Interpreter validates the ZIP, file hashes, Pragma YAML, lock, compiler capability, and
@@ -51,10 +66,15 @@ Import is prepared as a wizard before one final confirmation:
 
 Desktop automatically reuses exact Runtime/model, capability, knowledge-base, and plugin matches.
 Included portable payloads are installed automatically. Everything else appears in **Finish local
-setup**. Runtime and model are selected separately. Entering a Runtime binding refreshes local
-availability automatically; the same screen also has a manual refresh action and listens for
-background model-catalog updates. If only the requested model is missing, the wizard keeps the
-matching available Runtime selected and explains that provider accounts do not travel with a Bundle.
+setup**. Missing models are presented under the names of the experts or workflow resources using
+them. One model selection updates the engine, provider account, and model together. Internal
+RuntimeProfile conflicts and separate Runtime binding controls are not shown. Market details list
+model settings separately from resource dependencies, with the source model and its actual Expert,
+team delegation, tool delegation, or Flow consumers. Generic catalog profile names are never treated
+as standalone installable Runtime products; the engine and provider accounts are not bundled. Model availability
+refreshes automatically and can also be refreshed manually; provider accounts do not travel with a Bundle.
+Unreachable source RuntimeProfiles are excluded from publication, installation ownership, and setup
+requirements; existing unrelated local profiles are preserved.
 Legacy generated resource names are shown as localized missing-name labels with technical refs available
 in diagnostic tooltips.
 

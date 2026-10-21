@@ -226,3 +226,64 @@ export function collectBundleResourceClosure(
   }
   return result;
 }
+
+/** Model settings travel with their actual users; catalog profile names are internal. */
+export function bundleRuntimeModels(
+  resources: readonly PragmaResource[],
+): NonNullable<PragmaBundleImportInspection["runtimeModels"]> {
+  const models: NonNullable<PragmaBundleImportInspection["runtimeModels"]> = {};
+  const indexed = new Map(
+    resources.flatMap(
+      (resource) =>
+        [
+          [resource.metadata.id, resource],
+          [canonicalPragmaResourceRef(resource), resource],
+        ] as const,
+    ),
+  );
+  for (const resource of resources) {
+    if (resource.kind !== "RuntimeProfile") continue;
+    const config = resource.spec.config as Record<string, unknown>;
+    models[canonicalPragmaResourceRef(resource)] = {
+      ...(typeof config["model"] === "string" ? { modelId: config["model"] } : {}),
+      consumers: [],
+    };
+  }
+  type Consumer = NonNullable<
+    PragmaBundleImportInspection["runtimeModels"]
+  >[string]["consumers"][number];
+  const add = (ref: string, name: string, usage: Consumer["usage"], target?: string) => {
+    const model = models[ref];
+    if (model === undefined) return;
+    const targetName = target === undefined ? undefined : indexed.get(target)?.metadata.name;
+    const consumer = { name, usage, ...(targetName === undefined ? {} : { targetName }) };
+    if (
+      !model.consumers.some(
+        (value) => value.name === name && value.usage === usage && value.targetName === targetName,
+      )
+    )
+      model.consumers.push(consumer);
+  };
+  for (const resource of resources) {
+    const name = resource.metadata.name;
+    if (resource.kind === "Expert") {
+      if (resource.spec.runtime !== undefined) add(resource.spec.runtime.ref, name, "expert");
+      for (const tool of resource.spec.tools)
+        for (const [expertId, ref] of Object.entries(tool.policy?.runtimes ?? {}))
+          add(ref, name, "tool-delegation", expertId);
+    } else if (resource.kind === "ExpertTeam") {
+      for (const [expertId, ref] of Object.entries(resource.spec.delegation.runtimes))
+        add(ref, name, "team-delegation", expertId);
+    } else if (resource.kind === "Flow") {
+      for (const step of Object.values(resource.spec.graph.steps)) {
+        if (step.runtime !== undefined)
+          add(step.runtime.ref, name, "flow", (step.expert ?? step.team ?? step.flow)?.ref);
+        for (const [expertId, ref] of Object.entries(step.runtimes ?? {}))
+          add(ref, name, "flow", expertId);
+      }
+    }
+  }
+  return Object.fromEntries(
+    Object.entries(models).filter(([, model]) => model.consumers.length > 0),
+  );
+}

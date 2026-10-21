@@ -36,6 +36,8 @@ Turbo 缓存包含上述完整副产物，按 OS/arch/Node/pnpm/lockfile 隔离�
 
 Desktop 开发模式允许从不含 Git 元数据的源码目录启动，此时内置 CLI 的 distribution.json 中 sourceCommit 为 null；正式构建与发行仍要求有效 Git HEAD，不允许缺失来源提交。
 
+Desktop 开发启动先通过 Turbo 构建 workspace 依赖，main 再通过 Node 加载这些包的 `dist`，避免 Rollup 重复打包整个 Runtime SDK 依赖图。正式构建仍内联 workspace 包并执行 bundle 审计；preload/renderer 的浏览器边界不变。修改 workspace 包源码后需重新构建依赖并重启开发进程。Vite 日志记录构建耗时，`desktop.services_ready` 和 `desktop.window_loaded` 分别记录服务就绪与窗口加载耗时；`startupDurationMs` 从应用入口函数开始计时，不含前置构建和静态模块加载。
+
 Release 只接受本仓库 push main 的同 SHA 最新成功 CI 与验证 receipt，缺失时调用共享验证；已有运行未完成时等最多三十分钟，失败/取消直接阻止发布。产物过期时重建与验证。Desktop 在原生主机重新生成安装包、平台审计与许可证资料；CLI 发布前仍执行平台矩阵，发布后仍检查 Registry 完整性、公开安装与 provenance。
 
 ## 测量与验收

@@ -1402,3 +1402,69 @@ final result: passed
 - [x] Keyboard focus and reduced-motion behavior supported.
 
 final result: passed
+
+# Knowledge base creation method redesign — 2026-10-20
+
+Source visual truth: `/Users/linminqiu/.codex/generated_images/01a15937-d5fa-7030-9e47-46689d68aab7/exec-16bf9e6d-2cb1-4f20-abe6-eeee560e6f34.png` (selected third concept, 1122 × 1402).
+Implementation: `http://127.0.0.1:4186/`; rendered production component with synthetic callbacks. Browser screenshot: `/tmp/pragma-knowledge-qa/desktop-final.png` (1440 × 900 viewport, density 1, drawer 610 × 900 CSS px).
+Full-view comparison: `/tmp/pragma-knowledge-qa/comparison-final.png`; source resized proportionally to 720 × 900, actual drawer cropped at x=830 without scaling. Density and drawer-width differences are intentional: existing production drawer dimensions, shell, stepper and typography remain authoritative. State: configure, blank selected, empty fields, Simplified Chinese.
+
+## Findings and comparison history
+
+- Initial desktop comparison (`comparison.png`) confirmed the three-row hierarchy, icon/title/help/radio alignment and form below. At 1080 × 700 with 125% CSS zoom, the existing name autofocus scrolled the options offscreen (`english-125.png`): P2.
+- Fixed by moving initial focus to the selected native radio. The post-fix capture (`english-125-fixed.png`) shows the heading and all three choices; keyboard navigation subsequently scrolls the form into view. Footer remains fixed and usable.
+- Final full-view comparison opened with both images in one input. No actionable P0/P1/P2 findings remain. Focused region: selection list is legible at the comparison's native resolution; keyboard focus evidence also captured in `/tmp/pragma-knowledge-qa/focus.png`.
+
+## Required fidelity surfaces
+
+- Fonts/typography: existing application fonts, 14px/500 row titles, 12px/400 helper text; no excessive weight. Product typography retained rather than enlarging the entire existing drawer to mock dimensions.
+- Spacing/layout: one vertical group, 72px minimum rows with wrapping allowed, 16px icon gaps, separators between adjacent rows, no card grid or nested frames. Existing drawer footer and scrolling retained.
+- Colors/tokens: semantic text, subtle surface, line, accent and focus tokens. Blue selected indicator plus radio state; no decorative selection stripe or shadow.
+- Assets: installed Phosphor FileText/Folder/GitBranch and RadioButton/Circle; no generated assets required by this component.
+- Copy/content: localized existing creation descriptions; folder method renamed consistently in English, Simplified and Traditional Chinese. Existing storage-location text and field limits retained; placeholder additions in the mock treated as optional P3 and omitted.
+
+## Interaction and verification
+
+- Browser verified blank creation and folder import through review and submission; inspected synthetic payloads preserve mode/name/description/sourcePath.
+- Git choice opens the existing remote/branch form, hides the duplicate footer primary action, and completes via the existing imported callback using a synthetic API. No real remote repository or private data was accessed.
+- Native radio keyboard ArrowDown changes method; all controls remain labelled; names survive method switches. Independent group name uses useId.
+- 1440 × 900 Simplified Chinese, 1080 × 700 English at 125% CSS zoom and Traditional Chinese at 150% CSS zoom inspected. Large content scrolls in the existing body while footer remains visible. CSS zoom is a layout stress check, not a claim of native Electron page-zoom testing.
+- Browser console: no errors.
+- ContextStoreFragment tests: 10 passed. Renderer typecheck, scoped ESLint and style ownership verification passed.
+- Existing drawer shell/stepper styling is outside the scoped configuration module; no unrelated shell redesign performed.
+
+final result: passed
+
+# Workflow import dialog — selected table layout — 2026-10-20
+
+Source visual truth: `/var/folders/7y/x39kntq56gvcfdymbtjb36280000gn/T/codex-clipboard-3c3db169-627b-4071-9bd8-724ce08f5b75.png` (1374 × 1145). The user explicitly selected this earlier table concept and requested implementation for subsequent device verification.
+Implementation: production `PragmaBundleDialog` with synthetic inspection data; local browser preview `http://127.0.0.1:4189/`. Browser screenshot: `/tmp/pragma-import-ui-uks61Y/browser-final.png`. Electron capture: `/tmp/pragma-import-ui-uks61Y/zh-Hans-ready.png` (2880 × 1736 pixels, 1440 × 868 CSS content viewport, device density 2, zoom 1).
+
+Full-view comparison: `/tmp/pragma-import-ui-uks61Y/comparison.png`, opened as one comparison input. Source dialog cropped at (47, 60) with size 1280 × 1038 and resized proportionally to 760 CSS pixels wide. Electron dialog cropped at (680, 228) with size 1520 × 1280 and normalized to 760 × 640 CSS pixels. The production dialog is deliberately 640 CSS pixels tall with its existing fixed footer and scrollable body. State: Simplified Chinese, selected ExpertTeam bundle, 11 resources, five ready model dependencies.
+
+## Findings and fidelity surfaces
+
+- No actionable P0/P1/P2 mismatch in the selected first-step composition. The stepper, package identity/actions, inline dependency summary and three-column table match the selected information hierarchy. No earlier failed visual iteration for this implementation; temporary keyboard harness timing was corrected before verification.
+- Fonts/typography: existing application Inter/PingFang fallbacks; 24px dialog title, 16px bundle and section titles, 14px resource names and 12px metadata. Original product type scale retained rather than reproducing raster font rendering. No clipping of role names in the reference state; long names retain a readable title tooltip.
+- Spacing/layout: white surfaces, separate stepper with neutral connectors and bottom rule, package summary with right-aligned validation/action, table with plain column headings and row separators. Source and implementation inspected together at normalized width. Individual labels, action divider, summary baseline and status checks are legible in this combined image, so no separate focused crop was necessary.
+- Colors/tokens: white canvas, semantic neutral text/lines, semantic success green. File action uses neutral text instead of the mock's blue, following the existing UI convention. Blue remains reserved for the primary footer action. This is an intentional product constraint.
+- Assets: installed Phosphor Archive, CheckCircle, Check and WarningCircle icons. No raster illustration, avatar or generated decorative asset is required.
+- Copy/content: shortened localized description and file-selection step; English, Simplified and Traditional Chinese strings supplied. Runtime consumer names appear directly under Expert, with Model in the dependency column; ready rows expose the status accessibly without repeating visible Ready / No action labels. Mixed dependencies use Resource and their localized types. Missing/invalid/action-required states retain status and action instructions.
+
+## Interaction and verification
+
+- Browser: Continue reaches the confirmation step; Back returns to the file/inspection step. File-action Tab advances to Cancel. Browser console errors: none. Preview uses synthetic callbacks, with no real import or user data mutation.
+- Electron captures inspected at 1440 × 900 / zoom 1, English 1080 × 700 / 125%, Traditional Chinese 1080 × 700 / 150%, and a missing-model state. Fixed footer remains visible; content scrolls at enlarged zoom. Existing application body min-width causes document-level width overflow in the isolated enlarged-zoom fixture; the dialog fits the viewport and does not hide persistent actions. This is not claimed as a full application shell review.
+- Component tests: 9 passed, including ready/missing dependencies, legacy-name fallback, consumer names, absence of redundant action text, accessible ready status and disabled file replacement while busy.
+- Existing Electron bundle recovery regression: 12 scenarios passed, including deferred bindings, retained installation recovery, conflict replanning and failed cleanup.
+- Renderer typecheck, scoped ESLint, style ownership verification and formatting passed.
+- User will perform final real-device visual acceptance; no claim of that acceptance is made here.
+
+## Implementation checklist
+
+- [x] Selected horizontal stepper and separate file identity/status/action row.
+- [x] Inline dependency readiness summary and accessible three-column table.
+- [x] Missing dependencies preserve actionable information; supported import and recovery paths retained.
+- [x] Locale coverage, responsive scrolling, keyboard and regression checks.
+
+final result: passed

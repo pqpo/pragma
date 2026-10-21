@@ -213,6 +213,36 @@ export const PragmaBundleImportInspectionSchema = z
     unpackedBytes: z.number().int().positive().optional(),
     fileCount: z.number().int().positive().optional(),
     resources: z.number().int().nonnegative(),
+    resourceDetails: z
+      .array(
+        z
+          .object({
+            ref: PragmaResourceRefSchema,
+            kind: PragmaBundleConflictSchema.shape.resourceKind,
+            name: z.string().trim().min(1).max(200),
+          })
+          .strict(),
+      )
+      .optional(),
+    runtimeModels: z
+      .record(
+        PragmaResourceRefSchema,
+        z
+          .object({
+            modelId: z.string().trim().min(1).max(200).optional(),
+            consumers: z.array(
+              z
+                .object({
+                  name: z.string().trim().min(1).max(200),
+                  usage: z.enum(["expert", "team-delegation", "tool-delegation", "flow"]),
+                  targetName: z.string().trim().min(1).max(200).optional(),
+                })
+                .strict(),
+            ),
+          })
+          .strict(),
+      )
+      .optional(),
     dependencies: z.array(PragmaBundleDependencySummarySchema),
     conflicts: z.array(PragmaBundleConflictSchema),
     assetConflicts: z.array(PragmaBundleAssetConflictSchema).default([]),

@@ -199,11 +199,6 @@
   font-size: 13px;
 }
 
-.general-process-environment-add input:focus-visible {
-  outline: 0;
-  box-shadow: 0 0 0 3px var(--ui-focus);
-}
-
 .general-process-environment-tags {
   display: flex;
   flex-wrap: wrap;
@@ -330,7 +325,7 @@
 
 .tool-permission-options input:checked + span {
   background: var(--ui-selection);
-  color: var(--ui-accent-strong);
+  color: var(--ui-text);
   box-shadow: none;
 }
 
@@ -402,10 +397,6 @@
   background: var(--ui-surface);
   color: var(--ui-text);
   font: inherit;
-}
-
-.agent-context-window-field input:focus-visible {
-  box-shadow: 0 0 0 3px var(--ui-focus);
 }
 
 .agent-context-window-field > span {
@@ -549,9 +540,7 @@
   font: inherit;
 }
 
-.static-field input:focus,
-.static-field > select:focus,
-.key-input-wrap:focus-within {
+.static-field > select:focus {
   border-color: var(--ui-accent);
   box-shadow: 0 0 0 2px color-mix(in srgb, var(--ui-accent) 18%, transparent);
 }
@@ -616,11 +605,6 @@
   font: inherit;
 }
 
-.manual-model-row input:focus-visible {
-  border-color: var(--ui-accent);
-  box-shadow: 0 0 0 3px var(--focus-ring);
-}
-
 .selected-model-row {
   display: grid;
   grid-template-columns: minmax(160px, 1fr) minmax(0, 3fr) auto;
@@ -672,9 +656,9 @@
 }
 
 .thinking-level-options input:checked + span {
-  border-color: var(--ui-accent);
+  border-color: var(--ui-line-strong);
   background: var(--ui-selection);
-  color: var(--ui-accent-strong);
+  color: var(--ui-text);
 }
 
 .thinking-level-options input:focus-visible + span {
@@ -838,9 +822,7 @@
   background: var(--ui-surface-subtle);
 }
 
-.static-field input:focus,
 .static-field > select:focus,
-.key-input-wrap:focus-within,
 .protocol-select-shell:focus-within {
   border-color: var(--ui-accent);
   background: var(--ui-surface);

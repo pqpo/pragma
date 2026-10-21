@@ -24,11 +24,12 @@
   color-scheme: light;
   --ui-canvas: #ffffff;
   --ui-rail: #f6f6f6;
-  --ui-rail-secondary: #fcfcfc;
+  --ui-rail-secondary: var(--ui-rail);
   --ui-surface: #ffffff;
   --ui-surface-raised: #ffffff;
   --ui-surface-subtle: #f6f6f6;
-  --ui-selection: #fefefe;
+  --ui-selection: #ffffff;
+  --ui-message-user-background: #e8f3fe;
   --ui-text: #262626;
   --ui-text-secondary: #686868;
   --ui-navigation-text: #454545;
@@ -48,6 +49,7 @@
   --ui-danger: #9d3f34;
   --ui-danger-subtle: #fff8f7;
   --ui-warning: #d95f18;
+  --ui-favorite: #b88a00;
   --ui-info: var(--ui-accent);
   --ui-focus: rgb(79 130 239 / 20%);
   --ui-radius-sm: 4px;
