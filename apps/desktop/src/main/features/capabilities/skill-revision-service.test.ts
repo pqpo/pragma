@@ -2,7 +2,9 @@ import { createHash, randomUUID } from "node:crypto";
 import {
   chmod,
   mkdir,
+  open,
   readFile,
+  readdir,
   realpath,
   rename,
   rm,
@@ -20,7 +22,7 @@ import { createMissionStore } from "@pragma/local-host";
 import { createSkillRevisionMissionRestorer } from "./skill-revision-mission-restore.ts";
 import type { CapabilityStore } from "@pragma/local-host/deployment";
 import { createDesktopSkillRevisionSubmissionPort } from "./skill-revision-capability.ts";
-import { copySkillTree } from "@pragma/local-host/deployment";
+import { copySkillTree, createStableSkillSubmission } from "@pragma/local-host/deployment";
 import {
   SkillRevisionDraftV4StoredSchema,
   SkillRevisionJobV4StoredSchema,
@@ -641,6 +643,10 @@ describe("Skill revision service", () => {
       draft.id,
     );
     await mkdir(join(workspaceDraftPath, "worktree"), { recursive: true });
+    await writeFile(
+      join(workspaceDraftPath, "worktree", "late-edit.txt"),
+      "Preserve the interrupted writer.\n",
+    );
     const journalPath = join(fixture.statePath, "submission-cleanup-journals", `${draft.id}.json`);
     await writeFile(
       journalPath,
@@ -666,6 +672,21 @@ describe("Skill revision service", () => {
     await recovered.getDraft(draft.id);
 
     await expect(stat(workspaceDraftPath)).rejects.toMatchObject({ code: "ENOENT" });
+    const retained = (await readdir(dirname(workspaceDraftPath))).filter((name) =>
+      name.startsWith(`${draft.id}.submitted-`),
+    );
+    const copies = await Promise.all(
+      retained.map(
+        async (name) =>
+          await readFile(
+            join(dirname(workspaceDraftPath), name, "worktree", "late-edit.txt"),
+            "utf8",
+          ).catch(() => undefined),
+      ),
+    );
+    expect(copies).toContain("Preserve the interrupted writer.\n");
+    await recovered.getDraft(draft.id);
+    expect(await readdir(dirname(workspaceDraftPath))).toHaveLength(retained.length);
   });
 
   it("repairs the Job when submission crashes after committing the Draft", async () => {
@@ -797,6 +818,222 @@ describe("Skill revision service", () => {
     expect(warn).toHaveBeenCalledWith(
       "Failed to recover a submitted Skill draft cleanup.",
       expect.anything(),
+    );
+  });
+
+  it("retains source files for late writes through open handles and across rework", async () => {
+    const fixture = await createService();
+    const job = await fixture.service.start(request("expert-reflection"));
+    const inspection = await fixture.service.inspectDraft(job.draftId);
+    const writer = await open(join(inspection.draftPath!, "SKILL.md"), "a");
+    try {
+      const pending = await fixture.service.submitDraft({
+        draftId: job.draftId,
+        expectedRevision: inspection.draft.revision,
+        expectedWorkingTreeHash: inspection.workingTree.hash,
+        summary: "Retain source inodes after submission.",
+      });
+      await writer.appendFile("\nLate write through an open handle.\n");
+      const parent = dirname(dirname(inspection.draftPath!));
+      const retained = (await readdir(parent)).filter((name) =>
+        name.startsWith(`${job.draftId}.submitted-`),
+      );
+      expect(retained).toHaveLength(1);
+      const retainedFile = join(parent, retained[0]!, "worktree", "SKILL.md");
+      await expect(readFile(retainedFile, "utf8")).resolves.toContain(
+        "Late write through an open handle.",
+      );
+      const submitted = await fixture.service.getDraft(job.draftId);
+      await expect(
+        readFile(
+          join(
+            fixture.draftsPath,
+            job.draftId,
+            "submissions",
+            submitted.submissionHash!,
+            "SKILL.md",
+          ),
+          "utf8",
+        ),
+      ).resolves.not.toContain("Late write");
+      await mkdir(inspection.draftPath!, { recursive: true });
+      await writeFile(
+        join(inspection.draftPath!, "recreated.txt"),
+        "A stale writer recreated the old path.",
+      );
+      await fixture.service.returnForRework(job.id, pending.revision);
+      const allRetained = (await readdir(parent)).filter((name) =>
+        name.startsWith(`${job.draftId}.submitted-`),
+      );
+      expect(allRetained).toHaveLength(2);
+      const recreated = await Promise.all(
+        allRetained.map(
+          async (name) =>
+            await readFile(join(parent, name, "worktree", "recreated.txt"), "utf8").catch(
+              () => undefined,
+            ),
+        ),
+      );
+      expect(recreated).toContain("A stale writer recreated the old path.");
+      await expect(readFile(retainedFile, "utf8")).resolves.toContain(
+        "Late write through an open handle.",
+      );
+    } finally {
+      await writer.close();
+    }
+  });
+
+  it("does not remove an existing same-hash submission when temporary validation fails", async () => {
+    const fixture = await createService();
+    const job = await fixture.service.start(request("expert-reflection"));
+    const inspection = await fixture.service.inspectDraft(job.draftId);
+    const input = {
+      worktreePath: inspection.draftPath!,
+      submissionsPath: join(fixture.draftsPath, job.draftId, "submissions"),
+      expectedHash: inspection.workingTree.hash,
+    };
+    const existing = await createStableSkillSubmission(input);
+    await expect(
+      createStableSkillSubmission({
+        ...input,
+        validate: async (temporaryPath) => {
+          expect(temporaryPath).not.toBe(existing.path);
+          throw new Error("validation failed");
+        },
+      }),
+    ).rejects.toThrow("validation failed");
+    expect(await readdir(input.submissionsPath)).toEqual([inspection.workingTree.hash]);
+    await expect(readFile(join(existing.path, "SKILL.md"), "utf8")).resolves.toContain(
+      "safe-workflow",
+    );
+  });
+
+  it("rejects edits during validation and preserves the changed editable files", async () => {
+    const fixture = await createService();
+    const job = await fixture.service.start(request("expert-reflection"));
+    const inspection = await fixture.service.inspectDraft(job.draftId);
+    const original = fixture.capabilities.get.bind(fixture.capabilities);
+    let reads = 0;
+    vi.spyOn(fixture.capabilities, "get").mockImplementation(async (...args) => {
+      if (++reads === 2) {
+        await writeFile(
+          join(inspection.draftPath!, "SKILL.md"),
+          "---\nname: changed-after-snapshot\ndescription: Changed while submitting.\n---\n",
+        );
+      }
+      return await original(...args);
+    });
+    await expect(
+      fixture.service.submitDraft({
+        draftId: job.draftId,
+        expectedRevision: inspection.draft.revision,
+        expectedWorkingTreeHash: inspection.workingTree.hash,
+        summary: "Review the inspected snapshot.",
+      }),
+    ).rejects.toMatchObject({ code: "skill_revision_working_tree_changed" });
+    const editable = await fixture.service.getDraft(job.draftId);
+    expect(editable.state).toBe("editing");
+    expect(editable.submissionHash).toBeUndefined();
+    await expect(readFile(join(inspection.draftPath!, "SKILL.md"), "utf8")).resolves.toContain(
+      "name: changed-after-snapshot",
+    );
+    expect(await readdir(join(fixture.draftsPath, job.draftId, "submissions"))).toEqual([]);
+    vi.mocked(fixture.capabilities.get).mockRestore();
+    const changed = await fixture.service.inspectDraft(job.draftId);
+    await expect(
+      fixture.service.submitDraft({
+        draftId: job.draftId,
+        expectedRevision: changed.draft.revision,
+        expectedWorkingTreeHash: changed.workingTree.hash,
+        summary: "Submit the preserved edits after inspecting them.",
+      }),
+    ).resolves.toMatchObject({ state: "pending_review" });
+  });
+
+  it("submits edited creation metadata after actionable validation failures and rework", async () => {
+    const fixture = await createService();
+    const job = await fixture.service.start({
+      schemaVersion: "pragma.skill-revision-request/v4",
+      operation: "create",
+      capabilityId: randomUUID(),
+      resourceName: "initial-skill",
+      resourceDescription: "Python workflow.",
+      source: "expert-reflection",
+      sourceDigest: "e".repeat(64),
+      sourceRefs: [],
+      prompt: "Create the Skill.",
+    });
+    let inspection = await fixture.service.inspectDraft(job.draftId);
+    const submit = async () => {
+      inspection = await fixture.service.inspectDraft(job.draftId);
+      return await fixture.service.submitDraft({
+        draftId: job.draftId,
+        expectedRevision: inspection.draft.revision,
+        expectedWorkingTreeHash: inspection.workingTree.hash,
+        summary: "Create the Node workflow.",
+      });
+    };
+    await writeFile(
+      join(inspection.draftPath!, "SKILL.md"),
+      '---\nname: node-workflow\ndescription: ""\n---\n',
+    );
+    await expect(submit()).rejects.toMatchObject({
+      code: "invalid_input",
+      validation: { diagnostics: [expect.objectContaining({ path: "SKILL.md:description" })] },
+    });
+    expect(await fixture.service.getDraft(job.draftId)).toMatchObject({
+      state: "editing",
+      name: "initial-skill",
+      resourceDescription: "Python workflow.",
+    });
+    expect(await readdir(join(fixture.draftsPath, job.draftId, "submissions"))).toEqual([]);
+    await writeFile(
+      join(inspection.draftPath!, "SKILL.md"),
+      `---\nname: node-workflow\ndescription: "Node 22: user's workflow."\n---\n`,
+    );
+    await mkdir(join(inspection.draftPath!, "scripts"));
+    await mkdir(join(inspection.draftPath!, "tests"));
+    await writeFile(join(inspection.draftPath!, "scripts/run.mjs"), "import 'node:https';\n");
+    await writeFile(
+      join(inspection.draftPath!, "tests/run.test.mjs"),
+      "import '../scripts/run.mjs';\n",
+    );
+    await expect(submit()).rejects.toMatchObject({
+      code: "invalid_input",
+      validation: {
+        diagnostics: expect.arrayContaining([expect.objectContaining({ path: "scripts/run.mjs" })]),
+      },
+    });
+    expect(await readdir(join(fixture.draftsPath, job.draftId, "submissions"))).toEqual([]);
+    await writeFile(join(inspection.draftPath!, "scripts/run.mjs"), "export const run = true;\n");
+    const pending = await submit();
+    expect(pending.state).toBe("pending_review");
+    expect(await fixture.service.getDraft(job.draftId)).toMatchObject({
+      name: "node-workflow",
+      resourceDescription: "Node 22: user's workflow.",
+    });
+    await fixture.service.returnForRework(job.id, pending.revision);
+    inspection = await fixture.service.inspectDraft(job.draftId);
+    await writeFile(
+      join(inspection.draftPath!, "SKILL.md"),
+      "---\nname: final-workflow\ndescription: Final Node workflow.\n---\n",
+    );
+    const resubmitted = await submit();
+    const recovered = createSkillRevisionService({
+      statePath: fixture.statePath,
+      draftsPath: fixture.draftsPath,
+      draftsTrashPath: fixture.draftsTrashPath,
+      capabilities: fixture.capabilities,
+      resolveWorkspacePath: async () => fixture.workspacePath,
+    });
+    await expect(recovered.approve(job.id, resubmitted.revision)).resolves.toMatchObject({
+      state: "completed",
+    });
+    expect(fixture.publishNew).toHaveBeenCalledWith(
+      expect.objectContaining({
+        name: "final-workflow",
+        description: "Final Node workflow.",
+      }),
     );
   });
 
@@ -1318,7 +1555,7 @@ describe("Skill revision service", () => {
     const editing = await fixture.service.inspectDraft(job.draftId);
     await writeFile(
       join(editing.draftPath!, "SKILL.md"),
-      "---\nname: recovered-skill\ndescription: Recovered Skill.\n---\n\nKeep this candidate.\n",
+      "---\nname: recovered-skill\ndescription: Updated Node workflow.\n---\n\nKeep this candidate.\n",
     );
     await mkdir(join(editing.draftPath!, "scripts"));
     await writeFile(join(editing.draftPath!, "scripts", "verify.mjs"), "process.exit(0);\n");
@@ -1410,6 +1647,8 @@ describe("Skill revision service", () => {
     expect(fixture.publishNew.mock.calls.at(-1)?.[0]).toMatchObject({
       id: replacement.request.capabilityId,
       candidateContentHash: recoveredDraft.submissionHash,
+      name: "recovered-skill",
+      description: "Updated Node workflow.",
     });
   });
 

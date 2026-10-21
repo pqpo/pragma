@@ -1,3 +1,4 @@
+import { readSkillFrontmatter } from "./skill-frontmatter.ts";
 import { builtInSkill, validatePortableSkillPackage } from "@pragma/built-in-agents";
 export { CapabilityStoreError } from "../../resources/index.ts";
 import {
@@ -718,7 +719,7 @@ export function createCapabilityStore(options: {
           const content = decodeTextFile(await readFile(join(temporary, ...entry.path.split("/"))));
           if (content !== null) files.push({ path: entry.path, content });
         }
-        const metadata = readSkillMetadata(
+        const metadata = readSkillFrontmatter(
           files.find((file) => file.path === "SKILL.md")?.content ?? "",
         );
         const executablePaths = new Set(
@@ -813,7 +814,7 @@ export function createCapabilityStore(options: {
           });
         }
         const skillFile = await readFile(join(payloadPath, "SKILL.md"), "utf8");
-        const metadata = readSkillMetadata(skillFile);
+        const metadata = readSkillFrontmatter(skillFile);
         const name = input.name ?? metadata.name;
         const description = input.description ?? metadata.description;
         if (!name || !description) {
@@ -934,7 +935,7 @@ export function createCapabilityStore(options: {
       try {
         await copySkillTree(input.sourcePath, payloadPath);
         const skillDocument = await readFile(join(payloadPath, "SKILL.md"), "utf8");
-        const metadata = readSkillMetadata(skillDocument);
+        const metadata = readSkillFrontmatter(skillDocument);
         const contentHash = await hashSkillDirectoryContent(payloadPath);
         const executablePaths = input.executablePaths;
         const candidateSnapshot = await scanSkillWorkingTree(payloadPath, {
@@ -1111,7 +1112,7 @@ export function createCapabilityStore(options: {
           }
           const contentHash = await hashSkillDirectoryContent(payloadPath);
           const skillDocument = await readFile(join(payloadPath, "SKILL.md"), "utf8");
-          const metadata = readSkillMetadata(skillDocument);
+          const metadata = readSkillFrontmatter(skillDocument);
           if (
             metadata.name !== input.name ||
             (rawInput.checkDescriptionConsistency !== false &&
@@ -1838,40 +1839,6 @@ function importLimitError(): CapabilityStoreError {
     "import_invalid",
     "Skill packages are limited to 25 MiB and 1000 files.",
   );
-}
-function readSkillMetadata(content: string): {
-  readonly name?: string;
-  readonly description?: string;
-} {
-  const normalized = content.replace(/\r\n/g, "\n");
-  if (!normalized.startsWith("---\n")) return {};
-  const end = normalized.indexOf("\n---\n", 4);
-  if (end < 0) return {};
-  const values = Object.fromEntries(
-    normalized
-      .slice(4, end)
-      .split("\n")
-      .map((line) => {
-        const index = line.indexOf(":");
-        return index < 0
-          ? [line, ""]
-          : [line.slice(0, index).trim(), unquote(line.slice(index + 1).trim())];
-      }),
-  );
-  return {
-    ...(values["name"] ? { name: values["name"] } : {}),
-    ...(values["description"] ? { description: values["description"] } : {}),
-  };
-}
-function unquote(value: string): string {
-  if (value.startsWith('"') && value.endsWith('"')) {
-    try {
-      return JSON.parse(value) as string;
-    } catch {
-      return value.slice(1, -1);
-    }
-  }
-  return value;
 }
 export async function hashSkillDirectoryContent(path: string): Promise<string> {
   const hash = createHash("sha256");

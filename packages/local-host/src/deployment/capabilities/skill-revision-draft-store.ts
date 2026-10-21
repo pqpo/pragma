@@ -179,11 +179,26 @@ export function assertSkillCopyTarget(source: string, target: string): void {
   }
 }
 
-export async function createStableSkillSubmission(input: {
+interface SkillSubmissionInput {
   readonly worktreePath: string;
   readonly submissionsPath: string;
   readonly expectedHash: string;
-}): Promise<{ readonly path: string; readonly snapshot: SkillWorkingTreeSnapshot }> {
+}
+
+interface StableSkillSubmission {
+  readonly path: string;
+  readonly snapshot: SkillWorkingTreeSnapshot;
+}
+
+export function createStableSkillSubmission<T>(
+  input: SkillSubmissionInput & { readonly validate: (path: string) => Promise<T> },
+): Promise<StableSkillSubmission & { readonly validation: T }>;
+export function createStableSkillSubmission(
+  input: SkillSubmissionInput,
+): Promise<StableSkillSubmission>;
+export async function createStableSkillSubmission<T>(
+  input: SkillSubmissionInput & { readonly validate?: (path: string) => Promise<T> },
+): Promise<StableSkillSubmission & { readonly validation: T | undefined }> {
   const before = await scanSkillWorkingTree(input.worktreePath);
   if (before.hash !== input.expectedHash) {
     throw new SkillWorkingTreeError(
@@ -206,6 +221,14 @@ export async function createStableSkillSubmission(input: {
         "The Skill draft changed while its submission was being created.",
       );
     }
+    const validation = await input.validate?.(temporary);
+    // Validation can take time; reject edits made while validating the frozen copy.
+    if ((await scanSkillWorkingTree(input.worktreePath)).hash !== before.hash) {
+      throw new SkillWorkingTreeError(
+        "skill_revision_working_tree_changed",
+        "The Skill draft changed during validation. Inspect it again before submitting.",
+      );
+    }
     try {
       await rename(temporary, target);
     } catch (error) {
@@ -219,7 +242,7 @@ export async function createStableSkillSubmission(input: {
         );
       }
     }
-    return { path: target, snapshot: before };
+    return { path: target, snapshot: before, validation };
   } finally {
     await rm(temporary, { recursive: true, force: true }).catch(() => undefined);
   }

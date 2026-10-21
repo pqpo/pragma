@@ -1011,6 +1011,30 @@ describe("capability store", () => {
     ).toBe(snapshot.hash);
   });
 
+  it.each([
+    ["'Node 22: user''s workflow.'", "Node 22: user's workflow."],
+    [">-\n  Node 22\n  workflow.", "Node 22 workflow."],
+    ['"  Node workflow.  "', "Node workflow."],
+  ])("publishes reviewed YAML metadata consistently: %s", async (descriptionYaml, description) => {
+    const { directory, store } = await createStore();
+    const source = join(directory, "new-skill-candidate");
+    await mkdir(source);
+    await writeFile(
+      join(source, "SKILL.md"),
+      `---\nname: 'reviewed-skill'\ndescription: ${descriptionYaml}\n---\n\nFollow it.\n`,
+    );
+    const snapshot = await scanSkillWorkingTree(source);
+    await expect(
+      store.publishNewSkillRevisionCandidate({
+        id: "0123456789abcdef",
+        name: "reviewed-skill",
+        description,
+        sourcePath: source,
+        candidateContentHash: snapshot.hash,
+      }),
+    ).resolves.toMatchObject({ definition: { name: "reviewed-skill", description } });
+  });
+
   it("publishes a reviewed new Skill candidate idempotently as revision 1", async () => {
     const { directory, store } = await createStore();
     const source = join(directory, "new-skill-candidate");
