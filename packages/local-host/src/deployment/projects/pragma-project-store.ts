@@ -86,9 +86,11 @@ const ProjectIdentityMigrationManifestSchema = z
 
 export interface PragmaProjectStore {
   get(): Promise<PragmaProjectSnapshot>;
-  /** Derive the same graph used by all publication paths, with the Host identity policy. */
+  /** Use the Host identity policy. An export scope limits validation and reference rewrites
+   * to that closure; full resources still determine identity priority and Runtime users. */
   normalizeResources(
     resources: readonly PragmaResource[],
+    exportScope?: ReadonlySet<string>,
   ): ReturnType<typeof normalizeHostBoundResources>;
   /** Read one exact immutable revision without consulting the project head. */
   getRevision(revision: number): Promise<PragmaProjectSnapshot>;
@@ -437,8 +439,12 @@ export function createPragmaProjectStore(options: {
     }
   };
 
-  const normalizeResources = async (resources: readonly PragmaResource[]) =>
+  const normalizeResources = async (
+    resources: readonly PragmaResource[],
+    exportScope?: ReadonlySet<string>,
+  ) =>
     await normalizeHostBoundResources(resources, {
+      scope: exportScope,
       capabilityName: options.capabilityName,
       canonicalCapabilityId: options.canonicalCapabilityId,
     });

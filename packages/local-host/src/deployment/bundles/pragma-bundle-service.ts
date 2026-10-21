@@ -716,8 +716,11 @@ export function createPragmaBundleService(options: {
       // Export a derived project: caller-specific model overrides must not travel with Experts.
       // Normalize the full revision before selecting the closure: an alias outside the
       // requested root still participates in the same identity choice as an explicit save.
-      const normalized = await options.project.normalizeResources(snapshot.resources);
+      const sourceResources = project.listResourceClosure(PragmaBundleRootRefSchema.parse(rootRef));
+      const scope = new Set(sourceResources.map(canonicalPragmaResourceRef));
+      const normalized = await options.project.normalizeResources(snapshot.resources, scope);
       const named = await normalizeHostBoundResources(normalized.resources, {
+        scope: new Set([...scope].map((ref) => normalized.aliases.get(ref) ?? ref)),
         canonicalCapabilityId: (id) =>
           normalized.resources.find(
             (resource) => classifyHostCapabilityResource(resource)?.id === id,
@@ -726,7 +729,6 @@ export function createPragmaBundleService(options: {
           (await options.capabilities.resolveActive(id).catch(() => undefined))?.definition.name,
       });
       rootRef = normalized.aliases.get(rootRef) ?? rootRef;
-      const sourceResources = project.listResourceClosure(PragmaBundleRootRefSchema.parse(rootRef));
       const portableResources = collectBundleResourceClosure(named.resources, rootRef);
       let changed = !isDeepStrictEqual(portableResources, sourceResources);
       for (const resource of portableResources) {
@@ -952,6 +954,15 @@ export function createPragmaBundleService(options: {
       ),
     ]);
     const created = new Set(installation.createdResourceRefs);
+    const peerOwned = new Set(
+      (await readCatalog()).installations
+        .filter(
+          (record) => record.id !== installation.id && record.projectId === installation.projectId,
+        )
+        .flatMap((record) => record.createdResourceRefs),
+    );
+    for (const ref of installation.resourceRefs)
+      if (!created.has(ref) && peerOwned.has(ref)) borrowed.add(ref);
     if (
       installation.resourceRefs.some((ref) => !created.has(ref) && !borrowed.has(ref)) ||
       installation.conflictResolutions.some((value) => value.action === "update") ||
@@ -1111,18 +1122,6 @@ export function createPragmaBundleService(options: {
       journal.installation.projectId !== options.project.projectId
     )
       throw new Error("The binding repair journal belongs to a different installation.");
-    const published =
-      (await options.project.findRevisionByPublicationId(journal.publicationId)) ??
-      (await options.project.applyTransactional(
-        {
-          baseRevision: journal.baseRevision,
-          upserts: journal.upserts,
-          requiredUnchangedRefs: journal.requiredUnchangedRefs,
-        },
-        journal.publicationId,
-      ));
-    // A rebind can make two previously distinct resources equivalent. Resolve ownership
-    // against the actual publication receipt, including recovery after a lost receipt.
     const base = await options.project.getRevision(journal.baseRevision);
     const candidates = new Map(
       [...base.resources, ...journal.upserts].map((resource) => [
@@ -1130,45 +1129,181 @@ export function createPragmaBundleService(options: {
         resource,
       ]),
     );
-    const publishedRefs = new Set(published.resources.map(canonicalPragmaResourceRef));
-    const mapRef = (ref: string) => {
-      if (publishedRefs.has(ref)) return ref;
-      const candidate = candidates.get(ref);
-      const binding =
-        candidate === undefined ? undefined : classifyHostCapabilityResource(candidate);
-      const canonical =
-        binding === undefined
-          ? undefined
-          : published.resources.find(
-              (resource) => classifyHostCapabilityResource(resource)?.id === binding.id,
-            );
-      return canonical === undefined ? ref : canonicalPragmaResourceRef(canonical);
-    };
-    const owned = new Set(journal.installation.createdResourceRefs);
-    const baseRefs = new Set(base.resources.map(canonicalPragmaResourceRef));
-    const installation = await updateInstallation(id, () =>
-      PragmaBundleInstallationSchema.parse({
-        ...journal.installation,
-        rootRef: mapRef(journal.installation.rootRef),
-        resourceRefs: unique(journal.installation.resourceRefs.map(mapRef)),
-        createdResourceRefs: unique(journal.installation.createdResourceRefs.map(mapRef)).filter(
-          (ref) => !baseRefs.has(ref) || owned.has(ref),
+    let publicationError: unknown;
+    const installation = await withFileLock(options.paths.bundleInstallationsLock(), async () => {
+      // One replayable repair coordinates the Project receipt and an atomic catalog update.
+      // Hold the catalog lock through publication so peer installations cannot change owners.
+      const catalog = await readCatalogFile();
+      const targetRefs = (record: PragmaBundleInstallation) => [
+        record.rootRef,
+        ...record.resourceRefs,
+        ...record.createdResourceRefs,
+        ...record.resourceMappings.map((mapping) => mapping.targetRef),
+        ...record.pending.map((entry) => entry.resourceRef),
+        ...record.readiness.map((entry) => entry.resourceRef),
+      ];
+      const receipt = await options.project.findRevisionByPublicationId(journal.publicationId);
+      const coordinated = catalog.installations.find((record) => record.id === id);
+      // A committed catalog is replay-idempotent, including later repairs of peer installations.
+      if (
+        receipt !== undefined &&
+        coordinated !== undefined &&
+        coordinated.projectRevision >= receipt.revision
+      ) {
+        const currentRefs = new Set(
+          (await options.project.get()).resources.map(canonicalPragmaResourceRef),
+        );
+        const pendingAliases = catalog.installations.some(
+          (record) =>
+            record.projectId === options.project.projectId &&
+            targetRefs(record).some((ref) => candidates.has(ref) && !currentRefs.has(ref)),
+        );
+        if (!pendingAliases) return coordinated;
+      }
+      const planned = await options.project.normalizeResources([...candidates.values()]);
+      const merging = new Set(
+        [...planned.aliases].flatMap(([source, target]) =>
+          source === target ? [] : [source, target],
         ),
-        resourceMappings: journal.installation.resourceMappings.map((mapping) => ({
-          ...mapping,
-          targetRef: mapRef(mapping.targetRef),
-        })),
-        pending: journal.installation.pending.map((entry) => ({
-          ...entry,
-          resourceRef: mapRef(entry.resourceRef),
-        })),
-        readiness: journal.installation.readiness.map((entry) => ({
-          ...entry,
-          resourceRef: mapRef(entry.resourceRef),
-        })),
-        projectRevision: published.revision,
-      }),
-    );
+      );
+      const peerUnchangedRefs: string[] = [];
+      for (const record of catalog.installations) {
+        if (
+          record.id === id ||
+          record.projectId !== options.project.projectId ||
+          !record.resourceRefs.some((ref) => merging.has(ref))
+        )
+          continue;
+        const expected = await options.project.getRevision(record.projectRevision);
+        for (const ref of record.createdResourceRefs) {
+          if (merging.has(ref)) continue;
+          const original = expected.resources.find(
+            (resource) => canonicalPragmaResourceRef(resource) === ref,
+          );
+          const current = (receipt?.resources ?? base.resources).find(
+            (resource) => canonicalPragmaResourceRef(resource) === ref,
+          );
+          if (current !== undefined && !isDeepStrictEqual(original, current))
+            throw new BundleInstallationConflictError(
+              "installation_target_conflict",
+              "Another installation has edited resources. Resolve those edits before merging its resource aliases.",
+            );
+          peerUnchangedRefs.push(ref);
+        }
+      }
+      let published = receipt;
+      if (published === undefined) {
+        try {
+          published = await options.project.applyTransactional(
+            {
+              baseRevision: journal.baseRevision,
+              upserts: journal.upserts,
+              requiredUnchangedRefs: unique([
+                ...journal.requiredUnchangedRefs,
+                ...peerUnchangedRefs,
+              ]),
+            },
+            journal.publicationId,
+          );
+        } catch (error) {
+          published = await options.project.findRevisionByPublicationId(journal.publicationId);
+          if (published === undefined) throw error;
+          // Finish peer reference repair even when the caller lost its publication receipt.
+          // Retain the journal and original error so the owning repair can still be replayed.
+          publicationError = error;
+        }
+      }
+      const publishedByRef = new Map(
+        published.resources.map((resource) => [canonicalPragmaResourceRef(resource), resource]),
+      );
+      const mapRef = (ref: string) => {
+        if (publishedByRef.has(ref)) return ref;
+        const binding = classifyHostCapabilityResource(candidates.get(ref));
+        const canonical =
+          binding === undefined
+            ? undefined
+            : published.resources.find(
+                (resource) => classifyHostCapabilityResource(resource)?.id === binding.id,
+              );
+        return canonical === undefined ? ref : canonicalPragmaResourceRef(canonical);
+      };
+      const mergedTargets = new Set(
+        [...candidates.keys()].flatMap((ref) => (mapRef(ref) === ref ? [] : [mapRef(ref)])),
+      );
+      const records = catalog.installations.map((record) =>
+        record.id === id ? journal.installation : record,
+      );
+      // Keep a unique resource owner. Prefer the participating installation that owns the
+      // bound asset, then the retained identity's owner. This prevents mutual discard blockers.
+      const owners = new Map<string, string>();
+      for (const ref of mergedTargets) {
+        const assetId = classifyHostCapabilityResource(publishedByRef.get(ref))?.id;
+        const participants = records.filter(
+          (record) =>
+            record.projectId === options.project.projectId &&
+            record.resourceRefs.some((value) => mapRef(value) === ref),
+        );
+        const eligible = participants.filter(
+          (record) =>
+            record.createdResourceRefs.some((value) => mapRef(value) === ref) ||
+            (assetId !== undefined && record.createdCapabilityIds.includes(assetId)),
+        );
+        const owner = eligible.toSorted(
+          (left, right) =>
+            Number(assetId !== undefined && right.createdCapabilityIds.includes(assetId)) -
+              Number(assetId !== undefined && left.createdCapabilityIds.includes(assetId)) ||
+            Number(right.createdResourceRefs.includes(ref)) -
+              Number(left.createdResourceRefs.includes(ref)) ||
+            left.id.localeCompare(right.id),
+        )[0];
+        if (owner !== undefined) owners.set(ref, owner.id);
+      }
+      const installations = records.map((record) => {
+        if (record.projectId !== options.project.projectId) return record;
+        const refs = targetRefs(record);
+        if (record.id !== id && !refs.some((ref) => mapRef(ref) !== ref || mergedTargets.has(ref)))
+          return record;
+        if (
+          record.id !== id &&
+          record.projectRevision > published.revision &&
+          refs.some((ref) => mapRef(ref) !== ref)
+        )
+          throw new BundleInstallationConflictError(
+            "installation_target_conflict",
+            "Another installation changed after publication. Resolve its references before replaying this repair.",
+          );
+        const mapped = PragmaBundleInstallationSchema.parse({
+          ...record,
+          rootRef: mapRef(record.rootRef),
+          rootName: publishedByRef.get(mapRef(record.rootRef))?.metadata.name ?? record.rootName,
+          resourceRefs: unique(record.resourceRefs.map(mapRef)),
+          createdResourceRefs: unique([
+            ...record.createdResourceRefs
+              .map(mapRef)
+              .filter((ref) => !mergedTargets.has(ref) || owners.get(ref) === record.id),
+            ...[...owners].filter(([, owner]) => owner === record.id).map(([ref]) => ref),
+          ]),
+          resourceMappings: record.resourceMappings.map((mapping) => ({
+            ...mapping,
+            targetRef: mapRef(mapping.targetRef),
+          })),
+          pending: record.pending.map((entry) => ({
+            ...entry,
+            resourceRef: mapRef(entry.resourceRef),
+          })),
+          readiness: record.readiness.map((entry) => ({
+            ...entry,
+            resourceRef: mapRef(entry.resourceRef),
+          })),
+        });
+        return record.id === id || !isDeepStrictEqual(mapped, record)
+          ? { ...mapped, projectRevision: published.revision }
+          : record;
+      });
+      await writeCatalog({ ...catalog, installations });
+      return installations.find((record) => record.id === id)!;
+    });
+    if (publicationError !== undefined) throw publicationError;
     const result = await recheck(installation);
     await rm(bindingRepairPath(id), { force: true });
     return result;

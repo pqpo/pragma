@@ -12,6 +12,8 @@ import { classifyHostCapabilityResource } from "../bindings.ts";
 export async function normalizeHostBoundResources(
   source: readonly PragmaResource[],
   options: {
+    /** Derived export scope; other resources only participate in identity and Runtime naming. */
+    readonly scope?: ReadonlySet<string> | undefined;
     readonly canonicalCapabilityId?: ((id: string) => string | undefined) | undefined;
     readonly capabilityResources?: readonly PragmaResource[] | undefined;
     readonly capabilityName?: ((id: string) => Promise<string | undefined>) | undefined;
@@ -29,9 +31,21 @@ export async function normalizeHostBoundResources(
     group.push(resource);
     groups.set(binding.id, group);
   }
+  const scopedCapabilityIds =
+    options.scope === undefined
+      ? undefined
+      : new Set(
+          resources
+            .filter((resource) => options.scope!.has(canonicalPragmaResourceRef(resource)))
+            .flatMap((resource) => {
+              const binding = classifyHostCapabilityResource(resource);
+              return binding === undefined ? [] : [binding.id];
+            }),
+        );
   const aliases = new Map<string, string>();
   const capabilityNames = new Map<string, string>();
   for (const [id, group] of groups) {
+    if (scopedCapabilityIds !== undefined && !scopedCapabilityIds.has(id)) continue;
     const catalog = options.capabilityResources?.find(
       (resource) => classifyHostCapabilityResource(resource)?.id === id,
     );
@@ -87,7 +101,11 @@ export async function normalizeHostBoundResources(
   });
   applyGeneratedNames(retained, "Capability", capabilityNames, "");
   for (const resource of retained) {
-    if (resource.kind !== "Expert") continue;
+    if (
+      resource.kind !== "Expert" ||
+      (options.scope !== undefined && !options.scope.has(canonicalPragmaResourceRef(resource)))
+    )
+      continue;
     for (const reference of resource.spec.capabilities) {
       reference.ref = (aliases.get(reference.ref) ?? reference.ref) as typeof reference.ref;
     }
