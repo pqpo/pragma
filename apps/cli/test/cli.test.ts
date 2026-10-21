@@ -80,6 +80,72 @@ describe("runCli", () => {
     expect(JSON.stringify(output)).not.toContain("pragma.cli.doctor/v1");
   });
 
+  it.each(["text", "json"] as const)(
+    "preserves credential failures alongside backup warnings in %s output",
+    async (format) => {
+      const io = createIo();
+      await expect(
+        runCli(["doctor", `--format=${format}`], io, {
+          inspectCredentialMigration: async () => [
+            {
+              module: "model-provider",
+              status: "degraded",
+              code: "STORAGE_CORRUPTED",
+              reasonCode: "SECRET_MASTER_KEY_MISSING",
+              warnings: [
+                {
+                  code: "LEGACY_CREDENTIAL_BACKUP_MISSING",
+                  message: "Historical backup is missing.",
+                },
+              ],
+            },
+          ],
+        }),
+      ).resolves.toBe(7);
+      const output = io.writeStdout.mock.calls.map(([text]) => text).join("");
+      expect(output).toContain("SECRET_MASTER_KEY_MISSING");
+      expect(output).toContain("LEGACY_CREDENTIAL_BACKUP_MISSING");
+      expect(output).not.toContain("Open the upgraded Desktop");
+      if (format === "json")
+        expect(JSON.parse(output)).toMatchObject({
+          error: {
+            details: {
+              credentials: [
+                expect.objectContaining({
+                  reasonCode: "SECRET_MASTER_KEY_MISSING",
+                  warnings: [expect.objectContaining({ code: "LEGACY_CREDENTIAL_BACKUP_MISSING" })],
+                }),
+              ],
+            },
+          },
+        });
+    },
+  );
+
+  it.each([
+    ["SECRET_MASTER_KEY_MISSING", "Restore the original keychain key"],
+    ["SECRET_NOT_FOUND", "consistent backup"],
+    ["SECRET_REVISION_CONFLICT", "matching credential revisions"],
+    ["SECRET_STORE_CORRUPTED", "matching OS keychain key"],
+  ] as const)(
+    "gives recovery guidance for %s without suggesting an update the store can reject",
+    async (reasonCode, guidance) => {
+      const io = createIo();
+      await expect(
+        runCli(["doctor", "--json"], io, {
+          inspectCredentialMigration: async () => [
+            { module: "model-provider", status: "degraded", code: "STORAGE_CORRUPTED", reasonCode },
+          ],
+        }),
+      ).resolves.toBe(7);
+      const output = JSON.parse(io.writeStdout.mock.calls[0]![0] as string) as {
+        error: { message: string };
+      };
+      expect(output.error.message).toContain(guidance);
+      expect(output.error.message).not.toContain("reconfigure");
+    },
+  );
+
   it("maps doctor failures to a registered exit code without throwing a raw stack", async () => {
     const io = createIo();
     await expect(

@@ -132,7 +132,7 @@ function createDoctorError(
     schemaVersion: "pragma.integration-error/v1" as const,
     code,
     category: doctorCategory(code),
-    message: doctorMessage(code),
+    message: doctorMessage(code, findings),
     ...(details === undefined ? {} : { details }),
   };
   return IntegrationErrorSchema.parse({
@@ -145,9 +145,15 @@ function createDoctorError(
 }
 
 function findingToJson(finding: CredentialDoctorFinding): JsonValue {
-  return finding.code === undefined
-    ? { module: finding.module, status: finding.status }
-    : { module: finding.module, status: finding.status, code: finding.code };
+  return {
+    module: finding.module,
+    status: finding.status,
+    ...(finding.code === undefined ? {} : { code: finding.code }),
+    ...(finding.reasonCode === undefined ? {} : { reasonCode: finding.reasonCode }),
+    ...(finding.warnings === undefined
+      ? {}
+      : { warnings: finding.warnings.map((warning) => ({ ...warning })) }),
+  };
 }
 
 function doctorCategory(code: IntegrationErrorCode) {
@@ -186,7 +192,21 @@ function doctorCategory(code: IntegrationErrorCode) {
   return "execution" as const;
 }
 
-function doctorMessage(code: IntegrationErrorCode): string {
+function doctorMessage(
+  code: IntegrationErrorCode,
+  findings?: readonly CredentialDoctorFinding[],
+): string {
+  const reason = findings?.find(
+    (finding) => finding.code === code && finding.reasonCode !== undefined,
+  )?.reasonCode;
+  if (reason === "SECRET_MASTER_KEY_MISSING")
+    return "The credential master key is missing from the OS keychain. Restore the original keychain key; Desktop cannot recreate it for an existing SecretStore. Existing credential data has been preserved.";
+  if (reason === "SECRET_NOT_FOUND")
+    return "A configured credential is missing from SecretStore. Restore the missing credential data and its configuration from a consistent backup.";
+  if (reason === "SECRET_REVISION_CONFLICT")
+    return "A configured credential reference is stale. Restore a configuration and SecretStore snapshot with matching credential revisions.";
+  if (reason === "SECRET_STORE_CORRUPTED")
+    return "SecretStore credential data is corrupted. Restore a known-good SecretStore backup together with its matching OS keychain key.";
   if (code === "KEYCHAIN_UNAVAILABLE") return "The OS keychain is unavailable.";
   if (code === "SECRET_STORE_LOCKED") return "The OS keychain is locked or access was denied.";
   if (code === "SECRET_MIGRATION_REQUIRED") {

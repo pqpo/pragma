@@ -1,5 +1,12 @@
-import { useState } from "react";
-import { CaretLeft, CaretRight, CheckCircle, Plus, StopCircle } from "@phosphor-icons/react";
+import { useLayoutEffect, useRef, useState } from "react";
+import {
+  CaretDown,
+  CaretLeft,
+  CaretRight,
+  CheckCircle,
+  Plus,
+  StopCircle,
+} from "@phosphor-icons/react";
 import { useTranslation } from "react-i18next";
 import { type HumanInteractionResponse } from "@pragma/shared";
 import { type MissionHumanInteraction } from "../../../../shared/contracts/index.ts";
@@ -29,6 +36,27 @@ export function MissionHumanComposer(props: {
   readonly onInterrupt: () => void;
 }) {
   const { t } = useTranslation("missions");
+  const [collapsed, setCollapsed] = useState(false);
+  const composerRef = useRef<HTMLElement>(null);
+  const previousHeightRef = useRef<number | null>(null);
+
+  useLayoutEffect(() => {
+    const composer = composerRef.current;
+    const previousHeight = previousHeightRef.current;
+    previousHeightRef.current = null;
+    if (
+      composer === null ||
+      previousHeight === null ||
+      window.matchMedia("(prefers-reduced-motion: reduce)").matches
+    ) {
+      return;
+    }
+    const animation = composer.animate(
+      [{ height: `${previousHeight}px` }, { height: `${composer.offsetHeight}px` }],
+      { duration: 180, easing: "ease-in-out" },
+    );
+    return () => animation.cancel();
+  }, [collapsed]);
   const [visibleQuestionNotes, setVisibleQuestionNotes] = useState<ReadonlySet<string>>(
     () => new Set(),
   );
@@ -55,10 +83,27 @@ export function MissionHumanComposer(props: {
         : request.prompt;
 
   return (
-    <section className="mission-human-composer" aria-labelledby="mission-human-title">
+    <section
+      ref={composerRef}
+      className={`mission-human-composer${collapsed ? " is-collapsed" : ""}`}
+      aria-labelledby="mission-human-title"
+    >
       <header>
+        <button
+          className="mission-human-toggle"
+          type="button"
+          aria-label={t(collapsed ? "expandHumanInteraction" : "collapseHumanInteraction")}
+          title={t(collapsed ? "expandHumanInteraction" : "collapseHumanInteraction")}
+          aria-expanded={!collapsed}
+          onClick={() => {
+            previousHeightRef.current = composerRef.current?.offsetHeight ?? null;
+            setCollapsed((current) => !current);
+          }}
+        >
+          <CaretDown size={16} aria-hidden="true" />
+        </button>
         <div className="mission-human-heading">
-          {question === undefined ? (
+          {collapsed ? null : question === undefined ? (
             <small>
               {t("userInputPosition", {
                 ns: "missions",
@@ -69,11 +114,16 @@ export function MissionHumanComposer(props: {
           ) : (
             <small>{question.header}</small>
           )}
-          <strong id="mission-human-title">{heading}</strong>
-          {helperText === undefined ? null : <p>{helperText}</p>}
+          <strong id="mission-human-title" title={collapsed ? heading : undefined}>
+            {heading}
+          </strong>
+          {collapsed || helperText === undefined ? null : <p>{helperText}</p>}
         </div>
         <div className="mission-human-header-actions">
-          {request.kind !== "approval" && question !== undefined && questions.length > 1 ? (
+          {!collapsed &&
+          request.kind !== "approval" &&
+          question !== undefined &&
+          questions.length > 1 ? (
             <div
               className="mission-human-question-navigation"
               aria-label={t("questionNavigation", { ns: "missions" })}
@@ -105,19 +155,21 @@ export function MissionHumanComposer(props: {
               </button>
             </div>
           ) : null}
-          <button
-            className="mission-human-interrupt"
-            type="button"
-            aria-label={t("interrupt", { ns: "missions" })}
-            title={t("interrupt", { ns: "missions" })}
-            disabled={!props.interruptible || props.interrupting}
-            onClick={props.onInterrupt}
-          >
-            <StopCircle size={20} weight="fill" aria-hidden="true" />
-          </button>
+          {collapsed ? null : (
+            <button
+              className="mission-human-interrupt"
+              type="button"
+              aria-label={t("interrupt", { ns: "missions" })}
+              title={t("interrupt", { ns: "missions" })}
+              disabled={!props.interruptible || props.interrupting}
+              onClick={props.onInterrupt}
+            >
+              <StopCircle size={20} weight="fill" aria-hidden="true" />
+            </button>
+          )}
         </div>
       </header>
-      {request.kind === "approval" ? (
+      {collapsed ? null : request.kind === "approval" ? (
         <>
           {request.data === undefined ? null : <pre>{formatInteractionData(request.data)}</pre>}
           <textarea

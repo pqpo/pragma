@@ -118,6 +118,7 @@ if (lane !== "host") {
     "src/main/features/model-providers/model-connectivity.test.ts",
     "src/main/features/model-providers/model-discovery.test.ts",
     "src/main/features/bundles/pragma-bundle-ipc.test.ts",
+    "src/main/features/bundles/bundle-executor-readiness.test.ts",
     "src/renderer/src/pages/studio/PragmaBundleDialog.test.tsx",
     "src/renderer/src/pages/settings/ModelProvidersFragment.test.tsx",
     "src/main/features/capabilities/capability-store.test.ts",

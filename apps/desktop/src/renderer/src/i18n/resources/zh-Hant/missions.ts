@@ -485,6 +485,8 @@ export const missions = {
   questionPosition: "問題 {{current}} / {{total}} · {{header}}",
   questionNavigation: "題目導覽",
   previousQuestion: "上一題",
+  collapseHumanInteraction: "摺疊詢問",
+  expandHumanInteraction: "展開詢問",
   nextQuestion: "下一題",
   questionProgress: "{{current}} / {{total}}",
   humanInputRequired: "需要人工輸入",

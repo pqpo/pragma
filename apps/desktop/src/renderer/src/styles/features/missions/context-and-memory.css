@@ -941,8 +941,28 @@
   gap: 12px;
 }
 
+.mission-human-composer.is-collapsed {
+  flex-direction: row;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+}
+
+.mission-human-composer.is-collapsed > header {
+  flex: 1 1 auto;
+  min-width: 0;
+  align-items: center;
+}
+
+.mission-human-composer.is-collapsed .mission-human-heading strong {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .mission-human-heading {
   display: grid;
+  flex: 1 1 auto;
   min-width: 0;
   gap: 4px;
 }
@@ -990,6 +1010,7 @@
 }
 
 .mission-human-question-navigation > button,
+.mission-human-toggle,
 .mission-human-interrupt {
   display: grid;
   width: 32px;
@@ -1004,15 +1025,35 @@
 }
 
 .mission-human-question-navigation > button:hover:not(:disabled),
+.mission-human-toggle:hover:not(:disabled),
 .mission-human-interrupt:hover:not(:disabled) {
   background: var(--ui-surface-subtle);
   color: var(--ui-text);
 }
 
 .mission-human-question-navigation > button:focus-visible,
+.mission-human-toggle:focus-visible,
 .mission-human-interrupt:focus-visible {
   outline: 0;
   box-shadow: 0 0 0 3px var(--ui-focus);
+}
+
+.mission-human-toggle {
+  flex: 0 0 auto;
+}
+
+.mission-human-toggle > svg {
+  transition: transform 180ms ease-in-out;
+}
+
+.mission-human-composer.is-collapsed .mission-human-toggle > svg {
+  transform: rotate(180deg);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .mission-human-toggle > svg {
+    transition: none;
+  }
 }
 
 .mission-human-interrupt {

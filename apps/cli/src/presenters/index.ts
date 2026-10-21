@@ -969,7 +969,17 @@ function renderCredentialFindings(items: readonly JsonValue[]): string {
         const module = valueText(item, "module") ?? "unknown";
         const status = valueText(item, "status") ?? "unknown";
         const code = valueText(item, "code");
-        return `${module}: ${status}${code === undefined ? "" : ` (${code})`}`;
+        const reason = valueText(item, "reasonCode");
+        const warnings = Array.isArray(item["warnings"]) ? item["warnings"] : [];
+        const diagnostics = warnings.flatMap((warning) =>
+          isRecord(warning)
+            ? [`  warning ${valueText(warning, "code")}: ${valueText(warning, "message")}`]
+            : [],
+        );
+        return [
+          `${module}: ${status}${code === undefined ? "" : ` (${code})`}${reason === undefined ? "" : ` [${reason}]`}`,
+          ...diagnostics,
+        ].join("\n");
       })
       .join("\n") + "\n"
   );

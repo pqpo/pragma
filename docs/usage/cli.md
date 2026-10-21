@@ -224,6 +224,16 @@ Windows：
 如果直接调用成功、裸 `pragma` 失败，问题在 PATH 顺序或 shell 缓存；如果两者都失败，
 再查看 `pragma doctor` 和 npm 安装输出。
 
+凭据迁移完成后，`doctor` 会只读检查当前配置中的 SecretRef，验证后立即释放凭据句柄，
+不会输出凭据值、重放迁移或改写配置。历史备份丢失会输出
+`LEGACY_CREDENTIAL_BACKUP_MISSING` warning；若当前凭据可用，命令仍成功退出。
+需要历史恢复时应从归档找回备份，重新打开 Desktop 不会重建它。
+迁移确实未完成时仍报告 `SECRET_MIGRATION_REQUIRED` 并提示打开升级后的 Desktop。
+当前凭据故障在 finding 的 `reasonCode` 中区分主密钥缺失、Secret 不存在、引用版本冲突和
+SecretStore 损坏；文本与 JSON 输出均保留该原因，故障仍以非零状态退出。
+主密钥丢失时需恢复原钥匙串密钥；Desktop 不会为已有 SecretStore 重建替代密钥。
+引用或 SecretStore 数据异常时，应恢复配置、凭据数据及钥匙串密钥相互匹配的备份。
+
 Node.js 20 即使 npm 发出 `EBADENGINE` 警告也不满足运行要求：bootstrap 会在主 bundle
 加载前以退出码 2 拒绝。启用 `engine-strict` 时安装本身应失败。
 
