@@ -1,3 +1,4 @@
+import { CONVERSATION_EXTRACTION_DELAYS } from "../src/pipeline/conversation-extraction-schedule.ts";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -134,7 +135,7 @@ it.each(
       const prepareFact = vi.fn(async () => undefined);
       const coordinator = createConversationMemoryExtractionCoordinator({
         pragmaHome,
-        now: () => due,
+        now: () => new Date(due.getTime() + CONVERSATION_EXTRACTION_DELAYS.completedMs),
         episodic: { store: episodic.store, prepareBackgroundOnce: prepareEpisode },
         semantic: { store: semantic.store, prepareBackgroundOnce: prepareFact },
       });
@@ -147,7 +148,11 @@ it.each(
       expect(prepareEpisode).toHaveBeenCalledTimes(failure === "new-failure-before-second" ? 0 : 1);
       expect(prepareFact).toHaveBeenCalledTimes(failure === "new-failure-before-second" ? 0 : 1);
       expect((await episodic.store.getExtractionJob(episode.id))?.status).toBe(
-        failure === "new-failure-before-second" ? "needs_attention" : "pending",
+        failure === "new-failure-before-second"
+          ? "needs_attention"
+          : failure === "lifecycle-before-second"
+            ? "waiting_idle"
+            : "pending",
       );
       expect((await semantic.store.getExtractionJob(fact.id))?.status).toBe("pending");
       expect((await sessions.conversationRetryGenerations(jobId))[session.key]).toBe(1);

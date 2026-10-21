@@ -153,10 +153,6 @@ export async function createEpisodicMemoryModule(
         await store.completeRejected(job, "sensitive", now());
         return;
       }
-      if (isLowValue(evidence)) {
-        await store.completeRejected(job, "low-value", now());
-        return;
-      }
       const visibility = strictestVisibility(evidence);
       if (visibility === undefined) {
         await store.completeRejected(job, "policy", now());
@@ -383,28 +379,6 @@ export async function createEpisodicMemoryModule(
 
 function conversationKey(ref: MemorySubjectRef): string {
   return `${ref.type}\0${ref.id}`;
-}
-
-function isLowValue(evidence: readonly MemoryEvidenceEnvelope[]): boolean {
-  const texts = evidence.flatMap((item) => {
-    if (item.schemaRef !== "pragma.memory.execution-message/v2") return [];
-    const payload = item.payload as {
-      readonly message?: { readonly role?: string; readonly text?: string };
-    };
-    return typeof payload.message?.text === "string"
-      ? [{ role: payload.message.role, text: payload.message.text.trim() }]
-      : [];
-  });
-  const userLength = texts
-    .filter((item) => item.role === "user")
-    .reduce((total, item) => total + item.text.length, 0);
-  const assistantLength = texts
-    .filter((item) => item.role === "assistant")
-    .reduce((total, item) => total + item.text.length, 0);
-  const action = evidence.some(
-    (item) => item.topic.startsWith("execution.tool.") || item.topic.startsWith("artifact."),
-  );
-  return !action && userLength < 20 && assistantLength < 120;
 }
 
 function sanitizeEvidence(

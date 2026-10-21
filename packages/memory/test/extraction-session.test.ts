@@ -1,3 +1,4 @@
+import { CONVERSATION_EXTRACTION_DELAYS } from "../src/pipeline/conversation-extraction-schedule.ts";
 import { mkdtemp, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
@@ -152,8 +153,10 @@ describe("Memory extraction sessions", () => {
       },
     }));
     let admissions = 0;
+    let clock = new Date();
     const module = await createSemanticMemoryModule({
       pragmaHome,
+      now: () => clock,
       extractor: {
         extract: async (input, options) => {
           admissions++;
@@ -203,8 +206,9 @@ describe("Memory extraction sessions", () => {
       await module.setConversationState({
         conversationRef: { type: "pragma.execution", id: "execution" },
         state: "completed",
-        now: new Date(),
+        now: clock,
       });
+      clock = new Date(clock.getTime() + CONVERSATION_EXTRACTION_DELAYS.completedMs);
       await module.runBackgroundOnce?.();
       expect(admissions).toBe(1);
       expect(await module.store.list()).toHaveLength(1);
@@ -632,6 +636,7 @@ describe("Memory extraction sessions", () => {
       state: "completed",
       now: clock,
     });
+    clock = new Date(clock.getTime() + CONVERSATION_EXTRACTION_DELAYS.completedMs);
     const job = (await module.store.claimDueJob(clock))!;
     expect(job).toBeDefined();
     const session = await store.create({

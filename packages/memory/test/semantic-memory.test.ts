@@ -1,3 +1,4 @@
+import { CONVERSATION_EXTRACTION_DELAYS } from "../src/pipeline/conversation-extraction-schedule.ts";
 import { mkdir, mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -186,6 +187,7 @@ describe("Semantic Memory", () => {
           state: "completed",
           now: clock,
         });
+        clock = new Date(clock.getTime() + CONVERSATION_EXTRACTION_DELAYS.completedMs);
         vi.spyOn(module.store, "readEvidenceForJob").mockImplementationOnce(async (job) => {
           expect(job.attempts).toBe(history + 1);
           const evidence = await readEvidence(job);
@@ -209,6 +211,7 @@ describe("Semantic Memory", () => {
         state: "completed",
         now: clock,
       });
+      clock = new Date(clock.getTime() + CONVERSATION_EXTRACTION_DELAYS.completedMs);
       for (let attempt = history; attempt < 4; attempt += 1) {
         await module.runBackgroundOnce?.();
         const [job] = await module.store.listExtractionJobs();
@@ -262,6 +265,7 @@ describe("Semantic Memory", () => {
       state: "completed",
       now: clock,
     });
+    clock = new Date(clock.getTime() + CONVERSATION_EXTRACTION_DELAYS.completedMs);
     await module.runBackgroundOnce?.();
     expect(extractor.extract).toHaveBeenCalledTimes(2);
     expect((await module.store.listExtractionJobs())[0]).toMatchObject({
@@ -451,6 +455,8 @@ describe("Semantic Memory", () => {
         state: "completed",
         now: clock,
       });
+      if (attempts === 1)
+        clock = new Date(clock.getTime() + CONVERSATION_EXTRACTION_DELAYS.completedMs - 5_000);
       clock = new Date(clock.getTime() + 4_999);
       await module.runBackgroundOnce?.();
       expect(extractor.extract).toHaveBeenCalledTimes(attempts);
@@ -469,6 +475,7 @@ describe("Semantic Memory", () => {
       state: "completed",
       now: clock,
     });
+    clock = new Date(clock.getTime() + CONVERSATION_EXTRACTION_DELAYS.completedMs);
     await module.runBackgroundOnce?.();
     await module.store.wakeNeedsAttention(clock);
     await module.runBackgroundOnce?.();

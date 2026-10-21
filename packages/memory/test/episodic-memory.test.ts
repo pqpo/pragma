@@ -1,3 +1,4 @@
+import { CONVERSATION_EXTRACTION_DELAYS } from "../src/pipeline/conversation-extraction-schedule.ts";
 import { mkdir, mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -135,6 +136,7 @@ describe("Episodic Memory", () => {
           state: "completed",
           now: clock,
         });
+        clock = new Date(clock.getTime() + CONVERSATION_EXTRACTION_DELAYS.completedMs);
         vi.spyOn(module.store, "readEvidenceForJob").mockImplementationOnce(async (job) => {
           expect(job.attempts).toBe(history + 1);
           const evidence = await readEvidence(job);
@@ -158,6 +160,7 @@ describe("Episodic Memory", () => {
         state: "completed",
         now: clock,
       });
+      clock = new Date(clock.getTime() + CONVERSATION_EXTRACTION_DELAYS.completedMs);
       for (let attempt = history; attempt < 4; attempt += 1) {
         await module.runBackgroundOnce?.();
         const [job] = await module.store.listExtractionJobs();
@@ -207,6 +210,7 @@ describe("Episodic Memory", () => {
       state: "completed",
       now: clock,
     });
+    clock = new Date(clock.getTime() + CONVERSATION_EXTRACTION_DELAYS.completedMs);
     await module.runBackgroundOnce?.();
     expect(extractor.extract).toHaveBeenCalledTimes(2);
     expect((await module.store.listExtractionJobs())[0]).toMatchObject({
@@ -382,6 +386,8 @@ describe("Episodic Memory", () => {
         state: "completed",
         now: clock,
       });
+      if (attempts === 1)
+        clock = new Date(clock.getTime() + CONVERSATION_EXTRACTION_DELAYS.completedMs - 5_000);
       clock = new Date(clock.getTime() + 4_999);
       await module.runBackgroundOnce?.();
       expect(extractor.extract).toHaveBeenCalledTimes(attempts);
@@ -400,6 +406,7 @@ describe("Episodic Memory", () => {
       state: "completed",
       now: clock,
     });
+    clock = new Date(clock.getTime() + CONVERSATION_EXTRACTION_DELAYS.completedMs);
     await module.runBackgroundOnce?.();
     await module.store.wakeNeedsAttention(clock);
     await module.runBackgroundOnce?.();
@@ -930,7 +937,7 @@ describe("Episodic Memory", () => {
     module.close();
   });
 
-  it("allows completed Missions immediately and rejects a superseded running result", async () => {
+  it("waits after Mission completion and rejects a superseded running result", async () => {
     let clock = new Date("2026-08-01T00:00:03.000Z");
     let release!: () => void;
     const released = new Promise<void>((resolve) => {
@@ -952,6 +959,7 @@ describe("Episodic Memory", () => {
     });
     const conversationRef = ref("pragma.mission", "mission-superseded");
     await module.setConversationState({ conversationRef, state: "completed", now: clock });
+    clock = new Date(clock.getTime() + CONVERSATION_EXTRACTION_DELAYS.completedMs);
     await module.consume(
       executionEvidence("superseded-turn").map((item) =>
         MemoryEvidenceEnvelopeSchema.parse({ ...item, conversationRef }),
@@ -959,7 +967,7 @@ describe("Episodic Memory", () => {
     );
     const running = module.runBackgroundOnce?.();
     await vi.waitFor(() => expect(extractor.extract).toHaveBeenCalledOnce());
-    clock = new Date("2026-08-01T00:01:00.000Z");
+    clock = new Date(clock.getTime() + 60_000);
     await module.setConversationState({ conversationRef, state: "active", now: clock });
     expect(signal?.aborted).toBe(true);
     release();
@@ -974,7 +982,7 @@ describe("Episodic Memory", () => {
   });
 
   it("rechecks the conversation watermark before invoking the extractor", async () => {
-    const clock = new Date("2026-08-01T00:00:03.000Z");
+    let clock = new Date("2026-08-01T00:00:03.000Z");
     const extractor = fakeExtractor();
     const module = await createEpisodicMemoryModule({
       pragmaHome: await temporaryRoot(),
@@ -983,6 +991,7 @@ describe("Episodic Memory", () => {
     });
     const conversationRef = ref("pragma.mission", "mission-preflight-superseded");
     await module.setConversationState({ conversationRef, state: "completed", now: clock });
+    clock = new Date(clock.getTime() + CONVERSATION_EXTRACTION_DELAYS.completedMs);
     await module.consume(
       executionEvidence("preflight-turn").map((item) =>
         MemoryEvidenceEnvelopeSchema.parse({ ...item, conversationRef }),
@@ -1213,10 +1222,47 @@ describe("Episodic Memory", () => {
     module.close();
   });
 
-  it("rejects low-value and restricted evidence without invoking the model", async () => {
+  it("lets the Curator retain substantive work even when its account is short and has no tool events", async () => {
+    const extractor = fakeExtractor();
+    const module = await createEpisodicMemoryModule({
+      pragmaHome: await temporaryRoot(),
+      extractor,
+    });
+    try {
+      await module.consume([
+        messageEvidence("brief-work", "brief-user", "user", "比较迁移方案", "confidential"),
+        messageEvidence(
+          "brief-work",
+          "brief-assistant",
+          "assistant",
+          "比较三条迁移路径，排除破坏恢复能力的方案，确认分阶段迁移并验证回滚。",
+          "confidential",
+        ),
+        terminalEvidence(
+          "brief-work",
+          "brief-terminal",
+          "2026-08-01T00:00:01.000Z",
+          "confidential",
+        ),
+      ]);
+      await module.runBackgroundOnce?.();
+      expect(extractor.extract).toHaveBeenCalledOnce();
+      expect(await module.store.list()).toHaveLength(1);
+    } finally {
+      module.close();
+    }
+  });
+
+  it("lets the Curator reject low-value evidence and blocks restricted evidence before model admission", async () => {
     for (const sensitivity of ["confidential", "restricted"] as const) {
       const root = await temporaryRoot();
       const extractor = fakeExtractor();
+      const original =
+        extractor.extract.getMockImplementation()! as EpisodicMemoryExtractor["extract"];
+      extractor.extract.mockImplementation(async (input) => ({
+        ...(await original(input)),
+        output: { retain: false, reason: "low-value" },
+      }));
       const module = await createEpisodicMemoryModule({ pragmaHome: root, extractor });
       const short = [
         messageEvidence("short", "short-user", "user", "hi", sensitivity),
@@ -1229,7 +1275,7 @@ describe("Episodic Memory", () => {
       ];
       await module.consume(short);
       await module.runBackgroundOnce?.();
-      expect(extractor.extract).not.toHaveBeenCalled();
+      expect(extractor.extract).toHaveBeenCalledTimes(sensitivity === "restricted" ? 0 : 1);
       expect(await module.store.list()).toEqual([]);
       const diagnostic = await module.store.inspect();
       expect(diagnostic.rejected).toBe(1);

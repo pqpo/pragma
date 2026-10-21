@@ -324,6 +324,7 @@ it.each([
         const earlier = {
           ...message,
           messageId: "earlier-message",
+          sensitivity: "restricted" as const,
           correlationId: "earlier-source",
           subjectRefs: [{ type: "pragma.execution", id: "earlier-source" }],
           occurredAt: "2026-10-14T00:00:00.000Z",
@@ -360,6 +361,15 @@ it.each([
         await module.setConversationState({
           conversationRef: { type: "pragma.execution", id: "source" },
           state: "completed",
+          now: new Date(),
+        });
+        // These tests exercise Curator execution; explicitly bypass the completion grace period.
+        const pending = (await module.store.listExtractionJobs()).find(
+          (job) => job.executionId === "source",
+        )!;
+        await module.store.expediteJob({
+          id: pending.id,
+          expectedRevision: pending.revision,
           now: new Date(),
         });
       }
@@ -875,6 +885,15 @@ describe("Desktop Memory Curator", () => {
         await module.setConversationState({
           conversationRef: { type: "pragma.execution", id: "source" },
           state: "completed",
+          now: new Date(),
+        });
+        // These tests exercise Curator execution; explicitly bypass the completion grace period.
+        const pending = (await module.store.listExtractionJobs()).find(
+          (job) => job.executionId === "source",
+        )!;
+        await module.store.expediteJob({
+          id: pending.id,
+          expectedRevision: pending.revision,
           now: new Date(),
         });
         await module.runBackgroundOnce?.();

@@ -252,7 +252,7 @@ describe("Memory extraction tool contract 2", () => {
     expect(session.toolContractVersion).toBe(2);
     expect(session.toolNames).toHaveLength(12);
     expect(session.prompt()).toContain("Tool contract: 2");
-    expect(session.promptVersion).toContain("v9");
+    expect(session.promptVersion).toContain("v11");
     await expect(session.call("finish_extraction", { retain: true })).rejects.toThrow(
       "tool_unavailable",
     );

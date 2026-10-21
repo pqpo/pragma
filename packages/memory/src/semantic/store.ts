@@ -1,3 +1,4 @@
+import { conversationExtractionEligibleAt } from "../pipeline/conversation-extraction-schedule.ts";
 import type { MemoryExtractionProvenanceUpdate } from "../pipeline/extraction-session.ts";
 import {
   pruneCompletedMemoryJobs,
@@ -629,15 +630,7 @@ export async function createSemanticMemoryStore(
             ...(existing?.sourceExecutionIds ?? []),
             envelope.correlationId,
           ]);
-          const eligibleAt =
-            activity?.state === "completed"
-              ? activity.updatedAt
-              : new Date(
-                  (activity === undefined
-                    ? Date.parse(envelope.occurredAt)
-                    : Math.max(Date.parse(envelope.occurredAt), Date.parse(activity.updatedAt))) +
-                    DEFAULT_MEMORY_STORAGE_POLICY.extractionIdleMs,
-                ).toISOString();
+          const eligibleAt = conversationExtractionEligibleAt(envelope.occurredAt, activity);
           writeJob(
             SemanticExtractionJobSchema.parse({
               schemaVersion: "pragma.memory-semantic-job/v4",
@@ -649,7 +642,7 @@ export async function createSemanticMemoryStore(
               inputWatermark: envelope.messageId,
               executionId: envelope.correlationId,
               terminalMessageId: envelope.messageId,
-              status: activity?.state === "completed" ? "pending" : "waiting_idle",
+              status: "waiting_idle",
               attempts: 0,
               totalAttempts: existing?.totalAttempts ?? 0,
               eligibleAt,
@@ -862,6 +855,12 @@ export async function createSemanticMemoryStore(
     async touchConversation(input) {
       state.exec("BEGIN IMMEDIATE;");
       try {
+        const activity = readConversationActivity(state, input.conversationRef);
+        // Reconciliation and repeated completion must not extend a grace period or retry backoff.
+        if (input.state === "completed" && activity?.state === "completed") {
+          state.exec("COMMIT;");
+          return;
+        }
         writeConversationActivity(state, input);
         const current = readJobByConversation(state, input.conversationRef);
         // The running count includes this claim's reservation. Refund only that reservation,
@@ -897,12 +896,10 @@ export async function createSemanticMemoryStore(
           current.status !== "needs_attention" &&
           !blocksAutomaticExtractionRetry(current.lastFailure, attempts)
         ) {
-          const eligibleAt =
-            input.state === "completed"
-              ? input.now.toISOString()
-              : new Date(
-                  input.now.getTime() + DEFAULT_MEMORY_STORAGE_POLICY.extractionIdleMs,
-                ).toISOString();
+          const eligibleAt = conversationExtractionEligibleAt(current.sourceUpdatedAt, {
+            state: input.state,
+            updatedAt: input.now.toISOString(),
+          });
           const retryAt =
             current.lastFailure === undefined
               ? eligibleAt
@@ -916,7 +913,7 @@ export async function createSemanticMemoryStore(
             SemanticExtractionJobSchema.parse({
               ...current,
               revision: current.revision + 1,
-              status: input.state === "completed" ? "pending" : "waiting_idle",
+              status: "waiting_idle",
               attempts,
               totalAttempts: Math.max(0, current.totalAttempts - (refundClaim ? 1 : 0)),
               retryAt,

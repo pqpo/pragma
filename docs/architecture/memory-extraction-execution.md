@@ -2,6 +2,18 @@
 
 ## Shared conversation extraction
 
+New tool-contract-2 Curator tasks use prompt version 11. The Curator judges actual task complexity
+from read Evidence: simple tasks and trivial interactions are skipped; relatively complex tasks with
+substantive work and a meaningful outcome may be retained as concise task history. A generalizable
+lesson or membership in a predefined task category is not required. Reasoning, investigation,
+coordination, implementation and validation are contextual signals, not a checklist. Task labels,
+transcript length, tool-call counts and completion alone do not determine complexity. For example,
+a simple tool smoke test usually needs no episode, while substantial testing can merit one.
+Complexity and retention are the Curator's model judgment; the Host does not reject episodes by
+message length or tool presence. Evidence access and sensitivity guards still apply before model
+admission. Existing Episode records are unchanged. Semantic decisions remain independent; a one-time test response or language
+choice does not establish a stable preference.
+
 See [ADR 073](../adr/073-shared-conversation-memory-extraction.md). Desktop prepares Episodic and
 Semantic deliveries together and admits one Curator Mission for the same conversation/watermark.
 New conversations use tool contract 2: the model reads shared evidence and saves independent decisions
@@ -96,9 +108,16 @@ With multiple revision targets, configuration failure after any planner admissio
 against automatic configuration wakeup; other transient failures share the same bounded job budget.
 
 Conversation completion notifications preserve in-flight work and completed/rejected jobs.
-Active conversation notifications still defer failed pending work until the normal idle deadline,
-while preserving its attempts. Completion can release that idle wait but cannot bypass the five-second
-failure backoff. Activity that cancels an admitted extraction parks its existing claim. Same-process cancellation
+Active conversation notifications defer pending work until six hours of inactivity while preserving
+attempts. Completing a conversation schedules both Episodic and Semantic extraction after a separate
+ten-minute grace period, measured from the later of completion and source Evidence time. The two
+thresholds are defined independently in `conversation-extraction-schedule.ts`; they are currently
+code policy, not user-editable settings. Repeated completion/reconciliation preserves the durable
+deadline, including across restart. Existing stored deadlines are not rewritten at startup. Completion
+cannot bypass the five-second failure backoff. Deleting a Mission during the grace period removes
+its pending extraction and Evidence through the existing owner cleanup; replay cannot recreate it.
+An explicit expedite action remains available to bypass the wait. Activity that cancels an admitted
+extraction parks its existing claim. Same-process cancellation
 before extractor admission withdraws only the current claim reservation from `attempts` and
 `totalAttempts`, preserving all earlier model admissions. Exhaustion is checked against the refunded
 count, so an unadmitted fourth claim can return to waiting without exhausting the budget. This proof
