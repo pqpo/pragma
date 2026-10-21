@@ -39,7 +39,7 @@
   overflow: hidden;
   margin: 0;
   padding: 56px 18px 64px 20px;
-  background: var(--ui-rail);
+  background: var(--ui-rail-secondary);
 }
 
 .settings-content {
@@ -71,17 +71,17 @@
 }
 
 .settings-nav-item:hover {
-  background: #f2f4f1;
+  background: var(--ui-surface-subtle);
 }
 
 .settings-nav-item:focus-visible {
-  outline: 2px solid var(--green);
+  outline: 2px solid var(--ui-accent);
   outline-offset: 2px;
 }
 
 .settings-nav-item.is-active {
   background: var(--ui-selection);
-  color: var(--ui-accent-strong);
+  color: var(--ui-text);
 }
 
 .settings-panel {
@@ -197,11 +197,6 @@
   background: var(--ui-surface);
   color: var(--ui-text);
   font-size: 13px;
-}
-
-.general-process-environment-add input:focus-visible {
-  outline: 0;
-  box-shadow: 0 0 0 3px var(--ui-focus);
 }
 
 .general-process-environment-tags {
@@ -325,12 +320,12 @@
 }
 
 .tool-permission-options label:hover > span {
-  background: rgb(255 255 255 / 64%);
+  background: color-mix(in srgb, var(--ui-surface) 64%, transparent);
 }
 
 .tool-permission-options input:checked + span {
-  background: var(--ui-surface);
-  color: var(--ui-accent-strong);
+  background: var(--ui-selection);
+  color: var(--ui-text);
   box-shadow: none;
 }
 
@@ -402,10 +397,6 @@
   background: var(--ui-surface);
   color: var(--ui-text);
   font: inherit;
-}
-
-.agent-context-window-field input:focus-visible {
-  box-shadow: 0 0 0 3px var(--ui-focus);
 }
 
 .agent-context-window-field > span {
@@ -511,7 +502,7 @@
   align-items: center;
   gap: 8px;
   margin-top: 3px;
-  color: #969d98;
+  color: var(--ui-text-disabled);
   font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
   font-size: 12px;
   font-weight: 590;
@@ -519,7 +510,7 @@
 }
 
 .status-copy.is-active {
-  color: #5e6962;
+  color: var(--ui-text-secondary);
 }
 
 .static-field {
@@ -528,7 +519,7 @@
 }
 
 .static-field > span:first-child {
-  color: #737c76;
+  color: var(--ui-text-secondary);
   font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
   font-size: 10px;
   font-weight: 700;
@@ -544,16 +535,14 @@
   border: 1px solid var(--border-strong);
   border-radius: 5px;
   outline: 0;
-  background: #f8faf7;
+  background: var(--ui-surface-subtle);
   color: var(--text);
   font: inherit;
 }
 
-.static-field input:focus,
-.static-field > select:focus,
-.key-input-wrap:focus-within {
-  border-color: var(--green);
-  box-shadow: 0 0 0 2px rgb(94 128 111 / 18%);
+.static-field > select:focus {
+  border-color: var(--ui-accent);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--ui-accent) 18%, transparent);
 }
 
 .key-input-wrap {
@@ -564,8 +553,8 @@
   padding: 0 14px;
   border: 1px solid var(--border-strong);
   border-radius: 5px;
-  background: #f8faf7;
-  color: #56625b;
+  background: var(--ui-surface-subtle);
+  color: var(--ui-text-secondary);
 }
 
 .key-input-wrap input {
@@ -616,11 +605,6 @@
   font: inherit;
 }
 
-.manual-model-row input:focus-visible {
-  border-color: var(--green);
-  box-shadow: 0 0 0 3px var(--focus-ring);
-}
-
 .selected-model-row {
   display: grid;
   grid-template-columns: minmax(160px, 1fr) minmax(0, 3fr) auto;
@@ -668,13 +652,13 @@
   padding: 4px 7px;
   border: 1px solid var(--border);
   border-radius: 6px;
-  background: #fff;
+  background: var(--ui-surface);
 }
 
 .thinking-level-options input:checked + span {
-  border-color: var(--green);
-  background: #eaf3ec;
-  color: var(--green-dark);
+  border-color: var(--ui-line-strong);
+  background: var(--ui-selection);
+  color: var(--ui-text);
 }
 
 .thinking-level-options input:focus-visible + span {
@@ -704,7 +688,7 @@
 
 .setting-row p {
   margin-top: 4px;
-  color: #747d77;
+  color: var(--ui-text-secondary);
   font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
   font-size: 11px;
   letter-spacing: 0.035em;
@@ -725,13 +709,13 @@
   height: 8px;
   flex: 0 0 auto;
   border-radius: 50%;
-  background: #b7beb9;
+  background: var(--ui-control-disabled);
 }
 
 .online-dot,
 .status-copy.is-active .status-dot {
-  background: var(--lime);
-  box-shadow: 0 0 0 3px rgb(184 226 62 / 17%);
+  background: var(--ui-success);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--ui-success) 17%, transparent);
 }
 
 @media (max-width: 1180px) {
@@ -815,13 +799,13 @@
 }
 
 .settings-nav-item:hover {
-  background: rgb(255 255 255 / 66%);
+  background: color-mix(in srgb, var(--ui-surface) 66%, transparent);
 }
 
 .settings-nav-item.is-active {
   border-color: transparent;
   background: var(--ui-selection);
-  color: var(--ui-accent-strong);
+  color: var(--ui-text);
   box-shadow: none;
 }
 
@@ -835,15 +819,13 @@
 .key-input-wrap:hover,
 .protocol-select-shell:hover,
 .input-shell:hover {
-  background: #f1f4f2;
+  background: var(--ui-surface-subtle);
 }
 
-.static-field input:focus,
 .static-field > select:focus,
-.key-input-wrap:focus-within,
 .protocol-select-shell:focus-within {
-  border-color: var(--green);
-  background: #fff;
+  border-color: var(--ui-accent);
+  background: var(--ui-surface);
   box-shadow: 0 0 0 3px var(--focus-ring);
 }
 

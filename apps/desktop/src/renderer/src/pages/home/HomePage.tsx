@@ -2240,7 +2240,12 @@ function ExecutorFavoriteMenu(props: {
           setOpen((current) => !current);
         }}
       >
-        <Star size={15} weight={isFavorite ? "fill" : "regular"} aria-hidden="true" />
+        <Star
+          className={isFavorite ? "mission-executor-pinned-star" : undefined}
+          size={15}
+          weight={isFavorite ? "fill" : "regular"}
+          aria-hidden="true"
+        />
         <span>{selectedLabel}</span>
         <CaretDown size={12} aria-hidden="true" />
       </button>
@@ -2268,6 +2273,7 @@ function ExecutorFavoriteMenu(props: {
                   onClick={() => void applyPreference({ favoriteScope: scope })}
                 >
                   <Star
+                    className={scope === "global" ? "mission-executor-pinned-star" : undefined}
                     size={15}
                     weight={scope === "global" ? "fill" : "regular"}
                     aria-hidden="true"

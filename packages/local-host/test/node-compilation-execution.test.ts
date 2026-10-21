@@ -765,113 +765,145 @@ describe("default Node compilation reaches persisted Execution", { timeout: 15_0
     60_000,
   );
 
-  it("takes over a real Flow Native crash without redispatching the interrupted Invocation", async () => {
-    const f = await fixture();
-    const repositoryRoot = join(import.meta.dirname, "..", "..", "..");
-    const launcher = readFileSync(join(repositoryRoot, "node_modules", ".bin", "tsx"), "utf8");
-    const loaderPackage = launcher.match(/node_modules\/\.pnpm\/([^/]+)\/node_modules\/tsx/u)?.[1];
-    if (loaderPackage === undefined) throw new Error("Could not locate tsx loader.");
-    const loader = join(
-      repositoryRoot,
-      "node_modules",
-      ".pnpm",
-      loaderPackage,
-      "node_modules",
-      "tsx",
-      "dist",
-      "loader.mjs",
-    );
-    const requestId = randomUUID();
-    const child = spawn(
-      process.execPath,
-      [
-        "--import",
-        loader,
-        join(import.meta.dirname, "fixtures", "node-execution-crash-process.ts"),
-        f.home,
-        "flow-fresh",
-        requestId,
-        f.home,
-      ],
-      { stdio: ["ignore", "pipe", "pipe"] },
-    );
-    let diagnostics = "";
-    child.stderr!.on("data", (chunk) => {
-      diagnostics += String(chunk);
-    });
-    const paths = new PragmaPaths({ pragmaHome: f.home });
-    const executions = createSqliteExecutionStore({ pragmaHome: f.home });
-    const controller = createMissionControllerStore({ missionsPath: paths.missionsRoot() });
-    const desktop = createLocalHostNodeApplication({
-      pragmaHome: f.home,
-      runtimes: f.runtimes,
-      client: { surface: "desktop", version: "test", instanceId: randomUUID() },
-      workspace: {
-        stat: async () => ({ isDirectory: () => true }),
-        access: async () => undefined,
-        realpath: async (path) => path,
-      },
-    });
-    let started: { missionId: string; executionId: string } | undefined;
-    try {
-      await vi.waitFor(
-        async () => {
-          if (child.exitCode !== null) throw new Error(`Flow crash fixture exited: ${diagnostics}`);
-          try {
-            started = JSON.parse(await readFile(join(f.home, "flow-started.json"), "utf8"));
-            expect(
-              JSON.parse(await readFile(join(f.home, "crash-ready.json"), "utf8")),
-            ).toMatchObject({ requestId });
-          } catch (error) {
-            throw new Error(`Flow Native dispatch not ready: ${diagnostics}`, { cause: error });
-          }
+  it.each(["resume", "stop"] as const)(
+    "takes over a real Flow Native crash via %s without redispatching",
+    async (action) => {
+      const f = await fixture();
+      const repositoryRoot = join(import.meta.dirname, "..", "..", "..");
+      const launcher = readFileSync(join(repositoryRoot, "node_modules", ".bin", "tsx"), "utf8");
+      const loaderPackage = launcher.match(
+        /node_modules\/\.pnpm\/([^/]+)\/node_modules\/tsx/u,
+      )?.[1];
+      if (loaderPackage === undefined) throw new Error("Could not locate tsx loader.");
+      const loader = join(
+        repositoryRoot,
+        "node_modules",
+        ".pnpm",
+        loaderPackage,
+        "node_modules",
+        "tsx",
+        "dist",
+        "loader.mjs",
+      );
+      const requestId = randomUUID();
+      const child = spawn(
+        process.execPath,
+        [
+          "--import",
+          loader,
+          join(import.meta.dirname, "fixtures", "node-execution-crash-process.ts"),
+          f.home,
+          "flow-fresh",
+          requestId,
+          f.home,
+        ],
+        { stdio: ["ignore", "pipe", "pipe"] },
+      );
+      let diagnostics = "";
+      child.stderr!.on("data", (chunk) => {
+        diagnostics += String(chunk);
+      });
+      const paths = new PragmaPaths({ pragmaHome: f.home });
+      const executions = createSqliteExecutionStore({ pragmaHome: f.home });
+      const controller = createMissionControllerStore({ missionsPath: paths.missionsRoot() });
+      const permissionResolver = vi.fn(() => f.runtimes);
+      const desktop = createLocalHostNodeApplication({
+        pragmaHome: f.home,
+        runtimes: f.runtimes,
+        runtimesForToolPermissionMode: permissionResolver,
+        client: { surface: "desktop", version: "test", instanceId: randomUUID() },
+        workspace: {
+          stat: async () => ({ isDirectory: () => true }),
+          access: async () => undefined,
+          realpath: async (path) => path,
         },
-        { timeout: 10_000 },
-      );
-      const target = started!;
-      expect(target.executionId).toEqual(expect.any(String));
-      const invocation = (await executions.listInvocations(target.executionId)).find(
-        (item) => item.invocationId !== target.executionId && item.contextId !== undefined,
-      )!;
-      expect(invocation).toBeDefined();
-      const context = RuntimeContextRecordSchema.parse(
-        await executions.getContext(target.executionId, invocation.contextId!),
-      );
-      expect(context.snapshot).toBeDefined();
-      await expect(
-        desktop.resumeMission!({ missionId: target.missionId, requestId: randomUUID() }),
-      ).rejects.toMatchObject({ code: "MISSION_LEASE_HELD" });
-      const exited = new Promise<void>((resolve) => child.once("exit", () => resolve()));
-      child.kill("SIGKILL");
-      await exited;
-      const record = (await executions.get(target.executionId))!;
-      const claim = record.state[EXECUTION_RECOVERY_CLAIM_STATE_KEY] as { expiresAt: string };
-      const lease = (await controller.readSnapshot({ missionId: target.missionId })).snapshot
-        .lease!;
-      advanceLeaseClock(Math.max(Date.parse(claim.expiresAt), Date.parse(lease.expiresAt)) + 100);
-      await expect(
-        desktop.resumeMission!({ missionId: target.missionId, requestId: randomUUID() }),
-      ).rejects.toMatchObject({ code: "EXECUTION_FAILED" });
-      const restored = RuntimeContextRecordSchema.parse(
-        await executions.getContext(target.executionId, invocation.contextId!),
-      );
-      expect(restored.contextId).toBe(context.contextId);
-      expect(restored.snapshot).toEqual(context.snapshot);
-      expect(f.startTurn).not.toHaveBeenCalled();
-      expect(
-        (await readFile(join(f.home, "native-dispatches.jsonl"), "utf8")).trim().split("\n"),
-      ).toHaveLength(1);
-      expect((await executions.get(target.executionId))?.status).toBe("failed");
-    } finally {
-      if (child.exitCode === null && child.signalCode === null) {
+      });
+      let started: { missionId: string; executionId: string } | undefined;
+      try {
+        await vi.waitFor(
+          async () => {
+            if (child.exitCode !== null)
+              throw new Error(`Flow crash fixture exited: ${diagnostics}`);
+            try {
+              started = JSON.parse(await readFile(join(f.home, "flow-started.json"), "utf8"));
+              expect(
+                JSON.parse(await readFile(join(f.home, "crash-ready.json"), "utf8")),
+              ).toMatchObject({ requestId });
+            } catch (error) {
+              throw new Error(`Flow Native dispatch not ready: ${diagnostics}`, { cause: error });
+            }
+          },
+          { timeout: 10_000 },
+        );
+        const target = started!;
+        expect(target.executionId).toEqual(expect.any(String));
+        const invocation = (await executions.listInvocations(target.executionId)).find(
+          (item) => item.invocationId !== target.executionId && item.contextId !== undefined,
+        )!;
+        expect(invocation).toBeDefined();
+        const context = RuntimeContextRecordSchema.parse(
+          await executions.getContext(target.executionId, invocation.contextId!),
+        );
+        expect(context.snapshot).toBeDefined();
+        await expect(
+          desktop.resumeMission!({ missionId: target.missionId, requestId: randomUUID() }),
+        ).rejects.toMatchObject({ code: "MISSION_LEASE_HELD" });
         const exited = new Promise<void>((resolve) => child.once("exit", () => resolve()));
         child.kill("SIGKILL");
         await exited;
+        const record = (await executions.get(target.executionId))!;
+        const claim = record.state[EXECUTION_RECOVERY_CLAIM_STATE_KEY] as { expiresAt: string };
+        const lease = (await controller.readSnapshot({ missionId: target.missionId })).snapshot
+          .lease!;
+        advanceLeaseClock(Math.max(Date.parse(claim.expiresAt), Date.parse(lease.expiresAt)) + 100);
+        permissionResolver.mockClear();
+        if (action === "resume") {
+          await expect(
+            desktop.resumeMission!({ missionId: target.missionId, requestId: randomUUID() }),
+          ).rejects.toMatchObject({ code: "EXECUTION_FAILED" });
+        } else {
+          // Current tools are intentionally unavailable. Stop must only restore the owned Native identity.
+          await rm(join(paths.dataRoot(), "capabilities"), { recursive: true, force: true });
+          const interruptId = randomUUID();
+          await desktop.missionControl!.submit({
+            missionId: target.missionId,
+            requestId: interruptId,
+            kind: "interrupt",
+            target: { executionId: target.executionId },
+            payload: { kind: "interrupt", reason: "cold process stop" },
+          });
+          const receipt = await desktop.missionControl!.waitForTerminal({
+            missionId: target.missionId,
+            requestId: interruptId,
+            timeoutMs: 10_000,
+          });
+          expect(receipt.state).toBe("applied");
+          expect(permissionResolver).toHaveBeenCalledWith("request-approval");
+        }
+        const restored = RuntimeContextRecordSchema.parse(
+          await executions.getContext(target.executionId, invocation.contextId!),
+        );
+        expect(restored.contextId).toBe(context.contextId);
+        expect(restored.snapshot).toEqual(context.snapshot);
+        expect(f.startTurn).not.toHaveBeenCalled();
+        expect(
+          (await readFile(join(f.home, "native-dispatches.jsonl"), "utf8")).trim().split("\n"),
+        ).toHaveLength(1);
+        expect((await executions.get(target.executionId))?.status).toBe(
+          action === "stop" ? "cancelled" : "failed",
+        );
+      } finally {
+        if (child.exitCode === null && child.signalCode === null) {
+          const exited = new Promise<void>((resolve) => child.once("exit", () => resolve()));
+          child.kill("SIGKILL");
+          await exited;
+        }
+        if (started !== undefined) await desktop.missionControl!.stopOwner(started.missionId);
+        executions.close();
       }
-      if (started !== undefined) await desktop.missionControl!.stopOwner(started.missionId);
-      executions.close();
-    }
-  }, 60_000);
+    },
+    60_000,
+  );
 
   it.each([false, true])(
     "persists a changed-authority successor and reopens its original Context and Native Session (controller-only=%s)",

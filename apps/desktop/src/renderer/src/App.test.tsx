@@ -1,12 +1,25 @@
 import { renderToStaticMarkup } from "react-dom/server";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { App, AssetGitIssueNotice, updateAssetGitIssues } from "./App.tsx";
 import { i18n } from "./i18n/index.ts";
 
 afterEach(async () => {
+  vi.unstubAllGlobals();
   await i18n.changeLanguage("en");
 });
+
+function pinAllMoreDestinations() {
+  vi.stubGlobal("window", {
+    innerWidth: 1440,
+    localStorage: {
+      getItem: (key: string) =>
+        key === "pragma.desktop.sidebar.pinned-navigation"
+          ? JSON.stringify(["market", "evaluations", "usage", "settings"])
+          : null,
+    },
+  });
+}
 
 describe("App", () => {
   it("renders the mission creation Home by default", () => {
@@ -32,19 +45,22 @@ describe("App", () => {
   });
 
   it("offers every available application destination", () => {
+    pinAllMoreDestinations();
     const html = renderToStaticMarkup(<App />);
 
     expect(html).toContain("Home");
     expect(html).toContain("Missions");
     expect(html).toContain("Studio");
+    expect(html).toContain("Market");
     expect(html).toContain("Evaluations");
     expect(html).toContain("Usage");
     expect(html).toContain("Settings");
   });
 
   it("keeps application navigation in the required product order", () => {
+    pinAllMoreDestinations();
     const html = renderToStaticMarkup(<App />);
-    const labels = ["Home", "Missions", "Studio", "Evaluations", "Usage", "Settings"];
+    const labels = ["Home", "Missions", "Studio", "Market", "Evaluations", "Usage", "Settings"];
     const positions = labels.map((label) => html.indexOf(`aria-label="${label}"`));
 
     expect(positions.every((position) => position >= 0)).toBe(true);
@@ -52,10 +68,12 @@ describe("App", () => {
   });
 
   it("keeps every application navigation destination enabled", () => {
+    pinAllMoreDestinations();
     const html = renderToStaticMarkup(<App />);
 
     expect(html).toContain("Missions");
     expect(html).toContain("Studio");
+    expect(html).toContain("Market");
     expect(html).toContain("Evaluations");
     expect(html).toContain("Usage");
     expect(html).not.toContain("Inbox");

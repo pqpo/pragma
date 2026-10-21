@@ -80,6 +80,9 @@ if (lane !== "desktop") {
   await vitest("@pragma/memory", [
     "test/episodic-memory.test.ts",
     "test/semantic-memory.test.ts",
+    "test/conversation-retry.test.ts",
+    "test/conversation-extraction-coordinator.test.ts",
+    "test/extraction-contract-v2.test.ts",
     "test/memory-plane.test.ts",
     "test/memory-activity.test.ts",
     "test/retrieval.test.ts",
@@ -123,6 +126,7 @@ if (lane !== "host") {
     "src/main/features/projects/pragma-project-store.test.ts",
     "src/main/features/plugins/plugin-store.test.ts",
     "src/main/features/memory/desktop-memory-plane.test.ts",
+    "src/main/features/memory/memory-curator.test.ts",
     "src/main/bootstrap/shutdown-sequence.test.ts",
     "src/main/features/context-stores/knowledge-revision-capability.test.ts",
     "src/main/features/context-stores/context-store-revision-service.test.ts",

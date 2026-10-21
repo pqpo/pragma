@@ -340,8 +340,36 @@ describe("MemoryPage", () => {
       />,
     );
     expect(empty).toContain("There are no active refinements or tasks needing attention.");
+    expect(empty).toContain('class="empty-state memory-task-details-empty"');
     expect(empty).not.toContain("memory-task-detail-item");
+    expect(empty).not.toContain("<aside");
+    expect(empty).not.toContain("<main");
+    expect(empty).not.toContain('role="separator"');
+    expect(empty).not.toContain("Select a task to inspect its refinement activity.");
   });
+
+  it.each(["loading", "error", "hasMore"] as const)(
+    "preserves %s controls when task details have no loaded tasks",
+    (state) => {
+      const html = renderToStaticMarkup(
+        <MemoryExtractionTaskDetails
+          tasks={[]}
+          pagination={{
+            loading: state === "loading",
+            error: state === "error",
+            hasMore: state === "hasMore",
+            loadMore: async () => {},
+          }}
+        />,
+      );
+      expect(html).not.toContain("There are no active refinements or tasks needing attention.");
+      expect(html).not.toContain("<aside");
+      expect(html).toContain("<button");
+      expect(html).toContain(
+        state === "loading" ? 'role="status"' : state === "error" ? "Retry" : "Load more",
+      );
+    },
+  );
 
   it("explains and disables a queued knowledge action when learning is off", () => {
     const empty = { tasks: [], pageIndex: 0, pageCount: 1, totalTasks: 0 };

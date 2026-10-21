@@ -2,7 +2,7 @@
 
 ## Status
 
-Accepted for Issue #399 stage 1 (2026-10-19).
+Accepted for Issue #399 stage 1 and shared configuration closeout (2026-10-19).
 
 ## Decision
 
@@ -85,6 +85,32 @@ The baseline explicitly rejects Bundle Plugin dependencies, despite older docume
 otherwise. The user confirmed retaining that restriction for this stage. Plugin package installation
 and configuration writes are shared, but Plugin Bundle import/export is not enabled implicitly.
 
+## CLI configuration closeout
+
+Desktop and CLI construct model-provider and Runtime Environment stores through
+`createLocalHostRuntimeConfiguration`. Desktop injects its existing SecretStore and historical
+Electron decryptor; CLI uses the same home-scoped SecretStore with the existing native OS keychain.
+CLI does not decrypt historical Electron ciphertext or introduce a credential backend. Concrete
+adapter factories remain in each app, reading the same saved process-environment policy; PI receives
+the shared model-provider registry. CLI binds new contexts through the Environment service and
+resolves persisted bindings by exact revision and fingerprint. Mission permission modes select the
+adapter permissions without changing Runtime identity. Missing configuration remains an explicit
+failure, including model-catalog diagnostics, rather than a fallback to the former fixed adapter list.
+
+A newly allocated run with no prior events can pin its resolved project revision even when CLI
+project options were omitted. Existing reservations, attached historical Missions and retries still
+require their existing proof rules; resolving the latest project cannot repair a historical binding.
+Older CLI Contexts used `createLocalHostRuntimeResolver` static fingerprints (including the original
+`codex` → `codex-local` alias). A resolve-only reader retains that exact authority: it is attempted
+only for revision 1 after the saved Environment binding is unavailable, and succeeds only when the
+historical descriptor/model-catalog fingerprint matches. New bindings always use the Environment
+service. Current model/authentication errors, future revisions and unproven fingerprints never use
+this reader. No Session identity is rewritten, and there is no hot migration to another Harness.
+The historical binding fixture was written by the `eb458180` resolver and concrete adapter with a
+deterministic catalog port, rather than by changing a current Environment's version or fingerprint.
+
+No persistent or wire schema changes are introduced by this closeout.
+
 ## Verification
 
 Shared service tests exercise real temporary persistence and injected credential/runtime capabilities.
@@ -92,3 +118,15 @@ Desktop tests exercise production composition and IPC adapters. Migration eviden
 historical writer output, current no-op, adjacent/chained upgrade, interrupted-journal replay and
 future-version rejection. Engineering tests do not establish real model, native keychain or platform
 acceptance; the stage report records those separately.
+
+### PR #409 复审补充
+
+Desktop 设置的持久读写、Schema 与既有 v1→v2 迁移链下沉到 Local Host；文件仍是
+`state/desktop-settings.json`，协议、journal、备份与锁路径不变。Desktop 继续负责 locale
+解析和 UI snapshot，CLI 只消费 PI 所需的工作上下文预算；预算参与 adapter preparation
+快照与缓存键，不引入 CLI 设置命令。
+
+历史静态 ID `codex-local` 仅在没有该 ID 的持久 Environment 时用于新绑定别名，目标是共享
+`codex` Environment。已注册或已删除的同名 Environment 都不被覆盖。旧 Session 的
+`resolve(binding)` 不做别名重写，继续要求原 fingerprint 精确匹配。停止恢复与正常执行
+选用同一 Mission 持久权限模式的 resolver，停止路径不准备当前工具、凭据和 mounts。

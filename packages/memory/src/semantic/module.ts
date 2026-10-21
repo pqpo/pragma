@@ -134,6 +134,7 @@ export async function createSemanticMemoryModule(
         }, 60_000)
       : undefined;
     lease?.unref();
+    let materialized: readonly { id: string; revision: number }[] = [];
     let phase: MemoryExtractionFailurePhase = "source_read";
     try {
       if (await store.hasAppliedJob(job)) {
@@ -235,6 +236,9 @@ export async function createSemanticMemoryModule(
           signal: controller.signal,
           watermark: job.inputWatermark,
           conversationRef: job.conversationRef,
+          onProvenance: async (_type, previous, next) => {
+            await store.enrichExtractionProvenance({ records: materialized, previous, next });
+          },
           onAdmission: () => {
             unadmittedClaims.delete(controller);
           },
@@ -270,7 +274,7 @@ export async function createSemanticMemoryModule(
         return;
       }
       assertCandidateRefs(output.facts, evidence, allowedSubjectRefs);
-      await store.completeRetained({
+      materialized = await store.completeRetained({
         job,
         candidates: output.facts,
         evidence,

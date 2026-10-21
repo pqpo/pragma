@@ -87,11 +87,6 @@
   box-shadow: none;
 }
 
-.mission-executor-dialog-search:focus-within {
-  border-color: var(--ui-accent);
-  box-shadow: 0 0 0 3px var(--ui-focus);
-}
-
 .mission-executor-kind-filter {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
@@ -117,12 +112,12 @@
 .mission-executor-kind-filter button:focus-visible {
   outline: 0;
   background: var(--ui-surface);
-  box-shadow: 0 0 0 3px var(--ui-focus);
+  box-shadow: 0 0 0 3px rgb(var(--ui-shadow-rgb) / 20%);
 }
 
 .mission-executor-kind-filter button.is-active {
   background: var(--ui-selection);
-  color: var(--ui-accent-strong);
+  color: var(--ui-text);
 }
 
 .mission-executor-dialog-results {
@@ -166,7 +161,7 @@
   width: 32px;
   height: 32px;
   place-items: center;
-  color: var(--ui-accent-strong);
+  color: var(--ui-text-secondary);
 }
 
 .mission-executor-dialog-row > span:nth-child(2) {
@@ -238,12 +233,12 @@
   padding: 10px 14px;
   border: 1px solid transparent;
   border-radius: 12px;
-  background: rgb(255 255 255 / 64%);
+  background: color-mix(in srgb, var(--ui-surface) 64%, transparent);
 }
 
 .mission-model-overrides label:focus-within {
-  border-color: rgb(88 121 104 / 28%);
-  background: #fff;
+  border-color: color-mix(in srgb, var(--ui-accent) 28%, transparent);
+  background: var(--ui-surface);
   box-shadow: 0 0 0 3px var(--focus-ring);
 }
 
@@ -413,8 +408,8 @@
 
 .mission-attachment-thumbnail:hover,
 .mission-attachment-thumbnail:focus-visible {
-  border-color: var(--green);
-  box-shadow: 0 0 0 3px var(--ui-focus);
+  border-color: var(--ui-line-strong);
+  box-shadow: 0 0 0 3px rgb(var(--ui-shadow-rgb) / 20%);
 }
 
 .mission-attachment-thumbnail img {
@@ -432,10 +427,10 @@
   height: 18px;
   place-items: center;
   padding: 0;
-  border: 1px solid rgb(255 255 255 / 75%);
+  border: 1px solid color-mix(in srgb, var(--ui-surface) 75%, transparent);
   border-radius: 50%;
-  background: rgb(25 31 28 / 72%);
-  color: #fff;
+  background: rgb(var(--ui-shadow-rgb) / 72%);
+  color: var(--ui-surface);
   cursor: pointer;
   opacity: 0;
   visibility: hidden;

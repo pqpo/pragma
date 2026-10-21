@@ -145,6 +145,8 @@ export const missions = {
   errorInternalStateConflict: "任務狀態發生異常變化，請重新整理任務後再試。",
   bundleSetupRequired:
     "此工作流程還有 {{count}} 項本機依賴未完成設定：{{resources}}。請開啟 Bundle 匯入，重新選擇原檔案並完成綁定。",
+  bundleLegacyCapability: "能力（舊版 Bundle 未保留名稱）",
+  bundleLegacyRuntime: "執行設定（舊版 Bundle 未保留名稱）",
   bundleLegacyKnowledgeBase: "知識庫（舊版 Bundle 未保留名稱）",
   selectAnother: "請選擇其他任務或建立新任務。",
   deleteTitle: "刪除此任務？",

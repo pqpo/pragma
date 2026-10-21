@@ -295,44 +295,77 @@ describe("Local Host run application", () => {
     }
   });
 
-  it("lets the original run retry fill the pin after a created-before-pin crash gap", async () => {
-    const home = await mkdtemp(join(tmpdir(), "pragma-local-run-pin-retry-"));
-    try {
-      const controller = createMissionControllerStore({ missionsPath: join(home, "missions") });
-      const mission = createControllerRunMissionPort(controller);
-      let failPin = true;
-      const application = createLocalHostRunApplication({
-        executors: fakeExecutorPort(),
-        mission: {
-          ...mission,
-          ensurePinnedBinding: async (input) => {
-            if (failPin) {
-              failPin = false;
-              throw new Error("simulated crash between mission.created and pin");
-            }
-            return await mission.ensurePinnedBinding(input);
+  it.each([false, true])(
+    "fills the pin after a creation-only crash gap (inferred project=%s)",
+    async (inferred) => {
+      const home = await mkdtemp(join(tmpdir(), "pragma-local-run-pin-retry-"));
+      try {
+        const controller = createMissionControllerStore({ missionsPath: join(home, "missions") });
+        const mission = createControllerRunMissionPort(controller);
+        const runRequest = request(inferred ? { project: undefined } : {});
+        let starts = 0;
+        const executors = fakeExecutorPort({
+          onStart: () => {
+            starts += 1;
           },
-        },
-      });
+        });
+        let failPin = true;
+        const application = createLocalHostRunApplication({
+          executors,
+          mission: {
+            ...mission,
+            ensurePinnedBinding: async (input) => {
+              if (failPin) {
+                failPin = false;
+                throw new Error("simulated crash between mission.created and pin");
+              }
+              return await mission.ensurePinnedBinding(input);
+            },
+          },
+        });
 
-      await expect(application.start(request())).rejects.toThrow(
-        "simulated crash between mission.created and pin",
-      );
-      const firstSnapshot = await controller.readSnapshot({
-        missionId: (await controller.readRunRequest({ requestId: request().requestId }))!.missionId,
-      });
-      expect(firstSnapshot.events.map((event) => event.type)).toEqual(["mission.created"]);
+        await expect(application.start(runRequest)).rejects.toThrow(
+          "simulated crash between mission.created and pin",
+        );
+        const firstSnapshot = await controller.readSnapshot({
+          missionId: (await controller.readRunRequest({ requestId: runRequest.requestId }))!
+            .missionId,
+        });
+        expect(firstSnapshot.events.map((event) => event.type)).toEqual(["mission.created"]);
 
-      const retry = await application.start(request());
-      await expect(retry.outcome).resolves.toMatchObject({ status: "succeeded" });
-      const finalSnapshot = await controller.readSnapshot({ missionId: retry.missionId });
-      expect(
-        finalSnapshot.events.filter((event) => event.type === "mission.binding.pinned"),
-      ).toHaveLength(1);
-    } finally {
-      await rm(home, { recursive: true, force: true });
-    }
-  });
+        // Reopen durable state as a new Host would after the failed process exits.
+        const reopened = createLocalHostRunApplication({
+          executors,
+          mission: createControllerRunMissionPort(
+            createMissionControllerStore({ missionsPath: join(home, "missions") }),
+          ),
+        });
+        const changedRevision = createLocalHostRunApplication({
+          executors: fakeExecutorPort({
+            descriptor: { ...descriptor, project: { ...descriptor.project!, revision: 2 } },
+          }),
+          mission: createControllerRunMissionPort(controller),
+        });
+        if (inferred)
+          await expect(changedRevision.start(runRequest)).rejects.toMatchObject({
+            code: "IDEMPOTENCY_CONFLICT",
+          });
+        const retry = await reopened.start(runRequest);
+        await expect(retry.outcome).resolves.toMatchObject({ status: "succeeded" });
+        await expect((await reopened.start(runRequest)).outcome).resolves.toMatchObject({
+          status: "succeeded",
+          executionId: "execution-1",
+        });
+        expect(starts).toBe(1);
+        const finalSnapshot = await controller.readSnapshot({ missionId: retry.missionId });
+        expect(
+          finalSnapshot.events.filter((event) => event.type === "mission.binding.pinned"),
+        ).toHaveLength(1);
+      } finally {
+        await rm(home, { recursive: true, force: true });
+      }
+    },
+  );
 
   it("renews the CLI owner and consumes the durable Mission Inbox", async () => {
     const home = await mkdtemp(join(tmpdir(), "pragma-local-run-owner-scope-"));

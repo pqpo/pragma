@@ -3,7 +3,6 @@ import {
   Database,
   GitBranch,
   PlugsConnected,
-  Storefront,
   User,
   UsersThree,
   Wrench,
@@ -21,14 +20,7 @@ export type ExpertModel = Extract<
   { readonly mode: "pinned" }
 >["model"];
 export type StudioView =
-  | "square"
-  | "experts"
-  | "teams"
-  | "flows"
-  | "integrations"
-  | "connectors"
-  | "skills"
-  | "context-stores";
+  "experts" | "teams" | "flows" | "integrations" | "connectors" | "skills" | "context-stores";
 
 export type ExpertRecord = {
   readonly ref?: string | undefined;
@@ -190,7 +182,6 @@ export const studioSections = [
   { id: "connectors", labelKey: "connectors", icon: PlugsConnected },
   { id: "skills", labelKey: "skills", icon: Wrench },
   { id: "context-stores", labelKey: "contextStores", icon: Database },
-  { id: "square", labelKey: "square.navigation", icon: Storefront },
 ] as const satisfies readonly {
   readonly id: StudioView;
   readonly labelKey: string;

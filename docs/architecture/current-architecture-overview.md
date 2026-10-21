@@ -11,7 +11,7 @@ AI-native 工作方式，并由 Desktop、CLI 或嵌入式 SDK Host 运行。
 核心设计围绕四个长期资产展开：
 
 - 可移植的工作方式：使用 Pragma YAML DSL 描述并通过 Interpreter 编译；
-- 可替换的执行环境：PI、Codex、Claude Code、Qoder CLI 与 Antigravity 以独立 Runtime Adapter 接入；
+- 可替换的执行环境：PI、Codex、OpenCode、Claude Code、Qoder CLI 与 Antigravity 以独立 Runtime Adapter 接入；
 - 可治理的任务状态：Mission、Execution、Invocation、Session 与事件具有稳定身份和持久化语义；
 - 可积累的知识：Evidence、Episodic、Semantic、Knowledge 与 Skill revision 形成独立 Memory Plane。
 
@@ -78,18 +78,11 @@ Local Host 统一 pinned Revision、目标依赖、binding/fingerprint、identit
 `@pragma/local-host/node-application` 组合 Mission controller、owner lease、command inbox、query/watch、
 Project catalog、Mission Board、Core store 与 Usage sink。Desktop 和 CLI 注入 Runtime、文件系统、
 SecretStore、交互界面与 Host policy。`@pragma/local-host/resources` 提供共用 Node 资源读取与迁移；
-Desktop 的资源身份策略、mutation coordinator 和审批保留。
+通用 mutation/部署协调归 Local Host；Desktop 保留产品资源身份策略与交互审批。
 
-统一控制、编译、运行与恢复的分阶段设计见
-[Mission 统一 Local Host 应用内核分阶段重构方案](local-host-application-kernel-refactor.md)。
-R1 已经 PR #353 合入 main，工程验证与真实 Native Mission smoke 已通过，真实模型性能及完整产品场景
-仍缺验收证据，不能标记 R1 全部完成。R2 实施与逐项验证见
-[R2 报告](local-host-kernel-r2-implementation.md)，阶段退出以该报告的实测结果和剩余缺口为准。
-
-R1–R3 已通过 #353/#354/#355 合入。Desktop 与 Node/CLI 使用 Local Host 同一 Mission application
-factory 和 `MissionExecutionOwner`，共用首轮执行、Session、恢复与 admission；内部调用也依赖共享用例。
-已删除 `runExecutor`、完整 application override、旧 Runner 和纯业务转发出口。Desktop metadata cache
-属于展示层。工程验证与真实模型、OS 凭据、完整产品性能验收分别记录在 [R4 报告](local-host-kernel-r4-implementation.md)。
+Desktop 与 CLI 使用同一 Mission application factory 和 `MissionExecutionOwner`，共用首轮执行、
+Session、恢复与 admission；内部调用也依赖共享用例。Host 不注入完整 application/run 内核替代品，
+Desktop metadata cache 仅属于展示层。历史实施与验收记录统一见[归档入口](../archive/README.md)。
 
 同一 Mission 的 mutation 由持久 `MissionControllerLease` 和单调 fencing token 协调。非 owner 的
 `send`、`steer`、`respond`、`interrupt` 与 queue mutation 写入持久 `MissionCommandInbox`；提交使用
@@ -188,14 +181,9 @@ stable journal、备份与原子替换保证恢复。业务 parser 只接受当�
 - [Memory](../usage/memory.md)
 - [Execution SDK](../Execution-SDK-Design.md)
 
-## Issue #348 R4：共享 Mission application
+## 规范与历史
 
-Desktop Main 与 CLI 通过 Local Host 同一 Mission application factory 构造控制、编译与执行内核。
-Automation、Pragma、Memory Curator、Store/Skill Revision、Evaluation 与 IPC mutation 使用共享用例。
-Desktop 保留平台资源、审批、展示、Electron 与 IPC adapter；CLI 保留 argv、TTY、presentation 和 Runtime composition。
-不得注入完整 command/run/execution service 恢复双内核。通用耐久投递编排归 Local Host，产品 payload 与通知归 Desktop。
-
-CLI 测试入口执行完整 Local Host 业务门禁；Desktop/CLI composition 验证证明实际接入该实现。
-Desktop 的 UI、IPC、平台和打包测试继续独立。
-[ADR 066](../adr/066-unified-local-host-mission-application.md) 与 [R4 验证报告](local-host-kernel-r4-implementation.md)
-区分代码收敛、工程门禁与仍需真实模型/OS 凭据/完整产品场景的验收。
+共享 Mission application、控制、编译、执行与恢复归 Local Host。Desktop 与 CLI 提供平台资源和展示端口，内部 Agent 使用同一用例。
+详细边界见[模块边界](module-boundaries.md)、[模块实现约束](../conventions/package-contracts.md)和
+[共享 Mission application 决策](../adr/066-unified-local-host-mission-application.md)。
+历史实施报告与验收缺口见[归档入口](../archive/README.md)，不能据此推断当前验收状态。

@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vitest";
 
-import { isBundlePluginUnavailableError, localizedBundleMutationError } from "./bundle-errors.ts";
+import {
+  bundleDependencyDisplayName,
+  isBundlePluginUnavailableError,
+  localizedBundleMutationError,
+} from "./bundle-errors.ts";
 
 describe("isBundlePluginUnavailableError", () => {
   it("recognizes mutation errors and errors from read-only IPC", () => {
@@ -45,5 +49,20 @@ describe("localizedBundleMutationError", () => {
     );
 
     expect(translated).toBe("1:知识库（旧版 Bundle 未保留名称）");
+  });
+});
+
+describe("bundleDependencyDisplayName", () => {
+  it("hides legacy generated capability identities without changing real names", () => {
+    expect(
+      bundleDependencyDisplayName(
+        "capability",
+        "Capability 009405fc-3ade-4df2-8e4b-eccab29e78c4",
+        (key) => key,
+      ),
+    ).toBe("bundleLegacyCapability");
+    expect(bundleDependencyDisplayName("capability", "Search documentation", (key) => key)).toBe(
+      "Search documentation",
+    );
   });
 });

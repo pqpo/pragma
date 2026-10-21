@@ -1,12 +1,14 @@
 # Issue #348 R4 串行性能对照（CR 前）
 
+> 历史测量/调研：结论只适用于记录中的提交、版本与环境，不是当前状态或开发规范。当前入口见[文档索引](../README.md)。
+
 2026-10-04，macOS，同机 Node 24.18.0 / pnpm 10.12.1；baseline 为 `cc1103ecae55c5ec28d98f7e4e54f1165c4bfc8a`。
 测试、构建及子 Agent 停止后，按 main→R4 顺序串行执行两组。生产源码冻结；两侧前后摘要均一致：
 
 - main（1181 文件）：`5de2487c846c077d0ea68760bc02c7307395104df007988d3854a987783d93ce`。
 - R4（1159 文件）：`42919e9181cc0ccab79d62d9284b7749975995813203c2fd36f3a3965a920492`。
 
-本报告保留 CR 前证据，不能作为修复后源码的性能结论。修复后记录见 [CR followup](../architecture/local-host-kernel-r4-cr-followup.md)。
+本报告保留 CR 前证据，不能作为修复后源码的性能结论。修复后记录见 [CR followup](../archive/architecture/local-host-kernel-r4-cr-followup.md)。
 
 ## 范围与方法
 
@@ -80,4 +82,4 @@ worker payload、队列/锁等待、数据库增长与 macOS 进程 I/O 原始�
 探针命令：`pnpm exec tsx docs/performance/local-host-kernel-r2-compilation-probe.mjs --checkout <checkout> --samples 20 --lifecycle true --output <external.json>`；冷启动追加 `--samples 40 --scenario cold`。
 源码身份用 `local-host-kernel-r3-source-digest.mjs`；完整原始采样、命令/日志与比较 JSON 位于仓库外 `/tmp/pragma-r4-performance/`。首次探针导入已删除转发文件而启动失败，日志另存 `/tmp/pragma-r4-performance-probe-import-failed/`，不纳入有效对照。
 
-本报告仅证明已采样内核路径未发现可复现的阈值回退。真实模型、OS 凭据、renderer 与正常 Memory/Automation 负载的产品四目标由 [R4 验收报告](../architecture/local-host-kernel-r4-implementation.md)单列；fixture 不作为替代证据。
+本报告仅证明已采样内核路径未发现可复现的阈值回退。真实模型、OS 凭据、renderer 与正常 Memory/Automation 负载的产品四目标由 [R4 验收报告](../archive/architecture/local-host-kernel-r4-implementation.md)单列；fixture 不作为替代证据。

@@ -59,7 +59,6 @@ import { FlowEditor } from "./flow-editor/FlowEditor.tsx";
 import { PragmaBundleDialog } from "./PragmaBundleDialog.tsx";
 import { BundleSourcePublishDialog } from "./BundleSourcePublishDialog.tsx";
 import { ContextStoreRevisionFragment } from "./ContextStoreRevisionFragment.tsx";
-import { SquareDirectoryFragment } from "./SquareDirectoryFragment.tsx";
 import { User } from "@phosphor-icons/react";
 import { createEmptyFlow } from "./flow-editor/flow-model.ts";
 import {
@@ -129,6 +128,7 @@ export function StudioPage(props: {
   readonly initialExpertRef?: string | undefined;
   readonly initialExpertStep?: ExpertEditorStep | undefined;
   readonly initialResourceRef?: string | undefined;
+  readonly initialCapabilityId?: string | undefined;
   readonly initialRevisionStoreId?: string | undefined;
   readonly initialAssetGitTarget?:
     { readonly target: AssetGitTarget; readonly requestId: number } | undefined;
@@ -212,11 +212,11 @@ export function StudioPage(props: {
     readonly newResourceId?: string | undefined;
   } | null>(null);
   const [bundleMode, setBundleMode] = useState<"export" | "import" | null>(null);
-  const [squareBundlePath, setSquareBundlePath] = useState<string | undefined>();
   const [bundleRootRef, setBundleRootRef] = useState<string | undefined>();
   const [publicationRootRef, setPublicationRootRef] = useState<string | null>(null);
   const openedInitialExpertRef = useRef<string | undefined>(undefined);
   const openedInitialResourceRef = useRef<string | undefined>(undefined);
+  const openedInitialCapabilityId = useRef<string | undefined>(undefined);
   const openedAssetGitRequest = useRef<number | undefined>(undefined);
   const resourceSaveCompletedRef = useRef(false);
 
@@ -396,6 +396,17 @@ export function StudioPage(props: {
     setResourceEditor({ kind: "team", mode: "edit" });
     setScreen("resource-edit");
   }, [project, props.initialResourceRef]);
+
+  useEffect(() => {
+    const id = props.initialCapabilityId;
+    if (id === undefined || openedInitialCapabilityId.current === id) return;
+    const capability = capabilities.find((item) => item.manifest.id === id);
+    if (capability === undefined) return;
+    openedInitialCapabilityId.current = id;
+    setActiveView(capability.definition.kind === "skill" ? "skills" : "connectors");
+    setSelectedCapabilityId(id);
+    setScreen("capability-detail");
+  }, [capabilities, props.initialCapabilityId]);
 
   useEffect(() => {
     const request = props.initialAssetGitTarget;
@@ -834,25 +845,6 @@ export function StudioPage(props: {
       />
 
       <div className="studio-content">
-        {screen === "directory" && activeView === "square" ? (
-          <SquareDirectoryFragment
-            canExport={project !== null}
-            onExport={() => {
-              setBundleRootRef(undefined);
-              setBundleMode("export");
-            }}
-            onImport={() => {
-              setSquareBundlePath(undefined);
-              setBundleRootRef(undefined);
-              setBundleMode("import");
-            }}
-            onInstall={(sourcePath, rootRef) => {
-              setSquareBundlePath(sourcePath);
-              setBundleRootRef(rootRef);
-              setBundleMode("import");
-            }}
-          />
-        ) : null}
         {screen === "expert-detail" && selectedExpert !== null ? (
           <ExpertDetailFragment
             expert={selectedExpert}
@@ -1362,18 +1354,15 @@ export function StudioPage(props: {
           capabilities={userCapabilities}
           contextStores={contextStores}
           runtimes={runtimes}
-          initialSourcePath={squareBundlePath}
           initialRootRef={bundleRootRef}
           onRefreshRuntimes={refreshRuntimeAvailability}
           onClose={() => {
             setBundleMode(null);
-            setSquareBundlePath(undefined);
             setBundleRootRef(undefined);
           }}
           onChanged={refreshBundleData}
           onOpenCapability={(capabilityId) => {
             setBundleMode(null);
-            setSquareBundlePath(undefined);
             setBundleRootRef(undefined);
             setActiveView(
               capabilities.find((item) => item.manifest.id === capabilityId)?.definition.kind ===

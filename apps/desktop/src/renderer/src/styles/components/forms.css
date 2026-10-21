@@ -175,7 +175,7 @@
 
 .ui-select-option[aria-selected="true"] {
   background: var(--ui-selection);
-  color: var(--ui-accent-strong);
+  color: var(--ui-text);
 }
 
 .ui-select-option:disabled {
@@ -302,7 +302,7 @@
   width: 48px;
   height: 22px;
   border-radius: 999px;
-  background: #ccd3ce;
+  background: var(--ui-control-disabled);
 }
 
 .toggle-thumb {
@@ -314,18 +314,18 @@
   height: 16px;
   place-items: center;
   border-radius: 50%;
-  background: #fff;
-  color: #fff;
+  background: var(--ui-surface);
+  color: var(--ui-surface);
   transition: left 140ms ease;
 }
 
 .toggle.is-checked {
-  background: var(--green);
+  background: var(--ui-accent);
 }
 
 .toggle.is-checked .toggle-thumb {
   left: 29px;
-  background: #2865e8;
+  background: var(--ui-surface);
 }
 
 .form-error {
@@ -347,13 +347,13 @@
   left: 0;
   height: 4px;
   border-radius: 999px;
-  background: #c7d0ca;
+  background: var(--ui-control-disabled);
   content: "";
 }
 
 .range-fill {
   right: 34%;
-  background: var(--green);
+  background: var(--ui-accent);
 }
 
 .range-thumb {
@@ -364,8 +364,8 @@
   height: 16px;
   border: 3px solid var(--surface);
   border-radius: 50%;
-  background: var(--green);
-  box-shadow: 0 0 0 1px var(--green);
+  background: var(--ui-accent);
+  box-shadow: 0 0 0 1px var(--ui-accent);
 }
 
 .automation-flow-input-form .mission-schema-field > input,
@@ -409,8 +409,8 @@
 .mission-schema-field > header > label:first-child span {
   padding: 2px 5px;
   border-radius: 5px;
-  background: #e8f0eb;
-  color: var(--green);
+  background: var(--ui-surface-subtle);
+  color: var(--ui-text-secondary);
   font-size: 9px;
   font-weight: 700;
 }
@@ -544,7 +544,7 @@
 .mission-model-menu-option:hover,
 .mission-model-menu-option:focus-visible {
   outline: 0;
-  background: var(--ui-surface-subtle);
+  background: var(--ui-selection);
 }
 
 .mission-model-menu-section:disabled {
@@ -582,7 +582,7 @@
 
 .mission-model-menu-option[aria-selected="true"] {
   background: var(--ui-selection);
-  color: var(--ui-accent-strong);
+  color: var(--ui-text);
 }
 
 .mission-model-menu-option[aria-selected="true"] > svg {
@@ -644,7 +644,7 @@
   padding: 1px 5px 1px 2px;
   border-radius: var(--ui-radius-md);
   background: var(--ui-selection);
-  color: var(--ui-accent-strong);
+  color: var(--ui-text);
   font-weight: 500;
   line-height: 1.4;
   vertical-align: middle;

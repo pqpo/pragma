@@ -160,6 +160,8 @@ export const missions = {
     "The mission state changed unexpectedly. Refresh the mission and try again.",
   bundleSetupRequired:
     "This workflow still has {{count}} local dependency(ies) to set up: {{resources}}. Open Bundle import, select the original file again, and finish binding.",
+  bundleLegacyCapability: "Capability (name unavailable in legacy bundle)",
+  bundleLegacyRuntime: "Runtime configuration (name unavailable in legacy bundle)",
   bundleLegacyKnowledgeBase: "Knowledge base (name unavailable in this legacy Bundle)",
   selectAnother: "Select another mission or create a new one.",
   deleteTitle: "Delete this mission?",

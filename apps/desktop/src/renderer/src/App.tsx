@@ -16,6 +16,7 @@ import type { StudioLeaveGuard } from "./pages/studio/StudioScreenFrame.tsx";
 import { EvaluationsPage } from "./pages/evaluations/EvaluationsPage.tsx";
 import { HomePage } from "./pages/home/HomePage.tsx";
 import { UsagePage } from "./pages/usage/UsagePage.tsx";
+import { MarketPage } from "./pages/market/MarketPage.tsx";
 import { MemoryPage } from "./pages/memory/MemoryPage.tsx";
 import type {
   AssetGitStatus,
@@ -39,6 +40,7 @@ export function App() {
   const [studioExpertRef, setStudioExpertRef] = useState<string>();
   const [studioExpertStep, setStudioExpertStep] = useState<"capabilities" | undefined>();
   const [studioResourceRef, setStudioResourceRef] = useState<string>();
+  const [studioCapabilityId, setStudioCapabilityId] = useState<string>();
   const [studioRevisionStoreId, setStudioRevisionStoreId] = useState<string>();
   const [studioAssetGitTarget, setStudioAssetGitTarget] = useState<{
     readonly target: AssetGitTarget;
@@ -106,6 +108,7 @@ export function App() {
       setStudioExpertRef(undefined);
       setStudioExpertStep(undefined);
       setStudioResourceRef(undefined);
+      setStudioCapabilityId(undefined);
       setStudioRevisionStoreId(undefined);
       setStudioAssetGitTarget(undefined);
       if (view === "missions") setMissionToOpen(undefined);
@@ -140,6 +143,7 @@ export function App() {
     setStudioExpertRef(undefined);
     setStudioExpertStep(undefined);
     setStudioResourceRef(undefined);
+    setStudioCapabilityId(undefined);
     setStudioRevisionStoreId(undefined);
     setStudioAssetGitTarget(undefined);
     setStudioMemoryState({ activeView: "context-stores" });
@@ -147,6 +151,7 @@ export function App() {
   };
 
   const openStudioForExecutor = (executor: HomeMissionExecutorOption) => {
+    setStudioCapabilityId(undefined);
     setStudioExpertRef(executor.kind === "expert" ? executor.ref : undefined);
     setStudioExpertStep(executor.kind === "expert" ? "capabilities" : undefined);
     setStudioResourceRef(executor.kind === "team" ? executor.ref : undefined);
@@ -166,6 +171,7 @@ export function App() {
       setStudioExpertRef(undefined);
       setStudioExpertStep(undefined);
       setStudioResourceRef(undefined);
+      setStudioCapabilityId(undefined);
       setStudioRevisionStoreId(undefined);
       setStudioMemoryState({
         activeView: status.target.kind === "knowledge" ? "context-stores" : "skills",
@@ -232,6 +238,7 @@ export function App() {
           onOpenKnowledgeRevision={(storeId) => {
             setStudioExpertRef(undefined);
             setStudioResourceRef(undefined);
+            setStudioCapabilityId(undefined);
             setStudioRevisionStoreId(storeId);
             setStudioMemoryState({ activeView: "context-stores" });
             setActiveView("studio");
@@ -240,6 +247,7 @@ export function App() {
             setStudioExpertRef(expertRef);
             setStudioExpertStep(undefined);
             setStudioResourceRef(undefined);
+            setStudioCapabilityId(undefined);
             setStudioRevisionStoreId(undefined);
             setActiveView("studio");
           }}
@@ -256,6 +264,7 @@ export function App() {
           initialExpertRef={studioExpertRef}
           initialExpertStep={studioExpertStep}
           initialResourceRef={studioResourceRef}
+          initialCapabilityId={studioCapabilityId}
           initialRevisionStoreId={studioRevisionStoreId}
           initialAssetGitTarget={studioAssetGitTarget}
           initialMemoryState={studioMemoryState}
@@ -279,6 +288,18 @@ export function App() {
               setStudioRevisionStoreId(undefined);
               setActiveView("missions");
             });
+          }}
+        />
+      ) : activeView === "market" ? (
+        <MarketPage
+          onOpenCapability={(capabilityId) => {
+            setStudioExpertRef(undefined);
+            setStudioExpertStep(undefined);
+            setStudioResourceRef(undefined);
+            setStudioRevisionStoreId(undefined);
+            setStudioAssetGitTarget(undefined);
+            setStudioCapabilityId(capabilityId);
+            setActiveView("studio");
           }}
         />
       ) : activeView === "evaluations" ? (

@@ -1,6 +1,8 @@
 # Mission 统一内核实施前性能基线
 
-测量日期：2026-10-02。代码：`main@8fdbd4526d0f62d0b36891165539ed9ec47dc603`。本记录对应[四阶段重构方案](../architecture/local-host-application-kernel-refactor.md)第一阶段的前置基线测量，不额外增加实施阶段。
+> 历史测量/调研：结论只适用于记录中的提交、版本与环境，不是当前状态或开发规范。当前入口见[文档索引](../README.md)。
+
+测量日期：2026-10-02。代码：`main@8fdbd4526d0f62d0b36891165539ed9ec47dc603`。本记录对应[四阶段重构方案](../archive/architecture/local-host-application-kernel-refactor.md)第一阶段的前置基线测量，不额外增加实施阶段。
 
 ## 测量范围与环境
 

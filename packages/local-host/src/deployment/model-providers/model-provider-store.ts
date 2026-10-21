@@ -1,3 +1,5 @@
+import { ModelProviderStoreError } from "./model-provider-error.ts";
+export { ModelProviderStoreError } from "./model-provider-error.ts";
 import { createHash, randomUUID } from "node:crypto";
 import { access, chmod, mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
@@ -89,23 +91,6 @@ export interface ModelProviderStore extends ModelProviderRegistry {
     result: ModelConnectionTestResult,
   ): Promise<ModelProviderVerification>;
   migrateLegacy?(): Promise<boolean>;
-}
-
-export class ModelProviderStoreError extends Error {
-  constructor(
-    readonly code:
-      | "config_invalid"
-      | "migration_required"
-      | "provider_not_found"
-      | "secret_unavailable"
-      | "invalid_base_url"
-      | "connection_changed",
-    message: string,
-    options?: ErrorOptions,
-  ) {
-    super(message, options);
-    this.name = "ModelProviderStoreError";
-  }
 }
 
 function normalizeModels(models: readonly ModelProviderModel[]): ModelProviderModel[] {

@@ -94,7 +94,7 @@
 .mission-message-sender {
   display: block;
   margin-bottom: 5px;
-  color: var(--green-dark);
+  color: var(--ui-text-secondary);
   font-size: 10px;
   font-weight: 700;
   line-height: 1.3;
@@ -114,7 +114,7 @@
   padding: 0;
   border: 1px solid var(--border);
   border-radius: 22px;
-  background: #fff;
+  background: var(--ui-surface);
   color: var(--faint);
   box-shadow: var(--shadow-soft);
 }
@@ -122,7 +122,7 @@
 .mission-chat-composer-shell {
   border: 1px solid var(--border);
   border-radius: 22px;
-  background: #fff;
+  background: var(--ui-surface);
   box-shadow: var(--shadow-soft);
 }
 
@@ -130,13 +130,6 @@
   border: 0;
   border-radius: 22px;
   box-shadow: none;
-}
-
-.mission-chat-composer-shell:focus-within {
-  border-color: var(--green);
-  box-shadow:
-    0 0 0 3px var(--focus-ring),
-    var(--shadow-soft);
 }
 
 .mission-chat-composer-shell:focus-within > .mission-chat-composer {
@@ -148,7 +141,7 @@
   overflow: hidden;
   border-bottom: 1px solid var(--border);
   border-radius: 21px 21px 0 0;
-  background: #fcfdfc;
+  background: var(--ui-surface-subtle);
 }
 
 .mission-prompt-queue-item {
@@ -161,7 +154,7 @@
 }
 
 .mission-prompt-queue-item + .mission-prompt-queue-item {
-  border-top: 1px solid rgb(88 121 104 / 10%);
+  border-top: 1px solid var(--ui-line-strong);
 }
 
 .mission-prompt-queue-marker {
@@ -205,8 +198,8 @@
 }
 
 .mission-prompt-queue-actions > button:hover:not(:disabled) {
-  background: var(--green-soft);
-  color: var(--green-dark);
+  background: var(--ui-selection);
+  color: var(--ui-text);
 }
 
 .mission-prompt-queue-actions > button:disabled {
@@ -233,16 +226,12 @@
   padding: 0;
 }
 
-.mission-chat-composer:focus-within {
-  border-color: var(--green);
-}
-
 .mission-chat-composer:has(textarea:disabled) {
-  background: #f7f9f8;
+  background: var(--ui-surface-subtle);
 }
 
 .mission-chat-composer:has(.team-mention-editor[data-disabled="true"]) {
-  background: #f7f9f8;
+  background: var(--ui-surface-subtle);
 }
 
 .mission-chat-composer textarea {
@@ -327,8 +316,8 @@
   place-items: center;
   padding: 0 5px;
   border-radius: var(--ui-radius-round);
-  background: var(--green-soft);
-  color: var(--green-dark);
+  background: var(--ui-selection);
+  color: var(--ui-text);
   font-size: 11px;
 }
 
@@ -348,18 +337,18 @@
   padding: 0;
   border: 0;
   border-radius: var(--ui-radius-round);
-  background: var(--green);
-  color: #fff;
+  background: var(--ui-accent);
+  color: var(--ui-surface);
   cursor: pointer;
 }
 
 .mission-chat-actions > button:disabled {
-  background: #cad1cc;
+  background: var(--ui-control-disabled);
 }
 
 .mission-chat-actions > button.is-loading:disabled {
-  background: var(--green);
-  color: #fff;
+  background: var(--ui-accent);
+  color: var(--ui-surface);
   cursor: wait;
 }
 
@@ -525,7 +514,7 @@
   border-color: var(--border-strong);
   outline: 0;
   background: var(--surface-muted);
-  box-shadow: 0 0 0 3px var(--ui-focus);
+  box-shadow: 0 0 0 3px rgb(var(--ui-shadow-rgb) / 20%);
 }
 
 .mission-team-participant.is-running {

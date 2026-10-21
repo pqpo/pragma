@@ -134,6 +134,9 @@ export function createBuiltInMemoryCurator(options: {
             for (const { work } of entries)
               await work.options?.assertEvidenceAccess?.(evidence, type);
           },
+          async onProvenance(type, previous, next) {
+            await batch[type]?.options?.onProvenance?.(type, previous, next);
+          },
           async onResult(type, receipt) {
             if (type === "episodic" && batch.episodic !== undefined)
               await batch.episodic.settle({

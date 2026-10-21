@@ -2,7 +2,7 @@
 
 ## 状态
 
-Accepted
+Superseded in part by [Skill Bundle roots](056-first-class-skill-bundles.md). 知识库 payload、身份与 v1→v2 升级规则仍适用；下文四类根描述的是 v2 历史边界，当前写入以 Interpreter 能力声明为准。
 
 ## 背景
 

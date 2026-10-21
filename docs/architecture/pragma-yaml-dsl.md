@@ -1,13 +1,14 @@
-# Pragma YAML DSL v3
+# Pragma YAML DSL
 
 Pragma DSL is the canonical, portable definition language for `Expert`, `ExpertTeam`, `Flow`,
 `Automation`, `Capability`, `ContextStore`, and `RuntimeProfile`. `@pragma/interpreter` owns parsing, linking,
 validation, environment resolution, compilation, locking, and normalized dumping. Core remains the
 execution object model and does not depend on the interpreter.
 
-`pragma/v3` removes semantic resource versions. The Interpreter owns the pure, bounded
-`pragma/v2`-to-`pragma/v3` DSL migration described by ADR 024, while Desktop owns the file
-transaction described by ADR 023. The normal parser and compiler accept only current DSL.
+The write/direct-read/upgrade-from versions are defined by the
+[DSL capability constants](../../packages/interpreter/src/ast/pragma-api-version.ts), not by this
+page. Historical v2→v3 identity migration is documented by [ADR 024](../adr/024-interpreter-owned-dsl-migrations.md).
+The examples below use the current write generation; historical inputs must pass their registered migrations.
 
 DSL `apiVersion`, Host/runtime-state `schemaVersion`, immutable project `revision`, and independently
 shipped adapter or plugin versions are separate compatibility axes. They do not share migration
@@ -36,13 +37,13 @@ That publication path applies to DSL `apiVersion` migrations that rewrite identi
 compiler compatibility path.
 
 Compiler compatibility is declared on a separate axis from DSL `apiVersion`. The current
-Interpreter writes and directly reads `pragma.dsl/v3`, while `pragma.dsl/v2` is only an upgrade
-source. Desktop supports mixed v4/v5 storage and upgrades only the requested v2 revision into a
-read-only, rebuildable v3 view. It does not rewrite the authoritative snapshot, revision manifest,
-project head, or unrelated history. The compiler migration validates the historical lock and
-removes the abandoned `Flow.spec.runDry` field without creating an Evaluation. A version may be
-advertised as directly readable only when the current parser accepts real revisions written by that
-version.
+Interpreter declares write, direct-read and upgrade-from versions in its
+[compiler capability constants](../../packages/interpreter/src/ast/compiler-compatibility.ts).
+Host upgrades only the requested Revision into a read-only, rebuildable derived view. It does not
+rewrite the authoritative snapshot, revision manifest, project head or unrelated history.
+Historical field conversion belongs to the corresponding adjacent migration, including removal of
+old embedded `Flow.spec.runDry`. A version is directly readable only when the current parser accepts
+real revisions written by that version.
 
 Application startup does not enumerate or migrate project history. Startup-critical shared state
 may fail closed, but project revision compatibility is checked at the revision access boundary.
@@ -67,7 +68,7 @@ pragma.lock.yaml
 ```
 
 ```yaml
-apiVersion: pragma/v3
+apiVersion: pragma/v5
 kind: Bundle
 imports:
   - ./runtime-profiles/7h8j9k0m1n2p3q4r.pragma.yaml
@@ -84,7 +85,7 @@ Machine-specific endpoints, credentials, live stores, and host tools are referen
 bindings and resolved only by the installation environment.
 
 ```yaml
-apiVersion: pragma/v3
+apiVersion: pragma/v5
 kind: Capability
 metadata:
   id: 5h6j7k8m9n0p1q2r
@@ -98,8 +99,10 @@ spec:
 
 Built-in versioned adapters cover Skill artifacts, MCP, HTTP and code capabilities; file, static,
 note and host context stores; host capabilities; and runtime profiles. New semantics are registered
-in `PragmaResourceAdapterRegistry` and never inferred from arbitrary YAML fields. Portable DSL,
-lock, and health objects are strict schemas: unknown keys are rejected instead of silently removed.
+in `PragmaResourceAdapterRegistry` and never inferred from arbitrary YAML fields. At current-generation resource/Bundle compatibility-read boundaries, unknown fields are retained
+recursively and reported as warnings; known fields remain strictly validated. Unknown resource
+discriminators, future apiVersion, Lock and integrity protocols fail closed. Host updates merge unknown
+fields at the shared persistence boundary rather than asking each editor to maintain a whitelist.
 
 An artifact source is either project-local or external and integrity-pinned:
 
@@ -142,7 +145,7 @@ from environment fingerprints; only store identity and connection configuration 
 ## Expert and resource invocation
 
 ```yaml
-apiVersion: pragma/v3
+apiVersion: pragma/v5
 kind: Expert
 metadata:
   id: 1h2j3k4m5n6p7q8r
@@ -150,6 +153,7 @@ metadata:
   description: Coordinates delivery
 spec:
   scope: Own the delivery outcome.
+  instructions: Coordinate the delivery, validate results, and report unresolved work.
   runtime: { ref: runtime-profile:7h8j9k0m1n2p3q4r }
   capabilities:
     - ref: capability:5h6j7k8m9n0p1q2r
@@ -160,9 +164,6 @@ spec:
     - ref: context-store:6h7j8k9m0n1p2q3r
       namespace: project_guide
       required: true
-  plugins:
-    - ref: plugin:pragma.memory@0.0.0
-      config: { task: { enabled: true } }
   tools:
     - adapter: pragma.tool.call@v1
       target: { ref: flow:3h4j5k6m7n8p9q0r }

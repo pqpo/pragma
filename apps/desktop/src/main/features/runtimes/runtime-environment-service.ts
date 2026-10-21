@@ -28,7 +28,10 @@ import type {
   RuntimeEnvironmentDefinition,
 } from "../../../shared/contracts/index.ts";
 import type { ModelProviderStore } from "@pragma/local-host/deployment";
-import { BUILT_IN_RUNTIME_DISPLAY_NAME } from "@pragma/local-host/deployment";
+import {
+  assertEmptyBuiltInRuntimeConfig,
+  BUILT_IN_RUNTIME_DISPLAY_NAME,
+} from "@pragma/local-host/deployment";
 
 export interface CreateBuiltInRuntimeFactoriesOptions {
   readonly modelProviders: ModelProviderStore;
@@ -57,7 +60,7 @@ export function createBuiltInRuntimeFactories(
     environment: RuntimeEnvironmentDefinition,
     agentContextWindow: number | undefined,
   ): Promise<RuntimeAdapter> {
-    assertEmptyRuntimeConfig(environment);
+    assertEmptyBuiltInRuntimeConfig(environment);
     return createPiRuntime({
       descriptor: { id: environment.id, displayName: BUILT_IN_RUNTIME_DISPLAY_NAME },
       modelProviders: options.modelProviders,
@@ -75,7 +78,7 @@ export function createBuiltInRuntimeFactories(
       id: "pragma.runtime.opencode",
       version: "v1",
       create: async (environment, context) => {
-        assertEmptyRuntimeConfig(environment);
+        assertEmptyBuiltInRuntimeConfig(environment);
         const [permissionMode, env] = await Promise.all([
           context?.toolPermissionMode ?? getToolPermissionMode(),
           getRuntimeProcessEnvironment("pragma.runtime.opencode"),
@@ -99,7 +102,7 @@ export function createBuiltInRuntimeFactories(
       id: "pragma.runtime.codex",
       version: "v1",
       create: async (environment, context) => {
-        assertEmptyRuntimeConfig(environment);
+        assertEmptyBuiltInRuntimeConfig(environment);
         const [permissionMode, env] = await Promise.all([
           context?.toolPermissionMode ?? getToolPermissionMode(),
           getRuntimeProcessEnvironment("pragma.runtime.codex"),
@@ -124,7 +127,7 @@ export function createBuiltInRuntimeFactories(
       id: "pragma.runtime.claude-code",
       version: "v1",
       create: async (environment, context) => {
-        assertEmptyRuntimeConfig(environment);
+        assertEmptyBuiltInRuntimeConfig(environment);
         const [permissionMode, env] = await Promise.all([
           context?.toolPermissionMode ?? getToolPermissionMode(),
           getRuntimeProcessEnvironment("pragma.runtime.claude-code"),
@@ -153,7 +156,7 @@ export function createBuiltInRuntimeFactories(
       id: "pragma.runtime.antigravity",
       version: "v1",
       create: async (environment, context) => {
-        assertEmptyRuntimeConfig(environment);
+        assertEmptyBuiltInRuntimeConfig(environment);
         const [permissionMode, env] = await Promise.all([
           context?.toolPermissionMode ?? getToolPermissionMode(),
           getRuntimeProcessEnvironment("pragma.runtime.antigravity"),
@@ -178,7 +181,7 @@ export function createBuiltInRuntimeFactories(
       id: "pragma.runtime.qodercli",
       version: "v1",
       create: async (environment, context) => {
-        assertEmptyRuntimeConfig(environment);
+        assertEmptyBuiltInRuntimeConfig(environment);
         const [permissionMode, env] = await Promise.all([
           context?.toolPermissionMode ?? getToolPermissionMode(),
           getRuntimeProcessEnvironment("pragma.runtime.qodercli"),
@@ -204,7 +207,7 @@ export function createBuiltInRuntimeFactories(
       create: async (environment) =>
         await createPiAdapter(environment, await options.getAgentContextWindow?.()),
       prepare: async (environment) => {
-        assertEmptyRuntimeConfig(environment);
+        assertEmptyBuiltInRuntimeConfig(environment);
         const agentContextWindow = await options.getAgentContextWindow?.();
         return {
           cacheKey: `agent-context-window=${agentContextWindow ?? "default"}`,
@@ -238,10 +241,4 @@ export function antigravityRuntimePermissionForMode(
   mode: DesktopToolPermissionMode,
 ): AntigravityRuntimePermissionMode {
   return mode;
-}
-
-function assertEmptyRuntimeConfig(environment: RuntimeEnvironmentDefinition): void {
-  if (Object.keys(environment.config).length > 0) {
-    throw new Error(`Built-in Runtime Environment config must be empty: ${environment.id}.`);
-  }
 }

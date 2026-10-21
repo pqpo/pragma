@@ -2,6 +2,8 @@
 
 日期：2026-10-08。关联：Issue #368。状态：Flow、DSL 与 Evaluation 默认 Schema 已按 2026-10-09 用户授权切换，部分验收待补齐。
 
+当前有效范围：Execution 私有管理通道、审批、幂等结果及 `manage-pragma` Skill。阶段一至三的命令名、数量和六 Skill 描述是历史过程；当前入口以[CLI Agent 指南](../usage/cli-agent.md)为准。分发已由[ADR 068](068-desktop-bundled-cli-and-terminal-registration.md)的完整随包 CLI 取代，不能照早期“轻量 client / 不修改 PATH”段落实现。用户授权的 cutover 与未完成验收证据保留。
+
 ## 决策
 
 管理命令复用 Built-in Agents 的工具 factory、权威 Schema 与 handler。Local Host 拥有静态
@@ -71,7 +73,7 @@ DSL apiVersion、compilerVersion、Core storage major 或已有持久 Schema，�
 默认 Pragma 的六个 Flow 工具。Pi Keychain、Qoder 额度和性能证据等缺口保留在验收记录中，
 不将用户授权切换等同于所有验收已通过。
 
-验收与未完成项见[第一阶段实施报告](../architecture/management-tools-cli-skills-phase-one-implementation.md)。
+验收与未完成项见[第一阶段实施报告](../archive/architecture/management-tools-cli-skills-phase-one-implementation.md)。
 
 ## PR 评论后的历史交接
 
@@ -103,7 +105,7 @@ Automation 等第三阶段内容仍保留原入口。
 据此移除 DSL 14 个与 Evaluation 7 个默认工具，Pi 默认数量 49 → 28；原定义和 handler
 继续用于 CLI、显式 binding 与 Revision Agent。CLI grants、审批和 owner/receipt 独立于模型目录。
 此前 prospective probe 数据保留；Pi Keychain、Qoder 额度、性能与平台等门禁继续未完成，
-不以此次授权切换宣称验收通过。详见[第二阶段实施记录](../architecture/management-tools-cli-skills-phase-two-implementation.md)。
+不以此次授权切换宣称验收通过。详见[第二阶段实施记录](../archive/architecture/management-tools-cli-skills-phase-two-implementation.md)。
 
 ## 第三阶段与统一 manage 命名空间（2026-10-09）
 
@@ -137,7 +139,7 @@ reference 从 DSL Skill 移走；原六组 handler 定义仍用于 CLI、显式 
 默认 Pragma management binding 保留 `tools: []`，Interpreter 已有 contribution hooks 仍能
 装配私有通道；不以删除整个 binding 的方式移除 Schema。默认 managed tools 为两个 Revision
 调用，Pi 默认口径为 13。真实 Runtime、发行与性能结果分别见
-[第三阶段实施报告](../architecture/management-tools-cli-skills-phase-three-implementation.md)，
+[第三阶段实施报告](../archive/architecture/management-tools-cli-skills-phase-three-implementation.md)，
 未通过门禁不因默认目录切换而关闭。
 
 ## 合并为 manage-pragma（2026-10-09 后续用户决策）
@@ -154,4 +156,4 @@ wire/storage Schema 或版本号，静态 content hash 与编译 fingerprint 随
 
 命令仍为 46 项、默认 Pi 工具仍为 13 项，授权与审批不因 Skill 合并扩张。阶段成本数据
 保留原测试时的六 Skill 配置；合并后的静态估算单独记录，不作为真实任务成本下降证明。
-[实施与验证记录](../architecture/management-tools-cli-skills-unified-skill-implementation.md)。
+[实施与验证记录](../archive/architecture/management-tools-cli-skills-unified-skill-implementation.md)。

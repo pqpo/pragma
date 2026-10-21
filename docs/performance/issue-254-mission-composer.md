@@ -1,5 +1,7 @@
 # Issue 254 Mission Composer performance record
 
+> 历史测量/调研：结论只适用于记录中的提交、版本与环境，不是当前状态或开发规范。当前入口见[文档索引](../README.md)。
+
 Date: 2026-09-18
 
 ## Method

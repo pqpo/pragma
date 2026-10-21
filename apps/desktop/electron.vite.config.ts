@@ -30,6 +30,7 @@ export default defineConfig(({ command }) => ({
             throw new Error("Desktop main output directory is missing.");
           await buildDesktopCli(output.dir, {
             minify: command === "build" && process.env.PRAGMA_BUILD_MINIFY !== "0",
+            development: command === "serve",
           });
           // A self-contained worker requires only this file outside ASAR, without
           // changing the packaging policy for main or its shared chunks.
@@ -73,7 +74,10 @@ export default defineConfig(({ command }) => ({
     build: {
       minify: command === "build" && process.env.PRAGMA_BUILD_MINIFY !== "0" ? "esbuild" : false,
       externalizeDeps: {
-        exclude: workspaceDependencies,
+        // predev builds workspace dist first. Load those packages through Node in
+        // development instead of rebundling every Runtime SDK on each launch.
+        // Distribution builds still include the complete workspace dependency graph.
+        exclude: command === "serve" ? [] : workspaceDependencies,
       },
       rollupOptions: {
         // ws treats these native accelerators as optional and catches a missing

@@ -1,5 +1,7 @@
 # Issue #348 R4 CR 后性能复验
 
+> 历史测量/调研：结论只适用于记录中的提交、版本与环境，不是当前状态或开发规范。当前入口见[文档索引](../README.md)。
+
 2026-10-04；Node 24.18.0 / pnpm 10.12.1，同机 macOS。全部测试、构建及 Agent 结束后，main→R4 串行两组，八场景每组每侧 20 次。真实持久化/编译/Host 资源，Runtime/health/凭据为 fixture。沿用 [CR 前方法与产品验收边界](local-host-kernel-r4-comparison.md)。
 
 修复后生产源码 1159 文件：`949681a946f34bd6c09274c7a8871a47d1028b5570ced64ce49507e2bf781aab`，两侧采样前后摘要一致。编译/缓存/pin 与 sourceUnchanged 断言全部通过。阈值：candidate P95 > main×1.1 且差值 >20ms；不足 20 个样本不计算百分位。

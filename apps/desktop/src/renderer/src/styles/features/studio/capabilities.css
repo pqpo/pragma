@@ -16,7 +16,7 @@
 
 .capability-sync-feedback {
   margin: 0 0 16px;
-  color: var(--ui-accent-strong);
+  color: var(--ui-text);
   font-size: 13px;
   line-height: 1.5;
 }
@@ -95,7 +95,7 @@
 }
 
 .capability-filters button.is-active {
-  background: #edf1ed;
+  background: var(--ui-selection);
   color: var(--text);
 }
 
@@ -113,7 +113,7 @@
 
 .capability-table-heading {
   min-height: 42px;
-  color: #778078;
+  color: var(--ui-text-secondary);
   font-size: 11px;
   font-weight: 650;
   letter-spacing: 0.04em;
@@ -163,10 +163,10 @@
 .capability-built-in-chip {
   flex: 0 0 auto;
   padding: 1px 6px;
-  border: 1px solid rgb(88 121 104 / 22%);
+  border: 1px solid var(--ui-line-strong);
   border-radius: 999px;
-  background: var(--green-soft);
-  color: var(--green-dark);
+  background: var(--ui-selection);
+  color: var(--ui-text);
   font-size: 10px;
   font-weight: 600;
   line-height: 1.4;
@@ -199,8 +199,8 @@
 .capability-type {
   padding: 4px 7px;
   border-radius: 5px;
-  background: #edf2ed;
-  color: #4f6556;
+  background: var(--ui-surface-subtle);
+  color: var(--ui-text-secondary);
   font-size: 11px;
   font-style: normal;
   font-weight: 650;
@@ -242,7 +242,7 @@
   padding: 5px 7px;
   border: 0;
   background: transparent;
-  color: var(--green-dark);
+  color: var(--ui-text);
   cursor: pointer;
   font-size: 12px;
   font-weight: 650;
@@ -262,7 +262,7 @@
   padding: 5px;
   border: 1px solid var(--border);
   border-radius: 9px;
-  background: #fff;
+  background: var(--ui-surface);
   box-shadow: var(--shadow-panel);
 }
 
@@ -284,7 +284,7 @@
 }
 
 .capability-row-actions .capability-row-menu button:focus-visible {
-  outline: 2px solid var(--green);
+  outline: 2px solid var(--ui-accent);
   outline-offset: -2px;
 }
 
@@ -304,7 +304,7 @@
   display: grid;
   padding: 24px;
   place-items: center;
-  background: rgb(29 33 31 / 36%);
+  background: rgb(var(--ui-shadow-rgb) / 36%);
   backdrop-filter: blur(2px);
 }
 
@@ -313,7 +313,7 @@
   padding: 25px;
   border: 1px solid var(--border);
   border-radius: 16px;
-  background: #fff;
+  background: var(--ui-surface);
   box-shadow: var(--shadow-panel);
 }
 
@@ -346,7 +346,7 @@
   inset: 0;
   display: flex;
   justify-content: flex-end;
-  background: rgb(30 37 32 / 22%);
+  background: rgb(var(--ui-shadow-rgb) / 22%);
 }
 
 .capability-drawer {
@@ -357,7 +357,7 @@
   overflow: auto;
   padding: 32px;
   background: var(--surface);
-  box-shadow: -12px 0 35px rgb(26 34 28 / 12%);
+  box-shadow: -12px 0 35px rgb(var(--ui-shadow-rgb) / 12%);
 }
 
 .capability-drawer.is-code-service {
@@ -399,6 +399,10 @@
   padding-top: 24px;
 }
 
+.capability-import-sources + .asset-git-import-form {
+  margin-top: 24px;
+}
+
 .capability-upload {
   display: grid;
   place-items: center;
@@ -421,7 +425,7 @@
 .capability-form-field {
   display: grid;
   gap: 7px;
-  color: #343d37;
+  color: var(--ui-text);
   font-size: 12px;
   font-weight: 650;
 }
@@ -439,7 +443,7 @@
   padding: 9px 11px;
   border: 1px solid var(--border-strong);
   border-radius: 7px;
-  background: #fff;
+  background: var(--ui-surface);
   color: var(--text);
   font: inherit;
   font-weight: 450;
@@ -481,7 +485,7 @@
 
 .capability-form .capability-auth-toggle:focus-within {
   border-radius: 4px;
-  outline: 2px solid var(--green);
+  outline: 2px solid var(--ui-accent);
   outline-offset: 3px;
 }
 
@@ -517,6 +521,7 @@
 .instructions-preview h2,
 .expert-capabilities h2,
 .capability-editor h2,
+.instructions-field h2,
 .review-summary h2 {
   font-size: 18px;
   font-weight: 690;
@@ -525,6 +530,7 @@
 
 .creator-preview p,
 .capability-editor > p,
+.instructions-field p,
 .review-summary > p {
   margin: 0;
   color: var(--muted);
@@ -537,7 +543,7 @@
 .capability-editor-field {
   display: grid;
   gap: 7px;
-  color: #2c342e;
+  color: var(--ui-text);
   font-size: 13px;
   font-weight: 650;
 }
@@ -562,14 +568,14 @@
   gap: 10px;
   padding: 0 10px;
   border-bottom: 1px solid var(--border);
-  color: #48534b;
+  color: var(--ui-text);
   font-size: 13px;
 }
 
 .capability-toggles input {
   width: 16px;
   min-height: 16px;
-  accent-color: var(--green);
+  accent-color: var(--ui-accent);
 }
 
 .expert-creator .creator-form-content,
@@ -726,7 +732,7 @@
   min-width: 0;
   border: 1px solid var(--border);
   border-radius: 11px;
-  background: #fff;
+  background: var(--ui-surface);
 }
 
 .capability-tool-list {
@@ -773,11 +779,11 @@
 
 .capability-tool-list-scroll > button:hover,
 .capability-tool-list-scroll > button.is-active {
-  background: #eff4f0;
+  background: var(--ui-selection);
 }
 
 .capability-tool-list-scroll > button.is-active {
-  box-shadow: inset 3px 0 var(--green);
+  box-shadow: inset 3px 0 var(--ui-text);
 }
 
 .capability-tool-list-scroll button strong {
@@ -846,7 +852,7 @@
   padding: 12px;
   border: 1px solid var(--border);
   border-radius: 7px;
-  background: #f5f7f5;
+  background: var(--ui-surface-subtle);
   font-size: 11px;
   line-height: 1.55;
   white-space: pre-wrap;
@@ -877,12 +883,6 @@
   color: var(--text);
   font-size: 11px;
   line-height: 1.55;
-}
-
-.capability-test-input:focus {
-  border-color: var(--green);
-  outline: 0;
-  box-shadow: 0 0 0 3px var(--focus-ring);
 }
 
 .capability-test-result {
@@ -928,7 +928,6 @@
   gap: 15px;
   margin-top: 10px;
   padding-top: 20px;
-  border-top: 1px solid var(--border);
 }
 
 .capability-section-heading {
@@ -957,8 +956,8 @@
   flex: 0 0 auto;
   padding: 5px 9px;
   border-radius: 999px;
-  background: var(--green-soft);
-  color: var(--green-dark);
+  background: var(--ui-selection);
+  color: var(--ui-text-secondary);
   font-size: 11px;
   font-weight: 680;
 }
@@ -984,8 +983,8 @@
 }
 
 .capability-summary-card:hover {
-  border-color: rgb(88 121 104 / 26%);
-  background: #fff;
+  border-color: var(--ui-line-strong);
+  background: var(--ui-surface);
   box-shadow: var(--shadow-hover);
   transform: translateY(-1px);
 }
@@ -1004,8 +1003,8 @@
   height: 34px;
   place-items: center;
   border-radius: 9px;
-  background: var(--green-soft);
-  color: var(--green-dark);
+  background: var(--ui-selection);
+  color: var(--ui-text-secondary);
 }
 
 .capability-summary-count {
@@ -1027,7 +1026,7 @@
 .expert-picker-heading > div > small {
   display: block;
   margin-bottom: 4px;
-  color: var(--green-dark);
+  color: var(--ui-text-secondary);
   font-size: 10px;
   font-weight: 720;
   letter-spacing: 0.08em;
@@ -1067,15 +1066,15 @@
   padding: 4px 7px;
   border: 1px solid var(--border);
   border-radius: 6px;
-  background: #fff;
-  color: #4d5850;
+  background: var(--ui-surface);
+  color: var(--ui-text-secondary);
   font-size: 10px;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
 .capability-summary-empty {
-  color: #909891;
+  color: var(--ui-text-disabled);
   font-size: 11px;
 }
 
@@ -1097,7 +1096,7 @@
   padding: 0;
   border: 0;
   background: transparent;
-  color: var(--green-dark);
+  color: var(--ui-text-secondary);
   cursor: pointer;
   font: inherit;
   font-size: 11px;
@@ -1403,8 +1402,8 @@
   height: 34px;
   place-items: center;
   border-radius: 9px;
-  background: var(--green-soft);
-  color: var(--green-dark);
+  background: var(--ui-selection);
+  color: var(--ui-text-secondary);
 }
 
 .plugin-declaration-group h3 {
@@ -1516,7 +1515,7 @@
 }
 
 .plugin-capability-declaration > header span {
-  color: var(--green-dark);
+  color: var(--ui-text);
 }
 
 .plugin-capability-declaration > p {
@@ -1621,7 +1620,7 @@
 .expert-context-section {
   border-color: transparent;
   border-radius: var(--radius-card);
-  background: #fff;
+  background: var(--ui-surface);
   box-shadow: var(--shadow-soft);
 }
 
@@ -1635,5 +1634,5 @@
 
 .capability-drawer-backdrop,
 .drawer-scrim {
-  background: rgb(26 34 29 / 28%);
+  background: rgb(var(--ui-shadow-rgb) / 28%);
 }

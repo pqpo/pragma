@@ -37,8 +37,7 @@
   height: 100%;
   place-items: center;
   padding: 64px;
-  background:
-    radial-gradient(circle at 50% 15%, rgb(145 163 151 / 8%), transparent 34%), var(--background);
+  background: var(--ui-canvas);
 }
 
 .desktop-fatal-error-card {
@@ -61,15 +60,15 @@
   place-items: center;
   margin-bottom: 4px;
   border-radius: 13px;
-  background: var(--green);
-  color: #fff;
+  background: var(--ui-surface-subtle);
+  color: var(--ui-text-secondary);
   font-size: 28px;
   font-weight: 700;
   line-height: 1;
 }
 
 .desktop-fatal-error-eyebrow {
-  color: var(--green-dark);
+  color: var(--ui-text-secondary);
   font-size: 12px;
   font-weight: 700;
   letter-spacing: 0.08em;
@@ -97,7 +96,7 @@
   padding: 5px 9px;
   border-radius: 7px;
   background: var(--surface-muted);
-  color: var(--green-dark);
+  color: var(--ui-text);
   font-size: 12px;
 }
 
@@ -152,7 +151,7 @@
   bottom: 0;
   left: 3px;
   width: 2px;
-  background: var(--ui-accent);
+  background: var(--ui-surface-subtle);
   content: "";
   opacity: 0;
   transition: opacity 120ms ease;
@@ -208,10 +207,10 @@
   height: 39px;
   place-items: center;
   overflow: hidden;
-  border: 1px solid #fff;
+  border: 1px solid var(--ui-surface);
   border-radius: 50%;
-  background: #fff;
-  box-shadow: 0 5px 14px rgb(69 100 84 / 18%);
+  background: var(--ui-surface);
+  box-shadow: 0 5px 14px rgb(var(--ui-shadow-rgb) / 18%);
 }
 
 .brand-mark img {
@@ -223,7 +222,7 @@
 }
 
 .brand-name {
-  color: #1f221f;
+  color: var(--ui-text);
   font-size: 30px;
   font-weight: 740;
   letter-spacing: -0.045em;
@@ -258,7 +257,7 @@
 }
 
 .sidebar-collapse-toggle:focus-visible {
-  outline: 2px solid var(--green);
+  outline: 2px solid var(--ui-accent);
   outline-offset: 2px;
 }
 
@@ -274,25 +273,54 @@
   position: relative;
   display: flex;
   width: 100%;
-  height: 48px;
+  height: 44px;
   align-items: center;
-  gap: 17px;
-  padding: 0 18px;
+  gap: 12px;
+  padding: 0 16px;
   border: 0;
-  border-radius: 9px;
+  border-radius: var(--ui-radius-md);
   background: transparent;
   color: var(--muted);
+  cursor: pointer;
+  font-weight: 500;
   text-align: left;
 }
 
 .navigation-item.is-active {
-  background: var(--surface-muted);
-  color: var(--green-dark);
+  background: var(--ui-selection);
+  color: var(--ui-text);
+  box-shadow: none;
 }
 
-.navigation-item span {
-  font-size: 15px;
-  font-weight: 520;
+.navigation-label {
+  font-size: 13px;
+  font-weight: 500;
+}
+
+.navigation-tooltip {
+  position: absolute;
+  z-index: 100;
+  top: 50%;
+  left: calc(100% + 4px);
+  width: max-content;
+  padding: 8px 12px;
+  border-radius: var(--ui-radius-lg);
+  background: var(--ui-text);
+  color: var(--ui-surface);
+  box-shadow: var(--ui-shadow-overlay);
+  font-size: 13px;
+  font-weight: 500;
+  line-height: 1.4;
+  opacity: 0;
+  pointer-events: none;
+  transform: translateY(-50%);
+  visibility: hidden;
+}
+
+.navigation-item:hover .navigation-tooltip,
+.navigation-item:focus-visible .navigation-tooltip {
+  opacity: 1;
+  visibility: visible;
 }
 
 .desktop-shell.is-sidebar-collapsed .brand {
@@ -300,7 +328,7 @@
   padding: 0;
 }
 
-.desktop-shell.is-sidebar-collapsed .navigation-item span {
+.desktop-shell.is-sidebar-collapsed .navigation-label {
   display: none;
 }
 
@@ -359,7 +387,7 @@
   inset: -3px;
   padding: 2px;
   border-radius: inherit;
-  background: conic-gradient(from 220deg, #60b39c, #89bf73 28%, #f0c96b 48%, #35a998 70%, #60b39c);
+  background: var(--ui-line-strong);
   content: "";
   mask:
     linear-gradient(#000 0 0) content-box,
@@ -378,18 +406,18 @@
   z-index: 2;
   top: -8px;
   right: -8px;
-  color: #dfaf48;
+  color: var(--ui-favorite);
   content: "✦";
   font-size: 13px;
   line-height: 1;
   opacity: 0;
   pointer-events: none;
-  text-shadow: 0 1px 8px rgb(240 201 107 / 62%);
+  text-shadow: 0 1px 8px rgb(var(--ui-shadow-rgb) / 62%);
   transform: scale(0.35) rotate(-20deg);
 }
 
 .brand:hover .brand-mark {
-  box-shadow: 0 5px 15px rgb(45 132 108 / 24%);
+  box-shadow: 0 5px 15px rgb(var(--ui-shadow-rgb) / 24%);
   transform: translateY(-1px) rotate(-2deg);
 }
 
@@ -445,30 +473,9 @@
   border-color: var(--ui-line);
 }
 
-.navigation-item {
-  height: 44px;
-  gap: 12px;
-  padding: 0 16px;
-  border: 0;
-  border-radius: var(--ui-radius-md);
-  cursor: pointer;
-  font-weight: 500;
-}
-
 .navigation-item:hover:not(:disabled) {
   background: var(--ui-surface-subtle);
   color: var(--ui-text);
-}
-
-.navigation-item.is-active {
-  background: var(--ui-selection);
-  color: var(--ui-accent-strong);
-  box-shadow: none;
-}
-
-.navigation-item span {
-  font-size: 13px;
-  font-weight: 500;
 }
 
 .navigation-item:disabled {
@@ -502,4 +509,79 @@
   .brand:hover .brand-mark::after {
     animation: none;
   }
+}
+
+.navigation-more {
+  position: relative;
+}
+
+.navigation-more-popover {
+  position: absolute;
+  z-index: 100;
+  bottom: 0;
+  left: 100%;
+  width: 248px;
+  padding-left: 8px;
+}
+
+.navigation-more-panel {
+  padding: 4px;
+  border: 1px solid var(--ui-line-strong);
+  border-radius: var(--ui-radius-lg);
+  background: var(--ui-surface);
+  box-shadow: var(--ui-shadow-overlay);
+}
+
+.navigation-more-row {
+  display: flex;
+  align-items: center;
+  border-radius: var(--ui-radius-md);
+}
+
+.navigation-more-row:hover {
+  background: var(--ui-surface-subtle);
+}
+
+.navigation-more-link {
+  display: flex;
+  min-width: 0;
+  min-height: 40px;
+  flex: 1;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 12px;
+  border: 0;
+  border-radius: var(--ui-radius-md);
+  background: transparent;
+  color: var(--ui-text);
+  cursor: pointer;
+  text-align: left;
+  font-size: 13px;
+  font-weight: 500;
+}
+
+.navigation-more-link.is-active,
+.navigation-pin[aria-pressed="true"] {
+  color: var(--ui-text);
+  background: var(--ui-selection);
+}
+
+.navigation-pin {
+  display: grid;
+  width: 32px;
+  height: 32px;
+  flex: 0 0 auto;
+  place-items: center;
+  margin-right: 4px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--ui-radius-md);
+  background: transparent;
+  color: var(--ui-text-secondary);
+  cursor: pointer;
+}
+
+.navigation-pin:hover {
+  background: var(--ui-selection);
+  color: var(--ui-text);
 }

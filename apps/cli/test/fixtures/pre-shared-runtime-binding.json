@@ -1,0 +1,42 @@
+{
+  "writer": "origin/main production static CLI resolver, before Issue 399 configuration closeout",
+  "binding": {
+    "runtimeId": "codex",
+    "revision": 1,
+    "fingerprint": "7606e4f1c1a69c2704b376720be36077066d550bbd5c054d2c81ca0438d8cae6"
+  },
+  "descriptor": {
+    "id": "codex-local",
+    "kind": "codex-local",
+    "displayName": "Codex Local",
+    "capabilities": {
+      "targets": ["agent"],
+      "executionLocations": ["local"],
+      "supportsStreaming": true,
+      "supportsAbort": true,
+      "supportsMcp": true,
+      "supportsResume": true,
+      "supportsSteer": true,
+      "supportsCancel": true,
+      "supportsClose": true,
+      "supportsContextWindowInspection": true,
+      "supportsManualCompaction": true,
+      "supportsContextCompactionEvents": true
+    }
+  },
+  "models": [
+    {
+      "id": "legacy-model",
+      "displayName": "Legacy model",
+      "provider": {
+        "id": "openai",
+        "kind": "registered",
+        "displayName": "OpenAI"
+      },
+      "default": true,
+      "inputModalities": ["text"]
+    }
+  ],
+  "writerCommit": "eb458180f808ed57ec47d9a212bf18544aef4bfc",
+  "catalogProvenance": "Deterministic listModels port supplied to the historical concrete Codex adapter; the historical static resolver wrote the descriptor and binding without changing any version fields."
+}

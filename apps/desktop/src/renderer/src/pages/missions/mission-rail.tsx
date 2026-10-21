@@ -65,11 +65,8 @@ export function MissionsPageSkeleton(props: {
           <span className="mission-skeleton-block" />
         </div>
         <div className="mission-skeleton-body">
-          <span className="mission-skeleton-block mission-skeleton-message" />
-          <span className="mission-skeleton-block mission-skeleton-message is-wide" />
-          <span className="mission-skeleton-block mission-skeleton-message is-short" />
+          <MissionChatSkeleton label={props.label} />
         </div>
-        <span className="mission-skeleton-block mission-skeleton-composer" />
       </div>
     </section>
   );
@@ -97,11 +94,8 @@ export function MissionDetailSkeleton(props: {
           <span className="mission-skeleton-block" />
         </div>
         <div className="mission-skeleton-body">
-          <span className="mission-skeleton-block mission-skeleton-message" />
-          <span className="mission-skeleton-block mission-skeleton-message is-wide" />
-          <span className="mission-skeleton-block mission-skeleton-message is-short" />
+          <MissionChatSkeleton label={props.label} />
         </div>
-        <span className="mission-skeleton-block mission-skeleton-composer" />
       </div>
     </div>
   );

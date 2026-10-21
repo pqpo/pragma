@@ -1,5 +1,7 @@
 # 阶段二真实复测与阶段三调整
 
+> 历史测量/调研：结论只适用于记录中的提交、版本与环境，不是当前状态或开发规范。当前入口见[文档索引](../README.md)。
+
 2026-10-01，Desktop 开发进程 0.2.49，boot `1bde4503-adda-4404-a01e-972252ddfc99`。
 采样窗口为北京时间 12:12:30–12:13:30；Mission `baa945eb-646d-4065-a29a-e980f8e07ddf`。
 三轮复用同一 ExpertSession、根 Context 和 Pi Runtime Session。两次后续发送时，上轮 Session active binding 已释放，observer 仍在收尾。

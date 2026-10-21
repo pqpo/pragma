@@ -11,10 +11,10 @@
   align-items: center;
   gap: 6px;
   padding: 6px 10px;
-  border: 1px solid rgb(88 121 104 / 32%);
+  border: 1px solid var(--ui-line-strong);
   border-radius: var(--radius-control);
-  background: var(--green-soft);
-  color: var(--green-dark);
+  background: var(--ui-selection);
+  color: var(--ui-text);
   cursor: pointer;
   font: inherit;
   font-size: 11px;
@@ -22,8 +22,8 @@
 }
 
 .team-permissions-connect-all:hover:not(:disabled) {
-  border-color: rgb(88 121 104 / 48%);
-  background: color-mix(in srgb, var(--green-soft) 78%, var(--green) 22%);
+  border-color: var(--ui-line-strong);
+  background: var(--ui-surface-subtle);
 }
 
 .team-permissions-connect-all:focus-visible {
@@ -62,7 +62,7 @@
   border: 1px solid var(--border);
   border-radius: var(--ui-radius-md);
   background: var(--text);
-  color: #fff;
+  color: var(--ui-surface);
   font-size: 11px;
   font-weight: 450;
   line-height: 1.5;
@@ -118,11 +118,11 @@
 .team-permission-members > button:hover,
 .team-permission-members > button.is-active {
   background: var(--surface);
-  box-shadow: 0 1px 4px rgb(25 42 32 / 8%);
+  box-shadow: 0 1px 4px rgb(var(--ui-shadow-rgb) / 8%);
 }
 
 .team-permission-members > button.is-active > svg {
-  color: var(--green-dark);
+  color: var(--ui-text-secondary);
 }
 
 .team-permission-members > button > span {
@@ -203,12 +203,12 @@
 }
 
 .team-permission-cards > button:hover {
-  border-color: rgb(88 121 104 / 35%);
+  border-color: var(--ui-line-strong);
   background: var(--surface-soft);
 }
 
 .team-permission-cards > button:focus-visible {
-  border-color: var(--green);
+  border-color: var(--ui-accent);
   outline: 0;
   box-shadow: 0 0 0 3px var(--focus-ring);
 }
@@ -241,7 +241,7 @@
 }
 
 .team-permission-card-summary b {
-  color: var(--green-dark);
+  color: var(--ui-text-secondary);
   font-size: 10px;
 }
 
@@ -265,7 +265,7 @@
   gap: 0.25rem;
   padding: 0.75rem 1rem;
   border-radius: 0.6rem;
-  background: color-mix(in srgb, var(--accent) 9%, transparent);
+  background: var(--ui-surface-subtle);
 }
 
 .team-coordinator-authority span {

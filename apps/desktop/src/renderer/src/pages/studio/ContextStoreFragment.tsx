@@ -6,8 +6,8 @@ import {
   Database,
   DownloadSimple,
   FileText,
-  FilePlus,
-  FolderPlus,
+  Circle,
+  RadioButton,
   FloppyDisk,
   Folder,
   GearSix,
@@ -83,6 +83,7 @@ type ContextStoreDeleteError = {
 export type ContextStoreMissionMountCheck = {
   readonly storeId: string;
   readonly status: "checking" | "mounted" | "unmounted" | "unknown";
+  readonly count?: number;
 };
 
 export function contextStoreDeleteError(error: unknown): ContextStoreDeleteError {
@@ -97,7 +98,7 @@ export function contextStoreDeleteCheckPending(
   check: ContextStoreMissionMountCheck | null,
   storeId: string,
 ): boolean {
-  return check?.storeId !== storeId || check.status === "checking";
+  return check?.storeId !== storeId || check.status === "checking" || check.status === "unknown";
 }
 
 export function firstContextStoreFile(
@@ -354,13 +355,14 @@ export function ContextStoreDetailFragment(props: {
       .then(async () =>
         api === undefined
           ? undefined
-          : await api.isContextStoreMountedInMission({ storeId: props.store.id }),
+          : await api.countContextStoreMissionReferences({ storeId: props.store.id }),
       )
-      .then((mounted) => {
+      .then((count) => {
         if (active) {
           setMissionMountCheck({
             storeId: props.store.id,
-            status: mounted === undefined ? "unknown" : mounted ? "mounted" : "unmounted",
+            status: count === undefined ? "unknown" : count > 0 ? "mounted" : "unmounted",
+            ...(count === undefined ? {} : { count }),
           });
         }
       })
@@ -782,6 +784,7 @@ export function ContextStoreDetailFragment(props: {
       await props.onDelete();
     } catch (cause) {
       setDeleteError(contextStoreDeleteError(cause));
+      setMissionMountCheck({ storeId: props.store.id, status: "checking" });
     } finally {
       setDeleting(false);
     }
@@ -1148,21 +1151,27 @@ export function ContextStoreDetailFragment(props: {
         <StudioConfirmationDialog
           title={t("deleteKnowledgeBase")}
           description={t("deleteKnowledgeBaseDescription", { name: props.store.name })}
-          warning={hasMissionMounts ? t("knowledgeBaseMissionMountWarning") : null}
+          warning={
+            hasMissionMounts
+              ? t("knowledgeBaseMissionMountWarning", { count: missionMountCheck?.count })
+              : null
+          }
           error={
-            deleteBlockedByRevisionDrafts
-              ? t("knowledgeBaseRevisionTasksBlocked")
-              : deleteError?.code === "draft_unreadable"
-                ? t("knowledgeBaseRevisionDraftUnreadable")
-                : deleteBlockedByReferences
-                  ? t("knowledgeBaseStillReferenced")
-                  : deleteMissionUnmountFailed
-                    ? t("knowledgeBaseMissionUnmountFailed")
-                    : deleteActiveMission
-                      ? t("knowledgeBaseActiveMission")
-                      : deleteMissionMessagesPending
-                        ? t("knowledgeBaseMissionMessagesPending")
-                        : deleteError?.message
+            missionMountCheck?.status === "unknown"
+              ? t("knowledgeBaseMissionCountFailed")
+              : deleteBlockedByRevisionDrafts
+                ? t("knowledgeBaseRevisionTasksBlocked")
+                : deleteError?.code === "draft_unreadable"
+                  ? t("knowledgeBaseRevisionDraftUnreadable")
+                  : deleteBlockedByReferences
+                    ? t("knowledgeBaseStillReferenced")
+                    : deleteMissionUnmountFailed
+                      ? t("knowledgeBaseMissionUnmountFailed")
+                      : deleteActiveMission
+                        ? t("knowledgeBaseActiveMission")
+                        : deleteMissionMessagesPending
+                          ? t("knowledgeBaseMissionMessagesPending")
+                          : deleteError?.message
           }
           errorAction={
             deleteBlockedByRevisionDrafts && props.onOpenRevisions !== undefined
@@ -1196,6 +1205,7 @@ export function ContextStoreCreatorDrawer(props: {
   readonly mountExpertName?: string;
 }) {
   const { t } = useTranslation("studio");
+  const methodGroupId = useId();
   const [step, setStep] = useState<CreateStep>("intro");
   const [creationSource, setCreationSource] = useState<"local" | "git">("local");
   const [mode, setMode] = useState<CreateMode>("blank");
@@ -1288,7 +1298,7 @@ export function ContextStoreCreatorDrawer(props: {
                 <p>{t("markdownKnowledgeBaseDescription")}</p>
               </div>
               <div className="store-type-options">
-                <div className="is-selected">
+                <div>
                   <Folder size={26} />
                   <span>
                     <strong>Markdown</strong>
@@ -1305,34 +1315,80 @@ export function ContextStoreCreatorDrawer(props: {
             <>
               <div className="drawer-copy">
                 <h3>{t("configureKnowledgeBase")}</h3>
-                <p>{t("configureKnowledgeBaseDescription")}</p>
               </div>
-              <div className="knowledge-create-modes">
-                <button
-                  className={creationSource === "local" ? "is-selected" : ""}
-                  type="button"
-                  onClick={() => setCreationSource("local")}
-                >
-                  <FilePlus size={23} />
-                  <span>
-                    <strong>{t("assetGit.localCreate")}</strong>
-                    <small>{t("createKnowledgeBaseDescription")}</small>
-                  </span>
-                </button>
-                {props.onGitImported ? (
-                  <button
-                    className={creationSource === "git" ? "is-selected" : ""}
-                    type="button"
-                    onClick={() => setCreationSource("git")}
-                  >
-                    <GitBranch size={23} />
-                    <span>
-                      <strong>{t("assetGit.import")}</strong>
-                      <small>{t("assetGit.importDescription")}</small>
-                    </span>
-                  </button>
-                ) : null}
-              </div>
+              <fieldset className="knowledge-create-methods">
+                <legend>{t("creationMethod")}</legend>
+                {(
+                  [
+                    {
+                      value: "blank",
+                      icon: FileText,
+                      title: t("blankKnowledgeBase"),
+                      description: t("blankKnowledgeBaseDescription"),
+                    },
+                    {
+                      value: "import",
+                      icon: Folder,
+                      title: t("importKnowledgeBase"),
+                      description: t("importKnowledgeBaseDescription"),
+                    },
+                    ...(props.onGitImported
+                      ? [
+                          {
+                            value: "git",
+                            icon: GitBranch,
+                            title: t("assetGit.import"),
+                            description: t("assetGit.importDescription"),
+                          },
+                        ]
+                      : []),
+                  ] as const
+                ).map((method) => {
+                  const selected =
+                    creationSource === "git" ? method.value === "git" : method.value === mode;
+                  const Icon = method.icon;
+                  return (
+                    <label
+                      className={`knowledge-create-method${selected ? " is-selected" : ""}`}
+                      key={method.value}
+                    >
+                      <input
+                        type="radio"
+                        name={methodGroupId}
+                        value={method.value}
+                        autoFocus={selected}
+                        checked={selected}
+                        onChange={() => {
+                          setCreationSource(method.value === "git" ? "git" : "local");
+                          if (method.value === "blank" || method.value === "import") {
+                            setMode(method.value);
+                          }
+                          setError(null);
+                        }}
+                      />
+                      <Icon size={20} aria-hidden="true" />
+                      <span className="knowledge-create-method-copy">
+                        <span>{method.title}</span>
+                        <small>{method.description}</small>
+                      </span>
+                      {selected ? (
+                        <RadioButton
+                          className="knowledge-create-method-indicator"
+                          size={20}
+                          weight="fill"
+                          aria-hidden="true"
+                        />
+                      ) : (
+                        <Circle
+                          className="knowledge-create-method-indicator"
+                          size={20}
+                          aria-hidden="true"
+                        />
+                      )}
+                    </label>
+                  );
+                })}
+              </fieldset>
               {creationSource === "git" && props.onGitImported ? (
                 <AssetGitImportForm
                   kind="knowledge"
@@ -1343,30 +1399,6 @@ export function ContextStoreCreatorDrawer(props: {
                 />
               ) : (
                 <>
-                  <div className="knowledge-create-modes">
-                    <button
-                      className={mode === "blank" ? "is-selected" : ""}
-                      type="button"
-                      onClick={() => setMode("blank")}
-                    >
-                      <FilePlus size={23} />
-                      <span>
-                        <strong>{t("blankKnowledgeBase")}</strong>
-                        <small>{t("blankKnowledgeBaseDescription")}</small>
-                      </span>
-                    </button>
-                    <button
-                      className={mode === "import" ? "is-selected" : ""}
-                      type="button"
-                      onClick={() => setMode("import")}
-                    >
-                      <FolderPlus size={23} />
-                      <span>
-                        <strong>{t("importKnowledgeBase")}</strong>
-                        <small>{t("importKnowledgeBaseDescription")}</small>
-                      </span>
-                    </button>
-                  </div>
                   <div className="store-config-form">
                     <label>
                       {t("name")}
@@ -1381,7 +1413,6 @@ export function ContextStoreCreatorDrawer(props: {
                             ),
                           )
                         }
-                        autoFocus
                       />
                       <CharacterCount value={name} max={PRAGMA_TEXT_LIMITS.contextStore.name} />
                     </label>
@@ -1430,7 +1461,10 @@ export function ContextStoreCreatorDrawer(props: {
                         ) : null}
                       </div>
                     ) : (
-                      <p className="store-availability-note">{t("managedLocationNote")}</p>
+                      <p className="knowledge-create-location">
+                        <Folder size={16} aria-hidden="true" />
+                        {t("managedLocationNote")}
+                      </p>
                     )}
                   </div>
                 </>

@@ -16,16 +16,16 @@
 
 .primary-button {
   padding: 0 13px;
-  border: 1px solid var(--green-dark);
-  background: var(--green);
-  color: #fff;
+  border: 1px solid var(--ui-accent);
+  background: var(--ui-accent);
+  color: var(--ui-surface);
 }
 
 .secondary-button {
   padding: 0 12px;
   border: 1px solid var(--border-strong);
-  background: #f8faf7;
-  color: #435047;
+  background: var(--ui-surface-subtle);
+  color: var(--ui-text);
   white-space: nowrap;
 }
 
@@ -34,7 +34,7 @@
   padding: 5px;
   border: 0;
   background: transparent;
-  color: var(--green-dark);
+  color: var(--ui-text);
 }
 
 .danger-button {
@@ -83,9 +83,9 @@
 }
 
 .studio-action-button:hover:not(:disabled) {
-  border-color: var(--ui-accent);
+  border-color: var(--ui-line-strong);
   background: var(--ui-surface-subtle);
-  color: var(--ui-accent-strong);
+  color: var(--ui-text);
 }
 
 .studio-action-button:focus-visible {
@@ -135,7 +135,7 @@
   max-width: min(260px, calc(100vw - 48px));
   padding: 7px 9px;
   border-radius: var(--ui-radius-md);
-  background: var(--ui-accent-strong);
+  background: var(--ui-text);
   color: var(--ui-surface);
   font-size: 12px;
   font-weight: 500;
@@ -196,7 +196,7 @@
 .danger-button:focus-visible,
 .text-button:focus-visible,
 .icon-button:focus-visible {
-  outline: 2px solid var(--green);
+  outline: 2px solid var(--ui-accent);
   outline-offset: 2px;
 }
 
@@ -216,7 +216,7 @@
   padding: 0;
   border: 0;
   background: transparent;
-  color: var(--green-dark);
+  color: var(--ui-text);
   cursor: pointer;
   font-size: 14px;
   font-weight: 620;

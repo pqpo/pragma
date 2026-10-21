@@ -88,7 +88,7 @@
   border: 0;
   border-radius: var(--ui-radius-md);
   background: transparent;
-  color: var(--green-dark);
+  color: var(--ui-text);
   cursor: pointer;
   font: inherit;
   font-size: 12px;
@@ -99,7 +99,7 @@
 .mission-memory-back:focus-visible {
   outline: 0;
   background: var(--surface-soft);
-  box-shadow: 0 0 0 3px var(--ui-focus);
+  box-shadow: 0 0 0 3px rgb(var(--ui-shadow-rgb) / 20%);
 }
 
 .mission-memory-empty h2,
@@ -270,7 +270,7 @@
 }
 .mission-memory-row-action {
   flex: none;
-  color: var(--ui-accent-strong);
+  color: var(--ui-text);
   font-size: 13px;
   font-weight: 500;
 }
@@ -337,7 +337,7 @@
   padding: 0;
   border: 0;
   background: transparent;
-  color: var(--ui-accent-strong);
+  color: var(--ui-text);
   font-size: 14px;
   text-align: left;
   overflow-wrap: anywhere;
@@ -439,10 +439,10 @@
   align-items: center;
   gap: 9px;
   padding: 9px 11px;
-  border: 1px solid #dce7df;
+  border: 1px solid var(--ui-line);
   border-radius: 10px;
-  background: #f7faf8;
-  color: var(--green-dark);
+  background: var(--ui-surface-subtle);
+  color: var(--ui-text);
   font-size: 12px;
 }
 
@@ -501,14 +501,14 @@
 }
 
 .mission-context-operation-tip {
-  color: var(--green-dark);
+  color: var(--ui-text-secondary);
 }
 
 .mission-context-window {
   position: relative;
   display: grid;
   place-items: center;
-  color: var(--green);
+  color: var(--ui-text);
 }
 
 .mission-context-trigger {
@@ -533,10 +533,10 @@
   width: 13px;
   height: 13px;
   place-items: center;
-  border: 2px solid #fff;
+  border: 2px solid var(--ui-surface);
   border-radius: 50%;
   background: #bd3f3f;
-  color: #fff;
+  color: var(--ui-surface);
   font-size: 9px;
   font-weight: 800;
   line-height: 1;
@@ -545,11 +545,11 @@
 .mission-context-trigger:hover,
 .mission-context-trigger:focus-visible,
 .mission-context-trigger[aria-expanded="true"] {
-  background: #eef5f0;
+  background: var(--ui-surface-subtle);
 }
 
 .mission-context-trigger:focus-visible {
-  outline: 2px solid var(--green);
+  outline: 2px solid var(--ui-accent);
   outline-offset: 1px;
 }
 
@@ -567,7 +567,7 @@
 }
 
 .mission-context-track {
-  stroke: #dfe6e1;
+  stroke: var(--ui-text-disabled);
 }
 
 .mission-context-progress {
@@ -593,9 +593,9 @@
   padding: 14px;
   border: 1px solid var(--border);
   border-radius: 12px;
-  background: #fff;
+  background: var(--ui-surface);
   color: var(--text);
-  box-shadow: 0 14px 36px rgb(29 49 38 / 16%);
+  box-shadow: 0 14px 36px rgb(var(--ui-shadow-rgb) / 16%);
 }
 
 .mission-context-heading,
@@ -667,8 +667,8 @@
   padding: 7px 11px;
   border: 0;
   border-radius: 8px;
-  background: var(--green);
-  color: #fff;
+  background: var(--ui-accent);
+  color: var(--ui-surface);
   cursor: pointer;
   font: inherit;
   font-size: 12px;
@@ -676,12 +676,12 @@
 }
 
 .mission-context-compact:disabled {
-  background: #cad1cc;
+  background: var(--ui-control-disabled);
   cursor: not-allowed;
 }
 
 .mission-context-compact:focus-visible {
-  outline: 2px solid var(--green);
+  outline: 2px solid var(--ui-accent);
   outline-offset: 2px;
 }
 
@@ -789,7 +789,7 @@
 }
 
 .mission-tool-entry.is-succeeded summary > svg:last-child {
-  color: var(--green);
+  color: var(--ui-success);
 }
 
 .mission-tool-entry.is-succeeded summary > small,
@@ -808,19 +808,19 @@
 }
 
 .mission-tool-entry summary:hover > span {
-  color: var(--green-dark);
+  color: var(--ui-text-secondary);
 }
 
 .mission-tool-entry.is-agent-lifecycle {
   padding: 1px 9px;
-  border: 1px solid rgb(88 121 104 / 17%);
+  border: 1px solid var(--ui-line-strong);
   border-radius: 9px;
-  background: var(--green-soft);
+  background: var(--ui-selection);
 }
 
 .mission-tool-entry.is-agent-lifecycle summary > svg:first-child,
 .mission-tool-entry.is-agent-lifecycle.mission-tool-static-row > svg:first-child {
-  color: var(--green-dark);
+  color: var(--ui-text-secondary);
 }
 
 .mission-tool-group > summary > span {
@@ -875,8 +875,8 @@
   margin: 0;
   padding: 10px;
   border-radius: var(--ui-radius-md);
-  background: #f4f6f5;
-  color: #445048;
+  background: var(--ui-surface-subtle);
+  color: var(--ui-text);
   font-family: "SFMono-Regular", Consolas, monospace;
   font-size: 11px;
   line-height: 1.55;
@@ -1053,11 +1053,6 @@
   line-height: 1.5;
 }
 
-.mission-human-composer textarea:focus-visible {
-  border-color: var(--ui-accent);
-  box-shadow: 0 0 0 3px var(--ui-focus);
-}
-
 .mission-human-options {
   display: grid;
   grid-template-columns: minmax(0, 1fr);
@@ -1087,14 +1082,14 @@
 
 .mission-human-options > button:not(.is-selected):hover,
 .mission-human-options > label:not(.is-selected):hover {
-  background: var(--ui-surface-subtle);
+  background: var(--ui-selection);
 }
 
 .mission-human-options > button.is-selected,
 .mission-human-options > label.is-selected {
-  border-color: var(--ui-accent);
+  border-color: var(--ui-line-strong);
   background: var(--ui-selection);
-  color: var(--ui-accent-strong);
+  color: var(--ui-text-secondary);
 }
 
 .mission-human-options > button:focus-visible {
@@ -1175,11 +1170,6 @@
   color: var(--ui-text);
   font: inherit;
   font-size: 13px;
-}
-
-.mission-human-custom-answer:focus-within {
-  border-color: var(--ui-accent);
-  box-shadow: 0 0 0 3px var(--ui-focus);
 }
 
 .mission-human-custom-answer > input:focus-visible {
@@ -1342,7 +1332,7 @@
   padding: 20px 16px 16px;
   border: 1px solid var(--border);
   border-radius: 16px;
-  background: #fff;
+  background: var(--ui-surface);
   color: var(--text);
   cursor: pointer;
   text-align: center;
@@ -1363,11 +1353,11 @@
 
 .mission-work-card:hover,
 .mission-work-card:focus-visible {
-  border-color: rgb(88 121 104 / 32%);
+  border-color: var(--ui-line-strong);
   outline: 0;
   box-shadow:
-    0 0 0 3px var(--focus-ring),
-    0 12px 28px rgb(34 57 44 / 9%);
+    0 0 0 3px rgb(var(--ui-shadow-rgb) / 20%),
+    0 12px 28px color-mix(in srgb, var(--ui-text) 9%, transparent);
   transform: translateY(-2px);
 }
 
@@ -1386,10 +1376,10 @@
   height: 22px;
   place-items: center;
   padding-inline: 6px;
-  border: 1px solid rgb(74 103 87 / 18%);
+  border: 1px solid var(--ui-line-strong);
   border-radius: 999px;
   background: var(--surface-muted);
-  color: var(--green-dark);
+  color: var(--ui-text-secondary);
   font-size: 10px;
   font-weight: 720;
   letter-spacing: 0.03em;
@@ -1432,7 +1422,7 @@
   height: 8px;
   margin-top: 6px;
   border-radius: 50%;
-  background: #aeb4af;
+  background: var(--ui-control-disabled);
 }
 
 .mission-work-card-avatar > .mission-work-status {
@@ -1442,7 +1432,7 @@
   width: 11px;
   height: 11px;
   margin: 0;
-  border: 2px solid #fff;
+  border: 2px solid var(--ui-surface);
 }
 
 .mission-work-grid-connections {
@@ -1456,12 +1446,12 @@
 }
 
 .mission-work-grid-connections marker path {
-  fill: #687d71;
+  fill: var(--ui-text-secondary);
 }
 
 .mission-work-grid-connection {
   fill: none;
-  stroke: #82958a;
+  stroke: var(--ui-text-disabled);
   stroke-dasharray: 6 7;
   stroke-linecap: round;
   stroke-linejoin: round;
@@ -1487,11 +1477,11 @@
 }
 
 .mission-work-status.is-queued {
-  background: #89938c;
+  background: var(--ui-control-disabled);
 }
 
 .mission-work-status.is-succeeded {
-  background: var(--green);
+  background: var(--ui-success);
 }
 
 .mission-work-status.is-failed,
@@ -1528,7 +1518,7 @@
   height: 100%;
   padding: 0;
   border: 0;
-  background: rgb(26 34 29 / 28%);
+  background: rgb(var(--ui-shadow-rgb) / 28%);
   cursor: default;
 }
 
@@ -1543,8 +1533,8 @@
   max-width: calc(100vw - 48px);
   grid-template-rows: auto minmax(0, 1fr);
   overflow: hidden;
-  background: #fff;
-  box-shadow: -14px 0 38px rgb(30 41 33 / 15%);
+  background: var(--ui-surface);
+  box-shadow: -14px 0 38px rgb(var(--ui-shadow-rgb) / 15%);
 }
 
 .mission-work-drawer > header {
@@ -1562,7 +1552,7 @@
 }
 
 .mission-work-drawer > header small {
-  color: var(--green-dark);
+  color: var(--ui-text);
   font-size: 10px;
   font-weight: 700;
   letter-spacing: 0.07em;
@@ -1590,7 +1580,7 @@
   display: inline-flex;
   align-items: center;
   gap: 4px;
-  color: var(--green-dark);
+  color: var(--ui-accent-strong);
 }
 
 .mission-work-streaming svg {
@@ -1615,7 +1605,7 @@
 .mission-work-drawer > header > button:focus-visible {
   outline: 0;
   background: var(--surface-muted);
-  box-shadow: 0 0 0 3px var(--focus-ring);
+  box-shadow: 0 0 0 3px rgb(var(--ui-shadow-rgb) / 20%);
 }
 
 .mission-work-drawer-body {
@@ -1673,7 +1663,7 @@
 }
 
 :is(.trigger-options > label, .expert-picker-row):has(input:focus-visible) {
-  border-color: var(--green);
+  border-color: var(--ui-accent);
   box-shadow: 0 0 0 3px var(--focus-ring);
 }
 

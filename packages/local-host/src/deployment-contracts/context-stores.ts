@@ -18,6 +18,7 @@ export {
   DeleteContextStoreSchema,
   ContextStoreMissionMountCheckSchema,
   ContextStoreMissionMountCheckResultSchema,
+  ContextStoreMissionReferenceCountSchema,
   ContextStoreContentMetadataSchema,
   ContextStoreContentSummarySchema,
   ContextStoreContentSchema,

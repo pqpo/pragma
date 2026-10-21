@@ -42,6 +42,22 @@ unfinished types and preserves published Memory. Completed-history limits count 
 and do not evict a successful half while its companion remains unfinished. Module delivery
 counters are not a count of fresh model conversations. The shared Session owns model admission.
 
+Conversation retry and fresh restart now commit through one bounded
+`state/memory/conversation-retry-v1.json` journal under the same lock as conversation admission.
+The journal pins the source watermarks, job revisions and pre-retry Session generations. Recovery
+runs before the next claim, completes partially written deliveries and does not increment a Session
+retry generation twice. New source snapshots and newer delivery transitions supersede old retry
+intent, including lifecycle updates and later failure/cancellation; recovery never overwrites them.
+Backwards revisions and future journal formats fail closed. This is a new journal namespace; existing Session/job database
+formats and their migration chains are unchanged.
+
+Local Host marks first-run readiness/compilation failures with process-local proof that Native
+execution has not started. This proof belongs to one Mission and can be consumed only once, so
+reusing an Error cannot withdraw another Mission's admission. Curator withdraws its persisted
+admission only with this proof, allowing
+the repaired task to start in its original Mission. Missing projections, matching error messages
+and unknown failures are not proof, and continue to block potentially billable replay.
+
 The existing Session database upgrades lazily through SQLite versions 1 → 2 → 3 to
 `pragma.memory-curator-session/v3`; its existing filename is retained. The aggregate records
 `toolContractVersion`. Migrated sessions retain contract 1, original tools/DSL and Native conversation;
@@ -214,6 +230,15 @@ Runtime diagnostics are supplementary: after bounded read retries, failure recor
 retains the existing provenance fields, and still applies the Mission completion time. It cannot
 invalidate a durable receipt, fail the extraction job, or authorize another model admission.
 Cancellation remains effective during diagnostic reads.
+
+For shared extraction, terminal provenance is collected for the types completed by each Native
+turn, including a successful type in a failed turn. Updating the Session also updates those types'
+receipts and supplements the exact Memory revisions already materialized by their Module.
+Earlier completed types keep their original turn's model/time; late diagnostics cannot overwrite
+newer or governed revisions. This supplements provenance metadata in the current/history copy of
+the same revision, without revising Memory content. Authority records update before typed receipts;
+failed or uncertain writes retry with the original compare-and-set source. Supplementary update
+failures are diagnosed and do not invalidate durable receipts or authorize another model call.
 
 ### Real Runtime acceptance
 

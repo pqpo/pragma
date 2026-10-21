@@ -2,7 +2,9 @@
 
 ## Status
 
-Accepted. Current storage version constants and adjacent migrations are owned by their authoritative storage modules;
+Accepted. The former synchronous capacity write gate is superseded by
+[ADR 064: Capacity accounting withdrawn](064-mission-durable-delivery-and-capacity-accounting.md#capacity-accounting-withdrawn).
+Current storage version constants and adjacent migrations are owned by their authoritative storage modules;
 this ADR defines the stable layout and lifecycle rules.
 
 ## Context
@@ -49,9 +51,10 @@ Completed trash entries are retained until the first configured age, total-size 
 Incomplete or invalid deletion journals are retained for recovery. Desktop performs targeted maintenance after the
 first window exists and after successful owner deletion; startup does not scan every owner.
 
-Storage capacity uses separate soft and hard bounds. Rebuildable cache and diagnostic archives are eligible for their
-defined retention policy; authoritative data is removed only through explicit owner deletion. At the write gate, the
-hard bound permits completion, deletion, export and GC while rejecting new capacity-growing work.
+Storage capacity is an advisory, low-frequency idle background inspection. It must not block page
+reads, Mission admission or normal writes. Over-limit diagnostics ask the user to clean up manually;
+there is no global write gate. Rebuildable caches and archives follow their own bounded retention,
+and authority data is removed only through explicit owner deletion.
 
 Storage schema upgrades run on first access to the smallest owner. Each supported step uses a static adjacent migration,
 backup, aggregate lock, stable journal and atomic replacement. The business parser reads only the current schema.

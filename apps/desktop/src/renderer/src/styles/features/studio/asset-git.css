@@ -37,11 +37,6 @@
   font-weight: 400;
 }
 
-.asset-git-field > input:focus-visible {
-  outline: 0;
-  box-shadow: 0 0 0 3px var(--ui-focus);
-}
-
 .asset-git-actions {
   display: flex;
   flex-wrap: wrap;
@@ -161,7 +156,7 @@
   flex-direction: column;
   min-height: 0;
   padding: 16px 12px;
-  background: var(--ui-rail);
+  background: var(--ui-rail-secondary);
 }
 
 .asset-git-files-heading {
@@ -214,7 +209,7 @@
 }
 
 .asset-git-file-state.is-complete {
-  color: var(--ui-accent-strong);
+  color: var(--ui-text);
 }
 
 .asset-git-merge-files .is-active {
@@ -281,7 +276,7 @@
 
 .asset-git-version-options button[aria-pressed="true"] {
   background: var(--ui-selection);
-  color: var(--ui-accent-strong);
+  color: var(--ui-text);
 }
 
 .asset-git-source-legend {
@@ -296,7 +291,7 @@
 }
 
 .asset-git-source-legend .is-local {
-  color: var(--ui-accent-strong);
+  color: var(--ui-text-secondary);
 }
 
 .asset-git-merge-dialog .asset-git-icon-button {
@@ -360,10 +355,6 @@
   min-height: 0;
   min-width: 0;
   background: var(--ui-surface);
-}
-
-.asset-git-code-editor:focus-within {
-  box-shadow: 0 0 0 3px var(--ui-focus);
 }
 
 .asset-git-code-editor .cm-editor {
@@ -453,7 +444,7 @@
 
 .asset-git-code-editor .cm-panels {
   border: 0;
-  background: var(--ui-rail);
+  background: var(--ui-rail-secondary);
   color: var(--ui-text);
 }
 

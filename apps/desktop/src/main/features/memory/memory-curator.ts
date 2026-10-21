@@ -1,3 +1,4 @@
+import { consumeUnstartedMissionPreparationFailure } from "@pragma/local-host";
 import { waitForInternalMissionRetry } from "@pragma/local-host";
 import { cleanupInternalMission } from "@pragma/local-host";
 import { waitForInternalMissionTerminal } from "@pragma/local-host";
@@ -217,7 +218,15 @@ export function createDesktopMemoryCurator(options: {
             ? {
                 ref,
                 revision: "1",
-                fingerprint: `${session.key}:tools-v${session.toolContractVersion}`,
+                // Include the tool contract in the identity without changing the SHA-256 format.
+                fingerprint: createHash("sha256")
+                  .update(
+                    JSON.stringify({
+                      sessionKey: session.key,
+                      toolContractVersion: session.toolContractVersion,
+                    }),
+                  )
+                  .digest("hex"),
                 value: {
                   contribution: {
                     tools: createMemoryCuratorTools(
@@ -402,7 +411,7 @@ export function createDesktopMemoryCurator(options: {
           .flat()
           .find((run) => run.missionId === entry.missionId);
         if (archived?.chat === undefined) {
-          const chat = await readCuratorResultWithRetry(() =>
+          const chat = await retryCuratorResultOperation(() =>
             options.application.getInternalConversationSnapshot(entry.missionId),
           );
           const snapshot = await createMemoryExtractionSessionStore(options).forMission(
@@ -619,6 +628,7 @@ async function runCuratorMission(input: {
   await input.session.bindMission(mission.id);
   input.activeSessions.set(mission.id, input.session);
   input.activeRuns.set(mission.id, activeRun);
+  const pendingTypesAtStart = await input.session.pendingTypes();
   let failure: MemoryExtractionFailureDiagnostic | undefined;
   let finalStatus: DesktopMemoryExtractionRun["status"] = "failed";
   let executionRequested = false;
@@ -641,6 +651,18 @@ async function runCuratorMission(input: {
       continuations: (await input.session.executionState()).continuations,
     });
   };
+  const prepareTurnProvenance = async (): Promise<void> => {
+    const current = (await input.session.executionState()).provenance;
+    if (current === undefined) return;
+    await input.session.setProvenance(
+      {
+        ...current,
+        responseModel: undefined,
+        extractedAt: (input.options.now?.() ?? new Date()).toISOString(),
+      },
+      [],
+    );
+  };
   try {
     await registerCuratorMission(pragmaHome, mission.id, input.jobId);
     input.signal?.throwIfAborted();
@@ -648,9 +670,19 @@ async function runCuratorMission(input: {
     // Once admitted, provider execution/billing may have happened even if a later read fails.
     executionRequested = true;
     if (prior?.missionId === undefined || !prior.admitted) {
+      await prepareTurnProvenance();
       await input.session.markAdmitted();
       input.onAdmission?.();
-      await input.options.application.startRun(mission.id);
+      try {
+        await input.options.application.startRun(mission.id);
+      } catch (error) {
+        if (consumeUnstartedMissionPreparationFailure(error, mission.id)) {
+          await input.session.withdrawUnstartedAdmission();
+          executionRequested = false;
+          Object.assign(error as object, { preAdmission: true });
+        }
+        throw error;
+      }
     } else if (
       prior.pendingContinuation === undefined &&
       (mission.execution === undefined ||
@@ -662,17 +694,20 @@ async function runCuratorMission(input: {
       // this path only with its already reserved command; it must not revive a cancelled turn.
       await reserveRepair(mission.execution!.id);
     }
-    let finished;
+    let finished: Awaited<ReturnType<typeof input.options.missions.get>>;
+    let pendingTypesForTurn = pendingTypesAtStart;
     for (;;) {
       const state = await input.session.executionState();
       let expectedExecutionId: string | undefined;
       if (input.module === "conversation" && state.pendingContinuation !== undefined) {
         const pending = state.pendingContinuation;
+        pendingTypesForTurn = await input.session.pendingTypes();
         await waitForInternalMissionRetry(
           Math.max(0, Date.parse(pending.retryAt) - Date.now()),
           input.signal,
         );
         await input.session.assertCurrent();
+        await prepareTurnProvenance();
         input.onAdmission?.();
         const continued = await input.options.application.continueInternalMemoryMission({
           id: mission.id,
@@ -691,6 +726,52 @@ async function runCuratorMission(input: {
         executionId: expectedExecutionId,
       });
       finished = await input.options.missions.get(mission.id);
+      const pendingAfterTurn = await input.session.pendingTypes();
+      const completedTypes = pendingTypesForTurn.filter((type) => !pendingAfterTurn.includes(type));
+      if (completedTypes.length > 0) {
+        let responseModel: string | undefined;
+        try {
+          responseModel = (
+            await retryCuratorResultOperation(
+              () => input.options.application.getTerminalRuntimeOutputDiagnostic(mission.id),
+              input.signal,
+            )
+          )?.responseModel;
+        } catch (error) {
+          input.signal?.throwIfAborted();
+          logger.warn(
+            "desktop.memory_curator_provenance_read_failed",
+            "Extraction completed; supplementary Runtime provenance could not be read.",
+            { error, missionId: mission.id },
+          );
+        }
+        for (const type of completedTypes) {
+          const receipt = await input.session.receiptFor(type);
+          if (receipt === undefined) continue;
+          try {
+            await retryCuratorResultOperation(
+              () =>
+                input.session.setProvenance(
+                  {
+                    ...receipt.provenance,
+                    ...(responseModel === undefined ? {} : { responseModel }),
+                    extractedAt:
+                      finished.execution?.finishedAt ??
+                      (input.options.now?.() ?? new Date()).toISOString(),
+                  },
+                  [type],
+                ),
+              input.signal,
+            );
+          } catch (error) {
+            logger.warn(
+              "desktop.memory_curator_provenance_update_failed",
+              "Extraction completed; supplementary provenance could not be fully updated.",
+              { error, missionId: mission.id, type },
+            );
+          }
+        }
+      }
       if (input.module !== "conversation" || (await input.session.completed())) break;
       const runtimeFailure =
         finished.execution?.status === "failed"
@@ -742,30 +823,8 @@ async function runCuratorMission(input: {
         new Error((await input.session.failure()) ?? "memory_curator_result_unavailable"),
         { retryable: false },
       );
-    let responseModel: string | undefined;
     try {
-      responseModel = (
-        await readCuratorResultWithRetry(
-          () => input.options.application.getTerminalRuntimeOutputDiagnostic(mission.id),
-          input.signal,
-        )
-      )?.responseModel;
-    } catch (error) {
-      input.signal?.throwIfAborted();
-      logger.warn(
-        "desktop.memory_curator_provenance_read_failed",
-        "Extraction completed; supplementary Runtime provenance could not be read.",
-        { error, missionId: mission.id },
-      );
-    }
-    await input.session.setProvenance({
-      ...receipt.provenance,
-      ...(responseModel === undefined ? {} : { responseModel }),
-      extractedAt:
-        finished.execution?.finishedAt ?? (input.options.now?.() ?? new Date()).toISOString(),
-    });
-    try {
-      resultChat = await readCuratorResultWithRetry(
+      resultChat = await retryCuratorResultOperation(
         () => input.options.application.getInternalConversationSnapshot(mission.id),
         input.signal,
       );
@@ -894,15 +953,15 @@ function redactCuratorDiagnosticText(value: string): string {
     .replace(/([?&](?:api[_-]?key|token|secret|password)=)[^\s&#]+/giu, "$1[REDACTED]");
 }
 
-/** Retry only reads of the completed execution; never rerun the model for a read failure. */
-async function readCuratorResultWithRetry<T>(
-  read: () => Promise<T>,
+/** Retry local result reads and idempotent metadata writes; never rerun the model. */
+async function retryCuratorResultOperation<T>(
+  operation: () => Promise<T>,
   signal?: AbortSignal,
 ): Promise<T> {
   for (let attempt = 0; ; attempt += 1) {
     signal?.throwIfAborted();
     try {
-      return await read();
+      return await operation();
     } catch (error) {
       signal?.throwIfAborted();
       if (attempt >= 3) throw error;

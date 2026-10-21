@@ -1,5 +1,7 @@
 # 排队轮已执行但页面未更新
 
+> 历史测量/调研：结论只适用于记录中的提交、版本与环境，不是当前状态或开发规范。当前入口见[文档索引](../../README.md)。
+
 截图反馈的缺口在 Steer 修复后仍存在。它位于 Desktop 的执行投影承接，与 Codex 是否支持 ACP 无关。
 
 Codex、Claude Code（ACP）、PI、OpenCode、QoderCLI 和 Antigravity 共用 Core ExpertSession

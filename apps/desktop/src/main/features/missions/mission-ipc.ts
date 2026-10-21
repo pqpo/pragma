@@ -66,6 +66,7 @@ import {
 import {
   ContextStoreMissionMountCheckSchema,
   ContextStoreMissionMountCheckResultSchema,
+  ContextStoreMissionReferenceCountSchema,
 } from "@pragma/local-host/deployment-contracts";
 import { canonicalPragmaResourceRef, type PragmaExpertTeamResource } from "@pragma/interpreter/ast";
 import type {
@@ -296,6 +297,12 @@ export function installMissionHandlers(options: {
     const { storeId } = ContextStoreMissionMountCheckSchema.parse(input);
     return ContextStoreMissionMountCheckResultSchema.parse(
       await options.missions.isContextStoreReferenced(storeId),
+    );
+  });
+  ipcMain.handle("missions:context-store:reference-count", async (_event, input: unknown) => {
+    const { storeId } = ContextStoreMissionMountCheckSchema.parse(input);
+    return ContextStoreMissionReferenceCountSchema.parse(
+      (await options.missions.listContextStoreReferences(storeId)).length,
     );
   });
   ipcMain.handle("missions:source:get", (_event, id: unknown) =>

@@ -2,7 +2,9 @@
 
 ## Status
 
-Accepted.
+Accepted for local asset identity and its recorded cutover. Current whole-library Git synchronization
+uses [ADR 060](060-structured-core-asset-sync.md) and [ADR 070](070-automatic-core-asset-reconciliation.md);
+the old Skill-only repository key below is historical, not the current repository layout.
 
 ## Context
 

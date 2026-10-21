@@ -205,8 +205,8 @@
 
 .automation-knowledge-trigger:hover,
 .automation-knowledge-trigger:focus-visible {
-  border-color: var(--ui-accent);
-  box-shadow: 0 0 0 3px var(--ui-focus);
+  border-color: var(--ui-line-strong);
+  box-shadow: 0 0 0 3px rgb(var(--ui-shadow-rgb) / 20%);
 }
 
 .automation-knowledge-trigger:disabled {
@@ -255,8 +255,8 @@
 
 .automation-workspace-picker.is-open,
 .automation-workspace-picker:has(.mission-workspace-trigger:focus-visible) {
-  border-color: var(--ui-accent);
-  box-shadow: 0 0 0 3px var(--ui-focus);
+  border-color: var(--ui-line-strong);
+  box-shadow: 0 0 0 3px rgb(var(--ui-shadow-rgb) / 20%);
 }
 
 .automation-workspace-picker .mission-workspace-trigger {
@@ -315,8 +315,8 @@
 
 .automation-weekday-trigger:focus-visible,
 .automation-weekday-picker.is-open .automation-weekday-trigger {
-  border-color: var(--ui-accent);
-  box-shadow: 0 0 0 3px var(--ui-focus);
+  border-color: var(--ui-line-strong);
+  box-shadow: 0 0 0 3px rgb(var(--ui-shadow-rgb) / 20%);
 }
 
 .automation-weekday-picker.is-open .automation-weekday-trigger > svg {
@@ -384,12 +384,6 @@
   resize: vertical;
 }
 
-.automation-form input:focus-visible,
-.automation-form textarea:focus-visible {
-  border-color: var(--ui-accent);
-  box-shadow: 0 0 0 3px var(--ui-focus);
-}
-
 .automation-form .automation-switch {
   display: flex;
   align-items: center;
@@ -446,8 +440,8 @@
   height: 64px;
   place-items: center;
   border-radius: var(--ui-radius-lg);
-  background: var(--green-soft);
-  color: var(--green-dark);
+  background: var(--ui-selection);
+  color: var(--ui-text-secondary);
 }
 
 .automation-detail-title {
@@ -646,7 +640,7 @@
 .automation-detail-run-notice {
   border: 1px solid var(--ui-line);
   background: var(--ui-selection);
-  color: var(--ui-accent-strong);
+  color: var(--ui-text);
 }
 
 .automation-detail-empty-copy {

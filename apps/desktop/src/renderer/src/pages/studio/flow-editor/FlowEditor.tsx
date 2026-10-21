@@ -836,13 +836,20 @@ function FlowEditorCanvas(props: {
             connectionRadius={24}
             defaultEdgeOptions={{ type: "smoothstep", markerEnd: { type: MarkerType.ArrowClosed } }}
           >
-            <Background variant={BackgroundVariant.Dots} gap={18} size={1.3} color="#c8d1ca" />
+            <Background
+              variant={BackgroundVariant.Dots}
+              gap={18}
+              size={1.3}
+              color="var(--ui-line-strong)"
+            />
             <MiniMap
               pannable
               zoomable
               position="bottom-right"
               className="flow-minimap"
-              nodeColor={(node) => (node.type === "terminal" ? "#87938b" : "#5e806f")}
+              nodeColor={(node) =>
+                node.type === "terminal" ? "var(--ui-text-disabled)" : "var(--ui-text-secondary)"
+              }
             />
             <Panel position="bottom-left" className="flow-canvas-hint">
               <Hand size={15} /> {t("canvasHint")}

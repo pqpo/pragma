@@ -38,6 +38,6 @@ text/compact 的大结果、事件和队列正文使用 `pragma.mission-content-
 
 ## 验证
 
-计划及逐项证据见 [实施清单](../plans/issue-398.md)。真实子进程回归验证调用方自然退出、Host 后续持久化结果和幂等重试一次 start；执行器端口为确定性 fixture，不冒充真实模型 Runtime smoke。正式平台发布前仍执行 macOS/Windows 与实际 Runtime 的业务 smoke。
+计划及逐项证据见 [实施清单](../archive/plans/issue-398.md)。真实子进程回归验证调用方自然退出、Host 后续持久化结果和幂等重试一次 start；执行器端口为确定性 fixture，不冒充真实模型 Runtime smoke。正式平台发布前仍执行 macOS/Windows 与实际 Runtime 的业务 smoke。
 
 固定数据的输出基准见 [JSON 证据](../plans/issue-398-output-evidence.json)，由旧/新 presenter 和统一 o200k_base tokenizer 产生；它衡量获取相同事实的输出与调用数，不是生产模型成本预测。

@@ -1,6 +1,7 @@
 # ADR 027: Mission latency cache and Runtime warmup boundaries
 
-- Status: Accepted
+- Status: Superseded in part
+- Scope: Blueprint caching, Runtime isolation and latency observations remain active. [ADR 066](066-unified-local-host-mission-application.md) owns Host execution/compilation; [ADR 064](064-mission-durable-delivery-and-capacity-accounting.md#capacity-accounting-withdrawn) replaces storage admission with nonblocking capacity inspection.
 - Date: 2026-07-29
 
 ## Context
@@ -24,7 +25,7 @@ matches the Mission. The identity includes the immutable Project revision, execu
 system Expert fingerprint, tool permission mode, and model override.
 
 Follow-up skips compilation on an identity hit. A miss recompiles. If the resulting execution
-definition fingerprint differs from the live Session fingerprint, Desktop closes the old Session
+definition fingerprint differs from the live Session fingerprint, Local Host closes the old Session
 and creates a successor rather than mutating a running `ExpertSession`.
 
 ### Compiler-owned Blueprint cache
@@ -53,15 +54,14 @@ being recalculated.
 
 ### Storage admission
 
-Desktop creates one `StorageCapacityGuard` from the startup maintenance result. A fresh, below-soft
-limit snapshot admits writes without rescanning the Pragma home. The guard refreshes in the
-background, coalesces concurrent refreshes, synchronously refreshes stale or pressured snapshots,
-and preserves the hard-limit cleanup behavior.
+The former `StorageCapacityGuard` write gate is retired. Capacity inspection is advisory and runs
+in the background after window creation; [ADR 016](016-local-storage-lifecycle-and-content-addressing.md)
+defines current storage and retention policy. It cannot block normal reads, admission or writes.
 
 ### Runtime reuse
 
 As defined by ADR 028, Desktop owns one reference-counted MCP connection pool shared by
-compiler live checks, Capability workflows, and all four Runtime adapters. Pooling is per server
+compiler live checks, Capability workflows, and the Runtime adapters. Pooling is per server
 connection so consumer-specific server IDs, tool projections, and approval policies do not prevent
 reuse. External connections use a stable, redacted fingerprint; in-process connections use object
 identity because functions must not be merged by serialization. Idle connections are bounded and
@@ -99,7 +99,7 @@ Deterministic tests enforce the local overhead gates:
 
 - warm live-Session follow-up admission below 250 ms;
 - warm serialized Blueprint load below 200 ms;
-- fresh storage admission snapshot below 50 ms.
+- capacity inspection must stay off the foreground admission path.
 
 These gates cover Pragma-controlled overhead and deliberately exclude provider/model TTFT. Release
 profiling must group traces by Runtime, model, thinking level, tool count, context length bucket,

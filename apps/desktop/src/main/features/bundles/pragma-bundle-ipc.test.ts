@@ -106,6 +106,15 @@ describe("Desktop Bundle production IPC wiring", () => {
       value: { id: string; status: string };
     };
     expect(failed).toMatchObject({ ok: true, value: { status: "failed" } });
+    expect(
+      await electron.handlers.get("pragma-bundles:inspect")!(
+        {},
+        { installationId: failed.value.id },
+      ),
+    ).toMatchObject({
+      alreadyInstalledId: failed.value.id,
+      sourcePath: target.paths.bundleInstallationArchive(failed.value.id),
+    });
     const assetId = (await target.contextStores.list())[0]!.id;
     await target.project.publish({ expectedRevision: 0, resources: [] });
     expect(

@@ -1,3 +1,4 @@
+import { withMissionPreparationFailure } from "./preparation-failure.ts";
 import { defineLocalHostMissionMessageFormat } from "../mission-command-admission.ts";
 import { MEMORY_CURATOR_REF } from "@pragma/memory";
 import { type LocalHostMissionPromptAdmissionHook } from "../mission-command-admission.ts";
@@ -2121,7 +2122,9 @@ export function createLocalHostMissionExecutionService(
           "before loading its execution context",
         );
         const compileScope = compileService.createRequestScope(mission);
-        await options.assertExecutorReady?.(mission.executor.ref, compileScope);
+        await withMissionPreparationFailure(mission, async () =>
+          options.assertExecutorReady?.(mission.executor.ref, compileScope),
+        );
         if (mission.branch !== undefined && mission.execution === undefined) {
           throw new Error("Continue a branched Mission by sending a new message.");
         }
@@ -2152,7 +2155,9 @@ export function createLocalHostMissionExecutionService(
         );
         logMissionPhase(logger, id, "execution_context", executionContextStartedAt, acceptedAt);
         let phaseStartedAt = performance.now();
-        const stableCompilation = await compileService.compileStable(compileScope, runtimes);
+        const stableCompilation = await withMissionPreparationFailure(mission, () =>
+          compileService.compileStable(compileScope, runtimes),
+        );
         const {
           compiled,
           capabilities: resolvedCapabilities,
@@ -5875,7 +5880,23 @@ export function createLocalHostMissionExecutionService(
           (mount) => mount.kind !== "context-store" || mount.storeId !== input.storeId,
         );
         if (contextMounts.length === mission.contextMounts.length) return mission;
-        return await updateMissionContextMounts({ id: input.id, contextMounts });
+        sessionService.beginContextBindingChange(input.id);
+        try {
+          const current = await assertContextMountChangeAllowedWithinController(input.id);
+          // Removal must not resolve unrelated mounts: historical Missions can
+          // retain unavailable Stores or completed revision drafts. Preserve them
+          // verbatim and only detach the Store being deleted.
+          const updated = await options.missions.updateContextMounts(
+            input.id,
+            current.contextMounts.filter(
+              (mount) => mount.kind !== "context-store" || mount.storeId !== input.storeId,
+            ),
+          );
+          await invalidateContextBindings(input.id);
+          return updated;
+        } finally {
+          sessionService.finishContextBindingChange(input.id);
+        }
       });
     },
     async invalidateContextBindings(id) {

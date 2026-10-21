@@ -29,7 +29,7 @@ import {
   type SkillLearningSink,
   type SkillLearningTargetReader,
   type SkillMemoryModule,
-  createMemoryExtractionSessionStore,
+  createConversationMemoryRetryManager,
 } from "@pragma/memory";
 
 import {
@@ -581,26 +581,31 @@ export async function createDesktopMemoryPlane(options: {
               throw new Error("memory_curator_lifecycle_unavailable");
             await curatorLifecycle.retireJobs([input.id, ...task.members.map(({ job }) => job.id)]);
           }
-          if (input.action === "retry" || input.action === "restart")
-            await createMemoryExtractionSessionStore(options).retryConversation(
-              input.id,
-              input.action === "restart",
-              task.members
-                .filter(({ job }) => job.status !== "completed")
-                .map(({ module }) => module),
-            );
+          if (input.action === "retry" || input.action === "restart") {
+            await createConversationMemoryRetryManager({
+              pragmaHome: options.pragmaHome,
+              episodic: episodic.store,
+              semantic: semantic.store,
+            }).retry({
+              jobId: input.id,
+              restart: input.action === "restart",
+              members: task.members
+                .filter(({ job }) => job.status === "needs_attention")
+                .map(({ module, job }) => ({
+                  module,
+                  id: job.id,
+                  revision: job.revision,
+                  watermark: job.inputWatermark,
+                })),
+            });
+            wakePipeline();
+            return;
+          }
           for (const { module, job } of task.members) {
             if (job.status === "completed") continue;
             const store = module === "episodic" ? episodic.store : semantic.store;
             const command = { id: job.id, expectedRevision: job.revision, now: new Date() };
             if (
-              (input.action === "retry" || input.action === "restart") &&
-              job.status === "needs_attention"
-            ) {
-              if (input.action === "restart")
-                await createMemoryExtractionSessionStore(options).deleteJobs(module, [job.id]);
-              await store.retryJob({ ...command, preserveSession: true });
-            } else if (
               input.action === "expedite" &&
               (job.status === "pending" || job.status === "waiting_idle")
             )

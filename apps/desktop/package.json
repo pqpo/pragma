@@ -1,6 +1,6 @@
 {
   "name": "@pragma/desktop",
-  "version": "0.2.64",
+  "version": "0.2.67",
   "private": true,
   "type": "module",
   "productName": "Pragma",
@@ -40,7 +40,7 @@
     "test:core": "pnpm run test:packaging:contracts && vitest run --passWithNoTests src/main/bootstrap/application-identity.test.ts src/main/bootstrap/startup-sequence.test.ts",
     "clean": "rm -rf out dist .plugin-bundles",
     "test:packaging": "pnpm run test:packaging:contracts && node --test ./scripts/pi-image-bundle.test.mjs",
-    "test:packaging:contracts": "node --test ./scripts/audit-packaged-app.test.mjs ./scripts/packaging-policy.test.mjs",
+    "test:packaging:contracts": "node --test ./scripts/audit-packaged-app.test.mjs ./scripts/packaging-policy.test.mjs ./scripts/build-desktop-cli.test.mjs",
     "test:claude-worker": "node --test ./scripts/claude-worker-boundary.test.mjs",
     "test:mission-rename-ui": "node ./scripts/test-mission-rename-ui.mjs",
     "test:bundle-recovery-ui": "node ./scripts/test-bundle-recovery-ui.mjs",

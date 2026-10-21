@@ -222,9 +222,37 @@ export const studio = {
     contents: "Contents and dependencies",
     loadingVersion: "Reading the selected version…",
     retryVersion: "Retry",
+    resourceDetailsUnavailable:
+      "Resource details are unavailable. Restart the app and reopen this item in the Market.",
+    resourceKinds: {
+      Expert: "Expert",
+      ExpertTeam: "Expert team",
+      Flow: "Flow",
+      Evaluation: "Evaluation",
+      Automation: "Automation",
+      Capability: "Capability",
+      ContextStore: "Knowledge base",
+      RuntimeProfile: "Model configuration",
+    },
+    resources: "Resources",
+    dependencyCount: "Dependencies: {{count}}",
+    modelCount: "Model settings: {{count}}",
+    viewDetails: "View details",
+    closeDetails: "Close",
     resourceCount: "{{count}} resources included",
     dependencies: "Dependencies",
-    noDependencies: "This version has no external dependencies.",
+    noDependencies: "No additional resource dependencies.",
+    models: "Model settings",
+    modelsHint:
+      "Models travel with the expert or workflow and can be replaced during import. Model service accounts are not included.",
+    defaultModel: "Default model",
+    modelTarget: "the target",
+    modelUsage: {
+      expert: "{{name}}: expert model",
+      "team-delegation": "{{name}}: model used when delegating to {{target}}",
+      "tool-delegation": "{{name}}: model used when calling {{target}}",
+      flow: "{{name}}: model used to run {{target}}",
+    },
     dependencyIncluded: "Included",
     dependencyRequired: "Configure after import",
     dependencyKinds: {
@@ -836,15 +864,17 @@ export const studio = {
   deleteKnowledgeBase: "Delete this knowledge base?",
   deleteKnowledgeBaseAction: "Delete knowledge base",
   deleteKnowledgeBaseDescription:
-    "“{{name}}” and its managed files will be moved to Trash. Remove its Expert mounts and finish or discard unmerged revision drafts first. Inactive Mission mounts will be removed automatically. Wait for queued, running, or waiting Missions to finish before deleting.",
+    "“{{name}}” and its managed files will be moved to Trash. Confirming deletion automatically removes Mission bindings and keeps Missions and conversation history. Remove Expert mounts and finish or discard unmerged revision drafts first.",
+  knowledgeBaseMissionCountFailed:
+    "Could not count linked Missions. Close this dialog and try again. The knowledge base was not deleted.",
   knowledgeBaseMissionMountWarning:
-    "This knowledge base is mounted in one or more Missions. Inactive mounts will be removed automatically. Deletion is rejected while any of those Missions is queued, running, or waiting.",
+    "{{count}} Missions reference this knowledge base. Deletion automatically removes these bindings. You do not need to check or delete Missions individually. Wait for active Missions and queued messages to finish before retrying.",
   knowledgeBaseActiveMission:
-    "A Mission using this knowledge base is queued, running, or waiting. Wait for it to finish before retrying. The knowledge base was not deleted; some inactive Mission mounts may already have been removed. Refresh Missions to check their current mounts.",
+    "A linked Mission is queued, running, or waiting. Wait for it to finish, then retry to remove its binding automatically. You do not need to delete the Mission.",
   knowledgeBaseMissionMessagesPending:
-    "A Mission using this knowledge base has queued messages. Remove or finish those messages before retrying. The knowledge base was not deleted; some inactive Mission mounts may already have been removed. Refresh Missions to check their current mounts.",
+    "A linked Mission has unfinished messages. Wait for them to finish or cancel the queued messages, then retry to remove its binding automatically. You do not need to delete the Mission.",
   knowledgeBaseMissionUnmountFailed:
-    "Some Mission mounts could not be removed, so the knowledge base was not deleted. Some mounts may already have been removed; refresh and retry.",
+    "Automatic Mission unbinding failed. The knowledge base was not deleted. Retry to remove the remaining bindings; you do not need to check or delete Missions individually.",
   knowledgeBaseRevisionTasksBlocked:
     "This knowledge base still has unmerged revision drafts that could change its contents. Finish and merge them, or discard them, from Revision tasks before deleting the knowledge base. Merged revision history does not need to be deleted.",
   knowledgeBaseRevisionDraftUnreadable:
@@ -951,7 +981,7 @@ export const studio = {
   configureKnowledgeBaseDescription: "Start empty or copy Markdown files from a local folder.",
   blankKnowledgeBase: "Blank knowledge base",
   blankKnowledgeBaseDescription: "Create an empty managed library.",
-  importKnowledgeBase: "Import existing knowledge",
+  importKnowledgeBase: "Import from folder",
   importKnowledgeBaseDescription: "Copy Markdown files from a folder.",
   chooseSourceFolder: "Choose source folder",
   inspecting: "Inspecting…",
@@ -1666,8 +1696,7 @@ export const studio = {
   bundleExportDescription:
     "Package one Expert, Expert Team, Flow, knowledge base, or Skill for another computer.",
   bundleImportTitle: "Import workflow",
-  bundleImportDescription:
-    "Inspect a .pragma file, install safe resources automatically, then bind local dependencies.",
+  bundleImportDescription: "Check the file and confirm local dependencies.",
   bundleExportObject: "Expert, team, Flow, knowledge base, or Skill",
   bundleChooseExportObject: "Choose what to export",
   bundleSearchExportObjects: "Search by name, description, ID, tag, or type",
@@ -1697,8 +1726,9 @@ export const studio = {
   bundleKnowledgeBaseRequiredHint:
     "The root knowledge-base snapshot is always included and is not an attachment.",
   bundleModuleUnavailableHint: "This object has no corresponding content to export.",
-  bundleAppendKnowledgeRevision: "Append revision",
-  bundleAppendKnowledgeRevisionHint: "Keep local history and append the imported snapshot.",
+  bundleAppendKnowledgeRevision: "Add revision",
+  bundleAppendKnowledgeRevisionHint:
+    "Keep the local knowledge base identity and history, and append the bundled content as a new revision. Other experts using it will also be affected.",
   bundleFilterKnowledgeBases: "Knowledge bases",
   bundleFilterSkills: "Skills",
   bundleKnowledgeMemory: "Published Knowledge Memory",
@@ -1729,9 +1759,9 @@ export const studio = {
   bundleAssetSkill: "Skill",
   bundleAssetKnowledgeBase: "Knowledge base",
   bundleSelectLocalAsset: "Select the local asset to use",
-  bundleImportCopy: "Import as a copy",
+  bundleImportCopy: "Copy",
   bundleImportCopyHint: "Create new identities for all conflicts above and rewrite references.",
-  bundleUpdateExisting: "Update matching resources",
+  bundleUpdateExisting: "Update",
   bundleUpdateExistingHint: "Replace all matching local resources listed above.",
   bundleImportAction: "Import bundle",
   bundleImporting: "Importing…",
@@ -1746,10 +1776,28 @@ export const studio = {
   bundleReadyDependencies: "{{count}} other local dependencies are ready",
   bundleFinishSetupNow: "Continue setup",
   bundleFinishSetupLater: "Finish later",
+  bundleLocalDependencies: "Local dependencies",
+  bundleModelsReady: "{{count}} models ready",
+  bundleModelsReady_one: "{{count}} model ready",
+  bundleModelsReady_other: "{{count}} models ready",
+  bundleDependenciesReady: "{{count}} dependencies ready",
+  bundleDependenciesReady_one: "{{count}} dependency ready",
+  bundleDependenciesReady_other: "{{count}} dependencies ready",
+  bundleDependencyExpert: "Expert",
+  bundleDependencyResource: "Resource",
+  bundleDependencyType: "Dependency",
+  bundleDependencyCheck: "Check",
+  bundleDependencyTypes: {
+    runtime: "Model",
+    capability: "Capability",
+    "context-store": "Knowledge base",
+    plugin: "Plugin",
+    secret: "Secret",
+  },
   bundlePreflightTitle: "Dependency readiness",
   bundleRecheck: "Check again",
   bundleConfigureCapability: "Configure {{name}}",
-  bundleGenericError: "The Bundle operation could not be completed. Check the file and try again.",
+  bundleGenericError: "The Bundle operation could not be completed.",
   bundlePluginsUnavailable:
     "This item uses plugins, so Bundle operations are unavailable in this version.",
   bundleStatus: {
@@ -1760,7 +1808,7 @@ export const studio = {
   },
   bundleAction: {
     none: "No action",
-    choose_runtime: "Choose a Runtime",
+    choose_runtime: "Choose a model",
     choose_capability: "Choose a capability",
     configure_capability: "Configure the capability",
     choose_knowledge_base: "Choose a knowledge base",
@@ -1768,11 +1816,40 @@ export const studio = {
     enter_secret: "Enter the secret",
     restore_or_replace: "Restore or replace",
   },
-  bundleChooseRuntime: "Runtime",
   bundleChooseCapability: "Choose capability",
   bundleChooseKnowledgeBase: "Choose knowledge base",
   bundleBindingOptional:
     "You can finish this later; the imported workflow cannot run until it is bound.",
+  bundleLegacyCapability: "Capability (name unavailable in legacy bundle)",
+  bundleLegacyRuntime: "Runtime configuration (name unavailable in legacy bundle)",
+  bundleRequestedModel:
+    "Requested model: {{model}}. Choose a model available on this computer; the source provider account is not included.",
+  bundleFileChanged: "The bundle changed. Select the file again.",
+  bundleDeferBinding: "Set up later",
+  bundleResumeTitle: "Unfinished imports",
+  bundleResumeAction: "Continue setup",
+  bundleRetainedAssetHint:
+    "Keeping the local resource also keeps its bound content. No separate content action is needed.",
+  bundleRequiredTools: "Required tools: {{tools}}",
+  bundleRootMissing:
+    "The imported entry was deleted. Discard this installation or import the bundle again.",
+  bundleProjectChanged:
+    "The project changed during import. Resume or discard this installation before trying again.",
+  bundleRequestChanged:
+    "This import request changed. Resume the previous installation or discard it to start again.",
+  bundleExpertModelTitle: "Model for {{names}}",
+  bundleExpertModelFallback: "Model configuration",
+  bundleNoAvailableModels:
+    "No models are available on this computer. Configure a model in Settings and refresh, or set it up later.",
+  bundleBindingHelp: {
+    runtime:
+      "Choose an available replacement model for this expert. The selection directly updates its configuration.",
+    capability:
+      "Choose a compatible local capability, or set it up later in Studio. Only capabilities with the required tools are listed.",
+    "context-store": "Choose a local knowledge base, or finish setup after importing.",
+    secret: "Enter the required secret. Secrets are not included in the bundle.",
+    plugin: "Install the required plugin before using this resource.",
+  },
   bundleLegacyKnowledgeBase: "Knowledge base (name unavailable in legacy bundle)",
   bundleEnterSecret: "Enter secret",
   bundleInstallPluginManually: "Install this plugin from Studio → Plugins, then save again.",
@@ -1789,7 +1866,7 @@ export const studio = {
   bundleContinue: "Continue",
   bundleBack: "Back",
   bundleReview: "Review import",
-  bundleStepSelect: "Choose bundle",
+  bundleStepSelect: "Choose file",
   bundleStepConflicts: "Resolve conflicts",
   bundleStepBindings: "Bind resources",
   bundleStepReview: "Review",
@@ -1809,28 +1886,28 @@ export const studio = {
   bundleDropNow: "Drop to inspect",
   bundleDropInvalid: "Drop exactly one .pragma file.",
   bundleVerified: "Verified",
+  bundleConflictActions: "Conflict action",
   bundleConflictPerResourceHint:
     "Choose independently for each resource. Copies are selected by default to protect local work.",
-  bundleAllCopies: "All as copies",
-  bundleAllUpdates: "Update all possible",
-  bundleAllKeepLocal: "Keep all local",
-  bundleImportCopyShortHint: "Create a new local identity.",
-  bundleUpdateExistingShortHint: "Replace the matching local resource.",
-  bundleKeepLocal: "Use local version",
+  bundleAllCopies: "Copy all",
+  bundleAllUpdates: "Update all",
+  bundleAllKeepLocal: "Keep all",
+  bundleImportCopyShortHint:
+    "Create an independent copy and keep the existing local resource. Imported references will use the new copy.",
+  bundleUpdateExistingShortHint:
+    "Update the matching local resource with the bundled content, keeping its identity. Other references to this resource will also be affected.",
+  bundleKeepLocal: "Keep local",
   bundleKeepLocalHint:
-    "Ignore this imported content and bind Bundle references to the local resource.",
+    "Use the existing local resource and its settings, ignoring this item in the bundle. Imported references will point to the local resource.",
   bundleUpdateBlocked: "Identity and name match different local resources.",
   bundleBindingProgress: "Resource {{current}} of {{total}}",
   bundleRefresh: "Refresh",
   bundleRefreshing: "Refreshing…",
-  bundleChooseRuntimePlaceholder: "Choose a Runtime",
   bundleChooseModel: "Model",
   bundleChooseModelPlaceholder: "Choose a model",
   bundleChooseThinking: "Thinking level",
-  bundleRuntimeDefault: "Runtime default",
+  bundleRuntimeDefault: "Model default",
   bundleRuntimeUnavailable: "Unavailable",
-  bundleRequestedRuntimeUnavailable:
-    "The requested Runtime “{{runtime}}” is unavailable. Refresh or choose another Runtime.",
   bundlePluginDeferredTitle: "Plugin setup will be deferred",
   bundlePluginDeferredDescription:
     "You can finish this import now, then install the exact plugin from Studio → Plugins.",

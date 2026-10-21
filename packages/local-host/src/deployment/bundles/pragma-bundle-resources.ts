@@ -1,3 +1,4 @@
+import { referencedPragmaResourceRefs } from "../../missions/resource-dependencies.ts";
 import { generatePragmaResourceId } from "@pragma/core";
 import {
   canonicalPragmaResourceRef,
@@ -158,5 +159,131 @@ export function artifactPathIsReferenced(
   return referencedPaths.some(
     (source) =>
       artifactPath === source || artifactPath.startsWith(`${source.replace(/\/+$/, "")}/`),
+  );
+}
+
+/** Computes the graph that will actually exist after resource conflict decisions. */
+export function planBundleResources(input: {
+  readonly imported: readonly PragmaResource[];
+  readonly current: readonly PragmaResource[];
+  readonly rootRef: string;
+  readonly mappings: ReadonlyMap<
+    ReturnType<typeof canonicalPragmaResourceRef>,
+    ReturnType<typeof canonicalPragmaResourceRef>
+  >;
+  readonly conflicts: readonly {
+    readonly resourceRef: string;
+    readonly action: "copy" | "update" | "keep_local";
+  }[];
+}) {
+  const kept = new Set(
+    input.conflicts
+      .filter((value) => value.action === "keep_local")
+      .map(
+        (value) =>
+          input.mappings.get(value.resourceRef as ReturnType<typeof canonicalPragmaResourceRef>) ??
+          value.resourceRef,
+      ),
+  );
+  const imported = input.imported.filter((value) => !kept.has(canonicalPragmaResourceRef(value)));
+  const replacements = new Set(imported.map(canonicalPragmaResourceRef));
+  const effective = collectBundleResourceClosure(
+    [
+      ...input.current.filter((value) => !replacements.has(canonicalPragmaResourceRef(value))),
+      ...imported,
+    ],
+    input.rootRef,
+  );
+  const refs = new Set(effective.map(canonicalPragmaResourceRef));
+  return {
+    effective,
+    refs,
+    resources: imported.filter((value) => refs.has(canonicalPragmaResourceRef(value))),
+    sourceRefs: new Set(
+      [...input.mappings]
+        .filter(([, target]) => refs.has(target) && !kept.has(target))
+        .map(([source]) => source),
+    ),
+  };
+}
+
+export function collectBundleResourceClosure(
+  resources: readonly PragmaResource[],
+  rootRef: string,
+): readonly PragmaResource[] {
+  const indexed = new Map(resources.map((value) => [canonicalPragmaResourceRef(value), value]));
+  const visited = new Set<string>();
+  const result: PragmaResource[] = [];
+  const pending = [rootRef];
+  while (pending.length > 0) {
+    const ref = pending.pop()!;
+    if (visited.has(ref)) continue;
+    visited.add(ref);
+    const resource = indexed.get(ref as ReturnType<typeof canonicalPragmaResourceRef>);
+    if (resource === undefined) continue;
+    result.push(resource);
+    pending.push(...referencedPragmaResourceRefs([resource]));
+  }
+  return result;
+}
+
+/** Model settings travel with their actual users; catalog profile names are internal. */
+export function bundleRuntimeModels(
+  resources: readonly PragmaResource[],
+): NonNullable<PragmaBundleImportInspection["runtimeModels"]> {
+  const models: NonNullable<PragmaBundleImportInspection["runtimeModels"]> = {};
+  const indexed = new Map(
+    resources.flatMap(
+      (resource) =>
+        [
+          [resource.metadata.id, resource],
+          [canonicalPragmaResourceRef(resource), resource],
+        ] as const,
+    ),
+  );
+  for (const resource of resources) {
+    if (resource.kind !== "RuntimeProfile") continue;
+    const config = resource.spec.config as Record<string, unknown>;
+    models[canonicalPragmaResourceRef(resource)] = {
+      ...(typeof config["model"] === "string" ? { modelId: config["model"] } : {}),
+      consumers: [],
+    };
+  }
+  type Consumer = NonNullable<
+    PragmaBundleImportInspection["runtimeModels"]
+  >[string]["consumers"][number];
+  const add = (ref: string, name: string, usage: Consumer["usage"], target?: string) => {
+    const model = models[ref];
+    if (model === undefined) return;
+    const targetName = target === undefined ? undefined : indexed.get(target)?.metadata.name;
+    const consumer = { name, usage, ...(targetName === undefined ? {} : { targetName }) };
+    if (
+      !model.consumers.some(
+        (value) => value.name === name && value.usage === usage && value.targetName === targetName,
+      )
+    )
+      model.consumers.push(consumer);
+  };
+  for (const resource of resources) {
+    const name = resource.metadata.name;
+    if (resource.kind === "Expert") {
+      if (resource.spec.runtime !== undefined) add(resource.spec.runtime.ref, name, "expert");
+      for (const tool of resource.spec.tools)
+        for (const [expertId, ref] of Object.entries(tool.policy?.runtimes ?? {}))
+          add(ref, name, "tool-delegation", expertId);
+    } else if (resource.kind === "ExpertTeam") {
+      for (const [expertId, ref] of Object.entries(resource.spec.delegation.runtimes))
+        add(ref, name, "team-delegation", expertId);
+    } else if (resource.kind === "Flow") {
+      for (const step of Object.values(resource.spec.graph.steps)) {
+        if (step.runtime !== undefined)
+          add(step.runtime.ref, name, "flow", (step.expert ?? step.team ?? step.flow)?.ref);
+        for (const [expertId, ref] of Object.entries(step.runtimes ?? {}))
+          add(ref, name, "flow", expertId);
+      }
+    }
+  }
+  return Object.fromEntries(
+    Object.entries(models).filter(([, model]) => model.consumers.length > 0),
   );
 }

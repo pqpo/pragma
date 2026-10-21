@@ -145,10 +145,6 @@
   box-shadow: none;
 }
 
-.context-browser-search:focus-within {
-  box-shadow: 0 0 0 3px var(--ui-focus);
-}
-
 .context-browser-search input {
   min-width: 0;
   width: 100%;
@@ -212,7 +208,7 @@
 }
 
 .context-browser-file > small {
-  color: var(--green-dark);
+  color: var(--ui-text-secondary);
   font-size: 9px;
   white-space: nowrap;
 }
@@ -242,7 +238,7 @@
 }
 
 .context-browser-results button:hover {
-  background: #e2e8e3;
+  background: var(--ui-surface-subtle);
 }
 
 .context-browser-results strong {
@@ -348,7 +344,7 @@
   max-height: 100%;
   object-fit: contain;
   border-radius: 6px;
-  box-shadow: 0 8px 28px rgb(35 48 40 / 12%);
+  box-shadow: 0 8px 28px rgb(var(--ui-shadow-rgb) / 12%);
 }
 
 .context-browser-load-more {
@@ -357,7 +353,7 @@
   border: 1px solid var(--border);
   border-radius: 7px;
   background: var(--surface);
-  color: var(--green-dark);
+  color: var(--ui-text);
   cursor: pointer;
 }
 
@@ -432,9 +428,9 @@
 
 .markdown-code-block {
   overflow: hidden;
-  border: 1px solid #dfe4e1;
+  border: 1px solid var(--ui-line);
   border-radius: 10px;
-  background: #f6f7f6;
+  background: var(--ui-surface-subtle);
 }
 
 .markdown-code-toolbar {
@@ -444,7 +440,7 @@
   justify-content: space-between;
   gap: 12px;
   padding: 0 8px 0 12px;
-  border-bottom: 1px solid #e3e7e4;
+  border-bottom: 1px solid var(--ui-line);
   color: var(--muted);
   font-size: 11px;
 }
@@ -473,7 +469,7 @@
 .markdown-code-toolbar button:hover,
 .markdown-code-toolbar button:focus-visible {
   outline: 0;
-  background: rgb(69 84 75 / 8%);
+  background: var(--ui-surface-subtle);
   color: var(--text);
 }
 
@@ -485,7 +481,7 @@
   border: 0;
   border-radius: 0;
   background: transparent;
-  color: #26312a;
+  color: var(--ui-text);
   font-family: "SFMono-Regular", Consolas, monospace;
   font-size: 12px;
   line-height: 1.6;

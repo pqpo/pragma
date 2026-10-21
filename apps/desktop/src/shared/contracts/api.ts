@@ -435,6 +435,7 @@ export interface PragmaDesktopAPI {
   ) => Promise<ContextStoreImportInspection>;
   deleteContextStore: (input: DeleteContextStore) => Promise<void>;
   isContextStoreMountedInMission: (input: ContextStoreMissionMountCheck) => Promise<boolean>;
+  countContextStoreMissionReferences: (input: ContextStoreMissionMountCheck) => Promise<number>;
   getContextStoreContent: (input: GetContextStoreContent) => Promise<ContextStoreContent>;
   listContextStoreEntries: (input: ListContextStoreEntries) => Promise<ContextStoreEntry[]>;
   createContextStoreFolder: (input: CreateContextStoreFolder) => Promise<void>;

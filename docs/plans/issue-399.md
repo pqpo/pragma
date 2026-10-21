@@ -1,37 +1,50 @@
-# Issue 399 独立部署与 Memory Headless 重构执行计划
+# Issue 399 共享运行配置收尾计划
 
-目标是让 Desktop 与 CLI 共用资源部署、环境管理和 Memory 后台业务，CLI 能在不启动 Desktop 的情况下完成配置、导入、运行与学习。先在现有支持的平台完成业务闭环，Linux 支持放到最后。
+阶段一已完成；本次只剩一个收尾阶段，做三件事：补齐 CLI 配置接线、验证与 Desktop 的运行一致性、补对应测试与文档。CLI 已经能够提交和执行 Mission、查询结果，这些能力直接复用。
 
-代码基线：2026-10-19 拉取的 `main`，`e1b6d427`。需求依据为 [Issue 399](https://github.com/pqpo/pragma/issues/399)、维护者的[阶段核对](https://github.com/pqpo/pragma/issues/399#issuecomment-6260731002)和 [Memory Headless 补充](https://github.com/pqpo/pragma/issues/399#issuecomment-6260968883)。
+核对基线：2026-10-19 的最新 `origin/main`，`5b3891e7`（[PR 408](https://github.com/pqpo/pragma/pull/408) 已合并）。实施时重新拉取最新远程 main 并创建独立 worktree。
 
-## 已完成的基础
+需求依据：[Issue 399](https://github.com/pqpo/pragma/issues/399) 及维护者确认的[范围调整评论](https://github.com/pqpo/pragma/issues/399#issuecomment-6269368075)。本计划替代原阶段 2—5 的后续排期；原始独立部署、Linux 和 Memory Headless 目标暂缓，不标记为完成。
 
-以下能力已经存在，后续直接复用，不重新实现。
+## 已完成及其价值
 
-| 已完成内容                               | 当前边界                                                                                                     | 依据                                                                                                                                            |
-| ---------------------------------------- | ------------------------------------------------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------- |
-| Desktop 与 CLI 统一 Mission application  | 控制、编译、执行、owner 和恢复已共享                                                                         | [PR 356](https://github.com/pqpo/pragma/pull/356)、[ADR 066](../adr/066-unified-local-host-mission-application.md)                              |
-| 管理 CLI 与 manage-pragma Skill 迁移     | 管理命令仍依赖 owning Execution endpoint                                                                     | [PR 375](https://github.com/pqpo/pragma/pull/375)                                                                                               |
-| 凭据诊断修复                             | 已修复存储版本误报，尚不包含 Linux 无桌面凭据支持                                                            | [PR 400](https://github.com/pqpo/pragma/pull/400)                                                                                               |
-| CLI 查询与运行能力完善                   | 已有分页、有限等待、owner 生命周期与机器输出                                                                 | [PR 402](https://github.com/pqpo/pragma/pull/402)、[实施记录](issue-398.md)                                                                     |
-| Bundle 协议与 Desktop 导入能力           | Interpreter 拥有协议；阶段 1 已将安装、资源写入、配置和绑定收敛到 Local Host                                 | [Bundle 架构](../architecture/pragma-bundle.md)、[Desktop 导入说明](../architecture/desktop-bundle-transfer.md)                                 |
-| Memory 数据面及提炼、检索、Learning 能力 | CLI 已能采集 Evidence、提交 Job 和读取已有记忆；提炼执行、索引写入和 Learning 编排尚未形成独立 Headless 闭环 | [Memory 说明](../usage/memory.md)、[ADR 057](../adr/057-unified-memory-revision-learning.md)、[PR 407](https://github.com/pqpo/pragma/pull/407) |
+- Mission application、编译、执行、owner、恢复与查询已由 Desktop / CLI 共享；CLI 已有机器输出、分页、有限等待和外部 Agent 调用基础。
+- 阶段一将 Project、Capability、ContextStore、Plugin 写入，Bundle 安装/导出/恢复/绑定修复，以及模型连接和 Runtime Environment 服务收敛到 Local Host，Desktop 已改接。详见 [ADR 075](../adr/075-shared-deployment-and-environments.md)。
+- 这些共享服务保留，供 Desktop、CLI 及未来 Web 服务端复用。未来 Web 仍需接口、页面、权限和 Host 生命周期；本次不建设这些入口。
 
-这些成果是本次重构的起点，不代表 Issue 399 的独立部署与后台业务闭环已经完成。
+## 唯一剩余阶段 CLI 运行配置接线与验收
 
-## 阶段顺序与状态
+**主要目标：** 在当前支持的平台、同一操作系统用户及同一 Pragma home 下，Desktop 完成模型、Runtime、凭据配置与 Bundle 导入，关闭 Desktop 后，CLI 能使用预期配置执行已有资源并获取最终结果。
 
-| 顺序 | 阶段                        | 当前进展                                    | 接下来交付                                      |
-| ---- | --------------------------- | ------------------------------------------- | ----------------------------------------------- |
-| 1    | 共享部署与环境服务          | 共享业务与工程门禁完成                      | CLI 入口留待阶段 2，真实闭环验收留待阶段 4      |
-| 2    | CLI 独立部署入口            | 运行、查询、诊断和管理客户端已有基础        | 从空配置完成导入、环境准备、修复与运行          |
-| 3    | Memory 与 Learning 独立运行 | 领域能力已存在，后台业务仍依赖 Desktop 装配 | 共享后台服务与 CLI 配置、处理、审核入口         |
-| 4    | 现有平台闭环验收            | 已有分项测试与验证                          | 使用实际 CLI 包完成独立部署和 Memory 全链路     |
-| 5    | Linux 支持                  | 当前包不支持 Linux，CI 仅验证拒绝安装       | 无桌面认证、平台适配、正向 CI 与完整 Linux 验收 |
+**实现思路：** 复用已有 Mission 命令及阶段一共享服务，重点补 CLI production composition。当前 Desktop 使用持久化 Runtime Environment 和模型连接 Store 装配 Runtime；CLI 仍直接创建固定的一组 Runtime，例如 PI 未注入 Desktop 使用的模型连接 Store。核对最新代码，只补两端配置解析与装配的实际差异。
 
-按 1 → 2 → 3 → 4 → 5 推进。每阶段可以拆成多个 PR；前三阶段及现有平台验收不以 Linux 支持为前置条件。本次只交付阶段 1；CLI 独立部署、Memory Headless 和 Linux 仍按后续阶段推进。
+**执行计划：**
 
-## 阶段 1 共享部署与环境服务
+1. **补配置接线。** CLI 接入已有共享环境服务，正确读取保存的 Runtime Environment、模型连接、SecretRef 与凭据。共享解析和校验放在 Local Host，具体 Runtime 工厂留在应用入口；沿用现有 SecretStore 和 Harness 原生认证，保持已有 Environment revision、Session Runtime 身份及权限边界。
+2. **验证运行一致性。** Desktop 配置并导入资源后关闭 Desktop，用实际构建的 CLI 验证预期 Runtime、模型、连接和认证，完成任务并查询最终结果。已有提交、查询、必要交互与恢复入口仅做相关回归，有缺口才修；缺失配置或凭据须准确诊断，不静默改用默认模型。
+3. **补测试与文档。** 补共享配置解析、CLI 生产入口/Worker 和必要 Desktop 接线回归，按本次改动合并重复测试，保留持久化与恢复覆盖。更新 CLI 使用、Agent 指南和本计划的实施记录，区分工程测试与真实 Runtime/模型验收。
+
+**完成标志：** 至少记录一条 Desktop 关闭后、实际 CLI 使用预期配置完成真实任务的证据；相关测试和构建通过，无 TTY、机器输出及 owner 语义无回退，凭据不进入日志。无法执行的真实环境或平台验证如实记录，不以 mock 或入队回执替代。`--detach` 继续只表示持久入队，不承诺进程退出后持续执行。
+
+## 暂缓范围与现有行为
+
+- 暂缓空 home 的 CLI 完整配置与独立部署、Bundle 管理/修复命令、可移植绑定配置、Linux、SecretStore 文件模式/helper、Web/云端沙箱及常驻后台进程。
+- 暂缓 Memory、Embedding、Learning Headless。现有 Memory 保留：策略允许时 CLI 仍保存 Evidence、提交持久提炼任务并召回已有记忆；提炼、索引维护与 Learning 继续由同一 home 下的 Desktop 承载。证据或任务入队不等于生成记忆，Knowledge/Skill 发布仍需人工批准。
+- 不新增 Mission 内核或完整 CLI 管理面，不做全仓测试搬迁、Bundle service 大规模重构及无关 Provider 管理扩展。Plugin 依赖 Bundle 继续遵循现有拒绝策略。
+
+收尾完成后按范围调整后的交付核对 Issue，不宣称原始 Linux 独立部署或 Memory Headless 验收通过。
+
+## 推进状态
+
+| 阶段                                       | 状态                   | 记录                                                                                                           |
+| ------------------------------------------ | ---------------------- | -------------------------------------------------------------------------------------------------------------- |
+| 阶段一：共享部署与环境服务                 | 已合并，验收边界见下文 | [PR 408](https://github.com/pqpo/pragma/pull/408)、[ADR 075](../adr/075-shared-deployment-and-environments.md) |
+| 最后收尾：配置接线、一致性验证、测试与文档 | 本轮范围已完成         | 见下方收尾实施记录                                                                                             |
+| 原独立部署、Memory Headless、Linux 阶段    | 暂缓                   | 不计入本轮交付                                                                                                 |
+
+## 阶段一实施与验证记录
+
+以下保留已合并阶段的历史实施和验证证据，不作为新增工作清单。
 
 **已完成：** 在 `e1b6d427` 的已有 Mission application、compile service、owner、恢复和 SecretStore 上继续收敛，没有新增执行内核。Project、Capability、ContextStore、Plugin 写入，Bundle 导入导出和安装，模型连接及 Runtime Environment 业务均已进入 `@pragma/local-host/deployment`；Desktop 生产入口直接接入，旧业务实现已删除。浏览器安全 DTO 使用独立的 `@pragma/local-host/deployment-contracts`。具体 Runtime 工厂、PI 模型目录/探针、Electron/凭据后端以及编辑器、默认资源和系统专家身份策略留在 Desktop。详见 [ADR 075：共享部署与环境服务](../adr/075-shared-deployment-and-environments.md)。
 
@@ -89,7 +102,7 @@
 
 本轮修复后重新执行根目录 lint、typecheck、build，均为 19/19 任务通过；编译产物上的共享部署及架构边界测试 75/75、真实历史安装迁移 8/8、CLI adapter 全部 165/165、Desktop 部署/环境/IPC/UI 相关 13 个文件 221/221，通过且没有跳过。本轮共 469 项回归，覆盖前述六类问题；不以此替代上文已经记录的完整业务门禁或真实 Runtime 验收。新增共享部署 ADR 原先误用已有编号，已改为未使用的 075 并补入索引，相关引用同步更新。
 
-**剩余边界：** 本阶段无 CLI 新部署入口、Memory Headless 或 Linux 适配。真实模型/Harness 执行、系统钥匙串、交互式 Desktop 全流程和 macOS/Windows 发布包验收尚未执行，留待相应平台和阶段 4 验收；本次工程测试不能替代这些验收。CI 性能目标同样尚未验收；本次已记录本地超出目标的计时，未将其标作通过。
+**阶段一验收边界：** 本阶段未提供 CLI 新部署入口、Memory Headless 或 Linux 适配；按当前范围，这些能力暂缓。真实模型/Harness 执行、系统钥匙串、交互式 Desktop 全流程和 macOS/Windows 发布包验收当时尚未执行；收尾只验证本次配置接线涉及的链路，不将历史缺项标为通过。CI 性能目标同样尚未验收；本次已记录本地超出目标的计时，未将其标作通过。
 
 **PR #408 评论复核与修复（2026-10-19）：** 完整读取普通评论、审核正文及行内评论，确认三个 P1 均成立，已修复并独立验证。原提交 `0e6acee8` 的 GitHub CI 质量、业务与 CLI 包验证已通过；以下为修复后的本机证据。
 
@@ -100,103 +113,176 @@
 
 验证：根目录 `pnpm lint`、`pnpm typecheck`、`pnpm build` 各 19/19 任务通过；编译后共享部署及边界 76/76、Core 历史迁移 8/8、CLI adapter 165/165、Desktop 相关 14 个文件 236/236，共 485 项通过且无跳过。Chromium 另有 3 组交互场景通过，覆盖无 transaction 的两类历史状态、确认/取消、拒绝清理时展示服务端原因、重新 inspection 和新 UUID。浏览器交互使用受控 Bridge，生产 IPC 测试另行验证真实 Project/ContextStore/归档和历史迁移边界，两者不冒充真实 Runtime 验收。已检查简中 1440×900/100%、英文 1080×700/125%、繁中 1080×700/150% 的正常与焦点态截图；Tab 验证真实焦点移动，隐藏 macOS 窗口的焦点态截图使用 DevTools 强制 focus-visible。临时截图保留在仓库外，未提交。
 
-非阻断建议已核对：当前模型编辑已有 provider revision CAS，实际消费者影响预览及 expectedImpact 接线留待后续；Bundle application service 内部按规划/事务/恢复/绑定修复拆分属于后续维护，不在本次缺陷修复中扩大重构。阶段 2、3、5 和真实 Runtime/平台验收的未完成状态保持不变。
+非阻断建议已核对：当前模型编辑已有 provider revision CAS，实际消费者影响预览及 expectedImpact 接线留待后续；Bundle application service 内部按规划/事务/恢复/绑定修复拆分属于后续维护，不在本次缺陷修复中扩大重构。上述记录仅代表阶段一的交付状态；当前后续范围以本文收尾阶段及 Issue 最新范围调整评论为准。
 
-## 阶段 2 CLI 独立部署入口
+## 收尾实施记录（2026-10-19）
 
-**已完成：** CLI 已有 Runtime 装配、Mission 运行与恢复、查询、分页、诊断、有限等待和机器输出；Agent 管理 CLI 已完成迁移。
+基于重新 fetch 的 `origin/main` `eb458180`，独立 worktree `pragma-issue-399-final`、分支
+`codex/issue-399-final` 实施。本轮未创建 PR，未修改持久协议版本。
 
-**主要目标：** 在现有支持的平台，仅通过 CLI 从空 `PRAGMA_HOME` 完成配置、导入 Bundle、修复依赖并运行任务。
+- Desktop / CLI 共用 `createLocalHostRuntimeConfiguration`，读取相同 Environment Store、模型连接和
+  SecretRef。CLI 的具体工厂使用保存的 Runtime identity、环境变量策略、模型目录缓存和统一 Token
+  counter，PI 注入共享 provider registry；既有 Environment revision / fingerprint 按精确绑定恢复。
+- 旧 CLI 静态绑定保留 resolve-only 精确读取：只在 Environment binding 不可用且旧静态 descriptor /
+  模型目录 fingerprint 完全匹配时恢复；新建 Session 始终使用共享 Environment。真实历史 resolver
+  fixture 验证 `codex` / `codex-local` 身份不被改写，当前配置错误与未来 revision 不走旧读取路径。
+- Mission 执行资源按持久权限模式取得 Runtime resolver，权限变化不改变 Runtime identity。缺失连接、
+  锁定钥匙串、迁移要求及 Runtime / 模型不可用保留机器错误和诊断，不改用其他模型。
+- 修复生产任务中发现的新建 Mission 接线：无事件的新分配任务可使用已解析的精确项目 Revision；后续
+  执行使用同一 Revision。旧 reservation、历史 Mission 和已有 Session 的证明 / pin 规则保持严格。
+- 编译错误映射新增模型连接错误与 Runtime 诊断。错误类使用独立叶子模块，源码子进程不再因连接 Store
+  与 Host barrel 的循环初始化而退出；真实 SIGKILL 恢复回归重新验证。
+- 保留既有 Memory Evidence 采集、持久入队与已有记忆召回。未增加 CLI 配置管理、Bundle 命令、Linux、
+  Memory Headless、凭据后端、Web 或 daemon。
 
-**实现思路：** CLI 只补参数、交互、输出和进程适配，业务全部调用阶段 1 的共享服务。独立部署入口不要求先有 owning Execution endpoint。
+### 真实 Runtime 验收
 
-**测试收敛目标：** 共享业务测试与 CLI 真实生产链路通过后，应能覆盖 Desktop 所复用的部署、环境和绑定业务的基本正确性；Desktop 通过必要的适配与界面测试验证平台差异。CLI 测试必须实际调用共享服务，不能以 mock 共享业务后的命令测试作为这一保证。
+macOS Intel、Node 23.11.0、Electron 43.7.6；同一操作系统用户，隔离 home
+`/tmp/pragma399-acceptance/home`。真实 Electron Host 使用 Desktop 生产 application container 与真实
+IPC 导入 `real-task.pragma`，Installation `54c977ba-416e-4bd0-9fd7-2aff2fe9f83a` 为 `ready`，
+Project `studio@1`，Expert `expert:0000000000000400`。这条链路使用自动化隐藏窗口，未冒充人工 UI 操作。
 
-**执行计划：**
+Electron PID 28215 已退出后，用实际构建的 npm CLI（`0.1.0-next.23`）执行：
 
-1. 接入初始化、Harness/模型发现、连接与凭据配置，支持从零创建运行环境。
-2. 接入 Bundle 检查、安装、状态查询、诊断和局部重新绑定，沿用已有 Mission 运行与结果查询。
-3. 补齐参数或配置文件驱动的非交互流程，以及可复用的无密钥绑定配置。
-4. 验证无 TTY 时不挂起、依赖不足时准确报告、修复后无需重新导入，并保留原管理客户端的授权边界。
-5. 将仍位于 Desktop 的通用部署业务测试迁移到 Local Host，包括 Project、Capability、ContextStore、Plugin、Bundle、模型连接和 Runtime Environment 的通用用例。保留真实持久化、迁移、重试、中断恢复、冲突、依赖缺失、绑定歧义和局部修复覆盖；Core、Interpreter 等领域包继续拥有自身测试。
-6. 接通 CLI 生产入口对这些共享服务的端到端覆盖，同步清理 Desktop 中的重复通用业务用例，并更新分级业务门禁。不能通过删除恢复、迁移或真实持久边界用例来减少测试数量；同一共享业务选集在门禁中只执行一次。
+```bash
+PRAGMA_HOME=/tmp/pragma399-acceptance/home node apps/cli/dist/pragma.js \
+  expert run expert:0000000000000400 --project studio --revision 1 \
+  --workspace /tmp/pragma-399-real-workspace \
+  --prompt 'Compute 137 times 29. Return the product and one sentence of explanation. Do not call tools or modify files. End with PRAGMA399-REAL-20261019.' \
+  --interactive never --json
 
-**测试职责与验收：**
+PRAGMA_HOME=/tmp/pragma399-acceptance/home node apps/cli/dist/pragma.js \
+  mission get 63af2b67-de59-47f7-8900-accf2d853377 --view result --json
+```
 
-- Local Host 验证通用业务规则及真实存储边界，成为 Desktop 与 CLI 共用的业务回归依据。
-- CLI 使用实际构建的入口和 Worker，从空配置验证部署、配置、绑定、运行、诊断及跨进程恢复；覆盖非交互与无 TTY 行为，不另建 CLI 专用业务实现。
-- Desktop 保留 UI/IPC 参数与结果传递、凭据后端、具体 Runtime 装配、打包产物，以及编辑器、默认资源和系统专家特有身份策略的测试。只调用共享服务的通用业务用例迁出，不重复验证共享内核；Desktop 特有行为仍须验证。
-- 提交迁移前后用例与门禁的对应记录，证明覆盖被转移而非丢失，并记录共享、CLI、Desktop 各选集耗时。遵循现有 worker 与测试分级预算；真实 Runtime、系统钥匙串及发布包验收与受控测试端口的工程验证分开记录。
+- Runtime `codex`、provider `openai`、模型 `gpt-5.6-sol`、Harness 原生认证；不是受控模型服务。
+- Mission `63af2b67-de59-47f7-8900-accf2d853377`，Execution
+  `e84567aa-3bc3-4383-9fac-6137f1b24320`；run 与独立结果查询均为 `succeeded`，返回 `3973` 和
+  `PRAGMA399-REAL-20261019`，实际报告 15956 tokens。
+- 持久 Session 根 Context 保存 `codex@1`，fingerprint
+  `30e4a83b0810584ab267572e34d2766ff06db4f6624711dd8c3fb3e8a9e56955`，模型仍为
+  `openai/gpt-5.6-sol`，未替换身份。原生 Codex rollout 的 `turn_context` 同时确认
+  `model=gpt-5.6-sol`、`approval_policy=on-request`、`sandbox_policy.type=workspace-write`。
+- 另以固定构建产物副本和 `--wait-timeout 120` 验证真实 owner Worker：Mission
+  `f668b354-6f1d-489e-9614-7d03bc282a36`、Execution
+  `74e0ab79-35c1-4362-8c92-636d629ce1f1` 返回 `PRAGMA399-WORKER-OK` / `succeeded`。
+  该固定副本 `cli.js` SHA-256 为 `a4f87b57b37fc704189509d28d6c0fed5bf95eaf6a345ae91ff0abbf024fd0bb`。
 
-**完成标志：** Desktop 关闭且没有历史 Pragma 配置时，CLI 可以完成一次真实部署与任务执行；相同安装请求安全重试，不影响其他资源或已有 Session。通用部署业务测试已集中到共享层，CLI 生产链路与 Desktop 必要接线测试共同通过，Desktop 不再重复维护这一范围的通用业务测试。
+**收尾提交 `8e775bef` 构建产物的追加验收：** `cli-closeout-artifact/cli.js` SHA-256
+`cf2aea73df12c145a843116fc021bd892a76b6cbc61a0af10113d1aa6384eafe`，与该次构建的
+`apps/cli/dist/cli.js` 一致。
 
-## 阶段 3 Memory 与 Learning 独立运行
+- 不传 `--project` / `--revision`，使用 `--wait-timeout 120 --interactive never --json`，Mission
+  `c8a95cfc-024e-4967-8a30-c8b8cf4f25df`、Execution `687db454-5f71-43ca-9dfd-59bfdf522bbe`
+  返回 `3973` / `PRAGMA399-CLOSEOUT-OK`；独立 `mission get --view result` 查询同样成功。
+- 继续早先的 `63af2b67-de59-47f7-8900-accf2d853377`，返回 `PRAGMA399-CONTINUED-OK`；根 Context
+  `5bd0312b-aed7-4e52-b077-76b49ba9ac59`、Environment binding 与模型选择不变，Native 记录为
+  `thread_resume` / `restored: true`。
+- 用修改前的真实 CLI 产物（静态 Runtime composition，SHA-256
+  `472b7f44677768cd1ec0cdd32b278df1e461cc3726a610cb43fa21c5813a54f9`）创建 Mission
+  `f960f853-b47c-4b97-b09e-ade392c1fedd`，成功返回 `PRAGMA399-LEGACY-CREATED`。再由最终 CLI
+  `mission send --wait` 继续，Execution `e92267b4-4dc5-4031-9b0e-fd2807e66dd8` 返回
+  `PRAGMA399-LEGACY-RESTORED`，独立结果查询成功。根 Context
+  `77b87d29-d7be-48a2-b590-9acf3ed0a5c3` 的原静态 fingerprint
+  `fc5a9a7360fa40064b7db50bb33999ab44d7af37703bbbe515c0e60444f6bac6`、`codex` binding 和
+  `openai/gpt-5.6-sol` 不变；Native adapter 仍为 `codex-local`，原 systemSessionId
+  `dbcfbae3-b7a1-47f7-bead-8fcdc863a3be` 得到恢复，没有热迁移或重建身份。
 
-**已完成：** Memory 已有共享数据面、提炼 Job/Session、Curator 工具契约、向量检索和 Learning 规则；Desktop 已能执行后台提炼及 Knowledge/Skill 草稿审核。最新 PR 407 已完善 Curator v2 与历史会话恢复。
+原始验收记录、CLI 输出和临时 home 位于仓库外 `/tmp/pragma399-acceptance/`，不提交凭据或生成文件。
+首次并行构建期间的产物读取失败不计为通过；后续使用固定副本完成 Worker 验收。
 
-**主要目标：** Desktop 关闭时，CLI 或显式托管的 Worker 仍能完成记忆提炼、索引维护和 Learning，并保留人工治理。
+### 工程验证与限制
 
-**实现思路：** 将 Desktop 独占的后台业务编排收敛到 Local Host，复用 Memory、Built-in Agents 和共享 Mission 用例。Desktop 与 CLI 仅管理各自生命周期和交互，不新增 CLI 专用提炼或索引实现。
+工程测试和真实 Runtime 验收分开记录。本轮最终结果：
 
-**执行计划：**
+| 验证                                                | 结果                                                                                                                                  |
+| --------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------- |
+| `pnpm lint`、`pnpm typecheck`、`pnpm build`         | 最后一轮各 19/19 任务通过，包含静态旧绑定读取；main 无外部 workspace import、preload 自包含、随包 CLI 与 storage Worker 验证通过      |
+| `pnpm test:local-host-kernel`                       | Core 文件锁 22/22；Host 111 个文件、1095 通过、1 项条件跳过，Host 阶段 709.48 秒                                                      |
+| `pnpm --filter @pqpo/pragma test:adapters:prepared` | 最后一轮 22 个文件、167/167 通过，包含历史静态绑定、未来 revision / fingerprint 拒绝和当前模型错误不走旧读取路径                      |
+| CLI 生产配置 / owner Worker / 原生 SecretStore      | 最后单独补跑 1/1 通过；真实临时持久存储、原生钥匙串、受控 HTTP 服务，覆盖成功、独立结果查询、删除 SecretRef、删除连接及凭据不进入输出 |
+| Desktop 接线                                        | Runtime Environment service/store 与模型 IPC 26/26，进程环境 / login shell 9/9，通过                                                  |
+| 新建 / 恢复相关补跑                                 | run / core-run / Node composition / shared configuration 33/33；真实 SIGKILL 安装恢复 2/2；执行内核 25/25                             |
+| `pnpm test:core`                                    | 4/4 任务通过，27.20 秒                                                                                                                |
 
-1. 共享 Curator、提炼调度、诊断和恢复服务，提供显式、有界或持续处理的 Worker 生命周期。
-2. 接通无 Desktop 的 Embedding 配置、全量回填、增量索引与失败恢复，保留关键词降级；Jev 继续可选。
-3. 共享 Knowledge/Skill Learning 的规划、托管草稿和 Revision 编排，保持原触发门槛及人工批准规则。
-4. 补齐 CLI 的 Memory 配置、处理、查询、重试和审核入口，Desktop 同步改接共享业务。
+旧静态绑定的 resolve-only 读取另行通过 CLI 全量 adapter、生产入口 / Worker、历史 writer fixture
+与真实旧版 Session 恢复验收；未改变 Mission 持久化、队列或恢复内核。早期构建与
+产物测试并行造成的临时失败不计入上述通过结果；后续固定构建产物后完成验收。新增错误映射导致的
+源码循环初始化也已修复，并通过真实 SIGKILL 子进程恢复回归。
 
-**完成标志：** 无 Desktop 时，新 Evidence 能生成 Episodic/Semantic Memory 并被下一次 Mission 召回；索引可更新，Learning 能生成草稿并在授权批准后生效；重启可恢复且不重复写入。
+全量共享门禁仍超过历史八分钟性能目标，本轮没有扩展为性能优化或 CI 冷 / 暖缓存验收。原生钥匙串
+独立平台专项仍按既有门禁规则排除；本轮新增生产 CLI 用例实际使用了 macOS 原生钥匙串测试凭据。
 
-## 阶段 4 现有平台闭环验收
+受控 HTTP 模型服务 + 实际 CLI/owner Worker 验证 PI 使用保存的自定义 Environment、精确模型、原生
+SecretStore 凭据和独立 Mission 查询；验证认证 canary 不进入 stdout/stderr，删除连接后不再发送请求，
+准确返回依赖 / Runtime 诊断。这是工程集成测试，不是实际 PI 模型验收。
 
-**已完成：** 各能力已有工程测试、使用文档和分项验证，但尚不足以证明独立部署及 Memory/Learning 的完整闭环。
+当前 Node CLI 的内置 Pragma 仍缺少管理资源端口，会报告依赖不可用；本轮真实任务使用 Desktop
+导入的 Expert，没有扩展这些管理端口。
 
-**主要目标：** 先在当前支持的平台验证前三阶段，形成可复现的交付与回归证据。
+真实 PI / 模型连接验收未完成：本机历史模型连接存在待恢复的 Electron credential migration，历史
+safeStorage 读取未能在无人值守下完成；没有绕过钥匙串、复制明文凭据或更换后端。Windows、Apple Silicon、
+真实 Team/Flow、人工 Desktop UI、独立安装 tarball 及所有 Harness 组合未在本轮真实环境验收。
+Linux 与 Memory Headless 仍为暂缓项，不能将此轮结果用于声称原始 Linux 独立部署目标完成。
 
-**实现思路：** 使用实际候选 CLI 发布包、真实 Desktop 导出的 Bundle 和真实 Runtime/模型。独立环境从空配置开始，验收期间不启动 Desktop；另行回归 Desktop 原有体验。
+### 收尾提交的追加 CR 与修复（2026-10-19）
 
-**执行计划：**
+人工逐项审查 `8e775bef` 的配置、Mission 提交、编译错误、Desktop 接线及历史 Session 恢复改动，
+确认并修复两项问题：
 
-1. 验证配置、Bundle 资产导入、自动绑定、真实任务、进度和结果查询，以及无密钥配置复用。
-2. 验证依赖缺失、凭据错误、绑定歧义、局部修复、安装中断与跨进程恢复。
-3. 验证记忆生成、下一任务召回、真实向量检索、Learning 草稿审核和发布。
-4. 完成相关共享业务、CLI、Desktop 与打包回归，更新使用文档并保存验收记录。
+- P2：旧 CLI Session 的恢复 resolver 固定采用 `request-approval`，且永久缓存初次读取的环境变量
+  策略。现在按 Mission 权限模式分别缓存，并在策略版本改变后重建 adapter；恢复继续校验真实历史
+  descriptor / catalog fingerprint，不改写 Runtime binding。回归覆盖 `full-access`、恢复默认权限、
+  显式允许变量与后续 blocklist 收紧。
+- P2：新 Runtime 的缓存键与 adapter 构造分别读取策略，跨进程更新可能使 adapter 缓存到错误策略
+  版本下。现在通过 factory `prepare` 捕获同一策略快照，缓存键和构造闭包共同使用它。回归模拟
+  连续读取间策略变化，验证首次过滤、下次允许及相同版本缓存复用。
 
-**完成标志：** 现有平台独立运行闭环通过，工程测试与真实运行证据分别记录。Linux 验收继续保留在阶段 5，Issue 399 不提前视为全部完成。
+新增回归在原提交上复现为 2 项失败，在修复后为 3/3 通过。未发现其他已确认而未修复的问题；
+本次 CR 不改变上文的真实平台、模型和安装验收限制。
 
-## 阶段 5 Linux 支持
+修复后重新运行全仓 `pnpm lint`、`pnpm typecheck`、`pnpm build`，均为 19/19 任务通过；
+CLI 全量 adapter 为 22 文件、168/168 通过；生产 CLI / owner Worker / 原生 SecretStore 配置
+集成为 1/1 通过。此次只改 CLI composition，未改共享 Mission 内核；上文完整内核门禁未重复运行。
 
-**已完成：** 已有 CLI 发布包、Worker 打包与审计基础；当前 npm 包仅支持 macOS/Windows，Linux CI 验证的是拒绝安装。
+CR 后固定 CLI 产物 `cli-cr-artifact/cli.js` SHA-256 为
+`d8b93aa2db1e89e56e54786f1bbe9866e4e61192512dce1e6c416f4e75778de3`。
+用它继续同一旧 Mission `f960f853-b47c-4b97-b09e-ade392c1fedd`，Execution
+`6efba6c9-71c3-4e72-8bb3-d0e9fc76aa7f` 成功返回 `PRAGMA399-CR-RESTORED-OK`，独立
+`mission get --view result` 同样成功。持久 Session、根 Context、原静态 fingerprint 及
+`openai/gpt-5.6-sol` 均与上文旧版恢复验收一致。记录为仓库外 `cli-cr-legacy.json` 与
+`cli-cr-legacy-result.json`。固定副本首次未链接原生依赖目录的启动失败未计入通过结果；
+补齐与此前验收一致的 `node_modules` 链接后完成以上验收，未改变源码或凭据。
 
-**主要目标：** 在无 Desktop、无图形登录和历史用户配置的 Linux 环境中，运行前四阶段的完整能力。
+### PR #409 全量评论复核（2026-10-20）
 
-**实现思路：** 在已共享的业务之上补平台适配，优先支持明确的发行环境、架构与 Runtime 组合。此阶段确定可用的无桌面凭据方案，不提前绑定具体实现。
+读取两条普通评论、一份审核正文与全部行内评论；维护者意见共 3 个 P2 和 1 个 P3，
+其中崩溃窗口问题与自动审核行内意见重复。四项均经代码和回归确认成立并修复：
 
-**执行计划：**
+- 创建事件已写入而 pin 未写入的重试，使用规范化后的精确 project/revision；回归覆盖
+  无显式 project/revision、重新打开持久 controller、同 requestId 重放仅一次 Execution，
+  并验证解析到不同 revision 时仍拒绝幂等冲突。
+- 历史 RuntimeProfile 的 `codex-local` 新 Mission 使用共享 Environment 的 canonical binding，
+  不启用静态新绑定。别名只在持久 ID 不存在时生效；显式注册的同名配置优先，删除后明确失败。
+  回归通过真实发布/编译/Mission/持久 Session 边界检查 `codex` binding，CLI composition 也有接线断言。
+- Desktop/CLI 共用原设置存储及历史迁移，PI 读取相同 `agentContextWindow`；预算参与 preparation
+  快照和缓存键。CLI 回归验证 32K→64K 更新、缓存刷新以及原 binding 不变。Desktop 保留 UI/locale
+  转换；不改存储版本、文件、锁、journal 与备份语义。
+- stop-only 路径使用 Mission 权限对应的 resolver；覆盖 request-approval/full-access 持久模式，
+  并验证不触碰工具、Memory 或挂载准备。另在真实子进程 SIGKILL 后恢复/停止 Flow，验证不重发
+  Native Invocation，即使当前工具资源已删除仍可停止。
 
-1. 明确首版支持矩阵及无桌面凭据后端，保持受控注入和 SecretStore 边界，不静默降级为明文持久化。
-2. 适配原生依赖、权限与路径、Harness 发现、环境传递和包内 Worker。
-3. 使用实际发布包增加 Linux 正向安装与运行 CI，保留 macOS/Windows 回归。
-4. 在干净 Linux 环境重复部署、真实任务、Memory/Learning 和恢复验收，补充支持矩阵与部署文档。
+修复前针对性回归复现崩溃重试、历史 ID 新绑定、PI 预算和停止权限选择失败；修复后分别验证。
+此前真实模型验收记录仍有效，但不将本轮工程测试表述为新增 PI/Windows/ARM64 真实验收。
 
-**完成标志：** 实际 CLI 包在声明的 Linux 组合中通过完整闭环；平台声明、CI 和可复现文档一致，随后核对 Issue 399 全部验收项。
+本轮 `pnpm check` 整体通过（lint/typecheck 各 19/19、Core 测试 4/4 任务）；`pnpm build`
+19/19 通过。Desktop 设置历史 fixture、升级恢复、未来版本拒绝、Runtime 和协议回归合计
+5 文件、103/103 通过；崩溃窗口、历史 ID 与停止资源针对性回归 20/20 通过，CLI 配置回归
+4/4 通过。完整共享内核门禁在本轮重新执行，最终计数与远程 CI 结果见 PR #409 最新验证记录。
 
-## 各阶段共同约束
-
-- Desktop 与 CLI 使用同一共享业务；每次下沉同步改接，避免长期保留两套实现。Core、Interpreter、Memory 和 Built-in Agents 保持原有领域所有权。
-- 保持资源身份、显式副本导入、确定性绑定和已有 Session 的持久 Runtime 身份；不按名称猜测或静默替换环境。
-- 持久协议语义改变时，同步交付版本、相邻迁移、历史 fixture 和恢复测试；保留 Curator 历史工具契约的恢复能力。
-- Memory 默认关闭并要求显式启用，Learning 不绕过人工批准；凭据不进入 Bundle、普通配置或日志。
-- 每阶段验证相关业务和生产接线；“命令存在”“已入队”或 mock 成功不能代替真实任务、记忆生成和正式发布结果。
-
-## 后续推进方式
-
-每次选择一个阶段推进，先核对最新代码与 Issue 更新，只实施剩余部分。完成后在下表记录 PR、验证证据和剩余缺口，再进入下一阶段；具体文件、命令和测试拆分在该阶段实施时确定。
-
-| 阶段                          | 本计划剩余工作状态           | 实施与验证记录                                                                              |
-| ----------------------------- | ---------------------------- | ------------------------------------------------------------------------------------------- |
-| 1 共享部署与环境服务          | 共享业务完成，验收边界见记录 | [ADR 075：共享部署与环境服务](../adr/075-shared-deployment-and-environments.md)，见本节记录 |
-| 2 CLI 独立部署入口            | 待推进                       | —                                                                                           |
-| 3 Memory 与 Learning 独立运行 | 待推进                       | —                                                                                           |
-| 4 现有平台闭环验收            | 待推进                       | —                                                                                           |
-| 5 Linux 支持                  | 延后，最后推进               | —                                                                                           |
+本轮固定 CLI `cli-pr409-comment-fixes/cli.js` SHA-256 为
+`269f2631eb47adcca0a1ab54676b111cffdc30ecc2113de6e4aa7b17054ee7a0`。
+同一旧 Mission 的 Execution `00daed20-23b5-447a-82c5-105149e07081` 成功返回
+`PRAGMA409-COMMENTS-OK`，独立查询成功；原 Session、根 Context、静态 fingerprint 与
+`openai/gpt-5.6-sol` 均保持不变。记录为仓库外 `cli-pr409-comments.json` 与
+`cli-pr409-comments-result.json`；没有新增真实 PI 或其他平台验收声明。

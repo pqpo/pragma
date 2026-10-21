@@ -168,3 +168,5 @@ export type ModelDiscoveryResult = z.infer<
   typeof import("./model-provider.ts").ModelDiscoveryResultSchema
 >;
 export * from "./environment.ts";
+
+export * from "./settings.ts";

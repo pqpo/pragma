@@ -1,3 +1,4 @@
+import { ModelProviderStoreError } from "../deployment/model-providers/model-provider-error.ts";
 import { PragmaDslError, PragmaResourceNeedsAttentionError } from "@pragma/interpreter";
 import {
   createIntegrationError,
@@ -55,6 +56,25 @@ export function localHostCompilationError(error: unknown): unknown {
   if (error instanceof PragmaDslError || error instanceof PragmaResourceNeedsAttentionError) {
     const diagnostics = error instanceof PragmaDslError ? error.diagnostics : error.health.issues;
     if (
+      diagnostics.some(
+        (issue) => issue.severity === "error" && issue.code === "environment.runtime_unavailable",
+      )
+    ) {
+      return createIntegrationError({
+        code: "RUNTIME_UNAVAILABLE",
+        category: "dependency",
+        message: error.message,
+        details: {
+          diagnostics: diagnostics.map((issue) => ({
+            code: issue.code,
+            severity: issue.severity,
+            message: issue.message,
+            path: [...issue.path],
+          })),
+        },
+      });
+    }
+    if (
       !diagnostics.some(
         (issue) =>
           issue.severity === "error" &&
@@ -102,6 +122,7 @@ export function localHostCompilationError(error: unknown): unknown {
 
 function isHostResourceError(error: unknown): error is Error & { readonly code: string } {
   return (
+    error instanceof ModelProviderStoreError ||
     error instanceof LocalHostResourceUnavailableError ||
     error instanceof CapabilityStoreError ||
     error instanceof ContextStoreStoreError ||
@@ -119,6 +140,7 @@ function readerErrorCode(
   | Exclude<IntegrationErrorCode, "COMMAND_RESULT_TIMEOUT" | "EXECUTION_FAILED" | "INTERNAL_ERROR">
   | undefined {
   switch (code) {
+    case "provider_not_found":
     case "capability_not_found":
     case "plugin_not_found":
     case "version_conflict":

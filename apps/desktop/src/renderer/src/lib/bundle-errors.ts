@@ -25,16 +25,28 @@ export function localizedBundleMutationError(
   }
   const names = dependencies
     .slice(0, 3)
-    .map((dependency) =>
-      dependency.kind === "context-store" &&
-      /^Context\s+[0-9a-f]{8}-[0-9a-f-]{27,}$/iu.test(dependency.name)
-        ? translate("bundleLegacyKnowledgeBase")
-        : dependency.name,
-    );
+    .map((dependency) => bundleDependencyDisplayName(dependency.kind, dependency.name, translate));
   const remaining = dependencies.length - names.length;
   const resources = remaining > 0 ? `${names.join(", ")} (+${remaining})` : names.join(", ");
   return translate("bundleSetupRequired", {
     count: dependencies.length,
     resources,
   });
+}
+
+export function bundleDependencyDisplayName(
+  kind: string,
+  name: string,
+  translate: (key: string) => string,
+): string {
+  const legacyIdentity =
+    /^(?:Context|Capability|Runtime(?: Profile)?)\s+(?:[0-9a-f]{8}-[0-9a-f-]{27,}|[0-9a-hjkmnp-tv-z]{16})$/iu;
+  if (!legacyIdentity.test(name)) return name;
+  return translate(
+    kind === "context-store"
+      ? "bundleLegacyKnowledgeBase"
+      : kind === "capability"
+        ? "bundleLegacyCapability"
+        : "bundleLegacyRuntime",
+  );
 }
