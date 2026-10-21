@@ -509,6 +509,8 @@ export const missions = {
   questionPosition: "Question {{current}} of {{total}} · {{header}}",
   questionNavigation: "Question navigation",
   previousQuestion: "Previous question",
+  collapseHumanInteraction: "Collapse question",
+  expandHumanInteraction: "Expand question",
   nextQuestion: "Next question",
   questionProgress: "{{current}} / {{total}}",
   humanInputRequired: "Human input required",

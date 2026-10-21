@@ -1782,6 +1782,7 @@ export function MissionDetailFragment(props: {
               {interactions[0] !== undefined ? (
                 <>
                   <MissionHumanComposer
+                    key={interactions[0].interactionId}
                     interaction={interactions[0]}
                     answers={humanAnswers[interactions[0].interactionId] ?? {}}
                     customAnswers={humanCustomAnswers[interactions[0].interactionId] ?? {}}

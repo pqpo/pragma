@@ -485,6 +485,8 @@ export const missions = {
   questionPosition: "问题 {{current}} / {{total}} · {{header}}",
   questionNavigation: "题目导航",
   previousQuestion: "上一题",
+  collapseHumanInteraction: "折叠询问",
+  expandHumanInteraction: "展开询问",
   nextQuestion: "下一题",
   questionProgress: "{{current}} / {{total}}",
   humanInputRequired: "需要人工输入",
