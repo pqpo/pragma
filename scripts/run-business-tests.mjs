@@ -125,6 +125,8 @@ if (lane !== "host") {
     "src/main/features/capabilities/capability-revision-coordinator.test.ts",
     "src/main/features/context-stores/context-store-store.test.ts",
     "src/main/features/projects/pragma-project-store.test.ts",
+    "src/main/features/built-in-agents/pragma-agent-project-adapter.test.ts",
+    "src/renderer/src/pages/studio/SquareDirectoryFragment.test.tsx",
     "src/main/features/plugins/plugin-store.test.ts",
     "src/main/features/memory/desktop-memory-plane.test.ts",
     "src/main/features/memory/memory-curator.test.ts",

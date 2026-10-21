@@ -1,3 +1,5 @@
+import { normalizeHostBoundResources } from "./deployment/projects/resource-normalization.ts";
+import { classifyHostCapabilityResource } from "./deployment/bindings.ts";
 import { createHash, randomUUID } from "node:crypto";
 import { readCommandState } from "./management-command-ownership.ts";
 import {
@@ -249,6 +251,21 @@ export function createLocalHostPragmaProjectPort(options: {
   const dslDraftMutationLockPath = (id: string) =>
     join(dslDraftsRoot, ".locks", `${encodePragmaPathSegment(id)}.lock`);
 
+  const normalizeResources = async (
+    resources: readonly PragmaResource[],
+    catalog: PragmaManagementExpertCatalog,
+  ) => {
+    const capabilityResources = [...catalog.resources.values()].filter(
+      (resource) => resource.kind === "Capability",
+    );
+    return await normalizeHostBoundResources(resources, {
+      capabilityResources,
+      capabilityName: async (id) =>
+        capabilityResources.find((resource) => classifyHostCapabilityResource(resource)?.id === id)
+          ?.metadata.name,
+    });
+  };
+
   const planResources = async (input: {
     readonly expectedProjectRevision: number;
     readonly authoredResources: readonly PragmaResource[];
@@ -261,6 +278,13 @@ export function createLocalHostPragmaProjectPort(options: {
     const snapshot = await options.project.get();
     const authoredResources = [...input.authoredResources];
     const catalog = await options.catalog();
+    const normalizedSnapshot = await normalizeResources(snapshot.resources, catalog);
+    const existingDependencies = new Map(
+      normalizedSnapshot.resources.map((resource) => [
+        canonicalPragmaResourceRef(resource),
+        resource,
+      ]),
+    );
     const knownRefs = new Set([
       ...snapshot.resources.map(canonicalPragmaResourceRef),
       ...authoredResources.map(canonicalPragmaResourceRef),
@@ -270,8 +294,22 @@ export function createLocalHostPragmaProjectPort(options: {
       .flatMap(expertDependencyRefs)
       .flatMap((ref) => {
         if (knownRefs.has(ref)) return [];
-        const dependency = catalog.resources.get(ref);
+        let dependency = existingDependencies.get(ref) ?? catalog.resources.get(ref);
         if (dependency === undefined) return [];
+        // An explicit catalog selection may introduce its ID in this write transaction.
+        // Preserve the stored definition's extension fields instead of replacing it with a template.
+        const binding = classifyHostCapabilityResource(dependency);
+        const stored =
+          binding === undefined
+            ? undefined
+            : normalizedSnapshot.resources.find(
+                (resource) => classifyHostCapabilityResource(resource)?.id === binding.id,
+              );
+        if (stored?.kind === "Capability") {
+          const copy = structuredClone(stored);
+          copy.metadata.id = dependency.metadata.id;
+          dependency = copy;
+        }
         knownRefs.add(ref);
         return [dependency];
       });
@@ -286,9 +324,37 @@ export function createLocalHostPragmaProjectPort(options: {
       requestedResources,
       catalog,
     );
+    const combined = new Map(
+      snapshot.resources.map((resource) => [canonicalPragmaResourceRef(resource), resource]),
+    );
+    for (const resource of requestedResources)
+      combined.set(canonicalPragmaResourceRef(resource), resource);
+    const normalized = await normalizeResources([...combined.values()], catalog);
+    const original = new Map(
+      snapshot.resources.map((resource) => [canonicalPragmaResourceRef(resource), resource]),
+    );
+    const requested = new Set(refs.map((ref) => normalized.aliases.get(ref) ?? ref));
+    const normalizedUpserts = normalized.resources.filter(
+      (resource) =>
+        requested.has(canonicalPragmaResourceRef(resource)) ||
+        !isDeepStrictEqual(resource, original.get(canonicalPragmaResourceRef(resource))),
+    );
+    // Prefer authored changes in the display order; review matching uses resource refs.
+    const authoredOrder = new Map(
+      authoredResources.map((resource, index) => [
+        normalized.aliases.get(canonicalPragmaResourceRef(resource)) ??
+          canonicalPragmaResourceRef(resource),
+        index,
+      ]),
+    );
+    normalizedUpserts.sort(
+      (left, right) =>
+        (authoredOrder.get(canonicalPragmaResourceRef(left)) ?? Infinity) -
+        (authoredOrder.get(canonicalPragmaResourceRef(right)) ?? Infinity),
+    );
     const preview = await options.project.previewChanges({
       baseRevision: input.expectedProjectRevision,
-      upserts: requestedResources,
+      upserts: normalizedUpserts,
     });
     return {
       snapshot,
@@ -360,7 +426,7 @@ export function createLocalHostPragmaProjectPort(options: {
                 ).resources,
                 rawResources: input.draftReview.rawResources,
                 authoredResources,
-                effectiveResources: resources.slice(0, authoredResources.length),
+                effectiveResources: resources,
                 diagnostics,
                 dependencies,
                 effectivePreviewAvailable: true,
@@ -902,7 +968,7 @@ export function createLocalHostPragmaProjectPort(options: {
           expectedProjectRevision: draft.baseProjectRevision,
           authoredResources: parsed.resources,
         });
-        effectiveResources = plan.resources.slice(0, parsed.resources.length);
+        effectiveResources = plan.resources;
         dependencies = plan.dependencies;
         effectivePreviewAvailable = true;
         diagnostics.push(...plan.diagnostics);
@@ -1698,7 +1764,8 @@ export function createLocalHostPragmaProjectPort(options: {
       const snapshot = await options.project.get();
       const query = input.query?.trim().toLocaleLowerCase();
       const kinds = input.kinds === undefined ? undefined : new Set(input.kinds);
-      const resources = snapshot.resources
+      const normalized = await normalizeResources(snapshot.resources, await options.catalog());
+      const resources = normalized.resources
         .map((resource) => ({
           ref: canonicalPragmaResourceRef(resource),
           kind: resource.kind,
@@ -1722,7 +1789,7 @@ export function createLocalHostPragmaProjectPort(options: {
       const page = paginateManagementItems({
         items: resources,
         scope: "list_dsl_resources",
-        fingerprintValue: snapshot.revision,
+        fingerprintValue: { revision: snapshot.revision, resources },
         filters: { kinds: input.kinds, query },
         cursor: input.cursor,
         limit: input.limit,
@@ -1734,8 +1801,10 @@ export function createLocalHostPragmaProjectPort(options: {
     },
     async read(ref) {
       const snapshot = await options.project.get();
-      const resource = snapshot.resources.find(
-        (candidate) => canonicalPragmaResourceRef(candidate) === ref,
+      const normalized = await normalizeResources(snapshot.resources, await options.catalog());
+      const canonicalRef = normalized.aliases.get(ref) ?? ref;
+      const resource = normalized.resources.find(
+        (candidate) => canonicalPragmaResourceRef(candidate) === canonicalRef,
       );
       const systemResource = resource === undefined ? options.readSystemResource(ref) : undefined;
       const resolved = resource ?? systemResource;

@@ -734,14 +734,7 @@ export function SquareBundleContents(props: { readonly inspection: PragmaBundleI
             resources === undefined ? (
               <p className="square-detail-status">{t("square.resourceDetailsUnavailable")}</p>
             ) : (
-              <ul className="square-content-detail-list">
-                {resources.map((resource) => (
-                  <li key={resource.ref}>
-                    <span>{resource.name}</span>
-                    <small>{t(`square.resourceKinds.${resource.kind}`)}</small>
-                  </li>
-                ))}
-              </ul>
+              <SquareBundleResourceList inspection={inspection} />
             )
           ) : activeSection === "dependencies" ? (
             dependencies.length === 0 ? (
@@ -790,5 +783,29 @@ export function SquareBundleContents(props: { readonly inspection: PragmaBundleI
         </Dialog>
       )}
     </>
+  );
+}
+
+export function SquareBundleResourceList(props: {
+  readonly inspection: PragmaBundleImportInspection;
+}) {
+  const { t } = useTranslation("studio");
+  return (
+    <ul className="square-content-detail-list">
+      {props.inspection.resourceDetails?.map((resource) => (
+        <li key={resource.ref}>
+          <span>{resource.name}</span>
+          <small>{t(`square.resourceKinds.${resource.kind}`)}</small>
+          {props.inspection.runtimeModels?.[resource.ref]?.consumers.map((consumer, index) => (
+            <small key={index}>
+              {t(`square.modelUsage.${consumer.usage}`, {
+                name: consumer.name,
+                target: consumer.targetName ?? t("square.modelTarget"),
+              })}
+            </small>
+          ))}
+        </li>
+      ))}
+    </ul>
   );
 }
