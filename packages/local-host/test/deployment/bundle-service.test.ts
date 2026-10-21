@@ -7,7 +7,7 @@ import { chmod, copyFile, mkdir, mkdtemp, readFile, rm, stat, writeFile } from "
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { PragmaPaths } from "@pragma/core";
+import { PragmaPaths, derivePragmaResourceId } from "@pragma/core";
 import { pragmaManagementCapabilityResource } from "@pragma/built-in-agents";
 import { decodePragmaBundle, createPragmaBundleFingerprint } from "@pragma/interpreter";
 import {
@@ -72,6 +72,242 @@ afterEach(async () => {
 });
 
 describe("PragmaBundleService", { timeout: 30_000 }, () => {
+  it("exports distinct same-name Host capabilities without name collisions or false merging", async () => {
+    const assetsRoot = await mkdtemp(join(tmpdir(), "pragma-412-same-name-assets-"));
+    directories.push(assetsRoot);
+    const assets = createRealSkillCapabilityStore(assetsRoot);
+    const definition = (baseUrl: string) => ({
+      kind: "http_service" as const,
+      name: "code",
+      description: "Development tools",
+      baseUrl,
+      auth: { type: "none" as const },
+      timeoutMs: 30000,
+      tools: [
+        {
+          name: "read",
+          description: "Read",
+          method: "GET" as const,
+          path: "/read",
+          parameters: [],
+        },
+      ],
+    });
+    const first = await assets.create({
+      definition: definition("https://first.example.test"),
+      credentials: {},
+    });
+    const second = await assets.create({
+      definition: definition("https://second.example.test"),
+      credentials: {},
+    });
+    const fixture = await createFixture("412-distinct-same-names", { capabilities: assets });
+    const bindings = [first, second].map((asset, index) => {
+      const resource = portableCapability();
+      resource.metadata.id = index === 0 ? "20k21q9j9wexjv50" : "nv27faxmxpqnxwqr";
+      resource.metadata.name = `Capability ${asset.manifest.id}`;
+      resource.spec.binding = desktopCapabilityBindingRef(asset.manifest.id);
+      resource.spec.config = { key: asset.manifest.id };
+      return resource;
+    });
+    const writer = expert("Use both code services");
+    writer.spec.capabilities = bindings.map((resource) => ({
+      ref: canonicalPragmaResourceRef(resource),
+      kind: "tools",
+      tools: ["read"],
+    }));
+    const published = await fixture.project.publish({
+      expectedRevision: fixture.projectRevision,
+      resources: [writer, runtime("codex"), ...bindings],
+    });
+    expect(
+      (
+        await fixture.service.prepareExport({
+          rootRef: "expert:1xddvess309a6gme",
+          projectRevision: published.revision,
+        })
+      ).capabilityCount,
+    ).toBe(2);
+    const path = join(fixture.root, "same-name.pragma");
+    await fixture.service.exportTo(exportInput(published.revision), path);
+    const inspection = await fixture.service.inspect(path);
+    const names = inspection
+      .resourceDetails!.filter((resource) => resource.kind === "Capability")
+      .map((resource) => resource.name);
+    expect(names).toHaveLength(2);
+    expect(new Set(names).size).toBe(2);
+    expect(names.every((name) => name.startsWith("code"))).toBe(true);
+    expect((await fixture.project.getRevision(published.revision)).resources).toEqual(
+      published.resources,
+    );
+  });
+
+  it("normalizes legacy Capability aliases and shared Runtime users on export and reimport", async () => {
+    const assetsRoot = await mkdtemp(join(tmpdir(), "pragma-412-assets-"));
+    directories.push(assetsRoot);
+    const assets = createRealSkillCapabilityStore(assetsRoot);
+    const definition = (name: string) => ({
+      kind: "http_service" as const,
+      name,
+      description: "Development tools",
+      baseUrl: "https://example.test",
+      auth: { type: "none" as const },
+      timeoutMs: 30000,
+      tools: ["read", "write"].map((name) => ({
+        name,
+        description: name,
+        method: "GET" as const,
+        path: `/${name}`,
+        parameters: [],
+      })),
+    });
+    const code = await assets.create({ definition: definition("code"), credentials: {} });
+    const km = await assets.create({ definition: definition("aone-km"), credentials: {} });
+    const source = await createFixture("412-legacy-source", { capabilities: assets });
+    const legacy = portableCapability();
+    legacy.metadata.name = `Capability ${code.manifest.id}`;
+    legacy.spec.binding = desktopCapabilityBindingRef(code.manifest.id);
+    legacy.spec.config = { key: code.manifest.id };
+    const canonical = structuredClone(legacy);
+    canonical.metadata = {
+      ...canonical.metadata,
+      id: "20k21q9j9wexjv50",
+      name: "code",
+      tags: ["default-agent-option"],
+    };
+    const knowledge = structuredClone(legacy);
+    knowledge.metadata = {
+      ...knowledge.metadata,
+      id: "kqh4nx7rx26mb3e7",
+      name: `Capability ${km.manifest.id}`,
+    };
+    knowledge.spec.binding = desktopCapabilityBindingRef(km.manifest.id);
+    knowledge.spec.config = { key: km.manifest.id };
+    const writer = expert("Write verified changes");
+    writer.spec.capabilities = [
+      { ref: canonicalPragmaResourceRef(legacy), kind: "tools", tools: ["write"] },
+    ];
+    writer.spec.toolApprovals = { write: "ask" };
+    const reviewer = expert("Review changes", "3sfd30h5017wd17d");
+    reviewer.metadata.name = "Reviewer";
+    reviewer.spec.capabilities = [
+      { ref: canonicalPragmaResourceRef(canonical), kind: "tools", tools: ["read"] },
+      { ref: canonicalPragmaResourceRef(knowledge), kind: "tools", tools: ["read"] },
+    ];
+    const team = expertTeam();
+    team.spec.members = [{ ref: "expert:3sfd30h5017wd17d" }];
+    const shared = runtime("codex");
+    shared.metadata.name = "Built-in Runtime / GPT Test";
+    // publish deliberately retains historical input; normalizing export must not rewrite it.
+    const published = await source.project.publish({
+      expectedRevision: source.projectRevision,
+      resources: [writer, reviewer, team, shared, legacy, canonical, knowledge],
+    });
+    const request = {
+      ...exportInput(published.revision),
+      rootRef: "team:p8cbn3cg2avyksn4" as const,
+    };
+    const preview = await source.service.prepareExport(request);
+    expect(preview.capabilityCount).toBe(2);
+    expect(preview.resourceCount).toBe(6);
+    const path = join(source.root, "normalized.pragma");
+    await source.service.exportTo(request, path);
+    expect(await source.project.getRevision(published.revision)).toEqual(published);
+    const target = await createFixture("412-target", {
+      capabilities: assets,
+      canonicalCapabilityId: (id) => derivePragmaResourceId(`test-host-capability:${id}`),
+    });
+    const inspection = await target.service.inspect(path);
+    expect(
+      inspection.resourceDetails
+        ?.filter((resource) => resource.kind === "Capability")
+        .map((resource) => resource.name)
+        .sort(),
+    ).toEqual(["aone-km", "code"]);
+    expect(
+      inspection.resourceDetails?.find((resource) => resource.kind === "RuntimeProfile")?.name,
+    ).toBe("Writer / Reviewer Runtime");
+    expect(
+      inspection.runtimeModels?.["runtime-profile:zdkgs0fde4xt00vr"]?.consumers.map(
+        (user) => user.name,
+      ),
+    ).toEqual(expect.arrayContaining(["Writer", "Reviewer"]));
+    const installed = await target.service.startImport({
+      ...importInput(
+        path,
+        inspection.bundleFingerprint,
+        inspection.projectFingerprint,
+        inspection.projectRevision,
+      ),
+      rootRef: request.rootRef,
+      conflicts: inspection.conflicts.map((conflict) => ({
+        resourceRef: conflict.ref,
+        action: "update" as const,
+      })),
+    });
+    expect(installed.resourceRefs.filter((ref) => ref.startsWith("capability:"))).toHaveLength(2);
+    const imported = (await target.project.get()).resources.filter(
+      (resource) => resource.kind === "Expert",
+    );
+    expect(
+      imported.find((resource) => resource.metadata.name === "Writer")?.spec.toolApprovals,
+    ).toEqual({ write: "ask" });
+    const writerRef = imported.find((resource) => resource.metadata.name === "Writer")!.spec
+      .capabilities[0]!.ref;
+    expect(
+      imported.find((resource) => resource.metadata.name === "Reviewer")!.spec.capabilities[0]!.ref,
+    ).toBe(writerRef);
+    expect(
+      imported.find((resource) => resource.metadata.name === "Reviewer")!.spec.capabilities[0]!
+        .tools,
+    ).toEqual(["read"]);
+    // Editing imported data may canonicalize old aliases. Setup must derive the current graph
+    // and rebind the current resource without reallocating its ID when its Host binding changes.
+    const current = await target.project.get();
+    const selected = current.resources.find(
+      (resource): resource is PragmaExpertResource =>
+        resource.kind === "Expert" && resource.metadata.name === "Writer",
+    )!;
+    const edited = await target.project.apply({
+      baseRevision: current.revision,
+      upserts: [
+        { ...selected, metadata: { ...selected.metadata, description: "Edited after import" } },
+      ],
+    });
+    const setup = await target.service.inspectInstallation(installed.id);
+    const codeRef = edited.resources.find(
+      (resource) => resource.kind === "Expert" && resource.metadata.name === "Writer",
+    )!;
+    if (codeRef.kind !== "Expert") throw new Error("Missing Writer");
+    const currentCodeRef = codeRef.spec.capabilities[0]!.ref;
+    expect(setup.readiness.some((entry) => entry.resourceRef === currentCodeRef)).toBe(true);
+    const replacement = await assets.create({
+      definition: definition("Replacement code"),
+      credentials: {},
+    });
+    await target.service.rebindInstallation({
+      installationId: installed.id,
+      baseRevision: edited.revision,
+      runtimes: [],
+      capabilities: [
+        {
+          requirementId: setup.readiness.find((entry) => entry.resourceRef === currentCodeRef)!.id,
+          resourceRef: currentCodeRef,
+          capabilityId: replacement.manifest.id,
+        },
+      ],
+      contextStores: [],
+      secrets: {},
+    });
+    const rebound = (await target.project.get()).resources.find(
+      (resource) => canonicalPragmaResourceRef(resource) === currentCodeRef,
+    );
+    expect(rebound).toMatchObject({
+      kind: "Capability",
+      spec: { binding: desktopCapabilityBindingRef(replacement.manifest.id) },
+    });
+  });
+
   it("blocks public Bundle operations for plugin dependencies", async () => {
     const fixture = await createFixture("plugin-boundary");
     const snapshot = await fixture.project.get();
@@ -3668,6 +3904,32 @@ describe("PragmaBundleService", { timeout: 30_000 }, () => {
     });
     const path = join(source.root, "shared-skill.pragma");
     await source.service.exportTo(exportInput(published.revision), path);
+    // Preserve regression coverage for already-published archives containing duplicate refs.
+    // The current Host exporter deduplicates; Interpreter can still encode the historical graph.
+    const normalizedArchive = await decodePragmaBundle({ kind: "file", path });
+    const legacyPayload = normalizedArchive.manifest.requirements.find(
+      (requirement) => requirement.kind === "binding" && requirement.payload !== undefined,
+    )!.payload!;
+    const payloadFiles = new Map(
+      [...normalizedArchive.files]
+        .filter(([name]) => name.startsWith(`${legacyPayload.root}/`))
+        .map(([name, bytes]) => [name.slice(legacyPayload.root.length + 1), bytes]),
+    );
+    const legacyProject = await source.project.openRevision(published.revision);
+    try {
+      const legacyArchive = await legacyProject.exportBundle({
+        roots: ["expert:1xddvess309a6gme"],
+        host: {
+          exportPayload: async ({ requirement }) =>
+            requirement.kind === "binding"
+              ? { codec: legacyPayload.codec, files: payloadFiles }
+              : undefined,
+        },
+      });
+      await writeFile(path, legacyArchive.bytes);
+    } finally {
+      await legacyProject.dispose();
+    }
 
     let created: Capability | undefined;
     let createCount = 0;
@@ -4341,6 +4603,7 @@ describe("PragmaBundleService", { timeout: 30_000 }, () => {
 async function createFixture(
   name: string,
   overrides: {
+    readonly canonicalCapabilityId?: ((id: string) => string) | undefined;
     readonly instructions?: string;
     readonly runtimeId?: string;
     readonly expertId?: string;
@@ -4361,6 +4624,7 @@ async function createFixture(
   directories.push(root);
   const paths = new PragmaPaths({ pragmaHome: join(root, ".pragma") });
   const project = createPragmaProjectStore({
+    canonicalCapabilityId: overrides.canonicalCapabilityId,
     projectsPath: paths.projectsRoot(),
     objectsPath: paths.contentObjectsRoot(),
     projectViewsPath: paths.projectViewsCacheRoot(),

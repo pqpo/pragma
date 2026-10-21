@@ -12,6 +12,7 @@ import {
   SquareDirectoryFragment,
   SquareItemVisual,
   SquareBundleContents,
+  SquareBundleResourceList,
   normalizeSquareCategoryFilter,
   squareItemsForView,
   toggleSquareCategory,
@@ -168,6 +169,30 @@ describe("SquareDirectoryFragment", () => {
           "runtime-profile:0000000000000001": { modelId: "unused-model", consumers: [] },
         },
       };
+      const resourceInspection = {
+        ...inspection,
+        resourceDetails: [
+          {
+            ref: "runtime-profile:zdkgs0fde4xt00vr",
+            kind: "RuntimeProfile" as const,
+            name: "Writer / Reviewer Runtime",
+          },
+        ],
+        runtimeModels: {
+          "runtime-profile:zdkgs0fde4xt00vr": {
+            modelId: "qwen3.7-plus",
+            consumers: [
+              { name: "Writer", usage: "expert" as const },
+              { name: "Reviewer", usage: "expert" as const },
+            ],
+          },
+        },
+      };
+      const details = renderToStaticMarkup(
+        <SquareBundleResourceList inspection={resourceInspection} />,
+      );
+      expect(details).toContain("Writer: expert model");
+      expect(details).toContain("Reviewer: expert model");
       const html = renderToStaticMarkup(<SquareBundleContents inspection={inspection} />);
       expect(html).toContain("Model settings");
       expect(html).toContain("qwen3.7-plus");

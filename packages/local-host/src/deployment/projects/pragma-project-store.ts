@@ -3,6 +3,7 @@ import {
   writeStorageFile as writeFile,
   replaceStorageFile as rename,
 } from "@pragma/core";
+import { normalizeHostBoundResources } from "./resource-normalization.ts";
 import { createWorkflowLayoutStore } from "./workflow-layout-store.ts";
 import { createHash, randomUUID } from "node:crypto";
 import { mkdir, mkdtemp, readdir, rm, rmdir, stat } from "node:fs/promises";
@@ -55,6 +56,7 @@ import {
 import { referencingPragmaResources } from "./pragma-resource-references.ts";
 import { findPragmaInvocableDependencyCycle } from "./pragma-invocable-dependency-graph.ts";
 import {
+  classifyHostCapabilityResource,
   desktopCapabilityBindingRef,
   parseLegacyDesktopCapabilityBindingRef,
 } from "../bindings.ts";
@@ -193,6 +195,8 @@ export class PragmaProjectRevisionUnavailableError extends Error {
 }
 
 export function createPragmaProjectStore(options: {
+  readonly canonicalCapabilityId?: ((id: string) => string) | undefined;
+  readonly capabilityName?: ((id: string) => Promise<string | undefined>) | undefined;
   readonly onPublished?: (() => void) | undefined;
   readonly projectsPath: string;
   readonly objectsPath?: string | undefined;
@@ -430,6 +434,54 @@ export function createPragmaProjectStore(options: {
     }
   };
 
+  // Derive changes against the complete graph so shared users and legacy aliases are handled
+  // in the same optimistic transaction as the caller's edit. Historical Revisions stay immutable.
+  const normalizeChanges = async (input: PragmaProjectChangeSetInput) => {
+    const candidate = await service.materializeChangeSet(projectId, input);
+    const requestedResources = (input.upserts ?? []).map((resource) =>
+      PragmaForwardCompatibleResourceSchema.parse(resource),
+    );
+    // A management caller may explicitly select a catalog dependency even when the
+    // repository Host supplies no identity policy. Keep that choice in this transaction.
+    const selectedCatalogIds = new Map(
+      requestedResources
+        .filter(
+          (resource) =>
+            resource.kind === "Capability" &&
+            resource.metadata.tags.includes("default-agent-option"),
+        )
+        .flatMap((resource) => {
+          const binding = classifyHostCapabilityResource(resource);
+          return binding === undefined ? [] : [[binding.id, resource.metadata.id] as const];
+        }),
+    );
+    const normalized = await normalizeHostBoundResources(candidate.resources, {
+      capabilityName: options.capabilityName,
+      canonicalCapabilityId: options.canonicalCapabilityId ?? ((id) => selectedCatalogIds.get(id)),
+    });
+    const byRef = new Map(
+      candidate.resources.map((resource) => [canonicalPragmaResourceRef(resource), resource]),
+    );
+    const requestedRefs = new Set(requestedResources.map(canonicalPragmaResourceRef));
+    const retainedRefs = new Set(normalized.resources.map(canonicalPragmaResourceRef));
+    return {
+      ...input,
+      upserts: normalized.resources.filter(
+        (resource) =>
+          requestedRefs.has(canonicalPragmaResourceRef(resource)) ||
+          !isDeepStrictEqual(resource, byRef.get(canonicalPragmaResourceRef(resource))),
+      ),
+      removals: [
+        ...new Set([
+          ...(input.removals ?? []),
+          ...candidate.resources
+            .map(canonicalPragmaResourceRef)
+            .filter((ref) => !retainedRefs.has(ref)),
+        ]),
+      ],
+    } satisfies PragmaProjectChangeSetInput;
+  };
+
   const previewChanges = async (
     input: PragmaProjectChangeSetInput,
   ): Promise<{
@@ -438,8 +490,9 @@ export function createPragmaProjectStore(options: {
   }> => {
     try {
       await ensureMigrated();
-      const candidate = await service.materializeChangeSet(projectId, input);
-      const upsertRefs = (input.upserts ?? [])
+      const normalizedInput = await normalizeChanges(input);
+      const candidate = await service.materializeChangeSet(projectId, normalizedInput);
+      const upsertRefs = (normalizedInput.upserts ?? [])
         .map((resource) => PragmaForwardCompatibleResourceSchema.parse(resource))
         .map(canonicalPragmaResourceRef);
       const candidateByRef = new Map(
@@ -488,7 +541,16 @@ export function createPragmaProjectStore(options: {
           "Built-in resource refs cannot be removed.",
         );
       }
-      const candidate = await service.materializeChangeSet(projectId, { ...input, upserts });
+      const normalizedInput = await normalizeChanges({ ...input, upserts });
+      assertNotReserved(normalizedInput.upserts);
+      assertFixedResources(normalizedInput.upserts);
+      if (normalizedInput.removals.some((ref) => options.reservedResourceRefs?.has(ref))) {
+        throw new PragmaProjectStoreError(
+          "built_in_readonly",
+          "Built-in resource refs cannot be removed.",
+        );
+      }
+      const candidate = await service.materializeChangeSet(projectId, normalizedInput);
       const orphanedFlowRuntimeProfiles = new Set(
         candidate.resources
           .filter(
@@ -501,11 +563,13 @@ export function createPragmaProjectStore(options: {
           .map(canonicalPragmaResourceRef),
       );
       const effectiveChangeSet = {
-        ...input,
-        upserts: upserts.filter(
+        ...normalizedInput,
+        upserts: normalizedInput.upserts.filter(
           (resource) => !orphanedFlowRuntimeProfiles.has(canonicalPragmaResourceRef(resource)),
         ),
-        removals: [...new Set([...(input.removals ?? []), ...orphanedFlowRuntimeProfiles])],
+        removals: [
+          ...new Set([...(normalizedInput.removals ?? []), ...orphanedFlowRuntimeProfiles]),
+        ],
       } satisfies PragmaProjectChangeSetInput;
       const effectiveCandidate = await service.materializeChangeSet(projectId, effectiveChangeSet);
       assertDesktopExpertAuthoring(effectiveCandidate.resources);

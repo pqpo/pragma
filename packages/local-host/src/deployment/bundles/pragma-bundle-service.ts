@@ -1,3 +1,5 @@
+import { normalizeHostBoundResources } from "../projects/resource-normalization.ts";
+import { isDeepStrictEqual } from "node:util";
 import {
   planBundleResources,
   collectBundleResourceClosure,
@@ -712,8 +714,11 @@ export function createPragmaBundleService(options: {
     try {
       // Export a derived project: caller-specific model overrides must not travel with Experts.
       const sourceResources = project.listResourceClosure(PragmaBundleRootRefSchema.parse(rootRef));
-      const portableResources = structuredClone(sourceResources);
-      let changed = false;
+      const { resources: portableResources } = await normalizeHostBoundResources(sourceResources, {
+        capabilityName: async (id) =>
+          (await options.capabilities.resolveActive(id).catch(() => undefined))?.definition.name,
+      });
+      let changed = !isDeepStrictEqual(portableResources, sourceResources);
       for (const resource of portableResources) {
         if (resource.kind === "ExpertTeam") {
           changed ||= Object.keys(resource.spec.delegation.runtimes).length > 0;
