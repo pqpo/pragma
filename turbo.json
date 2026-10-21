@@ -58,7 +58,7 @@
   "globalDependencies": [
     "scripts/build-artifact.mjs",
     "apps/cli/scripts/build-bundles.mjs",
-    "tsconfig.base.json",
+    "packages/tsconfig/*.json",
     "scripts/build.mjs"
   ],
   "globalPassThroughEnv": ["GOMAXPROCS", "PRAGMA_LOG_LEVEL", "CI"]

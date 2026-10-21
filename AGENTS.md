@@ -69,7 +69,6 @@ pnpm-workspace.yaml
 turbo.json
 eslint.config.mjs
 prettier.config.mjs
-tsconfig.base.json
 ```
 
 ## Package 命名
@@ -678,7 +677,7 @@ Expert API 设计要求：
 
 ## TypeScript 与导入规范
 
-根配置是 `tsconfig.base.json`，package 应继承 `@pragma/tsconfig/base.json`、`node.json` 或 `web.json`。
+共享编译选项位于 `packages/tsconfig/base.json`，package 应继承 `@pragma/tsconfig/base.json`、`node.json` 或 `web.json`。配置包内的继承链不得通过相对路径跳出包目录，以兼容 pnpm 链接和构建工具的配置解析。
 
 源码内部相对导入使用 `.ts` 扩展名，TypeScript 构建时会重写为 `.js`：
 
@@ -898,7 +897,7 @@ docs/conventions/coding-conventions.md
 
 - pnpm workspace 正常识别全部 app/package。
 - Turborepo 可执行 `lint`、`typecheck`、`test`、`build`。
-- 根目录存在统一 TypeScript、ESLint、Prettier 配置。
+- 共享 TypeScript 配置位于 `@pragma/tsconfig`；根目录存在统一 ESLint、Prettier 配置。
 - 所有 package 使用 ESM。
 - 所有内部依赖使用 `workspace:*`。
 
