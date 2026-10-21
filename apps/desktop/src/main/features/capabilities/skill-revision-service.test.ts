@@ -800,6 +800,123 @@ describe("Skill revision service", () => {
     );
   });
 
+  it("validates and records the immutable submission when the working tree changes", async () => {
+    const fixture = await createService();
+    const job = await fixture.service.start(request("expert-reflection"));
+    const inspection = await fixture.service.inspectDraft(job.draftId);
+    const original = fixture.capabilities.get.bind(fixture.capabilities);
+    let reads = 0;
+    vi.spyOn(fixture.capabilities, "get").mockImplementation(async (...args) => {
+      if (++reads === 2) {
+        await writeFile(
+          join(inspection.draftPath!, "SKILL.md"),
+          "---\nname: changed-after-snapshot\ndescription: Changed while submitting.\n---\n",
+        );
+      }
+      return await original(...args);
+    });
+    const pending = await fixture.service.submitDraft({
+      draftId: job.draftId,
+      expectedRevision: inspection.draft.revision,
+      expectedWorkingTreeHash: inspection.workingTree.hash,
+      summary: "Review the inspected snapshot.",
+    });
+    expect(pending.state).toBe("pending_review");
+    const submitted = await fixture.service.getDraft(job.draftId);
+    expect(submitted.submissionHash).toBe(inspection.workingTree.hash);
+    await expect(
+      readFile(
+        join(fixture.draftsPath, job.draftId, "submissions", submitted.submissionHash!, "SKILL.md"),
+        "utf8",
+      ),
+    ).resolves.toContain("name: safe-workflow");
+  });
+
+  it("submits edited creation metadata after actionable validation failures and rework", async () => {
+    const fixture = await createService();
+    const job = await fixture.service.start({
+      schemaVersion: "pragma.skill-revision-request/v4",
+      operation: "create",
+      capabilityId: randomUUID(),
+      resourceName: "initial-skill",
+      resourceDescription: "Python workflow.",
+      source: "expert-reflection",
+      sourceDigest: "e".repeat(64),
+      sourceRefs: [],
+      prompt: "Create the Skill.",
+    });
+    let inspection = await fixture.service.inspectDraft(job.draftId);
+    const submit = async () => {
+      inspection = await fixture.service.inspectDraft(job.draftId);
+      return await fixture.service.submitDraft({
+        draftId: job.draftId,
+        expectedRevision: inspection.draft.revision,
+        expectedWorkingTreeHash: inspection.workingTree.hash,
+        summary: "Create the Node workflow.",
+      });
+    };
+    await writeFile(
+      join(inspection.draftPath!, "SKILL.md"),
+      '---\nname: node-workflow\ndescription: ""\n---\n',
+    );
+    await expect(submit()).rejects.toMatchObject({
+      code: "invalid_input",
+      validation: { diagnostics: [expect.objectContaining({ path: "SKILL.md:description" })] },
+    });
+    expect(await fixture.service.getDraft(job.draftId)).toMatchObject({
+      state: "editing",
+      name: "initial-skill",
+      resourceDescription: "Python workflow.",
+    });
+    await writeFile(
+      join(inspection.draftPath!, "SKILL.md"),
+      `---\nname: node-workflow\ndescription: "Node 22: user's workflow."\n---\n`,
+    );
+    await mkdir(join(inspection.draftPath!, "scripts"));
+    await mkdir(join(inspection.draftPath!, "tests"));
+    await writeFile(join(inspection.draftPath!, "scripts/run.mjs"), "import 'node:https';\n");
+    await writeFile(
+      join(inspection.draftPath!, "tests/run.test.mjs"),
+      "import '../scripts/run.mjs';\n",
+    );
+    await expect(submit()).rejects.toMatchObject({
+      code: "invalid_input",
+      validation: {
+        diagnostics: expect.arrayContaining([expect.objectContaining({ path: "scripts/run.mjs" })]),
+      },
+    });
+    await writeFile(join(inspection.draftPath!, "scripts/run.mjs"), "export const run = true;\n");
+    const pending = await submit();
+    expect(pending.state).toBe("pending_review");
+    expect(await fixture.service.getDraft(job.draftId)).toMatchObject({
+      name: "node-workflow",
+      resourceDescription: "Node 22: user's workflow.",
+    });
+    await fixture.service.returnForRework(job.id, pending.revision);
+    inspection = await fixture.service.inspectDraft(job.draftId);
+    await writeFile(
+      join(inspection.draftPath!, "SKILL.md"),
+      "---\nname: final-workflow\ndescription: Final Node workflow.\n---\n",
+    );
+    const resubmitted = await submit();
+    const recovered = createSkillRevisionService({
+      statePath: fixture.statePath,
+      draftsPath: fixture.draftsPath,
+      draftsTrashPath: fixture.draftsTrashPath,
+      capabilities: fixture.capabilities,
+      resolveWorkspacePath: async () => fixture.workspacePath,
+    });
+    await expect(recovered.approve(job.id, resubmitted.revision)).resolves.toMatchObject({
+      state: "completed",
+    });
+    expect(fixture.publishNew).toHaveBeenCalledWith(
+      expect.objectContaining({
+        name: "final-workflow",
+        description: "Final Node workflow.",
+      }),
+    );
+  });
+
   it("publishes an approved empty-baseline Skill as revision 1", async () => {
     const fixture = await createService();
     const missionId = randomUUID();
@@ -1318,7 +1435,7 @@ describe("Skill revision service", () => {
     const editing = await fixture.service.inspectDraft(job.draftId);
     await writeFile(
       join(editing.draftPath!, "SKILL.md"),
-      "---\nname: recovered-skill\ndescription: Recovered Skill.\n---\n\nKeep this candidate.\n",
+      "---\nname: recovered-skill\ndescription: Updated Node workflow.\n---\n\nKeep this candidate.\n",
     );
     await mkdir(join(editing.draftPath!, "scripts"));
     await writeFile(join(editing.draftPath!, "scripts", "verify.mjs"), "process.exit(0);\n");
@@ -1410,6 +1527,8 @@ describe("Skill revision service", () => {
     expect(fixture.publishNew.mock.calls.at(-1)?.[0]).toMatchObject({
       id: replacement.request.capabilityId,
       candidateContentHash: recoveredDraft.submissionHash,
+      name: "recovered-skill",
+      description: "Updated Node workflow.",
     });
   });
 

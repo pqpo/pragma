@@ -23,6 +23,13 @@ scripts or `node:test` files.
 
 Validation failure returns `invalid_input` with path-addressed diagnostics and leaves the draft
 editable. The Skill Revision Agent repairs the reported files and resubmits until validation passes.
+For new Skills, the creation request supplies initial metadata. A successful submission copies the
+validated SKILL.md name and description into the draft as part of the existing journaled transition;
+the original request remains the creation intent. Review, rework, recovery, and publication use the
+submitted draft metadata, including creation ID conflict recovery. Submission validates the immutable
+snapshot, and submission and publication share the same YAML metadata parser. Invalid packages leave
+the editable draft metadata unchanged.
+
 A successful submission enters `pending_review`; approval repeats deterministic validation against
 the immutable submission before publication. Memory-created and Memory-revised Skills follow the
 same manual-review rule and are never auto-published.
