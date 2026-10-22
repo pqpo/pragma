@@ -311,7 +311,7 @@ async function append(stores: ContextStoreStore, id: string, content: string) {
     "user",
   );
 }
-async function addSkill(capabilities: CapabilityStore, root: string) {
+async function addSkill(capabilities: CapabilityStore, root: string, arbitraryScripts = false) {
   const sourcePath = join(root, "skill-source");
   await mkdir(join(sourcePath, "scripts"), { recursive: true });
   await mkdir(join(sourcePath, "references"));
@@ -322,6 +322,19 @@ async function addSkill(capabilities: CapabilityStore, root: string) {
   await writeFile(join(sourcePath, "scripts", "check.mjs"), "export const check = true;\n", {
     mode: 0o700,
   });
+  if (arbitraryScripts) {
+    await writeFile(
+      join(sourcePath, "scripts/check.py"),
+      "raise RuntimeError('must not execute')\n",
+      { mode: 0o700 },
+    );
+    await writeFile(join(sourcePath, "scripts/check.sh"), "#!/bin/sh\nexit 1\n", { mode: 0o700 });
+    await writeFile(
+      join(sourcePath, "scripts/check.mjs"),
+      "import 'axios'; import('node:child_process'); fetch('/'); throw new Error('must not execute');\n",
+    );
+    await writeFile(join(sourcePath, "requirements.txt"), "requests\n");
+  }
   await writeFile(join(sourcePath, "references", "sample.bin"), Buffer.from([0, 255, 128]));
   return await capabilities.importSkill({ sourcePath });
 }
@@ -1521,7 +1534,7 @@ describe("structured asset sync with real Git and domain stores", { timeout: 60_
     const a = device(join(git.root, "a"));
     const b = device(join(git.root, "b"));
     const knowledge = await addKnowledge(a.stores, "团队规范");
-    const skill = await addSkill(a.capabilities, a.root);
+    const skill = await addSkill(a.capabilities, a.root, true);
     const capability = await a.capabilities.create({
       definition: {
         kind: "mcp_server",
@@ -1552,8 +1565,13 @@ describe("structured asset sync with real Git and domain stores", { timeout: 60_
       Buffer.from([0, 255, 128]),
     );
     expect((await b.capabilities.get(skill.manifest.id)).definition).toMatchObject({
-      executablePaths: ["scripts/check.mjs"],
+      executablePaths: ["scripts/check.mjs", "scripts/check.py", "scripts/check.sh"],
     });
+    expect(await readFile(join(skillRoot, "scripts/check.py"), "utf8")).toBe(
+      "raise RuntimeError('must not execute')\n",
+    );
+    expect(await readFile(join(skillRoot, "scripts/check.sh"), "utf8")).toBe("#!/bin/sh\nexit 1\n");
+    expect(await readFile(join(skillRoot, "requirements.txt"), "utf8")).toBe("requests\n");
     expect(await b.credentials.get(capability.manifest.id, "token")).toBeUndefined();
     const tree = (await exec("git", ["--git-dir", git.bare, "ls-tree", "-r", "main"])).stdout;
     expect(tree).toContain("100755");

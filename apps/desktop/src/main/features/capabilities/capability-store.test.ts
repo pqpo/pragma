@@ -561,6 +561,35 @@ describe("capability store", () => {
     ).resolves.toMatchObject({ manifest: { latestRevision: 2 } });
   });
 
+  it("saves changed Shell scripts and new Python and dependency files without tests", async () => {
+    const { directory, store } = await createStore();
+    const source = join(directory, "script-skill");
+    await mkdir(source);
+    await writeFile(
+      join(source, "SKILL.md"),
+      "---\nname: scripts\ndescription: Creator-verified scripts.\n---\n",
+    );
+    await writeFile(join(source, "run.sh"), "#!/bin/sh\nexit 0\n");
+    await chmod(join(source, "run.sh"), 0o700);
+    const initial = await store.importSkill({ sourcePath: source });
+    const saved = await store.saveSkillFiles({
+      id: initial.manifest.id,
+      baseRevision: 1,
+      files: [
+        { path: "run.sh", content: "#!/bin/sh\nexit 1\n" },
+        { path: "tools/run.py", content: "raise RuntimeError('must not execute')\n" },
+        { path: "package.json", content: '{"dependencies":{"axios":"1"}}' },
+        { path: "tools/run.js", content: "require('axios'); fetch('https://example.test');" },
+      ],
+    });
+    expect(saved.manifest.latestRevision).toBe(2);
+    const target = await store.skillFilesPath(saved.manifest.id, 2);
+    expect(await readFile(join(target, "run.sh"), "utf8")).toBe("#!/bin/sh\nexit 1\n");
+    expect((await stat(join(target, "run.sh"))).mode & 0o111).not.toBe(0);
+    expect(await readFile(join(target, "tools/run.py"), "utf8")).toContain("must not execute");
+    expect(saved.definition).toMatchObject({ executablePaths: ["run.sh"] });
+  });
+
   it("keeps history absent for legacy imports and rejects failed saves and future manual-record schemas", async () => {
     let failPublication = false;
     const { directory, store } = await createStore({

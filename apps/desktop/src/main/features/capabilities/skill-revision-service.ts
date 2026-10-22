@@ -18,7 +18,6 @@ import { withFileLock } from "@pragma/core";
 import {
   applySkillChangeSet,
   validateSkillPackage,
-  validatePortableSkillPackage,
   type SkillPackageValidationResult,
 } from "@pragma/built-in-agents";
 import {
@@ -31,7 +30,7 @@ import {
   type ManagedSkillRevisionJob,
   type SkillRevisionRequestV4,
 } from "@pragma/built-in-agents/contracts";
-import { SkillPackageSchema, type SkillPackage } from "@pragma/shared";
+import { SkillBundleFileSchema, SkillPackageSchema, type SkillPackage } from "@pragma/shared";
 import { readSkillFrontmatter } from "@pragma/local-host/deployment";
 import { z } from "zod";
 
@@ -51,7 +50,6 @@ import {
   emptySkillWorkingTreeSnapshot,
   scanSkillWorkingTree,
   type SkillWorkingTreeSnapshot,
-  type SkillWorkingTreeEntry,
 } from "@pragma/local-host/deployment";
 import {
   SkillRevisionDraftV1Schema,
@@ -2033,20 +2031,7 @@ export function createSkillRevisionService(options: {
                       options.supportsExecutableBits ?? process.platform !== "win32",
                     );
                     const candidate = candidateSnapshot.package;
-                    const validation = validateSkillRevisionPackage(
-                      candidate,
-                      draft.operation,
-                      job.request.source,
-                      candidateSnapshot.executablePaths,
-                      await unchangedLegacyExecutablePaths(
-                        options.capabilities,
-                        draft,
-                        job.request.source,
-                        candidate,
-                        candidateSnapshot.entries,
-                        options.supportsExecutableBits ?? process.platform !== "win32",
-                      ),
-                    );
+                    const validation = validateSkillPackage(candidate);
                     if (!validation.passed) throw new SkillRevisionValidationError(validation);
                     return candidate;
                   },
@@ -2137,20 +2122,7 @@ export function createSkillRevisionService(options: {
         options.supportsExecutableBits ?? process.platform !== "win32",
       );
       const candidate = candidateSnapshot.package;
-      const validation = validateSkillRevisionPackage(
-        candidate,
-        draft.operation,
-        job.request.source,
-        candidateSnapshot.executablePaths,
-        await unchangedLegacyExecutablePaths(
-          options.capabilities,
-          draft,
-          job.request.source,
-          candidate,
-          candidateSnapshot.entries,
-          options.supportsExecutableBits ?? process.platform !== "win32",
-        ),
-      );
+      const validation = validateSkillPackage(candidate);
       if (!validation.passed) throw new SkillRevisionValidationError(validation);
       const publishingDraft = await mutateDraft(draft.id, draft.revision, () => ({
         state: "publishing",
@@ -2612,7 +2584,6 @@ async function readSkillPackage(
   readonly filesystemHash: string;
   readonly package: SkillPackage;
   readonly executablePaths: ReadonlySet<string>;
-  readonly entries: readonly SkillWorkingTreeEntry[];
 }> {
   const capability = creation === undefined ? await capabilities.get(capabilityId) : undefined;
   if (capability !== undefined && capability.definition.kind !== "skill") {
@@ -2641,6 +2612,18 @@ async function readSkillPackage(
   );
   const files: { path: string; content: string }[] = [];
   for (const entry of snapshot.entries) {
+    // Binary payloads are omitted from the text package below, but must obey the same path rules.
+    const parsedPath = SkillBundleFileSchema.shape.path.safeParse(entry.path);
+    if (!parsedPath.success) {
+      throw new SkillRevisionValidationError({
+        passed: false,
+        diagnostics: parsedPath.error.issues.map((issue) => ({
+          path: entry.path,
+          code: issue.code,
+          message: issue.message,
+        })),
+      });
+    }
     const bytes = await readFile(join(root, ...entry.path.split("/")));
     const content = bytes.toString("utf8");
     if (!Buffer.from(content, "utf8").equals(bytes)) continue;
@@ -2672,7 +2655,6 @@ async function readSkillPackage(
     filesystemHash: filesystemSnapshot.hash,
     package: parsedPackage.data,
     executablePaths,
-    entries: snapshot.entries,
   };
 }
 
@@ -2692,65 +2674,6 @@ async function applyLegacyChangeSetToTree(
       await writeFile(path, operation.content, { mode: 0o600 });
     }
   }
-}
-
-function validateSkillRevisionPackage(
-  candidate: SkillPackage,
-  operation: SkillRevisionDraft["operation"],
-  source: ManagedSkillRevisionJob["request"]["source"],
-  executablePaths: ReadonlySet<string>,
-  allowUnscannedExecutablePaths: ReadonlySet<string> = new Set(),
-): SkillPackageValidationResult {
-  return operation === "create" || source === "memory-learning"
-    ? validateSkillPackage(candidate, { executablePaths })
-    : validatePortableSkillPackage(candidate, {
-        executablePaths,
-        allowUnscannedExecutablePaths,
-      });
-}
-
-async function unchangedLegacyExecutablePaths(
-  capabilities: CapabilityStore,
-  draft: SkillRevisionDraft,
-  source: ManagedSkillRevisionJob["request"]["source"],
-  candidate: SkillPackage,
-  candidateEntries: readonly SkillWorkingTreeEntry[],
-  supportsExecutableBits: boolean,
-): Promise<ReadonlySet<string>> {
-  if (
-    draft.operation !== "revise" ||
-    source === "memory-learning" ||
-    draft.capabilityId === undefined ||
-    draft.baseRevision < 1
-  ) {
-    return new Set();
-  }
-  const baseRoot = await capabilities.skillFilesPath(draft.capabilityId, draft.baseRevision);
-  const base = await capabilities.get(draft.capabilityId, draft.baseRevision);
-  const baseEntries = await scanSkillWorkingTree(
-    baseRoot,
-    !supportsExecutableBits &&
-      base.definition.kind === "skill" &&
-      base.definition.executablePaths !== undefined
-      ? { executablePaths: new Set(base.definition.executablePaths) }
-      : {},
-  );
-  const baseByPath = new Map(baseEntries.entries.map((entry) => [entry.path, entry]));
-  const candidatePaths = new Set(candidate.files.map((file) => file.path));
-  return new Set(
-    candidateEntries
-      .filter(
-        (entry) =>
-          candidatePaths.has(entry.path) &&
-          entry.executable &&
-          !/\.(?:mjs|cjs|js)$/iu.test(entry.path),
-      )
-      .filter((entry) => {
-        const base = baseByPath.get(entry.path);
-        return base?.executable === true && base.sha256 === entry.sha256;
-      })
-      .map((entry) => entry.path),
-  );
 }
 
 async function readJsonNames(path: string): Promise<string[]> {

@@ -1,3 +1,5 @@
+import { MAX_SKILL_PACKAGE_BYTES } from "@pragma/shared";
+import { SkillDataSchema } from "@pragma/local-host/deployment";
 import { PRAGMA_MANAGEMENT_DESKTOP_CAPABILITY_ID } from "@pragma/built-in-agents";
 import { describe, expect, it } from "vitest";
 import { PRAGMA_DSL_WRITE_API_VERSION } from "@pragma/interpreter/ast";
@@ -92,6 +94,47 @@ describe("structured sync repository", () => {
     expect(restored[1]).toEqual(item("skill", skillId, "review", normalizedSkill));
     expect(encodeSyncRepository(decodeSyncRepository(files))).toEqual(files);
   });
+  it("round-trips binary resources without counting UTF-8 replacement bytes", () => {
+    const data = SkillDataSchema.parse(skill().data);
+    const bytes = Buffer.alloc(9 * 1024 * 1024, 0xff);
+    data.files.push({
+      path: "assets/runtime.bin",
+      content: bytes.toString("base64"),
+      executable: true,
+    });
+    const files = encode(item("skill", skillId, "review", data));
+    expect(files.get(`skills/${skillId}/files/assets/runtime.bin`)?.bytes.equals(bytes)).toBe(true);
+    const restored = SkillDataSchema.parse(
+      decodeSyncRepository(files).get(`skill:${skillId}`)!.data,
+    );
+    expect(restored.files.find((entry) => entry.path === "assets/runtime.bin")).toEqual(
+      data.files.at(-1),
+    );
+  });
+
+  it("rejects binary resources exceeding the actual package byte limit", () => {
+    const data = SkillDataSchema.parse(skill().data);
+    data.files.push({
+      path: "assets/runtime.bin",
+      content: Buffer.alloc(MAX_SKILL_PACKAGE_BYTES, 0xff).toString("base64"),
+      executable: true,
+    });
+    expect(() => encode(item("skill", skillId, "review", data))).toThrow("package exceeds 25 MiB");
+  });
+
+  it("rejects an entry document containing invalid UTF-8 instead of decoding it lossily", () => {
+    const files = encode(skill());
+    files.set(`skills/${skillId}/files/SKILL.md`, {
+      bytes: Buffer.concat([
+        Buffer.from("---\nname: review\ndescription: "),
+        Buffer.from([0xff]),
+        Buffer.from("\n---\n"),
+      ]),
+      executable: false,
+    });
+    expect(() => decodeSyncRepository(files)).toThrow("entry must be valid UTF-8 text");
+  });
+
   it("identifies an invalid incoming Skill by ID and package path", () => {
     const files = encode(skill());
     files.set(

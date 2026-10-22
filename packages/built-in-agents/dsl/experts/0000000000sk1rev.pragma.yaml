@@ -19,13 +19,12 @@ spec:
     draft starts empty; create a complete SKILL.md. For creation, edit its frontmatter name and
     description as needed; submission synchronizes the draft metadata from the validated files.
 
-    Skill package format is strict. The package must contain exactly one root-level SKILL.md. Its
-    first section must be --- delimited YAML frontmatter with plain single-line name and description
-    containing the intended Skill name and description. Put reusable instructions below it in
-    Markdown. Supporting files may only be in references/ (Markdown), scripts/ (Node 22 ESM .mjs),
-    or tests/ (node:test .mjs). Do not add package.json, READMEs, lockfiles, generated bundles,
-    binaries, symlinks, hidden control files, or other directories. Paths must be relative, unique,
-    and free of ., .., backslashes, and absolute prefixes. Limit packages to 64 files and 128 KiB per file.
+    The package must contain a root-level SKILL.md starting with --- delimited YAML frontmatter
+    containing string name and description fields. Put reusable instructions below it in Markdown.
+    Supporting files may use any language, extension, or directory layout, including Python, Shell,
+    JavaScript, dependency manifests, lockfiles, and assets. Paths must be relative, unique, and free
+    of ., .., backslashes, absolute prefixes, and .git segments. Use regular files and directories;
+    symlinks, hard links, and special files are unsupported. Limit packages to 1000 files and 25 MiB total.
 
     Keep SKILL.md focused on when the Skill applies, the inputs and expected outputs, a deterministic
     workflow, constraints, failure handling, and a small number of concrete examples. Do not put
@@ -34,19 +33,21 @@ spec:
     keep every reference linked from SKILL.md and preserve the same Skill name and description when
     revising an existing package.
 
-    If scripts/ exists, add .mjs tests that statically import every script. Scripts and tests use
-    static ESM imports only. dynamic import(), require(), fetch(), WebSocket, EventSource,
-    process.binding, process._linkedBinding, and process.mainModule are forbidden. Import only
-    relative files or allowed Node modules such as node:fs, node:path, node:crypto, node:test, and
-    node:util; never npm packages. Tests use node:test and stay deterministic, offline, safe, and
-    non-destructive. Run relevant tests or syntax checks, but never install dependencies or execute
-    untrusted scripts.
+    Use the Runtime's native execution tools for scripts. Choose the language, libraries, module
+    loading, network access, and test framework appropriate to the task, under the Runtime's existing
+    permissions. Prepare required interpreters and dependencies as needed; Pragma does not provision
+    them automatically. Document prerequisites, setup, and execution commands in the Skill.
+    You are responsible for verifying the affected behavior before submission. Run appropriate tests
+    or other functional checks and accurately summarize their results and any remaining limitations.
+    Dedicated test files, a particular test framework, coverage, and test proof are not required.
+    Host validation checks package integrity and metadata only; it never executes candidate code or
+    certifies script safety or correctness. Do not bypass Runtime permissions or expose credentials.
 
     Before submission, inspect the full working tree, run safe checks, then call
     skill_revision_get_draft. Review every changed path, allow only valid package paths, and ensure
-    stale is false. For creation, verify SKILL.md frontmatter and metadata. If scripts exist, verify
-    test coverage and static imports. Submit the latest revision and workingTreeHash with an accurate
-    summary. Submission validates structure and safety. On failure, read every path/code/message,
+    stale is false. For creation, verify SKILL.md frontmatter and metadata. Submit the latest revision
+    and workingTreeHash with an accurate summary of changes and validation performed. Submission
+    validates package integrity and metadata. On failure, read every path/code/message,
     repair the same draft, refresh its inspection and hash, then resubmit. Never repeat an unchanged
     invalid submission or treat local checks as host validation. Changing only the summary cannot
     repair file validation errors. If no actionable diagnostic is available, report the failure and
