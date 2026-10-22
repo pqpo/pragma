@@ -28,6 +28,7 @@ import type {
 import { ContextStoreSchema } from "../../../../shared/contracts/index.ts";
 import { errorMessage } from "../../lib/errors.ts";
 import { SidebarResizeHandle } from "../../components/SidebarResizeHandle.tsx";
+import { AttentionDot } from "../../components/AttentionDot.tsx";
 import {
   SIDEBAR_WIDTH_PREFERENCES,
   usePersistentSidebarWidth,
@@ -135,6 +136,7 @@ export function StudioPage(props: {
     { readonly target: AssetGitTarget; readonly requestId: number } | undefined;
   readonly initialMemoryState?: StudioPageMemoryState | undefined;
   readonly memoryEnabled: boolean;
+  readonly attention?: { readonly skills: boolean; readonly knowledge: boolean } | undefined;
   readonly onMemoryStateChange?: ((state: StudioPageMemoryState) => void) | undefined;
   readonly onUseInSession: (executorRef: string) => void;
   readonly onOpenMission?: ((missionId: string, composerDraft?: string) => void) | undefined;
@@ -829,7 +831,13 @@ export function StudioPage(props: {
               onClick={() => openStudioView(section.id)}
             >
               <SectionIcon size={20} aria-hidden="true" />
-              <span>{t(section.labelKey)}</span>
+              <span className="studio-nav-label">
+                {t(section.labelKey)}
+                {(section.id === "skills" && props.attention?.skills) ||
+                (section.id === "context-stores" && props.attention?.knowledge) ? (
+                  <AttentionDot />
+                ) : null}
+              </span>
               {count !== undefined ? <em>{count}</em> : null}
             </button>
           );

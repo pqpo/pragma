@@ -29,6 +29,7 @@ export const common = {
     viewDetails: "查看詳情",
   },
   navigation: {
+    needsAttention: "有未讀訊息或待處理事項",
     market: "市場",
     more: "更多",
     pin: "將{{name}}固定到側邊欄",

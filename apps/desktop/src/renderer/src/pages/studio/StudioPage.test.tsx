@@ -49,18 +49,32 @@ describe("StudioPage", () => {
     const html = renderToStaticMarkup(
       <StudioPage memoryEnabled={true} onUseInSession={() => undefined} />,
     );
-    const resourceIndex = html.indexOf("<span>Knowledge bases</span>");
-    const capabilitiesIndex = html.indexOf("<span>Capabilities</span>");
+    const resourceIndex = html.indexOf(">Knowledge bases</span>");
+    const capabilitiesIndex = html.indexOf(">Capabilities</span>");
 
     expect(html).toContain('class="studio-navigation"');
     expect(html).toContain('aria-label="Resize navigation"');
     expect(html).toContain('role="separator"');
-    expect(html).not.toContain("<span>Revision tasks</span><em>");
-    expect(html).not.toContain("<span>Plugins</span>");
+    expect(html).not.toContain(">Revision tasks</span><em>");
+    expect(html).not.toContain(">Plugins</span>");
     expect(resourceIndex).toBeGreaterThan(-1);
     expect(resourceIndex).toBeGreaterThan(capabilitiesIndex);
-    expect(html).not.toContain("<span>Market</span>");
+    expect(html).not.toContain(">Market</span>");
+    expect(html).not.toContain('class="navigation-attention-dot"');
     expect(html).not.toContain('class="studio-distribution-actions"');
+  });
+
+  it("shows pending revision dots on both Skills and Knowledge bases", () => {
+    const html = renderToStaticMarkup(
+      <StudioPage
+        memoryEnabled
+        attention={{ skills: true, knowledge: true }}
+        onUseInSession={() => undefined}
+      />,
+    );
+    expect(html.match(/class="navigation-attention-dot"/g)).toHaveLength(2);
+    expect(html).toContain('Knowledge bases<span class="navigation-attention-dot"');
+    expect(html).toContain('Skills<span class="navigation-attention-dot"');
   });
 
   it("keeps the last successfully loaded experts across page remounts", () => {

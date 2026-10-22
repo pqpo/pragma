@@ -18,6 +18,7 @@ import { useId, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 
 import pragmaIcon from "../assets/pragma-icon.png";
+import { AttentionDot } from "./AttentionDot.tsx";
 import { readPinnedNavigation, writePinnedNavigation } from "../lib/sidebar-preference.ts";
 
 export type AppView =
@@ -45,6 +46,7 @@ export function Sidebar(props: {
   readonly activeView: AppView;
   readonly collapsed: boolean;
   readonly memoryEnabled: boolean;
+  readonly attention?: Partial<Record<AppView, boolean>> | undefined;
   readonly onNavigate: (view: AppView) => void;
   readonly onToggle: () => void;
 }) {
@@ -81,7 +83,9 @@ export function Sidebar(props: {
               className={isActive ? "navigation-item is-active" : "navigation-item"}
               type="button"
               aria-current={isActive ? "page" : undefined}
-              aria-label={label}
+              aria-label={
+                props.attention?.[item.id] ? `${label}, ${t("navigation.needsAttention")}` : label
+              }
               title={props.collapsed ? undefined : label}
               onClick={() => props.onNavigate(item.id)}
             >
@@ -92,6 +96,7 @@ export function Sidebar(props: {
               >
                 {label}
               </span>
+              {props.attention?.[item.id] ? <AttentionDot /> : null}
             </button>
           );
         })}

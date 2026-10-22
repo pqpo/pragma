@@ -8,12 +8,125 @@ import {
   readUnreadMissionOutputIds,
   recordMissionChatUpdateIds,
   recordMissionOutputIds,
+  recordBackgroundMissionChatUpdate,
+  readMissionOutputBoundaries,
+  missionUnreadOutputChangedEvent,
   writeUnreadMissionOutputIds,
 } from "./mission-unread-output.ts";
 
 const streamId = "00000000-0000-4000-8000-000000000099";
 
 describe("Mission unread output state", () => {
+  it("persists the fallback state when storage recovers", () => {
+    const data = new Map<string, string>();
+    let unavailable = true;
+    const storage = {
+      getItem: (key: string) => data.get(key) ?? null,
+      setItem: (key: string, value: string) => {
+        if (unavailable) throw new Error("quota exceeded");
+        data.set(key, value);
+      },
+      removeItem: (key: string) => {
+        data.delete(key);
+      },
+    };
+    const update: MissionChatUpdate = {
+      missionId: "mission-a",
+      streamId,
+      revision: 1,
+      kind: "patch",
+      patches: [{ type: "entry.append", entryId: "reply", field: "content", delta: "answer" }],
+    };
+    recordBackgroundMissionChatUpdate(storage, update);
+    unavailable = false;
+    recordBackgroundMissionChatUpdate(storage, { ...update, missionId: "mission-b" });
+    const freshReader = { getItem: storage.getItem };
+    expect(readUnreadMissionOutputIds(freshReader)).toEqual(["mission-a", "mission-b"]);
+    expect(Object.keys(readMissionOutputBoundaries(freshReader))).toEqual([
+      "mission-a",
+      "mission-b",
+    ]);
+  });
+  it("preserves accumulated background output and replay boundaries when storage writes fail", () => {
+    const storage = {
+      getItem: () => null,
+      setItem: () => {
+        throw new Error("quota exceeded");
+      },
+      removeItem: () => {
+        throw new Error("storage unavailable");
+      },
+    };
+    const update: MissionChatUpdate = {
+      missionId: "mission-a",
+      streamId,
+      revision: 1,
+      kind: "patch",
+      patches: [{ type: "entry.append", entryId: "reply", field: "content", delta: "answer" }],
+    };
+    recordBackgroundMissionChatUpdate(storage, update);
+    recordBackgroundMissionChatUpdate(storage, { ...update, missionId: "mission-b" });
+    expect(readUnreadMissionOutputIds(storage)).toEqual(["mission-a", "mission-b"]);
+    expect(readMissionOutputBoundaries(storage)["mission-a"]).toEqual({ streamId, revision: 1 });
+    writeUnreadMissionOutputIds(storage, []);
+    recordBackgroundMissionChatUpdate(storage, update);
+    expect(readUnreadMissionOutputIds(storage)).toEqual([]);
+    recordBackgroundMissionChatUpdate(storage, { ...update, revision: 2 });
+    expect(readUnreadMissionOutputIds(storage)).toEqual(["mission-a"]);
+  });
+  it("notifies navigation when output is read, even when persistence is unavailable", async () => {
+    const target = new EventTarget();
+    const listener = vi.fn();
+    target.addEventListener(missionUnreadOutputChangedEvent, listener);
+    vi.stubGlobal("window", target);
+    try {
+      const storage = {
+        setItem: vi.fn(),
+        removeItem: () => {
+          throw new Error("unavailable");
+        },
+      };
+      writeUnreadMissionOutputIds(storage, []);
+      expect(listener).not.toHaveBeenCalled();
+      await Promise.resolve();
+      expect(listener).toHaveBeenCalledOnce();
+      expect((listener.mock.calls[0]![0] as CustomEvent).detail).toEqual([]);
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+  it("tracks output outside Missions without replaying old output after opening a Mission", () => {
+    const data = new Map<string, string>();
+    const storage = {
+      getItem: (key: string) => data.get(key) ?? null,
+      setItem: (key: string, value: string) => {
+        data.set(key, value);
+      },
+      removeItem: (key: string) => {
+        data.delete(key);
+      },
+    };
+    const update: MissionChatUpdate = {
+      missionId: "mission-a",
+      streamId,
+      revision: 1,
+      kind: "patch",
+      patches: [{ type: "entry.append", entryId: "reply", field: "content", delta: "answer" }],
+    };
+    recordBackgroundMissionChatUpdate(storage, update);
+    expect(readUnreadMissionOutputIds(storage)).toEqual(["mission-a"]);
+    writeUnreadMissionOutputIds(storage, []);
+    recordBackgroundMissionChatUpdate(storage, update);
+    recordBackgroundMissionChatUpdate(storage, {
+      missionId: "mission-a",
+      streamId,
+      revision: 2,
+      kind: "invalidate",
+    });
+    expect(readUnreadMissionOutputIds(storage)).toEqual([]);
+    recordBackgroundMissionChatUpdate(storage, { ...update, revision: 3 });
+    expect(readUnreadMissionOutputIds(storage)).toEqual(["mission-a"]);
+  });
   it("persists unread Mission ids and tolerates invalid local state", () => {
     expect(
       readUnreadMissionOutputIds({ getItem: () => '["mission-a","mission-b","mission-a"," "]' }),

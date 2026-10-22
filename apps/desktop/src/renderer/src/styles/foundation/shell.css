@@ -292,6 +292,25 @@
   box-shadow: none;
 }
 
+.navigation-attention-dot {
+  display: inline-block;
+  flex: 0 0 6px;
+  width: 6px;
+  height: 6px;
+  border-radius: var(--ui-radius-round);
+  background: var(--ui-accent);
+}
+
+.navigation-item > .navigation-attention-dot {
+  margin-left: auto;
+}
+
+.desktop-shell.is-sidebar-collapsed .navigation-item > .navigation-attention-dot {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+}
+
 .navigation-label {
   font-size: 13px;
   font-weight: 500;

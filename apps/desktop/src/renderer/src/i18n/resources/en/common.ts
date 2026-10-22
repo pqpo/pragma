@@ -29,6 +29,7 @@ export const common = {
     viewDetails: "View details",
   },
   navigation: {
+    needsAttention: "Unread messages or pending actions",
     market: "Market",
     more: "More",
     pin: "Pin {{name}} to sidebar",

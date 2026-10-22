@@ -18,6 +18,7 @@ import { HomePage } from "./pages/home/HomePage.tsx";
 import { UsagePage } from "./pages/usage/UsagePage.tsx";
 import { MarketPage } from "./pages/market/MarketPage.tsx";
 import { MemoryPage } from "./pages/memory/MemoryPage.tsx";
+import { useNavigationAttention } from "./lib/use-navigation-attention.ts";
 import type {
   AssetGitStatus,
   AssetGitTarget,
@@ -50,6 +51,7 @@ export function App() {
   const [evaluationTargetId, setEvaluationTargetId] = useState<string>();
   const [settingsView, setSettingsView] = useState<SettingsView>("general");
   const [memoryEnabled, setMemoryEnabled] = useState<boolean>();
+  const attention = useNavigationAttention(activeView === "missions", memoryEnabled === true);
   const [assetGitIssues, setAssetGitIssues] = useState<readonly AssetGitStatus[]>([]);
   const assetGitNavigationSequence = useRef(0);
   const leaveGuardRef = useRef<StudioLeaveGuard | null>(null);
@@ -198,6 +200,7 @@ export function App() {
         activeView={activeView}
         collapsed={sidebarCollapsed}
         memoryEnabled={memoryEnabled === true}
+        attention={attention}
         onNavigate={navigate}
         onToggle={toggleSidebar}
       />
@@ -261,6 +264,7 @@ export function App() {
         />
       ) : activeView === "studio" ? (
         <StudioPage
+          attention={attention}
           initialExpertRef={studioExpertRef}
           initialExpertStep={studioExpertStep}
           initialResourceRef={studioResourceRef}

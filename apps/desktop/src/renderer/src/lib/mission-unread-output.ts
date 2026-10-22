@@ -2,9 +2,24 @@ import type { MissionChatEntry, MissionChatUpdate } from "../../../shared/contra
 
 const unreadMissionOutputStorageKey = "pragma.desktop.missions.unread-output-ids.v1";
 const missionOutputBoundariesStorageKey = "pragma.desktop.missions.output-boundaries.v1";
+export const missionUnreadOutputChangedEvent = "pragma:mission-unread-output-changed";
 
 type MissionOutputStateReader = Pick<Storage, "getItem">;
 type MissionOutputStateWriter = Pick<Storage, "removeItem" | "setItem">;
+const unreadFallback = new WeakMap<object, readonly string[]>();
+const boundariesFallback = new WeakMap<object, MissionOutputBoundaries>();
+
+export function recordBackgroundMissionChatUpdate(
+  storage: MissionOutputStateReader & MissionOutputStateWriter,
+  update: MissionChatUpdate,
+): void {
+  const accepted = acceptMissionChatUpdate(readMissionOutputBoundaries(storage), update);
+  if (!accepted.accepted) return;
+  writeMissionOutputBoundaries(storage, accepted.boundaries);
+  const current = readUnreadMissionOutputIds(storage);
+  const next = recordMissionChatUpdateIds(current, update, null);
+  if (next !== current) writeUnreadMissionOutputIds(storage, next);
+}
 
 export interface MissionOutputBoundary {
   readonly streamId: string;
@@ -16,6 +31,8 @@ export type MissionOutputBoundaries = Readonly<Record<string, MissionOutputBound
 export function readMissionOutputBoundaries(
   storage: MissionOutputStateReader | undefined,
 ): MissionOutputBoundaries {
+  if (storage !== undefined && boundariesFallback.has(storage))
+    return boundariesFallback.get(storage)!;
   try {
     const value = storage?.getItem(missionOutputBoundariesStorageKey);
     if (value === undefined || value === null) return {};
@@ -46,7 +63,9 @@ export function writeMissionOutputBoundaries(
     if (Object.keys(boundaries).length === 0)
       storage?.removeItem(missionOutputBoundariesStorageKey);
     else storage?.setItem(missionOutputBoundariesStorageKey, JSON.stringify(boundaries));
+    if (storage !== undefined) boundariesFallback.delete(storage);
   } catch {
+    if (storage !== undefined) boundariesFallback.set(storage, boundaries);
     // Storage failures must not prevent live Mission output from rendering.
   }
 }
@@ -76,6 +95,8 @@ export function acceptMissionChatUpdate(
 export function readUnreadMissionOutputIds(
   storage: MissionOutputStateReader | undefined,
 ): string[] {
+  if (storage !== undefined && unreadFallback.has(storage))
+    return [...unreadFallback.get(storage)!];
   try {
     const value = storage?.getItem(unreadMissionOutputStorageKey);
     if (value === undefined || value === null) return [];
@@ -98,14 +119,24 @@ export function writeUnreadMissionOutputIds(
   storage: MissionOutputStateWriter | undefined,
   missionIds: readonly string[],
 ): void {
+  const uniqueMissionIds = [...new Set(missionIds.map((missionId) => missionId.trim()))].filter(
+    (missionId) => missionId !== "",
+  );
   try {
-    const uniqueMissionIds = [...new Set(missionIds.map((missionId) => missionId.trim()))].filter(
-      (missionId) => missionId !== "",
-    );
     if (uniqueMissionIds.length === 0) storage?.removeItem(unreadMissionOutputStorageKey);
     else storage?.setItem(unreadMissionOutputStorageKey, JSON.stringify(uniqueMissionIds));
+    if (storage !== undefined) unreadFallback.delete(storage);
   } catch {
+    if (storage !== undefined) unreadFallback.set(storage, uniqueMissionIds);
     // Storage failures must not prevent live Mission output from rendering.
+  }
+  if (typeof window !== "undefined") {
+    // Callers may persist inside a React state updater. Notify the shell after that update.
+    queueMicrotask(() =>
+      window.dispatchEvent(
+        new CustomEvent(missionUnreadOutputChangedEvent, { detail: uniqueMissionIds }),
+      ),
+    );
   }
 }
 
