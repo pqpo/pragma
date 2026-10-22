@@ -1,8 +1,9 @@
+import { createLocalHostMissionReadPorts } from "../../src/missions/read-ports.ts";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { createLocalHostMissionController } from "../../src/missions/controller/composition.ts";
 import {
@@ -216,4 +217,25 @@ describe("Mission query repository authority", () => {
       ).rejects.toMatchObject({ code: "unsupported_schema" });
     }
   });
+});
+
+it("wakes owner recovery even when a result query rejects its missing projection", async () => {
+  const { repository, mission, controller } = await fixture();
+  const failure = new Error("terminal projection missing");
+  const onAccess = vi.fn();
+  const ports = createLocalHostMissionReadPorts({
+    pragmaHome: mission.workspace.path,
+    repository,
+    controller,
+    onAccess,
+    query: {
+      queryMission: async () => {
+        throw failure;
+      },
+    },
+  });
+  await expect(
+    ports.missions.query({ missionId: mission.id, view: "result", limit: 20 }),
+  ).rejects.toBe(failure);
+  expect(onAccess).toHaveBeenCalledExactlyOnceWith(mission.id);
 });

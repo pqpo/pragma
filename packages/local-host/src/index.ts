@@ -597,3 +597,5 @@ export {
   consumeUnstartedMissionPreparationFailure,
   withMissionPreparationFailure,
 } from "./missions/preparation-failure.ts";
+
+export * from "./missions/mission-receipt-recovery.ts";

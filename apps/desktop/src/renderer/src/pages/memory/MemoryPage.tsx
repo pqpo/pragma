@@ -431,29 +431,31 @@ export function MemoryPage(props: { readonly onConfigureExtraction?: () => void 
                   ]}
                 />
               </div>
-              {!memoryPages.loading && items.length === 0 ? <p>{t("empty")}</p> : null}
-              {items.map((item) => (
-                <button
-                  key={key(item)}
-                  type="button"
-                  className={
-                    key(item) === selectedId ? "memory-list-item is-active" : "memory-list-item"
-                  }
-                  aria-current={key(item) === selectedId ? "true" : undefined}
-                  onClick={() => {
-                    setSelectedId(key(item));
-                    setEvidence(undefined);
-                  }}
-                >
-                  <span className="memory-list-preview">
-                    <span className="memory-list-meta">
-                      {t(item.module === "episodic" ? "episodes" : "facts")}
-                    </span>{" "}
-                    {item.title}
-                  </span>
-                </button>
-              ))}
-              <MemoryListLoadMore {...memoryPages} />
+              <div className="memory-list-scroll">
+                {!memoryPages.loading && items.length === 0 ? <p>{t("empty")}</p> : null}
+                {items.map((item) => (
+                  <button
+                    key={key(item)}
+                    type="button"
+                    className={
+                      key(item) === selectedId ? "memory-list-item is-active" : "memory-list-item"
+                    }
+                    aria-current={key(item) === selectedId ? "true" : undefined}
+                    onClick={() => {
+                      setSelectedId(key(item));
+                      setEvidence(undefined);
+                    }}
+                  >
+                    <span className="memory-list-preview">
+                      <span className="memory-list-meta">
+                        {t(item.module === "episodic" ? "episodes" : "facts")}
+                      </span>{" "}
+                      {item.title}
+                    </span>
+                  </button>
+                ))}
+                <MemoryListLoadMore {...memoryPages} />
+              </div>
             </aside>
             <SidebarResizeHandle
               label={t("resizeList")}

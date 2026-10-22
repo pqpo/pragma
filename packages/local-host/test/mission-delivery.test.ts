@@ -1,3 +1,10 @@
+import { createTestExecutionStore } from "./execution-test-host.ts";
+import { createMissionControllerStore } from "../src/missions/controller/mission-controller-store.ts";
+import { createMissionOwnerScope } from "../src/missions/controller/owner-scope.ts";
+import { createMissionExecutionEventProjector } from "../src/missions/mission-execution-event-projector.ts";
+import { createMissionTerminalMaterializer } from "../src/missions/mission-terminal-materializer.ts";
+import { createMissionReceiptRecovery } from "../src/missions/mission-receipt-recovery.ts";
+import { createLocalHostMissionReadPorts } from "../src/missions/read-ports.ts";
 import {
   createEmptyUsage,
   createFileCanonicalEventFeed,
@@ -58,7 +65,11 @@ async function fixture(callback?: (step: MissionDeliveryStep) => Promise<void | 
   resources.push({ root, feed, delivery });
   return { root, path, mission, feed, delivery, usage, terminal, logger };
 }
-async function publish(feed: CanonicalEventFeed, kind: "usage" | "terminal") {
+async function publish(
+  feed: CanonicalEventFeed,
+  kind: "usage" | "terminal",
+  status: "succeeded" | "cancelled" = "succeeded",
+) {
   const eventId = kind;
   const observation = {
     observationId: "obs",
@@ -92,7 +103,7 @@ async function publish(feed: CanonicalEventFeed, kind: "usage" | "terminal") {
         cursor: { executionId, sequence: 1 },
         executionId,
         invocationId: executionId,
-        type: kind === "usage" ? "runtime.usage.observed" : "execution.succeeded",
+        type: kind === "usage" ? "runtime.usage.observed" : `execution.${status}`,
         data:
           kind === "usage"
             ? { schemaVersion: "pragma.runtime-usage-observed/v1", observation }
@@ -360,6 +371,53 @@ describe("Mission durable delivery", { timeout: 15000 }, () => {
     await vi.waitFor(() => expect(target.delivery.inspect().pending).toBe(0));
     expect(target.usage).not.toHaveBeenCalled();
     expect(target.terminal).not.toHaveBeenCalled();
+  });
+  it("does not synthesize a request association while a live Execution is awaiting registration", async () => {
+    const target = await fixture();
+    await publish(target.feed, "usage");
+    await target.delivery.recoverMission({
+      ...target.mission,
+      execution: {
+        id: executionId,
+        inputMessageId: target.mission.initialMessageId,
+        status: "running",
+        startedAt: target.mission.createdAt,
+      },
+    });
+    expect(target.usage).not.toHaveBeenCalled();
+    await expect(
+      target.delivery.register(target.mission, executionId, "native-request"),
+    ).resolves.toBeUndefined();
+    await target.delivery.settleMission(target.mission.id);
+    expect(target.usage).toHaveBeenCalledOnce();
+  });
+  it("preserves the registered request when an owner envelope uses a different input message ID", async () => {
+    const target = await fixture();
+    await target.delivery.register(target.mission, executionId, "canonical-request");
+    await publish(target.feed, "terminal");
+    await target.delivery.recoverMission({
+      ...target.mission,
+      execution: {
+        id: executionId,
+        inputMessageId: target.mission.initialMessageId,
+        status: "running",
+        startedAt: target.mission.createdAt,
+      },
+    });
+    expect(target.terminal).toHaveBeenCalledTimes(5);
+    expect(target.terminal.mock.calls.every((call) => call[2] === "canonical-request")).toBe(true);
+    await expect(
+      target.delivery.recoverMission({
+        ...target.mission,
+        id: "00000000-0000-4000-8000-000000000222",
+        execution: {
+          id: executionId,
+          inputMessageId: target.mission.initialMessageId,
+          status: "running",
+          startedAt: target.mission.createdAt,
+        },
+      }),
+    ).rejects.toThrow("OWNER_CONFLICT");
   });
   it("rejects rebinding an Execution to a different Mission or request", async () => {
     const target = await fixture();
@@ -670,3 +728,148 @@ describe("Mission delivery initialization recovery", () => {
     expect(() => opened!.inspect()).toThrow();
   });
 });
+
+it.each([
+  { ownerLifetime: "host", status: "succeeded" },
+  { ownerLifetime: "host", status: "cancelled" },
+  { ownerLifetime: "request", status: "succeeded" },
+  { ownerLifetime: "request", status: "cancelled" },
+] as const)(
+  "recovers unassociated historical terminal custody on explicit owner access ($ownerLifetime, $status)",
+  async ({ ownerLifetime, status }) => {
+    const target = await fixture();
+    const missions = createMissionStore({ missionsPath: join(target.root, "missions") });
+    const controller = createMissionControllerStore({
+      missionsPath: join(target.root, "missions"),
+      missionPath: missions.storagePath,
+    });
+    const ownerScope = createMissionOwnerScope({ controller });
+    ownerScope.bindConsumer({ apply: async () => ({ result: {} }) });
+    const executions = createTestExecutionStore({ pragmaHome: target.root });
+    const definition = { kind: "flow" as const, id: "flow" };
+    const timestamp = target.mission.createdAt;
+    await executions.create(
+      {
+        schemaVersion: "pragma.execution/v12",
+        executionId,
+        version: 0,
+        kind: "flow",
+        definition,
+        rootInvocationId: executionId,
+        status,
+        input: null,
+        state: {},
+        lastAppliedSequence: 0,
+        createdAt: timestamp,
+        updatedAt: timestamp,
+      },
+      {
+        invocationId: executionId,
+        rootInvocationId: executionId,
+        contextId: "context",
+        definition,
+        status,
+        input: null,
+        pendingExpertMessages: [],
+        createdAt: timestamp,
+        updatedAt: timestamp,
+      },
+    );
+    await missions.updateExecution(target.mission.id, {
+      id: executionId,
+      inputMessageId: target.mission.initialMessageId,
+      status: "running",
+      startedAt: timestamp,
+    });
+    await missions.appendExecutionReference({
+      missionId: target.mission.id,
+      inputMessageId: target.mission.initialMessageId,
+      executionId,
+      createdAt: timestamp,
+    });
+    // Reproduce the old partial handoff: terminal facts survived, registration did not.
+    await publish(target.feed, "terminal", status);
+    await target.delivery.takeCustody();
+    expect(target.delivery.inspect().pending).toBe(5);
+    await target.delivery.close();
+    const memory = vi.fn(async () => undefined);
+    const delivery = await createMissionDelivery({
+      ...target,
+      terminal: createMissionTerminalMaterializer({
+        missions,
+        executions,
+        ownerScope,
+        ownerLifetime,
+        withAdmission: async (_id, operation) => await operation(),
+        projector: createMissionExecutionEventProjector({ controller, ownerScope }),
+        memory,
+      }),
+    });
+    resources[resources.length - 1]!.delivery = delivery;
+    const onError = vi.fn();
+    const readMission = vi.spyOn(missions, "get");
+    const recovery = createMissionReceiptRecovery({
+      readMission,
+      getDelivery: async () => delivery,
+      withOwner:
+        ownerLifetime === "request"
+          ? async (id, operation) => {
+              const guard = await ownerScope.acquireForRecovery(id);
+              try {
+                await operation();
+              } finally {
+                await ownerScope.release(id, guard);
+              }
+            }
+          : undefined,
+      onError,
+    });
+    const ports = createLocalHostMissionReadPorts({
+      pragmaHome: target.root,
+      repository: missions,
+      controller,
+      onAccess: recovery.wake,
+    });
+    try {
+      // An unopened owner is left untouched; list reads cannot trigger global repair.
+      await ports.missions.listDiagnostics();
+      expect(memory).not.toHaveBeenCalled();
+      expect((await missions.get(target.mission.id)).execution?.status).toBe("running");
+      if (ownerLifetime === "host" && status === "succeeded") {
+        // A failed result read must itself wake recovery; no get or manual wake follows it.
+        await ports.missions
+          .query({ missionId: target.mission.id, view: "result", limit: 20 })
+          .catch((error: unknown) =>
+            expect(error).toMatchObject({ code: "DEPENDENCY_UNAVAILABLE" }),
+          );
+      } else {
+        await ports.missions.get(target.mission.id);
+        recovery.wake(target.mission.id); // coalesce overlapping explicit accesses
+      }
+      await recovery.close();
+      expect(onError).not.toHaveBeenCalled();
+      expect((await missions.get(target.mission.id)).execution?.status).toBe(status);
+      await expect(
+        ports.missions.query({ missionId: target.mission.id, view: "result", limit: 20 }),
+      ).resolves.toMatchObject({ executionId, available: status === "succeeded" });
+      const { events } = await controller.readSnapshot({ missionId: target.mission.id });
+      expect(events.filter((event) => event.type === "run.started")).toHaveLength(1);
+      expect(
+        events.filter(
+          (event) => event.type === (status === "cancelled" ? "run.interrupted" : "run.succeeded"),
+        ),
+      ).toHaveLength(1);
+      expect(memory).toHaveBeenCalledOnce();
+      await delivery.takeCustody();
+      expect(delivery.inspect().pending).toBe(0);
+      const reads = readMission.mock.calls.length;
+      recovery.wake(target.mission.id);
+      expect(readMission).toHaveBeenCalledTimes(reads);
+    } finally {
+      await recovery.close();
+      await ownerScope.stop(target.mission.id);
+      await executions.close();
+    }
+  },
+  15000,
+);

@@ -228,6 +228,18 @@ export async function createMissionDelivery(input: {
       );
       wake();
     },
+    /** Recover a persisted owner without replacing an already registered request identity. */
+    async recoverMission(mission: Mission) {
+      if (mission.execution === undefined) return;
+      await this.takeCustody();
+      const registered = await receipts.recoverLink(
+        mission.execution.id,
+        mission.id,
+        JSON.stringify(LinkSchema.parse({ mission, requestId: mission.execution.inputMessageId })),
+      );
+      if (!registered) return;
+      await this.settleMission(mission.id);
+    },
     async retry(missionId: string) {
       await receipts.retry(missionId);
       wake();

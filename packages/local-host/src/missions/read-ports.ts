@@ -32,6 +32,7 @@ export function createLocalHostMissionReadPorts(options: {
   readonly pragmaHome: string;
   readonly repository: MissionStore;
   readonly controller: MissionControllerStore;
+  readonly onAccess?: ((missionId: string) => void) | undefined;
   readonly query?: MissionQueryPort | undefined;
   readonly watch?: MissionWatchPort | undefined;
 }) {
@@ -72,7 +73,9 @@ export function createLocalHostMissionReadPorts(options: {
     missions: {
       get: async (id: string) => {
         await assertMission(id);
-        return await options.controller.readSnapshot({ missionId: id });
+        const snapshot = await options.controller.readSnapshot({ missionId: id });
+        options.onAccess?.(id);
+        return snapshot;
       },
       listDiagnostics: async () =>
         await listMissionSnapshots(options.controller, options.repository, options.pragmaHome),
@@ -98,7 +101,11 @@ export function createLocalHostMissionReadPorts(options: {
           });
         return result.items;
       },
-      query: query.queryMission,
+      query: async (input: Parameters<MissionQueryPort["queryMission"]>[0]) => {
+        await assertMission(input.missionId);
+        options.onAccess?.(input.missionId);
+        return await query.queryMission(input);
+      },
     },
     watch: {
       watch: async (input: Parameters<MissionWatchPort["watch"]>[0]) => {

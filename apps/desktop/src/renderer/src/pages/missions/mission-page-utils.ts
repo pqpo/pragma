@@ -227,7 +227,7 @@ export function missionToSummary(
   return {
     id: mission.id,
     title: mission.title,
-    workspace: { basename: mission.workspace.basename },
+    workspace: { ...mission.workspace },
     executor: { kind: mission.executor.kind, name: mission.executor.name },
     ...(mission.execution === undefined
       ? {}

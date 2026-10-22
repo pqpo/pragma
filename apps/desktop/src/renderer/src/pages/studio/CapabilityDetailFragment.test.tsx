@@ -174,13 +174,14 @@ describe("CapabilityDetailFragment", () => {
       (match) => match[1],
     );
     expect(actions).toEqual([
-      "Update from package",
+      "Save Skill",
+      "Publish to source",
       "Submit revision",
       "Export",
-      "Publish to source",
+      "Update from package",
       "Settings",
       "Delete",
-      "Save Skill",
+      "More",
     ]);
     expect(html).not.toContain("Update Skill");
     expect(html).not.toContain("Prepare revision");

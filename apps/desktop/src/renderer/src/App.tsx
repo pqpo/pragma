@@ -34,6 +34,7 @@ export function App() {
   );
   const [sidebarWidth, setSidebarWidth] = usePersistentSidebarWidth(SIDEBAR_WIDTH_PREFERENCES.main);
   const [missionExecutorRef, setMissionExecutorRef] = useState<string>();
+  const [missionWorkspaceToCreate, setMissionWorkspaceToCreate] = useState<Mission["workspace"]>();
   const [missionToOpen, setMissionToOpen] = useState<Mission>();
   const [missionComposerDraftToOpen, setMissionComposerDraftToOpen] = useState<string>();
   const [autoRunMissionOnOpen, setAutoRunMissionOnOpen] = useState(false);
@@ -105,6 +106,7 @@ export function App() {
   const navigate = (view: AppView) => {
     const perform = () => {
       setMissionExecutorRef(undefined);
+      setMissionWorkspaceToCreate(undefined);
       setMissionComposerDraftToOpen(undefined);
       setAutoRunMissionOnOpen(false);
       setStudioExpertRef(undefined);
@@ -216,6 +218,7 @@ export function App() {
       {activeView === "home" ? (
         <HomePage
           initialExecutorRef={missionExecutorRef}
+          initialWorkspace={missionWorkspaceToCreate}
           onConfigureModels={openModelSettings}
           onConfigureRuntime={openRuntimeSettings}
           onConfigureExpert={openStudioForExecutor}
@@ -224,6 +227,7 @@ export function App() {
             setMissionToOpen(mission);
             setMissionComposerDraftToOpen(undefined);
             setAutoRunMissionOnOpen(true);
+            setMissionWorkspaceToCreate(undefined);
             setMissionExecutorRef(undefined);
             setActiveView("missions");
           }}
@@ -254,7 +258,8 @@ export function App() {
             setStudioRevisionStoreId(undefined);
             setActiveView("studio");
           }}
-          onCreate={() => {
+          onCreate={(workspace) => {
+            setMissionWorkspaceToCreate(workspace);
             setMissionToOpen(undefined);
             setMissionComposerDraftToOpen(undefined);
             setAutoRunMissionOnOpen(false);
@@ -279,6 +284,7 @@ export function App() {
           }}
           onUseInSession={(executorRef) => {
             setMissionExecutorRef(executorRef);
+            setMissionWorkspaceToCreate(undefined);
             setMissionToOpen(undefined);
             setMissionComposerDraftToOpen(undefined);
             setAutoRunMissionOnOpen(false);

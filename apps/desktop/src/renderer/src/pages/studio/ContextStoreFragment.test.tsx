@@ -230,8 +230,8 @@ describe("knowledge base UI", () => {
     expect(html).toContain('class="knowledge-base-editor-actions"');
     expect(html).not.toContain("Revision history");
     expect(html).toContain("Submit revision");
-    expect(html.match(/class="studio-action-button"/g)).toHaveLength(6);
-    expect(html.match(/role="tooltip"/g)).toHaveLength(6);
+    expect(html.match(/class="studio-action-button"/g)).toHaveLength(7);
+    expect(html.match(/role="tooltip"/g)).toHaveLength(7);
     expect(html).toContain('aria-label="Settings"');
     expect(html).toContain('aria-label="Save"');
     expect(html).toContain("No changes to save");
@@ -241,12 +241,23 @@ describe("knowledge base UI", () => {
     );
     expect(actions).toEqual([
       "Save",
+      "Publish to source",
       "Submit revision",
       "Export",
-      "Publish to source",
       "Settings",
       "Delete",
+      "More",
     ]);
+    const overflow = html.match(
+      /<div class="studio-detail-actions-reveal" id="([^"]+)" inert="">([\s\S]*?)<\/div><\/div>/,
+    );
+    expect(overflow).not.toBeNull();
+    expect(overflow![2]).not.toContain('aria-label="Save"');
+    expect(overflow![2]).not.toContain('aria-label="Publish to source"');
+    for (const label of ["Submit revision", "Export", "Settings", "Delete"]) {
+      expect(overflow![2]).toContain(`aria-label="${label}"`);
+    }
+    expect(html).toContain(`aria-expanded="false" aria-controls="${overflow![1]}"`);
     expect(html).toContain(renderToStaticMarkup(<DownloadSimple size={18} aria-hidden="true" />));
     expect(html).toContain(renderToStaticMarkup(<GitBranch size={18} aria-hidden="true" />));
     expect(html).toContain('aria-label="Resize file list"');

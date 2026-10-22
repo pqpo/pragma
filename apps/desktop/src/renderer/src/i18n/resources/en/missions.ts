@@ -1,4 +1,14 @@
 export const missions = {
+  workspaceTabsPreferenceUnavailable:
+    "Workspace tabs could not be saved or restored. The original preferences have been preserved.",
+  dragWorkspaceTab: "Drag to reorder; Alt+Shift+Left/Right also moves this tab",
+  workspaceSearchEmpty: "No workspaces found",
+  allWorkspaces: "All workspaces",
+  workspaceCategories: "Workspace categories",
+  addWorkspaceTab: "Add workspace tab",
+  closeWorkspaceTab: "Close {{name}} tab",
+  searchWorkspaces: "Search workspaces",
+
   renameMission: "Rename mission",
   renameNamed: "Rename “{{title}}”",
   renameDescription: "Keep it short and easy to recognize",

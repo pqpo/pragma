@@ -83,6 +83,26 @@ export function createMissionActivityReader(options: {
     return operation;
   };
 
+  const failures = new Map<string, string>();
+  let failureCapacity = 256;
+  const reportFailure = (
+    input: MissionActivityInput,
+    source: "mission-events" | "core-execution",
+    error: unknown,
+  ) => {
+    const key = `${input.missionId}:${input.execution.id}:${source}`;
+    const signature = error instanceof Error ? `${error.name}:${error.message}` : String(error);
+    if (failures.get(key) === signature) return;
+    failures.delete(key);
+    failures.set(key, signature);
+    // Keep both authority failures for the visible list without retaining every
+    // Mission visited during a long Host lifetime.
+    if (failures.size > failureCapacity) failures.delete(failures.keys().next().value!);
+    options.onReadFailure?.({ missionId: input.missionId, source, error });
+  };
+  const clearFailure = (input: MissionActivityInput, source: string) =>
+    failures.delete(`${input.missionId}:${input.execution.id}:${source}`);
+
   const readUncached = async (input: MissionActivityInput): Promise<MissionActivitySnapshot> => {
     let degraded = false;
     const projected = await within(
@@ -95,15 +115,15 @@ export function createMissionActivityReader(options: {
       .then((snapshot) => projectMissionExecutionActivity(snapshot.events, input.execution.id))
       .catch((error: unknown) => {
         degraded = true;
-        options.onReadFailure?.({
-          missionId: input.missionId,
-          source: "mission-events",
-          error,
-        });
+        reportFailure(input, "mission-events", error);
         return undefined;
       });
 
     if (projected !== undefined && isTerminal(projected.status)) {
+      if (!degraded) {
+        clearFailure(input, "mission-events");
+        clearFailure(input, "core-execution");
+      }
       return { ...projected, source: "mission-events", degraded };
     }
 
@@ -115,24 +135,25 @@ export function createMissionActivityReader(options: {
       `Mission canonical Execution read timed out after ${readTimeoutMs}ms.`,
     ).catch((error: unknown) => {
       degraded = true;
-      options.onReadFailure?.({
-        missionId: input.missionId,
-        source: "core-execution",
-        error,
-      });
+      reportFailure(input, "core-execution", error);
       return undefined;
     });
+    if (canonical !== undefined) clearFailure(input, "core-execution");
     const canonicalStatus = normalizeExecutionStatus(canonical?.status);
     if (canonical !== undefined && canonicalStatus !== undefined && isTerminal(canonicalStatus)) {
       if (projected === undefined || !isTerminal(projected.status)) {
+        if (!degraded)
+          reportFailure(
+            input,
+            "mission-events",
+            Object.assign(
+              new Error(
+                `Mission event projection is missing canonical terminal Execution ${input.execution.id}.`,
+              ),
+              { code: "mission_terminal_projection_missing" },
+            ),
+          );
         degraded = true;
-        options.onReadFailure?.({
-          missionId: input.missionId,
-          source: "mission-events",
-          error: new Error(
-            `Mission event projection is missing canonical terminal Execution ${input.execution.id}.`,
-          ),
-        });
       }
       return {
         executionId: input.execution.id,
@@ -144,6 +165,7 @@ export function createMissionActivityReader(options: {
     }
 
     if (projected !== undefined) {
+      if (!degraded) clearFailure(input, "mission-events");
       return { ...projected, source: "mission-events", degraded };
     }
     return {
@@ -161,11 +183,13 @@ export function createMissionActivityReader(options: {
     if (existing !== undefined) return await existing;
     const operation = readUncached(input)
       .then((snapshot) => {
+        cache.delete(input.missionId);
         cache.set(input.missionId, {
           inputUpdatedAt: input.execution.updatedAt,
           cachedAt: Date.now(),
           snapshot,
         });
+        if (cache.size > 256) cache.delete(cache.keys().next().value!);
         return snapshot;
       })
       .finally(() => inFlight.delete(operationKey));
@@ -176,26 +200,30 @@ export function createMissionActivityReader(options: {
   return {
     read,
     async readMany(inputs) {
+      failureCapacity = Math.max(256, inputs.length * 2);
+      while (failures.size > failureCapacity) failures.delete(failures.keys().next().value!);
       const now = Date.now();
-      const result = inputs.map((input) => {
+      const pending: { input: MissionActivityInput; index: number }[] = [];
+      const result = inputs.map((input, index) => {
         const cached = cache.get(input.missionId);
         if (
           cached !== undefined &&
           cached.snapshot.executionId === input.execution.id &&
           cached.inputUpdatedAt === input.execution.updatedAt &&
-          (isTerminal(cached.snapshot.status) || now - cached.cachedAt <= activeCacheTtlMs)
+          ((!cached.snapshot.degraded && isTerminal(cached.snapshot.status)) ||
+            now - cached.cachedAt <= activeCacheTtlMs)
         ) {
           return cached.snapshot;
         }
-        return persistedMetadataSnapshot(input);
+        pending.push({ input, index });
+        return cached?.snapshot.executionId === input.execution.id &&
+          cached.inputUpdatedAt === input.execution.updatedAt
+          ? cached.snapshot
+          : persistedMetadataSnapshot(input);
       });
-      const work = mapConcurrent(inputs, concurrency, async (input) => await read(input)).then(
-        (snapshots) => {
-          for (let index = 0; index < snapshots.length; index += 1) {
-            result[index] = snapshots[index]!;
-          }
-        },
-      );
+      const work = mapConcurrent(pending, concurrency, async ({ input, index }) => {
+        result[index] = await read(input);
+      });
       // The rail has a strict latency budget. Slow per-Mission I/O continues in
       // the background and warms the bounded cache for the next render instead
       // of blocking the entire list behind the slowest owner.

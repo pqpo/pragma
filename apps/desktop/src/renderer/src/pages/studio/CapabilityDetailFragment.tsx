@@ -4,6 +4,8 @@ import {
   Archive,
   Code,
   DownloadSimple,
+  FloppyDisk,
+  SpinnerGap,
   GitBranch,
   GearSix,
   Globe,
@@ -11,6 +13,7 @@ import {
   Play,
   Plug,
   Trash,
+  X,
 } from "@phosphor-icons/react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
@@ -19,7 +22,8 @@ import type { Capability, CapabilityTestResult } from "../../../../shared/contra
 import { errorMessage } from "../../lib/errors.ts";
 import { CharacterCount } from "../../components/CharacterCount.tsx";
 import { Dialog } from "../../components/Dialog.tsx";
-import { SkillFileWorkspace } from "./SkillFileWorkspace.tsx";
+import { SkillFileWorkspace, type SkillSaveAction } from "./SkillFileWorkspace.tsx";
+import { StudioDetailActions } from "../../components/StudioDetailActions.tsx";
 import { StudioActionButton } from "../../components/StudioActionButton.tsx";
 import { StudioConfirmationDialog } from "./StudioDialog.tsx";
 import { StudioScreenFrame, type StudioLeaveGuard } from "./StudioScreenFrame.tsx";
@@ -54,6 +58,7 @@ export function CapabilityDetailFragment(props: {
     if (leaveGuardRef.current === null) action();
     else leaveGuardRef.current(action);
   };
+  const [skillSaveAction, setSkillSaveAction] = useState<SkillSaveAction | null>(null);
   const [selectedToolName, setSelectedToolName] = useState(() => firstToolName(capability));
   const [testInput, setTestInput] = useState("{}");
   const [testResult, setTestResult] = useState<CapabilityTestResult | null>(null);
@@ -254,56 +259,79 @@ export function CapabilityDetailFragment(props: {
           </div>
           {isBuiltIn ? null : definition.kind === "skill" ? (
             <div className="capability-detail-actions">
-              <StudioActionButton
-                label={t("updateSkillFromPackage")}
-                icon={<Archive size={18} aria-hidden="true" />}
-                disabled={busy || deleting}
-                onClick={() => requestLeave(() => void importSkillRevision())}
-              />
-              <StudioActionButton
-                label={t("submitSkillRevision")}
-                icon={<PaperPlaneTilt size={18} aria-hidden="true" />}
-                onClick={() => {
-                  requestLeave(() => {
-                    setRevisionError(null);
-                    setRevisionDialogOpen(true);
-                  });
-                }}
-              />
-              {props.onExport === undefined ? null : (
+              <StudioDetailActions
+                primary={
+                  <>
+                    <StudioActionButton
+                      label={skillSaveAction?.saving ? t("saving") : t("saveSkill")}
+                      tone="primary"
+                      disabled={!skillSaveAction?.dirty || skillSaveAction.saving}
+                      busy={skillSaveAction?.saving}
+                      icon={
+                        skillSaveAction?.saving ? (
+                          <SpinnerGap className="spin" size={18} aria-hidden="true" />
+                        ) : (
+                          <FloppyDisk size={18} aria-hidden="true" />
+                        )
+                      }
+                      onClick={() => void skillSaveAction?.save()}
+                    />
+                    {props.onPublish === undefined ? null : (
+                      <StudioActionButton
+                        label={t("publishToSource")}
+                        icon={<GitBranch size={18} aria-hidden="true" />}
+                        disabled={busy || deleting}
+                        onClick={() => requestLeave(() => void runTransferAction(props.onPublish))}
+                      />
+                    )}
+                  </>
+                }
+              >
                 <StudioActionButton
-                  label={t("exportBundle")}
-                  icon={<DownloadSimple size={18} aria-hidden="true" />}
-                  disabled={busy || deleting}
-                  onClick={() => void runTransferAction(props.onExport)}
+                  label={t("submitSkillRevision")}
+                  icon={<PaperPlaneTilt size={18} aria-hidden="true" />}
+                  onClick={() => {
+                    requestLeave(() => {
+                      setRevisionError(null);
+                      setRevisionDialogOpen(true);
+                    });
+                  }}
                 />
-              )}
-              {props.onPublish === undefined ? null : (
+                {props.onExport === undefined ? null : (
+                  <StudioActionButton
+                    label={t("exportBundle")}
+                    icon={<DownloadSimple size={18} aria-hidden="true" />}
+                    disabled={busy || deleting}
+                    onClick={() => void runTransferAction(props.onExport)}
+                  />
+                )}
+
                 <StudioActionButton
-                  label={t("publishToSource")}
-                  icon={<GitBranch size={18} aria-hidden="true" />}
+                  label={t("updateSkillFromPackage")}
+                  icon={<Archive size={18} aria-hidden="true" />}
                   disabled={busy || deleting}
-                  onClick={() => requestLeave(() => void runTransferAction(props.onPublish))}
+                  onClick={() => requestLeave(() => void importSkillRevision())}
                 />
-              )}
-              <StudioActionButton
-                label={t("assetGit.settings")}
-                icon={<GearSix size={18} aria-hidden="true" />}
-                disabled={busy || deleting}
-                onClick={() => requestLeave(() => setGitSettingsOpen(true))}
-              />
-              <StudioActionButton
-                label={t("delete")}
-                icon={<Trash size={18} aria-hidden="true" />}
-                tone="danger"
-                disabled={busy || deleting}
-                onClick={() => {
-                  requestLeave(() => {
-                    setDeleteError(null);
-                    setDeleteDialogOpen(true);
-                  });
-                }}
-              />
+
+                <StudioActionButton
+                  label={t("assetGit.settings")}
+                  icon={<GearSix size={18} aria-hidden="true" />}
+                  disabled={busy || deleting}
+                  onClick={() => requestLeave(() => setGitSettingsOpen(true))}
+                />
+                <StudioActionButton
+                  label={t("delete")}
+                  icon={<Trash size={18} aria-hidden="true" />}
+                  tone="danger"
+                  disabled={busy || deleting}
+                  onClick={() => {
+                    requestLeave(() => {
+                      setDeleteError(null);
+                      setDeleteDialogOpen(true);
+                    });
+                  }}
+                />
+              </StudioDetailActions>
             </div>
           ) : definition.kind === "mcp_server" ? (
             <button
@@ -336,6 +364,7 @@ export function CapabilityDetailFragment(props: {
           capability={capability}
           onChanged={props.onChanged}
           onLeaveGuardChange={onSkillLeaveGuardChange}
+          onSaveActionChange={setSkillSaveAction}
         />
       ) : (
         <section className="capability-tool-workspace" aria-label={t("capabilityToolsPanel")}>
@@ -465,17 +494,19 @@ export function CapabilityDetailFragment(props: {
       ) : null}
       {gitSettingsOpen && definition.kind === "skill" && !isBuiltIn ? (
         <Dialog
-          title={t("assetGit.settingsTitle")}
+          title={t("skillSettings")}
           description={t("assetGit.description")}
           className="asset-git-dialog"
           onCancel={() => setGitSettingsOpen(false)}
-          footer={
+          headerAction={
             <button
-              className="secondary-button"
+              className="icon-button is-borderless"
               type="button"
+              aria-label={t("close")}
+              title={t("close")}
               onClick={() => setGitSettingsOpen(false)}
             >
-              {t("close")}
+              <X size={20} aria-hidden="true" />
             </button>
           }
         >

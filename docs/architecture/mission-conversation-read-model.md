@@ -30,10 +30,19 @@ Desktop product metadata ─────────────┴──▶ Des
 2. 历史分页使用稳定 entry key cursor。旧 byte-offset cursor 只作为升级输入，不能继续定位可替换文件。
 3. 加载历史页不推进实时 `revision`；该水位只表示连续应用的 live change sequence。
 4. pending interaction 只属于当前 waiting Execution。Execution 进入非 waiting 或终态后立即为空，缓存不得复活它。
-5. archived projection 在内存中按当前规则规范化；读取不会重写文件、创建备份或调度 timer。
-6. archived projection 仍受明确的条目、字节和字段长度上限约束；省略条目数和截断字段数进入读取协议并在
+5. 用户显式访问单个 Mission 时，Host 可在响应路径之外唤醒共享 Local Host 的 receipt recovery：
+   仅在已接收当前 Execution 的耐久终态事实后，从该 owner 的持久 envelope 原子补登记缺失的
+   投递关联；已有正常关联保留原 request 身份。查询失败也必须能唤醒此恢复。Desktop 与 CLI
+   复用此路径，遵循原有 owner fencing、删除屏障与失败退避；列表、activity reader 和历史投影读取
+   不扫描或修复其他 owner。关闭 Host 时停止接收新恢复工作并等待已接收工作。
+6. archived projection 在内存中按当前规则规范化；读取不会重写文件、创建备份或调度 timer。
+7. archived projection 仍受明确的条目、字节和字段长度上限约束；省略条目数和截断字段数进入读取协议并在
    UI 展示，禁止把有损归档伪装成完整历史。
-7. Renderer 按权威条目顺序合并，且只挂载可视区域附近的会话块。
+8. Renderer 按权威条目顺序合并，且只挂载可视区域附近的会话块。
+
+Activity 列表读取仅刷新缓存过期或身份变化的条目；健康终态在 Execution 身份和 owner 更新时间
+不变时复用，降级终态继续按 TTL 校验。相同 Execution、来源和故障的告警在恢复前去重，恢复后
+再次失败重新报告；缓存和告警状态有界。
 
 ## 阶段二读取与刷新
 

@@ -1,4 +1,5 @@
 export const studio = {
+  skillSettings: "Skill settings",
   knowledgeBaseSettings: "Knowledge base settings",
   writeApproval: "Write approval",
   writeApprovalRequired: "Require approval",

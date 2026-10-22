@@ -1,3 +1,15 @@
+import {
+  MissionWorkspaceTabs,
+  missionMatchesWorkspace,
+  EMPTY_MISSION_WORKSPACE_TABS,
+  type MissionWorkspaceTabState,
+} from "./mission-workspace-tabs.tsx";
+import {
+  readMissionWorkspaceTabs,
+  writeMissionWorkspaceTabs,
+  reconcileMissionWorkspaceTabs,
+  addMissionWorkspaceTab,
+} from "../../lib/mission-workspace-tabs-preference.ts";
 import { resolveUnlistedMissionSelection } from "./mission-list-selection.ts";
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import { useTranslation } from "react-i18next";
@@ -8,6 +20,7 @@ import {
   type MissionConversationSnapshot,
   type MissionStatusUpdate,
   type MissionSummary,
+  type MissionCreationDefaults,
   type ExpertMentionCandidate,
   type MissionMentionCandidates,
 } from "../../../../shared/contracts/index.ts";
@@ -35,6 +48,7 @@ import {
   mergeConversationState,
   type MissionConversationPrefetch,
 } from "./use-mission-conversation.ts";
+import { workspaceSelectionFromPath } from "../../components/WorkspacePicker.tsx";
 import { SidebarResizeHandle } from "../../components/SidebarResizeHandle.tsx";
 import {
   SIDEBAR_WIDTH_PREFERENCES,
@@ -78,6 +92,8 @@ export interface MissionsPageMemoryState {
   readonly selectedMission: Mission | null;
   readonly selectedMissionId: string | null;
   readonly activeSource?: MissionListSource | undefined;
+  readonly workspacePath?: string | null | undefined;
+  readonly workspaceTabs?: MissionWorkspaceTabState | undefined;
   readonly selectedMissionIds?: Partial<Record<MissionListSource, string>> | undefined;
 }
 
@@ -121,6 +137,9 @@ export function resolveMissionsPageInitialState(input: {
       selectedMission: input.initialMission,
       selectedMissionId: input.initialMission.id,
       activeSource: source,
+      workspaceTabs: input.memoryState?.workspaceTabs,
+      workspacePath:
+        input.memoryState?.workspacePath == null ? null : input.initialMission.workspace.path,
       selectedMissionIds: {
         ...input.memoryState?.selectedMissionIds,
         [source]: input.initialMission.id,
@@ -153,7 +172,7 @@ export function MissionsPage(props: {
   readonly initialMemoryState?: MissionsPageMemoryState | undefined;
   readonly memoryEnabled?: boolean | undefined;
   readonly autoRunInitialMission?: boolean | undefined;
-  readonly onCreate: () => void;
+  readonly onCreate: (workspace?: MissionCreationDefaults["workspace"] | undefined) => void;
   readonly onMemoryStateChange?: ((state: MissionsPageMemoryState) => void) | undefined;
   readonly onConfigureModels?: (() => void) | undefined;
   readonly onOpenKnowledgeBases?: (() => void) | undefined;
@@ -187,6 +206,29 @@ export function MissionsPage(props: {
     initialState.selectedMissionId,
   );
   const [loadingMissionId, setLoadingMissionId] = useState<string | null>(null);
+  const [workspacePath, setWorkspacePath] = useState<string | null>(
+    initialState.workspacePath ?? null,
+  );
+  const workspacePathRef = useRef(workspacePath);
+  const [workspaceTabPreference] = useState(() =>
+    readMissionWorkspaceTabs(typeof window === "undefined" ? undefined : window.localStorage),
+  );
+  const [workspaceTabs, setWorkspaceTabs] = useState(() => {
+    const current =
+      workspaceTabPreference.status === "ready"
+        ? workspaceTabPreference.state
+        : (initialState.workspaceTabs ?? EMPTY_MISSION_WORKSPACE_TABS);
+    return props.autoRunInitialMission === true && props.initialMission !== undefined
+      ? addMissionWorkspaceTab(current, props.initialMission.workspace)
+      : current;
+  });
+  const [hasRefreshedMissionList, setHasRefreshedMissionList] = useState(false);
+  const newMissionWorkspaceAppliedRef = useRef<string | null>(
+    props.autoRunInitialMission === true ? (props.initialMission?.id ?? null) : null,
+  );
+  const [workspaceChoices, setWorkspaceChoices] = useState<
+    readonly MissionCreationDefaults["workspace"][]
+  >([]);
   const [activeSource, setActiveSource] = useState<MissionListSource>(initialState.activeSource);
   const [hasResolvedInitialLoad, setHasResolvedInitialLoad] = useState(
     initialState.hasResolvedInitialLoad,
@@ -557,10 +599,14 @@ export function MissionsPage(props: {
       selectedMission,
       selectedMissionId,
       activeSource,
+      workspacePath,
+      workspaceTabs,
       selectedMissionIds: selectedMissionIdsRef.current,
     });
   }, [
     activeSource,
+    workspacePath,
+    workspaceTabs,
     hasResolvedInitialLoad,
     missions,
     props.onMemoryStateChange,
@@ -728,6 +774,7 @@ export function MissionsPage(props: {
             : applyMissionStatusUpdateToSummary(mission, statusUpdate);
         });
         setMissions(refreshedMissions);
+        setHasRefreshedMissionList(true);
         updateUnreadMissionOutputIds((current) => {
           const retained = current.filter((missionId) =>
             refreshedMissions.some((mission) => mission.id === missionId),
@@ -794,7 +841,9 @@ export function MissionsPage(props: {
           }
         }
         const sourceMissions = refreshedMissions.filter(
-          (mission) => missionListSourceForSummary(mission) === activeSourceRef.current,
+          (mission) =>
+            missionListSourceForSummary(mission) === activeSourceRef.current &&
+            missionMatchesWorkspace(mission, workspacePathRef.current),
         );
         let missionId = selectedMissionIdsRef.current[activeSourceRef.current] ?? null;
         if (missionId !== null && !sourceMissions.some((mission) => mission.id === missionId)) {
@@ -880,7 +929,9 @@ export function MissionsPage(props: {
   const visibleMissions = useMemo(() => {
     const query = search.trim().toLocaleLowerCase();
     const sourceMissions = presentedMissions.filter(
-      (mission) => missionListSourceForSummary(mission) === activeSource,
+      (mission) =>
+        missionListSourceForSummary(mission) === activeSource &&
+        missionMatchesWorkspace(mission, workspacePath),
     );
     if (query === "") return sourceMissions;
     return sourceMissions.filter((mission) =>
@@ -888,7 +939,7 @@ export function MissionsPage(props: {
         value.toLocaleLowerCase().includes(query),
       ),
     );
-  }, [activeSource, presentedMissions, search]);
+  }, [activeSource, presentedMissions, search, workspacePath]);
 
   const changeSource = useCallback(
     (nextSource: MissionListSource) => {
@@ -897,7 +948,9 @@ export function MissionsPage(props: {
       setActiveSource(nextSource);
       setError(null);
       const sourceMissions = missions.filter(
-        (mission) => missionListSourceForSummary(mission) === nextSource,
+        (mission) =>
+          missionListSourceForSummary(mission) === nextSource &&
+          missionMatchesWorkspace(mission, workspacePathRef.current),
       );
       const rememberedId = selectedMissionIdsRef.current[nextSource];
       const missionId =
@@ -914,6 +967,85 @@ export function MissionsPage(props: {
     },
     [missions, openMission],
   );
+  const changeWorkspace = useCallback(
+    (path: string | null) => {
+      if (path === workspacePathRef.current) return;
+      workspacePathRef.current = path;
+      setWorkspacePath(path);
+      setError(null);
+      const candidates = missions.filter(
+        (mission) =>
+          missionListSourceForSummary(mission) === activeSourceRef.current &&
+          missionMatchesWorkspace(mission, path),
+      );
+      if (candidates.some((mission) => mission.id === selectedMissionIdRef.current)) return;
+      const next = candidates[0];
+      if (next !== undefined) {
+        void openMission(next.id);
+      } else {
+        selectedMissionIdRef.current = null;
+        setSelectedMissionId(null);
+        setSelectedMission(null);
+        setLoadingMissionId(null);
+      }
+    },
+    [missions, openMission],
+  );
+
+  useEffect(() => {
+    const api = desktopApi();
+    if (api === undefined) return;
+    let cancelled = false;
+    void api
+      .getMissionCreationDefaults()
+      .then((defaults) => {
+        if (!cancelled) setWorkspaceChoices([defaults.workspace, ...defaults.recentWorkspaces]);
+      })
+      .catch((loadError: unknown) => {
+        if (!cancelled) setError(missionError(loadError));
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [missionError]);
+
+  useEffect(() => {
+    const created =
+      props.autoRunInitialMission === true &&
+      props.initialMission !== undefined &&
+      newMissionWorkspaceAppliedRef.current !== props.initialMission.id
+        ? props.initialMission
+        : undefined;
+    if (created !== undefined) newMissionWorkspaceAppliedRef.current = created.id;
+    setWorkspaceTabs((current) => {
+      const reconciled = hasRefreshedMissionList
+        ? reconcileMissionWorkspaceTabs(current, missions)
+        : current;
+      return created === undefined
+        ? reconciled
+        : addMissionWorkspaceTab(reconciled, created.workspace);
+    });
+  }, [hasRefreshedMissionList, missions, props.autoRunInitialMission, props.initialMission]);
+
+  useEffect(() => {
+    if (
+      workspaceTabPreference.status === "invalid" ||
+      workspaceTabPreference.status === "unavailable"
+    ) {
+      setError(t("workspaceTabsPreferenceUnavailable"));
+      return;
+    }
+    if (!workspaceTabs.initialized) return;
+    if (
+      !writeMissionWorkspaceTabs(
+        typeof window === "undefined" ? undefined : window.localStorage,
+        workspaceTabs,
+      )
+    ) {
+      setError(t("workspaceTabsPreferenceUnavailable"));
+    }
+  }, [t, workspaceTabPreference.status, workspaceTabs]);
+
   if (!hasResolvedInitialLoad) {
     return <MissionsPageSkeleton label={t("loading", { ns: "missions" })} railWidth={railWidth} />;
   }
@@ -922,7 +1054,29 @@ export function MissionsPage(props: {
       className="missions-page"
       style={{ "--sidebar-width": `${railWidth}px` } as CSSProperties}
     >
+      <MissionWorkspaceTabs
+        missions={missions}
+        value={workspacePath}
+        onChange={changeWorkspace}
+        state={workspaceTabs}
+        onStateChange={setWorkspaceTabs}
+        knownWorkspaces={workspaceChoices}
+        onPickWorkspace={async () => {
+          const api = desktopApi();
+          if (api === undefined) return;
+          try {
+            const result = await api.pickWorkspace();
+            if (result.ok && result.path !== undefined && result.basename !== undefined) {
+              return { path: result.path, basename: result.basename };
+            }
+            if (result.reason !== "cancelled") setError(result.error ?? t("workspaceUnavailable"));
+          } catch (pickError) {
+            setError(missionError(pickError));
+          }
+        }}
+      />
       <MissionRail
+        key={`${activeSource}:${workspacePath ?? ""}`}
         missions={visibleMissions}
         source={activeSource}
         search={search}
@@ -931,7 +1085,16 @@ export function MissionsPage(props: {
         selectedMissionId={selectedMissionId}
         onSearch={setSearch}
         onSourceChange={changeSource}
-        onCreate={props.onCreate}
+        onCreate={() =>
+          props.onCreate(
+            workspacePath === null
+              ? undefined
+              : workspaceSelectionFromPath(workspacePath, [
+                  ...workspaceTabs.addedWorkspaces,
+                  ...workspaceChoices,
+                ]),
+          )
+        }
         onOpen={(summary) => openMission(summary.id, { source: activeSource })}
         onTogglePin={(summary) =>
           updatePinnedMissionIds((current) => togglePinnedMissionId(current, summary.id))
@@ -1217,7 +1380,9 @@ export function MissionsPage(props: {
                   setSelectedMissionId(null);
                   setSelectedMission(null);
                   const fallback = storedMissions.find(
-                    (mission) => missionListSourceForSummary(mission) === activeSourceRef.current,
+                    (mission) =>
+                      missionListSourceForSummary(mission) === activeSourceRef.current &&
+                      missionMatchesWorkspace(mission, workspacePathRef.current),
                   );
                   if (fallback === undefined) {
                     writeLastOpenedMissionId(window.localStorage, null);

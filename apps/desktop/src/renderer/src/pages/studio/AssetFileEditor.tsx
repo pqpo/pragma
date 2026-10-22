@@ -28,26 +28,17 @@ export function AssetFileEditor(props: {
         <div>
           {props.readOnly || props.value === null ? null : (
             <button
-              className={!props.preview ? "is-active" : ""}
               type="button"
-              title={t("edit")}
-              aria-label={t("edit")}
-              aria-pressed={!props.preview}
-              onClick={() => props.onPreviewChange(false)}
+              title={props.preview ? t("edit") : t("preview")}
+              aria-label={props.preview ? t("edit") : t("preview")}
+              disabled={props.disabled}
+              onClick={() => props.onPreviewChange(!props.preview)}
             >
-              <PencilSimple size={17} />
-            </button>
-          )}
-          {props.value === null ? null : (
-            <button
-              className={props.preview ? "is-active" : ""}
-              type="button"
-              title={t("preview")}
-              aria-label={t("preview")}
-              aria-pressed={props.preview}
-              onClick={() => props.onPreviewChange(true)}
-            >
-              <Eye size={17} />
+              {props.preview ? (
+                <PencilSimple size={17} aria-hidden="true" />
+              ) : (
+                <Eye size={17} aria-hidden="true" />
+              )}
             </button>
           )}
           {props.actions}

@@ -54,6 +54,8 @@ export async function createMissionDeliveryReceiptStore(input: {
     registerLink: async (executionId: string, missionId: string, payload: string) => {
       await call("register", [executionId, missionId, payload]);
     },
+    recoverLink: async (executionId: string, missionId: string, payload: string) =>
+      await call<boolean>("recover", [executionId, missionId, payload]),
     stagePage: async function stagePage(page: CanonicalEventPage): Promise<void> {
       try {
         page = canonicalReceiptPage(page, true);

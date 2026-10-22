@@ -35,6 +35,7 @@ import {
 } from "./index.ts";
 import type { LocalHostMissionControllerComposition } from "./missions/controller/composition.ts";
 import { createMissionDelivery } from "./missions/mission-delivery.ts";
+import { createMissionReceiptRecovery } from "./missions/mission-receipt-recovery.ts";
 import { createMissionTerminalMaterializer } from "./missions/mission-terminal-materializer.ts";
 import { createMissionSessionAssociationResolver } from "./missions/session-association.ts";
 import { createMissionStore, MissionStoreError } from "./missions/repository/mission-store.ts";
@@ -220,13 +221,11 @@ export function createLocalHostNodeApplication(
   });
   let missionDelivery: Promise<Awaited<ReturnType<typeof createMissionDelivery>>> | undefined;
   let resourcesClosing = false;
-  const receiptRecovery = new Set<Promise<void>>();
-  const recoveringMissions = new Set<string>();
   const runMemory = createLocalHostRunMemory({
     pragmaHome: options.pragmaHome,
     loggerProvider,
     beforeFeedClose: async () => {
-      await Promise.all(receiptRecovery);
+      await receiptRecovery.close();
       // Native settlement can have committed its terminal after the last scheduler tick.
       // Shutdown hands off those facts before closing the feed, without waiting for enrichment.
       await executionStore.drainCanonicalEvents();
@@ -324,26 +323,19 @@ export function createLocalHostNodeApplication(
     }));
   const hasEnvelope = async (id: string): Promise<boolean> =>
     (await readMissionEnvelope(id)) !== undefined;
-  const wakeReceiptRecovery = (missionId: string): void => {
-    if (resourcesClosing || recoveringMissions.has(missionId)) return;
-    recoveringMissions.add(missionId);
-    const recovery = (async () => {
-      const mission = await readMissionEnvelope(missionId);
-      if (mission?.execution === undefined) return;
-      const delivery = await getMissionDelivery();
-      await delivery.register(mission, mission.execution.id, mission.execution.inputMessageId);
+  const receiptRecovery = createMissionReceiptRecovery({
+    readMission: readMissionEnvelope,
+    getDelivery: getMissionDelivery,
+    withOwner: async (missionId, operation) => {
       const existing = ownerScope.currentGuard(missionId);
       const guard = existing ?? (await ownerScope.acquireForRecovery(missionId));
       try {
-        await delivery.settleMission(missionId);
+        await operation();
       } finally {
-        // Once disposal owns cleanup, leave this exact claim in the shared
-        // owner inventory so its normal release retry/fencing rules apply.
         if (existing === undefined && !resourcesClosing) await ownerScope.release(missionId, guard);
       }
-    })().catch((error: unknown) => {
-      // Reading an owner held by another Host is normal; its consumer retains
-      // custody. Leave the tasks untouched rather than marking this Module down.
+    },
+    onError: (missionId, error) => {
       if (IntegrationErrorSchema.safeParse(error).data?.code === "MISSION_LEASE_HELD") return;
       missionLogger.warn("mission.delivery_degraded", "Mission receipt recovery needs attention", {
         missionId,
@@ -351,20 +343,15 @@ export function createLocalHostNodeApplication(
         errorCode: "MISSION_DELIVERY_UNAVAILABLE",
         error,
       });
-    });
-    receiptRecovery.add(recovery);
-    void recovery.finally(() => {
-      receiptRecovery.delete(recovery);
-      recoveringMissions.delete(missionId);
-    });
-  };
+    },
+  });
   const executionService = createLocalHostMissionApplication({
     lifecycle: missionLifecycle,
     prepareShutdown: async () => {
       // New accesses cannot enqueue recovery after this snapshot. Quiesce permits
       // only already accepted recovery claims while their bounded work settles.
       resourcesClosing = true;
-      await Promise.all(receiptRecovery);
+      await receiptRecovery.close();
     },
     closeResources: () => runMemory.dispose(),
     client: options.client,
@@ -490,6 +477,7 @@ export function createLocalHostNodeApplication(
     controller: missionController,
     query: missionQuery,
     watch: missionWatch,
+    onAccess: receiptRecovery.wake,
   });
 
   return createLocalHostApplication({
@@ -504,19 +492,7 @@ export function createLocalHostNodeApplication(
           ...(await projectCatalog.listExecutors()),
         ],
     },
-    missions: {
-      ...readPorts.missions,
-      get: async (id) => {
-        const mission = await readPorts.missions.get(id);
-        wakeReceiptRecovery(id);
-        return mission;
-      },
-      query: async (input) => {
-        const result = await readPorts.missions.query(input);
-        wakeReceiptRecovery(input.missionId);
-        return result;
-      },
-    },
+    missions: readPorts.missions,
     workspace: options.workspace,
     board: readPorts.board,
     queue: { list: async (missionId) => await promptQueueProjection.list(missionId) },

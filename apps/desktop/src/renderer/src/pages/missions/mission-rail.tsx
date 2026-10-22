@@ -19,6 +19,7 @@ import {
   PencilSimple,
   PushPin,
   SpinnerGap,
+  SquaresFour,
   Trash,
 } from "@phosphor-icons/react";
 import { createPortal } from "react-dom";
@@ -41,6 +42,14 @@ export function MissionsPageSkeleton(props: {
       aria-label={props.label}
       aria-live="polite"
     >
+      <div className="mission-workspace-bar" aria-hidden="true">
+        <span className="mission-workspace-all">
+          <SquaresFour size={20} />
+        </span>
+        {[0, 1, 2].map((tab) => (
+          <span className="mission-skeleton-block mission-workspace-placeholder" key={tab} />
+        ))}
+      </div>
       <aside className="mission-skeleton-rail" aria-hidden="true">
         <span className="mission-skeleton-block mission-skeleton-title" />
         <span className="mission-skeleton-block mission-skeleton-button" />

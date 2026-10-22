@@ -34,7 +34,7 @@ import {
 } from "../features/asset-git/asset-sync-coordinator.ts";
 import { migrateLegacyRevisionProfile } from "../features/experts/legacy-revision-profile-migration.ts";
 import { createHomeProjectStore } from "../features/missions/home-project-store.ts";
-import { createMissionDeliveryRecovery } from "@pragma/local-host";
+import { createMissionReceiptRecovery, createMissionDeliveryRecovery } from "@pragma/local-host";
 import {
   createMissionDelivery,
   createMissionTerminalMaterializer,
@@ -1259,6 +1259,7 @@ export async function createDesktopApplicationContainer(
     controller: missionControllerStore,
     query: missionQuery,
     watch: missionWatch,
+    onAccess: (missionId) => missionReceiptRecovery.wake(missionId),
   });
   const localHostRunExecutorResolver = createDesktopLocalHostExecutorResolver({
     executors: missionExecutors,
@@ -1266,6 +1267,7 @@ export async function createDesktopApplicationContainer(
   });
   const closedResources = new Set<number>();
   const missionApplication = createLocalHostMissionApplication({
+    prepareShutdown: async () => await missionReceiptRecovery.close(),
     closeResources: async () => {
       const errors: unknown[] = [];
       for (const [index, operation] of [
@@ -1881,6 +1883,21 @@ export async function createDesktopApplicationContainer(
       );
     },
   });
+  const missionReceiptRecovery = createMissionReceiptRecovery({
+    readMission: missionReadPorts.readEnvelope,
+    getDelivery: async () => {
+      await missionDeliveryRecovery.initialize();
+      return missionDeliveryRef.current;
+    },
+    onError: (missionId, error) => {
+      mainLogger.warn("mission.delivery_degraded", "Mission receipt recovery needs attention", {
+        missionId,
+        moduleId: "pragma.mission-delivery",
+        errorCode: "MISSION_DELIVERY_UNAVAILABLE",
+        error,
+      });
+    },
+  });
   await missionDeliveryRecovery.initialize();
   localHostUsageRef.current = createLocalHostUsageSink({
     path: join(pragmaPaths.dataRoot(), "usage", "observations.json"),
@@ -2128,8 +2145,11 @@ export async function createDesktopApplicationContainer(
   // leaking casts throughout IPC handlers.
   const desktopLocalHost = {
     ...localHost,
-    getMission: async (missionId: string) =>
-      MissionSchema.parse(await missionReadModel.get(missionId)),
+    getMission: async (missionId: string) => {
+      const mission = MissionSchema.parse(await missionReadModel.get(missionId));
+      missionReceiptRecovery.wake(missionId);
+      return mission;
+    },
     listMissions: async () => MissionSummarySchema.array().parse(await missionReadModel.list()),
     listExecutors: async () =>
       MissionExecutorOptionSchema.array().parse(await localHost.listExecutors()),

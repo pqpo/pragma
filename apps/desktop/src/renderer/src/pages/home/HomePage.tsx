@@ -141,6 +141,7 @@ export function HomeExecutorConfigurationTip(props: {
 
 export function HomePage(props: {
   readonly initialExecutorRef?: string | undefined;
+  readonly initialWorkspace?: WorkspaceSelection | undefined;
   readonly onCreated: (mission: Mission) => void | Promise<void>;
   readonly onConfigureModels?: (() => void) | undefined;
   readonly onConfigureRuntime?: (() => void) | undefined;
@@ -153,7 +154,9 @@ export function HomePage(props: {
   const [executors, setExecutors] = useState<readonly HomeMissionExecutorOption[]>([]);
   const [defaultWorkspace, setDefaultWorkspace] = useState<WorkspaceSelection>();
   const [recentWorkspaces, setRecentWorkspaces] = useState<readonly WorkspaceSelection[]>([]);
-  const [workspaceOverride, setWorkspaceOverride] = useState<WorkspaceSelection>();
+  const [workspaceOverride, setWorkspaceOverride] = useState<WorkspaceSelection | undefined>(
+    props.initialWorkspace,
+  );
   const [executorRef, setExecutorRef] = useState(props.initialExecutorRef ?? "");
   const [defaultExecutorRef, setDefaultExecutorRef] = useState("");
   const [goal, setGoal] = useState("");
@@ -301,6 +304,7 @@ export function HomePage(props: {
         setDefaultExecutorRef(defaults.executorRef);
         setToolPermissionMode(persisted?.toolPermissionMode ?? defaults.toolPermissionMode);
         const restoredWorkspace =
+          props.initialWorkspace ??
           (restoresPersistedInput ? persisted.workspaceOverride : undefined) ??
           selected?.preference.lastWorkspace;
         setWorkspaceOverride(restoredWorkspace);
@@ -351,7 +355,7 @@ export function HomePage(props: {
     return () => {
       cancelled = true;
     };
-  }, [props.initialExecutorRef]);
+  }, [props.initialExecutorRef, props.initialWorkspace]);
 
   useEffect(() => {
     const timer = window.setInterval(() => {

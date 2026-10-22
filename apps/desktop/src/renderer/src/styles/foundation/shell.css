@@ -116,6 +116,20 @@
   background: var(--background);
 }
 
+/* The Mission work surface includes its own workspace tab strip. */
+.desktop-shell:has(> .missions-page) {
+  background: var(--ui-line);
+}
+
+.desktop-shell:has(> .missions-page) > .window-drag-region {
+  right: auto;
+  width: var(--sidebar-width, 240px);
+}
+
+.desktop-shell.is-sidebar-collapsed:has(> .missions-page) > .window-drag-region {
+  width: 88px;
+}
+
 .window-drag-region {
   position: fixed;
   z-index: 1000;

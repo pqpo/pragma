@@ -275,7 +275,12 @@ CREATE TABLE IF NOT EXISTS delivery_metadata (key TEXT PRIMARY KEY, value TEXT N
       return { row, claim };
     });
   }
-  function register(mission: { id: string }, executionId: string, requestId: string) {
+  function register(
+    mission: { id: string },
+    executionId: string,
+    requestId: string,
+    recovery = false,
+  ) {
     if (isDeleted(mission.id)) throw new Error("MISSION_DELIVERY_OWNER_DELETED");
     const existing = db
       .prepare("SELECT mission_id,payload FROM execution_links WHERE execution_id=?")
@@ -283,7 +288,7 @@ CREATE TABLE IF NOT EXISTS delivery_metadata (key TEXT PRIMARY KEY, value TEXT N
     if (
       existing !== undefined &&
       (existing.mission_id !== mission.id ||
-        LinkSchema.parse(JSON.parse(existing.payload)).requestId !== requestId)
+        (!recovery && LinkSchema.parse(JSON.parse(existing.payload)).requestId !== requestId))
     )
       throw new Error("MISSION_DELIVERY_OWNER_CONFLICT");
     if (
@@ -293,8 +298,8 @@ CREATE TABLE IF NOT EXISTS delivery_metadata (key TEXT PRIMARY KEY, value TEXT N
       throw new Error("MISSION_DELIVERY_OWNER_DELETED");
     // Accessing a Mission is not a delivery retry or a metadata write.
     // The consumer reloads current metadata when executing each task.
-    if (existing !== undefined) return;
-    transaction(() => {
+    if (existing !== undefined) return true;
+    const registered = transaction(() => {
       if (
         isDeleted(mission.id) ||
         db.prepare("SELECT 1 FROM deleted_executions WHERE execution_id=?").get(executionId) !==
@@ -307,11 +312,23 @@ CREATE TABLE IF NOT EXISTS delivery_metadata (key TEXT PRIMARY KEY, value TEXT N
       if (raced !== undefined) {
         if (
           raced.mission_id !== mission.id ||
-          LinkSchema.parse(JSON.parse(raced.payload)).requestId !== requestId
+          (!recovery && LinkSchema.parse(JSON.parse(raced.payload)).requestId !== requestId)
         )
           throw new Error("MISSION_DELIVERY_OWNER_CONFLICT");
-        return;
+        return true;
       }
+      // Recovery may only infer a missing association after canonical terminal
+      // custody. A live writer can still be installing its real request identity.
+      if (
+        recovery &&
+        db
+          .prepare(
+            "SELECT 1 FROM delivery_tasks WHERE id IN (?,?,?,?,?) AND execution_id=? AND json_extract(payload,'$.kind')='terminal' LIMIT 1",
+          )
+          .get(...STEPS.map((_, step) => `terminal:${executionId}:${step}`), executionId) ===
+          undefined
+      )
+        return false;
       db.prepare("INSERT INTO execution_links VALUES (?,?,?)").run(
         executionId,
         mission.id,
@@ -321,6 +338,7 @@ CREATE TABLE IF NOT EXISTS delivery_metadata (key TEXT PRIMARY KEY, value TEXT N
         mission.id,
         executionId,
       );
+      return true;
     });
     if (
       db
@@ -330,6 +348,7 @@ CREATE TABLE IF NOT EXISTS delivery_metadata (key TEXT PRIMARY KEY, value TEXT N
         .get(mission.id) !== undefined
     )
       degraded(mission.id);
+    return registered;
   }
   let value: unknown;
   try {
@@ -341,13 +360,14 @@ CREATE TABLE IF NOT EXISTS delivery_metadata (key TEXT PRIMARY KEY, value TEXT N
         stagePage(args[0] as CanonicalEventPage);
         value = cursor();
         break;
-      case "register": {
+      case "register":
+      case "recover": {
         const [executionId, missionId, payload] = args as [string, string, string];
         if (Buffer.byteLength(payload) > 1024 * 1024)
           throw new Error("MISSION_DELIVERY_PAYLOAD_TOO_LARGE");
         const link = LinkSchema.parse(JSON.parse(payload));
         if (link.mission.id !== missionId) throw new Error("MISSION_DELIVERY_OWNER_CONFLICT");
-        register(link.mission, executionId, link.requestId);
+        value = register(link.mission, executionId, link.requestId, operation === "recover");
         break;
       }
       case "claim":

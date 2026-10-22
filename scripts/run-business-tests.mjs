@@ -109,6 +109,9 @@ if (lane !== "host") {
   await vitest("@pragma/desktop", [
     "src/test/mission-queued-chat-refresh.test.tsx",
     "src/renderer/src/pages/missions/mission-conversation-model.test.ts",
+    "src/renderer/src/pages/missions/mission-workspace-tabs.test.tsx",
+    "src/renderer/src/lib/mission-workspace-tabs-preference.test.ts",
+    "src/renderer/src/pages/home/HomePagePersistence.test.tsx",
     "src/main/features/missions/desktop-mission-adapter.test.ts",
     "src/main/features/missions/desktop-mission-system-resources.test.ts",
     "src/main/features/missions/desktop-mission-cold-session.test.ts",
@@ -130,6 +133,8 @@ if (lane !== "host") {
     "src/main/features/bundles/pragma-bundle-ipc.test.ts",
     "src/main/features/bundles/bundle-executor-readiness.test.ts",
     "src/renderer/src/pages/studio/PragmaBundleDialog.test.tsx",
+    "src/renderer/src/pages/studio/ContextStoreFragment.test.tsx",
+    "src/renderer/src/pages/studio/CapabilityDetailFragment.test.tsx",
     "src/renderer/src/pages/settings/ModelProvidersFragment.test.tsx",
     "src/main/features/capabilities/capability-store.test.ts",
     "src/main/features/capabilities/skill-revision-service.test.ts",

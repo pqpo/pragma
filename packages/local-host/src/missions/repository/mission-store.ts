@@ -2667,7 +2667,7 @@ function toMissionSummary(mission: Mission, source: MissionSummary["source"]): M
   return {
     id: mission.id,
     title: mission.title,
-    workspace: { basename: mission.workspace.basename },
+    workspace: { ...mission.workspace },
     executor: {
       kind: mission.executor.kind,
       name: mission.executor.name,

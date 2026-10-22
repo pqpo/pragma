@@ -1,4 +1,13 @@
 export const missions = {
+  workspaceTabsPreferenceUnavailable: "工作空间标签无法保存或恢复，原有偏好已保留。",
+  dragWorkspaceTab: "拖动调整顺序，也可按 Alt+Shift+左右方向键移动",
+  workspaceSearchEmpty: "未找到工作空间",
+  allWorkspaces: "全部工作空间",
+  workspaceCategories: "工作空间分类",
+  addWorkspaceTab: "添加工作空间",
+  closeWorkspaceTab: "关闭“{{name}}”标签",
+  searchWorkspaces: "搜索工作空间",
+
   renameMission: "重命名任务",
   renameNamed: "重命名“{{title}}”",
   renameDescription: "保持简短且易于识别",

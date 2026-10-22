@@ -54,9 +54,62 @@
   color: var(--ui-text-secondary);
 }
 
+.icon-button.is-borderless {
+  border: 0;
+  background: transparent;
+}
+
 .icon-button:hover:not(:disabled) {
   background: var(--ui-surface-subtle);
   color: var(--ui-text);
+}
+
+.studio-detail-actions {
+  display: flex;
+  align-items: center;
+  flex: 0 0 auto;
+  gap: 8px;
+}
+
+.studio-detail-more {
+  display: inline-flex;
+}
+
+.studio-detail-actions-reveal {
+  display: grid;
+  grid-template-columns: 0fr;
+  margin-left: -8px;
+  opacity: 0;
+  visibility: hidden;
+  transition:
+    grid-template-columns 180ms ease-out,
+    margin-left 180ms ease-out,
+    opacity 180ms ease-out,
+    visibility 180ms;
+}
+
+.studio-detail-actions-overflow {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 8px;
+}
+
+.studio-detail-actions-overflow > * {
+  flex: 0 0 auto;
+}
+
+.studio-detail-actions.is-expanded .studio-detail-actions-reveal {
+  grid-template-columns: 1fr;
+  margin-left: 0;
+  opacity: 1;
+  visibility: visible;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .studio-detail-actions-reveal {
+    transition: none;
+  }
 }
 
 .studio-action-with-tooltip {

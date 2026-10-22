@@ -299,11 +299,21 @@
 }
 
 .memory-list {
+  display: flex;
+  min-height: 0;
+  flex-direction: column;
+  overflow: hidden;
   border-right: 1px solid var(--border);
 }
 
 .memory-detail {
   container: memory-detail / inline-size;
+}
+
+.memory-list-scroll {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
 }
 
 .memory-list-pagination {
@@ -353,6 +363,7 @@
 }
 
 .memory-list-filter {
+  flex-shrink: 0;
   margin-bottom: 12px;
 }
 

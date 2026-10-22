@@ -385,7 +385,7 @@
   margin-top: 24px;
   overflow: hidden;
   border: 1px solid var(--border);
-  border-radius: 10px;
+  border-radius: var(--ui-radius-lg);
   background: var(--surface);
 }
 
@@ -2428,13 +2428,6 @@
   color: var(--ui-text-secondary);
   font-size: 12px;
   line-height: 1.6;
-}
-
-.knowledge-settings-dialog .ui-dialog-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 16px;
 }
 
 .knowledge-settings-dialog .icon-button[aria-disabled="true"] {

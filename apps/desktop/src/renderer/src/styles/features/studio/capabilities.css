@@ -714,7 +714,6 @@
   grid-template-columns: var(--sidebar-width, 240px) minmax(0, 1fr);
   margin-top: 16px;
   border: 1px solid var(--ui-line);
-  border-radius: 0;
 }
 
 .capability-tool-workspace {

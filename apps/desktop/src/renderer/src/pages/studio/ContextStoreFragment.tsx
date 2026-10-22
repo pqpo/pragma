@@ -40,6 +40,7 @@ import { Dialog } from "../../components/Dialog.tsx";
 import { AssetFileWorkspace } from "./AssetFileWorkspace.tsx";
 import { fileName, rebaseEntryId } from "./asset-file-paths.ts";
 import { SelectMenu } from "../../components/SelectMenu.tsx";
+import { StudioDetailActions } from "../../components/StudioDetailActions.tsx";
 import { StudioActionButton } from "../../components/StudioActionButton.tsx";
 import { errorMessage } from "../../lib/errors.ts";
 import { SIDEBAR_WIDTH_PREFERENCES } from "../../lib/sidebar-width-preference.ts";
@@ -836,74 +837,82 @@ export function ContextStoreDetailFragment(props: {
             </div>
           </div>
           <div className="knowledge-base-editor-actions">
-            <StudioActionButton
-              label={saveStatus === "saving" ? t("saving") : t("saveKnowledgeBase")}
-              tooltip={
-                saveStatus === "saving"
-                  ? t("saving")
-                  : !dirty && !draftDirty
-                    ? t("noKnowledgeChangesToSave")
-                    : t("saveKnowledgeBase")
+            <StudioDetailActions
+              primary={
+                <>
+                  <StudioActionButton
+                    label={saveStatus === "saving" ? t("saving") : t("saveKnowledgeBase")}
+                    tooltip={
+                      saveStatus === "saving"
+                        ? t("saving")
+                        : !dirty && !draftDirty
+                          ? t("noKnowledgeChangesToSave")
+                          : t("saveKnowledgeBase")
+                    }
+                    tone="primary"
+                    disabled={(!dirty && !draftDirty) || saveStatus === "saving"}
+                    busy={saveStatus === "saving"}
+                    icon={
+                      saveStatus === "saving" ? (
+                        <SpinnerGap className="spin" size={18} aria-hidden="true" />
+                      ) : (
+                        <FloppyDisk size={18} aria-hidden="true" />
+                      )
+                    }
+                    onClick={() => void commitDraft()}
+                  />
+                  {props.onPublish !== undefined ? (
+                    <StudioActionButton
+                      label={t("publishToSource")}
+                      icon={<GitBranch size={18} aria-hidden="true" />}
+                      onClick={() =>
+                        requestLeave(() => {
+                          setError(null);
+                          void props.onPublish!().catch((cause: unknown) =>
+                            setError(errorMessage(cause)),
+                          );
+                        })
+                      }
+                    />
+                  ) : null}
+                </>
               }
-              tone="primary"
-              disabled={(!dirty && !draftDirty) || saveStatus === "saving"}
-              busy={saveStatus === "saving"}
-              icon={
-                saveStatus === "saving" ? (
-                  <SpinnerGap className="spin" size={18} aria-hidden="true" />
-                ) : (
-                  <FloppyDisk size={18} aria-hidden="true" />
-                )
-              }
-              onClick={() => void commitDraft()}
-            />
-            {props.onSubmitRevision !== undefined ? (
-              <StudioActionButton
-                label={t("submitStoreRevision")}
-                icon={<PaperPlaneTilt size={18} aria-hidden="true" />}
-                onClick={() =>
-                  requestLeave(() => {
-                    setRevisionError(null);
-                    setRevisionDialogOpen(true);
-                  })
-                }
-              />
-            ) : null}
-            {props.onExport !== undefined ? (
-              <StudioActionButton
-                label={t("exportBundle")}
-                icon={<DownloadSimple size={18} aria-hidden="true" />}
-                onClick={() => {
-                  setError(null);
-                  void props.onExport!().catch((cause: unknown) => setError(errorMessage(cause)));
-                }}
-              />
-            ) : null}
-            {props.onPublish !== undefined ? (
-              <StudioActionButton
-                label={t("publishToSource")}
-                icon={<GitBranch size={18} aria-hidden="true" />}
-                onClick={() =>
-                  requestLeave(() => {
+            >
+              {props.onSubmitRevision !== undefined ? (
+                <StudioActionButton
+                  label={t("submitStoreRevision")}
+                  icon={<PaperPlaneTilt size={18} aria-hidden="true" />}
+                  onClick={() =>
+                    requestLeave(() => {
+                      setRevisionError(null);
+                      setRevisionDialogOpen(true);
+                    })
+                  }
+                />
+              ) : null}
+              {props.onExport !== undefined ? (
+                <StudioActionButton
+                  label={t("exportBundle")}
+                  icon={<DownloadSimple size={18} aria-hidden="true" />}
+                  onClick={() => {
                     setError(null);
-                    void props.onPublish!().catch((cause: unknown) =>
-                      setError(errorMessage(cause)),
-                    );
-                  })
-                }
+                    void props.onExport!().catch((cause: unknown) => setError(errorMessage(cause)));
+                  }}
+                />
+              ) : null}
+
+              <StudioActionButton
+                label={t("assetGit.settings")}
+                icon={<GearSix size={18} aria-hidden="true" />}
+                onClick={() => requestLeave(() => setSettingsOpen(true))}
               />
-            ) : null}
-            <StudioActionButton
-              label={t("assetGit.settings")}
-              icon={<GearSix size={18} aria-hidden="true" />}
-              onClick={() => requestLeave(() => setSettingsOpen(true))}
-            />
-            <StudioActionButton
-              label={t("delete")}
-              tone="danger"
-              icon={<Trash size={18} aria-hidden="true" />}
-              onClick={openDeleteConfirmation}
-            />
+              <StudioActionButton
+                label={t("delete")}
+                tone="danger"
+                icon={<Trash size={18} aria-hidden="true" />}
+                onClick={openDeleteConfirmation}
+              />
+            </StudioDetailActions>
           </div>
         </div>
       }
@@ -1058,7 +1067,7 @@ export function ContextStoreDetailFragment(props: {
           onCancel={() => setSettingsOpen(false)}
           headerAction={
             <button
-              className="icon-button"
+              className="icon-button is-borderless"
               type="button"
               aria-label={t("close")}
               title={t("close")}

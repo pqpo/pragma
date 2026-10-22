@@ -163,3 +163,99 @@ function event(sequence: number, type: string, data: Record<string, unknown>): M
     data,
   };
 }
+
+it("reuses fresh list entries and rechecks degraded terminals without repeating the same warning", async () => {
+  let events = [event(1, "run.started", { executionId })];
+  const readSnapshot = vi.fn(async () => ({ events }) as never);
+  const onReadFailure = vi.fn();
+  let now = Date.now();
+  const date = vi.spyOn(Date, "now").mockImplementation(() => now);
+  const reader = createMissionActivityReader({
+    controller: { readSnapshot },
+    executions: {
+      get: async () => ({ status: "cancelled", updatedAt: input().execution.updatedAt }) as never,
+    },
+    onReadFailure,
+    activeCacheTtlMs: 100,
+  });
+  try {
+    expect(await reader.readMany([input()])).toMatchObject([
+      { status: "cancelled", degraded: true },
+    ]);
+    await reader.readMany([input()]);
+    expect(readSnapshot).toHaveBeenCalledTimes(1);
+    now += 101;
+    await reader.readMany([input()]);
+    expect(readSnapshot).toHaveBeenCalledTimes(2);
+    expect(onReadFailure).toHaveBeenCalledOnce();
+    events = [...events, event(2, "run.interrupted", { executionId })];
+    now += 101;
+    expect(await reader.readMany([input()])).toMatchObject([
+      { status: "cancelled", degraded: false, source: "mission-events" },
+    ]);
+    now += 10000;
+    await reader.readMany([input()]);
+    expect(readSnapshot).toHaveBeenCalledTimes(3);
+    // A changed owner envelope invalidates its terminal cache.
+    await reader.readMany([
+      { ...input(), execution: { ...input().execution, updatedAt: "2026-09-02T00:00:00.000Z" } },
+    ]);
+    expect(readSnapshot).toHaveBeenCalledTimes(4);
+    events = [event(1, "run.started", { executionId })];
+    await reader.read(input());
+    expect(onReadFailure).toHaveBeenCalledTimes(2);
+  } finally {
+    date.mockRestore();
+  }
+});
+
+it("caches active list reads only for their TTL and invalidates a successor Execution", async () => {
+  const readSnapshot = vi.fn(controller([event(1, "run.started", { executionId })]).readSnapshot);
+  let now = Date.now();
+  const date = vi.spyOn(Date, "now").mockImplementation(() => now);
+  try {
+    const reader = createMissionActivityReader({
+      controller: { readSnapshot },
+      executions: { get: async () => undefined },
+      activeCacheTtlMs: 100,
+    });
+    await reader.readMany([input()]);
+    await reader.readMany([input()]);
+    expect(readSnapshot).toHaveBeenCalledTimes(1);
+    now += 101;
+    await reader.readMany([input()]);
+    expect(readSnapshot).toHaveBeenCalledTimes(2);
+    await reader.readMany([{ ...input(), execution: { ...input().execution, id: "successor" } }]);
+    expect(readSnapshot).toHaveBeenCalledTimes(3);
+  } finally {
+    date.mockRestore();
+  }
+});
+
+it("retains failure deduplication for a list larger than the single-owner cache", async () => {
+  let now = Date.now();
+  const date = vi.spyOn(Date, "now").mockImplementation(() => now);
+  const onReadFailure = vi.fn();
+  try {
+    const reader = createMissionActivityReader({
+      controller: controller([]),
+      executions: {
+        get: async () => ({ status: "cancelled", updatedAt: input().execution.updatedAt }) as never,
+      },
+      activeCacheTtlMs: 0,
+      onReadFailure,
+    });
+    const inputs = Array.from({ length: 257 }, (_, index) => ({
+      ...input(),
+      missionId: `mission-${index}`,
+      execution: { ...input().execution, id: `execution-${index}` },
+    }));
+    await reader.readMany(inputs);
+    expect(onReadFailure).toHaveBeenCalledTimes(inputs.length);
+    now += 1;
+    await reader.readMany(inputs);
+    expect(onReadFailure).toHaveBeenCalledTimes(inputs.length);
+  } finally {
+    date.mockRestore();
+  }
+});

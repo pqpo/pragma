@@ -162,7 +162,11 @@ export const MissionSchema = MissionBaseSchema.extend({
 export const MissionRepositorySummarySchema = z.object({
   id: MissionIdSchema,
   title: z.string().trim().min(1).max(120),
-  workspace: z.object({ basename: z.string().trim().min(1).max(255) }),
+  // Additive read projection; summaries are rebuilt from the owning Mission.
+  workspace: z.object({
+    basename: z.string().trim().min(1).max(255),
+    path: MissionWorkspaceSchema.shape.path.optional(),
+  }),
   executor: z.object({
     kind: z.enum(["expert", "team", "flow"]),
     name: z.string().trim().min(1).max(120),

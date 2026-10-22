@@ -1,4 +1,5 @@
 export const studio = {
+  skillSettings: "技能設定",
   knowledgeBaseSettings: "知識庫設定",
   writeApproval: "寫入審批",
   writeApprovalRequired: "需要審批",

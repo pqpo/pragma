@@ -84,7 +84,9 @@ describe("mission store", { timeout: 30_000 }, () => {
     const original = await readFile(aggregatePath, "utf8");
 
     for (const reader of [store, createMissionStore({ missionsPath })]) {
-      await expect(reader.list()).resolves.toMatchObject([{ id: mission.id }]);
+      await expect(reader.list()).resolves.toMatchObject([
+        { id: mission.id, workspace: mission.workspace },
+      ]);
       await expect(reader.listContextStoreReferences(storeId)).resolves.toEqual([
         { id: mission.id, title: mission.title },
       ]);

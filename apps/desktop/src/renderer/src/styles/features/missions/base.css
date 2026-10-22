@@ -10,16 +10,215 @@
 .missions-page {
   display: grid;
   grid-template-columns: var(--sidebar-width, 300px) minmax(0, 1fr);
+  grid-template-rows: 44px minmax(0, 1fr);
+  grid-template-areas:
+    "rail workspaces"
+    "rail detail";
+  position: relative;
+  background: var(--ui-canvas);
   min-width: 0;
   min-height: 0;
   overflow: hidden;
 }
 
+.missions-page > .sidebar-resize-handle {
+  top: 0;
+}
+
+.mission-workspace-bar {
+  display: flex;
+  grid-area: workspaces;
+  min-width: 0;
+  align-items: stretch;
+  gap: 8px;
+  padding: 4px 8px 0;
+  background: var(--ui-rail);
+  -webkit-app-region: drag;
+}
+
+.mission-workspace-placeholder {
+  width: 128px;
+  height: 32px;
+  max-width: 20%;
+  align-self: center;
+}
+
+.mission-workspace-tabs {
+  display: flex;
+  flex: 0 1 auto;
+  min-width: 0;
+  align-items: stretch;
+}
+
+.mission-workspace-scroll {
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+.mission-workspace-all,
+.mission-workspace-tab {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  min-width: 0;
+  padding: 0 16px;
+  border: 0;
+  border-radius: var(--ui-radius-lg) var(--ui-radius-lg) 0 0;
+  background: transparent;
+  color: var(--ui-text-secondary);
+  font: inherit;
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  -webkit-app-region: no-drag;
+}
+
+.mission-workspace-all {
+  width: 48px;
+  padding: 0;
+}
+
+.mission-workspace-tab-slot {
+  -webkit-app-region: no-drag;
+  user-select: none;
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  min-width: 128px;
+  max-width: 240px;
+  border-radius: var(--ui-radius-lg) var(--ui-radius-lg) 0 0;
+}
+
+.mission-workspace-tab-slot.is-active {
+  background: var(--ui-canvas);
+}
+
+.mission-workspace-tab-slot.is-drop-target {
+  background: var(--ui-line);
+}
+
+.mission-workspace-tab {
+  flex: 1;
+  justify-content: start;
+  padding: 0 12px;
+  height: 100%;
+}
+
+.mission-workspace-close {
+  display: grid;
+  flex: none;
+  width: 24px;
+  height: 24px;
+  place-items: center;
+  margin-right: 4px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--ui-radius-round);
+  background: transparent;
+  color: var(--ui-text-secondary);
+  cursor: pointer;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 120ms ease-out;
+  -webkit-app-region: no-drag;
+}
+
+.mission-workspace-tab-slot:hover .mission-workspace-close,
+.mission-workspace-tab-slot:has(:focus-visible) .mission-workspace-close {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.mission-workspace-close:hover {
+  background: var(--ui-line);
+  color: var(--ui-text);
+}
+
+.mission-workspace-close:focus-visible {
+  outline: 0;
+  box-shadow: inset 0 0 0 2px var(--ui-focus);
+}
+
+.mission-workspace-tab > svg {
+  flex: none;
+}
+
+.mission-workspace-tab > span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mission-workspace-all:hover,
+.mission-workspace-tab:hover {
+  background: var(--ui-surface-subtle);
+  color: var(--ui-text);
+}
+
+.mission-workspace-all.is-active,
+.mission-workspace-tab.is-active {
+  background: var(--ui-canvas);
+  color: var(--ui-text);
+}
+
+.mission-workspace-all:focus-visible,
+.mission-workspace-tab:focus-visible {
+  outline: 0;
+  box-shadow: inset 0 0 0 2px var(--ui-focus);
+}
+
+.mission-workspace-overflow {
+  flex: none;
+  align-self: center;
+  margin-bottom: 4px;
+  -webkit-app-region: no-drag;
+}
+
+.mission-workspace-overflow .ui-select-trigger {
+  width: 32px;
+  height: 32px;
+  min-height: 32px;
+  justify-content: center;
+  padding: 0;
+  border: 0;
+  background: var(--ui-surface-subtle);
+}
+
+.mission-workspace-overflow .ui-select-value {
+  display: none;
+}
+
+.mission-workspace-overflow-menu {
+  max-width: calc(100vw - 24px);
+}
+
+.mission-workspace-overflow-menu .ui-select-option.has-icon {
+  grid-template-columns: 24px minmax(0, 1fr) 16px;
+  min-height: 48px;
+  gap: 8px;
+  padding: 8px;
+}
+
+.mission-workspace-overflow-menu .ui-select-option-check {
+  display: none;
+}
+
+.mission-workspace-overflow-menu .ui-select-option-icon {
+  display: grid;
+  place-items: center;
+  color: var(--ui-text-secondary);
+}
+
 .mission-rail {
+  grid-area: rail;
   min-width: 0;
   overflow-y: auto;
-  padding: 0 24px 36px;
-  border-right: 1px solid var(--border);
+  padding: 0 16px 24px;
   background: var(--ui-rail-secondary);
   overflow-anchor: none;
 }
@@ -28,24 +227,24 @@
   position: sticky;
   z-index: 2;
   top: 0;
-  padding-top: 45px;
+  padding-top: 0;
   background: var(--ui-rail-secondary);
 }
 
 .mission-new-button {
   display: flex;
   width: 100%;
-  height: 42px;
+  height: 36px;
   align-items: center;
   justify-content: center;
   gap: 8px;
-  margin-top: 20px;
-  border: 1px solid var(--ui-accent-strong);
-  border-radius: 7px;
+  margin-top: 16px;
+  border: 0;
+  border-radius: var(--ui-radius-md);
   background: var(--ui-accent);
   color: var(--ui-surface);
   cursor: pointer;
-  font-weight: 650;
+  font-weight: 500;
 }
 
 .mission-search {
@@ -102,6 +301,7 @@
 }
 
 .mission-main {
+  grid-area: detail;
   position: relative;
   min-width: 0;
   min-height: 0;
@@ -244,7 +444,7 @@
   align-items: center;
   gap: 24px;
   min-width: 0;
-  padding: 24px 8px 0 48px;
+  padding: 8px 8px 0 32px;
   border-bottom: 1px solid var(--border);
 }
 
@@ -507,8 +707,8 @@
 
 @media (max-width: 1220px) {
   .mission-rail {
-    padding-right: 17px;
-    padding-left: 17px;
+    padding-right: 12px;
+    padding-left: 12px;
   }
 
   .missions-page .mission-create,
@@ -538,9 +738,8 @@
   box-shadow: 0 1px 2px rgb(var(--ui-shadow-rgb) / 4%);
 }
 
-.missions-page {
-  position: relative;
-  background: var(--background);
+.missions-page > .mission-skeleton-main {
+  grid-area: detail;
 }
 
 .mission-page-skeleton {
@@ -548,6 +747,7 @@
 }
 
 .mission-skeleton-rail {
+  grid-area: rail;
   min-width: 0;
   padding: 32px 20px 28px;
   background: var(--ui-rail-secondary);
@@ -684,23 +884,6 @@
     animation: none;
     background-position: 50% 0;
   }
-}
-
-.mission-rail {
-  padding: 0 14px 24px;
-  border-right: 0;
-  background: var(--ui-rail-secondary);
-}
-
-.mission-rail-sticky {
-  padding-top: 28px;
-  background: var(--ui-rail-secondary);
-}
-
-.mission-new-button {
-  height: 36px;
-  margin-top: 14px;
-  border: 0;
 }
 
 .mission-source-tabs {
@@ -1629,8 +1812,8 @@
 
 @media (max-width: 1220px) {
   .mission-rail {
-    padding-right: 17px;
-    padding-left: 17px;
+    padding-right: 12px;
+    padding-left: 12px;
   }
 }
 
@@ -1686,6 +1869,7 @@
   .studio-asset-row,
   .mission-row,
   .mission-row-open,
+  .mission-workspace-close,
   .mission-source-indicator,
   .mission-source-tabs > button,
   .mission-search-slot,

@@ -1,4 +1,4 @@
-import { FileText, FloppyDisk, SpinnerGap } from "@phosphor-icons/react";
+import { FileText, SpinnerGap } from "@phosphor-icons/react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import type {
@@ -9,7 +9,6 @@ import type {
   SkillFileOperation,
 } from "../../../../shared/contracts/index.ts";
 import { Dialog } from "../../components/Dialog.tsx";
-import { StudioActionButton } from "../../components/StudioActionButton.tsx";
 import { errorMessage } from "../../lib/errors.ts";
 import { SIDEBAR_WIDTH_PREFERENCES } from "../../lib/sidebar-width-preference.ts";
 import { AssetFileWorkspace } from "./AssetFileWorkspace.tsx";
@@ -38,7 +37,14 @@ export function skillPreviewBody(path: string, content: string): string {
     .trimStart();
 }
 
+export type SkillSaveAction = {
+  readonly dirty: boolean;
+  readonly saving: boolean;
+  readonly save: () => Promise<boolean>;
+};
+
 export function SkillFileWorkspace(props: {
+  readonly onSaveActionChange: (action: SkillSaveAction | null) => void;
   readonly capability: Capability;
   readonly onChanged: (capability: Capability) => void;
   readonly onLeaveGuardChange: (guard: StudioLeaveGuard | null) => void;
@@ -211,6 +217,10 @@ export function SkillFileWorkspace(props: {
   const entries = useMemo(() => skillFileTreeEntries(files), [files]);
   const value = selected === null ? null : (edits.get(selected.path) ?? selected.content);
   const dirty = edits.size > 0 || operations.length > 0;
+  useEffect(() => {
+    props.onSaveActionChange(readOnly ? null : { dirty, saving, save });
+    return () => props.onSaveActionChange(null);
+  }, [dirty, saving, save, readOnly, props.onSaveActionChange]);
   const recordOperation = (operation: SkillFileOperation) => {
     operationsRef.current = [...operationsRef.current, operation];
     setOperations(operationsRef.current);
@@ -358,18 +368,6 @@ export function SkillFileWorkspace(props: {
             <p>{loading ? t("loadingSkillFile") : t("selectSkillFile")}</p>
           </>
         }
-        emptyActions={
-          readOnly ? null : (
-            <StudioActionButton
-              label={t("saveSkill")}
-              tone="primary"
-              disabled={!dirty || saving}
-              busy={saving}
-              icon={<FloppyDisk size={18} />}
-              onClick={() => void save()}
-            />
-          )
-        }
         editor={
           selected === null
             ? null
@@ -391,16 +389,6 @@ export function SkillFileWorkspace(props: {
                           ? t("skillUnsavedChanges")
                           : ""}
                   </span>
-                ),
-                actions: readOnly ? null : (
-                  <StudioActionButton
-                    label={saving ? t("saving") : t("saveSkill")}
-                    tone="primary"
-                    disabled={!dirty || saving}
-                    busy={saving}
-                    icon={<FloppyDisk size={18} aria-hidden="true" />}
-                    onClick={() => void save()}
-                  />
                 ),
                 onChange: (content) => {
                   setSaved(false);
