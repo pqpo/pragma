@@ -433,3 +433,8 @@ job's conversation identity when capture has not yet been bound. They survive Ep
 extraction job cleanup. Skill inspection may discover package files and read related scripts or
 references by pinned path; targetFiles declarations are checked for complete coverage. The same shared
 8 MiB budget applies through Memory revision request validation; ordinary prompt limits are unchanged.
+
+Large Revision prompts are staged temporarily and copied into Mission-owned file attachments during
+atomic Mission creation. The durable manifest references the owned copy, which survives temporary
+storage maintenance and Runtime retries and is reclaimed by Mission deletion. Branches own independent
+copies. This opt-in snapshot behavior leaves ordinary external file attachment references unchanged.

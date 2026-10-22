@@ -126,6 +126,8 @@ export interface MissionStore {
     readonly project: { readonly id: string; readonly revision: number };
     readonly executor: MissionExecutor;
     readonly attachments?: readonly ExpertPromptAttachment[] | undefined;
+    /** Snapshot file inputs into Mission storage; external file references remain the default. */
+    readonly copyFileAttachments?: boolean | undefined;
     readonly toolPermissionMode?: ToolPermissionMode | undefined;
     readonly modelOverride?: MissionModelOverride | undefined;
     readonly origin?: Mission["origin"] | undefined;
@@ -1490,6 +1492,7 @@ export function createMissionStore(options: {
           const sourceAttachments = await readAttachmentsManifest(sourceMissionId);
           const attachments = await materializeMissionAttachments({
             attachments: sourceAttachments.attachments,
+            sourceMissionPath: missionPath(sourceMissionId),
             temporaryMissionPath: temporaryPath,
             targetMissionPath: targetPath,
           });
@@ -1787,6 +1790,7 @@ export function createMissionStore(options: {
       try {
         const attachments = await materializeMissionAttachments({
           attachments: input.attachments ?? [],
+          copyFileAttachments: input.copyFileAttachments,
           temporaryMissionPath: temporaryPath,
           targetMissionPath: targetPath,
         });
@@ -2458,6 +2462,8 @@ async function copyDirectoryIfExists(source: string, target: string): Promise<vo
 
 async function materializeMissionAttachments(options: {
   readonly attachments: readonly ExpertPromptAttachment[];
+  readonly copyFileAttachments?: boolean | undefined;
+  readonly sourceMissionPath?: string | undefined;
   readonly temporaryMissionPath: string;
   readonly targetMissionPath: string;
 }): Promise<MissionAttachmentsManifest> {
@@ -2484,11 +2490,23 @@ async function materializeMissionAttachments(options: {
         throw new Error(`Mission attachment is not a file: ${sourcePath}`);
       }
       if (attachment.kind === "file") {
+        // Branches take custody of owned inputs rather than retaining the source Mission.
+        const sourceOwnedPath =
+          options.sourceMissionPath === undefined
+            ? undefined
+            : join(options.sourceMissionPath, "attachments", "files", attachment.id);
+        const copy = options.copyFileAttachments === true || attachment.path === sourceOwnedPath;
+        const ownedRelativePath = join("attachments", "files", attachment.id);
+        if (copy) {
+          const ownedTemporaryPath = join(options.temporaryMissionPath, ownedRelativePath);
+          await mkdir(dirname(ownedTemporaryPath), { recursive: true, mode: 0o700 });
+          await copyFile(sourcePath, ownedTemporaryPath);
+        }
         return {
           id: attachment.id,
           kind: attachment.kind,
           name: attachment.name,
-          path: sourcePath,
+          path: copy ? join(options.targetMissionPath, ownedRelativePath) : sourcePath,
           size: metadata.size,
         };
       }

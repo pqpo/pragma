@@ -8,15 +8,19 @@ import { join } from "node:path";
 export async function prepareRevisionPromptInput(input: {
   readonly pragmaHome: string;
   readonly goal: string;
-}): Promise<{ readonly goal: string; readonly attachments?: readonly ExpertPromptAttachment[] }> {
+}): Promise<{
+  readonly goal: string;
+  readonly attachments?: readonly ExpertPromptAttachment[];
+  readonly copyFileAttachments?: boolean;
+}> {
   if (input.goal.length <= 100_000) return { goal: input.goal };
   const root = join(
     new PragmaPaths({ pragmaHome: input.pragmaHome }).temporaryRoot(),
     "revision-inputs",
   );
   await mkdir(root, { recursive: true, mode: 0o700 });
-  // Content-addressing preserves the exact input across retries without overwriting other Missions.
-  // Retain it with the existing temporary revision workspace for subsequent Mission turns.
+  // Temporary staging only: Mission creation atomically copies this input into its owner tree.
+  // Its durable manifest never retains this GC-managed path.
   const path = join(root, `${createHash("sha256").update(input.goal).digest("hex")}.md`);
   const temporary = `${path}.${randomUUID()}.tmp`;
   try {
@@ -27,6 +31,7 @@ export async function prepareRevisionPromptInput(input: {
   }
   return {
     goal: "Read the attached revision-request.md in full before editing. It contains the complete revision request, source evidence, and draft instructions. Follow those instructions and submit the draft for review.",
+    copyFileAttachments: true,
     attachments: [
       {
         id: randomUUID(),

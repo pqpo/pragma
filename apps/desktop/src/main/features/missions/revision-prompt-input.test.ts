@@ -2,7 +2,7 @@ import {
   ContextStoreRevisionRequestSchema,
   SkillRevisionRequestV4Schema,
 } from "@pragma/built-in-agents";
-import type { RuntimeResolver } from "@pragma/core";
+import { PragmaPaths, runTransientStorageMaintenance, type RuntimeResolver } from "@pragma/core";
 import { createMissionStore, type LocalHostMissionApplication } from "@pragma/local-host";
 import { createPragmaProjectStore } from "@pragma/local-host/deployment";
 import { randomUUID } from "node:crypto";
@@ -115,18 +115,38 @@ describe("revision Mission prompt transport", () => {
         ).rejects.toBe(stopped);
       }
       expect(createdMissionId).toBeDefined();
+      const paths = new PragmaPaths({ pragmaHome: root });
+      const stagingRoot = join(paths.temporaryRoot(), "revision-inputs");
+      expect(await readdir(stagingRoot)).toHaveLength(1);
+      await runTransientStorageMaintenance({ paths, now: Date.now() + 25 * 60 * 60 * 1000 });
+      await expect(readdir(stagingRoot)).rejects.toMatchObject({ code: "ENOENT" });
       const reopened = createMissionStore({ missionsPath: join(root, "missions") });
       const mission = await reopened.get(createdMissionId!);
       expect(mission.goal.length).toBeLessThan(100_000);
       expect(mission.goal).toContain("in full");
       const [attachment] = await reopened.getAttachments(mission.id);
       expect(attachment?.kind).toBe("file");
+      expect(attachment!.path).toBe(
+        join(reopened.storagePath!(mission.id), "attachments", "files", attachment!.id),
+      );
+      expect(await reopened.getPromptAttachments(mission.id, mission.initialMessageId)).toEqual([
+        attachment,
+      ]);
       const body = await readFile(attachment!.path, "utf8");
       expect(body).toContain(prompt);
       expect(body).toContain(draftId);
       expect(attachment!.size).toBe(Buffer.byteLength(body));
       expect(await readdir(draftWorkspace)).toEqual([]);
       expect(startRun).toHaveBeenCalledWith(mission.id);
+      // Retry consumes the canonical attachment, after the staging file was collected.
+      startRun.mockImplementationOnce(async () => {
+        const [input] = await reopened.getPromptAttachments(mission.id, mission.initialMessageId);
+        expect(await readFile(input!.path, "utf8")).toContain(prompt);
+        throw stopped;
+      });
+      await expect(startRun()).rejects.toBe(stopped);
+      await reopened.remove(mission.id);
+      await expect(readFile(attachment!.path)).rejects.toMatchObject({ code: "ENOENT" });
     },
   );
 });

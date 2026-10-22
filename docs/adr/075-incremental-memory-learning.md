@@ -99,10 +99,13 @@ including Unicode and JSON-escaped content. Revision request parsing admits the 
 Memory prompts while ordinary requests retain their 50,000-character limit. This only expands an
 accepted bound: existing persisted requests retain their structure and meaning and remain valid.
 Large requests use existing Mission file attachments, outside publishable draft payloads, so the
-100,000-character Mission goal/message limit does not reject accepted source prompts. Input files
-remain with the temporary revision workspace for subsequent Mission turns; they are task inputs,
-not another authoritative store. Configured Runtime context-window limits still apply and real-model
-quality is a separate check.
+100,000-character Mission goal/message limit does not reject accepted source prompts. Temporary
+input files are staging only: revision Mission creation opts into copying file attachments into its
+owned attachments/files directory before atomically publishing the Mission and manifest. Runtime
+retries read that durable copy after transient storage GC; Mission deletion reclaims it. Branches
+copy owned inputs into their own owner tree. Ordinary external file attachments keep their existing
+reference semantics. No persisted protocol shape changes. Configured Runtime context-window limits
+still apply and real-model quality is a separate check.
 
 Skill target inspection exposes the pinned SKILL.md and package file catalog, then reads selected
 scripts/references lazily by path. Plans declare the files they use in targetFiles; declared files
