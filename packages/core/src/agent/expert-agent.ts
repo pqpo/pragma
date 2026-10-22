@@ -330,6 +330,10 @@ export class Expert implements IExpertAgent {
     return this.contextSystem.listStores();
   }
 
+  async discoverStores(context?: ExpertAgentRunContext): Promise<readonly ContextStoreSummary[]> {
+    return await this.contextSystem.discoverStores(context);
+  }
+
   async listContext(
     input: ExpertAgentContextItemListInput = {},
   ): Promise<ExpertAgentContextResult<ContextIndex>> {

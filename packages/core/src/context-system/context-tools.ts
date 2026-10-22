@@ -73,6 +73,8 @@ export interface CreateContextToolsOptions {
 
 export interface ExpertAgentContextItemOperations {
   readonly listStores: () => readonly ContextStoreSummary[];
+  readonly discoverStores?:
+    ((context?: ExpertAgentRunContext) => Promise<readonly ContextStoreSummary[]>) | undefined;
   readonly listContext: (input?: {
     readonly namespace?: string | undefined;
     readonly context?: ExpertAgentRunContext | undefined;
@@ -104,16 +106,18 @@ export function createContextTools(
       name: "list_context_stores",
       label: "List context stores",
       description:
-        "Discover concrete Context stores registered for the current execution context, including mounted knowledge, Memory and Board stores. Returns namespaces and optional display names without listing documents or reading contents. Copy namespace exactly into Context tools; never reconstruct or shorten it. Use this tool after an unregistered namespace error. Follow nextCursor to discover all stores. Dynamic namespace prefixes are not concrete stores and are excluded. Registration does not guarantee that Store contents are healthy or every operation is authorized.",
+        "Discover concrete Context stores registered for the current execution context, including mounted knowledge, Memory and Board stores. Returns namespaces and optional display names without listing documents or reading contents. Copy namespace exactly into Context tools; never reconstruct or shorten it. Use this tool after an unregistered namespace error. Follow nextCursor to discover all stores. Dynamic namespace prefixes are excluded; currently visible concrete stores beneath them are included. Registration does not guarantee that Store contents are healthy or every operation is authorized.",
       inputSchema: objectSchema({
         cursor: stringSchema(
           "Opaque nextCursor from list_context_stores. Omit for the first page.",
         ),
         limit: integerSchema("Maximum stores to return. Defaults to 20 and is capped at 50."),
       }),
-      call: async (args) =>
+      call: async (args, _signal, context) =>
         listContextStoresPage(
-          contextOperations.listStores(),
+          contextOperations.discoverStores === undefined
+            ? contextOperations.listStores()
+            : await contextOperations.discoverStores(readRunContext(options, context)),
           readOptionalBlankStringParam(args, "cursor"),
           normalizeListLimit(readOptionalNumberParam(args, "limit")),
           normalizeResultByteBudget(options),

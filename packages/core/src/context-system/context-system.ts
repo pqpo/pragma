@@ -121,10 +121,14 @@ export type ExpertAgentContextStoreRegistrationInput = ExpertAgentContextStoreRe
     | {
         readonly store?: never;
         /**
-         * Resolves non-enumerable namespaces beneath `namespace` as a prefix. This is intended
+         * Resolves namespaces beneath `namespace` as a prefix. This is intended
          * for Host-owned resources whose durable identifier is allocated during an Invocation.
          */
         readonly resolveStore: (namespace: string) => ExpertAgentContextStore | undefined;
+        /** Enumerates currently visible concrete namespaces without reading Store contents. */
+        readonly discoverStores?:
+          | ((context?: ExpertAgentRunContext) => Promise<readonly ContextStoreSummary[]>)
+          | undefined;
       }
   );
 
@@ -452,6 +456,8 @@ export class ContextSystem {
     string,
     {
       readonly resolveStore: (namespace: string) => ExpertAgentContextStore | undefined;
+      readonly discoverStores?:
+        ((context?: ExpertAgentRunContext) => Promise<readonly ContextStoreSummary[]>) | undefined;
       readonly storeName?: string | undefined;
       readonly required: boolean;
       readonly mutationApproval: ContextMutationApproval;
@@ -542,6 +548,7 @@ export class ContextSystem {
       }
       this.dynamicStores.set(namespaceResult.value, {
         resolveStore: input.resolveStore,
+        discoverStores: input.discoverStores,
         ...(storeName.value === undefined ? {} : { storeName: storeName.value }),
         required,
         mutationApproval,
@@ -610,20 +617,40 @@ export class ContextSystem {
       .sort((left, right) => left.namespace.localeCompare(right.namespace));
   }
 
+  /** Discovers live Host namespaces using the caller's execution scope. */
+  async discoverStores(context?: ExpertAgentRunContext): Promise<readonly ContextStoreSummary[]> {
+    const stores = new Map(this.listStores().map((store) => [store.namespace, store]));
+    for (const [prefix, binding] of this.dynamicStores) {
+      for (const store of (await binding.discoverStores?.(context)) ?? []) {
+        if (
+          store.namespace !== prefix &&
+          store.namespace.startsWith(prefix) &&
+          !stores.has(store.namespace)
+        ) {
+          stores.set(store.namespace, store);
+        }
+      }
+    }
+    return [...stores.values()].sort((left, right) =>
+      left.namespace.localeCompare(right.namespace),
+    );
+  }
+
   async index(
     input: ExpertAgentContextItemListInput = {},
   ): Promise<ExpertAgentContextResult<ContextIndex>> {
     const summaries: ExpertAgentContextItemSummary[] = [];
     const issues: ContextStoreIssue[] = [];
-    const storesResult = this.getStoresForNamespace(input.namespace);
+    const storesResult = await this.getStoresForNamespace(input.namespace, input.context);
     const stores: ContextStoreIndexSummary[] = [];
 
     if (!storesResult.ok) {
       return storesResult;
     }
 
-    for (const [namespace, store] of storesResult.value) {
+    for (const [namespace, store, discoveredName] of storesResult.value) {
       const binding = this.resolveBinding(namespace)!;
+      const storeName = discoveredName ?? binding.storeName;
       const listResult = await store.listContext({ context: input.context });
 
       if (!listResult.ok) {
@@ -635,7 +662,7 @@ export class ContextSystem {
         issues.push({ namespace, operation: "list", error: listResult.error });
         stores.push({
           namespace,
-          ...(binding.storeName === undefined ? {} : { storeName: binding.storeName }),
+          ...(storeName === undefined ? {} : { storeName }),
         });
         continue;
       }
@@ -643,7 +670,7 @@ export class ContextSystem {
       summaries.push(...listResult.value.map((item) => normalizeContextSummary(item, namespace)));
       stores.push({
         namespace,
-        ...(binding.storeName === undefined ? {} : { storeName: binding.storeName }),
+        ...(storeName === undefined ? {} : { storeName }),
         itemCount: listResult.value.length,
       });
     }
@@ -853,7 +880,10 @@ export class ContextSystem {
     }
 
     const matches: ExpertAgentContextItemSearchMatch[] = [];
-    const storesResult = this.getStoresForNamespace(normalizedInput.value.namespace);
+    const storesResult = await this.getStoresForNamespace(
+      normalizedInput.value.namespace,
+      normalizedInput.value.context,
+    );
 
     if (!storesResult.ok) {
       return storesResult;
@@ -933,6 +963,9 @@ export class ContextSystem {
     | {
         readonly store: ExpertAgentContextStore;
         readonly storeName?: string | undefined;
+        readonly discoverStores?:
+          | ((context?: ExpertAgentRunContext) => Promise<readonly ContextStoreSummary[]>)
+          | undefined;
         readonly required: boolean;
         readonly mutationApproval: ContextMutationApproval;
         readonly overflowTarget: boolean;
@@ -950,9 +983,14 @@ export class ContextSystem {
     return undefined;
   }
 
-  private getStoresForNamespace(
+  private async getStoresForNamespace(
     namespace: string | undefined,
-  ): ExpertAgentContextResult<readonly (readonly [string, ExpertAgentContextStore])[]> {
+    context?: ExpertAgentRunContext,
+  ): Promise<
+    ExpertAgentContextResult<
+      readonly (readonly [string, ExpertAgentContextStore, (string | undefined)?])[]
+    >
+  > {
     if (namespace !== undefined) {
       const namespaceResult = normalizeNamespace(namespace);
 
@@ -966,10 +1004,19 @@ export class ContextSystem {
         return storeResult;
       }
 
-      return ok([[namespaceResult.value, storeResult.value]]);
+      const binding = this.resolveBinding(namespaceResult.value)!;
+      const summary = (await binding.discoverStores?.(context))?.find(
+        (store) => store.namespace === namespaceResult.value,
+      );
+      return ok([[namespaceResult.value, storeResult.value, summary?.storeName]]);
     }
 
-    return ok([...this.stores.entries()].map(([namespace, binding]) => [namespace, binding.store]));
+    return ok(
+      (await this.discoverStores(context)).flatMap(({ namespace, storeName }) => {
+        const binding = this.resolveBinding(namespace);
+        return binding === undefined ? [] : [[namespace, binding.store, storeName] as const];
+      }),
+    );
   }
 }
 

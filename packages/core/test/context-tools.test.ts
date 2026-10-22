@@ -49,6 +49,64 @@ describe("Expert context tools", () => {
     expect(base.contextSystem.listStores()).toEqual([]);
   });
 
+  it("discovers live draft namespaces and hides them after close without reopening the agent", async () => {
+    const store = new InMemoryContextStore();
+    const list = vi.spyOn(store, "listContext");
+    const search = vi.spyOn(store, "searchContext");
+    await store.addContext({ id: "guide.md", content: "Visible draft content" });
+    let active = false;
+    const discoverStores = vi.fn(async () =>
+      active ? [{ namespace: "draft:one", storeName: "Knowledge (draft)" }] : [],
+    );
+    const base = await defineExpert({
+      id: "live-directory",
+      name: "Directory",
+      description: "Test",
+      tags: [],
+      scope: "test",
+      workspace: process.cwd(),
+    });
+    const agent = withHostContextBindings(base, [
+      {
+        namespace: "draft:",
+        storeName: "Generic draft prefix",
+        resolveStore: () => store,
+        discoverStores,
+      },
+    ]);
+    const directory = agent
+      .createDefaultTools()
+      .find((tool) => tool.name === "list_context_stores")!;
+    expect(JSON.parse((await directory.call({}, undefined)).text)).toEqual({ stores: [] });
+    active = true;
+    expect(JSON.parse((await directory.call({}, undefined)).text)).toEqual({
+      stores: [{ namespace: "draft:one", storeName: "Knowledge (draft)" }],
+    });
+    expect(list).not.toHaveBeenCalled();
+    expect(await agent.listContext()).toMatchObject({
+      ok: true,
+      value: { stores: [{ namespace: "draft:one", storeName: "Knowledge (draft)", itemCount: 1 }] },
+    });
+    expect(list).toHaveBeenCalledOnce();
+    expect(await agent.listContext({ namespace: "draft:one" })).toMatchObject({
+      ok: true,
+      value: { stores: [{ namespace: "draft:one", storeName: "Knowledge (draft)", itemCount: 1 }] },
+    });
+    expect(await agent.searchContext({ query: "Visible" })).toMatchObject({
+      ok: true,
+      value: [expect.objectContaining({ namespace: "draft:one", id: "guide.md" })],
+    });
+    expect(search).toHaveBeenCalledOnce();
+    active = false;
+    expect(JSON.parse((await directory.call({}, undefined)).text)).toEqual({ stores: [] });
+    list.mockClear();
+    expect((await agent.listContext()).ok).toBe(true);
+    expect(list).not.toHaveBeenCalled();
+    search.mockClear();
+    expect(await agent.searchContext({ query: "Visible" })).toEqual({ ok: true, value: [] });
+    expect(search).not.toHaveBeenCalled();
+  });
+
   it("paginates every exact Store namespace within the result budget and rejects stale cursors", async () => {
     const agent = await defineExpert({
       id: "directory-pages",

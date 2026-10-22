@@ -2594,6 +2594,18 @@ describe("Desktop Mission resource adapter contracts", { timeout: 30_000 }, () =
               context,
             );
             expect(denied.isError).toBe(true);
+            const directory = await session.context.agent
+              .createDefaultTools()
+              .find((tool) => tool.name === "list_context_stores")!
+              .call({}, turn.signal, context);
+            expect(directory.isError, directory.text).not.toBe(true);
+            expect(JSON.parse(directory.text).stores).not.toEqual(
+              expect.arrayContaining([
+                expect.objectContaining({
+                  namespace: activeMissionKnowledgeDraftNamespace(target.id),
+                }),
+              ]),
+            );
             if (afterMerge) {
               expect(JSON.parse(denied.text)).toMatchObject({
                 error: { code: "permission_denied" },
@@ -2662,6 +2674,15 @@ describe("Desktop Mission resource adapter contracts", { timeout: 30_000 }, () =
           draftId = started.draftId;
           expect(started.missionId).toBe(caller.id);
           expect(started.writableNamespace).toBe(activeMissionKnowledgeDraftNamespace(target.id));
+          const directory = await session.context.agent
+            .createDefaultTools()
+            .find((tool) => tool.name === "list_context_stores")!
+            .call({}, turn.signal, { execution: session.context.request.executionContext });
+          expect(directory.isError, directory.text).not.toBe(true);
+          expect(JSON.parse(directory.text).stores).toContainEqual({
+            namespace: started.writableNamespace,
+            storeName: `${target.name} (draft)`,
+          });
           const replay = await call("knowledge_revision_start", startInput);
           expect(replay).toMatchObject({ jobId, draftId });
           if (
@@ -3410,11 +3431,30 @@ describe("Desktop Mission resource adapter contracts", { timeout: 30_000 }, () =
       ],
     });
     const createdDraftIds = new Map<string, string>();
+    let discoverDrafts!: () => Promise<{ namespace: string; storeName?: string }[]>;
     const runtime = defineRuntimeTestDriver<never, { context: RuntimeNativeSessionContext }>({
       descriptor: { id: "fake", kind: "fake", displayName: "Fake" },
       createSession: (context) => ({ context }),
       readSession: () => ({ runtimeSessionId: "runtime" }),
       async startTurn(session, turn) {
+        const directory = session.context.agent
+          .createDefaultTools()
+          .find((tool) => tool.name === "list_context_stores")!;
+        discoverDrafts = async () => {
+          const result = await directory.call({ limit: 50 }, turn.signal, {
+            execution: session.context.request.executionContext,
+          });
+          expect(result.isError, result.text).not.toBe(true);
+          return (
+            JSON.parse(result.text).stores as { namespace: string; storeName?: string }[]
+          ).filter((store) => store.namespace.startsWith("mission-knowledge-draft:"));
+        };
+        if (
+          turn.rawQuery === mission.goal ||
+          turn.rawQuery === "Continue the first knowledge draft"
+        ) {
+          expect(await discoverDrafts()).toEqual([]);
+        }
         const managedTools = session.context.agent.tools ?? [];
         const listTargets = managedTools.find(
           (tool) => tool.name === "knowledge_revision_list_targets",
@@ -3482,7 +3522,38 @@ describe("Desktop Mission resource adapter contracts", { timeout: 30_000 }, () =
             { execution: session.context.request.executionContext },
           );
           expect(added.isError, added.text).not.toBe(true);
+          expect(await discoverDrafts()).toContainEqual({
+            namespace: details.writableNamespace,
+            storeName: `${targetStore.name} (draft)`,
+          });
+          const draftIndex = await session.context.agent
+            .createDefaultTools()
+            .find((tool) => tool.name === "list_expert_context")!
+            .call({ namespace: details.writableNamespace }, turn.signal, {
+              execution: session.context.request.executionContext,
+            });
+          expect(draftIndex.isError, draftIndex.text).not.toBe(true);
+          expect(draftIndex.text).toContain(details.writableNamespace);
+          expect(draftIndex.text).not.toContain("Context stores:");
           outputText = added.text;
+        }
+        if (turn.rawQuery === "Revise a newly created knowledge base") {
+          const created = await start.call(
+            {
+              create: { name: "Unpublished knowledge", description: "Created in this Mission" },
+              prompt: "Create knowledge for this Mission",
+            },
+            turn.signal,
+            {
+              runContext: session.context.runContext,
+              toolCallId: "create-unpublished-knowledge",
+            },
+          );
+          expect(created.isError, created.text).not.toBe(true);
+          expect(await discoverDrafts()).toContainEqual({
+            namespace: (created.details as { writableNamespace: string }).writableNamespace,
+            storeName: "Unpublished knowledge (draft)",
+          });
         }
         return { outputText, runtimeSessionId: "runtime" };
       },
@@ -3550,6 +3621,7 @@ describe("Desktop Mission resource adapter contracts", { timeout: 30_000 }, () =
         value: { content: `# Same turn ${index + 1}\n` },
       });
     }
+    expect(await discoverDrafts()).toHaveLength(2);
     const firstSessionId = (await missions.get(mission.id)).execution!.sessionId;
     const submittedId = createdDraftIds.get(secondStore.id)!;
     const submittedDraft = await revisions.getDraft(submittedId);
@@ -3560,6 +3632,13 @@ describe("Desktop Mission resource adapter contracts", { timeout: 30_000 }, () =
     );
     const submittedJob = (await revisions.list()).find((job) => job.draftId === submittedId)!;
     expect((await revisions.approve(submittedJob.id, submittedJob.revision)).state).toBe("merged");
+
+    expect(await discoverDrafts()).toEqual([
+      {
+        namespace: activeMissionKnowledgeDraftNamespace(firstStore.id),
+        storeName: `${firstStore.name} (draft)`,
+      },
+    ]);
 
     const laterStore = await contextStores.create({
       mode: "blank",

@@ -72,13 +72,16 @@ root caller retains its root-owned draft after context binding changes rebuild i
 this continuity does not grant another teammate access.
 
 When an Expert or Team member starts a revision inside a Mission, the Host attaches the draft to
-that same Mission before returning. With pre-registered dynamic draft namespaces, the existing
+that same Mission before returning. With a non-enumerable dynamic draft prefix, the existing
 published Store mount remains read-only for other members; an explicitly selected, previously
 unmounted target receives a claimed draft mount. The Host acknowledges the new mount fingerprint
 in that same atomic Mission write and retains the ExpertSession, so a later `continue_expert`
 still resolves the original teammate Context, including after reopening storage. Concurrent mounts
-keep the message gate closed until all changes finish. The eligible namespace list is refreshed
-for every Invocation, including knowledge bases created after the Mission started. Each Context operation resolves that knowledge base's current claimed draft,
+keep the message gate closed until all changes finish. The concrete namespace list is discovered on
+every directory, index, or search call from the current Mission claims and caller ownership,
+including knowledge bases created after the Mission
+started. Unclaimed, closed, and other Contexts' drafts are omitted; visible drafts include the
+knowledge base name. Each Context operation resolves that knowledge base's current claimed draft,
 so `start -> edit -> submit` works in one turn even though the Invocation's original Context index was
 assembled before the draft existed. `knowledge_revision_start` returns the exact writable namespace.
 The mount remains the authority for ownership, later-Session indexing, recovery, and cleanup; draft

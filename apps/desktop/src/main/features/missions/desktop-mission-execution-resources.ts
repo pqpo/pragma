@@ -30,6 +30,7 @@ import {
   type HostContextBindingsResolver,
   type McpToolRegistryPool,
   type RuntimeResolver,
+  type ExpertAgentRunContext,
 } from "@pragma/core";
 import type {
   PragmaAdapterHost,
@@ -63,7 +64,10 @@ import {
   withContextStoreRevisionLocks,
   type ContextStoreStore,
 } from "@pragma/local-host/deployment";
-import { DynamicContextStore } from "../context-stores/dynamic-context-store.ts";
+import {
+  DynamicContextStore,
+  type DynamicContextStoreOperation,
+} from "../context-stores/dynamic-context-store.ts";
 import { createDesktopKnowledgeRevisionSubmissionPort } from "../context-stores/knowledge-revision-capability.ts";
 import type { PluginStore } from "@pragma/local-host/deployment";
 import {
@@ -367,122 +371,138 @@ export function createDesktopMissionExecutionResources(
             )
           ).filter((binding): binding is NonNullable<typeof binding> => binding !== undefined);
         };
-        // Pre-register draft namespaces so a tool can claim a target and edit it in the
-        // same Invocation. The resolver below enforces the durable owner on every call.
+        // Keep dynamic addressing available for same-Invocation claims, while discovering
+        // only drafts currently claimed and owned by the caller.
         const resolveActiveKnowledgeRevisionBindings = async (): Promise<
           readonly ExpertAgentContextStoreRegistrationInput[]
         > => {
           if (options.contextStoreRevisions === undefined) return [];
-          const createActiveDraftStore = (storeId: string) =>
-            new DynamicContextStore(async (operation, runContext) => {
-              const currentMission = await options.missions.get(mission.id);
-              const claimedMounts = currentMission.contextMounts.filter(
-                (
+          const resolveActiveDraftStore = async (
+            storeId: string,
+            operation: DynamicContextStoreOperation,
+            runContext?: ExpertAgentRunContext,
+          ) => {
+            const currentMission = await options.missions.get(mission.id);
+            const claimedMounts = currentMission.contextMounts.filter(
+              (
+                mount,
+              ): mount is Extract<
+                Mission["contextMounts"][number],
+                { kind: "context-store-draft" }
+              > => mount.kind === "context-store-draft" && mount.revisionJobId !== undefined,
+            );
+            const activeMounts = (
+              await Promise.all(
+                claimedMounts.map(async (mount) => ({
                   mount,
-                ): mount is Extract<
-                  Mission["contextMounts"][number],
-                  { kind: "context-store-draft" }
-                > => mount.kind === "context-store-draft" && mount.revisionJobId !== undefined,
-              );
-              const activeMounts = (
-                await Promise.all(
-                  claimedMounts.map(async (mount) => ({
-                    mount,
-                    storeId: (await options.contextStoreRevisions!.getDraft(mount.draftId)).storeId,
-                  })),
-                )
-              ).filter((candidate) => candidate.storeId === storeId);
-              if (activeMounts.length === 0 && (operation === "list" || operation === "search")) {
-                return ok(new StaticContextStore([]));
-              }
-              if (activeMounts.length !== 1) {
-                return error(
-                  "store_unavailable",
-                  activeMounts.length === 0
-                    ? "Start a knowledge revision for this knowledge base before using its draft namespace."
-                    : "The Mission has more than one active draft for the same knowledge base.",
-                );
-              }
-              const mount = activeMounts[0]!.mount;
-              const [job, draft, resolved] = await Promise.all([
-                options.contextStoreRevisions!.get(mount.revisionJobId!),
-                options.contextStoreRevisions!.getDraft(mount.draftId),
-                options.contextStoreRevisions!.resolveDraft(mount.draftId),
-              ]);
-              if (
-                job.state !== "running" ||
-                job.draftId !== mount.draftId ||
-                job.missionId !== mission.id ||
-                draft.activeMissionId !== mission.id
-              ) {
-                return error(
-                  "permission_denied",
-                  "The active knowledge revision draft is not owned by this Mission.",
-                );
-              }
-              const scope = readExecutionRunScope(runContext);
-              const caller =
-                scope.executionId === undefined || scope.invocationId === undefined
-                  ? undefined
-                  : await executionStore.getInvocation(scope.executionId, scope.invocationId);
-              const provenance = job.request.provenance;
-              const owner =
-                provenance === undefined
-                  ? undefined
-                  : await executionStore.getInvocation(
-                      provenance.executionId,
-                      provenance.invocationId,
-                    );
-              const ownsDraft =
-                caller !== undefined &&
-                (mission.executor.ref === STORE_REVISION_EXPERT_REF
-                  ? caller.parentInvocationId === undefined
-                  : owner !== undefined &&
-                    (caller.contextId === owner.contextId ||
-                      (owner.parentInvocationId === undefined &&
-                        caller.parentInvocationId === undefined)));
-              if (!ownsDraft) {
-                if (operation === "list" || operation === "search")
-                  return ok(new StaticContextStore([]));
-                return error(
-                  "permission_denied",
-                  "This revision draft belongs to another Runtime Context.",
-                );
-              }
-              if (["add", "edit", "delete"].includes(operation) && draft.state !== "editing") {
-                return error(
-                  "permission_denied",
-                  `The active knowledge revision draft cannot be edited while it is ${draft.state}.`,
-                );
-              }
-              return ok(resolved.store);
-            });
-          const currentMission = await options.missions.get(mission.id);
-          const claimedDraftStoreIds = await Promise.all(
-            currentMission.contextMounts
-              .filter(
-                (
-                  mount,
-                ): mount is Extract<
-                  Mission["contextMounts"][number],
-                  { kind: "context-store-draft" }
-                > => mount.kind === "context-store-draft" && mount.revisionJobId !== undefined,
+                  storeId: (await options.contextStoreRevisions!.getDraft(mount.draftId)).storeId,
+                })),
               )
-              .map(
-                async (mount) =>
-                  (await options.contextStoreRevisions!.getDraft(mount.draftId)).storeId,
-              ),
-          );
-          const revisionTargetStoreIds = [
-            ...new Set([
-              ...((await options.contextStores?.list()) ?? []).map((store) => store.id),
-              ...claimedDraftStoreIds,
-            ]),
-          ];
+            ).filter((candidate) => candidate.storeId === storeId);
+            if (activeMounts.length === 0 && (operation === "list" || operation === "search")) {
+              return ok(new StaticContextStore([]));
+            }
+            if (activeMounts.length !== 1) {
+              return error(
+                "store_unavailable",
+                activeMounts.length === 0
+                  ? "Start a knowledge revision for this knowledge base before using its draft namespace."
+                  : "The Mission has more than one active draft for the same knowledge base.",
+              );
+            }
+            const mount = activeMounts[0]!.mount;
+            const [job, draft, resolved] = await Promise.all([
+              options.contextStoreRevisions!.get(mount.revisionJobId!),
+              options.contextStoreRevisions!.getDraft(mount.draftId),
+              options.contextStoreRevisions!.resolveDraft(mount.draftId),
+            ]);
+            if (
+              job.state !== "running" ||
+              job.draftId !== mount.draftId ||
+              job.missionId !== mission.id ||
+              draft.activeMissionId !== mission.id
+            ) {
+              return error(
+                "permission_denied",
+                "The active knowledge revision draft is not owned by this Mission.",
+              );
+            }
+            const scope = readExecutionRunScope(runContext);
+            const caller =
+              scope.executionId === undefined || scope.invocationId === undefined
+                ? undefined
+                : await executionStore.getInvocation(scope.executionId, scope.invocationId);
+            const provenance = job.request.provenance;
+            const owner =
+              provenance === undefined
+                ? undefined
+                : await executionStore.getInvocation(
+                    provenance.executionId,
+                    provenance.invocationId,
+                  );
+            const ownsDraft =
+              caller !== undefined &&
+              (mission.executor.ref === STORE_REVISION_EXPERT_REF
+                ? caller.parentInvocationId === undefined
+                : owner !== undefined &&
+                  (caller.contextId === owner.contextId ||
+                    (owner.parentInvocationId === undefined &&
+                      caller.parentInvocationId === undefined)));
+            if (!ownsDraft) {
+              if (operation === "list" || operation === "search")
+                return ok(new StaticContextStore([]));
+              return error(
+                "permission_denied",
+                "This revision draft belongs to another Runtime Context.",
+              );
+            }
+            if (["add", "edit", "delete"].includes(operation) && draft.state !== "editing") {
+              return error(
+                "permission_denied",
+                `The active knowledge revision draft cannot be edited while it is ${draft.state}.`,
+              );
+            }
+            return ok(resolved.store);
+          };
+          const createActiveDraftStore = (storeId: string) =>
+            new DynamicContextStore((operation, context) =>
+              resolveActiveDraftStore(storeId, operation, context),
+            );
+          const discoverDraftStores = async (context?: ExpertAgentRunContext) => {
+            const currentMission = await options.missions.get(mission.id);
+            const claimedDrafts = await Promise.all(
+              currentMission.contextMounts
+                .filter(
+                  (
+                    mount,
+                  ): mount is Extract<
+                    Mission["contextMounts"][number],
+                    { kind: "context-store-draft" }
+                  > => mount.kind === "context-store-draft" && mount.revisionJobId !== undefined,
+                )
+                .map(async (mount) => await options.contextStoreRevisions!.getDraft(mount.draftId)),
+            );
+            const stores = [];
+            const draftsByStore = new Map(claimedDrafts.map((draft) => [draft.storeId, draft]));
+            for (const [storeId, draft] of draftsByStore) {
+              const resolved = await resolveActiveDraftStore(storeId, "read", context);
+              if (!resolved.ok) continue;
+              const name =
+                draft.operation === "create"
+                  ? (draft.resourceName ?? draft.name)
+                  : ((await options.contextStores?.get(storeId))?.name ?? draft.name);
+              stores.push({
+                namespace: activeMissionKnowledgeDraftNamespace(storeId),
+                storeName: `${name} (draft)`,
+              });
+            }
+            return stores;
+          };
           const namespacePrefix = activeMissionKnowledgeDraftNamespace("");
           return [
             {
               namespace: namespacePrefix,
+              discoverStores: discoverDraftStores,
               storeName: "Active Mission Knowledge draft",
               resolveStore: (namespace) => {
                 const storeId = namespace.slice(namespacePrefix.length);
@@ -506,13 +526,6 @@ export function createDesktopMissionExecutionResources(
               required: false,
               mutationApproval: "none" as const,
             },
-            ...revisionTargetStoreIds.map((storeId) => ({
-              namespace: activeMissionKnowledgeDraftNamespace(storeId),
-              storeName: "Active Mission Knowledge draft",
-              store: createActiveDraftStore(storeId),
-              required: false,
-              mutationApproval: "none" as const,
-            })),
           ];
         };
         const branchHistory = await options.missions.readBranchHistory(mission.id);
