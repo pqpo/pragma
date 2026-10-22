@@ -35,12 +35,16 @@ import { isResourceItem } from "../asset-transfer/asset-transfer-service.ts";
 import { KnowledgeDataSchema, SkillDataSchema } from "@pragma/local-host/deployment";
 import { fingerprint } from "../asset-transfer/asset-transfer-fingerprint.ts";
 import { runAssetGit } from "../asset-git/asset-git-command.ts";
+import { readSkillFrontmatter } from "@pragma/local-host/deployment";
 import { validateTransferredSkill } from "@pragma/local-host/deployment";
 
 export const SYNC_DIRECTORY = "pragma-sync";
 const MAX_BYTES = 150 * 1024 * 1024;
-const MarkerSchema = z
+const MarkerV1Schema = z
   .object({ schemaVersion: z.literal("pragma.asset-sync-repository/v1") })
+  .strict();
+const MarkerSchema = z
+  .object({ schemaVersion: z.literal("pragma.asset-sync-repository/v2") })
   .strict();
 const KnowledgeMetadataSchema = KnowledgeDataSchema.omit({ files: true })
   .extend({
@@ -48,6 +52,22 @@ const KnowledgeMetadataSchema = KnowledgeDataSchema.omit({ files: true })
     files: z.array(
       z.object({ id: z.string(), metadata: ContextStoreContentMetadataSchema }).strict(),
     ),
+  })
+  .strict();
+const SkillMetadataV1Schema = z
+  .object({
+    id: CapabilityIdSchema,
+    name: z
+      .string()
+      .trim()
+      .min(1)
+      .refine((value) => [...value].length <= 50),
+    description: z
+      .string()
+      .trim()
+      .min(1)
+      .refine((value) => [...value].length <= 500),
+    entryPath: z.literal("SKILL.md"),
   })
   .strict();
 const SkillMetadataSchema = SkillDataSchema.omit({ files: true })
@@ -175,7 +195,7 @@ export function encodeSyncRepository(
     files.set(path, { bytes, executable });
   };
   const addYaml = (path: string, value: unknown) => add(path, Buffer.from(formatPragmaYaml(value)));
-  addYaml("sync.yaml", MarkerSchema.parse({ schemaVersion: "pragma.asset-sync-repository/v1" }));
+  addYaml("sync.yaml", MarkerSchema.parse({ schemaVersion: "pragma.asset-sync-repository/v2" }));
   const index: string[] = [];
   for (const item of [...items.values()].sort((a, b) => a.key.localeCompare(b.key))) {
     let path: string;
@@ -206,8 +226,7 @@ export function encodeSyncRepository(
           add(`knowledge-bases/${id}/files/${file.id}`, Buffer.from(file.content));
         }
       } else if (item.kind === "skill") {
-        const data = SkillDataSchema.parse(item.data);
-        validateTransferredSkill(data, { id });
+        const data = validateTransferredSkill(SkillDataSchema.parse(item.data), { id });
         path = `skills/${id}/metadata.yaml`;
         addYaml(path, {
           id,
@@ -263,13 +282,37 @@ function assertLogicalAssetLimit(items: ReadonlyMap<string, CoreAssetSyncItem>):
   if (identities.size > 5_000) throw new Error("Sync repository exceeds 5,000 logical assets.");
 }
 
+/** Upgrade only a working copy; immutable Git commits and source files are never rewritten. */
+function migrateSyncRepositoryV1ToV2(files: ReadonlyMap<string, SyncFile>): Map<string, SyncFile> {
+  const migrated = new Map(files);
+  for (const [path, file] of files) {
+    if (!/^skills\/[^/]+\/metadata\.yaml$/u.test(path)) continue;
+    const metadata = SkillMetadataV1Schema.parse(yaml(file.bytes));
+    const entry = files.get(`skills/${metadata.id}/files/SKILL.md`);
+    if (!entry) throw new Error(`Skill entry file is missing: ${metadata.id}/SKILL.md`);
+    const description = readSkillFrontmatter(text(entry.bytes)).description;
+    if (description === undefined) throw new Error(`Invalid SKILL.md description: ${metadata.id}`);
+    migrated.set(path, {
+      bytes: Buffer.from(formatPragmaYaml({ ...metadata, description })),
+      executable: false,
+    });
+  }
+  migrated.set("sync.yaml", {
+    bytes: Buffer.from(formatPragmaYaml({ schemaVersion: "pragma.asset-sync-repository/v2" })),
+    executable: false,
+  });
+  return migrated;
+}
+
 export function decodeSyncRepository(
   files: ReadonlyMap<string, SyncFile>,
 ): Map<string, CoreAssetSyncItem> {
   validateFiles(files);
   const marker = files.get("sync.yaml");
   if (!marker) throw new Error("The sync repository is missing pragma-sync/sync.yaml.");
-  MarkerSchema.parse(yaml(marker.bytes));
+  const version = z.union([MarkerV1Schema, MarkerSchema]).parse(yaml(marker.bytes));
+  if (version.schemaVersion === "pragma.asset-sync-repository/v1")
+    files = migrateSyncRepositoryV1ToV2(files);
   const consumed = new Set(["sync.yaml", "README.md"]);
   const result = new Map<string, CoreAssetSyncItem>();
   const add = (kind: CoreAssetSyncItem["kind"], id: string, name: string, data: unknown) => {
@@ -324,6 +367,7 @@ export function decodeSyncRepository(
       consumed.add(path);
     } else if (
       (directory === "knowledge-bases" || directory === "skills") &&
+      path.split("/").length === 3 &&
       path.endsWith("/metadata.yaml")
     ) {
       if (directory === "knowledge-bases") {
@@ -384,12 +428,14 @@ export function decodeSyncRepository(
               executable: content.executable,
             };
           });
-        const data = SkillDataSchema.parse({
-          name: meta.name,
-          description: meta.description,
-          files: entries,
-        });
-        validateTransferredSkill(data, { id: meta.id });
+        const data = validateTransferredSkill(
+          SkillDataSchema.parse({
+            name: meta.name,
+            description: meta.description,
+            files: entries,
+          }),
+          { id: meta.id },
+        );
         add("skill", meta.id, meta.name, data);
       }
       consumed.add(path);

@@ -32,7 +32,28 @@ approval step is required. Pragma does not automatically provision interpreters 
 Submission, approval, and synchronization never execute candidate scripts or tests and do not certify
 code safety or correctness. Runtime execution permissions, human review, immutable snapshots,
 concurrency checks, executable metadata, and publication integrity remain unchanged. This policy
-relaxation does not change stored schemas or require data migration.
+relaxation does not change local revision storage schemas. The sync metadata policy below has its own versioned compatibility path.
+
+### Skill description authority
+
+For a portable Skill, SKILL.md frontmatter owns the description. Capability definitions and Git
+metadata.yaml retain derived descriptions for discovery, display, Runtime descriptors, and sync
+fingerprints; editing the cached description does not change the Skill. Import and generated-package
+writers prefer a valid frontmatter description. Legacy imports without one retain their explicit
+fallback description. New and incremental reviewed publications use the description in the exact
+submitted payload. Existing immutable local revisions are not rewritten; later publications refresh
+the cache from their own payload.
+
+Git sync repository v2 makes this authority explicit. A frozen v1 marker and metadata reader support
+an adjacent in-memory v1-to-v2 migration that derives descriptions from each SKILL.md. Reads and
+fingerprints normalize cached descriptions, including stale v2 caches; writers emit v2 metadata from
+that canonical data. Original Git commits and local revision files remain unchanged. Future versions
+and malformed source documents are rejected without rewriting their inputs. A metadata-only stale
+cache edit creates no Skill revision; script or frontmatter updates create a normal payload
+revision, retain executable metadata, and converge on repeated syncs. Restore journals advance from v2 to v3 through a backed-up, owner-local atomic migration: stored Skill
+payloads, expected fingerprints, and incoming baselines are normalized together. Domain revision
+expectations are retained; interrupted old migrations replay before new planning, and stale operations
+cannot overwrite newer documents. No Runtime execution permission or manual review policy changes.
 
 Validation failure returns `invalid_input` with path-addressed diagnostics and leaves the draft
 editable. The Skill Revision Agent repairs the reported files and resubmits until validation passes.

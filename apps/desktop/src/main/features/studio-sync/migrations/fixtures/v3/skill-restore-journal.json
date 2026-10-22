@@ -1,0 +1,76 @@
+{
+  "schemaVersion": "pragma.asset-sync-journal/v3",
+  "source": "[\"ssh://git@pragma.test/assets.git\",\"main\"]",
+  "changes": [
+    {
+      "key": "skill:0df66ebd-69bb-4656-82e5-5634a3878139",
+      "expectedRevision": 4,
+      "local": {
+        "key": "skill:0df66ebd-69bb-4656-82e5-5634a3878139",
+        "kind": "skill",
+        "name": "review",
+        "data": {
+          "name": "review",
+          "description": "Original review",
+          "files": [
+            {
+              "path": "SKILL.md",
+              "content": "LS0tCm5hbWU6IHJldmlldwpkZXNjcmlwdGlvbjogT3JpZ2luYWwgcmV2aWV3Ci0tLQoKUmV2aWV3IGNoYW5nZXMuCg==",
+              "executable": false
+            },
+            {
+              "path": "scripts/run.sh",
+              "content": "IyEvYmluL3NoCmV4aXQgMAo=",
+              "executable": true
+            }
+          ]
+        },
+        "fingerprint": "ab8da6ae2ddfbeebe5ed77cbaa11c75b8372fefae1d1ac54a3d7cd3c0dd24ac7"
+      },
+      "remote": {
+        "key": "skill:0df66ebd-69bb-4656-82e5-5634a3878139",
+        "kind": "skill",
+        "name": "review",
+        "data": {
+          "name": "review",
+          "description": "Updated review",
+          "files": [
+            {
+              "path": "SKILL.md",
+              "content": "LS0tCm5hbWU6IHJldmlldwpkZXNjcmlwdGlvbjogVXBkYXRlZCByZXZpZXcKLS0tCgpSZXZpZXcgY2hhbmdlcy4K",
+              "executable": false
+            },
+            {
+              "path": "scripts/run.sh",
+              "content": "IyEvYmluL3NoCmVjaG8gdXBkYXRlZAo=",
+              "executable": true
+            }
+          ]
+        },
+        "fingerprint": "6356d210bf3a0c98864ef715323f59bbea3dbfffc3f28eac5857bac70cf53271"
+      }
+    }
+  ],
+  "expected": {
+    "skill:0df66ebd-69bb-4656-82e5-5634a3878139": "ab8da6ae2ddfbeebe5ed77cbaa11c75b8372fefae1d1ac54a3d7cd3c0dd24ac7"
+  },
+  "incomingState": {
+    "schemaVersion": "pragma.asset-sync-state/v2",
+    "source": "[\"ssh://git@pragma.test/assets.git\",\"main\"]",
+    "repositoryInitialized": true,
+    "bases": {
+      "skill:0df66ebd-69bb-4656-82e5-5634a3878139": "6356d210bf3a0c98864ef715323f59bbea3dbfffc3f28eac5857bac70cf53271"
+    },
+    "remoteItems": {
+      "skill:0df66ebd-69bb-4656-82e5-5634a3878139": {
+        "kind": "skill",
+        "name": "review",
+        "fingerprint": "6356d210bf3a0c98864ef715323f59bbea3dbfffc3f28eac5857bac70cf53271"
+      }
+    },
+    "unavailableItems": {},
+    "conflicts": [],
+    "conflictMessages": {},
+    "restoreConflicts": []
+  }
+}

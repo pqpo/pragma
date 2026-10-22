@@ -2756,12 +2756,16 @@ describe("ExpertSession", { timeout: 30_000 }, () => {
     const steer = vi.fn();
     let finish!: () => void;
     const turnGate = new Promise<void>((resolve) => (finish = resolve));
+    let markTurnStarted!: () => void;
+    const turnStarted = new Promise<void>((resolve) => (markTurnStarted = resolve));
     const app = createPragma({
       pragmaHome: home,
       executionStore: executions,
       loggerProvider: createNoopLoggerProvider(),
       runtimes: createStaticRuntimeResolver({
-        runtimes: [createFakeRuntime({ stats, turnGate, onSteer: steer })],
+        runtimes: [
+          createFakeRuntime({ stats, turnGate, onSteer: steer, onTurnStarted: markTurnStarted }),
+        ],
         defaultRuntimeId: "fake",
       }),
     });
@@ -2790,7 +2794,8 @@ describe("ExpertSession", { timeout: 30_000 }, () => {
       return await commit(input);
     });
     try {
-      await vi.waitFor(() => expect(stats.executionIds).toContain(active.executionId));
+      await turnStarted;
+      expect(stats.executionIds).toContain(active.executionId);
       const target = { executionId: active.executionId, turnId: "active" };
       await expect(session.steerQueuedPrompt("redirect", { target })).rejects.toThrow(
         "Synthetic source cancellation failure",

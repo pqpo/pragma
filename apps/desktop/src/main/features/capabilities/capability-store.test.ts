@@ -837,6 +837,28 @@ describe("capability store", () => {
     expect((await store.getSkillDocument({ id: initial.manifest.id })).content).toBe(document);
   });
 
+  it("derives imported and generated descriptions from frontmatter instead of an independent cache", async () => {
+    const { directory, store } = await createStore();
+    const source = join(directory, "description-skill");
+    await mkdir(source);
+    const content =
+      "---\nname: review\ndescription: Actual skill description\n---\n\nReview changes.\n";
+    await writeFile(join(source, "SKILL.md"), content);
+    const imported = await store.importSkill({
+      sourcePath: source,
+      description: "Stale directory description",
+    });
+    expect(imported.definition).toMatchObject({ description: "Actual skill description" });
+    const generated = await store.createGeneratedSkill({
+      package: {
+        name: "review",
+        description: "Stale generated description",
+        files: [{ path: "SKILL.md", content }],
+      },
+    });
+    expect(generated.definition).toMatchObject({ description: "Actual skill description" });
+  });
+
   it("copies a Skill package into an immutable revision", async () => {
     const { directory, store } = await createStore();
     const source = join(directory, "source-skill");

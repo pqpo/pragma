@@ -12,8 +12,10 @@ const families = [
   ["state.json", stateMigrationChain],
   ["restore-journal.json", journalMigrationChain],
 ] as const;
-const fixture = async (version: "v1" | "v2", name: string): Promise<unknown> =>
+const fixture = async (version: "v1" | "v2" | "v3", name: string): Promise<unknown> =>
   JSON.parse(await readFile(join(import.meta.dirname, "fixtures", version, name), "utf8"));
+const currentVersion = (name: string) => (name === "restore-journal.json" ? 3 : 2);
+const currentFixture = (name: string) => fixture(currentVersion(name) === 3 ? "v3" : "v2", name);
 async function owner(version: "v1" | "v2" = "v1") {
   const root = await mkdtemp(join(tmpdir(), "pragma-sync-upgrade-"));
   roots.push(root);
@@ -37,17 +39,17 @@ describe("asset sync owner migrations", () => {
     "upgrades actual historical %s through its adjacent chain",
     async (name, chain) => {
       const old = await fixture("v1", name);
-      const target = await fixture("v2", name);
+      const target = await currentFixture(name);
       expect(chain.upgrade(old)).toMatchObject({
         value: target,
         fromVersion: 1,
-        toVersion: 2,
+        toVersion: currentVersion(name),
         migrated: true,
       });
       expect(chain.upgrade(target)).toMatchObject({
         value: target,
-        fromVersion: 2,
-        toVersion: 2,
+        fromVersion: currentVersion(name),
+        toVersion: currentVersion(name),
         migrated: false,
       });
     },
@@ -60,7 +62,7 @@ describe("asset sync owner migrations", () => {
     await upgrade();
     for (const [name] of families)
       expect(JSON.parse(await readFile(join(root, name), "utf8"))).toEqual(
-        await fixture("v2", name),
+        await currentFixture(name),
       );
     const names = await readdir(join(root, "migrations/backups"));
     const backups = await Promise.all(
@@ -91,7 +93,9 @@ describe("asset sync owner migrations", () => {
     );
     await upgrade();
     for (const [name] of families)
-      expect(JSON.parse(await readFile(join(root, name), "utf8"))).toEqual(documents[name]);
+      expect(JSON.parse(await readFile(join(root, name), "utf8"))).toEqual(
+        await currentFixture(name),
+      );
     await expect(readFile(join(root, "asset-sync.migration.json"))).rejects.toMatchObject({
       code: "ENOENT",
     });
@@ -100,10 +104,10 @@ describe("asset sync owner migrations", () => {
     "rejects future %s without changing any owner document",
     async (name, chain) => {
       const { root, upgrade } = await owner();
-      const value = (await fixture("v2", name)) as Record<string, unknown>;
+      const value = (await currentFixture(name)) as Record<string, unknown>;
       await writeFile(
         join(root, name),
-        JSON.stringify({ ...value, schemaVersion: `${chain.family}/v3` }),
+        JSON.stringify({ ...value, schemaVersion: `${chain.family}/v${currentVersion(name) + 1}` }),
       );
       const before = await Promise.all(
         families.map(([file]) => readFile(join(root, file), "utf8")),
@@ -135,7 +139,7 @@ describe("asset sync owner migrations", () => {
     const { root, upgrade } = await owner();
     await writeFile(
       join(root, "asset-sync.migration.json"),
-      JSON.stringify({ fromVersion: 2, toVersion: 3, documents: {} }),
+      JSON.stringify({ fromVersion: 3, toVersion: 4, documents: {} }),
     );
     await expect(upgrade()).rejects.toThrow("migration_unsupported_version");
   });
@@ -143,7 +147,7 @@ describe("asset sync owner migrations", () => {
   it("never replays a stale migration journal over newer owner data", async () => {
     const { root, upgrade } = await owner();
     const documents: Record<string, unknown> = {};
-    for (const [name] of families) documents[name] = await fixture("v2", name);
+    for (const [name] of families) documents[name] = await currentFixture(name);
     await writeFile(
       join(root, "asset-sync.migration.json"),
       JSON.stringify({
@@ -167,5 +171,70 @@ describe("asset sync owner migrations", () => {
     expect(await readFile(join(root, "asset-sync.migration.json"), "utf8")).toContain(
       "pragma.state-migration/v1",
     );
+  });
+  it("migrates v2 Skill payloads and every stored fingerprint together", async () => {
+    const source = await fixture("v2", "skill-restore-journal.json");
+    const before = JSON.stringify(source);
+    const target = await fixture("v3", "skill-restore-journal.json");
+    expect(journalMigrationChain.upgrade(source)).toMatchObject({
+      value: target,
+      fromVersion: 2,
+      toVersion: 3,
+      migrated: true,
+    });
+    expect(JSON.stringify(source)).toBe(before);
+    expect(journalMigrationChain.upgrade(target)).toMatchObject({ value: target, migrated: false });
+    const { root, upgrade } = await owner("v2");
+    await writeFile(join(root, "restore-journal.json"), before);
+    await upgrade();
+    expect(JSON.parse(await readFile(join(root, "restore-journal.json"), "utf8"))).toEqual(target);
+    const names = await readdir(join(root, "migrations/backups"));
+    expect(names).toHaveLength(1);
+    expect(names[0]).toMatch(/\.v2\.json$/u);
+    expect(await readFile(join(root, "migrations/backups", names[0]!), "utf8")).toBe(before);
+    await upgrade();
+    expect(await readdir(join(root, "migrations/backups"))).toEqual(names);
+  });
+
+  it("replays an interrupted v2-to-v3 Skill journal migration", async () => {
+    const { root, upgrade } = await owner("v2");
+    const target = await fixture("v3", "skill-restore-journal.json");
+    await writeFile(
+      join(root, "restore-journal.json"),
+      JSON.stringify(await fixture("v2", "skill-restore-journal.json")),
+    );
+    await writeFile(
+      join(root, "asset-sync.migration.json"),
+      JSON.stringify({
+        schemaVersion: "pragma.state-migration/v1",
+        resource: { family: "pragma.asset-sync-owner", id: "asset-sync" },
+        fromVersion: 2,
+        toVersion: 3,
+        documents: { "restore-journal.json": target },
+      }),
+    );
+    await upgrade();
+    expect(JSON.parse(await readFile(join(root, "restore-journal.json"), "utf8"))).toEqual(target);
+    await expect(readFile(join(root, "asset-sync.migration.json"))).rejects.toMatchObject({
+      code: "ENOENT",
+    });
+  });
+
+  it("rejects an old owner migration that would overwrite a v3 restore journal", async () => {
+    const { root, upgrade } = await owner("v2");
+    const target = await fixture("v3", "skill-restore-journal.json");
+    await writeFile(join(root, "restore-journal.json"), JSON.stringify(target));
+    await writeFile(
+      join(root, "asset-sync.migration.json"),
+      JSON.stringify({
+        schemaVersion: "pragma.state-migration/v1",
+        resource: { family: "pragma.asset-sync-owner", id: "asset-sync" },
+        fromVersion: 1,
+        toVersion: 2,
+        documents: { "restore-journal.json": await fixture("v2", "restore-journal.json") },
+      }),
+    );
+    await expect(upgrade()).rejects.toThrow("migration_stale");
+    expect(JSON.parse(await readFile(join(root, "restore-journal.json"), "utf8"))).toEqual(target);
   });
 });

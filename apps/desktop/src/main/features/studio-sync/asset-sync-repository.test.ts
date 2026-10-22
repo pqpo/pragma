@@ -1,4 +1,5 @@
 import { MAX_SKILL_PACKAGE_BYTES } from "@pragma/shared";
+import { readFileSync } from "node:fs";
 import { SkillDataSchema } from "@pragma/local-host/deployment";
 import { PRAGMA_MANAGEMENT_DESKTOP_CAPABILITY_ID } from "@pragma/built-in-agents";
 import { describe, expect, it } from "vitest";
@@ -154,7 +155,7 @@ describe("structured sync repository", () => {
     expect(errorMessage).toContain("SKILL.md:name");
   });
   it.each(["Review\ncode", String.raw`Review \ncode with \"quotes\"`, "Different description"])(
-    "round-trips independent metadata descriptions: %s",
+    "derives the metadata description from SKILL.md instead of stale cache text: %s",
     (description) => {
       const original = skill();
       const originalData = original.data as {
@@ -167,10 +168,77 @@ describe("structured sync repository", () => {
 
       const restored = decodeSyncRepository(files).get(`skill:${skillId}`);
 
-      expect(restored?.data).toMatchObject({ description });
+      expect(restored?.data).toMatchObject({ description: "Review code" });
       expect(encodeSyncRepository(decodeSyncRepository(files))).toEqual(files);
     },
   );
+  it.each(["Legacy directory annotation", "🧠".repeat(300)])(
+    "migrates a frozen v1 Skill description snapshot without rewriting its source: %s",
+    (annotation) => {
+      const metadataPath = `skills/${skillId}/metadata.yaml`;
+      const entryPath = `skills/${skillId}/files/SKILL.md`;
+      const legacyMetadata = `id: ${skillId}\nname: review\ndescription: ${annotation}\nentryPath: SKILL.md\n`;
+      const entry =
+        "---\nname: review\ndescription: |-\n  Actual skill\n  description\n---\n\nRun the review.\n";
+      const legacy = new Map<string, SyncFile>([
+        ["sync.yaml", file("schemaVersion: pragma.asset-sync-repository/v1\n")],
+        [metadataPath, file(legacyMetadata)],
+        [entryPath, file(entry)],
+        [
+          `skills/${skillId}/files/references/metadata.yaml`,
+          file("description: Native YAML resource\n"),
+        ],
+        [
+          `skills/${skillId}/files/scripts/run.sh`,
+          { bytes: Buffer.from("#!/bin/sh\nexit 0\n"), executable: true },
+        ],
+      ]);
+      const restored = decodeSyncRepository(legacy);
+      expect(restored.get(`skill:${skillId}`)?.data).toMatchObject({
+        description: "Actual skill\ndescription",
+      });
+      expect(legacy.get(metadataPath)?.bytes.toString()).toBe(legacyMetadata);
+      expect(legacy.get("sync.yaml")?.bytes.toString()).toContain("repository/v1");
+      const current = encodeSyncRepository(restored);
+      expect(current.get("sync.yaml")?.bytes.toString()).toContain("repository/v2");
+      expect(current.get(entryPath)?.bytes.toString()).toBe(entry);
+      expect(
+        current.get(`skills/${skillId}/files/references/metadata.yaml`)?.bytes.toString(),
+      ).toBe("description: Native YAML resource\n");
+      expect(decodeSyncRepository(current)).toEqual(restored);
+      expect(current.get(`skills/${skillId}/files/scripts/run.sh`)?.executable).toBe(true);
+    },
+  );
+
+  it("migrates actual v1 writer output at the 50 Unicode-character name boundary", () => {
+    const fixture = JSON.parse(
+      readFileSync(
+        new URL("./fixtures/repository-v1/skill-name-boundary.json", import.meta.url),
+        "utf8",
+      ),
+    ) as { files: { path: string; content: string; executable: boolean }[] };
+    const legacy = new Map(
+      fixture.files.map((entry) => [
+        entry.path,
+        { bytes: Buffer.from(entry.content), executable: entry.executable },
+      ]),
+    );
+    const restored = decodeSyncRepository(legacy);
+    expect(restored.get(`skill:${skillId}`)?.name).toBe("🧠".repeat(50));
+    expect(encodeSyncRepository(decodeSyncRepository(encodeSyncRepository(restored)))).toEqual(
+      encodeSyncRepository(restored),
+    );
+    expect(legacy.get("sync.yaml")?.bytes.toString()).toContain("repository/v1");
+  });
+
+  it("rejects unknown future repository versions without altering their files", () => {
+    const files = encode(skill());
+    const future = file("schemaVersion: pragma.asset-sync-repository/v3\n");
+    files.set("sync.yaml", future);
+    expect(() => decodeSyncRepository(files)).toThrow();
+    expect(files.get("sync.yaml")).toBe(future);
+  });
+
   it("accepts edits, additions and deletions without a manually updated hash index", () => {
     const original = knowledge();
     const files = encode(original);
