@@ -1,3 +1,4 @@
+import { readLearningDecision, type LearningDecision } from "../learning/decision-store.ts";
 import {
   pruneCompletedMemoryJobs,
   type CompletedMemoryJobCursor,
@@ -58,6 +59,7 @@ export interface KnowledgeLearningStoreDiagnostic {
 
 export interface KnowledgeLearningStore {
   getPresentation(job: KnowledgeExtractionJob): MemoryLearningTaskPresentation | undefined;
+  getDecision?(job: KnowledgeExtractionJob): LearningDecision | undefined;
   schedule(input: {
     readonly rootRef: MemorySubjectRef;
     readonly sourceDigest: string;
@@ -152,6 +154,9 @@ export async function createKnowledgeLearningStore(
   const store: KnowledgeLearningStore = {
     getPresentation(job) {
       return readMemoryLearningTaskPresentation(options, { module: "knowledge", ...job });
+    },
+    getDecision(job) {
+      return readLearningDecision(options, "knowledge", job.id);
     },
     async schedule(input) {
       const sourceDigest = assertDigest(input.sourceDigest);

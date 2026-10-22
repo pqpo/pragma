@@ -1,4 +1,6 @@
 import type { EpisodicMemoryRecord } from "../src/episodic/schema.ts";
+import { createKnowledgeSourceReader } from "../src/knowledge/source-reader.ts";
+import { EpisodicMemoryRecordSchema } from "../src/episodic/schema.ts";
 import { createSkillSourceReader } from "../src/skill/source-reader.ts";
 import type { SemanticFact } from "@pragma/shared";
 import { describe, expect, it } from "vitest";
@@ -9,14 +11,14 @@ describe("Skill source reader", () => {
   it("reserves the source limit for Episodic evidence before Semantic support", async () => {
     const reader = createSkillSourceReader({
       episodic: {
-        list: async () => [
+        listForLearning: async () => [
           episode("episode-old", "2026-08-01T00:00:00.000Z"),
           episode("episode-new", "2026-08-03T00:00:00.000Z"),
           episode("episode-mid", "2026-08-02T00:00:00.000Z"),
         ],
       },
       semantic: {
-        list: async () => [fact("fact-new", "2026-08-04T00:00:00.000Z")],
+        listForLearning: async () => [fact("fact-new", "2026-08-04T00:00:00.000Z")],
       },
     });
 
@@ -111,3 +113,26 @@ function fact(id: string, observedAt: string): SemanticFact {
     updatedAt: observedAt,
   };
 }
+
+it("preserves a complete valid long Episode and validation results in both learning projections", async () => {
+  const record = EpisodicMemoryRecordSchema.parse({
+    ...episode("long-workflow", "2026-08-03T00:00:00.000Z"),
+    goal: { text: "Goal ".repeat(300), evidenceRefs: ["evidence-long-workflow"] },
+    attempts: Array.from({ length: 10 }, (_, index) => ({
+      description: "Step ".repeat(300),
+      result: `Verified output ${index}: ` + "OK ".repeat(400),
+      evidenceRefs: ["evidence-long-workflow"],
+    })),
+  });
+  const stores = {
+    episodic: { listForLearning: async () => [record] },
+    semantic: { listForLearning: async () => [], sourceExecutionIds: async () => [] },
+  };
+  for (const reader of [createKnowledgeSourceReader(stores), createSkillSourceReader(stores)]) {
+    const sources = await reader.listEligibleSources({ rootRef, limit: 10, now: new Date() });
+    expect(sources).toHaveLength(1);
+    expect(sources[0]!.title).toBe(record.goal.text.trim());
+    expect(sources[0]!.body.length).toBeGreaterThan(24000);
+    expect(sources[0]!.body).toContain("Verified output 9:");
+  }
+});

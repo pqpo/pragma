@@ -92,7 +92,7 @@ export async function createSemanticMemoryModule(
     const notification = await store.readProjectionNotification();
     if (notification === undefined) return;
     try {
-      if (notification.learningEligible) {
+      if (notification.learningEligible || notification.sourceChanged) {
         await options.onProjectionChanged?.({ rootRef: notification.rootRef });
       }
       await store.acknowledgeProjectionNotification(notification.id);

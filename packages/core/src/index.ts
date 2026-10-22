@@ -130,3 +130,5 @@ export {
 export * from "./storage/migrations/execution-storage-conversion/index.ts";
 
 export * from "./storage/owner-deletion.ts";
+
+export * from "./storage/migrations/memory-learning-revisions/index.ts";

@@ -1112,7 +1112,7 @@ describe("Semantic Memory", () => {
     const history = await module.store.history(initial.id);
     expect(history.map((revision) => revision.revision)).toEqual([4, 3, 2, 1]);
     expect(history.at(-1)?.statement).toBe("The user prefers concise Chinese answers.");
-    expect(onProjectionChanged).toHaveBeenCalledTimes(3);
+    expect(onProjectionChanged).toHaveBeenCalledTimes(4);
     module.close();
   });
 
@@ -1247,7 +1247,7 @@ describe("Semantic Memory", () => {
     expect(await module.store.get(initial.id)).toBeUndefined();
     expect(await module.store.history(initial.id)).toEqual([]);
     expect(await module.store.getEvidence(evidence[0]!.messageId)).toBeUndefined();
-    expect(onProjectionChanged).toHaveBeenCalledTimes(1);
+    expect(onProjectionChanged).toHaveBeenCalledTimes(3);
     module.close();
 
     const database = new DatabaseSync(dataPath);
@@ -1292,12 +1292,12 @@ describe("Semantic Memory", () => {
         "facts.sqlite",
       ),
     );
-    database.exec("PRAGMA user_version = 7");
+    database.exec("PRAGMA user_version = 8");
     database.close();
 
     await expect(
       createSemanticMemoryModule({ pragmaHome: root, extractor: fakeExtractor() }),
-    ).rejects.toThrow("unsupported-state-version:pragma.memory-semantic-store/v7");
+    ).rejects.toThrow("unsupported-state-version:pragma.memory-semantic-store/v8");
   });
 
   it("upgrades historical semantic jobs through the registered migration and keeps a backup", async () => {

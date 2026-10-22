@@ -1,20 +1,45 @@
 import { z } from "zod";
+import { KnowledgeSourceRevisionRefSchema, SkillSourceRevisionRefSchema } from "@pragma/shared";
 
-import { SkillSourceRevisionRefSchema } from "@pragma/shared";
+export const MEMORY_LEARNING_POLICY_VERSION = "learning-v2";
+
+const reason = z.string().trim().min(1).max(2000);
+const skip = z
+  .object({
+    action: z.literal("skip"),
+    reason: reason.optional(),
+    disposition: z.enum(["accumulate", "duplicate", "unsupported"]).optional(),
+    waitForTarget: z.string().min(1).max(300).optional(),
+  })
+  .strict();
 
 export const KnowledgeLearningPlanSchema = z.discriminatedUnion("action", [
-  z.object({ action: z.literal("skip") }).strict(),
+  skip,
   z
     .object({
       action: z.literal("apply"),
       name: z.string().trim().min(1).max(120),
-      description: z.string().trim().min(1).max(2_000),
+      description: z.string().trim().min(1).max(2000),
+      rationale: reason,
+      sourceRefs: z.array(KnowledgeSourceRevisionRefSchema).min(1).max(20),
+      maturity: z.enum(["incremental", "cross-conversation", "validated-artifact"]),
+      target: z.discriminatedUnion("type", [
+        z.object({ type: z.literal("create"), justification: reason }).strict(),
+        z
+          .object({
+            type: z.literal("revise"),
+            storeId: z.string().uuid(),
+            baseRevision: z.number().int().positive(),
+            snapshotHash: z.string().regex(/^[a-f0-9]{64}$/u),
+          })
+          .strict(),
+      ]),
     })
     .strict(),
 ]);
 
 export const SkillLearningPlanSchema = z.discriminatedUnion("action", [
-  z.object({ action: z.literal("skip") }).strict(),
+  skip,
   z
     .object({
       action: z.literal("apply"),
@@ -30,13 +55,18 @@ export const SkillLearningPlanSchema = z.discriminatedUnion("action", [
                 .min(1)
                 .max(300)
                 .regex(/^[a-z0-9][a-z0-9._:/-]*$/u),
-              sourceRefs: z.array(SkillSourceRevisionRefSchema).min(3).max(8),
+              sourceRefs: z.array(SkillSourceRevisionRefSchema).min(1).max(8),
               target: z.discriminatedUnion("type", [
                 z.object({ type: z.literal("create") }).strict(),
                 z
                   .object({
                     type: z.literal("revise"),
                     capabilityId: z.string().regex(/^(?:[0-9a-hjkmnp-tv-z]{16}|[0-9a-f-]{36})$/u),
+                    baseRevision: z.number().int().positive().optional(),
+                    contentHash: z
+                      .string()
+                      .regex(/^[a-f0-9]{64}$/u)
+                      .optional(),
                   })
                   .strict(),
               ]),
@@ -48,6 +78,17 @@ export const SkillLearningPlanSchema = z.discriminatedUnion("action", [
     })
     .strict(),
 ]);
+
+export interface ExistingKnowledgeLearningTarget {
+  readonly storeId: string;
+  readonly name: string;
+  readonly description: string;
+  readonly baseRevision: number;
+  readonly snapshotHash: string;
+  readonly mounted: boolean;
+  readonly pending?: boolean;
+  readonly body?: string;
+}
 
 export type KnowledgeLearningPlan = z.infer<typeof KnowledgeLearningPlanSchema>;
 export type SkillLearningPlan = z.infer<typeof SkillLearningPlanSchema>;

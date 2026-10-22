@@ -53,7 +53,7 @@ describe("Memory extraction job v3 migration", () => {
       const migrated = new DatabaseSync(dataPath);
       expect(
         (migrated.prepare("PRAGMA user_version").get() as { user_version: number }).user_version,
-      ).toBe(moduleId === "pragma.memory.semantic" ? 6 : 5);
+      ).toBe(moduleId === "pragma.memory.semantic" ? 7 : 6);
       expect(
         migrated
           .prepare(

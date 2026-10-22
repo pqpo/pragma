@@ -1,6 +1,13 @@
 import type { DesktopTranslationResource } from "../en/index.ts";
 
 export const memory = {
+  learningDecisions: {
+    accumulate: "继续积累",
+    duplicate: "没有新增内容",
+    unsupported: "依据不足",
+    create: "提出新建",
+    revise: "提出修订",
+  },
   showCompletedTasks: "显示已完成",
   hideCompletedTasks: "隐藏已完成",
   extractionSource: "来源：{{name}}",

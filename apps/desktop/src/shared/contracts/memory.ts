@@ -151,6 +151,13 @@ export const DesktopMemoryExtractionTaskSchema = z
     sourceName: z.string().trim().min(1).optional(),
     createdAt: z.string().datetime().optional(),
     topicCount: z.number().int().positive().optional(),
+    learningDecision: z
+      .object({
+        outcome: z.enum(["accumulate", "duplicate", "unsupported", "create", "revise"]),
+        reason: z.string().max(4000),
+        targets: z.array(z.string()).max(3),
+      })
+      .optional(),
     completion: z.enum(["retained", "rejected"]).optional(),
     problem: DesktopMemoryProblemSchema.optional(),
     updatedAt: z.string().datetime(),

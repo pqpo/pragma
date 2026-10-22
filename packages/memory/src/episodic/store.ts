@@ -1,3 +1,4 @@
+import { initializeEpisodicLearningNotifications } from "../storage/migrations/episodic-data/steps/v5-to-v6.ts";
 import { conversationExtractionEligibleAt } from "../pipeline/conversation-extraction-schedule.ts";
 import type { MemoryExtractionProvenanceUpdate } from "../pipeline/extraction-session.ts";
 import {
@@ -38,6 +39,7 @@ import {
 } from "@pragma/core";
 import {
   MemoryEvidenceEnvelopeSchema,
+  MemorySubjectRefSchema,
   type MemoryExtractionFailureAttempt,
   type MemoryExtractionFailureDiagnostic,
   type MemoryEvidenceEnvelope,
@@ -114,6 +116,18 @@ export type EpisodicRejectionReason =
   "low-value" | "insufficient-evidence" | "sensitive" | "policy";
 
 export interface EpisodicMemoryStore {
+  readLearningNotification(): Promise<
+    | {
+        readonly rootRef: MemorySubjectRef;
+        readonly generation: number;
+        readonly learningEligible: boolean;
+      }
+    | undefined
+  >;
+  acknowledgeLearningNotification(input: {
+    readonly rootRef: MemorySubjectRef;
+    readonly generation: number;
+  }): Promise<void>;
   enrichExtractionProvenance(input: MemoryExtractionProvenanceUpdate): Promise<void>;
   queryForExtraction(
     input: ExtractionCatalogQuery,
@@ -180,6 +194,7 @@ export interface EpisodicMemoryStore {
   get(id: string): Promise<EpisodicMemoryRecord | undefined>;
   history(id: string): Promise<readonly EpisodicMemoryRecord[]>;
   list(): Promise<readonly EpisodicMemoryRecord[]>;
+  listForLearning(): Promise<readonly EpisodicMemoryRecord[]>;
   listForRecall(scope: MemoryRecallScope, now?: Date): Promise<readonly EpisodicMemoryRecord[]>;
   listCandidatesForRecall(
     scope: MemoryRecallScope,
@@ -303,7 +318,7 @@ export async function createEpisodicMemoryStore(
           database: data,
           databasePath: dataPath,
           family: "pragma.memory-episodic-store",
-          targetVersion: 5,
+          targetVersion: 6,
           migrations: EPISODIC_DATA_STORAGE_MIGRATIONS,
         });
       }
@@ -385,6 +400,25 @@ export async function createEpisodicMemoryStore(
   };
 
   const store: EpisodicMemoryStore = {
+    async readLearningNotification() {
+      const row = data
+        .prepare(
+          "SELECT root_ref_json AS root, generation, learning_eligible AS learningEligible FROM learning_notifications ORDER BY root_ref_json LIMIT 1",
+        )
+        .get() as { root: string; generation: number; learningEligible: number } | undefined;
+      return row === undefined
+        ? undefined
+        : {
+            rootRef: MemorySubjectRefSchema.parse(JSON.parse(row.root)),
+            generation: row.generation,
+            learningEligible: row.learningEligible === 1,
+          };
+    },
+    async acknowledgeLearningNotification(input) {
+      data
+        .prepare("DELETE FROM learning_notifications WHERE root_ref_json=? AND generation=?")
+        .run(JSON.stringify(input.rootRef), input.generation);
+    },
     async enrichExtractionProvenance(input) {
       const previous = EpisodicMemoryRecordSchema.shape.extractor.parse(input.previous);
       const next = EpisodicMemoryRecordSchema.shape.extractor.parse(input.next);
@@ -838,6 +872,21 @@ export async function createEpisodicMemoryStore(
       );
     },
 
+    async listForLearning() {
+      return readEpisodeRows(
+        data
+          .prepare(
+            `SELECT record_json AS recordJson FROM episodes e
+        WHERE json_array_length(e.record_json, '$.evidenceRefs') > 0 AND NOT EXISTS (
+          SELECT 1 FROM json_each(e.record_json, '$.evidenceRefs') cited
+          LEFT JOIN episode_evidence evidence ON evidence.episode_id=e.id AND evidence.evidence_id=cited.value
+          WHERE evidence.evidence_id IS NULL OR COALESCE(json_extract(evidence.envelope_json, '$.policySnapshot.learning'), 'disabled')='disabled'
+        ) ORDER BY updated_at DESC, id`,
+          )
+          .all(),
+      );
+    },
+
     async listCandidatesForRecall(scope) {
       const access = recallPredicate("episodes", scope);
       return readEpisodeRows(
@@ -997,6 +1046,17 @@ export async function createEpisodicMemoryStore(
         for (const envelope of input.evidence) {
           if (!citedEvidence.has(envelope.messageId)) continue;
           insert.run(record.id, envelope.messageId, envelope.occurredAt, JSON.stringify(envelope));
+        }
+        if (
+          input.evidence.length > 0 &&
+          input.evidence.every((item) => item.policySnapshot.learning !== "disabled")
+        ) {
+          for (const rootRef of record.rootRefs)
+            data
+              .prepare(
+                "UPDATE learning_notifications SET learning_eligible=1 WHERE root_ref_json=?",
+              )
+              .run(JSON.stringify(rootRef));
         }
         data.exec("COMMIT;");
       } catch (error) {
@@ -1492,7 +1552,7 @@ function uniqueStrings(values: readonly string[]): string[] {
 
 function initializeData(database: DatabaseSync): void {
   const version = readVersion(database);
-  if (version > 5) {
+  if (version > 6) {
     database.close();
     throw new Error(`unsupported-state-version:pragma.memory-episodic-store/v${version}`);
   }
@@ -1563,11 +1623,12 @@ function initializeData(database: DatabaseSync): void {
       pruned_at TEXT NOT NULL
     );
   `);
-  if (version !== 0 && version !== 5) {
+  if (version !== 0 && version !== 6) {
     throw new Error(`missing-adjacent-migration:pragma.memory-episodic-store/v${version}`);
   }
   initializeMemoryIndexOutbox(database, "episodes");
-  database.exec("PRAGMA user_version = 5;");
+  initializeEpisodicLearningNotifications(database);
+  database.exec("PRAGMA user_version = 6;");
 }
 
 function initializeState(database: DatabaseSync): void {

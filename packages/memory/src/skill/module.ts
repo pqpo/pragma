@@ -1,7 +1,13 @@
+import {
+  SkillLearningPlanSchema,
+  MEMORY_LEARNING_POLICY_VERSION,
+} from "../learning/revision-plan.ts";
+import { createLearningDecisionStore, learningFingerprint } from "../learning/decision-store.ts";
 import { createHash } from "node:crypto";
 
 import { StaticContextStore } from "@pragma/core";
 import {
+  SkillSourceSnapshotSchema,
   type ExistingMemorySkillTarget,
   type MemoryEvidenceEnvelope,
   type MemoryExtractionFailurePhase,
@@ -24,9 +30,12 @@ import type { SkillLearningPlan } from "../learning/revision-plan.ts";
 import { createMemoryLearningPolicyGuard } from "../learning/learning-policy.ts";
 import { writeMemoryLearningTaskPresentation } from "../learning/task-presentation.ts";
 
-const MAX_SOURCE_REVISIONS = 100;
+const MAX_SOURCE_REVISIONS =
+  DEFAULT_MEMORY_STORAGE_POLICY.episodicMaxRecords +
+  DEFAULT_MEMORY_STORAGE_POLICY.semanticMaxRecords;
 
 export interface SkillLearningTargetReader {
+  readTarget?(target: ExistingMemorySkillTarget): Promise<string>;
   listTargets(input: { readonly expertRef: string }): Promise<readonly ExistingMemorySkillTarget[]>;
 }
 
@@ -52,6 +61,7 @@ export interface SkillLearningPlanner {
     readonly sourceDigest: string;
     readonly sources: readonly SkillSourceSnapshot[];
     readonly existingTargets: readonly ExistingMemorySkillTarget[];
+    readonly readTarget?: ((target: ExistingMemorySkillTarget) => Promise<string>) | undefined;
     readonly signal: AbortSignal;
     readonly onRejectedChanges?: (issues: readonly SkillPlanValidationIssue[]) => void;
   }): Promise<SkillLearningPlan>;
@@ -59,6 +69,7 @@ export interface SkillLearningPlanner {
 
 export interface SkillMemoryModule extends MemoryModule {
   readonly store: SkillLearningStore;
+  scheduleRoot(rootRef: MemorySubjectRef): Promise<void>;
   setPlanner(planner: SkillLearningPlanner | undefined): Promise<void>;
   interruptExtractionJob(input: {
     readonly id: string;
@@ -78,10 +89,41 @@ export async function createSkillMemoryModule(options: {
 }): Promise<SkillMemoryModule> {
   const store = await createSkillLearningStore(options);
   const now = options.now ?? (() => new Date());
+  let decisions: ReturnType<typeof createLearningDecisionStore>;
+  try {
+    decisions = createLearningDecisionStore(options, "skill");
+  } catch (error) {
+    store.close();
+    throw error;
+  }
   const canLearn = createMemoryLearningPolicyGuard({ ...options, now });
   let planner = options.planner;
   const running = new Map<string, AbortController>();
+  const scheduleRoot = async (rootRef: MemorySubjectRef): Promise<void> => {
+    if (!(await canLearn(rootRef))) return;
+    const sources = boundSources(
+      await options.sourceReader.listEligibleSources({
+        rootRef,
+        limit: MAX_SOURCE_REVISIONS,
+        now: now(),
+      }),
+    );
+    const sourceDigest = digest(
+      "skill-sources",
+      MEMORY_LEARNING_POLICY_VERSION,
+      ...sources.map(sourceKey).toSorted(),
+    );
+    const job = await store.schedule({
+      rootRef,
+      sourceDigest,
+      now: now(),
+      deferUntil: new Date(now().getTime() + DEFAULT_MEMORY_STORAGE_POLICY.extractionIdleMs),
+    });
+    if (job !== undefined)
+      writeMemoryLearningTaskPresentation(options, { module: "skill", ...job }, { sources });
+  };
   return {
+    scheduleRoot,
     descriptor: {
       id: "pragma.memory.skill-learning",
       version: "1.0.0",
@@ -111,28 +153,20 @@ export async function createSkillMemoryModule(options: {
     async consume(envelopes) {
       for (const [rootKey, group] of groupTerminalSignals(envelopes)) {
         if (!(await canLearn(group[0]!.attribution!.rootRef))) continue;
-        const job = await store.schedule({
-          rootRef: group[0]!.attribution!.rootRef,
-          sourceDigest: digest(
-            "terminal-signal",
-            rootKey,
-            ...group.map((item) => item.messageId).toSorted(),
-          ),
-          now: now(),
-        });
-        if (job !== undefined) {
-          try {
-            const sources = boundSources(
-              await options.sourceReader.listEligibleSources({
-                rootRef: job.rootRef,
-                limit: MAX_SOURCE_REVISIONS,
-                now: now(),
-              }),
-            );
-            writeMemoryLearningTaskPresentation(options, { module: "skill", ...job }, { sources });
-          } catch {
-            // Display metadata is optional; the scheduled job retries source reads in the background.
-          }
+        try {
+          await scheduleRoot(group[0]!.attribution!.rootRef);
+        } catch {
+          // Source delivery must remain recoverable even when its projections cannot be read yet.
+          await store.schedule({
+            rootRef: group[0]!.attribution!.rootRef,
+            sourceDigest: digest(
+              "terminal-signal",
+              rootKey,
+              ...group.map((item) => item.messageId).toSorted(),
+            ),
+            now: now(),
+            deferUntil: new Date(now().getTime() + DEFAULT_MEMORY_STORAGE_POLICY.extractionIdleMs),
+          });
         }
       }
       return {};
@@ -156,7 +190,11 @@ export async function createSkillMemoryModule(options: {
           now: now(),
         });
         const sources = boundSources(available);
-        const sourceDigest = digest("skill-sources", ...sources.map(sourceKey).toSorted());
+        const sourceDigest = digest(
+          "skill-sources",
+          MEMORY_LEARNING_POLICY_VERSION,
+          ...sources.map(sourceKey).toSorted(),
+        );
         if (job.sourceDigest !== sourceDigest) {
           const next = await store.schedule({ rootRef: job.rootRef, sourceDigest, now: now() });
           if (next !== undefined)
@@ -192,25 +230,83 @@ export async function createSkillMemoryModule(options: {
           controller.signal.throwIfAborted();
           // Skill targets are chosen by the planner; unrelated pending targets must not
           // prevent this expert from proposing independent Skill work.
-          phase = "revision_plan";
-          modelRequested = true;
-          const proposedPlan = await planner.plan({
-            rootRef: job.rootRef,
+          const evaluationKey = learningFingerprint({
+            policy: MEMORY_LEARNING_POLICY_VERSION,
             expertRef,
-            sourceDigest,
+            rootRef: job.rootRef,
             sources: expertSources,
             existingTargets,
-            signal: controller.signal,
-            onRejectedChanges: (issues) => {
-              rejectedChanges.push(...issues.map((issue) => ({ expertRef, ...issue })));
-            },
           });
+          if (decisions.has(evaluationKey)) {
+            decisions.write(learningFingerprint({ evaluationKey, jobId: job.id }), job.id, {
+              outcome: "duplicate",
+              reason:
+                "The effective Memory sources and editable target versions have not changed since the previous assessment.",
+              targets: [],
+            });
+            continue;
+          }
+          phase = "revision_plan";
+          const cachedPlan = decisions.readPlan(evaluationKey);
+          modelRequested ||= cachedPlan === undefined;
+          const proposedPlan =
+            cachedPlan === undefined
+              ? await planner.plan({
+                  rootRef: job.rootRef,
+                  expertRef,
+                  sourceDigest,
+                  sources: expertSources,
+                  existingTargets,
+                  readTarget: options.targetReader.readTarget,
+                  signal: controller.signal,
+                  onRejectedChanges: (issues) => {
+                    rejectedChanges.push(...issues.map((issue) => ({ expertRef, ...issue })));
+                  },
+                })
+              : SkillLearningPlanSchema.parse(cachedPlan);
+          if (cachedPlan !== undefined && proposedPlan.action === "apply")
+            for (const change of proposedPlan.changes)
+              change.sourceRefs = change.sourceRefs.map(
+                (ref) =>
+                  expertSources.find(
+                    (source) => source.ref.kind === ref.kind && source.ref.id === ref.id,
+                  )?.ref ?? ref,
+              );
           if (!(await canLearn(job.rootRef, producers))) {
             await store.interruptJob({ id: job.id, expectedRevision: job.revision, now: now() });
             return;
           }
           controller.signal.throwIfAborted();
           if (!(await store.isClaimCurrent(job))) return;
+          const latest = boundSources(
+            await options.sourceReader.listEligibleSources({
+              rootRef: job.rootRef,
+              limit: MAX_SOURCE_REVISIONS,
+              now: now(),
+            }),
+          );
+          if (
+            digest(
+              "skill-sources",
+              MEMORY_LEARNING_POLICY_VERSION,
+              ...latest.map(sourceKey).toSorted(),
+            ) !== job.sourceDigest
+          ) {
+            await store.schedule({
+              rootRef: job.rootRef,
+              sourceDigest: digest(
+                "skill-sources",
+                MEMORY_LEARNING_POLICY_VERSION,
+                ...latest.map(sourceKey).toSorted(),
+              ),
+              now: now(),
+              deferUntil: new Date(
+                now().getTime() + DEFAULT_MEMORY_STORAGE_POLICY.extractionIdleMs,
+              ),
+            });
+            await store.complete(job, "rejected", now());
+            return;
+          }
           phase = "validation";
           rejectedChanges.push(
             ...inspectSkillLearningPlan(proposedPlan, expertSources, existingTargets).map(
@@ -218,23 +314,89 @@ export async function createSkillMemoryModule(options: {
             ),
           );
           const plan = qualifyingSkillLearningPlan(proposedPlan, expertSources, existingTargets);
-          if (plan.action === "skip") continue;
+          if (plan.action === "skip") {
+            if (plan.waitForTarget !== undefined) {
+              if (
+                !existingTargets.some(
+                  (target) => target.capabilityId === plan.waitForTarget && target.pending,
+                )
+              )
+                throw Object.assign(new Error("memory_learning_invalid_wait_target"), {
+                  retryable: false,
+                });
+              decisions.writePlan(evaluationKey, plan);
+              throw new Error("memory_revision_pending");
+            }
+            decisions.write(evaluationKey, job.id, {
+              outcome: rejectedChanges.some((issue) => issue.expertRef === expertRef)
+                ? "unsupported"
+                : (plan.disposition ?? "accumulate"),
+              reason:
+                plan.reason ??
+                (rejectedChanges.some((issue) => issue.expertRef === expertRef)
+                  ? rejectedChanges
+                      .filter((issue) => issue.expertRef === expertRef)
+                      .map((issue) => issue.message)
+                      .join("\n")
+                      .slice(0, 4000)
+                  : "No supported incremental change."),
+              targets: [],
+            });
+            continue;
+          }
+          if (cachedPlan === undefined) decisions.writePlan(evaluationKey, plan);
+          const proposalKey = learningFingerprint({
+            expertRef,
+            changes: plan.changes.map((change) => ({
+              normalizedKey: change.normalizedKey,
+              target: change.target,
+              sourceRefs: change.sourceRefs,
+            })),
+            sources: expertSources.filter((source) =>
+              plan.changes.some((change) =>
+                change.sourceRefs.some(
+                  (ref) => ref.kind === source.ref.kind && ref.id === source.ref.id,
+                ),
+              ),
+            ),
+          });
+          if (decisions.has(proposalKey)) {
+            decisions.write(evaluationKey, job.id, {
+              outcome: "duplicate",
+              reason: "The same supported workflow was already submitted for review.",
+              targets: plan.changes.map((item) => item.name),
+            });
+            continue;
+          }
           writeMemoryLearningTaskPresentation(
             options,
             { module: "skill", ...job },
             { sources, plannedTitles: plan.changes.map((change) => change.name) },
           );
           phase = "revision_submit";
-          await options.learningSink.assertAvailable?.({ expertRef, sourceDigest, plan });
+          await options.learningSink.assertAvailable?.({
+            expertRef,
+            sourceDigest: proposalKey,
+            plan,
+          });
           controller.signal.throwIfAborted();
           if (!(await store.isClaimCurrent(job))) return;
           await options.learningSink.submit({
             rootRef: job.rootRef,
-            sourceDigest,
+            sourceDigest: proposalKey,
             expertRef,
             plan,
             sources: expertSources,
           });
+          const decision = {
+            outcome: plan.changes.some((item) => item.target.type === "create")
+              ? ("create" as const)
+              : ("revise" as const),
+            reason: plan.changes.map((item) => item.description).join("\n"),
+            targets: plan.changes.map((item) => item.name),
+          };
+          decisions.write(proposalKey, job.id, decision);
+          decisions.write(evaluationKey, job.id, decision);
           retained = true;
         }
         const completedAt = now();
@@ -283,6 +445,7 @@ export async function createSkillMemoryModule(options: {
     },
     store,
     close() {
+      decisions.close();
       store.close();
     },
   };
@@ -307,30 +470,9 @@ function groupTerminalSignals(
 }
 
 function boundSources(sources: readonly SkillSourceSnapshot[]): readonly SkillSourceSnapshot[] {
-  const candidates = sources
-    .map((source, index) => ({ source, index }))
-    .toSorted(
-      (left, right) =>
-        sourcePriority(left.source) - sourcePriority(right.source) || left.index - right.index,
-    )
+  return sources
+    .filter((source) => SkillSourceSnapshotSchema.safeParse(source).success)
     .slice(0, MAX_SOURCE_REVISIONS);
-  const selected: Array<{ readonly source: SkillSourceSnapshot; readonly index: number }> = [];
-  for (const candidate of candidates) {
-    if (
-      Buffer.byteLength(
-        JSON.stringify([...selected.map((item) => item.source), candidate.source]),
-      ) > Math.min(DEFAULT_MEMORY_STORAGE_POLICY.extractionPromptMaxBytes, 35_000)
-    )
-      continue;
-    selected.push(candidate);
-  }
-  return selected.toSorted((left, right) => left.index - right.index).map((item) => item.source);
-}
-
-function sourcePriority(source: SkillSourceSnapshot): number {
-  if (source.ref.kind === "episodic" && (source.valueScore ?? 0) >= 0.85) return 0;
-  if (source.ref.kind === "episodic") return 1;
-  return 2;
 }
 
 function producerExpertRefs(

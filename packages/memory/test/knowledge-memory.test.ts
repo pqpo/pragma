@@ -60,7 +60,7 @@ describe("Knowledge learning jobs", () => {
       now: () => clock,
       sourceReader: { listEligibleSources: async () => sources() },
       planner: { plan },
-      learningSink: { submit: vi.fn() },
+      learningSink: { listTargets: async () => [knowledgeTarget], submit: vi.fn() },
     });
     try {
       for (const rootRef of [disabledRoot, enabledRoot]) {
@@ -116,7 +116,12 @@ describe("Knowledge learning jobs", () => {
       };
       const plan = vi.fn(async () => {
         if (boundary === "during-plan") await disable();
-        return { action: "apply" as const, name: "Knowledge", description: "Guidance" };
+        return {
+          action: "apply" as const,
+          ...knowledgePlanFields(),
+          name: "Knowledge",
+          description: "Guidance",
+        };
       });
       const submit = vi.fn(async () => undefined);
       const module = await createKnowledgeMemoryModule({
@@ -124,7 +129,7 @@ describe("Knowledge learning jobs", () => {
         now: () => now,
         sourceReader: { listEligibleSources: async () => sources() },
         planner: { plan },
-        learningSink: { submit },
+        learningSink: { listTargets: async () => [knowledgeTarget], submit },
       });
       try {
         if (boundary !== "during-plan") await disable();
@@ -175,7 +180,7 @@ describe("Knowledge learning jobs", () => {
         pragmaHome,
         sourceReader: { listEligibleSources: async () => available },
         planner: { plan },
-        learningSink: { submit: vi.fn() },
+        learningSink: { listTargets: async () => [knowledgeTarget], submit: vi.fn() },
         now: () => now,
       });
       const page = await module.store.listJobsPage({
@@ -204,10 +209,15 @@ describe("Knowledge learning jobs", () => {
       planner: {
         plan: async () => {
           available = [];
-          return { action: "apply", name: "Obsolete knowledge", description: "Removed source" };
+          return {
+            action: "apply",
+            ...knowledgePlanFields(),
+            name: "Obsolete knowledge",
+            description: "Removed source",
+          };
         },
       },
-      learningSink: { submit },
+      learningSink: { listTargets: async () => [knowledgeTarget], submit },
       now: () => due,
     });
     await module.store.schedule({
@@ -239,23 +249,23 @@ describe("Knowledge learning jobs", () => {
     store.close();
   });
 
-  it("removes an obsolete source snapshot even when other eligible sources remain", async () => {
+  it("replaces obsolete work with the remaining eligible sources without another notification", async () => {
     let available = sources();
     const module = await createKnowledgeMemoryModule({
       pragmaHome: await temporaryRoot(),
       sourceReader: { listEligibleSources: async () => available },
-      learningSink: { submit: vi.fn() },
+      learningSink: { listTargets: async () => [knowledgeTarget], submit: vi.fn() },
       now: () => now,
     });
     await module.scheduleRoot(ref("pragma.expert", "expert-a"));
     available = available.slice(0, 1);
-    expect(
-      await module.store.listJobsPage({
-        statuses: ["pending"],
-        limit: 10,
-        sortKeyPrefix: "knowledge",
-      }),
-    ).toEqual({ jobs: [], total: 0 });
+    const page = await module.store.listJobsPage({
+      statuses: ["pending"],
+      limit: 10,
+      sortKeyPrefix: "knowledge",
+    });
+    expect(page.total).toBe(1);
+    expect(page.jobs[0]!.sourceDigest).toBe(digestSources(available));
     await module.scheduleRoot(ref("pragma.expert", "expert-a"));
     expect(await module.store.listJobs()).toHaveLength(1);
     module.close();
@@ -267,7 +277,7 @@ describe("Knowledge learning jobs", () => {
       sourceReader: {
         listEligibleSources: async ({ rootRef }) => (rootRef.id === "expert-a" ? sources() : []),
       },
-      learningSink: { submit: vi.fn() },
+      learningSink: { listTargets: async () => [knowledgeTarget], submit: vi.fn() },
       now: () => now,
     });
     await module.store.schedule({ rootRef: ref("pragma.expert", "history"), sourceDigest, now });
@@ -652,6 +662,7 @@ describe("Knowledge learning jobs", () => {
     const submit = vi.fn(async () => undefined);
     const plan = {
       action: "apply" as const,
+      ...knowledgePlanFields(),
       name: "Memory knowledge",
       description: "Reusable guidance.",
     };
@@ -659,7 +670,7 @@ describe("Knowledge learning jobs", () => {
       pragmaHome: await temporaryRoot(),
       sourceReader: { listEligibleSources: async () => sourceRevisions },
       planner: { plan: async () => plan },
-      learningSink: { submit },
+      learningSink: { listTargets: async () => [knowledgeTarget], submit },
       now: () => now,
     });
     await module.store.schedule({
@@ -692,7 +703,7 @@ describe("Knowledge learning jobs", () => {
       pragmaHome: await temporaryRoot(),
       sourceReader: { listEligibleSources: async () => sourceRevisions },
       planner: { plan: async () => ({ action: "skip" }) },
-      learningSink: { submit },
+      learningSink: { listTargets: async () => [knowledgeTarget], submit },
       now: () => now,
     });
     await module.store.schedule({
@@ -714,11 +725,13 @@ describe("Knowledge learning jobs", () => {
       planner: {
         plan: async () => ({
           action: "apply",
+          ...knowledgePlanFields(),
           name: "Knowledge",
           description: "Reusable guidance.",
         }),
       },
       learningSink: {
+        listTargets: async () => [knowledgeTarget],
         submit: async () => {
           throw new Error("memory_revision_pending");
         },
@@ -755,8 +768,9 @@ describe("Knowledge learning jobs", () => {
       rootRef,
       producerRefs: [ref("pragma.expert", index === 0 ? "expert-a" : "expert-b")],
     }));
-    const plan = vi.fn(async () => ({
+    const plan = vi.fn(async (input: { sources: readonly KnowledgeSourceSnapshot[] }) => ({
       action: "apply" as const,
+      ...knowledgePlanFields(input.sources),
       name: "Team knowledge",
       description: "Reusable knowledge.",
     }));
@@ -765,7 +779,7 @@ describe("Knowledge learning jobs", () => {
       pragmaHome: await temporaryRoot(),
       sourceReader: { listEligibleSources: async () => sourceRevisions },
       planner: { plan },
-      learningSink: { submit },
+      learningSink: { listTargets: async () => [knowledgeTarget], submit },
       now: () => now,
     });
     await module.store.schedule({
@@ -774,7 +788,7 @@ describe("Knowledge learning jobs", () => {
       now: new Date(now.getTime() - 6 * 60 * 60_000),
     });
     await module.runBackgroundOnce?.();
-    expect(plan).toHaveBeenCalledTimes(1);
+    expect(plan).toHaveBeenCalledTimes(2);
     expect(plan).toHaveBeenCalledWith(
       expect.objectContaining({
         expertRef: "expert:expert-b",
@@ -792,7 +806,7 @@ describe("Knowledge learning jobs", () => {
 
   it("keeps usable sources after an oversized source", async () => {
     const usable = sources();
-    const oversized = { ...usable[0]!, body: "x".repeat(36_000) };
+    const oversized = { ...usable[0]!, body: "x".repeat(410_001) };
     const submit = vi.fn(async () => undefined);
     const module = await createKnowledgeMemoryModule({
       pragmaHome: await temporaryRoot(),
@@ -800,11 +814,12 @@ describe("Knowledge learning jobs", () => {
       planner: {
         plan: async () => ({
           action: "apply",
+          ...knowledgePlanFields(),
           name: "Knowledge",
           description: "Reusable guidance.",
         }),
       },
-      learningSink: { submit },
+      learningSink: { listTargets: async () => [knowledgeTarget], submit },
       now: () => now,
     });
     await module.store.schedule({
@@ -817,9 +832,10 @@ describe("Knowledge learning jobs", () => {
     module.close();
   });
 
-  it("requires a verified Semantic source or Semantic support from two executions", () => {
+  it("admits active Episodes and Facts for value assessment independently of source count", () => {
     const [episode, semantic] = sources();
-    expect(knowledgeSourceSelectionEligible([episode!])).toBe(false);
+    expect(knowledgeSourceSelectionEligible([episode!])).toBe(true);
+    expect(knowledgeSourceSelectionEligible([])).toBe(false);
     expect(knowledgeSourceSelectionEligible([semantic!])).toBe(true);
     expect(
       knowledgeSourceSelectionEligible([
@@ -874,7 +890,10 @@ function sources(): readonly KnowledgeSourceSnapshot[] {
   ];
 }
 
-function digestSources(sourceRevisions: readonly KnowledgeSourceSnapshot[]): string {
+function digestSources(
+  sourceRevisions: readonly KnowledgeSourceSnapshot[],
+  policyVersion = "learning-v2",
+): string {
   const keys = sourceRevisions
     .map((source) =>
       JSON.stringify({
@@ -882,6 +901,8 @@ function digestSources(sourceRevisions: readonly KnowledgeSourceSnapshot[]): str
         id: source.ref.id,
         producerRefs: source.producerRefs,
         sourceExecutionIds: source.sourceExecutionIds,
+        conversationRefs: source.conversationRefs,
+        outcome: source.outcome,
         title: source.title,
         body: source.body,
         observedAt: source.observedAt,
@@ -893,7 +914,7 @@ function digestSources(sourceRevisions: readonly KnowledgeSourceSnapshot[]): str
     )
     .toSorted();
   return createHash("sha256")
-    .update(["knowledge-sources", ...keys].join("\0"))
+    .update(["knowledge-sources", ...(policyVersion ? [policyVersion] : []), ...keys].join("\0"))
     .digest("hex");
 }
 
@@ -956,14 +977,20 @@ async function writeKnowledgeV2Store(root: string): Promise<string> {
   return databasePath;
 }
 
-it("checks a pending revision before planning and resumes only on a dependency wake", async () => {
+it("selects a target before waiting and reuses its validated plan on dependency wakes", async () => {
   let pending = true;
-  const plan = vi.fn(async () => ({ action: "skip" as const }));
+  const plan = vi.fn(async () => ({
+    action: "apply" as const,
+    name: "Knowledge",
+    description: "Migration guidance",
+    ...knowledgePlanFields(),
+  }));
   const module = await createKnowledgeMemoryModule({
     pragmaHome: await temporaryRoot(),
     sourceReader: { listEligibleSources: async () => sources() },
     planner: { plan },
     learningSink: {
+      listTargets: async () => [knowledgeTarget],
       assertAvailable: async () => {
         if (pending) throw new Error("memory_revision_pending");
       },
@@ -978,12 +1005,12 @@ it("checks a pending revision before planning and resumes only on a dependency w
       now: new Date(now.getTime() - 6 * 60 * 60_000),
     });
     await module.runBackgroundOnce?.();
-    expect(plan).not.toHaveBeenCalled();
+    expect(plan).toHaveBeenCalledOnce();
     const [waiting] = await module.store.listJobs();
     expect(waiting).toMatchObject({
       status: "needs_attention",
       lastErrorCode: "memory_revision_pending",
-      attempts: 0,
+      attempts: 1,
     });
     // Unrelated revision completions must not exhaust a task that has admitted no model.
     for (let wake = 0; wake < 5; wake += 1) {
@@ -991,13 +1018,13 @@ it("checks a pending revision before planning and resumes only on a dependency w
       await module.runBackgroundOnce?.();
       expect((await module.store.listJobs())[0]).toMatchObject({
         status: "needs_attention",
-        attempts: 0,
+        attempts: 1,
       });
     }
-    expect(plan).not.toHaveBeenCalled();
+    expect(plan).toHaveBeenCalledOnce();
     pending = false;
     await module.store.wakeNeedsAttention(now, "revision-settled");
-    expect((await module.store.listJobs())[0]).toMatchObject({ status: "pending", attempts: 0 });
+    expect((await module.store.listJobs())[0]).toMatchObject({ status: "pending", attempts: 1 });
     await module.runBackgroundOnce?.();
     expect(plan).toHaveBeenCalledOnce();
     expect((await module.store.listJobs())[0]).toMatchObject({ status: "completed" });
@@ -1087,5 +1114,393 @@ it("reopens historical nonretryable revision waits without resetting or exceedin
     });
   } finally {
     store.close();
+  }
+});
+
+const knowledgeTarget = {
+  storeId: "11111111-1111-4111-8111-111111111111",
+  name: "Existing knowledge",
+  description: "Migration guidance",
+  baseRevision: 1,
+  snapshotHash: "f".repeat(64),
+  mounted: true,
+  body: "Existing migration guide.",
+};
+function knowledgePlanFields(selected: readonly KnowledgeSourceSnapshot[] = sources()) {
+  return {
+    rationale: "Add supported migration recovery guidance.",
+    sourceRefs: selected.map((source) => source.ref),
+    maturity: "incremental" as const,
+    target: {
+      type: "revise" as const,
+      storeId: knowledgeTarget.storeId,
+      baseRevision: knowledgeTarget.baseRevision,
+      snapshotHash: knowledgeTarget.snapshotHash,
+    },
+  };
+}
+
+it("keeps a single verified fact from creating a knowledge base, then admits a mature cross-conversation topic", async () => {
+  const root = await temporaryRoot();
+  let available = [
+    { ...sources()[1]!, conversationRefs: [ref("pragma.mission", "conversation-a")] },
+  ];
+  const submit = vi.fn(async () => undefined);
+  const module = await createKnowledgeMemoryModule({
+    pragmaHome: root,
+    now: () => now,
+    sourceReader: { listEligibleSources: async () => available },
+    learningSink: { submit },
+    planner: {
+      plan: async ({ sources: selected }) => ({
+        action: "apply",
+        name: "Migration handbook",
+        description: "Stable migration and recovery guidance.",
+        rationale: "A coherent reusable migration method.",
+        sourceRefs: selected.map((source) => source.ref),
+        maturity: "cross-conversation",
+        target: {
+          type: "create",
+          justification:
+            "No related editable base exists; independent conversations jointly establish this durable topic.",
+        },
+      }),
+    },
+  });
+  try {
+    await module.store.schedule({
+      rootRef: ref("pragma.expert", "expert-a"),
+      sourceDigest: digestSources(available),
+      now: new Date(now.getTime() - 6 * 60 * 60_000),
+    });
+    await module.runBackgroundOnce?.();
+    expect(submit).not.toHaveBeenCalled();
+    expect((await module.store.listJobs())[0]).toMatchObject({
+      lastErrorCode: "knowledge_learning_topic_immature",
+    });
+    available = [
+      ...available,
+      { ...sources()[0]!, conversationRefs: [ref("pragma.mission", "conversation-b")] },
+    ];
+    await module.store.schedule({
+      rootRef: ref("pragma.expert", "expert-a"),
+      sourceDigest: digestSources(available),
+      now: new Date(now.getTime() - 6 * 60 * 60_000),
+    });
+    await module.runBackgroundOnce?.();
+    expect(submit).toHaveBeenCalledOnce();
+  } finally {
+    module.close();
+  }
+});
+
+it("does not resubmit the same selected knowledge after unrelated evidence arrives, but accepts a supported new delta", async () => {
+  const root = await temporaryRoot();
+  let available = [...sources()];
+  let selected = [...available];
+  const submit = vi.fn(async () => undefined);
+  const module = await createKnowledgeMemoryModule({
+    pragmaHome: root,
+    now: () => now,
+    sourceReader: { listEligibleSources: async () => available },
+    learningSink: { listTargets: async () => [knowledgeTarget], submit },
+    planner: {
+      plan: async () => ({
+        action: "apply",
+        name: "Migration guide",
+        description: "Reusable guidance.",
+        ...knowledgePlanFields(selected),
+      }),
+    },
+  });
+  const run = async () => {
+    await module.store.schedule({
+      rootRef: ref("pragma.expert", "expert-a"),
+      sourceDigest: digestSources(available),
+      now: new Date(now.getTime() - 6 * 60 * 60_000),
+    });
+    await module.runBackgroundOnce?.();
+  };
+  try {
+    await run();
+    expect(submit).toHaveBeenCalledTimes(1);
+    available = [
+      ...available,
+      {
+        ...sources()[1]!,
+        ref: { kind: "semantic", id: "unrelated", revision: 1 },
+        body: "Unrelated temporary material.",
+      },
+    ];
+    await run();
+    expect(submit).toHaveBeenCalledTimes(1);
+    const newSource = {
+      ...sources()[1]!,
+      ref: { kind: "semantic" as const, id: "new-validation", revision: 1 },
+      body: "The migration requires a validated recovery journal before applying changes.",
+    };
+    available = [...available, newSource];
+    selected = [newSource];
+    await run();
+    expect(submit).toHaveBeenCalledTimes(2);
+  } finally {
+    module.close();
+  }
+});
+
+it("preserves decisions for both tasks when a revision-only source update reuses an earlier assessment", async () => {
+  let available = [...sources()];
+  const plan = vi.fn(async () => ({
+    action: "apply" as const,
+    name: "Migration guide",
+    description: "Verified guidance",
+    ...knowledgePlanFields(available),
+  }));
+  const submit = vi.fn(async () => undefined);
+  const module = await createKnowledgeMemoryModule({
+    pragmaHome: await temporaryRoot(),
+    now: () => now,
+    sourceReader: { listEligibleSources: async () => available },
+    planner: { plan },
+    learningSink: { listTargets: async () => [knowledgeTarget], submit },
+  });
+  const run = async () => {
+    await module.store.schedule({
+      rootRef: ref("pragma.expert", "expert-a"),
+      sourceDigest: digestSources(available),
+      now: new Date(now.getTime() - 6 * 60 * 60_000),
+    });
+    await module.runBackgroundOnce?.();
+  };
+  try {
+    await run();
+    const first = (await module.store.listJobs())[0]!;
+    available = available.map((source) => ({
+      ...source,
+      ref: { ...source.ref, revision: source.ref.revision + 1 },
+      observedAt: "2026-08-05T07:00:00.000Z",
+    }));
+    await run();
+    expect(plan).toHaveBeenCalledOnce();
+    expect(submit).toHaveBeenCalledOnce();
+    const second = (await module.store.listJobs()).find((job) => job.id !== first.id)!;
+    expect(module.store.getDecision?.(first)).toMatchObject({ outcome: "revise" });
+    expect(module.store.getDecision?.(second)).toMatchObject({ outcome: "duplicate" });
+  } finally {
+    module.close();
+  }
+});
+
+it.each(["conversationRefs", "outcome"] as const)(
+  "reassesses knowledge when only %s changes",
+  async (field) => {
+    let available: readonly KnowledgeSourceSnapshot[] = [
+      { ...sources()[0]!, outcome: "failed", conversationRefs: [ref("pragma.mission", "first")] },
+    ];
+    const plan = vi.fn(async () => ({ action: "skip" as const }));
+    const module = await createKnowledgeMemoryModule({
+      pragmaHome: await temporaryRoot(),
+      now: () => now,
+      sourceReader: { listEligibleSources: async () => available },
+      planner: { plan },
+      learningSink: { submit: vi.fn() },
+    });
+    const run = async () => {
+      await module.scheduleRoot(ref("pragma.expert", "expert-a"));
+      const pending = (await module.store.listJobs()).find((job) => job.status === "pending");
+      if (pending)
+        await module.store.expediteJob({ id: pending.id, expectedRevision: pending.revision, now });
+      await module.runBackgroundOnce?.();
+    };
+    try {
+      await run();
+      available = [
+        {
+          ...available[0]!,
+          ...(field === "outcome"
+            ? { outcome: "succeeded" as const }
+            : {
+                conversationRefs: [ref("pragma.mission", "first"), ref("pragma.mission", "second")],
+              }),
+        },
+      ];
+      await run();
+      expect(plan).toHaveBeenCalledTimes(2);
+    } finally {
+      module.close();
+    }
+  },
+);
+
+it("does not submit a Knowledge plan interrupted during target availability checks", async () => {
+  const submit = vi.fn(async () => undefined);
+  const module = await createKnowledgeMemoryModule({
+    pragmaHome: await temporaryRoot(),
+    now: () => now,
+    sourceReader: { listEligibleSources: async () => sources() },
+    planner: {
+      plan: async () => ({
+        action: "apply",
+        name: "Guide",
+        description: "Guidance",
+        ...knowledgePlanFields(),
+      }),
+    },
+    learningSink: {
+      listTargets: async () => [knowledgeTarget],
+      submit,
+      assertAvailable: async () => {
+        const current = (await module.store.listJobs())[0]!;
+        await module.interruptExtractionJob({
+          id: current.id,
+          expectedRevision: current.revision,
+          now,
+        });
+      },
+    },
+  });
+  try {
+    await module.store.schedule({
+      rootRef: ref("pragma.expert", "expert-a"),
+      sourceDigest: digestSources(sources()),
+      now: new Date(now.getTime() - 6 * 60 * 60_000),
+    });
+    await module.runBackgroundOnce?.();
+    expect(submit).not.toHaveBeenCalled();
+  } finally {
+    module.close();
+  }
+});
+
+it("uses different submission identities when the selected Knowledge target version changes", async () => {
+  let target = { ...knowledgeTarget };
+  const available = [...sources()];
+  const submit = vi.fn<import("../src/knowledge/module.ts").KnowledgeLearningSink["submit"]>(
+    async () => undefined,
+  );
+  const module = await createKnowledgeMemoryModule({
+    pragmaHome: await temporaryRoot(),
+    now: () => now,
+    sourceReader: { listEligibleSources: async () => available },
+    planner: {
+      plan: async () => ({
+        action: "apply",
+        name: "Guide",
+        description: "Guidance",
+        ...knowledgePlanFields(available),
+        target: {
+          type: "revise",
+          storeId: target.storeId,
+          baseRevision: target.baseRevision,
+          snapshotHash: target.snapshotHash,
+        },
+      }),
+    },
+    learningSink: { listTargets: async () => [target], submit },
+  });
+  const run = async () => {
+    await module.store.schedule({
+      rootRef: ref("pragma.expert", "expert-a"),
+      sourceDigest: digestSources(available),
+      now: new Date(now.getTime() - 6 * 60 * 60_000),
+    });
+    await module.runBackgroundOnce?.();
+  };
+  try {
+    await run();
+    target = { ...target, baseRevision: 2, snapshotHash: "e".repeat(64) };
+    // Completed history may be pruned, while published targets continue evolving.
+    await module.store.pruneCompletedJobs({
+      updatedAt: "2026-08-06T00:00:00.000Z",
+      tieBreaker: "knowledge:z",
+    });
+    await run();
+    expect(submit).toHaveBeenCalledTimes(2);
+    expect(submit.mock.calls[1]![0].sourceDigest).not.toBe(submit.mock.calls[0]![0].sourceDigest);
+  } finally {
+    module.close();
+  }
+});
+
+it("does not create a decision database while reading a historical task without decisions", async () => {
+  const pragmaHome = await temporaryRoot();
+  const store = await createKnowledgeLearningStore({ pragmaHome });
+  try {
+    const job = (await store.schedule({
+      rootRef: ref("pragma.expert", "expert-a"),
+      sourceDigest,
+      now,
+    }))!;
+    expect(store.getDecision?.(job)).toBeUndefined();
+    const path = join(
+      new PragmaPaths({ pragmaHome }).memoryModuleDataRoot("pragma.memory.knowledge-learning"),
+      "learning-decisions-v1.sqlite",
+    );
+    await expect(stat(path)).rejects.toMatchObject({ code: "ENOENT" });
+  } finally {
+    store.close();
+  }
+});
+
+it.each([0, 1, 2])(
+  "rejects a malformed or future decision database at version %i without recreating it",
+  async (version) => {
+    const { createLearningDecisionStore } = await import("../src/learning/decision-store.ts");
+    const pragmaHome = await temporaryRoot();
+    const dir = new PragmaPaths({ pragmaHome }).memoryModuleDataRoot(
+      "pragma.memory.knowledge-learning",
+    );
+    await mkdir(dir, { recursive: true });
+    const path = join(dir, "learning-decisions-v1.sqlite");
+    const db = new DatabaseSync(path);
+    db.exec(
+      `CREATE TABLE preserved (value TEXT); INSERT INTO preserved VALUES ('keep'); PRAGMA user_version=${version};`,
+    );
+    db.close();
+    expect(() => createLearningDecisionStore({ pragmaHome }, "knowledge")).toThrow();
+    const inspect = new DatabaseSync(path, { readOnly: true });
+    try {
+      expect(inspect.prepare("PRAGMA user_version").get()).toEqual({ user_version: version });
+      expect(inspect.prepare("SELECT * FROM preserved").all()).toEqual([{ value: "keep" }]);
+      expect(
+        inspect.prepare("SELECT name FROM sqlite_master WHERE name='decisions'").get(),
+      ).toBeUndefined();
+    } finally {
+      inspect.close();
+    }
+  },
+);
+
+it("reassesses sources completed under the old Knowledge learning policy", async () => {
+  const available = sources();
+  const plan = vi.fn(async () => ({ action: "skip" as const }));
+  const module = await createKnowledgeMemoryModule({
+    pragmaHome: await temporaryRoot(),
+    now: () => now,
+    sourceReader: { listEligibleSources: async () => available },
+    planner: { plan },
+    learningSink: { submit: vi.fn() },
+  });
+  try {
+    const rootRef = ref("pragma.expert", "expert-a");
+    await module.store.schedule({
+      rootRef,
+      sourceDigest: digestSources(available, ""),
+      now: new Date(now.getTime() - 6 * 60 * 60_000),
+    });
+    const old = (await module.store.claimDueJob(now))!;
+    await module.store.completeRejected(old, now);
+    await module.scheduleRoot(rootRef);
+    const pending = (await module.store.listJobs()).find((job) => job.status === "pending");
+    expect(pending).toBeDefined();
+    await module.store.expediteJob({ id: pending!.id, expectedRevision: pending!.revision, now });
+    await module.runBackgroundOnce?.();
+    expect(plan).toHaveBeenCalledOnce();
+    expect(await module.store.getJob(old.id)).toMatchObject({
+      status: "completed",
+      completion: "rejected",
+    });
+  } finally {
+    module.close();
   }
 });

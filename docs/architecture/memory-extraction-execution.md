@@ -92,14 +92,14 @@ five seconds apart, without admitting another model. Only non-streaming assistan
 to the observed execution is eligible. Unavailable terminal observations, diagnostics or exhausted
 result reads are nonretryable; cancellation is checked again after reading and before Skill submission.
 Skill planning also validates citations, per-change evidence thresholds, distinct keys and target ownership
-inside those same correction turns. Each Skill requires three distinct Episodes with valueScore >= 0.85
-from at least two conversations, including two successful or recovered outcomes. After business
+inside those same correction turns. Each Skill requires at least one succeeded Episode, regardless
+of salience score, with exact distinct citations and current target versions. After business
 correction exhaustion, the Host submits only qualifying changes; if none qualify, the job completes
 as rejected (no Skill extracted). This is a normal learning outcome and does not enter needs-attention
 or start another planning Mission. Final rejected-change diagnostics are passed back to the Memory
 module before the planning Mission is removed, and committed atomically with completion to the
 existing failure-attempt history, including when other changes are retained. Runtime, cancellation, unreadable output and submission failures
-retain their existing failure handling. Source thresholds and description limits remain unchanged.
+retain their existing failure handling. Description limits remain unchanged.
 
 The Skill learning database upgrades lazily from version 4 to 5 with a locked, backed-up SQLite
 transaction. Historical pending/needs-attention jobs whose last error is exactly
@@ -109,7 +109,18 @@ and running claims are unchanged. When an older job has no failure-attempt entry
 its last structured diagnostic (or legacy error text) there before clearing active error fields.
 Interrupted settlement rolls back and replays on the next open.
 
-Knowledge sinks check outstanding work before planner admission and again under the submission lock.
+Source admission now separates evidence from value: one succeeded Episode can support a Skill
+proposal regardless of salience score. Knowledge plans explicitly select supplied target IDs and
+source revisions, explain the delta, and use stricter maturity gates for creation. Existing targets
+include ordinary editable assets and outstanding Memory drafts, with mounted assets preferred.
+Read-only JSON inspection continuations page/search catalogs and read complete selected documents
+in the same planning Mission (32 requests, 256,000 delivered bytes); they are distinct from the two
+invalid-output correction turns. Exhaustion is nonretryable, not a skip. Revision descriptions retain
+their existing length limits.
+
+Knowledge and Skill sinks check outstanding work for the selected targets after planning and again
+under the submission lock. Validated plans waiting on a revision are cached against effective input
+and target versions, so dependency wakes need not admit the planner again.
 Skill occupancy is checked only for the selected plan targets, after planning and again when submitting;
 an unrelated pending Skill must not block independent work for the same expert.
 A same-process preflight wait refunds only its current, unadmitted claim; earlier model attempts remain counted.
@@ -177,6 +188,22 @@ needs-attention work does not count toward the limit.
 
 Cache hits, model-catalog validation and routine chat reads are debug diagnostics. Failures and
 meaningful execution lifecycle transitions remain visible at normal logging levels.
+
+## Incremental learning state
+
+[ADR 075](../adr/075-incremental-memory-learning.md) replaces per-Expert knowledge sinks and
+repeated-Episode Skill admission. Episodic data upgrades 5 → 6 with a transactional, coalesced root
+notification outbox and monotonic generations. It preserves captured learning denial and replays
+failed delivery after restart; Semantic projection notifications and Episodic notifications wake both
+learning consumers. Governance and provenance changes participate in the source fingerprints.
+
+`state/memory-learning-revisions/bindings.json` upgrades v1 → v2 under its aggregate lock with an
+atomic migration journal and retained original backup. Existing pending revisions and mounted assets
+survive; knowledge bindings now permit multiple targets per Expert and multiple Experts per target.
+Each learning Module owns `learning-decisions-v1.sqlite` under its module state root, recording
+versioned decisions and validated pending plans. Effective-content fingerprints suppress duplicate
+model work and proposals independently of the prunable task history. These records are not published
+knowledge and cannot bypass revision review or target-version checks.
 
 ## Tool-driven extraction
 
@@ -391,3 +418,5 @@ parts, exhaust submission/correction space, reopen, and save both receipts in ei
 Duplicate finish calls cannot consume the companion receipt allocation. Frozen v1/v2 migration
 dependencies are copied from their actual writer commits; historical fixture validation is tested
 with the live Shared and omission-statistics modules unavailable.
+
+Semantic data upgrades 6 → 7 to distinguish governance/source invalidation from captured-learning denial in durable projection notifications. Existing denial flags remain unchanged; invalidation, forgetting, conflict and expiry changes can now wake learning to reconsider the remaining eligible projections. The historical v6 writer fixture verifies upgrade and delivery without changing Fact revisions.

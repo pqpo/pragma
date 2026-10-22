@@ -2,14 +2,24 @@ import { createHash, randomUUID } from "node:crypto";
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 
-import { withFileLock } from "@pragma/core";
+import {
+  withFileLock,
+  defineStateMigrationChain,
+  applyAtomicStateMigration,
+  recoverAtomicStateMigration,
+  MEMORY_LEARNING_REVISION_MIGRATIONS,
+} from "@pragma/core";
 import {
   SkillPackageSchema,
   type ExistingMemorySkillTarget,
   type KnowledgeSourceSnapshot,
   type SkillSourceSnapshot,
 } from "@pragma/shared";
-import type { KnowledgeLearningPlan, SkillLearningPlan } from "@pragma/memory";
+import type {
+  ExistingKnowledgeLearningTarget,
+  KnowledgeLearningPlan,
+  SkillLearningPlan,
+} from "@pragma/memory";
 import { z } from "zod";
 
 import type { ContextStoreRevisionService } from "../context-stores/context-store-revision-service.ts";
@@ -22,6 +32,9 @@ const KnowledgeBindingSchema = z
   .object({
     expertRef: z.string(),
     storeId: z.string().uuid(),
+    topicKey: z.string().min(1),
+    topicName: z.string().optional(),
+    topicDescription: z.string().optional(),
     sourceDigest: z.string().regex(/^[a-f0-9]{64}$/u),
     revisionJobId: z.string().uuid().optional(),
     mounted: z.boolean(),
@@ -41,7 +54,7 @@ const SkillBindingSchema = z
   .strict();
 const StateSchema = z
   .object({
-    schemaVersion: z.literal("pragma.memory-learning-revisions/v1"),
+    schemaVersion: z.literal("pragma.memory-learning-revisions/v2"),
     knowledge: z.array(KnowledgeBindingSchema),
     skills: z.array(SkillBindingSchema),
   })
@@ -122,7 +135,7 @@ const LegacySkillCandidateSchema = z
   .passthrough();
 type State = z.infer<typeof StateSchema>;
 const EMPTY: State = {
-  schemaVersion: "pragma.memory-learning-revisions/v1",
+  schemaVersion: "pragma.memory-learning-revisions/v2",
   knowledge: [],
   skills: [],
 };
@@ -135,6 +148,9 @@ export function createMemoryLearningRevisions(options: {
   readonly contextStores: ContextStoreStore;
   readonly capabilities: CapabilityStore;
   readonly expertExists: (ref: string) => Promise<boolean>;
+  readonly mountedAssets?: (
+    ref: string,
+  ) => Promise<{ readonly stores: readonly string[]; readonly skills: readonly string[] }>;
   readonly mountStore: (expertRef: string, storeId: string) => Promise<void>;
   readonly bindSkill: (expertRef: string, capabilityId: string) => Promise<void>;
 }) {
@@ -199,6 +215,7 @@ export function createMemoryLearningRevisions(options: {
     return {
       expertRef: journal.expertRef,
       storeId: journal.storeId,
+      topicKey: `legacy:${journal.storeId}`,
       sourceDigest: candidate.sourceDigest,
       revisionJobId: randomUUID(),
       mounted: true,
@@ -248,9 +265,49 @@ export function createMemoryLearningRevisions(options: {
       revisionPending: false,
     };
   };
+  const chain = defineStateMigrationChain({
+    family: "pragma.memory-learning-revisions",
+    currentVersion: 2,
+    currentSchema: StateSchema,
+    steps: MEMORY_LEARNING_REVISION_MIGRATIONS,
+  });
+  const migration = {
+    aggregateRoot: options.statePath,
+    journalFile: join(options.statePath, "migration-v2.json"),
+    resource: { family: "pragma.memory-learning-revisions", id: "bindings" },
+    validateDocuments(documents: Readonly<Record<string, unknown>>) {
+      if (
+        Object.keys(documents).some(
+          (key) => key !== "bindings.json" && key !== "migration-backups/bindings-v1.json",
+        )
+      )
+        throw new Error("memory_learning_migration_invalid_documents");
+      const current = StateSchema.parse(documents["bindings.json"]);
+      const historical = MEMORY_LEARNING_REVISION_MIGRATIONS[0].inputSchema.parse(
+        documents["migration-backups/bindings-v1.json"],
+      );
+      if (JSON.stringify(chain.upgrade(historical).value) !== JSON.stringify(current))
+        throw new Error("memory_learning_migration_invalid_result");
+    },
+  };
   const read = async (): Promise<State> => {
     try {
-      const current = StateSchema.parse(JSON.parse(await readFile(path, "utf8")));
+      const beforeRecovery = await readFile(path, "utf8").catch((error: NodeJS.ErrnoException) => {
+        if (error.code === "ENOENT") return undefined;
+        throw error;
+      });
+      if (beforeRecovery !== undefined) chain.upgrade(JSON.parse(beforeRecovery));
+      await recoverAtomicStateMigration(migration);
+      const raw: unknown = JSON.parse(await readFile(path, "utf8"));
+      const upgraded = chain.upgrade(raw);
+      if (upgraded.migrated)
+        await applyAtomicStateMigration({
+          ...migration,
+          fromVersion: upgraded.fromVersion,
+          toVersion: upgraded.toVersion,
+          documents: { "bindings.json": upgraded.value, "migration-backups/bindings-v1.json": raw },
+        });
+      const current = upgraded.value;
       await archiveLegacy();
       return current;
     } catch (error) {
@@ -276,6 +333,7 @@ export function createMemoryLearningRevisions(options: {
                       {
                         expertRef: entry.expertRef,
                         storeId: entry.storeId,
+                        topicKey: `legacy:${entry.storeId}`,
                         sourceDigest: entry.lastSourceDigest,
                         revisionJobId: randomUUID(),
                         mounted: true,
@@ -359,13 +417,34 @@ export function createMemoryLearningRevisions(options: {
     async assertKnowledgeAvailable(input: {
       readonly expertRef: string;
       readonly sourceDigest: string;
+      readonly plan?: Extract<KnowledgeLearningPlan, { action: "apply" }>;
     }): Promise<void> {
       await locked(async (state) => {
-        const existing = state.knowledge.find((item) => item.expertRef === input.expertRef);
+        const target = input.plan?.target;
+        if (target === undefined) {
+          // Historical callers have no selected target. Do not block unrelated experts.
+          if (
+            state.knowledge.some(
+              (item) =>
+                item.expertRef === input.expertRef &&
+                item.revisionPending &&
+                item.revisionJobId !== undefined &&
+                item.sourceDigest !== input.sourceDigest,
+            )
+          )
+            throw new Error("memory_revision_pending");
+          return;
+        }
         if (
-          existing?.revisionPending &&
-          existing.revisionJobId !== undefined &&
-          existing.sourceDigest !== input.sourceDigest
+          state.knowledge.some(
+            (item) =>
+              item.revisionPending &&
+              item.revisionJobId !== undefined &&
+              (target.type === "revise"
+                ? item.storeId === target.storeId
+                : item.expertRef === input.expertRef &&
+                  item.topicKey === topicKey(input.plan!.name)),
+          )
         )
           throw new Error("memory_revision_pending");
       });
@@ -407,28 +486,57 @@ export function createMemoryLearningRevisions(options: {
     }): Promise<void> {
       if (!(await options.expertExists(input.expertRef))) return;
       await locked(async (state) => {
-        const existing = state.knowledge.find((item) => item.expertRef === input.expertRef);
+        const target = input.plan.target;
+        const key = topicKey(input.plan.name);
+        const existing = state.knowledge.find(
+          (item) =>
+            item.expertRef === input.expertRef &&
+            (target.type === "revise" ? item.storeId === target.storeId : item.topicKey === key),
+        );
         if (existing?.sourceDigest === input.sourceDigest && existing.revisionJobId !== undefined)
           return;
-        if (existing?.revisionPending === true && existing.revisionJobId !== undefined)
+        if (target.type === "create" && existing?.mounted)
+          throw Object.assign(new Error("memory_learning_target_already_exists"), {
+            retryable: false,
+          });
+        const storeId =
+          target.type === "revise" ? target.storeId : (existing?.storeId ?? randomUUID());
+        if (
+          state.knowledge.some(
+            (item) =>
+              item.storeId === storeId && item.revisionPending && item.revisionJobId !== undefined,
+          )
+        )
           throw new Error("memory_revision_pending");
-        const storeId = existing?.storeId ?? randomUUID();
-        const operation: "revise" | "create" = existing?.mounted === true ? "revise" : "create";
-        const prompt = knowledgePrompt(input.sources);
+        if (target.type === "revise") {
+          const current = await options.contextStores.get(storeId);
+          if (
+            current.status !== "ready" ||
+            current.contentRevision !== target.baseRevision ||
+            current.snapshotHash !== target.snapshotHash
+          )
+            throw Object.assign(new Error("memory_learning_target_changed"), {
+              retryable: current.status === "ready",
+            });
+        }
+        const operation = target.type;
+        const prompt = knowledgePrompt(input.sources, input.plan);
+        const mounted =
+          (await options.mountedAssets?.(input.expertRef))?.stores.includes(storeId) ??
+          existing?.mounted ??
+          false;
         const pending = {
           expertRef: input.expertRef,
           storeId,
+          topicKey: key,
+          topicName: input.plan.name,
+          topicDescription: input.plan.description,
           sourceDigest: input.sourceDigest,
-          mounted: existing?.mounted ?? false,
+          mounted,
           revisionPending: true,
         };
-        await write({
-          ...state,
-          knowledge: [
-            ...state.knowledge.filter((item) => item.expertRef !== input.expertRef),
-            pending,
-          ],
-        });
+        const others = state.knowledge.filter((item) => item !== existing);
+        await write({ ...state, knowledge: [...others, pending] });
         const request = {
           schemaVersion: "pragma.context-store-revision-request/v2" as const,
           operation,
@@ -441,13 +549,7 @@ export function createMemoryLearningRevisions(options: {
           sourceDigest: input.sourceDigest,
         };
         const job = await options.knowledgeRevisions.submit(request);
-        await write({
-          ...state,
-          knowledge: [
-            ...state.knowledge.filter((item) => item.expertRef !== input.expertRef),
-            { ...pending, revisionJobId: job.id },
-          ],
-        });
+        await write({ ...state, knowledge: [...others, { ...pending, revisionJobId: job.id }] });
         options.knowledgeRevisions.scheduleProcessing();
       });
     },
@@ -483,13 +585,31 @@ export function createMemoryLearningRevisions(options: {
           ) {
             throw new Error("memory_revision_pending");
           }
+          if (change.target.type === "revise") {
+            const current = await options.capabilities.get(capabilityId);
+            if (
+              current.definition.kind !== "skill" ||
+              current.managedBy === "system" ||
+              (change.target.baseRevision !== undefined &&
+                current.manifest.latestRevision !== change.target.baseRevision) ||
+              (change.target.contentHash !== undefined &&
+                current.definition.contentHash !== change.target.contentHash)
+            )
+              throw Object.assign(new Error("memory_learning_target_changed"), {
+                retryable: current.definition.kind === "skill" && current.managedBy !== "system",
+              });
+          }
+          const mounted =
+            (await options.mountedAssets?.(input.expertRef))?.skills.includes(capabilityId) ??
+            existing?.mounted ??
+            false;
           const prompt = skillPrompt(change, input.sources);
           const pending = {
             expertRef: input.expertRef,
             capabilityId,
             normalizedKey: change.normalizedKey,
             sourceDigest: digest,
-            mounted: existing?.mounted ?? false,
+            mounted,
             revisionPending: true,
           };
           state = {
@@ -540,31 +660,149 @@ export function createMemoryLearningRevisions(options: {
         }
       });
     },
+    async listKnowledgeTargets(input: {
+      readonly expertRef: string;
+    }): Promise<readonly ExistingKnowledgeLearningTarget[]> {
+      const mounts = await options.mountedAssets?.(input.expertRef);
+      return await locked(async (state) => {
+        const result: ExistingKnowledgeLearningTarget[] = [];
+        for (const store of await options.contextStores.list()) {
+          if (store.status !== "ready") continue;
+          result.push({
+            storeId: store.id,
+            name: store.name,
+            description: store.description,
+            baseRevision: store.contentRevision,
+            snapshotHash: store.snapshotHash,
+            mounted: mounts?.stores.includes(store.id) ?? false,
+            pending: state.knowledge.some(
+              (item) => item.storeId === store.id && item.revisionPending,
+            ),
+          });
+        }
+        for (const binding of state.knowledge.filter(
+          (item) =>
+            item.revisionPending && !result.some((target) => target.storeId === item.storeId),
+        )) {
+          const job =
+            binding.revisionJobId === undefined
+              ? undefined
+              : await options.knowledgeRevisions.get(binding.revisionJobId);
+          result.push({
+            storeId: binding.storeId,
+            name: job?.request?.resourceName ?? binding.topicName ?? "Pending knowledge",
+            description:
+              job?.request?.resourceDescription ??
+              binding.topicDescription ??
+              "A knowledge draft is awaiting review.",
+            baseRevision: 0,
+            snapshotHash: "0".repeat(64),
+            mounted: false,
+            pending: true,
+          });
+        }
+        return result.toSorted(
+          (a, b) => Number(b.mounted) - Number(a.mounted) || a.storeId.localeCompare(b.storeId),
+        );
+      });
+    },
+    async readKnowledgeTarget(target: ExistingKnowledgeLearningTarget): Promise<string> {
+      if (target.pending)
+        return "This related target has an outstanding revision. Wait for its review; do not create a duplicate.";
+      const snapshot = await options.contextStores.getSnapshot(target.storeId, target.baseRevision);
+      if (snapshot.snapshotHash !== target.snapshotHash)
+        throw Object.assign(new Error("memory_learning_target_changed"), { retryable: false });
+      return snapshot.files.map((file) => `# ${file.id}\n${file.content}`).join("\n\n");
+    },
+    async readSkillTarget(target: ExistingMemorySkillTarget): Promise<string> {
+      if (target.pending)
+        return "This related Skill has an outstanding revision. Wait for its review; do not create a duplicate.";
+      const document = await options.capabilities.getSkillDocument({
+        id: target.capabilityId,
+        revision: target.baseRevision,
+      });
+      return document.content;
+    },
     async listSkillTargets(input: {
       readonly expertRef: string;
     }): Promise<readonly ExistingMemorySkillTarget[]> {
+      const mounts = await options.mountedAssets?.(input.expertRef);
       return await locked(async (state) => {
-        const targets: ExistingMemorySkillTarget[] = [];
+        const result: ExistingMemorySkillTarget[] = [];
+        const candidates = new Map(
+          (await options.capabilities.list()).map((item) => [item.manifest.id, item]),
+        );
         for (const item of state.skills.filter(
-          (candidate) =>
-            candidate.expertRef === input.expertRef &&
-            candidate.mounted &&
-            candidate.revisionJobId !== undefined,
+          (item) => item.expertRef === input.expertRef && item.mounted,
         )) {
-          if (item.revisionJobId === undefined) continue;
           const capability = await options.capabilities.get(item.capabilityId);
-          if (capability.definition.kind !== "skill") {
+          if (capability.definition.kind !== "skill")
             throw new Error("memory_skill_target_not_skill");
-          }
-          targets.push({
-            bindingId: item.revisionJobId,
-            capabilityId: item.capabilityId,
+          candidates.set(item.capabilityId, capability);
+        }
+        for (const capability of candidates.values()) {
+          if (
+            capability.definition.kind !== "skill" ||
+            capability.managedBy === "system" ||
+            capability.health.status !== "ready"
+          )
+            continue;
+          const id = capability.manifest.id;
+          const bindings = state.skills.filter((item) => item.capabilityId === id);
+          const expertBindings = bindings.filter((item) => item.expertRef === input.expertRef);
+          result.push({
+            bindingId: bindings[0]?.revisionJobId ?? randomUUID(),
+            capabilityId: id,
             name: capability.definition.name,
             description: capability.definition.description,
-            normalizedKeys: [item.normalizedKey],
+            normalizedKeys:
+              expertBindings.length > 0
+                ? [...new Set(expertBindings.map((item) => item.normalizedKey))]
+                : [`skill:${id}`],
+            mounted:
+              mounts?.skills.includes(id) ??
+              bindings.some((item) => item.expertRef === input.expertRef && item.mounted),
+            pending: bindings.some((item) => item.revisionPending),
+            baseRevision: capability.manifest.latestRevision,
+            contentHash: capability.definition.contentHash,
           });
         }
-        return targets;
+        for (const binding of state.skills.filter(
+          (item) =>
+            item.revisionPending &&
+            !result.some((target) => target.capabilityId === item.capabilityId),
+        )) {
+          const job =
+            binding.revisionJobId === undefined
+              ? undefined
+              : await options.skillRevisions.get(binding.revisionJobId);
+          result.push({
+            bindingId: binding.revisionJobId ?? randomUUID(),
+            capabilityId: binding.capabilityId,
+            name: job?.request?.resourceName ?? "Pending Skill",
+            description: job?.request?.resourceDescription ?? "A Skill draft is awaiting review.",
+            normalizedKeys: state.skills.some(
+              (item) =>
+                item.capabilityId === binding.capabilityId && item.expertRef === input.expertRef,
+            )
+              ? state.skills
+                  .filter(
+                    (item) =>
+                      item.capabilityId === binding.capabilityId &&
+                      item.expertRef === input.expertRef,
+                  )
+                  .map((item) => item.normalizedKey)
+              : [`skill:${binding.capabilityId}`],
+            mounted: false,
+            pending: true,
+            baseRevision: 0,
+            contentHash: "0".repeat(64),
+          });
+        }
+        return result.toSorted(
+          (a, b) =>
+            Number(b.mounted) - Number(a.mounted) || a.capabilityId.localeCompare(b.capabilityId),
+        );
       });
     },
     async reconcile(wakeSettled?: () => Promise<void>): Promise<boolean> {
@@ -667,13 +905,18 @@ export function createMemoryLearningRevisions(options: {
   };
 }
 
-function knowledgePrompt(sources: readonly KnowledgeSourceSnapshot[]): string {
+function knowledgePrompt(
+  sources: readonly KnowledgeSourceSnapshot[],
+  plan: Extract<KnowledgeLearningPlan, { action: "apply" }>,
+): string {
   const sourceText = JSON.stringify(sources.map(compactSource));
-  if (Buffer.byteLength(sourceText, "utf8") > 40_000) {
+  if (Buffer.byteLength(sourceText, "utf8") > 256_000) {
     throw new Error("knowledge_learning_prompt_too_large");
   }
   return [
     "Create or revise this knowledge base using only the supplied Memory projections. Facts are current beliefs; Episodes are historical context. Preserve unrelated published content. Submit a sparse draft for human review.",
+    "Apply only the stated incremental change. Compare the existing content first; preserve unrelated material and consolidate duplicates. Correct obsolete claims only when the supplied current evidence supports the correction. Do not generalize a historical Episode into current universal truth.",
+    `Proposed change: ${plan.rationale}`,
     "Do not copy source IDs, raw Evidence, Curator prompts, or local paths into published content.",
     `Sources: ${sourceText}`,
   ].join("\n\n");
@@ -693,11 +936,12 @@ function skillPrompt(
   );
   const compact = selected.map(compactSource);
   const sourceText = JSON.stringify(compact);
-  if (Buffer.byteLength(sourceText, "utf8") > 40_000) {
+  if (Buffer.byteLength(sourceText, "utf8") > 256_000) {
     throw new Error("skill_learning_prompt_too_large");
   }
   return [
     "Create or revise a complete reusable Skill from these Memory projections. Submit the managed draft for human review. Do not add source replay expectations or boundary-case tests solely for Memory learning.",
+    "Specify applicability, inputs and preconditions, ordered executable steps, actual result verification, and supported failure handling or limitations. Parameterize task-specific names, local paths and data. Never invent successful checks or publish raw Evidence/source IDs. Preserve unrelated existing Skill behavior and focus on the supported procedural improvement.",
     `Name: ${change.name}`,
     `Description: ${change.description}`,
     `Sources: ${sourceText}`,
@@ -707,7 +951,7 @@ function skillPrompt(
 function compactSource<T extends KnowledgeSourceSnapshot | SkillSourceSnapshot>(source: T): T {
   return {
     ...source,
-    body: source.body.slice(0, 1_500),
+    body: source.body,
     sourceExecutionIds: source.sourceExecutionIds.slice(0, 5),
     producerRefs: source.producerRefs.slice(0, 5),
   };
@@ -735,4 +979,10 @@ async function readOptionalJson<T extends z.ZodType>(
     if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
     throw error;
   }
+}
+
+function topicKey(name: string): string {
+  return createHash("sha256")
+    .update(name.normalize("NFKC").toLocaleLowerCase().trim())
+    .digest("hex");
 }

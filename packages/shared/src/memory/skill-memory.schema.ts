@@ -50,8 +50,8 @@ export const SkillSourceSnapshotSchema = z
     conversationRef: MemorySubjectRefSchema.optional(),
     sourceExecutionIds: z.array(z.string().min(1)).max(1_000).default([]),
     producerRefs: z.array(MemorySubjectRefSchema).max(100),
-    title: z.string().trim().min(1).max(500),
-    body: z.string().trim().min(1).max(24_000),
+    title: z.string().trim().min(1).max(4_000),
+    body: z.string().trim().min(1).max(410_000),
     outcome: z.enum(["succeeded", "failed", "cancelled", "interrupted", "supporting"]),
     hasSuccessfulRecovery: z.boolean(),
     observedAt: z.string().datetime(),
@@ -65,6 +65,14 @@ export const SkillSourceSnapshotSchema = z
 export const ExistingMemorySkillTargetSchema = z
   .object({
     bindingId: z.string().uuid(),
+    mounted: z.boolean().optional(),
+    pending: z.boolean().optional(),
+    baseRevision: z.number().int().nonnegative().optional(),
+    contentHash: z
+      .string()
+      .regex(/^[a-f0-9]{64}$/u)
+      .optional(),
+    body: z.string().max(100000).optional(),
     capabilityId: z.union([SemanticResourceIdSchema, z.string().uuid()]),
     name: z.string().trim().min(1).max(120),
     description: z.string().trim().min(1).max(500),

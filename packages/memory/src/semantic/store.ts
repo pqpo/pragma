@@ -214,6 +214,7 @@ export interface SemanticMemoryStore {
         readonly id: string;
         readonly rootRef: MemorySubjectRef;
         readonly learningEligible: boolean;
+        readonly sourceChanged: boolean;
       }
     | undefined
   >;
@@ -266,6 +267,7 @@ export interface SemanticMemoryStore {
   maintain(now: Date): Promise<{ readonly expired: number; readonly deleted: number }>;
   deleteExecutionState(executionIds: readonly string[], now?: Date): Promise<void>;
   list(): Promise<readonly SemanticFact[]>;
+  listForLearning(): Promise<readonly SemanticFact[]>;
   search(query: string, limit: number): Promise<readonly SemanticFact[]>;
   get(id: string): Promise<SemanticFact | undefined>;
   history(id: string): Promise<readonly SemanticFact[]>;
@@ -350,7 +352,7 @@ export async function createSemanticMemoryStore(
           database: data,
           databasePath: dataPath,
           family: "pragma.memory-semantic-store",
-          targetVersion: 6,
+          targetVersion: 7,
           migrations: SEMANTIC_DATA_STORAGE_MIGRATIONS,
         });
       }
@@ -1187,13 +1189,14 @@ export async function createSemanticMemoryStore(
     async readProjectionNotification() {
       const row = data
         .prepare(
-          "SELECT CAST(id AS BLOB) AS idBytes, root_ref_json AS rootRefJson, learning_eligible AS learningEligible FROM projection_notifications ORDER BY created_at, id LIMIT 1",
+          "SELECT CAST(id AS BLOB) AS idBytes, root_ref_json AS rootRefJson, learning_eligible AS learningEligible, source_changed AS sourceChanged FROM projection_notifications ORDER BY created_at, id LIMIT 1",
         )
         .get() as
         | {
             readonly idBytes: Uint8Array;
             readonly rootRefJson: string;
             readonly learningEligible: number;
+            readonly sourceChanged: number;
           }
         | undefined;
       return row === undefined
@@ -1203,6 +1206,7 @@ export async function createSemanticMemoryStore(
             id: Buffer.from(row.idBytes).toString("utf8"),
             rootRef: MemorySubjectRefSchema.parse(JSON.parse(row.rootRefJson)),
             learningEligible: row.learningEligible === 1,
+            sourceChanged: row.sourceChanged === 1,
           };
     },
 
@@ -1466,6 +1470,21 @@ export async function createSemanticMemoryStore(
         data
           .prepare(
             "SELECT record_json AS recordJson FROM current_facts ORDER BY updated_at DESC, id",
+          )
+          .all(),
+      );
+    },
+
+    async listForLearning() {
+      return readFactRows(
+        data
+          .prepare(
+            `SELECT record_json AS recordJson FROM current_facts f
+        WHERE json_array_length(f.record_json, '$.evidenceRefs') > 0 AND NOT EXISTS (
+          SELECT 1 FROM json_each(f.record_json, '$.evidenceRefs') cited
+          LEFT JOIN evidence e ON e.message_id=cited.value
+          WHERE e.message_id IS NULL OR COALESCE(json_extract(e.envelope_json, '$.policySnapshot.learning'), 'disabled')='disabled'
+        ) ORDER BY updated_at DESC, id`,
           )
           .all(),
       );
@@ -1862,8 +1881,8 @@ function enqueueFactProjectionNotifications(
   learningEligible = false,
 ): void {
   const insert = database.prepare(
-    `INSERT OR IGNORE INTO projection_notifications(id, root_ref_json, created_at, learning_eligible)
-     VALUES (?, ?, ?, ?)`,
+    `INSERT OR IGNORE INTO projection_notifications(id, root_ref_json, created_at, learning_eligible, source_changed)
+     VALUES (?, ?, ?, ?, 1)`,
   );
   for (const rootRef of fact.rootRefs) {
     insert.run(
@@ -1899,7 +1918,7 @@ function conversationKey(ref: MemorySubjectRef): string {
 
 function initializeData(database: DatabaseSync): void {
   const version = readDatabaseVersion(database);
-  if (version > 6) {
+  if (version > 7) {
     database.close();
     throw new Error(`unsupported-state-version:pragma.memory-semantic-store/v${version}`);
   }
@@ -1975,14 +1994,15 @@ function initializeData(database: DatabaseSync): void {
       id TEXT PRIMARY KEY,
       root_ref_json TEXT NOT NULL,
       created_at TEXT NOT NULL,
-      learning_eligible INTEGER NOT NULL CHECK (learning_eligible IN (0, 1))
+      learning_eligible INTEGER NOT NULL CHECK (learning_eligible IN (0, 1)),
+      source_changed INTEGER NOT NULL DEFAULT 0
     );
   `);
-  if (version !== 0 && version !== 6) {
+  if (version !== 0 && version !== 7) {
     throw new Error(`missing-adjacent-migration:pragma.memory-semantic-store/v${version}`);
   }
   initializeMemoryIndexOutbox(database, "current_facts");
-  database.exec("PRAGMA user_version = 6;");
+  database.exec("PRAGMA user_version = 7;");
 }
 
 function initializeState(database: DatabaseSync): void {

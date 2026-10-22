@@ -37,9 +37,9 @@ describe("Skill learning threshold", () => {
 
     expect(eligibility).toEqual({
       eligible: true,
-      highValueEpisodicCount: 3,
+      episodeCount: 3,
       conversationCount: 2,
-      successfulOrRecoveredCount: 2,
+      succeededCount: 2,
       qualifyingSourceRefs: [
         { kind: "episodic", id: "one", revision: 1 },
         { kind: "episodic", id: "three", revision: 1 },
@@ -58,35 +58,38 @@ describe("Skill learning threshold", () => {
     ).toBe(true);
   });
 
-  it("rejects fragments from one conversation or below the high-value cutoff", () => {
+  it("admits one successfully executed workflow without requiring a high score or multiple conversations", () => {
+    expect(skillSourceThresholdMet([episode("one", "conversation-a", "succeeded", 0.2)])).toBe(
+      true,
+    );
+  });
+
+  it("rejects failed and supporting-only sources regardless of score and repetition", () => {
     expect(
       skillSourceThresholdMet([
-        episode("one", "conversation-a"),
-        episode("two", "conversation-a"),
-        episode("three", "conversation-a"),
+        episode("one", "conversation-a", "failed"),
+        episode("two", "conversation-b", "failed"),
+        episode("three", "conversation-c", "failed"),
       ]),
     ).toBe(false);
     expect(
       skillSourceThresholdMet([
-        episode("one", "conversation-a"),
-        episode("two", "conversation-b"),
-        episode("three", "conversation-b", "succeeded", 0.84),
+        {
+          ...episode("fact", "conversation-a"),
+          ref: { kind: "semantic", id: "fact", revision: 1 },
+          outcome: "supporting",
+        },
       ]),
     ).toBe(false);
   });
 
-  it("uses the newest revision of an episode before applying the threshold", () => {
+  it("does not use a superseded successful revision when the newest Episode no longer succeeds", () => {
     expect(
       skillSourceThresholdMet([
-        { ...episode("one", "conversation-a"), ref: { kind: "episodic", id: "one", revision: 1 } },
-        { ...episode("two", "conversation-a"), ref: { kind: "episodic", id: "two", revision: 1 } },
+        episode("one", "conversation-a"),
         {
-          ...episode("three", "conversation-b"),
-          ref: { kind: "episodic", id: "three", revision: 1 },
-        },
-        {
-          ...episode("three", "conversation-b", "failed", 0.7),
-          ref: { kind: "episodic", id: "three", revision: 2 },
+          ...episode("one", "conversation-a", "failed"),
+          ref: { kind: "episodic", id: "one", revision: 2 },
         },
       ]),
     ).toBe(false);

@@ -1,4 +1,11 @@
 export const memory = {
+  learningDecisions: {
+    accumulate: "Continue accumulating",
+    duplicate: "No new information",
+    unsupported: "Insufficient support",
+    create: "Propose creation",
+    revise: "Propose revision",
+  },
   showCompletedTasks: "Show completed tasks",
   hideCompletedTasks: "Hide completed tasks",
   extractionSource: "Source: {{name}}",

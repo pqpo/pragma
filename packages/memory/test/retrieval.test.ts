@@ -288,8 +288,8 @@ describe("Memory vector retrieval", () => {
       expect(records).toHaveLength(1);
       expect(await semantic.scanForIndex(undefined, 100)).toHaveLength(1);
       for (const [module, file, major] of [
-        ["episodic", "episodes.sqlite", 5],
-        ["semantic", "facts.sqlite", 6],
+        ["episodic", "episodes.sqlite", 6],
+        ["semantic", "facts.sqlite", 7],
       ] as const) {
         const db = new DatabaseSync(
           join(paths.memoryModuleDataRoot(`pragma.memory.${module}`), file),

@@ -1,3 +1,4 @@
+import { readLearningDecision, type LearningDecision } from "../learning/decision-store.ts";
 import {
   pruneCompletedMemoryJobs,
   type CompletedMemoryJobCursor,
@@ -48,10 +49,12 @@ const LEASE_MS = 5 * 60_000;
 
 export interface SkillLearningStore {
   getPresentation(job: SkillLearningJob): MemoryLearningTaskPresentation | undefined;
+  getDecision?(job: SkillLearningJob): LearningDecision | undefined;
   schedule(input: {
     readonly rootRef: MemorySubjectRef;
     readonly sourceDigest: string;
     readonly now: Date;
+    readonly deferUntil?: Date;
   }): Promise<SkillLearningJob | undefined>;
   claimDueJob(now: Date): Promise<SkillLearningJob | undefined>;
   isClaimCurrent(job: SkillLearningJob): Promise<boolean>;
@@ -135,7 +138,7 @@ export async function createSkillLearningStore(
     database
       .prepare(
         `INSERT INTO jobs(id, root_key, source_digest, status, retry_at, lease_until, job_json)
-      VALUES (?, ?, ?, ?, ?, ?, ?) ON CONFLICT(id) DO UPDATE SET status=excluded.status,
+      VALUES (?, ?, ?, ?, ?, ?, ?) ON CONFLICT(id) DO UPDATE SET source_digest=excluded.source_digest,status=excluded.status,
       retry_at=excluded.retry_at, lease_until=excluded.lease_until, job_json=excluded.job_json`,
       )
       .run(
@@ -176,6 +179,9 @@ export async function createSkillLearningStore(
     getPresentation(job) {
       return readMemoryLearningTaskPresentation(options, { module: "skill", ...job });
     },
+    getDecision(job) {
+      return readLearningDecision(options, "skill", job.id);
+    },
     async schedule(input) {
       if (!/^[a-f0-9]{64}$/u.test(input.sourceDigest))
         throw new Error("skill_source_digest_invalid");
@@ -187,6 +193,28 @@ export async function createSkillLearningStore(
       )
         return undefined;
       const timestamp = input.now.toISOString();
+      const pending =
+        input.deferUntil === undefined
+          ? undefined
+          : (database
+              .prepare(
+                "SELECT job_json FROM jobs WHERE root_key=? AND status='pending' ORDER BY rowid DESC LIMIT 1",
+              )
+              .get(rootKey) as { job_json: string } | undefined);
+      if (pending !== undefined) {
+        const current = parse(pending.job_json);
+        const next = SkillLearningJobSchema.parse({
+          ...current,
+          revision: current.revision + 1,
+          sourceDigest: input.sourceDigest,
+          retryAt: new Date(
+            Math.min(input.deferUntil!.getTime(), Date.parse(current.createdAt) + 24 * 60 * 60_000),
+          ).toISOString(),
+          updatedAt: timestamp,
+        });
+        write(next);
+        return next;
+      }
       const job = SkillLearningJobSchema.parse({
         schemaVersion: "pragma.memory-skill-job/v2",
         id: stableId("skill-job", rootKey, input.sourceDigest),
@@ -195,6 +223,7 @@ export async function createSkillLearningStore(
         sourceDigest: input.sourceDigest,
         status: "pending",
         attempts: 0,
+        retryAt: input.deferUntil?.toISOString(),
         createdAt: timestamp,
         updatedAt: timestamp,
       });
