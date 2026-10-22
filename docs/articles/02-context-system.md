@@ -37,6 +37,12 @@ team/*                   当前 ExpertTeam 的临时关键指令
 
 命名空间解决来源冲突，Binding 解决环境差异，运行时 scope 则决定当前调用是否有权访问具体内容。
 
+模型使用 `list_context_stores` 发现当前执行上下文注册的具体 Store 及其完整 namespace。
+这个目录由 ContextSystem 的注册信息生成，不查询各 Store 的文档索引；目录和文档分别分页。
+选定 namespace 后，再用 `list_expert_context` 列举文档摘要，或用 read/search 工具获取内容。
+`list_expert_context` 不附带 Store 目录；namespace 传错时，应先通过 Store 目录取得精确值再重试。
+详见[Context 使用说明](../usage/context.md)。
+
 ## Prompt Assembly 应该是选择过程
 
 ContextSystem 不会把所有 Store 的正文都拼进系统 Prompt。它先构建 Context Index，再根据元数据和加载规则选择不同层次的内容。

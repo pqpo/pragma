@@ -314,6 +314,11 @@ describe("Expert context tools", () => {
     const second = await tool.call({ limit: 1, cursor }, undefined);
     expect(readItemIds(first.text)).toEqual(["a.md"]);
     expect(readItemIds(second.text)).toEqual(["b.md"]);
+    for (const result of [first, second]) {
+      expect(result.text).not.toContain("Context stores:");
+      expect(result.text).not.toContain("storeName:");
+      expect(result.text).not.toContain("additional context store(s) omitted");
+    }
   });
   it.each(["invalid_namespace", "store_unavailable"] as const)(
     "preserves optional-store diagnostics while surfacing invalid namespace input (%s)",
@@ -1095,12 +1100,12 @@ describe("Expert context tools", () => {
     expect(readItemIds(nextPage.text)).toEqual(["c.md"]);
   });
 
-  it("lists display metadata without changing Context addressing", async () => {
+  it("separates Store discovery from document addressing and concurrency tokens", async () => {
     const unsupported = vi.fn(async () => {
       throw new Error("not used");
     });
     const operations: ExpertAgentContextItemOperations = {
-      listStores: () => [],
+      listStores: () => [{ namespace: "4jtrtegfka94yzgg", storeName: "Memory · 00pragma" }],
       listContext: vi.fn(async () => ({
         ok: true as const,
         value: {
@@ -1129,14 +1134,22 @@ describe("Expert context tools", () => {
       editContext: unsupported,
       deleteContext: unsupported,
     };
-    const tool = createContextTools(operations).find(
-      (candidate) => candidate.name === "list_expert_context",
-    )!;
+    const tools = createContextTools(operations);
+    const tool = tools.find((candidate) => candidate.name === "list_expert_context")!;
+    const directory = await tools
+      .find((candidate) => candidate.name === "list_context_stores")!
+      .call({}, undefined);
+    expect(JSON.parse(directory.text)).toEqual({
+      stores: [{ namespace: "4jtrtegfka94yzgg", storeName: "Memory · 00pragma" }],
+    });
 
     const result = await tool.call({}, undefined);
 
-    expect(result.text).toContain("storeName: Memory · 00pragma");
-    expect(result.text).toContain("itemCount: 16");
+    expect(result.text).not.toContain("Context stores:");
+    expect(result.text).not.toContain("storeName:");
+    expect(result.text).not.toContain("itemCount:");
+    expect(result.text).toContain("id: guide.md");
+    expect(result.text).toContain("namespace: 4jtrtegfka94yzgg");
     expect(result.text).toContain("revision: 1723640000000000000:128");
     expect(result.text).toContain("etag: sha256:context-etag");
     expect(result.details).toBeUndefined();

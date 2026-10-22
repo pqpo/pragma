@@ -167,7 +167,7 @@ PRAGMA_ANTIGRAVITY_REAL_SMOKE=1 \
 ```
 
 结果 1/1 通过（57.38 s）。该记录实际证明首个 delta 早于 result settle、`list_dir` lifecycle、managed
-`list_expert_context` MCP、always-on system marker、带图片附件的 namespaced Skill、路径降级和 conversation
+`list_context_stores` 的 Store 目录发现与 namespace 错误恢复、`list_expert_context` 的文档分页 MCP、always-on system marker、带图片附件的 namespaced Skill、路径降级和 conversation
 resume。Desktop 正文/thought/工具卡片/审批/取消/错误提示的人工验收本次未执行，不能据此声明 Desktop
 end-to-end 已验收；compaction 后 startup reinjection 当前由 Core 自动测试证明，不冒充真实 CLI compaction
 smoke。

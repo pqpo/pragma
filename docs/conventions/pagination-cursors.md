@@ -12,6 +12,7 @@
 | `knowledge_revision_list_targets`、`knowledge_revision_list_drafts`、`knowledge_revision_inspect_rebase`    | 共用 Desktop 管理分页，已改为短游标。                                                                        |
 | `get_evaluation_draft`                                                                                      | 原游标包含查询词，已改为短游标。                                                                             |
 | `list_expert_context`                                                                                       | 原游标包含 namespace，已改为短游标。                                                                         |
+| `list_context_stores`                                                                                       | 独立分页的 Store 目录；短游标绑定注册列表指纹，注册信息变化后从 `{}` 重新列举。不能与文档分页游标混用。      |
 | `list_agents`                                                                                               | 可配置的 Context ID 长度不受限；改为固定长度的锚点游标，并继续接受原始 ID 游标。                             |
 | Desktop Mission 聊天                                                                                        | 旧 entries 游标编码无限长的工具调用 ID，可能超过 2048 字符的协议上限；新版改用定长摘要锚点，仍读取旧版游标。 |
 | CLI 列表、Mission 事件及 Desktop Memory 页面                                                                | 属于独立的 CLI、事件续传或 UI 协议；游标字段长度有界或不序列化为字符串，未发现同类问题。                     |

@@ -12,7 +12,6 @@ import type {
   ContextMutationApproval,
   ContextPriority,
   ContextIndex,
-  ContextStoreIndexSummary,
   ContextStoreSummary,
   ExpertAgentContextItem,
   ExpertAgentContextAddInput,
@@ -124,10 +123,10 @@ export function createContextTools(
       name: "list_expert_context",
       label: "List expert context",
       description:
-        "List Expert context documents with Store metadata, revision and etag concurrency tokens, descriptions, and triggers. To discover Store namespaces without querying document indexes, use list_context_stores instead. Optionally restrict the document listing to one context namespace. Omit or leave cursor empty for the first page; continue with nextCursor using the same namespace when the result is paginated.",
+        "List Expert context documents with revision and etag concurrency tokens, descriptions, and triggers. To discover Store namespaces without querying document indexes, use list_context_stores instead. Optionally restrict the document listing to one context namespace. Omit or leave cursor empty for the first page; continue with nextCursor using the same namespace when the result is paginated.",
       inputSchema: objectSchema({
         namespace: stringSchema(
-          "Optional context namespace to list. Omit to list every namespace.",
+          "Optional namespace whose documents to list. Omit to list documents across registered concrete namespaces.",
         ),
         cursor: stringSchema(
           "Opaque cursor returned by a previous list_expert_context call. Omit or leave empty for the first page.",
@@ -1004,13 +1003,11 @@ function formatContextSummaries(context: readonly ExpertAgentContextItemSummary[
 
 interface ContextIndexPage {
   readonly items: readonly ExpertAgentContextItemSummary[];
-  readonly stores: readonly ContextStoreIndexSummary[];
   readonly issues: ContextIndex["issues"];
   readonly total: number;
   readonly byteBudget: number;
   readonly skippedOversized: number;
   readonly omittedIssues: number;
-  readonly omittedStores: number;
   readonly nextCursor?: string | undefined;
 }
 
@@ -1039,10 +1036,6 @@ function paginateContextIndex(
     };
   }
   const sorted = [...index.items].sort(compareContextSummary);
-  const stores = boundContextStoreSummaries(
-    index.stores,
-    Math.min(512, Math.floor(byteBudget / 8)),
-  );
   const boundedIssues = boundContextIssues(index.issues, Math.min(384, Math.floor(byteBudget / 8)));
   const startOffset = Math.min(cursor.value?.[1] ?? 0, sorted.length);
   const selected: ExpertAgentContextItemSummary[] = [];
@@ -1055,13 +1048,11 @@ function paginateContextIndex(
     Buffer.byteLength(
       formatContextIndexPage({
         items: [],
-        stores,
         issues: boundedIssues.issues,
         total: sorted.length,
         byteBudget: Number.MAX_SAFE_INTEGER,
         skippedOversized: limit,
         omittedIssues: boundedIssues.omitted,
-        omittedStores: index.stores.length - stores.length,
         nextCursor: encodeShortPageCursor(contextCursorBinding(namespace), sorted.length),
       }),
       "utf8",
@@ -1091,13 +1082,11 @@ function paginateContextIndex(
     ok: true,
     value: {
       items: selected,
-      stores,
       issues: boundedIssues.issues,
       total: sorted.length,
       byteBudget,
       skippedOversized,
       omittedIssues: boundedIssues.omitted,
-      omittedStores: index.stores.length - stores.length,
       ...(hasMore
         ? { nextCursor: encodeShortPageCursor(contextCursorBinding(namespace), nextOffset) }
         : {}),
@@ -1109,12 +1098,6 @@ function formatContextIndexPage(page: ContextIndexPage): string {
   const summaries = formatContextSummaries(page.items);
   const pageLines = [
     `Showing ${page.items.length} of ${page.total} Expert context items.`,
-    ...(page.stores.length === 0
-      ? []
-      : ["Context stores:", ...page.stores.map(formatContextStoreSummary)]),
-    ...(page.omittedStores === 0
-      ? []
-      : [`${page.omittedStores} additional context store(s) omitted.`]),
     summaries,
     ...(page.nextCursor === undefined
       ? []
@@ -1374,47 +1357,6 @@ function formatContextSummary(context: ExpertAgentContextItemSummary): string {
     context.etag === undefined || context.etag === context.revision
       ? undefined
       : `  etag: ${context.etag}`,
-  ]
-    .filter((line) => line !== undefined)
-    .join("\n");
-}
-
-function boundContextStoreSummaries(
-  stores: readonly ContextStoreIndexSummary[],
-  byteBudget: number,
-): readonly ContextStoreIndexSummary[] {
-  const selected: ContextStoreIndexSummary[] = [];
-  let usedBytes = 0;
-  for (const store of stores) {
-    const bounded: ContextStoreIndexSummary = {
-      namespace: truncateUtf8(store.namespace, 120),
-      ...(store.storeName === undefined ? {} : { storeName: truncateUtf8(store.storeName, 120) }),
-      ...(store.itemCount === undefined ? {} : { itemCount: store.itemCount }),
-    };
-    let size = Buffer.byteLength(formatContextStoreSummary(bounded), "utf8") + 1;
-    if (usedBytes + size > byteBudget && bounded.storeName !== undefined) {
-      const identity: ContextStoreIndexSummary = {
-        namespace: bounded.namespace,
-        ...(bounded.itemCount === undefined ? {} : { itemCount: bounded.itemCount }),
-      };
-      size = Buffer.byteLength(formatContextStoreSummary(identity), "utf8") + 1;
-      if (usedBytes + size > byteBudget) break;
-      selected.push(identity);
-      usedBytes += size;
-      continue;
-    }
-    if (usedBytes + size > byteBudget) break;
-    selected.push(bounded);
-    usedBytes += size;
-  }
-  return selected;
-}
-
-function formatContextStoreSummary(store: ContextStoreIndexSummary): string {
-  return [
-    `- namespace: ${store.namespace}`,
-    store.storeName === undefined ? undefined : `  storeName: ${store.storeName}`,
-    store.itemCount === undefined ? undefined : `  itemCount: ${store.itemCount}`,
   ]
     .filter((line) => line !== undefined)
     .join("\n");

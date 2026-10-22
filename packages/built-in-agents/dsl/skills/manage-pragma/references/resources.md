@@ -15,6 +15,27 @@ For performing tasks, read [Missions](missions.md); for schedules, discover
 the automations reference. Inspect availability and retain actual IDs returned by the Host.
 Do not scan managed storage or infer a workspace path from its display label.
 
+## Current Context stores
+
+Use the native `list_context_stores({})` tool to discover concrete Store namespaces and names
+registered for this execution context, including mounted knowledge, Memory and Board stores.
+This is separate from `pragma manage knowledge-store list`, which discovers formal knowledge
+resources that may be selected for mounting. A host storeId or DSL ContextStore ref is not a namespace.
+
+`list_context_stores` does not query document indexes or contents. Follow its `nextCursor` with
+`cursor` until the desired Store is found; restart with `{}` if registrations change and the cursor
+expires. Copy namespace verbatim. Registration alone does not establish Store health or authorize
+an operation. Dynamic namespace prefixes are not concrete Stores and are omitted.
+
+Use `list_expert_context` to page through document ids and descriptions, normally with the chosen
+namespace; it does not return a Store directory, Store names, or Store item counts. Its document
+cursor is separate from the Store directory cursor. Read documents with `read_expert_context`.
+
+For an unregistered or malformed namespace error, follow the tool's recovery instruction to call
+`list_context_stores`, copy an exact namespace, and retry. Never repeat the unchanged invalid value
+or diagnose a storage outage from an addressing error. For revision drafts, keep the revision
+list/get and reclaim workflow below: discovering a namespace does not establish draft ownership.
+
 ## Managed knowledge and Skill changes
 
 Formal knowledge and Skill packages are read-only to Agents. For creation or modification,

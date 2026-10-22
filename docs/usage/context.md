@@ -54,6 +54,10 @@ namespace 格式错误（例如包含 `/`）返回 `invalid_input` 与同样的�
 这表示参数可能抄错或 Store 未挂载，不足以认定存储故障。先列举并复制精确 namespace 后重试；
 已注册 Store 自身返回的 `store_unavailable` 等故障码保持不变。
 
+`list_expert_context` 只返回分页的文档摘要和必要的 Store 故障诊断，不再附带 Store 目录、
+Store 名称或条目计数。文档摘要仍保留 namespace，便于精确读取；发现 Store 统一使用
+`list_context_stores`，其 Store 列表具有独立分页。
+
 `list_expert_context` 默认每页 20 条，可通过 `limit` 调整到最多 50 条；返回 `nextCursor` 时使用该
 `cursor` 继续下一页。Search 结果受数量和字节预算约束，结果被省略时应缩小 query；搜索片段被截断时，
 使用结果中的 namespace 与 ID 调用 `read_expert_context`。Read 默认按 8KB 分段，返回
