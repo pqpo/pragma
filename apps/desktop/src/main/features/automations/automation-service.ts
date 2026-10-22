@@ -455,6 +455,9 @@ export function createAutomationService(options: {
           await options.missions.backfillAutomationOrigin(missionId, automationRef);
         } catch (error) {
           if (error instanceof MissionStoreError && error.code === "mission_not_found") return;
+          // Historical runs outlive their Missions, including the durable deletion fence.
+          // Keep the fence intact and never try to recreate a deleted Mission.
+          if (error instanceof Error && error.message === "MISSION_DELETION_PENDING") return;
           throw error;
         }
       }),

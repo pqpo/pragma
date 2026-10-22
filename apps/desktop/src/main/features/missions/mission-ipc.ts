@@ -179,12 +179,21 @@ export function installMissionHandlers(options: {
     });
   };
   const ensureLegacyAutomationMissionSources = async (): Promise<void> => {
-    legacyAutomationMissionSourcesRequest ??= options.getAutomationMissionSources();
     try {
+      legacyAutomationMissionSourcesRequest ??= options.getAutomationMissionSources();
       legacyAutomationMissionSources = await legacyAutomationMissionSourcesRequest;
     } catch (error) {
       legacyAutomationMissionSourcesRequest = undefined;
-      throw error;
+      // Source enrichment must not prevent unrelated Missions from being read.
+      // Keep the last successful map and retry on the next request.
+      console.warn(
+        JSON.stringify({
+          level: "warn",
+          component: "desktop.missions",
+          event: "automation_mission_sources_unavailable",
+          message: error instanceof Error ? error.message : String(error),
+        }),
+      );
     }
   };
   const sourceForMission = async (mission: Mission): Promise<MissionSummary["source"]> => {
