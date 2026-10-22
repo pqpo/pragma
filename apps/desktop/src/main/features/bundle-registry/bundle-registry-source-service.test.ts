@@ -16,6 +16,7 @@ import { promisify } from "node:util";
 import { afterEach, describe, expect, it } from "vitest";
 import { decodePragmaBundle, formatPragmaYaml, loadPragmaProject } from "@pragma/interpreter";
 import { upgradeBundleSource } from "@pragma/local-host";
+import type { PragmaBundleService } from "@pragma/local-host/deployment";
 import { PRAGMA_DSL_WRITE_API_VERSION } from "@pragma/interpreter/ast";
 
 import {
@@ -27,6 +28,7 @@ import {
   UpdateDesktopBundleRegistrySourceSchema,
 } from "../../../shared/contracts/index.ts";
 import { createDesktopBundleRegistrySourceService } from "./bundle-registry-source-service.ts";
+import { createBundleSourcePublishingService } from "./bundle-source-publishing-service.ts";
 
 const temporaryRoots: string[] = [];
 const execFileAsync = promisify(execFile);
@@ -795,19 +797,76 @@ describe("Desktop Bundle Registry sources", () => {
       await expect(service.publishBundleToSource(request)).resolves.toMatchObject({
         status: "already_published",
       });
+      const renamedName = "代码审查专家";
+      const renamedBundlePath = await createExpertBundle(root, renamedName);
+      const renamedBundle = await decodePragmaBundle({ kind: "file", path: renamedBundlePath });
+      const publishing = createBundleSourcePublishingService({
+        cacheRoot: join(root, "cache"),
+        sources: service,
+        bundles: {
+          prepareExport: async () => ({
+            root: {
+              ref: request.rootRef,
+              kind: "Expert",
+              name: renamedName,
+              description: request.metadata.description,
+              tags: request.metadata.tags,
+              avatarId: request.metadata.avatarId,
+            },
+            projectRevision: 2,
+            capabilityCount: 0,
+            pluginCount: 0,
+            knowledgeBaseCount: 0,
+            hasFlowLayouts: false,
+            defaults: { capabilities: false, flowLayouts: false },
+          }),
+          exportTo: async (_input: unknown, path: string) => {
+            await copyFile(renamedBundlePath, path);
+            return { path, bundleFingerprint: renamedBundle.manifest.bundleFingerprint };
+          },
+        } as unknown as PragmaBundleService,
+        readGitIdentity: async () => ({ name: "New Publisher", email: "new@pragma.invalid" }),
+      });
+      const prepared = await publishing.prepare({ rootRef: request.rootRef, projectRevision: 2 });
+      expect(prepared.sources[0]?.existingItem).toMatchObject({
+        id: "reviewer",
+        name: { default: "Reviewer" },
+      });
+      expect(prepared.metadata).toMatchObject({
+        name: renamedName,
+        authorName: "Pragma Publisher",
+        license: "MIT",
+      });
       await expect(
-        service.publishBundleToSource({
-          ...request,
-          target: { ...request.target, version: "1.0.1" },
+        publishing.publish({
+          rootRef: request.rootRef,
+          projectRevision: prepared.projectRevision,
+          modules: prepared.modules,
+          metadata: { ...prepared.metadata, itemId: request.metadata.itemId },
+          targets: [{ ...request.target, version: "1.0.1" }],
         }),
       ).resolves.toMatchObject({
-        status: "published",
+        results: [{ sourceId: source.id, status: "published" }],
       });
       const checkout = join(root, "checkout");
       await execFileAsync("git", ["clone", "--branch", "main", `file://${remote}`, checkout]);
       await expect(
         readFile(join(checkout, "experts/general/reviewer/config.yaml"), "utf8"),
       ).resolves.toMatch(/avatarId: pragma\.avatar\.expert\.07[\s\S]*latestVersion: 1\.0\.1/u);
+      await expect(
+        readFile(join(checkout, "experts/general/reviewer/config.yaml"), "utf8"),
+      ).resolves.toContain(`default: ${renamedName}`);
+      const refreshed = await service.preparePublicationSources("expert", request.rootRef);
+      expect(refreshed[0]?.existingItem).toMatchObject({
+        id: "reviewer",
+        name: { default: renamedName },
+        latestVersion: "1.0.1",
+        versions: ["1.0.0", "1.0.1"],
+      });
+      const catalog = await service.getCatalog();
+      expect(catalog.items.filter((item) => item.rootRef === request.rootRef)).toEqual([
+        expect.objectContaining({ id: "reviewer", name: { default: renamedName } }),
+      ]);
     } finally {
       restoreEnvironment("HOME", previous.HOME);
       restoreEnvironment("GIT_CONFIG_COUNT", previous.GIT_CONFIG_COUNT);
@@ -837,7 +896,7 @@ function restoreEnvironment(name: string, value: string | undefined): void {
   else process.env[name] = value;
 }
 
-async function createExpertBundle(root: string): Promise<string> {
+async function createExpertBundle(root: string, name = "Reviewer"): Promise<string> {
   const projectPath = join(root, "project.yaml");
   const bundlePath = join(root, "reviewer.pragma");
   await writeFile(
@@ -862,7 +921,7 @@ async function createExpertBundle(root: string): Promise<string> {
           kind: "Expert",
           metadata: {
             id: "1xddvess309a6gme",
-            name: "Reviewer",
+            name,
             description: "Reviews code",
             tags: ["review"],
           },

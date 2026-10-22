@@ -62,7 +62,7 @@ export function createBundleSourcePublishingService(options: {
         },
         metadata: {
           itemId: sourceSlug(preview.root.name, preview.root.ref),
-          name: existing?.name.default ?? preview.root.name,
+          name: preview.root.name,
           summary: bundleSourcePublicationSummary(preview.root.description),
           description: preview.root.description,
           authorName: existing?.author.name ?? identity.name,
