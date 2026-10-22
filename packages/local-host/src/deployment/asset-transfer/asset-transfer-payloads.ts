@@ -8,7 +8,7 @@ import {
 import { isGitMetadataPath } from "../../deployment-contracts/git-metadata-path.ts";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
-import { validatePortableSkillPackage } from "@pragma/built-in-agents";
+import { validateSkillPackage } from "@pragma/built-in-agents";
 import { MAX_SKILL_PACKAGE_BYTES } from "@pragma/shared";
 import { scanSkillWorkingTree } from "../capabilities/skill-revision-draft-store.ts";
 import type { CapabilityStore } from "../capabilities/capability-store.ts";
@@ -83,25 +83,30 @@ export function validateTransferredSkill(
 ): void {
   const location = `pragma-sync/skills/${context.id}`;
   const identity = `Skill ${JSON.stringify(data.name)} (ID ${context.id}, ${location})`;
-  if (
-    data.files.reduce((sum, file) => sum + Buffer.from(file.content, "base64").byteLength, 0) >
-    MAX_SKILL_PACKAGE_BYTES
-  )
-    throw new Error(`Invalid ${identity}: package exceeds 25 MiB.`);
-  const validation = validatePortableSkillPackage(
+  let totalBytes = 0;
+  const files = data.files.map((file) => {
+    const bytes = Buffer.from(file.content, "base64");
+    totalBytes += bytes.byteLength;
+    if (totalBytes > MAX_SKILL_PACKAGE_BYTES)
+      throw new Error(`Invalid ${identity}: package exceeds 25 MiB.`);
+    // Only the entry document needs text decoding. All payload bytes count above, including
+    // binary files whose replacement characters would otherwise inflate the UTF-8 size.
+    let content = "";
+    if (file.path === "SKILL.md") {
+      content = bytes.toString("utf8");
+      if (!Buffer.from(content, "utf8").equals(bytes))
+        throw new Error(`Invalid ${identity} at SKILL.md: entry must be valid UTF-8 text.`);
+    }
+    return { path: file.path, content };
+  });
+  const validation = validateSkillPackage(
     {
       name: data.name,
       description: data.description,
-      files: data.files.map((file) => ({
-        path: file.path,
-        content: Buffer.from(file.content, "base64").toString("utf8"),
-      })),
+      files,
     },
     {
       checkDescriptionConsistency: false,
-      executablePaths: new Set(
-        data.files.filter((file) => file.executable).map((file) => file.path),
-      ),
     },
   );
   if (!validation.passed) {

@@ -17,9 +17,22 @@ evaluation without a consistent human review step.
 
 Remove the Skill Evaluation Agent and its replay protocol, model profile, IPC, UI, and asynchronous
 processing path. `skill_revision_submit_draft` now performs deterministic validation synchronously.
-It checks package/frontmatter consistency, script-to-test import coverage, static import allowlists,
-and forbidden dynamic-loading, network, and process escape patterns. It does not execute candidate
-scripts or `node:test` files.
+It checks package/frontmatter consistency and package integrity only. The same validation applies to
+creation, ordinary revision, Memory-generated changes, manual edits, and synchronization. Scripts may
+use any language or extension, third-party dependencies, dynamic module loading, network calls, and
+process APIs under the existing Runtime permissions. Supporting files may use any safe layout,
+including dependency manifests, lockfiles, and assets. Script-to-test import coverage, required test
+files, module allowlists, code-pattern scanning, and generated-only layout and per-file limits are
+removed. Package limits remain 1000 files and 25 MiB, with safe unique relative paths, a root SKILL.md,
+and regular files/directories only; symlinks, hard links, and special files remain unsupported.
+
+Creators are responsible for testing affected behavior before submission, documenting interpreter and
+dependency setup, and accurately summarizing checks and limitations. No test evidence field or new
+approval step is required. Pragma does not automatically provision interpreters or dependencies.
+Submission, approval, and synchronization never execute candidate scripts or tests and do not certify
+code safety or correctness. Runtime execution permissions, human review, immutable snapshots,
+concurrency checks, executable metadata, and publication integrity remain unchanged. This policy
+relaxation does not change stored schemas or require data migration.
 
 Validation failure returns `invalid_input` with path-addressed diagnostics and leaves the draft
 editable. The Skill Revision Agent repairs the reported files and resubmits until validation passes.

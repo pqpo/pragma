@@ -92,7 +92,10 @@ if (lane !== "desktop") {
     "test/memory-attention.test.ts",
     "test/jev-decision-provider.test.ts",
   ]);
-  await vitest("@pragma/built-in-agents", ["test/pragma-management-tools.test.ts"]);
+  await vitest("@pragma/built-in-agents", [
+    "test/skill-validation.test.ts",
+    "test/pragma-management-tools.test.ts",
+  ]);
 
   for (const runtime of ["pi", "codex", "opencode", "claude-code", "qodercli", "antigravity"])
     await run(["--filter", `@pragma/runtime-${runtime}`, "test:core"], `runtime-${runtime}`);
@@ -125,6 +128,8 @@ if (lane !== "host") {
     "src/renderer/src/pages/studio/PragmaBundleDialog.test.tsx",
     "src/renderer/src/pages/settings/ModelProvidersFragment.test.tsx",
     "src/main/features/capabilities/capability-store.test.ts",
+    "src/main/features/capabilities/skill-revision-service.test.ts",
+    "src/main/features/studio-sync/asset-sync-repository.test.ts",
     "src/main/features/capabilities/capability-revision-coordinator.test.ts",
     "src/main/features/context-stores/context-store-store.test.ts",
     "src/main/features/projects/pragma-project-store.test.ts",
@@ -139,5 +144,11 @@ if (lane !== "host") {
     "src/main/features/context-stores/knowledge-revision-capability.test.ts",
     "src/main/features/context-stores/context-store-revision-service.test.ts",
   ]);
+  await vitest(
+    "@pragma/desktop",
+    ["src/main/features/studio-sync/structured-asset-sync.integration.test.ts"],
+    ["-t", "restores Knowledge, binary Skill"],
+    "skill-script-sync",
+  );
   await run(["--filter", "@pragma/desktop", "test:claude-worker"], "claude-worker");
 }

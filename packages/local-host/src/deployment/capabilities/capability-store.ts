@@ -1,5 +1,5 @@
 import { readSkillFrontmatter } from "./skill-frontmatter.ts";
-import { builtInSkill, validatePortableSkillPackage } from "@pragma/built-in-agents";
+import { builtInSkill, validateSkillPackage } from "@pragma/built-in-agents";
 export { CapabilityStoreError } from "../../resources/index.ts";
 import {
   createLocalHostCapabilityReader,
@@ -725,28 +725,11 @@ export function createCapabilityStore(options: {
         const executablePaths = new Set(
           snapshot.entries.filter((entry) => entry.executable).map((entry) => entry.path),
         );
-        const unchangedExecutables = new Set(
-          snapshot.entries
-            .filter(
-              (next) =>
-                next.executable &&
-                original.entries.some(
-                  (entry) =>
-                    entry.executable &&
-                    entry.path === (executableOrigins.get(next.path) ?? next.path) &&
-                    entry.sha256 === next.sha256,
-                ),
-            )
-            .map((entry) => entry.path),
-        );
-        const validation = validatePortableSkillPackage(
-          {
-            name: metadata.name ?? current.definition.name,
-            description: metadata.description ?? current.definition.description,
-            files,
-          },
-          { executablePaths, allowUnscannedExecutablePaths: unchangedExecutables },
-        );
+        const validation = validateSkillPackage({
+          name: metadata.name ?? current.definition.name,
+          description: metadata.description ?? current.definition.description,
+          files,
+        });
         if (!validation.passed)
           throw new CapabilityStoreError(
             "config_invalid",

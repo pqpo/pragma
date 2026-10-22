@@ -10,7 +10,6 @@ import {
 
 export const SKILL_LEARNING_JOB_SCHEMA_VERSION = "pragma.memory-skill-job/v2" as const;
 export const MAX_SKILL_PACKAGE_BYTES = 25 * 1_024 * 1_024;
-export const MAX_GENERATED_SKILL_FILE_CHARACTERS = 128 * 1_024;
 
 function utf8ByteLength(value: string): number {
   let bytes = 0;

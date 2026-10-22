@@ -250,9 +250,9 @@ describe("Pragma management tools", () => {
       passed: false,
       diagnostics: [
         {
-          path: "scripts/run.mjs",
-          code: "skill_network_access_forbidden",
-          message: "Network access is forbidden.",
+          path: "SKILL.md:description",
+          code: "skill_metadata_mismatch",
+          message: "Description does not match Skill metadata.",
         },
       ],
     };

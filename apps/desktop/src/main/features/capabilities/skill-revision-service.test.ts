@@ -998,14 +998,6 @@ describe("Skill revision service", () => {
       join(inspection.draftPath!, "tests/run.test.mjs"),
       "import '../scripts/run.mjs';\n",
     );
-    await expect(submit()).rejects.toMatchObject({
-      code: "invalid_input",
-      validation: {
-        diagnostics: expect.arrayContaining([expect.objectContaining({ path: "scripts/run.mjs" })]),
-      },
-    });
-    expect(await readdir(join(fixture.draftsPath, job.draftId, "submissions"))).toEqual([]);
-    await writeFile(join(inspection.draftPath!, "scripts/run.mjs"), "export const run = true;\n");
     const pending = await submit();
     expect(pending.state).toBe("pending_review");
     expect(await fixture.service.getDraft(job.draftId)).toMatchObject({
@@ -1206,23 +1198,13 @@ describe("Skill revision service", () => {
     });
   });
 
-  it("returns actionable validation diagnostics without changing the editable draft", async () => {
+  it("returns actionable metadata diagnostics without changing the editable draft", async () => {
     const fixture = await createService();
     const job = await fixture.service.start(request("expert-reflection"));
     const inspected = await fixture.service.inspectDraft(job.draftId);
     await writeFile(
       join(inspected.draftPath!, "SKILL.md"),
-      "---\nname: safe-workflow\ndescription: Safe workflow.\n---\n",
-    );
-    await mkdir(join(inspected.draftPath!, "scripts"));
-    await mkdir(join(inspected.draftPath!, "tests"));
-    await writeFile(
-      join(inspected.draftPath!, "scripts", "unsafe.mjs"),
-      "export const run = () => fetch('https://example.test');\n",
-    );
-    await writeFile(
-      join(inspected.draftPath!, "tests", "unsafe.test.mjs"),
-      "import '../scripts/unsafe.mjs';\n",
+      "---\nname: [invalid]\ndescription: Safe workflow.\n---\n",
     );
     const invalid = await fixture.service.inspectDraft(job.draftId);
     await expect(
@@ -1238,10 +1220,7 @@ describe("Skill revision service", () => {
       validation: {
         passed: false,
         diagnostics: [
-          expect.objectContaining({
-            path: "scripts/unsafe.mjs",
-            code: "skill_network_access_forbidden",
-          }),
+          expect.objectContaining({ path: "SKILL.md:name", code: "skill_frontmatter_invalid" }),
         ],
       },
     } satisfies Partial<SkillRevisionValidationError>);
@@ -1373,37 +1352,64 @@ describe("Skill revision service", () => {
     });
   });
 
-  it("rejects executable files that the portable validator cannot inspect", async () => {
-    const fixture = await createService();
-    const job = await fixture.service.start(request("expert-reflection"));
-    const editing = await fixture.service.inspectDraft(job.draftId);
-    const bin = join(editing.draftPath!, "bin");
-    await mkdir(bin);
-    const executable = join(bin, "run");
-    await writeFile(executable, "echo unsafe\n");
-    await chmod(executable, 0o700);
-    const changed = await fixture.service.inspectDraft(job.draftId);
-
-    await expect(
-      fixture.service.submitDraft({
+  it.each(["expert-reflection", "memory-learning"] as const)(
+    "submits and publishes new arbitrary scripts for %s without running them",
+    async (source) => {
+      const fixture = await createService();
+      const job = await fixture.service.start(request(source));
+      const editing = await fixture.service.inspectDraft(job.draftId);
+      const marker = join(fixture.draftsPath, "executed.txt");
+      const scripts = [
+        {
+          path: "bin/run",
+          content: `#!/bin/sh\nprintf executed > ${JSON.stringify(marker)}\nexit 1\n`,
+        },
+        {
+          path: "scripts/run.py",
+          content: `from pathlib import Path\nPath(${JSON.stringify(marker)}).write_text('executed')\nraise RuntimeError('must not execute')\n`,
+        },
+        {
+          path: "scripts/run.mjs",
+          content: `import { writeFileSync } from 'node:fs'; writeFileSync(${JSON.stringify(marker)}, 'executed'); import('axios'); throw new Error('must not execute');\n`,
+        },
+      ];
+      for (const script of scripts) {
+        const target = join(editing.draftPath!, script.path);
+        await mkdir(dirname(target), { recursive: true });
+        await writeFile(target, script.content);
+        await chmod(target, 0o700);
+      }
+      const changed = await fixture.service.inspectDraft(job.draftId);
+      const pending = await fixture.service.submitDraft({
         draftId: job.draftId,
         expectedRevision: changed.draft.revision,
         expectedWorkingTreeHash: changed.workingTree.hash,
-        summary: "Reject an unscanned executable file.",
-      }),
-    ).rejects.toMatchObject({
-      validation: {
-        diagnostics: [
-          expect.objectContaining({
-            path: "bin/run",
-            code: "skill_script_language_unsupported",
-          }),
-        ],
-      },
-    });
-  });
+        summary: "Add creator-verified scripts without a required test directory.",
+      });
+      expect(pending.state).toBe("pending_review");
+      const submission = await fixture.service.getDraft(job.draftId);
+      const submittedRoot = join(
+        fixture.draftsPath,
+        job.draftId,
+        "submissions",
+        submission.submissionHash!,
+      );
+      for (const script of scripts) {
+        expect(await readFile(join(submittedRoot, script.path), "utf8")).toBe(script.content);
+        expect((await stat(join(submittedRoot, script.path))).mode & 0o111).not.toBe(0);
+      }
+      await expect(fixture.service.approve(pending.id, pending.revision)).resolves.toMatchObject({
+        state: "completed",
+        publishedRevision: 2,
+      });
+      await expect(stat(marker)).rejects.toMatchObject({ code: "ENOENT" });
+      await expect(stat(join(submittedRoot, "executed.txt"))).rejects.toMatchObject({
+        code: "ENOENT",
+      });
+    },
+  );
 
-  it("preserves an unchanged unsupported executable from an existing Skill revision", async () => {
+  it("preserves an unchanged executable from an existing Skill revision", async () => {
     const fixture = await createService();
     await mkdir(join(fixture.sourcePath, "references"));
     const legacyTool = join(fixture.sourcePath, "references", "tool.sh");
@@ -1430,7 +1436,7 @@ describe("Skill revision service", () => {
     });
   });
 
-  it("rejects a changed unsupported executable when revising an existing Skill", async () => {
+  it("publishes a changed Shell executable when revising an existing Skill", async () => {
     const fixture = await createService();
     await mkdir(join(fixture.sourcePath, "references"));
     const legacyTool = join(fixture.sourcePath, "references", "tool.sh");
@@ -1442,50 +1448,29 @@ describe("Skill revision service", () => {
     await writeFile(join(editing.draftPath!, "references", "tool.sh"), "echo changed tool\n");
     const changed = await fixture.service.inspectDraft(job.draftId);
 
-    await expect(
-      fixture.service.submitDraft({
-        draftId: job.draftId,
-        expectedRevision: changed.draft.revision,
-        expectedWorkingTreeHash: changed.workingTree.hash,
-        summary: "Reject the changed unscanned executable.",
-      }),
-    ).rejects.toMatchObject({
-      validation: {
-        diagnostics: [
-          expect.objectContaining({
-            path: "references/tool.sh",
-            code: "skill_script_language_unsupported",
-          }),
-        ],
-      },
+    const pending = await fixture.service.submitDraft({
+      draftId: job.draftId,
+      expectedRevision: changed.draft.revision,
+      expectedWorkingTreeHash: changed.workingTree.hash,
+      summary: "Update the Shell executable.",
     });
+    await expect(fixture.service.approve(pending.id, pending.revision)).resolves.toMatchObject({
+      state: "completed",
+      publishedRevision: 2,
+    });
+    const draft = await fixture.service.getDraft(job.draftId);
+    const target = join(
+      fixture.draftsPath,
+      job.draftId,
+      "submissions",
+      draft.submissionHash!,
+      "references/tool.sh",
+    );
+    expect(await readFile(target, "utf8")).toBe("echo changed tool\n");
+    expect((await stat(target)).mode & 0o111).not.toBe(0);
   });
 
-  it("keeps generated layout validation for Memory Skill revisions", async () => {
-    const fixture = await createService();
-    await mkdir(join(fixture.sourcePath, "scripts"));
-    await writeFile(join(fixture.sourcePath, "scripts", "run.js"), "export const run = true;\n");
-
-    const job = await fixture.service.start(request("memory-learning"));
-    const editing = await fixture.service.inspectDraft(job.draftId);
-
-    await expect(
-      fixture.service.submitDraft({
-        draftId: job.draftId,
-        expectedRevision: editing.draft.revision,
-        expectedWorkingTreeHash: editing.workingTree.hash,
-        summary: "Validate this generated Skill revision.",
-      }),
-    ).rejects.toMatchObject({
-      validation: {
-        diagnostics: expect.arrayContaining([
-          expect.objectContaining({ code: "skill_executable_extension_invalid" }),
-        ]),
-      },
-    });
-  });
-
-  it("keeps generated layout validation for Agent-created Skills", async () => {
+  it("publishes Agent-created Skills with Python, Shell, assets and dependency manifests without tests", async () => {
     const fixture = await createService();
     const job = await fixture.service.start({
       schemaVersion: "pragma.skill-revision-request/v4",
@@ -1504,25 +1489,28 @@ describe("Skill revision service", () => {
       "---\nname: created-skill\ndescription: A newly generated Skill.\n---\n",
     );
     await mkdir(join(draft.draftPath!, "scripts"));
-    await writeFile(join(draft.draftPath!, "scripts", "run.js"), "export const run = true;\n");
+    await writeFile(
+      join(draft.draftPath!, "scripts", "run.py"),
+      "raise RuntimeError('must not execute')\n",
+    );
+    await writeFile(join(draft.draftPath!, "scripts", "run.sh"), "#!/bin/sh\nexit 1\n");
+    await chmod(join(draft.draftPath!, "scripts", "run.sh"), 0o700);
+    await writeFile(join(draft.draftPath!, "requirements.txt"), "requests\n");
+    await writeFile(join(draft.draftPath!, "package.json"), '{"dependencies":{"axios":"1"}}');
     await mkdir(join(draft.draftPath!, "assets"));
     await writeFile(join(draft.draftPath!, "assets", "diagram.svg"), "<svg />\n");
     const ready = await fixture.service.inspectDraft(job.draftId);
 
-    await expect(
-      fixture.service.submitDraft({
-        draftId: job.draftId,
-        expectedRevision: ready.draft.revision,
-        expectedWorkingTreeHash: ready.workingTree.hash,
-        summary: "Submit the generated Skill.",
-      }),
-    ).rejects.toMatchObject({
-      validation: {
-        diagnostics: expect.arrayContaining([
-          expect.objectContaining({ code: "skill_file_location_invalid" }),
-          expect.objectContaining({ code: "skill_executable_extension_invalid" }),
-        ]),
-      },
+    const pending = await fixture.service.submitDraft({
+      draftId: job.draftId,
+      expectedRevision: ready.draft.revision,
+      expectedWorkingTreeHash: ready.workingTree.hash,
+      summary: "Submit the creator-verified Skill.",
+    });
+    expect(pending.state).toBe("pending_review");
+    await expect(fixture.service.approve(pending.id, pending.revision)).resolves.toMatchObject({
+      state: "completed",
+      publishedRevision: 1,
     });
   });
 
@@ -1651,6 +1639,34 @@ describe("Skill revision service", () => {
       description: "Updated Node workflow.",
     });
   });
+
+  it.each([".git", ".GIT"])(
+    "rejects reserved Git paths even when they contain only binary resources: %s",
+    async (segment) => {
+      const fixture = await createService();
+      const job = await fixture.service.start(request("expert-reflection"));
+      const editing = await fixture.service.inspectDraft(job.draftId);
+      const reserved = join(editing.draftPath!, "assets", segment);
+      await mkdir(reserved, { recursive: true });
+      await writeFile(join(reserved, "tool.bin"), Buffer.from([0xff, 0xfe]));
+      const changed = await fixture.service.inspectDraft(job.draftId);
+      await expect(
+        fixture.service.submitDraft({
+          draftId: job.draftId,
+          expectedRevision: changed.draft.revision,
+          expectedWorkingTreeHash: changed.workingTree.hash,
+          summary: "Submit binary resources.",
+        }),
+      ).rejects.toMatchObject({
+        code: "invalid_input",
+        validation: {
+          diagnostics: [expect.objectContaining({ path: `assets/${segment}/tool.bin` })],
+        },
+      });
+      expect((await fixture.service.getDraft(job.draftId)).state).toBe("editing");
+      expect(fixture.publish).not.toHaveBeenCalled();
+    },
+  );
 
   it("publishes a raw package including binary files and executable scripts", async () => {
     const fixture = await createService();
@@ -2071,28 +2087,22 @@ describe("Skill revision service", () => {
             baseContentHash,
             name: "safe-workflow",
             description: "Safe workflow.",
-            summary: "Add a checked helper.",
-            operations:
-              attempt === 1
-                ? [
-                    {
-                      operation: "upsert" as const,
-                      path: "scripts/run.mjs",
-                      content: "export const run = () => fetch('https://example.test');\n",
-                    },
-                    {
-                      operation: "upsert" as const,
-                      path: "tests/run.test.mjs",
-                      content: "import '../scripts/run.mjs';\n",
-                    },
-                  ]
-                : [
-                    {
-                      operation: "upsert" as const,
-                      path: "scripts/run.mjs",
-                      content: "export const run = () => 'safe';\n",
-                    },
-                  ],
+            summary: "Repair Skill metadata and add a helper.",
+            operations: [
+              {
+                operation: "upsert" as const,
+                path: "SKILL.md",
+                content:
+                  attempt === 1
+                    ? "---\nname: [invalid]\ndescription: Safe workflow.\n---\n"
+                    : "---\nname: safe-workflow\ndescription: Safe workflow.\n---\n",
+              },
+              {
+                operation: "upsert" as const,
+                path: "scripts/run.py",
+                content: "import requests\nrequests.get('https://example.test')\n",
+              },
+            ],
           };
         },
       },
@@ -2752,12 +2762,12 @@ describe("Skill revision service", () => {
             baseContentHash,
             name: "safe-workflow",
             description: "Safe workflow.",
-            summary: "Add an unsafe helper.",
+            summary: "Write invalid Skill metadata.",
             operations: [
               {
                 operation: "upsert" as const,
-                path: "scripts/run.mjs",
-                content: "export const run = () => fetch('https://example.test');\n",
+                path: "SKILL.md",
+                content: "---\nname: [invalid]\ndescription: Safe workflow.\n---\n",
               },
             ],
           };
