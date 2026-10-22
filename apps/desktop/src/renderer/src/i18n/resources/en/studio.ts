@@ -545,10 +545,6 @@ export const studio = {
     "“{{name}}” will be permanently removed. Resources that depend on it must be updated before it can be deleted.",
   deleteResourceReferenced:
     "This resource cannot be deleted because it is referenced by {{references}}. Remove those dependencies first.",
-  deleteResourceReferencedMore_one:
-    "This resource cannot be deleted because it is referenced by {{references}} and {{count}} more resource. Remove those dependencies first.",
-  deleteResourceReferencedMore_other:
-    "This resource cannot be deleted because it is referenced by {{references}} and {{count}} more resources. Remove those dependencies first.",
   deleteResourceReferencedUnknown:
     "This resource is still referenced and cannot be deleted. Remove its dependencies first.",
   deleteResourceReference: "{{kind}} “{{name}}”",

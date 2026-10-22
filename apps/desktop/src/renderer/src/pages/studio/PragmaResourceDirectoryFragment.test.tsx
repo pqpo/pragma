@@ -23,12 +23,12 @@ import {
 
 import {
   buildFullyConnectedTeamPermissions,
-  deletePragmaResourceErrorMessage,
   matchesResourceDirectoryQuery,
   PragmaResourceDetailFragment,
   PragmaResourceDirectoryFragment,
   TeamEditor,
 } from "./PragmaResourceDirectoryFragment.tsx";
+import { deletePragmaResourceErrorMessage } from "../../lib/resource-delete-error.ts";
 import { createEmptyFlow } from "./flow-editor/flow-model.ts";
 import type { ExpertRecord } from "./studio-model.ts";
 
@@ -474,12 +474,12 @@ describe("PragmaResourceDirectoryFragment", () => {
 
 describe("PragmaResourceDetailFragment", () => {
   it.each([
-    ["en", "Expert “Code reviewer”", "Flow “Issue reporter”", "1 more resource"],
-    ["zh-Hans", "专家“Code reviewer”", "流程“Issue reporter”", "另外1个资源"],
-    ["zh-Hant", "專家「Code reviewer」", "流程「Issue reporter」", "另外1個資源"],
+    ["en", "Expert “Code reviewer”", "Flow “Issue reporter”", "Automation “Nightly cleanup”"],
+    ["zh-Hans", "专家“Code reviewer”", "流程“Issue reporter”", "自动化“Nightly cleanup”"],
+    ["zh-Hant", "專家「Code reviewer」", "流程「Issue reporter」", "自動化「Nightly cleanup」"],
   ] as const)(
-    "localizes and truncates referenced-resource deletion errors in %s",
-    async (locale, first, second, remainder) => {
+    "localizes and lists all referenced-resource deletion errors in %s",
+    async (locale, first, second, third) => {
       await i18n.changeLanguage(locale);
       const message = deletePragmaResourceErrorMessage(
         {
@@ -497,8 +497,8 @@ describe("PragmaResourceDetailFragment", () => {
 
       expect(message).toContain(first);
       expect(message).toContain(second);
-      expect(message).toContain(remainder);
-      expect(message).not.toContain("Nightly cleanup");
+      expect(message).toContain(third);
+      expect(message).toContain("Nightly cleanup");
       expect(message).not.toContain("Raw backend message");
     },
   );

@@ -515,10 +515,6 @@ export const studio = {
   deleteResourceDescription: "“{{name}}”将被永久删除。删除前，必须先更新所有依赖它的资源。",
   deleteResourceReferenced:
     "该资源被以下资源引用，无法删除：{{references}}。请先移除这些依赖关系。",
-  deleteResourceReferencedMore_one:
-    "该资源被以下资源引用，无法删除：{{references}}，以及另外{{count}}个资源。请先移除这些依赖关系。",
-  deleteResourceReferencedMore_other:
-    "该资源被以下资源引用，无法删除：{{references}}，以及另外{{count}}个资源。请先移除这些依赖关系。",
   deleteResourceReferencedUnknown: "该资源仍被其他资源引用，无法删除。请先移除相关依赖关系。",
   deleteResourceReference: "{{kind}}“{{name}}”",
   deleteResourceReferenceSeparator: "、",

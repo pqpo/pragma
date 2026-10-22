@@ -119,6 +119,7 @@ function serializeDesktopMutationError(error: unknown): DesktopMutationErrorData
       code: error.code,
       message: error.message,
       diagnostics: [],
+      ...(error.referencedBy.length === 0 ? {} : { referencedBy: error.referencedBy }),
     });
   }
   if (error instanceof MissionStoreError) {

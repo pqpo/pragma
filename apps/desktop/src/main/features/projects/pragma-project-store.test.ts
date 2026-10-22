@@ -1,4 +1,4 @@
-import { PRAGMA_DSL_WRITE_API_VERSION } from "@pragma/interpreter/ast";
+import { PRAGMA_DSL_WRITE_API_VERSION, canonicalPragmaResourceRef } from "@pragma/interpreter/ast";
 import { mkdir, mkdtemp, readFile, readdir, rename, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
@@ -977,16 +977,37 @@ describe("PragmaProjectStore", { timeout: 30_000 }, () => {
   it("blocks deletion of referenced Experts and every write path for system Experts", async () => {
     const { project, experts } = await stores();
     const flow = exampleFlow();
+    const team = exampleTeam();
+    const consumer = exampleExpert("reviewer");
+    consumer.spec.tools = [
+      {
+        adapter: "pragma.tool.call@v1",
+        target: { ref: "expert:1xddvess309a6gme" },
+        tool: { name: "call_writer", description: "Call Writer.", approval: "ask" },
+      },
+    ];
     flow.spec.graph.steps["finish"] = {
       expert: { ref: "expert:1xddvess309a6gme" },
     };
     await project.publish({
       expectedRevision: 0,
-      resources: [exampleRuntime(), exampleExpert(), flow],
+      resources: [
+        exampleRuntime(),
+        exampleRuntime("reviewer"),
+        exampleExpert(),
+        consumer,
+        team,
+        flow,
+      ],
     });
 
     await expect(experts.remove("expert:1xddvess309a6gme")).rejects.toMatchObject({
       code: "expert_referenced",
+      referencedBy: expect.arrayContaining([
+        { ref: canonicalPragmaResourceRef(flow), name: flow.metadata.name },
+        { ref: canonicalPragmaResourceRef(team), name: team.metadata.name },
+        { ref: canonicalPragmaResourceRef(consumer), name: consumer.metadata.name },
+      ]),
     });
     await expect(
       project.upsert({ baseRevision: 1, resource: builtInAgentResource(BUILT_IN_PRAGMA_REF) }),
@@ -1113,6 +1134,7 @@ describe("PragmaProjectStore", { timeout: 30_000 }, () => {
 
     await expect(experts.remove("expert:1xddvess309a6gme")).rejects.toMatchObject({
       code: "expert_referenced",
+      referencedBy: [{ ref: STORE_REVISION_EXPERT_REF, name: storeRevision.name }],
     });
     await expect(
       project.remove({ baseRevision: 1, ref: "expert:1xddvess309a6gme" }),

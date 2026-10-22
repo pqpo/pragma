@@ -24,10 +24,8 @@ import {
   PRAGMA_DSL_WRITE_API_VERSION,
   PragmaExpertTeamResourceSchema,
   PragmaRuntimeProfileConfigSchema,
-  PragmaResourceKindSchema,
   canonicalPragmaResourceRef,
   mergePragmaResourcePreservingUnknownFields,
-  parsePragmaReference,
   type PragmaExpertResource,
   type PragmaExpertTeamResource,
   type PragmaExpertTeamContextVisibility,
@@ -39,7 +37,6 @@ import {
   truncatePragmaTrimmedUnicode,
 } from "@pragma/shared";
 import {
-  DesktopMutationErrorSchema,
   expertTeamCoordinatorAvatarId,
   type DesktopRuntimeAvailability,
   type PragmaProjectSnapshot,
@@ -55,6 +52,7 @@ import {
 } from "../../components/PragmaResourcePickerDialog.tsx";
 import { ProfiledExpertAvatar } from "../../components/ProfiledExpertAvatar.tsx";
 import { MarkdownContent } from "../../components/MarkdownContent.tsx";
+import { deletePragmaResourceErrorMessage } from "../../lib/resource-delete-error.ts";
 import { errorMessage } from "../../lib/errors.ts";
 import { AssetMemoryPolicySection } from "../settings/AssetMemoryPolicySection.tsx";
 import { ContextStorePickerDialog } from "../../components/ContextStorePickerDialog.tsx";
@@ -77,17 +75,6 @@ export interface TeamKnowledgeSelection {
   readonly visibility: PragmaExpertTeamContextVisibility;
 }
 
-const DELETE_REFERENCE_LIMIT = 2;
-const DELETE_REFERENCE_KIND_KEYS = {
-  expert: "deleteResourceKind.expert",
-  team: "deleteResourceKind.team",
-  flow: "deleteResourceKind.flow",
-  automation: "deleteResourceKind.automation",
-  capability: "deleteResourceKind.capability",
-  "context-store": "deleteResourceKind.contextStore",
-  "runtime-profile": "deleteResourceKind.runtimeProfile",
-  evaluation: "deleteResourceKind.evaluation",
-} as const;
 type FlowHumanPrompt = NonNullable<
   PragmaFlowResource["spec"]["graph"]["steps"][string]["human"]
 >["prompt"];
@@ -102,34 +89,6 @@ function expertRecordRef(expert: ExpertRecord): string {
 
 function normalized(value: string): string {
   return value.trim().toLocaleLowerCase();
-}
-
-export function deletePragmaResourceErrorMessage(error: unknown, t: TFunction<"studio">): string {
-  const parsed = DesktopMutationErrorSchema.safeParse(error);
-  if (!parsed.success || parsed.data.code !== "resource_referenced") {
-    return errorMessage(error);
-  }
-
-  const referencedBy = parsed.data.referencedBy ?? [];
-  if (referencedBy.length === 0) return t("deleteResourceReferencedUnknown");
-
-  const visibleReferences = referencedBy.slice(0, DELETE_REFERENCE_LIMIT);
-  const references = visibleReferences
-    .map(({ ref, name }) =>
-      t("deleteResourceReference", {
-        kind: t(
-          DELETE_REFERENCE_KIND_KEYS[
-            PragmaResourceKindSchema.parse(parsePragmaReference(ref).kind)
-          ],
-        ),
-        name,
-      }),
-    )
-    .join(t("deleteResourceReferenceSeparator"));
-  const remaining = referencedBy.length - visibleReferences.length;
-  return remaining > 0
-    ? t("deleteResourceReferencedMore", { references, count: remaining })
-    : t("deleteResourceReferenced", { references });
 }
 
 export function matchesResourceDirectoryQuery(
@@ -354,7 +313,9 @@ export function PragmaResourceDetailFragment(props: {
   const { t } = useTranslation("studio");
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [deleting, setDeleting] = useState(false);
-  const [deleteError, setDeleteError] = useState<string | null>(null);
+  const [deleteError, setDeleteError] = useState<unknown>(null);
+  const deleteErrorMessage =
+    deleteError === null ? null : deletePragmaResourceErrorMessage(deleteError, t);
   const [memoryStoreOpen, setMemoryStoreOpen] = useState(false);
   const [memoryStoreHasContent, setMemoryStoreHasContent] = useState(false);
   const isTeam = props.resource.kind === "ExpertTeam";
@@ -408,7 +369,7 @@ export function PragmaResourceDetailFragment(props: {
     try {
       await props.onDelete();
     } catch (cause) {
-      setDeleteError(deletePragmaResourceErrorMessage(cause, t));
+      setDeleteError(() => cause);
       setConfirmOpen(false);
     } finally {
       setDeleting(false);
@@ -496,9 +457,13 @@ export function PragmaResourceDetailFragment(props: {
           />
         </div>
       </header>
-      {deleteError ? (
-        <p className="form-error pragma-resource-delete-error" role="alert">
-          {deleteError}
+      {deleteErrorMessage !== null ? (
+        <p
+          className="form-error pragma-resource-delete-error"
+          role="alert"
+          title={deleteErrorMessage}
+        >
+          {deleteErrorMessage}
         </p>
       ) : null}
       {isTeam ? (

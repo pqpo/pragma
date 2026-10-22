@@ -15,6 +15,7 @@ import {
   ExpertSummarySchema,
   UpdateExpertDefinitionSchema,
   UpdateBuiltInExpertDefinitionSchema,
+  type DesktopMutationReferencedResource,
   type CreateExpertDefinition,
   type ExpertDefinition,
   type ExpertSummary,
@@ -56,6 +57,7 @@ export class ExpertDefinitionStoreError extends Error {
       | "expert_referenced"
       | "built_in_readonly",
     message: string,
+    readonly referencedBy: readonly DesktopMutationReferencedResource[] = [],
   ) {
     super(message);
     this.name = "ExpertDefinitionStoreError";
@@ -253,15 +255,18 @@ export function createExpertDefinitionStore(options: {
       if (resource === undefined) {
         throw new ExpertDefinitionStoreError("expert_not_found", "The expert no longer exists.");
       }
-      if (
-        referencingPragmaResources(
-          [...snapshot.resources, ...options.systemExperts.listResources()],
-          id,
-        ).length > 0
-      ) {
+      const referencedBy = referencingPragmaResources(
+        [...snapshot.resources, ...options.systemExperts.listResources()],
+        id,
+      ).map((referencingResource) => ({
+        ref: canonicalPragmaResourceRef(referencingResource),
+        name: referencingResource.metadata.name,
+      }));
+      if (referencedBy.length > 0) {
         throw new ExpertDefinitionStoreError(
           "expert_referenced",
-          "This Expert is used by an Expert Team, Flow, or resource tool. Remove those dependencies before deleting it.",
+          "This Expert is used by another resource. Remove those dependencies before deleting it.",
+          referencedBy,
         );
       }
       const retainedResources = pruneUnreferencedDesktopResources(

@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { createIntegrationError } from "@pragma/shared/integration";
 
+import { ExpertDefinitionStoreError } from "../../features/experts/expert-definition-store.ts";
 import { runDesktopMutation } from "./desktop-mutation-result.ts";
 import { BundleSetupRequiredError } from "@pragma/local-host/deployment";
 import { MissionStoreError } from "@pragma/local-host";
@@ -126,6 +127,30 @@ describe("runDesktopMutation", () => {
           { ref: "expert:1xddvess309a6gme", name: "Code reviewer" },
           { ref: "flow:ceq0qxcgdv75wg6b", name: "Issue reporter" },
         ],
+      },
+    });
+  });
+
+  it("preserves Expert deletion references across the IPC boundary", async () => {
+    const referencedBy = [
+      { ref: "team:0000000000000001", name: "Release team" },
+      { ref: "expert:1xddvess309a6gme", name: "Code reviewer" },
+      { ref: "flow:ceq0qxcgdv75wg6b", name: "Issue reporter" },
+    ];
+    const result = await runDesktopMutation(async () => {
+      throw new ExpertDefinitionStoreError(
+        "expert_referenced",
+        "The Expert is referenced.",
+        referencedBy,
+      );
+    });
+    expect(result).toEqual({
+      ok: false,
+      error: {
+        code: "expert_referenced",
+        message: "The Expert is referenced.",
+        diagnostics: [],
+        referencedBy,
       },
     });
   });

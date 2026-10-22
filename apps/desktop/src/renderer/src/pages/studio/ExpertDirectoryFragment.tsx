@@ -40,7 +40,7 @@ import {
   isBuiltInExpert,
   type ExpertRecord,
 } from "./studio-model.ts";
-import { errorMessage } from "../../lib/errors.ts";
+import { deletePragmaResourceErrorMessage } from "../../lib/resource-delete-error.ts";
 import { runtimeDisplayName } from "../../lib/runtime-display.ts";
 import {
   BUILT_IN_PRAGMA_EXPERT_REF,
@@ -227,7 +227,9 @@ export function ExpertDetailFragment(props: {
   });
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [deleting, setDeleting] = useState(false);
-  const [deleteError, setDeleteError] = useState<string | null>(null);
+  const [deleteError, setDeleteError] = useState<unknown>(null);
+  const deleteErrorMessage =
+    deleteError === null ? null : deletePragmaResourceErrorMessage(deleteError, t);
   const [resetConfirmOpen, setResetConfirmOpen] = useState(false);
   const [resetting, setResetting] = useState(false);
   const [memoryStoreOpen, setMemoryStoreOpen] = useState(false);
@@ -359,7 +361,7 @@ export function ExpertDetailFragment(props: {
     try {
       await props.onDelete();
     } catch (cause) {
-      setDeleteError(errorMessage(cause));
+      setDeleteError(() => cause);
       setConfirmOpen(false);
     } finally {
       setDeleting(false);
@@ -372,7 +374,7 @@ export function ExpertDetailFragment(props: {
       await props.onReset();
       setResetConfirmOpen(false);
     } catch (cause) {
-      setDeleteError(errorMessage(cause));
+      setDeleteError(() => cause);
       setResetConfirmOpen(false);
     } finally {
       setResetting(false);
@@ -459,9 +461,13 @@ export function ExpertDetailFragment(props: {
           ) : null}
         </div>
       </header>
-      {deleteError ? (
-        <p className="form-error" role="alert">
-          {deleteError}
+      {deleteErrorMessage !== null ? (
+        <p
+          className="form-error pragma-resource-delete-error"
+          role="alert"
+          title={deleteErrorMessage}
+        >
+          {deleteErrorMessage}
         </p>
       ) : null}
       <section className="expert-runtime-summary" aria-label={t("runtime")}>
