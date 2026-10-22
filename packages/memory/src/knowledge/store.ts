@@ -73,6 +73,7 @@ export interface KnowledgeLearningStore {
     readonly diagnostic: MemoryExtractionFailureDiagnostic;
     readonly stack?: string | undefined;
     readonly retry: "configuration" | "transient" | "capacity";
+    readonly modelRequested?: boolean;
     readonly now: Date;
   }): Promise<void>;
   retryJob(input: {
@@ -92,7 +93,10 @@ export interface KnowledgeLearningStore {
     readonly retryAt?: Date;
   }): Promise<KnowledgeExtractionJob>;
   deleteJob(input: { readonly id: string; readonly expectedRevision: number }): Promise<void>;
-  wakeNeedsAttention(now: Date, reason?: "configuration" | "manual"): Promise<void>;
+  wakeNeedsAttention(
+    now: Date,
+    reason?: "configuration" | "manual" | "revision-settled",
+  ): Promise<void>;
   listJobs(): Promise<readonly KnowledgeExtractionJob[]>;
   getJob(id: string): Promise<KnowledgeExtractionJob | undefined>;
   listFailureAttempts(jobId: string): Promise<readonly MemoryExtractionFailureAttempt[]>;
@@ -279,6 +283,11 @@ export async function createKnowledgeLearningStore(
         input.job.attempts >= MAX_EXTRACTION_ATTEMPTS;
       const failed = KnowledgeExtractionJobSchema.parse({
         ...input.job,
+        // Only the current process can prove this claim stopped before model admission.
+        attempts:
+          input.diagnostic.code === "memory_revision_pending" && input.modelRequested === false
+            ? Math.max(0, input.job.attempts - 1)
+            : input.job.attempts,
         revision: input.job.revision + 1,
         status: needsAttention ? "needs_attention" : "pending",
         retryAt: needsAttention
@@ -387,6 +396,16 @@ export async function createKnowledgeLearningStore(
         .all() as { job_json: string }[];
       for (const row of rows) {
         const job = parseJob(row.job_json);
+        if (reason === "revision-settled") {
+          // A settled dependency permits waiting work, not arbitrary Runtime replay.
+          // Preserve the consumed model budget, including historical nonretryable waits.
+          if (
+            job.lastErrorCode === "memory_revision_pending" &&
+            job.attempts < MAX_EXTRACTION_ATTEMPTS
+          )
+            writeJob({ ...resetPendingJob(job, now), attempts: job.attempts });
+          continue;
+        }
         if (
           reason === "configuration" &&
           (job.failureClass !== "configuration" ||

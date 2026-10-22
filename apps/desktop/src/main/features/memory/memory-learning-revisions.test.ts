@@ -167,10 +167,19 @@ describe("Memory revision learning bindings", () => {
     await expect(
       f.service.submitKnowledge({ ...base, sourceDigest: "b".repeat(64) }),
     ).rejects.toThrow("memory_revision_pending");
+    await expect(
+      f.service.assertKnowledgeAvailable({ expertRef: f.expertRef, sourceDigest: "b".repeat(64) }),
+    ).rejects.toThrow("memory_revision_pending");
+    await expect(
+      f.service.assertKnowledgeAvailable({ expertRef: f.expertRef, sourceDigest: "a".repeat(64) }),
+    ).resolves.toBeUndefined();
     expect(f.knowledgeStart).toHaveBeenCalledTimes(1);
     f.mergeKnowledge();
     expect(await f.service.reconcile()).toBe(true);
     expect(await f.service.reconcile()).toBe(false);
+    await expect(
+      f.service.assertKnowledgeAvailable({ expertRef: f.expertRef, sourceDigest: "b".repeat(64) }),
+    ).resolves.toBeUndefined();
     await f.service.submitKnowledge({ ...base, sourceDigest: "b".repeat(64) });
     expect(f.knowledgeStart).toHaveBeenCalledTimes(2);
     expect(f.knowledgeStart.mock.calls[1]?.[0].operation).toBe("revise");
@@ -242,6 +251,30 @@ describe("Memory revision learning bindings", () => {
     await expect(f.service.submitSkills({ ...base, sourceDigest: "b".repeat(64) })).rejects.toThrow(
       "memory_revision_pending",
     );
+    await expect(
+      f.service.assertSkillsAvailable({
+        expertRef: f.expertRef,
+        sourceDigest: "b".repeat(64),
+        plan: base.plan,
+      }),
+    ).rejects.toThrow("memory_revision_pending");
+    await expect(
+      f.service.assertSkillsAvailable({
+        expertRef: f.expertRef,
+        sourceDigest: "a".repeat(64),
+        plan: base.plan,
+      }),
+    ).resolves.toBeUndefined();
+    await expect(
+      f.service.assertSkillsAvailable({
+        expertRef: f.expertRef,
+        sourceDigest: "b".repeat(64),
+        plan: {
+          action: "apply",
+          changes: [{ ...base.plan.changes[0]!, normalizedKey: "workflow.independent" }],
+        },
+      }),
+    ).resolves.toBeUndefined();
     expect(f.skillStart).toHaveBeenCalledTimes(1);
     f.publishSkill();
     expect(await f.service.reconcile()).toBe(true);
@@ -646,4 +679,89 @@ describe("Memory revision learning bindings", () => {
       ),
     ).toBe("original backup");
   });
+});
+
+it("retries settlement wake failures before committing the resolved binding", async () => {
+  const f = await fixture();
+  await f.service.submitKnowledge({
+    expertRef: f.expertRef,
+    sourceDigest: "a".repeat(64),
+    plan: { action: "apply", name: "Knowledge", description: "Guidance" },
+    sources: [],
+  });
+  f.mergeKnowledge();
+  const wake = vi.fn(async () => undefined).mockRejectedValueOnce(new Error("wake interrupted"));
+  await expect(f.service.reconcile(wake)).rejects.toThrow("wake interrupted");
+  await expect(
+    f.service.assertKnowledgeAvailable({ expertRef: f.expertRef, sourceDigest: "b".repeat(64) }),
+  ).rejects.toThrow("memory_revision_pending");
+  expect(await f.service.reconcile(wake)).toBe(true);
+  expect(wake).toHaveBeenCalledTimes(2);
+  await expect(
+    f.service.assertKnowledgeAvailable({ expertRef: f.expertRef, sourceDigest: "b".repeat(64) }),
+  ).resolves.toBeUndefined();
+  expect(await f.service.reconcile(wake)).toBe(false);
+  expect(wake).toHaveBeenCalledTimes(2);
+});
+
+it("recovers a missed historical wake once per process even without a new settlement", async () => {
+  const f = await fixture();
+  await f.service.submitKnowledge({
+    expertRef: f.expertRef,
+    sourceDigest: "a".repeat(64),
+    plan: { action: "apply", name: "Knowledge", description: "Guidance" },
+    sources: [],
+  });
+  f.mergeKnowledge();
+  expect(await f.service.reconcile()).toBe(true);
+  const wake = vi.fn(async () => undefined);
+  expect(await f.service.reconcile(wake)).toBe(false);
+  expect(await f.service.reconcile(wake)).toBe(false);
+  expect(wake).toHaveBeenCalledOnce();
+});
+
+it("allows independent Skill creation while another target awaits review", async () => {
+  const f = await fixture();
+  const input = (normalizedKey: string, sourceDigest: string) => ({
+    expertRef: f.expertRef,
+    sourceDigest,
+    plan: {
+      action: "apply" as const,
+      changes: [
+        {
+          name: normalizedKey,
+          description: "Reusable workflow",
+          normalizedKey,
+          sourceRefs: [1, 2, 3].map((revision) => ({
+            kind: "episodic" as const,
+            id: `episode-${revision}`,
+            revision,
+          })),
+          target: { type: "create" as const },
+        },
+      ],
+    },
+    sources: [],
+  });
+  await f.service.submitSkills(input("workflow.first", "a".repeat(64)));
+  const independent = input("workflow.independent", "b".repeat(64));
+  await expect(f.service.assertSkillsAvailable(independent)).resolves.toBeUndefined();
+  await f.service.submitSkills(independent);
+  expect(f.skillStart).toHaveBeenCalledTimes(2);
+  const pendingCapabilityId = f.skillStart.mock.calls[0]![0].capabilityId;
+  await expect(
+    f.service.assertSkillsAvailable({
+      ...independent,
+      plan: {
+        action: "apply",
+        changes: [
+          {
+            ...independent.plan.changes[0]!,
+            normalizedKey: "workflow.alias",
+            target: { type: "revise", capabilityId: pendingCapabilityId },
+          },
+        ],
+      },
+    }),
+  ).rejects.toThrow("memory_revision_pending");
 });

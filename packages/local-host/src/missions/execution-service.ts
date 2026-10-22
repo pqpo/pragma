@@ -1,5 +1,6 @@
 import { withMissionPreparationFailure } from "./preparation-failure.ts";
 import { defineLocalHostMissionMessageFormat } from "../mission-command-admission.ts";
+import { SKILL_REVISION_EXPERT_REF, STORE_REVISION_EXPERT_REF } from "@pragma/built-in-agents";
 import { MEMORY_CURATOR_REF } from "@pragma/memory";
 import { type LocalHostMissionPromptAdmissionHook } from "../mission-command-admission.ts";
 import {
@@ -1260,11 +1261,9 @@ export function createLocalHostMissionExecutionService(
         ...(input.modelSelection === undefined ? {} : { modelSelection: input.modelSelection }),
       },
       resumeOptions: { ...resumeOptions, environment },
-      successorOnMismatch:
-        input.mission.origin.type === "system-memory" &&
-        input.mission.executor.ref === MEMORY_CURATOR_REF
-          ? false
-          : input.createSuccessorOnMismatch,
+      successorOnMismatch: isMemoryContinuationMission(input.mission)
+        ? false
+        : input.createSuccessorOnMismatch,
     };
   };
 
@@ -2648,11 +2647,7 @@ export function createLocalHostMissionExecutionService(
       sessionService.successorRequired(mission.id) ||
       missionContextMountsNeedSuccessor(mission, contextMountsFingerprint) ||
       (memoryBindingsChanged && !lifecycleService.hasActive(mission.id));
-    if (
-      mission.origin.type === "system-memory" &&
-      mission.executor.ref === MEMORY_CURATOR_REF &&
-      (definitionChanged || contextStoresChanged)
-    ) {
+    if (isMemoryContinuationMission(mission) && (definitionChanged || contextStoresChanged)) {
       throw Object.assign(new Error("memory_curator_session_environment_changed"), {
         retryable: false,
       });
@@ -5904,7 +5899,7 @@ export function createLocalHostMissionExecutionService(
     },
     async continueInternalMemoryMission(input) {
       const mission = await options.missions.get(input.id);
-      if (mission.origin.type !== "system-memory" || mission.executor.ref !== MEMORY_CURATOR_REF)
+      if (!isMemoryContinuationMission(mission))
         throw new Error("memory_curator_internal_access_denied");
       const receiptReader =
         controllerFactResources?.controller ??
@@ -7069,4 +7064,16 @@ function hasPromptAttachments(value: unknown): boolean {
   if (typeof value !== "object" || value === null || Array.isArray(value)) return false;
   const attachments = (value as { readonly attachments?: unknown }).attachments;
   return Array.isArray(attachments) && attachments.length > 0;
+}
+
+/** Only Curator and read-only revision planning may continue an owned Memory context. */
+function isMemoryContinuationMission(mission: Mission): boolean {
+  if (mission.origin.type !== "system-memory") return false;
+  return (
+    mission.executor.ref === MEMORY_CURATOR_REF ||
+    (mission.executor.ref === STORE_REVISION_EXPERT_REF &&
+      /^knowledge-plan:[a-f0-9]{64}$/u.test(mission.origin.jobId)) ||
+    (mission.executor.ref === SKILL_REVISION_EXPERT_REF &&
+      /^skill-plan:[a-f0-9]{64}$/u.test(mission.origin.jobId))
+  );
 }

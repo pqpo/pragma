@@ -26,6 +26,11 @@ export interface SkillLearningTargetReader {
 }
 
 export interface SkillLearningSink {
+  assertAvailable?(input: {
+    readonly expertRef: string;
+    readonly sourceDigest: string;
+    readonly plan: Extract<SkillLearningPlan, { action: "apply" }>;
+  }): Promise<void>;
   submit(input: {
     readonly rootRef: MemorySubjectRef;
     readonly sourceDigest: string;
@@ -178,6 +183,8 @@ export async function createSkillMemoryModule(options: {
           const existingTargets = await options.targetReader.listTargets({ expertRef });
           if (!(await store.isClaimCurrent(job))) return;
           controller.signal.throwIfAborted();
+          // Skill targets are chosen by the planner; unrelated pending targets must not
+          // prevent this expert from proposing independent Skill work.
           phase = "revision_plan";
           modelRequested = true;
           const plan = await planner.plan({
@@ -192,6 +199,8 @@ export async function createSkillMemoryModule(options: {
             await store.interruptJob({ id: job.id, expectedRevision: job.revision, now: now() });
             return;
           }
+          controller.signal.throwIfAborted();
+          if (!(await store.isClaimCurrent(job))) return;
           phase = "validation";
           if (plan.action === "skip") continue;
           if (
@@ -228,6 +237,9 @@ export async function createSkillMemoryModule(options: {
             { sources, plannedTitles: plan.changes.map((change) => change.name) },
           );
           phase = "revision_submit";
+          await options.learningSink.assertAvailable?.({ expertRef, sourceDigest, plan });
+          controller.signal.throwIfAborted();
+          if (!(await store.isClaimCurrent(job))) return;
           await options.learningSink.submit({
             rootRef: job.rootRef,
             sourceDigest,
@@ -246,6 +258,7 @@ export async function createSkillMemoryModule(options: {
         });
         await store.fail({
           job,
+          modelRequested,
           ...failure,
           diagnostic:
             modelRequested && isConfigurationError(error)

@@ -61,6 +61,7 @@ export interface SkillLearningStore {
     readonly diagnostic: MemoryExtractionFailureDiagnostic;
     readonly stack?: string | undefined;
     readonly retry: "configuration" | "transient" | "capacity";
+    readonly modelRequested?: boolean;
     readonly now: Date;
   }): Promise<void>;
   retryJob(input: {
@@ -79,7 +80,10 @@ export interface SkillLearningStore {
     readonly now: Date;
   }): Promise<SkillLearningJob>;
   deleteJob(input: { readonly id: string; readonly expectedRevision: number }): Promise<void>;
-  wakeNeedsAttention(now: Date, reason?: "configuration" | "manual"): Promise<void>;
+  wakeNeedsAttention(
+    now: Date,
+    reason?: "configuration" | "manual" | "revision-settled",
+  ): Promise<void>;
   listJobs(): Promise<readonly SkillLearningJob[]>;
   getJob(id: string): Promise<SkillLearningJob | undefined>;
   listFailureAttempts(jobId: string): Promise<readonly MemoryExtractionFailureAttempt[]>;
@@ -266,6 +270,11 @@ export async function createSkillLearningStore(
         input.job.attempts >= MAX_EXTRACTION_ATTEMPTS;
       const failed = SkillLearningJobSchema.parse({
         ...input.job,
+        // Only the current process can prove this claim stopped before model admission.
+        attempts:
+          input.diagnostic.code === "memory_revision_pending" && input.modelRequested === false
+            ? Math.max(0, input.job.attempts - 1)
+            : input.job.attempts,
         revision: input.job.revision + 1,
         status: attention ? "needs_attention" : "pending",
         retryAt: attention
@@ -348,6 +357,16 @@ export async function createSkillLearningStore(
         .all() as { job_json: string }[];
       for (const row of rows) {
         const job = parse(row.job_json);
+        if (reason === "revision-settled") {
+          // A settled dependency permits waiting work, not arbitrary Runtime replay.
+          // Preserve the consumed model budget, including historical nonretryable waits.
+          if (
+            job.lastErrorCode === "memory_revision_pending" &&
+            job.attempts < MAX_EXTRACTION_ATTEMPTS
+          )
+            write({ ...reset(job, now), attempts: job.attempts });
+          continue;
+        }
         if (
           reason === "manual" ||
           (job.failureClass === "configuration" &&

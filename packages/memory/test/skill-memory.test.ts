@@ -263,6 +263,7 @@ describe("Skill learning revision planning", () => {
     });
     await module.store.retryJob({ id: attention!.id, expectedRevision: attention!.revision, now });
     expect((await module.store.listJobs())[0]).toMatchObject({ status: "pending" });
+    expect((await module.store.listJobs())[0]?.attempts).toBe(0);
     module.close();
   });
 
@@ -643,3 +644,172 @@ async function temporaryRoot(): Promise<string> {
   });
   return root;
 }
+
+it("checks only the planned Skill targets before submitting a revision", async () => {
+  let pending = true;
+  const revisions = sources();
+  const result = {
+    action: "apply" as const,
+    changes: [
+      {
+        name: "Workflow",
+        description: "Reusable workflow",
+        normalizedKey: "workflow.test",
+        sourceRefs: revisions.slice(0, 3).map((source) => source.ref),
+        target: { type: "create" as const },
+      },
+    ],
+  };
+  const plan = vi.fn(async () => result);
+  const submit = vi.fn(async () => undefined);
+  const assertAvailable = vi.fn(async () => {
+    if (pending) throw new Error("memory_revision_pending");
+  });
+  const module = await createSkillMemoryModule({
+    pragmaHome: await temporaryRoot(),
+    sourceReader: { listEligibleSources: async () => revisions },
+    targetReader: { listTargets: async () => [] },
+    planner: { plan },
+    learningSink: { assertAvailable, submit },
+    now: () => now,
+  });
+  try {
+    await schedule(module, revisions);
+    await module.runBackgroundOnce?.();
+    expect(plan).toHaveBeenCalledOnce();
+    expect(assertAvailable).toHaveBeenCalledWith(expect.objectContaining({ plan: result }));
+    expect(submit).not.toHaveBeenCalled();
+    expect((await module.store.listJobs())[0]).toMatchObject({
+      status: "needs_attention",
+      attempts: 1,
+      lastErrorCode: "memory_revision_pending",
+    });
+    pending = false;
+    await module.store.wakeNeedsAttention(now, "revision-settled");
+    expect((await module.store.listJobs())[0]).toMatchObject({ status: "pending", attempts: 1 });
+    await module.runBackgroundOnce?.();
+    expect(submit).toHaveBeenCalledOnce();
+    expect((await module.store.listJobs())[0]).toMatchObject({ status: "completed" });
+  } finally {
+    module.close();
+  }
+});
+
+it("reopens historical nonretryable revision waits without resetting or exceeding the attempt budget", async () => {
+  const pragmaHome = await temporaryRoot();
+  let store = await createSkillLearningStore({ pragmaHome });
+  try {
+    await store.schedule({
+      rootRef: ref("pragma.expert", "expert-a"),
+      sourceDigest: "f".repeat(64),
+      now: new Date(now.getTime() - 6 * 60 * 60_000),
+    });
+    for (let attempt = 1; attempt <= 4; attempt += 1) {
+      const job = await store.claimDueJob(now);
+      expect(job?.attempts).toBe(attempt);
+      await store.fail({
+        job: job!,
+        retry: "configuration",
+        now,
+        diagnostic: {
+          schemaVersion: "pragma.memory-extraction-failure/v1",
+          code: "memory_revision_pending",
+          message: "memory_revision_pending",
+          phase: "revision_submit",
+          failedAt: now.toISOString(),
+          retryable: false,
+        },
+      });
+      store.close();
+      store = await createSkillLearningStore({ pragmaHome });
+      await store.wakeNeedsAttention(now, "configuration");
+      expect((await store.listJobs())[0]?.status).toBe("needs_attention");
+      await store.wakeNeedsAttention(now, "revision-settled");
+      expect((await store.listJobs())[0]).toMatchObject({
+        attempts: attempt,
+        status: attempt < 4 ? "pending" : "needs_attention",
+      });
+      if (attempt < 4) {
+        const preflight = (await store.claimDueJob(now))!;
+        await store.fail({
+          job: preflight,
+          retry: "configuration",
+          modelRequested: false,
+          now,
+          diagnostic: {
+            schemaVersion: "pragma.memory-extraction-failure/v1",
+            code: "memory_revision_pending",
+            message: "still waiting",
+            phase: "revision_submit",
+            failedAt: now.toISOString(),
+          },
+        });
+        expect((await store.listJobs())[0]?.attempts).toBe(attempt);
+        await store.wakeNeedsAttention(now, "revision-settled");
+      }
+    }
+    expect(await store.claimDueJob(now)).toBeUndefined();
+    await store.schedule({
+      rootRef: ref("pragma.expert", "expert-b"),
+      sourceDigest: "e".repeat(64),
+      now: new Date(now.getTime() - 6 * 60 * 60_000),
+    });
+    const failedRuntimeJob = (await store.claimDueJob(now))!;
+    await store.fail({
+      job: failedRuntimeJob,
+      retry: "configuration",
+      now,
+      diagnostic: {
+        schemaVersion: "pragma.memory-extraction-failure/v1",
+        code: "runtime_unavailable",
+        message: "runtime_unavailable",
+        phase: "revision_plan",
+        failedAt: now.toISOString(),
+        retryable: false,
+      },
+    });
+    await store.wakeNeedsAttention(now, "revision-settled");
+    expect(await store.getJob(failedRuntimeJob.id)).toMatchObject({
+      status: "needs_attention",
+      attempts: 1,
+      lastErrorCode: "runtime_unavailable",
+    });
+  } finally {
+    store.close();
+  }
+});
+
+it("does not submit a Skill plan after its job was interrupted during planning", async () => {
+  const sourceRevisions = sources();
+  const submit = vi.fn(async () => undefined);
+  let interrupt = async () => undefined;
+  const module = await createModule(sourceRevisions, {
+    plan: async () => {
+      await interrupt();
+      return {
+        action: "apply",
+        changes: [
+          {
+            name: "Workflow",
+            description: "Reusable workflow",
+            normalizedKey: "workflow.example",
+            sourceRefs: sourceRevisions.slice(0, 3).map((source) => source.ref),
+            target: { type: "create" },
+          },
+        ],
+      };
+    },
+    submit,
+  });
+  interrupt = async () => {
+    const [job] = await module.store.listJobs();
+    await module.interruptExtractionJob({ id: job!.id, expectedRevision: job!.revision, now });
+  };
+  try {
+    await schedule(module, sourceRevisions);
+    await module.runBackgroundOnce?.();
+    expect(submit).not.toHaveBeenCalled();
+  } finally {
+    module.close();
+  }
+});

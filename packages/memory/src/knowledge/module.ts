@@ -33,6 +33,10 @@ export interface KnowledgeMemoryModule extends MemoryModule {
 }
 
 export interface KnowledgeLearningSink {
+  assertAvailable?(input: {
+    readonly expertRef: string;
+    readonly sourceDigest: string;
+  }): Promise<void>;
   submit(input: {
     readonly rootRef: MemorySubjectRef;
     readonly expertRef: string;
@@ -229,6 +233,10 @@ export async function createKnowledgeMemoryModule(options: {
             expertRef,
             ...expertSources.map(sourceDigestKey).toSorted(),
           );
+          phase = "revision_submit";
+          await options.learningSink.assertAvailable?.({ expertRef, sourceDigest: expertDigest });
+          if (!(await store.isClaimCurrent(job))) return;
+          controller.signal.throwIfAborted();
           phase = "revision_plan";
           modelRequested = true;
           const plan = await planner.plan({
@@ -280,6 +288,7 @@ export async function createKnowledgeMemoryModule(options: {
         });
         await store.fail({
           job,
+          modelRequested,
           ...failure,
           diagnostic:
             modelRequested && isConfigurationError(error)

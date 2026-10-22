@@ -1148,11 +1148,12 @@ export async function createDesktopApplicationContainer(
     pragmaHome: pragmaPaths.root,
     logger: mainLogger,
     onTick: async () => {
-      if (await memoryLearningRevisions.reconcile()) {
-        await memoryPlaneRef.current?.wakeRevisionLearningJobs();
-      }
+      await memoryLearningRevisions.reconcile(async () => {
+        await memoryPlaneRef.current?.wakeRevisionLearningJobs("revision-settled");
+      });
     },
     knowledgeLearningSink: {
+      assertAvailable: (input) => memoryLearningRevisions.assertKnowledgeAvailable(input),
       async submit(input) {
         await memoryLearningRevisions.submitKnowledge(input);
       },
@@ -1163,6 +1164,7 @@ export async function createDesktopApplicationContainer(
       },
     },
     skillLearningSink: {
+      assertAvailable: (input) => memoryLearningRevisions.assertSkillsAvailable(input),
       async submit(input) {
         await memoryLearningRevisions.submitSkills(input);
       },

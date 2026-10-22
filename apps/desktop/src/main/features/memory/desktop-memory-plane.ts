@@ -146,7 +146,7 @@ export interface DesktopMemoryPlane {
     readonly reason: string;
   }): Promise<void>;
   wakeMemoryJobs(): Promise<void>;
-  wakeRevisionLearningJobs(): Promise<void>;
+  wakeRevisionLearningJobs(reason?: "configuration" | "revision-settled"): Promise<void>;
   wakePipeline(): void;
   manageMemoryJob(input: {
     readonly module: "episodic" | "semantic" | "conversation" | "knowledge" | "skill";
@@ -791,10 +791,10 @@ export async function createDesktopMemoryPlane(options: {
       ]);
       wakePipeline();
     },
-    async wakeRevisionLearningJobs() {
+    async wakeRevisionLearningJobs(reason = "configuration") {
       await Promise.all([
-        knowledge.store.wakeNeedsAttention(new Date(), "configuration"),
-        skill.store.wakeNeedsAttention(new Date(), "configuration"),
+        knowledge.store.wakeNeedsAttention(new Date(), reason),
+        skill.store.wakeNeedsAttention(new Date(), reason),
       ]);
       wakePipeline();
     },

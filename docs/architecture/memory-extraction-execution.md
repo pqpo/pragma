@@ -83,6 +83,27 @@ window methods reject this origin. Main-process Memory consumers use
 `LocalHostMissionApplication.getInternalConversationSnapshot`, which checks the system origin and reuses the same
 chat projection without opening public Mission IPC access.
 
+Knowledge/Skill planning declares the complete output constraints before admission. Invalid JSON or
+plan Schema errors allow at most two correction turns, five seconds apart, in the same Mission,
+ExpertSession and owned Native Runtime Context. Each continuation observes its own execution ID;
+cancellation and Runtime failures stop correction. Exhausted correction is nonretryable rather than
+starting a fresh planning Mission automatically. Successful result reads retry at most four times,
+five seconds apart, without admitting another model. Only non-streaming assistant output belonging
+to the observed execution is eligible. Unavailable terminal observations, diagnostics or exhausted
+result reads are nonretryable; cancellation is checked again after reading and before Skill submission.
+Source thresholds and description limits remain unchanged.
+
+Knowledge sinks check outstanding work before planner admission and again under the submission lock.
+Skill occupancy is checked only for the selected plan targets, after planning and again when submitting;
+an unrelated pending Skill must not block independent work for the same expert.
+A same-process preflight wait refunds only its current, unadmitted claim; earlier model attempts remain counted.
+A settled revision wakes only `memory_revision_pending` dependency waits, including historical waits
+marked nonretryable. This targeted wake preserves consumed attempts and cannot revive exhausted jobs,
+Runtime failures or cancellations. General configuration wakeups keep their existing retry guards.
+Settlement wakes are awaited before clearing durable revision-pending bindings. A failed wake or
+interrupted binding write therefore replays on reconciliation. The first reconciliation callback in
+each process also recovers historical missed wakes once, including when settlement already committed.
+
 Knowledge and Skill revision jobs allow three automatic retries after the initial attempt (four total execution
 attempts), with a fixed five-second delay after each retryable failure. Their job stores
 persist the attempt counter and retry deadline. Claiming, configuration wakeups, conversation

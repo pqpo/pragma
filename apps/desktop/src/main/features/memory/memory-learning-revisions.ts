@@ -143,6 +143,7 @@ export function createMemoryLearningRevisions(options: {
   const legacyRoot = dirname(options.statePath);
   const archiveRoot = join(dirname(legacyRoot), "archives", "memory-learning-v1");
   let archived = false;
+  let revisionWaitsRecovered = false;
   const archiveLegacy = async (): Promise<void> => {
     if (archived) return;
     await mkdir(archiveRoot, { recursive: true, mode: 0o700 });
@@ -355,6 +356,49 @@ export function createMemoryLearningRevisions(options: {
           }),
       );
     },
+    async assertKnowledgeAvailable(input: {
+      readonly expertRef: string;
+      readonly sourceDigest: string;
+    }): Promise<void> {
+      await locked(async (state) => {
+        const existing = state.knowledge.find((item) => item.expertRef === input.expertRef);
+        if (
+          existing?.revisionPending &&
+          existing.revisionJobId !== undefined &&
+          existing.sourceDigest !== input.sourceDigest
+        )
+          throw new Error("memory_revision_pending");
+      });
+    },
+    async assertSkillsAvailable(input: {
+      readonly expertRef: string;
+      readonly sourceDigest: string;
+      readonly plan: Extract<SkillLearningPlan, { action: "apply" }>;
+    }): Promise<void> {
+      await locked(async (state) => {
+        for (const change of input.plan.changes) {
+          const digest = createHash("sha256")
+            .update(`${input.sourceDigest}\0${change.normalizedKey}`)
+            .digest("hex");
+          const existing = state.skills.find(
+            (item) =>
+              item.expertRef === input.expertRef && item.normalizedKey === change.normalizedKey,
+          );
+          if (existing?.sourceDigest === digest && existing.revisionJobId !== undefined) continue;
+          const capabilityId =
+            change.target.type === "revise" ? change.target.capabilityId : existing?.capabilityId;
+          if (
+            (existing?.revisionPending && existing.revisionJobId !== undefined) ||
+            (capabilityId !== undefined &&
+              state.skills.some(
+                (item) =>
+                  item !== existing && item.capabilityId === capabilityId && item.revisionPending,
+              ))
+          )
+            throw new Error("memory_revision_pending");
+        }
+      });
+    },
     async submitKnowledge(input: {
       readonly expertRef: string;
       readonly sourceDigest: string;
@@ -523,7 +567,7 @@ export function createMemoryLearningRevisions(options: {
         return targets;
       });
     },
-    async reconcile(): Promise<boolean> {
+    async reconcile(wakeSettled?: () => Promise<void>): Promise<boolean> {
       return await locked(async (state) => {
         let next = state;
         let settled = false;
@@ -608,6 +652,13 @@ export function createMemoryLearningRevisions(options: {
                 : candidate,
             ),
           };
+        }
+        // Wake before committing settlement: a failed wake or interrupted write leaves
+        // the durable pending binding available to replay this idempotent operation.
+        // The first callback in each process also repairs historical missed wakes.
+        if (wakeSettled !== undefined && (settled || !revisionWaitsRecovered)) {
+          await wakeSettled();
+          revisionWaitsRecovered = true;
         }
         if (next !== state) await write(next);
         return settled;

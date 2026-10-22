@@ -25,12 +25,23 @@ import {
   createMissionStore,
   type MissionStore,
 } from "../../src/missions/repository/mission-store.ts";
+import { SKILL_REVISION_EXPERT_REF, STORE_REVISION_EXPERT_REF } from "@pragma/built-in-agents";
 import { MEMORY_CURATOR_REF } from "@pragma/memory";
 
 describe("execution service composition", () => {
-  it.each(["succeeded", "failed", "cancelled"] as const)(
-    "requires an owned Native snapshot before explicitly continuing a %s memory turn",
-    async (status) => {
+  it.each(
+    [
+      { ref: MEMORY_CURATOR_REF, jobId: "job", allowed: true },
+      { ref: STORE_REVISION_EXPERT_REF, jobId: `knowledge-plan:${"a".repeat(64)}`, allowed: true },
+      { ref: SKILL_REVISION_EXPERT_REF, jobId: `skill-plan:${"a".repeat(64)}`, allowed: true },
+      { ref: STORE_REVISION_EXPERT_REF, jobId: "job", allowed: false },
+      { ref: SKILL_REVISION_EXPERT_REF, jobId: `knowledge-plan:${"a".repeat(64)}`, allowed: false },
+    ].flatMap((task) =>
+      (["succeeded", "failed", "cancelled"] as const).map((status) => ({ ...task, status })),
+    ),
+  )(
+    "guards Native continuation for $ref/$jobId ($status)",
+    async ({ ref, jobId, allowed, status }) => {
       const home = await mkdtemp(join(tmpdir(), "pragma-memory-continuation-snapshot-"));
       const executions = createSqliteExecutionStore({ pragmaHome: home });
       const missions = createMissionStore({ missionsPath: join(home, "missions") });
@@ -61,8 +72,8 @@ describe("execution service composition", () => {
           workspace: { path: home, basename: "workspace" },
           goal: "extract",
           project: { id: "studio", revision: 1 },
-          executor: { kind: "expert", ref: MEMORY_CURATOR_REF, name: "Memory Curator" },
-          origin: { type: "system-memory", jobId: "job" },
+          executor: { kind: "expert", ref, name: "Memory task" },
+          origin: { type: "system-memory", jobId },
         });
         const executionId = crypto.randomUUID();
         await missions.updateExecution(mission.id, {
@@ -80,7 +91,9 @@ describe("execution service composition", () => {
             requestId: crypto.randomUUID(),
             previousExecutionId: executionId,
           }),
-        ).rejects.toThrow("memory_curator_session_unavailable");
+        ).rejects.toThrow(
+          allowed ? "memory_curator_session_unavailable" : "memory_curator_internal_access_denied",
+        );
         expect(dispatched).not.toHaveBeenCalled();
       } finally {
         await executions.close();
