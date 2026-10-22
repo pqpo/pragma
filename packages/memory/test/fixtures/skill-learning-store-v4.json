@@ -1,0 +1,171 @@
+{
+  "jobs": [
+    {
+      "schemaVersion": "pragma.memory-skill-job/v2",
+      "id": "dc57a59bc54ee28cf404fd06542e863d",
+      "revision": 3,
+      "rootRef": {
+        "type": "pragma.expert",
+        "id": "0000000000000001"
+      },
+      "sourceDigest": "3333333333333333333333333333333333333333333333333333333333333333",
+      "status": "needs_attention",
+      "attempts": 1,
+      "lastErrorCode": "runtime_unavailable",
+      "lastErrorMessage": "runtime_unavailable",
+      "lastFailure": {
+        "schemaVersion": "pragma.memory-extraction-failure/v1",
+        "code": "runtime_unavailable",
+        "message": "runtime_unavailable",
+        "phase": "revision_plan",
+        "failedAt": "2026-10-22T08:00:00.000Z",
+        "retryable": false
+      },
+      "failureClass": "configuration",
+      "createdAt": "2026-10-22T08:00:00.000Z",
+      "updatedAt": "2026-10-22T08:00:00.000Z"
+    },
+    {
+      "schemaVersion": "pragma.memory-skill-job/v2",
+      "id": "34d90920762d89437e09775d9335821d",
+      "revision": 3,
+      "rootRef": {
+        "type": "pragma.expert",
+        "id": "0000000000000001"
+      },
+      "sourceDigest": "2222222222222222222222222222222222222222222222222222222222222222",
+      "status": "pending",
+      "attempts": 1,
+      "retryAt": "2026-10-22T08:00:05.000Z",
+      "lastErrorCode": "skill_learning_plan_duplicate_key",
+      "lastErrorMessage": "skill_learning_plan_duplicate_key",
+      "lastFailure": {
+        "schemaVersion": "pragma.memory-extraction-failure/v1",
+        "code": "skill_learning_plan_duplicate_key",
+        "message": "skill_learning_plan_duplicate_key",
+        "phase": "validation",
+        "failedAt": "2026-10-22T08:00:00.000Z",
+        "retryable": true
+      },
+      "createdAt": "2026-10-22T08:00:00.000Z",
+      "updatedAt": "2026-10-22T08:00:00.000Z"
+    },
+    {
+      "schemaVersion": "pragma.memory-skill-job/v2",
+      "id": "73bf291c04cc39b179ad11afb6369d13",
+      "revision": 9,
+      "rootRef": {
+        "type": "pragma.expert",
+        "id": "0000000000000001"
+      },
+      "sourceDigest": "1111111111111111111111111111111111111111111111111111111111111111",
+      "status": "needs_attention",
+      "attempts": 4,
+      "lastErrorCode": "skill_learning_plan_invalid",
+      "lastErrorMessage": "skill_learning_plan_invalid",
+      "lastFailure": {
+        "schemaVersion": "pragma.memory-extraction-failure/v1",
+        "code": "skill_learning_plan_invalid",
+        "message": "skill_learning_plan_invalid",
+        "phase": "validation",
+        "failedAt": "2026-10-22T08:00:15.000Z",
+        "retryable": true
+      },
+      "failureClass": "transient-exhausted",
+      "createdAt": "2026-10-22T08:00:00.000Z",
+      "updatedAt": "2026-10-22T08:00:15.000Z"
+    }
+  ],
+  "failures": [
+    {
+      "schemaVersion": "pragma.memory-extraction-failure-attempt/v1",
+      "id": "79defcf7-95ca-461b-aea5-15745712d42e",
+      "jobId": "dc57a59bc54ee28cf404fd06542e863d",
+      "jobRevision": 2,
+      "attempt": 1,
+      "diagnostic": {
+        "schemaVersion": "pragma.memory-extraction-failure/v1",
+        "code": "runtime_unavailable",
+        "message": "runtime_unavailable",
+        "phase": "revision_plan",
+        "failedAt": "2026-10-22T08:00:00.000Z",
+        "retryable": false
+      }
+    },
+    {
+      "schemaVersion": "pragma.memory-extraction-failure-attempt/v1",
+      "id": "54afc34c-b822-4d77-ac9d-06ce900a0f7a",
+      "jobId": "34d90920762d89437e09775d9335821d",
+      "jobRevision": 2,
+      "attempt": 1,
+      "diagnostic": {
+        "schemaVersion": "pragma.memory-extraction-failure/v1",
+        "code": "skill_learning_plan_duplicate_key",
+        "message": "skill_learning_plan_duplicate_key",
+        "phase": "validation",
+        "failedAt": "2026-10-22T08:00:00.000Z",
+        "retryable": true
+      }
+    },
+    {
+      "schemaVersion": "pragma.memory-extraction-failure-attempt/v1",
+      "id": "3c1f5569-80d8-44a7-9438-71bf3b5c3374",
+      "jobId": "73bf291c04cc39b179ad11afb6369d13",
+      "jobRevision": 8,
+      "attempt": 4,
+      "diagnostic": {
+        "schemaVersion": "pragma.memory-extraction-failure/v1",
+        "code": "skill_learning_plan_invalid",
+        "message": "skill_learning_plan_invalid",
+        "phase": "validation",
+        "failedAt": "2026-10-22T08:00:15.000Z",
+        "retryable": true
+      }
+    },
+    {
+      "schemaVersion": "pragma.memory-extraction-failure-attempt/v1",
+      "id": "6a493dd2-3a72-4c02-b17a-4227dab5250f",
+      "jobId": "73bf291c04cc39b179ad11afb6369d13",
+      "jobRevision": 6,
+      "attempt": 3,
+      "diagnostic": {
+        "schemaVersion": "pragma.memory-extraction-failure/v1",
+        "code": "skill_learning_plan_invalid",
+        "message": "skill_learning_plan_invalid",
+        "phase": "validation",
+        "failedAt": "2026-10-22T08:00:10.000Z",
+        "retryable": true
+      }
+    },
+    {
+      "schemaVersion": "pragma.memory-extraction-failure-attempt/v1",
+      "id": "3bce21bc-b0cc-4da6-bb64-63b456147995",
+      "jobId": "73bf291c04cc39b179ad11afb6369d13",
+      "jobRevision": 4,
+      "attempt": 2,
+      "diagnostic": {
+        "schemaVersion": "pragma.memory-extraction-failure/v1",
+        "code": "skill_learning_plan_invalid",
+        "message": "skill_learning_plan_invalid",
+        "phase": "validation",
+        "failedAt": "2026-10-22T08:00:05.000Z",
+        "retryable": true
+      }
+    },
+    {
+      "schemaVersion": "pragma.memory-extraction-failure-attempt/v1",
+      "id": "ef9ecb7a-3aab-432e-ba3c-b75c60604060",
+      "jobId": "73bf291c04cc39b179ad11afb6369d13",
+      "jobRevision": 2,
+      "attempt": 1,
+      "diagnostic": {
+        "schemaVersion": "pragma.memory-extraction-failure/v1",
+        "code": "skill_learning_plan_invalid",
+        "message": "skill_learning_plan_invalid",
+        "phase": "validation",
+        "failedAt": "2026-10-22T08:00:00.000Z",
+        "retryable": true
+      }
+    }
+  ]
+}

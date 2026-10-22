@@ -13,6 +13,10 @@ import {
   createSkillMemoryModule,
   type SkillLearningSink,
 } from "../src/index.ts";
+import {
+  initializeExtractionFailureAttempts,
+  insertExtractionFailureAttempt,
+} from "../src/pipeline/extraction-failure-store.ts";
 import { createSkillLearningStore } from "../src/skill/store.ts";
 
 const roots: string[] = [];
@@ -200,7 +204,7 @@ describe("Skill learning revision planning", () => {
     module.close();
   });
 
-  it("retries an invented source plan within the bounded budget", async () => {
+  it("completes an invented source proposal without retrying the model", async () => {
     const sourceRevisions = sources();
     const module = await createModule(sourceRevisions, {
       plan: async () => ({
@@ -222,11 +226,179 @@ describe("Skill learning revision planning", () => {
     await schedule(module, sourceRevisions);
     await module.runBackgroundOnce?.();
     expect((await module.store.listJobs())[0]).toMatchObject({
-      status: "pending",
+      status: "completed",
+      completion: "rejected",
       attempts: 1,
-      lastFailure: { phase: "validation" },
     });
     module.close();
+  });
+
+  it("submits qualifying changes even when other changes cite lower-value Episodes", async () => {
+    const revisions = sources();
+    const low = {
+      ...revisions[2]!,
+      ref: { kind: "episodic" as const, id: "low", revision: 1 },
+      valueScore: 0.8,
+    };
+    const change = {
+      name: "Workflow",
+      description: "Reusable workflow",
+      normalizedKey: "workflow.good",
+      sourceRefs: revisions.slice(0, 3).map((source) => source.ref),
+      target: { type: "create" as const },
+    };
+    const submit = vi.fn(async () => undefined);
+    const module = await createModule([...revisions, low], {
+      submit,
+      plan: async () => ({
+        action: "apply",
+        changes: [
+          {
+            ...change,
+            normalizedKey: "workflow.bad",
+            sourceRefs: [revisions[0]!.ref, revisions[1]!.ref, low.ref],
+          },
+          change,
+        ],
+      }),
+    });
+    try {
+      await schedule(module, [...revisions, low]);
+      await module.runBackgroundOnce?.();
+      expect(submit).toHaveBeenCalledWith(
+        expect.objectContaining({ plan: { action: "apply", changes: [change] } }),
+      );
+      expect((await module.store.listJobs())[0]).toMatchObject({
+        status: "completed",
+        completion: "retained",
+        attempts: 1,
+      });
+    } finally {
+      module.close();
+    }
+  });
+
+  it("completes without retry when every proposed Skill misses the score threshold", async () => {
+    const revisions = sources();
+    const low = {
+      ...revisions[2]!,
+      ref: { kind: "episodic" as const, id: "low", revision: 1 },
+      valueScore: 0.8,
+    };
+    const submit = vi.fn(async () => undefined);
+    const module = await createModule([...revisions, low], {
+      submit,
+      plan: async () => ({
+        action: "apply",
+        changes: [
+          {
+            name: "Workflow",
+            description: "Reusable workflow",
+            normalizedKey: "workflow.bad",
+            sourceRefs: [revisions[0]!.ref, revisions[1]!.ref, low.ref],
+            target: { type: "create" },
+          },
+        ],
+      }),
+    });
+    try {
+      await schedule(module, [...revisions, low]);
+      await module.runBackgroundOnce?.();
+      expect(submit).not.toHaveBeenCalled();
+      expect((await module.store.listJobs())[0]).toMatchObject({
+        status: "completed",
+        completion: "rejected",
+        attempts: 1,
+      });
+      expect(await module.store.claimDueJob(new Date(now.getTime() + 60_000))).toBeUndefined();
+      const [job] = await module.store.listJobs();
+      expect(await module.store.listFailureAttempts(job!.id)).toEqual([
+        expect.objectContaining({
+          diagnostic: expect.objectContaining({
+            code: "skill_learning_plan_rejected",
+            phase: "validation",
+            message: expect.stringContaining("valueScore >= 0.85"),
+          }),
+        }),
+      ]);
+    } finally {
+      module.close();
+    }
+  });
+
+  it("records rejected changes reported by the planner even when it returns skip", async () => {
+    const module = await createModule(sources(), {
+      plan: async ({ onRejectedChanges }) => {
+        onRejectedChanges?.([
+          { index: 0, message: "Insufficient high-value citations after correction." },
+        ]);
+        return { action: "skip" };
+      },
+    });
+    try {
+      await schedule(module, sources());
+      await module.runBackgroundOnce?.();
+      const [job] = await module.store.listJobs();
+      expect(job).toMatchObject({ status: "completed", completion: "rejected" });
+      expect(await module.store.listFailureAttempts(job!.id)).toEqual([
+        expect.objectContaining({
+          diagnostic: expect.objectContaining({
+            code: "skill_learning_plan_rejected",
+            message: expect.stringContaining("after correction"),
+          }),
+        }),
+      ]);
+    } finally {
+      module.close();
+    }
+  });
+
+  it("rolls back diagnostic insertion when completion cannot commit", async () => {
+    const pragmaHome = await temporaryRoot();
+    const store = await createSkillLearningStore({ pragmaHome });
+    const databasePath = join(
+      new PragmaPaths({ pragmaHome }).memoryModuleDataRoot("pragma.memory.skill-learning"),
+      "skill-learning.sqlite",
+    );
+    const database = new DatabaseSync(databasePath);
+    try {
+      await store.schedule({
+        rootRef: ref("pragma.expert", "expert-a"),
+        sourceDigest: "d".repeat(64),
+        now,
+      });
+      const job = (await store.claimDueJob(now))!;
+      const diagnostic = {
+        schemaVersion: "pragma.memory-extraction-failure/v1" as const,
+        code: "skill_learning_plan_rejected",
+        message: "Rejected proposal",
+        phase: "validation" as const,
+        failedAt: now.toISOString(),
+        retryable: false,
+      };
+      database.exec(
+        `CREATE TRIGGER abort_completion BEFORE UPDATE OF status ON jobs WHEN NEW.status='completed' BEGIN SELECT RAISE(ABORT, 'completion interrupted'); END;`,
+      );
+      await expect(store.complete(job, "rejected", now, diagnostic)).rejects.toThrow(
+        "completion interrupted",
+      );
+      expect(await store.getJob(job.id)).toEqual(job);
+      expect(await store.listFailureAttempts(job.id)).toEqual([]);
+      database.exec("DROP TRIGGER abort_completion");
+      await store.complete(job, "rejected", now, diagnostic);
+      expect(await store.getJob(job.id)).toMatchObject({
+        status: "completed",
+        completion: "rejected",
+      });
+      expect(await store.listFailureAttempts(job.id)).toHaveLength(1);
+      await expect(store.complete(job, "rejected", now, diagnostic)).rejects.toThrow(
+        "skill_job_conflict",
+      );
+      expect(await store.listFailureAttempts(job.id)).toHaveLength(1);
+    } finally {
+      database.close();
+      store.close();
+    }
   });
 
   it("parks new evidence while a Skill revision is pending and keeps it wakeable", async () => {
@@ -267,7 +439,7 @@ describe("Skill learning revision planning", () => {
     module.close();
   });
 
-  it("rejects duplicate Skill identities in one plan", async () => {
+  it("keeps the first valid change when a later change repeats its Skill identity", async () => {
     const sourceRevisions = sources();
     const submit = vi.fn(async () => undefined);
     const change = {
@@ -283,11 +455,13 @@ describe("Skill learning revision planning", () => {
     });
     await schedule(module, sourceRevisions);
     await module.runBackgroundOnce?.();
-    expect(submit).not.toHaveBeenCalled();
+    expect(submit).toHaveBeenCalledWith(
+      expect.objectContaining({ plan: { action: "apply", changes: [change] } }),
+    );
     expect((await module.store.listJobs())[0]).toMatchObject({
-      status: "pending",
+      status: "completed",
+      completion: "retained",
       attempts: 1,
-      lastFailure: { phase: "validation" },
     });
     module.close();
   });
@@ -330,9 +504,9 @@ describe("Skill learning revision planning", () => {
     await module.runBackgroundOnce?.();
     expect(submit).not.toHaveBeenCalled();
     expect((await module.store.listJobs())[0]).toMatchObject({
-      status: "pending",
+      status: "completed",
+      completion: "rejected",
       attempts: 1,
-      lastFailure: { phase: "validation" },
     });
     module.close();
   });
@@ -373,7 +547,7 @@ describe("Skill learning revision planning", () => {
   });
 });
 
-describe("Skill learning store v3 migration", () => {
+describe("Skill learning store migration chain", () => {
   it("archives historical threshold attention as rejected and preserves other failures", async () => {
     const root = await temporaryRoot();
     const databasePath = await writeLegacyStore(root);
@@ -406,12 +580,12 @@ describe("Skill learning store v3 migration", () => {
     const migrated = new DatabaseSync(databasePath);
     expect(
       (migrated.prepare("SELECT version FROM schema_meta").get() as { version: number }).version,
-    ).toBe(4);
+    ).toBe(5);
     migrated.close();
     await expect(stat(`${databasePath}.v1.backup`)).resolves.toBeDefined();
   });
 
-  it("opens current v3 storage without rewriting jobs", async () => {
+  it("opens current v5 storage without rewriting jobs", async () => {
     const root = await temporaryRoot();
     const store = await createSkillLearningStore({ pragmaHome: root });
     const scheduled = await store.schedule({
@@ -488,12 +662,99 @@ describe("Skill learning store v3 migration", () => {
     const root = await temporaryRoot();
     const databasePath = await writeLegacyStore(root);
     const database = new DatabaseSync(databasePath);
-    database.prepare("UPDATE schema_meta SET version=5").run();
+    database.prepare("UPDATE schema_meta SET version=6").run();
     database.close();
 
     await expect(createSkillLearningStore({ pragmaHome: root })).rejects.toThrow(
       "Unsupported pragma.memory-skill-learning-store version.",
     );
+  });
+});
+
+describe("Skill learning store v4 to v5 settlement", () => {
+  it("settles historical invalid proposals without model replay and preserves diagnostics", async () => {
+    const root = await temporaryRoot();
+    const databasePath = await writeStoreFixture(root, 4, "skill-learning-store-v4.json");
+    const store = await createSkillLearningStore({ pragmaHome: root });
+    const jobs = await store.listJobs();
+    for (const job of jobs.filter((job) => job.status === "completed")) {
+      expect(job).toMatchObject({ completion: "rejected" });
+      expect(job.lastFailure).toBeUndefined();
+      expect(await store.listFailureAttempts(job.id)).not.toHaveLength(0);
+    }
+    expect(await store.inspect()).toMatchObject({ completed: 2, pending: 0, needsAttention: 1 });
+    expect(jobs.find((job) => job.status === "needs_attention")).toMatchObject({
+      lastErrorCode: "runtime_unavailable",
+      attempts: 1,
+    });
+    expect(await store.claimDueJob(new Date("2026-10-23T00:00:00.000Z"))).toBeUndefined();
+    store.close();
+    const reopened = await createSkillLearningStore({ pragmaHome: root });
+    expect(await reopened.listJobs()).toEqual(jobs);
+    reopened.close();
+    await expect(stat(`${databasePath}.v4.backup`)).resolves.toBeDefined();
+  });
+
+  it.each([true, false])(
+    "preserves the last diagnostic when history is absent (structured=%s)",
+    async (structured) => {
+      const root = await temporaryRoot();
+      const databasePath = await writeStoreFixture(root, 4, "skill-learning-store-v4.json");
+      const database = new DatabaseSync(databasePath);
+      database.exec("DELETE FROM job_failure_attempts");
+      if (!structured)
+        database.exec("UPDATE jobs SET job_json=json_remove(job_json, '$.lastFailure')");
+      database.close();
+      const store = await createSkillLearningStore({ pragmaHome: root });
+      let jobs: readonly SkillLearningJob[];
+      let attempts: readonly (readonly import("@pragma/shared").MemoryExtractionFailureAttempt[])[];
+      try {
+        for (const job of (await store.listJobs()).filter((job) => job.status === "completed")) {
+          expect(await store.listFailureAttempts(job.id)).toEqual([
+            expect.objectContaining({
+              diagnostic: expect.objectContaining({
+                phase: "validation",
+                code: expect.stringMatching(/^skill_learning_plan_/u),
+              }),
+            }),
+          ]);
+        }
+        jobs = await store.listJobs();
+        attempts = await Promise.all(jobs.map((job) => store.listFailureAttempts(job.id)));
+      } finally {
+        store.close();
+      }
+      const reopened = await createSkillLearningStore({ pragmaHome: root });
+      try {
+        expect(await Promise.all(jobs.map((job) => reopened.listFailureAttempts(job.id)))).toEqual(
+          attempts,
+        );
+      } finally {
+        reopened.close();
+      }
+    },
+  );
+
+  it("rolls back interrupted settlement and completes it on the next open", async () => {
+    const root = await temporaryRoot();
+    const databasePath = await writeStoreFixture(root, 4, "skill-learning-store-v4.json");
+    const database = new DatabaseSync(databasePath);
+    database.exec(`CREATE TRIGGER abort_settlement BEFORE UPDATE OF status ON jobs
+      WHEN NEW.status = 'completed' BEGIN SELECT RAISE(ABORT, 'settlement interrupted'); END;`);
+    database.close();
+    await expect(createSkillLearningStore({ pragmaHome: root })).rejects.toThrow(
+      "settlement interrupted",
+    );
+    const interrupted = new DatabaseSync(databasePath);
+    expect(interrupted.prepare("SELECT version FROM schema_meta").get()).toEqual({ version: 4 });
+    expect(
+      interrupted.prepare("SELECT count(*) AS count FROM jobs WHERE status='completed'").get(),
+    ).toEqual({ count: 0 });
+    interrupted.exec("DROP TRIGGER abort_settlement");
+    interrupted.close();
+    const recovered = await createSkillLearningStore({ pragmaHome: root });
+    expect(await recovered.inspect()).toMatchObject({ completed: 2, needsAttention: 1 });
+    recovered.close();
   });
 });
 
@@ -598,7 +859,10 @@ async function writeStoreFixture(
   const databasePath = join(dataRoot, "skill-learning.sqlite");
   const fixture = JSON.parse(
     await readFile(new URL(`./fixtures/${fixtureName}`, import.meta.url), "utf8"),
-  ) as { readonly jobs: readonly SkillLearningJob[] };
+  ) as {
+    readonly jobs: readonly SkillLearningJob[];
+    readonly failures?: readonly import("@pragma/shared").MemoryExtractionFailureAttempt[];
+  };
   const database = new DatabaseSync(databasePath);
   database.exec(`
     CREATE TABLE schema_meta(version INTEGER NOT NULL);
@@ -619,6 +883,8 @@ async function writeStoreFixture(
       JSON.stringify(job),
     );
   }
+  initializeExtractionFailureAttempts(database);
+  for (const failure of fixture.failures ?? []) insertExtractionFailureAttempt(database, failure);
   database.close();
   return databasePath;
 }

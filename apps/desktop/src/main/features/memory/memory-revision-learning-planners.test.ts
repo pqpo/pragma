@@ -1,3 +1,4 @@
+import type { SkillSourceSnapshot } from "@pragma/shared";
 import { randomUUID } from "node:crypto";
 import { mkdir, mkdtemp, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -212,7 +213,9 @@ it("repairs oversized descriptions and missing citations in the same Skill plann
     }),
     JSON.stringify(valid),
   ]);
-  await expect(f.planners.skill.plan(f.input)).resolves.toEqual(valid);
+  await expect(f.planners.skill.plan({ ...f.input, sources: planningSources() })).resolves.toEqual(
+    valid,
+  );
   expect(f.create).toHaveBeenCalledOnce();
   expect(f.continuation).toHaveBeenCalledOnce();
   expect(f.continuation).toHaveBeenCalledWith(
@@ -346,3 +349,102 @@ it("honors cancellation arriving with an otherwise valid planning result", async
   await expect(f.planners.skill.plan(f.input)).rejects.toThrow("cancelled after result read");
   expect(f.continuation).not.toHaveBeenCalled();
 });
+
+function planningSources(): SkillSourceSnapshot[] {
+  return [1, 2, 3].map((revision) => ({
+    ref: { kind: "episodic", id: `episode-${revision}`, revision },
+    rootRef: { type: "pragma.expert", id: "expert-a" },
+    conversationRef: { type: "pragma.mission", id: `mission-${revision}` },
+    sourceExecutionIds: [],
+    producerRefs: [],
+    title: "Workflow",
+    body: "Reusable workflow",
+    outcome: "succeeded",
+    hasSuccessfulRecovery: false,
+    valueScore: 0.85,
+    observedAt: "2026-10-22T00:00:00.000Z",
+    verified: true,
+    visibility: { mode: "host-private" },
+    sensitivity: "internal",
+  }));
+}
+
+it("repairs business threshold errors in the same planning conversation", async () => {
+  const sources = planningSources();
+  const change = {
+    name: "Workflow",
+    description: "Reusable workflow",
+    normalizedKey: "workflow.test",
+    sourceRefs: sources.map((source) => source.ref),
+    target: { type: "create" },
+  };
+  const low = {
+    ...sources[2]!,
+    ref: { kind: "episodic" as const, id: "low", revision: 1 },
+    valueScore: 0.8,
+  };
+  const f = await planningFixture([
+    JSON.stringify({
+      action: "apply",
+      changes: [{ ...change, sourceRefs: [sources[0]!.ref, sources[1]!.ref, low.ref] }],
+    }),
+    JSON.stringify({ action: "apply", changes: [change] }),
+  ]);
+  await expect(f.planners.skill.plan({ ...f.input, sources: [...sources, low] })).resolves.toEqual({
+    action: "apply",
+    changes: [change],
+  });
+  expect(f.create).toHaveBeenCalledOnce();
+  expect(f.continuation).toHaveBeenCalledOnce();
+  expect(f.continuation.mock.calls[0]![0].content).toContain("valueScore >= 0.85");
+}, 15_000);
+
+it("keeps valid changes after exhausting same-conversation business corrections", async () => {
+  const sources = planningSources();
+  const change = {
+    name: "Workflow",
+    description: "Reusable workflow",
+    normalizedKey: "workflow.test",
+    sourceRefs: sources.map((source) => source.ref),
+    target: { type: "create" },
+  };
+  const invalid = {
+    ...change,
+    normalizedKey: "workflow.invalid",
+    sourceRefs: [sources[0]!.ref, sources[1]!.ref, sources[0]!.ref],
+  };
+  const f = await planningFixture([
+    JSON.stringify({ action: "apply", changes: [invalid, change] }),
+  ]);
+  await expect(f.planners.skill.plan({ ...f.input, sources })).resolves.toEqual({
+    action: "apply",
+    changes: [change],
+  });
+  expect(f.create).toHaveBeenCalledOnce();
+  expect(f.continuation).toHaveBeenCalledTimes(2);
+}, 20_000);
+
+it("returns skip when no proposed Skill survives business corrections", async () => {
+  const change = {
+    name: "Workflow",
+    description: "Reusable workflow",
+    normalizedKey: "workflow.test",
+    sourceRefs: planningSources().map((source) => source.ref),
+    target: { type: "create" },
+  };
+  const f = await planningFixture([JSON.stringify({ action: "apply", changes: [change] })]);
+  const onRejectedChanges = vi.fn();
+  await expect(f.planners.skill.plan({ ...f.input, onRejectedChanges })).resolves.toEqual({
+    action: "skip",
+  });
+  expect(onRejectedChanges).toHaveBeenCalledWith(
+    expect.arrayContaining([
+      expect.objectContaining({
+        index: 0,
+        message: expect.stringContaining("exact supplied sourceRefs"),
+      }),
+    ]),
+  );
+  expect(f.create).toHaveBeenCalledOnce();
+  expect(f.continuation).toHaveBeenCalledTimes(2);
+}, 20_000);

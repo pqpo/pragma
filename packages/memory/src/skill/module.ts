@@ -14,7 +14,12 @@ import { extractionFailureDiagnostic } from "../pipeline/extraction-error-code.t
 import { DEFAULT_MEMORY_STORAGE_POLICY } from "../storage/memory-storage-policy.ts";
 import type { SkillSourceReader } from "./source-reader.ts";
 import { createSkillLearningStore, type SkillLearningStore } from "./store.ts";
-import { skillSourceThresholdMet } from "./validation.ts";
+import {
+  inspectSkillLearningPlan,
+  qualifyingSkillLearningPlan,
+  skillSourceThresholdMet,
+  type SkillPlanValidationIssue,
+} from "./validation.ts";
 import type { SkillLearningPlan } from "../learning/revision-plan.ts";
 import { createMemoryLearningPolicyGuard } from "../learning/learning-policy.ts";
 import { writeMemoryLearningTaskPresentation } from "../learning/task-presentation.ts";
@@ -48,6 +53,7 @@ export interface SkillLearningPlanner {
     readonly sources: readonly SkillSourceSnapshot[];
     readonly existingTargets: readonly ExistingMemorySkillTarget[];
     readonly signal: AbortSignal;
+    readonly onRejectedChanges?: (issues: readonly SkillPlanValidationIssue[]) => void;
   }): Promise<SkillLearningPlan>;
 }
 
@@ -139,6 +145,7 @@ export async function createSkillMemoryModule(options: {
       const controller = new AbortController();
       running.set(job.id, controller);
       let retained = false;
+      const rejectedChanges: { expertRef: string; index: number; message: string }[] = [];
       const startedAt = now();
       let phase: MemoryExtractionFailurePhase = "source_read";
       let modelRequested = false;
@@ -187,13 +194,16 @@ export async function createSkillMemoryModule(options: {
           // prevent this expert from proposing independent Skill work.
           phase = "revision_plan";
           modelRequested = true;
-          const plan = await planner.plan({
+          const proposedPlan = await planner.plan({
             rootRef: job.rootRef,
             expertRef,
             sourceDigest,
             sources: expertSources,
             existingTargets,
             signal: controller.signal,
+            onRejectedChanges: (issues) => {
+              rejectedChanges.push(...issues.map((issue) => ({ expertRef, ...issue })));
+            },
           });
           if (!(await canLearn(job.rootRef, producers))) {
             await store.interruptJob({ id: job.id, expectedRevision: job.revision, now: now() });
@@ -202,35 +212,13 @@ export async function createSkillMemoryModule(options: {
           controller.signal.throwIfAborted();
           if (!(await store.isClaimCurrent(job))) return;
           phase = "validation";
+          rejectedChanges.push(
+            ...inspectSkillLearningPlan(proposedPlan, expertSources, existingTargets).map(
+              (issue) => ({ expertRef, ...issue }),
+            ),
+          );
+          const plan = qualifyingSkillLearningPlan(proposedPlan, expertSources, existingTargets);
           if (plan.action === "skip") continue;
-          if (
-            new Set(plan.changes.map((change) => change.normalizedKey)).size !== plan.changes.length
-          ) {
-            throw new Error("skill_learning_plan_duplicate_key");
-          }
-          const available = new Map(expertSources.map((source) => [sourceKey(source), source]));
-          const valid = plan.changes.every((change) => {
-            const selected = change.sourceRefs.map((ref) =>
-              available.get(`${ref.kind}\0${ref.id}\0${ref.revision}`),
-            );
-            const selectedTarget = change.target;
-            const keyOwners = existingTargets.filter((target) =>
-              target.normalizedKeys.includes(change.normalizedKey),
-            );
-            const targetAllowed =
-              selectedTarget.type === "create"
-                ? keyOwners.length === 0
-                : existingTargets.some(
-                    (target) => target.capabilityId === selectedTarget.capabilityId,
-                  ) &&
-                  keyOwners.every((target) => target.capabilityId === selectedTarget.capabilityId);
-            return (
-              selected.every((source) => source !== undefined) &&
-              skillSourceThresholdMet(selected as SkillSourceSnapshot[]) &&
-              targetAllowed
-            );
-          });
-          if (!valid) throw new Error("skill_learning_plan_invalid");
           writeMemoryLearningTaskPresentation(
             options,
             { module: "skill", ...job },
@@ -249,7 +237,22 @@ export async function createSkillMemoryModule(options: {
           });
           retained = true;
         }
-        await store.complete(job, retained ? "retained" : "rejected", now());
+        const completedAt = now();
+        await store.complete(
+          job,
+          retained ? "retained" : "rejected",
+          completedAt,
+          rejectedChanges.length === 0
+            ? undefined
+            : extractionFailureDiagnostic(
+                Object.assign(new Error(JSON.stringify(rejectedChanges)), {
+                  code: "skill_learning_plan_rejected",
+                  retryable: false,
+                }),
+                "skill_extraction",
+                { phase: "validation", startedAt, now: completedAt },
+              ).diagnostic,
+        );
       } catch (error) {
         const failure = extractionFailureDiagnostic(error, "skill_extraction", {
           phase,

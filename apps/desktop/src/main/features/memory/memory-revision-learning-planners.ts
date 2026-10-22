@@ -12,6 +12,8 @@ import {
 } from "@pragma/built-in-agents";
 import {
   KnowledgeLearningPlanSchema,
+  inspectSkillLearningPlan,
+  qualifyingSkillLearningPlan,
   SkillLearningPlanSchema,
   type KnowledgeLearningPlanner,
   type SkillLearningPlanner,
@@ -45,6 +47,10 @@ export function createMemoryRevisionLearningPlanners(options: {
     readonly goal: string;
     readonly signal: AbortSignal;
     readonly schema: z.ZodType<T>;
+    readonly validate?: (
+      plan: T,
+    ) => readonly { readonly index: number; readonly message: string }[];
+    readonly settle?: (plan: T) => T;
   }): Promise<T> => {
     input.signal.throwIfAborted();
     await mkdir(workspace, { recursive: true, mode: 0o700 });
@@ -126,7 +132,17 @@ export function createMemoryRevisionLearningPlanners(options: {
         let correction: string;
         try {
           input.signal.throwIfAborted();
-          return input.schema.parse(JSON.parse(extractStructuredJson(content)));
+          const plan = input.schema.parse(JSON.parse(extractStructuredJson(content)));
+          const issues = input.validate?.(plan) ?? [];
+          if (issues.length === 0) return plan;
+          if (repair >= MAX_PLAN_REPAIRS && input.settle !== undefined) return input.settle(plan);
+          throw new z.ZodError(
+            issues.map(({ index, message }) => ({
+              code: "custom",
+              path: ["changes", index],
+              message,
+            })),
+          );
         } catch (error) {
           if (!(error instanceof z.ZodError) && !(error instanceof SyntaxError)) throw error;
           if (repair >= MAX_PLAN_REPAIRS) {
@@ -253,6 +269,13 @@ export function createMemoryRevisionLearningPlanners(options: {
         const sources = boundedSources(input.sources);
         return await run({
           schema: SkillLearningPlanSchema,
+          validate: (plan) => inspectSkillLearningPlan(plan, sources, input.existingTargets),
+          settle: (plan) => {
+            input.onRejectedChanges?.(
+              inspectSkillLearningPlan(plan, sources, input.existingTargets),
+            );
+            return qualifyingSkillLearningPlan(plan, sources, input.existingTargets);
+          },
           ref: SKILL_REVISION_EXPERT_REF,
           jobId: `skill-plan:${input.sourceDigest}`,
           signal: input.signal,
@@ -260,7 +283,7 @@ export function createMemoryRevisionLearningPlanners(options: {
             "Plan Memory-derived Skill creation or revision. This is a planning-only run: do not call tools or start a draft.",
             "Choose one to three complete reusable workflows, or skip when no workflow qualifies. Cite exact supplied sourceRefs. Use only supplied existing target IDs.",
             "For EACH change: name must be 1–120 characters; description must be a concise summary of 1–500 characters, not the workflow body; normalizedKey must be 1–300 lowercase ASCII characters matching ^[a-z0-9][a-z0-9._:/-]*$; sourceRefs must contain 3–8 distinct supplied references. All normalizedKeys must be distinct.",
-            'Return only {"action":"skip"} or {"action":"apply","changes":[{"name":"...","description":"...","normalizedKey":"...","sourceRefs":[{"kind":"episodic","id":"first supplied episode ID","revision":1},{"kind":"episodic","id":"second supplied episode ID","revision":1},{"kind":"episodic","id":"third supplied episode ID","revision":1}],"target":{"type":"create"}}]}. Cite at least three distinct high-value Episodes from two conversations, including two successful or recovered outcomes.',
+            'Return only {"action":"skip"} or {"action":"apply","changes":[{"name":"...","description":"...","normalizedKey":"...","sourceRefs":[{"kind":"episodic","id":"first supplied episode ID","revision":1},{"kind":"episodic","id":"second supplied episode ID","revision":1},{"kind":"episodic","id":"third supplied episode ID","revision":1}],"target":{"type":"create"}}]}. For EACH change cite at least three distinct Episodes with valueScore >= 0.85 from at least two conversations, including at least two successful or recovered outcomes. Lower-value Episodes and semantic facts do not count toward this threshold.',
             'For an existing target use {"type":"revise","capabilityId":"..."}. A later run of this same Skill Revision Agent will edit each draft.',
             `Root: ${JSON.stringify(input.rootRef)}`,
             `Expert: ${input.expertRef}`,

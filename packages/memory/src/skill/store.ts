@@ -55,7 +55,12 @@ export interface SkillLearningStore {
   }): Promise<SkillLearningJob | undefined>;
   claimDueJob(now: Date): Promise<SkillLearningJob | undefined>;
   isClaimCurrent(job: SkillLearningJob): Promise<boolean>;
-  complete(job: SkillLearningJob, completion: "retained" | "rejected", now: Date): Promise<void>;
+  complete(
+    job: SkillLearningJob,
+    completion: "retained" | "rejected",
+    now: Date,
+    diagnostic?: MemoryExtractionFailureDiagnostic,
+  ): Promise<void>;
   fail(input: {
     readonly job: SkillLearningJob;
     readonly diagnostic: MemoryExtractionFailureDiagnostic;
@@ -247,19 +252,33 @@ export async function createSkillLearningStore(
       const current = read(job.id);
       return current?.revision === job.revision && current.status === "running";
     },
-    async complete(job, completion, now) {
-      const current = read(job.id);
-      if (current?.revision !== job.revision || current.status !== "running") throw conflict();
-      write(
-        SkillLearningJobSchema.parse({
-          ...job,
-          revision: job.revision + 1,
-          status: "completed",
-          completion,
-          leaseUntil: undefined,
-          updatedAt: now.toISOString(),
-        }),
-      );
+    async complete(job, completion, now, diagnostic) {
+      database.exec("BEGIN IMMEDIATE;");
+      try {
+        const current = read(job.id);
+        if (current?.revision !== job.revision || current.status !== "running") throw conflict();
+        if (diagnostic !== undefined)
+          insertExtractionFailureAttempt(database, {
+            jobId: job.id,
+            jobRevision: job.revision,
+            attempt: job.attempts,
+            diagnostic,
+          });
+        write(
+          SkillLearningJobSchema.parse({
+            ...job,
+            revision: job.revision + 1,
+            status: "completed",
+            completion,
+            leaseUntil: undefined,
+            updatedAt: now.toISOString(),
+          }),
+        );
+        database.exec("COMMIT;");
+      } catch (error) {
+        database.exec("ROLLBACK;");
+        throw error;
+      }
     },
     async fail(input) {
       const current = read(input.job.id);
@@ -422,7 +441,7 @@ export async function createSkillLearningStore(
 function initialize(database: DatabaseSync): void {
   database.exec(`
     CREATE TABLE IF NOT EXISTS schema_meta(version INTEGER NOT NULL);
-    INSERT INTO schema_meta(version) SELECT 4 WHERE NOT EXISTS (SELECT 1 FROM schema_meta);
+    INSERT INTO schema_meta(version) SELECT 5 WHERE NOT EXISTS (SELECT 1 FROM schema_meta);
     CREATE TABLE IF NOT EXISTS jobs(
       id TEXT PRIMARY KEY, root_key TEXT NOT NULL, source_digest TEXT NOT NULL,
       status TEXT NOT NULL, retry_at TEXT, lease_until TEXT, job_json TEXT NOT NULL,
@@ -446,15 +465,17 @@ async function assertFreshOrCurrent(database: DatabaseSync, databasePath: string
     version?.version !== 1 &&
     version?.version !== 2 &&
     version?.version !== 3 &&
-    version?.version !== 4
+    version?.version !== 4 &&
+    version?.version !== 5
   ) {
     throw new Error("Unsupported pragma.memory-skill-learning-store version.");
   }
-  if (version.version === 4) return;
+  if (version.version === 5) return;
   await ensureSqliteMigrationBackup(database, databasePath, version.version);
   if (version.version === 1) migrateV1ToV2(database);
   if (version.version <= 2) migrateV2ToV3(database);
-  migrateV3ToV4(database);
+  if (version.version <= 3) migrateV3ToV4(database);
+  migrateV4ToV5(database);
 }
 
 function migrateV1ToV2(database: DatabaseSync): void {
@@ -560,6 +581,67 @@ function migrateV3ToV4(database: DatabaseSync): void {
       update.run(JSON.stringify(migrated), row.id);
     }
     database.prepare("UPDATE schema_meta SET version=4").run();
+    database.exec("COMMIT;");
+  } catch (error) {
+    database.exec("ROLLBACK;");
+    throw error;
+  }
+}
+
+// These errors describe rejected model proposals, with no user action to take.
+// Preserve diagnostics and consumed attempts; never replay a historical model call.
+function migrateV4ToV5(database: DatabaseSync): void {
+  database.exec("BEGIN IMMEDIATE;");
+  try {
+    const rows = database
+      .prepare("SELECT job_json FROM jobs WHERE status IN ('pending', 'needs_attention')")
+      .all() as { job_json: string }[];
+    const update = database.prepare(
+      "UPDATE jobs SET status=?, retry_at=NULL, lease_until=NULL, job_json=? WHERE id=?",
+    );
+    for (const row of rows) {
+      const job = SkillLearningJobSchema.parse(JSON.parse(row.job_json));
+      if (
+        job.lastErrorCode !== "skill_learning_plan_invalid" &&
+        job.lastErrorCode !== "skill_learning_plan_duplicate_key"
+      )
+        continue;
+      const diagnostic: MemoryExtractionFailureDiagnostic = job.lastFailure ?? {
+        schemaVersion: "pragma.memory-extraction-failure/v1",
+        code: job.lastErrorCode,
+        message: job.lastErrorMessage ?? job.lastErrorCode,
+        phase: "validation",
+        failedAt: job.updatedAt,
+        retryable: false,
+      };
+      if (
+        !listExtractionFailureAttempts(database, job.id).some(
+          (attempt) =>
+            attempt.diagnostic.failedAt === diagnostic.failedAt &&
+            attempt.diagnostic.code === diagnostic.code,
+        )
+      )
+        insertExtractionFailureAttempt(database, {
+          jobId: job.id,
+          jobRevision: Math.max(1, job.revision - 1),
+          attempt: job.attempts,
+          diagnostic,
+        });
+      const settled = SkillLearningJobSchema.parse({
+        ...job,
+        revision: job.revision + 1,
+        status: "completed",
+        completion: "rejected",
+        retryAt: undefined,
+        leaseUntil: undefined,
+        lastErrorCode: undefined,
+        lastErrorMessage: undefined,
+        lastFailure: undefined,
+        failureClass: undefined,
+      });
+      update.run(settled.status, JSON.stringify(settled), settled.id);
+    }
+    database.prepare("UPDATE schema_meta SET version=5").run();
     database.exec("COMMIT;");
   } catch (error) {
     database.exec("ROLLBACK;");

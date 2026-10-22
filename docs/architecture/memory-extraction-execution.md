@@ -91,7 +91,23 @@ starting a fresh planning Mission automatically. Successful result reads retry a
 five seconds apart, without admitting another model. Only non-streaming assistant output belonging
 to the observed execution is eligible. Unavailable terminal observations, diagnostics or exhausted
 result reads are nonretryable; cancellation is checked again after reading and before Skill submission.
-Source thresholds and description limits remain unchanged.
+Skill planning also validates citations, per-change evidence thresholds, distinct keys and target ownership
+inside those same correction turns. Each Skill requires three distinct Episodes with valueScore >= 0.85
+from at least two conversations, including two successful or recovered outcomes. After business
+correction exhaustion, the Host submits only qualifying changes; if none qualify, the job completes
+as rejected (no Skill extracted). This is a normal learning outcome and does not enter needs-attention
+or start another planning Mission. Final rejected-change diagnostics are passed back to the Memory
+module before the planning Mission is removed, and committed atomically with completion to the
+existing failure-attempt history, including when other changes are retained. Runtime, cancellation, unreadable output and submission failures
+retain their existing failure handling. Source thresholds and description limits remain unchanged.
+
+The Skill learning database upgrades lazily from version 4 to 5 with a locked, backed-up SQLite
+transaction. Historical pending/needs-attention jobs whose last error is exactly
+`skill_learning_plan_invalid` or `skill_learning_plan_duplicate_key` complete as rejected without
+model replay. Consumed attempts and failure-attempt diagnostics remain available; unrelated failures
+and running claims are unchanged. When an older job has no failure-attempt entry, migration preserves
+its last structured diagnostic (or legacy error text) there before clearing active error fields.
+Interrupted settlement rolls back and replays on the next open.
 
 Knowledge sinks check outstanding work before planner admission and again under the submission lock.
 Skill occupancy is checked only for the selected plan targets, after planning and again when submitting;
