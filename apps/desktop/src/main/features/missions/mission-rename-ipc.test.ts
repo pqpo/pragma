@@ -7,6 +7,7 @@ import {
   createLocalHostMissionApplication,
   createLocalHostMissionController,
   createMissionStore,
+  createMissionControllerStore,
   createSqliteExecutionStore,
   type LocalHostMissionExecutionResourcePorts,
 } from "@pragma/local-host";
@@ -83,6 +84,17 @@ it("persists renames through the shared application and broadcasts the updated M
       getWindow: () => ({ webContents: { send } }),
       temporaryRoot: join(root, "tmp"),
     } as unknown as Parameters<typeof installMissionHandlers>[0]);
+    const controller = createMissionControllerStore({
+      missionsPath,
+      missionPath: missions.storagePath,
+    });
+    const missionId = crypto.randomUUID();
+    const guard = await controller.claim({
+      missionId,
+      claimId: crypto.randomUUID(),
+      leaseMs: 10_000,
+    });
+    await controller.release({ missionId, guard });
     const countReferences = handlers.get("missions:context-store:reference-count")!;
     const storeId = crypto.randomUUID();
     await expect(countReferences({}, { storeId })).resolves.toBe(0);

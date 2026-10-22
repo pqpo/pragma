@@ -4,6 +4,7 @@ import { join } from "node:path";
 
 import { afterEach, describe, expect, it } from "vitest";
 import { ContentAddressedStore, withFileLock } from "@pragma/core";
+import { createMissionStore, createMissionControllerStore } from "@pragma/local-host";
 
 import { createContextStoreEditorDraftService } from "./context-store-editor-draft-service.ts";
 import {
@@ -1221,6 +1222,51 @@ describe("managed context store", () => {
 
     expect(unmounted).toBe(true);
     await expect(stat(join(storesPath, created.id))).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
+  it("deletes knowledge and unmounts linked Missions alongside controller-only history", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "pragma-knowledge-delete-controller-"));
+    directories.push(directory);
+    const missionsPath = join(directory, "missions");
+    const missions = createMissionStore({ missionsPath });
+    const controller = createMissionControllerStore({
+      missionsPath,
+      missionPath: missions.storagePath,
+    });
+    const missionId = crypto.randomUUID();
+    const guard = await controller.claim({
+      missionId,
+      claimId: crypto.randomUUID(),
+      leaseMs: 10_000,
+    });
+    await controller.release({ missionId, guard });
+    const aggregatePath = join(missions.storagePath!(missionId), "local-host", "aggregate.json");
+    const history = await readFile(aggregatePath, "utf8");
+    const storesPath = join(directory, "stores");
+    const store = createContextStoreStore({
+      storesPath,
+      removeMissionMounts: async (storeId) => {
+        for (const reference of await missions.listContextStoreReferences(storeId))
+          await missions.updateContextMounts(reference.id, []);
+      },
+      hasMissionReferences: (storeId) => missions.isContextStoreReferenced(storeId),
+    });
+    const created = await store.create({ mode: "blank", name: "Mounted", description: "" });
+    const mission = await missions.create({
+      workspace: { path: directory, basename: "workspace" },
+      goal: "Keep conversation after knowledge deletion",
+      project: { id: "studio", revision: 1 },
+      executor: { kind: "expert", ref: "expert:0000000000pragma", name: "Expert" },
+      contextMounts: [{ kind: "context-store", storeId: created.id }],
+    });
+    await expect(missions.listContextStoreReferences(created.id)).resolves.toHaveLength(1);
+    await store.remove(created.id);
+    await expect(stat(join(storesPath, created.id))).rejects.toMatchObject({ code: "ENOENT" });
+    await expect(missions.get(mission.id)).resolves.toMatchObject({
+      contextMounts: [],
+      goal: mission.goal,
+    });
+    expect(await readFile(aggregatePath, "utf8")).toBe(history);
   });
 
   it("rejects active Mission references without deleting the Store", async () => {

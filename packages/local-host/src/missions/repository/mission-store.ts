@@ -1130,35 +1130,62 @@ export function createMissionStore(options: {
     markMissionMutation();
   };
 
+  // Controller-only owners have no application envelope or knowledge mounts.
+  // Both list and reference queries must validate them before skipping them.
+  const readMissionForEnumeration = async (missionId: string): Promise<Mission | undefined> =>
+    await withMissionLock(missionId, "mission.enumeration.read", async () => {
+      // Recovery failures must never be mistaken for an absent envelope.
+      await recoverPendingTransactions(missionId);
+      try {
+        return await readMissionUnlocked(missionId);
+      } catch (error) {
+        const normalized = normalizeReadError(error, missionId);
+        if (normalized.code !== "mission_not_found" || (await pathExists(manifestPath(missionId))))
+          throw normalized;
+        for (const applicationPath of [
+          messagesPath,
+          attachmentsPath,
+          earlyMigrationTransactionPath,
+          v7MigrationTransactionPath,
+          v8MigrationTransactionPath,
+          v9MigrationTransactionPath,
+          v10MigrationTransactionPath,
+          v11MigrationTransactionPath,
+        ]) {
+          if (await pathExists(applicationPath(missionId)))
+            throw new MissionStoreError(
+              "config_invalid",
+              `Mission ${missionId} has application data without its manifest. The data was preserved.`,
+              { cause: error },
+            );
+        }
+        try {
+          const controller = await readJsonIfExists(
+            join(missionPath(missionId), "local-host", "aggregate.json"),
+          );
+          if (controller === undefined) throw normalized;
+          const state = MissionAggregateStateSchema.parse(controller);
+          if (state.missionId !== missionId)
+            throw new Error("Controller owner mismatch.", { cause: error });
+          return undefined;
+        } catch (cause) {
+          throw normalizeReadError(cause, missionId);
+        }
+      }
+    });
+
   const listMissions = async (): Promise<MissionSummary[]> => {
     try {
       const missionIds = await listMissionIds();
       const results = await mapWithConcurrency(missionIds, 4, async (missionId) => {
         try {
-          const mission = await readMission(missionId);
-          if (!isUserFacingMissionOrigin(mission.origin)) return { missionId } as const;
+          const mission = await readMissionForEnumeration(missionId);
+          if (mission === undefined || !isUserFacingMissionOrigin(mission.origin))
+            return { missionId } as const;
           const summary = toMissionSummary(mission, await getListSource(mission));
           return { missionId, summary } as const;
         } catch (error) {
-          const normalized = normalizeReadError(error, missionId);
-          if (normalized.code === "mission_not_found") {
-            const controller = await readJsonIfExists(
-              join(missionPath(missionId), "local-host", "aggregate.json"),
-            );
-            if (controller !== undefined) {
-              try {
-                const state = MissionAggregateStateSchema.parse(controller);
-                if (state.missionId !== missionId)
-                  throw new Error("Controller owner mismatch.", { cause: error });
-                // A controller-only owner is valid, but cannot be invented as
-                // a renderer Mission with project, origin and initial input.
-                return { missionId } as const;
-              } catch (cause) {
-                return { missionId, error: normalizeReadError(cause, missionId) } as const;
-              }
-            }
-          }
-          return { missionId, error: normalized } as const;
+          return { missionId, error: normalizeReadError(error, missionId) } as const;
         }
       });
       const summaries: MissionSummary[] = [];
@@ -1193,8 +1220,9 @@ export function createMissionStore(options: {
     }
     const references: MissionContextStoreReference[] = [];
     for (const missionId of missionIds) {
-      const mission = await readMission(missionId);
+      const mission = await readMissionForEnumeration(missionId);
       if (
+        mission !== undefined &&
         isUserFacingMissionOrigin(mission.origin) &&
         mission.contextMounts.some(
           (mount) => mount.kind === "context-store" && mount.storeId === storeId,

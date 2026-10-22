@@ -57,6 +57,188 @@ afterEach(async () => {
 });
 
 describe("mission store", { timeout: 30_000 }, () => {
+  it("counts knowledge references alongside controller-only owners across restarts", async () => {
+    const root = await temporaryRoot();
+    const missionsPath = join(root, "missions");
+    const store = createMissionStore({ missionsPath });
+    const storeId = crypto.randomUUID();
+    const mission = await store.create({
+      workspace: { path: root, basename: "workspace" },
+      goal: "Linked knowledge",
+      project: { id: "studio", revision: 1 },
+      executor: missionExecutorSnapshot(expertFixture()),
+      contextMounts: [{ kind: "context-store", storeId }],
+    });
+    const missionId = crypto.randomUUID();
+    const controller = createMissionControllerStore({
+      missionsPath,
+      missionPath: store.storagePath,
+    });
+    const guard = await controller.claim({
+      missionId,
+      claimId: crypto.randomUUID(),
+      leaseMs: 10_000,
+    });
+    await controller.release({ missionId, guard });
+    const aggregatePath = join(store.storagePath!(missionId), "local-host", "aggregate.json");
+    const original = await readFile(aggregatePath, "utf8");
+
+    for (const reader of [store, createMissionStore({ missionsPath })]) {
+      await expect(reader.list()).resolves.toMatchObject([{ id: mission.id }]);
+      await expect(reader.listContextStoreReferences(storeId)).resolves.toEqual([
+        { id: mission.id, title: mission.title },
+      ]);
+      await expect(reader.isContextStoreReferenced(storeId)).resolves.toBe(true);
+      await expect(reader.listContextStoreReferences(crypto.randomUUID())).resolves.toEqual([]);
+    }
+    // The deletion unmount phase uses the same query after the preflight count.
+    await store.updateContextMounts(mission.id, []);
+    await expect(store.listContextStoreReferences(storeId)).resolves.toEqual([]);
+    await expect(store.isContextStoreReferenced(storeId)).resolves.toBe(false);
+    expect(await readFile(aggregatePath, "utf8")).toBe(original);
+    await expect(
+      readFile(join(store.storagePath!(missionId), "mission.yaml")),
+    ).rejects.toMatchObject({
+      code: "ENOENT",
+    });
+  });
+
+  it.each([true, false])(
+    "does not skip an incomplete Mission create when its manifest is published: %s",
+    async (published) => {
+      const root = await temporaryRoot();
+      const missionsPath = join(root, "missions");
+      const store = createMissionStore({ missionsPath });
+      const storeId = crypto.randomUUID();
+      const mission = await store.create({
+        workspace: { path: root, basename: "workspace" },
+        goal: "Preserve an incomplete owner",
+        project: { id: "studio", revision: 1 },
+        executor: missionExecutorSnapshot(expertFixture()),
+        contextMounts: [{ kind: "context-store", storeId }],
+      });
+      const controller = createMissionControllerStore({
+        missionsPath,
+        missionPath: store.storagePath,
+      });
+      const guard = await controller.claim({
+        missionId: mission.id,
+        claimId: crypto.randomUUID(),
+        leaseMs: 10_000,
+      });
+      await controller.release({ missionId: mission.id, guard });
+      const directory = store.storagePath!(mission.id);
+      const staging = join(directory, ".mission-create.transaction");
+      await mkdir(staging);
+      if (!published) await rename(join(directory, "mission.yaml"), join(staging, "mission.yaml"));
+      const attachments = await readFile(join(directory, "attachments.json"));
+      await rm(join(directory, "attachments.json"));
+      // Recovery must fail, rather than treating this as a controller-only owner.
+      await expect(store.listContextStoreReferences(storeId)).rejects.toThrow();
+      await expect(store.isContextStoreReferenced(storeId)).rejects.toThrow();
+      await expect(
+        readFile(join(published ? directory : staging, "mission.yaml"), "utf8"),
+      ).resolves.toContain(storeId);
+      await writeFile(join(directory, "attachments.json"), attachments);
+      await expect(store.listContextStoreReferences(storeId)).resolves.toEqual([
+        { id: mission.id, title: mission.title },
+      ]);
+    },
+  );
+
+  it.each([false, true])(
+    "does not skip application data without a manifest, pending migration: %s",
+    async (pendingMigration) => {
+      const root = await temporaryRoot();
+      const missionsPath = join(root, "missions");
+      const store = createMissionStore({ missionsPath });
+      const storeId = crypto.randomUUID();
+      const mission = await store.create({
+        workspace: { path: root, basename: "workspace" },
+        goal: "Preserve migration evidence",
+        project: { id: "studio", revision: 1 },
+        executor: missionExecutorSnapshot(expertFixture()),
+        contextMounts: [{ kind: "context-store", storeId }],
+      });
+      const controller = createMissionControllerStore({
+        missionsPath,
+        missionPath: store.storagePath,
+      });
+      const guard = await controller.claim({
+        missionId: mission.id,
+        claimId: crypto.randomUUID(),
+        leaseMs: 10_000,
+      });
+      await controller.release({ missionId: mission.id, guard });
+      const directory = store.storagePath!(mission.id);
+      const manifest = await readFile(join(directory, "mission.yaml"));
+      const journalPath = join(directory, ".v10-to-v11.transaction.json");
+      const journal = JSON.stringify({
+        schemaVersion: "pragma.mission-v11-migration/v1",
+        missionId: mission.id,
+        target: mission,
+      });
+      if (pendingMigration) await writeFile(journalPath, journal);
+      await rm(join(directory, "mission.yaml"));
+      await expect(store.listContextStoreReferences(storeId)).rejects.toThrow();
+      await expect(store.isContextStoreReferenced(storeId)).rejects.toThrow();
+      if (pendingMigration) expect(await readFile(journalPath, "utf8")).toBe(journal);
+      await expect(readFile(join(directory, "messages.jsonl"), "utf8")).resolves.toContain(
+        mission.goal,
+      );
+      await writeFile(join(directory, "mission.yaml"), manifest);
+      await expect(store.listContextStoreReferences(storeId)).resolves.toEqual([
+        { id: mission.id, title: mission.title },
+      ]);
+    },
+  );
+
+  it.each(["absent", "invalid-json", "invalid-schema", "wrong-owner", "corrupt-envelope"])(
+    "rejects knowledge reference queries for %s Mission data",
+    async (kind) => {
+      const root = await temporaryRoot();
+      const missionsPath = join(root, "missions");
+      const store = createMissionStore({ missionsPath });
+      const missionId = crypto.randomUUID();
+      const controller = createMissionControllerStore({
+        missionsPath,
+        missionPath: store.storagePath,
+      });
+      const guard = await controller.claim({
+        missionId,
+        claimId: crypto.randomUUID(),
+        leaseMs: 10_000,
+      });
+      await controller.release({ missionId, guard });
+      const directory = store.storagePath!(missionId);
+      const aggregatePath = join(directory, "local-host", "aggregate.json");
+      const original = await readFile(aggregatePath, "utf8");
+      if (kind === "absent") await rm(aggregatePath);
+      if (kind === "invalid-json") await writeFile(aggregatePath, "{");
+      if (kind === "invalid-schema") await writeFile(aggregatePath, "{}");
+      if (kind === "wrong-owner")
+        await writeFile(
+          aggregatePath,
+          JSON.stringify({ ...JSON.parse(original), missionId: crypto.randomUUID() }),
+        );
+      if (kind === "corrupt-envelope")
+        await writeFile(
+          join(directory, "mission.yaml"),
+          "schemaVersion: pragma.mission/v11\ninvalid: true",
+        );
+      const code = kind === "absent" ? "mission_not_found" : "config_invalid";
+      const storeId = crypto.randomUUID();
+      await expect(store.listContextStoreReferences(storeId)).rejects.toMatchObject({ code });
+      await expect(store.isContextStoreReferenced(storeId)).rejects.toMatchObject({ code });
+      // Fixing the owner allows a fresh read without deleting its history.
+      await writeFile(aggregatePath, original);
+      if (kind === "corrupt-envelope") await rm(join(directory, "mission.yaml"));
+      await expect(
+        createMissionStore({ missionsPath }).listContextStoreReferences(storeId),
+      ).resolves.toEqual([]);
+    },
+  );
+
   it("persists a renamed running Mission and preserves concurrent execution updates", async () => {
     const root = await temporaryRoot();
     const missionsPath = join(root, "missions");
