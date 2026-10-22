@@ -55,6 +55,7 @@ import { createSecretStore, type OsKeychain } from "../src/secrets/secret-store.
 const tempDirectories: string[] = [];
 
 afterEach(async () => {
+  vi.unstubAllGlobals();
   await Promise.all(
     tempDirectories
       .splice(0)
@@ -103,7 +104,7 @@ describe("Core-backed Local Host run composition", { timeout: 10_000 }, () => {
     );
   });
 
-  it("publishes CLI Evidence and pending work which a subsequent Desktop pump can extract", async () => {
+  it("publishes CLI Evidence which a subsequent Desktop pump extracts after the completion grace period", async () => {
     const { home, runtimes, executors } = await createRunFixture();
     const policies = createFileMemoryPolicyStore({ pragmaHome: home });
     await policies.updateGlobal({
@@ -190,6 +191,33 @@ describe("Core-backed Local Host run composition", { timeout: 10_000 }, () => {
         };
       });
       await desktop.episodic.setExtractor({ extract });
+      await desktop.episodic.runBackgroundOnce?.();
+      expect(extract).not.toHaveBeenCalled();
+      expect(await desktop.episodic.store.list()).toHaveLength(0);
+      const jobs = await desktop.episodic.store.listExtractionJobs();
+      expect(jobs).toHaveLength(1);
+      const eligibleAt = Date.parse(jobs[0]!.eligibleAt!);
+      expect(eligibleAt).toBeGreaterThan(Date.now());
+
+      // Keep Date advancing with real I/O and lock deadlines, shifted to the
+      // persisted eligibility time instead of waiting out the grace period.
+      const RealDate = Date;
+      const offset = eligibleAt - RealDate.now();
+      class ExtractionDate extends RealDate {
+        constructor(value?: string | number | Date) {
+          super(
+            value === undefined
+              ? RealDate.now() + offset
+              : value instanceof RealDate
+                ? value.getTime()
+                : value,
+          );
+        }
+        static override now(): number {
+          return RealDate.now() + offset;
+        }
+      }
+      vi.stubGlobal("Date", ExtractionDate);
       await desktop.episodic.runBackgroundOnce?.();
       expect(extract).toHaveBeenCalledOnce();
       const episodes = await desktop.episodic.store.list();
