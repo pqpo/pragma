@@ -617,6 +617,7 @@ function formatContextAccessRulesSection(): string {
   return [
     "Context access rules:",
     "- Context ids are Context System identifiers, not local filesystem paths.",
+    "- Use list_context_stores to discover registered Store namespaces and names without listing documents. Copy namespaces exactly; never reconstruct or shorten them. On an unregistered namespace error, call list_context_stores, follow nextCursor if needed, and retry with the exact returned namespace before diagnosing a storage problem.",
     "- Use list_expert_context like a paginated directory listing to discover context ids and descriptions. Pass namespace when you need to browse one known context namespace; continue with its nextCursor using the same namespace when present.",
     "- Use search_expert_context to discover context by path or content, refine broad queries when results are omitted, and use read_expert_context when you know the context id.",
     "- Search snippets may be truncated. Read the referenced context in byte ranges with start/offset when complete content is needed.",

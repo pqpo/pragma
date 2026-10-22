@@ -20,6 +20,7 @@ import {
   updateRuntimeSessionRecord,
   createStaticRuntimeResolver,
   PragmaPaths,
+  resolveExecutionTools,
   EXECUTION_RECOVERY_CLAIM_STATE_KEY,
 } from "@pragma/core";
 import { createLocalHostCoreMissionControlAdapter } from "../src/core-control-adapter.ts";
@@ -1716,6 +1717,92 @@ it(
     });
     expect(reads).toHaveLength(1);
     await f.app.dispose?.();
+  },
+);
+
+it(
+  "discovers mounted Store namespaces through compiled model tools after a failed turn and manual retry",
+  { timeout: 20_000 },
+  async () => {
+    const storeId = randomUUID();
+    const namespace = `mission-knowledge:${storeId}`;
+    let attempts = 0;
+    const reads: string[] = [];
+    const f = await fixture(false, false, false, async (agent) => {
+      const tools = resolveExecutionTools({ agent, getContext: () => undefined }).tools;
+      const read = tools.find((tool) => tool.name === "read_expert_context")!.tool;
+      const directory = tools.find((tool) => tool.name === "list_context_stores")!.tool;
+      if (++attempts === 1) {
+        const failed = await read.call(
+          { namespace: `mission-knowledge:${storeId.slice(0, -4)}`, id: "knowledge.md" },
+          undefined,
+        );
+        expect(JSON.parse(failed.text)).toMatchObject({
+          error: { code: "invalid_namespace", details: { reason: "namespace_not_registered" } },
+          recovery: { tool: "list_context_stores", arguments: {} },
+        });
+        throw new Error("Simulate a turn failing after a mistyped namespace");
+      }
+      const listed = await directory.call({}, undefined);
+      expect(listed.isError).not.toBe(true);
+      const found = JSON.parse(listed.text).stores.find(
+        (store: { namespace: string }) => store.namespace === namespace,
+      );
+      expect(found).toBeDefined();
+      const result = await read.call({ namespace: found.namespace, id: "knowledge.md" }, undefined);
+      expect(result.isError).not.toBe(true);
+      reads.push(result.text);
+    });
+    await writePublishedKnowledgeFixture(f.home, storeId);
+    const paths = new PragmaPaths({ pragmaHome: f.home });
+    const missions = createMissionStore({ missionsPath: paths.missionsRoot() });
+    const requestId = randomUUID();
+    const mission = await missions.create({
+      initialMessageId: requestId,
+      workspace: { path: f.home, basename: "workspace" },
+      goal: "Read mounted knowledge",
+      project: { id: "studio", revision: 1 },
+      executor: { kind: "expert", ref: `expert:${f.expertId}`, name: "Expert" },
+      contextMounts: [{ kind: "context-store", storeId }],
+    });
+    const first = await f.app.run!.startAttached({
+      missionId: mission.id,
+      request: {
+        requestId,
+        command: "expert.run",
+        executor: { kind: "expert", id: f.expertId },
+        project: { projectId: "studio", revision: 1 },
+        workspace: f.workspace,
+        prompt: mission.goal,
+        detach: false,
+      },
+    });
+    expect((await first.outcome).status).toBe("failed");
+    const retryId = randomUUID();
+    await f.app.missionControl!.submit({
+      missionId: mission.id,
+      requestId: retryId,
+      kind: "send",
+      payload: {
+        kind: "send",
+        input: { prompt: "Retry: list Context stores and copy the exact namespace" },
+      },
+    });
+    expect(
+      await f.app.missionControl!.waitForTerminal({
+        missionId: mission.id,
+        requestId: retryId,
+        timeoutMs: 10_000,
+      }),
+    ).toMatchObject({ state: "applied" });
+    await vi.waitFor(
+      async () => {
+        expect((await missions.get(mission.id)).execution?.status).toBe("succeeded");
+      },
+      { timeout: 10_000 },
+    );
+    expect(attempts).toBe(2);
+    expect(reads).toEqual([expect.stringContaining("Original published content")]);
   },
 );
 

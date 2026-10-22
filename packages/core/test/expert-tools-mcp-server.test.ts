@@ -51,6 +51,20 @@ describe("Expert tools MCP Gateway", { concurrent: false }, () => {
     );
     expect(alphaTools.tools.map((tool) => tool.name)).toContain("read_alpha");
     expect(alphaTools.tools.map((tool) => tool.name)).toContain("list_expert_context");
+    expect(alphaTools.tools.map((tool) => tool.name)).toContain("list_context_stores");
+    const directory = await alphaClient.callTool({ name: "list_context_stores", arguments: {} });
+    expect(directory.isError).not.toBe(true);
+    expect(directory.content).toHaveLength(1);
+    expect(JSON.parse((directory.content[0] as { text: string }).text)).toHaveProperty("stores");
+    const badWrite = await alphaClient.callTool({
+      name: "add_expert_context",
+      arguments: { namespace: "unregistered", id: "guide.md", content: "Must not write" },
+    });
+    expect(badWrite.isError).toBe(true);
+    expect(JSON.parse((badWrite.content[0] as { text: string }).text)).toMatchObject({
+      error: { code: "invalid_namespace" },
+      recovery: { tool: "list_context_stores", arguments: {} },
+    });
     expect(alphaTools.tools.map((tool) => tool.name)).not.toContain("read_beta");
     expect(betaTools.tools.map((tool) => tool.name)).toContain("read_beta");
     expect(betaTools.tools.map((tool) => tool.name)).not.toContain("read_alpha");

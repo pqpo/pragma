@@ -26,6 +26,7 @@ export interface ExecutionToolRuntimeState {
 
 export interface ExecutionTool extends ExpertAgentManagedTool<string, ExpertAgentToolCallResult> {
   readonly label: string;
+  readonly preflight?: ExpertAgentDefaultTool["preflight"];
 }
 export type ResolvedExecutionTool = ResolvedTool<ExecutionTool>;
 export type ResolvedExecutionToolSet = ResolvedToolSet<ExecutionTool>;
@@ -79,14 +80,18 @@ export async function executeExecutionTool(options: {
   });
 
   try {
-    const resolvedArgs = await maybeRequestToolApproval({
-      approval: options.tool.approval,
-      humanInteractionHandler: options.humanInteractionHandler,
-      toolName: options.tool.name,
-      toolCallId: options.toolCallId,
-      args: options.args,
-      state: options.state,
-    });
+    const preflight = options.tool.preflight?.(options.args);
+    const resolvedArgs =
+      preflight === undefined
+        ? await maybeRequestToolApproval({
+            approval: options.tool.approval,
+            humanInteractionHandler: options.humanInteractionHandler,
+            toolName: options.tool.name,
+            toolCallId: options.toolCallId,
+            args: options.args,
+            state: options.state,
+          })
+        : { approved: false as const, result: preflight };
     if (!resolvedArgs.approved) {
       const durationMs = Date.now() - startedAt;
       await dispatchExpertAgentHook(options.agent.hooks, "afterToolCall", {
@@ -180,6 +185,7 @@ function fromDefaultTool(tool: ExpertAgentDefaultTool): ExecutionTool {
     description: tool.description,
     inputSchema: tool.inputSchema,
     approval: tool.approval,
+    preflight: tool.preflight,
     async call(args, signal, context) {
       return await tool.call(args, signal, {
         toolCallId: context?.toolCallId,

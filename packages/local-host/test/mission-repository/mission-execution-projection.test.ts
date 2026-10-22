@@ -68,6 +68,7 @@ describe("mission execution projection", () => {
     });
     system.register({ namespace: "mission-board-private", store: new InMemoryContextStore() });
     const tools = createContextTools({
+      listStores: () => system.listStores(),
       listContext: (input) => system.index(input),
       readContext: (input) => system.read(input),
       searchContext: (input) => system.search(input),

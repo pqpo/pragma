@@ -4,6 +4,10 @@ import {
   ContextSystem,
   InMemoryContextStore,
   createContextTools,
+  defineExpert,
+  withHostContextBindings,
+  resolveExecutionTools,
+  executeExecutionTool,
   EXECUTION_CURRENT_EXPERT_ID_ATTR,
   EXECUTION_ID_ATTR,
   INVOCATION_ID_ATTR,
@@ -11,12 +15,260 @@ import {
 } from "../src/index.ts";
 
 describe("Expert context tools", () => {
+  it("exposes a Store directory through model tools without querying any Store", async () => {
+    const store = new InMemoryContextStore();
+    const list = vi
+      .spyOn(store, "listContext")
+      .mockRejectedValue(new Error("must not access contents"));
+    const resolve = vi.fn(() => store);
+    const base = await defineExpert({
+      id: "directory-test",
+      name: "Directory",
+      description: "Test",
+      tags: [],
+      scope: "test",
+      workspace: process.cwd(),
+    });
+    const agent = withHostContextBindings(base, [
+      { namespace: "mission-knowledge:exact-id", storeName: "Empty knowledge", store },
+      { namespace: "memory", store },
+      { namespace: "draft:", resolveStore: resolve },
+    ]);
+    const tools = resolveExecutionTools({ agent, getContext: () => undefined }).tools;
+    const directory = tools.find((tool) => tool.name === "list_context_stores")!;
+    expect(directory.source).toBe("default");
+    const result = await directory.tool.call({}, undefined);
+    expect(JSON.parse(result.text)).toEqual({
+      stores: [
+        { namespace: "memory" },
+        { namespace: "mission-knowledge:exact-id", storeName: "Empty knowledge" },
+      ],
+    });
+    expect(list).not.toHaveBeenCalled();
+    expect(resolve).not.toHaveBeenCalled();
+    expect(base.contextSystem.listStores()).toEqual([]);
+  });
+
+  it("paginates every exact Store namespace within the result budget and rejects stale cursors", async () => {
+    const agent = await defineExpert({
+      id: "directory-pages",
+      name: "Directory",
+      description: "Test",
+      tags: [],
+      scope: "test",
+      workspace: process.cwd(),
+    });
+    const namespaces = Array.from(
+      { length: 55 },
+      (_, i) => `knowledge:${String(i).padStart(2, "0")}:${"x".repeat(150)}`,
+    );
+    for (const namespace of namespaces)
+      agent.contextSystem.register({ namespace, store: new InMemoryContextStore() });
+    const tool = agent
+      .createDefaultTools({ resultByteBudget: 1024 })
+      .find((tool) => tool.name === "list_context_stores")!;
+    const found: string[] = [];
+    let cursor: string | undefined;
+    let firstCursor: string | undefined;
+    do {
+      const result = await tool.call({ cursor, limit: 50 }, undefined);
+      expect(result.isError).not.toBe(true);
+      expect(Buffer.byteLength(result.text)).toBeLessThanOrEqual(1024);
+      const page = JSON.parse(result.text);
+      found.push(...page.stores.map((store: { namespace: string }) => store.namespace));
+      cursor = page.nextCursor;
+      firstCursor ??= cursor;
+    } while (cursor !== undefined);
+    expect(found).toEqual(namespaces);
+    agent.contextSystem.register({ namespace: "new", store: new InMemoryContextStore() });
+    expect(await tool.call({ cursor: firstCursor }, undefined)).toMatchObject({ isError: true });
+    expect(await tool.call({ cursor: "invalid" }, undefined)).toMatchObject({ isError: true });
+  });
+
+  it("never truncates an oversized namespace into an unusable address", async () => {
+    const agent = await defineExpert({
+      id: "oversized-store",
+      name: "Directory",
+      description: "Test",
+      tags: [],
+      scope: "test",
+      workspace: process.cwd(),
+    });
+    agent.contextSystem.register({
+      namespace: "x".repeat(2000),
+      store: new InMemoryContextStore(),
+    });
+    const tool = agent
+      .createDefaultTools({ resultByteBudget: 1024 })
+      .find((tool) => tool.name === "list_context_stores")!;
+    const result = await tool.call({}, undefined);
+    expect(JSON.parse(result.text)).toMatchObject({ error: { code: "context_too_large" } });
+  });
+
+  it.each([
+    ["list_expert_context", {}],
+    ["read_expert_context", { id: "guide.md" }],
+    ["search_expert_context", { query: "guide" }],
+    ["add_expert_context", { id: "guide.md", content: "bad write" }],
+    ["edit_expert_context", { id: "guide.md", mode: "replace", content: "bad write" }],
+    ["delete_expert_context", { id: "guide.md" }],
+  ])(
+    "guides %s from a mistyped namespace to the exact Store without auto-correction",
+    async (name, input) => {
+      const system = new ContextSystem();
+      const store = new InMemoryContextStore({ context: [{ id: "guide.md", content: "Guide" }] });
+      const read = vi.spyOn(store, "readContext");
+      const agent = await defineExpert({
+        id: "namespace-recovery",
+        name: "Recovery",
+        description: "Test",
+        tags: [],
+        scope: "test",
+        workspace: process.cwd(),
+        contextSystem: system,
+      });
+      system.register({ namespace: "mission-knowledge:full-exact-id", store });
+      const tools = agent.createDefaultTools();
+      const result = await tools
+        .find((tool) => tool.name === name)!
+        .call({ ...input, namespace: "mission-knowledge:full-id" }, undefined);
+      expect(result.isError).toBe(true);
+      expect(JSON.parse(result.text)).toMatchObject({
+        error: {
+          code: "invalid_namespace",
+          details: { reason: "namespace_not_registered", namespace: "mission-knowledge:full-id" },
+        },
+        recovery: { tool: "list_context_stores", arguments: {} },
+      });
+      expect(read).not.toHaveBeenCalled();
+      const directory = await tools
+        .find((tool) => tool.name === "list_context_stores")!
+        .call({}, undefined);
+      const namespace = JSON.parse(directory.text).stores[0].namespace;
+      const retried = await tools
+        .find((tool) => tool.name === "read_expert_context")!
+        .call({ namespace, id: "guide.md" }, undefined);
+      expect(retried.isError).not.toBe(true);
+      expect(retried.text).toContain("Guide");
+    },
+  );
+
+  it.each(["add_expert_context", "edit_expert_context", "delete_expert_context"])(
+    "rejects invalid namespaces in %s before approval while preserving valid-write approval",
+    async (name) => {
+      const system = new ContextSystem();
+      const store = new InMemoryContextStore({
+        context: [{ id: "guide.md", content: "Original" }],
+      });
+      system.register({ namespace: "knowledge", store });
+      const agent = await defineExpert({
+        id: "approval-recovery",
+        name: "Recovery",
+        description: "Test",
+        tags: [],
+        scope: "test",
+        workspace: process.cwd(),
+        contextSystem: system,
+      });
+      const tool = resolveExecutionTools({ agent, getContext: () => undefined }).tools.find(
+        (entry) => entry.name === name,
+      )!.tool;
+      const approve = vi.fn(async () => ({ kind: "tool_approval" as const, approved: false }));
+      const invoke = (namespace: string) =>
+        executeExecutionTool({
+          agent,
+          tool,
+          toolCallId: "test",
+          args: {
+            namespace,
+            id: "guide.md",
+            mode: "replace",
+            content: "Unexpected mutation",
+          },
+          signal: undefined,
+          humanInteractionHandler: approve,
+          logger: agent.logger,
+          state: {},
+        });
+      for (const namespace of ["knowledg", "knowledge/file.md", " "]) {
+        const result = await invoke(namespace);
+        expect(result.isError).toBe(true);
+        expect(JSON.parse(result.text)).toMatchObject({
+          recovery: { tool: "list_context_stores", arguments: {} },
+        });
+      }
+      expect(approve).not.toHaveBeenCalled();
+      const valid = await invoke("knowledge");
+      expect(valid.isError).toBe(true);
+      expect(approve).toHaveBeenCalledOnce();
+      await expect(system.read({ namespace: "knowledge", id: "guide.md" })).resolves.toMatchObject({
+        ok: true,
+        value: { content: "Original" },
+      });
+    },
+  );
+
+  it.each(["list_expert_context", "read_expert_context", "search_expert_context"])(
+    "provides namespace recovery for malformed addressing in %s",
+    async (name) => {
+      const agent = await defineExpert({
+        id: "invalid-address",
+        name: "Recovery",
+        description: "Test",
+        tags: [],
+        scope: "test",
+        workspace: process.cwd(),
+      });
+      const tool = agent.createDefaultTools().find((entry) => entry.name === name)!;
+      const result = await tool.call(
+        { namespace: "knowledge/file.md", id: "guide.md", query: "guide" },
+        undefined,
+      );
+      expect(JSON.parse(result.text)).toMatchObject({
+        error: { code: "invalid_input", details: { reason: "namespace_invalid" } },
+        recovery: { tool: "list_context_stores", arguments: {} },
+      });
+    },
+  );
+
+  it("distinguishes an empty directory and unknown namespace from an actual Store outage", async () => {
+    const system = new ContextSystem();
+    expect(system.listStores()).toEqual([]);
+    await expect(system.index({ namespace: "unknown" })).resolves.toMatchObject({
+      ok: false,
+      error: { code: "invalid_namespace" },
+    });
+    const store = new InMemoryContextStore();
+    const outage = {
+      ok: false as const,
+      error: { code: "store_unavailable" as const, message: "Storage offline" },
+    };
+    vi.spyOn(store, "readContext").mockResolvedValue(outage);
+    system.register({ namespace: "known", store });
+    const agent = await defineExpert({
+      id: "outage",
+      name: "Outage",
+      description: "Test",
+      tags: [],
+      scope: "test",
+      workspace: process.cwd(),
+      contextSystem: system,
+    });
+    const result = await agent
+      .createDefaultTools()
+      .find((tool) => tool.name === "read_expert_context")!
+      .call({ namespace: "known", id: "guide.md" }, undefined);
+    expect(JSON.parse(result.text)).toEqual({ ok: false, committed: false, error: outage.error });
+    expect(system.listStores()).toEqual([{ namespace: "known" }]);
+  });
+
   it("keeps trust labels, pagination and diagnostics in the sole bounded result", async () => {
     const unused = vi.fn(async () => {
       throw new Error("unused");
     });
     const tools = createContextTools(
       {
+        listStores: () => [],
         listContext: async () => ({
           ok: true,
           value: {
@@ -108,7 +360,7 @@ describe("Expert context tools", () => {
       system.read({ namespace: "draft:unknown", id: "guide.md" }),
     ).resolves.toMatchObject({
       ok: false,
-      error: { code: "store_unavailable" },
+      error: { code: "invalid_namespace" },
     });
     expect(system.mutationApprovalFor("draft:allocated-id")).toBe("none");
   });
@@ -134,6 +386,7 @@ describe("Expert context tools", () => {
       }).ok,
     ).toBe(true);
     const tools = createContextTools({
+      listStores: () => system.listStores(),
       listContext: (input) => system.index(input),
       readContext: (input) => system.read(input),
       searchContext: (input) => system.search(input),
@@ -173,6 +426,7 @@ describe("Expert context tools", () => {
       throw new Error("not used");
     });
     const operations: ExpertAgentContextItemOperations = {
+      listStores: () => [],
       listContext: unsupported,
       readContext: unsupported,
       searchContext: unsupported,
@@ -229,6 +483,7 @@ describe("Expert context tools", () => {
       throw new Error("not used");
     });
     const operations: ExpertAgentContextItemOperations = {
+      listStores: () => [],
       listContext: unsupported,
       readContext: unsupported,
       searchContext: unsupported,
@@ -296,6 +551,7 @@ describe("Expert context tools", () => {
       throw new Error("not used");
     });
     const tool = createContextTools({
+      listStores: () => [],
       listContext: unsupported,
       readContext: unsupported,
       searchContext: unsupported,
@@ -331,6 +587,7 @@ describe("Expert context tools", () => {
       throw new Error("not used");
     });
     const operations: ExpertAgentContextItemOperations = {
+      listStores: () => [],
       listContext: unsupported,
       readContext: unsupported,
       searchContext: unsupported,
@@ -378,6 +635,7 @@ describe("Expert context tools", () => {
       throw new Error("not used");
     });
     const operations: ExpertAgentContextItemOperations = {
+      listStores: () => [],
       listContext: unsupported,
       readContext: unsupported,
       searchContext: unsupported,
@@ -478,6 +736,7 @@ describe("Expert context tools", () => {
       throw new Error("not used");
     });
     const tools = createContextTools({
+      listStores: () => [],
       listContext,
       readContext: unsupported,
       searchContext,
@@ -531,6 +790,7 @@ describe("Expert context tools", () => {
       throw new Error("not used");
     });
     const tool = createContextTools({
+      listStores: () => [],
       listContext: unsupported,
       readContext: unsupported,
       searchContext: unsupported,
@@ -588,6 +848,7 @@ describe("Expert context tools", () => {
       throw new Error("not used");
     });
     const tools = createContextTools({
+      listStores: () => [],
       listContext: unsupported,
       readContext: unsupported,
       searchContext: unsupported,
@@ -650,6 +911,7 @@ describe("Expert context tools", () => {
       throw new Error("not used");
     });
     const operations: ExpertAgentContextItemOperations = {
+      listStores: () => [],
       listContext,
       readContext: unsupported,
       searchContext: unsupported,
@@ -694,6 +956,7 @@ describe("Expert context tools", () => {
       throw new Error("not used");
     });
     const operations: ExpertAgentContextItemOperations = {
+      listStores: () => [],
       listContext: vi.fn(async () => ({
         ok: true as const,
         value: {
@@ -760,6 +1023,7 @@ describe("Expert context tools", () => {
       },
     }));
     const operations: ExpertAgentContextItemOperations = {
+      listStores: () => [],
       listContext,
       readContext: unsupported,
       searchContext: unsupported,
@@ -799,6 +1063,7 @@ describe("Expert context tools", () => {
       throw new Error("not used");
     });
     const operations: ExpertAgentContextItemOperations = {
+      listStores: () => [],
       listContext: vi.fn(async () => ({
         ok: true as const,
         value: {
@@ -835,6 +1100,7 @@ describe("Expert context tools", () => {
       throw new Error("not used");
     });
     const operations: ExpertAgentContextItemOperations = {
+      listStores: () => [],
       listContext: vi.fn(async () => ({
         ok: true as const,
         value: {
@@ -881,6 +1147,7 @@ describe("Expert context tools", () => {
       throw new Error("not used");
     });
     const operations: ExpertAgentContextItemOperations = {
+      listStores: () => [],
       listContext: vi.fn(async () => ({
         ok: true as const,
         value: {
@@ -926,6 +1193,7 @@ describe("Expert context tools", () => {
       throw new Error("not used");
     });
     const operations: ExpertAgentContextItemOperations = {
+      listStores: () => [],
       listContext: unsupported,
       readContext: vi.fn(async () => ({
         ok: true as const,

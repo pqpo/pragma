@@ -13,6 +13,7 @@ import type {
   ContextPriority,
   ContextIndex,
   ContextStoreIndexSummary,
+  ContextStoreSummary,
   ExpertAgentContextItem,
   ExpertAgentContextAddInput,
   ExpertAgentContextItemEditInput,
@@ -47,6 +48,9 @@ export interface ExpertAgentDefaultTool {
   readonly label: string;
   readonly description: string;
   readonly inputSchema: unknown;
+  /** Reject invalid addressing before requesting mutation approval; never performs a mutation. */
+  readonly preflight?:
+    ((args: unknown) => ExpertAgentDefaultToolCallResult | undefined) | undefined;
   readonly approval?: ExpertAgentToolApproval | undefined;
   readonly call: (
     args: unknown,
@@ -61,6 +65,7 @@ export interface ExpertAgentDefaultTool {
 }
 
 export interface CreateContextToolsOptions {
+  readonly validateNamespace?: ((namespace: string) => ExpertAgentContextResult<void>) | undefined;
   readonly getContext?: (() => ExpertAgentRunContext | undefined) | undefined;
   readonly readByteBudget?: number | undefined;
   readonly resultByteBudget?: number | undefined;
@@ -68,6 +73,7 @@ export interface CreateContextToolsOptions {
 }
 
 export interface ExpertAgentContextItemOperations {
+  readonly listStores: () => readonly ContextStoreSummary[];
   readonly listContext: (input?: {
     readonly namespace?: string | undefined;
     readonly context?: ExpertAgentRunContext | undefined;
@@ -96,10 +102,29 @@ export function createContextTools(
   return [
     createAskUserQuestionTool(),
     {
+      name: "list_context_stores",
+      label: "List context stores",
+      description:
+        "Discover concrete Context stores registered for the current execution context, including mounted knowledge, Memory and Board stores. Returns namespaces and optional display names without listing documents or reading contents. Copy namespace exactly into Context tools; never reconstruct or shorten it. Use this tool after an unregistered namespace error. Follow nextCursor to discover all stores. Dynamic namespace prefixes are not concrete stores and are excluded. Registration does not guarantee that Store contents are healthy or every operation is authorized.",
+      inputSchema: objectSchema({
+        cursor: stringSchema(
+          "Opaque nextCursor from list_context_stores. Omit for the first page.",
+        ),
+        limit: integerSchema("Maximum stores to return. Defaults to 20 and is capped at 50."),
+      }),
+      call: async (args) =>
+        listContextStoresPage(
+          contextOperations.listStores(),
+          readOptionalBlankStringParam(args, "cursor"),
+          normalizeListLimit(readOptionalNumberParam(args, "limit")),
+          normalizeResultByteBudget(options),
+        ),
+    },
+    {
       name: "list_expert_context",
       label: "List expert context",
       description:
-        "List Expert context with Store metadata, revision and etag concurrency tokens, descriptions, and triggers. Optionally restrict the listing to one context namespace. Omit or leave cursor empty for the first page; continue with nextCursor using the same namespace when the result is paginated.",
+        "List Expert context documents with Store metadata, revision and etag concurrency tokens, descriptions, and triggers. To discover Store namespaces without querying document indexes, use list_context_stores instead. Optionally restrict the document listing to one context namespace. Omit or leave cursor empty for the first page; continue with nextCursor using the same namespace when the result is paginated.",
       inputSchema: objectSchema({
         namespace: stringSchema(
           "Optional context namespace to list. Omit to list every namespace.",
@@ -211,6 +236,7 @@ export function createContextTools(
     },
     {
       name: "add_expert_context",
+      preflight: (args) => preflightContextNamespace(args, options),
       label: "Add expert context",
       description: "Add an Expert context item to a context namespace by context id.",
       approval: {
@@ -263,6 +289,7 @@ export function createContextTools(
     },
     {
       name: "edit_expert_context",
+      preflight: (args) => preflightContextNamespace(args, options),
       label: "Edit expert context",
       description:
         'Edit an Expert context item. Use mode="replace" to replace the provided content or metadata fields; every omitted content or metadata field preserves its current value. Use mode="search_replace" for exact text search/replace, mode="append" to add content after the existing content, or mode="prepend" to add content before it. Append and prepend require an explicit separator.',
@@ -372,6 +399,7 @@ export function createContextTools(
     },
     {
       name: "delete_expert_context",
+      preflight: (args) => preflightContextNamespace(args, options),
       label: "Delete expert context",
       description:
         "Delete an Expert context by context id. The receipt may distinguish a persisted deletion from removal of a draft-only change that restores the source baseline.",
@@ -460,6 +488,15 @@ function createContextWriteReceipt(
     sizeBytes: Buffer.byteLength(content, "utf8"),
     ...extra,
   };
+}
+
+function preflightContextNamespace(
+  args: unknown,
+  options: CreateContextToolsOptions,
+): ExpertAgentDefaultToolCallResult | undefined {
+  if (!isRecord(args) || typeof args["namespace"] !== "string") return undefined;
+  const result = options.validateNamespace?.(args["namespace"]);
+  return result !== undefined && !result.ok ? errorResult(result.error) : undefined;
 }
 
 function requiresMutationApproval(
@@ -1107,6 +1144,55 @@ function formatContextIndexPage(page: ContextIndexPage): string {
   return truncateUtf8(output, page.byteBudget, "");
 }
 
+function listContextStoresPage(
+  stores: readonly ContextStoreSummary[],
+  cursor: string | undefined,
+  limit: number,
+  byteBudget: number,
+): ExpertAgentDefaultToolCallResult {
+  const sorted = [...stores].sort((left, right) => left.namespace.localeCompare(right.namespace));
+  const binding = { scope: "list_context_stores", filters: null, fingerprint: sorted };
+  let start = 0;
+  try {
+    if (cursor !== undefined) start = decodeShortPageCursor(cursor, binding);
+  } catch (error) {
+    if (!(error instanceof ShortPageCursorError)) throw error;
+    return errorResult({
+      code: "invalid_input",
+      message:
+        "Store list cursor is invalid or the registered stores have changed. Call list_context_stores with {} to restart.",
+    });
+  }
+  if (start > sorted.length) {
+    return errorResult({ code: "invalid_input", message: "Store list cursor is out of range." });
+  }
+  const selected: ContextStoreSummary[] = [];
+  const format = (next: number) =>
+    JSON.stringify({
+      stores: selected,
+      ...(next < sorted.length ? { nextCursor: encodeShortPageCursor(binding, next) } : {}),
+    });
+  for (let next = start; next < sorted.length && selected.length < limit; next++) {
+    const store = sorted[next]!;
+    selected.push({
+      namespace: store.namespace,
+      ...(store.storeName === undefined ? {} : { storeName: truncateUtf8(store.storeName, 120) }),
+    });
+    if (Buffer.byteLength(format(next + 1), "utf8") > byteBudget) {
+      selected.pop();
+      if (selected.length === 0) {
+        return errorResult({
+          code: "context_too_large",
+          message:
+            "A Store namespace exceeds the result budget and cannot be returned intact. Ask the Host to shorten its registered namespace.",
+        });
+      }
+      break;
+    }
+  }
+  return { text: format(start + selected.length) };
+}
+
 function contextCursorBinding(namespace: string | undefined) {
   return {
     scope: "list_expert_context",
@@ -1618,6 +1704,20 @@ function errorResult(error: ExpertAgentContextError): ExpertAgentDefaultToolCall
 }
 
 function contextErrorRecovery(error: ExpertAgentContextError): unknown {
+  if (
+    (error.code === "invalid_namespace" || error.code === "invalid_input") &&
+    isRecord(error.details) &&
+    (error.details["reason"] === "namespace_not_registered" ||
+      error.details["reason"] === "namespace_invalid")
+  ) {
+    return {
+      action: "discover_context_stores",
+      tool: "list_context_stores",
+      arguments: {},
+      instruction:
+        "Copy an exact namespace from the returned stores, then retry the original operation. Follow nextCursor if needed. Never guess or automatically substitute another store.",
+    };
+  }
   if (error.code !== "context_conflict" || !isRecord(error.details)) return undefined;
   const currentRevision = error.details["currentRevision"] ?? error.details["actualRevision"];
   const currentEtag = error.details["currentEtag"] ?? error.details["actualEtag"];

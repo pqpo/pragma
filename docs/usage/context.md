@@ -42,6 +42,18 @@ priority: normal
 `ContextSystem` 为 `always_on` context 注入包含加载状态和续读提示的 Manifest，并为
 `model_decision` context 注入 ID 和 description 索引。
 
+`list_context_stores({})` 独立列举当前执行上下文已注册的具体 Store，返回 JSON `stores`
+（`namespace`、可选 `storeName`）。它只读取注册信息，不查询文档目录或正文；空库也会列出，
+动态 namespace 前缀解析入口不作为具体 Store 返回。注册不代表底层存储健康，也不绕过 Store 的操作权限。
+默认每页 20 个、最多 50 个，并受返回字节预算限制；用返回的 `nextCursor` 作为 `cursor` 翻页。
+挂载列表变化会使游标失效，应从 `{}` 重新列举。namespace 始终完整返回，不能截断、缩写或自行重建。
+
+指定的 namespace 未注册时，Context 工具返回 `invalid_namespace`，并附带
+`reason: namespace_not_registered` 及调用 `list_context_stores({})` 的恢复指引。
+namespace 格式错误（例如包含 `/`）返回 `invalid_input` 与同样的恢复指引。写入类工具在申请审批前检查 namespace；合法写入仍按原策略审批。
+这表示参数可能抄错或 Store 未挂载，不足以认定存储故障。先列举并复制精确 namespace 后重试；
+已注册 Store 自身返回的 `store_unavailable` 等故障码保持不变。
+
 `list_expert_context` 默认每页 20 条，可通过 `limit` 调整到最多 50 条；返回 `nextCursor` 时使用该
 `cursor` 继续下一页。Search 结果受数量和字节预算约束，结果被省略时应缩小 query；搜索片段被截断时，
 使用结果中的 namespace 与 ID 调用 `read_expert_context`。Read 默认按 8KB 分段，返回

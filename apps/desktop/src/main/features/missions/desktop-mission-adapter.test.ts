@@ -2033,7 +2033,9 @@ describe("Desktop Mission resource adapter contracts", { timeout: 30_000 }, () =
       async () => expect((await missions.get(mission.id)).execution?.status).toBe("succeeded"),
       { timeout: settlementTimeoutMs },
     );
-    expect(observedReads[1]).toContain("Expert context store is not configured: memory");
+    expect(observedReads[1]).toContain(
+      "Context namespace is not registered in this execution context: memory",
+    );
   });
 
   it("reopens an active Session before a queued turn after Memory is disabled", async () => {
@@ -2137,7 +2139,9 @@ describe("Desktop Mission resource adapter contracts", { timeout: 30_000 }, () =
       { timeout: memoryBindingReopenTimeoutMs },
     );
     expect(observedReads[0]).toContain("Memory guide");
-    expect(observedReads[1]).toContain("Expert context store is not configured: memory");
+    expect(observedReads[1]).toContain(
+      "Context namespace is not registered in this execution context: memory",
+    );
     expect(createSessionCount).toBe(2);
     expect(restoreSession).not.toHaveBeenCalled();
   });

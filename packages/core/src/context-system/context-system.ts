@@ -365,10 +365,14 @@ export interface ContextStoreIssue {
   readonly error: ExpertAgentContextError;
 }
 
-/** Display-only metadata for one namespace in a Context index. */
-export interface ContextStoreIndexSummary {
+/** Registered concrete namespace metadata; listing does not probe Store health. */
+export interface ContextStoreSummary {
   readonly namespace: string;
   readonly storeName?: string | undefined;
+}
+
+/** Display-only metadata for one namespace in a Context index. */
+export interface ContextStoreIndexSummary extends ContextStoreSummary {
   readonly itemCount?: number | undefined;
 }
 
@@ -596,13 +600,19 @@ export class ContextSystem {
     }
   }
 
+  /** Lists concrete registrations without accessing Store contents or resolving dynamic prefixes. */
+  listStores(): readonly ContextStoreSummary[] {
+    return [...this.stores]
+      .map(([namespace, binding]) => ({
+        namespace,
+        ...(binding.storeName === undefined ? {} : { storeName: binding.storeName }),
+      }))
+      .sort((left, right) => left.namespace.localeCompare(right.namespace));
+  }
+
   async index(
     input: ExpertAgentContextItemListInput = {},
   ): Promise<ExpertAgentContextResult<ContextIndex>> {
-    if (this.stores.size === 0 && this.dynamicStores.size === 0) {
-      return ok({ items: [], issues: [], stores: [] });
-    }
-
     const summaries: ExpertAgentContextItemSummary[] = [];
     const issues: ContextStoreIssue[] = [];
     const storesResult = this.getStoresForNamespace(input.namespace);
@@ -887,6 +897,12 @@ export class ContextSystem {
     );
   }
 
+  /** Checks addressing only. Store operations still enforce permissions and health. */
+  validateNamespace(namespace: string): ExpertAgentContextResult<void> {
+    const result = this.getStore(namespace);
+    return result.ok ? ok(undefined) : result;
+  }
+
   private getStore(
     namespace: string | undefined,
   ): ExpertAgentContextResult<ExpertAgentContextStore> {
@@ -900,10 +916,12 @@ export class ContextSystem {
 
     if (binding === undefined) {
       return error(
-        "store_unavailable",
-        `Expert context store is not configured: ${namespaceResult.value}`,
+        "invalid_namespace",
+        `Context namespace is not registered in this execution context: ${namespaceResult.value}. The namespace may be mistyped or not mounted; this does not establish a storage failure. Call list_context_stores with {} and copy an exact namespace from its results before retrying. Do not repeat the unchanged namespace or infer a storage outage from this error.`,
         {
           namespace: namespaceResult.value,
+          reason: "namespace_not_registered",
+          recoveryTool: "list_context_stores",
         },
       );
     }
@@ -1261,15 +1279,28 @@ export function matchContextPattern(id: string, pattern: string, caseSensitive =
 
 function normalizeNamespace(namespace: string | undefined): ExpertAgentContextResult<string> {
   if (typeof namespace !== "string" || namespace.trim().length === 0) {
-    return error("invalid_input", "Context namespace must be a non-empty string.");
+    return error(
+      "invalid_input",
+      "Context namespace must be a non-empty string. Call list_context_stores with {} and copy an exact namespace before retrying.",
+      {
+        reason: "namespace_invalid",
+        recoveryTool: "list_context_stores",
+      },
+    );
   }
 
   const normalized = namespace.trim();
 
   if (normalized.includes("/")) {
-    return error("invalid_input", `Context namespace must not contain "/": ${normalized}`, {
-      namespace: normalized,
-    });
+    return error(
+      "invalid_input",
+      `Context namespace must not contain "/": ${normalized}. Call list_context_stores with {} and copy an exact namespace before retrying.`,
+      {
+        namespace: normalized,
+        reason: "namespace_invalid",
+        recoveryTool: "list_context_stores",
+      },
+    );
   }
 
   return ok(normalized);

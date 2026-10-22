@@ -15,6 +15,7 @@ import type {
   ExpertAgentContextItemReadInput,
   ExpertAgentContextItemListInput,
   ContextIndex,
+  ContextStoreSummary,
 } from "../context-system/context-system.ts";
 import { createContextTools } from "../context-system/context-tools.ts";
 import type {
@@ -321,7 +322,12 @@ export class Expert implements IExpertAgent {
     return createContextTools(this, {
       ...options,
       mutationApprovalFor: (namespace) => this.contextSystem.mutationApprovalFor(namespace),
+      validateNamespace: (namespace) => this.contextSystem.validateNamespace(namespace),
     });
+  }
+
+  listStores(): readonly ContextStoreSummary[] {
+    return this.contextSystem.listStores();
   }
 
   async listContext(
