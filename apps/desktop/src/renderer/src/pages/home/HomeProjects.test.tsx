@@ -19,7 +19,7 @@ describe("HomeProjects", () => {
         projects={projects}
         executors={[]}
         stores={[]}
-        selectedId={undefined}
+        selectedIds={[]}
         onSelect={() => undefined}
         onEdit={() => undefined}
         maxVisibleProjects={6}
@@ -31,13 +31,30 @@ describe("HomeProjects", () => {
     expect(html.match(/<button/g)).toHaveLength(6);
   });
 
+  it("marks all matching projects as pressed and leaves other projects unselected", () => {
+    const html = renderToStaticMarkup(
+      <HomeProjects
+        projects={projects}
+        executors={[]}
+        stores={[]}
+        selectedIds={[projects[0]!.id, projects[1]!.id]}
+        onSelect={() => undefined}
+        onEdit={() => undefined}
+      />,
+    );
+
+    expect(html.match(/class="home-project-button is-active"/g)).toHaveLength(2);
+    expect(html.match(/aria-pressed="true"/g)).toHaveLength(2);
+    expect(html.match(/aria-pressed="false"/g)).toHaveLength(5);
+  });
+
   it("shows edit actions in the project manager list", () => {
     const html = renderToStaticMarkup(
       <HomeProjects
         projects={projects}
         executors={[]}
         stores={[]}
-        selectedId={undefined}
+        selectedIds={[]}
         onSelect={() => undefined}
         onEdit={() => undefined}
         showEditActions
@@ -54,7 +71,7 @@ describe("HomeProjects", () => {
         projects={projects.slice(0, 2)}
         executors={[]}
         stores={[]}
-        selectedId={undefined}
+        selectedIds={[]}
         onSelect={() => undefined}
         onEdit={() => undefined}
         onReorder={() => undefined}

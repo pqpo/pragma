@@ -28,7 +28,7 @@ export function HomeProjects(props: {
   projects: readonly HomeProject[];
   executors: readonly HomeMissionExecutorOption[];
   stores: readonly ContextStore[];
-  selectedId: string | undefined;
+  selectedIds: readonly string[];
   onSelect: (project: HomeProject) => void;
   onEdit: (project: HomeProject | null) => void;
   onReorder?: (orderedProjectIds: readonly string[]) => void;
@@ -218,9 +218,9 @@ export function HomeProjects(props: {
             ) : null}
             <button
               type="button"
-              className={`home-project-button${props.selectedId === project.id ? " is-active" : ""}`}
+              className={`home-project-button${props.selectedIds.includes(project.id) ? " is-active" : ""}`}
               disabled={props.disabled}
-              aria-pressed={props.selectedId === project.id}
+              aria-pressed={props.selectedIds.includes(project.id)}
               onClick={() => props.onSelect(project)}
               title={project.workspace.path}
             >

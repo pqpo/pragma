@@ -200,7 +200,6 @@ export function HomePage(props: {
         : t("homeFavoritesManager");
   const [projectManagerOpen, setProjectManagerOpen] = useState(false);
   const [projectEditor, setProjectEditor] = useState<HomeProject | null>();
-  const [selectedProjectId, setSelectedProjectId] = useState<string>();
   const [projectOrderSaving, setProjectOrderSaving] = useState(false);
   const projectOrderSavingRef = useRef(false);
   const projectSelectionRequest = useRef(0);
@@ -366,6 +365,18 @@ export function HomePage(props: {
     return () => window.clearInterval(timer);
   }, []);
 
+  const selectedProjectIds = homeProjects
+    .filter(
+      (project) =>
+        project.executorRef === executorRef &&
+        workspacePathsEqual(
+          project.workspace.path,
+          (workspaceOverride ?? defaultWorkspace)?.path,
+        ) &&
+        project.contextStoreIds.length === contextStoreIds.length &&
+        project.contextStoreIds.every((id) => contextStoreIds.includes(id)),
+    )
+    .map((project) => project.id);
   const selectedExecutor = executors.find((executor) => executor.ref === executorRef);
   const hasValidExecutor = selectedExecutor !== undefined;
   const flowInputSchema =
@@ -520,7 +531,6 @@ export function HomePage(props: {
   const selectExecutor = (ref: string) => {
     projectSelectionRequest.current += 1;
     setProjectApplying(false);
-    setSelectedProjectId(undefined);
     const next = executors.find((executor) => executor.ref === ref);
     workspaceAssociationRequestRef.current = ref;
     setExecutorRef(ref);
@@ -597,7 +607,6 @@ export function HomePage(props: {
       if (next.kind === "flow") clearAttachmentDrafts();
       setWorkspaceOverride(project.workspace);
       setContextStoreIds(project.contextStoreIds);
-      setSelectedProjectId(project.id);
       setError(null);
     } catch (cause) {
       if (request === projectSelectionRequest.current) setError(errorMessage(cause));
@@ -805,6 +814,7 @@ export function HomePage(props: {
       const persistedModelOverride = modelOverride ?? pendingModelOverrideRef.current;
       writeHomeDraft(typeof window === "undefined" ? undefined : window.localStorage, {
         executorRef,
+        contextStoreIds: [...contextStoreIds],
         ...(workspaceOverride === undefined ? {} : { workspaceOverride }),
         goal: "",
         flowInput: clearedFlowInput,
@@ -815,7 +825,6 @@ export function HomePage(props: {
       attachmentIdsRef.current = [];
       setAttachments([]);
       setAttachmentPreviews({});
-      setContextStoreIds([]);
       setFlowInput(clearedFlowInput);
       await props.onCreated(mission);
     } catch (submitError) {
@@ -1111,16 +1120,7 @@ export function HomePage(props: {
                 disabled={!loaded || !contextStoresReady || !homeProjectsReady || saving}
                 executors={executors}
                 stores={contextStores}
-                selectedId={
-                  homeProjects.find(
-                    (project) =>
-                      project.id === selectedProjectId &&
-                      project.executorRef === executorRef &&
-                      project.workspace.path === (workspaceOverride ?? defaultWorkspace)?.path &&
-                      project.contextStoreIds.length === contextStoreIds.length &&
-                      project.contextStoreIds.every((id) => contextStoreIds.includes(id)),
-                  )?.id
-                }
+                selectedIds={selectedProjectIds}
                 onSelect={(project) => {
                   if (!saving) void applyProject(project);
                 }}
@@ -1161,7 +1161,7 @@ export function HomePage(props: {
               projects={homeProjects}
               executors={executors}
               stores={contextStores}
-              selectedId={undefined}
+              selectedIds={selectedProjectIds}
               disabled={projectOrderSaving || saving || projectApplying}
               onSelect={(project) => {
                 setProjectManagerOpen(false);
@@ -1205,12 +1205,10 @@ export function HomePage(props: {
                   ? [...current, saved]
                   : current.map((item) => (item.id === saved.id ? saved : item)),
               );
-              if (selectedProjectId === saved.id) setSelectedProjectId(undefined);
             }}
             onDelete={async (id) => {
               await window.pragmaDesktop.deleteHomeProject(id);
               setHomeProjects((current) => current.filter((item) => item.id !== id));
-              if (selectedProjectId === id) setSelectedProjectId(undefined);
             }}
           />
         ) : null}

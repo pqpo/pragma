@@ -1891,8 +1891,7 @@
   cursor: pointer;
 }
 
-.home-shortcuts-tabs > button[aria-selected="true"],
-.home-project-button.is-active {
+.home-shortcuts-tabs > button[aria-selected="true"] {
   background: var(--ui-selection);
   color: var(--ui-text);
 }
@@ -1940,6 +1939,7 @@
   font-size: 12px;
 }
 
+.home-project-button.is-active,
 .home-project-button:hover {
   background: var(--ui-surface-subtle);
 }
