@@ -1839,3 +1839,91 @@ function simulateJobCompletionCrash(pragmaHome: string): void {
     .run();
   database.close();
 }
+
+it("keeps extracting Episodes while durable learning delivery fails and replays after recovery", async () => {
+  let clock = new Date("2026-08-04T00:00:00.000Z");
+  const notify = vi.fn(async (): Promise<void> => {
+    throw new Error("learning sink unavailable");
+  });
+  const extractor = fakeExtractor();
+  const module = await createEpisodicMemoryModule({
+    pragmaHome: await temporaryRoot(),
+    now: () => clock,
+    extractor,
+    onProjectionChanged: notify,
+  });
+  try {
+    await module.consume(
+      executionEvidence("before-outage").map((item) => ({
+        ...item,
+        policySnapshot: { ...item.policySnapshot, learning: "local-candidates" as const },
+      })),
+    );
+    await module.runBackgroundOnce?.();
+    expect(await module.store.list()).toHaveLength(1);
+    await expect(module.runMaintenanceOnce?.()).rejects.toMatchObject({
+      code: "memory_learning_notification_delivery_failed",
+    });
+    expect(await module.store.readLearningNotification()).toBeDefined();
+    // Even a notification retry in backoff must not block another extraction admission.
+    await expect(module.runMaintenanceOnce?.()).rejects.toMatchObject({
+      code: "memory_learning_notification_delivery_failed",
+    });
+    await module.consume(
+      executionEvidence("during-outage").map((item) => ({
+        ...item,
+        policySnapshot: { ...item.policySnapshot, learning: "local-candidates" as const },
+      })),
+    );
+    await module.runBackgroundOnce?.();
+    expect(extractor.extract).toHaveBeenCalledTimes(2);
+    expect(await module.store.list()).toHaveLength(2);
+    expect(
+      (await module.store.listExtractionJobs()).every((job) => job.status === "completed"),
+    ).toBe(true);
+    notify.mockResolvedValue(undefined);
+    clock = new Date(clock.getTime() + 5000);
+    await module.runMaintenanceOnce?.();
+    expect(await module.store.readLearningNotification()).toBeUndefined();
+    expect(extractor.extract).toHaveBeenCalledTimes(2);
+  } finally {
+    module.close();
+  }
+});
+
+it("distinguishes a denied new Episode from an invalidation that must rescan remaining sources", async () => {
+  const notify = vi.fn(async () => undefined);
+  const module = await createEpisodicMemoryModule({
+    pragmaHome: await temporaryRoot(),
+    now: () => new Date("2026-08-04T00:00:00.000Z"),
+    extractor: fakeExtractor(),
+    onProjectionChanged: notify,
+  });
+  try {
+    await module.consume(executionEvidence("denied-episode"));
+    await module.runBackgroundOnce?.();
+    expect(await module.store.readLearningNotification()).toMatchObject({
+      learningEligible: false,
+      sourceChanged: false,
+    });
+    await module.runMaintenanceOnce?.();
+    expect(notify).not.toHaveBeenCalled();
+    const record = (await module.store.list())[0]!;
+    await module.store.invalidate({
+      id: record.id,
+      expectedRevision: record.revision,
+      actorRef: record.rootRefs[0]!,
+      reason: "Invalidation must rescan",
+      now: new Date(),
+    });
+    expect(await module.store.readLearningNotification()).toMatchObject({
+      learningEligible: false,
+      sourceChanged: true,
+    });
+    await module.runMaintenanceOnce?.();
+    expect(notify).toHaveBeenCalledOnce();
+    expect(await module.store.listForLearning()).toEqual([]);
+  } finally {
+    module.close();
+  }
+});

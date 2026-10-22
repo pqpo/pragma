@@ -1173,6 +1173,7 @@ export async function createDesktopApplicationContainer(
     },
     skillLearningTargetReader: {
       readTarget: (target) => memoryLearningRevisions.readSkillTarget(target),
+      readTargetFile: (target, path) => memoryLearningRevisions.readSkillTargetFile(target, path),
       async listTargets(input) {
         return await memoryLearningRevisions.listSkillTargets(input);
       },

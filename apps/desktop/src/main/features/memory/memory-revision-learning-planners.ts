@@ -1,4 +1,8 @@
 import {
+  MEMORY_LEARNING_MAX_INSPECTIONS,
+  MEMORY_LEARNING_MAX_INSPECTION_BYTES,
+} from "@pragma/shared";
+import {
   createLearningInspection,
   LearningInspectionRequestSchema,
 } from "./learning-inspection.ts";
@@ -152,21 +156,24 @@ export function createMemoryRevisionLearningPlanners(options: {
           )
             throw request.error;
           if (request.success) {
-            if (++inspections > 32)
+            if (++inspections > MEMORY_LEARNING_MAX_INSPECTIONS)
               throw Object.assign(new Error("memory_learning_inspection_budget_exhausted"), {
                 retryable: false,
               });
             const result = await input.inspection.read(request.data);
             inspectionResponse = JSON.stringify({
               inspection: JSON.parse(result),
-              remainingRequests: 32 - inspections,
+              remainingRequests: MEMORY_LEARNING_MAX_INSPECTIONS - inspections,
               remainingBytes: Math.max(
                 0,
-                256000 - deliveredBytes - Buffer.byteLength(result) - 256,
+                MEMORY_LEARNING_MAX_INSPECTION_BYTES -
+                  deliveredBytes -
+                  Buffer.byteLength(result) -
+                  256,
               ),
             });
             deliveredBytes += Buffer.byteLength(inspectionResponse);
-            if (deliveredBytes > 256000)
+            if (deliveredBytes > MEMORY_LEARNING_MAX_INSPECTION_BYTES)
               throw Object.assign(new Error("memory_learning_inspection_budget_exhausted"), {
                 retryable: false,
               });
@@ -332,6 +339,10 @@ export function createMemoryRevisionLearningPlanners(options: {
           input.readTarget === undefined
             ? undefined
             : (target) => input.readTarget!(target as (typeof input.existingTargets)[number]),
+          input.readTargetFile === undefined
+            ? undefined
+            : (target, path) =>
+                input.readTargetFile!(target as (typeof input.existingTargets)[number], path),
         );
         return await run({
           schema: SkillLearningPlanSchema,
@@ -351,7 +362,7 @@ export function createMemoryRevisionLearningPlanners(options: {
             "Inspect existing targets and prefer revising a related mounted Skill, then another editable Skill. Read its full content and propose a real improvement; skip duplicates. Use only supplied target identities and current baseRevision/contentHash.",
             "One successfully validated complete workflow can qualify. Multiple independent experiences can also jointly establish a workflow. Episode valueScore is a ranking hint, never an admission requirement. Supporting Facts cannot replace executed workflow evidence. Cite at least one successfully completed Episode for EACH proposal; do not claim a recovery succeeded merely because recovery text exists.",
             "Each workflow must retain a useful purpose after replacing task-specific names, paths and data. It needs applicability, inputs/preconditions, complete ordered steps, actual result verification, and supported limitations or failure handling. Reject single commands, vague advice, incomplete steps or invented validation. Read complete sources including their verification sections.",
-            'Return {"action":"skip","disposition":"accumulate|duplicate|unsupported","reason":"..."} or {"action":"apply","changes":[{"name":"1–120 chars","description":"concise summary, 1–500 chars","normalizedKey":"1–300 lowercase ASCII chars matching ^[a-z0-9][a-z0-9._:/-]*$","sourceRefs":[{"kind":"episodic","id":"supplied ID","revision":1}],"target":{"type":"create"}}]}. Cite 1–8 distinct fully read supplied sources per change. All keys must be distinct. For revise use target={"type":"revise","capabilityId":"supplied ID","baseRevision":1,"contentHash":"supplied hash"}.',
+            'Return {"action":"skip","disposition":"accumulate|duplicate|unsupported","reason":"..."} or {"action":"apply","changes":[{"name":"1–120 chars","description":"concise summary, 1–500 chars","normalizedKey":"1–300 lowercase ASCII chars matching ^[a-z0-9][a-z0-9._:/-]*$","sourceRefs":[{"kind":"episodic","id":"supplied ID","revision":1}],"target":{"type":"create"}}]}. Cite 1–8 distinct fully read supplied sources per change. All keys must be distinct. For revising a Skill, inspect its package file catalog, read the scripts/references that support the proposed change with path inspections, and declare targetFiles=["SKILL.md","scripts/relevant-file"]. Every declared target file must be fully read. For revise use target={"type":"revise","capabilityId":"supplied ID","baseRevision":1,"contentHash":"supplied hash"}.',
             'If the relevant target is pending review, do not create a duplicate or revise an unpublished target. Return {"action":"skip","disposition":"accumulate","reason":"waiting for related review","waitForTarget":"exact supplied pending target ID"}; the Host will resume this work after settlement.',
             inspection.catalog,
             `Root: ${JSON.stringify(input.rootRef)}; Expert: ${input.expertRef}`,

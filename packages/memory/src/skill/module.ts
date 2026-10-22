@@ -35,6 +35,7 @@ const MAX_SOURCE_REVISIONS =
   DEFAULT_MEMORY_STORAGE_POLICY.semanticMaxRecords;
 
 export interface SkillLearningTargetReader {
+  readTargetFile?(target: ExistingMemorySkillTarget, path: string): Promise<string>;
   readTarget?(target: ExistingMemorySkillTarget): Promise<string>;
   listTargets(input: { readonly expertRef: string }): Promise<readonly ExistingMemorySkillTarget[]>;
 }
@@ -62,6 +63,8 @@ export interface SkillLearningPlanner {
     readonly sources: readonly SkillSourceSnapshot[];
     readonly existingTargets: readonly ExistingMemorySkillTarget[];
     readonly readTarget?: ((target: ExistingMemorySkillTarget) => Promise<string>) | undefined;
+    readonly readTargetFile?:
+      ((target: ExistingMemorySkillTarget, path: string) => Promise<string>) | undefined;
     readonly signal: AbortSignal;
     readonly onRejectedChanges?: (issues: readonly SkillPlanValidationIssue[]) => void;
   }): Promise<SkillLearningPlan>;
@@ -258,6 +261,7 @@ export async function createSkillMemoryModule(options: {
                   sources: expertSources,
                   existingTargets,
                   readTarget: options.targetReader.readTarget,
+                  readTargetFile: options.targetReader.readTargetFile,
                   signal: controller.signal,
                   onRejectedChanges: (issues) => {
                     rejectedChanges.push(...issues.map((issue) => ({ expertRef, ...issue })));
@@ -350,6 +354,7 @@ export async function createSkillMemoryModule(options: {
             changes: plan.changes.map((change) => ({
               normalizedKey: change.normalizedKey,
               target: change.target,
+              targetFiles: change.targetFiles,
               sourceRefs: change.sourceRefs,
             })),
             sources: expertSources.filter((source) =>

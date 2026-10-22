@@ -1,3 +1,4 @@
+import { MEMORY_LEARNING_INSPECTION_PAGE_CHARACTERS as PAGE } from "@pragma/shared";
 import { expect, it, vi } from "vitest";
 import type { SkillSourceSnapshot } from "@pragma/shared";
 import { createLearningInspection } from "./learning-inspection.ts";
@@ -8,7 +9,7 @@ const source: SkillSourceSnapshot = {
   producerRefs: [{ type: "pragma.expert", id: "expert-a" }],
   sourceExecutionIds: ["execution-a"],
   title: "Verified workflow",
-  body: "A".repeat(17000) + "\nValidation: independently checked all outputs.",
+  body: "A".repeat(PAGE * 2 + 1000) + "\nValidation: independently checked all outputs.",
   outcome: "succeeded",
   hasSuccessfulRecovery: false,
   observedAt: "2026-08-01T00:00:00.000Z",
@@ -39,12 +40,12 @@ it("requires full source coverage, including verification beyond the old 1500-ch
       handle: "episodic:workflow",
     }),
   );
-  expect(page.nextOffset).toBe(8000);
+  expect(page.nextOffset).toBe(PAGE);
   await inspection.read({
     action: "inspect",
     collection: "sources",
     handle: "episodic:workflow",
-    offset: 16000,
+    offset: PAGE * 2,
   });
   expect(() => inspection.validate(plan)).toThrow("Read the complete supplied source");
   const middle = JSON.parse(
@@ -52,10 +53,10 @@ it("requires full source coverage, including verification beyond the old 1500-ch
       action: "inspect",
       collection: "sources",
       handle: "episodic:workflow",
-      offset: 8000,
+      offset: PAGE,
     }),
   );
-  expect(middle.nextOffset).toBe(16000);
+  expect(middle.nextOffset).toBe(PAGE * 2);
   expect(() => inspection.validate(plan)).not.toThrow();
 });
 
@@ -96,11 +97,11 @@ it("reads related target bodies lazily and checks complete target coverage befor
     snapshotHash: "a".repeat(64),
     mounted: true,
   };
-  const load = vi.fn(async () => "# Existing guide\n" + "B".repeat(10000));
+  const load = vi.fn(async () => "# Existing guide\n" + "B".repeat(PAGE + 2000));
   const inspection = createLearningInspection([source], [target], load);
   await inspection.read({ action: "inspect", collection: "targets" });
   expect(load).not.toHaveBeenCalled();
-  for (const offset of [0, 8000, 16000])
+  for (const offset of [0, PAGE, PAGE * 2])
     await inspection.read({
       action: "inspect",
       collection: "sources",
@@ -127,7 +128,7 @@ it("reads related target bodies lazily and checks complete target coverage befor
     action: "inspect",
     collection: "targets",
     handle: target.storeId,
-    offset: 8000,
+    offset: PAGE,
   });
   expect(load).toHaveBeenCalledOnce();
   expect(() => inspection.validate(revision)).not.toThrow();
@@ -198,4 +199,110 @@ it("asks the planner to combine multiple changes to one existing Skill", async (
       })),
     }),
   ).toThrow("Combine changes to the same existing Skill");
+});
+
+it("reads declared Skill scripts lazily and rejects a plan using an unread file", async () => {
+  const target = {
+    bindingId: "11111111-1111-4111-8111-111111111111",
+    capabilityId: "1h2j3k4m5n6p7q8r",
+    name: "Workflow",
+    description: "Existing workflow",
+    normalizedKeys: ["workflow.test"],
+    baseRevision: 1,
+    contentHash: "a".repeat(64),
+  };
+  const file = vi.fn(async () => "def verify():\n" + "x".repeat(PAGE + 1000));
+  const inspection = createLearningInspection(
+    [{ ...source, body: "Verified workflow" }],
+    [target],
+    async () => "# Skill\nSee scripts/verify.py",
+    file,
+  );
+  await inspection.read({ action: "inspect", collection: "targets" });
+  await inspection.read({ action: "inspect", collection: "targets", handle: target.capabilityId });
+  await inspection.read({ action: "inspect", collection: "sources", handle: "episodic:workflow" });
+  expect(file).not.toHaveBeenCalled();
+  const change = {
+    ...plan.changes[0]!,
+    targetFiles: ["SKILL.md", "scripts/verify.py"],
+    target: {
+      type: "revise" as const,
+      capabilityId: target.capabilityId,
+      baseRevision: target.baseRevision,
+      contentHash: target.contentHash,
+    },
+  };
+  expect(() => inspection.validate({ action: "apply", changes: [change] })).toThrow(
+    "Read the complete target file",
+  );
+  await inspection.read({
+    action: "inspect",
+    collection: "targets",
+    handle: target.capabilityId,
+    path: "scripts/verify.py",
+  });
+  expect(() => inspection.validate({ action: "apply", changes: [change] })).toThrow(
+    "Read the complete target file",
+  );
+  await inspection.read({
+    action: "inspect",
+    collection: "targets",
+    handle: target.capabilityId,
+    path: "scripts/verify.py",
+    offset: PAGE,
+  });
+  expect(() => inspection.validate({ action: "apply", changes: [change] })).not.toThrow();
+  expect(file).toHaveBeenCalledOnce();
+});
+
+it("does not mark an unreadable package file as evidence for a revision", async () => {
+  const target = {
+    bindingId: "11111111-1111-4111-8111-111111111111",
+    capabilityId: "1h2j3k4m5n6p7q8r",
+    name: "Workflow",
+    description: "Existing workflow",
+    normalizedKeys: ["workflow.test"],
+    baseRevision: 1,
+    contentHash: "a".repeat(64),
+  };
+  const inspection = createLearningInspection(
+    [{ ...source, body: "Verified workflow" }],
+    [target],
+    async () => "# Skill",
+    async () => {
+      throw Object.assign(new Error("Unreadable binary file"), {
+        code: "memory_learning_target_file_unreadable",
+      });
+    },
+  );
+  await inspection.read({ action: "inspect", collection: "targets" });
+  await inspection.read({ action: "inspect", collection: "targets", handle: target.capabilityId });
+  await inspection.read({ action: "inspect", collection: "sources", handle: "episodic:workflow" });
+  expect(
+    JSON.parse(
+      await inspection.read({
+        action: "inspect",
+        collection: "targets",
+        handle: target.capabilityId,
+        path: "scripts/check.bin",
+      }),
+    ),
+  ).toMatchObject({ error: "target_file_unreadable" });
+  expect(() =>
+    inspection.validate({
+      action: "apply",
+      changes: [
+        {
+          ...plan.changes[0]!,
+          targetFiles: ["SKILL.md", "scripts/check.bin"],
+          target: {
+            type: "revise",
+            capabilityId: target.capabilityId,
+            baseRevision: 1,
+            contentHash: target.contentHash,
+          },
+        },
+      ],
+    }),
+  ).toThrow("Read the complete target file");
 });

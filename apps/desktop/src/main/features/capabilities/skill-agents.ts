@@ -15,6 +15,7 @@ import type {
 import { z } from "zod";
 
 import type { DesktopSystemExpertRegistry } from "../experts/system-expert-registry.ts";
+import { prepareRevisionPromptInput } from "../missions/revision-prompt-input.ts";
 import { resolveSystemExpertRuntimeDefaults } from "../experts/system-expert-runtime.ts";
 import type { LocalHostMissionApplication } from "@pragma/local-host";
 import { MissionStoreError, type MissionStore } from "@pragma/local-host";
@@ -75,9 +76,13 @@ export function createDesktopSkillAgents(options: {
   }) => {
     const project = await options.project.ensurePublished();
     const missionWorkspace = await options.resolveDraftWorkspace(input.draftId);
+    const promptInput = await prepareRevisionPromptInput({
+      pragmaHome: options.pragmaHome,
+      goal: input.goal,
+    });
     const mission = await options.missions.create({
       workspace: { path: missionWorkspace, basename: basename(missionWorkspace) },
-      goal: input.goal,
+      ...promptInput,
       title: "Revise Skill Capability",
       project: { id: project.projectId, revision: project.revision },
       executor: {

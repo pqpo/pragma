@@ -29,7 +29,7 @@ workflows are proposed. Existing Skills are preferred over new assets.
 
 Task-scoped read-only inspection uses the existing owned Mission continuation path, with source and
 target catalogs, keyword search and character pages. Only fully read supplied documents may be cited;
-selected target contents must be read before revision. Limits are 32 inspections and 256,000 delivered
+selected target contents must be read before revision. Limits are 128 inspections and 8 MiB of delivered
 bytes, independent of the two JSON correction turns. Full draft sources are preserved rather than
 cut to 1,500 characters. No new execution kernel or general-purpose tool binding is introduced.
 
@@ -80,3 +80,31 @@ conversation support, interrupted claims are checked after target availability, 
 is replaced when valid sources remain. Skill identity keys stay scoped to the requesting Expert while
 pending target occupancy remains shared. Reading task decisions never initializes authority; malformed
 or future decision databases are rejected without recreating missing tables.
+
+PR review follow-up separates learning delivery from Episode and Semantic extraction using the existing Memory
+scheduler's independent maintenance lane. A delivery failure reports a stable degraded diagnostic,
+retains the durable notification, and backs off without delaying extraction or the conversation
+coordinator. Episode data 6 → 7 records source changes separately from captured learning permission;
+legacy pending roots are rescanned with a new CAS generation without granting permission to any
+source. A real v6 writer fixture covers migration, rollback, deletion, and stale acknowledgement.
+
+Fact conversation provenance comes from retained Semantic Evidence rather than Episode retention.
+When captured Evidence lacks that optional identity, the Semantic writer preserves its extraction
+job's conversation reference before job cleanup. Unknown historical conversation identities are not
+invented or counted as independent conversations.
+
+A shared 8 MiB budget covers inspection delivery and revision source prompts, with 32,768-character
+pages and 128 requests. A maximum-sized 410,000-character source has a complete read/submit path,
+including Unicode and JSON-escaped content. Revision request parsing admits the larger internal
+Memory prompts while ordinary requests retain their 50,000-character limit. This only expands an
+accepted bound: existing persisted requests retain their structure and meaning and remain valid.
+Large requests use existing Mission file attachments, outside publishable draft payloads, so the
+100,000-character Mission goal/message limit does not reject accepted source prompts. Input files
+remain with the temporary revision workspace for subsequent Mission turns; they are task inputs,
+not another authoritative store. Configured Runtime context-window limits still apply and real-model
+quality is a separate check.
+
+Skill target inspection exposes the pinned SKILL.md and package file catalog, then reads selected
+scripts/references lazily by path. Plans declare the files they use in targetFiles; declared files
+must have complete inspection coverage before revision. The complete package is never loaded by
+default, and unrelated files remain available for the Revision Agent to preserve.

@@ -1,5 +1,9 @@
 import { z } from "zod";
-import { KnowledgeSourceRevisionRefSchema, SkillSourceRevisionRefSchema } from "@pragma/shared";
+import {
+  KnowledgeSourceRevisionRefSchema,
+  SkillSourceRevisionRefSchema,
+  SkillPackageFileSchema,
+} from "@pragma/shared";
 
 export const MEMORY_LEARNING_POLICY_VERSION = "learning-v2";
 
@@ -55,6 +59,7 @@ export const SkillLearningPlanSchema = z.discriminatedUnion("action", [
                 .min(1)
                 .max(300)
                 .regex(/^[a-z0-9][a-z0-9._:/-]*$/u),
+              targetFiles: z.array(SkillPackageFileSchema.shape.path).min(1).max(20).optional(),
               sourceRefs: z.array(SkillSourceRevisionRefSchema).min(1).max(8),
               target: z.discriminatedUnion("type", [
                 z.object({ type: z.literal("create") }).strict(),

@@ -20,7 +20,7 @@ afterEach(async () => {
   await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true })));
 });
 
-async function fixture() {
+async function fixture(options: { onProjectionChanged?: () => Promise<void> } = {}) {
   const pragmaHome = await mkdtemp(join(tmpdir(), "pragma-conversation-coordinator-"));
   roots.push(pragmaHome);
   let clock = new Date("2026-10-16T00:00:00.000Z");
@@ -36,12 +36,14 @@ async function fixture() {
     now,
     extractionSettings,
     extractor,
+    onProjectionChanged: options.onProjectionChanged,
   });
   const semantic = await createSemanticMemoryModule({
     pragmaHome,
     now,
     extractionSettings,
     extractor,
+    onProjectionChanged: options.onProjectionChanged,
   });
   const modules = { episodic, semantic };
   let closed = false;
@@ -544,3 +546,60 @@ it.each(["episodic", "semantic"] as const)(
     }
   },
 );
+
+it("continues paired extraction when a companion projection notification is failing and in backoff", async () => {
+  const notify = vi.fn(async (): Promise<void> => {
+    throw new Error("learning delivery unavailable");
+  });
+  const f = await fixture({ onProjectionChanged: notify });
+  const extract = vi.fn(async (batch: import("../src/index.ts").ConversationExtractionBatch) => {
+    await batch.episodic!.settle({ output: { retain: false, reason: "low-value" }, provenance });
+    const input = batch.semantic!.input;
+    await batch.semantic!.settle({
+      output: {
+        retain: true,
+        facts: [
+          {
+            statement: "The user prefers concise answers.",
+            subjectRefs: input.allowedSubjectRefs.filter((ref) => ref.type === "pragma.user"),
+            predicate: "user.preference.style",
+            normalizedValue: "concise",
+            conflictMode: "compatible",
+            confidence: 0.9,
+            evidenceRefs: [input.evidence[0]!.messageId],
+          },
+        ],
+      },
+      provenance,
+    });
+  });
+  const coordinator = createConversationMemoryExtractionCoordinator({
+    pragmaHome: f.pragmaHome,
+    now: f.now,
+    ...f.modules,
+  });
+  coordinator.setExtractor({ extract });
+  try {
+    await f.seed("before-notification-failure");
+    await coordinator.runOnce();
+    await expect(f.modules.semantic.runMaintenanceOnce?.()).rejects.toMatchObject({
+      code: "memory_learning_notification_delivery_failed",
+    });
+    await f.seed("during-notification-failure");
+    await coordinator.runOnce();
+    expect(extract).toHaveBeenCalledTimes(2);
+    for (const module of Object.values(f.modules))
+      expect(
+        (await module.store.listExtractionJobs()).every((job) => job.status === "completed"),
+      ).toBe(true);
+    expect(await f.modules.semantic.store.readProjectionNotification()).toBeDefined();
+    notify.mockResolvedValue(undefined);
+    f.advance(5000);
+    await f.modules.semantic.runMaintenanceOnce?.();
+    await f.modules.semantic.runMaintenanceOnce?.();
+    expect(await f.modules.semantic.store.readProjectionNotification()).toBeUndefined();
+    expect(extract).toHaveBeenCalledTimes(2);
+  } finally {
+    f.close();
+  }
+});

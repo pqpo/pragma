@@ -114,7 +114,7 @@ proposal regardless of salience score. Knowledge plans explicitly select supplie
 source revisions, explain the delta, and use stricter maturity gates for creation. Existing targets
 include ordinary editable assets and outstanding Memory drafts, with mounted assets preferred.
 Read-only JSON inspection continuations page/search catalogs and read complete selected documents
-in the same planning Mission (32 requests, 256,000 delivered bytes); they are distinct from the two
+in the same planning Mission (128 requests, 8 MiB of delivered bytes); they are distinct from the two
 invalid-output correction turns. Exhaustion is nonretryable, not a skip. Revision descriptions retain
 their existing length limits.
 
@@ -420,3 +420,16 @@ dependencies are copied from their actual writer commits; historical fixture val
 with the live Shared and omission-statistics modules unavailable.
 
 Semantic data upgrades 6 → 7 to distinguish governance/source invalidation from captured-learning denial in durable projection notifications. Existing denial flags remain unchanged; invalidation, forgetting, conflict and expiry changes can now wake learning to reconsider the remaining eligible projections. The historical v6 writer fixture verifies upgrade and delivery without changing Fact revisions.
+
+Learning notification delivery runs in the Memory scheduler maintenance lane, independently of
+Episode/Semantic extraction and the conversation coordinator. Delivery failure keeps its durable outbox row,
+uses a bounded backoff, and reports memory_learning_notification_delivery_failed as degraded;
+it cannot prevent claiming an Episode job. Episode data 6 → 7 separates source_changed from captured
+permission so delete, invalidate, forget, and maintenance changes wake a rescan of remaining permitted
+sources. V6 pending notifications receive a fresh CAS generation during upgrade.
+
+Knowledge source conversation identities are retained with Semantic Evidence, using the extraction
+job's conversation identity when capture has not yet been bound. They survive Episode rejection and
+extraction job cleanup. Skill inspection may discover package files and read related scripts or
+references by pinned path; targetFiles declarations are checked for complete coverage. The same shared
+8 MiB budget applies through Memory revision request validation; ordinary prompt limits are unchanged.

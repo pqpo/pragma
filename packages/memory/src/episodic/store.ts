@@ -1,4 +1,4 @@
-import { initializeEpisodicLearningNotifications } from "../storage/migrations/episodic-data/steps/v5-to-v6.ts";
+import { initializeEpisodicLearningNotificationsV7 } from "../storage/migrations/episodic-data/steps/v6-to-v7.ts";
 import { conversationExtractionEligibleAt } from "../pipeline/conversation-extraction-schedule.ts";
 import type { MemoryExtractionProvenanceUpdate } from "../pipeline/extraction-session.ts";
 import {
@@ -121,6 +121,7 @@ export interface EpisodicMemoryStore {
         readonly rootRef: MemorySubjectRef;
         readonly generation: number;
         readonly learningEligible: boolean;
+        readonly sourceChanged: boolean;
       }
     | undefined
   >;
@@ -318,7 +319,7 @@ export async function createEpisodicMemoryStore(
           database: data,
           databasePath: dataPath,
           family: "pragma.memory-episodic-store",
-          targetVersion: 6,
+          targetVersion: 7,
           migrations: EPISODIC_DATA_STORAGE_MIGRATIONS,
         });
       }
@@ -403,15 +404,18 @@ export async function createEpisodicMemoryStore(
     async readLearningNotification() {
       const row = data
         .prepare(
-          "SELECT root_ref_json AS root, generation, learning_eligible AS learningEligible FROM learning_notifications ORDER BY root_ref_json LIMIT 1",
+          "SELECT root_ref_json AS root, generation, learning_eligible AS learningEligible, source_changed AS sourceChanged FROM learning_notifications ORDER BY root_ref_json LIMIT 1",
         )
-        .get() as { root: string; generation: number; learningEligible: number } | undefined;
+        .get() as
+        | { root: string; generation: number; learningEligible: number; sourceChanged: number }
+        | undefined;
       return row === undefined
         ? undefined
         : {
             rootRef: MemorySubjectRefSchema.parse(JSON.parse(row.root)),
             generation: row.generation,
             learningEligible: row.learningEligible === 1,
+            sourceChanged: row.sourceChanged === 1,
           };
     },
     async acknowledgeLearningNotification(input) {
@@ -1552,7 +1556,7 @@ function uniqueStrings(values: readonly string[]): string[] {
 
 function initializeData(database: DatabaseSync): void {
   const version = readVersion(database);
-  if (version > 6) {
+  if (version > 7) {
     database.close();
     throw new Error(`unsupported-state-version:pragma.memory-episodic-store/v${version}`);
   }
@@ -1623,12 +1627,12 @@ function initializeData(database: DatabaseSync): void {
       pruned_at TEXT NOT NULL
     );
   `);
-  if (version !== 0 && version !== 6) {
+  if (version !== 0 && version !== 7) {
     throw new Error(`missing-adjacent-migration:pragma.memory-episodic-store/v${version}`);
   }
   initializeMemoryIndexOutbox(database, "episodes");
-  initializeEpisodicLearningNotifications(database);
-  database.exec("PRAGMA user_version = 6;");
+  initializeEpisodicLearningNotificationsV7(database);
+  database.exec("PRAGMA user_version = 7;");
 }
 
 function initializeState(database: DatabaseSync): void {

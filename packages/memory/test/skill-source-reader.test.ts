@@ -126,7 +126,11 @@ it("preserves a complete valid long Episode and validation results in both learn
   });
   const stores = {
     episodic: { listForLearning: async () => [record] },
-    semantic: { listForLearning: async () => [], sourceExecutionIds: async () => [] },
+    semantic: {
+      listForLearning: async () => [],
+      sourceExecutionIds: async () => [],
+      sourceConversationRefs: async () => [],
+    },
   };
   for (const reader of [createKnowledgeSourceReader(stores), createSkillSourceReader(stores)]) {
     const sources = await reader.listEligibleSources({ rootRef, limit: 10, now: new Date() });

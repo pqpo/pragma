@@ -1,5 +1,6 @@
 import {
   ContextTriggerSchema,
+  MEMORY_LEARNING_MAX_PROMPT_BYTES,
   SemanticResourceIdSchema,
   SkillPackageFileSchema,
   SkillSourceRevisionRefSchema,
@@ -60,7 +61,7 @@ export const ContextStoreRevisionRequestSchema = z
     storeId: z.string().uuid(),
     resourceName: z.string().trim().min(1).max(120).optional(),
     resourceDescription: z.string().trim().min(1).max(2_000).optional(),
-    prompt: z.string().trim().min(1).max(50_000),
+    prompt: z.string().trim().min(1).max(MEMORY_LEARNING_MAX_PROMPT_BYTES),
     source: z.enum(["user", "memory-learning", "expert-reflection"]),
     sourceDigest: z
       .string()
@@ -78,6 +79,7 @@ export const ContextStoreRevisionRequestSchema = z
   })
   .strict()
   .superRefine((request, context) => {
+    validateRevisionPrompt(request, context);
     if (
       request.operation === "create" &&
       (request.resourceName === undefined || request.resourceDescription === undefined)
@@ -583,7 +585,7 @@ export const SkillRevisionRequestV4Schema = z
     capabilityId: CapabilityResourceIdSchema,
     resourceName: z.string().trim().min(1).max(120).optional(),
     resourceDescription: z.string().trim().min(1).max(500).optional(),
-    prompt: z.string().trim().min(1).max(50_000),
+    prompt: z.string().trim().min(1).max(MEMORY_LEARNING_MAX_PROMPT_BYTES),
     source: SkillRevisionSourceSchema,
     sourceDigest: z.string().regex(/^[a-f0-9]{64}$/u),
     provenance: SkillRevisionProvenanceSchema.optional(),
@@ -591,6 +593,7 @@ export const SkillRevisionRequestV4Schema = z
   })
   .strict()
   .superRefine((request, context) => {
+    validateRevisionPrompt(request, context);
     if (
       request.operation === "create" &&
       (request.resourceName === undefined || request.resourceDescription === undefined)
@@ -731,3 +734,23 @@ export type SkillRevisionChangeSet = z.infer<typeof SkillRevisionChangeSetSchema
 export type SkillRevisionRequestV4 = z.infer<typeof SkillRevisionRequestV4Schema>;
 export type SkillRevisionDraft = z.infer<typeof SkillRevisionDraftSchema>;
 export type ManagedSkillRevisionJob = z.infer<typeof ManagedSkillRevisionJobSchema>;
+
+/** A compatible bound expansion for internal Memory requests; existing records are unchanged. */
+function validateRevisionPrompt(
+  request: { readonly source: string; readonly prompt: string },
+  context: z.RefinementCtx,
+): void {
+  if (request.source === "memory-learning") {
+    if (new TextEncoder().encode(request.prompt).byteLength > MEMORY_LEARNING_MAX_PROMPT_BYTES)
+      context.addIssue({
+        code: "custom",
+        path: ["prompt"],
+        message: "Memory revision source budget exceeded.",
+      });
+  } else if (request.prompt.length > 50_000)
+    context.addIssue({
+      code: "custom",
+      path: ["prompt"],
+      message: "Revision prompts must contain at most 50000 characters.",
+    });
+}

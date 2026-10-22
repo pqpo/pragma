@@ -1,3 +1,4 @@
+import { migrateEpisodicDataV6ToV7 } from "./steps/v6-to-v7.ts";
 import { migrateEpisodicDataV5ToV6 } from "./steps/v5-to-v6.ts";
 import { migrateEpisodicDataV4ToV5 } from "./steps/v4-to-v5.ts";
 import { migrateEpisodicDataV1ToV2 } from "./steps/v1-to-v2.ts";
@@ -16,4 +17,5 @@ export const EPISODIC_DATA_STORAGE_MIGRATIONS = Object.freeze([
   { fromVersion: 3, toVersion: 4, migrate: migrateEpisodicDataV3ToV4 },
   { fromVersion: 4, toVersion: 5, migrate: migrateEpisodicDataV4ToV5 },
   { fromVersion: 5, toVersion: 6, migrate: migrateEpisodicDataV5ToV6 },
+  { fromVersion: 6, toVersion: 7, migrate: migrateEpisodicDataV6ToV7 },
 ] as const);

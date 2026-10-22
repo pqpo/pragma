@@ -1,3 +1,4 @@
+import { MEMORY_LEARNING_SOURCE_BODY_CHARACTERS } from "./learning-limits.ts";
 import { z } from "zod";
 import { MemoryExtractionFailureDiagnosticSchema } from "./extraction-failure.schema.ts";
 
@@ -26,7 +27,7 @@ export const KnowledgeSourceSnapshotSchema = z
     sourceExecutionIds: z.array(z.string().min(1)).max(1_000),
     title: z.string().trim().min(1).max(4_000),
     // Complete valid Episode projections: summary/outcome plus 50 attempts and recoveries.
-    body: z.string().trim().min(1).max(410_000),
+    body: z.string().trim().min(1).max(MEMORY_LEARNING_SOURCE_BODY_CHARACTERS),
     observedAt: z.string().datetime(),
     verified: z.boolean(),
     valueScore: z.number().min(0).max(1).optional(),

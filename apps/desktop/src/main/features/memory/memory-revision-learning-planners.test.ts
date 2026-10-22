@@ -1,3 +1,9 @@
+import {
+  MEMORY_LEARNING_MAX_INSPECTIONS,
+  MEMORY_LEARNING_INSPECTION_PAGE_CHARACTERS,
+  MEMORY_LEARNING_MAX_INSPECTION_BYTES,
+  SkillSourceSnapshotSchema,
+} from "@pragma/shared";
 import type { SkillSourceSnapshot } from "@pragma/shared";
 import { randomUUID } from "node:crypto";
 import { mkdir, mkdtemp, readdir, rm, writeFile } from "node:fs/promises";
@@ -471,7 +477,7 @@ it("bounds read-only inspection continuations without admitting a second plannin
     retryable: false,
   });
   expect(f.create).toHaveBeenCalledOnce();
-  expect(f.continuation).toHaveBeenCalledTimes(32);
+  expect(f.continuation).toHaveBeenCalledTimes(MEMORY_LEARNING_MAX_INSPECTIONS);
 }, 15000);
 
 function inspectionRequests(sources: readonly SkillSourceSnapshot[]): string[] {
@@ -486,3 +492,107 @@ function inspectionRequests(sources: readonly SkillSourceSnapshot[]): string[] {
     ),
   ];
 }
+
+it.each(["Unicode", "JSON-escaped"])(
+  "fully inspects a maximum-sized %s Episode within the shared request and byte budgets",
+  async (encoding) => {
+    const source = SkillSourceSnapshotSchema.parse({
+      ...planningSources()[0]!,
+      body: (encoding === "Unicode" ? "验" : "\u0000").repeat(409980) + "validated-at-end",
+    });
+    const text = JSON.stringify(source);
+    const requests = [JSON.stringify({ action: "inspect", collection: "targets" })];
+    for (let offset = 0; offset < text.length; offset += MEMORY_LEARNING_INSPECTION_PAGE_CHARACTERS)
+      requests.push(
+        JSON.stringify({
+          action: "inspect",
+          collection: "sources",
+          handle: `${source.ref.kind}:${source.ref.id}`,
+          offset,
+        }),
+      );
+    const expected = {
+      action: "apply",
+      changes: [
+        {
+          name: "Verified workflow",
+          description: "Complete workflow",
+          normalizedKey: "verified.workflow",
+          sourceRefs: [source.ref],
+          target: { type: "create" },
+        },
+      ],
+    };
+    const f = await planningFixture([...requests, JSON.stringify(expected)]);
+    await expect(f.planners.skill.plan({ ...f.input, sources: [source] })).resolves.toEqual(
+      expected,
+    );
+    expect(f.continuation.mock.calls.length).toBeLessThanOrEqual(MEMORY_LEARNING_MAX_INSPECTIONS);
+    expect(
+      f.continuation.mock.calls.reduce(
+        (bytes, [input]) => bytes + Buffer.byteLength(input.content),
+        0,
+      ),
+    ).toBeLessThanOrEqual(MEMORY_LEARNING_MAX_INSPECTION_BYTES);
+  },
+);
+
+it("reads a pinned Skill script in the same planning Mission before submitting a file-aware revision plan", async () => {
+  const source = planningSources()[0]!;
+  const target = {
+    bindingId: "11111111-1111-4111-8111-111111111111",
+    capabilityId: "1h2j3k4m5n6p7q8r",
+    name: "Workflow",
+    description: "Existing workflow",
+    normalizedKeys: ["workflow.test"],
+    baseRevision: 1,
+    contentHash: "a".repeat(64),
+  };
+  const expected = {
+    action: "apply",
+    changes: [
+      {
+        name: "Workflow",
+        description: "Improve verification",
+        normalizedKey: "workflow.test",
+        sourceRefs: [source.ref],
+        targetFiles: ["SKILL.md", "scripts/check.py"],
+        target: {
+          type: "revise",
+          capabilityId: target.capabilityId,
+          baseRevision: target.baseRevision,
+          contentHash: target.contentHash,
+        },
+      },
+    ],
+  };
+  const f = await planningFixture([
+    JSON.stringify({ action: "inspect", collection: "targets" }),
+    JSON.stringify({
+      action: "inspect",
+      collection: "sources",
+      handle: `${source.ref.kind}:${source.ref.id}`,
+    }),
+    JSON.stringify({ action: "inspect", collection: "targets", handle: target.capabilityId }),
+    JSON.stringify({
+      action: "inspect",
+      collection: "targets",
+      handle: target.capabilityId,
+      path: "scripts/check.py",
+    }),
+    JSON.stringify(expected),
+  ]);
+  const readTargetFile = vi.fn(async () => "assert outputs_valid()");
+  await expect(
+    f.planners.skill.plan({
+      ...f.input,
+      sources: [source],
+      existingTargets: [target],
+      readTarget: async () => "# Skill\nUse scripts/check.py",
+      readTargetFile,
+    }),
+  ).resolves.toEqual(expected);
+  expect(readTargetFile).toHaveBeenCalledWith(expect.objectContaining(target), "scripts/check.py");
+  expect(f.create).toHaveBeenCalledOnce();
+  expect(f.continuation).toHaveBeenCalledTimes(4);
+});

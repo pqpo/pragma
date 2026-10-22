@@ -14,7 +14,10 @@ import type { SemanticMemoryStore } from "../semantic/store.ts";
  */
 export function createKnowledgeSourceReader(options: {
   readonly episodic: Pick<EpisodicMemoryStore, "listForLearning">;
-  readonly semantic: Pick<SemanticMemoryStore, "listForLearning" | "sourceExecutionIds">;
+  readonly semantic: Pick<
+    SemanticMemoryStore,
+    "listForLearning" | "sourceExecutionIds" | "sourceConversationRefs"
+  >;
 }): KnowledgeSourceReader {
   return {
     async listEligibleSources(input) {
@@ -56,7 +59,9 @@ export function createKnowledgeSourceReader(options: {
           }),
         );
       const timestamp = input.now.toISOString();
-      const conversationsByExecution = new Map(
+      // Preserve known legacy identities when historical retained Evidence predates
+      // conversation enrichment. New Fact-only provenance never depends on this fallback.
+      const legacyConversations = new Map(
         episodes.flatMap((episode) =>
           episode.sourceExecutionIds.map((id) => [id, episode.conversationRef] as const),
         ),
@@ -72,14 +77,18 @@ export function createKnowledgeSourceReader(options: {
           )
           .map(async (fact) => {
             const sourceExecutionIds = await options.semantic.sourceExecutionIds(fact.id);
+            const conversationRefs = await options.semantic.sourceConversationRefs(fact.id);
             return KnowledgeSourceSnapshotSchema.parse({
               ref: { kind: "semantic", id: fact.id, revision: fact.revision },
               rootRef: input.rootRef,
               producerRefs: fact.producerRefs,
-              conversationRefs: sourceExecutionIds.flatMap((id) => {
-                const ref = conversationsByExecution.get(id);
-                return ref === undefined ? [] : [ref];
-              }),
+              conversationRefs:
+                conversationRefs.length > 0
+                  ? conversationRefs
+                  : sourceExecutionIds.flatMap((id) => {
+                      const ref = legacyConversations.get(id);
+                      return ref === undefined ? [] : [ref];
+                    }),
               sourceExecutionIds,
               title: `${fact.predicate}: ${fact.normalizedValue}`,
               body: fact.statement,

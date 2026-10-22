@@ -14,6 +14,7 @@ import type {
 } from "@pragma/interpreter";
 
 import type { ContextStoreRevisionProfile } from "../../../shared/contracts/index.ts";
+import { prepareRevisionPromptInput } from "../missions/revision-prompt-input.ts";
 import { resolveSystemExpertRuntimeDefaults } from "../experts/system-expert-runtime.ts";
 import type { LocalHostMissionApplication } from "@pragma/local-host";
 import type { MissionStore } from "@pragma/local-host";
@@ -65,13 +66,17 @@ export function createDesktopStoreRevisionAgent(options: {
     async generate(input) {
       const project = await options.project.ensurePublished();
       await mkdir(isolatedWorkspace, { recursive: true, mode: 0o700 });
-      const mission = await options.missions.create({
-        workspace: { path: isolatedWorkspace, basename: basename(isolatedWorkspace) },
+      const promptInput = await prepareRevisionPromptInput({
+        pragmaHome: options.pragmaHome,
         goal: [
           input.request.prompt,
           `The sparse revision draft ${input.draftId} is mounted as Mission Knowledge.`,
           "Edit the mission-knowledge-draft namespace with its native Context tools, then submit the draft for review.",
         ].join("\n\n"),
+      });
+      const mission = await options.missions.create({
+        workspace: { path: isolatedWorkspace, basename: basename(isolatedWorkspace) },
+        ...promptInput,
         title: `Revise knowledge base ${input.request.storeId.slice(0, 8)}`,
         project: { id: project.projectId, revision: project.revision },
         executor: {

@@ -36,7 +36,7 @@ it("upgrades a real v5 writer database and preserves records and a recoverable s
     expect(await store.list()).toEqual(records);
     const db = new DatabaseSync(f.path);
     try {
-      expect(db.prepare("PRAGMA user_version").get()).toEqual({ user_version: 6 });
+      expect(db.prepare("PRAGMA user_version").get()).toEqual({ user_version: 7 });
     } finally {
       db.close();
     }
@@ -72,13 +72,15 @@ it("replays a failed source notification after restart without extracting the Ep
     throw new Error("learning scheduler unavailable");
   });
   let module = await createEpisodicMemoryModule({ ...f, onProjectionChanged: notify });
-  await expect(module.runBackgroundOnce?.()).rejects.toThrow("learning scheduler unavailable");
+  await expect(module.runMaintenanceOnce?.()).rejects.toThrow(
+    "memory_learning_notification_delivery_failed",
+  );
   expect(await module.store.readLearningNotification()).toBeDefined();
   module.close();
   const replay = vi.fn(async () => undefined);
   module = await createEpisodicMemoryModule({ ...f, onProjectionChanged: replay });
   try {
-    await module.runBackgroundOnce?.();
+    await module.runMaintenanceOnce?.();
     expect(replay).toHaveBeenCalledOnce();
     expect(await module.store.readLearningNotification()).toBeUndefined();
   } finally {
@@ -96,8 +98,8 @@ it("preserves captured learning denial when backfilling old Episode notification
   const notify = vi.fn(async () => undefined);
   const module = await createEpisodicMemoryModule({ ...f, onProjectionChanged: notify });
   try {
-    await module.runBackgroundOnce?.();
-    expect(notify).not.toHaveBeenCalled();
+    await module.runMaintenanceOnce?.();
+    expect(notify).toHaveBeenCalledOnce(); // V6 pending roots are rescanned without granting source permission.
     expect(await module.store.list()).toHaveLength(1);
     expect(await module.store.listForLearning()).toEqual([]);
     expect(await module.store.readLearningNotification()).toBeUndefined();
@@ -140,7 +142,7 @@ it("upgrades a historical Semantic governance notification and wakes learning af
     const before = await module.store.list();
     expect(before[0]!.status).toBe("invalidated");
     expect(await module.store.listForLearning()).toHaveLength(1);
-    await module.runBackgroundOnce?.();
+    await module.runMaintenanceOnce?.();
     expect(notify).toHaveBeenCalledOnce();
     expect(await module.store.list()).toEqual(before);
     const db = new DatabaseSync(path);
@@ -157,4 +159,73 @@ it("upgrades a historical Semantic governance notification and wakes learning af
   } finally {
     module.close();
   }
+});
+
+it("upgrades real v6 notifications, preserves CAS generations and wakes after forget without the forgotten source", async () => {
+  const f = await historical();
+  await copyFile(new URL("./fixtures/episodic-data-v6.sqlite", import.meta.url), f.path);
+  const historicalDb = new DatabaseSync(f.path, { readOnly: true });
+  const before = historicalDb
+    .prepare("SELECT root_ref_json AS root, generation FROM learning_notifications LIMIT 1")
+    .get() as { root: string; generation: number };
+  historicalDb.close();
+  const notify = vi.fn(async () => undefined);
+  const module = await createEpisodicMemoryModule({ ...f, onProjectionChanged: notify });
+  try {
+    const record = (await module.store.list())[0]!;
+    const upgraded = (await module.store.readLearningNotification())!;
+    expect(upgraded.sourceChanged).toBe(true);
+    expect(upgraded.generation).toBeGreaterThan(before.generation);
+    await module.store.acknowledgeLearningNotification({
+      rootRef: JSON.parse(before.root),
+      generation: before.generation,
+    });
+    expect(await module.store.readLearningNotification()).toEqual(upgraded);
+    await module.runMaintenanceOnce?.();
+    await module.store.forget({
+      id: record.id,
+      expectedRevision: record.revision,
+      actorRef: record.rootRefs[0]!,
+      reason: "Forget test source",
+      now: new Date(),
+    });
+    const deleted = (await module.store.readLearningNotification())!;
+    expect(deleted).toMatchObject({ sourceChanged: true, learningEligible: false });
+    expect(deleted.generation).toBeGreaterThan(upgraded.generation);
+    await module.store.acknowledgeLearningNotification(upgraded);
+    expect(await module.store.readLearningNotification()).toEqual(deleted);
+    await module.runMaintenanceOnce?.();
+    expect(notify).toHaveBeenCalledTimes(2);
+    expect(await module.store.listForLearning()).toEqual([]);
+    expect(await module.store.readLearningNotification()).toBeUndefined();
+    expect((await stat(`${f.path}.v6.backup`)).isFile()).toBe(true);
+  } finally {
+    module.close();
+  }
+});
+
+it("rolls back an interrupted v6→v7 notification upgrade and rejects future versions", async () => {
+  const f = await historical();
+  await copyFile(new URL("./fixtures/episodic-data-v6.sqlite", import.meta.url), f.path);
+  const { migrateEpisodicDataV6ToV7 } =
+    await import("../src/storage/migrations/episodic-data/steps/v6-to-v7.ts");
+  const db = new DatabaseSync(f.path);
+  const exec = db.exec.bind(db);
+  const spy = vi.spyOn(db, "exec").mockImplementation((sql) => {
+    if (sql.includes("PRAGMA user_version=7")) throw new Error("interrupted");
+    return exec(sql);
+  });
+  try {
+    expect(() => migrateEpisodicDataV6ToV7(db)).toThrow("interrupted");
+    expect(db.prepare("PRAGMA user_version").get()).toEqual({ user_version: 6 });
+    expect(db.prepare("SELECT COUNT(*) AS count FROM episodes").get()).toEqual({ count: 1 });
+    spy.mockRestore();
+    migrateEpisodicDataV6ToV7(db);
+    expect(db.prepare("PRAGMA user_version").get()).toEqual({ user_version: 7 });
+    db.exec("PRAGMA user_version=8");
+  } finally {
+    spy.mockRestore();
+    db.close();
+  }
+  await expect(createEpisodicMemoryStore(f)).rejects.toThrow("unsupported-state-version");
 });

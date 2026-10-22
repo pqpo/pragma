@@ -272,6 +272,7 @@ export interface SemanticMemoryStore {
   get(id: string): Promise<SemanticFact | undefined>;
   history(id: string): Promise<readonly SemanticFact[]>;
   sourceExecutionIds(id: string): Promise<readonly string[]>;
+  sourceConversationRefs(id: string): Promise<readonly MemorySubjectRef[]>;
   listForRecall(scope: MemoryRecallScope, now: Date): Promise<readonly SemanticFact[]>;
   listCandidatesForRecall(scope: MemoryRecallScope, now: Date): Promise<readonly SemanticFact[]>;
   searchForRecall(
@@ -1137,9 +1138,18 @@ export async function createSemanticMemoryStore(
             for (const envelope of cited) {
               data
                 .prepare(
-                  "INSERT OR IGNORE INTO evidence(message_id, occurred_at, envelope_json) VALUES (?, ?, ?)",
+                  `INSERT INTO evidence(message_id, occurred_at, envelope_json) VALUES (?, ?, ?)
+                   ON CONFLICT(message_id) DO UPDATE SET envelope_json=json_set(evidence.envelope_json,
+                     '$.conversationRef',json(json_extract(excluded.envelope_json,'$.conversationRef')))`,
                 )
-                .run(envelope.messageId, envelope.occurredAt, JSON.stringify(envelope));
+                .run(
+                  envelope.messageId,
+                  envelope.occurredAt,
+                  JSON.stringify({
+                    ...envelope,
+                    conversationRef: input.job.conversationRef,
+                  }),
+                );
               data
                 .prepare("INSERT OR IGNORE INTO fact_evidence(fact_id, evidence_id) VALUES (?, ?)")
                 .run(record.id, envelope.messageId);
@@ -1519,6 +1529,19 @@ export async function createSemanticMemoryStore(
         )
         .all(id) as unknown as readonly { readonly executionId: string }[];
       return rows.map((row) => row.executionId);
+    },
+
+    async sourceConversationRefs(id) {
+      const rows = data
+        .prepare(
+          `SELECT DISTINCT json_extract(e.envelope_json, '$.conversationRef') AS ref
+        FROM current_facts f, json_each(f.record_json, '$.evidenceRefs') cited
+        JOIN evidence e ON e.message_id=cited.value
+        WHERE f.id=? AND json_type(e.envelope_json, '$.conversationRef')='object'
+        ORDER BY ref LIMIT 1000`,
+        )
+        .all(id) as { ref: string }[];
+      return rows.map((row) => MemorySubjectRefSchema.parse(JSON.parse(row.ref)));
     },
 
     async listCandidatesForRecall(scope, now) {

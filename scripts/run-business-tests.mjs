@@ -149,6 +149,7 @@ if (lane !== "host") {
     "src/main/features/memory/memory-learning-revisions.test.ts",
     "src/main/features/memory/memory-revision-learning-planners.test.ts",
     "src/main/features/memory/learning-inspection.test.ts",
+    "src/main/features/missions/revision-prompt-input.test.ts",
     "src/main/bootstrap/shutdown-sequence.test.ts",
     "src/main/features/context-stores/knowledge-revision-capability.test.ts",
     "src/main/features/context-stores/context-store-revision-service.test.ts",

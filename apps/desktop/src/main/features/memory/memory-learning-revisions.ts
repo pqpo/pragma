@@ -1,3 +1,4 @@
+import { MEMORY_LEARNING_MAX_PROMPT_BYTES } from "@pragma/shared";
 import { createHash, randomUUID } from "node:crypto";
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
@@ -721,7 +722,30 @@ export function createMemoryLearningRevisions(options: {
         id: target.capabilityId,
         revision: target.baseRevision,
       });
-      return document.content;
+      const files = await options.capabilities.listSkillFiles({
+        id: target.capabilityId,
+        revision: target.baseRevision,
+      });
+      return JSON.stringify({
+        document: document.content,
+        files,
+        instruction:
+          "Read related scripts and references with a target path inspection before proposing an incremental revision. Declare all files used in targetFiles.",
+      });
+    },
+    async readSkillTargetFile(target: ExistingMemorySkillTarget, path: string): Promise<string> {
+      if (target.pending) throw new Error("memory_revision_pending");
+      const file = await options.capabilities.getSkillFile({
+        id: target.capabilityId,
+        revision: target.baseRevision,
+        path,
+      });
+      if (file.revision !== target.baseRevision || typeof file.content !== "string")
+        throw Object.assign(new Error("memory_learning_target_file_unreadable"), {
+          code: "memory_learning_target_file_unreadable",
+          retryable: false,
+        });
+      return file.content;
     },
     async listSkillTargets(input: {
       readonly expertRef: string;
@@ -910,7 +934,7 @@ function knowledgePrompt(
   plan: Extract<KnowledgeLearningPlan, { action: "apply" }>,
 ): string {
   const sourceText = JSON.stringify(sources.map(compactSource));
-  if (Buffer.byteLength(sourceText, "utf8") > 256_000) {
+  if (Buffer.byteLength(sourceText, "utf8") > MEMORY_LEARNING_MAX_PROMPT_BYTES) {
     throw new Error("knowledge_learning_prompt_too_large");
   }
   return [
@@ -936,7 +960,7 @@ function skillPrompt(
   );
   const compact = selected.map(compactSource);
   const sourceText = JSON.stringify(compact);
-  if (Buffer.byteLength(sourceText, "utf8") > 256_000) {
+  if (Buffer.byteLength(sourceText, "utf8") > MEMORY_LEARNING_MAX_PROMPT_BYTES) {
     throw new Error("skill_learning_prompt_too_large");
   }
   return [
@@ -944,6 +968,7 @@ function skillPrompt(
     "Specify applicability, inputs and preconditions, ordered executable steps, actual result verification, and supported failure handling or limitations. Parameterize task-specific names, local paths and data. Never invent successful checks or publish raw Evidence/source IDs. Preserve unrelated existing Skill behavior and focus on the supported procedural improvement.",
     `Name: ${change.name}`,
     `Description: ${change.description}`,
+    `Target files used by the plan: ${JSON.stringify(change.targetFiles ?? ["SKILL.md"])}`,
     `Sources: ${sourceText}`,
   ].join("\n\n");
 }

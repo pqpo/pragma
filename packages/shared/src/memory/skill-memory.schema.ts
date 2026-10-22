@@ -1,3 +1,4 @@
+import { MEMORY_LEARNING_SOURCE_BODY_CHARACTERS } from "./learning-limits.ts";
 import { z } from "zod";
 import { MemoryExtractionFailureDiagnosticSchema } from "./extraction-failure.schema.ts";
 import { SemanticResourceIdSchema } from "../integration/primitives.schema.ts";
@@ -51,7 +52,7 @@ export const SkillSourceSnapshotSchema = z
     sourceExecutionIds: z.array(z.string().min(1)).max(1_000).default([]),
     producerRefs: z.array(MemorySubjectRefSchema).max(100),
     title: z.string().trim().min(1).max(4_000),
-    body: z.string().trim().min(1).max(410_000),
+    body: z.string().trim().min(1).max(MEMORY_LEARNING_SOURCE_BODY_CHARACTERS),
     outcome: z.enum(["succeeded", "failed", "cancelled", "interrupted", "supporting"]),
     hasSuccessfulRecovery: z.boolean(),
     observedAt: z.string().datetime(),

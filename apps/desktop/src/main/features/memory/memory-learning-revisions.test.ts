@@ -1,3 +1,7 @@
+import {
+  ContextStoreRevisionRequestSchema,
+  SkillRevisionRequestV4Schema,
+} from "@pragma/built-in-agents";
 import { randomUUID } from "node:crypto";
 import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -99,7 +103,24 @@ async function fixture() {
     } as unknown as ContextStoreStore,
     capabilities: {
       list: async () => [],
-      getSkillDocument: async () => ({ content: "# Workflow\nA reusable workflow." }),
+      getSkillDocument: async () => ({
+        content: "# Workflow\nRun scripts/verify.py and read references/guide.md.",
+      }),
+      listSkillFiles: vi.fn(async () => [
+        { path: "SKILL.md", size: 70 },
+        { path: "scripts/verify.py", size: 40 },
+        { path: "references/guide.md", size: 40 },
+      ]),
+      getSkillFile: vi.fn(async (input: { id: string; revision?: number; path: string }) => ({
+        capabilityId: input.id,
+        revision: input.revision ?? 1,
+        path: input.path,
+        content:
+          input.path === "scripts/verify.py"
+            ? "assert verify_all_outputs()"
+            : "# Actual reference guide",
+        size: 40,
+      })),
       get: async (id: string) => {
         if (capabilityMissing) {
           throw new CapabilityStoreError("capability_not_found", "Missing capability");
@@ -1035,4 +1056,93 @@ it("keeps Skill identity keys scoped to the requesting expert while sharing targ
   expect(await f.service.listSkillTargets({ expertRef: f.expertRef })).toMatchObject([
     { capabilityId, normalizedKeys: ["workflow.own"] },
   ]);
+});
+
+it("exposes a pinned Skill package catalog and lazily reads scripts and references", async () => {
+  const f = await fixture();
+  const target = {
+    bindingId: randomUUID(),
+    capabilityId: "1h2j3k4m5n6p7q8r",
+    name: "Workflow",
+    description: "Existing workflow",
+    normalizedKeys: ["workflow"],
+    baseRevision: 1,
+    contentHash: "c".repeat(64),
+  };
+  const body = JSON.parse(await f.service.readSkillTarget(target));
+  expect(body.files.map((file: { path: string }) => file.path)).toEqual([
+    "SKILL.md",
+    "scripts/verify.py",
+    "references/guide.md",
+  ]);
+  expect(body.document).toContain("scripts/verify.py");
+  expect(body).not.toHaveProperty("contents");
+  expect(await f.service.readSkillTargetFile(target, "scripts/verify.py")).toBe(
+    "assert verify_all_outputs()",
+  );
+  expect(await f.service.readSkillTargetFile(target, "references/guide.md")).toContain(
+    "Actual reference guide",
+  );
+});
+
+it("submits complete maximum-sized Unicode sources to both Knowledge and Skill revision owners", async () => {
+  const f = await fixture();
+  f.knowledgeStart.mockImplementation(async (request) => {
+    ContextStoreRevisionRequestSchema.parse(request);
+    return { id: randomUUID() };
+  });
+  f.skillStart.mockImplementation(async (request) => {
+    SkillRevisionRequestV4Schema.parse(request);
+    return { id: f.skillJobId, capabilityId: request.capabilityId };
+  });
+  const source = {
+    ref: { kind: "episodic" as const, id: "maximum-workflow", revision: 1 },
+    rootRef: { type: "pragma.expert", id: "expert-a" },
+    producerRefs: [],
+    sourceExecutionIds: [],
+    title: "Verified complete artifact",
+    body: "验".repeat(409980) + "validated-at-end",
+    observedAt: "2026-08-01T00:00:00.000Z",
+    verified: true,
+    outcome: "succeeded" as const,
+    hasSuccessfulRecovery: false,
+    visibility: { mode: "host-private" as const },
+    sensitivity: "internal" as const,
+  };
+  await f.service.submitKnowledge({
+    expertRef: f.expertRef,
+    sourceDigest: "e".repeat(64),
+    sources: [source],
+    plan: {
+      action: "apply",
+      ...knowledgePlanFields(),
+      name: "Verified guide",
+      description: "Reusable artifact",
+      sourceRefs: [source.ref],
+    },
+  });
+  await f.service.submitSkills({
+    expertRef: f.expertRef,
+    sourceDigest: "e".repeat(64),
+    sources: [source],
+    plan: {
+      action: "apply",
+      changes: [
+        {
+          name: "Verified workflow",
+          description: "Reusable workflow",
+          normalizedKey: "verified.workflow",
+          sourceRefs: [source.ref],
+          target: { type: "create" },
+        },
+      ],
+    },
+  });
+  expect(f.knowledgeStart).toHaveBeenCalledWith(
+    expect.objectContaining({ prompt: expect.stringContaining("validated-at-end") }),
+  );
+  expect(f.skillStart).toHaveBeenCalledWith(
+    expect.objectContaining({ prompt: expect.stringContaining("validated-at-end") }),
+    expect.anything(),
+  );
 });
