@@ -1,4 +1,5 @@
 import { MAX_SKILL_PACKAGE_BYTES } from "@pragma/shared";
+import { readFileSync } from "node:fs";
 import { SkillDataSchema } from "@pragma/local-host/deployment";
 import { PRAGMA_MANAGEMENT_DESKTOP_CAPABILITY_ID } from "@pragma/built-in-agents";
 import { describe, expect, it } from "vitest";
@@ -208,6 +209,27 @@ describe("structured sync repository", () => {
       expect(current.get(`skills/${skillId}/files/scripts/run.sh`)?.executable).toBe(true);
     },
   );
+
+  it("migrates actual v1 writer output at the 50 Unicode-character name boundary", () => {
+    const fixture = JSON.parse(
+      readFileSync(
+        new URL("./fixtures/repository-v1/skill-name-boundary.json", import.meta.url),
+        "utf8",
+      ),
+    ) as { files: { path: string; content: string; executable: boolean }[] };
+    const legacy = new Map(
+      fixture.files.map((entry) => [
+        entry.path,
+        { bytes: Buffer.from(entry.content), executable: entry.executable },
+      ]),
+    );
+    const restored = decodeSyncRepository(legacy);
+    expect(restored.get(`skill:${skillId}`)?.name).toBe("🧠".repeat(50));
+    expect(encodeSyncRepository(decodeSyncRepository(encodeSyncRepository(restored)))).toEqual(
+      encodeSyncRepository(restored),
+    );
+    expect(legacy.get("sync.yaml")?.bytes.toString()).toContain("repository/v1");
+  });
 
   it("rejects unknown future repository versions without altering their files", () => {
     const files = encode(skill());

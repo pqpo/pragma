@@ -1678,6 +1678,67 @@ describe("structured asset sync with real Git and domain stores", { timeout: 60_
     expect(await git.head()).toBe(head);
     expect((await b.capabilities.get(skill.manifest.id)).manifest.latestRevision).toBe(3);
   });
+  it("derives Skill descriptions for legacy bound resources without repeated changes", async () => {
+    const git = await fixture();
+    const a = device(join(git.root, "a"));
+    const b = device(join(git.root, "b"));
+    const skill = await addSkill(a.capabilities, a.root);
+    // Before frontmatter became authoritative, valid definitions could store another description.
+    const definitionPath = join(
+      a.root,
+      "data",
+      "capabilities",
+      skill.manifest.id,
+      "revisions",
+      "000001",
+      "definition.json",
+    );
+    const legacyDefinition = JSON.stringify({
+      ...skill.definition,
+      description: "Legacy directory annotation",
+    });
+    await writeFile(definitionPath, legacyDefinition);
+    const binding = createDesktopCapabilityResource({
+      owner: "project-expert",
+      capabilityId: skill.manifest.id,
+      name: "audit",
+      description: "Legacy directory annotation",
+    });
+    await a.project.apply({ baseRevision: (await a.project.get()).revision, upserts: [binding] });
+    const configured = await a.service.configure(configuration);
+    expect(configured.status, configured.error).toBe("ready");
+    const checkout = join(git.root, "reader");
+    await exec("git", ["clone", git.bare, checkout]);
+    const remoteItems = await readSyncRepository(checkout, true);
+    const bindingKey = `capability:${canonicalPragmaResourceRef(binding)}`;
+    expect(remoteItems.get(bindingKey)?.data).toMatchObject({
+      metadata: { description: "Audit code" },
+    });
+    const restored = await b.service.configure(configuration);
+    expect(restored.status, restored.error).toBe("ready");
+    const head = await git.head();
+    for (const service of [a.service, b.service, a.restart(), b.restart()]) {
+      const synced = await service.sync();
+      expect(synced.status, synced.error).toBe("ready");
+      expect(synced.items.find((entry) => entry.key === bindingKey)).toMatchObject({
+        status: "synced",
+      });
+      expect(await git.head()).toBe(head);
+    }
+    for (const current of [a, b]) {
+      const state = JSON.parse(
+        await readFile(join(current.root, "state", "asset-sync", "state.json"), "utf8"),
+      );
+      expect(state.bases[bindingKey]).toBe(remoteItems.get(bindingKey)!.fingerprint);
+      expect(state.remoteItems[bindingKey].fingerprint).toBe(
+        remoteItems.get(bindingKey)!.fingerprint,
+      );
+    }
+    expect((await a.capabilities.get(skill.manifest.id)).manifest.latestRevision).toBe(1);
+    expect((await b.capabilities.get(skill.manifest.id)).manifest.latestRevision).toBe(1);
+    expect(await readFile(definitionPath, "utf8")).toBe(legacyDefinition);
+  });
+
   it("accepts remote file edits/additions/deletions and honors automatic upload configuration", async () => {
     const git = await fixture();
     const a = device(join(git.root, "a"));

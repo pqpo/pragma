@@ -196,6 +196,34 @@ export function createAssetTransferService(options: {
         return classifyDesktopContextResource(resource) !== undefined;
       return ["Expert", "ExpertTeam", "Flow", "RuntimeProfile"].includes(resource.kind);
     });
+    // Use one validated payload snapshot for both the Skill and every bound resource.
+    // Historical definitions may retain descriptions that differ from SKILL.md.
+    const skillPayloads = new Map<string, z.infer<typeof SkillDataSchema>>();
+    for (const capability of capabilities) {
+      if (
+        capability.definition.kind !== "skill" ||
+        capability.managedBy === "system" ||
+        capability.manifest.id === PRAGMA_MANAGEMENT_DESKTOP_CAPABILITY_ID
+      )
+        continue;
+      const id = capability.manifest.id;
+      const root = await options.capabilities.skillFilesPath(
+        id,
+        capability.manifest.latestRevision,
+      );
+      const payload = await readTransferredSkill(root, capability.definition.executablePaths);
+      skillPayloads.set(
+        id,
+        validateTransferredSkill(
+          {
+            name: capability.definition.name,
+            description: capability.definition.description,
+            files: payload.files,
+          },
+          { id },
+        ),
+      );
+    }
     for (const resource of resources) {
       const kind =
         resource.kind === "Expert"
@@ -235,7 +263,8 @@ export function createAssetTransferService(options: {
             name = capability.definition.name;
             portable = bindExistingDesktopCapabilityResource(resource, binding, {
               name: capability.definition.name,
-              description: capability.definition.description,
+              description:
+                skillPayloads.get(binding.id)?.description ?? capability.definition.description,
             });
           } else {
             const key = `${kind}:${canonicalPragmaResourceRef(resource)}`;
@@ -291,25 +320,7 @@ export function createAssetTransferService(options: {
         add("capability", id, capability.definition.name, capability.definition);
         continue;
       }
-      const root = await options.capabilities.skillFilesPath(
-        id,
-        capability.manifest.latestRevision,
-      );
-      const payload = await readTransferredSkill(root, capability.definition.executablePaths);
-      const files = payload.files;
-      add(
-        "skill",
-        id,
-        capability.definition.name,
-        validateTransferredSkill(
-          {
-            name: capability.definition.name,
-            description: capability.definition.description,
-            files,
-          },
-          { id },
-        ),
-      );
+      add("skill", id, capability.definition.name, skillPayloads.get(id)!);
     }
     return { items: result, revisions, nameResolutionIssues };
   };

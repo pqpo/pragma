@@ -1,0 +1,25 @@
+{
+  "writerCommit": "7ab9269e",
+  "files": [
+    {
+      "path": "sync.yaml",
+      "content": "schemaVersion: pragma.asset-sync-repository/v1\n",
+      "executable": false
+    },
+    {
+      "path": "skills/0df66ebd-69bb-4656-82e5-5634a3878139/metadata.yaml",
+      "content": "id: 0df66ebd-69bb-4656-82e5-5634a3878139\nname: 🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠\ndescription: Historical writer description\nentryPath: SKILL.md\n",
+      "executable": false
+    },
+    {
+      "path": "skills/0df66ebd-69bb-4656-82e5-5634a3878139/files/SKILL.md",
+      "content": "---\nname: 🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠\ndescription: Historical writer description\n---\n\nReview changes.\n",
+      "executable": false
+    },
+    {
+      "path": "README.md",
+      "content": "# Pragma 核心资产同步\n\n定义和元数据使用 YAML，知识库与 Skill 正文保留原生文件。可直接编辑后提交到 Git，再在 Pragma 中同步。\n\n文件名使用稳定 ID；重命名只修改 YAML 中的名称。sync.yaml 声明格式版本，请保留。哈希由应用重新计算，无需手工更新。\n\n不包含密钥、运行记录、历史修订或插件安装包。Skill 可执行位以 Git index 为准。\n\n| 名称 | 类型 | 文件 |\n| --- | --- | --- |\n| 🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠 | skill | [skills/0df66ebd-69bb-4656-82e5-5634a3878139/metadata.yaml](skills/0df66ebd-69bb-4656-82e5-5634a3878139/metadata.yaml) |\n",
+      "executable": false
+    }
+  ]
+}
