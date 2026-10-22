@@ -34,7 +34,7 @@ const ChangeSchema = z
   .strict();
 export const JournalSchema = z
   .object({
-    schemaVersion: z.literal("pragma.asset-sync-journal/v2"),
+    schemaVersion: z.literal("pragma.asset-sync-journal/v3"),
     source: z.string(),
     changes: z.array(ChangeSchema),
     expected: z.record(z.string(), z.string().nullable()),

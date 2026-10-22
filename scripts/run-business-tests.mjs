@@ -128,6 +128,7 @@ if (lane !== "host") {
     "src/main/features/capabilities/capability-store.test.ts",
     "src/main/features/capabilities/skill-revision-service.test.ts",
     "src/main/features/studio-sync/asset-sync-repository.test.ts",
+    "src/main/features/studio-sync/migrations/migrations.test.ts",
     "src/main/features/capabilities/capability-revision-coordinator.test.ts",
     "src/main/features/context-stores/context-store-store.test.ts",
     "src/main/features/projects/pragma-project-store.test.ts",
@@ -143,7 +144,10 @@ if (lane !== "host") {
   await vitest(
     "@pragma/desktop",
     ["src/main/features/studio-sync/structured-asset-sync.integration.test.ts"],
-    ["-t", "restores Knowledge, binary Skill"],
+    [
+      "-t",
+      "restores Knowledge, binary Skill|derives Skill descriptions|migrates an interrupted v2 Skill restore",
+    ],
     "skill-script-sync",
   );
   await run(["--filter", "@pragma/desktop", "test:claude-worker"], "claude-worker");

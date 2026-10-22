@@ -915,7 +915,7 @@ export function createCoreAssetSyncService(options: {
               await writeAtomic(
                 journalPath,
                 JournalSchema.parse({
-                  schemaVersion: "pragma.asset-sync-journal/v2",
+                  schemaVersion: "pragma.asset-sync-journal/v3",
                   source,
                   changes: prepared,
                   expected: Object.fromEntries(

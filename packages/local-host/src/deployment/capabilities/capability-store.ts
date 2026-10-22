@@ -123,7 +123,6 @@ export interface CapabilityStore extends CapabilityRepository {
     readonly manualChanges?: SkillManualRevisionRecord["operations"] | undefined;
   }): Promise<Capability>;
   publishNewSkillRevisionCandidate(input: {
-    readonly checkDescriptionConsistency?: boolean;
     readonly id: string;
     readonly name: string;
     readonly description: string;
@@ -799,7 +798,7 @@ export function createCapabilityStore(options: {
         const skillFile = await readFile(join(payloadPath, "SKILL.md"), "utf8");
         const metadata = readSkillFrontmatter(skillFile);
         const name = input.name ?? metadata.name;
-        const description = input.description ?? metadata.description;
+        const description = metadata.description || input.description;
         if (!name || !description) {
           throw new CapabilityStoreError(
             "import_invalid",
@@ -857,7 +856,10 @@ export function createCapabilityStore(options: {
         const definition = CapabilityDefinitionSchema.parse({
           kind: "skill",
           name: input.name,
-          description: input.description,
+          description:
+            readSkillFrontmatter(
+              input.files.find((file) => file.path === "SKILL.md")?.content ?? "",
+            ).description || input.description,
           entryPath: "SKILL.md",
           contentHash: await hashSkillDirectoryContent(payloadPath),
         });
@@ -1096,16 +1098,10 @@ export function createCapabilityStore(options: {
           const contentHash = await hashSkillDirectoryContent(payloadPath);
           const skillDocument = await readFile(join(payloadPath, "SKILL.md"), "utf8");
           const metadata = readSkillFrontmatter(skillDocument);
-          if (
-            metadata.name !== input.name ||
-            (rawInput.checkDescriptionConsistency !== false &&
-              metadata.description !== input.description)
-          ) {
+          if (metadata.name !== input.name || metadata.description !== input.description) {
             throw new CapabilityStoreError(
               "config_invalid",
-              rawInput.checkDescriptionConsistency === false
-                ? "SKILL.md name must match the creation draft metadata."
-                : "SKILL.md name and description must match the creation draft metadata.",
+              "SKILL.md name and description must match the creation draft metadata.",
             );
           }
           const definition = CapabilityDefinitionSchema.parse({

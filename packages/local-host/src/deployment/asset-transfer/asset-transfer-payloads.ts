@@ -10,6 +10,7 @@ import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { validateSkillPackage } from "@pragma/built-in-agents";
 import { MAX_SKILL_PACKAGE_BYTES } from "@pragma/shared";
+import { readSkillFrontmatter } from "../capabilities/skill-frontmatter.ts";
 import { scanSkillWorkingTree } from "../capabilities/skill-revision-draft-store.ts";
 import type { CapabilityStore } from "../capabilities/capability-store.ts";
 import { hashSnapshotContent } from "../context-stores/context-store-store.ts";
@@ -80,7 +81,7 @@ export function validateTransferredSkill(
     readonly files: readonly TransferredSkillFile[];
   },
   context: TransferredSkillValidationContext,
-): void {
+): z.infer<typeof SkillDataSchema> {
   const location = `pragma-sync/skills/${context.id}`;
   const identity = `Skill ${JSON.stringify(data.name)} (ID ${context.id}, ${location})`;
   let totalBytes = 0;
@@ -99,16 +100,11 @@ export function validateTransferredSkill(
     }
     return { path: file.path, content };
   });
-  const validation = validateSkillPackage(
-    {
-      name: data.name,
-      description: data.description,
-      files,
-    },
-    {
-      checkDescriptionConsistency: false,
-    },
+  const metadata = readSkillFrontmatter(
+    files.find((file) => file.path === "SKILL.md")?.content ?? "",
   );
+  const description = metadata.description ?? "";
+  const validation = validateSkillPackage({ name: data.name, description, files });
   if (!validation.passed) {
     const diagnostic = validation.diagnostics[0];
     throw new Error(
@@ -117,6 +113,7 @@ export function validateTransferredSkill(
       }`,
     );
   }
+  return SkillDataSchema.parse({ ...data, description });
 }
 export async function publishTransferredSkill(
   store: CapabilityStore,
@@ -126,7 +123,6 @@ export async function publishTransferredSkill(
     readonly description: string;
     readonly sourcePath: string;
     readonly candidateContentHash: string;
-    readonly checkDescriptionConsistency?: boolean;
     readonly executablePaths?: readonly string[];
     readonly current?: Awaited<ReturnType<CapabilityStore["get"]>>;
   },
@@ -137,15 +133,16 @@ export async function publishTransferredSkill(
     candidateContentHash: input.candidateContentHash,
     ...(input.executablePaths === undefined ? {} : { executablePaths: [...input.executablePaths] }),
   };
-  if (input.current === undefined)
+  if (input.current === undefined) {
+    const metadata = readSkillFrontmatter(
+      await readFile(join(input.sourcePath, "SKILL.md"), "utf8"),
+    );
     return await store.publishNewSkillRevisionCandidate({
       ...common,
       name: input.name,
-      description: input.description,
-      ...(input.checkDescriptionConsistency === undefined
-        ? {}
-        : { checkDescriptionConsistency: input.checkDescriptionConsistency }),
+      description: metadata.description ?? input.description,
     });
+  }
   if (input.current.definition.kind !== "skill")
     throw new Error(`Capability ${input.id} is not a Skill.`);
   return await store.publishSkillRevisionCandidate({

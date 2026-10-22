@@ -1,0 +1,76 @@
+{
+  "schemaVersion": "pragma.asset-sync-journal/v2",
+  "source": "[\"ssh://git@pragma.test/assets.git\",\"main\"]",
+  "changes": [
+    {
+      "key": "skill:0df66ebd-69bb-4656-82e5-5634a3878139",
+      "expectedRevision": 4,
+      "local": {
+        "key": "skill:0df66ebd-69bb-4656-82e5-5634a3878139",
+        "kind": "skill",
+        "name": "review",
+        "data": {
+          "name": "review",
+          "description": "Legacy local annotation",
+          "files": [
+            {
+              "path": "SKILL.md",
+              "content": "LS0tCm5hbWU6IHJldmlldwpkZXNjcmlwdGlvbjogT3JpZ2luYWwgcmV2aWV3Ci0tLQoKUmV2aWV3IGNoYW5nZXMuCg==",
+              "executable": false
+            },
+            {
+              "path": "scripts/run.sh",
+              "content": "IyEvYmluL3NoCmV4aXQgMAo=",
+              "executable": true
+            }
+          ]
+        },
+        "fingerprint": "65366fddf91fe187af20a826a4c21055c9c1bb9fdf85578e4cc6dda50f73d32d"
+      },
+      "remote": {
+        "key": "skill:0df66ebd-69bb-4656-82e5-5634a3878139",
+        "kind": "skill",
+        "name": "review",
+        "data": {
+          "name": "review",
+          "description": "Legacy remote annotation",
+          "files": [
+            {
+              "path": "SKILL.md",
+              "content": "LS0tCm5hbWU6IHJldmlldwpkZXNjcmlwdGlvbjogVXBkYXRlZCByZXZpZXcKLS0tCgpSZXZpZXcgY2hhbmdlcy4K",
+              "executable": false
+            },
+            {
+              "path": "scripts/run.sh",
+              "content": "IyEvYmluL3NoCmVjaG8gdXBkYXRlZAo=",
+              "executable": true
+            }
+          ]
+        },
+        "fingerprint": "ef3610dd00cfc75d8387f63fb6371510cc52886fd1b91a53e71891d7d3f44916"
+      }
+    }
+  ],
+  "expected": {
+    "skill:0df66ebd-69bb-4656-82e5-5634a3878139": "65366fddf91fe187af20a826a4c21055c9c1bb9fdf85578e4cc6dda50f73d32d"
+  },
+  "incomingState": {
+    "schemaVersion": "pragma.asset-sync-state/v2",
+    "source": "[\"ssh://git@pragma.test/assets.git\",\"main\"]",
+    "repositoryInitialized": true,
+    "bases": {
+      "skill:0df66ebd-69bb-4656-82e5-5634a3878139": "ef3610dd00cfc75d8387f63fb6371510cc52886fd1b91a53e71891d7d3f44916"
+    },
+    "remoteItems": {
+      "skill:0df66ebd-69bb-4656-82e5-5634a3878139": {
+        "kind": "skill",
+        "name": "review",
+        "fingerprint": "ef3610dd00cfc75d8387f63fb6371510cc52886fd1b91a53e71891d7d3f44916"
+      }
+    },
+    "unavailableItems": {},
+    "conflicts": [],
+    "conflictMessages": {},
+    "restoreConflicts": []
+  }
+}

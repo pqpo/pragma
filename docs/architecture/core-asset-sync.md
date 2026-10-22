@@ -7,7 +7,7 @@ local. Only `pragma-sync/` belongs to this protocol; other repository paths are 
 
 ## Repository format
 
-The marker `pragma-sync/sync.yaml` declares `pragma.asset-sync-repository/v1`. It contains no asset
+The marker `pragma-sync/sync.yaml` declares `pragma.asset-sync-repository/v2`. It contains no asset
 inventory, timestamps or content hashes. Definitions use Interpreter YAML formatting and current
 resource schemas; stable IDs determine paths, so renaming an asset does not rename its files.
 
@@ -34,9 +34,11 @@ README is a generated Chinese name/type/path index and is ignored on import. Kno
 retains names, descriptions, empty directories and per-file metadata. The actual file tree controls
 file additions and removals; new files receive normal priority and manual activation. Skill files
 retain original bytes, including binary content; executable flags come from the Git index. Sync
-does not compare the Skill description in metadata.yaml with SKILL.md frontmatter, including
-during initial publication. Both descriptions retain their original content; frontmatter must still
-contain string name and description fields, and name consistency remains required. Users
+uses SKILL.md frontmatter as the description authority. metadata.yaml retains a derived description
+for indexing and discovery. Cached descriptions are normalized before fingerprinting, first publication,
+and incremental updates. A metadata-only annotation does not change the Skill or create a revision.
+The adjacent v1-to-v2 repository migration reads legacy independent descriptions without rewriting
+original Git commits; later writes emit v2 caches. Name consistency remains required. Users
 can edit YAML and native files without maintaining a hash list. Import recalculates domain hashes
 and canonical semantic fingerprints. YAML formatting, generated README, credentials and local
 revision numbers do not affect fingerprints. Definitions and bindings are normalized through the
@@ -66,7 +68,11 @@ provider keys, execution state, historical revisions and plugin packages are exc
 Configuration and private state live in `~/.pragma/state/asset-sync/settings.json` and `state.json`,
 using `pragma.asset-sync-settings/v2` and `pragma.asset-sync-state/v2`. A file lock serializes sync.
 `restore-journal.json` stores target payloads, expected semantic versions, domain revision numbers and incoming baselines
-under `pragma.asset-sync-journal/v2`. On retry, restore completes before reading a new remote head;
+under `pragma.asset-sync-journal/v3`. An adjacent v2-to-v3 journal migration normalizes stored Skill payloads and rewrites their expected
+fingerprints and incoming baselines together, preserving domain revision expectations. Owner-local
+atomic migration backs up old v2 bytes and replays under the existing lock; stale migration journals
+cannot overwrite newer owner documents. Settings and checkpoint schemas remain v2.
+On retry, restore completes before reading a new remote head;
 already identical publications are skipped. Knowledge metadata is canonicalized using domain
 schemas; implicit parent directories are included before hashing. Expert plugin configuration and
 secret binding references are retained, while secret values remain local. Import planning also applies the authoritative DSL unknown-field
