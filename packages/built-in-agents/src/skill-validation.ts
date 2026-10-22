@@ -10,15 +10,7 @@ export interface SkillPackageValidationResult {
   }[];
 }
 
-export interface SkillPackageValidationOptions {
-  /** Sync preserves descriptions independently from SKILL.md frontmatter. Defaults to true. */
-  readonly checkDescriptionConsistency?: boolean;
-}
-
-export function validateSkillPackage(
-  rawPackage: SkillPackage,
-  options: SkillPackageValidationOptions = {},
-): SkillPackageValidationResult {
+export function validateSkillPackage(rawPackage: SkillPackage): SkillPackageValidationResult {
   const parsed = SkillPackageSchema.safeParse(rawPackage);
   if (!parsed.success) {
     const diagnostics = parsed.error.issues.map((issue) => ({
@@ -28,7 +20,7 @@ export function validateSkillPackage(
     }));
     return { passed: false, diagnostics };
   }
-  const diagnostics = metadataDiagnostics(parsed.data, options);
+  const diagnostics = metadataDiagnostics(parsed.data);
   return { passed: diagnostics.length === 0, diagnostics };
 }
 
@@ -39,7 +31,6 @@ function normalizeDescription(value: string): string {
 
 function metadataDiagnostics(
   skill: SkillPackage,
-  options: SkillPackageValidationOptions,
 ): readonly { readonly path: string; readonly code: string; readonly message: string }[] {
   const diagnostics: { path: string; code: string; message: string }[] = [];
   const skillDocument = skill.files.find((file) => file.path === "SKILL.md")?.content ?? "";
@@ -88,8 +79,7 @@ function metadataDiagnostics(
           });
         } else if (
           field === "description"
-            ? options.checkDescriptionConsistency !== false &&
-              normalizeDescription(value) !== normalizeDescription(skill.description)
+            ? normalizeDescription(value) !== normalizeDescription(skill.description)
             : value.trim() !== skill.name
         ) {
           diagnostics.push({

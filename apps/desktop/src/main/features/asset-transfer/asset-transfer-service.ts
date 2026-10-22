@@ -301,11 +301,14 @@ export function createAssetTransferService(options: {
         "skill",
         id,
         capability.definition.name,
-        SkillDataSchema.parse({
-          name: capability.definition.name,
-          description: capability.definition.description,
-          files,
-        }),
+        validateTransferredSkill(
+          {
+            name: capability.definition.name,
+            description: capability.definition.description,
+            files,
+          },
+          { id },
+        ),
       );
     }
     return { items: result, revisions, nameResolutionIssues };
@@ -386,11 +389,12 @@ export function createAssetTransferService(options: {
         for (const file of data.files)
           if (Buffer.byteLength(file.content) > 1_000_000)
             throw new Error(`Knowledge file exceeds 1 MB: ${file.id}`);
-      } else if (change.remote?.kind === "skill")
-        validateTransferredSkill(SkillDataSchema.parse(change.remote.data), {
+      } else if (change.remote?.kind === "skill") {
+        const data = validateTransferredSkill(SkillDataSchema.parse(change.remote.data), {
           id: item.key.slice("skill:".length),
         });
-      else if (change.remote?.kind === "capability")
+        change = { ...change, remote: { ...change.remote, data, fingerprint: fingerprint(data) } };
+      } else if (change.remote?.kind === "capability")
         definitions.set(
           item.key.slice("capability:".length),
           CapabilityDefinitionSchema.parse(change.remote.data),
@@ -715,7 +719,7 @@ export function createAssetTransferService(options: {
         continue;
       }
       if (item.kind === "skill") {
-        const data = SkillDataSchema.parse(remote.data);
+        const data = validateTransferredSkill(SkillDataSchema.parse(remote.data), { id });
         if (localCapability?.definition.kind === "skill") {
           const root = await options.capabilities.skillFilesPath(
             id,
@@ -725,26 +729,18 @@ export function createAssetTransferService(options: {
             root,
             localCapability.definition.executablePaths,
           );
-          assertExpected(
-            item.key,
+          const currentData = validateTransferredSkill(
             {
               name: localCapability.definition.name,
               description: localCapability.definition.description,
               files: payload.files,
             },
-            localCapability.manifest.latestRevision,
+            { id },
           );
-          if (
-            fingerprint({
-              name: localCapability.definition.name,
-              description: localCapability.definition.description,
-              files: payload.files,
-            }) === fingerprint(data)
-          )
-            continue;
+          assertExpected(item.key, currentData, localCapability.manifest.latestRevision);
+          if (fingerprint(currentData) === fingerprint(data)) continue;
         }
         if (localCapability === undefined) assertExpected(item.key, undefined);
-        validateTransferredSkill(data, { id });
         const root = await mkdtemp(join(tmpdir(), "pragma-core-skill-"));
         try {
           for (const file of data.files) {
@@ -768,7 +764,6 @@ export function createAssetTransferService(options: {
             description: data.description,
             sourcePath: root,
             candidateContentHash: tree.hash,
-            checkDescriptionConsistency: false,
             executablePaths,
             ...(localCapability === undefined ? {} : { current: localCapability }),
           });
@@ -935,11 +930,14 @@ export function createAssetTransferService(options: {
             const payload = await readTransferredSkill(root, capability.definition.executablePaths);
             assertExpected(
               `skill:${removal.id}`,
-              {
-                name: capability.definition.name,
-                description: capability.definition.description,
-                files: payload.files,
-              },
+              validateTransferredSkill(
+                {
+                  name: capability.definition.name,
+                  description: capability.definition.description,
+                  files: payload.files,
+                },
+                { id: removal.id },
+              ),
               capability.manifest.latestRevision,
             );
           } else

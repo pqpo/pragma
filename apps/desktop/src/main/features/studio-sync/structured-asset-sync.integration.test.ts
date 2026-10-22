@@ -11,7 +11,7 @@ import {
   type PragmaResource,
 } from "@pragma/interpreter/ast";
 import { execFile } from "node:child_process";
-import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
@@ -35,6 +35,7 @@ import { createCoreAssetSyncService } from "./core-asset-sync-service.ts";
 import { readSyncRepository, writeSyncRepository } from "./asset-sync-repository.ts";
 import { CoreAssetSyncItemSchema } from "../../../shared/contracts/index.ts";
 import { appendTransferredKnowledge } from "@pragma/local-host/deployment";
+import { fingerprint } from "../asset-transfer/asset-transfer-fingerprint.ts";
 
 const exec = promisify(execFile);
 const temporary: string[] = [];
@@ -1605,7 +1606,7 @@ describe("structured asset sync with real Git and domain stores", { timeout: 60_
       beforeCapability + 1,
     );
   });
-  it("synchronizes Skill description differences through export, restore and first publication", async () => {
+  it("derives Skill descriptions consistently across legacy restore and incremental script updates", async () => {
     const git = await fixture();
     const a = device(join(git.root, "a"));
     const b = device(join(git.root, "b"));
@@ -1614,31 +1615,68 @@ describe("structured asset sync with real Git and domain stores", { timeout: 60_
     expect(configured.status, configured.error).toBe("ready");
     const checkout = join(git.root, "editor");
     await exec("git", ["clone", git.bare, checkout]);
-    const description = String.raw`Audit \ncode with \"quotes\"`;
+    const prefix = join(checkout, "pragma-sync");
+    const metadataPath = join(prefix, "skills", skill.manifest.id, "metadata.yaml");
+    const entryPath = join(prefix, "skills", skill.manifest.id, "files", "SKILL.md");
+    const scriptPath = join(prefix, "skills", skill.manifest.id, "files", "scripts", "check.mjs");
+    const publishEdit = async (summary: string) => {
+      await exec("git", ["-C", checkout, "add", "--all"]);
+      await exec("git", ["-C", checkout, "commit", "-m", summary]);
+      await exec("git", ["-C", checkout, "push"]);
+    };
+    // An actual old-format snapshot may contain an independently edited directory description.
+    await writeFile(join(prefix, "sync.yaml"), "schemaVersion: pragma.asset-sync-repository/v1\n");
     await writeFile(
-      join(checkout, "pragma-sync", "skills", skill.manifest.id, "metadata.yaml"),
+      metadataPath,
       formatPragmaYaml({
         id: skill.manifest.id,
         name: "audit",
-        description,
+        description: "Legacy directory annotation",
         entryPath: "SKILL.md",
       }),
     );
-    await exec("git", ["-C", checkout, "add", "--all"]);
-    await exec("git", ["-C", checkout, "commit", "-m", "Edit Skill description"]);
-    await exec("git", ["-C", checkout, "push"]);
-
+    await publishEdit("Edit legacy metadata description only");
     const restored = await b.service.configure(configuration);
     expect(restored.status, restored.error).toBe("ready");
     expect((await b.capabilities.get(skill.manifest.id)).definition).toMatchObject({
-      description,
+      description: "Audit code",
     });
-    const root = await b.capabilities.skillFilesPath(skill.manifest.id, 1);
-    expect(await readFile(join(root, "SKILL.md"), "utf8")).toContain("description: Audit code");
+    const metadataOnly = await a.service.refresh();
+    expect(metadataOnly.status, metadataOnly.error).toBe("ready");
+    expect((await a.capabilities.get(skill.manifest.id)).manifest.latestRevision).toBe(1);
+
+    const script = "export const check = 2;\n";
+    await writeFile(scriptPath, script);
+    await publishEdit("Update scripts while legacy metadata differs");
+    for (const current of [a, b]) {
+      const refreshed = await current.service.refresh();
+      expect(refreshed.status, refreshed.error).toBe("ready");
+      const published = await current.capabilities.get(skill.manifest.id);
+      expect(published.manifest.latestRevision).toBe(2);
+      expect(published.definition).toMatchObject({ description: "Audit code" });
+      const root = await current.capabilities.skillFilesPath(skill.manifest.id, 2);
+      expect(await readFile(join(root, "scripts/check.mjs"), "utf8")).toBe(script);
+      expect(await readFile(join(root, "SKILL.md"), "utf8")).toContain("description: Audit code");
+    }
+    const description = "Updated description from SKILL.md";
+    await writeFile(
+      entryPath,
+      `---\nname: audit\ndescription: ${description}\n---\n\nAudit changes.\n`,
+    );
+    await publishEdit("Change the authoritative description without editing the stale cache");
+    for (const current of [a, b]) {
+      const refreshed = await current.service.refresh();
+      expect(refreshed.status, refreshed.error).toBe("ready");
+      expect((await current.capabilities.get(skill.manifest.id)).definition).toMatchObject({
+        description,
+      });
+      expect((await current.capabilities.get(skill.manifest.id)).manifest.latestRevision).toBe(3);
+    }
     const head = await git.head();
     const synced = await b.service.sync();
     expect(synced.status, synced.error).toBe("ready");
     expect(await git.head()).toBe(head);
+    expect((await b.capabilities.get(skill.manifest.id)).manifest.latestRevision).toBe(3);
   });
   it("accepts remote file edits/additions/deletions and honors automatic upload configuration", async () => {
     const git = await fixture();
@@ -1668,6 +1706,38 @@ describe("structured asset sync with real Git and domain stores", { timeout: 60_
     await a.service.automatic();
     expect(await git.head()).not.toBe(enabledHead);
   });
+  it("migrates an interrupted v2 Skill restore with an independent cached description", async () => {
+    const git = await fixture();
+    const a = device(join(git.root, "a"));
+    const skill = await addSkill(a.capabilities, a.root);
+    await a.service.configure(configuration);
+    const b = device(join(git.root, "b"), "skill");
+    expect((await b.service.configure(configuration)).status).toBe("error");
+    const path = join(b.root, "state/asset-sync/restore-journal.json");
+    const journal = JSON.parse(await readFile(path, "utf8"));
+    journal.schemaVersion = "pragma.asset-sync-journal/v2";
+    const key = `skill:${skill.manifest.id}`;
+    const change = journal.changes.find((entry: { key: string }) => entry.key === key);
+    change.remote.data.description = "Legacy directory annotation";
+    change.remote.fingerprint = fingerprint(change.remote.data);
+    journal.incomingState.bases[key] = change.remote.fingerprint;
+    journal.incomingState.remoteItems[key].fingerprint = change.remote.fingerprint;
+    const legacy = JSON.stringify(journal);
+    await writeFile(path, legacy);
+    const recovered = await b.restart().refresh();
+    expect(recovered.status, recovered.error).toBe("ready");
+    const restored = await b.capabilities.get(skill.manifest.id);
+    expect(restored.manifest.latestRevision).toBe(1);
+    expect(restored.definition).toMatchObject({ description: "Audit code" });
+    await expect(readFile(path)).rejects.toMatchObject({ code: "ENOENT" });
+    const backups = join(b.root, "state/asset-sync/migrations/backups");
+    const names = await readdir(backups);
+    const snapshots = await Promise.all(names.map((name) => readFile(join(backups, name), "utf8")));
+    expect(snapshots).toContain(legacy);
+    expect((await b.service.sync()).status).toBe("ready");
+    expect((await b.capabilities.get(skill.manifest.id)).manifest.latestRevision).toBe(1);
+  });
+
   it("replays an interrupted restore without creating duplicate assets or revisions", async () => {
     const git = await fixture();
     const a = device(join(git.root, "a"));
@@ -1679,7 +1749,7 @@ describe("structured asset sync with real Git and domain stores", { timeout: 60_
     const first = await b.stores.getSnapshot(knowledge.id);
     expect(
       await readFile(join(b.root, "state", "asset-sync", "restore-journal.json"), "utf8"),
-    ).toContain("pragma.asset-sync-journal/v2");
+    ).toContain("pragma.asset-sync-journal/v3");
     const recovered = await b.restart().sync();
     expect(recovered.status, recovered.error).toBe("ready");
     expect((await b.stores.list()).length).toBe(1);

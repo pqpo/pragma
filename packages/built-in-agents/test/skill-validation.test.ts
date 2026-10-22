@@ -167,22 +167,4 @@ describe("Skill package validation", () => {
       expect.arrayContaining([expect.objectContaining({ code: "skill_frontmatter_invalid" })]),
     );
   });
-
-  it("keeps synchronization's explicit description consistency option", () => {
-    expect(
-      validateSkillPackage(
-        {
-          name: "Example Skill",
-          description: "Separate sync description.",
-          files: [
-            {
-              path: "SKILL.md",
-              content: "---\nname: Example Skill\ndescription: Original description.\n---\n",
-            },
-          ],
-        },
-        { checkDescriptionConsistency: false },
-      ).passed,
-    ).toBe(true);
-  });
 });

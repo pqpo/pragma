@@ -96,18 +96,33 @@ async function migrateOwner(configurationPath: string, statePath: string): Promi
     for (const [name, value] of Object.entries(documents)) {
       const spec = specs.find((entry) => relative(root, entry.path) === name);
       if (!spec) throw new Error("asset_sync.migration_invalid_document");
-      spec.schema.parse(value);
+      spec.chain.upgrade(value);
     }
   };
   const pending = await readOptional(migrationJournal);
   if (pending !== undefined) {
-    const journal = JSON.parse(pending) as { fromVersion?: unknown; toVersion?: unknown };
-    if (journal.fromVersion !== 1 || journal.toVersion !== 2)
+    const journal = JSON.parse(pending) as {
+      fromVersion?: unknown;
+      toVersion?: unknown;
+      documents?: Record<string, unknown>;
+    };
+    if (
+      ![
+        [1, 2],
+        [1, 3],
+        [2, 3],
+      ].some(([from, to]) => journal.fromVersion === from && journal.toVersion === to)
+    )
       throw new Error("asset_sync.migration_unsupported_version");
     // A stale recovery operation must never downgrade a newer owner document.
     for (const spec of specs) {
       const bytes = await readOptional(spec.path);
-      if (bytes !== undefined) spec.chain.upgrade(JSON.parse(bytes));
+      if (bytes !== undefined) {
+        const current = spec.chain.upgrade(JSON.parse(bytes));
+        const target = journal.documents?.[relative(root, spec.path)];
+        if (target !== undefined && current.fromVersion > spec.chain.upgrade(target).fromVersion)
+          throw new Error("asset_sync.migration_stale");
+      }
     }
   }
   await recoverAtomicStateMigration({
@@ -117,7 +132,7 @@ async function migrateOwner(configurationPath: string, statePath: string): Promi
     validateDocuments,
   });
   const documents: Record<string, unknown> = {};
-  const backups: { path: string; bytes: string }[] = [];
+  const backups: { path: string; bytes: string; fromVersion: number; toVersion: number }[] = [];
   for (const spec of specs) {
     const bytes = await readOptional(spec.path);
     if (bytes === undefined) continue;
@@ -126,21 +141,26 @@ async function migrateOwner(configurationPath: string, statePath: string): Promi
     const name = relative(root, spec.path);
     if (name.startsWith("..")) throw new Error("asset_sync.migration_invalid_path");
     documents[name] = upgraded.value;
-    backups.push({ path: spec.path, bytes });
+    backups.push({
+      path: spec.path,
+      bytes,
+      fromVersion: upgraded.fromVersion,
+      toVersion: upgraded.toVersion,
+    });
   }
   if (backups.length === 0) return;
   const backupRoot = join(root, "migrations", "backups");
   await mkdir(backupRoot, { recursive: true, mode: 0o700 });
   for (const backup of backups) {
     const hash = createHash("sha256").update(backup.bytes).digest("hex");
-    await copyFile(backup.path, join(backupRoot, `${hash}.v1.json`));
+    await copyFile(backup.path, join(backupRoot, `${hash}.v${backup.fromVersion}.json`));
   }
   await applyAtomicStateMigration({
     aggregateRoot: root,
     journalFile: migrationJournal,
     resource: { family: "pragma.asset-sync-owner", id: "asset-sync" },
-    fromVersion: 1,
-    toVersion: 2,
+    fromVersion: Math.min(...backups.map((backup) => backup.fromVersion)),
+    toVersion: Math.max(...backups.map((backup) => backup.toVersion)),
     documents,
     validateDocuments,
   });
