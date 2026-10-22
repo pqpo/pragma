@@ -1,6 +1,7 @@
 import { createHash, randomUUID } from "node:crypto";
 import { mkdir, readFile, readdir, rename, rm, stat, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
+import { isDeepStrictEqual } from "node:util";
 
 import { withFileLock } from "@pragma/core";
 import {
@@ -31,6 +32,7 @@ import {
   type UpdateContextStoreDraftFile,
 } from "@pragma/built-in-agents/contracts";
 import { z } from "zod";
+import { KnowledgeRevisionReworkV1Schema } from "./revision-migrations/schemas/v3.ts";
 
 import type { ContextStoreContent, ContextStoreSnapshot } from "../../../shared/contracts/index.ts";
 import { deterministicRevisionUuid } from "../built-in-agents/revision-resource-id.ts";
@@ -43,6 +45,9 @@ import {
 import {
   ContextStoreRevisionJobV1Schema,
   ContextStoreRevisionJobV2Schema,
+  ContextStoreRevisionJobV3Schema,
+  migrateContextStoreRevisionJobV3ToV4,
+  migrateKnowledgeRevisionReworkV1ToV2,
   migrateContextStoreRevisionJobV1ToV2,
   migrateContextStoreRevisionJobV2ToV3,
   overlayFromV1Job,
@@ -301,6 +306,7 @@ export function createContextStoreRevisionService(options: {
     update: (draft: ContextStoreDraft) => Partial<ContextStoreDraft>,
   ): Promise<ContextStoreDraft> =>
     await withFileLock(`${draftRoot(id)}.lock`, async () => {
+      await recoverSubmissionUnderDraftLock(id);
       const current = await readDraft(id);
       if (current.revision !== expectedRevision) throw revisionConflict();
       if (current.state === "merged") throw invalidState("Merged drafts are read-only.");
@@ -442,24 +448,78 @@ export function createContextStoreRevisionService(options: {
       );
     }
     const v2 = migrateContextStoreRevisionJobV1ToV2(legacy, draft.id);
-    const migrated = migrateContextStoreRevisionJobV2ToV3(v2);
+    const migrated = migrateContextStoreRevisionJobV3ToV4(migrateContextStoreRevisionJobV2ToV3(v2));
     await writeJsonAtomic(jobPath(migrated.id), migrated);
     await rm(migrationPath, { force: true });
     return migrated;
   };
 
+  const JobMigrationJournalSchema = z
+    .object({
+      schemaVersion: z.literal("pragma.context-store-revision-job-v4-migration/v1"),
+      targetJob: ContextStoreRevisionJobSchema,
+    })
+    .strict();
+  const jobMigrationPath = (id: string) =>
+    join(options.statePath, "migrations", `${id}.v3-to-v4.json`);
+  const readJobMigration = async (id: string) => {
+    try {
+      const pending = JobMigrationJournalSchema.parse(
+        JSON.parse(await readFile(jobMigrationPath(id), "utf8")),
+      );
+      if (pending.targetJob.id !== id || pending.targetJob.submissionApprovalMode !== "required")
+        throw invalidState("Invalid revision job migration journal.");
+      return pending;
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
+      throw error;
+    }
+  };
   const readJob = async (id: string): Promise<ContextStoreRevisionJob> => {
     try {
       const raw = JSON.parse(await readFile(jobPath(id), "utf8")) as unknown;
       const current = ContextStoreRevisionJobSchema.safeParse(raw);
-      if (current.success) return current.data;
+      if (current.success) {
+        const pending = await readJobMigration(id);
+        if (pending !== undefined) {
+          if (JSON.stringify(pending.targetJob) !== JSON.stringify(current.data))
+            throw revisionConflict();
+          await rm(jobMigrationPath(id), { force: true });
+        }
+        return current.data;
+      }
       return await withFileLock(`${jobPath(id)}.migration.lock`, async () => {
         const latestRaw = JSON.parse(await readFile(jobPath(id), "utf8")) as unknown;
         const latest = ContextStoreRevisionJobSchema.safeParse(latestRaw);
         if (latest.success) return latest.data;
+        const legacyV3 = ContextStoreRevisionJobV3Schema.safeParse(latestRaw);
+        if (legacyV3.success) {
+          await writeJsonAtomic(
+            join(options.statePath, "migration-backups", `${id}.v3.json`),
+            legacyV3.data,
+          );
+          let pending = await readJobMigration(id);
+          if (pending === undefined) {
+            pending = JobMigrationJournalSchema.parse({
+              schemaVersion: "pragma.context-store-revision-job-v4-migration/v1",
+              targetJob: migrateContextStoreRevisionJobV3ToV4(legacyV3.data),
+            });
+            await writeJsonAtomic(jobMigrationPath(id), pending);
+          }
+          if (
+            JSON.stringify(pending.targetJob) !==
+            JSON.stringify(migrateContextStoreRevisionJobV3ToV4(legacyV3.data))
+          )
+            throw revisionConflict();
+          await writeJob(pending.targetJob);
+          await rm(jobMigrationPath(id), { force: true });
+          return pending.targetJob;
+        }
         const legacyV2 = ContextStoreRevisionJobV2Schema.safeParse(latestRaw);
         if (legacyV2.success) {
-          const migrated = migrateContextStoreRevisionJobV2ToV3(legacyV2.data);
+          const migrated = migrateContextStoreRevisionJobV3ToV4(
+            migrateContextStoreRevisionJobV2ToV3(legacyV2.data),
+          );
           await writeJsonAtomic(
             join(options.statePath, "migration-backups", `${legacyV2.data.id}.v2.json`),
             legacyV2.data,
@@ -481,9 +541,132 @@ export function createContextStoreRevisionService(options: {
     await writeJsonAtomic(jobPath(job.id), ContextStoreRevisionJobSchema.parse(job));
   };
 
+  const SubmissionJournalSchema = z
+    .object({
+      schemaVersion: z.literal("pragma.knowledge-revision-submission/v1"),
+      draft: ContextStoreDraftSchema,
+      job: ContextStoreRevisionJobSchema,
+    })
+    .strict();
+  // Callers hold the draft lock followed by the jobs lock.
+  const applySubmissionJournal = async (draftId: string): Promise<void> => {
+    const path = join(draftRoot(draftId), "submission.json");
+    let raw: string;
+    try {
+      raw = await readFile(path, "utf8");
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") return;
+      throw error;
+    }
+    const pending = SubmissionJournalSchema.parse(JSON.parse(raw));
+    if (
+      pending.draft.id !== draftId ||
+      pending.job.draftId !== draftId ||
+      pending.draft.state !== "pending_review" ||
+      pending.job.state !== "pending_review"
+    )
+      throw invalidState("Invalid knowledge submission journal.");
+    const draft = await readDraft(draftId);
+    const job = await readJob(pending.job.id);
+    if (
+      ![pending.draft.revision - 1, pending.draft.revision].includes(draft.revision) ||
+      ![pending.job.revision - 1, pending.job.revision].includes(job.revision) ||
+      pending.draft.submittedRevision !== pending.draft.revision ||
+      pending.job.request.storeId !== pending.draft.storeId ||
+      job.draftId !== draftId ||
+      job.request.storeId !== draft.storeId ||
+      draft.storeId !== pending.draft.storeId ||
+      pending.job.missionId !== pending.draft.activeMissionId ||
+      pending.job.request.operation !== pending.draft.operation ||
+      (job.revision < pending.job.revision &&
+        !["editing", "running", "needs_rebase"].includes(job.state)) ||
+      (job.revision === pending.job.revision && !isDeepStrictEqual(job, pending.job)) ||
+      (draft.revision === pending.draft.revision && !isDeepStrictEqual(draft, pending.draft)) ||
+      (draft.revision < pending.draft.revision &&
+        !["editing", "needs_rebase"].includes(draft.state)) ||
+      (draft.revision === pending.draft.revision && draft.state !== "pending_review")
+    )
+      throw revisionConflict();
+    if (draft.revision < pending.draft.revision) await writeDraft(pending.draft);
+    if (job.revision < pending.job.revision) await writeJob(pending.job);
+    await rm(path, { force: true });
+  };
+  // mutateDraftRecord already holds the draft lock; take the jobs lock only for recovery.
+  const recoverSubmissionUnderDraftLock = async (draftId: string): Promise<void> => {
+    try {
+      await stat(join(draftRoot(draftId), "submission.json"));
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") return;
+      throw error;
+    }
+    await withFileLock(jobsLockPath, async () => applySubmissionJournal(draftId));
+  };
+  const autoApproveSubmittedDraft = async (draftId: string): Promise<void> => {
+    const jobs = (await readAllJobs()).filter(
+      (job) =>
+        job.draftId === draftId &&
+        job.state === "pending_review" &&
+        job.submissionApprovalMode === "auto",
+    );
+    if (jobs.length > 1) throw invalidState("Knowledge draft has multiple pending revision tasks.");
+    const job = jobs[0];
+    if (job !== undefined)
+      await withFileLock(`${jobPath(job.id)}.auto-approval.lock`, async () => {
+        const current = await readJob(job.id);
+        if (current.state === "pending_review" && current.submissionApprovalMode === "auto") {
+          try {
+            await api.approve(current.id, current.revision);
+          } catch (error) {
+            // approve records errors after entering merging. Preflight failures also need a
+            // durable diagnostic, without replacing a concurrent review or merge result.
+            try {
+              await withReworkLocks(current.draftId, async () => {
+                const latest = await readJob(current.id);
+                if (latest.state !== "pending_review" || latest.revision !== current.revision)
+                  return;
+                const draft = await readDraft(latest.draftId);
+                const updatedAt = new Date().toISOString();
+                await writeJob(
+                  ContextStoreRevisionJobSchema.parse({
+                    ...latest,
+                    revision: latest.revision + 1,
+                    state: "needs_attention",
+                    error: {
+                      code: "auto_approval_failed",
+                      message: (
+                        errorMessage(error) || "Automatic knowledge approval failed."
+                      ).slice(0, 2_000),
+                    },
+                    updatedAt,
+                  }),
+                );
+                if (draft.state === "pending_review") {
+                  await writeDraft(
+                    ContextStoreDraftSchema.parse({
+                      ...draft,
+                      revision: draft.revision + 1,
+                      state: "needs_attention",
+                      submittedRevision: undefined,
+                      updatedAt,
+                    }),
+                  );
+                }
+              });
+            } catch (recordError) {
+              options.warn?.(
+                "knowledge_revision_auto_approval_failure_record_failed: automatic approval diagnostics could not be saved.",
+                recordError,
+              );
+            }
+            throw error;
+          }
+        }
+      });
+  };
+
   const ReworkJournalSchema = z
     .object({
-      schemaVersion: z.literal("pragma.knowledge-revision-rework/v1"),
+      schemaVersion: z.literal("pragma.knowledge-revision-rework/v2"),
       nextDraft: ContextStoreDraftSchema,
       nextJob: ContextStoreRevisionJobSchema,
     })
@@ -499,7 +682,20 @@ export function createContextStoreRevisionService(options: {
       if ((error as NodeJS.ErrnoException).code === "ENOENT") return;
       throw error;
     }
-    const journal = ReworkJournalSchema.parse(JSON.parse(raw));
+    let parsed: unknown = JSON.parse(raw);
+    if (
+      z.object({ schemaVersion: z.string() }).parse(parsed).schemaVersion ===
+      "pragma.knowledge-revision-rework/v1"
+    ) {
+      const legacy = KnowledgeRevisionReworkV1Schema.parse(parsed);
+      await writeJsonAtomic(
+        join(options.statePath, "migration-backups", `${draftId}.rework.v1.json`),
+        legacy,
+      );
+      parsed = migrateKnowledgeRevisionReworkV1ToV2(legacy);
+      await writeJsonAtomic(path, parsed);
+    }
+    const journal = ReworkJournalSchema.parse(parsed);
     const { nextDraft, nextJob } = journal;
     const draft = await readDraft(draftId);
     const job = await readJob(nextJob.id);
@@ -529,6 +725,12 @@ export function createContextStoreRevisionService(options: {
     );
 
   const recoverRework = async (draftId: string): Promise<void> => {
+    try {
+      await stat(join(draftRoot(draftId), "submission.json"));
+      await withReworkLocks(draftId, async () => applySubmissionJournal(draftId));
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+    }
     try {
       await stat(reworkJournalPath(draftId));
     } catch (error) {
@@ -694,7 +896,7 @@ export function createContextStoreRevisionService(options: {
       }
       const timestamp = new Date().toISOString();
       job = ContextStoreRevisionJobSchema.parse({
-        schemaVersion: "pragma.context-store-revision-job/v3",
+        schemaVersion: "pragma.context-store-revision-job/v4",
         id: claim.jobId,
         revision: 1,
         draftId: claim.draftId,
@@ -899,7 +1101,7 @@ export function createContextStoreRevisionService(options: {
         }
         const timestamp = new Date().toISOString();
         const job = ContextStoreRevisionJobSchema.parse({
-          schemaVersion: "pragma.context-store-revision-job/v3",
+          schemaVersion: "pragma.context-store-revision-job/v4",
           id: randomUUID(),
           revision: 1,
           draftId: draft.id,
@@ -1170,7 +1372,7 @@ export function createContextStoreRevisionService(options: {
         await writeJsonAtomic(
           reworkJournalPath(draft.id),
           ReworkJournalSchema.parse({
-            schemaVersion: "pragma.knowledge-revision-rework/v1",
+            schemaVersion: "pragma.knowledge-revision-rework/v2",
             nextDraft,
             nextJob,
           }),
@@ -1289,7 +1491,7 @@ export function createContextStoreRevisionService(options: {
             }
             const timestamp = new Date().toISOString();
             replacement = ContextStoreRevisionJobSchema.parse({
-              schemaVersion: "pragma.context-store-revision-job/v3",
+              schemaVersion: "pragma.context-store-revision-job/v4",
               id: replacementJobId,
               revision: 1,
               draftId: replacementDraft.id,
@@ -1475,7 +1677,7 @@ export function createContextStoreRevisionService(options: {
 
     async submitDraft(draftId, expectedRevision, summary) {
       await recoverRework(draftId);
-      return await withFileLock(`${draftRoot(draftId)}.lock`, async () => {
+      const submitted = await withFileLock(`${draftRoot(draftId)}.lock`, async () => {
         const current = await readDraft(draftId);
         if (current.revision !== expectedRevision) throw revisionConflict();
         if (current.state !== "editing" && current.state !== "needs_rebase") {
@@ -1509,6 +1711,10 @@ export function createContextStoreRevisionService(options: {
           );
         }
         const job = owners[0];
+        const submissionApprovalMode =
+          current.operation === "revise" && job !== undefined
+            ? (await options.contextStores.get(current.storeId)).writeApprovalMode
+            : "required";
         const revision = current.revision + 1;
         const next = ContextStoreDraftSchema.parse({
           ...current,
@@ -1518,15 +1724,29 @@ export function createContextStoreRevisionService(options: {
           summary,
           updatedAt: new Date().toISOString(),
         });
-        await writeDraft(next);
-        if (job !== undefined && job.state !== "pending_review") {
-          await mutateJob(job.id, job.revision, () => ({
-            state: "pending_review",
-            error: undefined,
-          }));
-        }
+        if (job !== undefined) {
+          await withFileLock(jobsLockPath, async () => {
+            if ((await readJob(job.id)).revision !== job.revision) throw revisionConflict();
+            // Freeze and record the decision together; replay can complete a partial submission.
+            await writeJsonAtomic(join(draftRoot(draftId), "submission.json"), {
+              schemaVersion: "pragma.knowledge-revision-submission/v1",
+              draft: next,
+              job: ContextStoreRevisionJobSchema.parse({
+                ...job,
+                revision: job.revision + 1,
+                state: "pending_review",
+                submissionApprovalMode,
+                error: undefined,
+                updatedAt: next.updatedAt,
+              }),
+            });
+            await applySubmissionJournal(draftId);
+          });
+        } else await writeDraft(next);
         return next;
       });
+      await autoApproveSubmittedDraft(draftId);
+      return await readDraft(submitted.id);
     },
 
     async updateDraftFile(input) {
@@ -1723,6 +1943,19 @@ export function createContextStoreRevisionService(options: {
       if (processing !== undefined) return await processing;
       const processBatch = async () => {
         await recoverMissionClaimReleases();
+        const automatic = (await api.list()).filter(
+          (job) => job.state === "pending_review" && job.submissionApprovalMode === "auto",
+        );
+        for (const job of automatic) {
+          try {
+            await autoApproveSubmittedDraft(job.draftId);
+          } catch (error) {
+            options.warn?.(
+              "knowledge_revision_auto_approval_failed: automatic approval could not complete.",
+              error,
+            );
+          }
+        }
         const pausedDrafts = (await api.list()).filter(
           (job) =>
             job.state === "needs_attention" &&
@@ -1813,7 +2046,7 @@ export function createContextStoreRevisionService(options: {
               continue;
             }
             const completedByAgent = await api.get(running.id);
-            if (completedByAgent.state !== "pending_review") {
+            if (completedByAgent.state === "running") {
               await mutateJob(completedByAgent.id, completedByAgent.revision, () => ({
                 state: "editing",
                 error: undefined,
@@ -1821,7 +2054,7 @@ export function createContextStoreRevisionService(options: {
             }
           } catch (error) {
             const failed = await api.get(running.id).catch(() => undefined);
-            if (failed !== undefined && !["merged", "rejected"].includes(failed.state)) {
+            if (failed !== undefined && ["running", "editing"].includes(failed.state)) {
               await mutateJob(failed.id, failed.revision, () => ({
                 state: "needs_attention",
                 error: { code: "generation_failed", message: errorMessage(error) },

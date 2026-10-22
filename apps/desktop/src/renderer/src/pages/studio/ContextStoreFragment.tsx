@@ -250,6 +250,9 @@ export function ContextStoreDirectoryFragment(props: {
 
 export function ContextStoreDetailFragment(props: {
   readonly store: ContextStore;
+  readonly onUpdateWriteApproval?: (
+    mode: ContextStore["writeApprovalMode"],
+  ) => Promise<ContextStore>;
   readonly onBack: () => void;
   readonly onOpenRevisions?: (() => void) | undefined;
   readonly onExport?: (() => Promise<void>) | undefined;
@@ -331,7 +334,10 @@ export function ContextStoreDetailFragment(props: {
     props.store.id,
   );
   const [revisionDialogOpen, setRevisionDialogOpen] = useState(false);
-  const [gitSettingsOpen, setGitSettingsOpen] = useState(false);
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [approvalSaving, setApprovalSaving] = useState(false);
+  const settingsCloseRef = useRef<HTMLButtonElement>(null);
+  const [approvalError, setApprovalError] = useState<string | null>(null);
   const [revisionPrompt, setRevisionPrompt] = useState("");
   const [revisionSubmitting, setRevisionSubmitting] = useState(false);
   const [revisionError, setRevisionError] = useState<string | null>(null);
@@ -339,7 +345,7 @@ export function ContextStoreDetailFragment(props: {
   const [leaving, setLeaving] = useState(false);
 
   useEffect(() => {
-    if (props.openGitSettingsRequest !== undefined) setGitSettingsOpen(true);
+    if (props.openGitSettingsRequest !== undefined) setSettingsOpen(true);
   }, [props.openGitSettingsRequest]);
 
   useEffect(() => {
@@ -890,7 +896,7 @@ export function ContextStoreDetailFragment(props: {
             <StudioActionButton
               label={t("assetGit.settings")}
               icon={<GearSix size={18} aria-hidden="true" />}
-              onClick={() => requestLeave(() => setGitSettingsOpen(true))}
+              onClick={() => requestLeave(() => setSettingsOpen(true))}
             />
             <StudioActionButton
               label={t("delete")}
@@ -1044,47 +1050,93 @@ export function ContextStoreDetailFragment(props: {
           }
         />
       ) : null}
-      {gitSettingsOpen ? (
+      {settingsOpen ? (
         <Dialog
-          title={t("assetGit.settingsTitle")}
-          description={t("assetGit.description")}
-          className="asset-git-dialog"
-          onCancel={() => setGitSettingsOpen(false)}
-          footer={
+          title={t("knowledgeBaseSettings")}
+          className="asset-git-dialog knowledge-settings-dialog"
+          busy={approvalSaving}
+          onCancel={() => setSettingsOpen(false)}
+          headerAction={
             <button
-              className="secondary-button"
+              className="icon-button"
               type="button"
-              onClick={() => setGitSettingsOpen(false)}
+              aria-label={t("close")}
+              title={t("close")}
+              ref={settingsCloseRef}
+              aria-disabled={approvalSaving}
+              onClick={() => {
+                if (!approvalSaving) setSettingsOpen(false);
+              }}
             >
-              {t("close")}
+              <X size={20} aria-hidden="true" />
             </button>
           }
         >
-          <AssetGitPanel
-            target={{ kind: "knowledge", id: props.store.id }}
-            showHeading={false}
-            beforeSync={async () => {
-              if (!(await commitDraft())) throw new Error(t("assetGit.saveFailed"));
-            }}
-            onSynced={async () => {
-              const api = desktopApi();
-              if (!api) return;
-              const next = (await api.listContextStores()).find(
-                (item) => item.id === props.store.id,
-              );
-              if (next) props.onStoreChanged(next);
-              await loadEntries();
-              const selected = currentRef.current.selectedEntry;
-              if (
-                selected?.kind === "file" &&
-                (await props.onListEntries(props.store.id)).some(
-                  (entry) => entry.kind === "file" && entry.id === selected.id,
-                )
-              ) {
-                await loadFile(selected, { discardChanges: true, preservePreview: true });
-              }
-            }}
-          />
+          <section
+            className="knowledge-settings-section"
+            aria-labelledby="knowledge-write-approval-label"
+          >
+            <h3 id="knowledge-write-approval-label">{t("writeApproval")}</h3>
+            <SelectMenu<ContextStore["writeApprovalMode"]>
+              ariaLabel={t("writeApproval")}
+              className="form-select"
+              portal={false}
+              value={props.store.writeApprovalMode}
+              disabled={approvalSaving || props.onUpdateWriteApproval === undefined}
+              options={[
+                { value: "required", label: t("writeApprovalRequired") },
+                { value: "auto", label: t("writeApprovalAuto") },
+              ]}
+              onChange={(mode) => {
+                // Keep focus inside the dialog while the select trigger is disabled.
+                settingsCloseRef.current?.focus();
+                setApprovalSaving(true);
+                setApprovalError(null);
+                void props.onUpdateWriteApproval!(mode)
+                  .then(props.onStoreChanged)
+                  .catch((cause: unknown) => setApprovalError(errorMessage(cause)))
+                  .finally(() => setApprovalSaving(false));
+              }}
+            />
+            <p className="knowledge-settings-help">{t("writeApprovalHelp")}</p>
+            {approvalError !== null ? (
+              <p className="form-error" role="alert">
+                {approvalError}
+              </p>
+            ) : null}
+          </section>
+          <section
+            className="knowledge-settings-section"
+            aria-labelledby="knowledge-git-settings-label"
+          >
+            <h3 id="knowledge-git-settings-label">{t("assetGit.title")}</h3>
+            <p className="knowledge-settings-help">{t("assetGit.description")}</p>
+            <AssetGitPanel
+              target={{ kind: "knowledge", id: props.store.id }}
+              showHeading={false}
+              beforeSync={async () => {
+                if (!(await commitDraft())) throw new Error(t("assetGit.saveFailed"));
+              }}
+              onSynced={async () => {
+                const api = desktopApi();
+                if (!api) return;
+                const next = (await api.listContextStores()).find(
+                  (item) => item.id === props.store.id,
+                );
+                if (next) props.onStoreChanged(next);
+                await loadEntries();
+                const selected = currentRef.current.selectedEntry;
+                if (
+                  selected?.kind === "file" &&
+                  (await props.onListEntries(props.store.id)).some(
+                    (entry) => entry.kind === "file" && entry.id === selected.id,
+                  )
+                ) {
+                  await loadFile(selected, { discardChanges: true, preservePreview: true });
+                }
+              }}
+            />
+          </section>
         </Dialog>
       ) : null}
       {revisionDialogOpen ? (

@@ -79,7 +79,8 @@ const ManagedFileIdSchema = ContextStoreEntryIdSchema.refine(
 );
 
 const ContextStoreBaseSchema = z.object({
-  schemaVersion: z.literal("pragma.context-store/v4"),
+  schemaVersion: z.literal("pragma.context-store/v5"),
+  writeApprovalMode: z.enum(["required", "auto"]).default("required"),
   id: ContextStoreIdSchema,
   name: KnowledgeBaseNameSchema,
   description: KnowledgeBaseDescriptionSchema,
@@ -260,6 +261,13 @@ export const ContextStoreImportInspectionSchema = z.object({
   totalBytes: z.number().int().nonnegative(),
 });
 
+export const UpdateContextStoreWriteApprovalSchema = z
+  .object({
+    storeId: ContextStoreIdSchema,
+    writeApprovalMode: z.enum(["required", "auto"]),
+  })
+  .strict();
+
 export const DeleteContextStoreSchema = z.object({
   storeId: ContextStoreIdSchema,
 });
@@ -348,6 +356,8 @@ export const DeleteContextStoreEntrySchema = z.object({
   id: z.string().trim().min(1).max(2_000),
   kind: z.enum(["file", "directory"]),
 });
+
+export type UpdateContextStoreWriteApproval = z.infer<typeof UpdateContextStoreWriteApprovalSchema>;
 
 export type ContextStore = z.infer<typeof ContextStoreSchema>;
 export type ContextStoreSnapshot = z.infer<typeof ContextStoreSnapshotSchema>;

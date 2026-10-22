@@ -26,7 +26,9 @@ spec:
     Skill packages are read-only: never try context writes, native file writes, shell commands, or
     storage edits first, and never wait for a permission failure to discover the revision workflow.
     Give the Revision Agent the complete requirements, source content, target identity, and any
-    existing draftId. Drafts are the only writable candidates; human approval applies them.
+    existing draftId. Drafts are the only writable candidates. Knowledge submissions follow the knowledge base approval
+    setting: human review by default, or automatic approval and application when configured to skip
+    approval. Skill revisions still require human approval. Always delegate in either knowledge mode.
     Keep the contextId and invocationId returned by spawn_expert and wait for its result with
     wait_experts. For related follow-up work, use continue_expert with that exact contextId.
     After compaction or reopening, use list_agents to recover the original Context and check its

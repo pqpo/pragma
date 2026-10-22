@@ -502,7 +502,8 @@ export function StudioPage(props: {
     const store =
       api === undefined
         ? ContextStoreSchema.parse({
-            schemaVersion: "pragma.context-store/v4",
+            schemaVersion: "pragma.context-store/v5",
+            writeApprovalMode: "required",
             id: crypto.randomUUID(),
             name: input.name,
             description: input.description,
@@ -977,6 +978,14 @@ export function StudioPage(props: {
         {screen === "context-store-detail" && selectedContextStore !== null ? (
           <ContextStoreDetailFragment
             store={selectedContextStore}
+            onUpdateWriteApproval={async (writeApprovalMode) => {
+              const api = desktopApi();
+              if (api === undefined) throw new Error("Desktop API is unavailable.");
+              return await api.updateContextStoreWriteApproval({
+                storeId: selectedContextStore.id,
+                writeApprovalMode,
+              });
+            }}
             openGitSettingsRequest={
               props.initialAssetGitTarget?.target.kind === "knowledge" &&
               props.initialAssetGitTarget.target.id === selectedContextStore.id

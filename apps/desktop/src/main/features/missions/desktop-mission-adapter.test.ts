@@ -2414,6 +2414,8 @@ describe("Desktop Mission resource adapter contracts", { timeout: 30_000 }, () =
   it.each([
     { executorRef: "expert:0000000000000002", cold: false },
     { executorRef: STORE_REVISION_EXPERT_REF, cold: false },
+    { executorRef: STORE_REVISION_EXPERT_REF, cold: false, automaticApproval: true },
+    { executorRef: "expert:0000000000pragma", cold: false, automaticApproval: true },
     { executorRef: "team:0000000000000003", cold: false },
     { executorRef: "expert:0000000000pragma", cold: false },
     { executorRef: "expert:0000000000pragma", cold: true },
@@ -2426,8 +2428,14 @@ describe("Desktop Mission resource adapter contracts", { timeout: 30_000 }, () =
       changePermissionDuringMount: true,
     },
   ])(
-    "handles an unmounted target from $executorRef (cold=$cold, delayedPublication=$delayedPublication, changePermission=$changePermissionDuringMount)",
-    async ({ executorRef, cold, delayedPublication, changePermissionDuringMount }) => {
+    "handles an unmounted target from $executorRef (cold=$cold, delayedPublication=$delayedPublication, changePermission=$changePermissionDuringMount, automaticApproval=$automaticApproval)",
+    async ({
+      executorRef,
+      cold,
+      delayedPublication,
+      changePermissionDuringMount,
+      automaticApproval,
+    }) => {
       const root = await mkdtemp(join(tmpdir(), "pragma-background-revision-"));
       temporaryPaths.push(root);
       const pragmaHome = join(root, "state");
@@ -2442,6 +2450,8 @@ describe("Desktop Mission resource adapter contracts", { timeout: 30_000 }, () =
         name: "Unattached target",
         description: "",
       });
+      if (automaticApproval)
+        await contextStores.updateWriteApproval({ storeId: target.id, writeApprovalMode: "auto" });
       const original = await contextStores.getSnapshot(target.id);
       let releasePublication!: () => void;
       const draftMounted = new Promise<void>((resolve) => {
@@ -2874,11 +2884,12 @@ describe("Desktop Mission resource adapter contracts", { timeout: 30_000 }, () =
           const inspection = (await call("knowledge_revision_get_draft", { draftId })) as {
             draft: { revision: number };
           };
-          await call("knowledge_revision_submit_draft", {
+          const submitted = await call("knowledge_revision_submit_draft", {
             draftId,
             expectedRevision: inspection.draft.revision,
             summary: "Add tracking instructions",
           });
+          if (automaticApproval) expect(submitted).toMatchObject({ state: "merged", stale: false });
           return { outputText: "Revision accepted", runtimeSessionId: "runtime" };
         },
         mapEvent: () => ({ events: [] }),
@@ -3029,7 +3040,9 @@ describe("Desktop Mission resource adapter contracts", { timeout: 30_000 }, () =
           async () => {
             const current = await missions.get(caller.id);
             expect(current.execution?.status, current.execution?.error).toBe("succeeded");
-            expect((await revisions.get(jobId!)).state).toBe("pending_review");
+            expect((await revisions.get(jobId!)).state).toBe(
+              automaticApproval ? "merged" : "pending_review",
+            );
           },
           { timeout: 30_000, interval: 100 },
         );
@@ -3044,6 +3057,24 @@ describe("Desktop Mission resource adapter contracts", { timeout: 30_000 }, () =
           : undefined,
       ).toBeDefined();
       const job = await revisions.get(jobId!);
+      if (automaticApproval) {
+        expect(job.state, JSON.stringify(job.error)).toBe("merged");
+        expect(job.submissionApprovalMode).toBe("auto");
+        expect((await revisions.getDraft(job.draftId)).state).toBe("merged");
+        expect((await contextStores.getSnapshot(target.id)).files).toEqual(
+          expect.arrayContaining([
+            expect.objectContaining({ id: "items/tracking.md", content: preparedContent }),
+          ]),
+        );
+        expect((await missions.get(caller.id)).contextMounts).toEqual([
+          { kind: "context-store", storeId: target.id },
+        ]);
+        expect(await contextStores.history(target.id)).toHaveLength(2);
+        expect(generate).not.toHaveBeenCalled();
+        expect(await revisions.list()).toHaveLength(1);
+        await runner.stopLocalController(caller.id);
+        return;
+      }
       expect(job.state, JSON.stringify(job.error)).toBe("pending_review");
       if (executorRef.startsWith("team:")) {
         expect(job.request.provenance).toMatchObject({
@@ -3145,7 +3176,9 @@ describe("Desktop Mission resource adapter contracts", { timeout: 30_000 }, () =
               const current = await missions.get(caller.id);
               expect(current.execution?.status, current.execution?.error).toBe("succeeded");
               expect(jobId).toBeDefined();
-              expect((await revisions.get(jobId!)).state).toBe("pending_review");
+              expect((await revisions.get(jobId!)).state).toBe(
+                automaticApproval ? "merged" : "pending_review",
+              );
             },
             { timeout: 30_000, interval: 100 },
           );

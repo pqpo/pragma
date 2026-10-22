@@ -2404,3 +2404,40 @@
 .knowledge-frontmatter-table tbody tr + tr {
   border-top: 1px solid var(--ui-line);
 }
+
+.knowledge-settings-dialog .ui-dialog-body {
+  display: grid;
+  gap: 28px;
+}
+
+.knowledge-settings-section {
+  display: grid;
+  gap: 12px;
+  min-width: 0;
+}
+
+.knowledge-settings-section h3 {
+  margin: 0;
+  color: var(--ui-text);
+  font-size: 13px;
+  font-weight: 500;
+}
+
+.knowledge-settings-help {
+  margin: 0;
+  color: var(--ui-text-secondary);
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+.knowledge-settings-dialog .ui-dialog-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.knowledge-settings-dialog .icon-button[aria-disabled="true"] {
+  cursor: default;
+  opacity: 0.5;
+}

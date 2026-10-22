@@ -160,7 +160,8 @@ describe("Node resource readers shared with Desktop", () => {
     expect(await store.readContext({ id: "Architecture Notes.md" })).toMatchObject({ ok: true });
     const authority = await readFile(join(root, "store.json"), "utf8");
     expect(JSON.parse(authority)).toMatchObject({
-      schemaVersion: "pragma.context-store/v4",
+      schemaVersion: "pragma.context-store/v5",
+      writeApprovalMode: "required",
       contentRevision: 1,
     });
     expect((await host.resolveBinding(binding("context", id)))?.fingerprint).toBe(

@@ -1,4 +1,11 @@
 export const studio = {
+  knowledgeBaseSettings: "知識庫設定",
+  writeApproval: "寫入審批",
+  writeApprovalRequired: "需要審批",
+  writeApprovalAuto: "跳過審批",
+  writeApprovalHelp:
+    "均由 Store Revision Agent 編輯草稿；跳過審批時，提交後自動審批並套用。僅影響後續提交。",
+
   assetGit: {
     metadataLocal: "衝突欄位用本機",
     metadataRemote: "衝突欄位用遠端",

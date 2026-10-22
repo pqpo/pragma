@@ -607,14 +607,12 @@ describe("built-in Pragma Agent DSL", () => {
     expect(resource.spec.instructions).toContain("added effective file and affected link target");
     expect(resource.spec.instructions).toContain("Repeat the entire");
     expect(resource.spec.instructions).toContain("final check after the last fix");
-    expect(resource.spec.instructions).toContain("moves the draft to human review");
-    expect(resource.spec.instructions).toContain(
-      "Submission freezes the draft during pending_review",
-    );
+    expect(resource.spec.instructions).toContain("returns the resulting draft state");
+    expect(resource.spec.instructions).toContain("Submission freezes editing");
     expect(resource.spec.instructions).toContain("latest draft.revision");
     expect(resource.spec.instructions).toContain("knowledge_revision_submit_draft");
     expect(resource.spec.instructions).toContain(
-      "Returning for changes restores editing on the same draft and Mission",
+      "returning for changes restores the same draft and Mission",
     );
     expect(resource.spec.instructions).toContain("knowledge_revision_discard_draft");
   });

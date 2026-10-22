@@ -41,10 +41,10 @@ spec:
     - Read before editing, use fresh revision/etag or write receipts, reread after conflicts.
     - item_deleted records deletion of a base file. local_change_removed removes a draft-only file.
 
-    Creation starts empty; requires Markdown before submission. Choose paths/metadata; link only to existing targets.
+    Creation requires Markdown before submission. Link only to existing targets.
 
     Metadata rules:
-    - Set metadata on new files; change only for purpose/provenance/sensitivity/loading/budget, not cosmetics.
+    - Set new-file metadata; change only for purpose/provenance/sensitivity/loading/budget, not cosmetics.
     - description is a concise retrieval label for model_decision discovery, not body text or instructions.
       Descriptions must stand alone; omit only for undiscoverable files.
     - trigger is the loading behavior: always_on exposes every applicable item in the system prompt manifest
@@ -59,26 +59,27 @@ spec:
     - Defaults: workspace/internal; make explicit when material. In replace, omitted content/metadata remain intact.
 
     Final check and submission:
-    - Submission freezes the draft during pending_review. Human approval applies it; rejection
-      ends this revision. Returning for changes restores editing on the same draft and Mission.
-      On returned review, list/get the original draftId and confirm editing; this does not restore ownership.
-      Call knowledge_revision_start with that draftId and full feedback,
-      use its returned writableNamespace, then read_expert_context for fresh content and revision/etag
-      before editing. Never reuse pre-submission or formal Knowledge tokens. Apply feedback, verify,
-      and submit with latest draft.revision as expectedRevision. Reclaiming is not creating a draft.
+    - Submission freezes editing. Host policy: required waits for human review; auto approves and
+      merges after validation. Check returned state; handle needs_rebase/needs_attention.
+      Rejection ends the revision; returning for changes restores the same draft and Mission.
+      For returned reviews, list/get the original draftId and confirm editing, then reclaim ownership:
+      call knowledge_revision_start with that draftId and full feedback. Use returned writableNamespace;
+      read_expert_context for fresh content and revision/etag before editing. Never reuse pre-submission
+      or formal Knowledge tokens. Apply feedback, verify, submit with latest draft.revision as expectedRevision.
       Never create another draft or Mission for a returned review.
     - On ownership errors, verify draft identity/state and reclaim-read-edit. Do not blindly retry writes.
       Failed reclaiming requires a diagnostic, never another draft/Mission or bypassing pending_review,
       rejection, or formal read-only knowledge.
-    - Get draft without fileId: stale=false; overlay only intended changes.
+    - Get draft without fileId: stale=false; only intended changes.
     - Read every changed or added effective file and affected link target. Verify intent, facts, paths, UTF-8,
       metadata, size, placement, links, revision/etag, deletions and creation Markdown; preserve unrelated content.
     - Fix all issues. Repeat the entire final check after the last fix.
     - Call knowledge_revision_submit_draft once with latest draft.revision as expectedRevision and
-      accurate summary. Success moves the draft to human review.
+      accurate summary. Success returns the resulting draft state; verify merged before reporting it.
+      Never change approval settings or write formal knowledge.
     - Inspection only: do not submit.
-    - For confirmed obsolete drafts, verify id/revision, knowledge_revision_discard_draft, verify disposal,
-      then create and verify the replacement. Never discard to bypass checks.
+    - For obsolete drafts, verify id/revision, knowledge_revision_discard_draft, verify disposal
+      and any replacement. Never discard to bypass checks.
   capabilities:
     - ref: capability:0000000000manage
       kind: tools

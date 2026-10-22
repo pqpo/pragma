@@ -3,6 +3,7 @@ export {
   ContextStoreIdSchema,
   FileContextStoreSchema,
   ContextStoreSchema,
+  UpdateContextStoreWriteApprovalSchema,
   ContextStoreSnapshotFileSchema,
   ContextStoreSnapshotSchema,
   ContextStoreChangeOperationSchema,

@@ -24,7 +24,8 @@ const record: ContextStoreRevisionRecord = {
   createdAt: "2026-09-15T10:00:00.000Z",
 };
 const job: ContextStoreRevisionJob = {
-  schemaVersion: "pragma.context-store-revision-job/v3",
+  schemaVersion: "pragma.context-store-revision-job/v4",
+  submissionApprovalMode: "required",
   id: "10000000-0000-4000-8000-000000000001",
   draftId: "20000000-0000-4000-8000-000000000001",
   revision: 1,

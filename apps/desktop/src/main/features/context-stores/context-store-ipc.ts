@@ -19,6 +19,7 @@ import {
   RenameContextStoreEntrySchema,
   SubscribeContextStoreChangesSchema,
   UpdateContextStoreFileSchema,
+  UpdateContextStoreWriteApprovalSchema,
   ContextStoreRevisionJobRefSchema,
   ContextStoreDraftRefSchema,
   CreateContextStoreDraftSchema,
@@ -69,6 +70,9 @@ export function installContextStoreHandlers(
     subscription.watcher?.close();
     subscription.sender.removeListener("destroyed", subscription.onDestroyed);
   };
+  ipcMain.handle("context-stores:update-write-approval", (_event, input: unknown) =>
+    store.updateWriteApproval(UpdateContextStoreWriteApprovalSchema.parse(input)),
+  );
   ipcMain.handle("context-stores:list", () => store.list());
   ipcMain.handle("context-stores:create", (_event, input: unknown) =>
     store.create(CreateContextStoreSchema.parse(input)),

@@ -12,7 +12,8 @@ afterEach(async () => {
 describe("ContextStorePickerDialog", () => {
   it("renders the shared searchable knowledge-base picker with selected state", () => {
     const store: ContextStore = {
-      schemaVersion: "pragma.context-store/v4",
+      schemaVersion: "pragma.context-store/v5",
+      writeApprovalMode: "required",
       id: "00000000-0000-4000-8000-000000000001",
       name: "Quality handbook",
       description: "Shared review guidance.",
@@ -46,7 +47,8 @@ describe("ContextStorePickerDialog", () => {
 
   it("shows the first 20 knowledge bases before loading more", () => {
     const stores = Array.from({ length: 21 }, (_, index) => ({
-      schemaVersion: "pragma.context-store/v4" as const,
+      schemaVersion: "pragma.context-store/v5" as const,
+      writeApprovalMode: "required" as const,
       id: `00000000-0000-4000-8000-${String(index).padStart(12, "0")}`,
       name: `Knowledge ${index}`,
       description: "Shared guidance.",

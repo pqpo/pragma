@@ -22,6 +22,7 @@ import {
   RenameContextStoreEntrySchema,
   SubscribeContextStoreChangesSchema,
   UpdateContextStoreFileSchema,
+  UpdateContextStoreWriteApprovalSchema,
   ContextStoreEditorDraftSchema,
   GetContextStoreEditorDraftSchema,
   CommitContextStoreEditorDraftSchema,
@@ -46,6 +47,13 @@ import { PickWorkspaceResultSchema } from "../../shared/contracts/settings.ts";
 import type { PragmaDesktopAPI } from "../../shared/contracts/api.ts";
 import { invokeMutation } from "../invoke-mutation.ts";
 export const contextStoresApi = {
+  updateContextStoreWriteApproval: async (input) =>
+    ContextStoreSchema.parse(
+      await ipcRenderer.invoke(
+        "context-stores:update-write-approval",
+        UpdateContextStoreWriteApprovalSchema.parse(input),
+      ),
+    ),
   listContextStores: async () =>
     ContextStoreSchema.array().parse(await ipcRenderer.invoke("context-stores:list")),
   createContextStore: async (input) =>
@@ -283,6 +291,7 @@ export const contextStoresApi = {
   | "listContextStoreEntries"
   | "createContextStoreFolder"
   | "createContextStoreFile"
+  | "updateContextStoreWriteApproval"
   | "updateContextStoreFile"
   | "renameContextStoreEntry"
   | "deleteContextStoreEntry"

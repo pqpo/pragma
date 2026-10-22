@@ -638,7 +638,8 @@ async function draftReceipt(draft: ContextStoreDraft, stores: ContextStoreStore)
     state: draft.state,
     baseRevision: draft.baseRevision,
     stale:
-      current.revision !== draft.baseRevision || current.snapshotHash !== draft.baseSnapshotHash,
+      draft.state !== "merged" &&
+      (current.revision !== draft.baseRevision || current.snapshotHash !== draft.baseSnapshotHash),
     changedPaths: [
       ...draft.overlay.files.map((file) => file.id),
       ...draft.overlay.deletedFiles,

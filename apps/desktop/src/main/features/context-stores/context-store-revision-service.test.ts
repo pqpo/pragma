@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { afterEach, describe, expect, it, vi } from "vitest";
+import * as core from "@pragma/core";
 
 import {
   createContextStoreRevisionService,
@@ -78,6 +79,563 @@ async function fixture(
 }
 
 describe("context store sparse draft revisions", () => {
+  it("reports automatic approval preflight failures and can retry the same draft", async () => {
+    const { service, contextStores, store } = await fixture();
+    await contextStores.updateWriteApproval({ storeId: store.id, writeApprovalMode: "auto" });
+    const job = await service.startForMission({
+      missionId: "30000000-0000-4000-8000-000000000001",
+      request: {
+        schemaVersion: "pragma.context-store-revision-request/v2",
+        operation: "revise",
+        storeId: store.id,
+        prompt: "Revise",
+        source: "user",
+      },
+    });
+    await (
+      await service.resolveDraft(job.draftId)
+    ).store.addContext({ id: "change.md", content: "# Change" });
+    const draft = await service.getDraft(job.draftId);
+    const getSnapshot = contextStores.getSnapshot.bind(contextStores);
+    const snapshotSpy = vi
+      .spyOn(contextStores, "getSnapshot")
+      .mockImplementation(async (id, revision) => {
+        if (revision === undefined) throw new Error("Formal store is unavailable");
+        return await getSnapshot(id, revision);
+      });
+    await expect(service.submitDraft(draft.id, draft.revision, "Submit")).rejects.toThrow(
+      "Formal store is unavailable",
+    );
+    snapshotSpy.mockRestore();
+    const failed = await service.get(job.id);
+    expect(failed).toMatchObject({
+      state: "needs_attention",
+      submissionApprovalMode: "auto",
+      error: { code: "auto_approval_failed", message: "Formal store is unavailable" },
+    });
+    expect((await service.getDraft(draft.id)).state).toBe("needs_attention");
+    expect(await contextStores.history(store.id)).toHaveLength(1);
+    const retried = await service.retry(failed.id, failed.revision);
+    expect(retried.draftId).toBe(draft.id);
+    const editable = await service.getDraft(draft.id);
+    expect(
+      (await service.submitDraft(editable.id, editable.revision, "Retry approval")).state,
+    ).toBe("merged");
+    expect(await service.list()).toHaveLength(1);
+    expect(await contextStores.history(store.id)).toHaveLength(2);
+  });
+
+  it("takes the job lock when a cached draft writer recovers an interrupted submission", async () => {
+    const { directory, draftsPath, service, store } = await fixture();
+    const job = await service.start({
+      schemaVersion: "pragma.context-store-revision-request/v2",
+      operation: "revise",
+      storeId: store.id,
+      prompt: "Revise",
+      source: "user",
+    });
+    const cached = (await service.resolveDraft(job.draftId)).store;
+    await cached.addContext({ id: "change.md", content: "# Change" });
+    const draft = await service.getDraft(job.draftId);
+    const pendingDraft = {
+      ...draft,
+      revision: draft.revision + 1,
+      state: "pending_review",
+      submittedRevision: draft.revision + 1,
+    };
+    const pendingJob = {
+      ...job,
+      revision: job.revision + 1,
+      state: "pending_review",
+      submissionApprovalMode: "required",
+    };
+    await writeFile(
+      join(draftsPath, draft.id, "submission.json"),
+      JSON.stringify({
+        schemaVersion: "pragma.knowledge-revision-submission/v1",
+        draft: pendingDraft,
+        job: pendingJob,
+      }),
+    );
+    const jobsLockPath = join(directory, "state", "context-store-revisions", ".jobs.lock");
+    let release!: () => void;
+    let entered!: () => void;
+    const enteredLock = new Promise<void>((resolve) => {
+      entered = resolve;
+    });
+    const releaseLock = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const held = core.withFileLock(jobsLockPath, async () => {
+      entered();
+      await releaseLock;
+    });
+    await enteredLock;
+    const lockSpy = vi.spyOn(core, "withFileLock");
+    const mutation = cached.addContext({ id: "late.md", content: "Must not be added" });
+    try {
+      await vi.waitFor(
+        () => expect(lockSpy).toHaveBeenCalledWith(jobsLockPath, expect.any(Function)),
+        { timeout: 1000 },
+      );
+      const current = JSON.parse(
+        await readFile(
+          join(directory, "state", "context-store-revisions", "jobs", `${job.id}.json`),
+          "utf8",
+        ),
+      );
+      expect(current).toEqual(job);
+    } finally {
+      release();
+      await held;
+      lockSpy.mockRestore();
+      expect((await mutation).ok).toBe(false);
+    }
+    expect((await service.get(job.id)).state).toBe("pending_review");
+    expect((await service.getDraft(draft.id)).overlay.files.map((file) => file.id)).toEqual([
+      "change.md",
+    ]);
+  });
+
+  it.each(["job", "draft"])(
+    "preserves a submission journal when the %s has conflicting data at the same revision",
+    async (owner) => {
+      const { directory, draftsPath, service, store } = await fixture();
+      const job = await service.start({
+        schemaVersion: "pragma.context-store-revision-request/v2",
+        operation: "revise",
+        storeId: store.id,
+        prompt: "Revise",
+        source: "user",
+      });
+      await (
+        await service.resolveDraft(job.draftId)
+      ).store.addContext({ id: "change.md", content: "# Change" });
+      const draft = await service.getDraft(job.draftId);
+      const nextDraft = {
+        ...draft,
+        revision: draft.revision + 1,
+        state: "pending_review",
+        submittedRevision: draft.revision + 1,
+      };
+      const nextJob = {
+        ...job,
+        revision: job.revision + 1,
+        state: "pending_review",
+        submissionApprovalMode: "auto",
+      };
+      const journalPath = join(draftsPath, draft.id, "submission.json");
+      await writeFile(
+        journalPath,
+        JSON.stringify({
+          schemaVersion: "pragma.knowledge-revision-submission/v1",
+          draft: nextDraft,
+          job: nextJob,
+        }),
+      );
+      const draftPath = join(draftsPath, draft.id, "draft.json");
+      const jobPath = join(directory, "state", "context-store-revisions", "jobs", `${job.id}.json`);
+      await writeFile(
+        draftPath,
+        JSON.stringify(
+          owner === "draft" ? { ...nextDraft, summary: "Another submission" } : nextDraft,
+        ),
+      );
+      await writeFile(
+        jobPath,
+        JSON.stringify(owner === "job" ? { ...nextJob, state: "rejected" } : nextJob),
+      );
+      const before = await Promise.all([
+        readFile(journalPath, "utf8"),
+        readFile(draftPath, "utf8"),
+        readFile(jobPath, "utf8"),
+      ]);
+      await expect(service.getDraft(draft.id)).rejects.toMatchObject({ code: "revision_conflict" });
+      expect(
+        await Promise.all([
+          readFile(journalPath, "utf8"),
+          readFile(draftPath, "utf8"),
+          readFile(jobPath, "utf8"),
+        ]),
+      ).toEqual(before);
+    },
+  );
+
+  it("automatically applies a returned draft when it is resubmitted under the new setting", async () => {
+    const { service, contextStores, store } = await fixture();
+    const missionId = "30000000-0000-4000-8000-000000000001";
+    const request = {
+      schemaVersion: "pragma.context-store-revision-request/v2" as const,
+      operation: "revise" as const,
+      storeId: store.id,
+      prompt: "Revise",
+      source: "user" as const,
+    };
+    const job = await service.startForMission({ missionId, request });
+    await (
+      await service.resolveDraft(job.draftId)
+    ).store.addContext({ id: "returned.md", content: "# Revision" });
+    let draft = await service.getDraft(job.draftId);
+    await service.submitDraft(draft.id, draft.revision, "First review");
+    const pending = await service.get(job.id);
+    await service.returnForRework(job.id, pending.revision);
+    await contextStores.updateWriteApproval({ storeId: store.id, writeApprovalMode: "auto" });
+    expect((await service.startForMission({ missionId, request, draftId: draft.id })).id).toBe(
+      job.id,
+    );
+    draft = await service.getDraft(draft.id);
+    expect((await service.submitDraft(draft.id, draft.revision, "Revised review")).state).toBe(
+      "merged",
+    );
+    expect(await service.list()).toHaveLength(1);
+    expect(await contextStores.history(store.id)).toHaveLength(2);
+  });
+
+  it("validates an automatic submission before freezing or publishing it", async () => {
+    const { service, contextStores, store } = await fixture();
+    await contextStores.updateWriteApproval({ storeId: store.id, writeApprovalMode: "auto" });
+    const job = await service.startForMission({
+      missionId: "30000000-0000-4000-8000-000000000001",
+      request: {
+        schemaVersion: "pragma.context-store-revision-request/v2",
+        operation: "revise",
+        storeId: store.id,
+        prompt: "Revise",
+        source: "user",
+      },
+    });
+    await (
+      await service.resolveDraft(job.draftId)
+    ).store.addContext({
+      id: "overview.md",
+      content: "[Broken link](missing.md)",
+      metadata: { trigger: "always_on", priority: "normal" },
+    });
+    const draft = await service.getDraft(job.draftId);
+    await expect(service.submitDraft(draft.id, draft.revision, "Invalid")).rejects.toMatchObject({
+      code: "validation_failed",
+    });
+    expect((await service.getDraft(draft.id)).state).toBe("editing");
+    expect((await service.get(job.id)).state).toBe("running");
+    expect(await contextStores.history(store.id)).toHaveLength(1);
+  });
+
+  it("upgrades an interrupted historical rework journal before exposing the draft", async () => {
+    const { service, store, draftsPath } = await fixture();
+    const job = await service.submit({
+      schemaVersion: "pragma.context-store-revision-request/v2",
+      operation: "revise",
+      storeId: store.id,
+      prompt: "Review",
+      source: "user",
+    });
+    await service.processPending();
+    const pending = await service.get(job.id);
+    const draft = await service.getDraft(job.draftId);
+    const oldJob = JSON.parse(
+      await readFile(
+        new URL("./fixtures/context-store-revision-job-v3.json", import.meta.url),
+        "utf8",
+      ),
+    );
+    Object.assign(oldJob, {
+      id: job.id,
+      draftId: job.draftId,
+      revision: pending.revision + 1,
+      state: "editing",
+      request: pending.request,
+    });
+    const nextDraft = {
+      ...draft,
+      revision: draft.revision + 1,
+      state: "editing",
+      submittedRevision: undefined,
+    };
+    const path = join(draftsPath, draft.id, "rework.json");
+    await writeFile(
+      path,
+      JSON.stringify({
+        schemaVersion: "pragma.knowledge-revision-rework/v1",
+        nextDraft,
+        nextJob: oldJob,
+      }),
+    );
+    expect((await service.getDraft(draft.id)).state).toBe("editing");
+    expect(await service.get(job.id)).toMatchObject({
+      state: "editing",
+      submissionApprovalMode: "required",
+      revision: oldJob.revision,
+    });
+    await expect(stat(path)).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
+  it.each(["legacy", "prepared", "job_written"])(
+    "migrates the historical v3 job from %s with manual approval even when the store is automatic",
+    async (phase) => {
+      const { service, contextStores, store, directory } = await fixture();
+      const job = await service.submit({
+        schemaVersion: "pragma.context-store-revision-request/v2",
+        operation: "revise",
+        storeId: store.id,
+        prompt: "Manual history",
+        source: "user",
+      });
+      await service.processPending();
+      await contextStores.updateWriteApproval({ storeId: store.id, writeApprovalMode: "auto" });
+      const legacy = JSON.parse(
+        await readFile(
+          new URL("./fixtures/context-store-revision-job-v3.json", import.meta.url),
+          "utf8",
+        ),
+      );
+      legacy.id = job.id;
+      legacy.draftId = job.draftId;
+      legacy.request.storeId = store.id;
+      const path = join(directory, "state", "context-store-revisions", "jobs", `${job.id}.json`);
+      const target = {
+        ...legacy,
+        schemaVersion: "pragma.context-store-revision-job/v4",
+        submissionApprovalMode: "required",
+      };
+      await writeFile(path, JSON.stringify(phase === "job_written" ? target : legacy));
+      if (phase !== "legacy") {
+        const statePath = join(directory, "state", "context-store-revisions");
+        await mkdir(join(statePath, "migrations"), { recursive: true });
+        await mkdir(join(statePath, "migration-backups"), { recursive: true });
+        await writeFile(
+          join(statePath, "migration-backups", `${job.id}.v3.json`),
+          JSON.stringify(legacy),
+        );
+        await writeFile(
+          join(statePath, "migrations", `${job.id}.v3-to-v4.json`),
+          JSON.stringify({
+            schemaVersion: "pragma.context-store-revision-job-v4-migration/v1",
+            targetJob: target,
+          }),
+        );
+      }
+      expect(await service.get(job.id)).toMatchObject({
+        schemaVersion: "pragma.context-store-revision-job/v4",
+        revision: legacy.revision,
+        submissionApprovalMode: "required",
+        state: "pending_review",
+      });
+      expect(
+        JSON.parse(
+          await readFile(
+            join(
+              directory,
+              "state",
+              "context-store-revisions",
+              "migration-backups",
+              `${job.id}.v3.json`,
+            ),
+            "utf8",
+          ),
+        ),
+      ).toEqual(legacy);
+      await service.processPending();
+      expect((await service.get(job.id)).state).toBe("pending_review");
+      const current = await readFile(path, "utf8");
+      await service.get(job.id);
+      expect(await readFile(path, "utf8")).toBe(current);
+      const future = JSON.stringify({
+        ...JSON.parse(current),
+        schemaVersion: "pragma.context-store-revision-job/v999",
+      });
+      await writeFile(path, future);
+      await expect(service.get(job.id)).rejects.toThrow();
+      expect(await readFile(path, "utf8")).toBe(future);
+    },
+  );
+
+  it("automatically approves generated revisions without reopening the merged draft", async () => {
+    const { service, contextStores, store } = await fixture();
+    expect(store.writeApprovalMode).toBe("required");
+    await contextStores.updateWriteApproval({ storeId: store.id, writeApprovalMode: "auto" });
+    const job = await service.submit({
+      schemaVersion: "pragma.context-store-revision-request/v2",
+      operation: "revise",
+      storeId: store.id,
+      prompt: "Automatic revision",
+      source: "user",
+    });
+    await service.processPending();
+    expect(await service.get(job.id)).toMatchObject({
+      state: "merged",
+      submissionApprovalMode: "auto",
+    });
+    expect((await service.getDraft(job.draftId)).state).toBe("merged");
+    expect((await contextStores.getSnapshot(store.id)).files).toEqual(
+      expect.arrayContaining([expect.objectContaining({ id: "items/revised.md" })]),
+    );
+    await service.processPending();
+    expect(await contextStores.history(store.id)).toHaveLength(2);
+  });
+
+  it("leaves existing manual submissions pending when automatic approval is enabled", async () => {
+    const { service, contextStores, store } = await fixture();
+    const job = await service.submit({
+      schemaVersion: "pragma.context-store-revision-request/v2",
+      operation: "revise",
+      storeId: store.id,
+      prompt: "Manual revision",
+      source: "user",
+    });
+    await service.processPending();
+    await contextStores.updateWriteApproval({ storeId: store.id, writeApprovalMode: "auto" });
+    await service.processPending();
+    expect(await service.get(job.id)).toMatchObject({
+      state: "pending_review",
+      submissionApprovalMode: "required",
+    });
+    expect(await contextStores.history(store.id)).toHaveLength(1);
+  });
+
+  it.each(["required", "auto"] as const)(
+    "uses the latest %s setting for an editing Mission draft",
+    async (mode) => {
+      const { service, contextStores, store } = await fixture();
+      await contextStores.updateWriteApproval({
+        storeId: store.id,
+        writeApprovalMode: mode === "auto" ? "required" : "auto",
+      });
+      const job = await service.startForMission({
+        missionId: "30000000-0000-4000-8000-000000000001",
+        request: {
+          schemaVersion: "pragma.context-store-revision-request/v2",
+          operation: "revise",
+          storeId: store.id,
+          prompt: "Update",
+          source: "user",
+        },
+      });
+      const editable = (await service.resolveDraft(job.draftId)).store;
+      expect((await editable.addContext({ id: "change.md", content: "# Change" })).ok).toBe(true);
+      await contextStores.updateWriteApproval({ storeId: store.id, writeApprovalMode: mode });
+      const draft = await service.getDraft(job.draftId);
+      const submitted = await service.submitDraft(draft.id, draft.revision, "Submit");
+      expect(submitted.state).toBe(mode === "auto" ? "merged" : "pending_review");
+      expect((await service.get(job.id)).submissionApprovalMode).toBe(mode);
+      expect((await editable.addContext({ id: "after-submit.md", content: "Must fail" })).ok).toBe(
+        false,
+      );
+    },
+  );
+
+  it("preserves conflict checks during automatic approval", async () => {
+    const { service, contextStores, store } = await fixture();
+    await contextStores.updateWriteApproval({ storeId: store.id, writeApprovalMode: "auto" });
+    const job = await service.startForMission({
+      missionId: "30000000-0000-4000-8000-000000000001",
+      request: {
+        schemaVersion: "pragma.context-store-revision-request/v2",
+        operation: "revise",
+        storeId: store.id,
+        prompt: "Update",
+        source: "user",
+      },
+    });
+    const editable = (await service.resolveDraft(job.draftId)).store;
+    await editable.addContext({ id: "change.md", content: "# Change" });
+    await contextStores.createFile(store.id, "external.md", "# Independent change");
+    const draft = await service.getDraft(job.draftId);
+    expect((await service.submitDraft(draft.id, draft.revision, "Submit")).state).toBe(
+      "needs_rebase",
+    );
+    expect((await service.get(job.id)).state).toBe("needs_rebase");
+    expect((await contextStores.getSnapshot(store.id)).files.map((file) => file.id)).toEqual([
+      "external.md",
+    ]);
+  });
+
+  it("preserves automatic merge failure diagnostics", async () => {
+    const { service, contextStores, store } = await fixture();
+    await contextStores.updateWriteApproval({ storeId: store.id, writeApprovalMode: "auto" });
+    vi.spyOn(contextStores, "applyChangeSet").mockRejectedValueOnce(new Error("Storage failed"));
+    const job = await service.submit({
+      schemaVersion: "pragma.context-store-revision-request/v2",
+      operation: "revise",
+      storeId: store.id,
+      prompt: "Automatic revision",
+      source: "user",
+    });
+    await service.processPending();
+    expect(await service.get(job.id)).toMatchObject({
+      state: "needs_attention",
+      error: { code: "merge_failed" },
+    });
+    expect((await service.getDraft(job.draftId)).state).toBe("needs_attention");
+    expect(await contextStores.history(store.id)).toHaveLength(1);
+  });
+
+  it.each(["prepared", "draft_written", "both_written"])(
+    "recovers a %s automatic submission after restart exactly once",
+    async (phase) => {
+      const { directory, service, contextStores, store, draftsPath } = await fixture();
+      const job = await service.startForMission({
+        missionId: "30000000-0000-4000-8000-000000000001",
+        request: {
+          schemaVersion: "pragma.context-store-revision-request/v2",
+          operation: "revise",
+          storeId: store.id,
+          prompt: "Update",
+          source: "user",
+        },
+      });
+      await (
+        await service.resolveDraft(job.draftId)
+      ).store.addContext({ id: "recovered.md", content: "# Recovered" });
+      const draft = await service.getDraft(job.draftId);
+      const nextDraft = {
+        ...draft,
+        state: "pending_review",
+        revision: draft.revision + 1,
+        submittedRevision: draft.revision + 1,
+        summary: "Recovered submission",
+      };
+      const nextJob = {
+        ...(await service.get(job.id)),
+        state: "pending_review",
+        revision: job.revision + 1,
+        submissionApprovalMode: "auto",
+      };
+      await writeFile(
+        join(draftsPath, draft.id, "submission.json"),
+        JSON.stringify({
+          schemaVersion: "pragma.knowledge-revision-submission/v1",
+          draft: nextDraft,
+          job: nextJob,
+        }),
+      );
+      if (phase !== "prepared")
+        await writeFile(join(draftsPath, draft.id, "draft.json"), JSON.stringify(nextDraft));
+      if (phase === "both_written")
+        await writeFile(
+          join(directory, "state", "context-store-revisions", "jobs", `${job.id}.json`),
+          JSON.stringify(nextJob),
+        );
+      const restarted = createContextStoreRevisionService({
+        statePath: join(directory, "state", "context-store-revisions"),
+        draftsPath,
+        contextStores,
+        generator: {
+          generate: async () => {
+            throw new Error("Must not regenerate");
+          },
+        },
+      });
+      await restarted.processPending();
+      await restarted.processPending();
+      expect((await restarted.get(job.id)).state).toBe("merged");
+      expect((await restarted.getDraft(draft.id)).state).toBe("merged");
+      expect(await contextStores.history(store.id)).toHaveLength(2);
+      await expect(stat(join(draftsPath, draft.id, "submission.json"))).rejects.toMatchObject({
+        code: "ENOENT",
+      });
+    },
+  );
+
   it("rejects a future rework journal without changing this or another owner", async () => {
     const { service, store, draftsPath } = await fixture();
     const job = await service.submit({
@@ -203,7 +761,7 @@ describe("context store sparse draft revisions", () => {
       await writeFile(
         journalPath,
         JSON.stringify({
-          schemaVersion: "pragma.knowledge-revision-rework/v1",
+          schemaVersion: "pragma.knowledge-revision-rework/v2",
           nextDraft,
           nextJob,
         }),
@@ -1741,7 +2299,8 @@ describe("context store sparse draft revisions", () => {
 
     const [migrated] = await service.list();
     expect(migrated).toMatchObject({
-      schemaVersion: "pragma.context-store-revision-job/v3",
+      schemaVersion: "pragma.context-store-revision-job/v4",
+      submissionApprovalMode: "required",
       id: source.id,
       revision: 6,
       state: "pending_review",

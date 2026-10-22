@@ -43,6 +43,16 @@ The lifecycle is `editing -> pending_review -> merging -> merged`, with `needs_r
 disclosure and internal Markdown links. Approval converts the overlay to a minimal change set and
 reuses the published Store journal, atomic replacement, revision record, and revision/hash CAS.
 Published drift moves the task to `needs_rebase`; it never overwrites or creates a replacement task.
+Each knowledge base has a local `writeApprovalMode` setting: `required` by default, or `auto`.
+Both modes delegate to Store Revision Agent and edit sparse drafts. At submission, the Host persists
+that submission's approval mode and freezes the validated draft; `auto` then invokes the same
+approval/merge path automatically. Store settings never grant direct writes to published mounts.
+Changing the setting affects future submissions only. Pending manual reviews remain manual, while
+an editing or returned draft uses the latest setting when resubmitted. Creation and imported stores
+default to `required`; content export/publishing does not propagate this local setting. Skill review
+and the Studio editor's explicit Save workflow are unchanged. Submission recovery replays its draft/job
+journal and resumes only recorded automatic approvals; merge conflicts retain the existing recovery states.
+
 Explicit three-way rebase detects path, delete/modify, rename-equivalent, and directory-ancestor
 conflicts and updates the base exactly once after every conflict has a resolution.
 
@@ -185,13 +195,13 @@ clears the submission pin so the Agent can inspect, edit, and submit the same ca
 The selected draft and job are updated under their existing aggregate locks with a versioned
 `rework.json` journal in that draft's authority directory. First owner access replays interrupted
 updates without overwriting an already restored editable tree. Future journals fail closed and
-remain available for diagnosis; unrelated owner access continues. Existing draft/job schemas and
-state names are unchanged, so existing persisted records require no migration. This adds an
-explicit review operation and does not reinterpret prior rejected records.
+remain available for diagnosis; unrelated owner access continues. The rework operation preserves lifecycle state names. Approval-policy support upgrades job
+storage from v3 to v4 and the embedding rework journal from v1 to v2, preserving manual approval
+for historical submissions. It does not reinterpret prior rejected records.
 
 Pragma delegates managed content changes to the corresponding Revision Agent before trying any
-write. Formal content is read-only to Agents; only drafts are writable. Human approval remains
-the publication boundary. Continuation carries the draftId and review feedback to the original
+write. Formal content is read-only to Agents; only drafts are writable. Publication uses human
+approval by default, or Host automatic approval according to the knowledge base setting above. Continuation carries the draftId and review feedback to the original
 Revision Agent conversation rather than creating a replacement.
 
 An unreadable return journal is reported as `revision_rework_unavailable` in the draft recovery

@@ -17,7 +17,8 @@ import {
 } from "./ContextStoreFragment.tsx";
 
 const store: ContextStore = {
-  schemaVersion: "pragma.context-store/v4",
+  schemaVersion: "pragma.context-store/v5",
+  writeApprovalMode: "required",
   contentRevision: 1,
   snapshotHash: "0".repeat(64),
   id: "00000000-0000-4000-8000-000000000001",
@@ -221,6 +222,8 @@ describe("knowledge base UI", () => {
     );
 
     expect(html).toContain("Knowledge base files");
+    expect(html).not.toContain('aria-label="Write approval"');
+    expect(html).not.toContain("Store Revision Agent edits drafts in both modes");
     expect(html).not.toContain("<strong>Files</strong>");
     expect(html).toContain("Loading settings");
     expect(html).toContain("Select a Markdown file");

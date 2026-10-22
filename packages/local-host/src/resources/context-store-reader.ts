@@ -26,6 +26,13 @@ import {
   type ContextStoreRevisionRecord,
   type ContextStoreSnapshot,
 } from "@pragma/shared";
+import {
+  ContextStoreRevisionJournalV1Schema,
+  ContextStoreV4Schema,
+  migrateContextStoreV4ToV5,
+  migrateContextStoreRevisionJournalV1ToV2,
+} from "./context-store-migrations/index.ts";
+
 export const MIGRATION_READY_FILE = ".pragma-migration-ready.json";
 
 export const SNAPSHOT_STORAGE_MARKER = "snapshot-storage.json";
@@ -127,13 +134,13 @@ export const ContextStoreV4MigrationJournalSchema = z.object({
   storeId: z.string().uuid(),
   sourceSchema: z.literal("pragma.context-store/v3"),
   targetSchema: z.literal("pragma.context-store/v4"),
-  targetManifest: ContextStoreSchema,
+  targetManifest: ContextStoreV4Schema,
   snapshot: ContextStoreSnapshotSchema,
   record: ContextStoreRevisionRecordSchema,
 });
 
 export const ContextStoreRevisionJournalSchema = z.object({
-  schemaVersion: z.literal("pragma.context-store-revision-journal/v1"),
+  schemaVersion: z.literal("pragma.context-store-revision-journal/v2"),
   storeId: z.string().uuid(),
   previousFilesPath: z.string().min(1),
   stagedFilesPath: z.string().min(1),
@@ -198,7 +205,7 @@ export function assertSnapshotInvariant(
 
 export function assertRevisionBundle(
   id: string,
-  manifest: ContextStore,
+  manifest: Pick<ContextStore, "id" | "contentRevision" | "snapshotHash">,
   snapshot: ContextStoreSnapshot,
   record: ContextStoreRevisionRecord,
 ): void {
@@ -865,7 +872,7 @@ export function createLocalHostContextStoreReader(options: {
       }
       if (pending === undefined) {
         const snapshot = await buildSnapshot(id, 1, contentRoot(id), new Date().toISOString());
-        const target = ContextStoreSchema.parse({
+        const target = ContextStoreV4Schema.parse({
           ...latestLegacy.data,
           schemaVersion: "pragma.context-store/v4",
           contentRevision: 1,
@@ -906,7 +913,7 @@ export function createLocalHostContextStoreReader(options: {
       await persistRevision(id, pending.snapshot, pending.record);
       await writeJsonAtomic(manifestPath(id), pending.targetManifest);
       await rm(journalPath, { force: true });
-      return pending.targetManifest;
+      return await migrateV4Store(id, pending.targetManifest);
     });
 
   const ensureSnapshotStorageV2 = async (id: string, current: ContextStore): Promise<void> => {
@@ -965,15 +972,86 @@ export function createLocalHostContextStoreReader(options: {
     });
   };
 
+  const V5MigrationJournalSchema = z
+    .object({
+      schemaVersion: z.literal("pragma.context-store-v5-migration/v1"),
+      storeId: z.string().uuid(),
+      targetManifest: ContextStoreSchema,
+    })
+    .strict();
+  const migrateV4Store = async (id: string, source: unknown): Promise<ContextStore> =>
+    await withFileLock(join(storePath(id), ".v5-migration.lock"), async () => {
+      const latest = parseJson(await readFile(manifestPath(id), "utf8"), `${id}/store.json`);
+      const journalPath = join(storePath(id), "v4-to-v5.json");
+      let pending: z.infer<typeof V5MigrationJournalSchema> | undefined;
+      try {
+        pending = V5MigrationJournalSchema.parse(
+          parseJson(await readFile(journalPath, "utf8"), `${id}/v4-to-v5.json`),
+        );
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+      }
+      if (pending !== undefined && (pending.storeId !== id || pending.targetManifest.id !== id))
+        throw new ContextStoreStoreError(
+          "config_invalid",
+          "Knowledge base migration identity mismatch.",
+        );
+      const current = ContextStoreSchema.safeParse(latest);
+      if (current.success) {
+        if (
+          pending !== undefined &&
+          JSON.stringify(pending.targetManifest) !== JSON.stringify(current.data)
+        )
+          throw new ContextStoreStoreError(
+            "config_invalid",
+            "Knowledge base migration journal conflicts with the current manifest.",
+          );
+        if (pending !== undefined) await rm(journalPath, { force: true });
+        return current.data;
+      }
+      const legacy = ContextStoreV4Schema.parse(latest);
+      if (legacy.id !== id || ContextStoreV4Schema.parse(source).id !== id)
+        throw new ContextStoreStoreError(
+          "config_invalid",
+          "Knowledge base migration identity mismatch.",
+        );
+      if (pending === undefined) {
+        await writeJsonAtomic(join(storePath(id), "migration-backups", "store.v4.json"), legacy);
+        pending = V5MigrationJournalSchema.parse({
+          schemaVersion: "pragma.context-store-v5-migration/v1",
+          storeId: id,
+          targetManifest: migrateContextStoreV4ToV5(legacy),
+        });
+        await writeJsonAtomic(journalPath, pending);
+      }
+      if (
+        JSON.stringify(pending.targetManifest) !== JSON.stringify(migrateContextStoreV4ToV5(legacy))
+      )
+        throw new ContextStoreStoreError(
+          "config_invalid",
+          "Knowledge base migration journal conflicts with the source manifest.",
+        );
+      await writeJsonAtomic(manifestPath(id), pending.targetManifest);
+      await rm(journalPath, { force: true });
+      return pending.targetManifest;
+    });
+
   const readStore = async (id: string): Promise<ContextStore> => {
     try {
       await recoverRevisionTransaction(id);
       const raw = parseJson(await readFile(manifestPath(id), "utf8"), `${id}/store.json`);
       const current = ContextStoreSchema.safeParse(raw);
       if (current.success) {
+        if (await pathExists(join(storePath(id), "v4-to-v5.json"))) await migrateV4Store(id, raw);
         await rm(join(storePath(id), "v2-to-v3.json"), { force: true });
         await ensureSnapshotStorageV2(id, current.data);
         return current.data;
+      }
+      const legacyV4 = ContextStoreV4Schema.safeParse(raw);
+      if (legacyV4.success) {
+        const migrated = await migrateV4Store(id, legacyV4.data);
+        await ensureSnapshotStorageV2(id, migrated);
+        return migrated;
       }
       const legacyV2 = LegacyContextStoreV2Schema.safeParse(raw);
       const legacyV3 = LegacyContextStoreV3Schema.safeParse(raw);
@@ -1062,6 +1140,13 @@ export function createLocalHostContextStoreReader(options: {
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code === "ENOENT") return;
       throw error;
+    }
+    const version = z.object({ schemaVersion: z.string() }).parse(raw).schemaVersion;
+    if (version === "pragma.context-store-revision-journal/v1") {
+      const legacy = ContextStoreRevisionJournalV1Schema.parse(raw);
+      await writeJsonAtomic(join(storePath(id), "migration-backups", "revision.v1.json"), legacy);
+      raw = migrateContextStoreRevisionJournalV1ToV2(legacy);
+      await writeJsonAtomic(journalPath, raw);
     }
     const pending = ContextStoreRevisionJournalSchema.safeParse(raw);
     if (!pending.success || pending.data.storeId !== id) {

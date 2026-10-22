@@ -155,7 +155,8 @@ it("opens rejected Store history and its Diff after review while keeping all con
   hooks.reset();
   await i18n.changeLanguage("zh-Hans");
   let job: ContextStoreRevisionJob = {
-    schemaVersion: "pragma.context-store-revision-job/v3",
+    schemaVersion: "pragma.context-store-revision-job/v4",
+    submissionApprovalMode: "required",
     id: "10000000-0000-4000-8000-000000000001",
     revision: 1,
     draftId: "20000000-0000-4000-8000-000000000001",

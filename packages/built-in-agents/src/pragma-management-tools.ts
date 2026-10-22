@@ -721,7 +721,7 @@ const PRAGMA_KNOWLEDGE_REVISION_TOOL_DEFINITIONS = [
   ),
   definition(
     KNOWLEDGE_REVISION_SUBMIT_DRAFT_TOOL_NAME,
-    "Submit a non-empty validated knowledge draft for human review. Submission makes the draft non-editable; it does not merge or publish it.",
+    "Submit a non-empty validated knowledge draft. The Host uses the knowledge base approval setting: required waits for human review; auto approves and applies the draft through the same validation and conflict checks. Submission freezes editing. Inspect the returned state: merged is complete; pending_review awaits human review; needs_rebase or needs_attention needs follow-up. Always use the Store Revision Agent workflow in either mode.",
     KnowledgeRevisionSubmitDraftInputSchema,
     KnowledgeRevisionDraftReceiptSchema,
   ),

@@ -170,3 +170,5 @@ export type ModelDiscoveryResult = z.infer<
 export * from "./environment.ts";
 
 export * from "./settings.ts";
+
+export type { UpdateContextStoreWriteApproval } from "@pragma/shared";

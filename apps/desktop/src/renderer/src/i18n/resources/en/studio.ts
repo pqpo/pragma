@@ -1,4 +1,11 @@
 export const studio = {
+  knowledgeBaseSettings: "Knowledge base settings",
+  writeApproval: "Write approval",
+  writeApprovalRequired: "Require approval",
+  writeApprovalAuto: "Skip approval",
+  writeApprovalHelp:
+    "Store Revision Agent edits drafts in both modes. Skipping approval automatically approves and applies future submissions.",
+
   assetGit: {
     metadataLocal: "Use local conflicting fields",
     metadataRemote: "Use remote conflicting fields",

@@ -1826,7 +1826,8 @@ async function writePublishedKnowledgeFixture(home: string, storeId: string) {
     knowledge.manifestPath(storeId),
     JSON.stringify(
       ContextStoreSchema.parse({
-        schemaVersion: "pragma.context-store/v4",
+        schemaVersion: "pragma.context-store/v5",
+        writeApprovalMode: "required",
         id: storeId,
         name: "Published Knowledge",
         description: "",

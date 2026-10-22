@@ -73,7 +73,8 @@ describe("built-in revision state machines", () => {
 
 function contextJob(): ContextStoreRevisionJob {
   return {
-    schemaVersion: "pragma.context-store-revision-job/v3",
+    schemaVersion: "pragma.context-store-revision-job/v4",
+    submissionApprovalMode: "required",
     id: "10000000-0000-4000-8000-000000000001",
     revision: 1,
     draftId: "10000000-0000-4000-8000-000000000002",

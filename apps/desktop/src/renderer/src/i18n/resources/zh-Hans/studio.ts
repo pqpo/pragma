@@ -1,4 +1,11 @@
 export const studio = {
+  knowledgeBaseSettings: "知识库设置",
+  writeApproval: "写入审批",
+  writeApprovalRequired: "需要审批",
+  writeApprovalAuto: "跳过审批",
+  writeApprovalHelp:
+    "均由 Store Revision Agent 编辑草稿；跳过审批时，提交后自动审批并应用。仅影响后续提交。",
+
   assetGit: {
     metadataLocal: "冲突字段用本地",
     metadataRemote: "冲突字段用远端",

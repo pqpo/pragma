@@ -1,14 +1,11 @@
-import {
-  ContextStoreRevisionJobSchema,
-  type ContextStoreRevisionJob,
-} from "@pragma/built-in-agents/contracts";
+import { ContextStoreRevisionJobV3Schema, type ContextStoreRevisionJobV3 } from "../schemas/v3.ts";
 
 import type { ContextStoreRevisionJobV2 } from "../schemas/v2.ts";
 
 export function migrateContextStoreRevisionJobV2ToV3(
   source: ContextStoreRevisionJobV2,
-): ContextStoreRevisionJob {
-  return ContextStoreRevisionJobSchema.parse({
+): ContextStoreRevisionJobV3 {
+  return ContextStoreRevisionJobV3Schema.parse({
     ...source,
     schemaVersion: "pragma.context-store-revision-job/v3",
     revision: source.revision + 1,

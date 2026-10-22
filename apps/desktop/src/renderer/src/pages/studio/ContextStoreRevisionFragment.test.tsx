@@ -51,7 +51,8 @@ describe("ContextStoreRevisionFragment", () => {
         onOpen={() => undefined}
         onDelete={() => undefined}
         store={{
-          schemaVersion: "pragma.context-store/v4",
+          schemaVersion: "pragma.context-store/v5",
+          writeApprovalMode: "required",
           id: "00000000-0000-4000-8000-000000000001",
           name: "产品知识",
           description: "",
@@ -87,7 +88,8 @@ describe("ContextStoreRevisionFragment", () => {
   it("shows one removal action when a revision task still has an unmerged draft", async () => {
     await i18n.changeLanguage("zh-Hans");
     const job = {
-      schemaVersion: "pragma.context-store-revision-job/v3",
+      schemaVersion: "pragma.context-store-revision-job/v4",
+      submissionApprovalMode: "required",
       id: "10000000-0000-4000-8000-000000000004",
       revision: 3,
       draftId: "20000000-0000-4000-8000-000000000004",
@@ -159,7 +161,8 @@ describe("ContextStoreRevisionFragment", () => {
     const html = renderToStaticMarkup(
       <ContextStoreRevisionDiffFragment
         job={{
-          schemaVersion: "pragma.context-store-revision-job/v3",
+          schemaVersion: "pragma.context-store-revision-job/v4",
+          submissionApprovalMode: "required",
           id: "10000000-0000-4000-8000-000000000001",
           revision: 3,
           draftId: "20000000-0000-4000-8000-000000000001",
@@ -234,7 +237,8 @@ describe("ContextStoreRevisionFragment", () => {
     const html = renderToStaticMarkup(
       <ContextStoreRevisionDiffFragment
         job={{
-          schemaVersion: "pragma.context-store-revision-job/v3",
+          schemaVersion: "pragma.context-store-revision-job/v4",
+          submissionApprovalMode: "required",
           id: "10000000-0000-4000-8000-000000000002",
           revision: 4,
           draftId: "20000000-0000-4000-8000-000000000002",
@@ -291,7 +295,8 @@ describe("ContextStoreRevisionFragment", () => {
     const html = renderToStaticMarkup(
       <ContextStoreRevisionDiffFragment
         job={{
-          schemaVersion: "pragma.context-store-revision-job/v3",
+          schemaVersion: "pragma.context-store-revision-job/v4",
+          submissionApprovalMode: "required",
           id: "10000000-0000-4000-8000-000000000003",
           revision: 4,
           draftId: "20000000-0000-4000-8000-000000000003",

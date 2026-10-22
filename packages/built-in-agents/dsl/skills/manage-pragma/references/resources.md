@@ -44,7 +44,10 @@ Skill Revision Agent (expertId 0000000000sk1rev), supplying the complete require
 content. Retain the returned contextId and wait_experts on the invocationId. Use continue_expert
 with that exact contextId for related follow-up work; list_agents can recover it after compaction
 or reopening. Multiple Contexts for one expertId are distinct conversations, not interchangeable. Do not try native filesystem, shell, or context writes first.
-Only revision drafts are writable; human approval applies them.
+Only revision drafts are writable. Knowledge submissions use the knowledge base approval setting:
+human review by default, or automatic approval and application when configured to skip approval.
+Always delegate knowledge changes in both modes; Agents cannot change this setting. Skill revisions
+still require human approval.
 
 A review returned for changes restores `editing` on the same draft. Continue the original
 Revision Agent Context with continue_expert, its draftId, and full review feedback, then wait

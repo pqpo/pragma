@@ -52,6 +52,8 @@ import {
   type ContextStoreRevisionRecord,
   type ContextStoreSnapshot,
   type CreateContextStore,
+  UpdateContextStoreWriteApprovalSchema,
+  type UpdateContextStoreWriteApproval,
 } from "../../deployment-contracts/index.ts";
 import { canonicalPragmaResourceRef, type PragmaResource } from "@pragma/interpreter/ast";
 import { classifyHostContextResource } from "../bindings.ts";
@@ -61,6 +63,7 @@ import { isGitMetadataPath } from "../../deployment-contracts/git-metadata-path.
 type TrashItem = (path: string) => Promise<void>;
 export interface ContextStoreStore {
   list(): Promise<ContextStore[]>;
+  updateWriteApproval(input: UpdateContextStoreWriteApproval): Promise<ContextStore>;
   get(storeId: string): Promise<ContextStore>;
   /** Includes persisted stores with invalid or unavailable configuration. */
   exists(storeId: string): Promise<boolean>;
@@ -268,7 +271,7 @@ export function createContextStoreStore(options: {
         createdAt: timestamp,
       });
       const pending = ContextStoreRevisionJournalSchema.parse({
-        schemaVersion: "pragma.context-store-revision-journal/v1",
+        schemaVersion: "pragma.context-store-revision-journal/v2",
         storeId: id,
         previousFilesPath,
         stagedFilesPath,
@@ -337,7 +340,7 @@ export function createContextStoreStore(options: {
         createdAt: timestamp,
       });
       const pending = ContextStoreRevisionJournalSchema.parse({
-        schemaVersion: "pragma.context-store-revision-journal/v1",
+        schemaVersion: "pragma.context-store-revision-journal/v2",
         storeId: id,
         previousFilesPath,
         stagedFilesPath,
@@ -375,7 +378,7 @@ export function createContextStoreStore(options: {
       });
       return ContextStoreSchema.parse({
         ...legacyV3,
-        schemaVersion: "pragma.context-store/v4",
+        schemaVersion: "pragma.context-store/v5",
         contentRevision: 1,
         snapshotHash: hashSnapshotContent([], []),
       });
@@ -434,6 +437,20 @@ export function createContextStoreStore(options: {
   return {
     async get(storeId) {
       return await readStore(z.string().uuid().parse(storeId));
+    },
+    async updateWriteApproval(input) {
+      const parsed = UpdateContextStoreWriteApprovalSchema.parse(input);
+      return await withRevisionLock(parsed.storeId, async () => {
+        const current = await readStore(parsed.storeId);
+        const next = ContextStoreSchema.parse({
+          ...current,
+          writeApprovalMode: parsed.writeApprovalMode,
+          updatedAt: new Date().toISOString(),
+        });
+        await writeJsonAtomic(manifestPath(parsed.storeId), next);
+        options.onPublished?.(parsed.storeId);
+        return next;
+      });
     },
     async withRevisionLock(storeId, operation) {
       return await withRevisionLock(storeId, operation);
@@ -507,7 +524,7 @@ export function createContextStoreStore(options: {
         }
         const snapshot = await buildSnapshot(id, 1, join(temporaryPath, "files"), timestamp);
         const store = ContextStoreSchema.parse({
-          schemaVersion: "pragma.context-store/v4",
+          schemaVersion: "pragma.context-store/v5",
           id,
           name: parsed.name,
           description: parsed.description,
@@ -809,7 +826,7 @@ export function createContextStoreStore(options: {
             );
           }
           const store = ContextStoreSchema.parse({
-            schemaVersion: "pragma.context-store/v4",
+            schemaVersion: "pragma.context-store/v5",
             id,
             name: input.name,
             description: input.description,

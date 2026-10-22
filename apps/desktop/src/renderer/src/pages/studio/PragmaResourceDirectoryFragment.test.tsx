@@ -118,7 +118,8 @@ describe("expert team editor", () => {
       diagnostics: [],
     } satisfies PragmaProjectSnapshot;
     const contextStore: ContextStore = {
-      schemaVersion: "pragma.context-store/v4",
+      schemaVersion: "pragma.context-store/v5",
+      writeApprovalMode: "required",
       id: "00000000-0000-4000-8000-000000000001",
       name: "Quality handbook",
       description: "Shared review guidance.",
@@ -172,7 +173,8 @@ describe("expert team editor", () => {
       },
     });
     const contextStore: ContextStore = {
-      schemaVersion: "pragma.context-store/v4",
+      schemaVersion: "pragma.context-store/v5",
+      writeApprovalMode: "required",
       id: "00000000-0000-4000-8000-000000000001",
       name: "Quality handbook",
       description: "Shared review guidance.",
@@ -607,7 +609,8 @@ const complete = true;
       },
     });
     const contextStore: ContextStore = {
-      schemaVersion: "pragma.context-store/v4",
+      schemaVersion: "pragma.context-store/v5",
+      writeApprovalMode: "required",
       id: "00000000-0000-4000-8000-000000000001",
       name: "Quality handbook",
       description: "Shared review guidance.",

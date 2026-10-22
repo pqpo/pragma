@@ -61,7 +61,8 @@ const toolCapability = {
 } satisfies Capability;
 
 const contextStore = {
-  schemaVersion: "pragma.context-store/v4",
+  schemaVersion: "pragma.context-store/v5",
+  writeApprovalMode: "required",
   id: "00000000-0000-4000-8000-000000000001",
   name: "Quality handbook",
   description: "Shared review guidance.",

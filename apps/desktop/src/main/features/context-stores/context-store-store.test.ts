@@ -32,6 +32,116 @@ async function createStore(isReferenced?: (storeId: string) => Promise<boolean>)
 }
 
 describe("managed context store", () => {
+  it("replays the historical revision journal containing a v4 manifest", async () => {
+    const { storesPath, store } = await createStore();
+    const legacy = JSON.parse(
+      await readFile(new URL("./fixtures/context-store-v4.json", import.meta.url), "utf8"),
+    );
+    const root = join(storesPath, legacy.id);
+    await mkdir(storesPath, { recursive: true });
+    await cp(new URL("./fixtures/context-store-v3/", import.meta.url), root, { recursive: true });
+    const snapshot = await store.getSnapshot(legacy.id);
+    const [record] = await store.history(legacy.id);
+    const journal = {
+      schemaVersion: "pragma.context-store-revision-journal/v1",
+      storeId: legacy.id,
+      previousFilesPath: join(root, ".files.previous.recovery"),
+      stagedFilesPath: join(root, ".files.staged.recovery"),
+      targetManifest: legacy,
+      snapshot,
+      record,
+    };
+    await writeFile(join(root, "store.json"), JSON.stringify(legacy));
+    await writeFile(join(root, "revision.json"), JSON.stringify(journal));
+    const restarted = createContextStoreStore({ storesPath });
+    expect(await restarted.get(legacy.id)).toMatchObject({
+      schemaVersion: "pragma.context-store/v5",
+      writeApprovalMode: "required",
+      snapshotHash: legacy.snapshotHash,
+    });
+    expect(await restarted.history(legacy.id)).toHaveLength(1);
+    expect(
+      JSON.parse(await readFile(join(root, "migration-backups", "revision.v1.json"), "utf8")),
+    ).toEqual(journal);
+    await expect(stat(join(root, "revision.json"))).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
+  it.each(["legacy", "prepared", "manifest_written"])(
+    "upgrades the real v4 writer fixture from %s without changing content",
+    async (phase) => {
+      const { storesPath, store } = await createStore();
+      const legacy = JSON.parse(
+        await readFile(new URL("./fixtures/context-store-v4.json", import.meta.url), "utf8"),
+      );
+      const root = join(storesPath, legacy.id);
+      await mkdir(storesPath, { recursive: true });
+      await cp(new URL("./fixtures/context-store-v3/", import.meta.url), root, { recursive: true });
+      const target = await store.get(legacy.id);
+      await writeFile(
+        join(root, "store.json"),
+        JSON.stringify(phase === "manifest_written" ? target : legacy),
+      );
+      if (phase !== "legacy")
+        await writeFile(
+          join(root, "v4-to-v5.json"),
+          JSON.stringify({
+            schemaVersion: "pragma.context-store-v5-migration/v1",
+            storeId: legacy.id,
+            targetManifest: target,
+          }),
+        );
+      const restarted = createContextStoreStore({ storesPath });
+      expect(await restarted.get(legacy.id)).toMatchObject({
+        schemaVersion: "pragma.context-store/v5",
+        writeApprovalMode: "required",
+        contentRevision: legacy.contentRevision,
+        snapshotHash: legacy.snapshotHash,
+      });
+      expect(
+        JSON.parse(await readFile(join(root, "migration-backups", "store.v4.json"), "utf8")),
+      ).toEqual(legacy);
+      await expect(stat(join(root, "v4-to-v5.json"))).rejects.toMatchObject({ code: "ENOENT" });
+      await restarted.updateWriteApproval({ storeId: legacy.id, writeApprovalMode: "auto" });
+      expect((await restarted.get(legacy.id)).writeApprovalMode).toBe("auto");
+      expect(await restarted.history(legacy.id)).toHaveLength(1);
+      const future = JSON.stringify({ ...target, schemaVersion: "pragma.context-store/v999" });
+      await writeFile(join(root, "store.json"), future);
+      await expect(restarted.get(legacy.id)).rejects.toMatchObject({ code: "config_invalid" });
+      expect(await readFile(join(root, "store.json"), "utf8")).toBe(future);
+    },
+  );
+
+  it("persists approval configuration without changing content identity", async () => {
+    const { store, storesPath } = await createStore();
+    const created = await store.create({
+      mode: "blank",
+      name: "Approval settings",
+      description: "",
+    });
+    expect(created.writeApprovalMode).toBe("required");
+    const configured = await store.updateWriteApproval({
+      storeId: created.id,
+      writeApprovalMode: "auto",
+    });
+    expect(configured).toMatchObject({
+      writeApprovalMode: "auto",
+      contentRevision: created.contentRevision,
+      snapshotHash: created.snapshotHash,
+    });
+    const restarted = createContextStoreStore({ storesPath });
+    expect((await restarted.get(created.id)).writeApprovalMode).toBe("auto");
+    await restarted.createFile(created.id, "guide.md", "# Guide");
+    expect((await restarted.get(created.id)).writeApprovalMode).toBe("auto");
+    expect(await restarted.history(created.id)).toHaveLength(2);
+    await expect(
+      restarted.updateWriteApproval({
+        storeId: created.id,
+        writeApprovalMode: "invalid" as "auto",
+      }),
+    ).rejects.toThrow();
+    expect((await restarted.get(created.id)).writeApprovalMode).toBe("auto");
+  });
+
   it("distinguishes absent Knowledge authority entries from unavailable symbolic links", async () => {
     const { directory, storesPath, store } = await createStore();
     const id = "f13af121-439b-4bad-8fe4-8b7dc27554d3";
@@ -139,7 +249,8 @@ describe("managed context store", () => {
     });
 
     expect(created).toMatchObject({
-      schemaVersion: "pragma.context-store/v4",
+      schemaVersion: "pragma.context-store/v5",
+      writeApprovalMode: "required",
       type: "file",
       status: "ready",
       source: { origin: "created" },
@@ -209,14 +320,14 @@ describe("managed context store", () => {
 
     await expect(store.listEntries(validId)).resolves.toEqual([]);
     await expect(readFile(join(storesPath, validId, "store.json"), "utf8")).resolves.toContain(
-      "pragma.context-store/v4",
+      "pragma.context-store/v5",
     );
     await expect(store.listEntries(invalidId)).rejects.toMatchObject({
       code: "config_invalid",
       message: expect.stringContaining("name"),
     });
     await expect(store.list()).resolves.toEqual([
-      expect.objectContaining({ id: validId, schemaVersion: "pragma.context-store/v4" }),
+      expect.objectContaining({ id: validId, schemaVersion: "pragma.context-store/v5" }),
     ]);
     await expect(readFile(join(storesPath, invalidId, "store.json"), "utf8")).resolves.toContain(
       "pragma.context-store/v2",
@@ -278,7 +389,9 @@ describe("managed context store", () => {
     );
     expect(legacy).toMatchObject({ schemaVersion: "pragma.context-store/v3", id });
 
-    const targetManifest = JSON.parse(await readFile(join(root, "store.json"), "utf8"));
+    const targetManifest = JSON.parse(
+      await readFile(join(root, "migration-backups", "store.v4.json"), "utf8"),
+    );
     // The v3 journal historically embedded the materialized v1 snapshot. The
     // current on-disk snapshot is now a compact CAS manifest, so use the
     // already reconstructed value to exercise legacy journal recovery.
@@ -440,7 +553,8 @@ describe("managed context store", () => {
 
     const [migrated] = await store.list();
     expect(migrated).toMatchObject({
-      schemaVersion: "pragma.context-store/v4",
+      schemaVersion: "pragma.context-store/v5",
+      writeApprovalMode: "required",
       source: { origin: "migrated" },
     });
     await expect(readFile(join(storesPath, id, "files", "legacy.md"), "utf8")).resolves.toBe(
@@ -500,7 +614,7 @@ describe("managed context store", () => {
     );
 
     await expect(store.list()).resolves.toEqual([
-      expect.objectContaining({ schemaVersion: "pragma.context-store/v4" }),
+      expect.objectContaining({ schemaVersion: "pragma.context-store/v5" }),
     ]);
     await expect(store.getContent(id, "recovered.md")).resolves.toMatchObject({
       content: "Recovered",
@@ -562,7 +676,7 @@ describe("managed context store", () => {
     );
 
     await expect(store.list()).resolves.toEqual([
-      expect.objectContaining({ id, schemaVersion: "pragma.context-store/v4" }),
+      expect.objectContaining({ id, schemaVersion: "pragma.context-store/v5" }),
     ]);
     await expect(store.getContent(id, "staged.md")).resolves.toMatchObject({
       content: "Staged content",

@@ -440,6 +440,9 @@ export interface PragmaDesktopAPI {
   listContextStoreEntries: (input: ListContextStoreEntries) => Promise<ContextStoreEntry[]>;
   createContextStoreFolder: (input: CreateContextStoreFolder) => Promise<void>;
   createContextStoreFile: (input: CreateContextStoreFile) => Promise<ContextStoreContent>;
+  updateContextStoreWriteApproval: (
+    input: import("@pragma/local-host/deployment-contracts").UpdateContextStoreWriteApproval,
+  ) => Promise<ContextStore>;
   updateContextStoreFile: (input: UpdateContextStoreFile) => Promise<ContextStoreContent>;
   renameContextStoreEntry: (input: RenameContextStoreEntry) => Promise<void>;
   deleteContextStoreEntry: (input: DeleteContextStoreEntry) => Promise<void>;

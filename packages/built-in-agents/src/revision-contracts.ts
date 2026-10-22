@@ -486,7 +486,8 @@ export const ContextStoreRevisionJobStateSchema = z.enum([
 
 export const ContextStoreRevisionJobSchema = z
   .object({
-    schemaVersion: z.literal("pragma.context-store-revision-job/v3"),
+    schemaVersion: z.literal("pragma.context-store-revision-job/v4"),
+    submissionApprovalMode: z.enum(["required", "auto"]).default("required"),
     id: z.string().uuid(),
     revision: z.number().int().positive(),
     draftId: z.string().uuid(),
