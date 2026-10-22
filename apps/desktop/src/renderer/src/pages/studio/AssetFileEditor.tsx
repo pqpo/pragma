@@ -14,7 +14,7 @@ export function AssetFileEditor(props: {
   readonly status?: ReactNode;
   readonly actions?: ReactNode;
   readonly children?: ReactNode;
-  readonly previewSource?: string;
+  readonly previewSource?: string | undefined;
 }) {
   const { t } = useTranslation("studio");
   const isMarkdown = /\.md$/iu.test(props.path);

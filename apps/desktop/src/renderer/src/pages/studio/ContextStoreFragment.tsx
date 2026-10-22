@@ -913,6 +913,7 @@ export function ContextStoreDetailFragment(props: {
         loading={loading}
         onRefresh={() => loadEntries()}
         markdownFileNames
+        extractFrontmatter
         operations={{
           beforeOperation: save,
           createFile,

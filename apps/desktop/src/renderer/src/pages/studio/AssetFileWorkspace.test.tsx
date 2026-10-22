@@ -37,6 +37,40 @@ const props = {
 };
 
 describe("shared asset file workspace", () => {
+  it("moves knowledge frontmatter out of preview and places metadata after rename", () => {
+    const value = "---\ntitle: Metadata-only title\ntags: [CDN]\n---\n# Reading body";
+    const editor = { ...props.editor, value };
+    const html = renderToStaticMarkup(
+      <AssetFileWorkspace
+        {...props}
+        editor={editor}
+        extractFrontmatter
+        operations={{ ...operations, canModifyEntry: () => true }}
+      />,
+    );
+    expect(html).toContain("Reading body");
+    expect(html).not.toContain("Metadata-only title");
+    expect(html).toContain('aria-label="Metadata"');
+    expect(html.indexOf('aria-label="Rename"')).toBeLessThan(html.indexOf('aria-label="Metadata"'));
+    expect(html.indexOf('aria-label="Metadata"')).toBeLessThan(html.indexOf('aria-label="Delete"'));
+    const editing = renderToStaticMarkup(
+      <AssetFileWorkspace {...props} editor={{ ...editor, preview: false }} extractFrontmatter />,
+    );
+    expect(editing).toContain("title: Metadata-only title");
+    expect(editing).toContain("<textarea");
+  });
+
+  it("omits the metadata action when there are no fields and leaves other asset previews intact", () => {
+    const html = renderToStaticMarkup(<AssetFileWorkspace {...props} extractFrontmatter />);
+    expect(html).not.toContain('aria-label="Metadata"');
+    const value = "---\ntitle: Visible Skill example\n---\n# Body";
+    const skill = renderToStaticMarkup(
+      <AssetFileWorkspace {...props} editor={{ ...props.editor, value }} />,
+    );
+    expect(skill).toContain("Visible Skill example");
+    expect(skill).not.toContain('aria-label="Metadata"');
+  });
+
   it("exposes complete file operations while protecting the Skill entry document", () => {
     const html = renderToStaticMarkup(<AssetFileWorkspace {...props} operations={operations} />);
     expect(html).toContain('aria-label="New file"');

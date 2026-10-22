@@ -2342,3 +2342,65 @@
   justify-content: center;
   gap: 12px;
 }
+
+.knowledge-frontmatter-dialog {
+  width: min(720px, 100%);
+  height: min(560px, calc(100dvh - 48px));
+  grid-template-rows: auto minmax(0, 1fr);
+}
+
+.knowledge-frontmatter-dialog .ui-dialog-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.knowledge-frontmatter-dialog .ui-dialog-body {
+  display: flex;
+  overflow: hidden;
+}
+
+.knowledge-frontmatter-scroll {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  overflow: auto;
+}
+
+.knowledge-frontmatter-table {
+  width: 100%;
+  border-collapse: collapse;
+  table-layout: fixed;
+  font-size: 14px;
+  line-height: 1.5;
+}
+
+.knowledge-frontmatter-table th,
+.knowledge-frontmatter-table td {
+  padding: 12px;
+  text-align: left;
+  vertical-align: top;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+
+.knowledge-frontmatter-table th {
+  font-weight: 500;
+}
+
+.knowledge-frontmatter-table th:first-child {
+  width: 28%;
+}
+
+.knowledge-frontmatter-table thead th {
+  position: sticky;
+  top: 0;
+  background: var(--ui-surface);
+  color: var(--ui-text-secondary);
+  font-size: 12px;
+}
+
+.knowledge-frontmatter-table tbody tr + tr {
+  border-top: 1px solid var(--ui-line);
+}

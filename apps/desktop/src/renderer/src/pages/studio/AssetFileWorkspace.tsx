@@ -8,7 +8,7 @@ import {
   TextAa,
   Trash,
 } from "@phosphor-icons/react";
-import { useState, type ComponentProps, type CSSProperties, type ReactNode } from "react";
+import { useMemo, useState, type ComponentProps, type CSSProperties, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 import {
   PRAGMA_TEXT_LIMITS,
@@ -23,6 +23,8 @@ import {
 } from "../../lib/sidebar-width-preference.ts";
 import { errorMessage } from "../../lib/errors.ts";
 import { AssetFileEditor } from "./AssetFileEditor.tsx";
+import { AssetFileMetadataButton } from "./AssetFileMetadataButton.tsx";
+import { splitKnowledgeFrontmatter } from "./knowledge-frontmatter.ts";
 import { AssetFileTree } from "./AssetFileTree.tsx";
 import {
   canMoveEntryTo,
@@ -62,6 +64,7 @@ export function AssetFileWorkspace(props: {
   readonly onRefresh: () => Promise<void>;
   readonly operations?: AssetFileOperations | undefined;
   readonly markdownFileNames?: boolean;
+  readonly extractFrontmatter?: boolean;
   readonly editor: ComponentProps<typeof AssetFileEditor> | null;
   readonly editorChildren?: (controls: { saveCopy: () => void }) => ReactNode;
   readonly emptyEditor?: ReactNode;
@@ -79,6 +82,17 @@ export function AssetFileWorkspace(props: {
   const [error, setError] = useState<string | null>(null);
   const [dragged, setDragged] = useState<ContextStoreEntry | null>(null);
   const [dropTarget, setDropTarget] = useState<string | null>(null);
+  const frontmatter = useMemo(
+    () =>
+      props.extractFrontmatter && props.editor !== null && /\.md$/iu.test(props.editor.path)
+        ? splitKnowledgeFrontmatter(props.editor.value ?? "")
+        : null,
+    [props.extractFrontmatter, props.editor?.path, props.editor?.value],
+  );
+  const metadataAction =
+    frontmatter !== null && frontmatter.entries.length > 0 ? (
+      <AssetFileMetadataButton key={props.editor?.path} entries={frontmatter.entries} />
+    ) : null;
   const operations = props.operations;
   const disabled = busy || refreshing || props.disabled === true;
   const canModify = (entry: ContextStoreEntry) =>
@@ -196,6 +210,7 @@ export function AssetFileWorkspace(props: {
         >
           <TextAa size={17} />
         </button>
+        {metadataAction}
         <button
           type="button"
           title={t("delete")}
@@ -212,7 +227,9 @@ export function AssetFileWorkspace(props: {
           <Trash size={17} />
         </button>
       </>
-    ) : null;
+    ) : (
+      metadataAction
+    );
   return (
     <>
       <div
@@ -343,6 +360,7 @@ export function AssetFileWorkspace(props: {
           ) : (
             <AssetFileEditor
               {...props.editor}
+              previewSource={frontmatter?.body ?? props.editor.previewSource}
               actions={
                 <>
                   {props.editor.actions}
