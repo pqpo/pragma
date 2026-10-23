@@ -38,6 +38,7 @@ import type {
 import { CharacterCount } from "../../components/CharacterCount.tsx";
 import { Dialog } from "../../components/Dialog.tsx";
 import { AssetFileWorkspace } from "./AssetFileWorkspace.tsx";
+import { StudioDetailDescription } from "./StudioDetailDescription.tsx";
 import { fileName, rebaseEntryId } from "./asset-file-paths.ts";
 import { SelectMenu } from "../../components/SelectMenu.tsx";
 import { StudioDetailActions } from "../../components/StudioDetailActions.tsx";
@@ -831,9 +832,13 @@ export function ContextStoreDetailFragment(props: {
           </button>
           <div className="knowledge-base-title">
             <Folder size={24} aria-hidden="true" />
-            <div>
-              <h1 id="context-store-name">{props.store.name}</h1>
-              <p>{props.store.description || t("noDescription")}</p>
+            <div className="knowledge-base-title-copy">
+              <h1 id="context-store-name" title={props.store.name}>
+                {props.store.name}
+              </h1>
+              <StudioDetailDescription
+                description={props.store.description || t("noDescription")}
+              />
             </div>
           </div>
           <div className="knowledge-base-editor-actions">
@@ -918,6 +923,7 @@ export function ContextStoreDetailFragment(props: {
       }
     >
       <AssetFileWorkspace
+        showToolbarRename={false}
         filesLabel={t("knowledgeBaseFiles")}
         resizeLabel={t("resizeKnowledgeFileList")}
         widthPreference={SIDEBAR_WIDTH_PREFERENCES.knowledgeBaseFiles}

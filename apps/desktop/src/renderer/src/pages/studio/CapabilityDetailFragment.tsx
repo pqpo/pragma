@@ -23,6 +23,7 @@ import { errorMessage } from "../../lib/errors.ts";
 import { CharacterCount } from "../../components/CharacterCount.tsx";
 import { Dialog } from "../../components/Dialog.tsx";
 import { SkillFileWorkspace, type SkillSaveAction } from "./SkillFileWorkspace.tsx";
+import { StudioDetailDescription } from "./StudioDetailDescription.tsx";
 import { StudioDetailActions } from "../../components/StudioDetailActions.tsx";
 import { StudioActionButton } from "../../components/StudioActionButton.tsx";
 import { StudioConfirmationDialog } from "./StudioDialog.tsx";
@@ -255,7 +256,11 @@ export function CapabilityDetailFragment(props: {
               <span className="capability-type">{capabilityTypeLabel(capability)}</span>
               <span className="version-label">Revision {capability.manifest.latestRevision}</span>
             </div>
-            <p>{definition.description}</p>
+            {definition.kind === "skill" ? (
+              <StudioDetailDescription description={definition.description} />
+            ) : (
+              <p>{definition.description}</p>
+            )}
           </div>
           {isBuiltIn ? null : definition.kind === "skill" ? (
             <div className="capability-detail-actions">

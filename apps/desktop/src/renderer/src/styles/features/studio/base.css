@@ -140,6 +140,41 @@
   scrollbar-gutter: stable;
 }
 
+.studio-screen .studio-detail-description {
+  display: -webkit-box;
+  min-width: 0;
+  max-width: 760px;
+  margin: 0;
+  overflow: hidden;
+  color: var(--ui-text-secondary);
+  font-size: 13px;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+
+.studio-detail-description-popover {
+  position: fixed;
+  inset: auto;
+  width: 560px;
+  max-width: calc(100vw - 48px);
+  max-height: calc(100vh - 48px);
+  margin: 0;
+  padding: 12px 16px;
+  overflow: auto;
+  border: 1px solid var(--ui-line-strong);
+  border-radius: var(--ui-radius-lg);
+  background: var(--ui-surface);
+  box-shadow: var(--ui-shadow-overlay);
+  color: var(--ui-text);
+  font-size: 14px;
+  font-weight: 400;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+
 .studio-page-error {
   position: absolute;
   z-index: 8;

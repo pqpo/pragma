@@ -231,7 +231,9 @@ describe("knowledge base UI", () => {
     expect(html).not.toContain("Revision history");
     expect(html).toContain("Submit revision");
     expect(html.match(/class="studio-action-button"/g)).toHaveLength(7);
-    expect(html.match(/role="tooltip"/g)).toHaveLength(7);
+    expect(html.match(/class="studio-action-tooltip"/g)).toHaveLength(7);
+    expect(html).toContain('class="studio-detail-description"');
+    expect(html).toContain('class="studio-detail-description-popover"');
     expect(html).toContain('aria-label="Settings"');
     expect(html).toContain('aria-label="Save"');
     expect(html).toContain("No changes to save");

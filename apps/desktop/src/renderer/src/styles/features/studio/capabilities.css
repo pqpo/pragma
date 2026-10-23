@@ -645,6 +645,7 @@
 
 .capability-detail-title {
   display: grid;
+  grid-template-columns: minmax(0, 1fr);
   min-width: 0;
   flex: 1;
   gap: 8px;

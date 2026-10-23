@@ -364,8 +364,23 @@
   gap: 13px;
 }
 
+.knowledge-base-title > svg {
+  flex-shrink: 0;
+}
+
+.knowledge-base-title-copy {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  flex: 1;
+  min-width: 0;
+  gap: 4px;
+}
+
 .knowledge-base-title h1 {
   margin: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   font-size: 24px;
   letter-spacing: -0.035em;
 }

@@ -286,6 +286,7 @@ export function SkillFileWorkspace(props: {
     <div className="skill-workspace">
       <AssetFileWorkspace
         className="skill-file-workspace"
+        showToolbarRename={false}
         filesLabel={t("skillFiles")}
         resizeLabel={t("resizeSkillFileList")}
         widthPreference={SIDEBAR_WIDTH_PREFERENCES.skillFiles}

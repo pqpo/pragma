@@ -63,6 +63,7 @@ export function AssetFileWorkspace(props: {
   readonly loading: boolean;
   readonly onRefresh: () => Promise<void>;
   readonly operations?: AssetFileOperations | undefined;
+  readonly showToolbarRename?: boolean;
   readonly markdownFileNames?: boolean;
   readonly extractFrontmatter?: boolean;
   readonly editor: ComponentProps<typeof AssetFileEditor> | null;
@@ -201,15 +202,17 @@ export function AssetFileWorkspace(props: {
   const selectedActions =
     props.selectedEntry !== null && canModify(props.selectedEntry) ? (
       <>
-        <button
-          type="button"
-          title={t("rename")}
-          aria-label={t("rename")}
-          disabled={disabled}
-          onClick={() => void openOperation("rename", props.selectedEntry ?? undefined)}
-        >
-          <TextAa size={17} />
-        </button>
+        {props.showToolbarRename === false ? null : (
+          <button
+            type="button"
+            title={t("rename")}
+            aria-label={t("rename")}
+            disabled={disabled}
+            onClick={() => void openOperation("rename", props.selectedEntry ?? undefined)}
+          >
+            <TextAa size={17} />
+          </button>
+        )}
         {metadataAction}
         <button
           type="button"
