@@ -177,6 +177,7 @@ export async function createPhaseThreeCommandTestFixture(
     executor,
     preset,
     contextStore,
+    knowledge,
     creator,
     async dispose() {
       service.stop();

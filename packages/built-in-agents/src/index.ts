@@ -10,5 +10,6 @@ export * from "./skill-validation.ts";
 export * from "./skill-agents.ts";
 export * from "./pragma-management-tools.ts";
 export * from "./builtin-skills.ts";
+export * from "./pragma-resource-query-tools.ts";
 
 export * from "./memory-curator-tools.ts";

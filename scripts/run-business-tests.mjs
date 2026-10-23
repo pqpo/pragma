@@ -95,6 +95,7 @@ if (lane !== "desktop") {
   await vitest("@pragma/built-in-agents", [
     "test/skill-validation.test.ts",
     "test/pragma-management-tools.test.ts",
+    "test/builtin.test.ts",
   ]);
 
   for (const runtime of ["pi", "codex", "opencode", "claude-code", "qodercli", "antigravity"])
@@ -107,6 +108,8 @@ if (lane !== "desktop") {
 }
 if (lane !== "host") {
   await vitest("@pragma/desktop", [
+    "src/main/features/built-in-agents/management-command.integration.test.ts",
+    "src/main/features/built-in-agents/pragma-agent-resource-adapter.test.ts",
     "src/test/mission-queued-chat-refresh.test.tsx",
     "src/renderer/src/pages/missions/mission-conversation-model.test.ts",
     "src/renderer/src/pages/missions/mission-workspace-tabs.test.tsx",

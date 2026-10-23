@@ -227,3 +227,38 @@ Native 瞬时小事件不承诺 replay；选择有界展示时，大 scalar/arra
 Flow describe 的文本提供输入模板，复杂完整 Schema 使用 describe --json --output-view full。
 Board read 的 --max-bytes 是大小，--start 是字节位置；原 --offset 是大小别名。
 该公共 CLI 不替代当前 Execution 的 pragma manage 授权通道。
+
+## 授权 Execution 内查询技能与知识库
+
+`pragma manage` 的只读查询也要求当前 Execution 授权通道。支持所有受管正式资源，包括未挂载
+技能、未挂载知识库和只读系统技能；不扫描 `.pragma`、缓存或修订草稿。命令组决定资源类型。
+
+```sh
+pragma manage skill get --describe --format json
+printf '%s' '{"query":"review","managedBy":"user","limit":10}' | pragma manage skill list --input -
+printf '%s' '{"capabilityId":"<返回的 capabilityId>","view":"content"}' | pragma manage skill get --input -
+printf '%s' '{"query":"architecture","status":"ready"}' | pragma manage knowledge-store list --input -
+printf '%s' '{"storeId":"<返回的 storeId>","query":"routing"}' | pragma manage knowledge-store documents search --input -
+```
+
+示例占位符必须替换为实际身份。`--describe` 不连接 Host，返回单个命令的输入/输出 Schema、
+默认值、只读属性、Execution 要求与示例；outputSchema 描述结果 envelope，resultSchema 独立描述
+result 正文，二者的 JSON Schema 引用各自在本 Schema 内解析。描述不说明当前调用已获授权。管理命令仍使用
+`pragma.management-command/v1` envelope，与上文公共 Mission CLI 的 result 协议不同。
+
+技能 get 默认 summary，content 直接读取 SKILL.md，definition 读取关联 DSL 定义。
+其他文件通过 skill files list/read 查询。技能列表过滤 query、status、managedBy；查询默认最新
+正式修订，返回 latestRevision、activeRevision、实际 revision 和 contentHash，可显式选择
+revision="active"。知识库 get 返回正式 revision、snapshotHash、writeApprovalMode；
+documents list/search/read 分别发现、搜索和读取文档。搜索限定单个知识库，scope=path/content/all，
+为大小写不敏感字面量匹配。storeId、DSL ref 和当前 Context namespace 不能互换。
+
+后续读取复制修订号与内容指纹。新增分页/正文结果的 continuation.command 和 continuation.input
+可原样作为下一次 CLI 调用；知识库目录仍通过 nextCursor 续页。默认每页 25 项、最多 100 项，
+正文默认最多 20,000 UTF-16 单元，同时按序列化字节预算缩小结果并保留完整字符。
+根据 data.complete 判断正文是否完整，二进制文件返回 readable=false 和原因。
+
+刷新查询省略 request-id 以生成新 ID；原 ID 仅用于相同请求的重放，查询回执也会重放旧结果。
+检查 error.code 和 error.details.recovery，按返回 command/input 使用新 ID 恢复失效查询。
+NOT_FOUND、STORAGE_CORRUPTED、权限或通道错误不表示空内容。需要修改时，读取对应
+manage-pragma reference，委派 Skill Revision 或 Store Revision Agent，保留原审批与 Context 流程。

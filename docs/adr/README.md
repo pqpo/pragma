@@ -26,6 +26,7 @@ ADR 是有时间和范围的决策记录；版本、路径和支持范围以权�
 - [ADR 065: Mission 删除的停止确认与持久后处理](065-mission-deletion-stop-and-post-processing.md)
 - [ADR 066: Unified Local Host Mission application](066-unified-local-host-mission-application.md)
 - [ADR 067：Execution 管理 CLI 与内置 Skill](067-execution-management-cli-and-built-in-skills.md)
+- [ADR 076：正式技能与知识库的 Agent 查询入口](076-managed-resource-cli-queries.md)
 - [ADR 068: Desktop bundled CLI and terminal registration](068-desktop-bundled-cli-and-terminal-registration.md)
 - [ADR 069: Built-in Revision Agent Context Continuation](069-built-in-revision-agent-context-continuation.md)
 - [ADR 071：CLI 查询语义、精简视图与有限等待](071-agent-friendly-cli-queries-and-owner-waiting.md)

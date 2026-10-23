@@ -17,7 +17,11 @@ import {
   PragmaFlowRunDrySuiteResultSchema,
 } from "@pragma/evaluation/ast";
 import { PragmaExpertAvatarProfileSchema } from "@pragma/shared";
-import { OpaqueCursorSchema, ShortOffsetPageCursorSchema } from "@pragma/shared/integration";
+import {
+  OpaqueCursorSchema,
+  ShortOffsetPageCursorSchema,
+  ManagedKnowledgeListInputSchema,
+} from "@pragma/shared/integration";
 import { z } from "zod";
 
 export * from "./revision-contracts.ts";
@@ -681,6 +685,7 @@ export const PragmaAgentResourceQuerySchema = PragmaManagementPageInputSchema.ex
   query: z.string().trim().min(1).max(200).optional(),
 }).strict();
 export type PragmaAgentResourceQuery = z.infer<typeof PragmaAgentResourceQuerySchema>;
+export const PragmaAgentKnowledgeStoreQuerySchema = ManagedKnowledgeListInputSchema;
 
 export const PragmaAgentMissionSummarySchema = z.object({
   missionId: z.string().uuid(),

@@ -1,8 +1,68 @@
 import { describe, expect, it } from "vitest";
 import { isManagementCliArgv, runManagementCli } from "../src/management-client.ts";
-import { MANAGEMENT_COMMAND_PROTOCOL } from "@pragma/shared/integration";
+import {
+  MANAGEMENT_COMMAND_PROTOCOL,
+  MANAGED_RESOURCE_QUERY_SCHEMAS,
+  ManagedResourceCommandSchema,
+  ManagementCommandDescriptionSchema,
+} from "@pragma/shared/integration";
 
 describe("management CLI adapter", () => {
+  it.each(ManagedResourceCommandSchema.options)(
+    "describes %s input/output, access and valid examples without connecting to a Host",
+    async (command) => {
+      let stdout = "";
+      const result = await runManagementCli(
+        ["manage", ...command.split("."), "--describe", "--format", "json"],
+        {
+          writeStdout: (text) => {
+            stdout += text;
+          },
+          writeStderr: () => undefined,
+        },
+        {
+          execute: async () => {
+            throw new Error("Description must not execute a command");
+          },
+        },
+      );
+      expect(result).toBe(0);
+      const description = ManagementCommandDescriptionSchema.parse(JSON.parse(stdout));
+      expect(description).toMatchObject({ command, readOnly: true, requiresExecution: true });
+      expect(description.outputSchema).toHaveProperty("properties.result");
+      expect(description.outputSchema).toHaveProperty("properties.status");
+      expect(description.resultSchema).toHaveProperty("properties");
+      for (const schema of [
+        description.inputSchema,
+        description.outputSchema,
+        description.resultSchema,
+      ])
+        assertLocalSchemaRefs(schema, schema);
+      expect(description.examples).toHaveLength(1);
+      expect(
+        MANAGED_RESOURCE_QUERY_SCHEMAS[command].input.safeParse(description.examples[0]!.input)
+          .success,
+      ).toBe(true);
+    },
+  );
+
+  it("describes approval-free mutations as mutations and refuses actual queries without an Execution", async () => {
+    let stdout = "";
+    const io = {
+      writeStdout: (text: string) => {
+        stdout += text;
+      },
+      writeStderr: () => undefined,
+    };
+    expect(await runManagementCli(["manage", "flow", "draft", "create", "--describe"], io)).toBe(0);
+    expect(JSON.parse(stdout)).toMatchObject({ readOnly: false, requiresExecution: true });
+    stdout = "";
+    expect(await runManagementCli(["manage", "skill", "list"], io, { endpoint: "" })).not.toBe(0);
+    expect(JSON.parse(stdout)).toMatchObject({
+      status: "failed",
+      error: { code: "PERMISSION_DENIED" },
+    });
+  });
   it("loads one command help without opening a Host or exposing the full catalog", async () => {
     let stdout = "";
     const code = await runManagementCli(["manage", "flow", "draft", "get", "--help"], {
@@ -54,6 +114,30 @@ describe("management CLI adapter", () => {
     expect(JSON.parse(stdout).result.diagnostics[0].code).toBe("flow.invalid");
   });
 });
+
+function assertLocalSchemaRefs(value: unknown, root: unknown): void {
+  if (Array.isArray(value)) {
+    for (const child of value) assertLocalSchemaRefs(child, root);
+    return;
+  }
+  if (typeof value !== "object" || value === null) return;
+  for (const [key, child] of Object.entries(value)) {
+    if (key === "$ref" && typeof child === "string" && child.startsWith("#/")) {
+      let resolved: unknown = root;
+      for (const part of child
+        .slice(2)
+        .split("/")
+        .map((item) => item.replaceAll("~1", "/").replaceAll("~0", "~"))) {
+        resolved =
+          typeof resolved === "object" && resolved !== null
+            ? (resolved as Record<string, unknown>)[part]
+            : undefined;
+      }
+      expect(resolved, child).toBeDefined();
+    }
+    assertLocalSchemaRefs(child, root);
+  }
+}
 
 it("preserves the requested identity and command when stdin parsing fails", async () => {
   let stdout = "";

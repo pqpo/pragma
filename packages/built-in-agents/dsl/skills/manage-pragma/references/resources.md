@@ -33,39 +33,11 @@ cursor is separate from the Store directory cursor. Read documents with `read_ex
 
 For an unregistered or malformed namespace error, follow the tool's recovery instruction to call
 `list_context_stores`, copy an exact namespace, and retry. Never repeat the unchanged invalid value
-or diagnose a storage outage from an addressing error. For revision drafts, keep the revision
-list/get and reclaim workflow below: discovering a namespace does not establish draft ownership.
+or diagnose a storage outage from an addressing error. For revision drafts, read [Knowledge](knowledge.md) or [Skills](skills.md): discovering a namespace does not establish draft ownership.
 
-## Managed knowledge and Skill changes
+## Formal content and revisions
 
-Formal knowledge and Skill packages are read-only to Agents. For creation or modification,
-Pragma must first use spawn_expert for Store Revision Agent (expertId 0000000000st0rev) or
-Skill Revision Agent (expertId 0000000000sk1rev), supplying the complete requirements and source
-content. Retain the returned contextId and wait_experts on the invocationId. Use continue_expert
-with that exact contextId for related follow-up work; list_agents can recover it after compaction
-or reopening. Multiple Contexts for one expertId are distinct conversations, not interchangeable. Do not try native filesystem, shell, or context writes first.
-Only revision drafts are writable. Knowledge submissions use the knowledge base approval setting:
-human review by default, or automatic approval and application when configured to skip approval.
-Always delegate knowledge changes in both modes; Agents cannot change this setting. Skill revisions
-still require human approval.
-
-A review returned for changes restores `editing` on the same draft. Continue the original
-Revision Agent Context with continue_expert, its draftId, and full review feedback, then wait
-for the new invocationId. Knowledge drafts must be reclaimed with knowledge_revision_start and
-that draftId, followed by read_expert_context in the returned writableNamespace for fresh
-content and etag before editing. Skill drafts must be remounted with skill_revision_start and
-that draftId. Reuse the original Mission and draft; a closed or unavailable Context requires
-an explicit diagnostic, not a replacement Context or task. Rejection ends the revision instead of returning it for continued editing.
-
-For knowledge revisions, treat writableNamespace as an opaque value: copy it verbatim, never construct,
-shorten, or derive it from draftId/storeId. On the first invalid_namespace or store_unavailable, compare the actual tool
-argument character-for-character with the latest returned value. If it is lost, recover it through
-knowledge_revision_list_drafts or knowledge_revision_get_draft. Correct mismatches before retrying;
-never repeat a known-invalid value. A mounting, permission, or lifecycle diagnosis requires a failed
-call using the exact returned namespace. Separate verified tool results from hypotheses in reports.
-
-Format validation only detects malformed UUIDs. A valid but incorrect Store UUID can still produce an
-empty list/search result when no matching draft is active, as can an unauthorized caller. An empty
-result does not prove that the draft is empty or mounted correctly: compare the exact returned namespace
-and recover it with the read-only tools above. Explicit caller-safe diagnostics for this existing
-behavior are deferred; do not infer another caller's draft existence or bypass ownership checks.
+Read [Skills](skills.md) to find and read Skill Capabilities and request repairs.
+Read [Knowledge](knowledge.md) to list/search/read formal knowledge documents and request revisions.
+These authorized CLI queries work for unmounted resources. Context tools above query only registered
+Stores; they do not replace formal catalog or content queries.

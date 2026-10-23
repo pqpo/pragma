@@ -25,6 +25,11 @@ import type {
   PragmaAgentMissionWorkItemDetail,
   PragmaAgentAutomationSummary,
 } from "./contracts.ts";
+import type { ManagedResourceQuery, ManagedResourceQueryResult } from "@pragma/shared/integration";
+
+export interface PragmaManagedResourceQueryPort {
+  execute(request: ManagedResourceQuery): Promise<ManagedResourceQueryResult>;
+}
 
 export interface PragmaAgentDslProjectPort {
   startDslDraft(input: {
@@ -195,7 +200,7 @@ export interface PragmaAgentResourceCatalogPort {
   ): Promise<PragmaAgentResourcePage<PragmaAgentHomeProject>>;
   getHomeProject(projectId: string): Promise<PragmaAgentHomeProject>;
   listKnowledgeStores(
-    input: PragmaAgentResourceQuery,
+    input: PragmaAgentResourceQuery & { readonly status?: "ready" | "needs_attention" | undefined },
   ): Promise<PragmaAgentResourcePage<PragmaAgentKnowledgeStore>>;
 }
 

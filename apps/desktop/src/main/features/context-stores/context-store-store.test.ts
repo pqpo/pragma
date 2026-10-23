@@ -330,6 +330,9 @@ describe("managed context store", () => {
     await expect(store.list()).resolves.toEqual([
       expect.objectContaining({ id: validId, schemaVersion: "pragma.context-store/v5" }),
     ]);
+    await expect(store.list({ failOnUnreadable: true })).rejects.toMatchObject({
+      code: "config_invalid",
+    });
     await expect(readFile(join(storesPath, invalidId, "store.json"), "utf8")).resolves.toContain(
       "pragma.context-store/v2",
     );
@@ -706,6 +709,7 @@ describe("managed context store", () => {
     await writeFile(join(notePath, "contexts.json"), '{"items":[]}', "utf8");
 
     await expect(store.list()).resolves.toEqual([]);
+    await expect(store.list({ failOnUnreadable: true })).resolves.toEqual([]);
     await expect(readFile(join(notePath, "contexts.json"), "utf8")).resolves.toBe('{"items":[]}');
   });
 
@@ -736,6 +740,7 @@ describe("managed context store", () => {
       expect.objectContaining({ id: healthy.id, status: "ready" }),
       expect.objectContaining({ id, status: "needs_attention" }),
     ]);
+    await expect(store.list({ failOnUnreadable: true })).resolves.toEqual(listed);
     await expect(store.remove(id)).resolves.toBeUndefined();
     await expect(store.list()).resolves.toEqual([
       expect.objectContaining({ id: healthy.id, status: "ready" }),

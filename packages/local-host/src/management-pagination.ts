@@ -15,7 +15,7 @@ interface CursorPayload {
 }
 
 export function paginateManagementItems<T>(input: {
-  readonly items: readonly T[];
+  readonly items: Iterable<T>;
   readonly scope: string;
   readonly fingerprintValue: unknown;
   readonly filters: unknown;
@@ -31,12 +31,25 @@ export function paginateManagementItems<T>(input: {
       : isShortPageCursor(input.cursor)
         ? decodeManagementShortCursor(input.cursor, binding)
         : decodeLegacyCursor(input.cursor, input.scope, fingerprint, filterHash).offset;
-  if (offset > input.items.length) throw managementCursorError("cursor_expired");
-  const items = [...input.items.slice(offset, offset + input.limit)];
+  const items: T[] = [];
+  let skipped = 0;
+  let hasMore = false;
+  for (const item of input.items) {
+    if (skipped < offset) {
+      skipped++;
+      continue;
+    }
+    if (items.length === input.limit) {
+      hasMore = true;
+      break;
+    }
+    items.push(item);
+  }
+  if (skipped < offset) throw managementCursorError("cursor_expired");
   const nextOffset = offset + items.length;
   return {
     items,
-    ...(nextOffset < input.items.length
+    ...(hasMore
       ? {
           nextCursor: encodeShortPageCursor(binding, nextOffset),
         }

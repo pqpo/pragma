@@ -45,6 +45,7 @@ import {
   PragmaAgentHomeProjectPageSchema,
   PragmaAgentHomeProjectSchema,
   PragmaAgentKnowledgeStorePageSchema,
+  PragmaAgentKnowledgeStoreQuerySchema,
   PragmaAgentResourceQuerySchema,
   PragmaAgentMissionPageSchema,
   PragmaAgentMissionSchema,
@@ -805,9 +806,9 @@ function buildPragmaManagementHostTools(options: {
     tool(
       "list_knowledge_stores",
       "List host knowledge stores by name and availability. Pass ready storeIds as contextStoreIds to create_mission; these IDs are not DSL resource refs.",
-      z.toJSONSchema(PragmaAgentResourceQuerySchema),
+      z.toJSONSchema(PragmaAgentKnowledgeStoreQuerySchema),
       async (args) =>
-        ok(await resources().listKnowledgeStores(PragmaAgentResourceQuerySchema.parse(args))),
+        ok(await resources().listKnowledgeStores(PragmaAgentKnowledgeStoreQuerySchema.parse(args))),
     ),
     tool(
       "list_missions",

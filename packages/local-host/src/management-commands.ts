@@ -6,6 +6,7 @@ import {
   createPragmaManagementTools,
   PRAGMA_MANAGEMENT_TOOL_DEFINITIONS,
   PragmaManagementErrorSchema,
+  MANAGED_RESOURCE_QUERY_TOOLS,
   type PragmaManagementToolPorts,
   type PragmaManagementHostScope,
 } from "@pragma/built-in-agents";
@@ -35,6 +36,8 @@ import {
   IntegrationErrorSchema,
   ManagementFlowRecoveryInputSchema,
   ManagementChangesRecoveryInputSchema,
+  ManagedResourceCommandSchema,
+  MANAGED_RESOURCE_QUERY_SCHEMAS,
 } from "@pragma/shared/integration";
 
 import { managementCommandTargetId } from "./pragma-project-port.ts";
@@ -47,6 +50,7 @@ import {
 } from "./management-command-ownership.ts";
 
 export const MANAGEMENT_COMMAND_TOOLS = {
+  ...MANAGED_RESOURCE_QUERY_TOOLS,
   "mission.list": "list_missions",
   "mission.get": "get_mission",
   "mission.create": "create_mission",
@@ -128,12 +132,79 @@ export function describeManagementCommand(command: ManagementCommand) {
       command,
       description: definition.description,
       inputSchema: z.toJSONSchema(definition.schema),
+      outputSchema: z.toJSONSchema(ManagementCommandResultSchema),
+      resultSchema: z.toJSONSchema(
+        z
+          .object({
+            command: z.literal(command),
+            recovered: z.literal(true),
+            ...definition.schema.shape,
+          })
+          .strict(),
+      ),
+      approval: { mode: "required" as const },
     };
   }
   const tool = PRAGMA_MANAGEMENT_TOOL_DEFINITIONS.find(
     (item) => item.name === MANAGEMENT_COMMAND_TOOLS[command],
   )!;
-  return { command, description: tool.description, inputSchema: tool.inputSchema };
+  return {
+    command,
+    description: tool.description,
+    inputSchema: tool.inputSchema,
+    outputSchema: z.toJSONSchema(ManagementCommandResultSchema),
+    resultSchema: tool.outputSchema,
+    approval: tool.approval,
+  };
+}
+
+export function managementCommandReadOnly(command: ManagementCommand): boolean {
+  return (
+    ManagedResourceCommandSchema.safeParse(command).success ||
+    (
+      [
+        "mission.list",
+        "mission.get",
+        "mission.work.list",
+        "mission.work.get",
+        "workspace.list",
+        "home-project.list",
+        "home-project.get",
+        "knowledge-store.list",
+        "automation.list",
+        "flow.draft.get",
+        "dsl.resources.list",
+        "dsl.resources.read",
+        "dsl.options.list",
+        "dsl.draft.list",
+        "dsl.draft.inspect",
+        "dsl.draft.review",
+        "dsl.changes.read",
+        "evaluation.draft.get",
+        "evaluation.draft.cases",
+      ] as readonly string[]
+    ).includes(command)
+  );
+}
+
+export function managementCommandExamples(command: ManagementCommand) {
+  const capabilityId = "0000000000000001";
+  const storeId = "11111111-1111-4111-8111-111111111111";
+  const inputs: Partial<Record<ManagementCommand, Record<string, string>>> = {
+    "skill.list": { query: "review" },
+    "skill.get": { capabilityId, view: "content" },
+    "skill.files.list": { capabilityId },
+    "skill.files.read": { capabilityId, path: "SKILL.md" },
+    "knowledge-store.list": { query: "architecture" },
+    "knowledge-store.get": { storeId },
+    "knowledge-store.documents.list": { storeId },
+    "knowledge-store.documents.search": { storeId, query: "architecture", scope: "all" },
+    "knowledge-store.documents.read": { storeId, documentId: "Architecture.md" },
+  };
+  const input = inputs[command];
+  return input === undefined
+    ? []
+    : [{ command: `pragma manage ${command.replaceAll(".", " ")} --input - --format json`, input }];
 }
 
 const ApprovedInputSchema = z
@@ -272,6 +343,9 @@ export function createManagementCommandApplication(options: {
             "This command is not authorized for the current Execution.",
           );
         const name = MANAGEMENT_COMMAND_TOOLS[request.command];
+        const resourceCommand = ManagedResourceCommandSchema.safeParse(request.command);
+        if (resourceCommand.success)
+          MANAGED_RESOURCE_QUERY_SCHEMAS[resourceCommand.data].input.parse(request.input);
         // Model-visible allowlists differ from explicit command grants; deny policy still applies.
         const identity = JSON.stringify([options.scope.missionId, contextId, request.requestId]);
         const operationId = createHash("sha256").update(identity).digest("hex");
@@ -373,6 +447,36 @@ export function createManagementCommandApplication(options: {
               };
         const commandPorts = {
           ...ports,
+          ...(ports.resources === undefined
+            ? {}
+            : {
+                resources: {
+                  listWorkspaces: (
+                    input: Parameters<NonNullable<typeof ports.resources>["listWorkspaces"]>[0],
+                  ) => ports.resources!.listWorkspaces(input),
+                  listHomeProjects: (
+                    input: Parameters<NonNullable<typeof ports.resources>["listHomeProjects"]>[0],
+                  ) => ports.resources!.listHomeProjects(input),
+                  getHomeProject: (id: string) => ports.resources!.getHomeProject(id),
+                  listKnowledgeStores: (
+                    input: Parameters<
+                      NonNullable<typeof ports.resources>["listKnowledgeStores"]
+                    >[0],
+                  ) => preserveCommandStateError(() => ports.resources!.listKnowledgeStores(input)),
+                },
+              }),
+          ...(ports.managedResourceQueries === undefined
+            ? {}
+            : {
+                managedResourceQueries: {
+                  execute: (
+                    query: Parameters<
+                      NonNullable<typeof ports.managedResourceQueries>["execute"]
+                    >[0],
+                  ) =>
+                    preserveCommandStateError(() => ports.managedResourceQueries!.execute(query)),
+                },
+              }),
           ...(ports.missions === undefined
             ? {}
             : {

@@ -38,6 +38,13 @@ import {
   MANAGEMENT_COMMAND_TOOLS,
   callManagementCommand,
 } from "@pragma/local-host/management";
+import { createManagedResourceQueryPort } from "@pragma/local-host";
+import {
+  createCapabilityStore,
+  createContextStoreStore,
+  CapabilityStoreError,
+  ContextStoreStoreError,
+} from "@pragma/local-host/deployment";
 import {
   MANAGEMENT_COMMAND_PROTOCOL,
   ManagementCommandRequestSchema,
@@ -1824,8 +1831,67 @@ describe(
   },
 );
 
+it("reports structured catalog corruption and retries discovery through the CLI", async () => {
+  const f = await fixture(false, "create_flow_draft", true);
+  vi.spyOn(f.host!.knowledge, "list").mockRejectedValueOnce(
+    new ContextStoreStoreError("config_invalid", "Corrupted knowledge catalog"),
+  );
+  expect(await f.invoke("knowledge-store.list", { status: "ready" })).toMatchObject({
+    status: "failed",
+    error: { code: "STORAGE_CORRUPTED" },
+  });
+  expect(await f.invoke("knowledge-store.list", { status: "ready" })).toMatchObject({
+    status: "succeeded",
+    result: { items: [{ storeId: f.host!.contextStore.id }] },
+  });
+});
+
 it("assembles the production CLI grants and hooks with no selected management tools", async () => {
   const f = await fixture();
+  const capabilities = createCapabilityStore({
+    capabilitiesPath: join(f.root, "capabilities"),
+    credentials: {} as never,
+    verify: async (definition) => ({
+      definition,
+      health: { status: "ready", checkedAt: new Date().toISOString() },
+    }),
+    mutations: {} as never,
+    isReferenced: async () => false,
+  });
+  const knowledge = createContextStoreStore({ storesPath: join(f.root, "knowledge") });
+  const knowledgeBase = await knowledge.createFromSnapshot({
+    name: "Unmounted knowledge",
+    description: "Read through the compiled production binding",
+    files: [
+      {
+        id: "Routing.md",
+        content: "Formal routing",
+        metadata: { trigger: "always_on", priority: "normal" },
+      },
+    ],
+    author: "user",
+    summary: "Initial",
+  });
+  const managedResourceQueries = createManagedResourceQueryPort({
+    capabilities,
+    knowledge,
+    resources: async () => (await f.project.get()).resources,
+  });
+  const knowledgeRecordPath = join(
+    f.root,
+    "knowledge",
+    knowledgeBase.id,
+    "revisions",
+    "00000001",
+    "record.json",
+  );
+  const knowledgeRecord = await readFile(knowledgeRecordPath, "utf8");
+  let injectKnowledgeCorruption = true;
+  let corruptReadResult: unknown;
+  vi.spyOn(capabilities, "getSkillFile").mockRejectedValueOnce(
+    new CapabilityStoreError("capability_not_found", "Temporary missing Skill file"),
+  );
+  const resourceResults: unknown[] = [];
   const prepare = vi
     .spyOn(pragmaCommandDistribution, "prepareDesktopPragmaCommand")
     .mockResolvedValue(f.root);
@@ -1900,6 +1966,44 @@ it("assembles the production CLI grants and hooks with no selected management to
             input: {},
           },
         });
+        resourceResults.push(
+          await callManagementCommand({
+            endpoint,
+            request: {
+              protocol: MANAGEMENT_COMMAND_PROTOCOL,
+              requestId: randomUUID(),
+              command: "skill.get",
+              input: { capabilityId: "1h2j3k4m5n6p7q8r", view: "content" },
+            },
+          }),
+        );
+        resourceResults.push(
+          await callManagementCommand({
+            endpoint,
+            request: {
+              protocol: MANAGEMENT_COMMAND_PROTOCOL,
+              requestId: randomUUID(),
+              command: "knowledge-store.documents.read",
+              input: { storeId: knowledgeBase.id, documentId: "Routing.md" },
+            },
+          }),
+        );
+        if (injectKnowledgeCorruption) {
+          injectKnowledgeCorruption = false;
+          await writeFile(
+            knowledgeRecordPath,
+            JSON.stringify({ ...JSON.parse(knowledgeRecord), revision: "broken" }),
+          );
+          corruptReadResult = await callManagementCommand({
+            endpoint,
+            request: {
+              protocol: MANAGEMENT_COMMAND_PROTOCOL,
+              requestId: randomUUID(),
+              command: "knowledge-store.documents.read",
+              input: { storeId: knowledgeBase.id, documentId: "Routing.md" },
+            },
+          });
+        }
         return { outputText: "ok" };
       },
     },
@@ -1923,7 +2027,7 @@ it("assembles the production CLI grants and hooks with no selected management to
         capabilityCredentials: {} as never,
         capabilitiesPath: f.root,
         pragmaHome: f.root,
-        pragmaManagement: { project: f.port, missions: {} as never },
+        pragmaManagement: { project: f.port, missions: {} as never, managedResourceQueries },
         pragmaManagementScope: f.scope,
       },
       f.root,
@@ -1983,6 +2087,28 @@ it("assembles the production CLI grants and hooks with no selected management to
   });
   await session.submit({ query: "check", execution: { context: f.context.executionContext } })
     .result;
+  expect(resourceResults[0]).toMatchObject({ status: "failed", error: { code: "NOT_FOUND" } });
+  expect(resourceResults[1]).toMatchObject({
+    status: "succeeded",
+    result: { revision: 1, data: { content: "Formal routing" } },
+  });
+  expect(corruptReadResult).toMatchObject({
+    status: "failed",
+    error: { code: "STORAGE_CORRUPTED" },
+  });
+  await writeFile(knowledgeRecordPath, knowledgeRecord);
+  await session.submit({
+    query: "Retry the failed Skill read",
+    execution: { context: f.context.executionContext },
+  }).result;
+  expect(resourceResults[2]).toMatchObject({
+    status: "succeeded",
+    result: { path: "SKILL.md", data: { readable: true } },
+  });
+  expect(resourceResults[3]).toMatchObject({
+    status: "succeeded",
+    result: { revision: 1, data: { content: "Formal routing" } },
+  });
   expect(endpoint).toBeTruthy();
   if (process.platform !== "win32") {
     expect(shellResult).toMatchObject({
