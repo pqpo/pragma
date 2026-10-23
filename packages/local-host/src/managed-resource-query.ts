@@ -563,7 +563,17 @@ function isLowSurrogate(code: number): boolean {
   return code >= 0xdc00 && code <= 0xdfff;
 }
 function snippet(source: string, query: string): string {
-  let start = Math.max(0, source.toLowerCase().indexOf(query) - 100);
+  const match = source.toLowerCase().indexOf(query);
+  let originalOffset = 0;
+  let foldedOffset = 0;
+  // Lowercasing can expand a code point (İ → i + combining dot); slice by the original offset.
+  for (const character of source) {
+    const nextFoldedOffset = foldedOffset + character.toLowerCase().length;
+    if (nextFoldedOffset > match) break;
+    originalOffset += character.length;
+    foldedOffset = nextFoldedOffset;
+  }
+  let start = Math.max(0, originalOffset - 100);
   if (isLowSurrogate(source.charCodeAt(start))) start++;
   let end = Math.min(source.length, start + 400);
   if (isHighSurrogate(source.charCodeAt(end - 1))) end--;

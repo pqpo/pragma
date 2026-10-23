@@ -374,6 +374,40 @@ describe("formal managed resource queries", () => {
     ).rejects.toMatchObject({ code: "CURSOR_EXPIRED" });
   });
 
+  it.each([
+    { prefix: "İ".repeat(300), match: "TARGET", query: "target", suffix: "" },
+    {
+      prefix: "İ😀".repeat(150),
+      match: "Needle😀Marker",
+      query: "NEEDLE😀MARKER",
+      suffix: "😀".repeat(300),
+    },
+    { prefix: "İ".repeat(300), match: "TARİGET", query: "tarİget", suffix: "😀".repeat(300) },
+  ])(
+    "locates Unicode search snippets in the original text ($query)",
+    async ({ prefix, match, query, suffix }) => {
+      const f = await fixture();
+      const store = await f.knowledge.createFromSnapshot({
+        name: "Unicode matches",
+        description: "",
+        files: [{ id: "Routing.md", content: `Unrelated\n${prefix}${match}${suffix}`, metadata }],
+        author: "user",
+        summary: "Initial",
+      });
+      const result = ManagedKnowledgeSearchPageSchema.parse(
+        await f.port.execute({
+          command: "knowledge-store.documents.search",
+          input: { storeId: store.id, query, scope: "content" },
+        }),
+      );
+      expect(result.items).toHaveLength(1);
+      expect(result.items[0]).toMatchObject({ documentId: "Routing.md", line: 2 });
+      expect(result.items[0]!.snippet).toContain(match);
+      expect(result.items[0]!.snippet.length).toBeLessThanOrEqual(400);
+      expect(result.items[0]!.snippet.isWellFormed()).toBe(true);
+    },
+  );
+
   it("does not report a corrupt resource catalog as an empty successful list", async () => {
     const f = await fixture();
     const { skill } = await f.makeSkill("0000000000000001");

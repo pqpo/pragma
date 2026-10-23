@@ -673,7 +673,7 @@ function definition<TSchema extends z.ZodType>(
     description,
     schema,
     resultSchema: outputSchema,
-    inputSchema: z.toJSONSchema(schema),
+    inputSchema: z.toJSONSchema(schema, { io: "input" }),
     outputSchema: z.toJSONSchema(z.union([outputSchema, PragmaManagementErrorSchema])),
     approval:
       approval === "none"

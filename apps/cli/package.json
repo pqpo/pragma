@@ -45,6 +45,7 @@
     "commander": "14.0.3"
   },
   "devDependencies": {
+    "@cfworker/json-schema": "4.1.1",
     "@pragma/tsconfig": "workspace:*",
     "@types/node": "latest",
     "acorn": "8.19.0",

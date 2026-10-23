@@ -131,7 +131,7 @@ export function describeManagementCommand(command: ManagementCommand) {
     return {
       command,
       description: definition.description,
-      inputSchema: z.toJSONSchema(definition.schema),
+      inputSchema: z.toJSONSchema(definition.schema, { io: "input" }),
       outputSchema: z.toJSONSchema(ManagementCommandResultSchema),
       resultSchema: z.toJSONSchema(
         z
@@ -173,6 +173,7 @@ export function managementCommandReadOnly(command: ManagementCommand): boolean {
         "knowledge-store.list",
         "automation.list",
         "flow.draft.get",
+        "flow.draft.validate",
         "dsl.resources.list",
         "dsl.resources.read",
         "dsl.options.list",

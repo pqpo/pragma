@@ -44,7 +44,7 @@ export const PRAGMA_MANAGED_RESOURCE_TOOL_DEFINITIONS = Object.entries(
   return {
     name: MANAGED_RESOURCE_QUERY_TOOLS[command],
     description: descriptions[command],
-    inputSchema: z.toJSONSchema(schemas.input),
+    inputSchema: z.toJSONSchema(schemas.input, { io: "input" }),
     outputSchema: z.toJSONSchema(schemas.output),
     approval: { mode: "none" as const },
   };

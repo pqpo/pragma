@@ -207,21 +207,23 @@ const CreateEvaluationDraftInput = z.discriminatedUnion("mode", [
 // MCP tool inputs must expose a top-level object. A root discriminated union materializes as
 // `oneOf` and is reduced to an empty object by the MCP catalog, so keep the strict execution
 // validator above and publish the union fields through this model-facing object schema.
-const CreateEvaluationDraftToolInput = z.object({
-  mode: z
-    .enum(["create", "edit"])
-    .describe("Use create for a new test set or edit for an existing Evaluation."),
-  expectedProjectRevision: CreateEvaluationDraftCreateInput.shape.expectedProjectRevision,
-  metadata: CreateEvaluationDraftCreateInput.shape.metadata
-    .optional()
-    .describe("Required when mode is create."),
-  targetRef: CreateEvaluationDraftCreateInput.shape.targetRef
-    .optional()
-    .describe("Exact committed Flow ref; required when mode is create."),
-  evaluationRef: CreateEvaluationDraftEditInput.shape.evaluationRef
-    .optional()
-    .describe("Exact existing Evaluation ref; required when mode is edit."),
-});
+const CreateEvaluationDraftToolInput = z
+  .object({
+    mode: z
+      .enum(["create", "edit"])
+      .describe("Use create for a new test set or edit for an existing Evaluation."),
+    expectedProjectRevision: CreateEvaluationDraftCreateInput.shape.expectedProjectRevision,
+    metadata: CreateEvaluationDraftCreateInput.shape.metadata
+      .optional()
+      .describe("Required when mode is create."),
+    targetRef: CreateEvaluationDraftCreateInput.shape.targetRef
+      .optional()
+      .describe("Exact committed Flow ref; required when mode is create."),
+    evaluationRef: CreateEvaluationDraftEditInput.shape.evaluationRef
+      .optional()
+      .describe("Exact existing Evaluation ref; required when mode is edit."),
+  })
+  .strict();
 const EvaluationCaseIdsSchema = z
   .array(PragmaFlowRunDryCaseSchema.shape.id)
   .min(1)
@@ -386,14 +388,14 @@ function buildPragmaManagementHostTools(options: {
         tool(
           "list_automations",
           "List a filtered page of Desktop Automations, schedule status, and continuity Missions.",
-          z.toJSONSchema(ListAutomationsInput),
+          z.toJSONSchema(ListAutomationsInput, { io: "input" }),
           async (args) => ok(await automations().list(ListAutomationsInput.parse(args))),
         ),
         {
           ...tool(
             "save_automation",
             "Create, edit, enable, or disable one complete Automation YAML resource with its Desktop workspace and permission binding.",
-            z.toJSONSchema(SaveAutomationInput),
+            z.toJSONSchema(SaveAutomationInput, { io: "input" }),
             async (args, context) =>
               ok(
                 await automations().save({
@@ -411,7 +413,7 @@ function buildPragmaManagementHostTools(options: {
           ...tool(
             "delete_automation",
             "Delete an Automation while retaining every Mission and conversation it created.",
-            z.toJSONSchema(DeleteAutomationInput),
+            z.toJSONSchema(DeleteAutomationInput, { io: "input" }),
             async (args, context) =>
               ok(
                 await automations().delete({
@@ -429,7 +431,7 @@ function buildPragmaManagementHostTools(options: {
           ...tool(
             "reset_automation_session",
             "Reset the continuity binding so the next reusable Automation event starts a new Mission.",
-            z.toJSONSchema(RefInput),
+            z.toJSONSchema(RefInput, { io: "input" }),
             async (args, context) =>
               ok(
                 await automations().resetSession({
@@ -448,7 +450,7 @@ function buildPragmaManagementHostTools(options: {
     tool(
       "start_dsl_draft",
       "Create one Mission-owned editable file draft for existing or new Expert and ExpertTeam resources. Returns workspace file paths; edit them with native file tools.",
-      z.toJSONSchema(StartDslDraftInput),
+      z.toJSONSchema(StartDslDraftInput, { io: "input" }),
       async (args) =>
         ok(
           await project().startDslDraft({
@@ -460,7 +462,7 @@ function buildPragmaManagementHostTools(options: {
     tool(
       "list_dsl_drafts",
       "List compact DSL file-draft summaries owned by the current Mission.",
-      z.toJSONSchema(PragmaManagementPageInputSchema),
+      z.toJSONSchema(PragmaManagementPageInputSchema, { io: "input" }),
       async (args) =>
         ok(
           await project().listDslDrafts({
@@ -472,7 +474,7 @@ function buildPragmaManagementHostTools(options: {
     tool(
       "inspect_dsl_draft",
       "Preflight one DSL file draft and return bounded diagnostics, field summaries, omitted-field effects, Host dependencies, hashes, and target conflicts without returning full YAML or a full diff.",
-      z.toJSONSchema(DslDraftIdInput),
+      z.toJSONSchema(DslDraftIdInput, { io: "input" }),
       async (args) =>
         ok(
           await project().inspectDslDraft({
@@ -484,7 +486,7 @@ function buildPragmaManagementHostTools(options: {
     tool(
       "read_dsl_draft_review",
       "Read one bounded semantic detail page from a DSL draft review before prepare. Use only when inspect_dsl_draft reports omitted details; preserve section and ref filters while following nextCursor.",
-      z.toJSONSchema(ReadDslDraftReviewInput),
+      z.toJSONSchema(ReadDslDraftReviewInput, { io: "input" }),
       async (args) => {
         const input = ReadDslDraftReviewInput.parse(args);
         return ok(
@@ -498,7 +500,7 @@ function buildPragmaManagementHostTools(options: {
     tool(
       "prepare_dsl_draft",
       "Freeze and validate the current DSL draft files, then return a compact immutable change-set receipt with the same bounded review summary. Pass only the draft ID.",
-      z.toJSONSchema(DslDraftIdInput),
+      z.toJSONSchema(DslDraftIdInput, { io: "input" }),
       async (args) =>
         ok(
           summarizePrepareResult(
@@ -512,7 +514,7 @@ function buildPragmaManagementHostTools(options: {
     tool(
       "restart_dsl_draft",
       "Rebuild a conflicted or stale prepared DSL draft from the latest project resources and retain the previous candidate as a read-only reference.",
-      z.toJSONSchema(DslDraftIdInput),
+      z.toJSONSchema(DslDraftIdInput, { io: "input" }),
       async (args) =>
         ok(
           await project().restartDslDraft({
@@ -525,7 +527,7 @@ function buildPragmaManagementHostTools(options: {
       ...tool(
         "discard_dsl_draft",
         "Discard an uncommitted DSL file draft owned by the current Mission.",
-        z.toJSONSchema(DslDraftIdInput),
+        z.toJSONSchema(DslDraftIdInput, { io: "input" }),
         async (args) => {
           const draftId = DslDraftIdInput.parse(args).draftId;
           await project().discardDslDraft({ missionId: scope().missionId, draftId });
@@ -537,13 +539,13 @@ function buildPragmaManagementHostTools(options: {
     tool(
       "list_dsl_resources",
       "List a filtered page of current Pragma DSL resources and the exact project revision.",
-      z.toJSONSchema(ListDslResourcesInput),
+      z.toJSONSchema(ListDslResourcesInput, { io: "input" }),
       async (args) => ok(await project().list(ListDslResourcesInput.parse(args))),
     ),
     tool(
       "read_dsl_resource",
       "Read one current project resource or built-in system Expert as a bounded canonical YAML chunk.",
-      z.toJSONSchema(ReadResourceInput),
+      z.toJSONSchema(ReadResourceInput, { io: "input" }),
       async (args) => {
         const input = ReadResourceInput.parse(args);
         const document = await project().read(input.ref);
@@ -554,13 +556,13 @@ function buildPragmaManagementHostTools(options: {
     tool(
       "list_expert_options",
       "List one filtered category of host Runtime models, capabilities, avatar personas, or built-in Experts.",
-      z.toJSONSchema(ListExpertOptionsInput),
+      z.toJSONSchema(ListExpertOptionsInput, { io: "input" }),
       async (args) => ok(await project().listExpertOptions(ListExpertOptionsInput.parse(args))),
     ),
     tool(
       "allocate_dsl_resource_ids",
       "Allocate Host-generated stable IDs for new Pragma resources before authoring YAML.",
-      z.toJSONSchema(AllocateResourceIdsInput),
+      z.toJSONSchema(AllocateResourceIdsInput, { io: "input" }),
       async (args) =>
         ok(await project().allocateResourceIds(AllocateResourceIdsInput.parse(args).requests)),
     ),
@@ -598,7 +600,7 @@ function buildPragmaManagementHostTools(options: {
     tool(
       "read_prepared_dsl_change",
       "Read a bounded canonical YAML chunk for one exact ref only when the compact prepared review is insufficient.",
-      z.toJSONSchema(ReadPreparedDslChangeInput),
+      z.toJSONSchema(ReadPreparedDslChangeInput, { io: "input" }),
       async (args) => {
         const input = ReadPreparedDslChangeInput.parse(args);
         const changeSet = await project().getChangeSet(input.changeSetId, options.scope?.missionId);
@@ -615,7 +617,7 @@ function buildPragmaManagementHostTools(options: {
     tool(
       "create_flow_draft",
       "Create a durable incomplete Flow draft and return a compact summary.",
-      z.toJSONSchema(CreateFlowDraftInput),
+      z.toJSONSchema(CreateFlowDraftInput, { io: "input" }),
       async (args) =>
         ok(
           summarizeFlowDraftUpdate(
@@ -627,7 +629,7 @@ function buildPragmaManagementHostTools(options: {
     tool(
       "get_flow_draft",
       "Read a compact Flow draft summary by default; set includeResource only when the complete resource is needed.",
-      z.toJSONSchema(GetFlowDraftInput),
+      z.toJSONSchema(GetFlowDraftInput, { io: "input" }),
       async (args) => {
         const input = GetFlowDraftInput.parse(args);
         const draft = await project().getFlowDraft(input.draftId);
@@ -637,7 +639,7 @@ function buildPragmaManagementHostTools(options: {
     tool(
       "update_flow_draft",
       "Apply typed incremental operations to a Flow draft and return a compact validated revision summary. Use get_flow_draft when the complete resource is needed.",
-      z.toJSONSchema(UpdateFlowDraftToolInput),
+      z.toJSONSchema(UpdateFlowDraftToolInput, { io: "input" }),
       async (args) => {
         const { input, warning } = parseUpdateFlowDraftInput(args);
         return ok(
@@ -652,7 +654,7 @@ function buildPragmaManagementHostTools(options: {
     tool(
       "validate_flow_draft",
       "Revalidate a Flow draft and return a compact revision summary without changing it.",
-      z.toJSONSchema(DraftIdInput),
+      z.toJSONSchema(DraftIdInput, { io: "input" }),
       async (args) => {
         const draft = await project().validateFlowDraft(DraftIdInput.parse(args).draftId);
         return ok(summarizeFlowDraftUpdate(draft, []));
@@ -661,7 +663,7 @@ function buildPragmaManagementHostTools(options: {
     tool(
       "create_evaluation_draft",
       "Create an empty incremental Evaluation draft for a committed Flow, or start editing one existing Evaluation.",
-      z.toJSONSchema(CreateEvaluationDraftToolInput),
+      z.toJSONSchema(CreateEvaluationDraftToolInput, { io: "input" }),
       async (args) => {
         return ok(
           summarizeEvaluationDraft(
@@ -673,7 +675,7 @@ function buildPragmaManagementHostTools(options: {
     tool(
       "get_evaluation_draft",
       "Read compact Evaluation draft metadata and a filtered page of case summaries.",
-      z.toJSONSchema(GetEvaluationDraftInput),
+      z.toJSONSchema(GetEvaluationDraftInput, { io: "input" }),
       async (args) => {
         const input = GetEvaluationDraftInput.parse(args);
         return ok(viewEvaluationDraft(await project().getEvaluationDraft(input.draftId), input));
@@ -682,7 +684,7 @@ function buildPragmaManagementHostTools(options: {
     tool(
       "get_evaluation_cases",
       "Read full definitions for 1 to 10 exact Evaluation draft case IDs.",
-      z.toJSONSchema(GetEvaluationCasesInput),
+      z.toJSONSchema(GetEvaluationCasesInput, { io: "input" }),
       async (args) => {
         const input = GetEvaluationCasesInput.parse(args);
         return ok(
@@ -693,7 +695,7 @@ function buildPragmaManagementHostTools(options: {
     tool(
       "update_evaluation_draft",
       "Apply at most 10 typed case or rebase operations to an Evaluation draft. Default to one case per call.",
-      z.toJSONSchema(UpdateEvaluationDraftInput),
+      z.toJSONSchema(UpdateEvaluationDraftInput, { io: "input" }),
       async (args) =>
         ok(
           summarizeEvaluationDraft(
@@ -704,7 +706,7 @@ function buildPragmaManagementHostTools(options: {
     tool(
       "run_evaluation_draft",
       "Run the complete Evaluation draft internally, returning detailed results for only 1 to 10 requested cases plus compact suite and cumulative coverage status.",
-      z.toJSONSchema(RunEvaluationDraftInput),
+      z.toJSONSchema(RunEvaluationDraftInput, { io: "input" }),
       async (args) =>
         ok(
           PragmaAgentEvaluationDraftRunResultSchema.parse(
@@ -715,7 +717,7 @@ function buildPragmaManagementHostTools(options: {
     tool(
       "prepare_evaluation_draft",
       "Rerun and independently prepare a passing Evaluation draft that targets a committed Flow. Pass the returned changeSetId to commit_dsl_changes to save only the Evaluation.",
-      z.toJSONSchema(EvaluationDraftRevisionInput),
+      z.toJSONSchema(EvaluationDraftRevisionInput, { io: "input" }),
       async (args) =>
         ok(
           summarizePrepareResult(
@@ -726,7 +728,7 @@ function buildPragmaManagementHostTools(options: {
     tool(
       "discard_evaluation_draft",
       "Discard an uncommitted Evaluation draft.",
-      z.toJSONSchema(DraftIdInput),
+      z.toJSONSchema(DraftIdInput, { io: "input" }),
       async (args) => {
         await project().discardEvaluationDraft(DraftIdInput.parse(args).draftId);
         return ok({ discarded: true });
@@ -735,7 +737,7 @@ function buildPragmaManagementHostTools(options: {
     tool(
       "prepare_flow_draft",
       "Prepare a structurally complete Flow and optional non-Evaluation dependency YAML sources. Evaluations are prepared and saved separately with prepare_evaluation_draft and commit_dsl_changes.",
-      z.toJSONSchema(PrepareFlowDraftInput),
+      z.toJSONSchema(PrepareFlowDraftInput, { io: "input" }),
       async (args) =>
         ok(
           summarizePrepareResult(
@@ -746,7 +748,7 @@ function buildPragmaManagementHostTools(options: {
     tool(
       "discard_flow_draft",
       "Discard an uncommitted Flow draft.",
-      z.toJSONSchema(DraftIdInput),
+      z.toJSONSchema(DraftIdInput, { io: "input" }),
       async (args) => {
         await project().discardFlowDraft(DraftIdInput.parse(args).draftId);
         return ok({ discarded: true });
@@ -776,7 +778,7 @@ function buildPragmaManagementHostTools(options: {
     tool(
       "list_workspaces",
       "List recorded workspace directories from defaults, recent history, home projects, and the current Mission. Use the returned workspaceId absolute path when creating a Mission.",
-      z.toJSONSchema(PragmaAgentResourceQuerySchema),
+      z.toJSONSchema(PragmaAgentResourceQuerySchema, { io: "input" }),
       async (args) =>
         ok(
           await resources().listWorkspaces({
@@ -788,14 +790,14 @@ function buildPragmaManagementHostTools(options: {
     tool(
       "list_home_projects",
       "List home-page task presets with workspace, executor, and knowledge store bindings. These are distinct from the DSL Project.",
-      z.toJSONSchema(PragmaAgentResourceQuerySchema),
+      z.toJSONSchema(PragmaAgentResourceQuerySchema, { io: "input" }),
       async (args) =>
         ok(await resources().listHomeProjects(PragmaAgentResourceQuerySchema.parse(args))),
     ),
     tool(
       "get_home_project",
       "Read one home-page task preset by projectId, including its bindings and availability.",
-      z.toJSONSchema(z.object({ projectId: z.string().uuid() }).strict()),
+      z.toJSONSchema(z.object({ projectId: z.string().uuid() }).strict(), { io: "input" }),
       async (args) =>
         ok(
           await resources().getHomeProject(
@@ -806,27 +808,27 @@ function buildPragmaManagementHostTools(options: {
     tool(
       "list_knowledge_stores",
       "List host knowledge stores by name and availability. Pass ready storeIds as contextStoreIds to create_mission; these IDs are not DSL resource refs.",
-      z.toJSONSchema(PragmaAgentKnowledgeStoreQuerySchema),
+      z.toJSONSchema(PragmaAgentKnowledgeStoreQuerySchema, { io: "input" }),
       async (args) =>
         ok(await resources().listKnowledgeStores(PragmaAgentKnowledgeStoreQuerySchema.parse(args))),
     ),
     tool(
       "list_missions",
       "List a filtered page of Pragma Missions and their current status.",
-      z.toJSONSchema(ListMissionsInput),
+      z.toJSONSchema(ListMissionsInput, { io: "input" }),
       async (args) => ok(await missions().list(ListMissionsInput.parse(args))),
     ),
     tool(
       "get_mission",
       "Read one Pragma Mission summary and goal by exact missionId.",
-      z.toJSONSchema(MissionIdInput),
+      z.toJSONSchema(MissionIdInput, { io: "input" }),
       async (args) => ok(await missions().get(MissionIdInput.parse(args).missionId)),
     ),
     {
       ...tool(
         "create_mission",
         "Create and start a Mission with an exact Expert, Team, or Flow ref and an explicit absolute workspace directory path.",
-        z.toJSONSchema(CreateMissionInput),
+        z.toJSONSchema(CreateMissionInput, { io: "input" }),
         async (args, context) =>
           ok(
             await missions().submit({
@@ -841,7 +843,7 @@ function buildPragmaManagementHostTools(options: {
       ...tool(
         "send_mission_message",
         "Send a follow-up message to an existing conversational Mission.",
-        z.toJSONSchema(SendMissionMessageInput),
+        z.toJSONSchema(SendMissionMessageInput, { io: "input" }),
         async (args, context) =>
           ok(
             await missions().sendMessage({
@@ -855,13 +857,13 @@ function buildPragmaManagementHostTools(options: {
     tool(
       "list_mission_work_items",
       "List a filtered page of invocation work items for one Mission.",
-      z.toJSONSchema(ListMissionWorkItemsInput),
+      z.toJSONSchema(ListMissionWorkItemsInput, { io: "input" }),
       async (args) => ok(await missions().listWorkItems(ListMissionWorkItemsInput.parse(args))),
     ),
     tool(
       "get_mission_work_item",
       "Read one Mission work item by exact missionId and workItemId.",
-      z.toJSONSchema(GetMissionWorkItemInput),
+      z.toJSONSchema(GetMissionWorkItemInput, { io: "input" }),
       async (args) => {
         const input = GetMissionWorkItemInput.parse(args);
         return ok(await missions().getWorkItem(input.missionId, input.workItemId));
@@ -870,7 +872,7 @@ function buildPragmaManagementHostTools(options: {
     tool(
       "interrupt_mission",
       "Interrupt the currently running execution of a Mission.",
-      z.toJSONSchema(MissionIdInput),
+      z.toJSONSchema(MissionIdInput, { io: "input" }),
       async (args, context) =>
         ok(await missions().interrupt(MissionIdInput.parse(args).missionId, operationId(context))),
     ),
