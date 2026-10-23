@@ -248,10 +248,10 @@ export function MissionRail(props: {
   );
 
   return (
-    <aside className="mission-rail" onScroll={handleScroll}>
+    <aside className="mission-rail">
       <div
         className={
-          searchCollapsed ? "mission-rail-sticky is-search-collapsed" : "mission-rail-sticky"
+          searchCollapsed ? "mission-rail-header is-search-collapsed" : "mission-rail-header"
         }
       >
         <button className="mission-new-button" type="button" onClick={props.onCreate}>
@@ -301,13 +301,30 @@ export function MissionRail(props: {
           </label>
         </div>
       </div>
-      {missionGroups.waitingInput.visibleMissions.length > 0 ||
-      missionGroups.waitingInput.hiddenCount > 0 ? (
+      <div className="mission-rail-list" onScroll={handleScroll}>
+        {missionGroups.waitingInput.visibleMissions.length > 0 ||
+        missionGroups.waitingInput.hiddenCount > 0 ? (
+          <MissionRailGroup
+            label={t("waitingInput")}
+            emptyLabel={t("noWaitingInput")}
+            missions={missionGroups.waitingInput.visibleMissions}
+            hiddenCount={missionGroups.waitingInput.hiddenCount}
+            pinnedMissionIds={pinnedMissionIdSet}
+            unreadMissionOutputIds={unreadMissionOutputIdSet}
+            selectedMissionId={props.selectedMissionId}
+            onOpen={props.onOpen}
+            onTogglePin={props.onTogglePin}
+            onMarkComplete={props.onMarkComplete}
+            onRename={props.onRename}
+            onDelete={props.onDelete}
+            onLoadMore={() => setVisibleLimits(increaseMissionRailVisibleLimit("waitingInput"))}
+          />
+        ) : null}
         <MissionRailGroup
-          label={t("waitingInput")}
-          emptyLabel={t("noWaitingInput")}
-          missions={missionGroups.waitingInput.visibleMissions}
-          hiddenCount={missionGroups.waitingInput.hiddenCount}
+          label={t("active")}
+          emptyLabel={t(props.source === "automation" ? "noActiveAutomations" : "noActive")}
+          missions={missionGroups.active.visibleMissions}
+          hiddenCount={missionGroups.active.hiddenCount}
           pinnedMissionIds={pinnedMissionIdSet}
           unreadMissionOutputIds={unreadMissionOutputIdSet}
           selectedMissionId={props.selectedMissionId}
@@ -316,40 +333,25 @@ export function MissionRail(props: {
           onMarkComplete={props.onMarkComplete}
           onRename={props.onRename}
           onDelete={props.onDelete}
-          onLoadMore={() => setVisibleLimits(increaseMissionRailVisibleLimit("waitingInput"))}
+          onLoadMore={() => setVisibleLimits(increaseMissionRailVisibleLimit("active"))}
         />
-      ) : null}
-      <MissionRailGroup
-        label={t("active")}
-        emptyLabel={t(props.source === "automation" ? "noActiveAutomations" : "noActive")}
-        missions={missionGroups.active.visibleMissions}
-        hiddenCount={missionGroups.active.hiddenCount}
-        pinnedMissionIds={pinnedMissionIdSet}
-        unreadMissionOutputIds={unreadMissionOutputIdSet}
-        selectedMissionId={props.selectedMissionId}
-        onOpen={props.onOpen}
-        onTogglePin={props.onTogglePin}
-        onMarkComplete={props.onMarkComplete}
-        onRename={props.onRename}
-        onDelete={props.onDelete}
-        onLoadMore={() => setVisibleLimits(increaseMissionRailVisibleLimit("active"))}
-      />
-      <MissionRailGroup
-        label={t("completed")}
-        emptyLabel={t(props.source === "automation" ? "noCompletedAutomations" : "noCompleted")}
-        variant="completed"
-        missions={missionGroups.completed.visibleMissions}
-        hiddenCount={missionGroups.completed.hiddenCount}
-        pinnedMissionIds={pinnedMissionIdSet}
-        unreadMissionOutputIds={unreadMissionOutputIdSet}
-        selectedMissionId={props.selectedMissionId}
-        onOpen={props.onOpen}
-        onTogglePin={props.onTogglePin}
-        onMarkComplete={props.onMarkComplete}
-        onRename={props.onRename}
-        onDelete={props.onDelete}
-        onLoadMore={() => setVisibleLimits(increaseMissionRailVisibleLimit("completed"))}
-      />
+        <MissionRailGroup
+          label={t("completed")}
+          emptyLabel={t(props.source === "automation" ? "noCompletedAutomations" : "noCompleted")}
+          variant="completed"
+          missions={missionGroups.completed.visibleMissions}
+          hiddenCount={missionGroups.completed.hiddenCount}
+          pinnedMissionIds={pinnedMissionIdSet}
+          unreadMissionOutputIds={unreadMissionOutputIdSet}
+          selectedMissionId={props.selectedMissionId}
+          onOpen={props.onOpen}
+          onTogglePin={props.onTogglePin}
+          onMarkComplete={props.onMarkComplete}
+          onRename={props.onRename}
+          onDelete={props.onDelete}
+          onLoadMore={() => setVisibleLimits(increaseMissionRailVisibleLimit("completed"))}
+        />
+      </div>
     </aside>
   );
 }
