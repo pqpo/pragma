@@ -28,6 +28,7 @@ import { MissionExecutionOwner } from "../src/missions/execution-owner.ts";
 import { createMissionPinnedBinding } from "../src/missions/controller/pinned-binding.ts";
 import { MissionCommandSchema } from "@pragma/shared/integration";
 import { defineRuntimeTestDriver } from "@pragma/core/testing";
+import { EVALUATION_JUDGE_EXPERT_ID } from "@pragma/built-in-agents";
 import { PragmaCapabilityResourceSchema } from "@pragma/interpreter/ast";
 import {
   RuntimeContextRecordSchema,
@@ -281,6 +282,7 @@ async function fixture(
   return {
     home,
     runtimes,
+    driver,
     app,
     workspace,
     canUse,
@@ -295,6 +297,93 @@ async function fixture(
 }
 
 describe("default Node compilation reaches persisted Execution", { timeout: waitMs }, () => {
+  it("restores a built-in Mission on its original Runtime after the Node default changes", async () => {
+    const f = await fixture();
+    const first = await f.app.run!.start({
+      requestId: randomUUID(),
+      command: "expert.run",
+      executor: { kind: "expert", id: EVALUATION_JUDGE_EXPERT_ID },
+      workspace: f.workspace,
+      prompt: "Remember the original Runtime",
+      detach: false,
+    });
+    expect((await first.outcome).status).toBe("succeeded");
+    await f.app.missionControl!.stopOwner(first.missionId);
+    const paths = new PragmaPaths({ pragmaHome: f.home });
+    expect(
+      JSON.parse(await readFile(paths.missionExecutionSnapshot(first.missionId), "utf8")).sources[
+        `expert:${EVALUATION_JUDGE_EXPERT_ID}`
+      ].rootExecutionOverride,
+    ).toEqual({ runtimeId: "codex" });
+    const missions = createMissionStore({ missionsPath: paths.missionsRoot() });
+    const sessionId = (await missions.get(first.missionId)).execution!.sessionId!;
+    const executions = createSqliteExecutionStore({ pragmaHome: f.home });
+    const sessions = createFileExpertSessionStore({ pragmaHome: f.home, executions });
+    const before = (await sessions.get(sessionId))!;
+    const nextStart = vi.fn(() => ({ outputText: "new default", runtimeSessionId: "next-native" }));
+    const nextRuntime = defineRuntimeTestDriver({
+      descriptor: { id: "next", kind: "test", displayName: "New default" },
+      createSession: () => ({}),
+      readSession: () => ({ runtimeSessionId: "next-native" }),
+      startTurn: nextStart,
+      mapEvent: () => ({ events: [] }),
+    });
+    const nextCanUse = vi.spyOn(nextRuntime, "canUse").mockReturnValue({
+      usable: false,
+      reason: "The new default is not configured yet",
+    });
+    const cold = createLocalHostNodeApplication({
+      pragmaHome: f.home,
+      runtimes: createStaticRuntimeResolver({
+        runtimes: [f.driver, nextRuntime],
+        defaultRuntimeId: "next",
+      }),
+      client: { surface: "cli", version: "test", instanceId: randomUUID() },
+    });
+    try {
+      const requestId = randomUUID();
+      await cold.missionControl!.submit({
+        missionId: first.missionId,
+        requestId,
+        kind: "send",
+        payload: { kind: "send", input: { prompt: "Continue on the original Runtime" } },
+      });
+      const applied = await cold.missionControl!.waitForTerminal({
+        missionId: first.missionId,
+        requestId,
+        timeoutMs: waitMs,
+      });
+      expect(applied, JSON.stringify(applied.error)).toMatchObject({ state: "applied" });
+      await cold.missionControl!.waitExecution!({
+        missionId: first.missionId,
+        executionId: applied.result!["executionId"] as string,
+      });
+      const after = (await sessions.get(sessionId))!;
+      expect((await missions.get(first.missionId)).execution!.sessionId).toBe(sessionId);
+      expect(after.rootContextId).toBe(before.rootContextId);
+      expect(after.contexts[after.rootContextId]!.snapshot).toEqual(
+        before.contexts[before.rootContextId]!.snapshot,
+      );
+      expect(f.restore).toHaveBeenCalledOnce();
+      expect(f.startTurn).toHaveBeenCalledTimes(2);
+      expect(nextStart).not.toHaveBeenCalled();
+      nextCanUse.mockReturnValue({ usable: true });
+      const fresh = await cold.run!.start({
+        requestId: randomUUID(),
+        command: "expert.run",
+        executor: { kind: "expert", id: EVALUATION_JUDGE_EXPERT_ID },
+        workspace: f.workspace,
+        prompt: "Use the new default",
+        detach: false,
+      });
+      expect((await fresh.outcome).status).toBe("succeeded");
+      expect(nextStart).toHaveBeenCalledOnce();
+      await cold.missionControl!.stopOwner(fresh.missionId);
+    } finally {
+      await cold.missionControl!.stopOwner(first.missionId);
+      await executions.close();
+    }
+  });
   it.each([false, true])("executes stable Host IDs and manual retry (%s)", async (withAlias) => {
     const f = await fixture();
     const paths = new PragmaPaths({ pragmaHome: f.home });

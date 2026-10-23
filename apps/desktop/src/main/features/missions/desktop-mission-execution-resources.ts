@@ -889,7 +889,9 @@ export function createDesktopMissionExecutionResources(
         const compileService = createLocalHostMissionCompileService<Mission>({
           executionSnapshotPath: (mission) => {
             const directory = options.missions.storagePath?.(mission.id);
-            return directory !== undefined && isUserFacingMissionOrigin(mission.origin)
+            return directory !== undefined &&
+              mission.executor.kind !== "flow" &&
+              isUserFacingMissionOrigin(mission.origin)
               ? join(directory, "execution-snapshot.json")
               : undefined;
           },

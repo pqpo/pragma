@@ -38,10 +38,12 @@
 - Bundle 重绑定跨安装合并资源别名时，必须在目录锁下协调全部受影响安装的引用与唯一资源所有权，以发布回执支持重放，避免失效根引用和互相阻塞撤销。合并组含有原本不属于任何安装的用户资源时，结果必须保留为本地借用资源，不得因旧别名或底层资产属于安装而获得创建所有权；重放与撤销继续保留该来源。
 - ready Capability 新修订必须通过 Local Host Capability mutation coordinator 激活：先验证当前 Expert 的
   工具白名单，再以稳定 journal 提交 Capability 与凭据状态。Project、System Expert 与普通 Expert 只保存
-  Capability ID，不传播修订号；运行时解析 active revision，并在 Execution 中记录实际修订与 fingerprint。
-  历史 Project Revision 与 Mission 中的旧 binding 只保留 Capability identity，不继续 pin revision；恢复或继续
-  执行时同样解析当前 active revision。已经落盘的 Execution 与旧 Capability revision 保持固定，
-  `needs_attention` 修订不得自动激活。
+  Capability ID，不传播修订号。新建 Expert/ExpertTeam Mission 在首次编译前由 Mission owner 固定实际
+  Capability revision、可变系统定义和基础执行配置；继续执行与冷恢复使用该依赖快照，不重新解析 active revision，
+  见 [ADR 077](../adr/077-mission-execution-dependency-snapshots.md)。Mission 模型覆盖按请求叠加，清除后恢复
+  已固定的基础配置。无快照的历史 Mission、无 ExpertSession 的 Flow 及目录预览继续解析当前 active revision；
+  Project Revision 中的 binding 仍只保存 Capability identity。已经落盘的 Execution 与旧 Capability revision
+  保持固定，`needs_attention` 修订不得自动激活。
 
 ### `packages/shared`
 

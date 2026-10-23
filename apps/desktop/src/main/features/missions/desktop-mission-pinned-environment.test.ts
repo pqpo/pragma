@@ -18,7 +18,7 @@ import { createDesktopSystemExpertRegistry } from "../experts/system-expert-regi
 import { createDesktopMissionTestApplication } from "./fixtures/desktop-mission-test-application.ts";
 import { expect, it, vi } from "vitest";
 
-it.each(["root", "dependency"] as const)(
+it.each(["root", "dependency", "root with model override"] as const)(
   "keeps the original Session, native history and Skill revision after a %s system Expert changes",
   async (kind) => {
     const root = await mkdtemp(join(tmpdir(), "pragma-pinned-mission-"));
@@ -100,13 +100,16 @@ it.each(["root", "dependency"] as const)(
     });
     const revision = await project.ensurePublished();
     const missions = createMissionStore({ missionsPath: join(root, "missions") });
-    const ref = kind === "root" ? STORE_REVISION_EXPERT_REF : BUILT_IN_PRAGMA_REF;
+    const ref = kind === "dependency" ? BUILT_IN_PRAGMA_REF : STORE_REVISION_EXPERT_REF;
     const createMission = async () =>
       await missions.create({
         goal: "Remember the codeword violet",
         workspace: { path: root, basename: "fixture" },
         project: { id: revision.projectId, revision: revision.revision },
         executor: { kind: "expert", ref, name: "Fixture" },
+        ...(kind === "root with model override"
+          ? { modelOverride: { providerId: "fixture", modelId: "mission-model" } }
+          : {}),
       });
     const mission = await createMission();
     const nativeHistory = new Map<string, string[]>();
@@ -115,6 +118,7 @@ it.each(["root", "dependency"] as const)(
       definition: string;
       skills: string[];
       history: string[];
+      model: string | undefined;
     }[] = [];
     const created = vi.fn((context: RuntimeNativeSessionContext) => {
       const nativeId = randomUUID();
@@ -144,6 +148,7 @@ it.each(["root", "dependency"] as const)(
           definition: JSON.stringify(describeExpertExecutionDefinition(session.context.agent)),
           skills,
           history: [...history],
+          model: turn.modelSelection?.model?.modelId,
         });
         history.push(turn.rawQuery);
         return { outputText: history.join(" | "), runtimeSessionId: session.nativeId };
@@ -181,6 +186,12 @@ it.each(["root", "dependency"] as const)(
           if (resource === undefined) return undefined;
           const runtimeDefaults = pinnedSource?.rootExecutionOverride ?? {
             runtimeId: configuredRuntime,
+            modelSelection: {
+              model: {
+                providerId: "fixture",
+                modelId: request.modelOverride?.modelId ?? "base-model",
+              },
+            },
           };
           // Preparation itself must use the saved profile, before compilation overlays it.
           await resolver.bind(runtimeDefaults);
@@ -227,6 +238,18 @@ it.each(["root", "dependency"] as const)(
       const original = (await sessions.get(originalMission.execution!.sessionId!))!;
       const snapshotPath = join(missions.storagePath!(mission.id), "execution-snapshot.json");
       const originalSnapshot = await readFile(snapshotPath, "utf8");
+      if (kind === "root with model override") {
+        expect(observations[0]!.model).toBe("mission-model");
+        expect(
+          JSON.parse(originalSnapshot).sources[ref].rootExecutionOverride.modelSelection.model
+            .modelId,
+        ).toBe("base-model");
+        await runner.updateOptions({
+          id: mission.id,
+          toolPermissionMode: mission.toolPermissionMode,
+          modelOverride: null,
+        });
+      }
       expect(JSON.parse(originalSnapshot).capabilities).toEqual([
         expect.objectContaining({ capabilityId: skill.manifest.id, resolvedRevision: 1 }),
       ]);
@@ -261,6 +284,11 @@ it.each(["root", "dependency"] as const)(
         requestId: randomUUID(),
       });
       await waitForTurn(mission.id, 3);
+      if (kind === "root with model override")
+        expect(observations.slice(1).map((observation) => observation.model)).toEqual([
+          "base-model",
+          "base-model",
+        ]);
       const after = (await sessions.get((await missions.get(mission.id)).execution!.sessionId!))!;
       expect(after.sessionId).toBe(original.sessionId);
       expect(after.rootContextId).toBe(original.rootContextId);
@@ -277,7 +305,7 @@ it.each(["root", "dependency"] as const)(
             !observation.definition.includes("updated-agent-definition"),
         ),
       ).toBe(true);
-      if (kind === "root")
+      if (kind !== "dependency")
         expect(
           observations.every((observation) =>
             observation.skills.some(

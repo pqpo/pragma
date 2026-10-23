@@ -290,10 +290,13 @@ export function createLocalHostMissionCompileService<
     LocalHostMissionCompileScope<Request>,
     Map<string, LocalHostSystemExecutorSource>
   >();
+  // Stateless Flows resolve live dependencies on each run; only Session owners freeze them.
+  const executionSnapshotPath = (request: Request) =>
+    request.executor.kind === "flow" ? undefined : options.executionSnapshotPath?.(request);
   const readSnapshot = (scope: LocalHostMissionCompileScope<Request>) => {
     let result = snapshots.get(scope);
     if (result === undefined) {
-      const path = options.executionSnapshotPath?.(scope.request);
+      const path = executionSnapshotPath(scope.request);
       result =
         path === undefined
           ? Promise.resolve(undefined)
@@ -860,7 +863,7 @@ export function createLocalHostMissionCompileService<
     scope: LocalHostMissionCompileScope<Request>,
     runtimes: RuntimeResolver,
   ): Promise<void> => {
-    const path = options.executionSnapshotPath?.(scope.request);
+    const path = executionSnapshotPath(scope.request);
     if (
       path === undefined ||
       (await readSnapshot(scope)) !== undefined ||
@@ -910,7 +913,8 @@ export function createLocalHostMissionCompileService<
                 ref === scope.request.executor.ref
                   ? scope.request.executor
                   : { kind: "expert", ref, name: ref },
-              ...(ref === scope.request.executor.ref ? {} : { modelOverride: undefined }),
+              // Freeze the underlying profile. compileSource applies the current Mission option.
+              modelOverride: undefined,
             },
             runtimes,
             "execute",
@@ -964,6 +968,10 @@ export function createLocalHostMissionCompileService<
     pluginsFor: (compiled) => compilationResources.get(compiled)?.plugins,
     async runtimeIds(scope) {
       const ids = new Set<string>();
+      const snapshot = await readSnapshot(scope);
+      for (const source of Object.values(snapshot?.sources ?? {}))
+        if (source.rootExecutionOverride !== undefined)
+          ids.add(source.rootExecutionOverride.runtimeId);
       await visitDependencies(scope, (resource) => {
         if (resource?.kind !== "RuntimeProfile") return;
         const config = resource.spec.config as { runtimeId?: string };

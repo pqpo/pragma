@@ -149,7 +149,7 @@ export function createLocalHostNodeMissionCompiler<
       getDependencyResource: (ref) => builtInResources.get(ref),
       fingerprint: (ref) =>
         builtInRefs.has(ref) ? builtInAgentFingerprint(ref as BuiltInAgentRef) : undefined,
-      prepare: async (request, runtimes, _purpose, adapterHost) =>
+      prepare: async (request, runtimes, purpose, adapterHost, pinnedSource) =>
         builtInRefs.has(request.executor.ref)
           ? {
               ref: request.executor.ref as BuiltInAgentRef,
@@ -158,6 +158,11 @@ export function createLocalHostNodeMissionCompiler<
               workspace: request.workspace.path,
               pragmaHome: paths.root,
               runtimes,
+              rootExecutionOverride:
+                pinnedSource?.rootExecutionOverride ??
+                (purpose === "stop"
+                  ? undefined
+                  : { runtimeId: await runtimes.getDefaultRuntimeId() }),
               loggerProvider: options.loggerProvider,
               adapterHost,
             }

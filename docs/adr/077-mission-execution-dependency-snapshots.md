@@ -11,6 +11,10 @@ before any ExpertSession or native Session is created. The immutable snapshot li
 owner directory as `execution-snapshot.json`, with its own `pragma.mission-execution-snapshot/v1`
 schema. It records the pinned Project Revision and executor identity, reachable system resources,
 system fingerprints, declarative system execution profiles, and resolved Capability revisions.
+Profiles capture the underlying defaults, including the selected Node built-in Runtime, before
+applying any Mission model override. Each request overlays its current Mission option; clearing
+the option restores the pinned base model. Stateless Flow Missions do not create or read these
+snapshots and continue to resolve active dependencies on each run.
 No credential values, executable closures, compiled Agent instances or native history are serialized.
 
 Subsequent compilation and cold recovery read the snapshot, not the current System Expert Registry

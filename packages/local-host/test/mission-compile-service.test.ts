@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -190,6 +190,97 @@ async function fixture(
 }
 
 describe("Local Host Mission compile orchestration", () => {
+  it("recompiles a stateless Flow with the active Capability revision without creating a Mission snapshot", async () => {
+    const home = await mkdtemp(join(tmpdir(), "pragma-flow-unpinned-"));
+    let project: PragmaProject | undefined;
+    try {
+      const snapshotPath = join(home, "execution-snapshot.json");
+      const f = await fixture();
+      const resources = f.revision.resources;
+      const flow = resources.find((resource) => resource.kind === "Flow")!;
+      const entry = join(home, "pragma.yaml");
+      await writeFile(
+        entry,
+        formatPragmaYaml({
+          apiVersion: flow.apiVersion,
+          kind: "Bundle",
+          imports: [],
+          resources,
+        }),
+      );
+      project = await loadPragmaProject(entry);
+      const loaded = project;
+      let active = 1;
+      const bindingRevisions: number[] = [];
+      const service = createLocalHostMissionCompileService({
+        executionSnapshotPath: () => snapshotPath,
+        environmentId: "flow-recompile",
+        loggerProvider: createNoopLoggerProvider(),
+        revisionSource: {
+          getRevision: async () => ({
+            ...f.revision,
+            projectFingerprint: undefined,
+            derivedProjectFingerprint: undefined,
+          }),
+          withProject: async (_pin, run) => await run(loaded),
+        },
+        capabilityAuthority: {
+          getCapabilityId: () => capabilityId,
+          resolve: async (id, revision) => ({
+            capabilityId: id,
+            resolvedRevision: revision ?? active,
+            fingerprint: hash({ revision: revision ?? active }),
+          }),
+        },
+        adapterHost: () => ({
+          environmentId: "flow-recompile",
+          projectRoot: home,
+          resolveBinding: async (ref, pin) => {
+            const revision = Number(pin?.revision ?? active);
+            bindingRevisions.push(revision);
+            return {
+              ref,
+              revision: String(revision),
+              fingerprint: hash({ revision }),
+              value: { contribution: { tools: [] } },
+            };
+          },
+          resolveSecret: async () => undefined,
+          resolveArtifact: async () => {
+            throw new Error("Unexpected artifact");
+          },
+        }),
+      });
+      const runtimes = createStaticRuntimeResolver({
+        defaultRuntimeId: "codex",
+        runtimes: [
+          defineRuntimeTestDriver({
+            descriptor: { id: "codex", kind: "test", displayName: "Fixture" },
+            createSession: () => ({}),
+            startTurn: () => ({ outputText: "done" }),
+            mapEvent: () => ({ events: [] }),
+          }),
+        ],
+      });
+      const request = {
+        ...f.request,
+        executor: { kind: "flow", ref: canonicalPragmaResourceRef(flow), name: flow.metadata.name },
+        workspace: { path: home },
+      };
+      const first = await service.compileStable(service.createRequestScope(request), runtimes);
+      expect(first.capabilities[0]!.resolvedRevision).toBe(1);
+      active = 2;
+      const scope = service.createRequestScope(request);
+      const second = await service.compileStable(scope, runtimes);
+      expect(second.capabilities[0]!.resolvedRevision).toBe(2);
+      expect(bindingRevisions).toEqual([1, 2]);
+      expect(await service.isExecutionPinned(scope)).toBe(false);
+      await expect(readFile(snapshotPath)).rejects.toMatchObject({ code: "ENOENT" });
+    } finally {
+      await project?.dispose();
+      await rm(home, { recursive: true, force: true });
+    }
+  });
   it("preserves real Interpreter definitions, hashes and pins for equivalent Host bindings", async () => {
     const root = await mkdtemp(join(tmpdir(), "pragma-r2-compile-equivalence-"));
     let project: PragmaProject | undefined;
