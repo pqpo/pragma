@@ -58,6 +58,8 @@ import {
 } from "@pragma/interpreter/ast";
 import { strFromU8 } from "fflate";
 import {
+  PRAGMA_TEXT_LIMITS,
+  truncatePragmaUnicode,
   assertValidSkillBundlePayload,
   SkillBundlePayloadDescriptorSchema,
   serializeSkillBundleAssetIdentity,
@@ -744,7 +746,8 @@ export function createPragmaBundleService(options: {
         let name = entry.store.name;
         let ordinal = 1;
         while (occupiedContextNames.has(normalizePragmaResourceName(name))) {
-          name = `${entry.store.name} (${++ordinal})`;
+          const suffix = ` (${++ordinal})`;
+          name = `${truncatePragmaUnicode(entry.store.name, PRAGMA_TEXT_LIMITS.contextStore.name - suffix.length)}${suffix}`;
         }
         occupiedContextNames.add(normalizePragmaResourceName(name));
         entry.resource.metadata.name = name;

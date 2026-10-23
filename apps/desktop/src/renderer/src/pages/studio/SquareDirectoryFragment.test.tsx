@@ -224,6 +224,32 @@ describe("SquareDirectoryFragment", () => {
       expect(placeholderSummary).toContain("Knowledge base name unavailable");
       expect(placeholderSummary).toContain("Release handbook");
       expect(placeholderSummary).not.toContain("491dbb29-7290-4f32-b302-9d1add1de67e");
+      for (const name of ["491dbb29-7290-4f32-b302-9d1add1de67e", "kqh4nx7rx26mb3e7"]) {
+        const namedInspection = {
+          ...inspection,
+          resourceDetails: [
+            { ref: "context-store:kqh4nx7rx26mb3e7", kind: "ContextStore" as const, name },
+          ],
+          dependencies: [
+            {
+              kind: "context-store" as const,
+              ref: "context-store:kqh4nx7rx26mb3e7",
+              name,
+              included: false,
+            },
+          ],
+        };
+        const namedDetails = renderToStaticMarkup(
+          <SquareBundleResourceList inspection={namedInspection} />,
+        );
+        const namedSummary = renderToStaticMarkup(
+          <SquareBundleContents inspection={namedInspection} />,
+        );
+        expect(namedDetails).toContain(name);
+        expect(namedSummary).toContain(name);
+        expect(namedDetails).not.toContain("Knowledge base name unavailable");
+        expect(namedSummary).not.toContain("Knowledge base name unavailable");
+      }
       const html = renderToStaticMarkup(<SquareBundleContents inspection={inspection} />);
       expect(html).toContain("Model settings");
       expect(html).toContain("qwen3.7-plus");

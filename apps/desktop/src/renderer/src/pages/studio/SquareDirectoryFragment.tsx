@@ -630,7 +630,7 @@ function localized(
 }
 
 function squareKnowledgeName(name: string, unavailable: string): string {
-  return /^(?:Context\s+|context-store:)?(?:[0-9a-hjkmnp-tv-z]{16}|[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12})$/iu.test(
+  return /^(?:Context\s+|context-store:)(?:[0-9a-hjkmnp-tv-z]{16}|[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12})$/iu.test(
     name,
   )
     ? unavailable

@@ -78,64 +78,77 @@ afterEach(async () => {
 });
 
 describe("PragmaBundleService", { timeout: 30_000 }, () => {
-  it("disambiguates duplicate knowledge names only in the export graph", async () => {
-    const source = await createFixture("duplicate-knowledge-names", { realContextStores: true });
-    const stores = await Promise.all(
-      [0, 1].map(
-        async () =>
-          await source.contextStores.createFromSnapshot({
-            name: "Release handbook",
-            description: "",
-            author: "user",
-            summary: "Initial content.",
-            directories: [],
-            files: [],
-          }),
-      ),
-    );
-    const resources = stores.map((store, index) => {
-      const resource = contextStore(store.id);
-      resource.metadata.id = index === 0 ? "0000000000000001" : "0000000000000002";
-      resource.metadata.name = `Historical knowledge ${index}`;
-      return resource;
-    });
-    const snapshot = await source.project.get();
-    const owner = snapshot.resources.find((resource) => resource.kind === "Expert")!;
-    if (owner.kind !== "Expert") throw new Error("Expected Expert");
-    owner.spec.contextStores = resources.map((resource, index) => ({
-      ref: canonicalPragmaResourceRef(resource) as `context-store:${string}`,
-      namespace: `knowledge-${index}`,
-      required: false,
-    }));
-    const published = await source.project.publish({
-      expectedRevision: snapshot.revision,
-      resources: [...snapshot.resources, ...resources],
-    });
-    const before = await source.project.get();
-    const path = join(source.root, "duplicate.pragma");
-    const input = exportInput(published.revision);
-    await source.service.exportTo(input, path);
-    const decoded = await decodePragmaBundle({ kind: "file", path });
-    const project = await loadPragmaProject({ kind: "decoded-bundle", bundle: decoded });
-    try {
+  it.each(
+    [
+      "Release handbook",
+      ...[46, 47, 50].flatMap((length) => ["知".repeat(length), "📚".repeat(length)]),
+    ].flatMap((name) => [false, true].map((knowledgeBases) => ({ name, knowledgeBases }))),
+  )(
+    "bounds duplicate knowledge names and retries occupied suffixes ($name, content: $knowledgeBases)",
+    async ({ name, knowledgeBases }) => {
+      const collisionName = `${[...name].slice(0, 46).join("")} (2)`;
+      const expectedDisambiguated = `${[...name].slice(0, 46).join("")} (3)`;
+      const source = await createFixture("duplicate-knowledge-names", { realContextStores: true });
+      const stores = await Promise.all(
+        [collisionName, name, name].map(
+          async (storeName) =>
+            await source.contextStores.createFromSnapshot({
+              name: storeName,
+              description: "",
+              author: "user",
+              summary: "Initial content.",
+              directories: [],
+              files: [],
+            }),
+        ),
+      );
+      const resources = stores.map((store, index) => {
+        const resource = contextStore(store.id);
+        resource.metadata.id = `000000000000000${index + 1}`;
+        resource.metadata.name = `Historical knowledge ${index}`;
+        return resource;
+      });
+      const snapshot = await source.project.get();
+      const owner = snapshot.resources.find((resource) => resource.kind === "Expert")!;
+      if (owner.kind !== "Expert") throw new Error("Expected Expert");
+      owner.spec.contextStores = resources.map((resource, index) => ({
+        ref: canonicalPragmaResourceRef(resource) as `context-store:${string}`,
+        namespace: `knowledge-${index}`,
+        required: false,
+      }));
+      const published = await source.project.publish({
+        expectedRevision: snapshot.revision,
+        resources: [...snapshot.resources, ...resources],
+      });
+      const before = await source.project.get();
+      const path = join(source.root, "duplicate.pragma");
+      const input = exportInput(published.revision);
+      await source.service.exportTo(
+        { ...input, modules: { ...input.modules, knowledgeBases } },
+        path,
+      );
+      const decoded = await decodePragmaBundle({ kind: "file", path });
+      const project = await loadPragmaProject({ kind: "decoded-bundle", bundle: decoded });
+      try {
+        expect(
+          project
+            .listResources()
+            .filter((resource) => resource.kind === "ContextStore")
+            .map((resource) => resource.metadata.name)
+            .toSorted(),
+        ).toEqual([collisionName, name, expectedDisambiguated].toSorted());
+      } finally {
+        await project.dispose();
+      }
+      const inspection = await source.service.inspect(path);
       expect(
-        project
-          .listResources()
-          .filter((resource) => resource.kind === "ContextStore")
-          .map((resource) => resource.metadata.name)
-          .toSorted(),
-      ).toEqual(["Release handbook", "Release handbook (2)"]);
-    } finally {
-      await project.dispose();
-    }
-    const inspection = await source.service.inspect(path);
-    expect(
-      inspection.resourceDetails
-        ?.filter((resource) => resource.kind === "ContextStore")
-        .map((resource) => resource.name),
-    ).toEqual(["Release handbook", "Release handbook"]);
-    expect(await source.project.get()).toEqual(before);
-  });
+        inspection.resourceDetails
+          ?.filter((resource) => resource.kind === "ContextStore")
+          .map((resource) => resource.name),
+      ).toEqual([collisionName, name, name]);
+      expect(await source.project.get()).toEqual(before);
+    },
+  );
 
   it.each([false, true])(
     "reads knowledge names from an existing bundle descriptor (descriptor: %s)",
