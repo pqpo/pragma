@@ -58,6 +58,8 @@ import {
 } from "@pragma/interpreter/ast";
 import { strFromU8 } from "fflate";
 import {
+  PRAGMA_TEXT_LIMITS,
+  truncatePragmaUnicode,
   assertValidSkillBundlePayload,
   SkillBundlePayloadDescriptorSchema,
   serializeSkillBundleAssetIdentity,
@@ -730,6 +732,29 @@ export function createPragmaBundleService(options: {
       });
       rootRef = normalized.aliases.get(rootRef) ?? rootRef;
       const portableResources = collectBundleResourceClosure(named.resources, rootRef);
+      // Resolve host metadata only in the derived export graph. Historical revisions stay intact.
+      const exportContexts = await collectContexts(portableResources, options.contextStores);
+      const occupiedContextNames = new Set(
+        exportContexts
+          .filter((entry) => entry.store === undefined)
+          .map((entry) => normalizePragmaResourceName(entry.resource.metadata.name)),
+      );
+      for (const entry of exportContexts.toSorted((left, right) =>
+        left.resource.metadata.id.localeCompare(right.resource.metadata.id),
+      )) {
+        if (entry.store === undefined) continue;
+        let name = entry.store.name;
+        let ordinal = 1;
+        while (occupiedContextNames.has(normalizePragmaResourceName(name))) {
+          const suffix = ` (${++ordinal})`;
+          name = `${truncatePragmaUnicode(entry.store.name, PRAGMA_TEXT_LIMITS.contextStore.name - suffix.length)}${suffix}`;
+        }
+        occupiedContextNames.add(normalizePragmaResourceName(name));
+        entry.resource.metadata.name = name;
+        // A knowledge base can have no description, while DSL metadata requires one.
+        entry.resource.metadata.description =
+          entry.store.description.trim() || entry.resource.metadata.description;
+      }
       let changed = !isDeepStrictEqual(portableResources, sourceResources);
       for (const resource of portableResources) {
         if (resource.kind === "ExpertTeam") {
@@ -2240,7 +2265,12 @@ export function createPragmaBundleService(options: {
         resourceDetails: archive.resources.map((resource) => ({
           ref: canonicalPragmaResourceRef(resource),
           kind: resource.kind,
-          name: resource.metadata.name,
+          name:
+            (resource.kind === "ContextStore"
+              ? archive.manifest.dependencies.contextStores.find(
+                  (dependency) => dependency.resourceRef === canonicalPragmaResourceRef(resource),
+                )?.name
+              : undefined) ?? resource.metadata.name,
         })),
         runtimeModels: {
           ...bundleRuntimeModels(plan?.effective ?? archive.resources),

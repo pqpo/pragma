@@ -219,6 +219,7 @@ export const studio = {
     contents: "内容与依赖",
     loadingVersion: "正在读取所选版本…",
     retryVersion: "重试",
+    knowledgeBaseNameUnavailable: "知识库名称不可用",
     resourceDetailsUnavailable: "资源明细暂不可用，请重启应用后重新打开市场。",
     resourceKinds: {
       Expert: "专家",
