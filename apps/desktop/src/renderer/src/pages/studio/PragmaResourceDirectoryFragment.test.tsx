@@ -687,7 +687,7 @@ const complete = true;
     expect(html).toContain("<table>");
     expect(html).toContain("<thead>");
     expect(html).toContain("<tbody>");
-    expect(html).toContain("<th>Check</th>");
+    expect(html).toContain('<th scope="col">Check</th>');
     expect(html).toContain("<td>Complete</td>");
     expect(html).toContain('href="https://example.com" target="_blank" rel="noreferrer"');
     expect(html).toContain('class="markdown-image-placeholder"');

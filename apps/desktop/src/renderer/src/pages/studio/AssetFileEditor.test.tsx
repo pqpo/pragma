@@ -52,6 +52,25 @@ describe("shared asset file browser and editor", () => {
     expect(html).not.toContain('aria-label="Edit"');
   });
 
+  it("uses the shared document preview and code controls for knowledge and Skill Markdown", () => {
+    for (const path of ["SKILL.md", "guides/overview.md"]) {
+      const html = renderToStaticMarkup(
+        <AssetFileEditor
+          {...callbacks}
+          path={path}
+          value="---\nprivate: metadata\n---\n# Original"
+          previewSource={"# Preview\n\n```yaml\npriority: normal\n```"}
+          preview
+        />,
+      );
+      expect(html).toContain('<article class="asset-markdown-document">');
+      expect(html).toContain("<h1>Preview</h1>");
+      expect(html).toContain('class="language-yaml"');
+      expect(html).toContain('aria-label="Copy"');
+      expect(html).not.toContain("private: metadata");
+    }
+  });
+
   it("does not offer text editing or a text preview for binary files", () => {
     const html = renderToStaticMarkup(
       <AssetFileEditor {...callbacks} path="image.bin" value={null} preview={false} />,

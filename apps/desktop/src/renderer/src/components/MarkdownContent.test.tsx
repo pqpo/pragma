@@ -50,6 +50,28 @@ describe("MarkdownContent", () => {
     expect(interactive).toContain('class="markdown-content-link" href="semantic/items/fact-a.md"');
   });
 
+  it("keeps GFM table alignment and inline formatting inside a scroll container", () => {
+    const html = renderToStaticMarkup(
+      <MarkdownContent
+        source={["| File | Priority |", "| :--- | ---: |", "| `SKILL.md` | **3** |"].join("\n")}
+      />,
+    );
+    expect(html).toContain('class="markdown-table-scroll"');
+    expect(html).toContain('<th scope="col" style="text-align:right">Priority</th>');
+    expect(html).toContain("<code>SKILL.md</code>");
+    expect(html).toContain('<td style="text-align:right"><strong>3</strong></td>');
+  });
+
+  it("renders each task checkbox once, including nested and loose lists", () => {
+    const html = renderToStaticMarkup(
+      <MarkdownContent source={"- [x] Done\n  - [ ] Nested\n\n- [ ] Pending\n\n  Details."} />,
+    );
+    expect(html.match(/type="checkbox"/gu)).toHaveLength(3);
+    expect(html.match(/checked=""/gu)).toHaveLength(1);
+    expect(html).toContain("Nested");
+    expect(html).toContain("Details.");
+  });
+
   it("keeps the active Markdown tail lightweight while rendering stable blocks", () => {
     const source = "## Stable\n\nThe **active** tail";
     const parts = splitStreamingMarkdown(source);

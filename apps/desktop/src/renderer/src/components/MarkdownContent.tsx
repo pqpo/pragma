@@ -245,8 +245,7 @@ function renderMarkdownToken(
     case "list": {
       const list = token as Tokens.List;
       const children = list.items.map((item, index) => (
-        <li key={index}>
-          {item.task ? <input type="checkbox" checked={item.checked === true} readOnly /> : null}
+        <li key={index} className={item.task ? "markdown-task-item" : undefined}>
           {renderMarkdownTokens(item.tokens, codeBlockControls, onInternalLink)}
         </li>
       ));
@@ -259,28 +258,30 @@ function renderMarkdownToken(
     case "table": {
       const table = token as Tokens.Table;
       return (
-        <table key={key}>
-          <thead>
-            <tr>
-              {table.header.map((cell, index) => (
-                <th key={index} style={{ textAlign: cell.align ?? undefined }}>
-                  {renderMarkdownTokens(cell.tokens, codeBlockControls, onInternalLink)}
-                </th>
-              ))}
-            </tr>
-          </thead>
-          <tbody>
-            {table.rows.map((row, rowIndex) => (
-              <tr key={rowIndex}>
-                {row.map((cell, cellIndex) => (
-                  <td key={cellIndex} style={{ textAlign: cell.align ?? undefined }}>
+        <div className="markdown-table-scroll" key={key}>
+          <table>
+            <thead>
+              <tr>
+                {table.header.map((cell, index) => (
+                  <th key={index} scope="col" style={{ textAlign: cell.align ?? undefined }}>
                     {renderMarkdownTokens(cell.tokens, codeBlockControls, onInternalLink)}
-                  </td>
+                  </th>
                 ))}
               </tr>
-            ))}
-          </tbody>
-        </table>
+            </thead>
+            <tbody>
+              {table.rows.map((row, rowIndex) => (
+                <tr key={rowIndex}>
+                  {row.map((cell, cellIndex) => (
+                    <td key={cellIndex} style={{ textAlign: cell.align ?? undefined }}>
+                      {renderMarkdownTokens(cell.tokens, codeBlockControls, onInternalLink)}
+                    </td>
+                  ))}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
       );
     }
     case "link": {

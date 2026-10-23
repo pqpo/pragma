@@ -24,6 +24,7 @@
 @import "./features/studio/automations.css";
 @import "./features/studio/capabilities.css";
 @import "./features/studio/context-stores.css";
+@import "./features/studio/asset-markdown.css";
 @import "./features/studio/bundles.css";
 @import "./features/studio/square.css";
 @import "./features/studio/resources.css";
