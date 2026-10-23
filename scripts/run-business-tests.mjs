@@ -120,6 +120,7 @@ if (lane !== "host") {
     "src/renderer/src/pages/home/HomePagePersistence.test.tsx",
     "src/main/features/missions/desktop-mission-adapter.test.ts",
     "src/main/features/missions/desktop-mission-system-resources.test.ts",
+    "src/main/features/missions/desktop-mission-pinned-environment.test.ts",
     "src/main/features/missions/desktop-mission-cold-session.test.ts",
     "src/main/features/missions/mission-deletion.test.ts",
     "src/main/features/missions/mission-rename-ipc.test.ts",

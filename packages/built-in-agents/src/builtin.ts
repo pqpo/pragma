@@ -331,8 +331,8 @@ function builtInAgentAdapterHost(
   return {
     environmentId,
     projectRoot,
-    async resolveBinding(ref): Promise<PragmaBindingRecord | undefined> {
-      return await external?.resolveBinding(ref);
+    async resolveBinding(ref, pin): Promise<PragmaBindingRecord | undefined> {
+      return await external?.resolveBinding(ref, pin);
     },
     async resolveArtifact(source) {
       if (external !== undefined) return await external.resolveArtifact(source);

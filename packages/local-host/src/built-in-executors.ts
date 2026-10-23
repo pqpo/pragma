@@ -35,6 +35,7 @@ export function createLocalHostBuiltInExecutorResolver(options: {
   readonly ref: ExecutorReference;
   readonly workspace: WorkspaceSelection;
   readonly purpose?: "execute" | "stop" | undefined;
+  readonly mission?: { readonly id: string; readonly sessionId?: string | undefined } | undefined;
 }) => Promise<LocalHostCoreExecutorDefinition | undefined> {
   const compiler =
     options.compiler ??
@@ -48,18 +49,23 @@ export function createLocalHostBuiltInExecutorResolver(options: {
         : { resources: { adapterHost: () => options.adapterHost! } }),
     });
   const refs = new Set<string>(BUILT_IN_AGENT_REFS);
-  return async ({ ref, workspace, purpose }) => {
+  return async ({ ref, workspace, purpose, mission }) => {
     const exactRef = `${ref.kind}:${ref.id}`;
     if (ref.kind !== "expert" || !refs.has(exactRef)) return undefined;
     const resource = builtInAgentResource(exactRef as BuiltInAgentRef);
-    const scope = compiler.service.createRequestScope({
-      id: `resolve:${exactRef}`,
+    const request = {
+      id: mission?.id ?? `resolve:${exactRef}`,
       // A logical source identity only: shipped resources need no project checkout.
       project: { id: "built_in", revision: 1 },
       executor: { kind: ref.kind, ref: exactRef, name: resource.metadata.name },
       workspace: { path: workspace.canonicalPath },
       contextMounts: [],
-    });
+      ...(mission === undefined ? {} : { execution: { sessionId: mission.sessionId } }),
+    };
+    const scope =
+      mission === undefined
+        ? compiler.service.createRequestScope(request)
+        : await compiler.createExecutionScope(request);
     if (purpose === "stop") {
       const compiled = await compiler.compileForStop(scope);
       return {
@@ -80,6 +86,7 @@ export function createLocalHostBuiltInExecutorResolver(options: {
         true,
       ),
       definition: compilation.compiled.value,
+      executionPinned: await compiler.service.isExecutionPinned(scope),
       environment: missionCompilationEnvironmentSnapshot(
         compilation.compiled,
         compilation.capabilities,

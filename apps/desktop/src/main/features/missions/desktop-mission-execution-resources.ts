@@ -42,6 +42,7 @@ import {
   createLocalHostMissionCompileService,
   type LocalHostMissionCompileScope,
   type LocalHostSystemExecutorSource,
+  type LocalHostSystemExecutorSnapshot,
   type MissionOwnerScope,
 } from "@pragma/local-host";
 import { createHash, randomUUID } from "node:crypto";
@@ -154,6 +155,7 @@ export interface DesktopMissionExecutionResourceOptions {
         readonly runtimes: RuntimeResolver;
         readonly purpose: "execute" | "stop";
         readonly adapterHost: PragmaAdapterHost;
+        readonly pinnedSource?: LocalHostSystemExecutorSnapshot | undefined;
         readonly knowledgeRevisions?: KnowledgeRevisionSubmissionPort | undefined;
       }) => Promise<LocalHostSystemExecutorSource | undefined>)
     | undefined;
@@ -885,6 +887,12 @@ export function createDesktopMissionExecutionResources(
         };
 
         const compileService = createLocalHostMissionCompileService<Mission>({
+          executionSnapshotPath: (mission) => {
+            const directory = options.missions.storagePath?.(mission.id);
+            return directory !== undefined && isUserFacingMissionOrigin(mission.origin)
+              ? join(directory, "execution-snapshot.json")
+              : undefined;
+          },
           onPhase: ({ requestId, phase, elapsedMs }) =>
             logger.info("mission.performance", "Mission phase completed", {
               missionId: requestId,
@@ -918,8 +926,11 @@ export function createDesktopMissionExecutionResources(
             getCapabilityId: (binding) =>
               parseDesktopCapabilityBindingRef(binding) ??
               parseLegacyDesktopCapabilityBindingRef(binding)?.id,
-            resolve: async (capabilityId) => {
-              const capability = await options.capabilityStore.resolveActive(capabilityId);
+            resolve: async (capabilityId, revision) => {
+              const capability =
+                revision === undefined
+                  ? await options.capabilityStore.resolveActive(capabilityId)
+                  : await options.capabilityStore.get(capabilityId, revision);
               const credentials = await options.capabilityCredentials.fingerprint(
                 capability.manifest.id,
               );
@@ -936,12 +947,13 @@ export function createDesktopMissionExecutionResources(
             getResource: options.getSystemExecutorResource,
             getDependencyResource: options.getSystemDependencyResource,
             fingerprint: options.getSystemExecutorFingerprint,
-            prepare: async (mission, runtimes, purpose, adapterHost) =>
+            prepare: async (mission, runtimes, purpose, adapterHost, pinnedSource) =>
               await options.systemExecutorSource?.({
                 mission,
                 runtimes,
                 purpose,
                 adapterHost,
+                pinnedSource,
                 knowledgeRevisions: knowledgeRevisionsByAdapter.get(adapterHost),
               }),
           },

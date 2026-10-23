@@ -75,6 +75,8 @@ function advanceLeaseClock(expiredAt: number): void {
   vi.stubGlobal("Date", LeaseDate);
 }
 
+// Source SDK imports, Workers and child startup share this orchestration budget.
+const waitMs = 30_000;
 const roots: string[] = [];
 const hosts: ReturnType<typeof createNodeApplication>[] = [];
 function createLocalHostNodeApplication(
@@ -85,15 +87,25 @@ function createLocalHostNodeApplication(
   return host;
 }
 afterEach(async () => {
-  // Test bodies stop their child producers first; then drain Host custody
-  // before removing its durable root or restoring the Runtime mocks it uses.
-  for (const host of hosts.splice(0).reverse()) await host.dispose?.();
+  // Test bodies stop child producers first. Attempt every Host's custody drain
+  // before restoring globals, and retain evidence when shutdown fails.
+  const ownedRoots = roots.splice(0);
+  const errors: unknown[] = [];
+  for (const host of hosts.splice(0).reverse()) {
+    try {
+      await host.dispose?.();
+    } catch (error) {
+      errors.push(error);
+    }
+  }
   vi.unstubAllGlobals();
   vi.restoreAllMocks();
+  // Keep failed shutdown evidence and isolate later fixtures from its paths.
+  if (errors.length > 0) throw new AggregateError(errors, "Host shutdown failed; roots retained.");
   await Promise.all(
-    roots.splice(0).map((root) => rm(root, { recursive: true, force: true, maxRetries: 5 })),
+    ownedRoots.map((root) => rm(root, { recursive: true, force: true, maxRetries: 5 })),
   );
-});
+}, waitMs);
 
 async function executionDiagnostic(
   executions: ReturnType<typeof createSqliteExecutionStore>,
@@ -282,7 +294,7 @@ async function fixture(
   };
 }
 
-describe("default Node compilation reaches persisted Execution", { timeout: 15_000 }, () => {
+describe("default Node compilation reaches persisted Execution", { timeout: waitMs }, () => {
   it.each([false, true])("executes stable Host IDs and manual retry (%s)", async (withAlias) => {
     const f = await fixture();
     const paths = new PragmaPaths({ pragmaHome: f.home });
@@ -384,7 +396,13 @@ describe("default Node compilation reaches persisted Execution", { timeout: 15_0
           name: "clipboard.png",
           path,
           mimeType: "image/png",
-          optimized: { path: optimizedPath, mimeType: "image/webp", size: 15, width: 1, height: 1 },
+          optimized: {
+            path: optimizedPath,
+            mimeType: "image/webp",
+            size: 15,
+            width: 1,
+            height: 1,
+          },
         };
       };
       const seen: Array<readonly ExpertPromptAttachment[]> = [];
@@ -455,7 +473,7 @@ describe("default Node compilation reaches persisted Execution", { timeout: 15_0
         const result = await app.missionControl!.waitForTerminal({
           missionId: mission.id,
           requestId,
-          timeoutMs: 5_000,
+          timeoutMs: waitMs,
         });
         expect(result, JSON.stringify(result.error)).toMatchObject({ state: "applied" });
         const sessionId = (await missions.get(mission.id)).execution!.sessionId!;
@@ -475,7 +493,7 @@ describe("default Node compilation reaches persisted Execution", { timeout: 15_0
         await f.app.missionControl!.waitForTerminal({
           missionId: mission.id,
           requestId: blankId,
-          timeoutMs: 5_000,
+          timeoutMs: waitMs,
         }),
       ).toMatchObject({ state: "rejected" });
       expect(
@@ -520,7 +538,7 @@ describe("default Node compilation reaches persisted Execution", { timeout: 15_0
         await queuedHost.missionControl!.waitForTerminal({
           missionId: mission.id,
           requestId: holdId,
-          timeoutMs: 5_000,
+          timeoutMs: waitMs,
         }),
       ).toMatchObject({ state: "applied" });
       await vi.waitFor(() => expect(f.pending.size).toBe(1));
@@ -539,7 +557,7 @@ describe("default Node compilation reaches persisted Execution", { timeout: 15_0
         await queuedHost.missionControl!.waitForTerminal({
           missionId: mission.id,
           requestId: steerId,
-          timeoutMs: 5_000,
+          timeoutMs: waitMs,
         }),
       ).toMatchObject({ state: "rejected" });
       expect(
@@ -565,7 +583,7 @@ describe("default Node compilation reaches persisted Execution", { timeout: 15_0
         await queuedHost.missionControl!.waitForTerminal({
           missionId: mission.id,
           requestId: queuedSteerId,
-          timeoutMs: 5_000,
+          timeoutMs: waitMs,
         }),
       ).toMatchObject({ state: "rejected" });
       expect((await executions.get(queuedExecution))?.status).toBe("queued");
@@ -595,7 +613,7 @@ describe("default Node compilation reaches persisted Execution", { timeout: 15_0
         await restored.missionControl!.waitForTerminal({
           missionId: mission.id,
           requestId: resumeId,
-          timeoutMs: 5_000,
+          timeoutMs: waitMs,
         }),
       ).toMatchObject({ state: "applied" });
       await restored.missionControl!.waitExecution!({
@@ -772,7 +790,7 @@ describe("default Node compilation reaches persisted Execution", { timeout: 15_0
             }
             expect(ready).toMatchObject({ requestId });
           },
-          { timeout: 10_000 },
+          { timeout: waitMs },
         );
         const activeMission = await missions.get(started.missionId);
         const sessionId = activeMission.execution!.sessionId!;
@@ -903,7 +921,7 @@ describe("default Node compilation reaches persisted Execution", { timeout: 15_0
               throw new Error(`Flow Native dispatch not ready: ${diagnostics}`, { cause: error });
             }
           },
-          { timeout: 10_000 },
+          { timeout: waitMs },
         );
         const target = started!;
         expect(target.executionId).toEqual(expect.any(String));
@@ -976,7 +994,7 @@ describe("default Node compilation reaches persisted Execution", { timeout: 15_0
   );
 
   it.each([false, true])(
-    "persists a changed-authority successor and reopens its original Context and Native Session (controller-only=%s)",
+    "retains Mission dependency pins and reopens the accepted Context and Native Session (controller-only=%s)",
     async (controllerOnly) => {
       const f = await fixture();
       const started = await f.app.run!.start({
@@ -1069,7 +1087,7 @@ describe("default Node compilation reaches persisted Execution", { timeout: 15_0
       const accepted = await f.app.missionControl!.waitForTerminal({
         missionId: started.missionId,
         requestId,
-        timeoutMs: 5_000,
+        timeoutMs: waitMs,
       });
       expect(accepted, JSON.stringify(accepted.error)).toMatchObject({ state: "applied" });
       const executionId = accepted.result!["executionId"] as string;
@@ -1097,7 +1115,9 @@ describe("default Node compilation reaches persisted Execution", { timeout: 15_0
       });
       const successorSessionId = await resolveSession(started.missionId);
       expect(successorSessionId).toBeDefined();
-      expect(successorSessionId).not.toBe(original.execution?.sessionId);
+      // Controller recovery must use the same dependency snapshot even without
+      // the product envelope; it must never start an empty conversation.
+      expect(successorSessionId).toBe(original.execution?.sessionId);
       const before = (await sessions.get(successorSessionId!))!;
       const beforeRoot = before.contexts[before.rootContextId]!;
       if (controllerOnly) {
@@ -1153,7 +1173,7 @@ describe("default Node compilation reaches persisted Execution", { timeout: 15_0
         const applied = await cold.missionControl!.waitForTerminal({
           missionId: started.missionId,
           requestId: continuation,
-          timeoutMs: 5_000,
+          timeoutMs: waitMs,
         });
         expect(applied, JSON.stringify(applied.error)).toMatchObject({ state: "applied" });
         await cold.missionControl!.waitExecution!({
@@ -1353,7 +1373,7 @@ describe("default Node compilation reaches persisted Execution", { timeout: 15_0
     const operation = await cold.missionControl!.waitForTerminal({
       missionId: started.missionId,
       requestId,
-      timeoutMs: 5_000,
+      timeoutMs: waitMs,
     });
     expect(operation.state).toBe("applied");
     // This counter covers the external adapter API, not Native Session probes.
@@ -1374,7 +1394,7 @@ describe("default Node compilation reaches persisted Execution", { timeout: 15_0
     const rejected = await cold.missionControl!.waitForTerminal({
       missionId: started.missionId,
       requestId: sendRequestId,
-      timeoutMs: 5_000,
+      timeoutMs: waitMs,
     });
     expect(rejected).toMatchObject({ state: "rejected", error: { code: "RUNTIME_UNAVAILABLE" } });
     await cold.missionControl!.stopOwner(started.missionId);
@@ -1799,7 +1819,7 @@ it(
       async () => {
         expect((await missions.get(mission.id)).execution?.status).toBe("succeeded");
       },
-      { timeout: 10_000 },
+      { timeout: waitMs },
     );
     expect(attempts).toBe(2);
     expect(reads).toEqual([expect.stringContaining("Original published content")]);
@@ -1972,7 +1992,7 @@ it(
         return await cold.missionControl!.waitForTerminal({
           missionId: mission.id,
           requestId,
-          timeoutMs: 5_000,
+          timeoutMs: waitMs,
         });
       } catch (error) {
         const controller = lifecycle!.controller;

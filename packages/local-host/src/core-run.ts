@@ -68,6 +68,7 @@ export interface LocalHostCoreExecutorDefinition extends ResolvedRunExecutor {
   readonly descriptor: ExecutorDescriptor;
   readonly definition: LocalHostCoreDefinition;
   readonly environment?: ExecutionEnvironmentSnapshot | undefined;
+  readonly executionPinned?: boolean | undefined;
   readonly compilation?:
     | Pick<
         LocalHostStableMissionCompilation,
@@ -141,6 +142,8 @@ export interface LocalHostCoreRunComposition {
         readonly projectId?: string | undefined;
         readonly revision?: number | undefined;
         readonly workspace: WorkspaceSelection;
+        readonly mission?:
+          { readonly id: string; readonly sessionId?: string | undefined } | undefined;
       }) => Promise<LocalHostCoreExecutorDefinition | undefined>);
 }
 
@@ -198,6 +201,7 @@ export function createCoreRunExecutorPort(
     readonly projectId?: string | undefined;
     readonly revision?: number | undefined;
     readonly workspace: WorkspaceSelection;
+    readonly mission?: { readonly id: string; readonly sessionId?: string | undefined } | undefined;
   }): Promise<LocalHostCoreExecutorDefinition | undefined> => {
     const candidate =
       typeof options.executors === "function"
@@ -215,6 +219,7 @@ export function createCoreRunExecutorPort(
     return {
       descriptor: ExecutorDescriptorSchema.parse(candidate.descriptor),
       definition: candidate.definition,
+      executionPinned: candidate.executionPinned,
       ...(candidate.environment === undefined ? {} : { environment: candidate.environment }),
       ...(candidate.compilation === undefined ? {} : { compilation: candidate.compilation }),
     };
@@ -254,8 +259,27 @@ export function createCoreRunExecutorPort(
             admissionOwned: true,
           },
           async (admission) => {
-            const definition = input.executor as LocalHostCoreExecutorDefinition;
-            if (definition.definition === undefined) {
+            const accepted = input.executor as LocalHostCoreExecutorDefinition;
+            const definition =
+              typeof options.executors === "function" &&
+              accepted.executionPinned === false &&
+              !isFlowDefinition(accepted.definition)
+                ? await resolve({
+                    ref: input.request.executor,
+                    workspace: input.request.workspace,
+                    projectId:
+                      input.executor.descriptor.project?.projectId ??
+                      input.request.project?.projectId,
+                    revision:
+                      input.executor.descriptor.project?.revision ??
+                      input.request.project?.revision,
+                    mission: {
+                      id: input.missionId,
+                      sessionId: await options.resolveSessionId?.(input.missionId),
+                    },
+                  })
+                : accepted;
+            if (definition?.definition === undefined) {
               throw new Error(`Core executor definition is missing: ${input.request.executor.id}`);
             }
             const runApp =
@@ -436,6 +460,7 @@ async function startCoreDefinition(
           definition: definition.definition,
           createOptions: { sessionId: options.sessionId, ...environment },
           resumeOptions: environment,
+          preserveDefinitionSession: definition.executionPinned,
         },
   );
   if (opened.kind === "receipt") return { kind: "receipt", view: opened.view };

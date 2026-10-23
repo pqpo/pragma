@@ -65,6 +65,7 @@ export type MissionExecutionResources =
         | Omit<NonNullable<Parameters<ExpertApplication["resumeSession"]>[1]>, "sessionId">
         | undefined;
       readonly successorOnMismatch?: boolean | undefined;
+      readonly preserveDefinitionSession?: boolean | undefined;
     }
   | {
       readonly kind: "flow";
@@ -211,7 +212,11 @@ export function createMissionExecutionKernel(options: {
             options: resume,
           });
     } catch (error) {
-      if (resources.successorOnMismatch !== true || !shouldCreateSuccessorExpertSession(error))
+      if (
+        resources.preserveDefinitionSession === true ||
+        resources.successorOnMismatch !== true ||
+        !shouldCreateSuccessorExpertSession(error)
+      )
         throw error;
       const successor = await create();
       try {
@@ -334,6 +339,17 @@ export function createMissionExecutionKernel(options: {
     readonly previousEnvironmentAvailable?: boolean | undefined;
   }): Promise<{ readonly session: ExpertSession; readonly replaced: boolean }> => {
     const successor = input.definitionChanged || (input.contextStoresChanged && !input.hasActive);
+    if (input.definitionChanged && input.resources?.preserveDefinitionSession === true)
+      throw createIntegrationError({
+        code: "COMMAND_REJECTED",
+        category: "conflict",
+        message:
+          "The pinned Mission environment cannot be restored. Its original Session was preserved.",
+        details: {
+          missionId: input.subject.missionId,
+          reason: "mission_pinned_environment_unavailable",
+        },
+      });
     if (successor && input.resources?.successorOnMismatch === false)
       throw Object.assign(new Error("memory_curator_session_environment_changed"), {
         retryable: false,

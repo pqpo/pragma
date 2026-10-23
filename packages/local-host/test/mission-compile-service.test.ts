@@ -46,6 +46,27 @@ import { createPublishedProjectResources } from "./fixtures/published-project.ts
 const hash = (value: unknown) => createHash("sha256").update(JSON.stringify(value)).digest("hex");
 const capabilityId = "pcr7npvx0gv8fpka";
 
+it("pins the first usable environment after an initial compilation failure with no Session", async () => {
+  const home = await mkdtemp(join(tmpdir(), "pragma-initial-pin-retry-"));
+  try {
+    const f = await fixture({ executionSnapshotPath: () => join(home, "execution-snapshot.json") });
+    f.resolve.mockRejectedValueOnce(new Error("Capability temporarily unavailable"));
+    await expect(
+      f.service.compileStable(f.service.createRequestScope(f.request), f.runtimes),
+    ).rejects.toThrow("temporarily unavailable");
+    const retry = f.service.createRequestScope({ ...f.request, execution: {} });
+    await f.service.compileStable(retry, f.runtimes);
+    expect(await f.service.isExecutionPinned(retry)).toBe(true);
+    const resumed = f.service.createRequestScope({
+      ...f.request,
+      execution: { sessionId: "original" },
+    });
+    expect(await f.service.isExecutionPinned(resumed)).toBe(true);
+  } finally {
+    await rm(home, { recursive: true, force: true });
+  }
+});
+
 async function fixture(
   overrides: Partial<
     Parameters<typeof createLocalHostMissionCompileService<LocalHostMissionCompileRequest>>[0]

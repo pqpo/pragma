@@ -56,7 +56,11 @@ export interface PragmaArtifactRecord {
 export interface PragmaAdapterHost {
   readonly environmentId: string;
   readonly projectRoot: string;
-  readonly resolveBinding: (ref: PragmaBindingRef) => Promise<PragmaBindingRecord | undefined>;
+  /** Hosts resolving mutable libraries must honor an explicit historical revision. */
+  readonly resolveBinding: (
+    ref: PragmaBindingRef,
+    pin?: { readonly revision: string } | undefined,
+  ) => Promise<PragmaBindingRecord | undefined>;
   readonly resolveArtifact: (source: PragmaArtifactSource) => Promise<PragmaArtifactRecord>;
   readonly resolveSecret: (ref: string) => Promise<string | undefined>;
   readonly openFileContextStore?:

@@ -284,7 +284,7 @@ it("includes a real system customization Capability in warm identity and invalid
 });
 
 it.each(["secret", "plugin"] as const)(
-  "recompiles a retained Desktop owner when its %s authority rotates",
+  "refreshes %s authority while retaining the original Desktop Session",
   async (authority) => {
     const root = await mkdtemp(join(tmpdir(), "pragma-desktop-secret-owner-"));
     const loggerProvider = createNoopLoggerProvider();
@@ -400,6 +400,7 @@ it.each(["secret", "plugin"] as const)(
     const runtime = defineRuntimeTestDriver<never, { id: string }>({
       descriptor: { id: "fake", kind: "test", displayName: "Fixture" },
       createSession: ({ systemSessionId }) => ({ id: systemSessionId }),
+      restoreSession: ({ request }) => ({ id: request.runtimeSession!.id }),
       readSession: (session) => ({ runtimeSessionId: session.id }),
       startTurn: (session) => ({ outputText: "done", runtimeSessionId: session.id }),
       mapEvent: () => ({ events: [] }),
@@ -459,7 +460,7 @@ it.each(["secret", "plugin"] as const)(
       await runner.sendMessage({ id: mission.id, requestId: randomUUID(), content: "Rotated" });
       await settle();
       expect(reads).toHaveBeenCalled();
-      expect((await missions.get(mission.id)).execution?.sessionId).not.toBe(initialSession);
+      expect((await missions.get(mission.id)).execution?.sessionId).toBe(initialSession);
       const currentExecution = (await missions.get(mission.id)).execution!;
       expect((await executions.get(currentExecution.id))?.environment?.fingerprint).not.toBe(
         initialEnvironment?.fingerprint,

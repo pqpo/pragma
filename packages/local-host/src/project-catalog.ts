@@ -44,6 +44,7 @@ export interface LocalHostProjectCatalog {
     readonly revision?: number | undefined;
     readonly workspace: WorkspaceSelection;
     readonly purpose?: "execute" | "stop" | undefined;
+    readonly mission?: { readonly id: string; readonly sessionId?: string | undefined } | undefined;
   }) => Promise<LocalHostCoreExecutorDefinition | undefined>;
   readonly listProjects: () => Promise<readonly LocalHostProjectSummary[]>;
   readonly getProjectRevision: (
@@ -150,6 +151,7 @@ export function createLocalHostProjectCatalog(options: {
     readonly revision?: number | undefined;
     readonly workspace: WorkspaceSelection;
     readonly purpose?: "execute" | "stop" | undefined;
+    readonly mission?: { readonly id: string; readonly sessionId?: string | undefined } | undefined;
   }): Promise<LocalHostCoreExecutorDefinition | undefined> => {
     const targetProjectId = input.projectId ?? projectId;
     const exactRef = `${input.ref.kind}:${input.ref.id}`;
@@ -163,16 +165,18 @@ export function createLocalHostProjectCatalog(options: {
       (candidate) => canonicalPragmaResourceRef(candidate) === exactRef,
     );
     if (resource === undefined || !isInvocableResource(resource)) return undefined;
-    const scope = compiler.service.createRequestScope(
-      {
-        id: `resolve:${exactRef}`,
-        project: { id: location.projectId, revision: location.revision },
-        executor: { kind: input.ref.kind, ref: exactRef, name: resource.metadata.name },
-        workspace: { path: input.workspace.canonicalPath },
-        contextMounts: [],
-      },
-      revisionPromise,
-    );
+    const request = {
+      id: input.mission?.id ?? `resolve:${exactRef}`,
+      project: { id: location.projectId, revision: location.revision },
+      executor: { kind: input.ref.kind, ref: exactRef, name: resource.metadata.name },
+      workspace: { path: input.workspace.canonicalPath },
+      contextMounts: [],
+      ...(input.mission === undefined ? {} : { execution: { sessionId: input.mission.sessionId } }),
+    };
+    const scope =
+      input.mission === undefined
+        ? compiler.service.createRequestScope(request, revisionPromise)
+        : await compiler.createExecutionScope(request, revisionPromise);
     if (input.purpose === "stop") {
       const compiled = await compiler.compileForStop(scope);
       return {
@@ -196,6 +200,7 @@ export function createLocalHostProjectCatalog(options: {
         fingerprint: sourceFingerprint,
       }),
       definition: compilation.compiled.value,
+      executionPinned: await compiler.service.isExecutionPinned(scope),
       environment: missionCompilationEnvironmentSnapshot(
         compilation.compiled,
         compilation.capabilities,

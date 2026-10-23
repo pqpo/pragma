@@ -24,6 +24,7 @@ import type { ContextStoreRevisionGenerator } from "./context-store-revision-ser
 export interface DesktopStoreRevisionAgent {
   readonly generator: ContextStoreRevisionGenerator;
   source(input: {
+    readonly runtimeDefaults?: PragmaCompileOptions["rootExecutionOverride"];
     readonly profile: ContextStoreRevisionProfile;
     readonly runtimes?: RuntimeResolver | undefined;
     readonly adapterHost?: PragmaAdapterHost | undefined;
@@ -118,7 +119,8 @@ export function createDesktopStoreRevisionAgent(options: {
 
   const agent: DesktopStoreRevisionAgent = {
     async source(input) {
-      const runtime = await resolveRuntime(input.profile, input.runtimes);
+      const runtime =
+        input.runtimeDefaults ?? (await resolveRuntime(input.profile, input.runtimes));
       return {
         ref: STORE_REVISION_EXPERT_REF,
         environmentId: "desktop-store-revision",
@@ -144,8 +146,8 @@ export function createDesktopStoreRevisionAgent(options: {
         adapterHost: {
           environmentId: input.adapterHost?.environmentId ?? "desktop-store-revision",
           projectRoot: isolatedWorkspace,
-          async resolveBinding(ref) {
-            return await input.adapterHost?.resolveBinding(ref);
+          async resolveBinding(ref, pin) {
+            return await input.adapterHost?.resolveBinding(ref, pin);
           },
           async resolveArtifact(source) {
             if (input.adapterHost !== undefined) {

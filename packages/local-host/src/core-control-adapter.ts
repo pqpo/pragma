@@ -38,6 +38,7 @@ import {
   ExecutionController,
   ExpertAgentHumanRequestSchema,
   ExpertAgentHumanResponseSchema,
+  fingerprintExpertExecutionDefinition,
   FlowInterruptionUnconfirmedError,
   runtimeSupportsSteer,
   SteerNotDispatchedError,
@@ -172,13 +173,15 @@ export function createLocalHostCoreMissionControlAdapter(options: {
         readonly revision?: number | undefined;
         readonly workspace: WorkspaceSelection;
         readonly purpose?: "execute" | "stop" | undefined;
+        readonly mission?:
+          { readonly id: string; readonly sessionId?: string | undefined } | undefined;
       }) => Promise<LocalHostCoreExecutorDefinition | undefined>);
   readonly assertMissionReady?:
     ((missionId: string, purpose?: "execute" | "stop") => Promise<void>) | undefined;
   readonly compiler?:
     | Pick<
         ReturnType<typeof createLocalHostNodeMissionCompiler>,
-        "service" | "prepare" | "readiness"
+        "service" | "prepare" | "readiness" | "createExecutionScope"
       >
     | undefined;
   readonly resolveExecutionId?: ((missionId: string) => Promise<string | undefined>) | undefined;
@@ -307,6 +310,7 @@ export function createLocalHostCoreMissionControlAdapter(options: {
 
   const resolveExecutor = async (
     binding: MissionPinnedBinding,
+    missionId: string,
     purpose: "execute" | "stop" = "execute",
   ): Promise<LocalHostCoreExecutorDefinition> => {
     const workspace = workspaceFromBinding(binding);
@@ -316,6 +320,10 @@ export function createLocalHostCoreMissionControlAdapter(options: {
             ref: binding.executor.ref,
             workspace,
             purpose,
+            mission: {
+              id: missionId,
+              sessionId: (await options.resolveSessionId?.(missionId)) ?? missionId,
+            },
             ...(binding.executor.source === "project"
               ? {
                   projectId: binding.executor.project.projectId,
@@ -370,7 +378,7 @@ export function createLocalHostCoreMissionControlAdapter(options: {
     // Host bindings (for example Desktop's Pragma management capability).
     if ((await options.messageFormat?.(missionId)) !== undefined) return;
     const binding = await options.resolveMissionBinding(missionId);
-    if (binding !== undefined) await resolveExecutor(binding, purpose);
+    if (binding !== undefined) await resolveExecutor(binding, missionId, purpose);
     else if (options.prepareRecoveryResources === undefined) await readBinding(missionId);
   };
 
@@ -416,7 +424,8 @@ export function createLocalHostCoreMissionControlAdapter(options: {
                 MissionExecutionRecoveryResources & { executor?: LocalHostCoreExecutorDefinition }
               > => {
                 const binding = await readBinding(missionId);
-                const executor = preparedExecutor ?? (await resolveExecutor(binding, purpose));
+                const executor =
+                  preparedExecutor ?? (await resolveExecutor(binding, missionId, purpose));
                 assertExecutorMatchesBinding(executor.descriptor, binding);
                 const app = await createControlApp({
                   options,
@@ -451,6 +460,7 @@ export function createLocalHostCoreMissionControlAdapter(options: {
                         kind: "session",
                         app,
                         definition: executor.definition,
+                        preserveDefinitionSession: executor.executionPinned,
                         resumeOptions:
                           executor.environment === undefined
                             ? undefined
@@ -738,7 +748,7 @@ export function createLocalHostCoreMissionControlAdapter(options: {
       throw commandRejected(missionId, "steer_not_supported");
     }
     if (binding !== undefined) {
-      const executor = await resolveExecutor(await Promise.resolve(binding));
+      const executor = await resolveExecutor(binding, missionId);
       const session = await sessions.get(missionId);
       const supportsSteer =
         session === undefined
@@ -823,7 +833,7 @@ export function createLocalHostCoreMissionControlAdapter(options: {
     const executor = owner.executor;
     if (executor?.compilation === undefined)
       throw commandRejected(missionId, "executor_compilation_identity_required");
-    const scope = compiler.service.createRequestScope({
+    const scope = await compiler.createExecutionScope({
       id: missionId,
       project:
         binding.executor.source === "project"
@@ -836,6 +846,7 @@ export function createLocalHostCoreMissionControlAdapter(options: {
       },
       workspace: { path: binding.workspace.canonicalPath },
       contextMounts: [],
+      execution: { sessionId: owner.kind === "session" ? owner.session.sessionId : missionId },
     });
     const prepared = await compiler.prepare(scope, {
       hasOwner: true,
@@ -910,7 +921,7 @@ export function createLocalHostCoreMissionControlAdapter(options: {
             return { authorityChecked: false, checkedOwner: undefined, executor: undefined };
           // One pinned catalog preparation provides current authority for both
           // warm and cold Sessions; persisted Execution facts decide succession.
-          const executor = await resolveExecutor(await readBinding(mission.id));
+          const executor = await resolveExecutor(await readBinding(mission.id), mission.id);
           if (executor.compilation === undefined)
             throw commandRejected(mission.id, "executor_compilation_identity_required");
           return { authorityChecked: true, checkedOwner: actualOwner, executor };
@@ -972,7 +983,30 @@ export function createLocalHostCoreMissionControlAdapter(options: {
         const executor =
           nextExecutor ??
           owner?.executor ??
-          (owner === undefined ? await resolveExecutor(await readBinding(mission.id)) : undefined);
+          (owner === undefined
+            ? await resolveExecutor(await readBinding(mission.id), mission.id)
+            : undefined);
+        const refreshEnvironment =
+          authorityChanged &&
+          executor?.executionPinned === true &&
+          !isFlowDefinition(executor.definition) &&
+          previousState?.definitionFingerprint ===
+            fingerprintExpertExecutionDefinition(executor.definition);
+        if (refreshEnvironment && owner?.kind === "session") {
+          const [state, prompts] = await Promise.all([
+            owner.session.getState(),
+            owner.session.getPromptQueue(),
+          ]);
+          if (
+            state.activeExecutionId !== undefined ||
+            state.lastStatus === "waiting" ||
+            prompts.some((prompt) => prompt.status === "running" || prompt.status === "queued")
+          )
+            throw commandRejected(mission.id, "mission_environment_refresh_busy");
+          await owner.session.releaseAfterTerminal({ waitForIdle: true });
+          owners.deleteControlOwnerIfCurrent(mission.id, owner);
+          owner = undefined;
+        }
         const nativeResources =
           (owner === undefined || nextExecutor !== undefined) && executor !== undefined
             ? await (async () => {
@@ -989,6 +1023,7 @@ export function createLocalHostCoreMissionControlAdapter(options: {
                   kind: "session" as const,
                   app,
                   definition: executor.definition,
+                  preserveDefinitionSession: executor.executionPinned,
                   createOptions: { environment: executor.environment },
                   resumeOptions: { environment: executor.environment },
                 };
@@ -1003,7 +1038,7 @@ export function createLocalHostCoreMissionControlAdapter(options: {
           },
           nativeResources,
           session: owner?.kind === "session" ? owner.session : undefined,
-          definitionChanged: authorityChanged,
+          definitionChanged: authorityChanged && !refreshEnvironment,
           previousEnvironmentAvailable: previousEnvironment !== undefined,
           contextStoresChanged: false,
           rememberSession: (session: ExpertSession) => {
@@ -1258,7 +1293,7 @@ export function createLocalHostCoreMissionControlAdapter(options: {
                     });
                   } else {
                     const binding = await readBinding(command.missionId);
-                    const executor = await resolveExecutor(binding, "stop");
+                    const executor = await resolveExecutor(binding, command.missionId, "stop");
                     if (!isFlowDefinition(executor.definition))
                       throw commandRejected(command.missionId, "flow_definition_required");
                     const app = await createControlApp({
