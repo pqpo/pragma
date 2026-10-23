@@ -18,6 +18,7 @@ export function createAppServerFixture() {
   const stdout = new PassThrough();
   const stderr = new PassThrough();
   const requests: AppServerRequest[] = [];
+  const responses: Record<string, unknown>[] = [];
   const write = (message: unknown): void => {
     stdout.write(`${JSON.stringify(message)}\n`);
   };
@@ -40,8 +41,14 @@ export function createAppServerFixture() {
   createInterface({ input: stdin }).on("line", (line) => {
     const request = JSON.parse(line) as AppServerRequest;
     if (request.id === undefined) return;
+    if (request.method === undefined) {
+      responses.push(request as unknown as Record<string, unknown>);
+      return;
+    }
     requests.push(request);
     if (request.method === "initialize") reply(request.id, {});
+    if (request.method === "thread/resume")
+      reply(request.id, { thread: { id: request.params["threadId"] } });
     if (request.method === "thread/start") reply(request.id, { thread: { id: "thread-1" } });
     if (request.method === "turn/start") {
       const turnId = `turn-${requests.filter((item) => item.method === "turn/start").length}`;
@@ -64,5 +71,5 @@ export function createAppServerFixture() {
     });
   };
   const spawn: CodexRuntimeSpawn = () => child as ChildProcessWithoutNullStreams;
-  return { spawn, requests, reply, reject, disconnect, completeTurn };
+  return { spawn, requests, responses, write, reply, reject, disconnect, completeTurn };
 }

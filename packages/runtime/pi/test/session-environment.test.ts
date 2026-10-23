@@ -11,11 +11,13 @@ describe("PI session Bash environment", () => {
     const shellPath = resolveTestShellPath();
     const first = createPiSessionBashTool({
       cwd: process.cwd(),
+      permissionMode: "full-access",
       processEnvironment: { PI_SESSION_TOKEN: "token-a" },
       shellPath,
     });
     const second = createPiSessionBashTool({
       cwd: process.cwd(),
+      permissionMode: "full-access",
       processEnvironment: { PI_SESSION_TOKEN: "token-b" },
       shellPath,
     });

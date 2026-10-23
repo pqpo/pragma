@@ -2,15 +2,17 @@ import {
   SettingsManager,
   createAgentSession,
   createBashToolDefinition,
+  createWriteToolDefinition,
+  createEditToolDefinition,
 } from "@earendil-works/pi-coding-agent";
 import type {
   AgentSession,
-  BashToolInput,
   CreateAgentSessionOptions,
   ToolDefinition,
 } from "@earendil-works/pi-coding-agent";
 import type {
   PragmaLogger,
+  ExpertAgentHumanInteractionHandler,
   ResolvedModelProvider,
   RuntimeAdapter,
   RuntimeModelRef,
@@ -49,8 +51,13 @@ import {
   startPiTurn,
   type PiNativeSession,
 } from "./session.ts";
+import { withPiToolApproval } from "./permissions.ts";
 import { createResolvedPiTools } from "./tools.ts";
-import type { CloudPiRuntimeAdapterOptions, PiRuntimeStreamState } from "./types.ts";
+import type {
+  CloudPiRuntimeAdapterOptions,
+  PiRuntimeStreamState,
+  PiRuntimePermissionMode,
+} from "./types.ts";
 import { defaultOutputParser } from "./types.ts";
 
 const CLOUD_PI_RUNTIME_DESCRIPTOR = {
@@ -105,6 +112,10 @@ export function createPiRuntime(options: CloudPiRuntimeAdapterOptions = {}): Run
       const streamState: PiRuntimeStreamState = { logger: ctx.logger };
       return {
         streamState,
+        nativeApproval: {
+          permissionMode: options.permissionMode ?? "request-approval",
+          humanInteractionHandler: ctx.request.humanInteractionHandler,
+        },
         resolvedTools: createResolvedPiTools({
           agent: ctx.agent,
           cwd: ctx.workspace,
@@ -262,10 +273,14 @@ export function createPiRuntime(options: CloudPiRuntimeAdapterOptions = {}): Run
             sessionOptions.thinkingLevel = defaultThinkingLevel;
           }
 
+          const nativeApproval = permissions.nativeApproval;
           sessionOptions.customTools = [
             ...resolvedTools.tools.map((tool) => tool.tool),
+            withPiToolApproval(createWriteToolDefinition(cwd), nativeApproval),
+            withPiToolApproval(createEditToolDefinition(cwd), nativeApproval),
             createPiSessionBashTool({
               cwd,
+              ...nativeApproval,
               processEnvironment: ctx.processEnvironment,
               commandPrefix: settingsManager.getShellCommandPrefix(),
               shellPath: settingsManager.getShellPath(),
@@ -406,6 +421,8 @@ export function createPiSessionBashTool(options: {
   readonly processEnvironment: Readonly<NodeJS.ProcessEnv>;
   readonly commandPrefix?: string | undefined;
   readonly shellPath?: string | undefined;
+  readonly permissionMode?: PiRuntimePermissionMode | undefined;
+  readonly humanInteractionHandler?: ExpertAgentHumanInteractionHandler | undefined;
 }): ToolDefinition {
   const tool = createBashToolDefinition(options.cwd, {
     ...(options.commandPrefix === undefined ? {} : { commandPrefix: options.commandPrefix }),
@@ -415,21 +432,5 @@ export function createPiSessionBashTool(options: {
       env: { ...options.processEnvironment },
     }),
   });
-  return {
-    name: tool.name,
-    label: tool.label,
-    description: tool.description,
-    ...(tool.promptSnippet === undefined ? {} : { promptSnippet: tool.promptSnippet }),
-    parameters: tool.parameters,
-    ...(tool.executionMode === undefined ? {} : { executionMode: tool.executionMode }),
-    async execute(toolCallId, params, signal, onUpdate, context) {
-      return await tool.execute(
-        toolCallId,
-        params as BashToolInput,
-        signal,
-        onUpdate as Parameters<typeof tool.execute>[3],
-        context as Parameters<typeof tool.execute>[4],
-      );
-    },
-  };
+  return withPiToolApproval(tool, options);
 }

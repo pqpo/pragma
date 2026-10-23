@@ -31,18 +31,8 @@ for (const major of [1, 2] as const) {
             tools?: { function: { name: string } }[];
             messages: { role: string; content?: unknown }[];
           };
-          const tool = payload.tools?.find(
-            (item) =>
-              item.function.name.includes("stream_probe") ||
-              (major === 2 && item.function.name === "execute"),
-          );
-          const namespace = JSON.stringify(payload.messages).match(/pragma_ses_[a-zA-Z0-9_]+/)?.[0];
-          const argumentsText =
-            major === 2
-              ? JSON.stringify({
-                  code: `return await tools.${namespace}.stream_probe({ marker: "STREAM_ARGUMENT" });`,
-                })
-              : JSON.stringify({ marker: "STREAM_ARGUMENT" });
+          const tool = payload.tools?.find((item) => item.function.name.includes("stream_probe"));
+          const argumentsText = JSON.stringify({ marker: "STREAM_ARGUMENT" });
           if (!payload.stream) {
             response.writeHead(200, { "content-type": "application/json" }).end(
               JSON.stringify({
@@ -225,11 +215,7 @@ for (const major of [1, 2] as const) {
               : [],
           );
           expect(toolCalls).toHaveLength(1);
-          expect(toolCalls[0]?.arguments).toEqual(
-            major === 1
-              ? { marker: "STREAM_ARGUMENT" }
-              : { code: expect.stringContaining("STREAM_ARGUMENT") },
-          );
+          expect(toolCalls[0]?.arguments).toEqual({ marker: "STREAM_ARGUMENT" });
           if (reportedUsage) {
             expect(await turn.usage).toMatchObject({
               measurement: "reported",

@@ -2,10 +2,11 @@ import type { OpenCodePermissionRule } from "./client.ts";
 
 export type OpenCodePermissionMode = "request-approval" | "auto-approve" | "full-access";
 
-/** Never let an approved shell inherit the loopback password or provider credentials. */
+/** Host approval modes govern native shell execution just like workspace edits. */
 export function v1Permission(
   mode: OpenCodePermissionMode,
   denials: Record<string, unknown>,
+  skillsDirectory?: string,
 ): Record<string, unknown> {
   if (denials["*"] === "deny") return { "*": "deny" };
   const safe: Record<string, unknown> =
@@ -17,8 +18,12 @@ export function v1Permission(
           glob: "allow",
           grep: "allow",
           edit: mode === "auto-approve" ? "allow" : "ask",
-          external_directory: "deny",
-          bash: "deny",
+          external_directory:
+            skillsDirectory === undefined
+              ? "deny"
+              : { "*": "deny", [`${skillsDirectory}/*`]: "allow" },
+          bash: mode === "request-approval" ? "ask" : "allow",
+          skill: "allow",
           task: "deny",
           question: "allow",
           "pragma_tools_*": "allow",
@@ -45,6 +50,7 @@ export function v1Permission(
 export function v2PermissionRules(
   mode: OpenCodePermissionMode,
   denials: readonly OpenCodePermissionRule[],
+  skillsDirectory?: string,
 ): readonly OpenCodePermissionRule[] {
   const rule = (action: string, effect: OpenCodePermissionRule["effect"], resource = "*") => ({
     action,
@@ -64,8 +70,12 @@ export function v2PermissionRules(
           rule("grep", "allow"),
           rule("edit", mode === "auto-approve" ? "allow" : "ask"),
           rule("external_directory", "deny"),
-          rule("shell", "deny"),
-          rule("execute", "deny"),
+          rule("shell", mode === "request-approval" ? "ask" : "allow"),
+          rule("execute", "allow"),
+          rule("skill", "allow"),
+          ...(skillsDirectory === undefined
+            ? []
+            : [rule("external_directory", "allow", `${skillsDirectory}/*`)]),
           rule("subagent", "deny"),
           rule("question", "allow"),
           rule("pragma_tools_*", "allow"),

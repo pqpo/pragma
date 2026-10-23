@@ -114,7 +114,7 @@ for (const [major, variable] of [
               }).config.get({ query: { directory: root } })
             ).data;
             expect(config?.permission).toMatchObject({
-              bash: "deny",
+              bash: "ask",
               external_directory: "deny",
               read: { "blocked/*": "deny" },
             });
@@ -126,7 +126,7 @@ for (const [major, variable] of [
             }).session.get({ sessionID: sessionId });
             expect(info.permissions).toEqual(
               expect.arrayContaining([
-                { action: "shell", resource: "*", effect: "deny" },
+                { action: "shell", resource: "*", effect: "ask" },
                 { action: "external_directory", resource: "*", effect: "deny" },
                 { action: "read", resource: "blocked/*", effect: "deny" },
               ]),

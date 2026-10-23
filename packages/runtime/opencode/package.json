@@ -14,6 +14,7 @@
     "lint": "eslint src test",
     "typecheck": "tsc --noEmit",
     "test": "vitest run --passWithNoTests",
+    "test:core": "vitest run test/governance.test.ts test/skills.test.ts test/stream.test.ts",
     "clean": "rm -rf dist"
   },
   "dependencies": {
@@ -22,6 +23,7 @@
     "@opencode-ai/sdk": "1.19.2",
     "@opencode/client": "2.0.30",
     "json5": "2.2.3",
+    "yaml": "^2.9.1",
     "zod": "4.6.7"
   },
   "devDependencies": {

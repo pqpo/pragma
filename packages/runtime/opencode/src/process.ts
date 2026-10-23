@@ -59,6 +59,7 @@ export async function startOpenCodeProcess(input: {
   readonly version: string;
   readonly permissionMode?: OpenCodePermissionMode | undefined;
   readonly mcpUrl?: string | undefined;
+  readonly skillsDirectory?: string | undefined;
 }): Promise<OpenCodeProcess> {
   const port = await unusedLoopbackPort();
   const password = randomBytes(32).toString("base64url");
@@ -75,7 +76,11 @@ export async function startOpenCodeProcess(input: {
           ...(input.permissionMode === undefined
             ? {}
             : {
-                permission: v1Permission(input.permissionMode, asObject(config["permission"])),
+                permission: v1Permission(
+                  input.permissionMode,
+                  asObject(config["permission"]),
+                  input.skillsDirectory,
+                ),
               }),
           mcp:
             input.mcpUrl === undefined
@@ -86,20 +91,19 @@ export async function startOpenCodeProcess(input: {
         }
       : {
           ...config,
-          ...(input.permissionMode === undefined || input.permissionMode === "full-access"
-            ? {}
-            : {
-                experimental: {
-                  policies: [
-                    ...(Array.isArray(asObject(config["experimental"])["policies"])
-                      ? (asObject(config["experimental"])["policies"] as unknown[])
-                      : []),
-                    { action: "permission", resource: "shell:*", effect: "deny" },
-                    { action: "permission", resource: "execute:*", effect: "deny" },
-                    { action: "permission", resource: "external_directory:*", effect: "deny" },
-                  ],
-                },
-              }),
+          mcp: {
+            servers:
+              input.mcpUrl === undefined
+                ? {}
+                : {
+                    pragma_tools: {
+                      type: "remote",
+                      url: input.mcpUrl,
+                      oauth: false,
+                      codemode: false,
+                    },
+                  },
+          },
         };
   const child = spawn(
     input.executablePath,

@@ -307,6 +307,27 @@ describe("RuntimeEnvironmentService", () => {
     expect(create).not.toHaveBeenCalled();
   });
 
+  it.each(["request-approval", "auto-approve", "full-access"] as const)(
+    "includes Pi's captured %s policy in preparation and its cache identity",
+    async (mode) => {
+      let current: DesktopToolPermissionMode = "request-approval";
+      const factory = createBuiltInRuntimeFactories({
+        modelProviders: {} as ModelProviderStore,
+        getToolPermissionMode: () => current,
+        getRuntimeProcessEnvironment: async () => ({}),
+      }).find((candidate) => candidate.id === "pragma.runtime.pi")!;
+      const environment = definition("pi", "Pi", "pragma.runtime.pi");
+      const prepared = await factory.prepare!(environment, { toolPermissionMode: mode });
+      if (prepared === undefined) throw new Error("Pi preparation is required.");
+      expect(prepared.cacheKey).toBe(`agent-context-window=default;permission-mode=${mode}`);
+      current = "full-access";
+      await expect(prepared.create()).resolves.toMatchObject({ descriptor: { id: "pi" } });
+      expect((await factory.prepare!(environment))?.cacheKey).toContain(
+        "permission-mode=full-access",
+      );
+    },
+  );
+
   it("carries a historical Desktop setting through Pi preparation and native model conversion", async () => {
     const root = await mkdtemp(join(tmpdir(), "pragma-pi-v1-settings-startup-"));
     const settingsPath = join(root, "state", "desktop-settings.json");
@@ -326,7 +347,9 @@ describe("RuntimeEnvironmentService", () => {
 
     const preparation = await piFactory.prepare?.(definition("pi", "Pi", "pragma.runtime.pi"));
     if (preparation === undefined) throw new Error("Pi factory must prepare its dynamic settings.");
-    expect(preparation.cacheKey).toBe("agent-context-window=258000");
+    expect(preparation.cacheKey).toBe(
+      "agent-context-window=258000;permission-mode=request-approval",
+    );
     await expect(preparation.create()).resolves.toMatchObject({
       descriptor: { id: "pi" },
     });

@@ -15,6 +15,29 @@
 - Host 可以调用 Core；Core 不得反向依赖 Desktop、CLI 或未来 Host 应用层。
 - 本地 Claude Code、Codex、Qoder CLI、Antigravity CLI、自研执行环境属于 Runtime Adapter 的实现目标，由 Desktop App 承载本地连接、授权和执行桥接；Host 调用 Core，Core 不依赖 Host。
 
+## 基础能力与权限模式
+
+所有 Runtime 必须支持受管 MCP、Skill 按需加载和原生命令执行。权限模式不得通过整体隐藏 bash
+或漏装 Skill 来实现。显式资源拒绝、受管 MCP 白名单与 Session 身份校验继续生效。
+
+| 模式               | 原生副作用审批                                               | 原生沙箱                           |
+| ------------------ | ------------------------------------------------------------ | ---------------------------------- |
+| `request-approval` | 原生策略要求额外授权时转交 Host；无 handler 或拒绝时不得执行 | 保留 Runtime 支持的 workspace 限制 |
+| `auto-approve`     | 自动批准已支持的原生操作                                     | 保留 Runtime 支持的 workspace 限制 |
+| `full-access`      | 自动批准                                                     | 使用 Runtime 的完整访问模式        |
+
+受管 MCP 的逐工具审批仍由 Core 负责，Host 在自动模式下提供自动决策，不能绕过 Gateway 的工具白名单。
+各 Runtime 的原生审批粒度不同，不能将请求审批等同于逐次工具确认。
+Pi 当前通过包装原生 bash/write/edit 逐次请求 Host 审批，尚无普通操作与额外授权操作的策略区分；
+也没有独立 OS 沙箱，`auto-approve` 与 `full-access` 的原生命令执行范围相同。
+这些是 [Issue #425](https://github.com/pqpo/pragma/issues/425) 中明确延期的能力缺口，不能宣称三种模式的语义已完全一致，
+不得把审批当成 OS 隔离。
+Codex 在首次创建和恢复时都必须重新提交当前 `sandbox` 与 `approvalPolicy`，不能沿用历史宽松权限。
+Desktop 与 CLI 均须将当前模式传给 Adapter，缓存键必须区分模式。
+
+回归必须覆盖三种模式的首次执行与恢复，以及审批拒绝无副作用、之后重新批准可执行。
+MCP 的“已连接”不等于工具对模型可用，验收必须实际调用工具；Skill 必须实际发现、加载并读取支持文件。
+
 ## 接入验收
 
 新增 Runtime 或提升 capability 必须完成[Runtime Adapter 接入清单](runtime-adapter-integration-checklist.md)，保留代码、自动测试与真实 Runtime smoke 证据。配置落盘或 mock 成功不能单独证明 capability 可用。

@@ -78,12 +78,22 @@ describe("OpenCode governance", () => {
   it("keeps workspace boundaries and explicit denies in both permission dialects", () => {
     expect(v1Permission("auto-approve", { read: { "secrets/*": "deny" } })).toMatchObject({
       "*": "deny",
-      bash: "deny",
+      bash: "allow",
       edit: "allow",
       external_directory: "deny",
       read: { "secrets/*": "deny" },
     });
     expect(v1Permission("request-approval", {}).edit).toBe("ask");
+    expect(v1Permission("request-approval", {}).bash).toBe("ask");
+    expect(v2PermissionRules("request-approval", [])).toContainEqual({
+      action: "shell",
+      resource: "*",
+      effect: "ask",
+    });
+    expect(v1Permission("auto-approve", {}, "/session/skills")).toMatchObject({
+      skill: "allow",
+      external_directory: { "*": "deny", "/session/skills/*": "allow" },
+    });
     expect(v1Permission("full-access", { "*": "deny" })).toEqual({ "*": "deny" });
     expect(
       v1Permission("full-access", {
@@ -98,7 +108,7 @@ describe("OpenCode governance", () => {
     expect(v1Permission("auto-approve", { read: { "*": "deny" } }).read).toBe("deny");
     expect(v2PermissionRules("auto-approve", [])).toEqual(
       expect.arrayContaining([
-        { action: "shell", resource: "*", effect: "deny" },
+        { action: "shell", resource: "*", effect: "allow" },
         { action: "external_directory", resource: "*", effect: "deny" },
         { action: "edit", resource: "*", effect: "allow" },
       ]),
