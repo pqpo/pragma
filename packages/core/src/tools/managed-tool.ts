@@ -1,12 +1,45 @@
-import type { HumanInteractionRequest } from "@pragma/shared";
-import { HumanInteractionRequestSchema } from "@pragma/shared";
+import type { HumanInteractionRequest, ToolContent } from "@pragma/shared";
+import { HumanInteractionRequestSchema, ToolContentSchema } from "@pragma/shared";
 import type { ExpertAgentRunContext } from "../runtime/run-context.ts";
 import { z } from "zod";
 
 export interface ExpertAgentToolCallResult {
-  readonly text: string;
+  /** Complete model-facing result, including any information needed for the next action. */
+  readonly content: readonly ToolContent[];
   readonly isError?: boolean;
+  /** Structured Host data. Runtime model projections must not serialize this field. */
   readonly details?: unknown;
+}
+
+const toolResultSchema = z.strictObject({
+  content: z.array(ToolContentSchema),
+  isError: z.boolean().optional(),
+  details: z.unknown().optional(),
+});
+
+/** Recognize internal envelopes; leave richer vendor/business output intact. */
+export function readToolResult(value: unknown): ExpertAgentToolCallResult | undefined {
+  const result = toolResultSchema.safeParse(value);
+  if (!result.success) return undefined;
+  return {
+    content: result.data.content,
+    ...(result.data.isError === undefined ? {} : { isError: result.data.isError }),
+    ...(Object.hasOwn(result.data, "details") ? { details: result.data.details } : {}),
+  };
+}
+
+export function createTextToolResult(
+  text: string,
+  options: Pick<ExpertAgentToolCallResult, "details" | "isError"> = {},
+): ExpertAgentToolCallResult {
+  return { content: [{ type: "text", text }], ...options };
+}
+
+/** Explicit text projection for consumers such as logs, Memory and command diagnostics. */
+export function getToolResultText(result: Pick<ExpertAgentToolCallResult, "content">): string {
+  return result.content
+    .map((item) => (item.type === "text" ? item.text : JSON.stringify(item)))
+    .join("\n");
 }
 
 export interface ExpertToolExecutionContext {

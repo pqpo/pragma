@@ -1,3 +1,5 @@
+import { createTextToolResult } from "@pragma/core";
+import { getToolResultText } from "@pragma/core";
 import { mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -238,7 +240,7 @@ function createFakeRuntime(options: FakeRuntimeOptions = {}) {
             const tool = session.context.agent.tools?.find((candidate) => candidate.name === name);
             if (tool === undefined) throw new Error(`Missing concurrent test tool: ${name}`);
             const result = await tool.call({}, turn.signal, { execution });
-            if (result.isError === true) throw new Error(result.text);
+            if (result.isError === true) throw new Error(getToolResultText(result));
             return result.details;
           }),
         );
@@ -256,7 +258,8 @@ function createFakeRuntime(options: FakeRuntimeOptions = {}) {
               })
             : undefined;
         const resumableContextId = (
-          listed?.details as { contexts?: Array<{ contextId: string; status: string }> } | undefined
+          (listed === undefined ? undefined : JSON.parse(getToolResultText(listed))) as
+            { contexts?: Array<{ contextId: string; status: string }> } | undefined
         )?.contexts?.find((context) => context.status === "resumable")?.contextId;
         const spawned =
           resumableContextId === undefined
@@ -268,16 +271,21 @@ function createFakeRuntime(options: FakeRuntimeOptions = {}) {
                 turn.signal,
                 { execution: session.context.request.executionContext },
               );
-        const invocationId = (spawned.details as { invocationId: string }).invocationId;
+        const invocationId = (JSON.parse(getToolResultText(spawned)) as { invocationId: string })
+          .invocationId;
         const waiting = wait.call({ invocationIds: [invocationId] }, turn.signal, {
           execution: session.context.request.executionContext,
         });
         await new Promise<void>((resolve) => setTimeout(resolve, 250));
         options.onWait?.();
         const waited = await waiting;
-        const waitSteer = (waited.details as { steer?: { content?: unknown } }).steer?.content;
+        const waitSteer = (
+          JSON.parse(getToolResultText(waited)) as { steer?: { content?: unknown } }
+        ).steer?.content;
         if (stats !== undefined && typeof waitSteer === "string") stats.waitSteers.push(waitSteer);
-        const completed = (waited.details as { completed: Array<{ output?: unknown }> }).completed;
+        const completed = (
+          JSON.parse(getToolResultText(waited)) as { completed: Array<{ output?: unknown }> }
+        ).completed;
         output = `${session.context.agent.id}:${String(completed[0]?.output)}`;
       }
       turn.stream.write({
@@ -415,8 +423,8 @@ function createOrchestrationRuntime(
         };
         const call = async (name: string, input: unknown) => {
           const result = await tool(name).call(input, turn.signal, { execution });
-          if (result.isError === true) throw new Error(result.text);
-          return result.details as Record<string, unknown>;
+          if (result.isError === true) throw new Error(getToolResultText(result));
+          return JSON.parse(getToolResultText(result)) as Record<string, unknown>;
         };
         const spawn = async (expertId: string, task: string) =>
           await call("spawn_expert", { expertId, task });
@@ -1259,8 +1267,8 @@ describe("ExpertSession", { timeout: 30_000 }, () => {
             execution: nativeSession.context.request.executionContext,
           });
           output =
-            result.isError === true || !result.text.includes("historical output")
-              ? `read-failed:${result.text}`
+            result.isError === true || !getToolResultText(result).includes("historical output")
+              ? `read-failed:${getToolResultText(result)}`
               : "read-ok";
         } else {
           output = "unused";
@@ -4479,9 +4487,10 @@ describe("FlowExecution", { timeout: 30_000 }, () => {
       inputSchema: {},
       async call(input, signal, context) {
         const invoke = context?.execution?.invokeResource;
-        if (invoke === undefined) return { text: "missing execution", isError: true as const };
+        if (invoke === undefined)
+          return createTextToolResult("missing execution", { isError: true as const });
         const output = await invoke({ target, input, signal });
-        return { text: JSON.stringify(output), details: output };
+        return createTextToolResult(JSON.stringify(output), { details: output });
       },
     });
     const runtime = createFakeRuntime({
@@ -4524,7 +4533,7 @@ describe("FlowExecution", { timeout: 30_000 }, () => {
           throw new Error("Execution context is unavailable.");
         }
         const output = await execution.invokeResource({ target, input, signal });
-        return { text: String(output) };
+        return createTextToolResult(String(output));
       },
     };
     const runtime = createFakeRuntime({
@@ -4586,13 +4595,14 @@ describe("FlowExecution", { timeout: 30_000 }, () => {
       inputSchema: {},
       async call(_input, signal, context) {
         const invoke = context?.execution?.invokeResource;
-        if (invoke === undefined) return { text: "missing execution", isError: true };
+        if (invoke === undefined)
+          return createTextToolResult("missing execution", { isError: true });
         const output = await invoke({
           target: callee,
           input: { prompt: "hello" },
           signal,
         });
-        return { text: JSON.stringify(output), details: output };
+        return createTextToolResult(JSON.stringify(output), { details: output });
       },
     };
     const caller = await defineExpert({
@@ -5570,8 +5580,8 @@ describe("Expert lifecycle orchestration", { timeout: 30_000 }, () => {
           const tool = session.context.agent.tools?.find((candidate) => candidate.name === name);
           if (tool === undefined) throw new Error(`Missing collaboration tool: ${name}`);
           const result = await tool.call(input, turn.signal, { execution });
-          if (result.isError === true) throw new Error(result.text);
-          return result.details as Record<string, unknown>;
+          if (result.isError === true) throw new Error(getToolResultText(result));
+          return JSON.parse(getToolResultText(result)) as Record<string, unknown>;
         };
         if (expertId === "backend") {
           backendQueries.push(turn.rawQuery);
@@ -5625,7 +5635,6 @@ describe("Expert lifecycle orchestration", { timeout: 30_000 }, () => {
               {
                 invocationId: backend["invocationId"],
                 contextId: backend["contextId"],
-                agentId: backend["agentId"],
                 status: "succeeded",
               },
             ],
@@ -5758,8 +5767,8 @@ describe("Expert lifecycle orchestration", { timeout: 30_000 }, () => {
           const tool = session.context.agent.tools?.find((candidate) => candidate.name === name);
           if (tool === undefined) throw new Error(`Missing collaboration tool: ${name}`);
           const result = await tool.call(input, turn.signal, { execution });
-          if (result.isError === true) throw new Error(result.text);
-          return result.details as Record<string, unknown>;
+          if (result.isError === true) throw new Error(getToolResultText(result));
+          return JSON.parse(getToolResultText(result)) as Record<string, unknown>;
         };
         if (expertId === "child") {
           await childReleased;
@@ -5882,8 +5891,8 @@ describe("Expert lifecycle orchestration", { timeout: 30_000 }, () => {
           const tool = session.context.agent.tools?.find((candidate) => candidate.name === name);
           if (tool === undefined) throw new Error(`Missing collaboration tool: ${name}`);
           const result = await tool.call(input, turn.signal, { execution });
-          if (result.isError === true) throw new Error(result.text);
-          return result.details as Record<string, unknown>;
+          if (result.isError === true) throw new Error(getToolResultText(result));
+          return JSON.parse(getToolResultText(result)) as Record<string, unknown>;
         };
         await call("spawn_expert", { expertId: "worker", task: "worker-work" });
         await workerStarted;
@@ -5980,8 +5989,8 @@ describe("Expert lifecycle orchestration", { timeout: 30_000 }, () => {
           const tool = session.context.agent.tools?.find((candidate) => candidate.name === name);
           if (tool === undefined) throw new Error(`Missing collaboration tool: ${name}`);
           const result = await tool.call(input, turn.signal, { execution });
-          if (result.isError === true) throw new Error(result.text);
-          return result.details as Record<string, unknown>;
+          if (result.isError === true) throw new Error(getToolResultText(result));
+          return JSON.parse(getToolResultText(result)) as Record<string, unknown>;
         };
         if (expertId === "backend") {
           if (turn.rawQuery === "backend-work") {
@@ -6010,7 +6019,7 @@ describe("Expert lifecycle orchestration", { timeout: 30_000 }, () => {
             { execution },
           );
           expect(deniedPeerWait.isError).toBe(true);
-          expect(deniedPeerWait.text).toContain("not accessible");
+          expect(getToolResultText(deniedPeerWait)).toContain("not accessible");
           const steer = await call("steer_expert", {
             invocationId: backend.currentInvocation.invocationId,
             instruction: "apply-peer-guidance",
@@ -6112,8 +6121,8 @@ describe("Expert lifecycle orchestration", { timeout: 30_000 }, () => {
         };
         const call = async (name: string, input: unknown) => {
           const result = await tool(name).call(input, turn.signal, { execution });
-          if (result.isError === true) throw new Error(result.text);
-          return result.details as Record<string, unknown>;
+          if (result.isError === true) throw new Error(getToolResultText(result));
+          return JSON.parse(getToolResultText(result)) as Record<string, unknown>;
         };
         if (expertId === "lead") {
           const delegated = await call("spawn_expert", { expertId: "member-a", task: "a" });
@@ -6129,7 +6138,7 @@ describe("Expert lifecycle orchestration", { timeout: 30_000 }, () => {
             turn.signal,
             { execution },
           );
-          cycleError = result.text;
+          cycleError = getToolResultText(result);
           expect(result.isError).toBe(true);
         }
         return { outputText: `${expertId}:done`, runtimeSessionId: session.id };
@@ -6200,8 +6209,8 @@ describe("Expert lifecycle orchestration", { timeout: 30_000 }, () => {
         };
         const call = async (name: string, input: unknown) => {
           const result = await tool(name).call(input, turn.signal, { execution });
-          if (result.isError === true) throw new Error(result.text);
-          return result.details as Record<string, unknown>;
+          if (result.isError === true) throw new Error(getToolResultText(result));
+          return JSON.parse(getToolResultText(result)) as Record<string, unknown>;
         };
         if (expertId === "lead") {
           const first = await call("spawn_expert", { expertId: "member-a", task: "cross" });
@@ -6221,7 +6230,7 @@ describe("Expert lifecycle orchestration", { timeout: 30_000 }, () => {
             turn.signal,
             { execution },
           );
-          crossResults.push({ isError: result.isError, text: result.text });
+          crossResults.push({ isError: result.isError, text: getToolResultText(result) });
         }
         return { outputText: `${expertId}:done`, runtimeSessionId: session.id };
       },
@@ -6356,8 +6365,8 @@ describe("Expert lifecycle orchestration", { timeout: 30_000 }, () => {
           const tool = session.context.agent.tools?.find((candidate) => candidate.name === name);
           if (tool === undefined) throw new Error(`Missing orchestration tool: ${name}`);
           const result = await tool.call(input, turn.signal, { execution });
-          if (result.isError === true) throw new Error(result.text);
-          return result.details as Record<string, unknown>;
+          if (result.isError === true) throw new Error(getToolResultText(result));
+          return JSON.parse(getToolResultText(result)) as Record<string, unknown>;
         };
         const first = await call("spawn_expert", { expertId: "member-a", task: "first" });
         const second = await call("spawn_expert", { expertId: "member-b", task: "second" });
@@ -6601,7 +6610,7 @@ describe("Expert delegation declarations", { timeout: 30_000 }, () => {
           readonly returnWhen?: string | undefined;
         }) => {
           receivedRequest = request;
-          return {};
+          return { completed: [], pending: [] };
         },
       },
     };

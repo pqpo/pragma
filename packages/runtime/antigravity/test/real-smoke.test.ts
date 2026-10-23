@@ -1,3 +1,4 @@
+import { createTextToolResult } from "@pragma/core";
 import { createInMemoryExecutionStore } from "@pragma/core/testing";
 import { spawn as nodeSpawn } from "node:child_process";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
@@ -264,7 +265,7 @@ describe.runIf(runSmoke)("Antigravity real CLI smoke", () => {
             async call(input) {
               expect(input).toEqual({ schema_code: "AGY_SCHEMA_ONLY_8526" });
               calls++;
-              return { text: "GATEWAY_OK_262" };
+              return createTextToolResult("GATEWAY_OK_262");
             },
           },
         ],

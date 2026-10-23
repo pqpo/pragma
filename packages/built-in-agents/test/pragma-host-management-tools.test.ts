@@ -1,3 +1,4 @@
+import { getToolResultText } from "@pragma/core";
 import { PRAGMA_DSL_WRITE_API_VERSION } from "@pragma/interpreter/ast";
 import { describe, expect, it } from "vitest";
 
@@ -220,7 +221,7 @@ describe("Pragma Host management tools", () => {
         ],
       },
     });
-    expect(result.text).not.toContain("private-long-source");
+    expect(getToolResultText(result)).not.toContain("private-long-source");
   });
 
   it("injects the runtime toolCallId as the write operation id", async () => {
@@ -442,7 +443,7 @@ describe("Pragma Host management tools", () => {
     expect(summary.details).toMatchObject({
       cases: [{ id: "case-1", name: "Case one" }],
     });
-    expect(summary.text).not.toContain("expectInput");
+    expect(getToolResultText(summary)).not.toContain("expectInput");
     const selected = await tools
       .find((candidate) => candidate.name === "get_evaluation_cases")!
       .call(
@@ -453,7 +454,7 @@ describe("Pragma Host management tools", () => {
         undefined,
         undefined,
       );
-    expect(selected.text).toContain("expectInput");
+    expect(getToolResultText(selected)).toContain("expectInput");
     await expect(
       get.call(
         {
@@ -610,7 +611,7 @@ describe("Pragma Host management tools", () => {
       updatedAt: "2026-08-03T00:00:01.000Z",
     });
     expect(result.details).not.toHaveProperty("resource");
-    expect(result.text).not.toContain('"resource"');
+    expect(getToolResultText(result)).not.toContain('"resource"');
 
     const nativeResult = await update.call(
       {

@@ -12,6 +12,8 @@ import {
 } from "@pragma/built-in-agents";
 import {
   executeExecutionTool,
+  getToolResultText,
+  createTextToolResult,
   mergeExpertAgentToolApprovals,
   isHumanInteractionCheckpointError,
   resolveToolPolicy,
@@ -562,7 +564,7 @@ export function createManagementCommandApplication(options: {
               }
               await claimOwner(id);
               const details = { command, recovered: true, ...input };
-              return { text: JSON.stringify(details), details };
+              return createTextToolResult(JSON.stringify(details), { details });
             },
           });
         }
@@ -698,7 +700,7 @@ export function createManagementCommandApplication(options: {
                 managementError: error.data,
               });
               response = ManagementCommandResultSchema.parse({ ...response, result: error.data });
-            } else response = fail("PERMISSION_DENIED", result.text);
+            } else response = fail("PERMISSION_DENIED", getToolResultText(result));
           } else
             response = ManagementCommandResultSchema.parse({
               protocol: MANAGEMENT_COMMAND_PROTOCOL,
@@ -706,7 +708,7 @@ export function createManagementCommandApplication(options: {
               command: request.command,
               status: invalid ? "invalid" : "succeeded",
               exitCode: invalid ? 10 : 0,
-              result: payload ?? { text: result.text },
+              result: payload ?? { text: getToolResultText(result) },
             });
           response = { ...response, origin };
           await save(path, {

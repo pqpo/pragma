@@ -1,10 +1,11 @@
+import { getToolResultText } from "@pragma/core";
 import { normalizeHostBoundResources } from "../src/deployment/projects/resource-normalization.ts";
 import {
   createLocalHostContextStoreReader,
   SNAPSHOT_STORAGE_MARKER,
 } from "../src/resources/context-store-reader.ts";
 import { ContextStoreSchema, type ExpertPromptAttachment } from "@pragma/shared";
-import type { Expert, RuntimeTurnContext } from "@pragma/core";
+import type { Expert, RuntimeTurnContext, RuntimeNativeSessionContext } from "@pragma/core";
 import { randomUUID } from "node:crypto";
 import { spawn } from "node:child_process";
 import { readFileSync } from "node:fs";
@@ -131,9 +132,12 @@ async function fixture(
   const home = await mkdtemp(join(tmpdir(), "pragma-node-compiled-execution-"));
   roots.push(home);
   const pending = new Map<string, (error: Error) => void>();
-  const restore = vi.fn(({ systemSessionId }: { systemSessionId: string }) => ({
-    id: `native-${systemSessionId}`,
-  }));
+  const runtimeContexts = new Map<string, RuntimeNativeSessionContext>();
+  const restore = vi.fn((context: RuntimeNativeSessionContext) => {
+    const id = `native-${context.systemSessionId}`;
+    runtimeContexts.set(id, context);
+    return { id };
+  });
   const stop = vi.fn((session: { id: string }) =>
     pending.get(session.id)?.(new Error("Native stopped")),
   );
@@ -162,9 +166,11 @@ async function fixture(
           ],
         }
       : {}),
-    createSession: async ({ systemSessionId, agent }) => {
-      await probe?.(agent);
-      return { id: `native-${systemSessionId}` };
+    createSession: async (context) => {
+      await probe?.(context.agent);
+      const id = `native-${context.systemSessionId}`;
+      runtimeContexts.set(id, context);
+      return { id };
     },
     restoreSession: restore,
     cancelTurn: stop,
@@ -279,6 +285,7 @@ async function fixture(
     stop,
     capabilityDefinition: definition,
     startTurn,
+    runtimeContexts,
   };
 }
 
@@ -1737,7 +1744,7 @@ it(
           { namespace: `mission-knowledge:${storeId.slice(0, -4)}`, id: "knowledge.md" },
           undefined,
         );
-        expect(JSON.parse(failed.text)).toMatchObject({
+        expect(JSON.parse(getToolResultText(failed))).toMatchObject({
           error: { code: "invalid_namespace", details: { reason: "namespace_not_registered" } },
           recovery: { tool: "list_context_stores", arguments: {} },
         });
@@ -1745,13 +1752,13 @@ it(
       }
       const listed = await directory.call({}, undefined);
       expect(listed.isError).not.toBe(true);
-      const found = JSON.parse(listed.text).stores.find(
+      const found = JSON.parse(getToolResultText(listed)).stores.find(
         (store: { namespace: string }) => store.namespace === namespace,
       );
       expect(found).toBeDefined();
       const result = await read.call({ namespace: found.namespace, id: "knowledge.md" }, undefined);
       expect(result.isError).not.toBe(true);
-      reads.push(result.text);
+      reads.push(getToolResultText(result));
     });
     await writePublishedKnowledgeFixture(f.home, storeId);
     const paths = new PragmaPaths({ pragmaHome: f.home });
@@ -1803,6 +1810,162 @@ it(
     );
     expect(attempts).toBe(2);
     expect(reads).toEqual([expect.stringContaining("Original published content")]);
+  },
+);
+
+it.each([false, true])(
+  "collects actionable compiled delegation results on first execution and manual retry (failure: %s)",
+  { timeout: 30_000 },
+  async (initialFailure) => {
+    const f = await fixture();
+    const resources = structuredClone(createPublishedProjectResources());
+    const lead = resources.find(
+      (resource) => resource.kind === "Expert" && resource.metadata.id === f.expertId,
+    )!;
+    const member = resources.find(
+      (resource) => resource.kind === "Expert" && resource.metadata.id !== f.expertId,
+    )!;
+    if (lead.kind !== "Expert" || member.kind !== "Expert") throw new Error("Missing Experts");
+    // Keep the fixture's real Host Capability binding in the compiled project.
+    const paths = new PragmaPaths({ pragmaHome: f.home });
+    lead.spec.tools = [
+      {
+        adapter: "pragma.tool.delegate@v1",
+        targets: [{ ref: `expert:${member.metadata.id}` }],
+        policy: { maxConcurrency: 2, maxDepth: 2 },
+      },
+    ];
+    // Use the real binding emitted by the same fixture's Host resource resolver.
+    lead.spec.capabilities = [{ ref: "capability:pcr7npvx0gv8fpka", kind: "tools" }];
+    resources.push(
+      PragmaCapabilityResourceSchema.parse({
+        apiVersion: lead.apiVersion,
+        kind: "Capability",
+        metadata: { id: "pcr7npvx0gv8fpka", name: "Fixture", description: "Fixture", tags: [] },
+        spec: {
+          adapter: "pragma.capability.host@v1",
+          binding: `binding:desktop-capability.${Buffer.from(f.capabilityId).toString("base64url")}`,
+          config: { key: "fixture" },
+        },
+      }),
+    );
+    await writePublishedProjectFixture(f.home, resources);
+    let failChild = initialFailure;
+    const receipts: Array<{
+      contextId: string;
+      invocationId: string;
+      status: string;
+      message: string;
+    }> = [];
+    const results: string[] = [];
+    f.startTurn.mockImplementation(async (session, turn) => {
+      const context = f.runtimeContexts.get(session.id)!;
+      if (context.agent.id === member.metadata.id) {
+        if (failChild) throw new Error("Injected delegated failure");
+        return { outputText: "Review done", runtimeSessionId: session.id };
+      }
+      const tools = resolveExecutionTools({
+        agent: context.agent,
+        getContext: () => context.runContext,
+      }).tools;
+      const call = async (name: string, input: unknown) => {
+        const tool = tools.find((candidate) => candidate.name === name)!.tool;
+        const result = await tool.call(input, turn.signal, {
+          execution: context.request.executionContext,
+        });
+        expect(result.isError, getToolResultText(result)).not.toBe(true);
+        expect(result.details).toEqual(JSON.parse(getToolResultText(result)));
+        return JSON.parse(getToolResultText(result));
+      };
+      const receipt =
+        receipts.length === 0
+          ? await call("spawn_expert", { expertId: member.metadata.id, task: "Review" })
+          : await call("continue_expert", {
+              contextId: receipts[0]!.contextId,
+              task: "Review again",
+            });
+      expect(receipt.status).toBe("queued");
+      expect(receipt.message).toContain("not a completion result");
+      expect(receipt.message).toContain("wait_experts");
+      receipts.push(receipt);
+      const waited = await call("wait_experts", { invocationIds: [receipt.invocationId] });
+      expect(waited.pending).toEqual([]);
+      expect(waited.message).toContain("terminal");
+      const completed = waited.completed[0];
+      expect(completed.invocationId).toBe(receipt.invocationId);
+      expect(completed.contextId).toBe(receipt.contextId);
+      if (completed.status !== "succeeded") {
+        expect(completed.status).toBe("failed");
+        expect(completed.error).toMatchObject({ message: "Injected delegated failure" });
+        throw new Error(completed.error.message);
+      }
+      expect(completed.output).toBe("Review done");
+      results.push(completed.output);
+      return { outputText: completed.output, runtimeSessionId: session.id };
+    });
+    const requestId = randomUUID();
+    const missions = createMissionStore({ missionsPath: paths.missionsRoot() });
+    const mission = await missions.create({
+      initialMessageId: requestId,
+      workspace: { path: f.home, basename: "workspace" },
+      goal: "Delegate review",
+      project: { id: "studio", revision: 1 },
+      executor: { kind: "expert", ref: `expert:${f.expertId}`, name: "Lead" },
+    });
+    const first = await f.app.run!.startAttached({
+      missionId: mission.id,
+      request: {
+        requestId,
+        command: "expert.run",
+        executor: { kind: "expert", id: f.expertId },
+        project: { projectId: "studio", revision: 1 },
+        workspace: f.workspace,
+        prompt: mission.goal,
+        detach: false,
+      },
+    });
+    const firstOutcome = await first.outcome;
+    expect(firstOutcome.status, JSON.stringify(firstOutcome)).toBe(
+      initialFailure ? "failed" : "succeeded",
+    );
+    if (initialFailure) {
+      expect(firstOutcome).toMatchObject({
+        error: { message: expect.stringContaining("Injected delegated failure") },
+      });
+    }
+    const executions = createSqliteExecutionStore({ pragmaHome: f.home });
+    try {
+      expect((await executions.get(first.executionId!))?.environment?.resources).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ kind: "capability", id: f.capabilityId, revision: 3 }),
+        ]),
+      );
+    } finally {
+      await executions.close();
+    }
+    failChild = false;
+    const retryId = randomUUID();
+    await f.app.missionControl!.submit({
+      missionId: mission.id,
+      requestId: retryId,
+      kind: "send",
+      payload: { kind: "send", input: { prompt: "Review again" } },
+    });
+    expect(
+      await f.app.missionControl!.waitForTerminal({
+        missionId: mission.id,
+        requestId: retryId,
+        timeoutMs: 10_000,
+      }),
+    ).toMatchObject({ state: "applied" });
+    await vi.waitFor(
+      async () => expect((await missions.get(mission.id)).execution?.status).toBe("succeeded"),
+      { timeout: 10_000 },
+    );
+    expect(receipts).toHaveLength(2);
+    expect(new Set(receipts.map((receipt) => receipt.contextId)).size).toBe(1);
+    expect(new Set(receipts.map((receipt) => receipt.invocationId)).size).toBe(2);
+    expect(results).toEqual(initialFailure ? ["Review done"] : ["Review done", "Review done"]);
   },
 );
 

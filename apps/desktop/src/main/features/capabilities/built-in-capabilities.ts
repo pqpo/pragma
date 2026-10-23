@@ -1,3 +1,4 @@
+import { getToolResultText } from "@pragma/core";
 import { createHash, randomUUID } from "node:crypto";
 
 import {
@@ -124,7 +125,10 @@ export async function testBuiltInCapability(
         },
       },
     });
-    return testSuccess("The built-in tool test succeeded.", result.details ?? result.text);
+    return testSuccess(
+      "The built-in tool test succeeded.",
+      result.details ?? getToolResultText(result),
+    );
   } catch (error) {
     const message = error instanceof Error ? error.message : "The management tool test failed.";
     return testFailure(error instanceof z.ZodError ? "invalid_input" : "request_failed", message);

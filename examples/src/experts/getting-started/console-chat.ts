@@ -1,3 +1,4 @@
+import { createTextToolResult } from "@pragma/core";
 import type { ExpertAgentManagedTool, ExpertAgentToolCallResult, ExpertTurn } from "@pragma/core";
 
 import { ExpertConsoleTui } from "../../console/expert-console-tui.ts";
@@ -13,7 +14,7 @@ const currentTimeTool: ExpertAgentManagedTool<"get_current_time", ExpertAgentToo
   description: "Return the current local time with its UTC offset and IANA time zone.",
   inputSchema: { type: "object", properties: {}, additionalProperties: false },
   async call() {
-    return { text: JSON.stringify(readCurrentLocalTime()) };
+    return createTextToolResult(JSON.stringify(readCurrentLocalTime()));
   },
 };
 

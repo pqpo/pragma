@@ -508,7 +508,7 @@
   position: relative;
   display: grid;
   place-items: center;
-  color: var(--ui-text);
+  color: var(--ui-accent);
 }
 
 .mission-context-trigger {
@@ -567,7 +567,7 @@
 }
 
 .mission-context-track {
-  stroke: var(--ui-text-disabled);
+  stroke: var(--ui-line-strong);
 }
 
 .mission-context-progress {

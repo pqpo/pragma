@@ -1,3 +1,4 @@
+import { createTextToolResult } from "@pragma/core";
 import type {
   PragmaInvocableResource,
   PragmaDiagnostic,
@@ -296,10 +297,7 @@ const callToolAdapter: ResourceToolAdapter = {
           try {
             const output = await invoke({ target: target.value, input, signal: invocationSignal });
             const text = serializeToolOutput(output);
-            return {
-              text,
-              details: output,
-            };
+            return createTextToolResult(text, { details: output });
           } catch (error) {
             return failure(
               timeoutController.signal.aborted ? "resource_call_timeout" : "resource_call_failed",
@@ -335,7 +333,7 @@ function serializeToolOutput(output: unknown): string {
 }
 
 function failure(code: string, message: string): ExpertAgentToolCallResult {
-  return { text: message, isError: true, details: { code } };
+  return createTextToolResult(message, { isError: true, details: { code } });
 }
 
 function extensionKey(id: string, version: string): string {

@@ -1,3 +1,4 @@
+import { createTextToolResult } from "@pragma/core";
 import { createInMemoryExecutionStore } from "@pragma/core/testing";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { createServer } from "node:http";
@@ -168,7 +169,7 @@ for (const major of [1, 2] as const) {
               async call(input) {
                 expect(input).toEqual({ marker: "STREAM_ARGUMENT" });
                 calls++;
-                return { text: "STREAM_TOOL_RESULT" };
+                return createTextToolResult("STREAM_TOOL_RESULT");
               },
             },
           ],

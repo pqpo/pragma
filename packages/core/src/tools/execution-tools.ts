@@ -1,4 +1,6 @@
 import { randomUUID } from "node:crypto";
+import { isDeepStrictEqual } from "node:util";
+import { ToolContentSchema, type ToolContent } from "@pragma/shared";
 
 import type { Expert } from "../agent/expert-agent.ts";
 import type { ExpertAgentDefaultTool } from "../context-system/context-tools.ts";
@@ -15,7 +17,7 @@ import type {
   ExpertAgentToolCallResult,
   ExpertToolExecutionContext,
 } from "./managed-tool.ts";
-import { resolveExpertAgentToolApprovalRequirement } from "./managed-tool.ts";
+import { createTextToolResult, resolveExpertAgentToolApprovalRequirement } from "./managed-tool.ts";
 import { resolveToolPolicy, type ResolvedTool, type ResolvedToolSet } from "./tool-resolver.ts";
 
 export interface ExecutionToolRuntimeState {
@@ -30,6 +32,17 @@ export interface ExecutionTool extends ExpertAgentManagedTool<string, ExpertAgen
 }
 export type ResolvedExecutionTool = ResolvedTool<ExecutionTool>;
 export type ResolvedExecutionToolSet = ResolvedToolSet<ExecutionTool>;
+
+/** The sole model-facing projection; Host hooks and callers retain the original details. */
+export function toModelToolResult(result: ExpertAgentToolCallResult): {
+  content: ToolContent[];
+  isError?: boolean;
+} {
+  return {
+    content: [...result.content],
+    ...(result.isError === undefined ? {} : { isError: result.isError }),
+  };
+}
 
 export function resolveExecutionTools(options: {
   readonly agent: Expert;
@@ -141,7 +154,8 @@ export async function executeExecutionTool(options: {
         result,
         context: options.runContext,
       });
-      if (hint !== undefined) return { ...result, text: `${result.text}\n\n${hint}` };
+      if (hint !== undefined)
+        return { ...result, content: [...result.content, { type: "text", text: hint }] };
     } catch {
       options.logger.warn(
         "tool.host_result_hint_failed",
@@ -227,12 +241,13 @@ function createExecutionMcpTools(mcpTools: readonly McpManagedTool[]): Execution
     async call(args, signal, context) {
       const result = await mcpTool.call(args, signal, { toolCallId: context?.toolCallId });
       return {
-        text: formatMcpToolResult(result),
+        content: normalizeMcpToolContent(result),
         ...(isRecord(result) && result["isError"] === true ? { isError: true } : {}),
-        details:
-          isRecord(result) && isJsonObject(result["structuredContent"])
+        details: isRecord(result)
+          ? result["structuredContent"] !== undefined
             ? result["structuredContent"]
-            : { server: mcpTool.serverName, tool: mcpTool.name, result },
+            : (result["details"] ?? result)
+          : result,
       };
     },
   }));
@@ -243,15 +258,44 @@ export function sanitizeExecutionToolName(value: string): string {
   return sanitized.length === 0 ? "tool" : sanitized;
 }
 
-function formatMcpToolResult(result: unknown): string {
-  if (isRecord(result) && Array.isArray(result["content"])) {
-    const text = result["content"]
-      .map((entry) => (isRecord(entry) && typeof entry["text"] === "string" ? entry["text"] : null))
-      .filter((entry): entry is string => entry !== null);
-    if (text.length > 0) return text.join("\n");
+function normalizeMcpToolContent(result: unknown): ToolContent[] {
+  if (
+    isRecord(result) &&
+    (Array.isArray(result["content"]) || result["structuredContent"] !== undefined)
+  ) {
+    const content = ToolContentSchema.array().parse(result["content"] ?? []);
+    const structured = result["structuredContent"];
+    // Some servers provide only a summary in content. Preserve their business output once,
+    // but do not repeat structured JSON already supplied as text or an embedded resource.
+    if (
+      structured !== undefined &&
+      !content.some((entry) => mirrorsStructuredResult(entry, structured))
+    ) {
+      content.push({ type: "text", text: JSON.stringify(structured) });
+    }
+    return content;
   }
-  if (typeof result === "string") return result;
-  return JSON.stringify(result, null, 2) ?? String(result);
+  return [
+    ...createTextToolResult(
+      typeof result === "string" ? result : (JSON.stringify(result) ?? String(result)),
+    ).content,
+  ];
+}
+
+function mirrorsStructuredResult(entry: unknown, structured: unknown): boolean {
+  if (!isRecord(entry)) return false;
+  const text =
+    entry["type"] === "text"
+      ? entry["text"]
+      : isRecord(entry["resource"])
+        ? entry["resource"]["text"]
+        : undefined;
+  if (typeof text !== "string") return false;
+  try {
+    return isDeepStrictEqual(JSON.parse(text), structured);
+  } catch {
+    return false;
+  }
 }
 
 async function maybeRequestToolApproval(options: {
@@ -283,23 +327,22 @@ async function maybeRequestToolApproval(options: {
   if (options.humanInteractionHandler === undefined) {
     return {
       approved: false,
-      result: {
-        text: approval.reason ?? `Tool approval required for ${options.toolName}.`,
-        isError: true,
-      },
+      result: createTextToolResult(
+        approval.reason ?? `Tool approval required for ${options.toolName}.`,
+        { isError: true },
+      ),
     };
   }
   const response = await options.humanInteractionHandler(request);
   if (response.kind !== "tool_approval" || !response.approved) {
     return {
       approved: false,
-      result: {
-        text:
-          response.kind === "tool_approval" && response.reason !== undefined
-            ? response.reason
-            : `User declined ${options.toolName}.`,
-        isError: true,
-      },
+      result: createTextToolResult(
+        response.kind === "tool_approval" && response.reason !== undefined
+          ? response.reason
+          : `User declined ${options.toolName}.`,
+        { isError: true },
+      ),
     };
   }
   return { approved: true, updatedInput: response.updatedInput };
@@ -337,8 +380,4 @@ export function emitExecutionToolApprovalRequested(options: {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
-}
-
-function isJsonObject(value: unknown): value is Record<string, unknown> {
-  return isRecord(value) && !Array.isArray(value);
 }

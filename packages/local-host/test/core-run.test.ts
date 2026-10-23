@@ -1,3 +1,4 @@
+import { createTextToolResult } from "@pragma/core";
 import { createFileMemoryPolicyStore, MEMORY_CURATOR_REF } from "@pragma/memory";
 import { randomUUID } from "node:crypto";
 import { access, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
@@ -281,22 +282,45 @@ describe("Core-backed Local Host run composition", { timeout: 10_000 }, () => {
           toolName: "shell",
           toolCallId: "first",
           args: {},
-          result: { text: "askUserQuestion checkpoint failed", isError: true },
+          result: createTextToolResult("askUserQuestion checkpoint failed", { isError: true }),
           context,
         });
         await contexts.controller.flush();
         expect(fetcher).not.toHaveBeenCalled();
         await contexts.settings.update({ expectedRevision: 0, apiKey: "fixture-only-key" });
+        const observedText = "askUserQuestion checkpoint failed fixture-only-key tool-body-marker";
         await store.afterToolResult?.({
           toolName: "shell",
           toolCallId: "second",
           args: {},
-          result: { text: "askUserQuestion checkpoint failed fixture-only-key", isError: true },
+          result: {
+            ...createTextToolResult(observedText, {
+              isError: true,
+              details: { repeated: observedText, hostOnly: "host-only-marker" },
+            }),
+            content: [
+              { type: "image", mimeType: "image/png", data: "encoded-image-marker".repeat(200) },
+              { type: "text", text: observedText },
+            ],
+            isError: true,
+          },
           context,
         });
         await contexts.controller.flush();
-        for (const [, init] of fetcher.mock.calls)
+        for (const [, init] of fetcher.mock.calls) {
           expect(String(init?.body)).not.toContain("fixture-only-key");
+          expect(String(init?.body)).not.toContain("host-only-marker");
+          expect(String(init?.body)).not.toContain("encoded-image-marker");
+        }
+        const observedRequests = fetcher.mock.calls
+          .map(([, init]) => JSON.parse(String(init?.body)).state)
+          .map((state) => state.latestObservation ?? state.delta?.latestObservation)
+          .filter(
+            (text): text is string => typeof text === "string" && text.includes("tool-body-marker"),
+          );
+        expect(observedRequests.length).toBeGreaterThan(0);
+        for (const text of observedRequests)
+          expect(text.match(/tool-body-marker/g)).toHaveLength(1);
         const lens = await store.readContext({ id: "mission-attention.md", context });
         expect(lens.ok && lens.value.content).toContain(episodes[0]!.id);
         expect(
@@ -304,7 +328,7 @@ describe("Core-backed Local Host run composition", { timeout: 10_000 }, () => {
             toolName: "shell",
             toolCallId: "third",
             args: {},
-            result: { text: "same observation" },
+            result: createTextToolResult("same observation"),
             context,
           }),
         ).toBeUndefined();
@@ -321,7 +345,7 @@ describe("Core-backed Local Host run composition", { timeout: 10_000 }, () => {
           toolName: "shell",
           toolCallId: "embedding-unconfigured",
           args: {},
-          result: { text: "askUserQuestion checkpoint failed", isError: true },
+          result: createTextToolResult("askUserQuestion checkpoint failed", { isError: true }),
           context: unconfiguredContext,
         });
         await contexts.controller.flush();
@@ -367,7 +391,7 @@ describe("Core-backed Local Host run composition", { timeout: 10_000 }, () => {
             toolName: "shell",
             toolCallId: "corrupt-config",
             args: {},
-            result: { text: "still usable" },
+            result: createTextToolResult("still usable"),
             context,
           }),
         ).toBeUndefined();
@@ -378,7 +402,7 @@ describe("Core-backed Local Host run composition", { timeout: 10_000 }, () => {
           toolName: "shell",
           toolCallId: "late",
           args: {},
-          result: { text: "late completion" },
+          result: createTextToolResult("late completion"),
           context: withExecutionRunScope(context, {
             contextId: "late",
             invocationId: "late",

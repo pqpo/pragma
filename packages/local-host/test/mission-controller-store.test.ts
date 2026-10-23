@@ -1,3 +1,5 @@
+import { createTextToolResult } from "@pragma/core";
+import { getToolResultText } from "@pragma/core";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -187,7 +189,7 @@ describe("MissionControllerStore", () => {
       const outputPath = join(root, "side-effect.txt");
       const write = vi.fn(async () => {
         await writeFile(outputPath, "written");
-        return { text: "written" };
+        return createTextToolResult("written");
       });
       const loggerProvider = createNoopLoggerProvider();
       const runtime = defineRuntimeTestDriver<never, { context: RuntimeNativeSessionContext }>({
@@ -213,7 +215,7 @@ describe("MissionControllerStore", () => {
             logger: loggerProvider.createLogger({ component: "test" }),
             executionContext: native.context.request.executionContext,
           });
-          return { outputText: result.text, runtimeSessionId: "tool-owner-runtime" };
+          return { outputText: getToolResultText(result), runtimeSessionId: "tool-owner-runtime" };
         },
         mapEvent: () => ({ events: [] }),
         closeSession: () => undefined,

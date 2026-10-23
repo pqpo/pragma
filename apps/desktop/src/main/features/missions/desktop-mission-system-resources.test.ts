@@ -3,11 +3,18 @@ import { appendFile, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { STORE_REVISION_EXPERT_REF, builtInAgentResource } from "@pragma/built-in-agents";
+import {
+  SKILL_REVISION_EXPERT_REF,
+  STORE_REVISION_EXPERT_REF,
+  builtInAgentResource,
+} from "@pragma/built-in-agents";
 import {
   createNoopLoggerProvider,
   createStaticRuntimeResolver,
   createExpertAgentPluginPackageFingerprint,
+  resolveExecutionTools,
+  type ExpertAgentAutomaticHumanInteractionHandler,
+  type RuntimeNativeSessionContext,
 } from "@pragma/core";
 import { defineRuntimeTestDriver } from "@pragma/core/testing";
 import {
@@ -32,6 +39,169 @@ import { createMissionStore } from "@pragma/local-host";
 import { createDesktopMissionTestApplication } from "./fixtures/desktop-mission-test-application.ts";
 import { createDesktopSystemExpertRegistry } from "../experts/system-expert-registry.ts";
 import { parseDesktopCapabilityBindingRef } from "../../platform/bindings/desktop-binding-ref.ts";
+import {
+  isMemoryRevisionPlanningRun,
+  memoryRevisionPlanningResource,
+} from "../memory/memory-revision-planning-resource.ts";
+import { createDesktopAdapterHost } from "./mission-adapter-host.ts";
+
+it.each([
+  [STORE_REVISION_EXPERT_REF, "knowledge-plan"],
+  [SKILL_REVISION_EXPERT_REF, "skill-plan"],
+] as const)(
+  "keeps %s Memory planning noninteractive on first execution, manual retry and correction",
+  async (ref, jobPrefix) => {
+    const root = await mkdtemp(join(tmpdir(), "pragma-memory-planning-tools-"));
+    const pragmaHome = join(root, "home");
+    const resource = builtInAgentResource(ref);
+    const original = structuredClone(resource);
+    const planning = memoryRevisionPlanningResource(resource);
+    let turns = 0;
+    const observedTools: string[][] = [];
+    const automaticInteraction = vi.fn<ExpertAgentAutomaticHumanInteractionHandler>(
+      async (request) =>
+        request.kind === "user_question"
+          ? {
+              kind: "user_question",
+              answered: true,
+              answers: { "Choose a target": "Existing target" },
+            }
+          : { kind: "tool_approval", approved: true, updatedInput: request.input },
+    );
+    const runtime = defineRuntimeTestDriver<never, { context: RuntimeNativeSessionContext }>({
+      descriptor: { id: "fake", kind: "test", displayName: "Fixture" },
+      createSession: (context) => ({ context }),
+      readSession: () => ({ runtimeSessionId: "planning-native" }),
+      startTurn: async (session) => {
+        observedTools.push(
+          resolveExecutionTools({
+            agent: session.context.agent,
+            getContext: () => session.context.runContext,
+          }).tools.map((tool) => tool.name),
+        );
+        // Native callbacks bypass resolveExecutionTools, as in Claude ACP and
+        // OpenCode. They must settle without falling into a human-input wait.
+        const interact = session.context.request.humanInteractionHandler!;
+        const question = await interact({
+          kind: "user_question",
+          toolName: "askUserQuestion",
+          questions: [{ question: "Choose a target", header: "Target", kind: "text", options: [] }],
+        });
+        const approval = await interact({
+          kind: "tool_approval",
+          toolName: "native_write",
+          input: {},
+        });
+        const planningTurn = turns < 3;
+        expect(question).toMatchObject({ kind: "user_question", answered: !planningTurn });
+        expect(approval).toMatchObject({ kind: "tool_approval", approved: !planningTurn });
+        if (++turns === 1) throw new Error("planning_runtime_failure");
+        return { outputText: '{"action":"skip"}', runtimeSessionId: "planning-native" };
+      },
+      mapEvent: () => ({ events: [] }),
+    });
+    const runtimes = createStaticRuntimeResolver({ runtimes: [runtime], defaultRuntimeId: "fake" });
+    const project = createPragmaProjectStore({ projectsPath: join(root, "projects") });
+    const snapshot = await project.ensurePublished();
+    const missions = createMissionStore({ missionsPath: join(root, "missions") });
+    const createPlanningMission = () =>
+      missions.create({
+        workspace: { path: root, basename: "fixture" },
+        goal: "Plan from supplied Memory and return JSON",
+        project: { id: snapshot.projectId, revision: snapshot.revision },
+        executor: missionExecutorSnapshot(resource),
+        origin: { type: "system-memory", jobId: `${jobPrefix}:${"a".repeat(64)}` },
+        toolPermissionMode: "request-approval",
+      });
+    let mission = await createPlanningMission();
+    const interactiveAdapterHost = createDesktopAdapterHost(
+      {
+        capabilityStore: {} as CapabilityStore,
+        capabilityCredentials: {} as CapabilityCredentialStore,
+        capabilitiesPath: join(root, "capabilities"),
+        pragmaHome,
+        pragmaManagement: { knowledgeRevisions: {} as never, skillRevisions: {} as never },
+      },
+      root,
+    );
+    const runner = createDesktopMissionTestApplication({
+      missions,
+      project,
+      pragmaHome,
+      capabilityStore: {} as CapabilityStore,
+      capabilityCredentials: {} as CapabilityCredentialStore,
+      capabilitiesPath: join(root, "capabilities"),
+      runtimes,
+      loggerProvider: createNoopLoggerProvider(),
+      automaticHumanInteractionHandler: automaticInteraction,
+      getSystemExecutorResource: () => resource,
+      systemExecutorSource: async ({ mission: current }) => ({
+        ref,
+        expertResource: isMemoryRevisionPlanningRun(current.origin, current.executor.ref)
+          ? planning
+          : resource,
+        adapterHost: interactiveAdapterHost,
+        environmentId: "desktop-memory-revision-planning",
+        definitionStateRoot: join(root, "definitions"),
+        workspace: root,
+        pragmaHome,
+        runtimes,
+        rootExecutionOverride: { runtimeId: "fake" },
+      }),
+    });
+    const settle = async (status: "failed" | "succeeded", executionId?: string) => {
+      await vi.waitFor(
+        async () => {
+          const current = await missions.get(mission.id);
+          expect(current.execution?.status, current.execution?.error).toBe(status);
+          if (executionId !== undefined) expect(current.execution?.id).toBe(executionId);
+        },
+        { timeout: 10_000 },
+      );
+      return (await missions.get(mission.id)).execution!;
+    };
+    try {
+      await runner.startRun(mission.id);
+      await settle("failed");
+      // The planner removes each failed temporary Mission. A manual job retry
+      // admits a fresh planning Mission through the same compilation path.
+      await runner.delete(mission.id);
+      mission = await createPlanningMission();
+      await runner.startRun(mission.id);
+      const retried = await settle("succeeded");
+      const continued = await runner.continueInternalMemoryMission({
+        id: mission.id,
+        previousExecutionId: retried.id,
+        requestId: randomUUID(),
+        content: "Correct the planning response in the same conversation.",
+      });
+      const corrected = await settle("succeeded", continued.executionId);
+      expect(corrected.sessionId).toBe(retried.sessionId);
+      expect(observedTools).toHaveLength(3);
+      for (const tools of observedTools) expect(tools).not.toContain("askUserQuestion");
+      expect(automaticInteraction).not.toHaveBeenCalled();
+      expect(await runner.listHumanInteractions(mission.id)).toEqual([]);
+      await runner.delete(mission.id);
+
+      // Ordinary user revisions keep both managed tools and native interactions.
+      mission = await missions.create({
+        workspace: { path: root, basename: "fixture" },
+        goal: "Revise interactively",
+        project: { id: snapshot.projectId, revision: snapshot.revision },
+        executor: missionExecutorSnapshot(resource),
+      });
+      await runner.startRun(mission.id);
+      await settle("succeeded");
+      expect(observedTools[3]).toContain("askUserQuestion");
+      expect(automaticInteraction).toHaveBeenCalledTimes(2);
+      expect(resource).toEqual(original);
+    } finally {
+      await runner.stopLocalController(mission.id);
+      await rm(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
+    }
+  },
+  30_000,
+);
 
 it("compiles and executes a real published caller of an external system Expert", async () => {
   const root = await mkdtemp(join(tmpdir(), "pragma-r2-external-system-"));

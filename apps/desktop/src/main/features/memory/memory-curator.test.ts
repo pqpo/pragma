@@ -1,3 +1,4 @@
+import { getToolResultText } from "@pragma/core";
 import { randomUUID } from "node:crypto";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -125,7 +126,7 @@ it.each([
       const call = async (name: string, args: unknown) => {
         if (name === "read_evidence") readCount++;
         const result = await tools.find((tool) => tool.name === name)!.call(args, undefined);
-        expect(result.isError, result.text).not.toBe(true);
+        expect(result.isError, getToolResultText(result)).not.toBe(true);
       };
       if (!continued) {
         await call("read_evidence", { evidence: "e1" });
@@ -173,7 +174,7 @@ it.each([
               undefined,
             );
           expect(blocked.isError).toBe(true);
-          expect(blocked.text).toContain(
+          expect(getToolResultText(blocked)).toContain(
             scenario === "manual-preparation-failure"
               ? "memory_curator_type_already_finished"
               : "memory_curator_type_unavailable",
@@ -568,14 +569,14 @@ describe("Desktop Memory Curator", () => {
               .find((tool) => tool.name === "skip_extraction")!
               .call({}, undefined);
             expect(invalid).toMatchObject({ isError: true });
-            expect(invalid.text).toContain("Correction:");
-            expect(invalid.text).toContain("Preserve staged work");
+            expect(getToolResultText(invalid)).toContain("Correction:");
+            expect(getToolResultText(invalid)).toContain("Preserve staged work");
           }
           await tools.find((tool) => tool.name === "read_evidence")!.call({}, undefined);
           const result = await tools
             .find((tool) => tool.name === "skip_extraction")!
             .call({ type: "episodic", reason: "no-supported-memory" }, undefined);
-          expect(result.text).toContain("durable");
+          expect(getToolResultText(result)).toContain("durable");
         }
         return await missions.updateExecution(id, {
           id: randomUUID(),

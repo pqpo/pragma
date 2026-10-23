@@ -1,3 +1,4 @@
+import { createTextToolResult, getToolResultText } from "@pragma/core";
 import { createHash } from "node:crypto";
 
 import type {
@@ -901,7 +902,7 @@ function tool(
       try {
         const value = await call(args, context);
         if (value.isError !== true) outputSchema.parse(value.details);
-        if (Buffer.byteLength(value.text, "utf8") > 256 * 1024) {
+        if (Buffer.byteLength(getToolResultText(value), "utf8") > 256 * 1024) {
           return managementErrorResult(new Error("response_too_large"), name);
         }
         return value;
@@ -924,7 +925,7 @@ export const PRAGMA_MANAGEMENT_HOST_TOOL_DEFINITIONS = buildPragmaManagementHost
 
 function ok(details: unknown): ExpertAgentToolCallResult {
   const text = JSON.stringify(details);
-  return { text, details };
+  return createTextToolResult(text, { details });
 }
 
 function managementErrorResult(error: unknown, toolName: string): ExpertAgentToolCallResult {
@@ -975,7 +976,7 @@ function managementErrorResult(error: unknown, toolName: string): ExpertAgentToo
           }
         : {}),
   });
-  return { text: JSON.stringify(payload), details: payload, isError: true };
+  return createTextToolResult(JSON.stringify(payload), { details: payload, isError: true });
 }
 
 function parseUpdateFlowDraftInput(args: unknown): {

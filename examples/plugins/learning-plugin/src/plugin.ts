@@ -1,3 +1,4 @@
+import { createTextToolResult } from "@pragma/core";
 import {
   createInMemoryContextStore,
   definePluginEntry,
@@ -50,10 +51,10 @@ export default definePluginEntry({
           },
           call: async (args: unknown) => {
             const person = readPerson(args);
-            return {
-              text: `${config.greetingPrefix}，${person}！欢迎加入 ${config.teamName}。`,
-              details: { teamName: config.teamName },
-            };
+            return createTextToolResult(
+              `${config.greetingPrefix}，${person}！欢迎加入 ${config.teamName}。`,
+              { details: { teamName: config.teamName } },
+            );
           },
         },
       ],

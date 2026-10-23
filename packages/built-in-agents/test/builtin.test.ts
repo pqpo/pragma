@@ -1,3 +1,4 @@
+import { createTextToolResult } from "@pragma/core";
 import { PRAGMA_DSL_WRITE_API_VERSION } from "@pragma/interpreter/ast";
 import { mkdtemp, readFile, readdir, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -259,7 +260,7 @@ describe("built-in Pragma Agent DSL", () => {
                       name,
                       description: name,
                       inputSchema: { type: "object", properties: {} },
-                      call: async () => ({ text: "unused" }),
+                      call: async () => createTextToolResult("unused"),
                     })),
                   },
                 },
@@ -676,7 +677,7 @@ describe("built-in Pragma Agent DSL", () => {
                       name,
                       description: name,
                       inputSchema: { type: "object", properties: {} },
-                      call: async () => ({ text: "unused" }),
+                      call: async () => createTextToolResult("unused"),
                     })),
                   },
                 },
@@ -947,7 +948,7 @@ function definitionOnlyManagementTools() {
     description,
     inputSchema,
     approval,
-    call: async () => ({ text: "unavailable" }),
+    call: async () => createTextToolResult("unavailable"),
   }));
 }
 

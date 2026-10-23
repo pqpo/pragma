@@ -1,3 +1,4 @@
+import { getToolResultText } from "../src/tools/managed-tool.ts";
 import type { AgentInstance, RuntimeContextRecord } from "@pragma/shared";
 import { describe, expect, it } from "vitest";
 
@@ -79,7 +80,7 @@ describe("list_agents pagination", () => {
 
     const first = await call({ limit: 1 });
     expect(first.isError).not.toBe(true);
-    const firstPage = first.details as {
+    const firstPage = JSON.parse(getToolResultText(first)) as {
       contexts: readonly { contextId: string }[];
       nextCursor: string;
     };
@@ -89,12 +90,12 @@ describe("list_agents pagination", () => {
 
     const second = await call({ cursor: firstPage.nextCursor, limit: 1 });
     expect(
-      (second.details as { contexts: readonly { contextId: string }[] }).contexts.map(
-        (item) => item.contextId,
-      ),
+      (
+        JSON.parse(getToolResultText(second)) as { contexts: readonly { contextId: string }[] }
+      ).contexts.map((item) => item.contextId),
     ).toEqual([contextIds[1]]);
     const legacy = await call({ cursor: contextIds[0]!, limit: 1 });
-    expect(legacy.details).toEqual(second.details);
+    expect(JSON.parse(getToolResultText(legacy))).toEqual(JSON.parse(getToolResultText(second)));
     expect(await call({ cursor: firstPage.nextCursor, status: "resumable" })).toMatchObject({
       isError: true,
     });

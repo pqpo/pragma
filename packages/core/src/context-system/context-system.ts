@@ -1,6 +1,7 @@
 import type { ContextTrigger as SharedContextTrigger } from "@pragma/shared";
 
 import type { ExpertAgentRunContext } from "../runtime/run-context.ts";
+import type { ExpertAgentToolCallResult } from "../tools/managed-tool.ts";
 
 export const AGENTS_CONTEXT_ID = "AGENTS.md";
 export const HOST_CONTEXT_NAMESPACE = "host";
@@ -393,11 +394,7 @@ export interface ExpertAgentContextStore {
         readonly toolName: string;
         readonly toolCallId?: string | undefined;
         readonly args: unknown;
-        readonly result: {
-          readonly text: string;
-          readonly isError?: boolean;
-          readonly details?: unknown;
-        };
+        readonly result: ExpertAgentToolCallResult;
         readonly context: ExpertAgentRunContext | undefined;
       }) => Promise<string | undefined>)
     | undefined;

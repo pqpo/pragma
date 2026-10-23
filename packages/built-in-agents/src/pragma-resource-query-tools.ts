@@ -1,3 +1,4 @@
+import { createTextToolResult } from "@pragma/core";
 import type { ExpertAgentManagedTool, ExpertAgentToolCallResult } from "@pragma/core";
 import {
   MANAGED_RESOURCE_QUERY_SCHEMAS,
@@ -62,7 +63,7 @@ export function createPragmaManagedResourceTools(
       const schemas = MANAGED_RESOURCE_QUERY_SCHEMAS[command];
       const request = { command, input: schemas.input.parse(input) } as ManagedResourceQuery;
       const details = schemas.output.parse(await port.execute(request));
-      return { text: JSON.stringify(details), details };
+      return createTextToolResult(JSON.stringify(details), { details });
     },
   }));
 }

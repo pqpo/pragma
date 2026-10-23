@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 
 import type { CanonicalEventFeed } from "@pragma/core";
+import { readToolResult } from "@pragma/core";
 import {
   ExecutionEventSchema,
   ExpertAgentStreamEventSchema,
@@ -16,6 +17,7 @@ import {
   type ExecutionEvent,
   type MemoryEvidenceEnvelope,
   type MemorySubjectRef,
+  type ToolContent,
 } from "@pragma/shared";
 
 import type { MemoryExtractionSettingsStore } from "../pipeline/extraction-settings.ts";
@@ -459,17 +461,21 @@ function toolContent(canonical: CanonicalEventEnvelope):
           : JSON.stringify(redactMemoryValue(runtime.payload.inputPreview)),
       completeness: "preview",
     };
-  if (runtime.type === "tool.completed" && runtime.payload.outputPreview !== undefined)
+  if (runtime.type === "tool.completed" && runtime.payload.outputPreview !== undefined) {
+    const result = readToolResult(runtime.payload.outputPreview);
     return {
       toolCallId: runtime.payload.toolCallId,
       toolName: runtime.payload.toolName,
       phase: "completed",
       text:
-        typeof runtime.payload.outputPreview === "string"
-          ? runtime.payload.outputPreview
-          : JSON.stringify(redactMemoryValue(runtime.payload.outputPreview)),
+        result !== undefined
+          ? toolEvidenceText(result.content)
+          : typeof runtime.payload.outputPreview === "string"
+            ? runtime.payload.outputPreview
+            : JSON.stringify(redactMemoryValue(runtime.payload.outputPreview)),
       completeness: "preview",
     };
+  }
   if (runtime.type === "tool.failed")
     return {
       toolCallId: runtime.payload.toolCallId,
@@ -479,4 +485,25 @@ function toolContent(canonical: CanonicalEventEnvelope):
       completeness: "preview",
     };
   return undefined;
+}
+
+/** Keep readable evidence ahead of the capture limit; encoded media is not text evidence. */
+function toolEvidenceText(content: readonly ToolContent[]): string {
+  return content
+    .flatMap((item) => {
+      switch (item.type) {
+        case "text":
+          return [item.text];
+        case "resource":
+          return [
+            `Resource ${item.resource.uri}${typeof item.resource.text === "string" ? `\n${item.resource.text}` : ""}`,
+          ];
+        case "resource_link":
+          return [[item.name, item.uri, item.title, item.description].filter(Boolean).join("\n")];
+        case "image":
+        case "audio":
+          return [];
+      }
+    })
+    .join("\n");
 }

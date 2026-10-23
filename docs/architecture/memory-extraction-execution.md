@@ -83,6 +83,15 @@ window methods reject this origin. Main-process Memory consumers use
 `LocalHostMissionApplication.getInternalConversationSnapshot`, which checks the system origin and reuses the same
 chat projection without opening public Mission IPC access.
 
+Knowledge/Skill planning is unattended. Before Interpreter compilation, the Host removes revision
+capabilities and applies an explicit `askUserQuestion` denial, covering
+Core default tools on first execution, corrections and manual retries. Ordinary interactive revision
+Agents retain their question tools. The Host also declines native Runtime questions and approvals
+through its automatic interaction handler, before entering a durable human-input wait; these native
+requests do not pass through managed tool filtering. Planning uses only supplied Memory projections and target lists;
+missing evidence yields `skip` without asking for confirmation. Runtime, read and tool failures keep
+their failure handling and must not be disguised as insufficient evidence.
+
 Knowledge/Skill planning declares the complete output constraints before admission. Invalid JSON or
 plan Schema errors allow at most two correction turns, five seconds apart, in the same Mission,
 ExpertSession and owned Native Runtime Context. Each continuation observes its own execution ID;

@@ -1,3 +1,4 @@
+import { createTextToolResult, getToolResultText } from "@pragma/core";
 import {
   EXECUTION_CURRENT_EXPERT_ID_ATTR,
   EXECUTION_CURRENT_TEAM_ID_ATTR,
@@ -928,7 +929,7 @@ function tool<TSchema extends z.ZodType>(
         const value = result(
           toolDefinition.resultSchema.parse(await call(toolDefinition.schema.parse(args), context)),
         );
-        if (Buffer.byteLength(value.text, "utf8") > 256 * 1024) {
+        if (Buffer.byteLength(getToolResultText(value), "utf8") > 256 * 1024) {
           return managementErrorResult(new Error("response_too_large"), toolDefinition.name);
         }
         return value;
@@ -965,7 +966,7 @@ function invocation(
 
 function result(details: unknown): ExpertAgentToolCallResult {
   const text = JSON.stringify(details);
-  return { text, details };
+  return createTextToolResult(text, { details });
 }
 
 function managementErrorResult(error: unknown, toolName: string): ExpertAgentToolCallResult {
@@ -1040,7 +1041,7 @@ function managementErrorResult(error: unknown, toolName: string): ExpertAgentToo
           }
         : {}),
   });
-  return { text: JSON.stringify(payload), details: payload, isError: true };
+  return createTextToolResult(JSON.stringify(payload), { details: payload, isError: true });
 }
 
 export type { PragmaManagementHostScope } from "./pragma-host-management-tools.ts";

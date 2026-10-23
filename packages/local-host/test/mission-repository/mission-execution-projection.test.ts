@@ -1,3 +1,4 @@
+import { getToolResultText } from "@pragma/core";
 import { copyFile, mkdir, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -105,10 +106,10 @@ describe("mission execution projection", () => {
       separator: "blank_line",
     });
     results.push(await call("read_expert_context", { ...identity, start: 65, offset: 25 }));
-    expect(results[0]!.text).toContain("revision:");
-    expect(results[0]!.text).not.toContain("etag:");
-    expect(JSON.parse(results[3]!.text)).not.toHaveProperty("sha256");
-    expect(JSON.parse(results[3]!.text)).not.toHaveProperty("etag");
+    expect(getToolResultText(results[0]!)).toContain("revision:");
+    expect(getToolResultText(results[0]!)).not.toContain("etag:");
+    expect(JSON.parse(getToolResultText(results[3]!))).not.toHaveProperty("sha256");
+    expect(JSON.parse(getToolResultText(results[3]!))).not.toHaveProperty("etag");
     const { path } = await temporaryProjectionPath();
     const executionId = "compact-context";
     const entries: MissionChatEntry[] = results.map((result, index) => {
@@ -116,7 +117,7 @@ describe("mission execution projection", () => {
       expect(result.details).toBeUndefined();
       // Match the runtime's text-result envelope, including JSON escaping.
       const serialized = JSON.stringify({
-        content: [{ type: "text", text: result.text }],
+        content: result.content,
         isError: false,
       });
       expect(serialized.length).toBeLessThanOrEqual(800);

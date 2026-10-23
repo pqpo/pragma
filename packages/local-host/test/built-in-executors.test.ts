@@ -1,3 +1,5 @@
+import { createTextToolResult } from "@pragma/core";
+import { getToolResultText } from "@pragma/core";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -71,21 +73,25 @@ describe("Local Host built-in executors", () => {
       },
     );
 
-    await expect(
-      tool.call(
-        { expertId: STORE_REVISION_EXPERT_ID, task: "Revise the managed store." },
-        undefined,
-        {
-          execution: {
-            executionId: "execution-1",
-            invocationId: "invocation-1",
-            depth: 0,
-            spawnExpert,
-          },
+    const result = await tool.call(
+      { expertId: STORE_REVISION_EXPERT_ID, task: "Revise the managed store." },
+      undefined,
+      {
+        execution: {
+          executionId: "execution-1",
+          invocationId: "invocation-1",
+          depth: 0,
+          spawnExpert,
         },
-      ),
-    ).resolves.toMatchObject<ExpertAgentToolCallResult>({
-      details: expect.objectContaining({ contextId: "revision-context", status: "queued" }),
+      },
+    );
+    expect(result.isError, getToolResultText(result)).not.toBe(true);
+    expect(result.details).toEqual(JSON.parse(getToolResultText(result)));
+    expect(JSON.parse(getToolResultText(result))).toMatchObject({
+      contextId: "revision-context",
+      invocationId: "revision-invocation",
+      status: "queued",
+      message: expect.stringContaining("not a completion result"),
     });
     expect(spawnExpert).toHaveBeenCalledOnce();
     expect(tool.approval).toEqual({ mode: "ask" });
@@ -104,7 +110,7 @@ function managementAdapterHost(root: string): PragmaAdapterHost {
       inputSchema,
       approval,
       async call(): Promise<ExpertAgentToolCallResult> {
-        return { text: "Not exercised by this compilation test." };
+        return createTextToolResult("Not exercised by this compilation test.");
       },
     }),
   );

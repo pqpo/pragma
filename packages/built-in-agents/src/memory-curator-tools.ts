@@ -1,3 +1,4 @@
+import { createTextToolResult } from "@pragma/core";
 import type { ExpertAgentManagedTool, ExpertAgentToolCallResult } from "@pragma/core";
 import {
   EPISODE_PART_EXAMPLES,
@@ -120,7 +121,7 @@ export function createMemoryCuratorTools(
           await beforeCall?.();
           canCorrect = true;
           const text = await session.call(name, args);
-          return { text, details: feedbackFromText(text) };
+          return createTextToolResult(text, { details: feedbackFromText(text) });
         } catch (error) {
           if (signal?.aborted) throw error;
           const invalid = error instanceof z.ZodError;
@@ -184,7 +185,7 @@ export function createMemoryCuratorTools(
               .join("\n"),
             feedback,
           );
-          return { text, isError: true, details: feedbackFromText(text) };
+          return createTextToolResult(text, { isError: true, details: feedbackFromText(text) });
         }
       },
     };

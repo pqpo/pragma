@@ -79,6 +79,7 @@ import { createDesktopAdapterHost } from "./mission-adapter-host.ts";
 import { createMissionBranchContext } from "@pragma/local-host";
 import { MissionStatusService } from "@pragma/local-host";
 import type { MissionStore } from "@pragma/local-host";
+import { isMemoryRevisionPlanningRun } from "../memory/memory-revision-planning-resource.ts";
 
 interface ExecutorMetadata {
   readonly names: ReadonlyMap<string, string>;
@@ -580,6 +581,15 @@ export function createDesktopMissionExecutionResources(
             resolveHostContextBindings,
             loggerProvider: options.loggerProvider?.withScope({ missionId: mission.id }),
             automaticHumanInteractionHandler: async (request) => {
+              // Native Runtime questions/approvals bypass the managed tool list.
+              // Settle them here before Core enters a durable human-input wait.
+              if (isMemoryRevisionPlanningRun(mission.origin, mission.executor.ref)) {
+                const reason =
+                  "Memory revision planning is unattended. Human interaction is disabled. Use only the supplied evidence; do not treat this rejection as insufficient evidence.";
+                return request.kind === "user_question"
+                  ? { kind: "user_question", answered: false, reason }
+                  : { kind: "tool_approval", approved: false, updatedInput: request.input, reason };
+              }
               if (
                 ["system-store-revision", "system-skill-revision"].includes(mission.origin.type) &&
                 request.kind === "tool_approval"

@@ -3,8 +3,10 @@ import {
   type AgentAssistantMessage,
   type AgentMessage,
   type AgentMessageUsage,
+  type AgentToolResultMessage,
   type ExpertAgentStreamEvent,
 } from "@pragma/shared";
+import { readToolResult } from "../tools/managed-tool.ts";
 
 export class RuntimeMessageAccumulator {
   private text = "";
@@ -77,17 +79,31 @@ export class RuntimeMessageAccumulator {
         this.reset();
         return [message];
       }
-      case "tool.completed":
+      case "tool.completed": {
+        const result = readToolResult(event.payload.outputPreview);
+        const content: AgentToolResultMessage["content"] =
+          result === undefined
+            ? [{ type: "text", text: stringify(event.payload.outputPreview) }]
+            : result.content.map((item) =>
+                item.type === "text" || item.type === "image"
+                  ? item
+                  : {
+                      type: "text" as const,
+                      text: `[Tool content rendered as text: ${item.type}]\n${JSON.stringify(item)}`,
+                    },
+              );
         return [
           AgentMessageSchema.parse({
             role: "toolResult",
             toolCallId: event.payload.toolCallId,
             toolName: event.payload.toolName,
-            content: [{ type: "text", text: stringify(event.payload.outputPreview) }],
-            isError: false,
+            content,
+            ...(result?.details === undefined ? {} : { details: result.details }),
+            isError: result?.isError ?? false,
             timestamp: Date.parse(event.emittedAt),
           }),
         ];
+      }
       case "tool.failed":
         return [
           AgentMessageSchema.parse({

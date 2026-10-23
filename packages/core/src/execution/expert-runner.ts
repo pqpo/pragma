@@ -1572,14 +1572,14 @@ export async function runExpertInvocation(options: RunExpertInvocationOptions): 
               : waitResult.timedOut
                 ? [
                     "[Pragma orchestration wait timeout]",
-                    "The bounded wait ended, but the listed Expert tasks are still running.",
-                    "Review the pending state now. Call wait_experts again, steer_expert, or interrupt_expert as appropriate. Do not spawn duplicate work.",
+                    "The bounded wait ended without cancelling the pending Expert tasks. They may be queued, running, or waiting.",
+                    "Inspect their status, waitReason, and latestActivity, then call wait_experts again to collect remaining results. Use steer_expert to correct direction or interrupt_expert when cancellation is intended; a timeout or old/missing activity alone does not justify interruption. Do not spawn duplicate work.",
                     JSON.stringify(result, null, 2),
                   ].join("\n")
                 : [
                     "[Pragma orchestration continuation]",
-                    "All attached Expert tasks are terminal. Synthesize their results into the final answer.",
-                    "Do not spawn replacement tasks for work that is already complete.",
+                    "All attached Expert tasks are terminal. Inspect each status, output, and error before synthesizing the final answer; terminal tasks may have failed, been cancelled, or been interrupted.",
+                    "Do not spawn replacement tasks for successful work. Use continue_expert with the original contextId for a related retry when needed, then wait for its new invocationId.",
                     JSON.stringify(result, null, 2),
                   ].join("\n");
         continuation += 1;

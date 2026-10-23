@@ -1,8 +1,10 @@
+import { createTextToolResult } from "../src/tools/managed-tool.ts";
 import { Client, StreamableHTTPClientTransport } from "@modelcontextprotocol/client";
 import { afterEach, describe, expect, it } from "vitest";
 
 import {
   createPragmaLogger,
+  createAgentLauncher,
   defineExpert,
   HumanInteractionCheckpointError,
   registerExpertToolsMcpSession,
@@ -20,6 +22,89 @@ describe("Expert tools MCP Gateway", { concurrent: false }, () => {
       [...registrations].map(async (registration) => await registration.dispose()),
     );
     registrations.clear();
+  });
+
+  it("serves all model tools without Host details or duplicate structuredContent", async () => {
+    const worker = await defineExpert({
+      id: "worker",
+      name: "Worker",
+      description: "Worker",
+      tags: [],
+      scope: "test",
+      workspace: process.cwd(),
+    });
+    const agent = await defineExpert({
+      id: "lead",
+      name: "Lead",
+      description: "Lead",
+      tags: [],
+      scope: "test",
+      workspace: process.cwd(),
+      tools: createAgentLauncher({ experts: [worker] }).tools,
+    });
+    const identity = { agentId: "internal", contextId: "context", invocationId: "task" };
+    const registration = await registerExpertToolsMcpSession({
+      agent,
+      getContext: () => undefined,
+      logger: createPragmaLogger(undefined, { component: "test" }),
+      state: {},
+      executionContext: {
+        executionId: "execution",
+        invocationId: "root",
+        depth: 0,
+        spawnExpert: async () => ({ ...identity, expertId: "worker", status: "queued" }),
+        continueExpert: async () => ({
+          ...identity,
+          invocationId: "next",
+          status: "queued",
+          agentDisposition: "reused",
+        }),
+        waitExperts: async () => ({
+          returnWhen: "all",
+          timedOut: false,
+          waitedMs: 7,
+          completed: [{ ...identity, status: "succeeded", output: "Review done" }],
+          pending: [],
+        }),
+        listAgents: async () => ({
+          availableExperts: [{ expertId: "worker", canSpawn: true }],
+          contexts: [{ ...identity, canContinue: true }],
+        }),
+        steerExpert: async () => ({
+          ...identity,
+          outcome: "accepted",
+          delivery: "after_current",
+          messageId: "guidance",
+        }),
+        interruptExpert: async () => ({ ...identity, outcome: "already_terminal" }),
+      },
+    });
+    registrations.add(registration);
+    const client = await connectClient(registration.url, "lifecycle");
+    for (const [name, args] of [
+      ["spawn_expert", { expertId: "worker", task: "Review" }],
+      ["continue_expert", { contextId: "context", task: "Follow up" }],
+      ["wait_experts", { invocationIds: ["task"] }],
+      ["list_agents", {}],
+      ["steer_expert", { invocationId: "task", instruction: "Focus", delivery: "after_current" }],
+      ["interrupt_expert", { invocationId: "task" }],
+    ] as const) {
+      const result = await client.callTool({ name, arguments: args });
+      expect(result.isError).not.toBe(true);
+      expect(result.content).toHaveLength(1);
+      expect(result).not.toHaveProperty("structuredContent");
+      expect(result).not.toHaveProperty("details");
+      const payload = JSON.parse((result.content[0] as { text: string }).text);
+      expect(payload.message).toEqual(expect.any(String));
+      expect(payload).not.toHaveProperty("agentId");
+      if (name === "wait_experts") expect(payload.completed[0].output).toBe("Review done");
+    }
+    const other = await registerTestSession("structured");
+    const otherClient = await connectClient(other.url, "structured");
+    const otherResult = await otherClient.callTool({ name: "read_structured", arguments: {} });
+    expect(otherResult).toMatchObject({ content: [{ type: "text", text: "structured" }] });
+    expect(otherResult).not.toHaveProperty("structuredContent");
+    expect(otherResult).not.toHaveProperty("details");
   });
 
   it("shares one listener while isolating Session tools and routes", async () => {
@@ -68,11 +153,8 @@ describe("Expert tools MCP Gateway", { concurrent: false }, () => {
     expect(alphaTools.tools.map((tool) => tool.name)).not.toContain("read_beta");
     expect(betaTools.tools.map((tool) => tool.name)).toContain("read_beta");
     expect(betaTools.tools.map((tool) => tool.name)).not.toContain("read_alpha");
-    expect(alphaTools.tools.find((tool) => tool.name === "read_alpha")?.outputSchema).toMatchObject(
-      {
-        type: "object",
-        required: ["value"],
-      },
+    expect(alphaTools.tools.find((tool) => tool.name === "read_alpha")).not.toHaveProperty(
+      "outputSchema",
     );
 
     await expect(
@@ -116,6 +198,114 @@ describe("Expert tools MCP Gateway", { concurrent: false }, () => {
 
     const unknownTokenUrl = new URL(`/sessions/${"A".repeat(43)}/mcp`, alphaUrl.origin);
     await expect(fetch(unknownTokenUrl)).resolves.toMatchObject({ status: 404 });
+  });
+
+  it("validates output inside the Host without exposing schemas or metadata to the model", async () => {
+    const schema = {
+      type: "object",
+      properties: { value: { type: "string" } },
+      required: ["value"],
+    };
+    const agent = await defineExpert({
+      id: "validated",
+      name: "Validated",
+      description: "Test",
+      tags: [],
+      scope: "test",
+      workspace: process.cwd(),
+      tools: [
+        {
+          name: "valid",
+          description: "Valid",
+          inputSchema: { type: "object" },
+          outputSchema: schema,
+          call: async () =>
+            createTextToolResult('{"value":"visible"}', {
+              details: { value: "visible", privateMarker: "host-only" },
+            }),
+        },
+        {
+          name: "invalid",
+          description: "Invalid",
+          inputSchema: { type: "object" },
+          outputSchema: schema,
+          call: async () =>
+            createTextToolResult("Must not reach the model", { details: { value: 7 } }),
+        },
+        {
+          name: "missing",
+          description: "Missing",
+          inputSchema: { type: "object" },
+          outputSchema: schema,
+          call: async () => createTextToolResult("Must not reach the model"),
+        },
+      ],
+    });
+    const registration = await registerExpertToolsMcpSession({
+      agent,
+      getContext: () => undefined,
+      logger: createPragmaLogger(undefined, { component: "test" }),
+      state: {},
+    });
+    registrations.add(registration);
+    const client = await connectClient(registration.url, "validated");
+    for (const tool of (await client.listTools()).tools)
+      expect(tool).not.toHaveProperty("outputSchema");
+    const valid = await client.callTool({ name: "valid", arguments: {} });
+    expect(valid).toEqual({ content: [{ type: "text", text: '{"value":"visible"}' }] });
+    expect(JSON.stringify(valid)).not.toContain("host-only");
+    for (const name of ["invalid", "missing"]) {
+      const invalid = await client.callTool({ name, arguments: {} });
+      expect(invalid.isError).toBe(true);
+      expect(JSON.parse((invalid.content[0] as { text: string }).text)).toMatchObject({
+        ok: false,
+        committed: false,
+        error: {
+          code: "tool_execution_failed",
+          message: expect.stringContaining("Invalid output"),
+        },
+      });
+      expect(invalid).not.toHaveProperty("structuredContent");
+    }
+  });
+
+  it("forwards native MCP content blocks without flattening or repeating Host details", async () => {
+    const content = [
+      { type: "text", text: "Preview" },
+      { type: "image", data: "aW1hZ2UtYnl0ZXM=", mimeType: "image/png" },
+      { type: "audio", data: "YXVkaW8tYnl0ZXM=", mimeType: "audio/wav" },
+      { type: "resource", resource: { uri: "file:///notes.txt", text: "Notes" } },
+      { type: "resource_link", uri: "file:///report.pdf", name: "Report" },
+    ];
+    const agent = await defineExpert({
+      id: "content-test",
+      name: "Content",
+      description: "Test",
+      tags: [],
+      scope: "test",
+      workspace: process.cwd(),
+    });
+    const registration = await registerExpertToolsMcpSession({
+      agent,
+      getContext: () => undefined,
+      logger: createPragmaLogger(undefined, { component: "test" }),
+      state: {},
+      mcpTools: [
+        {
+          serverId: "fixture",
+          serverName: "Fixture",
+          name: "read",
+          description: "Read",
+          inputSchema: { type: "object" },
+          call: async () => ({ content, _meta: { privateMarker: "host-only" } }),
+        },
+      ],
+    });
+    registrations.add(registration);
+    const client = await connectClient(registration.url, "native-content");
+    const result = await client.callTool({ name: "mcp_fixture_read", arguments: {} });
+    expect(result).toEqual({ content });
+    expect(JSON.stringify(result)).not.toContain("host-only");
   });
 
   it("serves independent clients and reconnects on one Session URL", async () => {
@@ -276,7 +466,7 @@ describe("Expert tools MCP Gateway", { concurrent: false }, () => {
             },
           },
           async call() {
-            return { text: "ok" };
+            return createTextToolResult("ok");
           },
         },
       ],
@@ -392,7 +582,7 @@ async function registerTestSession(
           additionalProperties: false,
         },
         async call() {
-          return { text: label, details: { value: label } };
+          return createTextToolResult(label, { details: { value: label } });
         },
       },
       {
@@ -410,11 +600,10 @@ async function registerTestSession(
           additionalProperties: false,
         },
         async call() {
-          return {
-            text: `${label} failed`,
+          return createTextToolResult(`${label} failed`, {
             isError: true,
             details: { code: "expected_failure" },
-          };
+          });
         },
       },
       {

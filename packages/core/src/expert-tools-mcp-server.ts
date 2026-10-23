@@ -1,3 +1,4 @@
+import { createTextToolResult } from "./tools/managed-tool.ts";
 import { createHash, randomBytes } from "node:crypto";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import type { AddressInfo } from "node:net";
@@ -9,11 +10,7 @@ import {
   McpServer,
   WebStandardStreamableHTTPServerTransport,
 } from "@modelcontextprotocol/server";
-import type {
-  CallToolResult,
-  JsonSchemaType,
-  StandardSchemaWithJSON,
-} from "@modelcontextprotocol/server";
+import type { JsonSchemaType, StandardSchemaWithJSON } from "@modelcontextprotocol/server";
 
 import type { Expert } from "./agent/expert-agent.ts";
 import { isHumanInteractionCheckpointError } from "./execution/expert-runner.ts";
@@ -22,7 +19,6 @@ import type { McpManagedTool } from "./mcp-tools.ts";
 import type { ExpertAgentRunContext } from "./runtime/run-context.ts";
 import type {
   ExpertAgentHumanInteractionHandler,
-  ExpertAgentToolCallResult,
   ExpertToolExecutionContext,
 } from "./tools/managed-tool.ts";
 import {
@@ -30,6 +26,7 @@ import {
   executeExecutionTool,
   resolveExecutionTools,
   sanitizeExecutionToolName,
+  toModelToolResult,
   type ExecutionTool,
   type ExecutionToolRuntimeState,
   type ResolvedExecutionTool,
@@ -421,10 +418,7 @@ function createPermissionPromptTool(
           updatedInput: request.input,
         };
 
-        return {
-          text: JSON.stringify(details),
-          details,
-        };
+        return createTextToolResult(JSON.stringify(details), { details });
       }
 
       emitExecutionToolApprovalRequested({
@@ -439,17 +433,19 @@ function createPermissionPromptTool(
       });
 
       if (handler === undefined) {
-        return {
-          text: JSON.stringify({
+        return createTextToolResult(
+          JSON.stringify({
             behavior: "deny",
             message: "No approval handler is configured.",
           }),
-          isError: true,
-          details: {
-            behavior: "deny",
-            message: "No approval handler is configured.",
+          {
+            isError: true,
+            details: {
+              behavior: "deny",
+              message: "No approval handler is configured.",
+            },
           },
-        };
+        );
       }
 
       const response = await handler({
@@ -466,17 +462,19 @@ function createPermissionPromptTool(
             ? response.reason
             : `User declined ${request.toolName}.`;
 
-        return {
-          text: JSON.stringify({
+        return createTextToolResult(
+          JSON.stringify({
             behavior: "deny",
             message,
           }),
-          isError: true,
-          details: {
-            behavior: "deny",
-            message,
+          {
+            isError: true,
+            details: {
+              behavior: "deny",
+              message,
+            },
           },
-        };
+        );
       }
 
       const details = {
@@ -484,10 +482,7 @@ function createPermissionPromptTool(
         updatedInput: response.updatedInput ?? request.input,
       };
 
-      return {
-        text: JSON.stringify(details),
-        details,
-      };
+      return createTextToolResult(JSON.stringify(details), { details });
     },
   };
 }
@@ -550,7 +545,8 @@ function registerLocalTool(
     {
       description: tool.description,
       inputSchema,
-      ...(outputSchema === undefined ? {} : { outputSchema }),
+      // This endpoint serves models. Keep output validation inside the Host, since MCP
+      // outputSchema would require a second, structuredContent copy on the wire.
     },
     async (input, context) => {
       const toolCallId = String(context.mcpReq.id);
@@ -569,7 +565,15 @@ function registerLocalTool(
           state: options.state,
         });
 
-        return toCallToolResult(result);
+        if (result.isError !== true && outputSchema !== undefined) {
+          const validation = await outputSchema["~standard"].validate(result.details);
+          if (validation.issues !== undefined) {
+            throw new Error(
+              `Invalid output from tool ${tool.name}: ${JSON.stringify(validation.issues)}`,
+            );
+          }
+        }
+        return toModelToolResult(result);
       } catch (error) {
         // A human checkpoint is a control signal for the owning Runtime turn,
         // not a tool result that the model may recover from. The controller
@@ -583,8 +587,8 @@ function registerLocalTool(
           committed: false as const,
           error: { code: "tool_execution_failed", message },
         };
-        return toCallToolResult({
-          text: JSON.stringify(payload),
+        return toModelToolResult({
+          content: [{ type: "text", text: JSON.stringify(payload) }],
           isError: true,
           details: payload,
         });
@@ -681,21 +685,6 @@ function defaultObjectJsonSchema(): JsonSchemaType {
     properties: {},
     additionalProperties: false,
   } as JsonSchemaType;
-}
-
-function toCallToolResult(result: ExpertAgentToolCallResult): CallToolResult {
-  return {
-    content: [
-      {
-        type: "text",
-        text: result.text,
-      },
-    ],
-    ...(result.isError === undefined ? {} : { isError: result.isError }),
-    ...(result.isError === true || !isJsonObject(result.details)
-      ? {}
-      : { structuredContent: result.details }),
-  };
 }
 
 async function handleMcpHttpRequest(
@@ -814,10 +803,6 @@ function isStandardSchemaWithJson(value: unknown): value is StandardSchemaWithJS
   }
 
   return "jsonSchema" in value["~standard"];
-}
-
-function isJsonObject(value: unknown): value is Record<string, unknown> {
-  return isRecord(value) && !Array.isArray(value);
 }
 
 function readString(value: unknown): string | undefined {

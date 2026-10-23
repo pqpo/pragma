@@ -1,3 +1,4 @@
+import { createTextToolResult } from "@pragma/core";
 import type { ExpertAgentManagedTool, ExpertAgentToolCallResult } from "@pragma/core";
 import {
   MemoryExtractionToolSchemas,
@@ -196,15 +197,15 @@ export function createMemoryCuratorV1Tools(
         await beforeCall?.();
         canCorrect = true;
         const text = await session.call(name, args);
-        return { text };
+        return createTextToolResult(text);
       } catch (error) {
         if (signal?.aborted) throw error;
-        return {
-          text: await session.deliverErrorResponse(
+        return createTextToolResult(
+          await session.deliverErrorResponse(
             toolError(name, session.module, error, canCorrect, session.subjectAliases),
           ),
-          isError: true,
-        };
+          { isError: true },
+        );
       }
     },
   }));

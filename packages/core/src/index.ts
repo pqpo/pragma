@@ -14,6 +14,7 @@ export {
   type InvocationMessageHistory,
 } from "@pragma/shared";
 export type { ExecutionEvent, ExecutionOutputItem } from "@pragma/shared";
+export { ToolContentSchema, type ToolContent } from "@pragma/shared";
 export {
   createAgentLauncher,
   type AgentLauncher,

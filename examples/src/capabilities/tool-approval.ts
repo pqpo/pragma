@@ -1,3 +1,4 @@
+import { createTextToolResult } from "@pragma/core";
 import { stdin, stdout } from "node:process";
 import { createInterface } from "node:readline/promises";
 
@@ -23,7 +24,7 @@ const deleteNoteTool: ExpertAgentManagedTool<"delete_workspace_note", ExpertAgen
   async call(args) {
     const path =
       typeof args === "object" && args !== null && "path" in args ? String(args.path) : "<unknown>";
-    return { text: `已模拟删除：${path}`, details: { simulated: true } };
+    return createTextToolResult(`已模拟删除：${path}`, { details: { simulated: true } });
   },
 };
 

@@ -147,6 +147,10 @@ import {
 import { createMemoryLearningRevisions } from "../features/memory/memory-learning-revisions.ts";
 import { installMemoryPolicyHandlers } from "../features/memory/memory-policy-ipc.ts";
 import { createMemoryRevisionLearningPlanners } from "../features/memory/memory-revision-learning-planners.ts";
+import {
+  isMemoryRevisionPlanningRun,
+  memoryRevisionPlanningResource,
+} from "../features/memory/memory-revision-planning-resource.ts";
 import { installTeamMemoryContextStoreBrowserHandlers } from "../features/memory/team-memory-context-store-browser-ipc.ts";
 import { createTeamMemoryContextStoreBrowserService } from "../features/memory/team-memory-context-store-browser.ts";
 import { createHomeExecutorCatalog } from "../features/missions/home-executor-catalog.ts";
@@ -1457,13 +1461,7 @@ export async function createDesktopApplicationContainer(
             adapterHost,
           };
         }
-        if (
-          mission.origin.type === "system-memory" &&
-          ((planningRef === STORE_REVISION_EXPERT_REF &&
-            mission.origin.jobId.startsWith("knowledge-plan:")) ||
-            (planningRef === SKILL_REVISION_EXPERT_REF &&
-              mission.origin.jobId.startsWith("skill-plan:")))
-        ) {
+        if (isMemoryRevisionPlanningRun(mission.origin, planningRef)) {
           const resource = systemExperts.getResource(planningRef);
           if (resource === undefined) throw new Error("Memory revision planning Agent is missing.");
           const definition = systemExperts.get(planningRef);
@@ -1492,18 +1490,7 @@ export async function createDesktopApplicationContainer(
                 ? {}
                 : { modelSelection: defaults.modelSelection }),
             },
-            expertResource: {
-              ...resource,
-              spec: {
-                ...resource.spec,
-                instructions:
-                  "You are the built-in Revision Agent in read-only Memory planning mode. Use only the supplied Memory projections and existing target list. Do not call tools or start a draft. Return only the JSON object requested by the task. Treat historical Episodes as context, not current truth.",
-                capabilities: [],
-                tools: [],
-                contextStores: [],
-                plugins: [],
-              },
-            },
+            expertResource: memoryRevisionPlanningResource(resource),
           };
         }
         if (mission.executor.ref === MEMORY_CURATOR_REF) {

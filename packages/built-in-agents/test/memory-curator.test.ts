@@ -1,3 +1,4 @@
+import { getToolResultText } from "@pragma/core";
 import { copyFile, mkdir, mkdtemp, rm } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { tmpdir } from "node:os";
@@ -132,7 +133,7 @@ it.each([true, false])(
       valueScore: 0.8,
     });
     expect(incomplete.isError).toBe(true);
-    expect(incomplete.text).toContain("Correction:");
+    expect(getToolResultText(incomplete)).toContain("Correction:");
     expect(incomplete.details).toMatchObject({
       requiredFields: expect.arrayContaining(["goal", "summary", "outcome"]),
     });
@@ -190,10 +191,10 @@ it("repairs typed errors, reads editable candidates and recovers a saved fact re
       });
       const unread = await submit.call(fact, undefined);
       expect(unread.isError).toBe(true);
-      expect(unread.text).toContain("read");
+      expect(getToolResultText(unread)).toContain("read");
       await tools.find((t) => t.name === "read_evidence")!.call({}, undefined);
       const wrong = await submit.call({ ...fact, subjects: ["expert-team"] }, undefined);
-      expect(wrong.text).toContain('subject aliases: ["user"]');
+      expect(getToolResultText(wrong)).toContain('subject aliases: ["user"]');
       const advertised = z.fromJSONSchema(submit.inputSchema as z.core.JSONSchema.JSONSchema);
       const result = await submit.call(advertised.parse(fact), undefined);
       const metadata = MemoryExtractionFeedbackSchema.parse(result.details);
@@ -201,7 +202,7 @@ it("repairs typed errors, reads editable candidates and recovers a saved fact re
       const read = await tools
         .find((t) => t.name === "read_staged_candidate")!
         .call({ candidate: metadata.candidate }, undefined);
-      expect(read.text).toContain("zh-Hans");
+      expect(getToolResultText(read)).toContain("zh-Hans");
       const fix = await submit.call(
         {
           ...fact,
@@ -248,7 +249,7 @@ it("budgets actual visible correction text across reopening and preserves a stab
   await session.bindMission("errors");
   const tool = createMemoryCuratorTools(session).find((t) => t.name === "submit_fact")!;
   const first = await tool.call({ wrong: true }, undefined);
-  const used = defaultRuntimeTokenCounter.countText(first.text).tokens;
+  const used = defaultRuntimeTokenCounter.countText(getToolResultText(first)).tokens;
   expect(used).toBeGreaterThan(0);
   await session.setContextBudget(used + 1);
   const restored = (await store.forMission("errors"))!;
@@ -273,8 +274,8 @@ it("uses reserved budget to guide finalization only for already complete support
   const source = await read.call({}, undefined);
   const staged = await submitted.call(fact, undefined);
   const used =
-    defaultRuntimeTokenCounter.countText(source.text).tokens +
-    defaultRuntimeTokenCounter.countText(staged.text).tokens;
+    defaultRuntimeTokenCounter.countText(getToolResultText(source)).tokens +
+    defaultRuntimeTokenCounter.countText(getToolResultText(staged)).tokens;
   await session.setContextBudget(used + 1024);
   const exhausted = await read.call({}, undefined);
   expect(exhausted.details).toMatchObject({
@@ -320,7 +321,9 @@ it("keeps the original DSL and tool vocabulary for a migrated historical Native 
   expect(memoryCuratorResource(1).spec.instructions).toContain("finish_extraction");
   expect(memoryCuratorResource(2).spec.instructions).toContain("finish_episodic_extraction");
   expect(
-    (await tools.find((t) => t.name === "find_existing_memory")!.call({}, undefined)).text,
+    getToolResultText(
+      await tools.find((t) => t.name === "find_existing_memory")!.call({}, undefined),
+    ),
   ).toContain("goal");
 });
 it("accepts the original object property through a migrated historical tool's advertised schema", async () => {

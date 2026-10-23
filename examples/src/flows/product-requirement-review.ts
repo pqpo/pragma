@@ -1,3 +1,4 @@
+import { createTextToolResult } from "@pragma/core";
 import {
   defineExpertTeam,
   defineContextIdResolver,
@@ -89,10 +90,10 @@ const lookupRequirementEvidence: ExpertAgentManagedTool<
     const area =
       typeof input === "object" && input !== null && "area" in input ? String(input.area) : "";
     if (!(area in evidenceByArea)) {
-      return { text: `Unknown evidence area: ${area}`, isError: true };
+      return createTextToolResult(`Unknown evidence area: ${area}`, { isError: true });
     }
     const evidence = evidenceByArea[area as keyof typeof evidenceByArea];
-    return { text: JSON.stringify(evidence), details: { area, evidence } };
+    return createTextToolResult(JSON.stringify(evidence), { details: { area, evidence } });
   },
 };
 

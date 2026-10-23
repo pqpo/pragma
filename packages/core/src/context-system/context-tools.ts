@@ -1,3 +1,4 @@
+import { createTextToolResult } from "../tools/managed-tool.ts";
 import {
   decodeShortPageCursor,
   encodeShortPageCursor,
@@ -34,13 +35,10 @@ import type {
   ExpertAgentToolApproval,
   ExpertToolExecutionContext,
   ExpertAgentUserQuestion,
+  ExpertAgentToolCallResult,
 } from "../tools/managed-tool.ts";
 
-export interface ExpertAgentDefaultToolCallResult {
-  readonly text: string;
-  readonly isError?: boolean;
-  readonly details?: unknown;
-}
+export type ExpertAgentDefaultToolCallResult = ExpertAgentToolCallResult;
 
 export interface ExpertAgentDefaultTool {
   readonly name: string;
@@ -157,9 +155,7 @@ export function createContextTools(
         );
         if (!page.ok) return errorResult(page.error);
 
-        return {
-          text: formatContextIndexPage(page.value),
-        };
+        return createTextToolResult(formatContextIndexPage(page.value));
       },
     },
     {
@@ -192,9 +188,7 @@ export function createContextTools(
         }
 
         const bounded = boundReadContext(result.value, offset);
-        return {
-          text: formatContext(bounded),
-        };
+        return createTextToolResult(formatContext(bounded));
       },
     },
     {
@@ -232,9 +226,9 @@ export function createContextTools(
           return errorResult(result.error);
         }
 
-        return {
-          text: boundSearchMatches(result.value, normalizeResultByteBudget(options)),
-        };
+        return createTextToolResult(
+          boundSearchMatches(result.value, normalizeResultByteBudget(options)),
+        );
       },
     },
     {
@@ -285,9 +279,7 @@ export function createContextTools(
         }
 
         const receipt = createContextWriteReceipt(result.value, namespace, "created");
-        return {
-          text: JSON.stringify(receipt),
-        };
+        return createTextToolResult(JSON.stringify(receipt));
       },
     },
     {
@@ -395,9 +387,7 @@ export function createContextTools(
             ? {}
             : { replacementCount: result.value.replacementCount }),
         });
-        return {
-          text: JSON.stringify(receipt),
-        };
+        return createTextToolResult(JSON.stringify(receipt));
       },
     },
     {
@@ -439,9 +429,7 @@ export function createContextTools(
           ...(result.value.effect === undefined ? {} : { effect: result.value.effect }),
           ...(result.value.message === undefined ? {} : { message: result.value.message }),
         };
-        return {
-          text: JSON.stringify(receipt),
-        };
+        return createTextToolResult(JSON.stringify(receipt));
       },
     },
   ];
@@ -565,18 +553,16 @@ function createAskUserQuestionTool(): ExpertAgentDefaultTool {
     call: async (args, _signal, context) => {
       const questions = readAskUserQuestions(args);
       if (questions.length === 0) {
-        return {
-          text: "Invalid askUserQuestion input: questions array is empty or missing.",
-          isError: true,
-        };
+        return createTextToolResult(
+          "Invalid askUserQuestion input: questions array is empty or missing.",
+          { isError: true },
+        );
       }
 
       const humanInteraction = context?.humanInteraction;
 
       if (humanInteraction === undefined) {
-        return {
-          text: questions.map(formatAskUserQuestion).join("\n\n"),
-        };
+        return createTextToolResult(questions.map(formatAskUserQuestion).join("\n\n"));
       }
 
       const response = await humanInteraction({
@@ -587,13 +573,12 @@ function createAskUserQuestionTool(): ExpertAgentDefaultTool {
       });
 
       if (response.kind !== "user_question" || !response.answered) {
-        return {
-          text:
-            response.kind === "user_question" && response.reason !== undefined
-              ? response.reason
-              : "User declined to answer the question.",
-          isError: true,
-        };
+        return createTextToolResult(
+          response.kind === "user_question" && response.reason !== undefined
+            ? response.reason
+            : "User declined to answer the question.",
+          { isError: true },
+        );
       }
 
       const text =
@@ -601,10 +586,10 @@ function createAskUserQuestionTool(): ExpertAgentDefaultTool {
           ? "User answered the question."
           : JSON.stringify(response.answers, null, 2);
       const notes = response.notes?.trim();
-      return {
-        text: notes === undefined || notes === "" ? text : `${text}\n\nUser notes:\n${notes}`,
-        details: response.answers,
-      };
+      return createTextToolResult(
+        notes === undefined || notes === "" ? text : `${text}\n\nUser notes:\n${notes}`,
+        { details: response.answers },
+      );
     },
   };
 }
@@ -1177,7 +1162,7 @@ function listContextStoresPage(
       break;
     }
   }
-  return { text: format(start + selected.length) };
+  return createTextToolResult(format(start + selected.length));
 }
 
 function contextCursorBinding(namespace: string | undefined) {
@@ -1643,10 +1628,7 @@ function errorResult(error: ExpertAgentContextError): ExpertAgentDefaultToolCall
     },
     ...(recovery === undefined ? {} : { recovery }),
   };
-  return {
-    text: JSON.stringify(payload),
-    isError: true,
-  };
+  return createTextToolResult(JSON.stringify(payload), { isError: true });
 }
 
 function contextErrorRecovery(error: ExpertAgentContextError): unknown {

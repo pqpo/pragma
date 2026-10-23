@@ -1,3 +1,4 @@
+import { getToolResultText } from "@pragma/core";
 import { mkdir, mkdtemp, realpath, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
@@ -235,7 +236,7 @@ describe("Pragma resource discovery", () => {
     expect(stores.details).toMatchObject({
       items: [{ storeId: knowledge.id, name: knowledge.name, status: "ready" }],
     });
-    expect(stores.text).not.toContain(join(root, "knowledge"));
+    expect(getToolResultText(stores)).not.toContain(join(root, "knowledge"));
     await contextStores.remove(knowledge.id);
     const unavailable = await call("get_home_project", { projectId: project.id });
     expect(unavailable.details).toMatchObject({

@@ -7,6 +7,7 @@ import {
   createExpertAgentRunContext,
   withExecutionRunScope,
   readExecutionRunScope,
+  readToolResult,
   getExecutionLiveBus,
   type ExpertAgentRunContext,
   type ExpertAgentContextStore,
@@ -41,6 +42,33 @@ import { memoryDetailSegments } from "./memory-detail.ts";
 import type { SecretStore } from "./secrets/secret-store.ts";
 
 type DataPlane = Awaited<ReturnType<typeof createLocalHostMemoryDataPlane>>;
+
+/** Memory attention consumes observations, not Host metadata or encoded media bytes. */
+function toolResultObservation(value: unknown): unknown {
+  const result = readToolResult(value);
+  if (result === undefined) return value;
+  return result.content
+    .toSorted((left, right) => Number(left.type !== "text") - Number(right.type !== "text"))
+    .map((item) => {
+      switch (item.type) {
+        case "text":
+          return item.text;
+        case "image":
+        case "audio":
+          return `[${item.type}: ${item.mimeType}]`;
+        case "resource":
+          return `Resource ${item.resource.uri}\n${
+            typeof item.resource.text === "string"
+              ? item.resource.text
+              : `[binary: ${item.resource.mimeType ?? "application/octet-stream"}]`
+          }`;
+        case "resource_link":
+          return [item.name, item.uri, item.title, item.description].filter(Boolean).join("\n");
+      }
+    })
+    .join("\n");
+}
+
 interface MissionBinding {
   readonly missionId: string;
   readonly goal: string;
@@ -467,7 +495,7 @@ export function createLocalHostMemoryContextService(options: {
     ]
       .filter(
         (word) =>
-          !/^(REDACTED|undefined|null|true|false|outputPreview|toolName|message|text|input|result|toolCallId|kind|details|isError|arguments|payload|type)$/i.test(
+          !/^(REDACTED|undefined|null|true|false|outputPreview|toolName|message|text|content|input|result|toolCallId|kind|details|isError|arguments|payload|type)$/i.test(
             word,
           ),
       )
@@ -540,7 +568,9 @@ export function createLocalHostMemoryContextService(options: {
         await observe(
           binding,
           await eventContext(event),
-          stream.payload,
+          stream.type === "tool.completed"
+            ? toolResultObservation(stream.payload.outputPreview)
+            : stream.payload.message,
           stream.payload.toolName,
           stream.type === "tool.failed" ? "new_error" : "new_observation",
           stream.payload.toolCallId,
@@ -739,7 +769,7 @@ export function createLocalHostMemoryContextService(options: {
                   await observe(
                     binding,
                     input.context,
-                    { input: input.args, result: input.result },
+                    { input: input.args, result: toolResultObservation(input.result) },
                     input.toolName,
                     input.result.isError ? "new_error" : "new_observation",
                     input.toolCallId,

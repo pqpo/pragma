@@ -1,3 +1,4 @@
+import { getToolResultText } from "@pragma/core";
 import { mkdir, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { stdin, stdout } from "node:process";
@@ -186,7 +187,7 @@ async function callContextTool(name: string, args: unknown): Promise<void> {
 
   const result = await tool.call(args, undefined);
   console.log(`\n[${name}] ${result.isError === true ? "失败" : "成功"}`);
-  console.log(result.text);
+  console.log(getToolResultText(result));
 }
 
 function readRole(context: ExpertAgentRunContext | undefined): ExampleRole | "anonymous" {

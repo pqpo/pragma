@@ -1,3 +1,4 @@
+import { createTextToolResult } from "@pragma/core";
 import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -38,7 +39,7 @@ describe("capability example plugins", () => {
     const tool = expert.tools?.find((candidate) => candidate.name === "create_team_greeting");
     expect(tool).toBeDefined();
     await expect(tool?.call({ person: "Ada" }, undefined)).resolves.toMatchObject({
-      text: "Hello，Ada！欢迎加入 Runtime Team。",
+      content: [{ type: "text", text: "Hello，Ada！欢迎加入 Runtime Team。" }],
       details: { teamName: "Runtime Team" },
     });
   });
@@ -57,7 +58,7 @@ describe("capability example plugins", () => {
           name: "delete_workspace_note",
           description: "Delete a workspace note.",
           inputSchema: {},
-          call: async () => ({ text: "deleted" }),
+          call: async () => createTextToolResult("deleted"),
         },
       ],
       plugins: [{ entry: toolApprovalPolicy }],

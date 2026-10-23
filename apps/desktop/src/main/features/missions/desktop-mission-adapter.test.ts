@@ -1,3 +1,4 @@
+import { getToolResultText } from "@pragma/core";
 import { createDesktopSkillRevisionSubmissionPort } from "../capabilities/skill-revision-capability.ts";
 import { createSkillRevisionService } from "../capabilities/skill-revision-service.ts";
 import { randomUUID } from "node:crypto";
@@ -848,8 +849,8 @@ describe("Desktop Mission resource adapter contracts", { timeout: 30_000 }, () =
                 runContext: session.context.runContext,
                 toolCallId: `${name}-${round}`,
               });
-            expect(result.isError, result.text).not.toBe(true);
-            return result.details;
+            expect(result.isError, getToolResultText(result)).not.toBe(true);
+            return result.details ?? JSON.parse(getToolResultText(result));
           };
           if (session.context.agent.id === "0000000000pragma") {
             const spawned = (await call(
@@ -1996,8 +1997,8 @@ describe("Desktop Mission resource adapter contracts", { timeout: 30_000 }, () =
         const result = await read.call({ namespace: "memory", id: "guide.md" }, turn.signal, {
           execution: session.context.request.executionContext,
         });
-        observedReads.push(result.text);
-        return { outputText: result.text, runtimeSessionId: "runtime" };
+        observedReads.push(getToolResultText(result));
+        return { outputText: getToolResultText(result), runtimeSessionId: "runtime" };
       },
       mapEvent: () => ({ events: [] }),
       closeSession: () => undefined,
@@ -2096,8 +2097,8 @@ describe("Desktop Mission resource adapter contracts", { timeout: 30_000 }, () =
         const result = await read.call({ namespace: "memory", id: "guide.md" }, turn.signal, {
           execution: session.context.request.executionContext,
         });
-        observedReads.push(result.text);
-        return { outputText: result.text, runtimeSessionId: "runtime" };
+        observedReads.push(getToolResultText(result));
+        return { outputText: getToolResultText(result), runtimeSessionId: "runtime" };
       },
       mapEvent: () => ({ events: [] }),
       closeSession: () => undefined,
@@ -2198,7 +2199,7 @@ describe("Desktop Mission resource adapter contracts", { timeout: 30_000 }, () =
           { execution: session.context.request.executionContext },
         );
         return {
-          outputText: `${readResult.text}|writeDenied=${String(addResult.isError)}`,
+          outputText: `${getToolResultText(readResult)}|writeDenied=${String(addResult.isError)}`,
           runtimeSessionId: "runtime",
         };
       },
@@ -2359,7 +2360,7 @@ describe("Desktop Mission resource adapter contracts", { timeout: 30_000 }, () =
           turn.signal,
           { execution: session.context.request.executionContext },
         );
-        return { outputText: result.text, runtimeSessionId: "runtime" };
+        return { outputText: getToolResultText(result), runtimeSessionId: "runtime" };
       },
       mapEvent: () => ({ events: [] }),
       closeSession: () => undefined,
@@ -2543,15 +2544,15 @@ describe("Desktop Mission resource adapter contracts", { timeout: 30_000 }, () =
               const directory = await tools
                 .find((tool) => tool.name === "list_agents")!
                 .call({ expertId: "0000000000st0rev" }, turn.signal, context);
-              expect(directory.isError, directory.text).not.toBe(true);
+              expect(directory.isError, getToolResultText(directory)).not.toBe(true);
               if (changePermissionDuringMount) {
-                expect(directory.details).toMatchObject({ contexts: [] });
+                expect(JSON.parse(getToolResultText(directory))).toMatchObject({ contexts: [] });
                 return {
                   outputText: "New Session after permission change",
                   runtimeSessionId: "runtime",
                 };
               }
-              expect(directory.details).toMatchObject({
+              expect(JSON.parse(getToolResultText(directory))).toMatchObject({
                 contexts: expect.arrayContaining([
                   expect.objectContaining({ contextId: teammateContextId }),
                 ]),
@@ -2569,8 +2570,8 @@ describe("Desktop Mission resource adapter contracts", { timeout: 30_000 }, () =
                       turn.signal,
                       context,
                     );
-            expect(spawned.isError, spawned.text).not.toBe(true);
-            const { invocationId, contextId } = spawned.details as {
+            expect(spawned.isError, getToolResultText(spawned)).not.toBe(true);
+            const { invocationId, contextId } = JSON.parse(getToolResultText(spawned)) as {
               invocationId: string;
               contextId: string;
             };
@@ -2578,7 +2579,7 @@ describe("Desktop Mission resource adapter contracts", { timeout: 30_000 }, () =
             const waited = await tools
               .find((tool) => tool.name === "wait_experts")!
               .call({ invocationIds: [invocationId] }, turn.signal, context);
-            expect(waited.details, waited.text).toMatchObject({
+            expect(JSON.parse(getToolResultText(waited)), getToolResultText(waited)).toMatchObject({
               completed: [{ status: "succeeded" }],
               pending: [],
             });
@@ -2598,8 +2599,8 @@ describe("Desktop Mission resource adapter contracts", { timeout: 30_000 }, () =
               .createDefaultTools()
               .find((tool) => tool.name === "list_context_stores")!
               .call({}, turn.signal, context);
-            expect(directory.isError, directory.text).not.toBe(true);
-            expect(JSON.parse(directory.text).stores).not.toEqual(
+            expect(directory.isError, getToolResultText(directory)).not.toBe(true);
+            expect(JSON.parse(getToolResultText(directory)).stores).not.toEqual(
               expect.arrayContaining([
                 expect.objectContaining({
                   namespace: activeMissionKnowledgeDraftNamespace(target.id),
@@ -2607,7 +2608,7 @@ describe("Desktop Mission resource adapter contracts", { timeout: 30_000 }, () =
               ]),
             );
             if (afterMerge) {
-              expect(JSON.parse(denied.text)).toMatchObject({
+              expect(JSON.parse(getToolResultText(denied))).toMatchObject({
                 error: { code: "permission_denied" },
               });
               const deniedWrite = await session.context.agent
@@ -2623,7 +2624,7 @@ describe("Desktop Mission resource adapter contracts", { timeout: 30_000 }, () =
                   context,
                 );
               expect(deniedWrite.isError).toBe(true);
-              expect(JSON.parse(deniedWrite.text)).toMatchObject({
+              expect(JSON.parse(getToolResultText(deniedWrite))).toMatchObject({
                 error: { code: "permission_denied" },
               });
             }
@@ -2636,7 +2637,7 @@ describe("Desktop Mission resource adapter contracts", { timeout: 30_000 }, () =
               runContext: session.context.runContext,
               toolCallId: operationId,
             });
-            expect(result.isError, result.text).not.toBe(true);
+            expect(result.isError, getToolResultText(result)).not.toBe(true);
             return result.details;
           };
           const listed = (await call("knowledge_revision_list_targets", {})) as {
@@ -2662,7 +2663,7 @@ describe("Desktop Mission resource adapter contracts", { timeout: 30_000 }, () =
                 { execution: session.context.request.executionContext },
               );
             expect(unclaimed.isError).toBe(true);
-            expect(unclaimed.text).toContain("not owned by this Mission");
+            expect(getToolResultText(unclaimed)).toContain("not owned by this Mission");
           }
           const started = (await call("knowledge_revision_start", startInput)) as {
             jobId: string;
@@ -2678,8 +2679,8 @@ describe("Desktop Mission resource adapter contracts", { timeout: 30_000 }, () =
             .createDefaultTools()
             .find((tool) => tool.name === "list_context_stores")!
             .call({}, turn.signal, { execution: session.context.request.executionContext });
-          expect(directory.isError, directory.text).not.toBe(true);
-          expect(JSON.parse(directory.text).stores).toContainEqual({
+          expect(directory.isError, getToolResultText(directory)).not.toBe(true);
+          expect(JSON.parse(getToolResultText(directory)).stores).toContainEqual({
             namespace: started.writableNamespace,
             storeName: `${target.name} (draft)`,
           });
@@ -2714,8 +2715,8 @@ describe("Desktop Mission resource adapter contracts", { timeout: 30_000 }, () =
               const failed = await defaults
                 .find((tool) => tool.name === name)!
                 .call({ ...input, namespace }, turn.signal, context);
-              expect(failed.isError, failed.text).toBe(true);
-              expect(JSON.parse(failed.text)).toMatchObject({
+              expect(failed.isError, getToolResultText(failed)).toBe(true);
+              expect(JSON.parse(getToolResultText(failed))).toMatchObject({
                 ok: false,
                 committed: false,
                 error: {
@@ -2730,7 +2731,7 @@ describe("Desktop Mission resource adapter contracts", { timeout: 30_000 }, () =
                   },
                 },
               });
-              expect(failed.text).toContain("writableNamespace");
+              expect(getToolResultText(failed)).toContain("writableNamespace");
             }
             expect(await revisions.getDraft(draftId)).toEqual(before);
             const unavailable = await defaults
@@ -2744,7 +2745,7 @@ describe("Desktop Mission resource adapter contracts", { timeout: 30_000 }, () =
                 context,
               );
             expect(unavailable.isError).toBe(true);
-            expect(JSON.parse(unavailable.text)).toMatchObject({
+            expect(JSON.parse(getToolResultText(unavailable))).toMatchObject({
               error: { code: "store_unavailable" },
             });
             // Existing caller-safe behavior: a valid UUID without an active mount
@@ -2760,8 +2761,8 @@ describe("Desktop Mission resource adapter contracts", { timeout: 30_000 }, () =
                   turn.signal,
                   context,
                 );
-              expect(empty.isError, empty.text).not.toBe(true);
-              expect(empty.text).toContain(
+              expect(empty.isError, getToolResultText(empty)).not.toBe(true);
+              expect(getToolResultText(empty)).toContain(
                 name === "list_expert_context"
                   ? "Showing 0 of 0 Expert context items."
                   : "No Expert context matches found.",
@@ -2770,7 +2771,7 @@ describe("Desktop Mission resource adapter contracts", { timeout: 30_000 }, () =
             const corrected = await defaults
               .find((tool) => tool.name === "list_expert_context")!
               .call({ namespace: started.writableNamespace }, turn.signal, context);
-            expect(corrected.isError, corrected.text).not.toBe(true);
+            expect(corrected.isError, getToolResultText(corrected)).not.toBe(true);
           }
           const add = session.context.agent
             .createDefaultTools()
@@ -2790,8 +2791,8 @@ describe("Desktop Mission resource adapter contracts", { timeout: 30_000 }, () =
               const result = await defaults
                 .find((tool) => tool.name === name)!
                 .call({ ...input, namespace: started.writableNamespace }, turn.signal, context);
-              expect(result.isError, result.text).not.toBe(true);
-              expect(result.text).toContain("items/tracking.md");
+              expect(result.isError, getToolResultText(result)).not.toBe(true);
+              expect(getToolResultText(result)).toContain("items/tracking.md");
             }
             const read = await defaults
               .find((tool) => tool.name === "read_expert_context")!
@@ -2800,9 +2801,9 @@ describe("Desktop Mission resource adapter contracts", { timeout: 30_000 }, () =
                 turn.signal,
                 context,
               );
-            expect(read.isError, read.text).not.toBe(true);
-            expect(read.text).toContain("Feedback 2");
-            const revision = read.text.match(/^\s*revision: (.+)$/m)?.[1];
+            expect(read.isError, getToolResultText(read)).not.toBe(true);
+            expect(getToolResultText(read)).toContain("Feedback 2");
+            const revision = getToolResultText(read).match(/^\s*revision: (.+)$/m)?.[1];
             expect(revision).toBeDefined();
             const edited = await defaults
               .find((tool) => tool.name === "edit_expert_context")!
@@ -2817,7 +2818,7 @@ describe("Desktop Mission resource adapter contracts", { timeout: 30_000 }, () =
                 turn.signal,
                 context,
               );
-            expect(edited.isError, edited.text).not.toBe(true);
+            expect(edited.isError, getToolResultText(edited)).not.toBe(true);
           }
           if (!resuming) {
             const written = await add.call(
@@ -2829,7 +2830,7 @@ describe("Desktop Mission resource adapter contracts", { timeout: 30_000 }, () =
               turn.signal,
               { execution: session.context.request.executionContext },
             );
-            expect(written.isError, written.text).not.toBe(true);
+            expect(written.isError, getToolResultText(written)).not.toBe(true);
           }
           if (reworkRound > 0) {
             const context = { execution: session.context.request.executionContext };
@@ -2844,8 +2845,8 @@ describe("Desktop Mission resource adapter contracts", { timeout: 30_000 }, () =
                 turn.signal,
                 context,
               );
-            expect(read.isError, read.text).not.toBe(true);
-            const revision = read.text.match(/^\s*revision: (.+)$/m)?.[1];
+            expect(read.isError, getToolResultText(read)).not.toBe(true);
+            const revision = getToolResultText(read).match(/^\s*revision: (.+)$/m)?.[1];
             expect(revision).toBeDefined();
             const edit = defaults.find((tool) => tool.name === "edit_expert_context")!;
             const edited = await edit.call(
@@ -2859,7 +2860,7 @@ describe("Desktop Mission resource adapter contracts", { timeout: 30_000 }, () =
               turn.signal,
               context,
             );
-            expect(edited.isError, edited.text).not.toBe(true);
+            expect(edited.isError, getToolResultText(edited)).not.toBe(true);
             const stale = await edit.call(
               {
                 namespace: started.writableNamespace,
@@ -2881,7 +2882,7 @@ describe("Desktop Mission resource adapter contracts", { timeout: 30_000 }, () =
               turn.signal,
               { execution: session.context.request.executionContext },
             );
-            expect(written.isError, written.text).not.toBe(true);
+            expect(written.isError, getToolResultText(written)).not.toBe(true);
           }
           if (executorRef.startsWith("team:")) {
             const execution = session.context.request.executionContext!;
@@ -2897,7 +2898,7 @@ describe("Desktop Mission resource adapter contracts", { timeout: 30_000 }, () =
               },
             );
             expect(denied.isError).toBe(true);
-            expect(denied.text).toContain("another Runtime Context");
+            expect(getToolResultText(denied)).toContain("another Runtime Context");
           }
           if (!resuming && !afterMerge && executorRef !== STORE_REVISION_EXPERT_REF) {
             return { outputText: "Draft saved for continuation", runtimeSessionId: "runtime" };
@@ -3286,7 +3287,7 @@ describe("Desktop Mission resource adapter contracts", { timeout: 30_000 }, () =
           turn.signal,
           { runContext: session.context.runContext, toolCallId: "start-creation" },
         );
-        expect(started.isError, started.text).not.toBe(true);
+        expect(started.isError, getToolResultText(started)).not.toBe(true);
         const details = started.details as {
           readonly draftId: string;
           readonly creation: { readonly resourceId: string };
@@ -3307,8 +3308,8 @@ describe("Desktop Mission resource adapter contracts", { timeout: 30_000 }, () =
           turn.signal,
           { execution: session.context.request.executionContext },
         );
-        expect(added.isError, added.text).not.toBe(true);
-        return { outputText: added.text, runtimeSessionId: "runtime" };
+        expect(added.isError, getToolResultText(added)).not.toBe(true);
+        return { outputText: getToolResultText(added), runtimeSessionId: "runtime" };
       },
       mapEvent: () => ({ events: [] }),
       closeSession: () => undefined,
@@ -3444,9 +3445,12 @@ describe("Desktop Mission resource adapter contracts", { timeout: 30_000 }, () =
           const result = await directory.call({ limit: 50 }, turn.signal, {
             execution: session.context.request.executionContext,
           });
-          expect(result.isError, result.text).not.toBe(true);
+          expect(result.isError, getToolResultText(result)).not.toBe(true);
           return (
-            JSON.parse(result.text).stores as { namespace: string; storeName?: string }[]
+            JSON.parse(getToolResultText(result)).stores as {
+              namespace: string;
+              storeName?: string;
+            }[]
           ).filter((store) => store.namespace.startsWith("mission-knowledge-draft:"));
         };
         if (
@@ -3501,7 +3505,7 @@ describe("Desktop Mission resource adapter contracts", { timeout: 30_000 }, () =
               toolCallId: `start-revision-${index + 1}`,
             },
           );
-          expect(started.isError, started.text).not.toBe(true);
+          expect(started.isError, getToolResultText(started)).not.toBe(true);
           const details = started.details as {
             readonly draftId: string;
             readonly writableNamespace: string;
@@ -3521,7 +3525,7 @@ describe("Desktop Mission resource adapter contracts", { timeout: 30_000 }, () =
             turn.signal,
             { execution: session.context.request.executionContext },
           );
-          expect(added.isError, added.text).not.toBe(true);
+          expect(added.isError, getToolResultText(added)).not.toBe(true);
           expect(await discoverDrafts()).toContainEqual({
             namespace: details.writableNamespace,
             storeName: `${targetStore.name} (draft)`,
@@ -3532,10 +3536,10 @@ describe("Desktop Mission resource adapter contracts", { timeout: 30_000 }, () =
             .call({ namespace: details.writableNamespace }, turn.signal, {
               execution: session.context.request.executionContext,
             });
-          expect(draftIndex.isError, draftIndex.text).not.toBe(true);
-          expect(draftIndex.text).toContain(details.writableNamespace);
-          expect(draftIndex.text).not.toContain("Context stores:");
-          outputText = added.text;
+          expect(draftIndex.isError, getToolResultText(draftIndex)).not.toBe(true);
+          expect(getToolResultText(draftIndex)).toContain(details.writableNamespace);
+          expect(getToolResultText(draftIndex)).not.toContain("Context stores:");
+          outputText = getToolResultText(added);
         }
         if (turn.rawQuery === "Revise a newly created knowledge base") {
           const created = await start.call(
@@ -3549,7 +3553,7 @@ describe("Desktop Mission resource adapter contracts", { timeout: 30_000 }, () =
               toolCallId: "create-unpublished-knowledge",
             },
           );
-          expect(created.isError, created.text).not.toBe(true);
+          expect(created.isError, getToolResultText(created)).not.toBe(true);
           expect(await discoverDrafts()).toContainEqual({
             namespace: (created.details as { writableNamespace: string }).writableNamespace,
             storeName: "Unpublished knowledge (draft)",
@@ -3768,11 +3772,14 @@ describe("Desktop Mission resource adapter contracts", { timeout: 30_000 }, () =
         );
         const failed = results.find(
           (result) =>
-            result.isError === true || !result.text.includes("historical mission board output"),
+            result.isError === true ||
+            !getToolResultText(result).includes("historical mission board output"),
         );
         return {
           outputText:
-            failed === undefined ? "successor-read-ok" : `successor-read-failed:${failed.text}`,
+            failed === undefined
+              ? "successor-read-ok"
+              : `successor-read-failed:${getToolResultText(failed)}`,
           runtimeSessionId: session.id,
         };
       },
@@ -5429,7 +5436,8 @@ describe("Desktop Mission resource adapter contracts", { timeout: 30_000 }, () =
           execution,
         );
         announceSpawned();
-        const invocationId = (result.details as { invocationId: string }).invocationId;
+        const invocationId = (JSON.parse(getToolResultText(result)) as { invocationId: string })
+          .invocationId;
         await wait.call({ invocationIds: [invocationId] }, turn.signal, execution);
         return { outputText: "Delegation complete", runtimeSessionId: session.id };
       },
@@ -5675,12 +5683,14 @@ describe("Desktop Mission resource adapter contracts", { timeout: 30_000 }, () =
             turn.signal,
             { execution: session.context.request.executionContext },
           );
-          const invocationId = (spawned.details as { invocationId: string }).invocationId;
+          const invocationId = (JSON.parse(getToolResultText(spawned)) as { invocationId: string })
+            .invocationId;
           const waited = await wait.call({ invocationIds: [invocationId] }, turn.signal, {
             execution: session.context.request.executionContext,
           });
-          const completed = (waited.details as { completed: Array<{ output?: unknown }> })
-            .completed;
+          const completed = (
+            JSON.parse(getToolResultText(waited)) as { completed: Array<{ output?: unknown }> }
+          ).completed;
           output = `writer:${String(completed[0]?.output)}`;
         } else if (callReviewer !== undefined && turn.rawQuery === "Delegate review") {
           const delegated = await callReviewer.call({ prompt: "Standalone review" }, turn.signal, {
@@ -5810,7 +5820,7 @@ describe("Desktop Mission resource adapter contracts", { timeout: 30_000 }, () =
       executor: missionExecutorSnapshot(team),
     });
     let reviewerContextId: string | undefined;
-    const reviewerAgentIds: string[] = [];
+    const reviewerTasks: Array<{ executionId: string; invocationId: string }> = [];
     const runtime = defineRuntimeTestDriver<
       never,
       { context: RuntimeNativeSessionContext; id: string }
@@ -5838,13 +5848,11 @@ describe("Desktop Mission resource adapter contracts", { timeout: 30_000 }, () =
             turn.signal,
             execution,
           );
-          const details = spawned.details as {
-            agentId: string;
+          const details = JSON.parse(getToolResultText(spawned)) as {
             contextId: string;
             invocationId: string;
           };
           reviewerContextId = details.contextId;
-          reviewerAgentIds.push(details.agentId);
           invocationId = details.invocationId;
         } else {
           const continueExpert = tools.find((tool) => tool.name === "continue_expert");
@@ -5856,15 +5864,14 @@ describe("Desktop Mission resource adapter contracts", { timeout: 30_000 }, () =
             turn.signal,
             execution,
           );
-          const details = continued.details as {
-            agentDisposition: string;
-            agentId: string;
+          const details = JSON.parse(getToolResultText(continued)) as {
+            contextId: string;
             invocationId: string;
           };
-          expect(details.agentDisposition).toBe("materialized");
-          reviewerAgentIds.push(details.agentId);
+          expect(details.contextId).toBe(reviewerContextId);
           invocationId = details.invocationId;
         }
+        reviewerTasks.push({ executionId: execution.execution!.executionId, invocationId });
         await wait.call({ invocationIds: [invocationId] }, turn.signal, execution);
         return { outputText: "writer:reviewed", runtimeSessionId: session.id };
       },
@@ -5896,7 +5903,20 @@ describe("Desktop Mission resource adapter contracts", { timeout: 30_000 }, () =
       { timeout: settlementTimeoutMs },
     );
 
-    expect(new Set(reviewerAgentIds).size).toBe(2);
+    // Materialization remains authoritative even though tool receipts omit internal Agent ids.
+    const executions = createSqliteExecutionStore({ pragmaHome: join(root, "state") });
+    try {
+      const invocations = await Promise.all(
+        reviewerTasks.map(({ executionId, invocationId }) =>
+          executions.getInvocation(executionId, invocationId),
+        ),
+      );
+      expect(invocations).toHaveLength(2);
+      expect(invocations.every((invocation) => invocation?.agentId !== undefined)).toBe(true);
+      expect(new Set(invocations.map((invocation) => invocation!.agentId)).size).toBe(2);
+    } finally {
+      await executions.close();
+    }
     const workProjection = vi.spyOn(ExecutionWorkHistoryReader.prototype, "readProjection");
     const work = await runner.getWork(mission.id);
     const reviewerRecords = work.records.filter(

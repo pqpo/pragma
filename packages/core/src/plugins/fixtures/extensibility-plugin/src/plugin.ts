@@ -1,3 +1,4 @@
+import { createTextToolResult } from "../../../../index.ts";
 import { definePluginEntry, readExpertAgentPluginManifest } from "../../../../index.ts";
 
 export const events: string[] = [];
@@ -33,7 +34,7 @@ export const extensibilityPlugin = definePluginEntry({
         name: "plugin_tool",
         description: "Plugin tool",
         inputSchema: {},
-        call: async () => ({ text: "ok" }),
+        call: async () => createTextToolResult("ok"),
       },
     ],
     hooks: {

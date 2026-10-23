@@ -1,3 +1,4 @@
+import { getToolResultText } from "../src/tools/managed-tool.ts";
 import { describe, expect, it, vi } from "vitest";
 
 import {
@@ -38,7 +39,7 @@ describe("Expert context tools", () => {
     const directory = tools.find((tool) => tool.name === "list_context_stores")!;
     expect(directory.source).toBe("default");
     const result = await directory.tool.call({}, undefined);
-    expect(JSON.parse(result.text)).toEqual({
+    expect(JSON.parse(getToolResultText(result))).toEqual({
       stores: [
         { namespace: "memory" },
         { namespace: "mission-knowledge:exact-id", storeName: "Empty knowledge" },
@@ -77,9 +78,11 @@ describe("Expert context tools", () => {
     const directory = agent
       .createDefaultTools()
       .find((tool) => tool.name === "list_context_stores")!;
-    expect(JSON.parse((await directory.call({}, undefined)).text)).toEqual({ stores: [] });
+    expect(JSON.parse(getToolResultText(await directory.call({}, undefined)))).toEqual({
+      stores: [],
+    });
     active = true;
-    expect(JSON.parse((await directory.call({}, undefined)).text)).toEqual({
+    expect(JSON.parse(getToolResultText(await directory.call({}, undefined)))).toEqual({
       stores: [{ namespace: "draft:one", storeName: "Knowledge (draft)" }],
     });
     expect(list).not.toHaveBeenCalled();
@@ -98,7 +101,9 @@ describe("Expert context tools", () => {
     });
     expect(search).toHaveBeenCalledOnce();
     active = false;
-    expect(JSON.parse((await directory.call({}, undefined)).text)).toEqual({ stores: [] });
+    expect(JSON.parse(getToolResultText(await directory.call({}, undefined)))).toEqual({
+      stores: [],
+    });
     list.mockClear();
     expect((await agent.listContext()).ok).toBe(true);
     expect(list).not.toHaveBeenCalled();
@@ -131,8 +136,8 @@ describe("Expert context tools", () => {
     do {
       const result = await tool.call({ cursor, limit: 50 }, undefined);
       expect(result.isError).not.toBe(true);
-      expect(Buffer.byteLength(result.text)).toBeLessThanOrEqual(1024);
-      const page = JSON.parse(result.text);
+      expect(Buffer.byteLength(getToolResultText(result))).toBeLessThanOrEqual(1024);
+      const page = JSON.parse(getToolResultText(result));
       found.push(...page.stores.map((store: { namespace: string }) => store.namespace));
       cursor = page.nextCursor;
       firstCursor ??= cursor;
@@ -160,7 +165,9 @@ describe("Expert context tools", () => {
       .createDefaultTools({ resultByteBudget: 1024 })
       .find((tool) => tool.name === "list_context_stores")!;
     const result = await tool.call({}, undefined);
-    expect(JSON.parse(result.text)).toMatchObject({ error: { code: "context_too_large" } });
+    expect(JSON.parse(getToolResultText(result))).toMatchObject({
+      error: { code: "context_too_large" },
+    });
   });
 
   it.each([
@@ -191,7 +198,7 @@ describe("Expert context tools", () => {
         .find((tool) => tool.name === name)!
         .call({ ...input, namespace: "mission-knowledge:full-id" }, undefined);
       expect(result.isError).toBe(true);
-      expect(JSON.parse(result.text)).toMatchObject({
+      expect(JSON.parse(getToolResultText(result))).toMatchObject({
         error: {
           code: "invalid_namespace",
           details: { reason: "namespace_not_registered", namespace: "mission-knowledge:full-id" },
@@ -202,12 +209,12 @@ describe("Expert context tools", () => {
       const directory = await tools
         .find((tool) => tool.name === "list_context_stores")!
         .call({}, undefined);
-      const namespace = JSON.parse(directory.text).stores[0].namespace;
+      const namespace = JSON.parse(getToolResultText(directory)).stores[0].namespace;
       const retried = await tools
         .find((tool) => tool.name === "read_expert_context")!
         .call({ namespace, id: "guide.md" }, undefined);
       expect(retried.isError).not.toBe(true);
-      expect(retried.text).toContain("Guide");
+      expect(getToolResultText(retried)).toContain("Guide");
     },
   );
 
@@ -251,7 +258,7 @@ describe("Expert context tools", () => {
       for (const namespace of ["knowledg", "knowledge/file.md", " "]) {
         const result = await invoke(namespace);
         expect(result.isError).toBe(true);
-        expect(JSON.parse(result.text)).toMatchObject({
+        expect(JSON.parse(getToolResultText(result))).toMatchObject({
           recovery: { tool: "list_context_stores", arguments: {} },
         });
       }
@@ -282,7 +289,7 @@ describe("Expert context tools", () => {
         { namespace: "knowledge/file.md", id: "guide.md", query: "guide" },
         undefined,
       );
-      expect(JSON.parse(result.text)).toMatchObject({
+      expect(JSON.parse(getToolResultText(result))).toMatchObject({
         error: { code: "invalid_input", details: { reason: "namespace_invalid" } },
         recovery: { tool: "list_context_stores", arguments: {} },
       });
@@ -316,7 +323,11 @@ describe("Expert context tools", () => {
       .createDefaultTools()
       .find((tool) => tool.name === "read_expert_context")!
       .call({ namespace: "known", id: "guide.md" }, undefined);
-    expect(JSON.parse(result.text)).toEqual({ ok: false, committed: false, error: outage.error });
+    expect(JSON.parse(getToolResultText(result))).toEqual({
+      ok: false,
+      committed: false,
+      error: outage.error,
+    });
     expect(system.listStores()).toEqual([{ namespace: "known" }]);
   });
 
@@ -363,19 +374,19 @@ describe("Expert context tools", () => {
     );
     const tool = tools.find((tool) => tool.name === "list_expert_context")!;
     const first = await tool.call({ limit: 1 }, undefined);
-    expect(Buffer.byteLength(first.text)).toBeLessThanOrEqual(1_024);
-    expect(first.text).toContain("trustLevel: external");
-    expect(first.text).toContain("sensitivity: restricted");
-    expect(first.text).toContain("store_error");
-    expect(first.text).toContain("additional issue(s) omitted");
-    const cursor = readNextCursor(first.text);
+    expect(Buffer.byteLength(getToolResultText(first))).toBeLessThanOrEqual(1_024);
+    expect(getToolResultText(first)).toContain("trustLevel: external");
+    expect(getToolResultText(first)).toContain("sensitivity: restricted");
+    expect(getToolResultText(first)).toContain("store_error");
+    expect(getToolResultText(first)).toContain("additional issue(s) omitted");
+    const cursor = readNextCursor(getToolResultText(first));
     const second = await tool.call({ limit: 1, cursor }, undefined);
-    expect(readItemIds(first.text)).toEqual(["a.md"]);
-    expect(readItemIds(second.text)).toEqual(["b.md"]);
+    expect(readItemIds(getToolResultText(first))).toEqual(["a.md"]);
+    expect(readItemIds(getToolResultText(second))).toEqual(["b.md"]);
     for (const result of [first, second]) {
-      expect(result.text).not.toContain("Context stores:");
-      expect(result.text).not.toContain("storeName:");
-      expect(result.text).not.toContain("additional context store(s) omitted");
+      expect(getToolResultText(result)).not.toContain("Context stores:");
+      expect(getToolResultText(result)).not.toContain("storeName:");
+      expect(getToolResultText(result)).not.toContain("additional context store(s) omitted");
     }
   });
   it.each(["invalid_namespace", "store_unavailable"] as const)(
@@ -523,7 +534,7 @@ describe("Expert context tools", () => {
       },
     );
 
-    expect(result.text).toBe(
+    expect(getToolResultText(result)).toBe(
       '{\n  "Which direction should we take?": "Option one"\n}\n\nUser notes:\nWhich direction should we take?\nPrioritize the first route.',
     );
   });
@@ -570,7 +581,7 @@ describe("Expert context tools", () => {
 
     const result = await tool.call(input, undefined);
     const persistedContent = `${sentinel}\n持久化后附加的内容。`;
-    const receipt = JSON.parse(result.text);
+    const receipt = JSON.parse(getToolResultText(result));
 
     expect(addContext).toHaveBeenCalledWith({
       namespace: input.namespace,
@@ -595,8 +606,8 @@ describe("Expert context tools", () => {
       sizeBytes: Buffer.byteLength(persistedContent, "utf8"),
     });
     expect(receipt).not.toHaveProperty("content");
-    expect(JSON.parse(result.text)).toEqual(receipt);
-    expect(result.text).not.toContain(sentinel);
+    expect(JSON.parse(getToolResultText(result))).toEqual(receipt);
+    expect(getToolResultText(result)).not.toContain(sentinel);
     expect(result.details).toBeUndefined();
   });
 
@@ -635,7 +646,11 @@ describe("Expert context tools", () => {
       { namespace: "mission-board", id: "notes.md", content: "" },
       undefined,
     );
-    expect(JSON.parse(empty.text)).toMatchObject({ committed: true, id: "notes.md", sizeBytes: 0 });
+    expect(JSON.parse(getToolResultText(empty))).toMatchObject({
+      committed: true,
+      id: "notes.md",
+      sizeBytes: 0,
+    });
     expect(addContext).toHaveBeenCalledWith(
       expect.objectContaining({ namespace: "mission-board", id: "notes.md", content: "" }),
     );
@@ -668,7 +683,7 @@ describe("Expert context tools", () => {
     );
 
     expect(result.isError).toBe(true);
-    expect(JSON.parse(result.text)).toMatchObject({
+    expect(JSON.parse(getToolResultText(result))).toMatchObject({
       committed: false,
       error: { code: "store_error", message: "Store unavailable" },
     });
@@ -754,7 +769,7 @@ describe("Expert context tools", () => {
       context: expect.any(Object),
     });
     expect(result.details).toBeUndefined();
-    expect(JSON.parse(result.text)).toMatchObject({
+    expect(JSON.parse(getToolResultText(result))).toMatchObject({
       committed: true,
       status: "updated",
       namespace: "mission-board",
@@ -885,7 +900,7 @@ describe("Expert context tools", () => {
     );
 
     expect(result.isError).toBe(true);
-    expect(JSON.parse(result.text)).toEqual({
+    expect(JSON.parse(getToolResultText(result))).toEqual({
       ok: false,
       committed: false,
       error: {
@@ -948,14 +963,14 @@ describe("Expert context tools", () => {
       .find((tool) => tool.name === "delete_expert_context")!
       .call({ namespace: "mission-board", id: "notes.md" }, undefined);
 
-    expect(JSON.parse(edited.text)).toMatchObject({
+    expect(JSON.parse(getToolResultText(edited))).toMatchObject({
       committed: true,
       status: "updated",
       revision: "revision-updated",
       etag: "etag-updated",
     });
-    expect(edited.text).not.toContain("persisted content");
-    expect(JSON.parse(deleted.text)).toEqual({
+    expect(getToolResultText(edited)).not.toContain("persisted content");
+    expect(JSON.parse(getToolResultText(deleted))).toEqual({
       committed: true,
       status: "deleted",
       namespace: "mission-board",
@@ -1043,9 +1058,9 @@ describe("Expert context tools", () => {
     )!;
 
     const first = await tool.call({ limit: 2 }, undefined);
-    const nextCursor = readNextCursor(first.text);
-    expect(readItemIds(first.text)).toEqual(["a.md", "b.md"]);
-    expect(first.text).toContain("More items are available");
+    const nextCursor = readNextCursor(getToolResultText(first));
+    expect(readItemIds(getToolResultText(first))).toEqual(["a.md", "b.md"]);
+    expect(getToolResultText(first)).toContain("More items are available");
     expect(nextCursor).toMatch(/^p1\.[A-Za-z0-9_-]{40}$/u);
 
     await expect(tool.call({ cursor: "" }, undefined)).resolves.not.toMatchObject({
@@ -1056,13 +1071,13 @@ describe("Expert context tools", () => {
     });
 
     const second = await tool.call({ cursor: nextCursor, limit: 2 }, undefined);
-    expect(readItemIds(second.text)).toEqual(["c.md"]);
+    expect(readItemIds(getToolResultText(second))).toEqual(["c.md"]);
     const legacyCursor = Buffer.from(JSON.stringify([2, 2, null])).toString("base64url");
     const legacyPage = await tool.call({ cursor: legacyCursor, limit: 2 }, undefined);
-    expect(readItemIds(legacyPage.text)).toEqual(["c.md"]);
+    expect(readItemIds(getToolResultText(legacyPage))).toEqual(["c.md"]);
     await expect(tool.call({ cursor: "not-a-cursor" }, undefined)).resolves.toMatchObject({
       isError: true,
-      text: expect.stringContaining("invalid_input"),
+      content: [{ type: "text", text: expect.stringContaining("invalid_input") }],
     });
   });
 
@@ -1099,23 +1114,25 @@ describe("Expert context tools", () => {
     )!;
 
     const first = await tool.call({ namespace: "memory", limit: 2 }, undefined);
-    const nextCursor = readNextCursor(first.text);
+    const nextCursor = readNextCursor(getToolResultText(first));
     expect(listContext).toHaveBeenCalledWith({ namespace: "memory", context: expect.any(Object) });
-    expect(first.text).toContain("Showing 2 of 3");
+    expect(getToolResultText(first)).toContain("Showing 2 of 3");
 
     await expect(tool.call({ cursor: nextCursor, limit: 2 }, undefined)).resolves.toMatchObject({
       isError: true,
-      text: expect.stringContaining("namespace"),
+      content: [{ type: "text", text: expect.stringContaining("namespace") }],
     });
     await expect(
       tool.call({ namespace: "mission-board", cursor: nextCursor, limit: 2 }, undefined),
     ).resolves.toMatchObject({
       isError: true,
-      text: expect.stringContaining("namespace"),
+      content: [{ type: "text", text: expect.stringContaining("namespace") }],
     });
     await expect(
       tool.call({ namespace: "memory", cursor: nextCursor, limit: 2 }, undefined),
-    ).resolves.toMatchObject({ text: expect.stringContaining("Showing 1 of 3") });
+    ).resolves.toMatchObject({
+      content: [{ type: "text", text: expect.stringContaining("Showing 1 of 3") }],
+    });
   });
 
   it("continues a legacy cursor that embeds a long valid namespace", async () => {
@@ -1151,11 +1168,11 @@ describe("Expert context tools", () => {
 
     const page = await tool.call({ namespace, cursor: legacyCursor, limit: 1 }, undefined);
     expect(page.isError).not.toBe(true);
-    expect(readItemIds(page.text)).toEqual(["b.md"]);
-    const nextCursor = readNextCursor(page.text);
+    expect(readItemIds(getToolResultText(page))).toEqual(["b.md"]);
+    const nextCursor = readNextCursor(getToolResultText(page));
     expect(nextCursor).toMatch(/^p1\.[A-Za-z0-9_-]{40}$/u);
     const nextPage = await tool.call({ namespace, cursor: nextCursor, limit: 1 }, undefined);
-    expect(readItemIds(nextPage.text)).toEqual(["c.md"]);
+    expect(readItemIds(getToolResultText(nextPage))).toEqual(["c.md"]);
   });
 
   it("separates Store discovery from document addressing and concurrency tokens", async () => {
@@ -1197,19 +1214,19 @@ describe("Expert context tools", () => {
     const directory = await tools
       .find((candidate) => candidate.name === "list_context_stores")!
       .call({}, undefined);
-    expect(JSON.parse(directory.text)).toEqual({
+    expect(JSON.parse(getToolResultText(directory))).toEqual({
       stores: [{ namespace: "4jtrtegfka94yzgg", storeName: "Memory · 00pragma" }],
     });
 
     const result = await tool.call({}, undefined);
 
-    expect(result.text).not.toContain("Context stores:");
-    expect(result.text).not.toContain("storeName:");
-    expect(result.text).not.toContain("itemCount:");
-    expect(result.text).toContain("id: guide.md");
-    expect(result.text).toContain("namespace: 4jtrtegfka94yzgg");
-    expect(result.text).toContain("revision: 1723640000000000000:128");
-    expect(result.text).toContain("etag: sha256:context-etag");
+    expect(getToolResultText(result)).not.toContain("Context stores:");
+    expect(getToolResultText(result)).not.toContain("storeName:");
+    expect(getToolResultText(result)).not.toContain("itemCount:");
+    expect(getToolResultText(result)).toContain("id: guide.md");
+    expect(getToolResultText(result)).toContain("namespace: 4jtrtegfka94yzgg");
+    expect(getToolResultText(result)).toContain("revision: 1723640000000000000:128");
+    expect(getToolResultText(result)).toContain("etag: sha256:context-etag");
     expect(result.details).toBeUndefined();
   });
 
@@ -1249,14 +1266,14 @@ describe("Expert context tools", () => {
     )!;
 
     const first = await tool.call({ limit: 1 }, undefined);
-    const nextCursor = readNextCursor(first.text);
-    expect(Buffer.byteLength(first.text, "utf8")).toBeLessThanOrEqual(1_024);
-    expect(readItemIds(first.text)).toEqual([]);
-    expect(first.text).toContain("1 context item(s) were skipped");
-    expect(first.text).toContain("More items are available");
+    const nextCursor = readNextCursor(getToolResultText(first));
+    expect(Buffer.byteLength(getToolResultText(first), "utf8")).toBeLessThanOrEqual(1_024);
+    expect(readItemIds(getToolResultText(first))).toEqual([]);
+    expect(getToolResultText(first)).toContain("1 context item(s) were skipped");
+    expect(getToolResultText(first)).toContain("More items are available");
 
     const second = await tool.call({ cursor: nextCursor, limit: 1 }, undefined);
-    expect(readItemIds(second.text)).toEqual(["guide.md"]);
+    expect(readItemIds(getToolResultText(second))).toEqual(["guide.md"]);
   });
 
   it("bounds search snippets and defensively truncates oversized reads", async () => {
@@ -1304,8 +1321,8 @@ describe("Expert context tools", () => {
     const tools = createContextTools(operations, { readByteBudget: 128, resultByteBudget: 1_024 });
     const search = tools.find((candidate) => candidate.name === "search_expert_context")!;
     const searchResult = await search.call({ query: "汉" }, undefined);
-    expect(Buffer.byteLength(searchResult.text, "utf8")).toBeLessThanOrEqual(1_024);
-    expect(searchResult.text).toContain("read_expert_context");
+    expect(Buffer.byteLength(getToolResultText(searchResult), "utf8")).toBeLessThanOrEqual(1_024);
+    expect(getToolResultText(searchResult)).toContain("read_expert_context");
     expect(searchResult.details).toBeUndefined();
 
     const read = tools.find((candidate) => candidate.name === "read_expert_context")!;
@@ -1313,12 +1330,12 @@ describe("Expert context tools", () => {
       { namespace: "memory", id: "semantic/items/fact.md" },
       undefined,
     );
-    const body = readResult.text.split("  content:\n")[1]!;
+    const body = getToolResultText(readResult).split("  content:\n")[1]!;
     expect(Buffer.byteLength(body.replace(/^ {4}/gm, ""), "utf8")).toBeLessThanOrEqual(128);
-    expect(readResult.text).toContain("lines 4-4");
-    expect(readResult.text).toContain("truncationNotice");
-    expect(readResult.text).toContain("nextStart=126");
-    expect(readResult.text).toContain(
+    expect(getToolResultText(readResult)).toContain("lines 4-4");
+    expect(getToolResultText(readResult)).toContain("truncationNotice");
+    expect(getToolResultText(readResult)).toContain("nextStart=126");
+    expect(getToolResultText(readResult)).toContain(
       '"tool":"read_expert_context","arguments":{"namespace":"memory","id":"semantic/items/fact.md","start":126,"offset":128}',
     );
     expect(readResult.details).toBeUndefined();

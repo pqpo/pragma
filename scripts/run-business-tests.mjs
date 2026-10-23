@@ -61,6 +61,14 @@ async function vitest(pkg, files, extra = [], label = pkg) {
 if (!prepared) await run(["build"], "prepare");
 if (lane !== "desktop") {
   await vitest("@pragma/core", [
+    "test/expert-lifecycle-results.test.ts",
+    "test/tool-result-projection.test.ts",
+    "test/runtime-message-accumulator.test.ts",
+    "test/host-tool-result-hints.test.ts",
+    "test/plugin-loader.test.ts",
+    "test/code-service-mcp-server.test.ts",
+    "test/expert-tools-mcp-server.test.ts",
+    "test/expert-orchestrator-pagination.test.ts",
     "test/context-tools.test.ts",
     "test/file-lock.test.ts",
     "test/runtime-stream-controller.test.ts",
@@ -98,11 +106,14 @@ if (lane !== "desktop") {
   await vitest("@pragma/built-in-agents", [
     "test/skill-validation.test.ts",
     "test/pragma-management-tools.test.ts",
+    "test/pragma-host-management-tools.test.ts",
+    "test/memory-curator.test.ts",
     "test/builtin.test.ts",
   ]);
 
   for (const runtime of ["pi", "codex", "opencode", "claude-code", "qodercli", "antigravity"])
     await run(["--filter", `@pragma/runtime-${runtime}`, "test:core"], `runtime-${runtime}`);
+  await vitest("@pragma/runtime-pi", ["test/tools.test.ts", "test/session-events.test.ts"]);
   await vitest("@pragma/runtime-claude-code", [
     "test/availability.test.ts",
     "test/external-cli.test.ts",
@@ -113,6 +124,7 @@ if (lane !== "host") {
   await vitest("@pragma/desktop", [
     "src/main/features/built-in-agents/management-command.integration.test.ts",
     "src/main/features/built-in-agents/pragma-agent-resource-adapter.test.ts",
+    "src/main/features/capabilities/built-in-capabilities.test.ts",
     "src/test/mission-queued-chat-refresh.test.tsx",
     "src/renderer/src/pages/missions/mission-conversation-model.test.ts",
     "src/renderer/src/pages/missions/mission-workspace-tabs.test.tsx",

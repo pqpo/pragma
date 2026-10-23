@@ -4,6 +4,7 @@ import {
   StaticContextStore,
   createPragmaLogger,
   defineExpert,
+  createTextToolResult,
 } from "../src/index.ts";
 import { executeExecutionTool } from "../src/tools/execution-tools.ts";
 
@@ -27,7 +28,13 @@ describe("Host tool result hints", () => {
         workspace: process.cwd(),
         contextSystem: system,
       });
-      const original = { text: "tool output", isError: true, details: { preserved: true } };
+      const original = {
+        ...createTextToolResult("tool output", { isError: true, details: { preserved: true } }),
+        content: [
+          { type: "text" as const, text: "tool output" },
+          { type: "image" as const, data: "aW1hZ2U=", mimeType: "image/png" },
+        ],
+      };
       const tool = {
         name: "fixture",
         label: "Fixture",
@@ -47,9 +54,15 @@ describe("Host tool result hints", () => {
       });
       expect(result).toEqual({
         ...original,
-        text: fails
-          ? original.text
-          : `${original.text}\n\nHistorical context is available at memory/mission-attention.md.`,
+        content: fails
+          ? original.content
+          : [
+              ...original.content,
+              {
+                type: "text",
+                text: "Historical context is available at memory/mission-attention.md.",
+              },
+            ],
       });
       expect(JSON.stringify(tool.inputSchema)).toBe(before);
       expect(observe).toHaveBeenCalledWith(

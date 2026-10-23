@@ -5,7 +5,11 @@ import { join } from "node:path";
 import { createTestExecutionStore } from "./execution-test-host.ts";
 
 import { createFileCanonicalEventFeed } from "@pragma/core";
-import { type ExecutionRecord, type Invocation } from "@pragma/shared";
+import {
+  MemoryToolContentPayloadSchema,
+  type ExecutionRecord,
+  type Invocation,
+} from "@pragma/shared";
 import { describe, expect, it } from "vitest";
 
 import {
@@ -244,7 +248,25 @@ describe("Host Memory Execution integration", () => {
               toolName: "lookup",
               ...(type === "tool.started"
                 ? { inputPreview: { nested: riskyText } }
-                : { outputPreview: riskyText }),
+                : {
+                    outputPreview: {
+                      details: { repeated: riskyText, hostOnly: "host-only-marker" },
+                      content: [
+                        { type: "image", mimeType: "image/png", data: "A".repeat(70_000) },
+                        { type: "audio", mimeType: "audio/wav", data: "B".repeat(70_000) },
+                        {
+                          type: "resource",
+                          resource: { uri: "file:///data.bin", blob: "C".repeat(70_000) },
+                        },
+                        { type: "text", text: riskyText },
+                        {
+                          type: "resource",
+                          resource: { uri: "file:///notes.txt", text: "Useful resource notes" },
+                        },
+                        { type: "resource_link", uri: "file:///report.pdf", name: "Report" },
+                      ],
+                    },
+                  }),
             },
           },
           `preview-${type}`,
@@ -282,6 +304,23 @@ describe("Host Memory Execution integration", () => {
         text: expect.stringContaining("[REDACTED_CREDENTIAL]"),
       });
       const captured = JSON.stringify(page.items);
+      expect(captured).not.toContain("host-only-marker");
+      const toolContents = selected.retained.filter(
+        (item) => item.schemaRef === "pragma.memory.tool-content/v1",
+      );
+      expect(toolContents).toHaveLength(3);
+      for (const item of toolContents)
+        expect(JSON.stringify(item.payload).match(/Useful tool result/g)).toHaveLength(1);
+      const previewContent = toolContents.find((item) => {
+        const payload = MemoryToolContentPayloadSchema.parse(item.payload);
+        return payload.toolCallId === "preview" && payload.phase === "completed";
+      })!;
+      expect(previewContent.payload).toMatchObject({
+        completeness: "preview",
+        text: expect.stringContaining("Useful resource notes"),
+      });
+      expect(JSON.stringify(previewContent.payload)).toContain("file:///report.pdf");
+      for (const media of ["A", "B", "C"]) expect(captured).not.toContain(media.repeat(100));
       for (const secret of [
         "secret-value",
         privateKey.trim(),
@@ -305,7 +344,7 @@ describe("Host Memory Execution integration", () => {
           executionId: "execution",
           allowedSubjectRefs: [{ type: "pragma.user", id: "user" }],
           currentFacts: [],
-          evidence: [content],
+          evidence: [previewContent],
           omittedEvidence: { records: 0, bytes: 0, byTopic: {} },
         },
       });

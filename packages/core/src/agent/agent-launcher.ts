@@ -1,3 +1,4 @@
+import { createTextToolResult } from "../tools/managed-tool.ts";
 import type { Expert } from "./expert-agent.ts";
 import type { ExpertTeam } from "./expert-team.ts";
 import type { ExpertAgentManagedTool, ExpertAgentToolCallResult } from "../tools/managed-tool.ts";
@@ -129,7 +130,7 @@ function createLifecycleTools(
     tools.push(
       tool({
         name: "spawn_expert",
-        description: `Create a new Expert task in a fresh, isolated Runtime Context and return its context, agent, and invocation ids immediately. Use continue_expert instead for related follow-up work, retries, or interrupted work that should retain prior context.\n${spawnable}`,
+        description: `Submit a new Expert task in a fresh, isolated Runtime Context. The returned queued status is an acceptance receipt, not a completion result. Save contextId for related follow-ups and call wait_experts with invocationId to inspect the task result before reporting success. Use continue_expert for related work that should retain prior context.\n${spawnable}`,
         inputSchema: objectSchema(
           {
             expertId: { type: "string" },
@@ -147,7 +148,7 @@ function createLifecycleTools(
       tool({
         name: "wait_experts",
         description:
-          "Wait for exact Expert invocations created directly by this task. A timeout ends only this wait and never cancels pending work; call wait_experts again with pending invocation ids. Failed, cancelled, or interrupted work can be retried with continue_expert using its contextId. Defaults to all targets and a 10-minute timeout.",
+          "Wait for exact Expert invocations created directly by this task. completed contains terminal tasks, including failures, cancellations, and interruptions; inspect each status, output, and error before reporting success. A timeout ends only this wait and never cancels pending work; call wait_experts again with pending invocation ids. Retry related work with continue_expert using its contextId. Defaults to all targets and a 10-minute timeout.",
         inputSchema: objectSchema(
           {
             invocationIds: { type: "array", items: { type: "string" }, minItems: 1 },
@@ -207,7 +208,7 @@ function createLifecycleTools(
       tool({
         name: "continue_expert",
         description:
-          "Create a new trackable task that reuses one exact Runtime Context in this Team Session. Use it for related follow-up work or retries after success, failure, cancellation, or interruption. If the Context is busy, the new Invocation runs later in the same FIFO. Use steer_expert instead to correct the currently active Invocation.",
+          "Submit a new task in one exact existing Runtime Context for related follow-up work or retries. The queued receipt is not a completion result; call wait_experts with the NEW invocationId and inspect its result. A busy Context runs the task later in the same FIFO. Use steer_expert to correct the active Invocation instead of creating another task.",
         inputSchema: objectSchema(
           {
             contextId: { type: "string" },
@@ -228,7 +229,7 @@ function createLifecycleTools(
       tool({
         name: "steer_expert",
         description:
-          "Correct one exact active Expert Invocation without creating a new task. next_boundary requests native Runtime steering into the active turn at its next supported boundary and fails with runtime_unsupported when unavailable. after_current queues a continuation that starts only after the current Runtime turn finishes. Guidance stays in the targeted Invocation and never spills into a later one.",
+          "Correct one exact active Expert Invocation without creating a new task. next_boundary requests native Runtime steering at its next supported boundary and fails with runtime_unsupported when unavailable. after_current queues guidance for a continuation after the current Runtime turn. An accepted steer is not task completion. Guidance stays in the targeted Invocation and never spills into a later one.",
         inputSchema: objectSchema(
           {
             invocationId: { type: "string" },
@@ -252,7 +253,7 @@ function createLifecycleTools(
       tool({
         name: "interrupt_expert",
         description:
-          "Stop one exact active or queued Expert Invocation without closing its Runtime Context. Active work becomes interrupted, queued work becomes cancelled, terminal work returns already_terminal, and other FIFO tasks are preserved.",
+          "Stop one exact Expert Invocation when cancellation is intended, not merely because a wait timed out or activity is old. Active work becomes interrupted, queued work becomes cancelled, and terminal work returns already_terminal, which does not imply success. Its Runtime Context and other FIFO tasks are preserved.",
         inputSchema: objectSchema(
           {
             invocationId: { type: "string" },
@@ -284,7 +285,7 @@ function createLifecycleTools(
 }
 
 async function invoke<TInput>(
-  name: string,
+  name: ExpertLifecycleToolName,
   signal: AbortSignal | undefined,
   operation: ((input: TInput) => Promise<unknown>) | undefined,
   input: TInput,
@@ -293,10 +294,67 @@ async function invoke<TInput>(
   if (operation === undefined)
     return failure("missing_execution", `${name} requires an active Expert Turn.`);
   try {
-    const details = await operation(input);
-    return { text: JSON.stringify(details, null, 2), details };
+    const result = projectLifecycleResult(name, await operation(input));
+    return createTextToolResult(JSON.stringify(result), { details: result });
   } catch (error) {
     return failure(`${name}_failed`, error instanceof Error ? error.message : String(error));
+  }
+}
+
+function projectLifecycleResult(
+  name: ExpertLifecycleToolName,
+  value: unknown,
+): Record<string, unknown> {
+  const result = withoutAgentMetadata(value);
+  if (name === "wait_experts") {
+    result["completed"] = (result["completed"] as unknown[]).map(withoutAgentMetadata);
+    result["pending"] = (result["pending"] as unknown[]).map(withoutAgentMetadata);
+  } else if (name === "list_agents") {
+    result["contexts"] = (result["contexts"] as unknown[]).map(withoutAgentMetadata);
+  }
+  return { ...result, message: lifecycleMessage(name, result) };
+}
+
+function withoutAgentMetadata(value: unknown): Record<string, unknown> {
+  return Object.fromEntries(
+    Object.entries(readRecord(value)).filter(
+      ([key]) => key !== "agentId" && key !== "agentDisposition",
+    ),
+  );
+}
+
+function lifecycleMessage(name: ExpertLifecycleToolName, result: Record<string, unknown>): string {
+  switch (name) {
+    case "spawn_expert":
+      return "Task accepted and queued; this is not a completion result. Call wait_experts with invocationId and inspect the final status, output, and error before reporting success. Save contextId for related follow-ups.";
+    case "continue_expert":
+      return "New task accepted and queued in the existing Context; this is not a completion result. Call wait_experts with this NEW invocationId, not an earlier one. A busy Context runs this task later in its FIFO.";
+    case "wait_experts": {
+      const pending = (result["pending"] as unknown[]).length;
+      const wake =
+        result["wakeReason"] === "steer"
+          ? "New guidance woke this wait; handle it first. "
+          : result["wakeReason"] === "message"
+            ? "New messages woke this wait; handle them first. "
+            : "";
+      const timeout =
+        result["timedOut"] === true ? "This wait timed out; no task was cancelled. " : "";
+      return pending > 0
+        ? `${wake}${timeout}${pending} task(s) remain pending; inspect their status, waitReason, and latestActivity, then call wait_experts with their invocationIds to collect remaining results. A timeout or old/missing activity alone does not justify interrupting work. completed contains terminal tasks, not necessarily successful ones.`
+        : `${wake}${timeout}All requested tasks are terminal. Inspect each status, output, and error before reporting success; completed can include failed, cancelled, or interrupted tasks.`;
+    }
+    case "list_agents":
+      return "Use expertId to spawn fresh work, contextId to continue the exact related Context, and invocationId to steer or interrupt a task when permitted. Check task summaries and permission flags; visibility does not grant permission. wait_experts only accepts tasks created directly by your current task. Follow nextCursor when present.";
+    case "steer_expert":
+      return result["delivery"] === "after_current"
+        ? "Guidance accepted for a continuation after the current Runtime turn; it has not necessarily been applied yet. The same Invocation continues; this is not task completion."
+        : "Guidance dispatched to the active Invocation at a supported boundary; this is not task completion. Inspect its eventual result before reporting success.";
+    case "interrupt_expert":
+      return result["outcome"] === "already_terminal"
+        ? "The task was already terminal; no new interruption was performed. This does not imply success. Its Runtime Context remains available for permitted follow-up work."
+        : result["outcome"] === "cancelled"
+          ? "The queued task was cancelled, not completed successfully. Its Runtime Context and other FIFO tasks are preserved; use continue_expert with contextId if a retry is needed."
+          : "The active task was interrupted, not completed successfully. Its Runtime Context and other FIFO tasks are preserved; use continue_expert with contextId if a retry is needed.";
   }
 }
 
@@ -497,5 +555,5 @@ function failure(code: string, text: string): ExpertAgentToolCallResult {
     code,
     error: { code, message: text },
   };
-  return { text: JSON.stringify(payload), isError: true, details: payload };
+  return createTextToolResult(JSON.stringify(payload), { isError: true, details: payload });
 }

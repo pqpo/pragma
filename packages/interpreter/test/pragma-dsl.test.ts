@@ -1550,7 +1550,7 @@ describe("Pragma YAML DSL", () => {
     const empty = await tool!.call({}, undefined, {
       execution: { executionId: "execution", invocationId: "invocation", depth: 0, invokeResource },
     });
-    expect(empty).toMatchObject({ text: "null", details: undefined });
+    expect(empty).toMatchObject({ content: [{ type: "text", text: "null" }], details: undefined });
 
     invokeResource.mockResolvedValueOnce(1n);
     const invalid = await tool!.call({}, undefined, {

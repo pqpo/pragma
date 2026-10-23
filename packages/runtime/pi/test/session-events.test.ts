@@ -4,6 +4,33 @@ import { describe, expect, it, vi } from "vitest";
 
 import { assertAssistantTurnCompleted } from "../src/session-events.ts";
 import { mapPiAgentEvent } from "../src/session.ts";
+import { createToolStreamEvents } from "../src/stream.ts";
+
+describe("PI failed tool event projection", () => {
+  it.each([
+    { content: [] },
+    { content: [{ type: "image", data: "image-bytes", mimeType: "image/png" }] },
+  ])("keeps Host details out of media-only and empty failures: %j", ({ content }) => {
+    const [event] = createToolStreamEvents({
+      runId: "run",
+      source: { kind: "runtime", runId: "run", path: [] },
+      toolEvent: {
+        type: "completed",
+        toolCallId: "call",
+        toolName: "inspect",
+        isError: true,
+        result: { content, details: { hostOnly: "host-only-marker" } },
+      },
+    });
+    expect(event).toMatchObject({ type: "tool.failed" });
+    expect(JSON.stringify(event)).not.toContain("host-only-marker");
+    expect(event).toMatchObject({
+      payload: {
+        message: content.length === 0 ? "Tool execution failed" : JSON.stringify(content),
+      },
+    });
+  });
+});
 
 describe("PI assistant turn validation", () => {
   it("surfaces provider errors instead of succeeding with an empty response", () => {

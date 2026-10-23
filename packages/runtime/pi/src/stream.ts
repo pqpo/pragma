@@ -115,6 +115,10 @@ function stringifyToolOutput(output: unknown): string | undefined {
       if (text.length > 0) {
         return text;
       }
+
+      // Media-only and empty results still have a model body. Never fall back to
+      // serializing the result envelope, which also contains Host-only details.
+      return content.length === 0 ? undefined : summarizeText(JSON.stringify(content));
     }
 
     const text = output["text"];
