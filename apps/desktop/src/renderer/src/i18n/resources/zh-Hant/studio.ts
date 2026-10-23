@@ -858,6 +858,8 @@ export const studio = {
   selectKnowledgeFileDescription: "從檔案樹中選擇，或建立新檔案。",
   markdownContent: "Markdown 內容",
   loadingSettings: "載入設定",
+  expandLoadingSettings: "展開載入設定",
+  collapseLoadingSettings: "收合載入設定",
   selectFileForSettings: "選擇檔案後可設定專家如何載入它。",
   knowledgeLoadingHelp: {
     button: "了解{{setting}}的作用和注意事項",

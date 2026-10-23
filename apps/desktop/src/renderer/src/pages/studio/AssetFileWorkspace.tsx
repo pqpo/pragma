@@ -1,5 +1,7 @@
 import {
   ArrowClockwise,
+  CaretLeft,
+  CaretRight,
   File,
   FilePlus,
   FileText,
@@ -8,7 +10,14 @@ import {
   TextAa,
   Trash,
 } from "@phosphor-icons/react";
-import { useMemo, useState, type ComponentProps, type CSSProperties, type ReactNode } from "react";
+import {
+  useId,
+  useMemo,
+  useState,
+  type ComponentProps,
+  type CSSProperties,
+  type ReactNode,
+} from "react";
 import { useTranslation } from "react-i18next";
 import {
   PRAGMA_TEXT_LIMITS,
@@ -75,6 +84,8 @@ export function AssetFileWorkspace(props: {
   readonly metadataPanel?: ReactNode;
 }) {
   const { t } = useTranslation("studio");
+  const metadataPanelId = useId();
+  const [metadataOpen, setMetadataOpen] = useState(false);
   const [width, setWidth] = usePersistentSidebarWidth(props.widthPreference);
   const [operation, setOperation] = useState<TextOperation | null>(null);
   const [confirmation, setConfirmation] = useState<Confirmation | null>(null);
@@ -239,6 +250,7 @@ export function AssetFileWorkspace(props: {
         className={[
           "knowledge-base-workspace",
           props.metadataPanel === undefined ? "asset-file-workspace" : "",
+          props.metadataPanel !== undefined && metadataOpen ? "is-metadata-open" : "",
           props.className ?? "",
         ]
           .filter(Boolean)
@@ -376,7 +388,36 @@ export function AssetFileWorkspace(props: {
             </AssetFileEditor>
           )}
         </section>
-        {props.metadataPanel}
+        {props.metadataPanel === undefined ? null : (
+          <>
+            <div
+              id={metadataPanelId}
+              className="knowledge-metadata-drawer"
+              inert={!metadataOpen}
+              aria-hidden={!metadataOpen}
+            >
+              {props.metadataPanel}
+            </div>
+            <button
+              type="button"
+              className="knowledge-metadata-toggle"
+              aria-label={t(metadataOpen ? "collapseLoadingSettings" : "expandLoadingSettings")}
+              title={t(metadataOpen ? "collapseLoadingSettings" : "expandLoadingSettings")}
+              aria-expanded={metadataOpen}
+              aria-controls={metadataPanelId}
+              onClick={(event) => {
+                event.currentTarget.focus();
+                setMetadataOpen((open) => !open);
+              }}
+            >
+              {metadataOpen ? (
+                <CaretRight size={12} aria-hidden="true" />
+              ) : (
+                <CaretLeft size={12} aria-hidden="true" />
+              )}
+            </button>
+          </>
+        )}
       </div>
       {error !== null && operation === null && confirmation === null ? (
         <p className="form-error" role="alert">

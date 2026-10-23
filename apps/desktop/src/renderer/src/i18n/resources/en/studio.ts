@@ -915,6 +915,8 @@ export const studio = {
   selectKnowledgeFileDescription: "Choose a file from the tree or create a new one.",
   markdownContent: "Markdown content",
   loadingSettings: "Loading settings",
+  expandLoadingSettings: "Expand loading settings",
+  collapseLoadingSettings: "Collapse loading settings",
   selectFileForSettings: "Select a file to configure how experts load it.",
   knowledgeLoadingHelp: {
     button: "About {{setting}}: purpose and precautions",

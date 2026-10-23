@@ -857,6 +857,8 @@ export const studio = {
   selectKnowledgeFileDescription: "从文件树中选择，或创建一个新文件。",
   markdownContent: "Markdown 内容",
   loadingSettings: "加载设置",
+  expandLoadingSettings: "展开加载设置",
+  collapseLoadingSettings: "收起加载设置",
   selectFileForSettings: "选择文件后可配置专家如何加载它。",
   knowledgeLoadingHelp: {
     button: "了解{{setting}}的作用和注意事项",

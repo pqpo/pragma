@@ -392,16 +392,85 @@
 }
 
 .knowledge-base-workspace {
+  --knowledge-metadata-width: clamp(220px, 24%, 320px);
+  --knowledge-metadata-visible-width: 0px;
   position: relative;
   display: grid;
   height: auto;
   min-height: 0;
-  grid-template-columns: var(--sidebar-width, 240px) minmax(0, 1fr) minmax(190px, 0.29fr);
+  grid-template-columns:
+    var(--sidebar-width, 240px) minmax(0, 1fr)
+    var(--knowledge-metadata-visible-width);
   margin-top: 24px;
   overflow: hidden;
   border: 1px solid var(--border);
   border-radius: var(--ui-radius-lg);
   background: var(--surface);
+  transition: grid-template-columns 180ms ease;
+}
+
+.knowledge-base-workspace.is-metadata-open {
+  --knowledge-metadata-visible-width: var(--knowledge-metadata-width);
+}
+
+.knowledge-metadata-drawer {
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+  opacity: 0;
+  transform: translateX(8px);
+  transition:
+    opacity 180ms ease,
+    transform 180ms ease;
+}
+
+.is-metadata-open .knowledge-metadata-drawer {
+  opacity: 1;
+  transform: translateX(0);
+}
+
+.knowledge-metadata-toggle {
+  position: absolute;
+  z-index: 2;
+  top: 50%;
+  right: max(0px, calc(var(--knowledge-metadata-visible-width) - 6px));
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  width: 12px;
+  height: 56px;
+  place-items: center;
+  padding: 0;
+  border: 1px solid var(--ui-line-strong);
+  border-radius: var(--ui-radius-md);
+  background: var(--ui-surface);
+  color: var(--ui-text-secondary);
+  cursor: pointer;
+  transform: translateY(-50%);
+  transition: right 180ms ease;
+}
+
+.knowledge-metadata-toggle::before {
+  position: absolute;
+  inset: -4px;
+  content: "";
+}
+
+.knowledge-metadata-toggle:hover {
+  background: var(--ui-surface-subtle);
+  color: var(--ui-text);
+}
+
+.is-resizing-sidebar .knowledge-base-workspace,
+.is-resizing-sidebar .knowledge-metadata-toggle {
+  transition: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .knowledge-base-workspace,
+  .knowledge-metadata-drawer,
+  .knowledge-metadata-toggle {
+    transition: none;
+  }
 }
 
 .knowledge-file-panel,
@@ -419,7 +488,9 @@
 }
 
 .knowledge-metadata-panel {
-  padding: 18px;
+  height: 100%;
+  min-width: 220px;
+  padding: 16px;
   overflow-y: auto;
   overscroll-behavior: contain;
   border-left: 1px solid var(--border);
@@ -913,12 +984,6 @@
   margin: 3px 0 0;
   color: var(--muted);
   font-size: 11px;
-}
-
-@media (max-width: 1180px) {
-  .knowledge-base-workspace {
-    grid-template-columns: minmax(170px, 0.28fr) minmax(0, 1fr) minmax(160px, 0.27fr);
-  }
 }
 
 /* Knowledge-base revision tasks */
