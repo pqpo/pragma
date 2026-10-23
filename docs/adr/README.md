@@ -21,6 +21,7 @@ ADR 是有时间和范围的决策记录；版本、路径和支持范围以权�
 - [ADR 047: Durable Mission command receipts and owner lifecycle](047-durable-mission-command-receipts.md)
 - [ADR 062: Long-running Mission heartbeats and ownership fencing](062-long-running-mission-heartbeats.md)
 - [ADR 063: Idle Mission resource release](063-idle-mission-resource-release.md)
+- [ADR 077: Mission execution dependency snapshots](077-mission-execution-dependency-snapshots.md)
 - [ADR 064: Mission durable delivery](064-mission-durable-delivery-and-capacity-accounting.md)
 - [ADR 065: Incremental Host-owned Execution storage](065-incremental-execution-storage.md)
 - [ADR 065: Mission 删除的停止确认与持久后处理](065-mission-deletion-stop-and-post-processing.md)

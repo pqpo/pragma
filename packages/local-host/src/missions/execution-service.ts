@@ -1261,6 +1261,9 @@ export function createLocalHostMissionExecutionService(
         ...(input.modelSelection === undefined ? {} : { modelSelection: input.modelSelection }),
       },
       resumeOptions: { ...resumeOptions, environment },
+      preserveDefinitionSession: await compileService.isExecutionPinned(
+        compileService.createRequestScope(input.mission),
+      ),
       successorOnMismatch: isMemoryContinuationMission(input.mission)
         ? false
         : input.createSuccessorOnMismatch,
@@ -2570,7 +2573,7 @@ export function createLocalHostMissionExecutionService(
       executionContextStartedAt,
       acceptedAt,
     );
-    const session = sessionService.session(mission.id);
+    let session = sessionService.session(mission.id);
     let phaseStartedAt: number;
     const preparation = await compileService.prepare(compileScope, runtimes, {
       hasOwner: session !== undefined,
@@ -2580,6 +2583,23 @@ export function createLocalHostMissionExecutionService(
       definitionFingerprint: sessionService.definitionFingerprint(mission.id),
       capabilities: mission.execution?.resolvedCapabilities,
     });
+    if (preparation.refreshEnvironment === true && session !== undefined) {
+      const [state, prompts] = await Promise.all([session.getState(), session.getPromptQueue()]);
+      if (
+        state.activeExecutionId !== undefined ||
+        state.lastStatus === "waiting" ||
+        prompts.some((prompt) => prompt.status === "running" || prompt.status === "queued")
+      )
+        throw createIntegrationError({
+          code: "COMMAND_REJECTED",
+          category: "conflict",
+          message: "Wait for the current turn before refreshing the Mission environment.",
+          details: { missionId: mission.id, reason: "mission_environment_refresh_busy" },
+        });
+      await session.releaseAfterTerminal({ waitForIdle: true });
+      sessionService.deleteSessionIfCurrent(mission.id, session);
+      session = undefined;
+    }
     let desiredCapabilities = preparation.capabilities;
     let desiredCompilationIdentity = preparation.identity;
     let compiled = preparation.compiled;
@@ -2636,14 +2656,25 @@ export function createLocalHostMissionExecutionService(
       input.mode === "steer"
         ? undefined
         : (modelSelection ?? rootExpert?.models?.default ?? rootContext?.modelSelection);
+    const coldIdentityChanged =
+      session === undefined &&
+      mission.execution?.sessionId !== undefined &&
+      mission.execution.environmentFingerprint !== undefined &&
+      mission.execution.environmentFingerprint !== preparation.identity;
+    // With frozen dependencies, a different compilation identity and compatible
+    // definition mean the Mission's own options changed. Preserve the existing
+    // explicit option/context succession policy separately from definition errors.
+    const compatiblePinnedDefinition =
+      coldIdentityChanged &&
+      (await compileService.isExecutionPinned(compileScope)) &&
+      preparation.definitionFingerprint !== undefined &&
+      (await expertSessionStore.get(mission.execution!.sessionId!))?.definitionFingerprint ===
+        preparation.definitionFingerprint;
     const definitionChanged =
-      preparation.definitionChanged ||
-      (session === undefined &&
-        mission.execution?.sessionId !== undefined &&
-        mission.execution.environmentFingerprint !== undefined &&
-        mission.execution.environmentFingerprint !== preparation.identity);
+      preparation.definitionChanged || (coldIdentityChanged && !compatiblePinnedDefinition);
     const memoryBindingsChanged = sessionService.memoryBindingsChanged(mission.id);
     const contextStoresChanged =
+      compatiblePinnedDefinition ||
       sessionService.successorRequired(mission.id) ||
       missionContextMountsNeedSuccessor(mission, contextMountsFingerprint) ||
       (memoryBindingsChanged && !lifecycleService.hasActive(mission.id));

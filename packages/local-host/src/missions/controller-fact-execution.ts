@@ -20,7 +20,11 @@ export interface LocalHostMissionControllerFactResources {
   readonly resolveMissionBinding: (missionId: string) => Promise<MissionPinnedBinding | undefined>;
   readonly executors: LocalHostCoreRunComposition["executors"];
   readonly compiler?:
-    Pick<LocalHostNodeMissionCompiler, "service" | "prepare" | "readiness"> | undefined;
+    | Pick<
+        LocalHostNodeMissionCompiler,
+        "service" | "prepare" | "readiness" | "createExecutionScope"
+      >
+    | undefined;
   readonly createHostContextBindings?: LocalHostCoreRunComposition["createHostContextBindings"];
   readonly usageSink?: UsageSink | undefined;
   readonly memory?:

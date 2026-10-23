@@ -25,6 +25,7 @@ import type { SkillRevisionGenerator } from "./skill-revision-service.ts";
 export interface DesktopSkillAgents {
   readonly revisionGenerator: SkillRevisionGenerator;
   source(input: {
+    readonly runtimeDefaults?: PragmaCompileOptions["rootExecutionOverride"];
     readonly runtimes?: RuntimeResolver;
     readonly workspace?: string;
     readonly adapterHost?: PragmaCompileOptions["adapterHost"];
@@ -139,7 +140,7 @@ export function createDesktopSkillAgents(options: {
       },
     },
     async source(input) {
-      const runtime = await resolveRuntime(input.runtimes);
+      const runtime = input.runtimeDefaults ?? (await resolveRuntime(input.runtimes));
       return {
         ref: SKILL_REVISION_EXPERT_REF,
         environmentId: "desktop",

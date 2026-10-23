@@ -20,6 +20,7 @@ import {
 import { createLocalHostResourceResolvers } from "./resources/resolvers.ts";
 import { createLocalHostRuntimeReadiness } from "./missions/runtime-readiness.ts";
 import { withLocalHostCompilationErrors } from "./missions/compile-errors.ts";
+import { readMissionExecutionSnapshot } from "./missions/execution-snapshot.ts";
 import {
   createLocalHostProjectRevisionReader,
   type LocalHostProjectRevisionLocation,
@@ -37,6 +38,7 @@ export interface LocalHostCompileResourcePorts {
         readonly getCapabilityId: (binding: string) => string | undefined;
         readonly resolve: (
           id: string,
+          revision?: number,
         ) => Promise<{ capabilityId: string; resolvedRevision: number; fingerprint: string }>;
       }
     | undefined;
@@ -111,6 +113,10 @@ export function createLocalHostNodeMissionCompiler<
   const service = createLocalHostMissionCompileService<Request>({
     environmentId,
     pragmaHome: paths.root,
+    executionSnapshotPath: (request) =>
+      "initialMessageId" in request || request.execution !== undefined
+        ? paths.missionExecutionSnapshot(request.id)
+        : undefined,
     loggerProvider: options.loggerProvider,
     adapterHost: resources.adapterHost,
     secretFingerprint: resources.secretFingerprint,
@@ -143,7 +149,7 @@ export function createLocalHostNodeMissionCompiler<
       getDependencyResource: (ref) => builtInResources.get(ref),
       fingerprint: (ref) =>
         builtInRefs.has(ref) ? builtInAgentFingerprint(ref as BuiltInAgentRef) : undefined,
-      prepare: async (request, runtimes, _purpose, adapterHost) =>
+      prepare: async (request, runtimes, purpose, adapterHost, pinnedSource) =>
         builtInRefs.has(request.executor.ref)
           ? {
               ref: request.executor.ref as BuiltInAgentRef,
@@ -152,6 +158,11 @@ export function createLocalHostNodeMissionCompiler<
               workspace: request.workspace.path,
               pragmaHome: paths.root,
               runtimes,
+              rootExecutionOverride:
+                pinnedSource?.rootExecutionOverride ??
+                (purpose === "stop"
+                  ? undefined
+                  : { runtimeId: await runtimes.getDefaultRuntimeId() }),
               loggerProvider: options.loggerProvider,
               adapterHost,
             }
@@ -178,6 +189,27 @@ export function createLocalHostNodeMissionCompiler<
   return {
     reader,
     service,
+    async createExecutionScope(
+      request: LocalHostMissionCompileRequest,
+      revision?: Promise<LocalHostMissionRevision>,
+    ) {
+      const snapshot = await readMissionExecutionSnapshot(
+        paths.missionExecutionSnapshot(request.id),
+      );
+      return service.createRequestScope(
+        {
+          ...request,
+          // Only logical built-in identities need the product Project pin.
+          // Concrete Project bindings must still match the saved snapshot.
+          project:
+            request.project.id === "built_in"
+              ? (snapshot?.project ?? request.project)
+              : request.project,
+          execution: request.execution ?? {},
+        } as Request,
+        revision,
+      );
+    },
     readRevision,
     readiness,
     assertReady,

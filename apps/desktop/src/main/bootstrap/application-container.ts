@@ -10,6 +10,7 @@ import {
   createLocalHostMissionMemoryLifecycle,
   createMissionSessionAssociationResolver,
   findMissionPinnedBinding,
+  missionExecutionSnapshotsReference,
 } from "@pragma/local-host";
 import { createMissionAttentionRetirement } from "./mission-attention-retirement.ts";
 import {
@@ -587,6 +588,8 @@ export async function createDesktopApplicationContainer(
     paths: pragmaPaths,
     credentials: pluginCredentials,
     isReferenced: async (ref) => {
+      if (await missionExecutionSnapshotsReference(pragmaPaths.missionsRoot(), { pluginRef: ref }))
+        return true;
       const definitions = await Promise.all(
         (await expertStore.list()).map((summary) => expertStore.get(summary.ref)),
       );
@@ -626,6 +629,8 @@ export async function createDesktopApplicationContainer(
       mutate: async (input) => await capabilityRevisionCoordinator.mutate(input),
     },
     isReferenced: async (capabilityId) => {
+      if (await missionExecutionSnapshotsReference(pragmaPaths.missionsRoot(), { capabilityId }))
+        return true;
       const definitions = await Promise.all(
         (await expertStore.list()).map((summary) => expertStore.get(summary.ref)),
       );
@@ -1444,6 +1449,7 @@ export async function createDesktopApplicationContainer(
         knowledgeRevisions,
         purpose,
         adapterHost,
+        pinnedSource,
       }) => {
         const planningRef = mission.executor.ref;
         if (purpose === "stop") {
@@ -1528,6 +1534,7 @@ export async function createDesktopApplicationContainer(
             mission.workspace.path,
           );
           return await storeRevisionAgentRef.current.source({
+            runtimeDefaults: pinnedSource?.rootExecutionOverride,
             profile:
               storeRevisionDefinition.executionProfile.mode === "pinned"
                 ? {
@@ -1630,6 +1637,7 @@ export async function createDesktopApplicationContainer(
           const additionalResources =
             systemExperts.getAdditionalResources(SKILL_REVISION_EXPERT_REF);
           return await skillAgentsRef.current.source({
+            runtimeDefaults: pinnedSource?.rootExecutionOverride,
             runtimes: scopedRuntimes,
             workspace: mission.workspace.path,
             adapterHost: createDesktopAdapterHost(
@@ -1690,11 +1698,13 @@ export async function createDesktopApplicationContainer(
           createsSession && definition.executionProfile.mode === "pinned"
             ? definition.executionProfile.model
             : undefined;
-        const defaults = await resolveSystemExpertRuntimeDefaults(
-          scopedRuntimes,
-          configuredModel,
-          createsSession ? mission.modelOverride : undefined,
-        );
+        const defaults =
+          pinnedSource?.rootExecutionOverride ??
+          (await resolveSystemExpertRuntimeDefaults(
+            scopedRuntimes,
+            configuredModel,
+            createsSession ? mission.modelOverride : undefined,
+          ));
         return {
           ref: BUILT_IN_PRAGMA_REF,
           environmentId: "desktop-system-expert",

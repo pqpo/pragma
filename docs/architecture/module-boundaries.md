@@ -86,6 +86,10 @@ packages/runtime/qodercli
 packages/runtime/antigravity
 ```
 
+New user-facing Missions with an ExpertSession pin mutable system Agent definitions and Capability revisions
+before first execution in a Mission-owned `execution-snapshot.json`; external definition edits do
+not replace their Sessions. See [ADR 077](../adr/077-mission-execution-dependency-snapshots.md).
+
 Runtime sessions are owned by exactly one ExpertSession context or FlowExecution Invocation. Public
 Runtime Adapters expose capability and model discovery; `defineRuntimeDriver()` registers the private
 Session factory. Core stores Session metadata and atomic owner claims in

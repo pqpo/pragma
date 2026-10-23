@@ -48,7 +48,7 @@ export function createDesktopAdapterHost(
   return {
     environmentId: "desktop",
     projectRoot,
-    async resolveBinding(ref): Promise<PragmaBindingRecord | undefined> {
+    async resolveBinding(ref, pin): Promise<PragmaBindingRecord | undefined> {
       if (
         options.purpose === "stop" &&
         (ref === PRAGMA_MANAGEMENT_BINDING_REF ||
@@ -122,7 +122,10 @@ export function createDesktopAdapterHost(
         parseDesktopCapabilityBindingRef(ref) ?? parseLegacyDesktopCapabilityBindingRef(ref)?.id;
       if (capabilityRef !== undefined) {
         const capabilityId = capabilityRef;
-        const capability = await options.capabilityStore.resolveActive(capabilityId);
+        const capability =
+          pin === undefined
+            ? await options.capabilityStore.resolveActive(capabilityId)
+            : await options.capabilityStore.get(capabilityId, Number(pin.revision));
         const revision = capability.manifest.latestRevision;
         const toolNames =
           capability.definition.kind === "skill"
@@ -139,7 +142,10 @@ export function createDesktopAdapterHost(
             ],
             toolApprovals: {},
           },
-          store: options.capabilityStore,
+          store: {
+            resolveActive: async (id) =>
+              id === capabilityId ? capability : await options.capabilityStore.resolveActive(id),
+          },
           credentials: options.capabilityCredentials,
           capabilitiesPath: options.capabilitiesPath,
           ...(options.mcpToolRegistryPool === undefined

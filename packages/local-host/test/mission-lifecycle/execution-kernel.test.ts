@@ -43,6 +43,44 @@ afterEach(async () => {
 });
 
 describe("shared Mission execution kernel with durable Core stores", { timeout: 15_000 }, () => {
+  it.each([false, true])(
+    "preserves a pinned Mission Session when its definition cannot be restored (contexts changed=%s)",
+    async (contextStoresChanged) => {
+      const f = await fixture();
+      const session = await f.app.experts.createSession(f.expert);
+      f.openSessions.push(session);
+      const first = await session.prompt("Remember this history", { requestId: "pinned-first" });
+      await first.result;
+      await first.settled;
+      const before = await f.sessions.get(session.sessionId);
+      await expect(
+        f.kernel.preparePromptSession({
+          subject: {
+            missionId: "pinned-mission",
+            sessionId: session.sessionId,
+            intent: "recover",
+            request: { requestId: "pinned-next" },
+          },
+          resources: {
+            kind: "session",
+            app: f.app,
+            definition: f.expert,
+            preserveDefinitionSession: true,
+            successorOnMismatch: true,
+          },
+          session,
+          definitionChanged: true,
+          contextStoresChanged,
+          hasActive: false,
+        }),
+      ).rejects.toMatchObject({
+        code: "COMMAND_REJECTED",
+        details: { reason: "mission_pinned_environment_unavailable" },
+      });
+      expect(await f.sessions.get(session.sessionId)).toEqual(before);
+      expect(f.created).toHaveBeenCalledOnce();
+    },
+  );
   it("continues a released extraction Session with the original Native identity and refuses a successor", async () => {
     const f = await fixture(undefined, true);
     const session = await f.app.experts.createSession(f.expert);

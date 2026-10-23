@@ -3721,7 +3721,7 @@ describe("Desktop Mission resource adapter contracts", { timeout: 30_000 }, () =
     });
   });
 
-  it("creates a successor Session when the live execution definition changes", async () => {
+  it("creates a successor Session for a legacy Mission when the live execution definition changes", async () => {
     const root = await mkdtemp(join(tmpdir(), "pragma-mission-definition-successor-"));
     temporaryPaths.push(root);
     const project = createPragmaProjectStore({ projectsPath: join(root, "projects") });
@@ -3877,6 +3877,8 @@ describe("Desktop Mission resource adapter contracts", { timeout: 30_000 }, () =
     }
     expect(originalBoardOutput.namespace).toBe("mission-board");
     historicalBoardOutput.id = originalBoardOutput.id;
+    // Model the pre-snapshot writer, which did not persist frozen execution inputs.
+    await rm(join(missions.storagePath!(mission.id), "execution-snapshot.json"), { force: true });
     definitionVersion = 2;
     activeMissions = createMissionStore({ missionsPath: join(root, "missions") });
     runner = createRunner(activeMissions);
@@ -9251,7 +9253,13 @@ describe("Desktop Mission resource adapter contracts", { timeout: 30_000 }, () =
       missions,
       project,
       assertExecutorReady: readiness,
-      capabilityStore: { resolveActive } as unknown as CapabilityStore,
+      capabilityStore: {
+        resolveActive,
+        get: async (_id: string, revision: number) => {
+          expect(revision).toBe(1);
+          return await resolveActive();
+        },
+      } as unknown as CapabilityStore,
       capabilityCredentials: { fingerprint } as unknown as CapabilityCredentialStore,
       capabilitiesPath: join(root, "capabilities"),
       pragmaHome,

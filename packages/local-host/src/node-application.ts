@@ -294,6 +294,7 @@ export function createLocalHostNodeApplication(
       ref: input.ref,
       workspace: input.workspace,
       purpose: input.purpose,
+      mission: input.mission,
     })) ?? (await projectCatalog.resolve(input));
   const executionOwner: NonNullable<LocalHostMissionExecutionServiceOptions["executionOwner"]> =
     new MissionExecutionOwner();

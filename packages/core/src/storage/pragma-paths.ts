@@ -330,6 +330,10 @@ export class PragmaPaths {
     return join(this.dataRoot(), "missions");
   }
 
+  missionExecutionSnapshot(missionId: string): string {
+    return join(this.missionsRoot(), encodePragmaPathSegment(missionId), "execution-snapshot.json");
+  }
+
   automationBindingsRoot(): string {
     return join(this.dataRoot(), "automation-bindings");
   }

@@ -526,6 +526,7 @@ export * from "./mission-command-admission.ts";
 export * from "./missions/runtime-readiness.ts";
 
 export * from "./missions/compile-service.ts";
+export { missionExecutionSnapshotsReference } from "./missions/execution-snapshot.ts";
 export * from "./missions/resource-dependencies.ts";
 export * from "./node-mission-compiler.ts";
 

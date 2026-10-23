@@ -29,6 +29,7 @@ import { MissionExecutionOwner } from "../src/missions/execution-owner.ts";
 import { createMissionPinnedBinding } from "../src/missions/controller/pinned-binding.ts";
 import { MissionCommandSchema } from "@pragma/shared/integration";
 import { defineRuntimeTestDriver } from "@pragma/core/testing";
+import { EVALUATION_JUDGE_EXPERT_ID } from "@pragma/built-in-agents";
 import { PragmaCapabilityResourceSchema } from "@pragma/interpreter/ast";
 import {
   RuntimeContextRecordSchema,
@@ -76,6 +77,8 @@ function advanceLeaseClock(expiredAt: number): void {
   vi.stubGlobal("Date", LeaseDate);
 }
 
+// Source SDK imports, Workers and child startup share this orchestration budget.
+const waitMs = 30_000;
 const roots: string[] = [];
 const hosts: ReturnType<typeof createNodeApplication>[] = [];
 function createLocalHostNodeApplication(
@@ -86,15 +89,25 @@ function createLocalHostNodeApplication(
   return host;
 }
 afterEach(async () => {
-  // Test bodies stop their child producers first; then drain Host custody
-  // before removing its durable root or restoring the Runtime mocks it uses.
-  for (const host of hosts.splice(0).reverse()) await host.dispose?.();
+  // Test bodies stop child producers first. Attempt every Host's custody drain
+  // before restoring globals, and retain evidence when shutdown fails.
+  const ownedRoots = roots.splice(0);
+  const errors: unknown[] = [];
+  for (const host of hosts.splice(0).reverse()) {
+    try {
+      await host.dispose?.();
+    } catch (error) {
+      errors.push(error);
+    }
+  }
   vi.unstubAllGlobals();
   vi.restoreAllMocks();
+  // Keep failed shutdown evidence and isolate later fixtures from its paths.
+  if (errors.length > 0) throw new AggregateError(errors, "Host shutdown failed; roots retained.");
   await Promise.all(
-    roots.splice(0).map((root) => rm(root, { recursive: true, force: true, maxRetries: 5 })),
+    ownedRoots.map((root) => rm(root, { recursive: true, force: true, maxRetries: 5 })),
   );
-});
+}, waitMs);
 
 async function executionDiagnostic(
   executions: ReturnType<typeof createSqliteExecutionStore>,
@@ -275,6 +288,7 @@ async function fixture(
   return {
     home,
     runtimes,
+    driver,
     app,
     workspace,
     canUse,
@@ -289,7 +303,94 @@ async function fixture(
   };
 }
 
-describe("default Node compilation reaches persisted Execution", { timeout: 15_000 }, () => {
+describe("default Node compilation reaches persisted Execution", { timeout: waitMs }, () => {
+  it("restores a built-in Mission on its original Runtime after the Node default changes", async () => {
+    const f = await fixture();
+    const first = await f.app.run!.start({
+      requestId: randomUUID(),
+      command: "expert.run",
+      executor: { kind: "expert", id: EVALUATION_JUDGE_EXPERT_ID },
+      workspace: f.workspace,
+      prompt: "Remember the original Runtime",
+      detach: false,
+    });
+    expect((await first.outcome).status).toBe("succeeded");
+    await f.app.missionControl!.stopOwner(first.missionId);
+    const paths = new PragmaPaths({ pragmaHome: f.home });
+    expect(
+      JSON.parse(await readFile(paths.missionExecutionSnapshot(first.missionId), "utf8")).sources[
+        `expert:${EVALUATION_JUDGE_EXPERT_ID}`
+      ].rootExecutionOverride,
+    ).toEqual({ runtimeId: "codex" });
+    const missions = createMissionStore({ missionsPath: paths.missionsRoot() });
+    const sessionId = (await missions.get(first.missionId)).execution!.sessionId!;
+    const executions = createSqliteExecutionStore({ pragmaHome: f.home });
+    const sessions = createFileExpertSessionStore({ pragmaHome: f.home, executions });
+    const before = (await sessions.get(sessionId))!;
+    const nextStart = vi.fn(() => ({ outputText: "new default", runtimeSessionId: "next-native" }));
+    const nextRuntime = defineRuntimeTestDriver({
+      descriptor: { id: "next", kind: "test", displayName: "New default" },
+      createSession: () => ({}),
+      readSession: () => ({ runtimeSessionId: "next-native" }),
+      startTurn: nextStart,
+      mapEvent: () => ({ events: [] }),
+    });
+    const nextCanUse = vi.spyOn(nextRuntime, "canUse").mockReturnValue({
+      usable: false,
+      reason: "The new default is not configured yet",
+    });
+    const cold = createLocalHostNodeApplication({
+      pragmaHome: f.home,
+      runtimes: createStaticRuntimeResolver({
+        runtimes: [f.driver, nextRuntime],
+        defaultRuntimeId: "next",
+      }),
+      client: { surface: "cli", version: "test", instanceId: randomUUID() },
+    });
+    try {
+      const requestId = randomUUID();
+      await cold.missionControl!.submit({
+        missionId: first.missionId,
+        requestId,
+        kind: "send",
+        payload: { kind: "send", input: { prompt: "Continue on the original Runtime" } },
+      });
+      const applied = await cold.missionControl!.waitForTerminal({
+        missionId: first.missionId,
+        requestId,
+        timeoutMs: waitMs,
+      });
+      expect(applied, JSON.stringify(applied.error)).toMatchObject({ state: "applied" });
+      await cold.missionControl!.waitExecution!({
+        missionId: first.missionId,
+        executionId: applied.result!["executionId"] as string,
+      });
+      const after = (await sessions.get(sessionId))!;
+      expect((await missions.get(first.missionId)).execution!.sessionId).toBe(sessionId);
+      expect(after.rootContextId).toBe(before.rootContextId);
+      expect(after.contexts[after.rootContextId]!.snapshot).toEqual(
+        before.contexts[before.rootContextId]!.snapshot,
+      );
+      expect(f.restore).toHaveBeenCalledOnce();
+      expect(f.startTurn).toHaveBeenCalledTimes(2);
+      expect(nextStart).not.toHaveBeenCalled();
+      nextCanUse.mockReturnValue({ usable: true });
+      const fresh = await cold.run!.start({
+        requestId: randomUUID(),
+        command: "expert.run",
+        executor: { kind: "expert", id: EVALUATION_JUDGE_EXPERT_ID },
+        workspace: f.workspace,
+        prompt: "Use the new default",
+        detach: false,
+      });
+      expect((await fresh.outcome).status).toBe("succeeded");
+      expect(nextStart).toHaveBeenCalledOnce();
+      await cold.missionControl!.stopOwner(fresh.missionId);
+    } finally {
+      await cold.missionControl!.stopOwner(first.missionId);
+      await executions.close();
+    }
+  });
   it.each([false, true])("executes stable Host IDs and manual retry (%s)", async (withAlias) => {
     const f = await fixture();
     const paths = new PragmaPaths({ pragmaHome: f.home });
@@ -391,7 +492,13 @@ describe("default Node compilation reaches persisted Execution", { timeout: 15_0
           name: "clipboard.png",
           path,
           mimeType: "image/png",
-          optimized: { path: optimizedPath, mimeType: "image/webp", size: 15, width: 1, height: 1 },
+          optimized: {
+            path: optimizedPath,
+            mimeType: "image/webp",
+            size: 15,
+            width: 1,
+            height: 1,
+          },
         };
       };
       const seen: Array<readonly ExpertPromptAttachment[]> = [];
@@ -462,7 +569,7 @@ describe("default Node compilation reaches persisted Execution", { timeout: 15_0
         const result = await app.missionControl!.waitForTerminal({
           missionId: mission.id,
           requestId,
-          timeoutMs: 5_000,
+          timeoutMs: waitMs,
         });
         expect(result, JSON.stringify(result.error)).toMatchObject({ state: "applied" });
         const sessionId = (await missions.get(mission.id)).execution!.sessionId!;
@@ -482,7 +589,7 @@ describe("default Node compilation reaches persisted Execution", { timeout: 15_0
         await f.app.missionControl!.waitForTerminal({
           missionId: mission.id,
           requestId: blankId,
-          timeoutMs: 5_000,
+          timeoutMs: waitMs,
         }),
       ).toMatchObject({ state: "rejected" });
       expect(
@@ -527,7 +634,7 @@ describe("default Node compilation reaches persisted Execution", { timeout: 15_0
         await queuedHost.missionControl!.waitForTerminal({
           missionId: mission.id,
           requestId: holdId,
-          timeoutMs: 5_000,
+          timeoutMs: waitMs,
         }),
       ).toMatchObject({ state: "applied" });
       await vi.waitFor(() => expect(f.pending.size).toBe(1));
@@ -546,7 +653,7 @@ describe("default Node compilation reaches persisted Execution", { timeout: 15_0
         await queuedHost.missionControl!.waitForTerminal({
           missionId: mission.id,
           requestId: steerId,
-          timeoutMs: 5_000,
+          timeoutMs: waitMs,
         }),
       ).toMatchObject({ state: "rejected" });
       expect(
@@ -572,7 +679,7 @@ describe("default Node compilation reaches persisted Execution", { timeout: 15_0
         await queuedHost.missionControl!.waitForTerminal({
           missionId: mission.id,
           requestId: queuedSteerId,
-          timeoutMs: 5_000,
+          timeoutMs: waitMs,
         }),
       ).toMatchObject({ state: "rejected" });
       expect((await executions.get(queuedExecution))?.status).toBe("queued");
@@ -602,7 +709,7 @@ describe("default Node compilation reaches persisted Execution", { timeout: 15_0
         await restored.missionControl!.waitForTerminal({
           missionId: mission.id,
           requestId: resumeId,
-          timeoutMs: 5_000,
+          timeoutMs: waitMs,
         }),
       ).toMatchObject({ state: "applied" });
       await restored.missionControl!.waitExecution!({
@@ -779,7 +886,7 @@ describe("default Node compilation reaches persisted Execution", { timeout: 15_0
             }
             expect(ready).toMatchObject({ requestId });
           },
-          { timeout: 10_000 },
+          { timeout: waitMs },
         );
         const activeMission = await missions.get(started.missionId);
         const sessionId = activeMission.execution!.sessionId!;
@@ -910,7 +1017,7 @@ describe("default Node compilation reaches persisted Execution", { timeout: 15_0
               throw new Error(`Flow Native dispatch not ready: ${diagnostics}`, { cause: error });
             }
           },
-          { timeout: 10_000 },
+          { timeout: waitMs },
         );
         const target = started!;
         expect(target.executionId).toEqual(expect.any(String));
@@ -983,7 +1090,7 @@ describe("default Node compilation reaches persisted Execution", { timeout: 15_0
   );
 
   it.each([false, true])(
-    "persists a changed-authority successor and reopens its original Context and Native Session (controller-only=%s)",
+    "retains Mission dependency pins and reopens the accepted Context and Native Session (controller-only=%s)",
     async (controllerOnly) => {
       const f = await fixture();
       const started = await f.app.run!.start({
@@ -1076,7 +1183,7 @@ describe("default Node compilation reaches persisted Execution", { timeout: 15_0
       const accepted = await f.app.missionControl!.waitForTerminal({
         missionId: started.missionId,
         requestId,
-        timeoutMs: 5_000,
+        timeoutMs: waitMs,
       });
       expect(accepted, JSON.stringify(accepted.error)).toMatchObject({ state: "applied" });
       const executionId = accepted.result!["executionId"] as string;
@@ -1104,7 +1211,9 @@ describe("default Node compilation reaches persisted Execution", { timeout: 15_0
       });
       const successorSessionId = await resolveSession(started.missionId);
       expect(successorSessionId).toBeDefined();
-      expect(successorSessionId).not.toBe(original.execution?.sessionId);
+      // Controller recovery must use the same dependency snapshot even without
+      // the product envelope; it must never start an empty conversation.
+      expect(successorSessionId).toBe(original.execution?.sessionId);
       const before = (await sessions.get(successorSessionId!))!;
       const beforeRoot = before.contexts[before.rootContextId]!;
       if (controllerOnly) {
@@ -1160,7 +1269,7 @@ describe("default Node compilation reaches persisted Execution", { timeout: 15_0
         const applied = await cold.missionControl!.waitForTerminal({
           missionId: started.missionId,
           requestId: continuation,
-          timeoutMs: 5_000,
+          timeoutMs: waitMs,
         });
         expect(applied, JSON.stringify(applied.error)).toMatchObject({ state: "applied" });
         await cold.missionControl!.waitExecution!({
@@ -1360,7 +1469,7 @@ describe("default Node compilation reaches persisted Execution", { timeout: 15_0
     const operation = await cold.missionControl!.waitForTerminal({
       missionId: started.missionId,
       requestId,
-      timeoutMs: 5_000,
+      timeoutMs: waitMs,
     });
     expect(operation.state).toBe("applied");
     // This counter covers the external adapter API, not Native Session probes.
@@ -1381,7 +1490,7 @@ describe("default Node compilation reaches persisted Execution", { timeout: 15_0
     const rejected = await cold.missionControl!.waitForTerminal({
       missionId: started.missionId,
       requestId: sendRequestId,
-      timeoutMs: 5_000,
+      timeoutMs: waitMs,
     });
     expect(rejected).toMatchObject({ state: "rejected", error: { code: "RUNTIME_UNAVAILABLE" } });
     await cold.missionControl!.stopOwner(started.missionId);
@@ -1806,7 +1915,7 @@ it(
       async () => {
         expect((await missions.get(mission.id)).execution?.status).toBe("succeeded");
       },
-      { timeout: 10_000 },
+      { timeout: waitMs },
     );
     expect(attempts).toBe(2);
     expect(reads).toEqual([expect.stringContaining("Original published content")]);
@@ -2135,7 +2244,7 @@ it(
         return await cold.missionControl!.waitForTerminal({
           missionId: mission.id,
           requestId,
-          timeoutMs: 5_000,
+          timeoutMs: waitMs,
         });
       } catch (error) {
         const controller = lifecycle!.controller;

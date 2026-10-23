@@ -360,7 +360,8 @@ describe("Mission durable delivery", { timeout: 15000 }, () => {
     await publish(target.feed, "usage");
     target.delivery.start();
     await vi.waitFor(() => expect(target.delivery.safeThrough()).toBe(1));
-    expect(target.delivery.inspect().pending).toBe(1);
+    // Intake cursor and diagnostic cache are acknowledged separately.
+    await vi.waitFor(() => expect(target.delivery.inspect().pending).toBe(1));
     await target.delivery.deleteMission(target.mission.id, {
       mission: target.mission,
       executionIds: [executionId],

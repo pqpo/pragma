@@ -92,8 +92,11 @@ export function createLocalHostResourceResolvers(options: {
     parseLegacyLocalHostCapabilityBindingRef(binding)?.id;
   const capabilityAuthority = {
     getCapabilityId,
-    async resolve(id: string) {
-      const capability = await capabilities.resolveActive(id);
+    async resolve(id: string, revision?: number) {
+      const capability =
+        revision === undefined
+          ? await capabilities.resolveActive(id)
+          : await capabilities.readCapability(id, revision);
       const credentials = await capabilityCredentials.fingerprint(id);
       return {
         capabilityId: capability.manifest.id,
@@ -108,7 +111,7 @@ export function createLocalHostResourceResolvers(options: {
   ): PragmaAdapterHost => ({
     environmentId: options.environmentId ?? "cli",
     projectRoot: request.workspace.path,
-    async resolveBinding(ref): Promise<PragmaBindingRecord | undefined> {
+    async resolveBinding(ref, pin): Promise<PragmaBindingRecord | undefined> {
       const capabilityId = getCapabilityId(ref);
       const contextId = parseLocalHostContextBindingRef(ref);
       if (
@@ -130,7 +133,10 @@ export function createLocalHostResourceResolvers(options: {
         );
       }
       if (capabilityId !== undefined) {
-        const capability = await capabilities.resolveActive(capabilityId);
+        const capability =
+          pin === undefined
+            ? await capabilities.resolveActive(capabilityId)
+            : await capabilities.readCapability(capabilityId, Number(pin.revision));
         const toolNames =
           capability.definition.kind === "skill"
             ? []
@@ -146,7 +152,10 @@ export function createLocalHostResourceResolvers(options: {
             ],
             toolApprovals: {},
           },
-          store: capabilities,
+          store: {
+            resolveActive: async (id) =>
+              id === capabilityId ? capability : await capabilities.resolveActive(id),
+          },
           credentials: capabilityCredentials,
           capabilitiesPath,
           mcpToolRegistryPool: options.mcpToolRegistryPool,
