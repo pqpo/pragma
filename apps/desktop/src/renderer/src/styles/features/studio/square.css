@@ -237,9 +237,9 @@
 }
 
 .square-card-copy {
-  display: grid;
-  align-content: start;
-  height: 100%;
+  display: flex;
+  flex-direction: column;
+  align-self: stretch;
   min-width: 0;
   gap: 12px;
 }
@@ -282,6 +282,7 @@
 
 .square-card-copy > p {
   display: -webkit-box;
+  flex: 1 0 auto;
   min-height: 0;
   overflow: hidden;
   margin: 0;
@@ -307,7 +308,6 @@
   align-items: center;
   justify-content: space-between;
   gap: 12px;
-  margin-top: auto;
   padding-top: 8px;
   color: var(--ui-text-secondary);
   font-size: 12px;
