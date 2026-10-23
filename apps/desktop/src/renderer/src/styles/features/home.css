@@ -2154,6 +2154,7 @@ body > .ui-select-menu.home-project-executor-filter-menu {
 }
 
 .home-project-bindings .mission-workspace-menu {
+  transform-origin: center;
   position: fixed;
   top: 50%;
   left: 50%;

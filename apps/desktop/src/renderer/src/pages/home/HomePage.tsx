@@ -1,3 +1,8 @@
+import {
+  OverlayMotionScope,
+  OverlayPresence,
+  useOverlayMotion,
+} from "../../components/OverlayMotion.tsx";
 import { Dialog } from "../../components/Dialog.tsx";
 import { HomeProjects, HomeProjectEditor } from "./HomeProjects.tsx";
 import { orderHomeProjects, previewHomeItemDragOrder } from "./home-ordering.ts";
@@ -842,419 +847,431 @@ export function HomePage(props: {
   };
 
   return (
-    <section className="default-agent-home home-mission-create">
-      <section className="mission-create" aria-labelledby="new-mission-title">
-        <header className="home-welcome">
-          <h1 id="new-mission-title">
-            {t(`homeGreetings.${HOME_GREETING_KEYS[HOME_GREETING_INDEX]}`, {
-              greeting: timeGreeting,
-            })}
-          </h1>
-        </header>
-        <div className="home-workspace-context">
-          <MissionExecutorPicker
-            executors={executors}
-            value={hasValidExecutor ? executorRef : ""}
-            defaultExecutorRef={defaultExecutorRef}
-            workspace={workspaceOverride ?? defaultWorkspace}
-            recentWorkspaces={recentWorkspaces}
-            onChange={selectExecutor}
-            onPreferenceChange={updateExecutorPreference}
-            onChooseFavoriteWorkspace={chooseFavoriteWorkspace}
-            managerTitle={t("homeFavoritesAdd")}
-            managerOpen={executorManagerOpen}
-            onManagerOpenChange={setExecutorManagerOpen}
-          />
-          <WorkspacePicker
-            defaultWorkspace={defaultWorkspace}
-            recentWorkspaces={recentWorkspaces}
-            selection={workspaceOverride}
-            defaultSelected={
-              workspaceOverride === undefined || workspaceOverride.path === defaultWorkspace?.path
-            }
-            onChoose={() => void pickWorkspace()}
-            onSelect={changeWorkspace}
-            onUseDefault={() => changeWorkspace(undefined)}
-          />
-          {showExecutorConfigurationTip ? (
-            <HomeExecutorConfigurationTip
-              message={t("executorConfigurationRequired")}
-              configureModelsLabel={t("configureModelSettings")}
-              configureExpertLabel={t("configureExpert")}
-              onConfigureModels={props.onConfigureRuntime}
-              onConfigureExpert={
-                selectedExecutor === undefined || props.onConfigureExpert === undefined
-                  ? undefined
-                  : () => props.onConfigureExpert?.(selectedExecutor)
-              }
+    <OverlayMotionScope>
+      <section className="default-agent-home home-mission-create">
+        <section className="mission-create" aria-labelledby="new-mission-title">
+          <header className="home-welcome">
+            <h1 id="new-mission-title">
+              {t(`homeGreetings.${HOME_GREETING_KEYS[HOME_GREETING_INDEX]}`, {
+                greeting: timeGreeting,
+              })}
+            </h1>
+          </header>
+          <div className="home-workspace-context">
+            <MissionExecutorPicker
+              executors={executors}
+              value={hasValidExecutor ? executorRef : ""}
+              defaultExecutorRef={defaultExecutorRef}
+              workspace={workspaceOverride ?? defaultWorkspace}
+              recentWorkspaces={recentWorkspaces}
+              onChange={selectExecutor}
+              onPreferenceChange={updateExecutorPreference}
+              onChooseFavoriteWorkspace={chooseFavoriteWorkspace}
+              managerTitle={t("homeFavoritesAdd")}
+              managerOpen={executorManagerOpen}
+              onManagerOpenChange={setExecutorManagerOpen}
             />
-          ) : (
-            <p className="home-inline-tip" aria-live="polite">
-              <Lightbulb size={15} weight="regular" aria-hidden="true" />
-              <span className="home-inline-tip-viewport">
-                <span className="home-inline-tip-copy" key={tipIndex}>
-                  {t(`homeTips.${HOME_TIP_KEYS[tipIndex]}`)}
-                </span>
-              </span>
-            </p>
-          )}
-        </div>
-        <div className="mission-goal-composer">
-          <MissionAttachmentList
-            attachments={attachments}
-            previews={attachmentPreviews}
-            onRemove={(id) => {
-              void window.pragmaDesktop.discardMissionAttachmentDrafts({ attachmentIds: [id] });
-              setAttachments((current) => current.filter((attachment) => attachment.id !== id));
-              setAttachmentPreviews((current) => {
-                const next = { ...current };
-                delete next[id];
-                return next;
-              });
-            }}
-          />
-          {flowInputSchema === undefined ? (
-            <div className="mission-goal-field">
-              {selectedExecutor?.kind === "team" ? (
-                <TeamMentionComposer
-                  value={goal}
-                  candidates={selectedExecutor.members}
-                  onChange={setGoal}
-                  onSubmit={() => void submit()}
-                  onPaste={(event) => {
-                    const file = clipboardImageFile(event.clipboardData);
-                    if (file === undefined || saving) return;
-                    event.preventDefault();
-                    void pasteImage(file);
-                  }}
-                  disabled={saving}
-                  placeholder={t("goalPlaceholder")}
-                  ariaLabel={t("goalPlaceholder")}
-                  menuLabel={t("mentionMembers")}
-                  emptyLabel={t("mentionNoMatches")}
-                  unavailableLabel={t("mentionUnavailable")}
-                  variant="home"
-                  autoFocus
-                />
-              ) : (
-                <textarea
-                  ref={goalInputRef}
-                  id="mission-goal"
-                  aria-label={t("goalPlaceholder")}
-                  value={goal}
-                  onChange={(event) => setGoal(event.target.value)}
-                  onPaste={(event) => {
-                    const file = clipboardImageFile(event.clipboardData);
-                    if (file === undefined || selectedExecutor?.kind === "flow" || saving) return;
-                    event.preventDefault();
-                    void pasteImage(file);
-                  }}
-                  onKeyDown={(event) => {
-                    if (shouldSubmitComposerOnEnter(event.nativeEvent)) {
-                      event.preventDefault();
-                      void submit();
-                    }
-                  }}
-                  placeholder={t("goalPlaceholder")}
-                  autoFocus
-                />
-              )}
-            </div>
-          ) : (
-            <SchemaInputForm
-              schema={flowInputSchema}
-              value={flowInput}
-              disabled={saving}
-              onChange={setFlowInput}
-            />
-          )}
-          <footer>
-            <div className="mission-prompt-tools" aria-label={t("missionOptions")}>
-              <MissionAttachmentPicker
-                disabled={saving || selectedExecutor?.kind === "flow"}
-                compact
-                onPick={pickAttachments}
-              />
-              <button
-                className="mission-context-store-trigger"
-                type="button"
-                disabled={saving}
-                aria-label={t("missionKnowledge")}
-                title={t("missionKnowledgeSelected", {
-                  count: contextStoreIds.length,
-                })}
-                onClick={() => setContextStorePickerOpen(true)}
-              >
-                <FolderOpen size={17} aria-hidden="true" />
-                <span>{t("missionKnowledge")}</span>
-                {contextStoreIds.length === 0 ? null : <strong>{contextStoreIds.length}</strong>}
-              </button>
-              <ToolPermissionSelect
-                detailed
-                value={toolPermissionMode}
-                onChange={setToolPermissionMode}
-                disabled={saving}
-                title={t("permissionOverride")}
-              />
-              {selectedExecutor?.kind === "expert" || selectedExecutor?.kind === "team" ? (
-                <MissionModelOverrideControls
-                  models={models}
-                  loading={modelsLoading}
-                  value={modelOverride}
-                  defaultValue={defaultModelSelection}
-                  onChange={setModelOverride}
-                />
-              ) : null}
-            </div>
-            <button
-              className={`mission-submit-button${saving ? " is-loading" : ""}`}
-              type="button"
-              aria-label={saving ? t("starting") : t("startMission")}
-              title={saving ? t("starting") : t("startMission")}
-              aria-busy={saving}
-              disabled={
-                saving ||
-                projectApplying ||
-                !loaded ||
-                defaultWorkspace === undefined ||
-                !hasValidExecutor ||
-                executorConfigurationUnavailable ||
-                (!hasStructuredFlowInput && goal.trim() === "") ||
-                !structuredFlowInputValid
+            <WorkspacePicker
+              defaultWorkspace={defaultWorkspace}
+              recentWorkspaces={recentWorkspaces}
+              selection={workspaceOverride}
+              defaultSelected={
+                workspaceOverride === undefined || workspaceOverride.path === defaultWorkspace?.path
               }
-              onClick={() => void submit()}
-            >
-              {saving ? (
-                <SpinnerGap size={19} aria-hidden="true" />
-              ) : (
-                <ArrowUp size={19} weight="bold" aria-hidden="true" />
-              )}
-            </button>
-          </footer>
-        </div>
-        <section className="home-shortcuts">
-          <div className="home-shortcuts-heading">
-            <div className="home-shortcuts-tabs" role="tablist" aria-label={t("homeShortcuts")}>
-              {(["projects", "favorites"] as const).map((tab) => (
-                <button
-                  key={tab}
-                  id={`home-${tab}-tab`}
-                  type="button"
-                  role="tab"
-                  aria-selected={homeTab === tab}
-                  aria-controls={`home-${tab}-panel`}
-                  tabIndex={homeTab === tab ? 0 : -1}
-                  onClick={() => {
-                    setHomeTab(tab);
-                    setFavoriteMoreOpen(false);
-                  }}
-                  onKeyDown={(event) => {
-                    if (["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) {
-                      event.preventDefault();
-                      const next =
-                        event.key === "Home"
-                          ? "projects"
-                          : event.key === "End"
-                            ? "favorites"
-                            : homeTab === "projects"
-                              ? "favorites"
-                              : "projects";
-                      setHomeTab(next);
-                      setFavoriteMoreOpen(false);
-                      document.getElementById(`home-${next}-tab`)?.focus();
-                    }
-                  }}
-                >
-                  {t(tab === "projects" ? "homeProjects" : "homeFavorites")}
-                </button>
-              ))}
-            </div>
-            <div className="home-shortcuts-actions">
-              <button
-                className="home-favorites-manage-button"
-                type="button"
-                disabled={
-                  homeTab === "projects"
-                    ? !homeProjectsReady || !loaded || !contextStoresReady || saving
-                    : !loaded || saving
+              onChoose={() => void pickWorkspace()}
+              onSelect={changeWorkspace}
+              onUseDefault={() => changeWorkspace(undefined)}
+            />
+            {showExecutorConfigurationTip ? (
+              <HomeExecutorConfigurationTip
+                message={t("executorConfigurationRequired")}
+                configureModelsLabel={t("configureModelSettings")}
+                configureExpertLabel={t("configureExpert")}
+                onConfigureModels={props.onConfigureRuntime}
+                onConfigureExpert={
+                  selectedExecutor === undefined || props.onConfigureExpert === undefined
+                    ? undefined
+                    : () => props.onConfigureExpert?.(selectedExecutor)
                 }
-                aria-label={homeTab === "projects" ? t("homeProjectCreate") : t("homeFavoritesAdd")}
-                title={homeTab === "projects" ? t("homeProjectCreate") : t("homeFavoritesAdd")}
-                onClick={() =>
-                  homeTab === "projects" ? editProject(null) : setExecutorManagerOpen(true)
-                }
-              >
-                <Plus size={16} aria-hidden="true" />
-              </button>
-              <button
-                className="home-favorites-manage-button home-shortcuts-manager-button"
-                type="button"
-                disabled={
-                  homeTab === "projects"
-                    ? !homeProjectsReady || !loaded || !contextStoresReady || saving
-                    : !loaded || saving
-                }
-                aria-label={managerButtonLabel}
-                title={managerButtonLabel}
-                onClick={() =>
-                  homeTab === "projects" ? setProjectManagerOpen(true) : setFavoriteMoreOpen(true)
-                }
-              >
-                <GearSix size={16} aria-hidden="true" />
-                {homeTab === "projects" && homeProjectOverflowCount > 0 ? (
-                  <span className="home-shortcuts-overflow-badge" aria-hidden="true">
-                    {homeProjectOverflowCount}
-                  </span>
-                ) : homeTab === "favorites" && homeFavoriteOverflowCount > 0 ? (
-                  <span className="home-shortcuts-overflow-badge" aria-hidden="true">
-                    {homeFavoriteOverflowCount}
-                  </span>
-                ) : null}
-              </button>
-            </div>
-          </div>
-          <div
-            className="home-shortcuts-panel"
-            id={`home-${homeTab}-panel`}
-            role="tabpanel"
-            aria-labelledby={`home-${homeTab}-tab`}
-          >
-            {homeTab === "projects" ? (
-              <HomeProjects
-                projects={homeProjects}
-                maxVisibleProjects={HOME_SHORTCUTS_VISIBLE_COUNT}
-                disabled={!loaded || !contextStoresReady || !homeProjectsReady || saving}
-                executors={executors}
-                stores={contextStores}
-                selectedIds={selectedProjectIds}
-                onSelect={(project) => {
-                  if (!saving) void applyProject(project);
-                }}
-                onEdit={editProject}
               />
             ) : (
-              <HomeFavorites
-                executors={executors}
-                dialogOpen={favoriteMoreOpen}
-                onDialogOpenChange={setFavoriteMoreOpen}
-                onSelect={selectExecutor}
-                onRemoveFavorite={(ref) => updateExecutorPreference(ref, { favoriteScope: "none" })}
-                onReorder={(orderedRefs) => void reorderFavorites(orderedRefs)}
-              />
+              <p className="home-inline-tip" aria-live="polite">
+                <Lightbulb size={15} weight="regular" aria-hidden="true" />
+                <span className="home-inline-tip-viewport">
+                  <span className="home-inline-tip-copy" key={tipIndex}>
+                    {t(`homeTips.${HOME_TIP_KEYS[tipIndex]}`)}
+                  </span>
+                </span>
+              </p>
             )}
           </div>
-        </section>
-        {projectManagerOpen ? (
-          <Dialog
-            className="home-project-manager"
-            backdropClassName="home-favorites-backdrop"
-            title={t("homeProjects")}
-            description={t("homeProjectsDialogDescription")}
-            headerAction={
-              <button
-                className="home-project-manager-close"
-                type="button"
-                aria-label={tCommon("actions.close")}
-                data-dialog-initial-focus
-                onClick={() => setProjectManagerOpen(false)}
-              >
-                <X size={19} aria-hidden="true" />
-              </button>
-            }
-            onCancel={() => setProjectManagerOpen(false)}
-          >
-            <HomeProjects
-              projects={homeProjects}
-              executors={executors}
-              stores={contextStores}
-              selectedIds={selectedProjectIds}
-              disabled={projectOrderSaving || saving || projectApplying}
-              onSelect={(project) => {
-                setProjectManagerOpen(false);
-                if (!saving) void applyProject(project);
+          <div className="mission-goal-composer">
+            <MissionAttachmentList
+              attachments={attachments}
+              previews={attachmentPreviews}
+              onRemove={(id) => {
+                void window.pragmaDesktop.discardMissionAttachmentDrafts({ attachmentIds: [id] });
+                setAttachments((current) => current.filter((attachment) => attachment.id !== id));
+                setAttachmentPreviews((current) => {
+                  const next = { ...current };
+                  delete next[id];
+                  return next;
+                });
               }}
-              onEdit={(project) => {
-                setProjectManagerOpen(false);
-                editProject(project);
-              }}
-              onReorder={reorderProjects}
-              showEditActions
             />
-          </Dialog>
-        ) : null}
-        {projectEditor !== undefined ? (
-          <HomeProjectEditor
-            renderExecutorPicker={(value, onChange, workspace) => (
-              <MissionExecutorPicker
-                executors={executors}
-                value={value}
-                defaultExecutorRef={defaultExecutorRef}
-                workspace={workspace}
-                recentWorkspaces={recentWorkspaces}
-                onChange={onChange}
-                onPreferenceChange={updateExecutorPreference}
-                onChooseFavoriteWorkspace={chooseFavoriteWorkspace}
-                managerOpen={false}
-                onManagerOpenChange={setExecutorManagerOpen}
+            {flowInputSchema === undefined ? (
+              <div className="mission-goal-field">
+                {selectedExecutor?.kind === "team" ? (
+                  <TeamMentionComposer
+                    value={goal}
+                    candidates={selectedExecutor.members}
+                    onChange={setGoal}
+                    onSubmit={() => void submit()}
+                    onPaste={(event) => {
+                      const file = clipboardImageFile(event.clipboardData);
+                      if (file === undefined || saving) return;
+                      event.preventDefault();
+                      void pasteImage(file);
+                    }}
+                    disabled={saving}
+                    placeholder={t("goalPlaceholder")}
+                    ariaLabel={t("goalPlaceholder")}
+                    menuLabel={t("mentionMembers")}
+                    emptyLabel={t("mentionNoMatches")}
+                    unavailableLabel={t("mentionUnavailable")}
+                    variant="home"
+                    autoFocus
+                  />
+                ) : (
+                  <textarea
+                    ref={goalInputRef}
+                    id="mission-goal"
+                    aria-label={t("goalPlaceholder")}
+                    value={goal}
+                    onChange={(event) => setGoal(event.target.value)}
+                    onPaste={(event) => {
+                      const file = clipboardImageFile(event.clipboardData);
+                      if (file === undefined || selectedExecutor?.kind === "flow" || saving) return;
+                      event.preventDefault();
+                      void pasteImage(file);
+                    }}
+                    onKeyDown={(event) => {
+                      if (shouldSubmitComposerOnEnter(event.nativeEvent)) {
+                        event.preventDefault();
+                        void submit();
+                      }
+                    }}
+                    placeholder={t("goalPlaceholder")}
+                    autoFocus
+                  />
+                )}
+              </div>
+            ) : (
+              <SchemaInputForm
+                schema={flowInputSchema}
+                value={flowInput}
+                disabled={saving}
+                onChange={setFlowInput}
               />
             )}
-            project={projectEditor}
-            executors={executors}
-            stores={contextStores}
-            defaultWorkspace={defaultWorkspace}
-            recentWorkspaces={recentWorkspaces}
-            onClose={() => setProjectEditor(undefined)}
-            onSave={async (input) => {
-              const saved = await window.pragmaDesktop.saveHomeProject(input);
-              setHomeProjects((current) =>
-                input.id === undefined
-                  ? [...current, saved]
-                  : current.map((item) => (item.id === saved.id ? saved : item)),
-              );
-            }}
-            onDelete={async (id) => {
-              await window.pragmaDesktop.deleteHomeProject(id);
-              setHomeProjects((current) => current.filter((item) => item.id !== id));
-            }}
-          />
-        ) : null}
-        {loaded && executors.length === 0 ? (
-          <p className="mission-form-note">{t("createFirst")}</p>
-        ) : null}
-        {modelError && !showExecutorConfigurationTip ? (
-          <p className="mission-form-note">{t("modelOptionsUnavailable")}</p>
-        ) : null}
-        {modelResetRequired && !showExecutorConfigurationTip ? (
-          <p className="mission-form-note mission-model-reset-note" role="status">
-            <span>{t("modelConfigurationResetRequired")}</span>
-            <button className="text-button" type="button" onClick={props.onConfigureModels}>
-              {t("configureModels")}
-            </button>
-          </p>
-        ) : null}
-        {error ? (
-          <p className="form-error" role="alert">
-            {error}
-          </p>
-        ) : null}
+            <footer>
+              <div className="mission-prompt-tools" aria-label={t("missionOptions")}>
+                <MissionAttachmentPicker
+                  disabled={saving || selectedExecutor?.kind === "flow"}
+                  compact
+                  onPick={pickAttachments}
+                />
+                <button
+                  className="mission-context-store-trigger"
+                  type="button"
+                  disabled={saving}
+                  aria-label={t("missionKnowledge")}
+                  title={t("missionKnowledgeSelected", {
+                    count: contextStoreIds.length,
+                  })}
+                  onClick={() => setContextStorePickerOpen(true)}
+                >
+                  <FolderOpen size={17} aria-hidden="true" />
+                  <span>{t("missionKnowledge")}</span>
+                  {contextStoreIds.length === 0 ? null : <strong>{contextStoreIds.length}</strong>}
+                </button>
+                <ToolPermissionSelect
+                  detailed
+                  value={toolPermissionMode}
+                  onChange={setToolPermissionMode}
+                  disabled={saving}
+                  title={t("permissionOverride")}
+                />
+                {selectedExecutor?.kind === "expert" || selectedExecutor?.kind === "team" ? (
+                  <MissionModelOverrideControls
+                    models={models}
+                    loading={modelsLoading}
+                    value={modelOverride}
+                    defaultValue={defaultModelSelection}
+                    onChange={setModelOverride}
+                  />
+                ) : null}
+              </div>
+              <button
+                className={`mission-submit-button${saving ? " is-loading" : ""}`}
+                type="button"
+                aria-label={saving ? t("starting") : t("startMission")}
+                title={saving ? t("starting") : t("startMission")}
+                aria-busy={saving}
+                disabled={
+                  saving ||
+                  projectApplying ||
+                  !loaded ||
+                  defaultWorkspace === undefined ||
+                  !hasValidExecutor ||
+                  executorConfigurationUnavailable ||
+                  (!hasStructuredFlowInput && goal.trim() === "") ||
+                  !structuredFlowInputValid
+                }
+                onClick={() => void submit()}
+              >
+                {saving ? (
+                  <SpinnerGap size={19} aria-hidden="true" />
+                ) : (
+                  <ArrowUp size={19} weight="bold" aria-hidden="true" />
+                )}
+              </button>
+            </footer>
+          </div>
+          <section className="home-shortcuts">
+            <div className="home-shortcuts-heading">
+              <div className="home-shortcuts-tabs" role="tablist" aria-label={t("homeShortcuts")}>
+                {(["projects", "favorites"] as const).map((tab) => (
+                  <button
+                    key={tab}
+                    id={`home-${tab}-tab`}
+                    type="button"
+                    role="tab"
+                    aria-selected={homeTab === tab}
+                    aria-controls={`home-${tab}-panel`}
+                    tabIndex={homeTab === tab ? 0 : -1}
+                    onClick={() => {
+                      setHomeTab(tab);
+                      setFavoriteMoreOpen(false);
+                    }}
+                    onKeyDown={(event) => {
+                      if (["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) {
+                        event.preventDefault();
+                        const next =
+                          event.key === "Home"
+                            ? "projects"
+                            : event.key === "End"
+                              ? "favorites"
+                              : homeTab === "projects"
+                                ? "favorites"
+                                : "projects";
+                        setHomeTab(next);
+                        setFavoriteMoreOpen(false);
+                        document.getElementById(`home-${next}-tab`)?.focus();
+                      }
+                    }}
+                  >
+                    {t(tab === "projects" ? "homeProjects" : "homeFavorites")}
+                  </button>
+                ))}
+              </div>
+              <div className="home-shortcuts-actions">
+                <button
+                  className="home-favorites-manage-button"
+                  type="button"
+                  disabled={
+                    homeTab === "projects"
+                      ? !homeProjectsReady || !loaded || !contextStoresReady || saving
+                      : !loaded || saving
+                  }
+                  aria-label={
+                    homeTab === "projects" ? t("homeProjectCreate") : t("homeFavoritesAdd")
+                  }
+                  title={homeTab === "projects" ? t("homeProjectCreate") : t("homeFavoritesAdd")}
+                  onClick={() =>
+                    homeTab === "projects" ? editProject(null) : setExecutorManagerOpen(true)
+                  }
+                >
+                  <Plus size={16} aria-hidden="true" />
+                </button>
+                <button
+                  className="home-favorites-manage-button home-shortcuts-manager-button"
+                  type="button"
+                  disabled={
+                    homeTab === "projects"
+                      ? !homeProjectsReady || !loaded || !contextStoresReady || saving
+                      : !loaded || saving
+                  }
+                  aria-label={managerButtonLabel}
+                  title={managerButtonLabel}
+                  onClick={() =>
+                    homeTab === "projects" ? setProjectManagerOpen(true) : setFavoriteMoreOpen(true)
+                  }
+                >
+                  <GearSix size={16} aria-hidden="true" />
+                  {homeTab === "projects" && homeProjectOverflowCount > 0 ? (
+                    <span className="home-shortcuts-overflow-badge" aria-hidden="true">
+                      {homeProjectOverflowCount}
+                    </span>
+                  ) : homeTab === "favorites" && homeFavoriteOverflowCount > 0 ? (
+                    <span className="home-shortcuts-overflow-badge" aria-hidden="true">
+                      {homeFavoriteOverflowCount}
+                    </span>
+                  ) : null}
+                </button>
+              </div>
+            </div>
+            <div
+              className="home-shortcuts-panel"
+              id={`home-${homeTab}-panel`}
+              role="tabpanel"
+              aria-labelledby={`home-${homeTab}-tab`}
+            >
+              {homeTab === "projects" ? (
+                <HomeProjects
+                  projects={homeProjects}
+                  maxVisibleProjects={HOME_SHORTCUTS_VISIBLE_COUNT}
+                  disabled={!loaded || !contextStoresReady || !homeProjectsReady || saving}
+                  executors={executors}
+                  stores={contextStores}
+                  selectedIds={selectedProjectIds}
+                  onSelect={(project) => {
+                    if (!saving) void applyProject(project);
+                  }}
+                  onEdit={editProject}
+                />
+              ) : (
+                <HomeFavorites
+                  executors={executors}
+                  dialogOpen={favoriteMoreOpen}
+                  onDialogOpenChange={setFavoriteMoreOpen}
+                  onSelect={selectExecutor}
+                  onRemoveFavorite={(ref) =>
+                    updateExecutorPreference(ref, { favoriteScope: "none" })
+                  }
+                  onReorder={(orderedRefs) => void reorderFavorites(orderedRefs)}
+                />
+              )}
+            </div>
+          </section>
+          <OverlayPresence open={projectManagerOpen}>
+            {projectManagerOpen ? (
+              <Dialog
+                className="home-project-manager"
+                backdropClassName="home-favorites-backdrop"
+                title={t("homeProjects")}
+                description={t("homeProjectsDialogDescription")}
+                headerAction={
+                  <button
+                    className="home-project-manager-close"
+                    type="button"
+                    aria-label={tCommon("actions.close")}
+                    data-dialog-initial-focus
+                    onClick={() => setProjectManagerOpen(false)}
+                  >
+                    <X size={19} aria-hidden="true" />
+                  </button>
+                }
+                onCancel={() => setProjectManagerOpen(false)}
+              >
+                <HomeProjects
+                  projects={homeProjects}
+                  executors={executors}
+                  stores={contextStores}
+                  selectedIds={selectedProjectIds}
+                  disabled={projectOrderSaving || saving || projectApplying}
+                  onSelect={(project) => {
+                    setProjectManagerOpen(false);
+                    if (!saving) void applyProject(project);
+                  }}
+                  onEdit={(project) => {
+                    setProjectManagerOpen(false);
+                    editProject(project);
+                  }}
+                  onReorder={reorderProjects}
+                  showEditActions
+                />
+              </Dialog>
+            ) : null}
+          </OverlayPresence>
+          <OverlayPresence open={projectEditor !== undefined}>
+            {projectEditor !== undefined ? (
+              <HomeProjectEditor
+                renderExecutorPicker={(value, onChange, workspace) => (
+                  <MissionExecutorPicker
+                    executors={executors}
+                    value={value}
+                    defaultExecutorRef={defaultExecutorRef}
+                    workspace={workspace}
+                    recentWorkspaces={recentWorkspaces}
+                    onChange={onChange}
+                    onPreferenceChange={updateExecutorPreference}
+                    onChooseFavoriteWorkspace={chooseFavoriteWorkspace}
+                    managerOpen={false}
+                    onManagerOpenChange={setExecutorManagerOpen}
+                  />
+                )}
+                project={projectEditor}
+                executors={executors}
+                stores={contextStores}
+                defaultWorkspace={defaultWorkspace}
+                recentWorkspaces={recentWorkspaces}
+                onClose={() => setProjectEditor(undefined)}
+                onSave={async (input) => {
+                  const saved = await window.pragmaDesktop.saveHomeProject(input);
+                  setHomeProjects((current) =>
+                    input.id === undefined
+                      ? [...current, saved]
+                      : current.map((item) => (item.id === saved.id ? saved : item)),
+                  );
+                }}
+                onDelete={async (id) => {
+                  await window.pragmaDesktop.deleteHomeProject(id);
+                  setHomeProjects((current) => current.filter((item) => item.id !== id));
+                }}
+              />
+            ) : null}
+          </OverlayPresence>
+          {loaded && executors.length === 0 ? (
+            <p className="mission-form-note">{t("createFirst")}</p>
+          ) : null}
+          {modelError && !showExecutorConfigurationTip ? (
+            <p className="mission-form-note">{t("modelOptionsUnavailable")}</p>
+          ) : null}
+          {modelResetRequired && !showExecutorConfigurationTip ? (
+            <p className="mission-form-note mission-model-reset-note" role="status">
+              <span>{t("modelConfigurationResetRequired")}</span>
+              <button className="text-button" type="button" onClick={props.onConfigureModels}>
+                {t("configureModels")}
+              </button>
+            </p>
+          ) : null}
+          {error ? (
+            <p className="form-error" role="alert">
+              {error}
+            </p>
+          ) : null}
+        </section>
+        {appVersion !== undefined ? <p className="home-app-version">v{appVersion}</p> : null}
+        <OverlayPresence open={contextStorePickerOpen}>
+          {contextStorePickerOpen ? (
+            <ContextStorePickerDialog
+              stores={contextStores}
+              selectedStoreIds={contextStoreIds}
+              description={t("missionKnowledgePickerDescription")}
+              footerHint={t("missionKnowledgeCreateHint")}
+              onSelectedStoreIdsChange={(ids) => {
+                projectSelectionRequest.current += 1;
+                setProjectApplying(false);
+                setContextStoreIds(ids);
+              }}
+              onClose={() => setContextStorePickerOpen(false)}
+              onGoToKnowledgeBases={props.onOpenKnowledgeBases}
+            />
+          ) : null}
+        </OverlayPresence>
       </section>
-      {appVersion !== undefined ? <p className="home-app-version">v{appVersion}</p> : null}
-      {contextStorePickerOpen ? (
-        <ContextStorePickerDialog
-          stores={contextStores}
-          selectedStoreIds={contextStoreIds}
-          description={t("missionKnowledgePickerDescription")}
-          footerHint={t("missionKnowledgeCreateHint")}
-          onSelectedStoreIdsChange={(ids) => {
-            projectSelectionRequest.current += 1;
-            setProjectApplying(false);
-            setContextStoreIds(ids);
-          }}
-          onClose={() => setContextStorePickerOpen(false)}
-          onGoToKnowledgeBases={props.onOpenKnowledgeBases}
-        />
-      ) : null}
-    </section>
+    </OverlayMotionScope>
   );
 }
 
@@ -1269,6 +1286,7 @@ function HomeFavorites(props: {
   const { t } = useTranslation("missions");
   const { t: tCommon } = useTranslation("common");
   const { dialogOpen, onDialogOpenChange } = props;
+  const dialogMotion = useOverlayMotion(dialogOpen);
   const [draggedRef, setDraggedRef] = useState<string>();
   const [removingFavoriteRef, setRemovingFavoriteRef] = useState<string>();
   const [dragOrder, setDragOrder] = useState<readonly string[]>();
@@ -1562,8 +1580,9 @@ function HomeFavorites(props: {
           </div>
         )}
       </section>
-      {dialogOpen ? (
+      {dialogMotion.present ? (
         <div
+          {...dialogMotion.attributes("backdrop")}
           className="home-favorites-backdrop"
           role="presentation"
           onMouseDown={(event) => {
@@ -1571,6 +1590,7 @@ function HomeFavorites(props: {
           }}
         >
           <section
+            {...dialogMotion.attributes("dialog")}
             className="home-favorites-dialog"
             role="dialog"
             aria-modal="true"
@@ -1646,6 +1666,8 @@ function MissionExecutorPicker(props: {
         ? t("expertTeam")
         : t("flow");
   const [open, setOpen] = useState(false);
+  const selectionMotion = useOverlayMotion(open);
+  const managerMotion = useOverlayMotion(props.managerOpen);
   const [search, setSearch] = useState("");
   const [selectionKind, setSelectionKind] = useState<"all" | HomeMissionExecutorOption["kind"]>(
     "all",
@@ -1658,6 +1680,15 @@ function MissionExecutorPicker(props: {
   const overlayOwnerId = useId();
   const rootRef = useRef<HTMLDivElement | null>(null);
   const triggerRef = useRef<HTMLButtonElement | null>(null);
+  const searchInputRef = useRef<HTMLInputElement | null>(null);
+
+  useEffect(() => {
+    if (open) {
+      searchInputRef.current?.focus();
+    } else if (rootRef.current?.contains(document.activeElement)) {
+      triggerRef.current?.focus();
+    }
+  }, [open]);
   const managerDialogRef = useRef<HTMLElement | null>(null);
   const selected = props.executors.find((executor) => executor.ref === props.value);
   const pragmaCopy = {
@@ -1789,10 +1820,11 @@ function MissionExecutorPicker(props: {
           <span>{selectedCopy?.name ?? t("chooseResource")}</span>
           <CaretDown size={14} aria-hidden="true" />
         </button>
-        {open ? (
+        {selectionMotion.present ? (
           <>
             <div
               className="mission-executor-selection-backdrop"
+              {...selectionMotion.attributes("backdrop")}
               role="presentation"
               onMouseDown={() => {
                 setOpen(false);
@@ -1803,6 +1835,7 @@ function MissionExecutorPicker(props: {
             />
             <div
               className="mission-executor-menu"
+              {...selectionMotion.attributes("dialog")}
               role="dialog"
               aria-modal="false"
               aria-label={t("chooseMissionExecutor")}
@@ -1828,7 +1861,7 @@ function MissionExecutorPicker(props: {
                 <MagnifyingGlass size={17} aria-hidden="true" />
                 <span className="sr-only">{t("searchExecutors")}</span>
                 <input
-                  autoFocus
+                  ref={searchInputRef}
                   value={search}
                   onChange={(event) => setSearch(event.target.value)}
                   placeholder={t("searchExecutors")}
@@ -1946,8 +1979,9 @@ function MissionExecutorPicker(props: {
           </>
         ) : null}
       </div>
-      {props.managerOpen ? (
+      {managerMotion.present ? (
         <div
+          {...managerMotion.attributes("backdrop")}
           className="mission-executor-manager-backdrop"
           role="presentation"
           onMouseDown={(event) => {
@@ -1955,6 +1989,7 @@ function MissionExecutorPicker(props: {
           }}
         >
           <section
+            {...managerMotion.attributes("dialog")}
             className="mission-executor-manager-dialog"
             ref={managerDialogRef}
             role="dialog"
@@ -2154,9 +2189,10 @@ function ExecutorFavoriteMenu(props: {
 }) {
   const { t } = useTranslation("missions");
   const [open, setOpen] = useState(false);
+  const motion = useOverlayMotion(open);
   const [view, setView] = useState<"scope" | "workspace">("scope");
   const [saving, setSaving] = useState(false);
-  const [position, setPosition] = useState({ top: 0, left: 0 });
+  const [position, setPosition] = useState({ top: 0, left: 0, transformOrigin: "right top" });
   const rootRef = useRef<HTMLDivElement | null>(null);
   const triggerRef = useRef<HTMLButtonElement | null>(null);
   const menuRef = useRef<HTMLDivElement | null>(null);
@@ -2177,7 +2213,7 @@ function ExecutorFavoriteMenu(props: {
     if (trigger === null) return;
     const triggerRect = trigger.getBoundingClientRect();
     const menuWidth = 188;
-    const menuHeight = menuRef.current?.getBoundingClientRect().height ?? 150;
+    const menuHeight = menuRef.current?.offsetHeight ?? 150;
     const left = Math.max(
       12,
       Math.min(triggerRect.right - menuWidth, window.innerWidth - menuWidth - 12),
@@ -2187,7 +2223,11 @@ function ExecutorFavoriteMenu(props: {
       below + menuHeight <= window.innerHeight - 12
         ? below
         : Math.max(12, triggerRect.top - menuHeight - 6);
-    setPosition({ top, left });
+    setPosition({
+      top,
+      left,
+      transformOrigin: top < triggerRect.top ? "right bottom" : "right top",
+    });
   }, []);
 
   useDismissableMenu(open, rootRef, close);
@@ -2253,8 +2293,9 @@ function ExecutorFavoriteMenu(props: {
         <span>{selectedLabel}</span>
         <CaretDown size={12} aria-hidden="true" />
       </button>
-      {open ? (
+      {motion.present ? (
         <div
+          {...motion.attributes("menu")}
           className="mission-executor-favorite-menu"
           ref={menuRef}
           role="menu"

@@ -63,7 +63,7 @@ describe("shared asset file browser and editor", () => {
           preview
         />,
       );
-      expect(html).toContain('<article class="asset-markdown-document">');
+      expect(html).toContain('<article class="markdown-document">');
       expect(html).toContain("<h1>Preview</h1>");
       expect(html).toContain('class="language-yaml"');
       expect(html).toContain('aria-label="Copy"');

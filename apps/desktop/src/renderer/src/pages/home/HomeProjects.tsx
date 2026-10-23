@@ -1,3 +1,4 @@
+import { OverlayPresence } from "../../components/OverlayMotion.tsx";
 import {
   useEffect,
   useId,
@@ -465,46 +466,50 @@ export function HomeProjectEditor(props: {
           ) : null}
         </fieldset>
       </Dialog>
-      {knowledgePickerOpen ? (
-        <ContextStorePickerDialog
-          stores={props.stores}
-          selectedStoreIds={storeIds}
-          description={t("homeProjectKnowledgeHint")}
-          footerHint={t("homeProjectDescription")}
-          onSelectedStoreIdsChange={(ids) => {
-            setStoreIds([...ids]);
-            setError(undefined);
-          }}
-          onClose={() => setKnowledgePickerOpen(false)}
-        />
-      ) : null}
-      {confirmDelete && props.project ? (
-        <ConfirmationDialog
-          title={t("homeProjectDelete")}
-          description={t("homeProjectDeleteDescription", { name: props.project.name })}
-          cancelLabel={common("actions.cancel")}
-          confirmLabel={common("actions.delete")}
-          busyLabel={common("actions.delete")}
-          busy={busy}
-          onCancel={() => setConfirmDelete(false)}
-          onConfirm={() => {
-            if (operationPending.current) return;
-            operationPending.current = true;
-            setBusy(true);
-            void props
-              .onDelete(props.project!.id)
-              .then(props.onClose)
-              .catch((cause: unknown) => {
-                setConfirmDelete(false);
-                setError(errorMessage(cause));
-              })
-              .finally(() => {
-                operationPending.current = false;
-                setBusy(false);
-              });
-          }}
-        />
-      ) : null}
+      <OverlayPresence open={knowledgePickerOpen}>
+        {knowledgePickerOpen ? (
+          <ContextStorePickerDialog
+            stores={props.stores}
+            selectedStoreIds={storeIds}
+            description={t("homeProjectKnowledgeHint")}
+            footerHint={t("homeProjectDescription")}
+            onSelectedStoreIdsChange={(ids) => {
+              setStoreIds([...ids]);
+              setError(undefined);
+            }}
+            onClose={() => setKnowledgePickerOpen(false)}
+          />
+        ) : null}
+      </OverlayPresence>
+      <OverlayPresence open={confirmDelete && props.project !== null}>
+        {confirmDelete && props.project ? (
+          <ConfirmationDialog
+            title={t("homeProjectDelete")}
+            description={t("homeProjectDeleteDescription", { name: props.project.name })}
+            cancelLabel={common("actions.cancel")}
+            confirmLabel={common("actions.delete")}
+            busyLabel={common("actions.delete")}
+            busy={busy}
+            onCancel={() => setConfirmDelete(false)}
+            onConfirm={() => {
+              if (operationPending.current) return;
+              operationPending.current = true;
+              setBusy(true);
+              void props
+                .onDelete(props.project!.id)
+                .then(props.onClose)
+                .catch((cause: unknown) => {
+                  setConfirmDelete(false);
+                  setError(errorMessage(cause));
+                })
+                .finally(() => {
+                  operationPending.current = false;
+                  setBusy(false);
+                });
+            }}
+          />
+        ) : null}
+      </OverlayPresence>
     </>
   );
 }

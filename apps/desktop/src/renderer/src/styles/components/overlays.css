@@ -349,3 +349,65 @@
   padding: 24px;
   pointer-events: none;
 }
+
+/* Keep duration aligned with OVERLAY_MOTION_MS in OverlayMotion.tsx. */
+[data-ui-motion] {
+  opacity: 1;
+  transition:
+    opacity 120ms ease-out,
+    scale 120ms ease-out,
+    translate 120ms ease-out;
+}
+
+[data-ui-motion="menu"] {
+  transform-origin: left bottom;
+  scale: 1;
+}
+
+[data-ui-motion="dialog"] {
+  translate: 0 0;
+  scale: 1;
+}
+
+[data-ui-motion="backdrop"] {
+  backdrop-filter: blur(3px);
+}
+
+[data-ui-motion-state="closed"] {
+  opacity: 0;
+  pointer-events: none;
+}
+
+[data-ui-motion="menu"][data-ui-motion-state="closed"] {
+  scale: 0.96;
+}
+
+[data-ui-motion="dialog"][data-ui-motion-state="closed"] {
+  translate: 0 8px;
+  scale: 0.96;
+}
+
+@starting-style {
+  [data-ui-motion] {
+    opacity: 0;
+  }
+
+  [data-ui-motion="menu"] {
+    scale: 0.96;
+  }
+
+  [data-ui-motion="dialog"] {
+    translate: 0 8px;
+    scale: 0.96;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  [data-ui-motion] {
+    transition: none;
+  }
+
+  [data-ui-motion-state="closed"] {
+    visibility: hidden;
+  }
+}

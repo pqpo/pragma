@@ -225,143 +225,167 @@ export function CapabilityDetailFragment(props: {
   const selectedTool = tools.find((tool) => tool.name === selectedToolName);
   const Icon = capabilityIcon(capability);
 
-  return (
-    <StudioScreenFrame
-      className={
-        definition.kind === "skill" ? "capability-detail" : "capability-detail has-tool-workspace"
-      }
-      labelledBy="capability-detail-name"
-      header={
-        <button className="back-link" type="button" onClick={() => requestLeave(props.onBack)}>
-          <ArrowLeft size={18} aria-hidden="true" />
-          {t("backCapabilities")}
-        </button>
-      }
-    >
-      <div className="capability-detail-overview">
-        <header className="capability-detail-header">
+  const overview = (
+    <div className="capability-detail-overview">
+      <header
+        className={
+          definition.kind === "skill" ? "studio-file-detail-header" : "capability-detail-header"
+        }
+      >
+        {definition.kind === "skill" ? null : (
           <span className="expert-avatar" aria-hidden="true">
             <Icon size={40} />
           </span>
-          <div className="capability-detail-title">
-            <div>
-              <span className="capability-detail-name-row">
-                <h1 id="capability-detail-name" title={capability.manifest.name}>
-                  {capability.manifest.name}
-                </h1>
-                {isBuiltIn ? (
-                  <span className="capability-built-in-chip">{t("builtIn")}</span>
-                ) : null}
-              </span>
-              <span className="capability-type">{capabilityTypeLabel(capability)}</span>
-              <span className="version-label">Revision {capability.manifest.latestRevision}</span>
-            </div>
-            {definition.kind === "skill" ? (
-              <StudioDetailDescription description={definition.description} />
-            ) : (
-              <p>{definition.description}</p>
-            )}
+        )}
+        <div
+          className={
+            definition.kind === "skill" ? "studio-file-detail-title" : "capability-detail-title"
+          }
+        >
+          <div className={definition.kind === "skill" ? "studio-file-detail-name-row" : undefined}>
+            <span className="capability-detail-name-row">
+              <h1 id="capability-detail-name" title={capability.manifest.name}>
+                {capability.manifest.name}
+              </h1>
+              {isBuiltIn ? <span className="capability-built-in-chip">{t("builtIn")}</span> : null}
+            </span>
+            <span className="capability-type">{capabilityTypeLabel(capability)}</span>
+            <span className="version-label">Revision {capability.manifest.latestRevision}</span>
           </div>
-          {isBuiltIn ? null : definition.kind === "skill" ? (
-            <div className="capability-detail-actions">
-              <StudioDetailActions
-                primary={
-                  <>
-                    <StudioActionButton
-                      label={skillSaveAction?.saving ? t("saving") : t("saveSkill")}
-                      tone="primary"
-                      disabled={!skillSaveAction?.dirty || skillSaveAction.saving}
-                      busy={skillSaveAction?.saving}
-                      icon={
-                        skillSaveAction?.saving ? (
-                          <SpinnerGap className="spin" size={18} aria-hidden="true" />
-                        ) : (
-                          <FloppyDisk size={18} aria-hidden="true" />
-                        )
-                      }
-                      onClick={() => void skillSaveAction?.save()}
-                    />
-                    {props.onPublish === undefined ? null : (
-                      <StudioActionButton
-                        label={t("publishToSource")}
-                        icon={<GitBranch size={18} aria-hidden="true" />}
-                        disabled={busy || deleting}
-                        onClick={() => requestLeave(() => void runTransferAction(props.onPublish))}
-                      />
-                    )}
-                  </>
-                }
-              >
-                <StudioActionButton
-                  label={t("submitSkillRevision")}
-                  icon={<PaperPlaneTilt size={18} aria-hidden="true" />}
-                  onClick={() => {
-                    requestLeave(() => {
-                      setRevisionError(null);
-                      setRevisionDialogOpen(true);
-                    });
-                  }}
-                />
-                {props.onExport === undefined ? null : (
+          {definition.kind === "skill" ? (
+            <StudioDetailDescription description={definition.description} />
+          ) : (
+            <p>{definition.description}</p>
+          )}
+        </div>
+        {isBuiltIn ? null : definition.kind === "skill" ? (
+          <div className="studio-file-detail-actions">
+            <StudioDetailActions
+              primary={
+                <>
                   <StudioActionButton
-                    label={t("exportBundle")}
-                    icon={<DownloadSimple size={18} aria-hidden="true" />}
-                    disabled={busy || deleting}
-                    onClick={() => void runTransferAction(props.onExport)}
+                    label={skillSaveAction?.saving ? t("saving") : t("saveSkill")}
+                    tone="primary"
+                    disabled={!skillSaveAction?.dirty || skillSaveAction.saving}
+                    busy={skillSaveAction?.saving}
+                    icon={
+                      skillSaveAction?.saving ? (
+                        <SpinnerGap className="spin" size={18} aria-hidden="true" />
+                      ) : (
+                        <FloppyDisk size={18} aria-hidden="true" />
+                      )
+                    }
+                    onClick={() => void skillSaveAction?.save()}
                   />
-                )}
-
-                <StudioActionButton
-                  label={t("updateSkillFromPackage")}
-                  icon={<Archive size={18} aria-hidden="true" />}
-                  disabled={busy || deleting}
-                  onClick={() => requestLeave(() => void importSkillRevision())}
-                />
-
-                <StudioActionButton
-                  label={t("assetGit.settings")}
-                  icon={<GearSix size={18} aria-hidden="true" />}
-                  disabled={busy || deleting}
-                  onClick={() => requestLeave(() => setGitSettingsOpen(true))}
-                />
-                <StudioActionButton
-                  label={t("delete")}
-                  icon={<Trash size={18} aria-hidden="true" />}
-                  tone="danger"
-                  disabled={busy || deleting}
-                  onClick={() => {
-                    requestLeave(() => {
-                      setDeleteError(null);
-                      setDeleteDialogOpen(true);
-                    });
-                  }}
-                />
-              </StudioDetailActions>
-            </div>
-          ) : definition.kind === "mcp_server" ? (
-            <button
-              className="secondary-button"
-              type="button"
-              disabled={busy}
-              onClick={() => void refreshMcp()}
+                  {props.onPublish === undefined ? null : (
+                    <StudioActionButton
+                      label={t("publishToSource")}
+                      icon={<GitBranch size={18} aria-hidden="true" />}
+                      disabled={busy || deleting}
+                      onClick={() => requestLeave(() => void runTransferAction(props.onPublish))}
+                    />
+                  )}
+                </>
+              }
             >
-              <ArrowsClockwise size={17} /> {busy ? t("refreshing") : t("refreshTools")}
-            </button>
-          ) : null}
-        </header>
+              <StudioActionButton
+                label={t("submitSkillRevision")}
+                icon={<PaperPlaneTilt size={18} aria-hidden="true" />}
+                onClick={() => {
+                  requestLeave(() => {
+                    setRevisionError(null);
+                    setRevisionDialogOpen(true);
+                  });
+                }}
+              />
+              {props.onExport === undefined ? null : (
+                <StudioActionButton
+                  label={t("exportBundle")}
+                  icon={<DownloadSimple size={18} aria-hidden="true" />}
+                  disabled={busy || deleting}
+                  onClick={() => void runTransferAction(props.onExport)}
+                />
+              )}
 
-        {capability.health.diagnostic ? (
-          <p className="capability-diagnostic" role="status">
-            <strong>{capability.health.diagnostic.code}</strong>
-            {capability.health.diagnostic.message}
-          </p>
+              <StudioActionButton
+                label={t("updateSkillFromPackage")}
+                icon={<Archive size={18} aria-hidden="true" />}
+                disabled={busy || deleting}
+                onClick={() => requestLeave(() => void importSkillRevision())}
+              />
+
+              <StudioActionButton
+                label={t("assetGit.settings")}
+                icon={<GearSix size={18} aria-hidden="true" />}
+                disabled={busy || deleting}
+                onClick={() => requestLeave(() => setGitSettingsOpen(true))}
+              />
+              <StudioActionButton
+                label={t("delete")}
+                icon={<Trash size={18} aria-hidden="true" />}
+                tone="danger"
+                disabled={busy || deleting}
+                onClick={() => {
+                  requestLeave(() => {
+                    setDeleteError(null);
+                    setDeleteDialogOpen(true);
+                  });
+                }}
+              />
+            </StudioDetailActions>
+          </div>
+        ) : definition.kind === "mcp_server" ? (
+          <button
+            className="secondary-button"
+            type="button"
+            disabled={busy}
+            onClick={() => void refreshMcp()}
+          >
+            <ArrowsClockwise size={17} /> {busy ? t("refreshing") : t("refreshTools")}
+          </button>
         ) : null}
-        {error ? (
-          <p className="form-error" role="alert">
-            {error}
-          </p>
-        ) : null}
-      </div>
+      </header>
+
+      {capability.health.diagnostic ? (
+        <p className="capability-diagnostic" role="status">
+          <strong>{capability.health.diagnostic.code}</strong>
+          {capability.health.diagnostic.message}
+        </p>
+      ) : null}
+      {error ? (
+        <p className="form-error" role="alert">
+          {error}
+        </p>
+      ) : null}
+    </div>
+  );
+  const backLink = (
+    <button className="back-link" type="button" onClick={() => requestLeave(props.onBack)}>
+      <ArrowLeft size={18} aria-hidden="true" />
+      {t("backCapabilities")}
+    </button>
+  );
+
+  return (
+    <StudioScreenFrame
+      className={
+        definition.kind === "skill"
+          ? "capability-detail studio-file-detail"
+          : "capability-detail has-tool-workspace"
+      }
+      labelledBy="capability-detail-name"
+      header={
+        definition.kind === "skill" ? (
+          <div className="studio-file-detail-header">
+            {backLink}
+            {overview}
+          </div>
+        ) : (
+          backLink
+        )
+      }
+    >
+      {definition.kind === "skill" ? null : overview}
 
       {definition.kind === "skill" ? (
         <SkillFileWorkspace

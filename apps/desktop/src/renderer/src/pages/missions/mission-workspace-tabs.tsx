@@ -1,3 +1,4 @@
+import { OverlayMotionScope } from "../../components/OverlayMotion.tsx";
 import {
   useEffect,
   useId,
@@ -250,31 +251,33 @@ export function MissionWorkspaceTabs(props: {
           ))}
         </div>
       </div>
-      <SelectMenu
-        ariaLabel={t("addWorkspaceTab")}
-        title={t("addWorkspaceTab")}
-        className="mission-workspace-overflow"
-        menuClassName="mission-workspace-overflow-menu"
-        menuMinWidth={420}
-        animateOverflowingOptions
-        options={options}
-        value=""
-        onChange={(path) => {
-          if (path === PICK_WORKSPACE) {
-            void props.onPickWorkspace?.().then((workspace) => {
+      <OverlayMotionScope>
+        <SelectMenu
+          ariaLabel={t("addWorkspaceTab")}
+          title={t("addWorkspaceTab")}
+          className="mission-workspace-overflow"
+          menuClassName="mission-workspace-overflow-menu"
+          menuMinWidth={420}
+          animateOverflowingOptions
+          options={options}
+          value=""
+          onChange={(path) => {
+            if (path === PICK_WORKSPACE) {
+              void props.onPickWorkspace?.().then((workspace) => {
+                if (workspace !== undefined) addWorkspace(workspace);
+              });
+            } else {
+              const workspace = candidates.find((item) => item.path === path);
               if (workspace !== undefined) addWorkspace(workspace);
-            });
-          } else {
-            const workspace = candidates.find((item) => item.path === path);
-            if (workspace !== undefined) addWorkspace(workspace);
-          }
-        }}
-        indicator={<Plus size={18} aria-hidden="true" />}
-        searchable
-        searchPlaceholder={t("searchWorkspaces")}
-        emptyLabel={t("workspaceSearchEmpty")}
-        align="end"
-      />
+            }
+          }}
+          indicator={<Plus size={18} aria-hidden="true" />}
+          searchable
+          searchPlaceholder={t("searchWorkspaces")}
+          emptyLabel={t("workspaceSearchEmpty")}
+          align="end"
+        />
+      </OverlayMotionScope>
     </div>
   );
 }

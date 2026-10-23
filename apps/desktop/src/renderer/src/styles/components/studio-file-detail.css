@@ -1,0 +1,61 @@
+.studio-content:has(> .studio-file-detail) {
+  padding-bottom: 48px;
+}
+
+@media (max-width: 1360px) {
+  .studio-content:has(> .studio-file-detail) {
+    padding-bottom: 32px;
+  }
+}
+
+.studio-file-detail-header {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 20px;
+}
+
+.studio-file-detail-header .back-link {
+  grid-column: 1 / -1;
+  margin-bottom: 6px;
+}
+
+.studio-file-detail-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.studio-file-detail-title {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  min-width: 0;
+  gap: 4px;
+}
+
+.studio-file-detail-title h1 {
+  margin: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 24px;
+  letter-spacing: -0.035em;
+}
+
+.studio-file-detail-title p {
+  margin: 4px 0 0;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.studio-file-detail-name-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 9px;
+}
+
+.studio-file-detail-header > .capability-detail-overview {
+  grid-column: 1 / -1;
+}

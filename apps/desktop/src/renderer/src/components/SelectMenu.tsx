@@ -1,3 +1,4 @@
+import { useOverlayMotion } from "./OverlayMotion.tsx";
 import { CaretDown, Check, MagnifyingGlass } from "@phosphor-icons/react";
 import {
   useEffect,
@@ -54,6 +55,7 @@ export function SelectMenu<Value extends string>(props: {
   const selectedIndex = props.options.findIndex((option) => option.value === props.value);
   const selected = props.options[selectedIndex] ?? props.options.find((option) => !option.disabled);
   const [open, setOpen] = useState(false);
+  const motion = useOverlayMotion(open);
   const [query, setQuery] = useState("");
   const [activeIndex, setActiveIndex] = useState(0);
   const [hoveredIndex, setHoveredIndex] = useState(-1);
@@ -220,6 +222,7 @@ export function SelectMenu<Value extends string>(props: {
 
   const menu = (
     <div
+      {...motion.attributes("menu")}
       className={["ui-select-menu", props.menuClassName, `is-${menuPlacement}`]
         .filter(Boolean)
         .join(" ")}
@@ -228,8 +231,11 @@ export function SelectMenu<Value extends string>(props: {
       aria-label={props.ariaLabel}
       data-ui-overlay-owner={props.overlayOwnerId}
       ref={menuRef}
-      style={menuStyle}
-      hidden={!open}
+      style={{
+        ...menuStyle,
+        transformOrigin: `${props.align === "end" ? "right" : "left"} ${menuPlacement === "top" ? "bottom" : "top"}`,
+      }}
+      hidden={!motion.present}
     >
       {props.searchable ? (
         <label className="ui-select-search">
@@ -322,7 +328,7 @@ export function SelectMenu<Value extends string>(props: {
         <span className="ui-select-value">{selected?.label ?? props.ariaLabel}</span>
         {props.indicator ?? <CaretDown className="ui-select-caret" size={13} aria-hidden="true" />}
       </button>
-      {!open || typeof document === "undefined" || props.portal === false
+      {!motion.present || typeof document === "undefined" || props.portal === false
         ? menu
         : createPortal(menu, document.body)}
     </div>

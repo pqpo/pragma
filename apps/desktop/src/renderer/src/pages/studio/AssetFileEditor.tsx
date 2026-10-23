@@ -50,7 +50,7 @@ export function AssetFileEditor(props: {
       ) : props.preview || props.readOnly ? (
         <div className="knowledge-markdown-preview">
           {isMarkdown ? (
-            <article className="asset-markdown-document">
+            <article className="markdown-document">
               <MarkdownContent source={props.previewSource ?? props.value} codeBlockControls />
             </article>
           ) : (

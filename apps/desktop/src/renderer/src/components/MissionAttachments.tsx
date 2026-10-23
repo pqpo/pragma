@@ -1,3 +1,4 @@
+import { OverlayPresence, useOverlayMotion } from "./OverlayMotion.tsx";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { File as FileIcon, FolderOpen, ImageSquare, Plus, X } from "@phosphor-icons/react";
 import type { ExpertPromptAttachment, ExpertPromptAttachmentKind } from "@pragma/shared";
@@ -13,6 +14,7 @@ export function MissionAttachmentPicker(props: {
 }) {
   const { t } = useTranslation("missions");
   const [open, setOpen] = useState(false);
+  const motion = useOverlayMotion(open);
   const rootRef = useRef<HTMLDivElement | null>(null);
   const close = useCallback(() => setOpen(false), []);
 
@@ -61,8 +63,13 @@ export function MissionAttachmentPicker(props: {
       >
         <Plus size={props.compact ? 18 : 20} aria-hidden="true" />
       </button>
-      {open ? (
-        <div className="mission-attachment-menu" role="menu" aria-label={t("addAttachment")}>
+      {motion.present ? (
+        <div
+          {...motion.attributes("menu")}
+          className="mission-attachment-menu"
+          role="menu"
+          aria-label={t("addAttachment")}
+        >
           <button type="button" role="menuitem" onClick={() => choose("image")}>
             <ImageSquare size={18} aria-hidden="true" />
             <span>{t("attachImage")}</span>
@@ -149,13 +156,17 @@ export function MissionAttachmentList(props: {
           );
         })}
       </div>
-      {previewing === undefined ? null : (
-        <MissionImagePreviewDialog
-          name={previewing.name}
-          src={props.originalUrl?.(previewing) ?? missionAttachmentDraftOriginalUrl(previewing.id)}
-          onClose={closePreview}
-        />
-      )}
+      <OverlayPresence open={previewing !== undefined}>
+        {previewing === undefined ? null : (
+          <MissionImagePreviewDialog
+            name={previewing.name}
+            src={
+              props.originalUrl?.(previewing) ?? missionAttachmentDraftOriginalUrl(previewing.id)
+            }
+            onClose={closePreview}
+          />
+        )}
+      </OverlayPresence>
     </>
   );
 }

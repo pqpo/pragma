@@ -822,17 +822,16 @@ export function ContextStoreDetailFragment(props: {
 
   return (
     <StudioScreenFrame
-      className="knowledge-base-editor"
+      className="knowledge-base-editor studio-file-detail"
       labelledBy="context-store-name"
       header={
-        <div className="knowledge-base-editor-header">
+        <div className="studio-file-detail-header">
           <button className="back-link" type="button" onClick={() => requestLeave(props.onBack)}>
             <ArrowLeft size={18} aria-hidden="true" />
             {t("backKnowledgeBases")}
           </button>
           <div className="knowledge-base-title">
-            <Folder size={24} aria-hidden="true" />
-            <div className="knowledge-base-title-copy">
+            <div className="studio-file-detail-title">
               <h1 id="context-store-name" title={props.store.name}>
                 {props.store.name}
               </h1>
@@ -841,7 +840,7 @@ export function ContextStoreDetailFragment(props: {
               />
             </div>
           </div>
-          <div className="knowledge-base-editor-actions">
+          <div className="studio-file-detail-actions">
             <StudioDetailActions
               primary={
                 <>

@@ -1,3 +1,4 @@
+import { useOverlayMotion } from "./OverlayMotion.tsx";
 import { CaretDown, Check, ClockCounterClockwise, Folder, FolderOpen } from "@phosphor-icons/react";
 import { useEffect, useRef, useState, type RefObject } from "react";
 import { useTranslation } from "react-i18next";
@@ -20,6 +21,7 @@ export function WorkspacePicker(props: {
 }) {
   const { t } = useTranslation("missions");
   const [open, setOpen] = useState(false);
+  const motion = useOverlayMotion(open);
   const rootRef = useRef<HTMLDivElement | null>(null);
   const workspace = props.unselected ? undefined : (props.selection ?? props.defaultWorkspace);
   const defaultSelected =
@@ -62,8 +64,13 @@ export function WorkspacePicker(props: {
         </span>
         <CaretDown size={16} aria-hidden="true" />
       </button>
-      {open ? (
-        <div className="mission-workspace-menu" role="menu" aria-label={t("chooseWorkspace")}>
+      {motion.present ? (
+        <div
+          {...motion.attributes("menu")}
+          className="mission-workspace-menu"
+          role="menu"
+          aria-label={t("chooseWorkspace")}
+        >
           <button
             type="button"
             role="menuitemradio"

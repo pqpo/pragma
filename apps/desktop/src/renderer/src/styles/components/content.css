@@ -109,7 +109,7 @@
   grid-template-columns: minmax(0, min(var(--context-file-list-width, 240px), 50%)) minmax(0, 1fr);
   overflow: hidden;
   border: 1px solid var(--border);
-  border-radius: 0;
+  border-radius: var(--ui-radius-lg);
   background: var(--surface);
 }
 
@@ -308,15 +308,11 @@
   font-size: 9px;
 }
 
-.context-browser-markdown.markdown-preview {
+.context-browser-markdown {
   min-height: 0;
   padding: 24px;
   overflow-y: auto;
   overscroll-behavior: contain;
-}
-
-.context-browser-markdown > :first-child {
-  margin-top: 0;
 }
 
 .context-browser-plain-text {

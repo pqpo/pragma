@@ -1,3 +1,4 @@
+import { useDialogMotion } from "./OverlayMotion.tsx";
 import { useEffect, useId, useRef, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 
@@ -14,29 +15,33 @@ export function Dialog(props: {
   readonly busy?: boolean | undefined;
   readonly onCancel: () => void;
 }) {
+  const motion = useDialogMotion();
   const titleId = useId();
   const descriptionId = useId();
   const surfaceRef = useRef<HTMLElement>(null);
   const restoreFocusRef = useRef<HTMLElement | null>(null);
 
   useEffect(() => {
+    if (!motion.open) return;
     restoreFocusRef.current = document.activeElement as HTMLElement | null;
     const previousOverflow = document.body.style.overflow;
     document.body.style.overflow = "hidden";
-    requestAnimationFrame(() => {
+    const focusFrame = requestAnimationFrame(() => {
       const preferred =
         surfaceRef.current?.querySelector<HTMLElement>("[data-dialog-initial-focus]") ??
         surfaceRef.current?.querySelector<HTMLElement>("input, textarea, [role=combobox], button");
       preferred?.focus();
     });
     return () => {
+      cancelAnimationFrame(focusFrame);
       document.body.style.overflow = previousOverflow;
       restoreFocusRef.current?.focus();
     };
-  }, []);
+  }, [motion.open]);
 
   const content = (
     <div
+      {...motion.attributes("backdrop")}
       className={["ui-dialog-backdrop", props.backdropClassName].filter(Boolean).join(" ")}
       role="presentation"
       onPointerDown={(event) => {
@@ -44,6 +49,7 @@ export function Dialog(props: {
       }}
     >
       <section
+        {...motion.attributes("dialog")}
         className={["ui-dialog", props.className].filter(Boolean).join(" ")}
         ref={surfaceRef}
         role={props.role ?? "dialog"}

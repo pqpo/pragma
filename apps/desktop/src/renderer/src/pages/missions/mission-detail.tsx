@@ -1,3 +1,4 @@
+import { OverlayMotionScope, OverlayPresence } from "../../components/OverlayMotion.tsx";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import {
   ArrowCounterClockwise,
@@ -2153,41 +2154,48 @@ export function MissionDetailFragment(props: {
           onClose={() => selectWorkRecord(null)}
         />
       )}
-      {contextStorePickerOpen ? (
-        <ContextStorePickerDialog
-          stores={contextStores}
-          selectedStoreIds={contextStoreIds}
-          description={t("missionKnowledgePickerDescription", { ns: "missions" })}
-          footerHint={t("missionKnowledgeNextExecutionHint", { ns: "missions" })}
-          onSelectedStoreIdsChange={setContextStoreIds}
-          onGoToKnowledgeBases={props.onOpenKnowledgeBases}
-          onClose={() => {
-            const nextMounts: readonly MissionContextMount[] = [
-              ...contextStoreIds.map((storeId) => ({
-                kind: "context-store" as const,
-                storeId,
-              })),
-              ...props.mission.contextMounts.filter(
-                (mount): mount is Extract<MissionContextMount, { kind: "context-store-draft" }> =>
-                  mount.kind === "context-store-draft",
-              ),
-            ];
-            setContextStorePickerOpen(false);
-            if (JSON.stringify(nextMounts) === JSON.stringify(props.mission.contextMounts)) return;
-            setContextStoresSaving(true);
-            void Promise.resolve(props.onContextStoresChange?.(nextMounts))
-              .catch((saveError: unknown) => {
-                setContextStoreIds(
-                  props.mission.contextMounts.flatMap((mount) =>
-                    mount.kind === "context-store" ? [mount.storeId] : [],
+      <OverlayMotionScope>
+        <OverlayPresence open={contextStorePickerOpen}>
+          {contextStorePickerOpen ? (
+            <ContextStorePickerDialog
+              stores={contextStores}
+              selectedStoreIds={contextStoreIds}
+              description={t("missionKnowledgePickerDescription", { ns: "missions" })}
+              footerHint={t("missionKnowledgeNextExecutionHint", { ns: "missions" })}
+              onSelectedStoreIdsChange={setContextStoreIds}
+              onGoToKnowledgeBases={props.onOpenKnowledgeBases}
+              onClose={() => {
+                const nextMounts: readonly MissionContextMount[] = [
+                  ...contextStoreIds.map((storeId) => ({
+                    kind: "context-store" as const,
+                    storeId,
+                  })),
+                  ...props.mission.contextMounts.filter(
+                    (
+                      mount,
+                    ): mount is Extract<MissionContextMount, { kind: "context-store-draft" }> =>
+                      mount.kind === "context-store-draft",
                   ),
-                );
-                setOptionsError(missionError(saveError));
-              })
-              .finally(() => setContextStoresSaving(false));
-          }}
-        />
-      ) : null}
+                ];
+                setContextStorePickerOpen(false);
+                if (JSON.stringify(nextMounts) === JSON.stringify(props.mission.contextMounts))
+                  return;
+                setContextStoresSaving(true);
+                void Promise.resolve(props.onContextStoresChange?.(nextMounts))
+                  .catch((saveError: unknown) => {
+                    setContextStoreIds(
+                      props.mission.contextMounts.flatMap((mount) =>
+                        mount.kind === "context-store" ? [mount.storeId] : [],
+                      ),
+                    );
+                    setOptionsError(missionError(saveError));
+                  })
+                  .finally(() => setContextStoresSaving(false));
+              }}
+            />
+          ) : null}
+        </OverlayPresence>
+      </OverlayMotionScope>
       {branchCandidate === undefined ? null : (
         <ConfirmationDialog
           title={t("createBranchTitle", { ns: "missions" })}

@@ -1,3 +1,4 @@
+import { useOverlayMotion } from "./OverlayMotion.tsx";
 import { CaretDown, CaretRight, Check } from "@phosphor-icons/react";
 import { useEffect, useId, useLayoutEffect, useRef, useState, type CSSProperties } from "react";
 import { createPortal } from "react-dom";
@@ -52,6 +53,7 @@ export function MissionModelOverrideControls(props: {
   const optionsRef = useRef<HTMLDivElement>(null);
   const panelHoverTimerRef = useRef<number | null>(null);
   const [open, setOpen] = useState(false);
+  const motion = useOverlayMotion(open);
   const [activePanel, setActivePanel] = useState<OverridePanel | null>(null);
   const [menuStyle, setMenuStyle] = useState<CSSProperties>({});
   const [menuPlacement, setMenuPlacement] = useState<MenuPlacement>("right");
@@ -136,8 +138,8 @@ export function MissionModelOverrideControls(props: {
       const hasOptions = activePanel !== null;
       const menuWidth = Math.min(hasOptions ? 490 : 242, window.innerWidth - viewportPadding * 2);
       const menuGap = 8;
-      const sectionsWidth = sectionsRef.current?.getBoundingClientRect().width ?? 220;
-      const optionsWidth = optionsRef.current?.getBoundingClientRect().width ?? 260;
+      const sectionsWidth = sectionsRef.current?.offsetWidth ?? 220;
+      const optionsWidth = optionsRef.current?.offsetWidth ?? 260;
       const resolvedPlacement = hasOptions
         ? resolveMissionModelMenuPlacement({
             triggerLeft: trigger.left,
@@ -208,13 +210,17 @@ export function MissionModelOverrideControls(props: {
 
   const menu = (
     <div
+      {...motion.attributes("menu")}
       className="mission-model-menu"
       data-has-options={activePanel === null ? "false" : "true"}
       data-placement={menuPlacement}
       id={menuId}
       role="dialog"
       aria-label={t("modelOverride")}
-      style={menuStyle}
+      style={{
+        ...menuStyle,
+        transformOrigin: menuPlacement === "left" ? "right bottom" : "left bottom",
+      }}
       onKeyDown={(event) => {
         if (event.key !== "Escape") return;
         event.preventDefault();
@@ -333,7 +339,7 @@ export function MissionModelOverrideControls(props: {
         <span className="mission-model-control-value">{`${modelLabel} · ${thinkingLabel}`}</span>
         <CaretDown size={13} aria-hidden="true" />
       </button>
-      {open && typeof document !== "undefined" ? createPortal(menu, document.body) : null}
+      {motion.present && typeof document !== "undefined" ? createPortal(menu, document.body) : null}
     </div>
   );
 }

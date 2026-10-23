@@ -1081,7 +1081,7 @@ export function MissionsPage(props: {
         }}
       />
       <MissionRail
-        key={`${activeSource}:${workspacePath ?? ""}`}
+        key={workspacePath ?? ""}
         missions={visibleMissions}
         source={activeSource}
         search={search}

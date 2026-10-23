@@ -227,7 +227,7 @@ describe("knowledge base UI", () => {
     expect(html).not.toContain("<strong>Files</strong>");
     expect(html).toContain("Loading settings");
     expect(html).toContain("Select a Markdown file");
-    expect(html).toContain('class="knowledge-base-editor-actions"');
+    expect(html).toContain('class="studio-file-detail-actions"');
     expect(html).not.toContain("Revision history");
     expect(html).toContain("Submit revision");
     expect(html.match(/class="studio-action-button"/g)).toHaveLength(7);

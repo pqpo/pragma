@@ -9,6 +9,7 @@ import {
   type CSSProperties,
   type FocusEvent as ReactFocusEvent,
   type KeyboardEvent as ReactKeyboardEvent,
+  type PointerEvent as ReactPointerEvent,
   type RefObject,
 } from "react";
 import {
@@ -194,6 +195,17 @@ export function MissionRail(props: {
     setVisibleLimits(MISSION_RAIL_INITIAL_VISIBLE_LIMITS);
   }, [props.search]);
 
+  useLayoutEffect(() => {
+    setSearchCollapsed(false);
+    setVisibleLimits(MISSION_RAIL_INITIAL_VISIBLE_LIMITS);
+    scrollAnchorRef.current = 0;
+    searchTransitionLockedRef.current = false;
+    if (searchTransitionTimeoutRef.current !== undefined) {
+      clearTimeout(searchTransitionTimeoutRef.current);
+      searchTransitionTimeoutRef.current = undefined;
+    }
+  }, [props.source]);
+
   useEffect(
     () => () => {
       if (searchTransitionTimeoutRef.current !== undefined) {
@@ -247,6 +259,14 @@ export function MissionRail(props: {
     [lockSearchTransition, searchCollapsed],
   );
 
+  const updateCreateGlow = (event: ReactPointerEvent<HTMLButtonElement>) => {
+    if (event.pointerType === "touch") return;
+    const button = event.currentTarget;
+    const bounds = button.getBoundingClientRect();
+    button.style.setProperty("--mission-create-glow-x", `${event.clientX - bounds.left}px`);
+    button.style.setProperty("--mission-create-glow-y", `${event.clientY - bounds.top}px`);
+  };
+
   return (
     <aside className="mission-rail">
       <div
@@ -254,7 +274,13 @@ export function MissionRail(props: {
           searchCollapsed ? "mission-rail-header is-search-collapsed" : "mission-rail-header"
         }
       >
-        <button className="mission-new-button" type="button" onClick={props.onCreate}>
+        <button
+          className="mission-new-button"
+          type="button"
+          onClick={props.onCreate}
+          onPointerEnter={updateCreateGlow}
+          onPointerMove={updateCreateGlow}
+        >
           <Plus size={18} aria-hidden="true" />
           {t("newMission")}
         </button>
@@ -301,7 +327,7 @@ export function MissionRail(props: {
           </label>
         </div>
       </div>
-      <div className="mission-rail-list" onScroll={handleScroll}>
+      <div key={props.source} className="mission-rail-list" onScroll={handleScroll}>
         {missionGroups.waitingInput.visibleMissions.length > 0 ||
         missionGroups.waitingInput.hiddenCount > 0 ? (
           <MissionRailGroup

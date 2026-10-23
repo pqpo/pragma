@@ -303,7 +303,6 @@ export function AssetFileWorkspace(props: {
               </button>
             </div>
           </div>
-          {props.loading ? <p className="knowledge-tree-state">{t("loadingContents")}</p> : null}
           {!props.loading && props.entries.length === 0 ? (
             <div className="knowledge-tree-empty">
               <File size={23} />

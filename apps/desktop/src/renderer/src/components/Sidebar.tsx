@@ -90,12 +90,14 @@ export function Sidebar(props: {
               onClick={() => props.onNavigate(item.id)}
             >
               <NavigationIcon size={22} aria-hidden="true" />
-              <span
-                className={props.collapsed ? "navigation-tooltip" : "navigation-label"}
-                role={props.collapsed ? "tooltip" : undefined}
-              >
+              <span className="navigation-label" aria-hidden={props.collapsed}>
                 {label}
               </span>
+              {props.collapsed ? (
+                <span className="navigation-tooltip" role="tooltip">
+                  {label}
+                </span>
+              ) : null}
               {props.attention?.[item.id] ? <AttentionDot /> : null}
             </button>
           );
@@ -140,66 +142,68 @@ export function Sidebar(props: {
             <DotsThree size={22} aria-hidden="true" />
             <span className="navigation-label">{t("navigation.more")}</span>
           </button>
-          {moreOpen && (
-            <div className="navigation-more-popover">
-              <div
-                id={moreId}
-                className="navigation-more-panel"
-                role="dialog"
-                aria-label={t("navigation.more")}
-              >
-                {moreNavigationItems.map((item) => {
-                  const NavigationIcon = item.icon;
-                  const pinned = pinnedItems.includes(item.id);
-                  const label = t(item.labelKey);
-                  const pinLabel = t(pinned ? "navigation.unpin" : "navigation.pin", {
-                    name: label,
-                  });
-                  return (
-                    <div key={item.id} className="navigation-more-row">
-                      <button
-                        type="button"
-                        className={
-                          props.activeView === item.id
-                            ? "navigation-more-link is-active"
-                            : "navigation-more-link"
-                        }
-                        aria-current={props.activeView === item.id ? "page" : undefined}
-                        onClick={() => {
-                          props.onNavigate(item.id);
-                          setMoreOpen(false);
-                          moreButton.current?.focus();
-                        }}
-                      >
-                        <NavigationIcon size={20} aria-hidden="true" />
-                        <span>{label}</span>
-                      </button>
-                      <button
-                        type="button"
-                        className="navigation-pin"
-                        aria-label={pinLabel}
-                        title={pinLabel}
-                        aria-pressed={pinned}
-                        onClick={() => {
-                          const next = pinned
-                            ? pinnedItems.filter((id) => id !== item.id)
-                            : [...pinnedItems, item.id];
-                          setPinnedItems(next);
-                          writePinnedNavigation(next);
-                        }}
-                      >
-                        {pinned ? (
-                          <PushPinSlash size={16} aria-hidden="true" />
-                        ) : (
-                          <PushPin size={16} aria-hidden="true" />
-                        )}
-                      </button>
-                    </div>
-                  );
-                })}
-              </div>
+          <div
+            className={moreOpen ? "navigation-more-popover is-open" : "navigation-more-popover"}
+            aria-hidden={!moreOpen}
+            inert={!moreOpen}
+          >
+            <div
+              id={moreId}
+              className="navigation-more-panel"
+              role="dialog"
+              aria-label={t("navigation.more")}
+            >
+              {moreNavigationItems.map((item) => {
+                const NavigationIcon = item.icon;
+                const pinned = pinnedItems.includes(item.id);
+                const label = t(item.labelKey);
+                const pinLabel = t(pinned ? "navigation.unpin" : "navigation.pin", {
+                  name: label,
+                });
+                return (
+                  <div key={item.id} className="navigation-more-row">
+                    <button
+                      type="button"
+                      className={
+                        props.activeView === item.id
+                          ? "navigation-more-link is-active"
+                          : "navigation-more-link"
+                      }
+                      aria-current={props.activeView === item.id ? "page" : undefined}
+                      onClick={() => {
+                        props.onNavigate(item.id);
+                        setMoreOpen(false);
+                        moreButton.current?.focus();
+                      }}
+                    >
+                      <NavigationIcon size={20} aria-hidden="true" />
+                      <span>{label}</span>
+                    </button>
+                    <button
+                      type="button"
+                      className="navigation-pin"
+                      aria-label={pinLabel}
+                      title={pinLabel}
+                      aria-pressed={pinned}
+                      onClick={() => {
+                        const next = pinned
+                          ? pinnedItems.filter((id) => id !== item.id)
+                          : [...pinnedItems, item.id];
+                        setPinnedItems(next);
+                        writePinnedNavigation(next);
+                      }}
+                    >
+                      {pinned ? (
+                        <PushPinSlash size={16} aria-hidden="true" />
+                      ) : (
+                        <PushPin size={16} aria-hidden="true" />
+                      )}
+                    </button>
+                  </div>
+                );
+              })}
             </div>
-          )}
+          </div>
         </div>
       </nav>
 

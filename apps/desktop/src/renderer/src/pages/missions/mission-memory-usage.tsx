@@ -1,3 +1,4 @@
+import { useOverlayMotion } from "../../components/OverlayMotion.tsx";
 import { useEffect, useId, useRef, useState } from "react";
 import { SpinnerGap, WarningCircle, X } from "@phosphor-icons/react";
 import { useTranslation } from "react-i18next";
@@ -106,6 +107,7 @@ export function ContextWindowControl(props: {
 }) {
   const { t } = useTranslation("missions");
   const [open, setOpen] = useState(false);
+  const motion = useOverlayMotion(open);
   const closeTimerRef = useRef<ReturnType<typeof setTimeout>>(undefined);
   const popoverId = useId();
   const popoverLabelId = useId();
@@ -208,8 +210,10 @@ export function ContextWindowControl(props: {
           </span>
         ) : null}
       </button>
-      {open ? (
+      {motion.present ? (
         <div
+          {...motion.attributes("menu")}
+          style={{ transformOrigin: "right bottom" }}
           className="mission-context-popover"
           id={popoverId}
           role="dialog"

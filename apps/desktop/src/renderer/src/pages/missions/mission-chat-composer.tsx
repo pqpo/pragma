@@ -1,3 +1,4 @@
+import { OverlayMotionScope } from "../../components/OverlayMotion.tsx";
 import {
   forwardRef,
   useCallback,
@@ -335,116 +336,118 @@ export const MissionChatComposer = forwardRef<
   });
 
   return (
-    <div className="mission-chat-composer" aria-busy={props.clientOperationBusy}>
-      <MissionAttachmentList
-        attachments={attachments}
-        previews={attachmentPreviews}
-        onRemove={removeAttachment}
-      />
-      {props.mission.executor.kind === "team" ? (
-        <TeamMentionComposer
-          inputRef={assignInput}
-          value={draft}
-          candidates={props.mentionCandidates}
-          onChange={setDraft}
-          onSubmit={props.onSubmit}
-          disabled={disabled}
-          placeholder={placeholder}
-          ariaLabel={ariaLabel}
-          menuLabel={t("mentionMembers", { ns: "missions" })}
-          emptyLabel={t("mentionNoMatches", { ns: "missions" })}
-          unavailableLabel={t("mentionUnavailable", { ns: "missions" })}
-          onPaste={(event) => {
-            const file = clipboardImageFile(event.clipboardData);
-            if (file === undefined || disabled) return;
-            event.preventDefault();
-            void pasteImage(file);
-          }}
-          variant="mission"
+    <OverlayMotionScope>
+      <div className="mission-chat-composer" aria-busy={props.clientOperationBusy}>
+        <MissionAttachmentList
+          attachments={attachments}
+          previews={attachmentPreviews}
+          onRemove={removeAttachment}
         />
-      ) : (
-        <textarea
-          ref={assignInput}
-          rows={1}
-          value={draft}
-          disabled={props.isFlow || disabled}
-          placeholder={placeholder}
-          aria-label={ariaLabel}
-          aria-describedby={
-            props.compactingContext ? "mission-context-compaction-status" : undefined
-          }
-          onChange={(event) => setDraft(event.target.value)}
-          onPaste={(event) => {
-            const file = clipboardImageFile(event.clipboardData);
-            if (file === undefined || props.isFlow || disabled) return;
-            event.preventDefault();
-            void pasteImage(file);
-          }}
-          onKeyDown={(event) => {
-            if (shouldSubmitComposerOnEnter(event.nativeEvent)) {
+        {props.mission.executor.kind === "team" ? (
+          <TeamMentionComposer
+            inputRef={assignInput}
+            value={draft}
+            candidates={props.mentionCandidates}
+            onChange={setDraft}
+            onSubmit={props.onSubmit}
+            disabled={disabled}
+            placeholder={placeholder}
+            ariaLabel={ariaLabel}
+            menuLabel={t("mentionMembers", { ns: "missions" })}
+            emptyLabel={t("mentionNoMatches", { ns: "missions" })}
+            unavailableLabel={t("mentionUnavailable", { ns: "missions" })}
+            onPaste={(event) => {
+              const file = clipboardImageFile(event.clipboardData);
+              if (file === undefined || disabled) return;
               event.preventDefault();
-              props.onSubmit();
-            }
-          }}
-        />
-      )}
-      <div className="mission-chat-composer-toolbar">
-        <div className="mission-chat-options" aria-label={t("missionOptions")}>
-          <MissionAttachmentPicker
-            compact
-            disabled={props.isFlow || disabled}
-            onPick={pickAttachments}
+              void pasteImage(file);
+            }}
+            variant="mission"
           />
-          {props.toolbarOptions}
-        </div>
-        <div className="mission-chat-actions">
-          {props.contextWindowControl}
-          {composerAction === "interrupt" ? (
-            <button
-              className="is-interrupt"
-              type="button"
-              aria-label={t("interrupt", { ns: "missions" })}
-              title={t("interrupt", { ns: "missions" })}
-              disabled={props.interrupting}
-              onClick={props.onInterrupt}
-            >
-              <Stop size={17} weight="fill" aria-hidden="true" />
-            </button>
-          ) : composerAction === "recover" ? (
-            <button
-              className="is-recovery"
-              type="button"
-              aria-label={t("resume", { ns: "missions" })}
-              title={t("resume", { ns: "missions" })}
-              disabled={props.clientOperationBusy}
-              onClick={props.onRecover}
-            >
-              <ArrowCounterClockwise size={19} aria-hidden="true" />
-            </button>
-          ) : composerAction === "loading" ? (
-            <button
-              className="is-loading"
-              type="button"
-              aria-label={t("loading", { ns: "common" })}
-              title={t("loading", { ns: "common" })}
-              aria-busy="true"
-              disabled
-            >
-              <SpinnerGap size={19} aria-hidden="true" />
-            </button>
-          ) : (
-            <button
-              type="button"
-              aria-label={t("send", { ns: "missions" })}
-              disabled={props.isFlow || draft.trim() === "" || disabled}
-              onClick={props.onSubmit}
-            >
-              <ArrowUp size={19} weight="bold" aria-hidden="true" />
-            </button>
-          )}
+        ) : (
+          <textarea
+            ref={assignInput}
+            rows={1}
+            value={draft}
+            disabled={props.isFlow || disabled}
+            placeholder={placeholder}
+            aria-label={ariaLabel}
+            aria-describedby={
+              props.compactingContext ? "mission-context-compaction-status" : undefined
+            }
+            onChange={(event) => setDraft(event.target.value)}
+            onPaste={(event) => {
+              const file = clipboardImageFile(event.clipboardData);
+              if (file === undefined || props.isFlow || disabled) return;
+              event.preventDefault();
+              void pasteImage(file);
+            }}
+            onKeyDown={(event) => {
+              if (shouldSubmitComposerOnEnter(event.nativeEvent)) {
+                event.preventDefault();
+                props.onSubmit();
+              }
+            }}
+          />
+        )}
+        <div className="mission-chat-composer-toolbar">
+          <div className="mission-chat-options" aria-label={t("missionOptions")}>
+            <MissionAttachmentPicker
+              compact
+              disabled={props.isFlow || disabled}
+              onPick={pickAttachments}
+            />
+            {props.toolbarOptions}
+          </div>
+          <div className="mission-chat-actions">
+            {props.contextWindowControl}
+            {composerAction === "interrupt" ? (
+              <button
+                className="is-interrupt"
+                type="button"
+                aria-label={t("interrupt", { ns: "missions" })}
+                title={t("interrupt", { ns: "missions" })}
+                disabled={props.interrupting}
+                onClick={props.onInterrupt}
+              >
+                <Stop size={17} weight="fill" aria-hidden="true" />
+              </button>
+            ) : composerAction === "recover" ? (
+              <button
+                className="is-recovery"
+                type="button"
+                aria-label={t("resume", { ns: "missions" })}
+                title={t("resume", { ns: "missions" })}
+                disabled={props.clientOperationBusy}
+                onClick={props.onRecover}
+              >
+                <ArrowCounterClockwise size={19} aria-hidden="true" />
+              </button>
+            ) : composerAction === "loading" ? (
+              <button
+                className="is-loading"
+                type="button"
+                aria-label={t("loading", { ns: "common" })}
+                title={t("loading", { ns: "common" })}
+                aria-busy="true"
+                disabled
+              >
+                <SpinnerGap size={19} aria-hidden="true" />
+              </button>
+            ) : (
+              <button
+                type="button"
+                aria-label={t("send", { ns: "missions" })}
+                disabled={props.isFlow || draft.trim() === "" || disabled}
+                onClick={props.onSubmit}
+              >
+                <ArrowUp size={19} weight="bold" aria-hidden="true" />
+              </button>
+            )}
+          </div>
         </div>
       </div>
-    </div>
+    </OverlayMotionScope>
   );
 });
 

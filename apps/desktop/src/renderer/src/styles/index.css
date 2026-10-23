@@ -8,8 +8,10 @@
 @import "./components/forms.css";
 @import "./components/overlays.css";
 @import "./components/content.css";
+@import "./components/markdown-document.css";
 @import "./components/mission-controls.css";
 @import "./components/shared.css";
+@import "./components/studio-file-detail.css";
 
 @import "./features/settings/base.css";
 @import "./features/settings/model-providers.css";
@@ -24,7 +26,6 @@
 @import "./features/studio/automations.css";
 @import "./features/studio/capabilities.css";
 @import "./features/studio/context-stores.css";
-@import "./features/studio/asset-markdown.css";
 @import "./features/studio/bundles.css";
 @import "./features/studio/square.css";
 @import "./features/studio/resources.css";

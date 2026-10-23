@@ -618,7 +618,7 @@
 
 .capability-detail:not(.has-tool-workspace) .studio-screen-body {
   display: grid;
-  grid-template-rows: auto minmax(0, 1fr);
+  grid-template-rows: minmax(0, 1fr);
   overflow: hidden;
 }
 
@@ -632,15 +632,6 @@
   gap: 18px;
   margin-top: 12px;
   padding-bottom: 16px;
-}
-
-.capability-detail-actions {
-  display: flex;
-  flex: 0 0 auto;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: 8px;
-  margin-left: auto;
 }
 
 .capability-detail-title {
@@ -713,7 +704,7 @@
 
 .knowledge-base-workspace.skill-file-workspace {
   grid-template-columns: var(--sidebar-width, 240px) minmax(0, 1fr);
-  margin-top: 16px;
+  margin-top: 0;
   border: 1px solid var(--ui-line);
 }
 

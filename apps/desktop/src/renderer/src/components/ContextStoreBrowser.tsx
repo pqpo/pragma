@@ -461,13 +461,15 @@ export function ContextStoreBrowser(props: {
                     <p>{t("missionBoardPreviewUnsupportedDescription")}</p>
                   </div>
                 ) : (
-                  <div className="context-browser-markdown markdown-preview">
+                  <div className="context-browser-markdown">
                     {isMarkdownEntry(selected) ? (
-                      <MarkdownContent
-                        source={content}
-                        codeBlockControls
-                        onInternalLink={followInternalLink}
-                      />
+                      <article className="markdown-document">
+                        <MarkdownContent
+                          source={content}
+                          codeBlockControls
+                          onInternalLink={followInternalLink}
+                        />
+                      </article>
                     ) : (
                       <pre className="context-browser-plain-text">{content}</pre>
                     )}

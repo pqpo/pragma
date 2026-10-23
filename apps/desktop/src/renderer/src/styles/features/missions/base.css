@@ -82,7 +82,6 @@
 .mission-workspace-all {
   width: 48px;
   padding: 0;
-  border-top-left-radius: 0;
 }
 
 .mission-workspace-tab-slot {
@@ -261,6 +260,9 @@
 }
 
 .mission-new-button {
+  position: relative;
+  isolation: isolate;
+  overflow: hidden;
   display: flex;
   width: 100%;
   height: 36px;
@@ -270,10 +272,49 @@
   margin-top: 0;
   border: 0;
   border-radius: var(--ui-radius-md);
-  background: var(--ui-accent);
+  background: color-mix(in srgb, var(--ui-accent) 92%, var(--ui-surface));
   color: var(--ui-surface);
   cursor: pointer;
   font-weight: 500;
+}
+
+@property --mission-create-glow-x {
+  syntax: "<length-percentage>";
+  inherits: true;
+  initial-value: 50%;
+}
+
+@property --mission-create-glow-y {
+  syntax: "<length-percentage>";
+  inherits: true;
+  initial-value: 50%;
+}
+
+.mission-new-button::before {
+  position: absolute;
+  z-index: -1;
+  inset: 0;
+  background: radial-gradient(
+    circle 48px at var(--mission-create-glow-x) var(--mission-create-glow-y),
+    color-mix(in srgb, var(--ui-surface) 24%, transparent) 0%,
+    color-mix(in srgb, var(--ui-surface) 16%, transparent) 20%,
+    color-mix(in srgb, var(--ui-surface) 7%, transparent) 45%,
+    color-mix(in srgb, var(--ui-surface) 2%, transparent) 70%,
+    transparent 100%
+  );
+  content: "";
+  opacity: 0;
+  pointer-events: none;
+  transition:
+    opacity 120ms ease-out,
+    --mission-create-glow-x 100ms ease-out,
+    --mission-create-glow-y 100ms ease-out;
+}
+
+@media (hover: hover) {
+  .mission-new-button:hover::before {
+    opacity: 1;
+  }
 }
 
 .mission-search {
@@ -940,7 +981,7 @@
   background: var(--ui-surface);
   box-shadow: 0 1px 3px rgb(var(--ui-shadow-rgb) / 8%);
   transform: translateX(0);
-  transition: transform 210ms cubic-bezier(0.22, 1, 0.36, 1);
+  transition: transform 120ms ease-out;
 }
 
 .mission-source-tabs.is-automation .mission-source-indicator {
@@ -1891,6 +1932,11 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
+  .mission-new-button::before {
+    background: none;
+    transition: none;
+  }
+
   button,
   input,
   select,

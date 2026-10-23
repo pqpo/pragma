@@ -1,4 +1,4 @@
-.asset-markdown-document {
+.markdown-document {
   min-width: 0;
   max-width: 960px;
   margin: 0 auto;
@@ -8,69 +8,69 @@
   overflow-wrap: anywhere;
 }
 
-.asset-markdown-document :where(h1, h2, h3, h4, h5, h6) {
+.markdown-document :where(h1, h2, h3, h4, h5, h6) {
   margin: 32px 0 12px;
   font-weight: 600;
   line-height: 1.4;
 }
 
-.asset-markdown-document h1 {
+.markdown-document h1 {
   font-size: 24px;
 }
 
-.asset-markdown-document h2 {
+.markdown-document h2 {
   font-size: 20px;
 }
 
-.asset-markdown-document h3 {
+.markdown-document h3 {
   font-size: 16px;
 }
 
-.asset-markdown-document :where(h4, h5, h6) {
+.markdown-document :where(h4, h5, h6) {
   font-size: 14px;
 }
 
-.asset-markdown-document
+.markdown-document
   :where(p, ul, ol, blockquote, pre, .markdown-code-block, .markdown-table-scroll) {
   margin: 0 0 16px;
 }
 
-.asset-markdown-document > :first-child {
+.markdown-document > :first-child {
   margin-top: 0;
 }
 
-.asset-markdown-document > :last-child {
+.markdown-document > :last-child {
   margin-bottom: 0;
 }
 
-.asset-markdown-document :where(ul, ol) {
+.markdown-document :where(ul, ol) {
   padding-left: 24px;
 }
 
-.asset-markdown-document li + li {
+.markdown-document li + li {
   margin-top: 4px;
 }
 
-.asset-markdown-document li > :where(p, ul, ol) {
+.markdown-document li > :where(p, ul, ol) {
   margin-top: 4px;
   margin-bottom: 4px;
 }
 
-.asset-markdown-document .markdown-task-item {
+.markdown-document .markdown-task-item {
   list-style: none;
 }
 
-.asset-markdown-document .markdown-task-item input[type="checkbox"] {
+.markdown-document .markdown-task-item input[type="checkbox"] {
   margin: 0 8px 0 -20px;
   accent-color: var(--ui-accent);
   vertical-align: middle;
 }
 
-.asset-markdown-document strong {
+.markdown-document strong {
   font-weight: 600;
 }
 
-.asset-markdown-document :not(pre) > code {
+.markdown-document :not(pre) > code {
   padding: 2px 4px;
   border-radius: var(--ui-radius-sm);
   background: var(--ui-surface-subtle);
@@ -78,47 +78,47 @@
   font-size: 12px;
 }
 
-.asset-markdown-document .markdown-code-block {
+.markdown-document .markdown-code-block {
   min-width: 0;
 }
 
-.asset-markdown-document .markdown-code-block pre {
+.markdown-document .markdown-code-block pre {
   margin: 0;
   font-size: 12px;
   line-height: 1.75;
   overscroll-behavior-x: contain;
 }
 
-.asset-markdown-document blockquote {
+.markdown-document blockquote {
   padding: 0 16px;
   border-left: 3px solid var(--ui-line-strong);
   color: var(--ui-text-secondary);
 }
 
-.asset-markdown-document blockquote > :last-child {
+.markdown-document blockquote > :last-child {
   margin-bottom: 0;
 }
 
-.asset-markdown-document .markdown-content-link {
+.markdown-document .markdown-content-link {
   color: var(--ui-accent-strong);
   text-decoration-thickness: 1px;
   text-underline-offset: 3px;
 }
 
-.asset-markdown-document .markdown-table-scroll {
+.markdown-document .markdown-table-scroll {
   max-width: 100%;
   overflow-x: auto;
   overscroll-behavior-x: contain;
 }
 
-.asset-markdown-document table {
+.markdown-document table {
   width: 100%;
   border-collapse: collapse;
   font-size: 13px;
   line-height: 1.6;
 }
 
-.asset-markdown-document :where(th, td) {
+.markdown-document :where(th, td) {
   min-width: 120px;
   max-width: 360px;
   padding: 8px 12px;
@@ -127,17 +127,17 @@
   vertical-align: top;
 }
 
-.asset-markdown-document th {
+.markdown-document th {
   border-bottom-color: var(--ui-line-strong);
   background: var(--ui-surface-subtle);
   font-weight: 600;
 }
 
-.asset-markdown-document tbody tr:nth-child(even) {
+.markdown-document tbody tr:nth-child(even) {
   background: var(--ui-surface-subtle);
 }
 
-.asset-markdown-document hr {
+.markdown-document hr {
   margin: 24px 0;
   border: 0;
   border-top: 1px solid var(--ui-line);

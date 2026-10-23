@@ -546,6 +546,7 @@
 }
 
 .mission-workspace-menu {
+  transform-origin: left top;
   position: absolute;
   z-index: 50;
   top: calc(100% + 8px);
