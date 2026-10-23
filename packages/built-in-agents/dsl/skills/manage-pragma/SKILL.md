@@ -1,6 +1,6 @@
 ---
 name: manage-pragma
-description: Manage Pragma Experts, Teams, Flows, Evaluations, Missions and Automations, and discover their Host resources through authorized pragma manage CLI commands.
+description: Find and read managed Skills and knowledge bases, revise them through Revision Agents, and manage Pragma Experts, Teams, Flows, Evaluations, Missions and Automations through authorized CLI commands.
 ---
 
 # Manage Pragma
@@ -16,6 +16,8 @@ Read only the references needed for the user's task:
 - [DSL](references/dsl.md): create or update Experts, ExpertTeams and their dependencies using file drafts.
 - [Flow](references/flow.md): build or repair graphs through incremental typed draft operations.
 - [Evaluation](references/evaluation.md): test an exact committed Flow and save an independent Evaluation.
+- [Skills](references/skills.md): find Skills (Capabilities), read their current SKILL.md and package files, diagnose or delegate revisions.
+- [Knowledge](references/knowledge.md): find formal knowledge bases, list/search/read their documents, or delegate revisions.
 - [Resources](references/resources.md): discover workspaces, home task presets and ready knowledge stores.
 - [Missions](references/missions.md): create persistent tasks, query work, send follow-ups or interrupt them.
 - [Automations](references/automations.md): save schedules and Host bindings, enable/disable, delete or reset continuity.
@@ -27,9 +29,18 @@ Missions are separate tasks and do not replace current Execution subagent lifecy
 
 ## Command and approval rules
 
-Read the relevant subcommand's `--help` for current fields. Pass bounded JSON using `--input FILE`
+Use the examples in the relevant reference first. Read a subcommand's `--help` or `--describe`
+only when a required field, default or response is unclear; do not prefetch help for every command.
+Pass bounded JSON using `--input FILE`
 or `--input -`, with request files in the authorized workspace. Use `--format json`, bounded
 pagination, and the exact draft or Project revision returned by the Host.
+Use `--describe --format json` when input/output schemas or defaults are needed; it works without
+a Host connection. Default views are summaries. Request content only when needed. Copy returned
+`continuation.command` and `continuation.input` verbatim into the next CLI call. Do not compute offsets.
+Fresh queries use a new request ID (omitting the option generates one); reuse an ID only to replay
+the identical request after uncertain transport completion. Read-only query receipts also replay old results.
+Inspect `error.code` and `error.details.recovery`; an empty successful list only means no matches.
+Never scan `.pragma`, Runtime caches or historical revision drafts to locate formal content.
 
 Shell permission does not approve publication or other managed mutations. Preserve Host approval;
 `input_required` returns control to the owning Execution, and the CLI cannot approve for the user.

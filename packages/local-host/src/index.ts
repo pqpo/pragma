@@ -578,6 +578,7 @@ export * from "./management-pagination.ts";
 export * from "./management-commands.ts";
 export * from "./management-command-client.ts";
 export * from "./management-command-hooks.ts";
+export * from "./managed-resource-query.ts";
 export { createManagementCommandOwnerLookup } from "./management-command-ownership.ts";
 
 export * from "./pragma-mission-port.ts";

@@ -8,6 +8,11 @@ import {
 } from "@pragma/core";
 import { SemanticResourceIdSchema } from "@pragma/shared";
 import { z } from "zod";
+import {
+  createPragmaManagedResourceTools,
+  PRAGMA_MANAGED_RESOURCE_TOOL_DEFINITIONS,
+} from "./pragma-resource-query-tools.ts";
+import type { PragmaManagedResourceQueryPort } from "./ports.ts";
 
 import type {
   PragmaAgentResourceCatalogPort,
@@ -645,6 +650,7 @@ export interface SkillRevisionSubmissionPort {
 }
 
 export interface PragmaManagementToolPorts {
+  readonly managedResourceQueries?: PragmaManagedResourceQueryPort | undefined;
   readonly project?: PragmaAgentDslProjectPort | undefined;
   readonly missions?: PragmaAgentMissionPort | undefined;
   readonly automations?: PragmaAgentAutomationPort | undefined;
@@ -667,7 +673,7 @@ function definition<TSchema extends z.ZodType>(
     description,
     schema,
     resultSchema: outputSchema,
-    inputSchema: z.toJSONSchema(schema),
+    inputSchema: z.toJSONSchema(schema, { io: "input" }),
     outputSchema: z.toJSONSchema(z.union([outputSchema, PragmaManagementErrorSchema])),
     approval:
       approval === "none"
@@ -776,6 +782,7 @@ const PRAGMA_SKILL_REVISION_TOOL_DEFINITIONS = [
 
 export const PRAGMA_MANAGEMENT_TOOL_DEFINITIONS = [
   ...PRAGMA_MANAGEMENT_HOST_TOOL_DEFINITIONS,
+  ...PRAGMA_MANAGED_RESOURCE_TOOL_DEFINITIONS,
   ...PRAGMA_KNOWLEDGE_REVISION_TOOL_DEFINITIONS,
   ...PRAGMA_SKILL_REVISION_TOOL_DEFINITIONS,
 ] as const;
@@ -885,7 +892,14 @@ export function createPragmaManagementTools(
       ),
     );
   }
-  return [...hostTools, ...knowledgeTools, ...skillTools];
+  return [
+    ...hostTools,
+    ...(ports.managedResourceQueries === undefined
+      ? []
+      : createPragmaManagedResourceTools(ports.managedResourceQueries)),
+    ...knowledgeTools,
+    ...skillTools,
+  ];
 }
 
 function tool<TSchema extends z.ZodType>(

@@ -3,6 +3,7 @@ import { createBundleExecutorReadiness } from "../features/bundles/bundle-execut
 import { createSkillRevisionMissionRestorer } from "../features/capabilities/skill-revision-mission-restore.ts";
 import {
   createLocalHostNodeMissionCompiler,
+  createManagedResourceQueryPort,
   createLocalHostProjectCatalogFromHome,
   createLocalHostBuiltInExecutorResolver,
   createLocalHostMissionBoardBindings,
@@ -2086,6 +2087,11 @@ export async function createDesktopApplicationContainer(
     stateRoot: defaultAgentStateRoot,
   });
   pragmaManagementPortsRef.current = {
+    managedResourceQueries: createManagedResourceQueryPort({
+      capabilities: capabilityStore,
+      knowledge: contextStores,
+      resources: async () => (await pragmaProjectStore.get()).resources,
+    }),
     project: pragmaAgentProject,
     missions: pragmaAgentMissions,
     resources: createDesktopPragmaAgentResourceCatalogPort({

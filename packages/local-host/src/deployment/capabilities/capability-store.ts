@@ -96,7 +96,7 @@ export interface CapabilityRepository {
   completeRemoval(id: string, expectedRevision: number): Promise<void>;
 }
 export interface CapabilityStore extends CapabilityRepository {
-  list(): Promise<Capability[]>;
+  list(options?: { readonly failOnUnreadable?: boolean }): Promise<Capability[]>;
   /** Includes persisted assets that cannot currently be read or verified. */
   exists(id: string): Promise<boolean>;
   getSkillDocument(input: GetSkillDocument): Promise<SkillDocument>;
@@ -380,7 +380,7 @@ export function createCapabilityStore(options: {
       );
     },
     resolveActive,
-    async list() {
+    async list(queryOptions) {
       try {
         const entries = await readdir(options.capabilitiesPath, { withFileTypes: true });
         const capabilities = await Promise.all(
@@ -390,6 +390,7 @@ export function createCapabilityStore(options: {
               try {
                 return await readCapability(entry.name);
               } catch (error) {
+                if (queryOptions?.failOnUnreadable) throw error;
                 if (
                   error instanceof CapabilityStoreError &&
                   (error.code === "config_invalid" || error.code === "capability_not_found")

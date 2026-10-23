@@ -62,7 +62,7 @@ import { referencedPragmaResourceRefs } from "../projects/pragma-resource-refere
 import { isGitMetadataPath } from "../../deployment-contracts/git-metadata-path.ts";
 type TrashItem = (path: string) => Promise<void>;
 export interface ContextStoreStore {
-  list(): Promise<ContextStore[]>;
+  list(options?: { readonly failOnUnreadable?: boolean }): Promise<ContextStore[]>;
   updateWriteApproval(input: UpdateContextStoreWriteApproval): Promise<ContextStore>;
   get(storeId: string): Promise<ContextStore>;
   /** Includes persisted stores with invalid or unavailable configuration. */
@@ -467,7 +467,7 @@ export function createContextStoreStore(options: {
         throw error;
       }
     },
-    async list(): Promise<ContextStore[]> {
+    async list(queryOptions): Promise<ContextStore[]> {
       let directories;
       try {
         directories = (await readdir(options.storesPath, { withFileTypes: true })).filter(
@@ -486,6 +486,7 @@ export function createContextStoreStore(options: {
               if (error.code === "legacy_note_unsupported") return undefined;
               const legacy = await readLegacyCatalogEntry(entry.name);
               if (legacy !== undefined) return legacy;
+              if (queryOptions?.failOnUnreadable) throw error;
               if (error.code === "config_invalid" || error.code === "source_unavailable") {
                 return undefined;
               }

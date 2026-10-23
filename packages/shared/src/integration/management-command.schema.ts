@@ -1,10 +1,12 @@
 import { z } from "zod";
 import { IntegrationErrorSchema, IntegrationExitCodeSchema } from "./error.schema.ts";
 import { JsonObjectSchema, JsonValueSchema, RequestIdSchema } from "./primitives.schema.ts";
+import { ManagedResourceCommandSchema } from "./managed-resource-query.schema.ts";
 
 /** Independent, additive protocol; does not change native Runtime MCP results. */
 export const MANAGEMENT_COMMAND_PROTOCOL = "pragma.management-command/v1" as const;
 export const ManagementCommandSchema = z.enum([
+  ...ManagedResourceCommandSchema.options,
   "mission.list",
   "mission.get",
   "mission.create",
@@ -83,6 +85,21 @@ export const ManagementCommandResultSchema = z
 export type ManagementCommand = z.infer<typeof ManagementCommandSchema>;
 export type ManagementCommandRequest = z.infer<typeof ManagementCommandRequestSchema>;
 export type ManagementCommandResult = z.infer<typeof ManagementCommandResultSchema>;
+
+export const ManagementCommandDescriptionSchema = z
+  .object({
+    schemaVersion: z.literal("pragma.management-command-description/v1"),
+    command: ManagementCommandSchema,
+    description: z.string(),
+    inputSchema: JsonObjectSchema,
+    outputSchema: JsonObjectSchema,
+    resultSchema: JsonObjectSchema,
+    readOnly: z.boolean(),
+    requiresExecution: z.literal(true),
+    approval: JsonObjectSchema,
+    examples: z.array(z.object({ command: z.string(), input: JsonObjectSchema }).strict()),
+  })
+  .strict();
 
 /** Preserve existing integration error codes/exit codes at the new wire boundary. */
 export function managementCommandError(

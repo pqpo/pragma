@@ -1,8 +1,142 @@
 import { describe, expect, it } from "vitest";
+import { Validator, type Schema } from "@cfworker/json-schema";
 import { isManagementCliArgv, runManagementCli } from "../src/management-client.ts";
-import { MANAGEMENT_COMMAND_PROTOCOL } from "@pragma/shared/integration";
+import {
+  MANAGEMENT_COMMAND_PROTOCOL,
+  MANAGED_RESOURCE_QUERY_SCHEMAS,
+  ManagedResourceCommandSchema,
+  ManagementCommandSchema,
+  ManagementCommandDescriptionSchema,
+} from "@pragma/shared/integration";
 
 describe("management CLI adapter", () => {
+  it.each(ManagedResourceCommandSchema.options)(
+    "describes %s input/output, access and valid examples without connecting to a Host",
+    async (command) => {
+      let stdout = "";
+      const result = await runManagementCli(
+        ["manage", ...command.split("."), "--describe", "--format", "json"],
+        {
+          writeStdout: (text) => {
+            stdout += text;
+          },
+          writeStderr: () => undefined,
+        },
+        {
+          execute: async () => {
+            throw new Error("Description must not execute a command");
+          },
+        },
+      );
+      expect(result).toBe(0);
+      const description = ManagementCommandDescriptionSchema.parse(JSON.parse(stdout));
+      expect(description).toMatchObject({ command, readOnly: true, requiresExecution: true });
+      expect(description.outputSchema).toHaveProperty("properties.result");
+      expect(description.outputSchema).toHaveProperty("properties.status");
+      expect(description.resultSchema).toHaveProperty("properties");
+      for (const schema of [
+        description.inputSchema,
+        description.outputSchema,
+        description.resultSchema,
+      ])
+        assertLocalSchemaRefs(schema, schema);
+      expect(description.examples).toHaveLength(1);
+      const validator = new Validator(description.inputSchema as Schema);
+      for (const example of description.examples)
+        expect(validator.validate(example.input)).toMatchObject({ valid: true });
+      expect(
+        MANAGED_RESOURCE_QUERY_SCHEMAS[command].input.safeParse(description.examples[0]!.input)
+          .success,
+      ).toBe(true);
+    },
+  );
+
+  it.each([
+    ["skill.list", {}],
+    ["skill.get", { capabilityId: "0000000000000001" }],
+    ["knowledge-store.list", {}],
+    [
+      "knowledge-store.documents.search",
+      { storeId: "11111111-1111-4111-8111-111111111111", query: "routing" },
+    ],
+    ["mission.list", {}],
+    ["dsl.resources.list", {}],
+  ] as const)(
+    "advertises optional defaults for %s and rejects invalid values",
+    async (command, input) => {
+      let stdout = "";
+      expect(
+        await runManagementCli(["manage", ...command.split("."), "--describe"], {
+          writeStdout: (text) => {
+            stdout += text;
+          },
+          writeStderr: () => undefined,
+        }),
+      ).toBe(0);
+      const description = ManagementCommandDescriptionSchema.parse(JSON.parse(stdout));
+      const validator = new Validator(description.inputSchema as Schema);
+      expect(validator.validate(input)).toMatchObject({ valid: true });
+      if ("capabilityId" in input) expect(validator.validate({})).toMatchObject({ valid: false });
+      else expect(validator.validate({ ...input, limit: 0 })).toMatchObject({ valid: false });
+    },
+  );
+
+  it("publishes valid examples and input defaults across the entire command catalog", async () => {
+    for (const command of ManagementCommandSchema.options) {
+      let stdout = "";
+      await runManagementCli(["manage", ...command.split("."), "--describe"], {
+        writeStdout: (text) => {
+          stdout += text;
+        },
+        writeStderr: () => undefined,
+      });
+      const description = ManagementCommandDescriptionSchema.parse(JSON.parse(stdout));
+      const validator = new Validator(description.inputSchema as Schema);
+      for (const example of description.examples)
+        expect(validator.validate(example.input), command).toMatchObject({ valid: true });
+      assertInputDefaultsOptional(description.inputSchema);
+    }
+  });
+
+  it("describes Flow validation as read-only while preparation remains a mutation", async () => {
+    for (const [action, readOnly] of [
+      ["validate", true],
+      ["prepare", false],
+    ] as const) {
+      let stdout = "";
+      expect(
+        await runManagementCli(["manage", "flow", "draft", action, "--describe"], {
+          writeStdout: (text) => {
+            stdout += text;
+          },
+          writeStderr: () => undefined,
+        }),
+      ).toBe(0);
+      expect(JSON.parse(stdout)).toMatchObject({
+        command: `flow.draft.${action}`,
+        readOnly,
+        requiresExecution: true,
+      });
+    }
+  });
+
+  it("describes approval-free mutations as mutations and refuses actual queries without an Execution", async () => {
+    let stdout = "";
+    const io = {
+      writeStdout: (text: string) => {
+        stdout += text;
+      },
+      writeStderr: () => undefined,
+    };
+    expect(await runManagementCli(["manage", "flow", "draft", "create", "--describe"], io)).toBe(0);
+    expect(JSON.parse(stdout)).toMatchObject({ readOnly: false, requiresExecution: true });
+    stdout = "";
+    expect(await runManagementCli(["manage", "skill", "list"], io, { endpoint: "" })).not.toBe(0);
+    expect(JSON.parse(stdout)).toMatchObject({
+      status: "failed",
+      error: { code: "PERMISSION_DENIED" },
+    });
+  });
   it("loads one command help without opening a Host or exposing the full catalog", async () => {
     let stdout = "";
     const code = await runManagementCli(["manage", "flow", "draft", "get", "--help"], {
@@ -54,6 +188,45 @@ describe("management CLI adapter", () => {
     expect(JSON.parse(stdout).result.diagnostics[0].code).toBe("flow.invalid");
   });
 });
+
+function assertInputDefaultsOptional(value: unknown): void {
+  if (Array.isArray(value)) {
+    for (const child of value) assertInputDefaultsOptional(child);
+    return;
+  }
+  if (typeof value !== "object" || value === null) return;
+  const object = value as Record<string, unknown>;
+  if (typeof object["properties"] === "object" && object["properties"] !== null) {
+    for (const [name, property] of Object.entries(object["properties"]))
+      if (typeof property === "object" && property !== null && Object.hasOwn(property, "default"))
+        expect(object["required"] ?? [], name).not.toContain(name);
+  }
+  for (const child of Object.values(object)) assertInputDefaultsOptional(child);
+}
+
+function assertLocalSchemaRefs(value: unknown, root: unknown): void {
+  if (Array.isArray(value)) {
+    for (const child of value) assertLocalSchemaRefs(child, root);
+    return;
+  }
+  if (typeof value !== "object" || value === null) return;
+  for (const [key, child] of Object.entries(value)) {
+    if (key === "$ref" && typeof child === "string" && child.startsWith("#/")) {
+      let resolved: unknown = root;
+      for (const part of child
+        .slice(2)
+        .split("/")
+        .map((item) => item.replaceAll("~1", "/").replaceAll("~0", "~"))) {
+        resolved =
+          typeof resolved === "object" && resolved !== null
+            ? (resolved as Record<string, unknown>)[part]
+            : undefined;
+      }
+      expect(resolved, child).toBeDefined();
+    }
+    assertLocalSchemaRefs(child, root);
+  }
+}
 
 it("preserves the requested identity and command when stdin parsing fails", async () => {
   let stdout = "";

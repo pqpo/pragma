@@ -1,0 +1,85 @@
+{
+  "schemaVersion": "pragma.managed-resource-cli-evidence/v1",
+  "date": "2026-10-23",
+  "runtime": "codex-local",
+  "permissionMode": "danger-full-access",
+  "scenario": "Discover an unmounted user Skill, read its current formal SKILL.md and named reference; discover an unmounted knowledge base, search and read its formal document. Verify three source-only markers.",
+  "hostBinding": "Production createDesktopAdapterHost binding compiled through Interpreter; actual Codex Runtime and bundled CLI subprocesses.",
+  "fixtures": "Isolated temporary Host and generated fixtures; no user resources or credentials in this evidence.",
+  "runs": [
+    {
+      "guidance": "initial_guidance",
+      "succeeded": true,
+      "elapsedMs": 59599,
+      "cliQueries": 8,
+      "cliHelpCalls": 8,
+      "trackedQueryResultBodyBytes": 2998,
+      "trackedQueries": [
+        {
+          "command": "skill.list",
+          "bytes": 360
+        },
+        {
+          "command": "skill.files.list",
+          "bytes": 239
+        },
+        {
+          "command": "skill.get",
+          "bytes": 717
+        },
+        {
+          "command": "knowledge-store.get",
+          "bytes": 341
+        },
+        {
+          "command": "skill.files.read",
+          "bytes": 435
+        },
+        {
+          "command": "knowledge-store.documents.search",
+          "bytes": 392
+        },
+        {
+          "command": "knowledge-store.documents.read",
+          "bytes": 514
+        }
+      ]
+    },
+    {
+      "guidance": "final_guidance",
+      "succeeded": true,
+      "elapsedMs": 37006,
+      "cliQueries": 6,
+      "cliHelpCalls": 0,
+      "trackedQueryResultBodyBytes": 2418,
+      "trackedQueries": [
+        {
+          "command": "skill.list",
+          "bytes": 360
+        },
+        {
+          "command": "skill.get",
+          "bytes": 717
+        },
+        {
+          "command": "knowledge-store.documents.search",
+          "bytes": 392
+        },
+        {
+          "command": "skill.files.read",
+          "bytes": 435
+        },
+        {
+          "command": "knowledge-store.documents.read",
+          "bytes": 514
+        }
+      ]
+    }
+  ],
+  "measurementNotes": [
+    "Two native executions of the same read-only acceptance task; elapsed time is observed, not a controlled latency or model-cost benchmark.",
+    "Tracked result body bytes cover new managed-resource queries only; they exclude the legacy knowledge-store list, help, CLI envelopes and model tokens.",
+    "Revision delegation, approval and recovery are covered by test:revision and compiled Host regressions; this native scenario deliberately performs no mutation.",
+    "The workspace-write Runtime sandbox could not reach the local command channel; successful runs used the fully authorized mode matching the reported scenario."
+  ]
+}

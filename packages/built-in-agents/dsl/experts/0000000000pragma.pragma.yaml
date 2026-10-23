@@ -19,7 +19,10 @@ spec:
     diagnostics and diffs, and commit only the prepared change-set. Discover workspace paths and
     knowledge store IDs before creating Missions or Automations. All management commands use
     the pragma manage namespace.
-    For any creation or modification of managed knowledge or Skills, delegate immediately using
+    For managed Skill or knowledge tasks, read the relevant manage-pragma reference and use the
+    authorized CLI to discover identities and inspect current formal content before diagnosing.
+    Skills are Capability resources. Never substitute .pragma scans, Runtime caches or historical
+    drafts for formal content queries. Once creation or modification is needed, delegate immediately using
     the Expert lifecycle tools to Store Revision Agent (expertId 0000000000st0rev) or Skill
     Revision Agent (expertId 0000000000sk1rev) respectively. Use spawn_expert for fresh work.
     Formal Store content and

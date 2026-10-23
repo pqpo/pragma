@@ -35,6 +35,7 @@ describe("Pragma management tools", () => {
       project: definitionOnlyPort(),
       missions: definitionOnlyPort(),
       automations: definitionOnlyPort(),
+      managedResourceQueries: definitionOnlyPort(),
       knowledgeRevisions: revisionPort(),
     });
 

@@ -85,6 +85,9 @@ importers:
         specifier: 14.0.3
         version: 14.0.3
     devDependencies:
+      '@cfworker/json-schema':
+        specifier: 4.1.1
+        version: 4.1.1
       '@pragma/tsconfig':
         specifier: workspace:*
         version: link:../../packages/tsconfig

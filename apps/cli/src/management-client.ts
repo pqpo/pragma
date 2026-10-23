@@ -5,11 +5,14 @@ import { Command, CommanderError } from "commander";
 import {
   callManagementCommand,
   describeManagementCommand,
+  managementCommandReadOnly,
+  managementCommandExamples,
   MANAGEMENT_COMMAND_ENDPOINT_ENV,
 } from "@pragma/local-host/management";
 import {
   MANAGEMENT_COMMAND_PROTOCOL,
   ManagementCommandSchema,
+  ManagementCommandDescriptionSchema,
   ManagementCommandRequestSchema,
   RequestIdSchema,
   type ManagementCommand,
@@ -95,6 +98,7 @@ export async function runManagementCli(
     area
       .command(actionName)
       .description(info.description)
+      .option("--describe", "Describe this command as JSON without connecting to a Host")
       .option("--input <path>", "JSON request object; use - for stdin")
       .option(
         "--request-id <uuid>",
@@ -112,7 +116,7 @@ export async function runManagementCli(
       .addHelpText(
         "after",
         () =>
-          `\nInput Schema (loaded only by this help):\n${JSON.stringify(info.inputSchema, null, 2)}\n\nExample:\n  pragma manage ${name.replaceAll(".", " ")} --input request.json --format json\n`,
+          `\nInput Schema (loaded only by this help):\n${JSON.stringify(info.inputSchema, null, 2)}\n\nUse --describe --format json for input/output schemas and access requirements.\n\nExample:\n  pragma manage ${name.replaceAll(".", " ")} --input request.json --format json\n`,
       )
       .action(async (_localArgs, command: Command) => {
         const args = command.optsWithGlobals() as {
@@ -121,6 +125,7 @@ export async function runManagementCli(
           format: string;
           json?: boolean;
           streamJson?: boolean;
+          describe?: boolean;
         };
         activeCommand = name;
         requestId = RequestIdSchema.safeParse(args.requestId).data ?? requestIdDefault;
@@ -132,6 +137,17 @@ export async function runManagementCli(
           );
         if (outputFormat !== "json" && outputFormat !== "text")
           throw managementCommandError("INVALID_FORMAT", "Use --format json or text.");
+        if (args.describe) {
+          const description = ManagementCommandDescriptionSchema.parse({
+            schemaVersion: "pragma.management-command-description/v1",
+            ...info,
+            readOnly: managementCommandReadOnly(name),
+            requiresExecution: true,
+            examples: managementCommandExamples(name),
+          });
+          io.writeStdout(`${JSON.stringify(description)}\n`);
+          return;
+        }
         if (args.input !== undefined && args.input !== "-") {
           const root = process.env["PRAGMA_EXECUTION_WORKSPACE"];
           if (root !== undefined) {

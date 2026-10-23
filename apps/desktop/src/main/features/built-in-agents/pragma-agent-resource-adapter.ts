@@ -9,6 +9,8 @@ import type {
 } from "@pragma/built-in-agents";
 
 import type { ContextStoreStore } from "@pragma/local-host/deployment";
+import { ContextStoreStoreError } from "@pragma/local-host/resources";
+import { managementCommandError } from "@pragma/shared/integration";
 import type { HomeProjectStore } from "../missions/home-project-store.ts";
 import type { HomeExecutorPreferenceStore } from "../missions/home-executor-preference-store.ts";
 import type { MissionExecutorCatalog } from "../missions/mission-executor-catalog.ts";
@@ -24,12 +26,19 @@ export function createDesktopPragmaAgentResourceCatalogPort(options: {
   readonly workspacePreferences?: Pick<HomeExecutorPreferenceStore, "list"> | undefined;
   readonly getDefaultWorkspace: () => Promise<string>;
 }): PragmaAgentResourceCatalogPort {
-  const page = <T>(items: readonly T[], scope: string, input: PragmaAgentResourceQuery) =>
+  const page = <T>(
+    items: readonly T[],
+    scope: string,
+    input: PragmaAgentResourceQuery & { readonly status?: string | undefined },
+  ) =>
     paginateManagementItems({
       items,
       scope,
       fingerprintValue: items,
-      filters: { query: input.query },
+      filters: {
+        query: input.query,
+        ...(input.status === undefined ? {} : { status: input.status }),
+      },
       cursor: input.cursor,
       limit: input.limit,
     });
@@ -150,14 +159,29 @@ export function createDesktopPragmaAgentResourceCatalogPort(options: {
       return (await homeProjects([project], await options.executors.list()))[0]!;
     },
     async listKnowledgeStores(input) {
-      const items = (await options.contextStores.list()).map((store) => ({
+      const stores = await options.contextStores
+        .list({ failOnUnreadable: true })
+        .catch((error: unknown) => {
+          if (error instanceof ContextStoreStoreError) {
+            throw managementCommandError(
+              error.code === "config_invalid" ? "STORAGE_CORRUPTED" : "DEPENDENCY_UNAVAILABLE",
+              error.message,
+            );
+          }
+          throw error;
+        });
+      const items = stores.map((store) => ({
         storeId: store.id,
         name: store.name,
         description: store.description,
         status: store.status,
       }));
       return page(
-        items.filter((item) => matches(input, [item.name, item.description])),
+        items.filter(
+          (item) =>
+            matches(input, [item.storeId, item.name, item.description]) &&
+            (input.status === undefined || item.status === input.status),
+        ),
         "list_knowledge_stores",
         input,
       );

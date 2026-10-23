@@ -467,6 +467,24 @@ describe("built-in Pragma Agent DSL", () => {
     );
   });
 
+  it("routes formal Skill and knowledge reads independently and preserves revision recovery instructions", () => {
+    const index = BUILT_IN_AGENT_FILES["skills/manage-pragma/SKILL.md"]!;
+    const skills = BUILT_IN_AGENT_FILES["skills/manage-pragma/references/skills.md"]!;
+    const knowledge = BUILT_IN_AGENT_FILES["skills/manage-pragma/references/knowledge.md"]!;
+    const resources = BUILT_IN_AGENT_FILES["skills/manage-pragma/references/resources.md"]!;
+    expect(index).toContain("Skills](references/skills.md)");
+    expect(index).toContain("Knowledge](references/knowledge.md)");
+    expect(index).toContain("Read-only query receipts also replay old results");
+    expect(skills).toContain("view: content");
+    expect(skills).toContain("skill_revision_start");
+    expect(skills).toContain("System Skills");
+    expect(knowledge).toContain("knowledge_revision_start");
+    expect(knowledge).toContain("writableNamespace as opaque");
+    expect(resources).toContain("list_context_stores");
+    expect(resources).not.toContain("knowledge_revision_start");
+    expect(resources).not.toContain("skill_revision_start");
+  });
+
   it("teaches Flow commands without duplicating the old Flow tool instructions", () => {
     const skill = BUILT_IN_AGENT_FILES["skills/manage-pragma/references/flow.md"] ?? "";
     expect(skill).toContain("pragma manage flow draft update");
