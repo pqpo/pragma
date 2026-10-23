@@ -153,6 +153,7 @@ function renderer(component: () => ReactNode) {
 
 beforeEach(() => {
   hooks.reset();
+  vi.stubGlobal("window", new EventTarget());
   vi.useFakeTimers();
 });
 afterEach(() => {
@@ -439,6 +440,32 @@ it("uses the workspace passed from a Mission tab ahead of the Home draft and sub
   }
 });
 
+it("recognizes the default workspace after explicit selection and returning Home", async () => {
+  const { storage } = fixture([]);
+  const restored = { ...workspace, basename: "workspace" };
+  const view = renderer(() => HomePage({ onCreated: () => undefined }));
+  try {
+    await view.flush();
+    const picker = view.props((_props, type) => type === WorkspacePicker);
+    (picker.onSelect as (value: unknown) => void)(restored);
+    await view.flush();
+    expect(view.props((_props, type) => type === WorkspacePicker).defaultSelected).toBe(true);
+    expect(readHomeDraft(storage)?.workspaceOverride).toEqual(restored);
+  } finally {
+    view.unmount();
+  }
+  hooks.reset();
+  const returned = renderer(() => HomePage({ onCreated: () => undefined }));
+  try {
+    await returned.flush();
+    const picker = returned.props((_props, type) => type === WorkspacePicker);
+    expect(picker.selection).toEqual(restored);
+    expect(picker.defaultSelected).toBe(true);
+  } finally {
+    returned.unmount();
+  }
+});
+
 it.each([null, { path: "/workspace/from-tab", basename: "from-tab" }])(
   "passes only an explicitly selected workspace tab through the new-Mission action (%j)",
   async (selectedWorkspace) => {
@@ -470,6 +497,9 @@ it.each([null, { path: "/workspace/from-tab", basename: "from-tab" }])(
     );
     try {
       await view.flush();
+      expect(view.props((_props, type) => type === MissionWorkspaceTabs).defaultWorkspacePath).toBe(
+        workspace.path,
+      );
       (view.props((_props, type) => type === MissionRail).onCreate as () => void)();
       expect(onCreate).toHaveBeenCalledExactlyOnceWith(selectedWorkspace ?? undefined);
     } finally {
@@ -615,23 +645,47 @@ it("captures tab drags immediately and ignores mouse movement after release outs
     }),
   );
   try {
-    const slot = view.props((props) => props["data-workspace-path"] === tab.path);
+    const scroller = view.props((props) => props.className === "mission-workspace-scroll");
     const setPointerCapture = vi.fn();
+    vi.stubGlobal("cancelAnimationFrame", vi.fn());
+    vi.stubGlobal("getComputedStyle", () => ({ width: "128px" }));
+    const releasePointerCapture = vi.fn();
+    const capture = { setPointerCapture, hasPointerCapture: () => true, releasePointerCapture };
+    const bounds = { left: 0, width: 128 };
+    const slot = {
+      dataset: { workspacePath: tab.path },
+      querySelector: () => capture,
+      getBoundingClientRect: () => bounds,
+    };
     const event = {
       button: 0,
       pointerType: "mouse",
       pointerId: 1,
       clientX: 10,
       clientY: 10,
-      target: { closest: () => null },
-      currentTarget: { querySelector: () => ({ setPointerCapture }) },
+      target: {
+        closest: (selector: string) => (selector === ".mission-workspace-tab-slot" ? slot : null),
+      },
+      currentTarget: {
+        getBoundingClientRect: () => bounds,
+        querySelectorAll: () => [slot],
+        scrollLeft: 0,
+      },
     };
-    (slot.onPointerDown as (event: unknown) => void)(event);
+    (scroller.onPointerDown as (event: unknown) => void)(event);
     expect(setPointerCapture).toHaveBeenCalledExactlyOnceWith(1);
-    (slot.onPointerMove as (event: unknown) => void)({ ...event, buttons: 0, clientX: 100 });
-    (slot.onPointerUp as (event: unknown) => void)(event);
+    for (const handler of ["onPointerCancel", "onLostPointerCapture"]) {
+      (scroller[handler] as (event: unknown) => void)({ pointerId: 2 });
+      expect(releasePointerCapture).not.toHaveBeenCalled();
+    }
+    (scroller.onPointerMove as (event: unknown) => void)({ ...event, buttons: 0, clientX: 100 });
+    (scroller.onPointerUp as (event: unknown) => void)(event);
+    expect(releasePointerCapture).toHaveBeenCalledExactlyOnceWith(1);
     const preventDefault = vi.fn();
-    (slot.onClickCapture as (event: unknown) => void)({ preventDefault, stopPropagation: vi.fn() });
+    (scroller.onClickCapture as (event: unknown) => void)({
+      preventDefault,
+      stopPropagation: vi.fn(),
+    });
     expect(preventDefault).not.toHaveBeenCalled();
     expect(onStateChange).not.toHaveBeenCalled();
   } finally {
@@ -714,5 +768,68 @@ it("reorders the visible tabs before the initial mission list refresh finishes",
     expect(state.orderPaths).toEqual(["/b", "/a"]);
   } finally {
     view.unmount();
+  }
+});
+
+it("does not scroll backward when a frame timestamp precedes the last pointer event", () => {
+  const state = reconcileMissionWorkspaceTabs(EMPTY_MISSION_WORKSPACE_TABS, []);
+  const workspaces = ["/a", "/b"].map((path) => ({ path, basename: path }));
+  const callbacks: FrameRequestCallback[] = [];
+  vi.stubGlobal("requestAnimationFrame", (callback: FrameRequestCallback) => {
+    callbacks.push(callback);
+    return callbacks.length;
+  });
+  vi.stubGlobal("cancelAnimationFrame", vi.fn());
+  vi.stubGlobal("getComputedStyle", () => ({ width: "128px" }));
+  const now = vi.spyOn(performance, "now").mockReturnValue(100);
+  const capture = { setPointerCapture: vi.fn(), hasPointerCapture: () => false };
+  const slots = workspaces.map((workspace, index) => ({
+    dataset: { workspacePath: workspace.path },
+    querySelector: () => capture,
+    getBoundingClientRect: () => ({ left: index * 128 - 64, width: 128 }),
+    style: { transform: "" },
+  }));
+  const container = {
+    getBoundingClientRect: () => ({ left: 0, right: 128, width: 128 }),
+    querySelectorAll: () => slots,
+    scrollLeft: 64,
+  };
+  const view = renderer(() =>
+    MissionWorkspaceTabs({
+      missions: [],
+      state: workspaces.reduce(addMissionWorkspaceTab, state),
+      value: null,
+      onChange: () => {},
+      onStateChange: () => {},
+    }),
+  );
+  try {
+    const scroller = view.props((props) => props.className === "mission-workspace-scroll");
+    const event = {
+      button: 0,
+      pointerType: "mouse",
+      pointerId: 1,
+      clientX: 20,
+      clientY: 10,
+      target: {
+        closest: (selector: string) =>
+          selector === ".mission-workspace-tab-slot" ? slots[0] : null,
+      },
+      currentTarget: container,
+    };
+    (scroller.onPointerDown as (event: unknown) => void)(event);
+    (scroller.onPointerMove as (event: unknown) => void)({
+      ...event,
+      buttons: 1,
+      clientX: 127,
+      preventDefault: () => {},
+    });
+    callbacks.shift()!(90);
+    expect(container.scrollLeft).toBeGreaterThanOrEqual(64);
+    callbacks.shift()!(120);
+    expect(container.scrollLeft).toBeGreaterThan(64);
+  } finally {
+    view.unmount();
+    now.mockRestore();
   }
 });

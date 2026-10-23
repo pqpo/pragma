@@ -31,7 +31,7 @@
   min-width: 0;
   align-items: stretch;
   gap: 8px;
-  padding: 4px 8px 0;
+  padding: 4px 8px 0 0;
   background: var(--ui-rail);
   -webkit-app-region: drag;
 }
@@ -56,6 +56,7 @@
   min-width: 0;
   overflow-x: auto;
   scrollbar-width: none;
+  position: relative;
 }
 
 .mission-workspace-all,
@@ -81,6 +82,7 @@
 .mission-workspace-all {
   width: 48px;
   padding: 0;
+  border-top-left-radius: 0;
 }
 
 .mission-workspace-tab-slot {
@@ -91,6 +93,8 @@
   align-items: center;
   min-width: 128px;
   max-width: 240px;
+  position: relative;
+  transition: transform 160ms ease-out;
   border-radius: var(--ui-radius-lg) var(--ui-radius-lg) 0 0;
 }
 
@@ -98,8 +102,26 @@
   background: var(--ui-canvas);
 }
 
-.mission-workspace-tab-slot.is-drop-target {
-  background: var(--ui-line);
+.mission-workspace-scroll.is-dragging,
+.mission-workspace-scroll.is-dragging button {
+  cursor: grabbing;
+}
+
+.mission-workspace-tab-slot.is-dragging {
+  z-index: 1;
+  transition: none;
+  background: var(--ui-canvas);
+  box-shadow: var(--ui-shadow-overlay);
+}
+
+.mission-workspace-tab-slot.is-dragging .mission-workspace-tab {
+  background: transparent;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .mission-workspace-tab-slot {
+    transition: none;
+  }
 }
 
 .mission-workspace-tab {

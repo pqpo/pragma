@@ -237,6 +237,7 @@ export const missions = {
   homeFavoritesDialogDescription: "拖動即可排序；選擇工作區收藏會自動切換到對應工作區。",
   favoriteSwitchWorkspace: "切換到 {{workspace}} 並使用此收藏",
   chooseWorkspace: "選擇任務工作區",
+  defaultWorkspace: "預設工作區",
   useDefaultWorkspace: "使用預設工作區",
   taskWorkspace: "任務工作區",
   recentWorkspaces: "最近使用",

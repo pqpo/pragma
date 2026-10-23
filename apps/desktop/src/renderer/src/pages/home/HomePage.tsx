@@ -869,7 +869,9 @@ export function HomePage(props: {
             defaultWorkspace={defaultWorkspace}
             recentWorkspaces={recentWorkspaces}
             selection={workspaceOverride}
-            defaultSelected={workspaceOverride === undefined}
+            defaultSelected={
+              workspaceOverride === undefined || workspaceOverride.path === defaultWorkspace?.path
+            }
             onChoose={() => void pickWorkspace()}
             onSelect={changeWorkspace}
             onUseDefault={() => changeWorkspace(undefined)}

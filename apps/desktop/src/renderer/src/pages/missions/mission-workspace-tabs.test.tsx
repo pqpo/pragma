@@ -1,5 +1,5 @@
 import { renderToStaticMarkup } from "react-dom/server";
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 import { MissionSchema, MissionRepositorySummarySchema } from "@pragma/shared";
 import type { MissionSummary } from "../../../../shared/contracts/index.ts";
 import { MissionsPage, resolveMissionsPageInitialState } from "./MissionsPage.tsx";
@@ -14,6 +14,12 @@ import {
   missionWorkspaces,
 } from "./mission-workspace-tabs.tsx";
 
+import { i18n } from "../../i18n/index.ts";
+
+afterEach(async () => {
+  await i18n.changeLanguage("en");
+});
+
 const summary = (path: string, basename: string, id = path): MissionSummary => ({
   id,
   title: basename,
@@ -25,6 +31,47 @@ const summary = (path: string, basename: string, id = path): MissionSummary => (
 });
 
 describe("Mission workspace categories", () => {
+  it.each([
+    ["en", "Default workspace"],
+    ["zh-Hans", "默认工作区"],
+    ["zh-Hant", "預設工作區"],
+  ])("names the default workspace tab and close control in %s", async (locale, label) => {
+    await i18n.changeLanguage(locale);
+    const workspace = { path: "/pragma/workspace", basename: "workspace" };
+    const html = renderToStaticMarkup(
+      <MissionWorkspaceTabs
+        missions={[
+          summary(workspace.path, workspace.basename),
+          summary("/other/workspace", "workspace"),
+        ]}
+        value={workspace.path}
+        state={addMissionWorkspaceTab(EMPTY_MISSION_WORKSPACE_TABS, workspace)}
+        defaultWorkspacePath={workspace.path}
+        onStateChange={() => undefined}
+        onChange={() => undefined}
+      />,
+    );
+    expect(html).toContain(`<span>${label}</span>`);
+    expect(html).toContain(i18n.t("closeWorkspaceTab", { ns: "missions", name: label }));
+    expect(html).toContain("<span>workspace</span>");
+  });
+
+  it("names an unopened default workspace in the add menu", () => {
+    const html = renderToStaticMarkup(
+      <MissionWorkspaceTabs
+        missions={[]}
+        value={null}
+        state={EMPTY_MISSION_WORKSPACE_TABS}
+        defaultWorkspacePath="/pragma/workspace"
+        knownWorkspaces={[{ path: "/pragma/workspace", basename: "workspace" }]}
+        onStateChange={() => undefined}
+        onChange={() => undefined}
+      />,
+    );
+    expect(html).toContain("Default workspace");
+    expect(html).not.toContain('title="workspace"');
+  });
+
   it("opens only active workspace tabs by default across all task sources", () => {
     const missions = [
       summary("/a", "Alpha"),

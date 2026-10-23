@@ -22,6 +22,10 @@ export function WorkspacePicker(props: {
   const [open, setOpen] = useState(false);
   const rootRef = useRef<HTMLDivElement | null>(null);
   const workspace = props.unselected ? undefined : (props.selection ?? props.defaultWorkspace);
+  const defaultSelected =
+    !props.unselected &&
+    (props.defaultSelected ||
+      (workspace?.path !== undefined && workspace.path === props.defaultWorkspace?.path));
   const className = ["mission-workspace-picker", props.className, open ? "is-open" : undefined]
     .filter((value) => value !== undefined)
     .join(" ");
@@ -50,9 +54,7 @@ export function WorkspacePicker(props: {
         <Folder size={20} aria-hidden="true" />
         <span>
           <strong>
-            {props.defaultSelected
-              ? t("useDefaultWorkspace")
-              : workspace?.basename || t("taskWorkspace")}
+            {defaultSelected ? t("defaultWorkspace") : workspace?.basename || t("taskWorkspace")}
           </strong>
           <small>
             {workspace?.path ?? (props.unselected ? t("chooseWorkspace") : t("loadingWorkspace"))}
@@ -65,7 +67,7 @@ export function WorkspacePicker(props: {
           <button
             type="button"
             role="menuitemradio"
-            aria-checked={props.defaultSelected}
+            aria-checked={defaultSelected}
             onClick={() => {
               props.onUseDefault();
               setOpen(false);
@@ -76,7 +78,7 @@ export function WorkspacePicker(props: {
               <strong>{t("useDefaultWorkspace")}</strong>
               <small>{props.defaultWorkspace?.path ?? t("loadingWorkspace")}</small>
             </span>
-            {props.defaultSelected ? <Check size={16} aria-hidden="true" /> : null}
+            {defaultSelected ? <Check size={16} aria-hidden="true" /> : null}
           </button>
           {props.recentWorkspaces.length > 0 ? (
             <span className="mission-workspace-menu-heading" role="presentation">
@@ -84,7 +86,7 @@ export function WorkspacePicker(props: {
             </span>
           ) : null}
           {props.recentWorkspaces.map((recentWorkspace) => {
-            const selected = !props.defaultSelected && workspace?.path === recentWorkspace.path;
+            const selected = !defaultSelected && workspace?.path === recentWorkspace.path;
             return (
               <button
                 key={recentWorkspace.path}
@@ -99,7 +101,11 @@ export function WorkspacePicker(props: {
               >
                 <ClockCounterClockwise size={18} aria-hidden="true" />
                 <span>
-                  <strong>{recentWorkspace.basename}</strong>
+                  <strong>
+                    {recentWorkspace.path === props.defaultWorkspace?.path
+                      ? t("defaultWorkspace")
+                      : recentWorkspace.basename}
+                  </strong>
                   <small>{recentWorkspace.path}</small>
                 </span>
                 {selected ? <Check size={16} aria-hidden="true" /> : null}

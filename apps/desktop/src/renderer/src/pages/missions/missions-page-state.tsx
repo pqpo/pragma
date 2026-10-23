@@ -226,6 +226,7 @@ export function MissionsPage(props: {
   const newMissionWorkspaceAppliedRef = useRef<string | null>(
     props.autoRunInitialMission === true ? (props.initialMission?.id ?? null) : null,
   );
+  const [defaultWorkspacePath, setDefaultWorkspacePath] = useState<string>();
   const [workspaceChoices, setWorkspaceChoices] = useState<
     readonly MissionCreationDefaults["workspace"][]
   >([]);
@@ -999,7 +1000,10 @@ export function MissionsPage(props: {
     void api
       .getMissionCreationDefaults()
       .then((defaults) => {
-        if (!cancelled) setWorkspaceChoices([defaults.workspace, ...defaults.recentWorkspaces]);
+        if (!cancelled) {
+          setDefaultWorkspacePath(defaults.workspace.path);
+          setWorkspaceChoices([defaults.workspace, ...defaults.recentWorkspaces]);
+        }
       })
       .catch((loadError: unknown) => {
         if (!cancelled) setError(missionError(loadError));
@@ -1060,6 +1064,7 @@ export function MissionsPage(props: {
         onChange={changeWorkspace}
         state={workspaceTabs}
         onStateChange={setWorkspaceTabs}
+        defaultWorkspacePath={defaultWorkspacePath}
         knownWorkspaces={workspaceChoices}
         onPickWorkspace={async () => {
           const api = desktopApi();

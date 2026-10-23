@@ -257,6 +257,7 @@ export const missions = {
     "Drag to reorder. Workspace favorites switch workspace when selected.",
   favoriteSwitchWorkspace: "Switch to {{workspace}} and start with this favorite",
   chooseWorkspace: "Choose mission workspace",
+  defaultWorkspace: "Default workspace",
   useDefaultWorkspace: "Use default workspace",
   taskWorkspace: "Mission workspace",
   recentWorkspaces: "Recent workspaces",

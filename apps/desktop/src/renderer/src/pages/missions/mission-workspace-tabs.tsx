@@ -3,7 +3,6 @@ import {
   useId,
   useMemo,
   useRef,
-  useState,
   type KeyboardEvent,
   type Dispatch,
   type SetStateAction,
@@ -15,6 +14,8 @@ import type {
   MissionCreationDefaults,
 } from "../../../../shared/contracts/index.ts";
 import { SelectMenu } from "../../components/SelectMenu.tsx";
+
+import { useWorkspaceTabDrag } from "./use-workspace-tab-drag.ts";
 
 type Workspace = MissionCreationDefaults["workspace"];
 export {
@@ -63,6 +64,7 @@ export function MissionWorkspaceTabs(props: {
   readonly onChange: (path: string | null) => void;
   readonly state: MissionWorkspaceTabState;
   readonly onStateChange: Dispatch<SetStateAction<MissionWorkspaceTabState>>;
+  readonly defaultWorkspacePath?: string | undefined;
   readonly knownWorkspaces?: readonly Workspace[] | undefined;
   readonly onPickWorkspace?: (() => Promise<Workspace | undefined>) | undefined;
 }) {
@@ -72,19 +74,23 @@ export function MissionWorkspaceTabs(props: {
   const latestPropsRef = useRef(props);
   latestPropsRef.current = props;
   const state = props.state;
-  const dragRef = useRef<{
-    path: string;
-    startX: number;
-    startY: number;
-    moved: boolean;
-    target?: string;
-    placement?: "before" | "after";
-  } | null>(null);
-  const suppressClickRef = useRef(false);
-  const [dropTarget, setDropTarget] = useState<string | null>(null);
   const workspaces = useMemo(
     () => visibleMissionWorkspaces(props.missions, state),
     [props.missions, state],
+  );
+  const { draggingPath, handlers: dragHandlers } = useWorkspaceTabDrag(
+    workspaces.map(({ path }) => path),
+    (path, target, placement) => {
+      const latest = latestPropsRef.current;
+      latest.onStateChange((current) =>
+        moveMissionWorkspaceTab(
+          current.initialized ? current : reconcileMissionWorkspaceTabs(current, latest.missions),
+          path,
+          target,
+          placement,
+        ),
+      );
+    },
   );
   const candidates = sortedWorkspaces(
     [
@@ -94,11 +100,13 @@ export function MissionWorkspaceTabs(props: {
     ],
     i18n.language,
   ).filter((workspace) => !workspaces.some((open) => open.path === workspace.path));
+  const workspaceLabel = (workspace: Workspace) =>
+    workspace.path === props.defaultWorkspacePath ? t("defaultWorkspace") : workspace.basename;
   const allLabel = t("allWorkspaces");
   const options = [
     ...candidates.map((workspace) => ({
       value: workspace.path,
-      label: workspace.basename,
+      label: workspaceLabel(workspace),
       description: workspace.path,
       icon: <Folder size={18} />,
     })),
@@ -205,107 +213,15 @@ export function MissionWorkspaceTabs(props: {
         >
           <SquaresFour size={20} aria-hidden="true" />
         </button>
-        <div className="mission-workspace-scroll">
+        <div
+          className={`mission-workspace-scroll${draggingPath !== null ? " is-dragging" : ""}`}
+          {...dragHandlers}
+        >
           {workspaces.map((workspace, index) => (
             <div
               key={workspace.path}
-              className={`mission-workspace-tab-slot${props.value === workspace.path ? " is-active" : ""}${dropTarget === workspace.path ? " is-drop-target" : ""}`}
+              className={`mission-workspace-tab-slot${props.value === workspace.path ? " is-active" : ""}${draggingPath === workspace.path ? " is-dragging" : ""}`}
               data-workspace-path={workspace.path}
-              onPointerDown={(event) => {
-                suppressClickRef.current = false;
-                if (
-                  event.button !== 0 ||
-                  event.pointerType !== "mouse" ||
-                  (event.target as HTMLElement).closest(".mission-workspace-close")
-                )
-                  return;
-                event.currentTarget
-                  .querySelector<HTMLButtonElement>(".mission-workspace-tab")
-                  ?.setPointerCapture(event.pointerId);
-                dragRef.current = {
-                  path: workspace.path,
-                  startX: event.clientX,
-                  startY: event.clientY,
-                  moved: false,
-                };
-              }}
-              onPointerMove={(event) => {
-                const drag = dragRef.current;
-                if (drag === null) return;
-                if (event.buttons !== 1) {
-                  dragRef.current = null;
-                  setDropTarget(null);
-                  return;
-                }
-                if (
-                  !drag.moved &&
-                  Math.hypot(event.clientX - drag.startX, event.clientY - drag.startY) < 5
-                )
-                  return;
-                drag.moved = true;
-                const slots = rootRef.current?.querySelectorAll<HTMLElement>(
-                  ".mission-workspace-tab-slot",
-                );
-                const target = [...(slots ?? [])].find((slot) => {
-                  const rect = slot.getBoundingClientRect();
-                  return (
-                    event.clientX >= rect.left &&
-                    event.clientX <= rect.right &&
-                    event.clientY >= rect.top &&
-                    event.clientY <= rect.bottom
-                  );
-                });
-                const targetPath = target?.dataset.workspacePath;
-                if (target === undefined || targetPath === undefined || targetPath === drag.path) {
-                  delete drag.target;
-                  delete drag.placement;
-                  setDropTarget(null);
-                  return;
-                }
-                const rect = target.getBoundingClientRect();
-                drag.target = targetPath;
-                drag.placement = event.clientX < rect.left + rect.width / 2 ? "before" : "after";
-                setDropTarget(targetPath ?? null);
-              }}
-              onPointerUp={(event) => {
-                const drag = dragRef.current;
-                if (drag === null) return;
-                suppressClickRef.current = drag.moved;
-                if (drag.target !== undefined && drag.placement !== undefined) {
-                  const target = drag.target;
-                  const placement = drag.placement;
-                  props.onStateChange((current) =>
-                    moveMissionWorkspaceTab(
-                      current.initialized
-                        ? current
-                        : reconcileMissionWorkspaceTabs(current, props.missions),
-                      drag.path,
-                      target,
-                      placement,
-                    ),
-                  );
-                }
-                const button =
-                  event.currentTarget.querySelector<HTMLButtonElement>(".mission-workspace-tab");
-                if (button?.hasPointerCapture(event.pointerId))
-                  button.releasePointerCapture(event.pointerId);
-                dragRef.current = null;
-                setDropTarget(null);
-              }}
-              onPointerCancel={() => {
-                dragRef.current = null;
-                setDropTarget(null);
-              }}
-              onLostPointerCapture={() => {
-                dragRef.current = null;
-                setDropTarget(null);
-              }}
-              onClickCapture={(event) => {
-                if (!suppressClickRef.current) return;
-                event.preventDefault();
-                event.stopPropagation();
-                suppressClickRef.current = false;
-              }}
             >
               <button
                 id={`${id}-${index}`}
@@ -314,17 +230,17 @@ export function MissionWorkspaceTabs(props: {
                 aria-selected={props.value === workspace.path}
                 tabIndex={props.value === workspace.path ? 0 : -1}
                 className={`mission-workspace-tab${props.value === workspace.path ? " is-active" : ""}`}
-                title={`${workspace.basename}\n${workspace.path}\n${t("dragWorkspaceTab")}`}
+                title={`${workspaceLabel(workspace)}\n${workspace.path}\n${t("dragWorkspaceTab")}`}
                 onClick={() => props.onChange(workspace.path)}
               >
                 <Folder size={18} aria-hidden="true" />
-                <span>{workspace.basename}</span>
+                <span>{workspaceLabel(workspace)}</span>
               </button>
               <button
                 className="mission-workspace-close"
                 type="button"
-                aria-label={t("closeWorkspaceTab", { name: workspace.basename })}
-                title={t("closeWorkspaceTab", { name: workspace.basename })}
+                aria-label={t("closeWorkspaceTab", { name: workspaceLabel(workspace) })}
+                title={t("closeWorkspaceTab", { name: workspaceLabel(workspace) })}
                 tabIndex={props.value === workspace.path ? 0 : -1}
                 onClick={() => closeWorkspace(workspace.path)}
               >
