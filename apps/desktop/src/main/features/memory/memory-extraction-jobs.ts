@@ -390,6 +390,12 @@ function toDesktopTask(
       : entry.module === "skill"
         ? plane.skillLearningStore.getPresentation(entry.job)
         : undefined;
+  const decision =
+    entry.module === "knowledge"
+      ? plane.knowledgeLearningStore.getDecision?.(entry.job)
+      : entry.module === "skill"
+        ? plane.skillLearningStore.getDecision?.(entry.job)
+        : undefined;
   const title =
     entry.module === "knowledge" || entry.module === "skill"
       ? presentation?.titles[0]
@@ -407,6 +413,15 @@ function toDesktopTask(
           sourceName: resourceTitles.get(entry.job.rootRef.id),
           createdAt: entry.job.createdAt,
           ...(presentation === undefined ? {} : { topicCount: presentation.topicCount }),
+          ...(decision === undefined
+            ? {}
+            : {
+                learningDecision: {
+                  outcome: decision.outcome,
+                  reason: decision.reason,
+                  targets: decision.targets,
+                },
+              }),
         }
       : { createdAt: entry.job.sourceUpdatedAt }),
     ...(entry.job.status === "completed" && entry.job.completion !== undefined

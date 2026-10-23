@@ -1,3 +1,7 @@
+import {
+  ContextStoreRevisionRequestSchema,
+  SkillRevisionRequestV4Schema,
+} from "@pragma/built-in-agents";
 import { randomUUID } from "node:crypto";
 import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -6,7 +10,11 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { CapabilityStoreError, type CapabilityStore } from "@pragma/local-host/deployment";
-import { ContextStoreStoreError, type ContextStoreStore } from "@pragma/local-host/deployment";
+import {
+  createContextStoreStore,
+  ContextStoreStoreError,
+  type ContextStoreStore,
+} from "@pragma/local-host/deployment";
 import type { SkillRevisionService } from "../capabilities/skill-revision-service.ts";
 import type { ContextStoreRevisionService } from "../context-stores/context-store-revision-service.ts";
 import { createMemoryLearningRevisions } from "./memory-learning-revisions.ts";
@@ -71,20 +79,62 @@ async function fixture() {
       scheduleProcessing: vi.fn(),
     } as unknown as SkillRevisionService,
     contextStores: {
+      list: async () =>
+        [...existingStoreIds].map((id) => ({
+          id,
+          name: "Knowledge",
+          description: "Guidance",
+          status: "ready",
+          contentRevision: 1,
+          snapshotHash: "c".repeat(64),
+        })),
+      get: async (id: string) => {
+        if (!existingStoreIds.has(id))
+          throw new ContextStoreStoreError("store_not_found", "Missing store");
+        return { id, status: "ready", contentRevision: 1, snapshotHash: "c".repeat(64) };
+      },
       getSnapshot: async (id: string) => {
         if (!existingStoreIds.has(id)) {
           throw new ContextStoreStoreError("store_not_found", "Missing store");
         }
-        return {};
+        return { files: [] };
       },
       createFromSnapshot: createStore,
     } as unknown as ContextStoreStore,
     capabilities: {
-      get: async () => {
+      list: async () => [],
+      getSkillDocument: async () => ({
+        content: "# Workflow\nRun scripts/verify.py and read references/guide.md.",
+      }),
+      listSkillFiles: vi.fn(async () => [
+        { path: "SKILL.md", size: 70 },
+        { path: "scripts/verify.py", size: 40 },
+        { path: "references/guide.md", size: 40 },
+      ]),
+      getSkillFile: vi.fn(async (input: { id: string; revision?: number; path: string }) => ({
+        capabilityId: input.id,
+        revision: input.revision ?? 1,
+        path: input.path,
+        content:
+          input.path === "scripts/verify.py"
+            ? "assert verify_all_outputs()"
+            : "# Actual reference guide",
+        size: 40,
+      })),
+      get: async (id: string) => {
         if (capabilityMissing) {
           throw new CapabilityStoreError("capability_not_found", "Missing capability");
         }
-        return { definition: { kind: capabilityKind, name: "Skill", description: "Reusable" } };
+        return {
+          manifest: { id, latestRevision: 1 },
+          health: { status: "ready" },
+          definition: {
+            kind: capabilityKind,
+            name: "Skill",
+            description: "Reusable",
+            contentHash: "c".repeat(64),
+          },
+        };
       },
       createGeneratedSkill: createSkill,
     } as unknown as CapabilityStore,
@@ -105,6 +155,7 @@ async function fixture() {
     createSkill,
     mergeKnowledge: () => {
       knowledgeState = "merged";
+      for (const [request] of knowledgeStart.mock.calls) existingStoreIds.add(request.storeId);
     },
     publishSkill: () => {
       skillState = "completed";
@@ -135,7 +186,12 @@ describe("Memory revision learning bindings", () => {
     const input = {
       expertRef: f.expertRef,
       sourceDigest: digest,
-      plan: { action: "apply" as const, name: "Knowledge", description: "Reusable knowledge" },
+      plan: {
+        action: "apply" as const,
+        ...knowledgePlanFields(),
+        name: "Knowledge",
+        description: "Reusable knowledge",
+      },
       sources: [],
     };
     await f.service.submitKnowledge(input);
@@ -148,7 +204,19 @@ describe("Memory revision learning bindings", () => {
     expect(f.mountStore).toHaveBeenCalledTimes(1);
     await f.service.reconcile();
     expect(f.mountStore).toHaveBeenCalledTimes(1);
-    await f.service.submitKnowledge({ ...input, sourceDigest: "e".repeat(64) });
+    await f.service.submitKnowledge({
+      ...input,
+      plan: {
+        ...input.plan,
+        target: {
+          type: "revise",
+          storeId: f.knowledgeStart.mock.calls[0]![0].storeId,
+          baseRevision: 1,
+          snapshotHash: "c".repeat(64),
+        },
+      },
+      sourceDigest: "e".repeat(64),
+    });
     expect(f.knowledgeStart).toHaveBeenCalledTimes(2);
     expect(f.knowledgeStart.mock.calls[1]?.[0]).toMatchObject({
       operation: "revise",
@@ -160,7 +228,12 @@ describe("Memory revision learning bindings", () => {
     const f = await fixture();
     const base = {
       expertRef: f.expertRef,
-      plan: { action: "apply" as const, name: "Knowledge", description: "Guidance" },
+      plan: {
+        action: "apply" as const,
+        ...knowledgePlanFields(),
+        name: "Knowledge",
+        description: "Guidance",
+      },
       sources: [],
     };
     await f.service.submitKnowledge({ ...base, sourceDigest: "a".repeat(64) });
@@ -180,7 +253,19 @@ describe("Memory revision learning bindings", () => {
     await expect(
       f.service.assertKnowledgeAvailable({ expertRef: f.expertRef, sourceDigest: "b".repeat(64) }),
     ).resolves.toBeUndefined();
-    await f.service.submitKnowledge({ ...base, sourceDigest: "b".repeat(64) });
+    await f.service.submitKnowledge({
+      ...base,
+      plan: {
+        ...base.plan,
+        target: {
+          type: "revise",
+          storeId: f.knowledgeStart.mock.calls[0]![0].storeId,
+          baseRevision: 1,
+          snapshotHash: "c".repeat(64),
+        },
+      },
+      sourceDigest: "b".repeat(64),
+    });
     expect(f.knowledgeStart).toHaveBeenCalledTimes(2);
     expect(f.knowledgeStart.mock.calls[1]?.[0].operation).toBe("revise");
   });
@@ -644,13 +729,13 @@ describe("Memory revision learning bindings", () => {
     await writeFile(
       join(currentRoot, "bindings.json"),
       JSON.stringify({
-        schemaVersion: "pragma.memory-learning-revisions/v2",
+        schemaVersion: "pragma.memory-learning-revisions/v3",
         knowledge: [],
         skills: [],
       }),
     );
     await expect(f.service.reconcile()).rejects.toThrow();
-    expect(await readFile(join(currentRoot, "bindings.json"), "utf8")).toContain("/v2");
+    expect(await readFile(join(currentRoot, "bindings.json"), "utf8")).toContain("/v3");
     expect((await stat(legacyRoot)).isDirectory()).toBe(true);
   });
 
@@ -686,7 +771,7 @@ it("retries settlement wake failures before committing the resolved binding", as
   await f.service.submitKnowledge({
     expertRef: f.expertRef,
     sourceDigest: "a".repeat(64),
-    plan: { action: "apply", name: "Knowledge", description: "Guidance" },
+    plan: { action: "apply", ...knowledgePlanFields(), name: "Knowledge", description: "Guidance" },
     sources: [],
   });
   f.mergeKnowledge();
@@ -709,7 +794,7 @@ it("recovers a missed historical wake once per process even without a new settle
   await f.service.submitKnowledge({
     expertRef: f.expertRef,
     sourceDigest: "a".repeat(64),
-    plan: { action: "apply", name: "Knowledge", description: "Guidance" },
+    plan: { action: "apply", ...knowledgePlanFields(), name: "Knowledge", description: "Guidance" },
     sources: [],
   });
   f.mergeKnowledge();
@@ -764,4 +849,300 @@ it("allows independent Skill creation while another target awaits review", async
       },
     }),
   ).rejects.toThrow("memory_revision_pending");
+});
+
+function knowledgePlanFields() {
+  return {
+    rationale: "Add supported reusable knowledge.",
+    sourceRefs: [],
+    maturity: "validated-artifact" as const,
+    target: {
+      type: "create" as const,
+      justification:
+        "A complete independently useful verified guide with no related existing base.",
+    },
+  };
+}
+
+it("reuses an ordinary unmounted knowledge base and mounts it only after reviewed publication", async () => {
+  const f = await fixture();
+  const contextStores = createContextStoreStore({ storesPath: join(f.root, "knowledge") });
+  const related = await contextStores.createFromSnapshot({
+    name: "Migration handbook",
+    description: "Persistent schema upgrades and recovery",
+    files: [
+      {
+        id: "guide.md",
+        content: "# Migration\nPreserve backups and restore interrupted journals.",
+        metadata: { trigger: "model_decision", priority: "normal" },
+      },
+    ],
+    author: "user",
+    summary: "Create a manual knowledge base.",
+  });
+  let merged = false;
+  const service = createMemoryLearningRevisions({
+    statePath: join(f.root, "ordinary-bindings"),
+    skillWorkspacePath: join(f.root, "workspace"),
+    knowledgeRevisions: {
+      submit: f.knowledgeStart,
+      get: async () => ({ state: merged ? "merged" : "pending_review" }),
+      scheduleProcessing: vi.fn(),
+    } as unknown as ContextStoreRevisionService,
+    skillRevisions: {} as SkillRevisionService,
+    contextStores,
+    capabilities: {} as CapabilityStore,
+    expertExists: async () => true,
+    mountedAssets: async () => ({ stores: [], skills: [] }),
+    mountStore: f.mountStore,
+    bindSkill: f.bindSkill,
+  });
+  const targets = await service.listKnowledgeTargets({ expertRef: f.expertRef });
+  expect(targets).toEqual([expect.objectContaining({ storeId: related.id, mounted: false })]);
+  const target = targets[0]!;
+  expect(await service.readKnowledgeTarget(target)).toContain("restore interrupted journals");
+  const plan = {
+    action: "apply" as const,
+    ...knowledgePlanFields(),
+    name: related.name,
+    description: related.description,
+    maturity: "incremental" as const,
+    target: {
+      type: "revise" as const,
+      storeId: target.storeId,
+      baseRevision: target.baseRevision,
+      snapshotHash: target.snapshotHash,
+    },
+  };
+  await service.submitKnowledge({
+    expertRef: f.expertRef,
+    sourceDigest: "a".repeat(64),
+    plan,
+    sources: [],
+  });
+  expect(f.knowledgeStart).toHaveBeenCalledWith(
+    expect.objectContaining({ operation: "revise", storeId: related.id }),
+  );
+  expect(f.mountStore).not.toHaveBeenCalled();
+  // A different expert must wait for this same target, while an unrelated new topic remains available.
+  await expect(
+    service.assertKnowledgeAvailable({
+      expertRef: "expert:2h2j3k4m5n6p7q8r",
+      sourceDigest: "b".repeat(64),
+      plan,
+    }),
+  ).rejects.toThrow("memory_revision_pending");
+  await expect(
+    service.assertKnowledgeAvailable({
+      expertRef: f.expertRef,
+      sourceDigest: "b".repeat(64),
+      plan: {
+        ...plan,
+        name: "Other topic",
+        target: { type: "create", justification: "An unrelated mature topic." },
+      },
+    }),
+  ).resolves.toBeUndefined();
+  merged = true;
+  await service.reconcile();
+  expect(f.mountStore).toHaveBeenCalledWith(f.expertRef, related.id);
+  // A stale plan never silently creates a replacement base.
+  await contextStores.createFile(related.id, "new.md", "# New content");
+  await expect(
+    service.submitKnowledge({
+      expertRef: f.expertRef,
+      sourceDigest: "c".repeat(64),
+      plan,
+      sources: [],
+    }),
+  ).rejects.toThrow("memory_learning_target_changed");
+  expect(f.knowledgeStart).toHaveBeenCalledOnce();
+});
+
+it("upgrades a real v1 binding written by the historical service without losing its pending revision", async () => {
+  const f = await fixture();
+  const dir = join(f.root, "state", "memory-learning-revisions");
+  await mkdir(dir, { recursive: true });
+  const historical = await readFile(
+    new URL("./fixtures/memory-learning-bindings-v1.json", import.meta.url),
+    "utf8",
+  );
+  await writeFile(join(dir, "bindings.json"), historical);
+  await f.service.reconcile();
+  const current = JSON.parse(await readFile(join(dir, "bindings.json"), "utf8"));
+  const old = JSON.parse(historical);
+  expect(current).toMatchObject({
+    schemaVersion: "pragma.memory-learning-revisions/v2",
+    knowledge: [{ ...old.knowledge[0], topicKey: `legacy:${old.knowledge[0].storeId}` }],
+  });
+  expect(
+    JSON.parse(await readFile(join(dir, "migration-backups", "bindings-v1.json"), "utf8")),
+  ).toEqual(old);
+  const unchanged = await readFile(join(dir, "bindings.json"), "utf8");
+  await f.service.reconcile();
+  expect(await readFile(join(dir, "bindings.json"), "utf8")).toBe(unchanged);
+});
+
+it("replays an interrupted v1 to v2 binding migration from its stable journal", async () => {
+  const f = await fixture();
+  const dir = join(f.root, "state", "memory-learning-revisions");
+  await mkdir(dir, { recursive: true });
+  const old = JSON.parse(
+    await readFile(new URL("./fixtures/memory-learning-bindings-v1.json", import.meta.url), "utf8"),
+  );
+  const current = {
+    ...old,
+    schemaVersion: "pragma.memory-learning-revisions/v2",
+    knowledge: old.knowledge.map((item: { storeId: string }) => ({
+      ...item,
+      topicKey: `legacy:${item.storeId}`,
+    })),
+  };
+  await writeFile(join(dir, "bindings.json"), JSON.stringify(old));
+  await writeFile(
+    join(dir, "migration-v2.json"),
+    JSON.stringify({
+      schemaVersion: "pragma.state-migration/v1",
+      resource: { family: "pragma.memory-learning-revisions", id: "bindings" },
+      fromVersion: 1,
+      toVersion: 2,
+      documents: { "bindings.json": current, "migration-backups/bindings-v1.json": old },
+    }),
+  );
+  await f.service.reconcile();
+  expect(JSON.parse(await readFile(join(dir, "bindings.json"), "utf8"))).toEqual(current);
+  await expect(stat(join(dir, "migration-v2.json"))).rejects.toMatchObject({ code: "ENOENT" });
+});
+
+it("keeps Skill identity keys scoped to the requesting expert while sharing target occupancy", async () => {
+  const f = await fixture();
+  const otherExpert = "expert:2h2j3k4m5n6p7q8r";
+  const change = {
+    name: "Workflow",
+    description: "Reusable workflow",
+    normalizedKey: "workflow.foreign",
+    sourceRefs: [{ kind: "episodic" as const, id: "episode", revision: 1 }],
+    target: { type: "create" as const },
+  };
+  await f.service.submitSkills({
+    expertRef: otherExpert,
+    sourceDigest: "a".repeat(64),
+    sources: [],
+    plan: { action: "apply", changes: [change] },
+  });
+  const capabilityId = f.skillStart.mock.calls[0]![0].capabilityId;
+  // The same local target is visible while pending, but another expert's keys do not own this expert's identity.
+  expect(await f.service.listSkillTargets({ expertRef: f.expertRef })).toMatchObject([
+    { capabilityId, pending: true, normalizedKeys: [`skill:${capabilityId}`] },
+  ]);
+  f.publishSkill();
+  await f.service.reconcile();
+  await f.service.submitSkills({
+    expertRef: f.expertRef,
+    sourceDigest: "b".repeat(64),
+    sources: [],
+    plan: {
+      action: "apply",
+      changes: [
+        {
+          ...change,
+          normalizedKey: "workflow.own",
+          target: { type: "revise", capabilityId, baseRevision: 1, contentHash: "c".repeat(64) },
+        },
+      ],
+    },
+  });
+  await f.service.reconcile();
+  expect(await f.service.listSkillTargets({ expertRef: f.expertRef })).toMatchObject([
+    { capabilityId, normalizedKeys: ["workflow.own"] },
+  ]);
+});
+
+it("exposes a pinned Skill package catalog and lazily reads scripts and references", async () => {
+  const f = await fixture();
+  const target = {
+    bindingId: randomUUID(),
+    capabilityId: "1h2j3k4m5n6p7q8r",
+    name: "Workflow",
+    description: "Existing workflow",
+    normalizedKeys: ["workflow"],
+    baseRevision: 1,
+    contentHash: "c".repeat(64),
+  };
+  const body = JSON.parse(await f.service.readSkillTarget(target));
+  expect(body.files.map((file: { path: string }) => file.path)).toEqual([
+    "SKILL.md",
+    "scripts/verify.py",
+    "references/guide.md",
+  ]);
+  expect(body.document).toContain("scripts/verify.py");
+  expect(body).not.toHaveProperty("contents");
+  expect(await f.service.readSkillTargetFile(target, "scripts/verify.py")).toBe(
+    "assert verify_all_outputs()",
+  );
+  expect(await f.service.readSkillTargetFile(target, "references/guide.md")).toContain(
+    "Actual reference guide",
+  );
+});
+
+it("submits complete maximum-sized Unicode sources to both Knowledge and Skill revision owners", async () => {
+  const f = await fixture();
+  f.knowledgeStart.mockImplementation(async (request) => {
+    ContextStoreRevisionRequestSchema.parse(request);
+    return { id: randomUUID() };
+  });
+  f.skillStart.mockImplementation(async (request) => {
+    SkillRevisionRequestV4Schema.parse(request);
+    return { id: f.skillJobId, capabilityId: request.capabilityId };
+  });
+  const source = {
+    ref: { kind: "episodic" as const, id: "maximum-workflow", revision: 1 },
+    rootRef: { type: "pragma.expert", id: "expert-a" },
+    producerRefs: [],
+    sourceExecutionIds: [],
+    title: "Verified complete artifact",
+    body: "验".repeat(409980) + "validated-at-end",
+    observedAt: "2026-08-01T00:00:00.000Z",
+    verified: true,
+    outcome: "succeeded" as const,
+    hasSuccessfulRecovery: false,
+    visibility: { mode: "host-private" as const },
+    sensitivity: "internal" as const,
+  };
+  await f.service.submitKnowledge({
+    expertRef: f.expertRef,
+    sourceDigest: "e".repeat(64),
+    sources: [source],
+    plan: {
+      action: "apply",
+      ...knowledgePlanFields(),
+      name: "Verified guide",
+      description: "Reusable artifact",
+      sourceRefs: [source.ref],
+    },
+  });
+  await f.service.submitSkills({
+    expertRef: f.expertRef,
+    sourceDigest: "e".repeat(64),
+    sources: [source],
+    plan: {
+      action: "apply",
+      changes: [
+        {
+          name: "Verified workflow",
+          description: "Reusable workflow",
+          normalizedKey: "verified.workflow",
+          sourceRefs: [source.ref],
+          target: { type: "create" },
+        },
+      ],
+    },
+  });
+  expect(f.knowledgeStart).toHaveBeenCalledWith(
+    expect.objectContaining({ prompt: expect.stringContaining("validated-at-end") }),
+  );
+  expect(f.skillStart).toHaveBeenCalledWith(
+    expect.objectContaining({ prompt: expect.stringContaining("validated-at-end") }),
+    expect.anything(),
+  );
 });

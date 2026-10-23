@@ -81,8 +81,27 @@ export function createMemoryPipelineScheduler(options: {
       throw error;
     }
   };
-  const runBackgroundOnce = async (): Promise<void> => {
+  const runMaintenanceOnce = async (): Promise<void> => {
     await Promise.all(
+      options.registry.list().map(async (module) => {
+        try {
+          await module.runMaintenanceOnce?.();
+        } catch (error) {
+          await recordUnavailableDiagnostic({
+            module,
+            registry: options.registry,
+            feed: options.feed,
+            checkpoints: options.checkpoints,
+            now,
+            error,
+            status: "degraded",
+          });
+        }
+      }),
+    );
+  };
+  const runBackgroundOnce = async (): Promise<void> => {
+    const extraction = Promise.all(
       options.registry.list().map(async (module) => {
         try {
           if (options.runModuleBackground !== undefined) await options.runModuleBackground(module);
@@ -99,7 +118,7 @@ export function createMemoryPipelineScheduler(options: {
         }
       }),
     );
-    await afterBackground();
+    await Promise.all([extraction.then(afterBackground), runMaintenanceOnce()]);
   };
   const runOnce = async (input: { readonly background?: boolean } = {}): Promise<void> => {
     if (running !== undefined) return await running;
@@ -145,7 +164,7 @@ export function createMemoryPipelineScheduler(options: {
         }
       }),
     ).then(async () => {
-      if (input.background !== false) await afterBackground();
+      if (input.background !== false) await Promise.all([afterBackground(), runMaintenanceOnce()]);
     });
     try {
       await running;
@@ -346,13 +365,20 @@ async function recordUnavailableDiagnostic(input: {
   readonly checkpoints: MemoryConsumerCheckpointStore;
   readonly now: () => Date;
   readonly error: unknown;
+  readonly status?: "degraded" | "unavailable";
 }): Promise<void> {
   try {
     const [state, feed] = await Promise.all([
       input.checkpoints.read(input.module.descriptor.id),
       input.feed.inspect(),
     ]);
-    updateDiagnostic(input, state, feed.lastSequence, "unavailable", errorCode(input.error));
+    updateDiagnostic(
+      input,
+      state,
+      feed.lastSequence,
+      input.status ?? "unavailable",
+      errorCode(input.error),
+    );
   } catch {
     // Diagnostics must not turn a local Module failure into a scheduler-wide failure.
   }

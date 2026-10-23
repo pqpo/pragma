@@ -13,20 +13,22 @@ import type { SemanticMemoryStore } from "../semantic/store.ts";
  * write-capable cross-Module port.
  */
 export function createKnowledgeSourceReader(options: {
-  readonly episodic: Pick<EpisodicMemoryStore, "list">;
-  readonly semantic: Pick<SemanticMemoryStore, "list" | "sourceExecutionIds">;
+  readonly episodic: Pick<EpisodicMemoryStore, "listForLearning">;
+  readonly semantic: Pick<
+    SemanticMemoryStore,
+    "listForLearning" | "sourceExecutionIds" | "sourceConversationRefs"
+  >;
 }): KnowledgeSourceReader {
   return {
     async listEligibleSources(input) {
       const [episodes, facts] = await Promise.all([
-        options.episodic.list(),
-        options.semantic.list(),
+        options.episodic.listForLearning(),
+        options.semantic.listForLearning(),
       ]);
       const episodicSources = episodes
         .filter(
           (episode) =>
             episode.status === "active" &&
-            episode.valueScore >= 0.85 &&
             episode.rootRefs.some((ref) => sameRef(ref, input.rootRef)),
         )
         .map((episode) =>
@@ -34,12 +36,16 @@ export function createKnowledgeSourceReader(options: {
             ref: { kind: "episodic", id: episode.id, revision: episode.revision },
             rootRef: input.rootRef,
             producerRefs: episode.producerRefs,
-            sourceExecutionIds: episode.sourceExecutionIds.slice(0, 100),
+            conversationRefs: [episode.conversationRef],
+            outcome: episode.outcome.status,
+            sourceExecutionIds: episode.sourceExecutionIds,
             title: episode.goal.text,
             body: [
               episode.summary.text,
-              episode.outcome.summary,
-              ...episode.attempts.map((attempt) => attempt.description),
+              `Outcome: ${episode.outcome.status}: ${episode.outcome.summary}`,
+              ...episode.attempts.map((attempt) =>
+                [attempt.description, attempt.result].filter(Boolean).join(" — "),
+              ),
               ...episode.failuresAndRecoveries.flatMap((item) => [
                 item.failure,
                 ...(item.recovery === undefined ? [] : [item.recovery]),
@@ -53,6 +59,13 @@ export function createKnowledgeSourceReader(options: {
           }),
         );
       const timestamp = input.now.toISOString();
+      // Preserve known legacy identities when historical retained Evidence predates
+      // conversation enrichment. New Fact-only provenance never depends on this fallback.
+      const legacyConversations = new Map(
+        episodes.flatMap((episode) =>
+          episode.sourceExecutionIds.map((id) => [id, episode.conversationRef] as const),
+        ),
+      );
       const semanticSources = await Promise.all(
         facts
           .filter(
@@ -62,20 +75,29 @@ export function createKnowledgeSourceReader(options: {
               (fact.expiresAt === undefined || fact.expiresAt > timestamp) &&
               fact.rootRefs.some((ref) => sameRef(ref, input.rootRef)),
           )
-          .map(async (fact) =>
-            KnowledgeSourceSnapshotSchema.parse({
+          .map(async (fact) => {
+            const sourceExecutionIds = await options.semantic.sourceExecutionIds(fact.id);
+            const conversationRefs = await options.semantic.sourceConversationRefs(fact.id);
+            return KnowledgeSourceSnapshotSchema.parse({
               ref: { kind: "semantic", id: fact.id, revision: fact.revision },
               rootRef: input.rootRef,
               producerRefs: fact.producerRefs,
-              sourceExecutionIds: await options.semantic.sourceExecutionIds(fact.id),
+              conversationRefs:
+                conversationRefs.length > 0
+                  ? conversationRefs
+                  : sourceExecutionIds.flatMap((id) => {
+                      const ref = legacyConversations.get(id);
+                      return ref === undefined ? [] : [ref];
+                    }),
+              sourceExecutionIds,
               title: `${fact.predicate}: ${fact.normalizedValue}`,
               body: fact.statement,
               observedAt: fact.observedAt,
               verified: fact.verifiedAt !== undefined,
               visibility: fact.visibility,
               sensitivity: fact.sensitivity,
-            }),
-          ),
+            });
+          }),
       );
       return [...episodicSources, ...semanticSources].toSorted(compareSource).slice(0, input.limit);
     },

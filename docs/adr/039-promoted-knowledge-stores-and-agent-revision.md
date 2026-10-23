@@ -3,7 +3,7 @@
 ## Status
 
 Superseded in part by [ADR 057](./057-unified-memory-revision-learning.md). The managed Context Store
-authority remains; the Memory promotion candidate and separate creation path are removed. Agent-driven
+authority remains. Target discovery and incremental learning follow [ADR 075](./075-incremental-memory-learning.md); the Memory promotion candidate and separate creation path are removed. Agent-driven
 editing and review use the sparse draft protocol in [ADR 044](./044-sparse-context-store-revision-drafts.md).
 
 ## Context

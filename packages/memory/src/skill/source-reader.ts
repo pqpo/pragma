@@ -16,14 +16,14 @@ export interface SkillSourceReader {
 }
 
 export function createSkillSourceReader(options: {
-  readonly episodic: Pick<EpisodicMemoryStore, "list">;
-  readonly semantic: Pick<SemanticMemoryStore, "list">;
+  readonly episodic: Pick<EpisodicMemoryStore, "listForLearning">;
+  readonly semantic: Pick<SemanticMemoryStore, "listForLearning">;
 }): SkillSourceReader {
   return {
     async listEligibleSources(input) {
       const [episodes, facts] = await Promise.all([
-        options.episodic.list(),
-        options.semantic.list(),
+        options.episodic.listForLearning(),
+        options.semantic.listForLearning(),
       ]);
       const episodic = episodes
         .filter(

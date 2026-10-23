@@ -2418,3 +2418,22 @@ describe("context store sparse draft revisions", () => {
     ).resolves.toMatchObject({ ok: false, error: { code: "context_conflict" } });
   });
 });
+
+it("keeps Memory learning proposals under human review even for an automatically approved knowledge base", async () => {
+  const { service, contextStores, store } = await fixture();
+  await contextStores.updateWriteApproval({ storeId: store.id, writeApprovalMode: "auto" });
+  const job = await service.submit({
+    schemaVersion: "pragma.context-store-revision-request/v2",
+    operation: "revise",
+    storeId: store.id,
+    prompt: "Add supported Memory knowledge",
+    source: "memory-learning",
+    sourceDigest: "c".repeat(64),
+  });
+  await service.processPending();
+  expect(await service.get(job.id)).toMatchObject({
+    state: "pending_review",
+    submissionApprovalMode: "required",
+  });
+  expect((await contextStores.getSnapshot(store.id)).files).toHaveLength(0);
+});

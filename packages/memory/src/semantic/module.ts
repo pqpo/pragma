@@ -92,7 +92,7 @@ export async function createSemanticMemoryModule(
     const notification = await store.readProjectionNotification();
     if (notification === undefined) return;
     try {
-      if (notification.learningEligible) {
+      if (notification.learningEligible || notification.sourceChanged) {
         await options.onProjectionChanged?.({ rootRef: notification.rootRef });
       }
       await store.acknowledgeProjectionNotification(notification.id);
@@ -103,8 +103,11 @@ export async function createSemanticMemoryModule(
       projectionNotificationAttempts += 1;
       projectionNotificationRetryAt =
         now().getTime() + Math.min(2 ** projectionNotificationAttempts * 1_000, 5 * 60_000);
-      projectionNotificationError = error;
-      throw error;
+      projectionNotificationError = Object.assign(
+        new Error("memory_learning_notification_delivery_failed", { cause: error }),
+        { code: "memory_learning_notification_delivery_failed" },
+      );
+      throw projectionNotificationError;
     }
   };
 
@@ -113,14 +116,12 @@ export async function createSemanticMemoryModule(
     conversationRef?: MemorySubjectRef,
     deferAdmission = false,
   ): Promise<void> => {
-    await drainProjectionNotification();
     if (selectedExtractor === undefined) return;
     const claim = await store.claimDueJob(now(), conversationRef);
     if (claim === undefined) return;
     const { localRecoveryOnly, ...job } = claim;
     const key = conversationKey(job.conversationRef);
     const controller = new AbortController();
-    let shouldDrainProjectionNotification = false;
     running.set(key, controller);
     if (
       localRecoveryOnly !== true &&
@@ -286,7 +287,6 @@ export async function createSemanticMemoryModule(
         extractor: extracted.provenance,
         now: now(),
       });
-      shouldDrainProjectionNotification = true;
     } catch (error) {
       if (error instanceof MemoryExtractionDeferred) {
         await store.releaseUnadmittedClaim(job, now(), unadmittedClaims.has(controller));
@@ -312,7 +312,6 @@ export async function createSemanticMemoryModule(
       unadmittedClaims.delete(controller);
       if (running.get(key) === controller) running.delete(key);
     }
-    if (shouldDrainProjectionNotification) await drainProjectionNotification();
   };
 
   return {
@@ -358,6 +357,7 @@ export async function createSemanticMemoryModule(
       return {};
     },
     runBackgroundOnce,
+    runMaintenanceOnce: drainProjectionNotification,
     async prepareBackgroundOnce(conversationRef) {
       if (extractor === undefined) return undefined;
       const current = extractor;

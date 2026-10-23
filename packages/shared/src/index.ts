@@ -16,6 +16,7 @@ export * from "./integration/index.ts";
 export * from "./logging/log.schema.ts";
 export * from "./memory/extraction-failure.schema.ts";
 export * from "./memory/knowledge-memory.schema.ts";
+export * from "./memory/learning-limits.ts";
 export * from "./memory/memory-attention.schema.ts";
 export * from "./memory/memory-plane.schema.ts";
 export * from "./memory/memory-retrieval.schema.ts";

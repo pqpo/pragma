@@ -8,9 +8,9 @@ import type { SkillLearningPlan } from "../learning/revision-plan.ts";
 
 export interface SkillSourceEligibility {
   readonly eligible: boolean;
-  readonly highValueEpisodicCount: number;
+  readonly episodeCount: number;
   readonly conversationCount: number;
-  readonly successfulOrRecoveredCount: number;
+  readonly succeededCount: number;
   readonly qualifyingSourceRefs: readonly SkillSourceRevisionRef[];
 }
 
@@ -25,9 +25,7 @@ export function inspectSkillSourceEligibility(
       currentEpisodes.set(source.ref.id, source);
     }
   }
-  const episodes = [...currentEpisodes.values()].filter(
-    (source) => (source.valueScore ?? 0) >= 0.85,
-  );
+  const episodes = [...currentEpisodes.values()];
   const conversations = new Set(
     episodes
       .map((source) =>
@@ -37,14 +35,12 @@ export function inspectSkillSourceEligibility(
       )
       .filter(Boolean),
   );
-  const successful = episodes.filter(
-    (source) => source.outcome === "succeeded" || source.hasSuccessfulRecovery,
-  );
+  const successful = episodes.filter((source) => source.outcome === "succeeded");
   return {
-    eligible: episodes.length >= 3 && conversations.size >= 2 && successful.length >= 2,
-    highValueEpisodicCount: episodes.length,
+    eligible: successful.length >= 1,
+    episodeCount: episodes.length,
     conversationCount: conversations.size,
-    successfulOrRecoveredCount: successful.length,
+    succeededCount: successful.length,
     qualifyingSourceRefs: episodes
       .map((source) => source.ref)
       .toSorted((left, right) => left.id.localeCompare(right.id) || left.revision - right.revision),
@@ -68,6 +64,7 @@ export function inspectSkillLearningPlan(
   if (plan.action === "skip") return [];
   const available = new Map(sources.map((source) => [sourceRefKey(source.ref), source]));
   const acceptedKeys = new Set<string>();
+  const acceptedTargets = new Set<string>();
   return plan.changes.flatMap((change, index) => {
     const issues: string[] = [];
     const keys = change.sourceRefs.map(sourceRefKey);
@@ -79,7 +76,7 @@ export function inspectSkillLearningPlan(
       const eligibility = inspectSkillSourceEligibility(selected as SkillSourceSnapshot[]);
       if (!eligibility.eligible)
         issues.push(
-          `Each change requires at least 3 distinct Episodes with valueScore >= 0.85 from at least 2 conversations, including at least 2 successful or recovered outcomes. Selected counts: ${eligibility.highValueEpisodicCount} high-value Episodes, ${eligibility.conversationCount} conversations, ${eligibility.successfulOrRecoveredCount} successful or recovered outcomes.`,
+          `Each change requires at least one succeeded Episode with actual validation. Selected counts: ${eligibility.episodeCount} Episodes, ${eligibility.succeededCount} succeeded Episodes.`,
         );
     }
     const target = change.target;
@@ -92,8 +89,22 @@ export function inspectSkillLearningPlan(
     ) {
       issues.push("Use a supplied target ID and do not claim another target's normalizedKey.");
     }
+    if (target.type === "revise") {
+      const supplied = targets.find((item) => item.capabilityId === target.capabilityId);
+      if (
+        supplied?.pending ||
+        supplied?.baseRevision !== target.baseRevision ||
+        supplied?.contentHash !== target.contentHash
+      )
+        issues.push("Use the supplied current Skill version or wait for its pending review.");
+      if (acceptedTargets.has(target.capabilityId))
+        issues.push("Combine changes to the same existing Skill into one revision.");
+    }
     if (acceptedKeys.has(change.normalizedKey)) issues.push("All normalizedKeys must be distinct.");
-    if (issues.length === 0) acceptedKeys.add(change.normalizedKey);
+    if (issues.length === 0) {
+      acceptedKeys.add(change.normalizedKey);
+      if (target.type === "revise") acceptedTargets.add(target.capabilityId);
+    }
     return issues.map((message) => ({ index, message }));
   });
 }

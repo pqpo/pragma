@@ -160,10 +160,10 @@ describe("Skill learning revision planning", () => {
     store.close();
   });
 
-  it("completes insufficient evidence without invoking the Agent", async () => {
+  it("completes supporting facts without executed workflow evidence without invoking the Agent", async () => {
     const plan = vi.fn(async () => ({ action: "skip" as const }));
-    const module = await createModule(sources().slice(0, 2), { plan });
-    await schedule(module, sources().slice(0, 2));
+    const module = await createModule(sources().slice(3), { plan });
+    await schedule(module, sources().slice(3));
     await module.runBackgroundOnce?.();
     expect(plan).not.toHaveBeenCalled();
     expect((await module.store.listJobs())[0]).toMatchObject({
@@ -233,12 +233,13 @@ describe("Skill learning revision planning", () => {
     module.close();
   });
 
-  it("submits qualifying changes even when other changes cite lower-value Episodes", async () => {
+  it("submits qualifying changes even when other changes lack successful workflow evidence", async () => {
     const revisions = sources();
     const low = {
       ...revisions[2]!,
       ref: { kind: "episodic" as const, id: "low", revision: 1 },
       valueScore: 0.8,
+      outcome: "failed" as const,
     };
     const change = {
       name: "Workflow",
@@ -256,7 +257,7 @@ describe("Skill learning revision planning", () => {
           {
             ...change,
             normalizedKey: "workflow.bad",
-            sourceRefs: [revisions[0]!.ref, revisions[1]!.ref, low.ref],
+            sourceRefs: [low.ref],
           },
           change,
         ],
@@ -278,12 +279,13 @@ describe("Skill learning revision planning", () => {
     }
   });
 
-  it("completes without retry when every proposed Skill misses the score threshold", async () => {
+  it("completes without retry when every proposed Skill lacks a succeeded Episode", async () => {
     const revisions = sources();
     const low = {
       ...revisions[2]!,
       ref: { kind: "episodic" as const, id: "low", revision: 1 },
       valueScore: 0.8,
+      outcome: "failed" as const,
     };
     const submit = vi.fn(async () => undefined);
     const module = await createModule([...revisions, low], {
@@ -295,7 +297,7 @@ describe("Skill learning revision planning", () => {
             name: "Workflow",
             description: "Reusable workflow",
             normalizedKey: "workflow.bad",
-            sourceRefs: [revisions[0]!.ref, revisions[1]!.ref, low.ref],
+            sourceRefs: [low.ref],
             target: { type: "create" },
           },
         ],
@@ -317,7 +319,7 @@ describe("Skill learning revision planning", () => {
           diagnostic: expect.objectContaining({
             code: "skill_learning_plan_rejected",
             phase: "validation",
-            message: expect.stringContaining("valueScore >= 0.85"),
+            message: expect.stringContaining("at least one succeeded Episode"),
           }),
         }),
       ]);
@@ -834,12 +836,15 @@ function episode(
   };
 }
 
-function digestSources(sourceRevisions: readonly SkillSourceSnapshot[]): string {
+function digestSources(
+  sourceRevisions: readonly SkillSourceSnapshot[],
+  policyVersion = "learning-v2",
+): string {
   const keys = sourceRevisions
     .map((source) => `${source.ref.kind}\0${source.ref.id}\0${source.ref.revision}`)
     .toSorted();
   return createHash("sha256")
-    .update(["skill-sources", ...keys].join("\0"))
+    .update(["skill-sources", ...(policyVersion ? [policyVersion] : []), ...keys].join("\0"))
     .digest("hex");
 }
 
@@ -1075,6 +1080,345 @@ it("does not submit a Skill plan after its job was interrupted during planning",
     await schedule(module, sourceRevisions);
     await module.runBackgroundOnce?.();
     expect(submit).not.toHaveBeenCalled();
+  } finally {
+    module.close();
+  }
+});
+
+it("extracts a Skill from one successful complete workflow even with a low Episode score", async () => {
+  const source = {
+    ...episode("single-workflow", "one-conversation", "succeeded"),
+    valueScore: 0.4,
+  };
+  const submit = vi.fn(async () => undefined);
+  const plan = vi.fn(async () => ({
+    action: "apply" as const,
+    changes: [
+      {
+        name: "Verified workflow",
+        description: "Inputs, complete steps and verification.",
+        normalizedKey: "verified.workflow",
+        sourceRefs: [source.ref],
+        target: { type: "create" as const },
+      },
+    ],
+  }));
+  const module = await createModule([source], { plan, submit });
+  try {
+    await schedule(module, [source]);
+    await module.runBackgroundOnce?.();
+    expect(plan).toHaveBeenCalledOnce();
+    expect(submit).toHaveBeenCalledOnce();
+    expect((await module.store.listJobs())[0]).toMatchObject({
+      status: "completed",
+      completion: "retained",
+    });
+  } finally {
+    module.close();
+  }
+});
+
+it("does not treat recovery text in a failed task as proof of a successful workflow", async () => {
+  const source = {
+    ...episode("failed-recovery", "one-conversation", "failed"),
+    hasSuccessfulRecovery: true,
+  };
+  const plan = vi.fn(async () => ({ action: "skip" as const }));
+  const module = await createModule([source], { plan });
+  try {
+    await schedule(module, [source]);
+    await module.runBackgroundOnce?.();
+    expect(plan).not.toHaveBeenCalled();
+  } finally {
+    module.close();
+  }
+});
+
+it("keeps a relevant old workflow beyond the first 100 source records", async () => {
+  const sourceRevisions = Array.from({ length: 150 }, (_, index) =>
+    episode(`episode-${index}`, `conversation-${index}`, index === 149 ? "succeeded" : "failed"),
+  );
+  const old = sourceRevisions[149]!;
+  const submit = vi.fn(async () => undefined);
+  const plan = vi.fn(async () => ({
+    action: "apply" as const,
+    changes: [
+      {
+        name: "Old verified workflow",
+        description: "A reusable validated method.",
+        normalizedKey: "old.workflow",
+        sourceRefs: [old.ref],
+        target: { type: "create" as const },
+      },
+    ],
+  }));
+  const module = await createModule(sourceRevisions, { plan, submit });
+  try {
+    await schedule(module, sourceRevisions);
+    await module.runBackgroundOnce?.();
+    expect(plan).toHaveBeenCalledWith(
+      expect.objectContaining({ sources: expect.arrayContaining([old]) }),
+    );
+    expect(submit).toHaveBeenCalledOnce();
+  } finally {
+    module.close();
+  }
+});
+
+it("coalesces Episode notifications and defers Skill planning until the six-hour idle deadline", async () => {
+  const root = await temporaryRoot();
+  let clock = now;
+  let available: readonly SkillSourceSnapshot[] = [episode("first", "conversation-a", "succeeded")];
+  const plan = vi.fn(async () => ({
+    action: "skip" as const,
+    disposition: "accumulate" as const,
+    reason: "Workflow details are incomplete.",
+  }));
+  const module = await createSkillMemoryModule({
+    pragmaHome: root,
+    now: () => clock,
+    sourceReader: { listEligibleSources: async () => available },
+    targetReader: { listTargets: async () => [] },
+    planner: { plan },
+    learningSink: { submit: vi.fn() },
+  });
+  try {
+    await module.scheduleRoot(ref("pragma.expert", "expert-a"));
+    clock = new Date(now.getTime() + 60_000);
+    available = [...available, episode("second", "conversation-b", "succeeded")];
+    await module.scheduleRoot(ref("pragma.expert", "expert-a"));
+    expect(await module.store.listJobs()).toHaveLength(1);
+    await module.runBackgroundOnce?.();
+    expect(plan).not.toHaveBeenCalled();
+    clock = new Date(clock.getTime() + 6 * 60 * 60_000);
+    await module.runBackgroundOnce?.();
+    expect(plan).toHaveBeenCalledOnce();
+    expect(module.store.getDecision?.((await module.store.listJobs())[0]!)).toMatchObject({
+      outcome: "accumulate",
+    });
+  } finally {
+    module.close();
+  }
+});
+
+it("waits for a related pending Skill, reuses the waiting plan and resumes after settlement", async () => {
+  const source = episode("verified-workflow", "one-conversation", "succeeded");
+  const target = {
+    bindingId: "11111111-1111-4111-8111-111111111111",
+    capabilityId: "1h2j3k4m5n6p7q8r",
+    name: "Existing workflow",
+    description: "Verified workflow",
+    normalizedKeys: ["workflow.pending"],
+    pending: true,
+    baseRevision: 0,
+    contentHash: "a".repeat(64),
+  };
+  const plan = vi.fn(async () =>
+    target.pending
+      ? {
+          action: "skip" as const,
+          disposition: "accumulate" as const,
+          reason: "Wait for the related workflow review.",
+          waitForTarget: target.capabilityId,
+        }
+      : {
+          action: "apply" as const,
+          changes: [
+            {
+              name: target.name,
+              description: "Improve result verification.",
+              normalizedKey: "workflow.pending",
+              sourceRefs: [source.ref],
+              target: {
+                type: "revise" as const,
+                capabilityId: target.capabilityId,
+                baseRevision: target.baseRevision,
+                contentHash: target.contentHash,
+              },
+            },
+          ],
+        },
+  );
+  const submit = vi.fn(async () => undefined);
+  const module = await createModule([source], { plan, submit, targets: [target] });
+  try {
+    await schedule(module, [source]);
+    await module.runBackgroundOnce?.();
+    expect((await module.store.listJobs())[0]).toMatchObject({
+      status: "needs_attention",
+      lastErrorCode: "memory_revision_pending",
+      attempts: 1,
+    });
+    await module.store.wakeNeedsAttention(now, "revision-settled");
+    await module.runBackgroundOnce?.();
+    expect(plan).toHaveBeenCalledOnce();
+    expect(submit).not.toHaveBeenCalled();
+    target.pending = false;
+    target.baseRevision = 1;
+    await module.store.wakeNeedsAttention(now, "revision-settled");
+    await module.runBackgroundOnce?.();
+    expect(plan).toHaveBeenCalledTimes(2);
+    expect(submit).toHaveBeenCalledOnce();
+  } finally {
+    module.close();
+  }
+});
+
+it("keeps terminal notifications inside the Skill idle debounce", async () => {
+  let clock = now;
+  const available = [episode("complete", "conversation", "succeeded")];
+  const plan = vi.fn(async () => ({ action: "skip" as const }));
+  const module = await createSkillMemoryModule({
+    pragmaHome: await temporaryRoot(),
+    now: () => clock,
+    sourceReader: { listEligibleSources: async () => available },
+    targetReader: { listTargets: async () => [] },
+    planner: { plan },
+    learningSink: { submit: vi.fn() },
+  });
+  try {
+    await module.scheduleRoot(ref("pragma.expert", "expert-a"));
+    await module.consume([
+      {
+        topic: "execution.execution.terminal",
+        messageId: "terminal",
+        attribution: { rootRef: ref("pragma.expert", "expert-a") },
+      } as unknown as import("@pragma/shared").MemoryEvidenceEnvelope,
+    ]);
+    await module.runBackgroundOnce?.();
+    await module.runBackgroundOnce?.();
+    expect(plan).not.toHaveBeenCalled();
+    expect(await module.store.listJobs()).toHaveLength(1);
+    clock = new Date(now.getTime() + 6 * 60 * 60_000);
+    await module.runBackgroundOnce?.();
+    expect(plan).toHaveBeenCalledOnce();
+  } finally {
+    module.close();
+  }
+});
+
+it("settles repeated Skill target changes before submitting only the first qualifying revision", async () => {
+  const available = [episode("complete", "conversation", "succeeded")];
+  const target = {
+    bindingId: "11111111-1111-4111-8111-111111111111",
+    capabilityId: "1h2j3k4m5n6p7q8r",
+    name: "Workflow",
+    description: "Existing workflow",
+    normalizedKeys: ["workflow.one", "workflow.two"],
+    baseRevision: 1,
+    contentHash: "a".repeat(64),
+  };
+  const submit = vi.fn<SkillLearningSink["submit"]>(async () => undefined);
+  const module = await createModule(available, {
+    targets: [target],
+    submit,
+    plan: async () => ({
+      action: "apply",
+      changes: target.normalizedKeys.map((normalizedKey) => ({
+        name: "Workflow",
+        description: "Improve validation",
+        normalizedKey,
+        sourceRefs: available.map((source) => source.ref),
+        target: {
+          type: "revise",
+          capabilityId: target.capabilityId,
+          baseRevision: 1,
+          contentHash: target.contentHash,
+        },
+      })),
+    }),
+  });
+  try {
+    await schedule(module, available);
+    await module.runBackgroundOnce?.();
+    expect(submit).toHaveBeenCalledOnce();
+    const submitted = submit.mock.calls[0]![0];
+    expect(submitted.plan.changes).toHaveLength(1);
+    const job = (await module.store.listJobs())[0]!;
+    expect(job).toMatchObject({ status: "completed", completion: "retained" });
+    expect(await module.store.listFailureAttempts(job.id)).toEqual([
+      expect.objectContaining({
+        diagnostic: expect.objectContaining({
+          code: "skill_learning_plan_rejected",
+          message: expect.stringContaining("same existing Skill"),
+        }),
+      }),
+    ]);
+  } finally {
+    module.close();
+  }
+});
+
+it("uses a new submission identity for a later Skill target version with the same supporting evidence", async () => {
+  const available = [episode("complete", "conversation", "succeeded")];
+  const target = {
+    bindingId: "11111111-1111-4111-8111-111111111111",
+    capabilityId: "1h2j3k4m5n6p7q8r",
+    name: "Workflow",
+    description: "Existing workflow",
+    normalizedKeys: ["workflow.one"],
+    baseRevision: 1,
+    contentHash: "a".repeat(64),
+  };
+  const submit = vi.fn<SkillLearningSink["submit"]>(async () => undefined);
+  const module = await createModule(available, {
+    targets: [target],
+    submit,
+    plan: async () => ({
+      action: "apply",
+      changes: [
+        {
+          name: "Workflow",
+          description: "Improve validation",
+          normalizedKey: "workflow.one",
+          sourceRefs: available.map((source) => source.ref),
+          target: {
+            type: "revise",
+            capabilityId: target.capabilityId,
+            baseRevision: target.baseRevision,
+            contentHash: target.contentHash,
+          },
+        },
+      ],
+    }),
+  });
+  try {
+    await schedule(module, available);
+    await module.runBackgroundOnce?.();
+    await module.store.pruneCompletedJobs({
+      updatedAt: "2026-08-06T00:00:00.000Z",
+      tieBreaker: "skill:z",
+    });
+    target.baseRevision = 2;
+    target.contentHash = "b".repeat(64);
+    await schedule(module, available);
+    await module.runBackgroundOnce?.();
+    expect(submit).toHaveBeenCalledTimes(2);
+    expect(submit.mock.calls[1]![0].sourceDigest).not.toBe(submit.mock.calls[0]![0].sourceDigest);
+  } finally {
+    module.close();
+  }
+});
+
+it("reassesses sources completed under the old Skill learning policy", async () => {
+  const available = [episode("complete", "conversation", "succeeded")];
+  const plan = vi.fn(async () => ({ action: "skip" as const }));
+  const module = await createModule(available, { plan });
+  try {
+    const rootRef = ref("pragma.expert", "expert-a");
+    await module.store.schedule({ rootRef, sourceDigest: digestSources(available, ""), now });
+    const old = (await module.store.claimDueJob(now))!;
+    await module.store.complete(old, "rejected", now);
+    await module.scheduleRoot(rootRef);
+    const pending = (await module.store.listJobs()).find((job) => job.status === "pending");
+    expect(pending).toBeDefined();
+    await module.store.expediteJob({ id: pending!.id, expectedRevision: pending!.revision, now });
+    await module.runBackgroundOnce?.();
+    expect(plan).toHaveBeenCalledOnce();
+    expect(await module.store.getJob(old.id)).toMatchObject({
+      status: "completed",
+      completion: "rejected",
+    });
   } finally {
     module.close();
   }

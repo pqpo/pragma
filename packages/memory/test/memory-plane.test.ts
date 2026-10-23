@@ -1,11 +1,11 @@
-import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, writeFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 
 import { createFileCanonicalEventFeed, PragmaPaths, StaticContextStore } from "@pragma/core";
 import { CanonicalEventEnvelopeSchema, MemoryEvidenceEnvelopeSchema } from "@pragma/shared";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import {
   createFederatedMemoryContextStore,
@@ -321,4 +321,50 @@ describe("Memory Plane phase one", () => {
     ).toBe(1);
     database.close();
   });
+});
+
+it("runs the conversation coordinator independently of blocked maintenance and reports delivery degradation", async () => {
+  const home = await mkdtemp(join(tmpdir(), "pragma-maintenance-isolation-"));
+  const canonical = await createFileCanonicalEventFeed({ pragmaHome: home });
+  const state = createFileMemoryPipelineStateStore({ pragmaHome: home });
+  const registry = new MemoryModuleRegistry();
+  const probe = createProbeMemoryModule({ pragmaHome: home });
+  let release!: () => void;
+  const blocked = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const afterBackground = vi.fn(async () => undefined);
+  registry.register({
+    ...probe,
+    runBackgroundOnce: async () => undefined,
+    runMaintenanceOnce: async () => {
+      await blocked;
+      throw Object.assign(new Error("Delivery failed"), {
+        code: "memory_learning_notification_delivery_failed",
+      });
+    },
+  });
+  const scheduler = createMemoryPipelineScheduler({
+    registry,
+    feed: createMemoryEvidenceFeed(canonical),
+    publisher: createMemoryEvidencePublisher(canonical),
+    checkpoints: state,
+    deadLetters: state,
+    outbox: state,
+    afterBackground,
+  });
+  try {
+    const running = scheduler.runBackgroundOnce();
+    await vi.waitFor(() => expect(afterBackground).toHaveBeenCalledOnce());
+    release();
+    await running;
+    expect(registry.diagnostic(probe.descriptor.id)).toMatchObject({
+      status: "degraded",
+      lastErrorCode: "memory_learning_notification_delivery_failed",
+    });
+  } finally {
+    release();
+    await canonical.close();
+    await rm(home, { recursive: true, force: true });
+  }
 });

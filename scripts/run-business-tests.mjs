@@ -80,7 +80,10 @@ if (lane !== "desktop") {
   await vitest("@pqpo/pragma", []);
   await vitest("@pragma/memory", [
     "test/skill-memory.test.ts",
+    "test/skill-learning-threshold.test.ts",
+    "test/skill-source-reader.test.ts",
     "test/knowledge-memory.test.ts",
+    "test/learning-notifications.test.ts",
     "test/episodic-memory.test.ts",
     "test/semantic-memory.test.ts",
     "test/conversation-retry.test.ts",
@@ -150,6 +153,8 @@ if (lane !== "host") {
     "src/main/features/memory/memory-curator.test.ts",
     "src/main/features/memory/memory-learning-revisions.test.ts",
     "src/main/features/memory/memory-revision-learning-planners.test.ts",
+    "src/main/features/memory/learning-inspection.test.ts",
+    "src/main/features/missions/revision-prompt-input.test.ts",
     "src/main/bootstrap/shutdown-sequence.test.ts",
     "src/main/features/context-stores/knowledge-revision-capability.test.ts",
     "src/main/features/context-stores/context-store-revision-service.test.ts",

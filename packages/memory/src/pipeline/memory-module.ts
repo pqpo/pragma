@@ -58,6 +58,8 @@ export interface MemoryModule {
   consume(envelopes: readonly MemoryEvidenceEnvelope[]): Promise<MemoryModuleConsumeResult>;
   /** Durable module-owned work which must not hold the feed checkpoint open. */
   runBackgroundOnce?(): Promise<void>;
+  /** Independent retryable delivery; failure must not block projection extraction. */
+  runMaintenanceOnce?(): Promise<void>;
 }
 
 export class MemoryModuleRegistry {

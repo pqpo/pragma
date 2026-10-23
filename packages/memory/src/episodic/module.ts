@@ -71,6 +71,8 @@ export async function createEpisodicMemoryModule(
     readonly pragmaHome?: string | undefined;
     readonly extractor?: EpisodicMemoryExtractor | undefined;
     readonly extractionSettings?: Pick<MemoryExtractionSettingsStore, "get"> | undefined;
+    readonly onProjectionChanged?:
+      ((input: { readonly rootRef: MemorySubjectRef }) => Promise<void>) | undefined;
     readonly now?: (() => Date) | undefined;
   } = {},
 ): Promise<EpisodicMemoryModule> {
@@ -82,6 +84,31 @@ export async function createEpisodicMemoryModule(
     ((executionId: string) => Promise<readonly MemorySubjectRef[]>) | undefined;
   const running = new Map<string, AbortController>();
   const unadmittedClaims = new Set<AbortController>();
+
+  let notificationFailures = 0;
+  let notificationRetryAt = 0;
+  let notificationError: unknown;
+  const drainLearningNotification = async (): Promise<void> => {
+    if (now().getTime() < notificationRetryAt) throw notificationError;
+    const notification = await store.readLearningNotification();
+    if (notification === undefined || options.onProjectionChanged === undefined) return;
+    try {
+      if (notification.learningEligible || notification.sourceChanged)
+        await options.onProjectionChanged({ rootRef: notification.rootRef });
+      await store.acknowledgeLearningNotification(notification);
+      notificationFailures = 0;
+      notificationRetryAt = 0;
+      notificationError = undefined;
+    } catch (error) {
+      notificationRetryAt =
+        now().getTime() + Math.min(2 ** ++notificationFailures * 1000, 5 * 60_000);
+      notificationError = Object.assign(
+        new Error("memory_learning_notification_delivery_failed", { cause: error }),
+        { code: "memory_learning_notification_delivery_failed" },
+      );
+      throw notificationError;
+    }
+  };
 
   const runBackgroundOnce = async (
     selectedExtractor = extractor,
@@ -336,6 +363,7 @@ export async function createEpisodicMemoryModule(
       return {};
     },
     runBackgroundOnce,
+    runMaintenanceOnce: drainLearningNotification,
     async prepareBackgroundOnce(conversationRef) {
       if (extractor === undefined) return undefined;
       const current = extractor;

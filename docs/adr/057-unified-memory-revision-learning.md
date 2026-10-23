@@ -2,7 +2,7 @@
 
 ## Status
 
-Accepted
+Accepted. Knowledge target discovery, creation maturity, and Skill source admission are superseded by [ADR 075](./075-incremental-memory-learning.md). Managed revision ownership and review remain in force.
 
 ## Context
 

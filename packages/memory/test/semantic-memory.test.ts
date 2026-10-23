@@ -60,6 +60,7 @@ describe("Semantic Memory", () => {
         })),
       );
       await module.runBackgroundOnce?.();
+      await module.runMaintenanceOnce?.();
       expect(await module.store.list()).toHaveLength(1);
       expect(onProjectionChanged).not.toHaveBeenCalled();
     } finally {
@@ -92,6 +93,7 @@ describe("Semantic Memory", () => {
         await module.store.retryJob({ id: failed.id, expectedRevision: failed.revision, now });
       }
       await module.runBackgroundOnce?.();
+      await module.runMaintenanceOnce?.();
       expect(extractor.extract).not.toHaveBeenCalled();
       expect((await module.store.inspect()).needsAttention).toBe(0);
       expect((await module.store.inspect()).rejectedByReason["insufficient-evidence"]).toBe(1);
@@ -110,6 +112,7 @@ describe("Semantic Memory", () => {
     try {
       await module.consume(executionEvidence("missing-subject", "Use concise Chinese answers."));
       await module.runBackgroundOnce?.();
+      await module.runMaintenanceOnce?.();
       expect(extractor.extract).not.toHaveBeenCalled();
       expect((await module.store.listExtractionJobs())[0]).toMatchObject({
         status: "needs_attention",
@@ -137,6 +140,7 @@ describe("Semantic Memory", () => {
     await module.consume(executionEvidence("restart-budget", "Use concise Chinese answers."));
     for (let attempt = 0; attempt < 3; attempt += 1) {
       await module.runBackgroundOnce?.();
+      await module.runMaintenanceOnce?.();
       clock = new Date(clock.getTime() + 5_000);
     }
     const claim = await module.store.claimDueJob(clock);
@@ -149,6 +153,7 @@ describe("Semantic Memory", () => {
       now: clock,
     });
     await module.runBackgroundOnce?.();
+    await module.runMaintenanceOnce?.();
     expect(extractor.extract).toHaveBeenCalledTimes(3);
     expect((await module.store.listExtractionJobs())[0]).toMatchObject({
       status: "needs_attention",
@@ -177,6 +182,7 @@ describe("Semantic Memory", () => {
       await module.consume(executionEvidence("budget-cancel", "Use concise Chinese answers."));
       for (let attempt = 0; attempt < history; attempt += 1) {
         await module.runBackgroundOnce?.();
+        await module.runMaintenanceOnce?.();
         clock = new Date(clock.getTime() + 5_000);
       }
       const [initial] = await module.store.listExtractionJobs();
@@ -199,6 +205,7 @@ describe("Semantic Memory", () => {
           return evidence;
         });
         await module.runBackgroundOnce?.();
+        await module.runMaintenanceOnce?.();
         expect(extractor.extract).toHaveBeenCalledTimes(history);
         expect((await module.store.listExtractionJobs())[0]).toMatchObject({
           status: "waiting_idle",
@@ -214,11 +221,13 @@ describe("Semantic Memory", () => {
       clock = new Date(clock.getTime() + CONVERSATION_EXTRACTION_DELAYS.completedMs);
       for (let attempt = history; attempt < 4; attempt += 1) {
         await module.runBackgroundOnce?.();
+        await module.runMaintenanceOnce?.();
         const [job] = await module.store.listExtractionJobs();
         if (attempt < 3) {
           expect(job!.retryAt).toBe(new Date(clock.getTime() + 5_000).toISOString());
           clock = new Date(clock.getTime() + 4_999);
           await module.runBackgroundOnce?.();
+          await module.runMaintenanceOnce?.();
           expect(extractor.extract).toHaveBeenCalledTimes(attempt + 1);
           clock = new Date(clock.getTime() + 1);
         }
@@ -230,6 +239,7 @@ describe("Semantic Memory", () => {
         totalAttempts: 4,
       });
       await module.runBackgroundOnce?.();
+      await module.runMaintenanceOnce?.();
       expect(extractor.extract).toHaveBeenCalledTimes(4);
       module.close();
     },
@@ -250,6 +260,7 @@ describe("Semantic Memory", () => {
     });
     await module.consume(executionEvidence("review-boundary", "Use concise Chinese answers."));
     await module.runBackgroundOnce?.();
+    await module.runMaintenanceOnce?.();
     const [job] = await module.store.listExtractionJobs();
     await module.setConversationState({
       conversationRef: job!.conversationRef,
@@ -258,6 +269,7 @@ describe("Semantic Memory", () => {
     });
     clock = new Date(clock.getTime() + 5_000);
     await module.runBackgroundOnce?.();
+    await module.runMaintenanceOnce?.();
     expect(extractor.extract).toHaveBeenCalledTimes(1);
     expect((await module.store.listExtractionJobs())[0]?.attempts).toBe(1);
     await module.setConversationState({
@@ -267,6 +279,7 @@ describe("Semantic Memory", () => {
     });
     clock = new Date(clock.getTime() + CONVERSATION_EXTRACTION_DELAYS.completedMs);
     await module.runBackgroundOnce?.();
+    await module.runMaintenanceOnce?.();
     expect(extractor.extract).toHaveBeenCalledTimes(2);
     expect((await module.store.listExtractionJobs())[0]).toMatchObject({
       status: "completed",
@@ -297,6 +310,7 @@ describe("Semantic Memory", () => {
       });
       await module.consume(executionEvidence("review-boundary", "Use concise Chinese answers."));
       await module.runBackgroundOnce?.();
+      await module.runMaintenanceOnce?.();
       // Crash before the state transaction would leave source Evidence available.
       await module.consume(executionEvidence("review-boundary", "Use concise Chinese answers."));
       const database = new DatabaseSync(
@@ -335,6 +349,7 @@ describe("Semantic Memory", () => {
         });
       }
       await module.runBackgroundOnce?.();
+      await module.runMaintenanceOnce?.();
       expect(extractor.extract).toHaveBeenCalledTimes(1);
       expect((await module.store.listExtractionJobs())[0]).toMatchObject({
         status: resultState === "available" ? "completed" : "needs_attention",
@@ -385,6 +400,7 @@ describe("Semantic Memory", () => {
       now: clock,
     });
     await module.runBackgroundOnce?.();
+    await module.runMaintenanceOnce?.();
     expect(extractor.extract).toHaveBeenCalledOnce();
     expect((await module.store.listExtractionJobs())[0]).toMatchObject({
       status: "completed",
@@ -419,6 +435,7 @@ describe("Semantic Memory", () => {
     });
     clock.setUTCDate(clock.getUTCDate() + 1);
     await module.runBackgroundOnce?.();
+    await module.runMaintenanceOnce?.();
     expect(extractor.extract).toHaveBeenCalledTimes(1);
     expect((await module.store.listExtractionJobs())[0]).toMatchObject({
       status: "completed",
@@ -444,6 +461,7 @@ describe("Semantic Memory", () => {
     });
     await module.consume(executionEvidence("paid-result", "Use concise Chinese answers."));
     await module.runBackgroundOnce?.();
+    await module.runMaintenanceOnce?.();
     let [job] = await module.store.listExtractionJobs();
     expect(job).toMatchObject({ status: "pending", attempts: 1 });
     for (let attempts = 1; attempts <= 3; attempts += 1) {
@@ -459,9 +477,11 @@ describe("Semantic Memory", () => {
         clock = new Date(clock.getTime() + CONVERSATION_EXTRACTION_DELAYS.completedMs - 5_000);
       clock = new Date(clock.getTime() + 4_999);
       await module.runBackgroundOnce?.();
+      await module.runMaintenanceOnce?.();
       expect(extractor.extract).toHaveBeenCalledTimes(attempts);
       clock = new Date(clock.getTime() + 1);
       await module.runBackgroundOnce?.();
+      await module.runMaintenanceOnce?.();
       expect(extractor.extract).toHaveBeenCalledTimes(attempts + 1);
       [job] = await module.store.listExtractionJobs();
     }
@@ -477,12 +497,15 @@ describe("Semantic Memory", () => {
     });
     clock = new Date(clock.getTime() + CONVERSATION_EXTRACTION_DELAYS.completedMs);
     await module.runBackgroundOnce?.();
+    await module.runMaintenanceOnce?.();
     await module.store.wakeNeedsAttention(clock);
     await module.runBackgroundOnce?.();
+    await module.runMaintenanceOnce?.();
     expect(extractor.extract).toHaveBeenCalledTimes(4);
     [job] = await module.store.listExtractionJobs();
     await module.store.retryJob({ id: job!.id, expectedRevision: job!.revision, now: clock });
     await module.runBackgroundOnce?.();
+    await module.runMaintenanceOnce?.();
     expect(extractor.extract).toHaveBeenCalledTimes(5);
     module.close();
   });
@@ -506,6 +529,7 @@ describe("Semantic Memory", () => {
     clock = new Date("2026-08-04T00:06:00.000Z");
     module = await createSemanticMemoryModule({ pragmaHome: root, extractor, now: () => clock });
     await module.runBackgroundOnce?.();
+    await module.runMaintenanceOnce?.();
     expect(extractor.extract).not.toHaveBeenCalled();
     expect((await module.store.listExtractionJobs())[0]).toMatchObject({
       status: "needs_attention",
@@ -529,6 +553,7 @@ describe("Semantic Memory", () => {
 
     await module.consume(evidence);
     await module.runBackgroundOnce?.();
+    await module.runMaintenanceOnce?.();
 
     const facts = await module.store.list();
     expect(facts).toHaveLength(1);
@@ -576,6 +601,7 @@ describe("Semantic Memory", () => {
     });
     await module.consume(executionEvidence("markdown-link-label", "Remember this fact."));
     await module.runBackgroundOnce?.();
+    await module.runMaintenanceOnce?.();
 
     const [fact] = await module.store.list();
     const registry = new MemoryModuleRegistry();
@@ -613,6 +639,7 @@ describe("Semantic Memory", () => {
       });
       await module.consume(executionEvidence(executionId, text));
       await module.runBackgroundOnce?.();
+      await module.runMaintenanceOnce?.();
     }
 
     const facts = await module.store.list();
@@ -682,6 +709,7 @@ describe("Semantic Memory", () => {
       });
       await module.consume(executionEvidence(executionId, text));
       await module.runBackgroundOnce?.();
+      await module.runMaintenanceOnce?.();
     }
 
     const [fact] = await module.store.list();
@@ -712,6 +740,7 @@ describe("Semantic Memory", () => {
     });
     await module.consume(executionEvidence("archived-fact", "Remember cobalt-archive."));
     await module.runBackgroundOnce?.();
+    await module.runMaintenanceOnce?.();
 
     const registry = new MemoryModuleRegistry();
     registry.register(module);
@@ -735,9 +764,11 @@ describe("Semantic Memory", () => {
     });
     await module.consume(executionEvidence("execution-crash", "Use concise Chinese answers."));
     await module.runBackgroundOnce?.();
+    await module.runMaintenanceOnce?.();
     simulateJobCompletionCrash(root);
 
     await module.runBackgroundOnce?.();
+    await module.runMaintenanceOnce?.();
 
     expect(extractor.extract).toHaveBeenCalledOnce();
     expect((await module.store.inspect()).running).toBe(0);
@@ -765,6 +796,7 @@ describe("Semantic Memory", () => {
         ),
       );
       await module.runBackgroundOnce?.();
+      await module.runMaintenanceOnce?.();
       clock = new Date(clock.getTime() + 1_000);
     }
     expect(extractor.extract).toHaveBeenCalledTimes(2);
@@ -826,6 +858,7 @@ describe("Semantic Memory", () => {
         });
         await module.consume(executionEvidence(executionId, "Use concise Chinese answers."));
         if (executionId !== "still-waiting") await module.runBackgroundOnce?.();
+        await module.runMaintenanceOnce?.();
         clock = new Date(clock.getTime() + 1_000);
       }
       const jobs = await module.store.listExtractionJobs();
@@ -937,6 +970,7 @@ describe("Semantic Memory", () => {
         executionEvidence(executionId!, "Stable preference for this user.", expertId!),
       );
       await module.runBackgroundOnce?.();
+      await module.runMaintenanceOnce?.();
     }
     const input = extractor.extract.mock.calls.at(-1)![0] as SemanticExtractionInput;
     expect(input.currentFacts).toEqual([]);
@@ -974,6 +1008,7 @@ describe("Semantic Memory", () => {
       });
       await module.consume(executionEvidence(executionId, `Fact for ${expertId}`, expertId));
       await module.runBackgroundOnce?.();
+      await module.runMaintenanceOnce?.();
     }
     const registry = new MemoryModuleRegistry();
     registry.register(module);
@@ -1027,6 +1062,7 @@ describe("Semantic Memory", () => {
         ),
       );
       await module.runBackgroundOnce?.();
+      await module.runMaintenanceOnce?.();
     }
 
     const registry = new MemoryModuleRegistry();
@@ -1068,6 +1104,7 @@ describe("Semantic Memory", () => {
     });
     await module.consume(executionEvidence("execution-governance", "Use concise Chinese answers."));
     await module.runBackgroundOnce?.();
+    await module.runMaintenanceOnce?.();
     const initial = (await module.store.list())[0]!;
     const actorRef = ref("pragma.user", "local-user");
     const revised = await module.store.revise({
@@ -1082,6 +1119,7 @@ describe("Semantic Memory", () => {
       now: new Date("2026-08-03T13:00:00.000Z"),
     });
     await module.runBackgroundOnce?.();
+    await module.runMaintenanceOnce?.();
     await expect(
       module.store.verify({
         id: initial.id,
@@ -1099,6 +1137,7 @@ describe("Semantic Memory", () => {
       now: new Date("2026-08-03T13:01:00.000Z"),
     });
     await module.runBackgroundOnce?.();
+    await module.runMaintenanceOnce?.();
     expect(verified.confidence).toBe(1);
     const invalidated = await module.store.invalidate({
       id: verified.id,
@@ -1108,11 +1147,12 @@ describe("Semantic Memory", () => {
       now: new Date("2026-08-03T13:02:00.000Z"),
     });
     await module.runBackgroundOnce?.();
+    await module.runMaintenanceOnce?.();
     expect(invalidated.status).toBe("invalidated");
     const history = await module.store.history(initial.id);
     expect(history.map((revision) => revision.revision)).toEqual([4, 3, 2, 1]);
     expect(history.at(-1)?.statement).toBe("The user prefers concise Chinese answers.");
-    expect(onProjectionChanged).toHaveBeenCalledTimes(3);
+    expect(onProjectionChanged).toHaveBeenCalledTimes(4);
     module.close();
   });
 
@@ -1136,16 +1176,23 @@ describe("Semantic Memory", () => {
       executionEvidence("execution-notification-retry", "Use concise Chinese answers."),
     );
 
-    await expect(module.runBackgroundOnce?.()).rejects.toThrow("knowledge_sink_unavailable");
+    await module.runBackgroundOnce?.();
+    await expect(module.runMaintenanceOnce?.()).rejects.toThrow(
+      "memory_learning_notification_delivery_failed",
+    );
     expect(onProjectionChanged).toHaveBeenCalledTimes(1);
     expect(await module.store.listExtractionJobs()).toMatchObject([{ status: "completed" }]);
     expect(await module.store.readProjectionNotification()).toBeDefined();
 
-    await expect(module.runBackgroundOnce?.()).rejects.toThrow("knowledge_sink_unavailable");
+    await module.runBackgroundOnce?.();
+    await expect(module.runMaintenanceOnce?.()).rejects.toThrow(
+      "memory_learning_notification_delivery_failed",
+    );
     expect(onProjectionChanged).toHaveBeenCalledTimes(1);
 
     now = new Date(now.getTime() + 2_000);
     await module.runBackgroundOnce?.();
+    await module.runMaintenanceOnce?.();
     expect(onProjectionChanged).toHaveBeenCalledTimes(2);
     expect(await module.store.readProjectionNotification()).toBeUndefined();
     module.close();
@@ -1177,6 +1224,7 @@ describe("Semantic Memory", () => {
     );
     await module.consume(evidence);
     await module.runBackgroundOnce?.();
+    await module.runMaintenanceOnce?.();
     const initial = (await module.store.list())[0]!;
     expect(await module.store.listForRecall(expertScope("expert-a"), new Date())).toEqual([]);
     const principalScope = {
@@ -1199,6 +1247,7 @@ describe("Semantic Memory", () => {
       now: new Date("2026-08-03T13:00:00.000Z"),
     });
     await module.runBackgroundOnce?.();
+    await module.runMaintenanceOnce?.();
     await expect(
       module.store.tightenAccess({
         id: tightened.id,
@@ -1244,10 +1293,11 @@ describe("Semantic Memory", () => {
       now: new Date("2026-08-03T13:02:00.000Z"),
     });
     await module.runBackgroundOnce?.();
+    await module.runMaintenanceOnce?.();
     expect(await module.store.get(initial.id)).toBeUndefined();
     expect(await module.store.history(initial.id)).toEqual([]);
     expect(await module.store.getEvidence(evidence[0]!.messageId)).toBeUndefined();
-    expect(onProjectionChanged).toHaveBeenCalledTimes(1);
+    expect(onProjectionChanged).toHaveBeenCalledTimes(3);
     module.close();
 
     const database = new DatabaseSync(dataPath);
@@ -1292,12 +1342,12 @@ describe("Semantic Memory", () => {
         "facts.sqlite",
       ),
     );
-    database.exec("PRAGMA user_version = 7");
+    database.exec("PRAGMA user_version = 8");
     database.close();
 
     await expect(
       createSemanticMemoryModule({ pragmaHome: root, extractor: fakeExtractor() }),
-    ).rejects.toThrow("unsupported-state-version:pragma.memory-semantic-store/v7");
+    ).rejects.toThrow("unsupported-state-version:pragma.memory-semantic-store/v8");
   });
 
   it("upgrades historical semantic jobs through the registered migration and keeps a backup", async () => {
@@ -1381,6 +1431,7 @@ describe("Semantic Memory", () => {
     });
     await module.consume(executionEvidence("execution-invalid", "Remember this stable fact."));
     await module.runBackgroundOnce?.();
+    await module.runMaintenanceOnce?.();
     expect(await module.store.list()).toEqual([]);
     expect((await module.store.inspect()).running).toBe(0);
     expect(extractor.extract).toHaveBeenCalledOnce();
@@ -1562,3 +1613,59 @@ function simulateJobCompletionCrash(pragmaHome: string): void {
     .run(job["leaseUntil"] as string, JSON.stringify(job), row.id);
   database.close();
 }
+
+it("retains Fact-only conversation provenance independently of Episode retention and extraction job cleanup", async () => {
+  const pragmaHome = await temporaryRoot();
+  const module = await createSemanticMemoryModule({
+    pragmaHome,
+    now: () => new Date("2026-08-04T00:00:00.000Z"),
+    extractor: fakeExtractor(),
+  });
+  const rootRef = ref("pragma.expert", "expert-a");
+  try {
+    for (const [id, conversation] of [
+      ["fact-only-a", "conversation-a"],
+      ["fact-only-b", "conversation-b"],
+    ]) {
+      await module.registerExecutionSubjects({
+        executionId: id!,
+        subjectRefs: [ref("pragma.user", "local-user")],
+      });
+      // Capture without conversation metadata, then bind before extraction. The job is authority.
+      await module.consume(
+        executionEvidence(id!, "Use concise Chinese answers.").map((item) => ({
+          ...item,
+          conversationRef: ref("pragma.execution", id!),
+        })),
+      );
+      await module.bindExecutionConversation({
+        executionId: id!,
+        conversationRef: ref("pragma.mission", conversation!),
+        now: new Date("2026-08-03T23:00:00.000Z"),
+      });
+      await module.runBackgroundOnce?.();
+      await module.runMaintenanceOnce?.();
+    }
+    const facts = await module.store.list();
+    expect(facts).toHaveLength(1);
+    expect(await module.store.sourceConversationRefs(facts[0]!.id)).toEqual([
+      ref("pragma.mission", "conversation-a"),
+      ref("pragma.mission", "conversation-b"),
+    ]);
+    await module.store.deleteExecutionState(["fact-only-a", "fact-only-b"]);
+    const { createKnowledgeSourceReader } = await import("../src/knowledge/source-reader.ts");
+    const reader = createKnowledgeSourceReader({
+      episodic: { listForLearning: async () => [] },
+      semantic: module.store,
+    });
+    const sources = await reader.listEligibleSources({
+      rootRef,
+      now: new Date("2026-08-04T00:00:00.000Z"),
+      limit: 10,
+    });
+    expect(sources).toHaveLength(1);
+    expect(sources[0]!.conversationRefs).toHaveLength(2);
+  } finally {
+    module.close();
+  }
+});

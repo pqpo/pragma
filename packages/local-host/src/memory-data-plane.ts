@@ -29,7 +29,6 @@ import {
   createSkillMemoryModule,
   createSkillSourceReader,
   type KnowledgeLearningSink,
-  type KnowledgeMemoryModule,
   type SkillLearningSink,
   type SkillLearningTargetReader,
 } from "@pragma/memory";
@@ -65,19 +64,26 @@ export async function createLocalHostMemoryDataPlane(options: {
   });
   const publisher = createMemoryEvidencePublisher(canonical);
   const registry = new MemoryModuleRegistry();
+  const learningRef: {
+    current?: { scheduleRoot(rootRef: import("@pragma/shared").MemorySubjectRef): Promise<void> }[];
+  } = {};
+  const notifyLearning = async ({
+    rootRef,
+  }: {
+    rootRef: import("@pragma/shared").MemorySubjectRef;
+  }) => {
+    if (learningRef.current === undefined) throw new Error("memory_learning_modules_not_ready");
+    for (const module of learningRef.current) await module.scheduleRoot(rootRef);
+  };
   const episodic = await createEpisodicMemoryModule({
+    onProjectionChanged: notifyLearning,
     pragmaHome: options.pragmaHome,
     extractionSettings,
   });
-  const knowledgeRef: { current?: KnowledgeMemoryModule } = {};
   const semantic = await createSemanticMemoryModule({
     pragmaHome: options.pragmaHome,
     extractionSettings,
-    async onProjectionChanged({ rootRef }) {
-      const current = knowledgeRef.current;
-      if (current === undefined) throw new Error("knowledge_memory_module_not_ready");
-      await current.scheduleRoot(rootRef);
-    },
+    onProjectionChanged: notifyLearning,
   });
   const knowledge = await createKnowledgeMemoryModule({
     pragmaHome: options.pragmaHome,
@@ -93,7 +99,6 @@ export async function createLocalHostMemoryDataPlane(options: {
         },
       } satisfies KnowledgeLearningSink),
   });
-  knowledgeRef.current = knowledge;
   const skill = await createSkillMemoryModule({
     pragmaHome: options.pragmaHome,
     sourceReader: createSkillSourceReader({ episodic: episodic.store, semantic: semantic.store }),
@@ -112,6 +117,7 @@ export async function createLocalHostMemoryDataPlane(options: {
         },
       } satisfies SkillLearningSink),
   });
+  learningRef.current = [knowledge, skill];
   const activity = createMemoryActivityStore({ pragmaHome: options.pragmaHome });
   let extractionVectorSearch: ExtractionVectorSearch | undefined;
   const memoryReader = createExtractionMemoryReader({

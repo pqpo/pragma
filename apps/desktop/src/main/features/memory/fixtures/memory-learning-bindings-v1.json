@@ -1,0 +1,14 @@
+{
+  "schemaVersion": "pragma.memory-learning-revisions/v1",
+  "knowledge": [
+    {
+      "expertRef": "expert:1h2j3k4m5n6p7q8r",
+      "storeId": "0eebe538-d483-403f-9c09-c456fa94f995",
+      "sourceDigest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "revisionJobId": "11111111-1111-4111-8111-111111111111",
+      "mounted": false,
+      "revisionPending": true
+    }
+  ],
+  "skills": []
+}

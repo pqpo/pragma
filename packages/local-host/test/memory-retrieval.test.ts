@@ -191,7 +191,8 @@ describe("Memory retrieval across Hosts", () => {
       f.episodic.close();
       f.semantic.close();
     }
-  });
+    // Builds 145 records through the production vector Worker; this is a bulk integration case.
+  }, 15_000);
 
   it("applies the extraction scope intersection before the vector index Top-K cutoff", async () => {
     const f = await fixture();

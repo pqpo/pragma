@@ -1016,6 +1016,17 @@ export async function createDesktopApplicationContainer(
     skillRevisions,
     contextStores,
     capabilities: capabilityStore,
+    mountedAssets: async (ref) => {
+      const expert = await expertStore.get(ref);
+      return {
+        stores: expert.contextStoreMounts
+          .filter((mount) => mount.enabled)
+          .map((mount) => mount.storeId),
+        skills: expert.capabilities
+          .filter((item) => item.kind === "skill")
+          .map((item) => item.capabilityId),
+      };
+    },
     expertExists: async (expertRef) =>
       (await expertStore.list()).some((expert) => expert.ref === expertRef),
     mountStore: mountMemoryKnowledgeStore,
@@ -1153,12 +1164,16 @@ export async function createDesktopApplicationContainer(
       });
     },
     knowledgeLearningSink: {
+      listTargets: (input) => memoryLearningRevisions.listKnowledgeTargets(input),
+      readTarget: (target) => memoryLearningRevisions.readKnowledgeTarget(target),
       assertAvailable: (input) => memoryLearningRevisions.assertKnowledgeAvailable(input),
       async submit(input) {
         await memoryLearningRevisions.submitKnowledge(input);
       },
     },
     skillLearningTargetReader: {
+      readTarget: (target) => memoryLearningRevisions.readSkillTarget(target),
+      readTargetFile: (target, path) => memoryLearningRevisions.readSkillTargetFile(target, path),
       async listTargets(input) {
         return await memoryLearningRevisions.listSkillTargets(input);
       },

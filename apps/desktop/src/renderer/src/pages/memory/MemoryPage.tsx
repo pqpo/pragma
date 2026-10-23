@@ -1054,6 +1054,17 @@ export function MemoryExtractionJobs(props: {
                               .join(" · ")}
                           </p>
                         ) : null}
+                        {task.learningDecision !== undefined ? (
+                          <details className="memory-extraction-task-meta">
+                            <summary>
+                              {t(`learningDecisions.${task.learningDecision.outcome}`)}
+                              {task.learningDecision.targets.length > 0
+                                ? ` · ${task.learningDecision.targets.join(" / ")}`
+                                : ""}
+                            </summary>
+                            <p>{task.learningDecision.reason}</p>
+                          </details>
+                        ) : null}
                         <div className="memory-extraction-task-statuses">
                           <span className={`memory-extraction-type is-${task.module}`}>
                             {t(`extractionTaskTypes.${task.module}`)}

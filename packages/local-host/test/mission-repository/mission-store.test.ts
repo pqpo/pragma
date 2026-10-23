@@ -985,9 +985,54 @@ describe("mission store", { timeout: 30_000 }, () => {
     ).rejects.toMatchObject({ code: "timeline_invalid" });
   });
 
+  it("rolls back an interrupted owned-file copy and retries without losing its input", async () => {
+    const root = await temporaryRoot();
+    const missionsPath = join(root, "missions");
+    const store = createMissionStore({ missionsPath });
+    const file = join(root, "request.md");
+    await writeFile(file, "complete request END");
+    const input = {
+      id: crypto.randomUUID(),
+      workspace: { path: root, basename: "workspace" },
+      goal: "Read the attached request",
+      project: { id: "studio", revision: 1 },
+      executor: missionExecutorSnapshot(expertFixture()),
+      copyFileAttachments: true,
+      attachments: [
+        { id: crypto.randomUUID(), kind: "file" as const, name: "request.md", path: file },
+      ],
+    };
+    const replace = coreStorage.replaceStorageFile;
+    const failure = vi
+      .spyOn(coreStorage, "replaceStorageFile")
+      .mockImplementation(async (...args) => {
+        if (args[1] === store.storagePath!(input.id)) throw new Error("publication interrupted");
+        return await replace(...args);
+      });
+    try {
+      await expect(store.create(input)).rejects.toThrow("publication interrupted");
+    } finally {
+      failure.mockRestore();
+    }
+    await expect(store.get(input.id)).rejects.toMatchObject({ code: "mission_not_found" });
+    expect(await readFile(file, "utf8")).toBe("complete request END");
+    const mission = await store.create(input);
+    const [owned] = await store.getAttachments(mission.id);
+    await rm(file);
+    const reopened = createMissionStore({ missionsPath });
+    expect(await reopened.getPromptAttachments(mission.id, mission.initialMessageId)).toEqual([
+      owned,
+    ]);
+    expect(await readFile(owned!.path, "utf8")).toBe("complete request END");
+    await reopened.remove(mission.id);
+    await expect(readFile(owned!.path)).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
   it("creates an isolated branch from the latest reply and copies current Mission context", async () => {
     const root = await temporaryRoot();
     const sourceImage = join(root, "branch-source.png");
+    const sourceFile = join(root, "revision-request.md");
+    await writeFile(sourceFile, "owned-request");
     await writeFile(sourceImage, "branch-image");
     const store = createMissionStore({ missionsPath: join(root, "missions") });
     const contextStoreId = "10000000-0000-4000-8000-000000000001";
@@ -995,6 +1040,7 @@ describe("mission store", { timeout: 30_000 }, () => {
     const source = await store.create({
       workspace: { path: join(root, "workspace"), basename: "workspace" },
       goal: "Continue a long-running investigation",
+      copyFileAttachments: true,
       title: "A".repeat(48),
       project: { id: "studio", revision: 2 },
       executor: missionExecutorSnapshot(expertFixture()),
@@ -1011,6 +1057,12 @@ describe("mission store", { timeout: 30_000 }, () => {
           name: "branch-source.png",
           path: sourceImage,
           mimeType: "image/png",
+        },
+        {
+          id: "00000000-0000-4000-8000-000000000040",
+          kind: "file",
+          name: "revision-request.md",
+          path: sourceFile,
         },
       ],
     });
@@ -1255,7 +1307,7 @@ describe("mission store", { timeout: 30_000 }, () => {
     ).toBe(false);
 
     const branchAttachments = await store.getAttachments(branch.id);
-    expect(branchAttachments).toHaveLength(1);
+    expect(branchAttachments).toHaveLength(2);
     expect(branchAttachments[0]?.path).toContain(
       join(store.storagePath!(branch.id), "attachments"),
     );
@@ -1275,6 +1327,16 @@ describe("mission store", { timeout: 30_000 }, () => {
       ),
     ).resolves.toBe("private notes");
     await expect(store.get(source.id)).resolves.toEqual(interrupted);
+    const [, ownedSourceFile] = await store.getAttachments(source.id);
+    await rm(sourceFile);
+    await rm(ownedSourceFile!.path);
+    expect(branchAttachments[1]!.path).toBe(
+      join(store.storagePath!(branch.id), "attachments", "files", ownedSourceFile!.id),
+    );
+    await expect(readFile(branchAttachments[1]!.path, "utf8")).resolves.toBe("owned-request");
+    const nestedAttachments = await store.getAttachments(nestedBranch.id);
+    await rm(branchAttachments[1]!.path);
+    await expect(readFile(nestedAttachments[1]!.path, "utf8")).resolves.toBe("owned-request");
   });
 
   it("prepares stable images without publishing a user message and commits them after acceptance", async () => {

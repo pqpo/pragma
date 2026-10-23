@@ -35,9 +35,9 @@ Store/Skill Revision Agent 托管的 Knowledge 与 Skill 学习闭环：
   支持按 revision 立即提炼、重试、删除失败输入，或中断运行任务并重新等待六小时；
 - Mission 的 Memory 页签显示每次 Execution 的 capture/recall 计数。搜索审计只保存 digest 和长度，
   不保存 query 原文。
-- Knowledge learning 从有效 Episode 与已验证/无冲突 Fact 选择有界投影；Store Revision Agent 判断是否值得沉淀，随后创建或修订托管 Context Store 草稿。首次创建和后续修订使用同一审核、合并、挂载链路；
-- ExpertTeam/Flow 的来源按实际 producer Expert 路由；每个 Expert 保持一个 Memory Knowledge Store。正式 Store 不保存 Evidence、sourceRefs 或提炼提示词；
-- Skill learning 只在同一 producer Expert 至少出现 3 条高价值独立 Episode、覆盖 2 个 conversation，且至少 2 条成功或成功恢复后运行；Skill Revision Agent 从来源中最多选择 3 个完整可复用工作流；
+- Knowledge learning 从有效 Episode 与无冲突、未过期 Fact 选择来源；来源可靠性与沉淀价值分别判断。规划先检索已有知识库，优先补充或更正相关已挂载库，再考虑其他本地可编辑库；没有合适目标且主题成熟时才新建。零散内容继续留在 Memory 积累，重复内容跳过；
+- ExpertTeam/Flow 的来源按实际 producer Expert 路由，保持原根资产权限边界。一个 Expert 可维护多个主题库，多位 Expert 可向同一个库提出修订。正式 Store 不保存 Evidence、sourceRefs 或提炼提示词；
+- Skill learning 允许从一次成功任务中提炼完整、经过验证的可复用工作流，也可归纳多次经验；不再要求先积累 3 条高分 Episode。评分不作为准入条件，恢复文字本身不能证明执行成功。每个提案必须引用至少一条成功 Episode，明确适用条件、输入、步骤和实际验证依据；每次最多提出 3 个 Skill，已有相关 Skill 时优先修订；
 - Skill 创建和修订均生成托管草稿，保留同步格式与安全验证，由用户审核后发布并绑定 Expert。Memory 不直接改写正式 Skill，不执行来源回放测评；
 - 旧 Knowledge/Skill 候选审批页及二次 promotion 链路已移除。首次访问时先恢复旧版已批准但未完成的 promotion journal，再迁入已批准绑定；未审批候选连同旧状态按需归档，不进入新流程；
 - 分享与导入使用普通 Context Store 和 Skill Bundle 路径。旧 Published Knowledge API/UI 与 `pragma.memory.knowledge@v1` extension 已删除。
@@ -46,7 +46,7 @@ Store/Skill Revision Agent 托管的 Knowledge 与 Skill 学习闭环：
 扩展接入同一 SPI。旧插件与其 Task/Experience/Fact/Skill 数据不属于当前 Memory Plane
 的读取和导入协议。
 
-Episodic 的 data Store 当前为 user version 5，Semantic 为 version 6；两者 job Store 均为 version 4。data v3→v4 增加
+Episodic 的 data Store 当前为 user version 6，Semantic 为 version 7；两者 job Store 均为 version 4。data v3→v4 增加
 binding-scoped hot/archive 索引与召回统计；相邻 v2→v3 迁移将提炼生命周期
 升级为 conversation、source Execution 和 input-watermark 模型，并对升级前数据创建备份；未来
 版本仍 fail closed。
@@ -70,6 +70,25 @@ Memory Curator 的任务入口只显示提炼目标、主体别名和证据数�
 证据读取和已有事实查询沿用原任务的权限。达到预算仍有未处理内容时，任务进入“需要处理”，保留进度，不标为“没有值得记忆的内容”。可检查后手动重试。
 
 “允许工具辅助提炼”控制后续采集的脱敏工具输入与结果正文。正文只对采集时允许且当前仍启用的 Module 可用；历史中未保存的工具正文无法补读。工具名称和状态继续保留，不能代替结果内容作为事实依据。
+
+## 持续积累与审核
+
+Episode/Fact 的有效变化会唤醒知识与技能学习；Episode 提炼晚于 Execution 结束也不会遗漏。
+学习按六小时空闲窗口合并，连续更新的 Skill 工作最多推迟到首次调度后二十四小时。
+规划目录可分页、关键词搜索，选中的来源和已有资产需完整读取；预算耗尽进入需要处理，不伪装成低价值跳过。
+
+知识库的新建要求：没有匹配的已有库，主题边界和长期用途明确，内容可独立使用；并有至少两个
+独立对话的来源支持，或一次成功任务形成了明确验证的完整成果。一条已验证 Fact 或两个
+Execution 本身不再足以支持建库。相关旧库可接受少量有用增量，不以文件数量决定价值。
+
+待审核资产也参与目标发现；相关主题等待已有修订结束，其他目标继续处理。同一有效来源和
+目标状态不会反复调用规划；已提交或拒绝的相同建议不会因为无关新记忆而重复提出。新依据
+或目标变化后重新比较，模型只提出实际新增、更正或有依据的失效内容修订。
+任务卡片显示继续积累、没有增量、依据不足、新建或修订的判断及原因。
+
+Memory 提出的草稿需人工审核，包括目标库开启自动批准时的 Memory 修订；审核通过后才发布并
+新增挂载。普通用户发起的知识库修订继续遵守该库的批准设置。正式知识库不随原始 Memory
+被忘记而自动删除。本次升级保留所有已有知识库，不自动合并、迁移内容或删除旧库。
 
 ## 分层加载
 

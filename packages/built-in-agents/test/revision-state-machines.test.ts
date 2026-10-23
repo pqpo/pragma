@@ -90,3 +90,39 @@ function contextJob(): ContextStoreRevisionJob {
     updatedAt: timestamp,
   };
 }
+
+it("accepts complete Memory source prompts while retaining ordinary revision prompt limits", async () => {
+  const { ContextStoreRevisionRequestSchema, SkillRevisionRequestV4Schema } =
+    await import("../src/index.ts");
+  const prompt = "验".repeat(410000);
+  const knowledge = {
+    schemaVersion: "pragma.context-store-revision-request/v2",
+    operation: "revise",
+    storeId: "11111111-1111-4111-8111-111111111111",
+    source: "memory-learning",
+    sourceDigest: "a".repeat(64),
+    prompt,
+  };
+  const skill = {
+    schemaVersion: "pragma.skill-revision-request/v4",
+    operation: "revise",
+    capabilityId: "1h2j3k4m5n6p7q8r",
+    source: "memory-learning",
+    sourceDigest: "a".repeat(64),
+    prompt,
+  };
+  expect(ContextStoreRevisionRequestSchema.safeParse(knowledge).success).toBe(true);
+  expect(SkillRevisionRequestV4Schema.safeParse(skill).success).toBe(true);
+  expect(
+    ContextStoreRevisionRequestSchema.safeParse({
+      ...knowledge,
+      source: "user",
+      sourceDigest: undefined,
+      prompt: "x".repeat(50001),
+    }).success,
+  ).toBe(false);
+  expect(
+    SkillRevisionRequestV4Schema.safeParse({ ...skill, source: "user", prompt: "x".repeat(50001) })
+      .success,
+  ).toBe(false);
+});

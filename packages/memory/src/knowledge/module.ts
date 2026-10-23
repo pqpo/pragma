@@ -1,7 +1,13 @@
+import {
+  KnowledgeLearningPlanSchema,
+  MEMORY_LEARNING_POLICY_VERSION,
+} from "../learning/revision-plan.ts";
+import { createLearningDecisionStore, learningFingerprint } from "../learning/decision-store.ts";
 import { createHash } from "node:crypto";
 import { StaticContextStore } from "@pragma/core";
 
 import {
+  KnowledgeSourceSnapshotSchema,
   type KnowledgeSourceSnapshot,
   type MemoryExtractionFailurePhase,
   type MemorySubjectRef,
@@ -12,11 +18,16 @@ import { createKnowledgeLearningStore, type KnowledgeLearningStore } from "./sto
 import { extractionFailureDiagnostic } from "../pipeline/extraction-error-code.ts";
 import type { MemoryModule } from "../pipeline/memory-module.ts";
 import { DEFAULT_MEMORY_STORAGE_POLICY } from "../storage/memory-storage-policy.ts";
-import type { KnowledgeLearningPlan } from "../learning/revision-plan.ts";
+import type {
+  ExistingKnowledgeLearningTarget,
+  KnowledgeLearningPlan,
+} from "../learning/revision-plan.ts";
 import { createMemoryLearningPolicyGuard } from "../learning/learning-policy.ts";
 import { writeMemoryLearningTaskPresentation } from "../learning/task-presentation.ts";
 
-const MAX_SOURCE_REVISIONS = 100;
+const MAX_SOURCE_REVISIONS =
+  DEFAULT_MEMORY_STORAGE_POLICY.episodicMaxRecords +
+  DEFAULT_MEMORY_STORAGE_POLICY.semanticMaxRecords;
 
 export type { KnowledgeSourceReader } from "./schema.ts";
 
@@ -33,9 +44,14 @@ export interface KnowledgeMemoryModule extends MemoryModule {
 }
 
 export interface KnowledgeLearningSink {
+  readTarget?(target: ExistingKnowledgeLearningTarget): Promise<string>;
+  listTargets?(input: {
+    readonly expertRef: string;
+  }): Promise<readonly ExistingKnowledgeLearningTarget[]>;
   assertAvailable?(input: {
     readonly expertRef: string;
     readonly sourceDigest: string;
+    readonly plan?: Extract<KnowledgeLearningPlan, { action: "apply" }>;
   }): Promise<void>;
   submit(input: {
     readonly rootRef: MemorySubjectRef;
@@ -52,6 +68,9 @@ export interface KnowledgeLearningPlanner {
     readonly expertRef: string;
     readonly sourceDigest: string;
     readonly sources: readonly KnowledgeSourceSnapshot[];
+    readonly existingTargets: readonly ExistingKnowledgeLearningTarget[];
+    readonly readTarget?:
+      ((target: ExistingKnowledgeLearningTarget) => Promise<string>) | undefined;
     readonly signal: AbortSignal;
   }): Promise<KnowledgeLearningPlan>;
 }
@@ -65,6 +84,13 @@ export async function createKnowledgeMemoryModule(options: {
 }): Promise<KnowledgeMemoryModule> {
   const store = await createKnowledgeLearningStore(options);
   const now = options.now ?? (() => new Date());
+  let decisions: ReturnType<typeof createLearningDecisionStore>;
+  try {
+    decisions = createLearningDecisionStore(options, "knowledge");
+  } catch (error) {
+    store.close();
+    throw error;
+  }
   const canLearn = createMemoryLearningPolicyGuard({ ...options, now });
   let planner = options.planner;
   const running = new Map<string, AbortController>();
@@ -87,15 +113,35 @@ export async function createKnowledgeMemoryModule(options: {
           now: now(),
         }),
       );
-      const currentDigest = digest("knowledge-sources", ...sources.map(sourceDigestKey).toSorted());
+      const currentDigest = digest(
+        "knowledge-sources",
+        MEMORY_LEARNING_POLICY_VERSION,
+        ...sources.map(sourceDigestKey).toSorted(),
+      );
+      let discarded = false;
       for (const job of jobs.filter(
         (candidate) =>
           candidate.rootRef.type === root.type &&
           candidate.rootRef.id === root.id &&
           (sources.length === 0 || candidate.sourceDigest !== currentDigest),
       )) {
-        if (await store.discardJob({ id: job.id, expectedRevision: job.revision }))
+        if (await store.discardJob({ id: job.id, expectedRevision: job.revision })) {
+          discarded = true;
           running.get(job.id)?.abort();
+        }
+      }
+      if (discarded && sources.length > 0 && (await canLearn(root))) {
+        const next = await store.schedule({
+          rootRef: root,
+          sourceDigest: currentDigest,
+          now: now(),
+        });
+        if (next !== undefined)
+          writeMemoryLearningTaskPresentation(
+            options,
+            { module: "knowledge", ...next },
+            { sources },
+          );
       }
     }
   };
@@ -115,7 +161,11 @@ export async function createKnowledgeMemoryModule(options: {
     }
     const job = await store.schedule({
       rootRef,
-      sourceDigest: digest("knowledge-sources", ...sources.map(sourceDigestKey).toSorted()),
+      sourceDigest: digest(
+        "knowledge-sources",
+        MEMORY_LEARNING_POLICY_VERSION,
+        ...sources.map(sourceDigestKey).toSorted(),
+      ),
       now: now(),
     });
     if (job !== undefined)
@@ -187,6 +237,7 @@ export async function createKnowledgeMemoryModule(options: {
         }
         const sourceDigest = digest(
           "knowledge-sources",
+          MEMORY_LEARNING_POLICY_VERSION,
           ...sources.map(sourceDigestKey).toSorted(),
         );
         if (job.sourceDigest !== sourceDigest) {
@@ -234,18 +285,47 @@ export async function createKnowledgeMemoryModule(options: {
             ...expertSources.map(sourceDigestKey).toSorted(),
           );
           phase = "revision_submit";
-          await options.learningSink.assertAvailable?.({ expertRef, sourceDigest: expertDigest });
+          const existingTargets = (await options.learningSink.listTargets?.({ expertRef })) ?? [];
           if (!(await store.isClaimCurrent(job))) return;
           controller.signal.throwIfAborted();
-          phase = "revision_plan";
-          modelRequested = true;
-          const plan = await planner.plan({
-            rootRef: job.rootRef,
+          const evaluationKey = learningFingerprint({
+            policy: MEMORY_LEARNING_POLICY_VERSION,
             expertRef,
-            sourceDigest: expertDigest,
+            rootRef: job.rootRef,
             sources: expertSources,
-            signal: controller.signal,
+            existingTargets,
           });
+          if (decisions.has(evaluationKey)) {
+            decisions.write(learningFingerprint({ evaluationKey, jobId: job.id }), job.id, {
+              outcome: "duplicate",
+              reason:
+                "The effective Memory sources and editable target versions have not changed since the previous assessment.",
+              targets: [],
+            });
+            continue;
+          }
+          phase = "revision_plan";
+          const cachedPlan = decisions.readPlan(evaluationKey);
+          modelRequested ||= cachedPlan === undefined;
+          const plan =
+            cachedPlan === undefined
+              ? await planner.plan({
+                  rootRef: job.rootRef,
+                  expertRef,
+                  sourceDigest: expertDigest,
+                  sources: expertSources,
+                  existingTargets,
+                  readTarget: options.learningSink.readTarget,
+                  signal: controller.signal,
+                })
+              : KnowledgeLearningPlanSchema.parse(cachedPlan);
+          if (cachedPlan !== undefined && plan.action === "apply")
+            plan.sourceRefs = plan.sourceRefs.map(
+              (ref) =>
+                expertSources.find(
+                  (source) => source.ref.kind === ref.kind && source.ref.id === ref.id,
+                )?.ref ?? ref,
+            );
           if (!(await canLearn(job.rootRef, producers))) {
             // A policy pause must yield even after the original debounce deadline.
             const pausedAt = now();
@@ -262,7 +342,98 @@ export async function createKnowledgeMemoryModule(options: {
           await reconcileJobs(job.rootRef);
           controller.signal.throwIfAborted();
           if (!(await store.isClaimCurrent(job))) return;
-          if (plan.action === "skip") continue;
+          if (plan.action === "skip") {
+            if (plan.waitForTarget !== undefined) {
+              if (
+                !existingTargets.some(
+                  (target) => target.storeId === plan.waitForTarget && target.pending,
+                )
+              )
+                throw Object.assign(new Error("memory_learning_invalid_wait_target"), {
+                  retryable: false,
+                });
+              decisions.writePlan(evaluationKey, plan);
+              throw new Error("memory_revision_pending");
+            }
+            decisions.write(evaluationKey, job.id, {
+              outcome: plan.disposition ?? "accumulate",
+              reason: plan.reason ?? "No supported incremental change.",
+              targets: [],
+            });
+            continue;
+          }
+          const selected = plan.sourceRefs.map((ref) =>
+            expertSources.find(
+              (source) =>
+                source.ref.kind === ref.kind &&
+                source.ref.id === ref.id &&
+                source.ref.revision === ref.revision,
+            ),
+          );
+          if (
+            selected.some((source) => source === undefined) ||
+            new Set(plan.sourceRefs.map((ref) => `${ref.kind}:${ref.id}`)).size !==
+              plan.sourceRefs.length
+          )
+            throw Object.assign(new Error("knowledge_learning_plan_invalid_sources"), {
+              retryable: false,
+            });
+          const selectedSources = selected as KnowledgeSourceSnapshot[];
+          if (plan.target.type === "revise") {
+            const target = plan.target;
+            if (
+              !existingTargets.some(
+                (item) =>
+                  item.storeId === target.storeId &&
+                  item.baseRevision === target.baseRevision &&
+                  item.snapshotHash === target.snapshotHash,
+              )
+            )
+              throw Object.assign(new Error("knowledge_learning_plan_invalid_target"), {
+                retryable: false,
+              });
+          } else {
+            const conversations = new Set(
+              selectedSources
+                .flatMap((source) => source.conversationRefs ?? [])
+                .map((ref) => `${ref.type}:${ref.id}`),
+            );
+            const mature =
+              plan.maturity === "cross-conversation"
+                ? conversations.size >= 2
+                : plan.maturity === "validated-artifact" &&
+                  selectedSources.some(
+                    (source) => source.ref.kind === "episodic" && source.outcome === "succeeded",
+                  );
+            if (!mature)
+              throw Object.assign(new Error("knowledge_learning_topic_immature"), {
+                retryable: false,
+              });
+          }
+          if (cachedPlan === undefined) decisions.writePlan(evaluationKey, plan);
+          const proposalKey = learningFingerprint({
+            expertRef,
+            target: plan.target.type === "create" ? { type: "create" } : plan.target,
+            sources: selectedSources.map(({ ref, ...source }) => ({
+              ...source,
+              ref: { kind: ref.kind, id: ref.id },
+            })),
+          });
+          if (decisions.has(proposalKey)) {
+            decisions.write(evaluationKey, job.id, {
+              outcome: "duplicate",
+              reason: "The same supported proposal was already submitted for review.",
+              targets: [plan.name],
+            });
+            continue;
+          }
+          await options.learningSink.assertAvailable?.({
+            expertRef,
+            sourceDigest: proposalKey,
+            plan,
+          });
+          controller.signal.throwIfAborted();
+          if (!(await store.isClaimCurrent(job))) return;
           writeMemoryLearningTaskPresentation(
             options,
             { module: "knowledge", ...job },
@@ -272,10 +443,17 @@ export async function createKnowledgeMemoryModule(options: {
           await options.learningSink.submit({
             rootRef: job.rootRef,
             expertRef,
-            sourceDigest: expertDigest,
+            sourceDigest: proposalKey,
             plan,
-            sources: expertSources,
+            sources: selectedSources,
           });
+          const decision = {
+            outcome: plan.target.type,
+            reason: plan.rationale,
+            targets: [plan.name],
+          };
+          decisions.write(proposalKey, job.id, decision);
+          decisions.write(evaluationKey, job.id, decision);
           submitted = true;
         }
         if (submitted) await store.completeLearned(job, now());
@@ -311,6 +489,7 @@ export async function createKnowledgeMemoryModule(options: {
     },
     store: managedStore,
     close() {
+      decisions.close();
       managedStore.close();
     },
   };
@@ -319,27 +498,15 @@ export async function createKnowledgeMemoryModule(options: {
 function boundSources(
   sources: readonly KnowledgeSourceSnapshot[],
 ): readonly KnowledgeSourceSnapshot[] {
-  const selected: KnowledgeSourceSnapshot[] = [];
-  for (const source of sources.slice(0, MAX_SOURCE_REVISIONS)) {
-    const next = [...selected, source];
-    if (
-      Buffer.byteLength(JSON.stringify(next)) >
-      Math.min(DEFAULT_MEMORY_STORAGE_POLICY.extractionPromptMaxBytes, 35_000)
-    )
-      continue;
-    selected.push(source);
-  }
-  return selected;
+  return sources
+    .filter((source) => KnowledgeSourceSnapshotSchema.safeParse(source).success)
+    .slice(0, MAX_SOURCE_REVISIONS);
 }
 
 export function knowledgeSourceSelectionEligible(
   sources: readonly KnowledgeSourceSnapshot[],
 ): boolean {
-  const semantic = sources.filter((source) => source.ref.kind === "semantic");
-  return (
-    semantic.some((source) => source.verified) ||
-    new Set(semantic.flatMap((source) => source.sourceExecutionIds)).size >= 2
-  );
+  return sources.length > 0;
 }
 
 /** Detects effective source-content changes while ignoring revision-only churn. */
@@ -349,6 +516,8 @@ function sourceDigestKey(source: KnowledgeSourceSnapshot): string {
     id: source.ref.id,
     producerRefs: source.producerRefs,
     sourceExecutionIds: source.sourceExecutionIds,
+    conversationRefs: source.conversationRefs,
+    outcome: source.outcome,
     title: source.title,
     body: source.body,
     observedAt: source.observedAt,

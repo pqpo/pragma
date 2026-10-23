@@ -1712,7 +1712,9 @@ export function createContextStoreRevisionService(options: {
         }
         const job = owners[0];
         const submissionApprovalMode =
-          current.operation === "revise" && job !== undefined
+          current.operation === "revise" &&
+          job !== undefined &&
+          job.request.source !== "memory-learning"
             ? (await options.contextStores.get(current.storeId)).writeApprovalMode
             : "required";
         const revision = current.revision + 1;
