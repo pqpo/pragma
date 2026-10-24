@@ -158,6 +158,17 @@ export async function readAuthoringRecord<T>(
     };
     if (pending !== undefined)
       z.object({ fromVersion: z.literal(5), toVersion: z.literal(6) }).parse(JSON.parse(pending));
+    // A prepared upgrade installs its exact original backup before its journal.
+    // Verify that witness before replay can replace the persisted legacy document.
+    if (
+      pending !== undefined &&
+      legacy &&
+      (await optionalText(`${path}.dsl-v5.backup.json`)) !== originalText
+    )
+      throw managementCommandError(
+        "STORAGE_CORRUPTED",
+        "The prepared authoring migration has no matching original backup; its data and journal were preserved.",
+      );
     const resource = { family: `pragma.authoring-${kind}`, id: document };
     await recoverAtomicStateMigration({
       aggregateRoot: dirname(path),

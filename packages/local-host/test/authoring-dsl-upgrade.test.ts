@@ -328,3 +328,32 @@ it.each(["flow", "evaluation"] as const)(
     });
   },
 );
+
+it.each(["conflicting", "missing"] as const)(
+  "preserves data and journal when the prepared backup is %s",
+  async (state) => {
+    const f = await fixture();
+    await readAuthoringRecord(f.path, "flow", PragmaAgentFlowDraftSchema, f.original.draftId);
+    const target = JSON.parse(await readFile(f.path, "utf8"));
+    await writeFile(f.path, f.source);
+    const backup = `${f.path}.dsl-v5.backup.json`;
+    if (state === "missing") await rm(backup);
+    else await writeFile(backup, "retained conflicting original");
+    const journal = JSON.stringify({
+      schemaVersion: "pragma.state-migration/v1",
+      resource: { family: "pragma.authoring-flow", id: basename(f.path) },
+      fromVersion: 5,
+      toVersion: 6,
+      documents: { [basename(f.path)]: target },
+    });
+    await writeFile(`${f.path}.dsl-migration.json`, journal);
+    await expect(
+      readAuthoringRecord(f.path, "flow", PragmaAgentFlowDraftSchema, f.original.draftId),
+    ).rejects.toMatchObject({ code: "STORAGE_CORRUPTED" });
+    expect(await readFile(f.path, "utf8")).toBe(f.source);
+    expect(await readFile(`${f.path}.dsl-migration.json`, "utf8")).toBe(journal);
+    if (state === "conflicting")
+      expect(await readFile(backup, "utf8")).toBe("retained conflicting original");
+    else await expect(readFile(backup)).rejects.toMatchObject({ code: "ENOENT" });
+  },
+);
