@@ -5,7 +5,6 @@ import { mkdir } from "node:fs/promises";
 
 import {
   fingerprintExpertExecutionDefinition,
-  fingerprintExpertDelegationExecutionProfiles,
   withFileLock,
   type RuntimeModelSelection,
   type RuntimeResolver,
@@ -931,11 +930,9 @@ export function createLocalHostMissionCompileService<
         plugins,
         pluginReaders,
       });
-      if (!("kind" in compiled.value && compiled.value.kind === "flow"))
-        executionProfilesFingerprints.set(
-          compiled,
-          fingerprintExpertDelegationExecutionProfiles(compiled.value),
-        );
+      // Tool-call delegation and Team launchers share these resolved live profiles.
+      // Keep this guard separate from persisted structural definition fingerprints.
+      executionProfilesFingerprints.set(compiled, hash(profiles ?? {}));
       if (hasExecutionProfileOverlay) profileOverlayCompilations.add(compiled);
       return compiled;
     } catch (error) {
