@@ -261,3 +261,5 @@ function indexMigrationSteps(
   }
   return indexed;
 }
+
+export { migratePragmaV5AuthoringResourceToV6 } from "./authoring/v5-to-v6.ts";

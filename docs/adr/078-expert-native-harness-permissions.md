@@ -74,6 +74,23 @@ journals are rejected and preserved.
 Real pre-change writer fixtures accompany the Mission and Settings migrations;
 the existing v9 System Expert fixture exercises that upgrade as well.
 
+Flow/Evaluation authoring drafts, prepared change-sets and their mutation receipts
+also upgrade embedded DSL v5→v6 on first owner access, before current business
+schemas run. The embedded `apiVersion` is their DSL storage generation; unchanged
+transport/envelope fields keep their existing versions. Each mutable record has an
+owner-local lock, exact original backup, validated journal and replayable atomic
+replacement. Candidate resources and their review YAML sources upgrade together.
+Future/corrupt records, identity mismatches and stale journals preserve the originals.
+Discard clears pending upgrade journals so retained backups cannot resurrect drafts.
+
+File draft worktrees and immutable submissions retain their original bytes and
+approval hashes. Their resources pass through the Interpreter's pure adjacent DSL
+migration before current validation, and prepare publishes current DSL candidates.
+Reference-only owner/restart/commit journals and opaque historical command results
+keep their existing schema and idempotent snapshot semantics; they are not replayed
+as mutable DSL resources. Approval, Context ownership, editing and final publication
+remain separate decisions. Historical writer fixtures cover these boundaries.
+
 ## Verification boundary
 
 On this development host, Codex 0.159.0-alpha.3's native `sandbox -P :read-only`
