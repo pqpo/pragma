@@ -25,7 +25,12 @@ export class RuntimeProcessSupervisor {
 
   constructor(readonly process: ChildProcessWithoutNullStreams) {
     this.exit = new Promise<RuntimeProcessExit>((resolve, reject) => {
-      process.once("error", reject);
+      process.once("error", (error) => {
+        // A failed OS spawn has no process to terminate and emits no exit event.
+        // Errors from an already running process must still require confirmed exit.
+        if (process.pid === undefined) this.exited = true;
+        reject(error);
+      });
       process.once("exit", (code, signal) => {
         this.exited = true;
         resolve({ code, signal });

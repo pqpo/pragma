@@ -54,8 +54,8 @@ Agent 正文逐字承载 Core system prompt，声明 `mainAgent: true`、`subage
 将这些内部工具名直接写入列表会导致 `unknown component`；该明确配置错误不得被启动期间的临时认证
 日志误分类为未登录。
 非 full-access 的 `commandExecutionPolicy` 使用 `sandbox`，full-access 使用 `eager`；审批模式不再使用
-`off`，让命令调用能够到达 Host Hook。工具可见性与调用授权分别处理，auto-approve 的 shell 拒绝策略仍由
-relay 执行。启动使用注册名称 `--agent <name>`，而非绝对文件路径；init 参数回显
+`off`，让命令调用能够到达 Host Hook。工具可见性与调用授权分别处理，shell 在 request-approval 下由 Host 审批，在自动模式下由
+relay 放行。启动使用注册名称 `--agent <name>`，而非绝对文件路径；init 参数回显
 不等于 Agent 真正加载，真实测试必须验证 system marker。继承宿主 customization 的行为仍受上述认证边界约束。
 
 Startup 生命周期完全使用 Core driver：fresh conversation 首次消费，普通后续请求不重放；恢复
@@ -86,7 +86,7 @@ PreToolUse relay 是三种模式共同的权限闸门。headless stream-json 尚
 因此保留官方 Hook 入口与 `--dangerously-skip-permissions`，避免原生第二次非交互审批阻塞：
 
 - request-approval：受管 MCP 与安全读取通过；其他受支持操作交由 Host 审批，无 handler 则拒绝。
-- auto-approve：受管 MCP、已知 workspace 文件工具通过；shell、网络和未受管操作不自动通过。
+- auto-approve：受管 MCP、已知 workspace 文件工具与 shell 通过；网络和未受管操作不自动通过。
 - full-access：通过合法 workspace identity 校验后允许操作。
 
 额外读取范围仅包含完整受管 Skills 根，以及当前受管 server 的
@@ -158,8 +158,13 @@ ADC end-to-end 通过；Desktop 人工审批和 UI 验收也需独立记录。
 
 `test/real-smoke.test.ts` 的原生写入场景分别覆盖三种权限模式：使用 `write_to_file` 创建文件、
 `replace_file_content` 编辑文件，并由测试直接读取磁盘核对内容；释放并恢复 Session 后再次编辑。
-request-approval 必须收到并通过 Host 审批，full-access 直接执行；两者还使用 `run_command` 实际创建
-第二个文件。auto-approve 保持不自动批准 shell，权限拒绝由 `permission-hooks.test.ts` 验证。
+三种模式在首次执行与恢复后均使用 `run_command` 创建文件；request-approval 必须经过 Host 审批，
+并验证拒绝后不写入及重新批准后成功。以下 2026-09-30 记录反映当时仅两种模式开放 shell 的旧行为。
+
+2026-10-24：扩展后的真实 CLI 场景在三种模式均验证首次及恢复后的 shell 文件写入，
+request-approval 额外验证拒绝不写入、批准重试成功。首次批量运行中 auto-approve 恢复时的
+可用性探测报告 binding unavailable，单独复跑该完整场景通过；request-approval 与 full-access
+在批量运行中通过。该记录不覆盖 Desktop 人工 UI 验收。
 
 2026-09-30，Darwin x86_64、agy 1.2.13、host-keyring、gemini-3.8-flash-low：上述真实原生写入场景
 3/3 通过（256.97 s）。磁盘内容与原生工具完成事件均核对，request-approval 收到文件和命令的 Host
@@ -222,10 +227,10 @@ PRAGMA_ANTIGRAVITY_REAL_SMOKE=1 pnpm --filter @pragma/runtime-antigravity exec v
 
 2026-09-30 同类配置检查（源码与定向自动测试，不代表其他 Runtime 的真实模型执行验收）：
 
-| Runtime     | 原生文件与 shell 路径                                                                           | 检查结果                                                                   |
-| ----------- | ----------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------- |
-| Codex       | Desktop/CLI 显式选择 `workspace-write`，full-access 使用 `danger-full-access`                   | 未发现工具注册遗漏；直接使用 Adapter 时仍受显式选项及原生配置影响          |
-| Claude Code | ACP worker 使用原生 SDK 工具；Host 将模式映射到 `default` / `acceptEdits` / `bypassPermissions` | 未发现自定义 Agent 空工具列表                                              |
-| Qoder CLI   | SDK 使用原生工具；仅禁用 `AskUserQuestion`，MCP 白名单单独配置                                  | 未发现文件与 shell 工具被整体禁用                                          |
-| Pi          | 原生 coding tools 加上 Session Bash tool，managed tools 单独注入                                | 未发现读写工具注册遗漏；真实本地 Bash 环境测试通过                         |
-| OpenCode    | workspace edit 使用 allow/ask；普通模式显式拒绝 shell，full-access 允许                         | shell 限制是现有凭据隔离边界，详见 [OpenCode Runtime](opencode-runtime.md) |
+| Runtime     | 原生文件与 shell 路径                                                                           | 检查结果                                                           |
+| ----------- | ----------------------------------------------------------------------------------------------- | ------------------------------------------------------------------ |
+| Codex       | Desktop/CLI 显式选择 `workspace-write`，full-access 使用 `danger-full-access`                   | 未发现工具注册遗漏；直接使用 Adapter 时仍受显式选项及原生配置影响  |
+| Claude Code | ACP worker 使用原生 SDK 工具；Host 将模式映射到 `default` / `acceptEdits` / `bypassPermissions` | 未发现自定义 Agent 空工具列表                                      |
+| Qoder CLI   | SDK 使用原生工具；仅禁用 `AskUserQuestion`，MCP 白名单单独配置                                  | 未发现文件与 shell 工具被整体禁用                                  |
+| Pi          | 原生 coding tools 加上 Session Bash tool，managed tools 单独注入                                | 未发现读写工具注册遗漏；真实本地 Bash 环境测试通过                 |
+| OpenCode    | workspace edit 与 shell 使用 allow/ask；full-access 允许                                        | 三种模式均支持 shell，详见 [OpenCode Runtime](opencode-runtime.md) |

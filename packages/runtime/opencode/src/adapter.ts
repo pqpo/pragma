@@ -1,4 +1,5 @@
 import { pathToFileURL } from "node:url";
+import { isDeepStrictEqual } from "node:util";
 
 import {
   createExpertToolsHttpMcpFeature,
@@ -35,6 +36,7 @@ import { canUseOpenCodeRuntime } from "./availability.ts";
 import { prepareOpenCodeDataHome } from "./data-home.ts";
 import { prepareOpenCodeConfiguration } from "./configuration.ts";
 import { createOpenCodeModelDiscovery } from "./models.ts";
+import { materializeOpenCodeSkills } from "./skills.ts";
 import { v2PermissionRules, type OpenCodePermissionMode } from "./permissions.ts";
 import { probeOpenCode, startOpenCodeProcess } from "./process.ts";
 
@@ -109,11 +111,18 @@ export function createOpenCodeRuntime(options: OpenCodeRuntimeOptions = {}): Run
     mcp,
     permissions,
     userInteraction: enabled(),
-    skills: runtimeFeature.native(
-      runtimeFeature.unsupported(
-        "Pragma Skill materialization is not connected to OpenCode configuration.",
-      ),
-    ),
+    skills: runtimeFeature.session({
+      id: "opencode.skills",
+      readiness: runtimeFeature.degraded(PROVIDER_EVIDENCE_PENDING),
+      async prepare(ctx) {
+        return {
+          directory: await materializeOpenCodeSkills(
+            ctx.agent,
+            ctx.paths.runtimeSessionDir("opencode"),
+          ),
+        };
+      },
+    }),
     attachmentImage: enabled(),
     attachmentFile: enabled(),
     attachmentDirectory: runtimeFeature.native(
@@ -203,6 +212,7 @@ export function createOpenCodeRuntime(options: OpenCodeRuntimeOptions = {}): Run
           cwd: ctx.workspace,
           permissionMode: ctx.features.permissions.mode,
           mcpUrl: ctx.features.mcp.registration.url,
+          skillsDirectory: ctx.features.skills.directory,
           ...detected,
         });
         logPhase("process_start_and_health");
@@ -221,20 +231,21 @@ export function createOpenCodeRuntime(options: OpenCodeRuntimeOptions = {}): Run
             throw new Error(`OpenCode model is unavailable: ${model.providerId}/${model.modelId}.`);
           }
           const mode = ctx.features.permissions.mode;
-          const rules = v2PermissionRules(mode, sessionConfiguration.deniedPermissions);
+          const rules = v2PermissionRules(
+            mode,
+            sessionConfiguration.deniedPermissions,
+            ctx.features.skills.directory,
+          );
+          if (detected.major === 2) {
+            await client.waitForMcp("pragma_tools");
+            logPhase("native_mcp_connect");
+          }
           const id = await client.createSession(
             ctx.persistence.restoredRuntimeSessionId ?? ctx.request.runtimeSession?.id ?? "",
             ctx.agentContext.systemPrompt,
             rules,
           );
           logPhase("native_session_create_or_resume");
-          if (detected.major === 2) {
-            await client.addMcp(
-              `pragma_${id.replace(/[^a-zA-Z0-9_-]/g, "_")}`,
-              ctx.features.mcp.registration.url,
-            );
-            logPhase("native_mcp_connect");
-          }
           return {
             client,
             id,
@@ -315,7 +326,7 @@ export function createOpenCodeRuntime(options: OpenCodeRuntimeOptions = {}): Run
             files,
             onEvent: async (event) => {
               if (event.type === "permission.asked" || event.type === "permission.updated") {
-                await handlePermission(session, event);
+                await handleOpenCodePermission(session, event);
                 return;
               }
               if (event.type === "question.asked" || event.type === "form.created") {
@@ -474,26 +485,39 @@ export function mapOpenCodeEvent(
   }
 }
 
-async function handlePermission(session: NativeSession, event: OpenCodeWireEvent): Promise<void> {
+export async function handleOpenCodePermission(
+  session: NativeSession,
+  event: OpenCodeWireEvent,
+): Promise<void> {
   const id = event.data["id"];
   if (typeof id !== "string") return;
-  const action = String(event.data["action"] ?? event.data["type"] ?? "");
+  const action = String(
+    event.data["action"] ?? event.data["permission"] ?? event.data["type"] ?? "",
+  );
   let approved = session.mode === "full-access";
   if (
     session.mode === "request-approval" &&
-    !["bash", "shell", "execute", "external_directory", "task", "subagent"].includes(action) &&
+    !["external_directory", "task", "subagent"].includes(action) &&
     typeof session.humanInteractionHandler === "function"
   ) {
+    const input = event.data["resources"] ?? event.data["metadata"] ?? event.data;
+    const originalInput = structuredClone(input);
     const response = await session.humanInteractionHandler({
       kind: "tool_approval",
       toolName: action || "opencode",
       toolCallId: String(event.data["callID"] ?? id),
-      input: event.data["resources"] ?? event.data["metadata"] ?? event.data,
+      input,
       reason: String(
         event.data["message"] ?? event.data["title"] ?? "OpenCode requests permission.",
       ),
     });
-    approved = response.kind === "tool_approval" && response.approved;
+    // Both native protocols only accept an approval decision, not replacement
+    // arguments. Never approve the original call after the Host edited its input.
+    approved =
+      response.kind === "tool_approval" &&
+      response.approved &&
+      (response.updatedInput === undefined ||
+        isDeepStrictEqual(response.updatedInput, originalInput));
   }
   await session.client.replyPermission(session.id, id, approved);
 }

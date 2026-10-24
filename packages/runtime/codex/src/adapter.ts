@@ -458,6 +458,8 @@ async function startOrResumeThread({
       model,
       thinkingLevel,
       developerInstructions,
+      sandboxMode,
+      approvalPolicy,
     });
     return {
       threadId,

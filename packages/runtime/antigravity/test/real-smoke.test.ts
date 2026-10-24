@@ -146,7 +146,7 @@ describe.runIf(runSmoke)("Antigravity real CLI smoke", () => {
         }),
       });
       let session = await app.experts.createSession(expert);
-      const run = async (prompt: string) => {
+      const run = async (prompt: string, approved = true) => {
         const turn = await session.prompt(prompt);
         const events = await turn.subscribeEvents({ scope: { kind: "all" } });
         const approvals: string[] = [];
@@ -161,7 +161,7 @@ describe.runIf(runSmoke)("Antigravity real CLI smoke", () => {
             approvals.push(interaction.request.toolName);
             await turn.respondToHumanInteraction(
               interaction.interactionId,
-              { kind: "tool_approval", approved: true },
+              { kind: "tool_approval", approved },
               { requestId: `native-smoke-${interaction.interactionId}` },
             );
           }
@@ -176,7 +176,7 @@ describe.runIf(runSmoke)("Antigravity real CLI smoke", () => {
       };
       try {
         const first = await run(
-          'Use native write_to_file to create native.txt containing exactly "NATIVE_CREATED". Then use native replace_file_content to change it to exactly "NATIVE_EDITED". Do not use shell or MCP for these steps. Read the file back before answering.',
+          'Use native write_to_file to create native.txt containing exactly "NATIVE_CREATED". Then use native replace_file_content to change it to exactly "NATIVE_EDITED". Do not use shell or MCP for these steps. Read the file back, then use native run_command to execute printf SHELL_FIRST > first-shell.txt before answering.',
         );
         expect(
           (await readFile(join(workspace, "native.txt"), "utf8")).trim(),
@@ -184,6 +184,9 @@ describe.runIf(runSmoke)("Antigravity real CLI smoke", () => {
         ).toBe("NATIVE_EDITED");
         expect(hasCompletedTool(first.events, "write_to_file")).toBe(true);
         expect(hasCompletedTool(first.events, "replace_file_content")).toBe(true);
+        expect((await readFile(join(workspace, "first-shell.txt"), "utf8")).trim()).toBe(
+          "SHELL_FIRST",
+        );
         if (permissionMode === "request-approval") {
           expect(first.approvals).toContain("write_to_file");
           expect(first.approvals).toContain("replace_file_content");
@@ -192,19 +195,30 @@ describe.runIf(runSmoke)("Antigravity real CLI smoke", () => {
         session = await app.experts.resumeSession(expert, { sessionId: session.sessionId });
         const restored = await run(
           'Use native replace_file_content to change native.txt to exactly "NATIVE_RESTORED". Read it back. ' +
-            (permissionMode === "auto-approve"
-              ? "Do not run shell commands."
-              : "Also use native run_command to execute: printf SHELL_CREATED > shell.txt. Read shell.txt back."),
+            "Also use native run_command to execute: printf SHELL_CREATED > shell.txt. Read shell.txt back.",
         );
         expect((await readFile(join(workspace, "native.txt"), "utf8")).trim()).toBe(
           "NATIVE_RESTORED",
         );
         expect(hasCompletedTool(restored.events, "replace_file_content")).toBe(true);
-        if (permissionMode !== "auto-approve") {
-          expect(await readFile(join(workspace, "shell.txt"), "utf8")).toBe("SHELL_CREATED");
-          expect(hasCompletedTool(restored.events, "run_command")).toBe(true);
-          if (permissionMode === "request-approval")
-            expect(restored.approvals).toContain("run_command");
+        expect(await readFile(join(workspace, "shell.txt"), "utf8")).toBe("SHELL_CREATED");
+        expect(hasCompletedTool(restored.events, "run_command")).toBe(true);
+        if (permissionMode === "request-approval")
+          expect(restored.approvals).toContain("run_command");
+        if (permissionMode === "request-approval") {
+          await run(
+            "Use native run_command exactly once to execute printf DENIED > denied-shell.txt. If rejected, report that rejection and stop; do not use another tool or retry.",
+            false,
+          );
+          await expect(readFile(join(workspace, "denied-shell.txt"))).rejects.toMatchObject({
+            code: "ENOENT",
+          });
+          await run(
+            "The previous command was rejected. Now retry through native run_command: printf RETRIED > retried-shell.txt. This new request may be approved.",
+          );
+          expect((await readFile(join(workspace, "retried-shell.txt"), "utf8")).trim()).toBe(
+            "RETRIED",
+          );
         }
       } finally {
         await session.close("Native write smoke complete");

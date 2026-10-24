@@ -41,7 +41,10 @@ export interface PiModelProviderConfig {
   readonly authHeader?: boolean | undefined;
 }
 
+export type PiRuntimePermissionMode = "request-approval" | "auto-approve" | "full-access";
+
 export interface CloudPiRuntimeAdapterOptions {
+  readonly permissionMode?: PiRuntimePermissionMode | undefined;
   readonly descriptor?: RuntimeDriverDescriptorOverride | undefined;
   /** The host-provided environment selected by the local Runtime's environment policy. */
   readonly env?: NodeJS.ProcessEnv | undefined;

@@ -173,6 +173,8 @@ export class CodexAppServerClient {
       ...(options.developerInstructions === undefined
         ? {}
         : { developerInstructions: options.developerInstructions }),
+      ...(options.sandboxMode === undefined ? {} : { sandbox: options.sandboxMode }),
+      ...(options.approvalPolicy === undefined ? {} : { approvalPolicy: options.approvalPolicy }),
     };
     applyThreadThinkingLevel(params, options.thinkingLevel);
     const result = await this.request("thread/resume", params);

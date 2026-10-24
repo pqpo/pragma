@@ -25,6 +25,7 @@ export interface OpenCodeClient {
   listModels(): Promise<readonly OpenCodeModel[]>;
   serializedContext(sessionId: string): Promise<string>;
   addMcp(name: string, url: string): Promise<void>;
+  waitForMcp(name: string): Promise<void>;
   prompt(input: {
     readonly sessionId: string;
     readonly runId?: string | undefined;
@@ -159,6 +160,11 @@ function connectV1(process: OpenCodeProcess, directory: string): OpenCodeClient 
         body: { name, config: { type: "remote", url, enabled: true } },
         query: { directory },
       });
+    },
+    async waitForMcp(name) {
+      const status = await client.mcp.status({ query: { directory } });
+      if (status.data?.[name]?.status !== "connected")
+        throw new Error("Pragma MCP handshake failed.");
     },
     async prompt({ sessionId, text, files, model, onEvent, signal }) {
       if (model?.variant !== undefined) {
@@ -318,6 +324,26 @@ function connectV2(process: OpenCodeProcess, directory: string): OpenCodeClient 
   const client = OpenCode.make({ baseUrl: process.url, headers: { ...process.headers } });
   const location = { directory };
   const steering = new OpenCodeSteering(client, async () => await process.close());
+  const waitForMcp = async (name: string): Promise<void> => {
+    const deadline = Date.now() + 15_000;
+    let status: string;
+    do {
+      const registered = (
+        await client.mcp.list({ location }, { signal: AbortSignal.timeout(2_000) })
+      ).data.find((server) => server.name === name);
+      status = registered?.status.status ?? "missing";
+      if (status === "connected") {
+        // OpenCode 2.0.x batches MCP tools-changed events for 100 ms before
+        // rebuilding its model-facing registry. Connection status precedes that
+        // rebuild; let two batch windows drain before the first Session snapshot.
+        await new Promise((resolve) => setTimeout(resolve, 200));
+        return;
+      }
+      if (status !== "missing" && status !== "connecting" && status !== "pending") break;
+      await new Promise((resolve) => setTimeout(resolve, 25));
+    } while (Date.now() < deadline);
+    throw new Error(`Pragma MCP handshake failed: ${status}.`);
+  };
   return {
     async createSession(restoredId, systemPrompt, permissions) {
       if (restoredId !== "") {
@@ -399,17 +425,12 @@ function connectV2(process: OpenCodeProcess, directory: string): OpenCodeClient 
       await client.mcp.add({
         server: name,
         location,
-        config: { type: "remote", url, oauth: false },
+        config: { type: "remote", url, oauth: false, codemode: false },
       });
-      // add starts the connection in the background. Build the first turn's Code
-      // Mode catalog only after the Pragma MCP handshake has completed.
       await client.mcp.connect({ server: name, location });
-      const registered = (await client.mcp.list({ location })).data.find(
-        (server) => server.name === name,
-      );
-      if (registered?.status.status !== "connected")
-        throw new Error(`Pragma MCP handshake failed: ${registered?.status.status ?? "missing"}.`);
+      await waitForMcp(name);
     },
+    waitForMcp,
     async prompt({ sessionId, runId, text, files, model, onEvent, signal }) {
       const turn = steering.begin(sessionId, runId ?? randomUUID(), signal);
       let failed = true;

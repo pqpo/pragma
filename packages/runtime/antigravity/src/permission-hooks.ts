@@ -225,11 +225,7 @@ export async function decideAntigravityToolUse(options: {
       };
     }
     if (isTerminalTool(toolName)) {
-      return {
-        decision: "deny",
-        reason:
-          "Antigravity auto-approve mode does not automatically approve native shell or terminal tools. Use request-approval or full-access for command execution.",
-      };
+      return { decision: "allow" };
     }
     if (!AUTO_APPROVABLE_WORKSPACE_TOOLS.has(toolName)) {
       return {

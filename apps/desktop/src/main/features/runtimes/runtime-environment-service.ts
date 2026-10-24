@@ -59,9 +59,11 @@ export function createBuiltInRuntimeFactories(
   async function createPiAdapter(
     environment: RuntimeEnvironmentDefinition,
     agentContextWindow: number | undefined,
+    permissionMode: DesktopToolPermissionMode,
   ): Promise<RuntimeAdapter> {
     assertEmptyBuiltInRuntimeConfig(environment);
     return createPiRuntime({
+      permissionMode,
       descriptor: { id: environment.id, displayName: BUILT_IN_RUNTIME_DISPLAY_NAME },
       modelProviders: options.modelProviders,
       env: await getRuntimeProcessEnvironment("pragma.runtime.pi"),
@@ -204,14 +206,20 @@ export function createBuiltInRuntimeFactories(
     {
       id: "pragma.runtime.pi",
       version: "v1",
-      create: async (environment) =>
-        await createPiAdapter(environment, await options.getAgentContextWindow?.()),
-      prepare: async (environment) => {
+      create: async (environment, context) =>
+        await createPiAdapter(
+          environment,
+          await options.getAgentContextWindow?.(),
+          context?.toolPermissionMode ?? (await getToolPermissionMode()),
+        ),
+      prepare: async (environment, context) => {
         assertEmptyBuiltInRuntimeConfig(environment);
         const agentContextWindow = await options.getAgentContextWindow?.();
+        const permissionMode = context?.toolPermissionMode ?? (await getToolPermissionMode());
         return {
-          cacheKey: `agent-context-window=${agentContextWindow ?? "default"}`,
-          create: async () => await createPiAdapter(environment, agentContextWindow),
+          cacheKey: `agent-context-window=${agentContextWindow ?? "default"};permission-mode=${permissionMode}`,
+          create: async () =>
+            await createPiAdapter(environment, agentContextWindow, permissionMode),
         };
       },
     },

@@ -416,11 +416,11 @@ describe("Antigravity PreToolUse permission bridge", () => {
     ).resolves.toEqual({ decision: "allow" });
   });
 
-  it("fails closed for automatic shell, unmanaged MCP, and unknown native tools", async () => {
+  it("allows automatic shell but fails closed for unmanaged MCP and unknown native tools", async () => {
     await expect(
       decideAntigravityToolUse({
         input: input("run_command", {
-          CommandLine: "touch /tmp/pragma-outside-workspace",
+          CommandLine: "printf shell-probe",
           Cwd: workspace,
         }),
         workspace,
@@ -428,8 +428,7 @@ describe("Antigravity PreToolUse permission bridge", () => {
         toolRuntimeState: {},
       }),
     ).resolves.toMatchObject({
-      decision: "deny",
-      reason: expect.stringContaining("shell or terminal"),
+      decision: "allow",
     });
     await expect(
       decideAntigravityToolUse({
@@ -454,6 +453,35 @@ describe("Antigravity PreToolUse permission bridge", () => {
       reason: expect.stringContaining("known workspace file"),
     });
   });
+
+  it.each(["request-approval", "auto-approve", "full-access"] as const)(
+    "preserves shell decisions after recreating a Session gate in %s",
+    async (permissionMode) => {
+      let approved = true;
+      const handler = vi.fn<ExpertAgentHumanInteractionHandler>(async () => ({
+        kind: "tool_approval",
+        approved,
+      }));
+      for (const phase of ["fresh", "restored"]) {
+        const decide = () =>
+          decideAntigravityToolUse({
+            input: input("run_command", { CommandLine: `printf ${phase}` }),
+            workspace,
+            permissionMode,
+            humanInteractionHandler: handler,
+            toolRuntimeState: {},
+          });
+        await expect(decide()).resolves.toMatchObject({ decision: "allow" });
+        if (permissionMode === "request-approval") {
+          approved = false;
+          await expect(decide()).resolves.toMatchObject({ decision: "deny" });
+          approved = true;
+          await expect(decide()).resolves.toMatchObject({ decision: "allow" });
+        }
+      }
+      expect(handler).toHaveBeenCalledTimes(permissionMode === "request-approval" ? 6 : 0);
+    },
+  );
 
   it("routes side-effecting tools through Core approval and emits the request event", async () => {
     const emitted = vi.fn();
