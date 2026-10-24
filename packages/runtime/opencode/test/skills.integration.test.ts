@@ -26,6 +26,7 @@ for (const major of [1, 2] as const) {
           let approvals = 0;
           let mcpCalls = 0;
           const results: string[] = [];
+          const approvalTools: string[] = [];
           const server = createServer(async (request, response) => {
             let body = "";
             for await (const chunk of request) body += String(chunk);
@@ -224,22 +225,42 @@ for (const major of [1, 2] as const) {
             },
           });
           let session = await app.experts.createSession(expert);
-          const run = async (prompt: string, approved = true) => {
+          const run = async (
+            prompt: string,
+            approved = true,
+            updatedInput?: unknown,
+            nativeRejection = false,
+          ) => {
             const turn = await session.prompt(prompt);
             const events = await turn.subscribeEvents();
             const approve = (async () => {
               for await (const event of events) {
                 if (event.type !== "human.requested" || mode !== "request-approval") continue;
                 approvals++;
+                approvalTools.push(
+                  (event.data as { request: { toolName: string } }).request.toolName,
+                );
                 await turn.respondToHumanInteraction(
                   (event.data as { interactionId: string }).interactionId,
-                  { kind: "tool_approval", approved },
+                  {
+                    kind: "tool_approval",
+                    approved,
+                    ...(updatedInput === undefined ? {} : { updatedInput }),
+                  },
                   { requestId: `approve-${approvals}` },
                 );
               }
             })();
             try {
-              if (approved) {
+              if (nativeRejection) {
+                // Native versions may settle with an explanation or terminate the
+                // turn after rejection. Approval identity and filesystem checks
+                // below independently prove that the shell path was exercised.
+                await turn.result.catch((error: unknown) => {
+                  expect(error).toBeInstanceOf(Error);
+                  expect((error as Error).message).toMatch(/OpenCode turn/);
+                });
+              } else if (approved) {
                 expect(await turn.result, results.join("\n")).toBe("Skill and shell complete.");
               } else {
                 await expect(turn.result).rejects.toThrow(/OpenCode turn/);
@@ -281,8 +302,36 @@ for (const major of [1, 2] as const) {
               await expect(readFile(join(root, "mcp-result.txt"))).rejects.toMatchObject({
                 code: "ENOENT",
               });
-              step = 0;
+              // Start directly at shell, independently of the MCP refusal above.
+              for (const decision of ["reject", "edit"] as const) {
+                await session.resumePromptQueue();
+                step = 3;
+                const before = approvals;
+                await run(
+                  "Call the shell probe directly.",
+                  decision === "edit",
+                  decision === "edit"
+                    ? { command: "printf REPLACED > replacement-result.txt" }
+                    : undefined,
+                  true,
+                );
+                expect(approvals).toBe(before + 1);
+                expect(approvalTools.at(-1)).toBe(major === 1 ? "bash" : "shell");
+                await expect(readFile(join(root, "shell-result.txt"))).rejects.toMatchObject({
+                  code: "ENOENT",
+                });
+                await expect(readFile(join(root, "replacement-result.txt"))).rejects.toMatchObject({
+                  code: "ENOENT",
+                });
+              }
               await session.resumePromptQueue();
+              step = 3;
+              const beforeRetry = approvals;
+              await run("Approve a new shell probe after rejection.");
+              expect(approvals).toBe(beforeRetry + 1);
+              expect(approvalTools.at(-1)).toBe(major === 1 ? "bash" : "shell");
+              expect(await readFile(join(root, "shell-result.txt"), "utf8")).toBe("SHELL_OK");
+              step = 0;
               await run("Retry the probes after the previous rejection.");
               expect(mcpCalls).toBe(3);
               expect(await readFile(join(root, "shell-result.txt"), "utf8")).toBe("SHELL_OK");

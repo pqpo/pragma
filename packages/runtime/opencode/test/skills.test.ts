@@ -1,5 +1,15 @@
 import { defineExpert } from "@pragma/core";
-import { chmod, mkdir, mkdtemp, readFile, readdir, rm, stat, writeFile } from "node:fs/promises";
+import {
+  chmod,
+  mkdir,
+  mkdtemp,
+  readFile,
+  readdir,
+  rm,
+  stat,
+  symlink,
+  writeFile,
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
@@ -54,6 +64,63 @@ describe("OpenCode skill projection", () => {
       await rm(root, { recursive: true, force: true });
     }
   });
+
+  it.skipIf(process.platform === "win32")(
+    "copies in-package file and directory links, filters real sensitive targets and rejects escaping links",
+    async () => {
+      const home = await mkdtemp(join(tmpdir(), "pragma-opencode-links-"));
+      try {
+        const source = join(home, "source");
+        const session = join(home, "session");
+        await mkdir(join(source, "references"), { recursive: true });
+        await mkdir(join(source, ".git"));
+        await writeFile(join(source, "SKILL.md"), "Read the linked reference.");
+        await writeFile(join(source, "references", "guide.md"), "PUBLIC_REFERENCE");
+        await writeFile(join(source, ".env"), "PRIVATE_PACKAGE_VALUE");
+        await writeFile(join(source, ".git", "config"), "PRIVATE_GIT_VALUE");
+        await symlink("references/guide.md", join(source, "guide.md"));
+        await symlink("references", join(source, "linked-references"));
+        await symlink(".env", join(source, "public-looking.txt"));
+        await symlink(".git", join(source, "public-looking-directory"));
+        const agent = await defineExpert({
+          id: "links",
+          name: "Links",
+          description: "test",
+          scope: "test",
+          tags: [],
+          workspace: home,
+          skills: { skills: [{ type: "local", name: "links", description: "test", path: source }] },
+        });
+        const outside = join(home, "source-other");
+        await mkdir(outside);
+        await writeFile(join(outside, ".env"), "OUTSIDE_PRIVATE_VALUE");
+        await symlink(outside, join(source, "node_modules"));
+        const target = await materializeOpenCodeSkills(agent, session);
+        expect(await readdir(join(target, "links"))).not.toContain("node_modules");
+        expect(await readFile(join(target, "links", "guide.md"), "utf8")).toBe("PUBLIC_REFERENCE");
+        expect(await readFile(join(target, "links", "linked-references", "guide.md"), "utf8")).toBe(
+          "PUBLIC_REFERENCE",
+        );
+        expect(await readdir(join(target, "links"))).not.toContain("public-looking.txt");
+        expect(await readdir(join(target, "links"))).not.toContain("public-looking-directory");
+        for (const value of [join(outside, ".env"), outside]) {
+          const link = join(source, "escape");
+          await symlink(value, link);
+          await expect(materializeOpenCodeSkills(agent, session)).rejects.toThrow(
+            "escapes its package root",
+          );
+          expect(await readFile(join(target, "links", "guide.md"), "utf8")).toBe(
+            "PUBLIC_REFERENCE",
+          );
+          expect(await readdir(join(session, "config", "opencode"))).toEqual(["skills"]);
+          await rm(link);
+        }
+        await materializeOpenCodeSkills(agent, session);
+      } finally {
+        await rm(home, { recursive: true, force: true });
+      }
+    },
+  );
 
   it("copies packages, normalizes conflicting names, preserves metadata and modes, and removes stale bindings", async () => {
     const root = await mkdtemp(join(tmpdir(), "pragma-opencode-skills-"));

@@ -1,4 +1,5 @@
 import { pathToFileURL } from "node:url";
+import { isDeepStrictEqual } from "node:util";
 
 import {
   createExpertToolsHttpMcpFeature,
@@ -325,7 +326,7 @@ export function createOpenCodeRuntime(options: OpenCodeRuntimeOptions = {}): Run
             files,
             onEvent: async (event) => {
               if (event.type === "permission.asked" || event.type === "permission.updated") {
-                await handlePermission(session, event);
+                await handleOpenCodePermission(session, event);
                 return;
               }
               if (event.type === "question.asked" || event.type === "form.created") {
@@ -484,26 +485,39 @@ export function mapOpenCodeEvent(
   }
 }
 
-async function handlePermission(session: NativeSession, event: OpenCodeWireEvent): Promise<void> {
+export async function handleOpenCodePermission(
+  session: NativeSession,
+  event: OpenCodeWireEvent,
+): Promise<void> {
   const id = event.data["id"];
   if (typeof id !== "string") return;
-  const action = String(event.data["action"] ?? event.data["type"] ?? "");
+  const action = String(
+    event.data["action"] ?? event.data["permission"] ?? event.data["type"] ?? "",
+  );
   let approved = session.mode === "full-access";
   if (
     session.mode === "request-approval" &&
     !["external_directory", "task", "subagent"].includes(action) &&
     typeof session.humanInteractionHandler === "function"
   ) {
+    const input = event.data["resources"] ?? event.data["metadata"] ?? event.data;
+    const originalInput = structuredClone(input);
     const response = await session.humanInteractionHandler({
       kind: "tool_approval",
       toolName: action || "opencode",
       toolCallId: String(event.data["callID"] ?? id),
-      input: event.data["resources"] ?? event.data["metadata"] ?? event.data,
+      input,
       reason: String(
         event.data["message"] ?? event.data["title"] ?? "OpenCode requests permission.",
       ),
     });
-    approved = response.kind === "tool_approval" && response.approved;
+    // Both native protocols only accept an approval decision, not replacement
+    // arguments. Never approve the original call after the Host edited its input.
+    approved =
+      response.kind === "tool_approval" &&
+      response.approved &&
+      (response.updatedInput === undefined ||
+        isDeepStrictEqual(response.updatedInput, originalInput));
   }
   await session.client.replyPermission(session.id, id, approved);
 }

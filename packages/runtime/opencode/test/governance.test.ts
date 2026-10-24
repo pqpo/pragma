@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
 
-import { handleOpenCodeQuestion } from "../src/adapter.ts";
+import { handleOpenCodePermission, handleOpenCodeQuestion } from "../src/adapter.ts";
 import { prepareOpenCodeConfiguration } from "../src/configuration.ts";
 import { v1Permission, v2PermissionRules } from "../src/permissions.ts";
 import { probeOpenCode } from "../src/process.ts";
@@ -23,6 +23,50 @@ describe("OpenCode governance", () => {
       } finally {
         await rm(root, { recursive: true, force: true });
       }
+    },
+  );
+
+  it.each([
+    { action: "bash", data: { type: "bash", metadata: { command: "printf ORIGINAL" } } },
+    { action: "bash", data: { permission: "bash", metadata: { command: "printf ORIGINAL" } } },
+    { action: "shell", data: { action: "shell", resources: ["printf ORIGINAL"] } },
+    { action: "execute", data: { action: "execute", resources: ["tools.shell(original)"] } },
+  ])(
+    "rejects edited $action approvals without approving the original call",
+    async ({ action, data }) => {
+      const replyPermission = vi.fn(async () => undefined);
+      const input = "resources" in data ? data.resources : data.metadata;
+      const handler = vi.fn(async () => ({
+        kind: "tool_approval" as const,
+        approved: true,
+        updatedInput: { command: "printf REPLACEMENT" } as unknown,
+      }));
+      const session = {
+        id: "session-test",
+        mode: "request-approval",
+        client: { replyPermission },
+        humanInteractionHandler: handler,
+      } as unknown as Parameters<typeof handleOpenCodePermission>[0];
+      const event = { type: "permission.asked", data: { id: "permission-test", ...data } };
+      await handleOpenCodePermission(session, event);
+      expect(handler).toHaveBeenLastCalledWith(
+        expect.objectContaining({ toolName: action, input }),
+      );
+      expect(replyPermission).toHaveBeenLastCalledWith("session-test", "permission-test", false);
+      handler.mockResolvedValueOnce({
+        kind: "tool_approval",
+        approved: true,
+        updatedInput: structuredClone(input),
+      });
+      await handleOpenCodePermission(session, event);
+      expect(replyPermission).toHaveBeenLastCalledWith("session-test", "permission-test", true);
+      handler.mockResolvedValueOnce({
+        kind: "tool_approval",
+        approved: true,
+        updatedInput: undefined,
+      });
+      await handleOpenCodePermission(session, event);
+      expect(replyPermission).toHaveBeenLastCalledWith("session-test", "permission-test", true);
     },
   );
 
