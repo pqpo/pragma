@@ -2,6 +2,7 @@ import { lstat, readFile, realpath } from "node:fs/promises";
 import { isAbsolute, relative, resolve } from "node:path";
 import {
   defineExpert,
+  isExpertTeam,
   markStopOnlyDefinition,
   StaticContextStore,
   StopOnlyDefinitionExecutionError,
@@ -169,6 +170,9 @@ export async function compileProjectResource<T extends InvocableResource>(
         const config = PragmaRuntimeProfileConfigSchema.parse(indexed.resource.spec.config);
         contribution = {
           runtimeId: config.runtimeId,
+          ...(config.permissionModeId === undefined
+            ? {}
+            : { permissionModeId: config.permissionModeId }),
           ...(config.model === undefined || config.providerId === undefined
             ? {}
             : {
@@ -327,6 +331,7 @@ export async function compileProjectResource<T extends InvocableResource>(
             return await resolving;
           },
         },
+        rootExpertRefs.has(key) ? host.rootModelSelectionOverride : undefined,
       );
     } else if (indexed.resource.kind === "ExpertTeam") {
       const coordinator = (await instantiate(indexed.resource.spec.coordinator.ref)).value;
@@ -408,7 +413,12 @@ export async function compileProjectResource<T extends InvocableResource>(
       resolveRuntime,
       host,
     );
+    const executionDefinition = value as ExpertDefinition;
+    const rootPermissionModeId = isExpertTeam(executionDefinition)
+      ? executionDefinition.coordinator.permissionModeId
+      : executionDefinition.permissionModeId;
     const resolvedRootRuntime = await host.runtimes.bind({
+      permissionModeId: rootPermissionModeId,
       runtimeId: rootRuntimeId,
       ...(rootModelSelection === undefined ? {} : { modelSelection: rootModelSelection }),
     });
@@ -459,6 +469,10 @@ export async function compileProjectResource<T extends InvocableResource>(
       resources: fingerprintResources,
       plugins: fingerprintPlugins,
       rootRuntime: rootRuntimeEnvironment,
+      ...(host.expertExecutionProfiles === undefined ||
+      Object.keys(host.expertExecutionProfiles).length === 0
+        ? {}
+        : { expertExecutionProfiles: host.expertExecutionProfiles }),
     }),
   );
   return {
@@ -485,6 +499,7 @@ export async function compileExpert(
   executionOverride:
     | {
         readonly runtimeId: string;
+        readonly permissionModeId?: string | undefined;
         readonly modelSelection?: import("@pragma/core").RuntimeModelSelection | undefined;
       }
     | undefined,
@@ -496,14 +511,41 @@ export async function compileExpert(
       binding: PragmaExpertResource["spec"]["plugins"][number],
     ) => Promise<PragmaPluginResolution>;
   },
+  rootModelSelectionOverride?: import("@pragma/core").RuntimeModelSelection,
 ): Promise<Expert> {
+  const liveProfile = host.expertExecutionProfiles?.[resource.metadata.id];
+  const executionProfile: PragmaRuntimeProfileContribution | undefined =
+    executionOverride !== undefined
+      ? {
+          runtimeId: executionOverride.runtimeId,
+          permissionModeId: executionOverride.permissionModeId,
+          ...(executionOverride.modelSelection === undefined
+            ? {}
+            : { models: { default: executionOverride.modelSelection } }),
+        }
+      : liveProfile === null && host.runtimes !== undefined
+        ? { runtimeId: await host.runtimes.getDefaultRuntimeId() }
+        : (liveProfile ?? undefined);
+  const modelSelectionOverride = rootModelSelectionOverride ?? executionOverride?.modelSelection;
+  const executionBinding =
+    executionProfile !== undefined && host.compilationPurpose !== "stop"
+      ? await host.runtimes?.bind({
+          runtimeId: executionProfile.runtimeId,
+          permissionModeId: executionProfile.permissionModeId,
+          modelSelection: modelSelectionOverride ?? executionProfile.models?.default,
+        })
+      : undefined;
   const [plugins, runtime, capabilities, contextStores] = await Promise.all([
     host.compilationPurpose === "stop"
       ? Promise.resolve([])
       : Promise.all(resource.spec.plugins.map(resolvers.resolvePlugin)),
-    executionOverride !== undefined || resource.spec.runtime === undefined
-      ? Promise.resolve(undefined)
-      : resolvers.resolveRuntime(resource.spec.runtime.ref),
+    executionProfile !== undefined
+      ? Promise.resolve(executionProfile)
+      : liveProfile === null ||
+          executionOverride !== undefined ||
+          resource.spec.runtime === undefined
+        ? Promise.resolve(undefined)
+        : resolvers.resolveRuntime(resource.spec.runtime.ref),
     Promise.all(
       resource.spec.capabilities.map(async (binding) => ({
         binding,
@@ -518,6 +560,12 @@ export async function compileExpert(
       })),
     ),
   ]);
+  // An omitted mode on a host root override remains the native default. Keep its
+  // historical definition shape; resolved Context bindings capture the effective mode.
+  const permissionModeId =
+    executionOverride !== undefined
+      ? executionOverride.permissionModeId
+      : (executionBinding?.binding.permissionModeId ?? runtime?.permissionModeId);
   const hookGroups: {
     readonly source: string;
     readonly hooks: ExpertAgentPluginHooks | undefined;
@@ -559,6 +607,7 @@ export async function compileExpert(
     scope: resource.spec.scope,
     instructions: resource.spec.instructions,
     workspace: host.workspace,
+    ...(permissionModeId === undefined ? {} : { permissionModeId }),
     ...(host.pragmaHome === undefined ? {} : { pragmaHome: host.pragmaHome }),
     ...(host.loggerProvider === undefined ? {} : { loggerProvider: host.loggerProvider }),
     tools: [...tools, ...capabilityTools],
@@ -581,18 +630,22 @@ export async function compileExpert(
     hooks: mergeExpertAgentPluginHooks(hookGroups),
     skills: mergeSkills(skillConfigs),
     mcp: mergeMcp(mcpConfigs),
-    ...(executionOverride?.modelSelection !== undefined
-      ? { models: { default: executionOverride.modelSelection } }
-      : runtime?.models === undefined
-        ? host.defaultModelSelection === undefined
+    ...(modelSelectionOverride !== undefined
+      ? { models: { default: modelSelectionOverride } }
+      : executionProfile?.models !== undefined
+        ? { models: executionProfile.models }
+        : runtime?.models === undefined
+          ? host.defaultModelSelection === undefined
+            ? {}
+            : { models: { default: host.defaultModelSelection } }
+          : { models: runtime.models }),
+    ...(executionProfile !== undefined
+      ? { defaultRuntimeId: executionProfile.runtimeId }
+      : executionOverride !== undefined
+        ? { defaultRuntimeId: executionOverride.runtimeId }
+        : runtime === undefined
           ? {}
-          : { models: { default: host.defaultModelSelection } }
-        : { models: runtime.models }),
-    ...(executionOverride !== undefined
-      ? { defaultRuntimeId: executionOverride.runtimeId }
-      : runtime === undefined
-        ? {}
-        : { defaultRuntimeId: runtime.runtimeId }),
+          : { defaultRuntimeId: runtime.runtimeId }),
     contextSystem: createContextSystem(contextStores),
     plugins: plugins.map((plugin) => ({
       source: plugin.source,

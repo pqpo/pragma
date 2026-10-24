@@ -1,3 +1,4 @@
+import { permissionModes } from "./permission-modes.ts";
 import { pathToFileURL } from "node:url";
 
 import {
@@ -74,6 +75,8 @@ export function createOpenCodeRuntime(options: OpenCodeRuntimeOptions = {}): Run
   const env = { ...(options.env ?? process.env) };
   const pool = options.mcpToolRegistryPool ?? createMcpToolRegistryPool();
   const descriptor = {
+    permissionModes,
+    configuredPermissionModeId: options.permissionMode ?? "full-access",
     id: "opencode-local",
     kind: "opencode-local" as const,
     displayName: "OpenCode Local",
@@ -90,7 +93,7 @@ export function createOpenCodeRuntime(options: OpenCodeRuntimeOptions = {}): Run
     id: "opencode.permissions",
     readiness: runtimeFeature.degraded(PROVIDER_EVIDENCE_PENDING),
     prepare() {
-      return { mode: options.permissionMode ?? "request-approval" };
+      return { mode: options.permissionMode ?? "full-access" };
     },
   });
   const features = defineRuntimeFeatures({

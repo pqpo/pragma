@@ -32,7 +32,9 @@ export {
   type PragmaCompilerVersion,
 } from "./types.ts";
 
-export const PRAGMA_COMPILER_MIGRATION_CHAIN_VERSION = "pragma.compiler-migrations/v7";
+import { migratePragmaCompilerV9Project } from "./steps/v9-to-v10.ts";
+
+export const PRAGMA_COMPILER_MIGRATION_CHAIN_VERSION = "pragma.compiler-migrations/v8";
 
 export function migratePragmaCompilerProjectToCurrent(input: {
   readonly files: ReadonlyMap<string, string>;
@@ -53,7 +55,9 @@ export function migratePragmaCompilerProjectToCurrent(input: {
                 ? migratePragmaCompilerV6Project(input)
                 : sourceCompilerVersion === "pragma.dsl/v7"
                   ? migratePragmaCompilerV7Project(input)
-                  : migratePragmaCompilerV8Project(input);
+                  : sourceCompilerVersion === "pragma.dsl/v8"
+                    ? migratePragmaCompilerV8Project(input)
+                    : migratePragmaCompilerV9Project(input);
     return {
       sourceCompilerVersion,
       targetCompilerVersion: PRAGMA_COMPILER_WRITE_VERSION,

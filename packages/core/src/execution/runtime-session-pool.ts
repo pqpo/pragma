@@ -256,7 +256,8 @@ function assertMatchingIdentity(
     existing.expertId === requested.expertId &&
     existing.runtime.runtimeId === requested.runtime.runtimeId &&
     existing.runtime.revision === requested.runtime.revision &&
-    existing.runtime.fingerprint === requested.runtime.fingerprint
+    existing.runtime.fingerprint === requested.runtime.fingerprint &&
+    existing.runtime.permissionModeId === requested.runtime.permissionModeId
   )
     return;
   throw new Error(

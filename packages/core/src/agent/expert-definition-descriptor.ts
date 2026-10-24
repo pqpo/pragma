@@ -23,11 +23,17 @@ function describeDefinition(definition: ExpertDefinition, ancestors: Set<string>
       coordinator: {
         id: definition.coordinator.id,
         defaultRuntimeId: definition.coordinator.defaultRuntimeId,
+        ...(definition.coordinator.permissionModeId === undefined
+          ? {}
+          : { permissionModeId: definition.coordinator.permissionModeId }),
       },
       members: definition.members
         .map((member) => ({
           id: member.id,
           defaultRuntimeId: member.defaultRuntimeId,
+          ...(member.permissionModeId === undefined
+            ? {}
+            : { permissionModeId: member.permissionModeId }),
         }))
         .sort((left, right) => left.id.localeCompare(right.id)),
       contextStores: definition.contextStores.map((binding) => ({
@@ -57,6 +63,9 @@ function describeDefinition(definition: ExpertDefinition, ancestors: Set<string>
       kind: "expert",
       id: definition.id,
       defaultRuntimeId: definition.defaultRuntimeId,
+      ...(definition.permissionModeId === undefined
+        ? {}
+        : { permissionModeId: definition.permissionModeId }),
       recursive: true,
     };
   }
@@ -70,6 +79,9 @@ function describeDefinition(definition: ExpertDefinition, ancestors: Set<string>
     tags: [...definition.tags],
     scope: definition.scope,
     defaultRuntimeId: definition.defaultRuntimeId,
+    ...(definition.permissionModeId === undefined
+      ? {}
+      : { permissionModeId: definition.permissionModeId }),
     delegation: describeLauncher(definition, nextAncestors),
   };
 }

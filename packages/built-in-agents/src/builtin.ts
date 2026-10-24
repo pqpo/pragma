@@ -198,6 +198,7 @@ export async function compileBuiltInAgent(options: {
   readonly expertResource?: PragmaExpertResource | undefined;
   readonly additionalResources?: readonly PragmaResource[] | undefined;
   readonly rootExecutionOverride?: PragmaCompileOptions["rootExecutionOverride"];
+  readonly expertExecutionProfiles?: PragmaCompileOptions["expertExecutionProfiles"];
   readonly rootModelSelectionOverride?: PragmaCompileOptions["rootModelSelectionOverride"];
   readonly plugins?: PragmaCompileOptions["plugins"];
   readonly adapterHost?: PragmaCompileOptions["adapterHost"];
@@ -251,6 +252,7 @@ export async function compileBuiltInAgent(options: {
     pragmaHome: options.pragmaHome,
     environmentId: options.environmentId,
     runtimes: options.runtimes,
+    expertExecutionProfiles: options.expertExecutionProfiles,
     loggerProvider: options.loggerProvider,
     ...(options.defaultModelSelection === undefined
       ? {}

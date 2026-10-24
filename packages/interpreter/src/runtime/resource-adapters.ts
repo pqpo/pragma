@@ -82,6 +82,7 @@ export interface PragmaContextStoreContribution {
 }
 
 export interface PragmaRuntimeProfileContribution {
+  readonly permissionModeId?: string | undefined;
   readonly runtimeId: string;
   readonly models?: IExpertAgentModelsConfig | undefined;
 }
@@ -418,9 +419,6 @@ const ScheduleAutomationBindingSchema = z
   .object({
     workspace: z.string().trim().min(1).max(2_000),
     placement: z.literal("desktop").default("desktop"),
-    toolPermissionMode: z
-      .enum(["request-approval", "auto-approve", "full-access"])
-      .default("request-approval"),
     modelOverride: z.unknown().optional(),
   })
   .strict();
@@ -744,6 +742,9 @@ function runtimeProfileAdapter(): PragmaResourceAdapter<PragmaRuntimeProfileReso
         fingerprint: sha256(stableStringify({ parsed })),
         contribution: {
           runtimeId: parsed.runtimeId,
+          ...(parsed.permissionModeId === undefined
+            ? {}
+            : { permissionModeId: parsed.permissionModeId }),
           ...(models === undefined ? {} : { models }),
         },
       };

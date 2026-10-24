@@ -1251,7 +1251,6 @@ export function MissionsPage(props: {
                 replaceMission(
                   await api.updateMissionOptions({
                     id: selectedMission.id,
-                    toolPermissionMode: options.toolPermissionMode,
                     modelOverride: options.modelOverride ?? null,
                   }),
                 );

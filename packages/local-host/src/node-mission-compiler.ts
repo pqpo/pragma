@@ -123,6 +123,12 @@ export function createLocalHostNodeMissionCompiler<
     plugins: resources.plugins,
     capabilityAuthority: resources.capabilityAuthority,
     revisionSource: {
+      getCurrentResources: async (projectId) => {
+        const head = await reader.getHead(projectId);
+        if (head === undefined && projectId === "built_in") return [];
+        if (head === undefined) throw new Error(`Project not found: ${projectId}`);
+        return (await readRevision(head)).resources;
+      },
       getRevision: async (projectId, revision) => {
         const location = await reader.getRevision(projectId, revision);
         if (location === undefined)
@@ -144,6 +150,7 @@ export function createLocalHostNodeMissionCompiler<
       },
     },
     systemExecutors: {
+      tracksDefaultRuntime: false,
       getResource: (ref) =>
         builtInRefs.has(ref) ? builtInAgentResource(ref as BuiltInAgentRef) : undefined,
       getDependencyResource: (ref) => builtInResources.get(ref),

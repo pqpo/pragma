@@ -1,3 +1,4 @@
+import { permissionModes } from "./permission-modes.ts";
 import { join } from "node:path";
 
 import {
@@ -81,6 +82,8 @@ export function createAntigravityRuntime(
 ): RuntimeAdapter {
   const mcpToolRegistries = options.mcpToolRegistryPool ?? createMcpToolRegistryPool();
   const descriptor = {
+    permissionModes,
+    configuredPermissionModeId: options.permissionMode ?? "full-access",
     ...ANTIGRAVITY_DESCRIPTOR,
     ...options.descriptor,
     kind: options.descriptor?.kind ?? ANTIGRAVITY_DESCRIPTOR.kind,
@@ -94,7 +97,7 @@ export function createAntigravityRuntime(
     ctx: RuntimeFeatureSessionPrepareContext,
   ): Promise<AntigravityMcpPreparation> => {
     await assertAntigravityWorkspaceCustomizationsAreIsolated(ctx.workspace);
-    const permissionMode = options.permissionMode ?? "request-approval";
+    const permissionMode = options.permissionMode ?? "full-access";
     const sessionDir =
       ctx.persistence.spec?.sessionDir ?? ctx.paths.runtimeSessionDir("antigravity");
     const managedIdentity = createManagedAntigravityIdentity(ctx.agent.id, sessionDir);

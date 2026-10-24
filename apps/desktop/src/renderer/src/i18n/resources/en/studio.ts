@@ -1,4 +1,19 @@
 export const studio = {
+  permissionMode: "Permission mode",
+  permissionModeHint:
+    "Uses this Harness’s own execution permissions. Managed tools keep their separate policies.",
+  permissionModeLabels: {
+    "full-access": "Full access",
+    "request-approval": "Ask for approval",
+    "read-only": "Read only",
+    "auto-review": "Approve for me",
+    bypassPermissions: "Bypass permissions",
+    default: "Default approval",
+    auto: "Auto approval",
+    "native-auto": "Native auto approval",
+    "auto-approve": "Accept edits (no shell)",
+  },
+
   skillSettings: "Skill settings",
   knowledgeBaseSettings: "Knowledge base settings",
   writeApproval: "Write approval",

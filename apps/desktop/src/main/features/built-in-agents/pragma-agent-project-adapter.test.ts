@@ -2507,7 +2507,7 @@ function requirePrepared<
 
 function expert(description: string, runtimeRef: string, id = "1xddvess309a6gme"): string {
   return [
-    "apiVersion: pragma/v5",
+    "apiVersion: pragma/v6",
     "kind: Expert",
     "metadata:",
     `  id: ${id}`,
@@ -2530,7 +2530,7 @@ function expert(description: string, runtimeRef: string, id = "1xddvess309a6gme"
 
 function expertTeam(id: string, expertRef: string): string {
   return [
-    "apiVersion: pragma/v5",
+    "apiVersion: pragma/v6",
     "kind: ExpertTeam",
     "metadata:",
     `  id: ${id}`,
@@ -2556,7 +2556,7 @@ function expertTeam(id: string, expertRef: string): string {
 
 function evaluationSource(flowId: string): string {
   return [
-    "apiVersion: pragma/v5",
+    "apiVersion: pragma/v6",
     "kind: Evaluation",
     "metadata:",
     "  id: 7h8j9k0m1n2p3q4r",
@@ -2585,7 +2585,7 @@ function evaluationSource(flowId: string): string {
 
 function automationWithPrompt(prompt: string): string {
   return [
-    "apiVersion: pragma/v5",
+    "apiVersion: pragma/v6",
     "kind: Automation",
     "metadata:",
     "  id: 55af1v8nmn4j0h3z",

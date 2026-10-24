@@ -44,10 +44,9 @@ describe("desktop settings store", () => {
     const store = createStore(settingsPath);
 
     await expect(store.getSnapshot(["zh-TW"])).resolves.toEqual({
-      schemaVersion: 2,
+      schemaVersion: 3,
       agentContextWindow: 258_000,
       localePreference: "system",
-      toolPermissionMode: "request-approval",
       defaultWorkspace: "/default/workspace",
       usesBuiltInDefaultWorkspace: true,
       resolvedLocale: "zh-Hant",
@@ -59,18 +58,16 @@ describe("desktop settings store", () => {
     const store = createStore(settingsPath);
 
     await expect(store.update({ localePreference: "zh-Hans" }, ["en-US"])).resolves.toEqual({
-      schemaVersion: 2,
+      schemaVersion: 3,
       localePreference: "zh-Hans",
-      toolPermissionMode: "request-approval",
       agentContextWindow: 258_000,
       defaultWorkspace: "/default/workspace",
       usesBuiltInDefaultWorkspace: true,
       resolvedLocale: "zh-Hans",
     });
     expect(JSON.parse(await readFile(settingsPath, "utf8"))).toEqual({
-      schemaVersion: 2,
+      schemaVersion: 3,
       localePreference: "zh-Hans",
-      toolPermissionMode: "request-approval",
       agentContextWindow: 258_000,
     });
   });
@@ -81,18 +78,16 @@ describe("desktop settings store", () => {
     await store.update({ localePreference: "zh-Hant" }, ["en-US"]);
 
     await expect(store.update({ defaultWorkspace: "/work/project" }, ["en-US"])).resolves.toEqual({
-      schemaVersion: 2,
+      schemaVersion: 3,
       localePreference: "zh-Hant",
-      toolPermissionMode: "request-approval",
       agentContextWindow: 258_000,
       defaultWorkspace: "/work/project",
       usesBuiltInDefaultWorkspace: false,
       resolvedLocale: "zh-Hant",
     });
     expect(JSON.parse(await readFile(settingsPath, "utf8"))).toEqual({
-      schemaVersion: 2,
+      schemaVersion: 3,
       localePreference: "zh-Hant",
-      toolPermissionMode: "request-approval",
       agentContextWindow: 258_000,
       defaultWorkspace: "/work/project",
     });
@@ -108,25 +103,22 @@ describe("desktop settings store", () => {
       usesBuiltInDefaultWorkspace: true,
     });
     expect(JSON.parse(await readFile(settingsPath, "utf8"))).toEqual({
-      schemaVersion: 2,
+      schemaVersion: 3,
       localePreference: "system",
-      toolPermissionMode: "request-approval",
       agentContextWindow: 258_000,
     });
   });
 
-  it("persists the Desktop tool permission mode", async () => {
+  it("stores settings without a global tool permission mode", async () => {
     const settingsPath = await temporarySettingsPath();
     const store = createStore(settingsPath);
 
     await expect(
-      store.update({ toolPermissionMode: "auto-approve" }, ["en-US"]),
-    ).resolves.toMatchObject({
-      toolPermissionMode: "auto-approve",
-    });
-    expect(JSON.parse(await readFile(settingsPath, "utf8"))).toMatchObject({
-      toolPermissionMode: "auto-approve",
-    });
+      store.update({ agentContextWindow: 258_000 }, ["en-US"]),
+    ).resolves.not.toHaveProperty("toolPermissionMode");
+    expect(JSON.parse(await readFile(settingsPath, "utf8"))).not.toHaveProperty(
+      "toolPermissionMode",
+    );
   });
 
   it("updates the global Pi Agent context window", async () => {
@@ -134,7 +126,7 @@ describe("desktop settings store", () => {
     const store = createStore(settingsPath);
 
     await expect(store.update({ agentContextWindow: 320_000 }, ["en-US"])).resolves.toMatchObject({
-      schemaVersion: 2,
+      schemaVersion: 3,
       agentContextWindow: 320_000,
     });
     await expect(store.update({ agentContextWindow: 0 }, ["en-US"])).rejects.toThrow();
@@ -148,13 +140,12 @@ describe("desktop settings store", () => {
     const store = createStore(settingsPath);
 
     await expect(store.getSnapshot(["en-US"])).resolves.toMatchObject({
-      schemaVersion: 2,
+      schemaVersion: 3,
       localePreference: "zh-Hant",
-      toolPermissionMode: "auto-approve",
       agentContextWindow: 258_000,
     });
     await expect(readFile(settingsPath, "utf8").then(JSON.parse)).resolves.toMatchObject({
-      schemaVersion: 2,
+      schemaVersion: 3,
       agentContextWindow: 258_000,
     });
     const backupDirectory = join(dirname(settingsPath), "migrations", "backups");
@@ -180,7 +171,6 @@ describe("desktop settings store", () => {
           "desktop-settings.json": {
             schemaVersion: 2,
             localePreference: "system",
-            toolPermissionMode: "request-approval",
             agentContextWindow: 258_000,
           },
         },
@@ -189,21 +179,20 @@ describe("desktop settings store", () => {
     const store = createStore(settingsPath);
 
     await expect(store.getSnapshot(["en-US"])).resolves.toMatchObject({
-      schemaVersion: 2,
+      schemaVersion: 3,
       agentContextWindow: 258_000,
     });
     await expect(readFile(settingsPath, "utf8").then(JSON.parse)).resolves.toMatchObject({
-      schemaVersion: 2,
+      schemaVersion: 3,
       agentContextWindow: 258_000,
     });
   });
 
-  it("reads current v2 settings without rewriting them", async () => {
+  it("reads current v3 settings without rewriting them", async () => {
     const settingsPath = await temporarySettingsPath();
     const current = {
-      schemaVersion: 2,
+      schemaVersion: 3,
       localePreference: "en",
-      toolPermissionMode: "request-approval",
       agentContextWindow: 320_000,
     };
     await mkdir(dirname(settingsPath), { recursive: true });
@@ -219,9 +208,8 @@ describe("desktop settings store", () => {
   it("fails closed and preserves current-version settings that do not validate", async () => {
     const settingsPath = await temporarySettingsPath();
     const corruptCurrent = {
-      schemaVersion: 2,
+      schemaVersion: 3,
       localePreference: "zh-Hant",
-      toolPermissionMode: "auto-approve",
       // Simulates a truncated write or a v2 document created before this required field existed.
       defaultWorkspace: "/work/project",
     };
@@ -246,9 +234,8 @@ describe("desktop settings store", () => {
     await writeFile(
       settingsPath,
       JSON.stringify({
-        schemaVersion: 3,
+        schemaVersion: 999,
         localePreference: "system",
-        toolPermissionMode: "request-approval",
         agentContextWindow: 258_000,
       }),
     );
@@ -272,9 +259,8 @@ describe("desktop settings store", () => {
         toVersion: 2,
         documents: {
           "desktop-settings.json": {
-            schemaVersion: 2,
+            schemaVersion: 3,
             localePreference: "system",
-            toolPermissionMode: "request-approval",
             agentContextWindow: 258_000,
           },
         },
@@ -317,3 +303,61 @@ async function temporarySettingsPath(): Promise<string> {
   temporaryDirectories.push(directory);
   return join(directory, "state", "desktop-settings.json");
 }
+
+it("migrates settings from the real v2 writer while preserving its backup", async () => {
+  const settingsPath = await temporarySettingsPath();
+  await mkdir(dirname(settingsPath), { recursive: true });
+  const fixture = new URL(
+    "../../../../../../packages/local-host/test/fixtures/expert-permissions/settings-v2.json",
+    import.meta.url,
+  );
+  const source = await readFile(fixture, "utf8");
+  await writeFile(settingsPath, source);
+  const store = createStore(settingsPath);
+  const current = await store.getSnapshot(["en-US"]);
+  expect(current.schemaVersion).toBe(3);
+  expect(current.localePreference).toBe("zh-Hans");
+  expect(current).not.toHaveProperty("toolPermissionMode");
+  const backupRoot = join(dirname(settingsPath), "migrations/backups");
+  const files = await readdir(backupRoot);
+  expect(files).toHaveLength(1);
+  expect(JSON.parse(await readFile(join(backupRoot, files[0]!), "utf8"))).toEqual(
+    JSON.parse(source),
+  );
+  await expect(store.getSnapshot(["en-US"])).resolves.toEqual(current);
+});
+
+it("preserves future settings and a pending older migration journal", async () => {
+  const settingsPath = await temporarySettingsPath();
+  await mkdir(dirname(settingsPath), { recursive: true });
+  const future = JSON.stringify({
+    schemaVersion: 999,
+    localePreference: "en",
+    agentContextWindow: 320_000,
+  });
+  const journalPath = join(dirname(settingsPath), "desktop-settings.migration.json");
+  const journal = JSON.stringify({
+    schemaVersion: "pragma.state-migration/v1",
+    resource: { family: "pragma.desktop-settings", id: "desktop-settings" },
+    fromVersion: 2,
+    toVersion: 3,
+    documents: {
+      "desktop-settings.json": {
+        schemaVersion: 3,
+        localePreference: "zh-Hans",
+        agentContextWindow: 258_000,
+      },
+    },
+  });
+  await writeFile(settingsPath, future);
+  await writeFile(journalPath, journal);
+  const store = createStore(settingsPath);
+  await expect(store.getSnapshot(["en-US"])).rejects.toMatchObject({
+    code: DESKTOP_SETTINGS_MIGRATION_ERROR_CODES.unsupportedVersion,
+  });
+  await expect(store.update({ localePreference: "zh-Hant" }, ["en-US"])).rejects.toMatchObject({
+    code: DESKTOP_SETTINGS_MIGRATION_ERROR_CODES.unsupportedVersion,
+  });
+  expect(await readFile(settingsPath, "utf8")).toBe(future);
+  expect(await readFile(journalPath, "utf8")).toBe(journal);
+});

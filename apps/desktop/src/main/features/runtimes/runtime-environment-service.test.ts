@@ -6,15 +6,12 @@ import { defineRuntimeTestDriver } from "@pragma/core/testing";
 import { createPiModelProviderConverter } from "@pragma/runtime-pi";
 import { describe, expect, it, vi } from "vitest";
 
-import type { DesktopToolPermissionMode } from "../../../shared/contracts/index.ts";
 import type { ModelProviderStore } from "@pragma/local-host/deployment";
 import { createDesktopSettingsStore } from "../settings/desktop-settings-store.ts";
 import {
-  antigravityRuntimePermissionForMode,
   codexRuntimePermissionsForMode,
   createBuiltInRuntimeFactories,
   createRuntimeEnvironmentService,
-  qoderRuntimePermissionForMode,
   type RuntimeEnvironmentAdapterFactory,
 } from "./runtime-environment-service.ts";
 import { createRuntimeEnvironmentStore } from "@pragma/local-host/deployment";
@@ -86,7 +83,6 @@ describe("RuntimeEnvironmentService", () => {
     let createCount = 0;
     let modelCatalogCallCount = 0;
     let liveDiscoveryCount = 0;
-    let currentPermissionMode: DesktopToolPermissionMode = "request-approval";
     const cachedFactory: RuntimeEnvironmentAdapterFactory = {
       id: "test.runtime",
       version: "v1",
@@ -108,6 +104,15 @@ describe("RuntimeEnvironmentService", () => {
             id: environment.id,
             kind: "test",
             displayName: environment.displayName,
+            permissionModes: {
+              defaultModeId: "full-access",
+              modes: ["full-access", "read-only"].map((id) => ({
+                id,
+                label: id,
+                description: id,
+                available: true,
+              })),
+            },
           },
           listModels: async () => {
             modelCatalogCallCount += 1;
@@ -132,7 +137,6 @@ describe("RuntimeEnvironmentService", () => {
     const service = createRuntimeEnvironmentService({
       store,
       factories: [cachedFactory],
-      getToolPermissionMode: () => currentPermissionMode,
     });
     const selection = { model: { providerId: "provider", modelId: "model" } };
 
@@ -152,16 +156,18 @@ describe("RuntimeEnvironmentService", () => {
     expect(modelCatalogCallCount).toBe(1);
     expect(liveDiscoveryCount).toBe(1);
 
-    await service.forToolPermissionMode("full-access").bind();
+    const full = await service.bind({ permissionModeId: "full-access" });
+    expect(createCount).toBe(1);
+    await service.bind({ permissionModeId: "full-access" });
+    expect(createCount).toBe(1);
+    const readonly = await service.bind({ permissionModeId: "read-only" });
     expect(createCount).toBe(2);
-
-    currentPermissionMode = "full-access";
-    await service.bind();
-    expect(createCount).toBe(2);
-
-    currentPermissionMode = "auto-approve";
-    await service.bind();
-    expect(createCount).toBe(3);
+    expect(readonly.binding.permissionModeId).toBe("read-only");
+    expect((await service.resolve({ binding: readonly.binding })).adapter).toBe(readonly.adapter);
+    expect(full.adapter).not.toBe(readonly.adapter);
+    await expect(service.bind({ permissionModeId: "plan" })).rejects.toThrow(
+      "Unsupported permission mode",
+    );
 
     const original = (await store.getRevision("pi"))!;
     await store.update({
@@ -362,30 +368,11 @@ describe("RuntimeEnvironmentService", () => {
 describe("Codex tool permission mapping", () => {
   it.each([
     ["request-approval", "workspace-write", "on-request"],
-    ["auto-approve", "workspace-write", "on-request"],
+    ["read-only", "read-only", "never"],
     ["full-access", "danger-full-access", "never"],
   ] as const)("maps %s to sandbox=%s and approval=%s", (mode, sandboxMode, approvalPolicy) => {
     expect(codexRuntimePermissionsForMode(mode)).toEqual({ sandboxMode, approvalPolicy });
   });
-});
-
-describe("Qoder CLI tool permission mapping", () => {
-  it.each([
-    ["request-approval", "default"],
-    ["auto-approve", "auto"],
-    ["full-access", "bypassPermissions"],
-  ] as const)("maps %s to %s", (mode, permissionMode) => {
-    expect(qoderRuntimePermissionForMode(mode)).toBe(permissionMode);
-  });
-});
-
-describe("Antigravity CLI tool permission mapping", () => {
-  it.each(["request-approval", "auto-approve", "full-access"] as const)(
-    "preserves the Desktop %s policy",
-    (mode) => {
-      expect(antigravityRuntimePermissionForMode(mode)).toBe(mode);
-    },
-  );
 });
 
 describe("built-in Runtime process environments", () => {
@@ -496,3 +483,28 @@ function definition(id: string, displayName: string, adapterId = "test.runtime")
     config: {},
   };
 }
+
+it("publishes native harness modes without plan or a fake Pi approval mode", async () => {
+  const factories = createBuiltInRuntimeFactories({
+    modelProviders: { listProviders: async () => [] } as unknown as ModelProviderStore,
+  });
+  for (const factory of factories) {
+    const environment = {
+      ...definition("test", "Harness"),
+      adapter: { id: factory.id, version: factory.version },
+    };
+    const adapter = await factory.create(environment);
+    const catalog = adapter.descriptor.permissionModes!;
+    expect(catalog).toBeDefined();
+    expect(catalog.modes.some((mode) => mode.id === catalog.defaultModeId && mode.available)).toBe(
+      true,
+    );
+    expect(catalog.modes.some((mode) => mode.id === "plan")).toBe(false);
+    if (factory.id === "pragma.runtime.pi")
+      expect(catalog.modes.map((mode) => mode.id)).toEqual(["full-access"]);
+    if (factory.id === "pragma.runtime.codex") {
+      expect(catalog.modes.find((mode) => mode.id === "read-only")?.available).toBe(true);
+      expect(catalog.modes.find((mode) => mode.id === "auto-review")?.available).toBe(false);
+    }
+  }
+});

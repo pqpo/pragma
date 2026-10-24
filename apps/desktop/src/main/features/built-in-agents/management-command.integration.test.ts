@@ -1504,7 +1504,6 @@ describe(
           expectedProjectRevision: 1,
           source: JSON.stringify(resource),
           workspaceId: f.root,
-          toolPermissionMode: "request-approval" as const,
           operationId: randomUUID(),
         };
         const saveBinding = h.store.saveBinding.bind(h.store);
@@ -1560,7 +1559,6 @@ describe(
           expectedProjectRevision: 1,
           source: JSON.stringify(resource),
           workspaceId: f.root,
-          toolPermissionMode: "request-approval",
           operationId: randomUUID(),
         });
         const operationId = randomUUID();
@@ -1746,7 +1744,6 @@ describe(
         expectedProjectRevision: 1,
         source: JSON.stringify(resource),
         workspaceId: f.root,
-        toolPermissionMode: "request-approval",
       });
       expect((await f.invoke("automation.save", input())).status).toBe("failed");
       expect((await h.project.get()).revision).toBe(1);

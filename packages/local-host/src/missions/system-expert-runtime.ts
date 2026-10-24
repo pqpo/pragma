@@ -3,6 +3,7 @@ import type { RuntimeModelSelection, RuntimeResolver } from "@pragma/core";
 import type { MissionModelOverride } from "@pragma/shared";
 
 interface SystemExpertConfiguredModel {
+  readonly permissionModeId?: string | undefined;
   readonly runtimeId: string;
   readonly providerId: string;
   readonly modelId: string;
@@ -10,6 +11,7 @@ interface SystemExpertConfiguredModel {
 }
 
 export interface SystemExpertRuntimeDefaults {
+  readonly permissionModeId?: string | undefined;
   readonly runtimeId: string;
   readonly modelSelection?: RuntimeModelSelection | undefined;
 }
@@ -23,6 +25,9 @@ export async function resolveSystemExpertRuntimeDefaults(
   if (override !== undefined) {
     return {
       runtimeId,
+      ...(configuredModel?.permissionModeId === undefined
+        ? {}
+        : { permissionModeId: configuredModel.permissionModeId }),
       modelSelection: {
         model: { providerId: override.providerId, modelId: override.modelId },
         ...(override.thinkingLevel === undefined ? {} : { thinkingLevel: override.thinkingLevel }),
@@ -32,6 +37,9 @@ export async function resolveSystemExpertRuntimeDefaults(
   if (configuredModel !== undefined) {
     return {
       runtimeId,
+      ...(configuredModel?.permissionModeId === undefined
+        ? {}
+        : { permissionModeId: configuredModel.permissionModeId }),
       modelSelection: {
         model: {
           providerId: configuredModel.providerId,
@@ -66,6 +74,9 @@ export function withRuntimeDefaults(
     bind: async (request = {}) =>
       await runtimes.bind({
         runtimeId: request.runtimeId ?? defaults.runtimeId,
+        permissionModeId:
+          request.permissionModeId ??
+          (request.runtimeId === undefined ? defaults.permissionModeId : undefined),
         ...(request.modelSelection === undefined &&
         (request.runtimeId === undefined || request.runtimeId === defaults.runtimeId) &&
         defaults.modelSelection !== undefined

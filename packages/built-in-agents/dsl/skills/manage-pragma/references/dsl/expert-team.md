@@ -3,7 +3,7 @@
 Use an ExpertTeam when one coordinator governs collaboration among a bounded set of Experts.
 
 ```yaml
-apiVersion: pragma/v5
+apiVersion: pragma/v6
 kind: ExpertTeam
 metadata:
   id: 4h5j6k7m8n9p0q1r
@@ -41,10 +41,10 @@ spec:
 - The coordinator and every member must already exist or be included in the same change-set.
 - Reuse a matching read-only system Expert from the `builtin-experts` category of `pragma manage dsl options list` when available.
   Its canonical ref is valid directly and it remains outside the editable project resource list.
-- `avatarId` remains part of the `pragma/v5` portable resource protocol. Desktop displays the
+- `avatarId` remains part of the `pragma/v6` portable resource protocol. Desktop displays the
   coordinator's current Expert avatar and adds the Team badge in the UI.
 - Text limits use Unicode characters after trimming: name 50, description 500, and newly authored
-  team instructions 2,000. Existing pragma/v5 resources remain readable up to 5,000 characters.
+  team instructions 2,000. Existing pragma/v6 resources remain readable up to 5,000 characters.
 - `instructions` is optional. When present, it is loaded into the coordinator and every delegated
   member as an always-on `TEAM.md` Context System document. Use it for shared collaboration
   principles, quality requirements, and working agreements rather than role-specific behavior.

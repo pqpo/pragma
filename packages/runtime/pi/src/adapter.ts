@@ -1,3 +1,4 @@
+import { permissionModes } from "./permission-modes.ts";
 import {
   SettingsManager,
   createAgentSession,
@@ -74,6 +75,8 @@ export function createPiRuntime(options: CloudPiRuntimeAdapterOptions = {}): Run
   });
   const mcpToolRegistries = options.mcpToolRegistryPool ?? createMcpToolRegistryPool();
   const descriptor = {
+    permissionModes,
+    configuredPermissionModeId: "full-access",
     ...CLOUD_PI_RUNTIME_DESCRIPTOR,
     ...options.descriptor,
     kind: options.descriptor?.kind ?? CLOUD_PI_RUNTIME_DESCRIPTOR.kind,

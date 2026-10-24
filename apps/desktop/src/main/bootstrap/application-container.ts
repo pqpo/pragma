@@ -190,7 +190,6 @@ import {
   createRuntimeEnvironmentService,
 } from "../features/runtimes/runtime-environment-service.ts";
 import { installRuntimeHandlers } from "../features/runtimes/runtime-ipc.ts";
-import { createAutomaticToolPermissionHandler } from "../features/runtimes/tool-permission-policy.ts";
 import { installDesktopSettingsHandlers } from "../features/settings/desktop-settings-ipc.ts";
 import { createDesktopSettingsStore } from "../features/settings/desktop-settings-store.ts";
 import { installDesktopStorageCleanupHandlers } from "../features/settings/desktop-storage-cleanup-ipc.ts";
@@ -291,12 +290,8 @@ export async function createDesktopApplicationContainer(
     warn: (message, error) =>
       mainLogger.warn("desktop.home_executor_preference_warning", message, { error }),
   });
-  const getToolPermissionMode = async () =>
-    (await desktopSettings.getSnapshot(options.getPreferredSystemLanguages())).toolPermissionMode;
   const getAgentContextWindow = async () =>
     (await desktopSettings.getSnapshot(options.getPreferredSystemLanguages())).agentContextWindow;
-  const automaticHumanInteractionHandler =
-    createAutomaticToolPermissionHandler(getToolPermissionMode);
   const memoryPlaneRef: { current?: DesktopMemoryPlane } = {};
   const systemExperts = createDesktopSystemExpertRegistry({
     configPath: join(pragmaPaths.stateRoot(), "system-experts.json"),
@@ -516,12 +511,10 @@ export async function createDesktopApplicationContainer(
   const runtimes = createRuntimeEnvironmentService({
     store: runtimeEnvironments,
     logger: mainLogger,
-    getToolPermissionMode,
     getMaterializationCacheKey: runtimeProcessEnvironment.getCacheKey,
     factories: createBuiltInRuntimeFactories({
       modelProviders: modelProviderStore,
       modelCatalogCacheRoot: pragmaPaths.cacheRoot(),
-      getToolPermissionMode,
       getAgentContextWindow,
       getRuntimeProcessEnvironment: runtimeProcessEnvironment.get,
       onModelCatalogUpdated: (runtimeId) => {
@@ -555,6 +548,10 @@ export async function createDesktopApplicationContainer(
     project: pragmaProjectStore,
     systemExperts,
     validateModel: async (selection) => {
+      await runtimes.bind({
+        runtimeId: selection.runtimeId,
+        permissionModeId: selection.permissionModeId,
+      });
       const availability = await getRuntimeAvailability(runtimes);
       const runtime = availability.find((candidate) => candidate.id === selection.runtimeId);
       if (runtime?.status !== "available") {
@@ -1248,7 +1245,6 @@ export async function createDesktopApplicationContainer(
     executors: missionExecutors,
     contextStores,
     contextStoreRevisions: storeRevisions,
-    getDefaultToolPermissionMode: getToolPermissionMode,
     assertExecutorReady: async (ref) => await assertBundleExecutorReady(ref, "create_mission"),
   });
   installExpertDefinitionHandlers(expertStore, usageStore);
@@ -1368,10 +1364,6 @@ export async function createDesktopApplicationContainer(
       runtimes,
       usage: usageStore,
       loggerProvider,
-      automaticHumanInteractionHandler,
-      runtimesForToolPermissionMode: (mode) => runtimes.forToolPermissionMode(mode),
-      automaticHumanInteractionHandlerForToolPermissionMode: (mode) =>
-        createAutomaticToolPermissionHandler(() => mode),
       adapterHostForMission: (mission, fallback) => evaluationMocks.forMission(mission, fallback),
       ownerScope,
       pragmaManagementPorts: () => {
@@ -1492,6 +1484,9 @@ export async function createDesktopApplicationContainer(
             loggerProvider,
             rootExecutionOverride: {
               runtimeId: defaults.runtimeId,
+              ...(defaults.permissionModeId === undefined
+                ? {}
+                : { permissionModeId: defaults.permissionModeId }),
               ...(defaults.modelSelection === undefined
                 ? {}
                 : { modelSelection: defaults.modelSelection }),
@@ -1678,6 +1673,9 @@ export async function createDesktopApplicationContainer(
             loggerProvider,
             rootExecutionOverride: {
               runtimeId: defaults.runtimeId,
+              ...(defaults.permissionModeId === undefined
+                ? {}
+                : { permissionModeId: defaults.permissionModeId }),
               ...(defaults.modelSelection === undefined
                 ? {}
                 : { modelSelection: defaults.modelSelection }),
@@ -1695,16 +1693,14 @@ export async function createDesktopApplicationContainer(
         if (definition === undefined) throw new Error("The built-in Pragma definition is missing.");
         const createsSession = mission.execution?.sessionId === undefined;
         const configuredModel =
-          createsSession && definition.executionProfile.mode === "pinned"
+          definition.executionProfile.mode === "pinned"
             ? definition.executionProfile.model
             : undefined;
-        const defaults =
-          pinnedSource?.rootExecutionOverride ??
-          (await resolveSystemExpertRuntimeDefaults(
-            scopedRuntimes,
-            configuredModel,
-            createsSession ? mission.modelOverride : undefined,
-          ));
+        const defaults = await resolveSystemExpertRuntimeDefaults(
+          scopedRuntimes,
+          configuredModel,
+          createsSession ? mission.modelOverride : undefined,
+        );
         return {
           ref: BUILT_IN_PRAGMA_REF,
           environmentId: "desktop-system-expert",
@@ -1718,6 +1714,9 @@ export async function createDesktopApplicationContainer(
             : { defaultModelSelection: defaults.modelSelection }),
           rootExecutionOverride: {
             runtimeId: defaults.runtimeId,
+            ...(defaults.permissionModeId === undefined
+              ? {}
+              : { permissionModeId: defaults.permissionModeId }),
             ...(defaults.modelSelection === undefined
               ? {}
               : { modelSelection: defaults.modelSelection }),
@@ -2187,7 +2186,6 @@ export async function createDesktopApplicationContainer(
     getWindow: options.getWindow,
     application: missionApplication,
     getAutomationMissionSources: () => automationService.listMissionSources(),
-    getDefaultToolPermissionMode: getToolPermissionMode,
     getDefaultWorkspace: async () =>
       (await desktopSettings.getSnapshot(options.getPreferredSystemLanguages())).defaultWorkspace,
     getRecentWorkspaces: () => workspaceHistory.list(),

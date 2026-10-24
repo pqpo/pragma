@@ -1,3 +1,4 @@
+import { permissionModes } from "./permission-modes.ts";
 import { readdir } from "node:fs/promises";
 import { join } from "node:path";
 
@@ -62,6 +63,13 @@ export function createCodexRuntime(options: CodexRuntimeAdapterOptions = {}): Ru
     options.executablePath ??
     (options.spawn === undefined ? resolveCodexExecutablePath(options) : "codex");
   const descriptor = {
+    permissionModes,
+    configuredPermissionModeId:
+      options.sandboxMode === "read-only" && (options.approvalPolicy ?? "never") === "never"
+        ? "read-only"
+        : options.sandboxMode === "workspace-write"
+          ? "request-approval"
+          : "full-access",
     ...CODEX_LOCAL_RUNTIME_DESCRIPTOR,
     ...options.descriptor,
     kind: options.descriptor?.kind ?? CODEX_LOCAL_RUNTIME_DESCRIPTOR.kind,
@@ -96,8 +104,8 @@ export function createCodexRuntime(options: CodexRuntimeAdapterOptions = {}): Ru
     readiness: runtimeFeature.degraded(CODEX_EVIDENCE_PENDING),
     prepare(ctx) {
       return {
-        sandboxMode: options.sandboxMode,
-        approvalPolicy: options.approvalPolicy,
+        sandboxMode: options.sandboxMode ?? "danger-full-access",
+        approvalPolicy: options.approvalPolicy ?? "never",
         humanInteractionHandler: ctx.request.humanInteractionHandler,
       };
     },

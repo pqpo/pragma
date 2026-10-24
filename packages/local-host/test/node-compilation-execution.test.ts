@@ -990,11 +990,9 @@ describe("default Node compilation reaches persisted Execution", { timeout: wait
       const paths = new PragmaPaths({ pragmaHome: f.home });
       const executions = createSqliteExecutionStore({ pragmaHome: f.home });
       const controller = createMissionControllerStore({ missionsPath: paths.missionsRoot() });
-      const permissionResolver = vi.fn(() => f.runtimes);
       const desktop = createLocalHostNodeApplication({
         pragmaHome: f.home,
         runtimes: f.runtimes,
-        runtimesForToolPermissionMode: permissionResolver,
         client: { surface: "desktop", version: "test", instanceId: randomUUID() },
         workspace: {
           stat: async () => ({ isDirectory: () => true }),
@@ -1040,7 +1038,6 @@ describe("default Node compilation reaches persisted Execution", { timeout: wait
         const lease = (await controller.readSnapshot({ missionId: target.missionId })).snapshot
           .lease!;
         advanceLeaseClock(Math.max(Date.parse(claim.expiresAt), Date.parse(lease.expiresAt)) + 100);
-        permissionResolver.mockClear();
         if (action === "resume") {
           await expect(
             desktop.resumeMission!({ missionId: target.missionId, requestId: randomUUID() }),
@@ -1062,7 +1059,6 @@ describe("default Node compilation reaches persisted Execution", { timeout: wait
             timeoutMs: 10_000,
           });
           expect(receipt.state).toBe("applied");
-          expect(permissionResolver).toHaveBeenCalledWith("request-approval");
         }
         const restored = RuntimeContextRecordSchema.parse(
           await executions.getContext(target.executionId, invocation.contextId!),

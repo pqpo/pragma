@@ -90,7 +90,6 @@ export function createDesktopStoreRevisionAgent(options: {
           jobId: input.jobId,
           storeId: input.request.storeId,
         },
-        toolPermissionMode: "request-approval",
         contextMounts: [
           {
             kind: "context-store-draft",

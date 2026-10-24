@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { mkdir, open, rm } from "node:fs/promises";
+import { link, mkdir, open, rm } from "node:fs/promises";
 import { dirname, join, relative, resolve } from "node:path";
 import {
   parseStorageJson,
@@ -364,4 +364,24 @@ function isRetryableRename(error: unknown): boolean {
     "code" in error &&
     (error.code === "EPERM" || error.code === "EACCES")
   );
+}
+
+/** Install a complete original document without ever replacing a retained backup. */
+export async function writeStateMigrationBackup(path: string, source: string): Promise<void> {
+  const temporary = `${path}.${randomUUID()}.tmp`;
+  try {
+    await writeFile(temporary, source, { flag: "wx", mode: 0o600, flush: true });
+    try {
+      await link(temporary, path);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
+      if ((await readFile(path, "utf8")) !== source) {
+        throw new Error(`Migration backup conflicts with its original document: ${path}`, {
+          cause: error,
+        });
+      }
+    }
+  } finally {
+    await rm(temporary, { force: true });
+  }
 }

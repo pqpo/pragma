@@ -8,7 +8,6 @@ describe("home draft persistence", () => {
     workspaceOverride: { path: "/workspace/repo", basename: "repo" },
     goal: "Review this repository.",
     flowInput: { issueId: "36" },
-    toolPermissionMode: "request-approval" as const,
     modelOverride: {
       providerId: "openai",
       modelId: "gpt",

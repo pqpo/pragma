@@ -82,7 +82,6 @@ import {
   MissionChatPageSchema,
   MissionChatUpdateSchema,
   missionExecutorSnapshot,
-  type DesktopToolPermissionMode,
   type MissionChatUpdate,
 } from "../../../shared/contracts/index.ts";
 import type { CapabilityCredentialStore } from "../capabilities/capability-credential-store.ts";
@@ -149,6 +148,8 @@ async function compileRevisionPragma(
   pragmaHome: string,
   runtimes: RuntimeResolver,
   ports: Parameters<typeof createPragmaManagementTools>[0],
+  modelSelection?: RuntimeModelSelection,
+  runtimeId = "fake",
 ): Promise<import("@pragma/interpreter").CompiledResource<import("@pragma/core").Expert>> {
   const actual =
     await vi.importActual<typeof import("@pragma/built-in-agents")>("@pragma/built-in-agents");
@@ -180,6 +181,7 @@ async function compileRevisionPragma(
       pragmaHome,
       runtimes,
       adapterHost,
+      rootExecutionOverride: { runtimeId, modelSelection },
       resolveExternalInvocable: async (targetRef) => {
         const builtinRef = actual.BUILT_IN_AGENT_REFS.find((candidate) => candidate === targetRef);
         if (builtinRef === undefined)
@@ -2426,15 +2428,15 @@ describe("Desktop Mission resource adapter contracts", { timeout: 30_000 }, () =
       executorRef: "expert:0000000000pragma",
       cold: true,
       delayedPublication: true,
-      changePermissionDuringMount: true,
+      changeModelDuringMount: true,
     },
   ])(
-    "handles an unmounted target from $executorRef (cold=$cold, delayedPublication=$delayedPublication, changePermission=$changePermissionDuringMount, automaticApproval=$automaticApproval)",
+    "handles an unmounted target from $executorRef (cold=$cold, delayedPublication=$delayedPublication, changeModel=$changeModelDuringMount, automaticApproval=$automaticApproval)",
     async ({
       executorRef,
       cold,
       delayedPublication,
-      changePermissionDuringMount,
+      changeModelDuringMount,
       automaticApproval,
     }) => {
       const root = await mkdtemp(join(tmpdir(), "pragma-background-revision-"));
@@ -2466,10 +2468,12 @@ describe("Desktop Mission resource adapter contracts", { timeout: 30_000 }, () =
           input: Parameters<typeof missionStore.mountManagedRevisionDraft>[0],
         ) => {
           const mounted = await missionStore.mountManagedRevisionDraft(input);
-          if (changePermissionDuringMount) {
+          if (changeModelDuringMount) {
             // The first Execution is not linked yet. Simulate an independent
             // options update while publication is held at the mount barrier.
-            await missionStore.updateOptions(input.id, { toolPermissionMode: "full-access" });
+            await missionStore.updateOptions(input.id, {
+              modelOverride: { providerId: "test", modelId: "changed-model" },
+            });
           }
           releasePublication();
           return mounted;
@@ -2545,10 +2549,10 @@ describe("Desktop Mission resource adapter contracts", { timeout: 30_000 }, () =
                 .find((tool) => tool.name === "list_agents")!
                 .call({ expertId: "0000000000st0rev" }, turn.signal, context);
               expect(directory.isError, getToolResultText(directory)).not.toBe(true);
-              if (changePermissionDuringMount) {
+              if (changeModelDuringMount) {
                 expect(JSON.parse(getToolResultText(directory))).toMatchObject({ contexts: [] });
                 return {
-                  outputText: "New Session after permission change",
+                  outputText: "New Session after model change",
                   runtimeSessionId: "runtime",
                 };
               }
@@ -2955,9 +2959,22 @@ describe("Desktop Mission resource adapter contracts", { timeout: 30_000 }, () =
           systemExecutorSource: testSystemExecutorSource(
             async ({ mission, knowledgeRevisions }) => {
               if (mission.executor.ref === "expert:0000000000pragma") {
-                return await compileRevisionPragma(root, pragmaHome, runtimes, {
-                  knowledgeRevisions,
-                });
+                return await compileRevisionPragma(
+                  root,
+                  pragmaHome,
+                  runtimes,
+                  {
+                    knowledgeRevisions,
+                  },
+                  mission.modelOverride === undefined
+                    ? undefined
+                    : {
+                        model: {
+                          providerId: mission.modelOverride.providerId,
+                          modelId: mission.modelOverride.modelId,
+                        },
+                      },
+                );
               }
               const expert = await defineExpert({
                 id:
@@ -3045,7 +3062,7 @@ describe("Desktop Mission resource adapter contracts", { timeout: 30_000 }, () =
           content: "Continue and submit this draft",
           requestId: "33333333-3333-4333-8333-333333333333",
         });
-        if (changePermissionDuringMount) {
+        if (changeModelDuringMount) {
           await vi.waitFor(
             async () => {
               const current = await missions.get(caller.id);
@@ -4343,7 +4360,6 @@ describe("Desktop Mission resource adapter contracts", { timeout: 30_000 }, () =
       executor: missionExecutorSnapshot(
         snapshot.resources.find((resource) => resource.kind === "Expert")!,
       ),
-      toolPermissionMode: "full-access",
     });
     const cancelTurn = vi.fn();
     const runtime = defineRuntimeTestDriver<never, { id: string }>({
@@ -4400,7 +4416,6 @@ describe("Desktop Mission resource adapter contracts", { timeout: 30_000 }, () =
       runtimes: [runtime],
       defaultRuntimeId: "fake",
     });
-    const runtimesForToolPermissionMode = vi.fn(() => runtimeResolver);
     const runner = createDesktopMissionTestApplication({
       missions,
       project,
@@ -4409,13 +4424,11 @@ describe("Desktop Mission resource adapter contracts", { timeout: 30_000 }, () =
       capabilitiesPath: join(root, "capabilities"),
       pragmaHome: join(root, "state"),
       runtimes: runtimeResolver,
-      runtimesForToolPermissionMode,
     });
     const updates = vi.fn();
     const unsubscribe = runner.subscribeChat(updates);
 
     await runner.startRun(mission.id);
-    expect(runtimesForToolPermissionMode).toHaveBeenCalledWith("full-access");
     await vi.waitFor(
       async () => {
         const chat = await readMissionConversationSnapshot(runner, mission.id);
@@ -7291,7 +7304,6 @@ describe("Desktop Mission resource adapter contracts", { timeout: 30_000 }, () =
       });
       const updated = await runner.updateOptions({
         id: mission.id,
-        toolPermissionMode: mission.toolPermissionMode,
         modelOverride: { providerId: "provider", modelId: "next-model", thinkingLevel: "low" },
       });
       expect(updated.modelOverride?.modelId).toBe("next-model");
@@ -7300,7 +7312,6 @@ describe("Desktop Mission resource adapter contracts", { timeout: 30_000 }, () =
       await expect(
         runner.updateOptions({
           id: mission.id,
-          toolPermissionMode: "full-access",
           modelOverride: updated.modelOverride!,
         }),
       ).rejects.toThrow("mission permissions");
@@ -7311,7 +7322,6 @@ describe("Desktop Mission resource adapter contracts", { timeout: 30_000 }, () =
       });
       await runner.updateOptions({
         id: mission.id,
-        toolPermissionMode: mission.toolPermissionMode,
         modelOverride: null,
       });
       for (const [index, content] of ["First queued default", "Cached queued default"].entries()) {
@@ -7352,7 +7362,6 @@ describe("Desktop Mission resource adapter contracts", { timeout: 30_000 }, () =
       expect((await missions.get(mission.id)).execution?.sessionId).toBe(firstSession);
       await runner.updateOptions({
         id: mission.id,
-        toolPermissionMode: mission.toolPermissionMode,
         modelOverride: null,
       });
       await runner.sendMessage({
@@ -7401,7 +7410,6 @@ describe("Desktop Mission resource adapter contracts", { timeout: 30_000 }, () =
         session: {
           context: RuntimeNativeSessionContext;
           id: string;
-          toolPermissionMode: DesktopToolPermissionMode;
         },
         turn: { rawQuery: string; modelSelection?: RuntimeModelSelection | undefined },
       ) => ({
@@ -7409,59 +7417,26 @@ describe("Desktop Mission resource adapter contracts", { timeout: 30_000 }, () =
         runtimeSessionId: session.id,
       }),
     );
-    const openedSessionModes: DesktopToolPermissionMode[] = [];
-    const createSession = vi.fn((context: RuntimeNativeSessionContext) => {
-      openedSessionModes.push("request-approval");
-      return {
-        context,
-        id: `runtime-${context.systemSessionId}`,
-        toolPermissionMode: "request-approval" as const,
-      };
+    const createSession = vi.fn((context: RuntimeNativeSessionContext) => ({
+      context,
+      id: `runtime-${context.systemSessionId}`,
+    }));
+    const runtime = defineRuntimeTestDriver<
+      never,
+      { context: RuntimeNativeSessionContext; id: string }
+    >({
+      descriptor: { id: "fake", kind: "fake", displayName: "Fake" },
+      createSession,
+      restoreSession: (context) => ({ context, id: context.request.runtimeSession!.id }),
+      readSession: (session) => ({ runtimeSessionId: session.id }),
+      startTurn,
+      mapEvent: () => ({ events: [] }),
+      closeSession: () => undefined,
     });
-    const runtimeForMode = (toolPermissionMode: DesktopToolPermissionMode) =>
-      defineRuntimeTestDriver<
-        never,
-        {
-          context: RuntimeNativeSessionContext;
-          id: string;
-          toolPermissionMode: DesktopToolPermissionMode;
-        }
-      >({
-        descriptor: { id: "fake", kind: "fake", displayName: "Fake" },
-        createSession:
-          toolPermissionMode === "request-approval"
-            ? createSession
-            : (context) => {
-                openedSessionModes.push(toolPermissionMode);
-                return {
-                  context,
-                  id: `runtime-${context.systemSessionId}`,
-                  toolPermissionMode,
-                };
-              },
-        restoreSession: (context) => {
-          openedSessionModes.push(toolPermissionMode);
-          return { context, id: context.request.runtimeSession!.id, toolPermissionMode };
-        },
-        readSession: (session) => ({ runtimeSessionId: session.id }),
-        startTurn,
-        mapEvent: () => ({ events: [] }),
-        closeSession: () => undefined,
-      });
-    const runtime = runtimeForMode("request-approval");
     const runtimeResolver = createStaticRuntimeResolver({
       runtimes: [runtime],
       defaultRuntimeId: "fake",
     });
-    const runtimeResolvers = new Map(
-      (["request-approval", "auto-approve", "full-access"] as const).map((mode) => [
-        mode,
-        createStaticRuntimeResolver({ runtimes: [runtimeForMode(mode)], defaultRuntimeId: "fake" }),
-      ]),
-    );
-    const runtimesForToolPermissionMode = vi.fn((mode: DesktopToolPermissionMode) =>
-      runtimeResolvers.get(mode)!,
-    );
     const runner = createDesktopMissionTestApplication({
       missions,
       project,
@@ -7470,7 +7445,6 @@ describe("Desktop Mission resource adapter contracts", { timeout: 30_000 }, () =
       capabilitiesPath: join(root, "capabilities"),
       pragmaHome: join(root, "state"),
       runtimes: runtimeResolver,
-      runtimesForToolPermissionMode,
     });
     const chatRevisions: number[] = [];
     runner.subscribeChat(({ update }) => chatRevisions.push(update.revision));
@@ -7518,7 +7492,6 @@ describe("Desktop Mission resource adapter contracts", { timeout: 30_000 }, () =
 
     const configured = await runner.updateOptions({
       id: mission.id,
-      toolPermissionMode: "auto-approve",
       modelOverride: {
         providerId: "provider",
         modelId: "model",
@@ -7526,10 +7499,8 @@ describe("Desktop Mission resource adapter contracts", { timeout: 30_000 }, () =
       },
     });
     expect(configured).toMatchObject({
-      toolPermissionMode: "auto-approve",
       modelOverride: { thinkingLevel: "low" },
     });
-    expect(runtimesForToolPermissionMode).toHaveBeenCalledWith("auto-approve");
 
     const followup = runner.sendMessage({
       id: mission.id,
@@ -7560,11 +7531,8 @@ describe("Desktop Mission resource adapter contracts", { timeout: 30_000 }, () =
       model: { providerId: "provider", modelId: "model" },
       thinkingLevel: "low",
     });
-    expect(startTurn.mock.calls.map(([session]) => session.toolPermissionMode)).toEqual([
-      "request-approval",
-      "auto-approve",
-    ]);
-    expect(openedSessionModes).toEqual(["request-approval", "auto-approve"]);
+    expect(startTurn).toHaveBeenCalledTimes(2);
+    expect(createSession).toHaveBeenCalledTimes(1);
     await expect(runner.getWork(mission.id)).resolves.toEqual(
       expect.objectContaining({
         missionId: mission.id,
@@ -10656,3 +10624,228 @@ function approvalAfterExpertFlowFixture(): PragmaFlowResource {
     },
   };
 }
+
+it("keeps a running mode frozen and adopts the expert's current mode after cold continuation", async () => {
+  const root = await mkdtemp(join(tmpdir(), "pragma-expert-native-mode-"));
+  temporaryPaths.push(root);
+  const project = createPragmaProjectStore({ projectsPath: join(root, "projects") });
+  const profile = runtimeFixture();
+  const expert = expertFixture();
+  const snapshot = await project.publish({ expectedRevision: 0, resources: [profile, expert] });
+  const missions = createMissionStore({ missionsPath: join(root, "missions") });
+  const mission = await missions.create({
+    workspace: { path: root, basename: "workspace" },
+    goal: "Initial turn",
+    project: { id: snapshot.projectId, revision: snapshot.revision },
+    executor: missionExecutorSnapshot(expert),
+  });
+  let releaseFirst!: () => void;
+  const firstBarrier = new Promise<void>((resolve) => {
+    releaseFirst = resolve;
+  });
+  const observations: { mode: string; instructions: string; contextId: string; harness: string }[] =
+    [];
+  const catalog = {
+    defaultModeId: "full-access",
+    modes: ["full-access", "read-only"].map((id) => ({
+      id,
+      label: id,
+      description: id,
+      available: true,
+    })),
+  };
+  const resolvers = new Map(
+    catalog.modes.map(({ id: mode }) => [
+      mode,
+      createStaticRuntimeResolver({
+        defaultRuntimeId: "fake",
+        runtimes: [
+          defineRuntimeTestDriver<never, { context: RuntimeNativeSessionContext }>({
+            descriptor: {
+              id: "fake",
+              kind: "test",
+              displayName: "Harness",
+              permissionModes: catalog,
+            },
+            createSession: (context) => ({ context }),
+            restoreSession: (context) => ({ context }),
+            async startTurn(session) {
+              observations.push({
+                mode,
+                harness: "fake",
+                instructions: session.context.agent.instructions ?? "",
+                contextId: session.context.systemSessionId,
+              });
+              if (observations.length === 1) await firstBarrier;
+              return { outputText: mode, runtimeSessionId: session.context.systemSessionId };
+            },
+            mapEvent: () => ({ events: [] }),
+            closeSession: () => undefined,
+          }),
+        ],
+      }),
+    ]),
+  );
+  let defaultRuntimeId = "fake";
+  const defaultResolver = createStaticRuntimeResolver({
+    defaultRuntimeId: "pi",
+    runtimes: [
+      defineRuntimeTestDriver<never, { context: RuntimeNativeSessionContext }>({
+        descriptor: {
+          id: "pi",
+          kind: "cloud-pi-agent",
+          displayName: "Pi",
+          permissionModes: {
+            ...catalog,
+            modes: catalog.modes.filter((mode) => mode.id === "full-access"),
+          },
+        },
+        createSession: (context) => ({ context }),
+        restoreSession: (context) => ({ context }),
+        startTurn(session) {
+          observations.push({
+            mode: "full-access",
+            harness: "pi",
+            instructions: session.context.agent.instructions ?? "",
+            contextId: session.context.systemSessionId,
+          });
+          return { outputText: "pi", runtimeSessionId: session.context.systemSessionId };
+        },
+        mapEvent: () => ({ events: [] }),
+        closeSession: () => undefined,
+      }),
+    ],
+  });
+  const runtimes: RuntimeResolver = {
+    getDefaultRuntimeId: async () => defaultRuntimeId,
+    bind: async (request = {}) =>
+      await (
+        (request.runtimeId ?? defaultRuntimeId) === "pi"
+          ? defaultResolver
+          : resolvers.get(request.permissionModeId ?? "full-access")!
+      ).bind(request),
+    resolve: async (request) =>
+      await (
+        request.binding.runtimeId === "pi"
+          ? defaultResolver
+          : resolvers.get(request.binding.permissionModeId ?? "full-access")!
+      ).resolve(request),
+  };
+  const builtinModule =
+    await vi.importActual<typeof import("@pragma/built-in-agents")>("@pragma/built-in-agents");
+  const builtinResources = new Map<string, PragmaExpertResource>(
+    builtinModule.BUILT_IN_AGENT_REFS.map((ref) => [ref, builtinModule.builtInAgentResource(ref)]),
+  );
+  const createRunner = () =>
+    createDesktopMissionTestApplication({
+      missions,
+      project,
+      capabilityStore: {} as CapabilityStore,
+      capabilityCredentials: {} as CapabilityCredentialStore,
+      capabilitiesPath: join(root, "capabilities"),
+      pragmaHome: join(root, "state"),
+      runtimes,
+      getSystemExecutorResource: (ref) => builtinResources.get(ref),
+      systemExecutorSource: async (input) => {
+        if (input.mission.executor.ref !== "expert:0000000000pragma") return undefined;
+        const runtimeId = await input.runtimes.getDefaultRuntimeId();
+        const source = await testSystemExecutorSource(
+          async ({ runtimes, knowledgeRevisions }) =>
+            await compileRevisionPragma(
+              root,
+              join(root, "state"),
+              runtimes,
+              { knowledgeRevisions },
+              undefined,
+              runtimeId,
+            ),
+        )(input);
+        if (source === undefined) throw new Error("Missing built-in test executor source.");
+        return { ...source, rootExecutionOverride: { runtimeId } };
+      },
+    });
+  let runner = createRunner();
+  await runner.startRun(mission.id);
+  await vi.waitFor(() => expect(observations).toHaveLength(1));
+  const readonlyProfile = {
+    ...profile,
+    spec: {
+      ...profile.spec,
+      config: { ...(profile.spec.config as object), permissionModeId: "read-only" },
+    },
+  };
+  await project.publish({
+    expectedRevision: 1,
+    resources: [
+      readonlyProfile,
+      {
+        ...expert,
+        spec: { ...expert.spec, instructions: "New instructions apply only to new Missions." },
+      },
+    ],
+  });
+  releaseFirst();
+  await vi.waitFor(async () =>
+    expect((await missions.get(mission.id)).execution?.status).toBe("succeeded"),
+  );
+  await runner.stopLocalController(mission.id, "shutdown");
+  runner = createRunner();
+  await runner.sendMessage({
+    id: mission.id,
+    content: "Continue with current permissions",
+    requestId: randomUUID(),
+  });
+  await vi.waitFor(async () => {
+    expect((await missions.get(mission.id)).execution?.status).toBe("succeeded");
+    expect(observations).toHaveLength(2);
+  });
+  expect(observations.map((item) => item.mode)).toEqual(["full-access", "read-only"]);
+  expect(observations[1]!.contextId).not.toBe(observations[0]!.contextId);
+  expect(observations.every((item) => item.instructions === expert.spec.instructions)).toBe(true);
+  expect((await missions.get(mission.id)).project.revision).toBe(1);
+  const systemMission = await missions.create({
+    workspace: { path: root, basename: "workspace" },
+    goal: "Use system defaults",
+    project: { id: snapshot.projectId, revision: snapshot.revision },
+    executor: { kind: "expert", ref: "expert:0000000000pragma", name: "Pragma" },
+  });
+  await runner.startRun(systemMission.id);
+  await vi.waitFor(async () => {
+    expect((await missions.get(systemMission.id)).execution?.status).toBe("succeeded");
+    expect(observations).toHaveLength(3);
+  });
+  defaultRuntimeId = "pi";
+  await runner.sendMessage({
+    id: systemMission.id,
+    content: "Use the current default Harness",
+    requestId: randomUUID(),
+  });
+  await vi.waitFor(async () => {
+    expect((await missions.get(systemMission.id)).execution?.status).toBe("succeeded");
+    expect(observations).toHaveLength(4);
+  });
+  expect(observations[3]).toMatchObject({
+    harness: "pi",
+    mode: "full-access",
+    instructions: observations[2]!.instructions,
+  });
+  expect(observations[3]!.contextId).not.toBe(observations[2]!.contextId);
+  await runner.stopLocalController(systemMission.id, "shutdown");
+  defaultRuntimeId = "fake";
+  runner = createRunner();
+  await runner.sendMessage({
+    id: systemMission.id,
+    content: "Refresh defaults after restart",
+    requestId: randomUUID(),
+  });
+  await vi.waitFor(async () => {
+    expect((await missions.get(systemMission.id)).execution?.status).toBe("succeeded");
+    expect(observations).toHaveLength(5);
+  });
+  expect(observations[4]).toMatchObject({
+    harness: "fake",
+    mode: "full-access",
+    instructions: observations[2]!.instructions,
+  });
+  expect(observations[4]!.contextId).not.toBe(observations[3]!.contextId);
+}, 20_000);

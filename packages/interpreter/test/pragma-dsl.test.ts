@@ -532,7 +532,7 @@ describe("Pragma YAML DSL", () => {
       writeFile(
         join(root, "pragma.yaml"),
         [
-          "apiVersion: pragma/v5",
+          "apiVersion: pragma/v6",
           "kind: Bundle",
           "imports:",
           "  - ./flows/review/flow.pragma.yaml",
@@ -542,7 +542,7 @@ describe("Pragma YAML DSL", () => {
       writeFile(
         join(root, "flows", "review", "flow.pragma.yaml"),
         [
-          "apiVersion: pragma/v5",
+          "apiVersion: pragma/v6",
           "kind: Flow",
           "metadata:",
           "  id: t9ne4d8njvvxv2ea",
@@ -615,7 +615,7 @@ describe("Pragma YAML DSL", () => {
     });
     const dumped = await project.dump(compiled.value, { split: "by-resource" });
     expect(dumped.files.get("flows/t9ne4d8njvvxv2ea.pragma.yaml")).toContain("kind: Flow");
-    expect(dumped.files.get("pragma.lock.yaml")).toContain("compilerVersion: pragma.dsl/v9");
+    expect(dumped.files.get("pragma.lock.yaml")).toContain("compilerVersion: pragma.dsl/v10");
     const single = await project.dump(compiled.value, { split: "single" });
     await writeFile(join(root, "single.yaml"), single.files.get("pragma.yaml")!);
     expect((await loadPragmaProject(join(root, "single.yaml"))).listResources()).toHaveLength(1);
@@ -627,7 +627,7 @@ describe("Pragma YAML DSL", () => {
     await writeFile(
       entry,
       [
-        "apiVersion: pragma/v5",
+        "apiVersion: pragma/v6",
         "kind: Flow",
         "metadata:",
         "  id: a1zhjn7y341f1y3x",
@@ -678,7 +678,7 @@ describe("Pragma YAML DSL", () => {
     await writeFile(
       entry,
       [
-        "apiVersion: pragma/v5",
+        "apiVersion: pragma/v6",
         "kind: Flow",
         "metadata: { id: p5tb2v7ns1tmevx1, name: Invalid, description: Invalid expression }",
         "spec:",
@@ -745,7 +745,7 @@ describe("Pragma YAML DSL", () => {
     );
   });
 
-  it("warns above the ExpertTeam authoring limit while preserving pragma/v5 compatibility", async () => {
+  it("warns above the ExpertTeam authoring limit while preserving pragma/v6 compatibility", async () => {
     const root = await mkdtemp(join(tmpdir(), "pragma-team-authoring-limit-"));
     const entry = join(root, "pragma.yaml");
     const instructions = "令".repeat(PRAGMA_TEXT_LIMITS.expertTeam.instructionsAuthoring + 1);
@@ -881,7 +881,7 @@ describe("Pragma YAML DSL", () => {
     ).toBe(false);
   });
 
-  it("keeps the pragma/v5 ExpertTeam avatar field readable", () => {
+  it("keeps the pragma/v6 ExpertTeam avatar field readable", () => {
     const parsed = PragmaExpertTeamResourceSchema.parse({
       apiVersion: PRAGMA_DSL_WRITE_API_VERSION,
       kind: "ExpertTeam",
@@ -940,7 +940,7 @@ describe("Pragma YAML DSL", () => {
       join(root, "pragma.lock.yaml"),
       formatPragmaYaml({
         ...unlocked.createLock(),
-        compilerVersion: "pragma.dsl/v99",
+        compilerVersion: "pragma.dsl/v109",
       }),
     );
 
@@ -1001,7 +1001,7 @@ describe("Pragma YAML DSL", () => {
 
     const project = await loadPragmaProject(entry, {
       requireLock: true,
-      revisionCompilerVersion: "pragma.dsl/v99",
+      revisionCompilerVersion: "pragma.dsl/v109",
     });
     expect(await project.validate()).toEqual([
       expect.objectContaining({
@@ -1074,7 +1074,7 @@ describe("Pragma YAML DSL", () => {
 
     expect(migrated).toMatchObject({
       sourceCompilerVersion: "pragma.dsl/v2",
-      targetCompilerVersion: "pragma.dsl/v9",
+      targetCompilerVersion: "pragma.dsl/v10",
       migrated: true,
     });
     expect(migrated.resources).toEqual([
@@ -1097,7 +1097,7 @@ describe("Pragma YAML DSL", () => {
 
     expect(migrated).toMatchObject({
       sourceCompilerVersion: "pragma.dsl/v3",
-      targetCompilerVersion: "pragma.dsl/v9",
+      targetCompilerVersion: "pragma.dsl/v10",
       migrated: true,
       resources: [expect.objectContaining({ kind: "Expert" })],
     });
@@ -1115,7 +1115,7 @@ describe("Pragma YAML DSL", () => {
 
     expect(migrated).toMatchObject({
       sourceCompilerVersion: "pragma.dsl/v4",
-      targetCompilerVersion: "pragma.dsl/v9",
+      targetCompilerVersion: "pragma.dsl/v10",
       migrated: true,
       resources: [
         expect.objectContaining({
@@ -1138,7 +1138,7 @@ describe("Pragma YAML DSL", () => {
 
     expect(migrated).toMatchObject({
       sourceCompilerVersion: "pragma.dsl/v5",
-      targetCompilerVersion: "pragma.dsl/v9",
+      targetCompilerVersion: "pragma.dsl/v10",
       migrated: true,
       resources: [
         expect.objectContaining({
@@ -1162,7 +1162,7 @@ describe("Pragma YAML DSL", () => {
 
     expect(migrated).toMatchObject({
       sourceCompilerVersion: "pragma.dsl/v6",
-      targetCompilerVersion: "pragma.dsl/v9",
+      targetCompilerVersion: "pragma.dsl/v10",
       migrated: true,
       resources: [
         expect.objectContaining({
@@ -1173,6 +1173,44 @@ describe("Pragma YAML DSL", () => {
         }),
       ],
     });
+  });
+
+  it("upgrades a real compiler v9 writer without rewriting its files and rejects a tampered lock", async () => {
+    const root = join(import.meta.dirname, "fixtures", "compiler-v9-expert-permissions");
+    const resource = "experts/v2vt1v01vzz6j24q.pragma.yaml";
+    const files = new Map(
+      await Promise.all(
+        ["pragma.yaml", "pragma.lock.yaml", resource].map(
+          async (path) => [path, await readFile(join(root, path), "utf8")] as const,
+        ),
+      ),
+    );
+    const original = new Map(files);
+    const result = migratePragmaCompilerProjectToCurrent({
+      files,
+      revisionCompilerVersion: "pragma.dsl/v9",
+    });
+    expect(result).toMatchObject({
+      sourceCompilerVersion: "pragma.dsl/v9",
+      targetCompilerVersion: "pragma.dsl/v10",
+      migrated: true,
+      resources: [
+        {
+          apiVersion: PRAGMA_DSL_WRITE_API_VERSION,
+          kind: "Expert",
+          spec: { instructions: "Pinned original instructions" },
+        },
+      ],
+    });
+    expect(files).toEqual(original);
+    files.set(
+      resource,
+      files.get(resource)!.replace("Pinned original instructions", "Tampered instructions"),
+    );
+    expect(() =>
+      migratePragmaCompilerProjectToCurrent({ files, revisionCompilerVersion: "pragma.dsl/v9" }),
+    ).toThrow("does not match its lock");
+    expect(files.get(resource)).toContain("Tampered instructions");
   });
 
   it("upgrades a compiler v7 pragma/v4 fixture written by the historical compiler", async () => {
@@ -1188,7 +1226,7 @@ describe("Pragma YAML DSL", () => {
 
     expect(migrated).toMatchObject({
       sourceCompilerVersion: "pragma.dsl/v7",
-      targetCompilerVersion: "pragma.dsl/v9",
+      targetCompilerVersion: "pragma.dsl/v10",
       migrated: true,
       resources: [
         expect.objectContaining({ apiVersion: PRAGMA_DSL_WRITE_API_VERSION, kind: "Capability" }),
@@ -1253,7 +1291,7 @@ describe("Pragma YAML DSL", () => {
     });
     expect(migrated).toMatchObject({
       sourceCompilerVersion: "pragma.dsl/v8",
-      targetCompilerVersion: "pragma.dsl/v9",
+      targetCompilerVersion: "pragma.dsl/v10",
       migrated: true,
       resources: [
         expect.objectContaining({
@@ -1272,15 +1310,15 @@ describe("Pragma YAML DSL", () => {
     await writeFile(entry, formatPragmaYaml(runtimeProfile()));
     const project = await loadPragmaProject(entry);
     const migrated = migratePragmaCompilerProjectToCurrent({
-      revisionCompilerVersion: "pragma.dsl/v9",
+      revisionCompilerVersion: "pragma.dsl/v10",
       files: new Map([
         ["pragma.yaml", await readFile(entry, "utf8")],
         ["pragma.lock.yaml", formatPragmaYaml(project.createLock())],
       ]),
     });
     expect(migrated).toMatchObject({
-      sourceCompilerVersion: "pragma.dsl/v9",
-      targetCompilerVersion: "pragma.dsl/v9",
+      sourceCompilerVersion: "pragma.dsl/v10",
+      targetCompilerVersion: "pragma.dsl/v10",
       migrated: false,
     });
   });
@@ -1323,7 +1361,7 @@ describe("Pragma YAML DSL", () => {
     expect(() =>
       migratePragmaCompilerProjectToCurrent({
         files: new Map(),
-        revisionCompilerVersion: "pragma.dsl/v99",
+        revisionCompilerVersion: "pragma.dsl/v109",
       }),
     ).toThrow(expect.objectContaining({ code: "future_compiler_version" }));
   });
@@ -1848,7 +1886,7 @@ describe("Pragma YAML DSL", () => {
     await writeFile(
       join(root, "flow.pragma.yaml"),
       [
-        "apiVersion: pragma/v5",
+        "apiVersion: pragma/v6",
         "kind: Flow",
         "metadata:",
         "  id: t4kw6k4qpw8a7tjw",
@@ -1881,7 +1919,7 @@ describe("Pragma YAML DSL", () => {
     await writeFile(
       join(root, "flow.pragma.yaml"),
       [
-        "apiVersion: pragma/v5",
+        "apiVersion: pragma/v6",
         "kind: Flow",
         "metadata:",
         "  id: 5yts78payhvmtw04",
@@ -1924,7 +1962,7 @@ describe("Pragma YAML DSL", () => {
     expect(({} as { polluted?: unknown }).polluted).toBeUndefined();
   });
 
-  it("recursively retains pragma/v5 additive fields and reports them as warnings", async () => {
+  it("recursively retains pragma/v6 additive fields and reports them as warnings", async () => {
     const root = await mkdtemp(join(tmpdir(), "pragma-dsl-forward-compatible-"));
     const entry = join(root, "pragma.yaml");
     const forwardResource = {
@@ -2056,7 +2094,7 @@ describe("Pragma YAML DSL", () => {
     await writeFile(
       join(root, "flow.pragma.yaml"),
       [
-        "apiVersion: pragma/v5",
+        "apiVersion: pragma/v6",
         "kind: Flow",
         "metadata:",
         "  id: t4kw6k4qpw8a7tjw",
@@ -2092,7 +2130,7 @@ describe("Pragma YAML DSL", () => {
     await writeFile(
       join(root, "flow.pragma.yaml"),
       [
-        "apiVersion: pragma/v5",
+        "apiVersion: pragma/v6",
         "kind: Flow",
         "metadata:",
         "  id: t4kw6k4qpw8a7tjw",
@@ -2131,7 +2169,7 @@ describe("Pragma YAML DSL", () => {
     await writeFile(
       join(root, "flow.pragma.yaml"),
       [
-        "apiVersion: pragma/v5",
+        "apiVersion: pragma/v6",
         "kind: Flow",
         "metadata:",
         "  id: 5yts78payhvmtw04",
@@ -2220,6 +2258,9 @@ describe("Pragma YAML DSL", () => {
           },
         ],
       }),
+      expertExecutionProfiles: {
+        "1xddvess309a6gme": { runtimeId: "missing-live-runtime", permissionModeId: "read-only" },
+      },
       rootExecutionOverride: { runtimeId: "pi", modelSelection },
     });
 

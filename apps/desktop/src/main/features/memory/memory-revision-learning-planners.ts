@@ -77,7 +77,6 @@ export function createMemoryRevisionLearningPlanners(options: {
           input.ref === STORE_REVISION_EXPERT_REF ? "Store Revision Agent" : "Skill Revision Agent",
       },
       origin: { type: "system-memory", jobId: input.jobId },
-      toolPermissionMode: "request-approval",
     });
     try {
       await mkdir(registry, { recursive: true, mode: 0o700 });

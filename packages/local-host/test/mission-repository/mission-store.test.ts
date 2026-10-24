@@ -173,12 +173,22 @@ describe("mission store", { timeout: 30_000 }, () => {
       });
       await controller.release({ missionId: mission.id, guard });
       const directory = store.storagePath!(mission.id);
-      const manifest = await readFile(join(directory, "mission.yaml"));
+      const manifest = pendingMigration
+        ? formatPragmaYaml({
+            ...mission,
+            schemaVersion: "pragma.mission/v11",
+            toolPermissionMode: "request-approval",
+          })
+        : await readFile(join(directory, "mission.yaml"));
       const journalPath = join(directory, ".v10-to-v11.transaction.json");
       const journal = JSON.stringify({
         schemaVersion: "pragma.mission-v11-migration/v1",
         missionId: mission.id,
-        target: mission,
+        target: {
+          ...mission,
+          schemaVersion: "pragma.mission/v11",
+          toolPermissionMode: "request-approval",
+        },
       });
       if (pendingMigration) await writeFile(journalPath, journal);
       await rm(join(directory, "mission.yaml"));
@@ -226,7 +236,7 @@ describe("mission store", { timeout: 30_000 }, () => {
       if (kind === "corrupt-envelope")
         await writeFile(
           join(directory, "mission.yaml"),
-          "schemaVersion: pragma.mission/v11\ninvalid: true",
+          "schemaVersion: pragma.mission/v12\ninvalid: true",
         );
       const code = kind === "absent" ? "mission_not_found" : "config_invalid";
       const storeId = crypto.randomUUID();
@@ -410,7 +420,6 @@ describe("mission store", { timeout: 30_000 }, () => {
       goal: "Design the Missions experience\nwith a second line.",
       project: { id: "studio", revision: 3 },
       executor: missionExecutorSnapshot(expert),
-      toolPermissionMode: "full-access",
       modelOverride: {
         providerId: "provider",
         modelId: "configured-model",
@@ -424,7 +433,7 @@ describe("mission store", { timeout: 30_000 }, () => {
       ref: "expert:v2vt1v01vzz6j24q",
     });
     expect(created.project).toEqual({ id: "studio", revision: 3 });
-    expect(created.toolPermissionMode).toBe("full-access");
+    expect(created).not.toHaveProperty("toolPermissionMode");
     expect(created.modelOverride).toEqual({
       providerId: "provider",
       modelId: "configured-model",
@@ -437,10 +446,10 @@ describe("mission store", { timeout: 30_000 }, () => {
       expect.objectContaining({ id: created.id, title: created.title }),
     ]);
     const manifest = await readFile(join(store.storagePath!(created.id), "mission.yaml"), "utf8");
-    expect(manifest).toContain("schemaVersion: pragma.mission/v11");
+    expect(manifest).toContain("schemaVersion: pragma.mission/v12");
     expect(created.contextMounts).toEqual([]);
     expect(manifest).toContain("revision: 3");
-    expect(manifest).toContain("toolPermissionMode: full-access");
+    expect(manifest).not.toContain("toolPermissionMode:");
     expect(manifest).toContain("modelOverride:");
     expect(manifest).not.toContain("messages:");
     expect(
@@ -1048,7 +1057,6 @@ describe("mission store", { timeout: 30_000 }, () => {
         { kind: "context-store", storeId: contextStoreId },
         { kind: "context-store-draft", draftId },
       ],
-      toolPermissionMode: "full-access",
       modelOverride: { providerId: "provider", modelId: "old-model", thinkingLevel: "high" },
       attachments: [
         {
@@ -1161,13 +1169,12 @@ describe("mission store", { timeout: 30_000 }, () => {
     });
 
     expect(branch).toMatchObject({
-      schemaVersion: "pragma.mission/v11",
+      schemaVersion: "pragma.mission/v12",
       title: `分支 · ${source.title}`,
       workspace: source.workspace,
       project: { id: "studio", revision: 7 },
       executor: { name: "Updated Product Designer" },
       contextMounts: [{ kind: "context-store", storeId: contextStoreId }],
-      toolPermissionMode: "full-access",
       modelOverride: { modelId: "old-model" },
       branch: {
         sourceMissionId: source.id,
@@ -2169,33 +2176,27 @@ describe("mission store", { timeout: 30_000 }, () => {
     };
     await store.updateExecution(created.id, execution);
 
-    await expect(
-      store.updateOptions(created.id, {
-        toolPermissionMode: "full-access",
-      }),
-    ).rejects.toThrow("Wait for the current execution");
+    await expect(store.updateOptions(created.id, {})).resolves.not.toHaveProperty(
+      "toolPermissionMode",
+    );
 
     const duringRun = await store.updateOptions(created.id, {
-      toolPermissionMode: created.toolPermissionMode,
       modelOverride: { providerId: "provider", modelId: "next-model", thinkingLevel: "high" },
     });
     expect(duringRun.execution).toEqual(execution);
     expect(duringRun.modelOverride?.modelId).toBe("next-model");
     await store.updateExecution(created.id, { ...execution, status: "succeeded" });
     const updated = await store.updateOptions(created.id, {
-      toolPermissionMode: "auto-approve",
       modelOverride: { providerId: "provider", modelId: "next-model", thinkingLevel: "high" },
     });
 
-    expect(updated.toolPermissionMode).toBe("auto-approve");
+    expect(updated).not.toHaveProperty("toolPermissionMode");
     expect(updated.modelOverride?.modelId).toBe("next-model");
     expect(updated.workspace).toEqual(created.workspace);
     expect(updated.executor).toEqual(created.executor);
     expect(updated.project).toEqual(created.project);
 
-    const cleared = await store.updateOptions(created.id, {
-      toolPermissionMode: "request-approval",
-    });
+    const cleared = await store.updateOptions(created.id, {});
     expect(cleared.modelOverride).toBeUndefined();
   });
 
@@ -2761,7 +2762,7 @@ describe("mission store", { timeout: 30_000 }, () => {
     const manifestPath = join(directory, "mission.yaml");
     await writeFile(
       manifestPath,
-      (await readFile(manifestPath, "utf8")).replace("pragma.mission/v11", "pragma.mission/v2"),
+      (await readFile(manifestPath, "utf8")).replace("pragma.mission/v12", "pragma.mission/v2"),
       "utf8",
     );
     await expect(store.get(created.id)).rejects.toMatchObject({ code: "unsupported_schema" });
@@ -2791,7 +2792,7 @@ describe("mission store", { timeout: 30_000 }, () => {
     await writeFile(
       unsupportedManifest,
       (await readFile(unsupportedManifest, "utf8")).replace(
-        "pragma.mission/v11",
+        "pragma.mission/v12",
         "pragma.mission/v99",
       ),
       "utf8",
@@ -2831,7 +2832,7 @@ describe("mission store", { timeout: 30_000 }, () => {
     await writeFile(
       unsupportedManifest,
       (await readFile(unsupportedManifest, "utf8")).replace(
-        "pragma.mission/v11",
+        "pragma.mission/v12",
         "pragma.mission/v99",
       ),
       "utf8",
@@ -2866,10 +2867,10 @@ describe("mission store", { timeout: 30_000 }, () => {
     await writeFile(manifestPath, formatPragmaYaml(legacy), "utf8");
 
     await expect(store.get(created.id)).resolves.toMatchObject({
-      schemaVersion: "pragma.mission/v11",
+      schemaVersion: "pragma.mission/v12",
       flowInput: { goal: "Legacy Flow goal", workspace },
     });
-    expect(await readFile(manifestPath, "utf8")).toContain("schemaVersion: pragma.mission/v11");
+    expect(await readFile(manifestPath, "utf8")).toContain("schemaVersion: pragma.mission/v12");
     for (const version of ["v3", "v4", "v5"]) {
       await expect(
         readFile(
@@ -2901,7 +2902,7 @@ describe("mission store", { timeout: 30_000 }, () => {
     await writeFile(manifestPath, formatPragmaYaml(legacy), "utf8");
 
     await expect(store.get(created.id)).resolves.toMatchObject({
-      schemaVersion: "pragma.mission/v11",
+      schemaVersion: "pragma.mission/v12",
       origin: { type: "user" },
     });
     expect(await readFile(manifestPath, "utf8")).toContain("type: user");
@@ -2949,7 +2950,7 @@ describe("mission store", { timeout: 30_000 }, () => {
     );
 
     await expect(store.get(created.id)).resolves.toMatchObject({
-      schemaVersion: "pragma.mission/v11",
+      schemaVersion: "pragma.mission/v12",
       origin: { type: "user" },
     });
     await expect(
@@ -2963,7 +2964,7 @@ describe("mission store", { timeout: 30_000 }, () => {
     const { id, source } = await installMissionV7Fixture(root);
 
     await expect(store.get(id)).resolves.toMatchObject({
-      schemaVersion: "pragma.mission/v11",
+      schemaVersion: "pragma.mission/v12",
       contextMounts: [],
     });
     expect(
@@ -2996,7 +2997,7 @@ describe("mission store", { timeout: 30_000 }, () => {
     );
 
     await expect(store.get(id)).resolves.toMatchObject({
-      schemaVersion: "pragma.mission/v11",
+      schemaVersion: "pragma.mission/v12",
       contextMounts: [],
     });
     await expect(
@@ -3011,7 +3012,7 @@ describe("mission store", { timeout: 30_000 }, () => {
 
     const migrated = await store.get(id);
     expect(migrated).toMatchObject({
-      schemaVersion: "pragma.mission/v11",
+      schemaVersion: "pragma.mission/v12",
       contextMounts: [{ kind: "context-store", storeId: "10000000-0000-4000-8000-000000000001" }],
     });
     expect(migrated.branch).toBeUndefined();
@@ -3043,7 +3044,7 @@ describe("mission store", { timeout: 30_000 }, () => {
       "utf8",
     );
 
-    await expect(store.get(id)).resolves.toMatchObject({ schemaVersion: "pragma.mission/v11" });
+    await expect(store.get(id)).resolves.toMatchObject({ schemaVersion: "pragma.mission/v12" });
     await expect(
       readFile(join(store.storagePath!(id), ".v8-to-v9.transaction.json"), "utf8"),
     ).rejects.toMatchObject({ code: "ENOENT" });
@@ -3055,7 +3056,7 @@ describe("mission store", { timeout: 30_000 }, () => {
     const { id, source } = await installMissionV9Fixture(root);
 
     await expect(store.get(id)).resolves.toMatchObject({
-      schemaVersion: "pragma.mission/v11",
+      schemaVersion: "pragma.mission/v12",
       contextMounts: [{ kind: "context-store", storeId: "10000000-0000-4000-8000-000000000001" }],
       branch: {
         sourceMissionId: "80000000-0000-4000-8000-000000000008",
@@ -3097,7 +3098,7 @@ describe("mission store", { timeout: 30_000 }, () => {
       "utf8",
     );
 
-    await expect(store.get(id)).resolves.toMatchObject({ schemaVersion: "pragma.mission/v11" });
+    await expect(store.get(id)).resolves.toMatchObject({ schemaVersion: "pragma.mission/v12" });
     await expect(
       readFile(join(store.storagePath!(id), ".v9-to-v10.transaction.json"), "utf8"),
     ).rejects.toMatchObject({ code: "ENOENT" });
@@ -3208,7 +3209,7 @@ describe("mission store", { timeout: 30_000 }, () => {
     );
 
     await expect(store.get(created.id)).resolves.toMatchObject({
-      schemaVersion: "pragma.mission/v11",
+      schemaVersion: "pragma.mission/v12",
       id: created.id,
     });
     await expect(
@@ -3285,3 +3286,43 @@ async function installMissionV9Fixture(root: string): Promise<{
   await writeFile(join(directory, "mission.yaml"), source, "utf8");
   return { directory, id: manifest.id, source };
 }
+
+it("upgrades a real v11 writer fixture, retains its backup, and replays permission removal", async () => {
+  const root = await mkdtemp(join(tmpdir(), "pragma-permission-migration-"));
+  try {
+    const store = createMissionStore({ missionsPath: root });
+    const id = "0f8a6380-2b80-4cb4-9f27-d4775de57d2a";
+    const path = store.storagePath!(id);
+    await mkdir(path, { recursive: true });
+    const source = await readFile(
+      new URL("../fixtures/expert-permissions/mission-v11.yaml", import.meta.url),
+      "utf8",
+    );
+    await writeFile(join(path, "mission.yaml"), source);
+    const migrated = await store.get(id);
+    expect(migrated.schemaVersion).toBe("pragma.mission/v12");
+    expect(migrated).not.toHaveProperty("toolPermissionMode");
+    expect(await readFile(join(path, "migration-backups/mission.v11.yaml"), "utf8")).toBe(source);
+    await expect(store.get(id)).resolves.toEqual(migrated);
+    await writeFile(join(path, "mission.yaml"), source);
+    await writeFile(
+      join(path, ".schema-migration.transaction.json"),
+      JSON.stringify({
+        schemaVersion: "pragma.mission-schema-migration/v1",
+        missionId: id,
+        fromVersion: "pragma.mission/v11",
+        toVersion: "pragma.mission/v12",
+        target: migrated,
+      }),
+    );
+    await expect(createMissionStore({ missionsPath: root }).get(id)).resolves.toEqual(migrated);
+    await writeFile(
+      join(path, "mission.yaml"),
+      source.replace("pragma.mission/v11", "pragma.mission/v999"),
+    );
+    await expect(store.get(id)).rejects.toThrow();
+    expect(await readFile(join(path, "mission.yaml"), "utf8")).toContain("pragma.mission/v999");
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});

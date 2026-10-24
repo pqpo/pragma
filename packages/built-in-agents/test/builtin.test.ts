@@ -95,7 +95,7 @@ describe("built-in Pragma Agent DSL", () => {
     expect(BUILT_IN_AGENT_REFS).toContain(MEMORY_PLANE_CURATOR_REF);
   });
 
-  it("loads as a portable pragma/v5 project with the authoring Skill", async () => {
+  it("loads as a portable pragma/v6 project with the authoring Skill", async () => {
     const root = await mkdtemp(join(tmpdir(), "pragma-default-agent-builtin-"));
     const entry = await materializeBuiltInAgentBundle(root);
     const project = await loadPragmaProject(entry, { rootDir: dirname(entry) });

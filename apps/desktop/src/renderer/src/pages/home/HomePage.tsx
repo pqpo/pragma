@@ -47,14 +47,12 @@ import { useTranslation } from "react-i18next";
 
 import type {
   DesktopRuntimeModel,
-  DesktopToolPermissionMode,
   ContextStore,
   HomeExecutorFavoriteScope,
   HomeMissionExecutorOption,
   Mission,
   MissionModelOverride,
 } from "../../../../shared/contracts/index.ts";
-import { ToolPermissionSelect } from "../../components/ToolPermissionSelect.tsx";
 import {
   MissionAttachmentList,
   MissionAttachmentPicker,
@@ -175,8 +173,6 @@ export function HomePage(props: {
     {},
   );
   const [flowInput, setFlowInput] = useState<Readonly<Record<string, unknown>>>({});
-  const [toolPermissionMode, setToolPermissionMode] =
-    useState<DesktopToolPermissionMode>("request-approval");
   const [models, setModels] = useState<readonly DesktopRuntimeModel[]>([]);
   const [modelsLoading, setModelsLoading] = useState(false);
   const [modelOverride, setModelOverride] = useState<MissionModelOverride>();
@@ -307,7 +303,6 @@ export function HomePage(props: {
         setDefaultWorkspace(defaults.workspace);
         setRecentWorkspaces(defaults.recentWorkspaces);
         setDefaultExecutorRef(defaults.executorRef);
-        setToolPermissionMode(persisted?.toolPermissionMode ?? defaults.toolPermissionMode);
         const restoredWorkspace =
           props.initialWorkspace ??
           (restoresPersistedInput ? persisted.workspaceOverride : undefined) ??
@@ -502,7 +497,6 @@ export function HomePage(props: {
       ...(workspaceOverride === undefined ? {} : { workspaceOverride }),
       goal,
       flowInput,
-      toolPermissionMode,
       ...(persistedModelOverride === undefined ? {} : { modelOverride: persistedModelOverride }),
     });
   }, [
@@ -513,7 +507,6 @@ export function HomePage(props: {
     loaded,
     modelOverride,
     persistenceReady,
-    toolPermissionMode,
     workspaceOverride,
   ]);
 
@@ -804,7 +797,6 @@ export function HomePage(props: {
                   : { goal: goal.trim(), workspace: workspace.path },
               }
             : { kind: "prompt", value: goal.trim(), attachments: [...attachments] },
-        toolPermissionMode,
         ...(modelOverride === undefined ? {} : { modelOverride }),
       });
       window.pragmaDesktop.reportRendererLog?.({
@@ -827,7 +819,6 @@ export function HomePage(props: {
         ...(workspaceOverride === undefined ? {} : { workspaceOverride }),
         goal: "",
         flowInput: clearedFlowInput,
-        toolPermissionMode,
         ...(persistedModelOverride === undefined ? {} : { modelOverride: persistedModelOverride }),
       });
       setGoal("");
@@ -995,13 +986,6 @@ export function HomePage(props: {
                   <span>{t("missionKnowledge")}</span>
                   {contextStoreIds.length === 0 ? null : <strong>{contextStoreIds.length}</strong>}
                 </button>
-                <ToolPermissionSelect
-                  detailed
-                  value={toolPermissionMode}
-                  onChange={setToolPermissionMode}
-                  disabled={saving}
-                  title={t("permissionOverride")}
-                />
                 {selectedExecutor?.kind === "expert" || selectedExecutor?.kind === "team" ? (
                   <MissionModelOverrideControls
                     models={models}

@@ -1,6 +1,6 @@
-import { access, mkdtemp, rm } from "node:fs/promises";
+import { access, mkdtemp, rm, mkdir, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, dirname, relative } from "node:path";
 import { afterEach, expect, it, vi } from "vitest";
 import { PragmaPaths, createPragmaLogger, createNoopLoggerProvider } from "@pragma/core";
 import { createMissionStore, createMissionDeletionService } from "@pragma/local-host";
@@ -10,7 +10,7 @@ import {
   PragmaAutomationResourceSchema,
 } from "@pragma/interpreter/ast";
 import { createAutomationService } from "./automation-service.ts";
-import { createAutomationStore } from "./automation-store.ts";
+import { createAutomationStore, createAutomationBinding } from "./automation-store.ts";
 
 const roots: string[] = [];
 afterEach(async () => {
@@ -73,7 +73,7 @@ it("preserves deletion fences while backfilling, rotating, resetting and deletin
     await service.save({
       expectedProjectRevision: (await project.get()).revision,
       resource,
-      binding: { workspace: root, toolPermissionMode: "request-approval", contextMounts },
+      binding: { workspace: root, contextMounts },
     });
   const initial = await save();
   const base = {
@@ -171,3 +171,152 @@ it("preserves deletion fences while backfilling, rotating, resetting and deletin
     "MISSION_DELETION_PENDING",
   );
 }, 30_000);
+
+it("upgrades a real v2 binding once, preserves its original backup and replays the journal", async () => {
+  const root = await mkdtemp(join(tmpdir(), "pragma-automation-permissions-"));
+  roots.push(root);
+  const paths = new PragmaPaths({ pragmaHome: root });
+  const ref = "automation:0123456789abcdef";
+  const path = paths.automationBinding(ref);
+  await mkdir(dirname(path), { recursive: true });
+  const source = await readFile(
+    new URL(
+      "../../../../../../packages/local-host/test/fixtures/expert-permissions/automation-binding-v2.json",
+      import.meta.url,
+    ),
+    "utf8",
+  );
+  await writeFile(path, source);
+  const store = createAutomationStore(paths, "studio");
+  const upgraded = await store.getBinding(ref);
+  expect(upgraded).toMatchObject({
+    schemaVersion: "pragma.automation-binding/v3",
+    automationRef: ref,
+  });
+  expect(upgraded).not.toHaveProperty("toolPermissionMode");
+  expect(await readFile(`${path}.v2.backup.json`, "utf8")).toBe(source);
+  const committed = await readFile(path, "utf8");
+  await store.getBinding(ref);
+  expect(await readFile(path, "utf8")).toBe(committed);
+  await writeFile(path, source);
+  await writeFile(
+    `${path}.permission-migration.json`,
+    JSON.stringify({
+      schemaVersion: "pragma.state-migration/v1",
+      resource: { family: "pragma.automation-binding", id: ref },
+      fromVersion: 2,
+      toVersion: 3,
+      documents: { [relative(paths.root, path)]: upgraded },
+    }),
+  );
+  expect(await createAutomationStore(paths, "studio").getBinding(ref)).toEqual(upgraded);
+  expect(await readFile(`${path}.v2.backup.json`, "utf8")).toBe(source);
+  const future = JSON.stringify({ ...upgraded, schemaVersion: "pragma.automation-binding/v999" });
+  await writeFile(path, future);
+  await expect(store.getBinding(ref)).rejects.toThrow();
+  expect(await readFile(path, "utf8")).toBe(future);
+  await writeFile(path, source);
+  await writeFile(
+    `${path}.permission-migration.json`,
+    JSON.stringify({
+      schemaVersion: "pragma.state-migration/v1",
+      resource: { family: "pragma.automation-binding", id: ref },
+      fromVersion: 2,
+      toVersion: 3,
+      documents: { [relative(paths.root, path)]: upgraded },
+    }),
+  );
+  await store.remove(ref);
+  expect(await store.getBinding(ref)).toBeUndefined();
+  expect(await readFile(`${path}.v2.backup.json`, "utf8")).toBe(source);
+});
+
+it.each(["future", "wrong-owner"])(
+  "preserves automation data and journal on %s replay conflicts",
+  async (kind) => {
+    const root = await mkdtemp(join(tmpdir(), "pragma-automation-replay-conflict-"));
+    roots.push(root);
+    const paths = new PragmaPaths({ pragmaHome: root });
+    const ref = "automation:0123456789abcdef";
+    const store = createAutomationStore(paths, "studio");
+    const binding = await store.saveBinding(
+      createAutomationBinding({
+        automationRef: ref,
+        rotateGeneration: true,
+        workspace: { path: root, basename: "workspace" },
+      }),
+    );
+    const path = paths.automationBinding(ref);
+    const persisted = JSON.stringify({
+      ...binding,
+      ...(kind === "future" ? { schemaVersion: "pragma.automation-binding/v999" } : {}),
+    });
+    await writeFile(path, persisted);
+    const journal = JSON.stringify({
+      schemaVersion: "pragma.state-migration/v1",
+      resource: { family: "pragma.automation-binding", id: ref },
+      fromVersion: 2,
+      toVersion: 3,
+      documents: {
+        [relative(paths.root, path)]: {
+          ...binding,
+          ...(kind === "wrong-owner" ? { automationRef: "automation:fedcba9876543210" } : {}),
+        },
+      },
+    });
+    await writeFile(`${path}.permission-migration.json`, journal);
+    await expect(store.getBinding(ref)).rejects.toThrow();
+    expect(await readFile(path, "utf8")).toBe(persisted);
+    expect(await readFile(`${path}.permission-migration.json`, "utf8")).toBe(journal);
+  },
+);
+
+it.each(["current", "future", "wrong-owner"])(
+  "preserves %s binding data when replaying a stale v1 migration",
+  async (kind) => {
+    const root = await mkdtemp(join(tmpdir(), "pragma-automation-old-journal-"));
+    roots.push(root);
+    const paths = new PragmaPaths({ pragmaHome: root });
+    const ref = "automation:0123456789abcdef";
+    const initialStore = createAutomationStore(paths, "studio");
+    const binding = await initialStore.saveBinding(
+      createAutomationBinding({
+        automationRef: ref,
+        rotateGeneration: true,
+        workspace: { path: root, basename: "workspace" },
+      }),
+    );
+    const path = paths.automationBinding(ref);
+    const persisted = JSON.stringify({
+      ...binding,
+      ...(kind === "future" ? { schemaVersion: "pragma.automation-binding/v999" } : {}),
+    });
+    await writeFile(path, persisted);
+    await rm(join(paths.automationBindingsRoot(), ".v2-migrated"));
+    const journalPath = join(paths.storageStateRoot(), "automation-binding-v1-to-v2.json");
+    await mkdir(dirname(journalPath), { recursive: true });
+    const journal = JSON.stringify({
+      schemaVersion: "pragma.state-migration/v1",
+      resource: { family: "pragma.automation-binding", id: "studio" },
+      fromVersion: 1,
+      toVersion: 2,
+      documents: {
+        [relative(paths.root, path)]: {
+          ...binding,
+          schemaVersion: "pragma.automation-binding/v2",
+          toolPermissionMode: "request-approval",
+          ...(kind === "wrong-owner" ? { automationRef: "automation:fedcba9876543210" } : {}),
+        },
+      },
+    });
+    await writeFile(journalPath, journal);
+    const store = createAutomationStore(paths, "studio");
+    await expect(store.getBinding(ref)).rejects.toThrow();
+    expect(await readFile(path, "utf8")).toBe(persisted);
+    expect(await readFile(journalPath, "utf8")).toBe(journal);
+    if (kind === "current") {
+      await rm(journalPath);
+      expect(await store.getBinding(ref)).toEqual(binding);
+    }
+  },
+);

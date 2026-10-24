@@ -328,7 +328,8 @@ function runtimeMatches(
     (config.providerId ?? parseDesktopModelProviderBindingRef(resource.spec.binding ?? "")) ===
       model.providerId &&
     config.model === model.modelId &&
-    config.thinkingLevel === model.thinkingLevel
+    config.thinkingLevel === model.thinkingLevel &&
+    config.permissionModeId === model.permissionModeId
   );
 }
 
@@ -337,6 +338,7 @@ function runtimeConfig(model: CreateExpertDefinition["model"]): Record<string, u
     runtimeId: model.runtimeId,
     providerId: model.providerId,
     model: model.modelId,
+    ...(model.permissionModeId === undefined ? {} : { permissionModeId: model.permissionModeId }),
     ...(model.thinkingLevel === undefined ? {} : { thinkingLevel: model.thinkingLevel }),
   };
 }

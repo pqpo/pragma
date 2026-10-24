@@ -1,3 +1,4 @@
+import { DesktopSettingsV2Schema, desktopSettingsV2ToV3Step } from "./migrations/index.ts";
 import { createHash, randomUUID } from "node:crypto";
 import { chmod, copyFile, mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { basename, dirname, join } from "node:path";
@@ -12,7 +13,7 @@ import {
 } from "../deployment-contracts/settings.ts";
 import { DesktopSettingsV1Schema, desktopSettingsV1ToV2Step } from "./migrations/index.ts";
 
-const CONFIG_SCHEMA_VERSION = 2;
+const CONFIG_SCHEMA_VERSION = 3;
 const DESKTOP_SETTINGS_MIGRATION_FAMILY = "pragma.desktop-settings";
 const DESKTOP_SETTINGS_MIGRATION_RESOURCE_ID = "desktop-settings";
 
@@ -49,7 +50,6 @@ export function createLocalHostSettingsStore(options: {
   const defaultSettings: DesktopSettings = {
     schemaVersion: CONFIG_SCHEMA_VERSION,
     localePreference: "system",
-    toolPermissionMode: "request-approval",
     agentContextWindow: DEFAULT_AGENT_CONTEXT_WINDOW_TOKENS,
   };
 
@@ -57,7 +57,9 @@ export function createLocalHostSettingsStore(options: {
     if (Object.keys(documents).length !== 1 || !(settingsFileName in documents)) {
       throw new Error("Desktop settings migration must contain exactly one settings document.");
     }
-    DesktopSettingsSchema.parse(documents[settingsFileName]);
+    const value = documents[settingsFileName];
+    if (readSchemaVersion(value) === 2) DesktopSettingsV2Schema.parse(value);
+    else DesktopSettingsSchema.parse(value);
   };
 
   const recoverMigration = async (): Promise<void> => {
@@ -79,11 +81,15 @@ export function createLocalHostSettingsStore(options: {
     }
   };
 
-  const migrateV1ToV2 = async (source: unknown): Promise<void> => {
+  const migrateToCurrent = async (source: unknown): Promise<void> => {
     let target: DesktopSettings;
     try {
       target = DesktopSettingsSchema.parse(
-        desktopSettingsV1ToV2Step.migrate(DesktopSettingsV1Schema.parse(source)),
+        desktopSettingsV2ToV3Step.migrate(
+          readSchemaVersion(source) === 1
+            ? desktopSettingsV1ToV2Step.migrate(DesktopSettingsV1Schema.parse(source))
+            : source,
+        ),
       );
     } catch (error) {
       throw new DesktopSettingsMigrationError(
@@ -97,7 +103,7 @@ export function createLocalHostSettingsStore(options: {
       const sourceHash = createHash("sha256").update(JSON.stringify(source)).digest("hex");
       await copyFile(
         options.settingsPath,
-        join(backupRoot, `${sourceHash}.desktop-settings.v1.json`),
+        join(backupRoot, `${sourceHash}.desktop-settings.v${readSchemaVersion(source)}.json`),
       );
       await applyAtomicStateMigration({
         aggregateRoot: settingsDirectory,
@@ -106,8 +112,8 @@ export function createLocalHostSettingsStore(options: {
           family: DESKTOP_SETTINGS_MIGRATION_FAMILY,
           id: DESKTOP_SETTINGS_MIGRATION_RESOURCE_ID,
         },
-        fromVersion: desktopSettingsV1ToV2Step.fromVersion,
-        toVersion: desktopSettingsV1ToV2Step.toVersion,
+        fromVersion: readSchemaVersion(source)!,
+        toVersion: 3,
         documents: { [settingsFileName]: target },
         validateDocuments: validateMigrationDocuments,
       });
@@ -121,6 +127,21 @@ export function createLocalHostSettingsStore(options: {
 
   const readSettingsUnlocked = async (): Promise<DesktopSettings> => {
     try {
+      const persisted = await readFile(options.settingsPath, "utf8").catch((error: unknown) => {
+        if (isNodeError(error, "ENOENT")) return undefined;
+        throw error;
+      });
+      if (persisted !== undefined) {
+        const persistedVersion = readSchemaVersion(JSON.parse(persisted));
+        if (persistedVersion === undefined)
+          throw new DesktopSettingsMigrationError(
+            DESKTOP_SETTINGS_MIGRATION_ERROR_CODES.invalidSettings,
+          );
+        if (persistedVersion > CONFIG_SCHEMA_VERSION)
+          throw new DesktopSettingsMigrationError(
+            DESKTOP_SETTINGS_MIGRATION_ERROR_CODES.unsupportedVersion,
+          );
+      }
       await recoverMigration();
       const source = JSON.parse(await readFile(options.settingsPath, "utf8")) as unknown;
       const version = readSchemaVersion(source);
@@ -129,8 +150,8 @@ export function createLocalHostSettingsStore(options: {
           DESKTOP_SETTINGS_MIGRATION_ERROR_CODES.invalidSettings,
         );
       }
-      if (version === 1) {
-        await migrateV1ToV2(source);
+      if (version === 1 || version === 2) {
+        await migrateToCurrent(source);
         return DesktopSettingsSchema.parse(
           JSON.parse(await readFile(options.settingsPath, "utf8")),
         );
@@ -170,7 +191,6 @@ export function createLocalHostSettingsStore(options: {
         settings = DesktopSettingsSchema.parse({
           schemaVersion: CONFIG_SCHEMA_VERSION,
           localePreference: input.localePreference ?? current.localePreference,
-          toolPermissionMode: input.toolPermissionMode ?? current.toolPermissionMode,
           agentContextWindow: input.agentContextWindow ?? current.agentContextWindow,
           ...(defaultWorkspace === undefined ? {} : { defaultWorkspace }),
         });

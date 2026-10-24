@@ -30,7 +30,6 @@ import {
   type MissionConversationSnapshot,
   type MissionWorkRecord,
   type DesktopMissionMemoryActivity,
-  type DesktopToolPermissionMode,
   type ExpertMentionCandidate,
   type MissionMentionCandidates,
   type MissionModelOverride,
@@ -90,7 +89,6 @@ import {
   MissionUserMessageContent,
 } from "./mission-chat-presentation.tsx";
 import { runtimeDisplayName } from "../../lib/runtime-display.ts";
-import { ToolPermissionSelect } from "../../components/ToolPermissionSelect.tsx";
 import { MissionModelOverrideControls } from "../../components/MissionModelOverrideControls.tsx";
 import { MemoryStoreBrowser } from "../../components/MemoryStoreBrowser.tsx";
 import {
@@ -192,7 +190,6 @@ export function MissionDetailFragment(props: {
   ) => void | Promise<void | { readonly effectiveMode: "enqueue" | "steer" }>;
   readonly onOptionsChange?:
     | ((options: {
-        readonly toolPermissionMode: DesktopToolPermissionMode;
         readonly modelOverride?: MissionModelOverride | undefined;
       }) => void | Promise<void>)
     | undefined;
@@ -646,14 +643,12 @@ export function MissionDetailFragment(props: {
     modelsLoading,
     defaultModelSelection,
     modelResetRequired,
-    toolPermissionMode,
     modelOverride,
     save: saveOptions,
   } = useMissionOptions({
     missionId: props.mission.id,
     executorRef: props.mission.executor.ref,
     isFlow,
-    persistedToolPermissionMode: props.mission.toolPermissionMode,
     persistedModelOverride: props.mission.modelOverride,
     saving: optionsSaving,
     controlsDisabled: clientOperationBusy || compactingContext,
@@ -2009,17 +2004,6 @@ export function MissionDetailFragment(props: {
                               <strong>{props.mission.contextMounts.length}</strong>
                             )}
                           </button>
-                          <ToolPermissionSelect
-                            detailed
-                            value={toolPermissionMode}
-                            disabled={controlsDisabled}
-                            title={
-                              executionActive
-                                ? t("optionsAvailableNextTurn", { ns: "missions" })
-                                : t("permissionOverride", { ns: "missions" })
-                            }
-                            onChange={(value) => void saveOptions(value, modelOverride)}
-                          />
                           {!isFlow ? (
                             <MissionModelOverrideControls
                               models={models}
@@ -2028,7 +2012,7 @@ export function MissionDetailFragment(props: {
                               keepOpenWhenDisabled={optionsSaving}
                               value={modelOverride}
                               defaultValue={defaultModelSelection}
-                              onChange={(value) => void saveOptions(toolPermissionMode, value)}
+                              onChange={(value) => void saveOptions(value)}
                             />
                           ) : null}
                         </>

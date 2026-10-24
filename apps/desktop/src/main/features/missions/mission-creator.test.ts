@@ -61,7 +61,6 @@ describe("MissionCreator", () => {
       missions,
       project,
       executors,
-      getDefaultToolPermissionMode: () => "full-access",
     });
     const modelOverride = { providerId: "provider", modelId: "model" };
 
@@ -76,7 +75,6 @@ describe("MissionCreator", () => {
       project: { id: "studio", revision: 1 },
       executor,
       modelOverride,
-      toolPermissionMode: "full-access",
     });
     expect((await project.get()).revision).toBe(2);
     expect(resolvedSnapshots).toHaveLength(1);
@@ -114,7 +112,6 @@ describe("MissionCreator", () => {
       project,
       contextStores,
       executors: catalog(),
-      getDefaultToolPermissionMode: () => "request-approval",
     });
     const run = vi.fn(async (id: string) => await missions.get(id));
     const application = {
@@ -269,7 +266,6 @@ describe("MissionCreator", () => {
       missions,
       project,
       executors: catalog({ resolve: async () => flowExecutor }),
-      getDefaultToolPermissionMode: () => "request-approval",
     });
 
     const mission = await creator.create({
@@ -319,7 +315,6 @@ describe("MissionCreator", () => {
       missions,
       project,
       executors: catalog(),
-      getDefaultToolPermissionMode: () => "request-approval",
       assertExecutorReady: () => {
         readinessChecks += 1;
       },

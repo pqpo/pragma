@@ -115,6 +115,12 @@ describe("RuntimeSessionPool", () => {
         async () => session,
       ),
     ).rejects.toThrow("cannot be reused");
+    await expect(
+      pool.acquire(
+        { ...identity, runtime: { ...identity.runtime, permissionModeId: "read-only" } },
+        async () => session,
+      ),
+    ).rejects.toThrow("cannot be reused");
     await pool.close();
   });
 

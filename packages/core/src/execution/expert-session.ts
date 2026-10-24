@@ -421,6 +421,7 @@ export class ExpertSessionManager {
     const requestedModelSelection = options.modelSelection ?? rootExpert.models?.default;
     const runtime = await this.dependencies.runtimes.bind({
       runtimeId: options.runtime ?? rootExpert.defaultRuntimeId,
+      permissionModeId: rootExpert.permissionModeId,
       modelSelection: requestedModelSelection,
     });
     const modelSelection = requestedModelSelection;

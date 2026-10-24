@@ -1,3 +1,4 @@
+import { permissionModes } from "./permission-modes.ts";
 import type { RuntimeAdapter, RuntimeCanUseResult, RuntimeModelSelection } from "@pragma/core";
 import {
   createExpertToolsHttpMcpFeature,
@@ -34,6 +35,8 @@ export function createClaudeCodeRuntime(
 ): RuntimeAdapter {
   const mcpToolRegistries = options.mcpToolRegistryPool ?? createMcpToolRegistryPool();
   const descriptor = {
+    permissionModes,
+    configuredPermissionModeId: options.permissionMode ?? "bypassPermissions",
     ...CLAUDE_CODE_LOCAL_RUNTIME_DESCRIPTOR,
     ...options.descriptor,
     kind: options.descriptor?.kind ?? CLAUDE_CODE_LOCAL_RUNTIME_DESCRIPTOR.kind,

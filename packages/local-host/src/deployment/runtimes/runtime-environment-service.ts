@@ -6,7 +6,6 @@ import type {
   RuntimeModelSelection,
   RuntimeResolver,
 } from "@pragma/core";
-import type { ToolPermissionMode } from "@pragma/shared";
 import type {
   RuntimeEnvironmentDefinition,
   RuntimeEnvironmentRevision,
@@ -27,7 +26,7 @@ export interface RuntimeEnvironmentAdapterFactory {
    */
   readonly prepare?: (
     environment: RuntimeEnvironmentDefinition,
-    context?: { readonly toolPermissionMode?: ToolPermissionMode | undefined },
+    context?: { readonly permissionModeId?: string | undefined },
   ) =>
     | RuntimeEnvironmentAdapterPreparation
     | Promise<RuntimeEnvironmentAdapterPreparation>
@@ -35,7 +34,7 @@ export interface RuntimeEnvironmentAdapterFactory {
     | Promise<undefined>;
   readonly create: (
     environment: RuntimeEnvironmentDefinition,
-    context?: { readonly toolPermissionMode?: ToolPermissionMode | undefined },
+    context?: { readonly permissionModeId?: string | undefined },
   ) => RuntimeAdapter | Promise<RuntimeAdapter>;
 }
 
@@ -52,7 +51,6 @@ export interface RuntimeEnvironmentInspection {
 
 export interface RuntimeEnvironmentService extends RuntimeResolver {
   list(): Promise<readonly RuntimeEnvironmentInspection[]>;
-  forToolPermissionMode(mode: ToolPermissionMode): RuntimeResolver;
   getMaterializationCacheKey(): Promise<string>;
   invalidateModelValidation?(): void;
 }
@@ -63,8 +61,6 @@ export function createRuntimeEnvironmentService(options: {
   /** Retired IDs apply only when no persisted Environment owns that identity. */
   readonly bindAliases?: Readonly<Record<string, string>> | undefined;
   readonly logger?: Pick<PragmaLogger, "info" | "debug" | "warn"> | undefined;
-  readonly getToolPermissionMode?:
-    (() => ToolPermissionMode | Promise<ToolPermissionMode>) | undefined;
   readonly getMaterializationCacheKey?: (() => string | Promise<string>) | undefined;
 }): RuntimeEnvironmentService {
   const MATERIALIZED_ADAPTER_CACHE_LIMIT = 64;
@@ -81,10 +77,8 @@ export function createRuntimeEnvironmentService(options: {
 
   const materialize = async (
     revision: RuntimeEnvironmentRevision,
-    toolPermissionMode?: ToolPermissionMode,
+    permissionModeId?: string,
   ): Promise<ResolvedRuntime> => {
-    const effectiveToolPermissionMode =
-      toolPermissionMode ?? (await options.getToolPermissionMode?.());
     const definition = revision.definition;
     const ref = factoryRef(definition.adapter.id, definition.adapter.version);
     const factory = factories.get(ref);
@@ -93,10 +87,7 @@ export function createRuntimeEnvironmentService(options: {
         "adapter_factory_missing",
         `Runtime adapter factory is not registered: ${ref}.`,
       );
-    const factoryContext =
-      effectiveToolPermissionMode === undefined
-        ? undefined
-        : { toolPermissionMode: effectiveToolPermissionMode };
+    const factoryContext = { permissionModeId };
     const preparation = await factory.prepare?.(definition, factoryContext);
     const materializationCacheKey = [
       await getMaterializationCacheKey(),
@@ -107,7 +98,7 @@ export function createRuntimeEnvironmentService(options: {
       revision.revision,
       revision.fingerprint,
       ref,
-      effectiveToolPermissionMode ?? "default",
+      permissionModeId ?? "default",
       materializationCacheKey,
     ].join("\0");
     let adapterPromise = materializedAdapters.get(cacheKey);
@@ -127,7 +118,6 @@ export function createRuntimeEnvironmentService(options: {
                 runtimeId: revision.runtimeId,
                 revision: revision.revision,
                 fingerprint: revision.fingerprint,
-                toolPermissionMode: effectiveToolPermissionMode ?? "default",
                 materializationCacheKey,
                 durationMs: environmentElapsedMs(materializeStartedAt),
               },
@@ -144,7 +134,6 @@ export function createRuntimeEnvironmentService(options: {
                 runtimeId: revision.runtimeId,
                 revision: revision.revision,
                 fingerprint: revision.fingerprint,
-                toolPermissionMode: effectiveToolPermissionMode ?? "default",
                 materializationCacheKey,
                 durationMs: environmentElapsedMs(materializeStartedAt),
                 error,
@@ -164,6 +153,39 @@ export function createRuntimeEnvironmentService(options: {
       materializedAdapters.set(cacheKey, adapterPromise);
     }
     const adapter = await adapterPromise;
+    const catalog = adapter.descriptor.permissionModes;
+    const effectiveModeId = permissionModeId ?? catalog?.defaultModeId;
+    if (
+      effectiveModeId !== undefined &&
+      !catalog?.modes.some((mode) => mode.id === effectiveModeId && mode.available)
+    ) {
+      throw runtimeUnavailable(
+        "permission_mode_unavailable",
+        `Unsupported permission mode for ${revision.runtimeId}: ${effectiveModeId}`,
+      );
+    }
+    if (
+      adapter.descriptor.configuredPermissionModeId !== undefined &&
+      adapter.descriptor.configuredPermissionModeId !== effectiveModeId
+    ) {
+      throw runtimeUnavailable(
+        "permission_mode_mismatch",
+        `Runtime factory did not apply the requested permission mode: ${revision.runtimeId}/${effectiveModeId}.`,
+      );
+    }
+    if (permissionModeId === undefined && effectiveModeId !== undefined) {
+      const explicitKey = [
+        revision.runtimeId,
+        revision.revision,
+        revision.fingerprint,
+        ref,
+        effectiveModeId,
+        materializationCacheKey,
+      ].join("\0");
+      materializedAdapters.set(explicitKey, adapterPromise);
+      while (materializedAdapters.size > MATERIALIZED_ADAPTER_CACHE_LIMIT)
+        materializedAdapters.delete(materializedAdapters.keys().next().value!);
+    }
     if (cacheHit) {
       options.logger?.debug(
         "runtime.environment_adapter_cache_hit",
@@ -172,7 +194,6 @@ export function createRuntimeEnvironmentService(options: {
           runtimeId: revision.runtimeId,
           revision: revision.revision,
           fingerprint: revision.fingerprint,
-          toolPermissionMode: effectiveToolPermissionMode ?? "default",
           materializationCacheKey,
         },
       );
@@ -186,6 +207,7 @@ export function createRuntimeEnvironmentService(options: {
       adapter,
       binding: {
         runtimeId: revision.runtimeId,
+        ...(effectiveModeId === undefined ? {} : { permissionModeId: effectiveModeId }),
         revision: revision.revision,
         fingerprint: revision.fingerprint,
       },
@@ -259,7 +281,7 @@ export function createRuntimeEnvironmentService(options: {
     }
   };
 
-  const createResolver = (toolPermissionMode?: ToolPermissionMode): RuntimeResolver => ({
+  const createResolver = (): RuntimeResolver => ({
     getDefaultRuntimeId: async () => await options.store.getDefaultRuntimeId(),
     bind: async (request = {}) => {
       let runtimeId = request.runtimeId ?? (await options.store.getDefaultRuntimeId());
@@ -275,7 +297,7 @@ export function createRuntimeEnvironmentService(options: {
           `Runtime Environment is not active: ${runtimeId}.`,
         );
       }
-      const resolved = await materialize(revision, toolPermissionMode);
+      const resolved = await materialize(revision, request.permissionModeId);
       await validateModelSelection(resolved, request.modelSelection);
       return resolved;
     },
@@ -291,7 +313,7 @@ export function createRuntimeEnvironmentService(options: {
           `Runtime Environment binding is unavailable: ${binding.runtimeId}@${binding.revision}.`,
         );
       }
-      const resolved = await materialize(revision, toolPermissionMode);
+      const resolved = await materialize(revision, binding.permissionModeId);
       await validateModelSelection(resolved, modelSelection);
       return resolved;
     },
@@ -304,7 +326,6 @@ export function createRuntimeEnvironmentService(options: {
       modelCatalogs = new WeakMap();
       modelGeneration++;
     },
-    forToolPermissionMode: (mode) => createResolver(mode),
     list: async () =>
       await Promise.all(
         (await options.store.listHeads()).map(

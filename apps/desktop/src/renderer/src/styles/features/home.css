@@ -1011,8 +1011,7 @@
   margin-inline-start: auto;
 }
 
-.home-mission-create .mission-prompt-tools .mission-model-control-trigger > svg:last-child,
-.home-mission-create .mission-prompt-tools .tool-permission-select .ui-select-caret {
+.home-mission-create .mission-prompt-tools .mission-model-control-trigger > svg:last-child {
   margin-inline-start: -4px;
 }
 
@@ -1183,10 +1182,6 @@
 :is(.home-mission-create, .home-project-dialog) .mission-executor-option-copy > small {
   font-size: 12px;
   font-weight: 400;
-}
-
-.home-mission-create .tool-permission-select {
-  background: transparent;
 }
 
 .mission-submit-button {

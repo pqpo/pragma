@@ -1,4 +1,4 @@
-apiVersion: pragma/v5
+apiVersion: pragma/v6
 kind: Capability
 metadata:
   id: 0000000000manage

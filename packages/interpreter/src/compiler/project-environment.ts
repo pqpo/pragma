@@ -24,6 +24,7 @@ export async function verifyRuntimeEnvironment(
     }
     const resolvedRuntime = await runtimes.bind({
       runtimeId: inspection.contribution.runtimeId,
+      permissionModeId: inspection.contribution.permissionModeId,
     });
     const runtime = resolvedRuntime.adapter;
     const canUse = await runtime.canUse();
@@ -66,6 +67,12 @@ export async function verifyRuntimeEnvironment(
     }
     return {
       ...inspection,
+      contribution: {
+        ...inspection.contribution,
+        ...(resolvedRuntime.binding.permissionModeId === undefined
+          ? {}
+          : { permissionModeId: resolvedRuntime.binding.permissionModeId }),
+      },
       health: {
         ...inspection.health,
         verificationFingerprint: sha256(
@@ -127,6 +134,9 @@ export async function resolveRootRuntime(
 ): Promise<string | undefined> {
   if (host.rootExecutionOverride !== undefined) return host.rootExecutionOverride.runtimeId;
   if (resource.kind === "Expert") {
+    const live = host.expertExecutionProfiles?.[resource.metadata.id];
+    if (live === null) return await host.runtimes?.getDefaultRuntimeId();
+    if (live !== undefined) return live.runtimeId;
     return resource.spec.runtime === undefined
       ? await host.runtimes?.getDefaultRuntimeId()
       : (await resolveRuntime(resource.spec.runtime.ref)).runtimeId;
@@ -138,6 +148,9 @@ export async function resolveRootRuntime(
         `ExpertTeam coordinator not found: ${resource.spec.coordinator.ref}`,
       );
     }
+    const live = host.expertExecutionProfiles?.[coordinator.metadata.id];
+    if (live === null) return await host.runtimes?.getDefaultRuntimeId();
+    if (live !== undefined) return live.runtimeId;
     return coordinator.spec.runtime === undefined
       ? await host.runtimes?.getDefaultRuntimeId()
       : (await resolveRuntime(coordinator.spec.runtime.ref)).runtimeId;
@@ -158,6 +171,9 @@ export async function resolveRootModelSelection(
     return host.rootExecutionOverride.modelSelection;
   }
   if (resource.kind === "Expert") {
+    const live = host.expertExecutionProfiles?.[resource.metadata.id];
+    if (live === null) return host.defaultModelSelection;
+    if (live !== undefined) return live.models?.default;
     return resource.spec.runtime === undefined
       ? host.defaultModelSelection
       : (await resolveRuntime(resource.spec.runtime.ref)).models?.default;
@@ -165,6 +181,9 @@ export async function resolveRootModelSelection(
   if (resource.kind === "ExpertTeam") {
     const coordinator = resources.get(resource.spec.coordinator.ref)?.resource;
     if (coordinator?.kind !== "Expert") return undefined;
+    const live = host.expertExecutionProfiles?.[coordinator.metadata.id];
+    if (live === null) return host.defaultModelSelection;
+    if (live !== undefined) return live.models?.default;
     return coordinator.spec.runtime === undefined
       ? host.defaultModelSelection
       : (await resolveRuntime(coordinator.spec.runtime.ref)).models?.default;

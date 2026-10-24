@@ -547,6 +547,11 @@ export function ExpertEditorFragment(props: {
                                   runtimeId: selectedRuntime,
                                   providerId: model.provider.id,
                                   modelId: model.id,
+                                  permissionModeId:
+                                    draft.model?.runtimeId === selectedRuntime
+                                      ? (draft.model.permissionModeId ??
+                                        selectedRuntimeInfo?.permissionModes?.defaultModeId)
+                                      : selectedRuntimeInfo?.permissionModes?.defaultModeId,
                                 },
                         });
                       }}
@@ -556,6 +561,36 @@ export function ExpertEditorFragment(props: {
                         {selectedRuntimeInfo.modelDiscoveryError}
                       </small>
                     ) : null}
+                  </div>
+                ) : null}
+                {selectedRuntimeInfo?.permissionModes ? (
+                  <div className="capability-editor-field">
+                    <span>{t("permissionMode", { ns: "studio" })}</span>
+                    <SelectMenu
+                      ariaLabel={t("permissionMode", { ns: "studio" })}
+                      className="form-select"
+                      value={
+                        draft.model?.permissionModeId ??
+                        selectedRuntimeInfo.permissionModes.defaultModeId
+                      }
+                      disabled={draft.model === null}
+                      options={selectedRuntimeInfo.permissionModes.modes.map((mode) => ({
+                        value: mode.id,
+                        label: t(`permissionModeLabels.${mode.id}`, {
+                          ns: "studio",
+                          defaultValue: mode.label,
+                        }),
+                        disabled: !mode.available,
+                        description: mode.reason ?? mode.description,
+                      }))}
+                      onChange={(permissionModeId) => {
+                        if (draft.model !== null)
+                          setDraft({ ...draft, model: { ...draft.model, permissionModeId } });
+                      }}
+                    />
+                    <small className="field-hint">
+                      {t("permissionModeHint", { ns: "studio" })}
+                    </small>
                   </div>
                 ) : null}
                 {draft.model !== null ? (

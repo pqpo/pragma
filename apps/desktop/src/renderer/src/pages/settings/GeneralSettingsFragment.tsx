@@ -5,7 +5,6 @@ import { useTranslation } from "react-i18next";
 import type {
   DesktopLocalePreference,
   DesktopSettingsSnapshot,
-  DesktopToolPermissionMode,
 } from "../../../../shared/contracts/index.ts";
 import { localeDisplayNames, setDesktopLocale } from "../../i18n/index.ts";
 import { SelectMenu, type SelectMenuOption } from "../../components/SelectMenu.tsx";
@@ -65,19 +64,6 @@ export function GeneralSettingsFragment() {
       const snapshot = await window.pragmaDesktop.updateDesktopSettings({ localePreference });
       await setDesktopLocale(snapshot.resolvedLocale);
       setSettings(snapshot);
-    } catch (cause) {
-      setError(t(`general.${desktopSettingsErrorKey(cause)}`, { ns: "settings" }));
-    } finally {
-      setSaving(false);
-    }
-  };
-
-  const updateToolPermissionMode = async (toolPermissionMode: DesktopToolPermissionMode) => {
-    if (settings === undefined || toolPermissionMode === settings.toolPermissionMode) return;
-    setSaving(true);
-    setError(undefined);
-    try {
-      setSettings(await window.pragmaDesktop.updateDesktopSettings({ toolPermissionMode }));
     } catch (cause) {
       setError(t(`general.${desktopSettingsErrorKey(cause)}`, { ns: "settings" }));
     } finally {
@@ -192,38 +178,6 @@ export function GeneralSettingsFragment() {
             }
             onChange={(value) => void updateLanguage(value)}
           />
-        </div>
-        <div className="setting-row tool-permission-setting">
-          <span className="setting-copy">
-            <strong>{t("general.toolPermissions", { ns: "settings" })}</strong>
-            <span>{t("general.toolPermissionsDescription", { ns: "settings" })}</span>
-          </span>
-          <span
-            className="tool-permission-options"
-            role="radiogroup"
-            aria-label={t("general.toolPermissions", { ns: "settings" })}
-          >
-            {(["request-approval", "auto-approve", "full-access"] as const).map((mode) => (
-              <label key={mode}>
-                <input
-                  type="radio"
-                  name="tool-permission-mode"
-                  value={mode}
-                  checked={(settings?.toolPermissionMode ?? "request-approval") === mode}
-                  disabled={settings === undefined || saving}
-                  onChange={() => void updateToolPermissionMode(mode)}
-                />
-                <span>
-                  <strong>
-                    {t(`general.toolPermissionModes.${mode}.label`, { ns: "settings" })}
-                  </strong>
-                  <small>
-                    {t(`general.toolPermissionModes.${mode}.description`, { ns: "settings" })}
-                  </small>
-                </span>
-              </label>
-            ))}
-          </span>
         </div>
         <div className="setting-row agent-context-window-setting">
           <span className="setting-copy">

@@ -1,3 +1,4 @@
+import { PragmaRuntimeProfileConfigSchema } from "@pragma/interpreter/ast";
 import { createHash } from "node:crypto";
 import { dirname } from "node:path";
 import { mkdir } from "node:fs/promises";
@@ -48,7 +49,6 @@ export interface LocalHostMissionCompileRequest {
   readonly project: { readonly id: string; readonly revision: number };
   readonly executor: { readonly kind: string; readonly ref: string; readonly name: string };
   readonly workspace: { readonly path: string };
-  readonly toolPermissionMode?: string | undefined;
   readonly modelOverride?:
     | {
         readonly providerId: string;
@@ -72,6 +72,7 @@ export interface LocalHostMissionRevision {
 
 /** Resource access only; the service invokes the Interpreter compiler. */
 export interface LocalHostMissionRevisionSource {
+  getCurrentResources?(projectId: string): Promise<readonly PragmaResource[]>;
   getRevision(projectId: string, revision: number): Promise<LocalHostMissionRevision>;
   withProject<T>(
     pin: { readonly id: string; readonly revision: number },
@@ -125,6 +126,7 @@ export interface LocalHostMissionCompileService<
   Request extends LocalHostMissionCompileRequest = LocalHostMissionCompileRequest,
 > {
   isExecutionPinned(scope: LocalHostMissionCompileScope<Request>): Promise<boolean>;
+  allowsExecutionProfileSuccessor(compiled: CompiledResource<InvocableResource>): boolean;
   createRequestScope(
     request: Request,
     revision?: Promise<LocalHostMissionRevision>,
@@ -135,6 +137,7 @@ export interface LocalHostMissionCompileService<
   identity(
     scope: LocalHostMissionCompileScope<Request>,
     capabilities: readonly LocalHostResolvedCapabilityEnvironment[],
+    runtimes?: RuntimeResolver,
   ): Promise<string>;
   compile(
     scope: LocalHostMissionCompileScope<Request>,
@@ -268,6 +271,8 @@ export function createLocalHostMissionCompileService<
     | undefined;
   readonly systemExecutors?:
     | {
+        /** False when the Host pins implicit system Runtime choices in its saved source. */
+        readonly tracksDefaultRuntime?: boolean | undefined;
         readonly getDependencyResource?: ((ref: string) => PragmaResource | undefined) | undefined;
         readonly getResource?: ((ref: string) => PragmaInvocableResource | undefined) | undefined;
         readonly fingerprint?:
@@ -286,6 +291,69 @@ export function createLocalHostMissionCompileService<
     LocalHostMissionCompileScope<Request>,
     Promise<MissionExecutionSnapshot | undefined>
   >();
+  const liveProfiles = new WeakMap<
+    LocalHostMissionCompileScope<Request>,
+    Promise<Record<string, import("@pragma/interpreter").PragmaRuntimeProfileContribution | null>>
+  >();
+  const executionProfiles = (scope: LocalHostMissionCompileScope<Request>) => {
+    let pending = liveProfiles.get(scope);
+    if (pending === undefined) {
+      pending = (async () => {
+        const resources = await options.revisionSource.getCurrentResources?.(
+          scope.request.project.id,
+        );
+        const profiles: Record<
+          string,
+          import("@pragma/interpreter").PragmaRuntimeProfileContribution | null
+        > = {};
+        const expertRefs = new Set<string>();
+        if (resources !== undefined && resources.length > 0)
+          await visitDependencies(scope, (_resource, ref) => {
+            if (ref.startsWith("expert:")) expertRefs.add(ref);
+          });
+        for (const expert of resources ?? []) {
+          if (expert.kind !== "Expert" || !expertRefs.has(canonicalPragmaResourceRef(expert)))
+            continue;
+          if (expert.spec.runtime === undefined) {
+            profiles[expert.metadata.id] = null;
+            continue;
+          }
+          const resource = resources!.find(
+            (candidate) =>
+              candidate.kind === "RuntimeProfile" &&
+              canonicalPragmaResourceRef(candidate) === expert.spec.runtime!.ref,
+          );
+          if (
+            resource?.kind !== "RuntimeProfile" ||
+            resource.spec.adapter !== "pragma.runtime.profile@v1"
+          )
+            continue;
+          const config = PragmaRuntimeProfileConfigSchema.parse(resource.spec.config);
+          profiles[expert.metadata.id] = {
+            runtimeId: config.runtimeId,
+            ...(config.permissionModeId === undefined
+              ? {}
+              : { permissionModeId: config.permissionModeId }),
+            ...(config.providerId === undefined || config.model === undefined
+              ? {}
+              : {
+                  models: {
+                    default: {
+                      model: { providerId: config.providerId, modelId: config.model },
+                      ...(config.thinkingLevel === undefined
+                        ? {}
+                        : { thinkingLevel: config.thinkingLevel }),
+                    },
+                  },
+                }),
+          };
+        }
+        return profiles;
+      })();
+      liveProfiles.set(scope, pending);
+    }
+    return pending;
+  };
   const preparedSources = new WeakMap<
     LocalHostMissionCompileScope<Request>,
     Map<string, LocalHostSystemExecutorSource>
@@ -300,7 +368,11 @@ export function createLocalHostMissionCompileService<
       result =
         path === undefined
           ? Promise.resolve(undefined)
-          : readMissionExecutionSnapshot(path).then((snapshot) => {
+          : readMissionExecutionSnapshot(path, {
+              missionId: scope.request.id,
+              project: scope.request.project,
+              executorRef: scope.request.executor.ref,
+            }).then((snapshot) => {
               if (
                 snapshot !== undefined &&
                 (snapshot.missionId !== scope.request.id ||
@@ -317,6 +389,7 @@ export function createLocalHostMissionCompileService<
     }
     return result;
   };
+  const profileOverlayCompilations = new WeakSet<CompiledResource<InvocableResource>>();
   const compilationResources = new WeakMap<
     CompiledResource<InvocableResource>,
     {
@@ -452,29 +525,65 @@ export function createLocalHostMissionCompileService<
       await Promise.all([...ids].toSorted().map((id) => options.capabilityAuthority!.resolve(id)))
     ).toSorted((left, right) => left.capabilityId.localeCompare(right.capabilityId));
   };
+  const defaultRuntimeDependencies = new WeakMap<
+    LocalHostMissionCompileScope<Request>,
+    Promise<boolean>
+  >();
+  const usesDefaultRuntime = (scope: LocalHostMissionCompileScope<Request>): Promise<boolean> => {
+    let pending = defaultRuntimeDependencies.get(scope);
+    if (pending === undefined) {
+      pending = (async () => {
+        const profiles = await executionProfiles(scope);
+        if (Object.values(profiles).some((profile) => profile === null)) return true;
+        let implicitDefault = false;
+        await visitDependencies(scope, (pinnedResource, ref) => {
+          const systemResource =
+            options.systemExecutors?.getDependencyResource?.(ref) ??
+            options.systemExecutors?.getResource?.(ref);
+          if (
+            systemResource !== undefined &&
+            options.systemExecutors?.tracksDefaultRuntime === false
+          )
+            return;
+          const resource = systemResource ?? pinnedResource;
+          if (
+            resource?.kind === "Expert" &&
+            profiles[resource.metadata.id] === undefined &&
+            resource.spec.runtime === undefined
+          )
+            implicitDefault = true;
+        });
+        return implicitDefault;
+      })();
+      defaultRuntimeDependencies.set(scope, pending);
+    }
+    return pending;
+  };
   const identity = async (
     scope: LocalHostMissionCompileScope<Request>,
     active: readonly LocalHostResolvedCapabilityEnvironment[],
+    runtimes?: RuntimeResolver,
   ): Promise<string> => {
     const snapshot = await readSnapshot(scope);
-    const systemExecutorFingerprints =
-      snapshot?.fingerprints ??
-      (await resolveMissionSystemDependencyFingerprints({
-        mission: scope.request,
-        project: { getRevision: async () => await scope.getRevision() },
-        getSystemExecutorFingerprint: options.systemExecutors?.fingerprint,
-        getSystemExecutorResource: (ref) =>
-          options.systemExecutors?.getDependencyResource?.(ref) ??
-          options.systemExecutors?.getResource?.(ref),
-      }));
+    const systemExecutorFingerprints = await resolveMissionSystemDependencyFingerprints({
+      mission: scope.request,
+      project: { getRevision: async () => await scope.getRevision() },
+      getSystemExecutorFingerprint: options.systemExecutors?.fingerprint,
+      getSystemExecutorResource: (ref) =>
+        options.systemExecutors?.getDependencyResource?.(ref) ??
+        options.systemExecutors?.getResource?.(ref),
+    });
     const request = scope.request;
     return hash({
       project: request.project,
       executor: request.executor,
       contextMounts: missionCompileContextMountsFingerprint(request),
       systemExecutorFingerprints,
-      toolPermissionMode: request.toolPermissionMode,
       modelOverride: request.modelOverride ?? null,
+      expertExecutionProfiles: await executionProfiles(scope),
+      ...(runtimes !== undefined && (await usesDefaultRuntime(scope))
+        ? { defaultRuntimeId: await runtimes.getDefaultRuntimeId() }
+        : {}),
       capabilities: snapshot?.capabilities ?? active,
     });
   };
@@ -484,6 +593,8 @@ export function createLocalHostMissionCompileService<
     purpose: "execute" | "stop" = "execute",
   ): Promise<CompiledResource<InvocableResource>> => {
     const snapshot = await readSnapshot(scope);
+    const profiles = purpose === "stop" ? undefined : await executionProfiles(scope);
+    let hasExecutionProfileOverlay = profiles !== undefined && Object.keys(profiles).length > 0;
     const adapterHost = await options.adapterHost(scope.request, purpose);
     const secretGuards = new Map<string, string>();
     const secretReaders = new Map<string, () => Promise<string | undefined>>();
@@ -601,6 +712,7 @@ export function createLocalHostMissionCompileService<
             };
       return await compileBuiltInAgent({
         ...source,
+        expertExecutionProfiles: profiles,
         compilationPurpose: purpose,
         ...(source.plugins === undefined && options.plugins === undefined
           ? {}
@@ -683,6 +795,17 @@ export function createLocalHostMissionCompileService<
           else {
             if (source === undefined)
               throw new Error(`mission_pinned_executor_unavailable: ${ref}`);
+            // A current profile is still an overlay when switching back to the birth
+            // snapshot's values after an intervening execution used another profile.
+            if (
+              source.rootExecutionOverride !== undefined ||
+              JSON.stringify(source.rootExecutionOverride) !==
+                JSON.stringify(pinnedSource.rootExecutionOverride) ||
+              JSON.stringify(source.defaultModelSelection) !==
+                JSON.stringify(pinnedSource.defaultModelSelection)
+            ) {
+              hasExecutionProfileOverlay = true;
+            }
             const { expertResource, ...profile } = pinnedSource;
             if (expertResource !== undefined && expertResource.kind !== "Expert")
               throw new Error(`Invalid pinned Expert: ${ref}`);
@@ -690,9 +813,9 @@ export function createLocalHostMissionCompileService<
               ...source,
               ...profile,
               expertResource,
-              rootExecutionOverride: profile.rootExecutionOverride,
-              rootModelSelectionOverride: profile.rootModelSelectionOverride,
-              defaultModelSelection: profile.defaultModelSelection,
+              rootExecutionOverride: source.rootExecutionOverride,
+              rootModelSelectionOverride: source.rootModelSelectionOverride,
+              defaultModelSelection: source.defaultModelSelection,
             };
           }
         }
@@ -732,6 +855,7 @@ export function createLocalHostMissionCompileService<
                 async (project) =>
                   await project.compile<InvocableResource>(ref, {
                     compilationPurpose: purpose,
+                    expertExecutionProfiles: profiles,
                     workspace: scope.request.workspace.path,
                     projectRoot: dirname(project.entryFile),
                     pragmaHome: options.pragmaHome,
@@ -795,6 +919,7 @@ export function createLocalHostMissionCompileService<
         plugins,
         pluginReaders,
       });
+      if (hasExecutionProfileOverlay) profileOverlayCompilations.add(compiled);
       return compiled;
     } catch (error) {
       if (secretsChangedDuringCompile || pluginsChangedDuringCompile)
@@ -809,7 +934,7 @@ export function createLocalHostMissionCompileService<
     await ensureSnapshot(scope, runtimes);
     for (let attempt = 0; attempt < 3; attempt += 1) {
       const before = await capabilities(scope);
-      const beforeIdentity = await identity(scope, before);
+      const beforeIdentity = await identity(scope, before, runtimes);
       let compiled: CompiledResource<InvocableResource>;
       try {
         compiled = await compile(scope, runtimes);
@@ -818,7 +943,7 @@ export function createLocalHostMissionCompileService<
         throw error;
       }
       const after = await capabilities(scope);
-      const afterIdentity = await identity(scope, after);
+      const afterIdentity = await identity(scope, after, runtimes);
       const resourceCompilation = compilationResources.get(compiled)!;
       const secretsStable = (
         await Promise.all(
@@ -880,7 +1005,7 @@ export function createLocalHostMissionCompileService<
       }
       for (let attempt = 0; attempt < 3; attempt += 1) {
         const pins = await capabilities(scope);
-        const before = await identity(scope, pins);
+        const before = await identity(scope, pins, runtimes);
         const resources: PragmaResource[] = [];
         const pluginRefs = new Set<string>();
         const fingerprints: [string, string][] = [];
@@ -937,9 +1062,9 @@ export function createLocalHostMissionCompileService<
               : { defaultModelSelection: source.defaultModelSelection }),
           };
         }
-        if (before !== (await identity(scope, await capabilities(scope)))) continue;
+        if (before !== (await identity(scope, await capabilities(scope), runtimes))) continue;
         const snapshot: MissionExecutionSnapshot = {
-          schemaVersion: "pragma.mission-execution-snapshot/v1",
+          schemaVersion: "pragma.mission-execution-snapshot/v2",
           missionId: scope.request.id,
           project: scope.request.project,
           executorRef: scope.request.executor.ref,
@@ -959,6 +1084,7 @@ export function createLocalHostMissionCompileService<
   };
   return {
     isExecutionPinned: async (scope) => (await readSnapshot(scope)) !== undefined,
+    allowsExecutionProfileSuccessor: (compiled) => profileOverlayCompilations.has(compiled),
     createRequestScope,
     capabilities,
     identity,
@@ -983,7 +1109,7 @@ export function createLocalHostMissionCompileService<
       const identityStartedAt = performance.now();
       const active = await capabilities(scope);
       const snapshot = await readSnapshot(scope);
-      const desiredIdentity = await identity(scope, active);
+      const desiredIdentity = await identity(scope, active, runtimes);
       let cacheHit =
         owner?.hasOwner === true &&
         owner.identity === desiredIdentity &&

@@ -7,8 +7,7 @@ for current Automation YAML, executor refs and the Project revision. Allocate a 
 `pragma manage dsl ids allocate`; do not invent one.
 
 - `list`: filter by statuses, enabled, executorRef or query; follow nextCursor unchanged.
-- `save`: pass expectedProjectRevision, the complete YAML source, absolute workspaceId and
-  toolPermissionMode via `--input FILE|-`. Preserve existing fields and unknown compatibility data.
+- `save`: pass expectedProjectRevision, the complete YAML source, absolute workspaceId via `--input FILE|-`. Preserve existing fields and unknown compatibility data.
   Enable/disable by saving the resource with spec.enabled changed. Generic DSL commit does not
   establish Automation host bindings and must not replace this workflow.
 - `delete`: pass ref and expectedProjectRevision. It preserves existing Missions.

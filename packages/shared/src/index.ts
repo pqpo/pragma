@@ -36,6 +36,7 @@ export * from "./runtime-process-environment.schema.ts";
 export * from "./skill-bundle.schema.ts";
 export * from "./stream-event.schema.ts";
 export * from "./tool-permission.schema.ts";
+export * from "./runtime-permissions.schema.ts";
 export * from "./tool-content.schema.ts";
 
 export * from "./usage.schema.ts";
