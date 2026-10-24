@@ -14,7 +14,7 @@ import { describe, expect, it, vi } from "vitest";
 import { createPiRuntime } from "../src/adapter.ts";
 
 describe("Pi Session native approvals", () => {
-  it.each(["request-approval", "auto-approve", "full-access"] as const)(
+  it.each([undefined, "request-approval", "auto-approve", "full-access"] as const)(
     "preserves native approvals after restoring %s",
     async (permissionMode) => {
       const root = await mkdtemp(join(tmpdir(), "pragma-pi-session-"));

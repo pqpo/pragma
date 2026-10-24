@@ -2094,6 +2094,7 @@ async function invokeResourceFromExpert(
   const targetModelSelection = nativeTarget.models?.default;
   const targetRuntime = await options.runtimes.bind({
     runtimeId: nativeTarget.defaultRuntimeId ?? parentRuntimeId,
+    permissionModeId: nativeTarget.permissionModeId,
     modelSelection: targetModelSelection,
   });
   const contextResolution = await new ContextResolutionService(options.store).resolve({
@@ -2773,6 +2774,7 @@ async function bindDelegatedRuntime(
   return (
     await options.runtimes.bind({
       runtimeId: configuredRuntimeId,
+      permissionModeId: expert.permissionModeId,
       modelSelection: expert.models?.default,
     })
   ).binding;
@@ -2796,6 +2798,7 @@ function sameRuntimeBinding(
   return (
     left.runtimeId === right.runtimeId &&
     left.revision === right.revision &&
-    left.fingerprint === right.fingerprint
+    left.fingerprint === right.fingerprint &&
+    left.permissionModeId === right.permissionModeId
   );
 }

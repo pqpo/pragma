@@ -1,3 +1,11 @@
+import { basename } from "node:path";
+import {
+  applyAtomicStateMigration,
+  recoverAtomicStateMigration,
+  withFileLock,
+  writeStateMigrationBackup,
+} from "@pragma/core";
+import { executionSnapshotV1ToV2Step } from "./migrations/execution-snapshot/index.ts";
 import { randomUUID } from "node:crypto";
 import { mkdir, readFile, readdir, rename, rm, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
@@ -7,12 +15,13 @@ import { PragmaResourceSchema } from "@pragma/interpreter/ast";
 
 const ModelOverrideSchema = z.object({
   runtimeId: z.string().min(1),
+  permissionModeId: z.string().min(1).optional(),
   modelSelection: RuntimeModelSelectionSchema.optional(),
 });
 
 /** Declarative inputs only: native Sessions, callbacks and credentials stay with their owners. */
 export const MissionExecutionSnapshotSchema = z.object({
-  schemaVersion: z.literal("pragma.mission-execution-snapshot/v1"),
+  schemaVersion: z.literal("pragma.mission-execution-snapshot/v2"),
   missionId: z.string().min(1),
   project: z.object({ id: z.string().min(1), revision: z.number().int().positive() }),
   executorRef: z.string().min(1),
@@ -40,18 +49,87 @@ export const MissionExecutionSnapshotSchema = z.object({
 
 export type MissionExecutionSnapshot = z.infer<typeof MissionExecutionSnapshotSchema>;
 
-export async function readMissionExecutionSnapshot(
-  path: string,
-): Promise<MissionExecutionSnapshot | undefined> {
-  let source: string;
+type SnapshotIdentity = Pick<MissionExecutionSnapshot, "missionId" | "project" | "executorRef">;
+
+function assertSnapshotIdentity(snapshot: SnapshotIdentity, expected: SnapshotIdentity): void {
+  if (
+    snapshot.missionId !== expected.missionId ||
+    snapshot.project.id !== expected.project.id ||
+    snapshot.project.revision !== expected.project.revision ||
+    snapshot.executorRef !== expected.executorRef
+  ) {
+    throw new Error(`mission_execution_snapshot_identity_mismatch: ${expected.missionId}`);
+  }
+}
+
+async function readOptionalSnapshotText(path: string): Promise<string | undefined> {
   try {
-    source = await readFile(path, "utf8");
+    return await readFile(path, "utf8");
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
     throw error;
   }
-  // A damaged/future snapshot must never fall back to today's configuration.
-  return MissionExecutionSnapshotSchema.parse(JSON.parse(source));
+}
+
+function parseSnapshotForRecovery(source: string): MissionExecutionSnapshot {
+  const value: unknown = JSON.parse(source);
+  return (value as { schemaVersion?: unknown } | null)?.schemaVersion ===
+    "pragma.mission-execution-snapshot/v1"
+    ? executionSnapshotV1ToV2Step.migrate(value)
+    : MissionExecutionSnapshotSchema.parse(value);
+}
+
+export async function readMissionExecutionSnapshot(
+  path: string,
+  expected?: SnapshotIdentity,
+): Promise<MissionExecutionSnapshot | undefined> {
+  const journalFile = `${path}.schema-migration.json`;
+  if (
+    (await readOptionalSnapshotText(path)) === undefined &&
+    (await readOptionalSnapshotText(journalFile)) === undefined
+  )
+    return undefined;
+  return await withFileLock(`${path}.schema-migration.lock`, async () => {
+    const aggregateRoot = dirname(path);
+    const document = basename(path);
+    const resource = { family: "pragma.mission-execution-snapshot", id: document };
+    const source = await readOptionalSnapshotText(path);
+    if (source === undefined && (await readOptionalSnapshotText(journalFile)) === undefined)
+      return undefined;
+    // Validate the persisted version before replay; an older journal cannot downgrade a future document.
+    // A genuine prepared upgrade has already installed its complete original backup.
+    const original = parseSnapshotForRecovery(
+      source ?? (await readFile(`${path}.v1.backup.json`, "utf8")),
+    );
+    if (expected !== undefined) assertSnapshotIdentity(original, expected);
+    const validateDocuments = (documents: Readonly<Record<string, unknown>>) => {
+      if (Object.keys(documents).length !== 1 || !(document in documents))
+        throw new Error("Invalid execution snapshot migration target.");
+      const target = MissionExecutionSnapshotSchema.parse(documents[document]);
+      assertSnapshotIdentity(target, original);
+    };
+    await recoverAtomicStateMigration({ aggregateRoot, journalFile, resource, validateDocuments });
+    const persisted = await readFile(path, "utf8");
+    const value: unknown = JSON.parse(persisted);
+    const target = parseSnapshotForRecovery(persisted);
+    assertSnapshotIdentity(target, original);
+    if (
+      (value as { schemaVersion?: unknown }).schemaVersion !==
+      "pragma.mission-execution-snapshot/v1"
+    )
+      return target;
+    await writeStateMigrationBackup(`${path}.v1.backup.json`, persisted);
+    await applyAtomicStateMigration({
+      aggregateRoot,
+      journalFile,
+      resource,
+      fromVersion: 1,
+      toVersion: 2,
+      documents: { [document]: target },
+      validateDocuments,
+    });
+    return target;
+  });
 }
 
 /** Caller holds the snapshot lock; rename is the only commit point. */

@@ -4,7 +4,6 @@ import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import { createLocalHostRuntimeConfiguration } from "@pragma/local-host/deployment";
 import * as localHost from "@pragma/local-host";
-import * as nodeApplication from "@pragma/local-host/node-application";
 import * as pi from "@pragma/runtime-pi";
 import * as codex from "@pragma/runtime-codex";
 import { createProductionLocalHost } from "../src/composition/default.ts";
@@ -24,21 +23,16 @@ describe("CLI saved Runtime composition", () => {
     vi.spyOn(codex, "createCodexRuntime").mockImplementation((options) =>
       create({ ...options, listModels }),
     );
-    const composition = vi.spyOn(nodeApplication, "createLocalHostNodeApplication");
     const host = createProductionLocalHost();
     try {
       const resolver = host.runtimeResolver();
       const restored = await resolver.resolve({ binding: fixture.binding });
       expect(restored.binding).toEqual(fixture.binding);
-      expect(restored.adapter.descriptor).toEqual(fixture.descriptor);
-      const permissionResolver = composition.mock.calls.at(-1)?.[0].runtimesForToolPermissionMode;
-      expect(permissionResolver).toBeTypeOf("function");
-      const fullAccess = await permissionResolver!("full-access").resolve({
-        binding: fixture.binding,
-      });
-      expect(fullAccess.binding).toEqual(fixture.binding);
+      expect(restored.adapter.descriptor).toMatchObject(fixture.descriptor);
+      const readonly = await resolver.bind({ runtimeId: "codex", permissionModeId: "read-only" });
+      expect(readonly.binding.permissionModeId).toBe("read-only");
       expect(codex.createCodexRuntime).toHaveBeenLastCalledWith(
-        expect.objectContaining({ sandboxMode: "danger-full-access", approvalPolicy: "never" }),
+        expect.objectContaining({ sandboxMode: "read-only", approvalPolicy: "never" }),
       );
       const settings = localHost.createRuntimeProcessEnvironmentSettingsStore({ pragmaHome: home });
       vi.stubEnv("PRAGMA_LEGACY_POLICY_CANARY", "policy-value");
@@ -65,6 +59,7 @@ describe("CLI saved Runtime composition", () => {
       );
       const current = await resolver.bind({ runtimeId: "codex" });
       expect(current.adapter.descriptor.id).toBe("codex");
+      expect(current.binding.permissionModeId).toBe("full-access");
       expect(current.binding.fingerprint).not.toBe(fixture.binding.fingerprint);
       expect((await resolver.bind({ runtimeId: "codex-local" })).binding).toEqual(current.binding);
       const discoveryCalls = listModels.mock.calls.length;
@@ -188,10 +183,11 @@ describe("CLI saved Runtime composition", () => {
         runtimeId: first.runtimeId,
         revision: first.revision,
         fingerprint: first.fingerprint,
+        permissionModeId: "full-access",
       });
       expect(resolved.adapter.descriptor.id).toBe("saved-codex");
       expect(factory).toHaveBeenCalledWith(
-        expect.objectContaining({ sandboxMode: "workspace-write", approvalPolicy: "on-request" }),
+        expect.objectContaining({ sandboxMode: "danger-full-access", approvalPolicy: "never" }),
       );
       expect(factory.mock.calls.at(-1)?.[0]?.env).not.toHaveProperty("PRAGMA_CONFIG_SECRET_CANARY");
       await configuration.environments.update({

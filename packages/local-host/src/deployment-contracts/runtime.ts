@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { RuntimePermissionCatalogSchema } from "@pragma/shared";
 export const DesktopRuntimeIdSchema = z.string().trim().min(1).max(200);
 
 export const RuntimeEnvironmentDefinitionSchema = z.object({
@@ -71,6 +72,7 @@ export const DesktopRuntimeModelSchema = z.object({
 });
 
 export const DesktopRuntimeAvailabilitySchema = z.object({
+  permissionModes: RuntimePermissionCatalogSchema.optional(),
   id: DesktopRuntimeIdSchema,
   revision: z.number().int().positive().optional(),
   origin: z.enum(["built-in", "registered"]).optional(),

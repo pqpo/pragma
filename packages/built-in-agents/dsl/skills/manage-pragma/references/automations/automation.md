@@ -11,7 +11,7 @@ Automation text limits are enforced by both prepare and save:
 - Prompt input: 1–100,000 characters.
 
 ```yaml
-apiVersion: pragma/v5
+apiVersion: pragma/v6
 kind: Automation
 metadata:
   id: 9h0j1k2m3n4p5q6r
@@ -64,6 +64,6 @@ Mission continuity:
 - Deleting the Automation does not delete Missions. Reset continuity only when the user explicitly
   wants the next event to start a fresh Mission.
 
-The workspace, tool permission mode, model override, credentials, and future IM connection secrets
-are host bindings. Never place them in DSL. Call `pragma manage automation save` with an explicit `workspaceId` and
-`toolPermissionMode`; do not use generic `pragma manage dsl changes commit` for an Automation.
+The workspace, model override, credentials, and future IM connection secrets
+are host bindings. Never place them in DSL. Call `pragma manage automation save` with an explicit `workspaceId`;
+use the executor Expert’s Harness permission mode; do not use generic `pragma manage dsl changes commit` for an Automation.

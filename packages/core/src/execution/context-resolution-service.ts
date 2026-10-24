@@ -300,7 +300,8 @@ function sameRuntimeBinding(
   return (
     left.runtimeId === right.runtimeId &&
     left.revision === right.revision &&
-    left.fingerprint === right.fingerprint
+    left.fingerprint === right.fingerprint &&
+    left.permissionModeId === right.permissionModeId
   );
 }
 

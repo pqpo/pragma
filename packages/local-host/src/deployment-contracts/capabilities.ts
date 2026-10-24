@@ -47,6 +47,7 @@ export const ExpertAdditionalInstructionsSchema = z
   )
   .default("");
 export const ExpertModelConfigSchema = z.object({
+  permissionModeId: z.string().trim().min(1).max(100).optional(),
   runtimeId: DesktopRuntimeIdSchema,
   providerId: z.string().trim().min(1).max(200),
   modelId: ModelIdSchema,

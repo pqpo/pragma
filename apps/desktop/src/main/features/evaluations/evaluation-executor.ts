@@ -193,7 +193,6 @@ export function createMissionAgentEvaluationExecutor(options: {
             ref: run.targetRef,
             name: target.metadata.name,
           },
-          toolPermissionMode: "auto-approve",
           signal,
         });
       } finally {
@@ -224,7 +223,6 @@ export function createMissionAgentEvaluationExecutor(options: {
           ref: EVALUATION_JUDGE_EXPERT_REF,
           name: "Evaluation Judge Agent",
         },
-        toolPermissionMode: "request-approval",
         signal,
         ...(settings.judge.mode === "pinned" ? { modelOverride: settings.judge.model } : {}),
       });
@@ -260,7 +258,6 @@ async function runMission(input: {
     readonly ref: string;
     readonly name: string;
   };
-  readonly toolPermissionMode: "request-approval" | "auto-approve";
   readonly modelOverride?: MissionModelOverride | undefined;
   readonly signal: AbortSignal;
 }): Promise<{
@@ -280,7 +277,6 @@ async function runMission(input: {
       caseId: input.caseId,
       phase: input.phase,
     },
-    toolPermissionMode: input.toolPermissionMode,
     ...(input.modelOverride === undefined ? {} : { modelOverride: input.modelOverride }),
   });
   const interrupt = (): void => {

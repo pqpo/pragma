@@ -61,7 +61,6 @@ import {
   type Mission,
   type MissionSummary,
   type PickMissionAttachmentsResult,
-  type DesktopToolPermissionMode,
 } from "../../../shared/contracts/index.ts";
 import {
   ContextStoreMissionMountCheckSchema,
@@ -131,8 +130,6 @@ export function installMissionHandlers(options: {
   readonly application: LocalHostMissionApplication;
   readonly getAutomationMissionSources: () => Promise<ReadonlyMap<string, string>>;
   readonly getWindow: () => BrowserWindow | null;
-  readonly getDefaultToolPermissionMode: () =>
-    DesktopToolPermissionMode | Promise<DesktopToolPermissionMode>;
   readonly getDefaultWorkspace: () => string | Promise<string>;
   readonly getRecentWorkspaces: () => readonly string[] | Promise<readonly string[]>;
   readonly recordWorkspaceUsage: (path: string) => void | Promise<void>;
@@ -175,7 +172,6 @@ export function installMissionHandlers(options: {
         basename: recent.displayName,
       })),
       executorRef: options.defaultExecutorRef,
-      toolPermissionMode: await options.getDefaultToolPermissionMode(),
     });
   };
   const ensureLegacyAutomationMissionSources = async (): Promise<void> => {
@@ -463,9 +459,6 @@ export function installMissionHandlers(options: {
         executorRef: parsed.executor.ref,
         contextMounts: parsed.contextMounts,
         ...(parsed.modelOverride === undefined ? {} : { modelOverride: parsed.modelOverride }),
-        ...(parsed.toolPermissionMode === undefined
-          ? {}
-          : { toolPermissionMode: parsed.toolPermissionMode }),
       });
       if (parsed.input.kind === "prompt") {
         await imageDrafts.discard(parsed.input.attachments.map((attachment) => attachment.id));

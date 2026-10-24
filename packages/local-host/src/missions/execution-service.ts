@@ -105,7 +105,6 @@ import { basename, dirname } from "node:path";
 import { isDeepStrictEqual } from "node:util";
 import {
   isUserFacingMissionOrigin,
-  type ToolPermissionMode,
   type GetMissionWorkConversation,
   MissionSchema,
   type Mission,
@@ -302,7 +301,6 @@ export interface MissionExecutorPresentationMetadata {
 interface MissionExecutionContext {
   readonly app: ReturnType<typeof createPragma>;
   readonly runtimes: RuntimeResolver;
-  readonly setToolPermissionMode: (mode: ToolPermissionMode) => void;
 }
 
 export function missionKnowledgeNamespace(storeId: string): string {
@@ -334,7 +332,6 @@ import type { HostUsageStore } from "../host-usage-store.ts";
 export interface LocalHostMissionExecutionContextResources {
   readonly runtimes: RuntimeResolver;
   readonly appOptions: Parameters<typeof createPragma>[0];
-  readonly setToolPermissionMode: (mode: ToolPermissionMode) => void;
 }
 export interface LocalHostMissionExecutionResourcePorts {
   createExecutionContextResources(input: {
@@ -377,8 +374,6 @@ export interface LocalHostMissionExecutionServiceOptions {
   readonly runtimes: RuntimeResolver;
   readonly usage?: HostUsageStore | undefined;
   readonly loggerProvider?: import("@pragma/core").PragmaLoggerProvider | undefined;
-  readonly runtimesForToolPermissionMode?:
-    ((mode: ToolPermissionMode) => RuntimeResolver) | undefined;
   readonly getSystemExecutorMetadata?:
     (() => readonly MissionExecutorPresentationMetadata[]) | undefined;
   readonly registerExecutionDelivery?:
@@ -637,8 +632,6 @@ export function createLocalHostMissionExecutionService(
       chatService.invalidate(mission.id, missionSurfaceAudience(mission));
     }
   };
-  const runtimeResolverForToolPermissionMode = (mode: ToolPermissionMode) =>
-    options.runtimesForToolPermissionMode?.(mode) ?? options.runtimes;
   const invalidateContextBindings = async (id: string): Promise<void> => {
     sessionService.invalidateContextBindings(id);
     const session = sessionService.session(id);
@@ -689,7 +682,6 @@ export function createLocalHostMissionExecutionService(
     });
     return {
       runtimes: resources.runtimes,
-      setToolPermissionMode: resources.setToolPermissionMode,
       app: createPragma({
         ...resources.appOptions,
         executionStore,
@@ -1207,6 +1199,10 @@ export function createLocalHostMissionExecutionService(
   ): void => {
     if ("kind" in compiled.value && compiled.value.kind === "flow") return;
     sessionService.setCompilationIdentity(missionId, identity);
+    sessionService.setExecutionProfilesFingerprint(
+      missionId,
+      compileService.executionProfilesFingerprintFor(compiled),
+    );
     sessionService.setCompilationSecrets(missionId, compileService.secretsFor(compiled));
     sessionService.setCompilationPlugins(missionId, compileService.pluginsFor(compiled));
     sessionService.setDefinitionFingerprint(
@@ -1261,9 +1257,14 @@ export function createLocalHostMissionExecutionService(
         ...(input.modelSelection === undefined ? {} : { modelSelection: input.modelSelection }),
       },
       resumeOptions: { ...resumeOptions, environment },
-      preserveDefinitionSession: await compileService.isExecutionPinned(
-        compileService.createRequestScope(input.mission),
-      ),
+      preserveDefinitionSession:
+        (await compileService.isExecutionPinned(
+          compileService.createRequestScope(input.mission),
+        )) &&
+        !(
+          input.createSuccessorOnMismatch === true &&
+          compileService.allowsExecutionProfileSuccessor(input.compiled)
+        ),
       successorOnMismatch: isMemoryContinuationMission(input.mission)
         ? false
         : input.createSuccessorOnMismatch,
@@ -1310,11 +1311,17 @@ export function createLocalHostMissionExecutionService(
       { ...current, contextMounts: accepted.contextMounts },
       scope.getRevision(),
     );
-    if ((await compileService.identity(baseline, capabilities)) !== acceptedIdentity) return;
-    const identity = await compileService.identity(scope, capabilities);
     if (
-      (await compileService.identity(baseline, await compileService.capabilities(scope))) !==
-      acceptedIdentity
+      (await compileService.identity(baseline, capabilities, options.runtimes)) !== acceptedIdentity
+    )
+      return;
+    const identity = await compileService.identity(scope, capabilities, options.runtimes);
+    if (
+      (await compileService.identity(
+        baseline,
+        await compileService.capabilities(scope),
+        options.runtimes,
+      )) !== acceptedIdentity
     )
       return;
     await options.missions.updateExecution(
@@ -2581,6 +2588,7 @@ export function createLocalHostMissionExecutionService(
       secrets: sessionService.compilationSecrets(mission.id),
       plugins: sessionService.compilationPlugins(mission.id),
       definitionFingerprint: sessionService.definitionFingerprint(mission.id),
+      executionProfilesFingerprint: sessionService.executionProfilesFingerprint(mission.id),
       capabilities: mission.execution?.resolvedCapabilities,
     });
     if (preparation.refreshEnvironment === true && session !== undefined) {
@@ -2959,19 +2967,13 @@ export function createLocalHostMissionExecutionService(
       await settlementOutcomeWithin(activeExecution.settlement, 5_000);
       lifecycleService.deleteActiveIfCurrent(mission.id, activeExecution);
     }
-    if (
-      (lifecycleService.hasActive(mission.id) || projectedExecutionActive) &&
-      input.toolPermissionMode !== mission.toolPermissionMode
-    ) {
-      throw new Error("Wait for the current execution before changing mission permissions.");
-    }
     if (mission.executor.kind === "flow" && input.modelOverride !== null) {
       throw new Error("Flow missions do not support a model override.");
     }
-    const prospective = { ...mission, toolPermissionMode: input.toolPermissionMode };
+    const prospective = { ...mission };
     if (input.modelOverride === null) delete prospective.modelOverride;
     else prospective.modelOverride = input.modelOverride;
-    const baseRuntimes = runtimeResolverForToolPermissionMode(input.toolPermissionMode);
+    const baseRuntimes = options.runtimes;
     const runtimes = withMissionRuntimeBinding(baseRuntimes, await readMissionRootContext(mission));
     const stableCompilation = await compileService.compileStable(
       compileService.createRequestScope(prospective),
@@ -2984,18 +2986,11 @@ export function createLocalHostMissionExecutionService(
         modelSelection: toRuntimeModelSelection(prospective.modelOverride),
       });
     }
-    if (input.toolPermissionMode !== mission.toolPermissionMode) {
-      await sessionService.session(mission.id)?.refreshRuntimeSessions();
-    }
     const updated = await options.missions.updateOptions(mission.id, {
-      toolPermissionMode: input.toolPermissionMode,
       ...(prospective.modelOverride === undefined
         ? {}
         : { modelOverride: prospective.modelOverride }),
     });
-    (await sessionService.executionContext(mission.id))?.setToolPermissionMode(
-      input.toolPermissionMode,
-    );
     // Validation must not mark the live Session as compiled with its next model.
     // Recompile on the next accepted prompt, retaining the current definition fingerprint.
     sessionService.setCompilationIdentity(mission.id, "");
@@ -3448,7 +3443,7 @@ export function createLocalHostMissionExecutionService(
     if (rootContext === undefined) return undefined;
     // Display inspection needs routing, not a new execution app or host mounts.
     // In particular, a read racing owner release must not recreate that cache.
-    const runtimes = runtimeResolverForToolPermissionMode(mission.toolPermissionMode);
+    const runtimes = options.runtimes;
     const resolved = await runtimes
       .resolve({
         binding: rootContext.runtime,
@@ -6653,9 +6648,10 @@ function withMissionRuntimeBinding(
   if (context === undefined) return runtimes;
   const binding = context.runtime;
   return {
-    getDefaultRuntimeId: async () => binding.runtimeId,
+    getDefaultRuntimeId: () => runtimes.getDefaultRuntimeId(),
     bind: async (request = {}) =>
-      request.runtimeId === undefined || request.runtimeId === binding.runtimeId
+      (request.runtimeId === undefined || request.runtimeId === binding.runtimeId) &&
+      request.permissionModeId === binding.permissionModeId
         ? await runtimes.resolve({
             binding,
             ...(request.modelSelection === undefined && context.modelSelection === undefined

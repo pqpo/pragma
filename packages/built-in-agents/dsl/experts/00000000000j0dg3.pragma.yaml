@@ -1,4 +1,4 @@
-apiVersion: pragma/v5
+apiVersion: pragma/v6
 kind: Expert
 metadata:
   id: 00000000000j0dg3

@@ -155,7 +155,6 @@ const mission = {
   title: "Mission stream benchmark",
   goal: "Measure composer input while Mission output is streaming.",
   initialMessageId: "00000000-0000-4000-8000-000000000001",
-  toolPermissionMode: "request-approval",
   workspace: { path: "/workspace/expert-mesh", basename: "expert-mesh" },
   project: { id: "studio", revision: 1 },
   contextMounts: [],

@@ -1,0 +1,16 @@
+apiVersion: pragma/v5
+kind: Expert
+metadata:
+  id: v2vt1v01vzz6j24q
+  name: Historical expert
+  description: Historical writer fixture
+  tags: []
+  avatarId: pragma.avatar.expert.default
+spec:
+  scope: application
+  instructions: Pinned original instructions
+  capabilities: []
+  toolApprovals: {}
+  contextStores: []
+  plugins: []
+  tools: []

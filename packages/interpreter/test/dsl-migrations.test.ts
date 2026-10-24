@@ -154,7 +154,7 @@ describe("Pragma DSL project migrations", () => {
     );
 
     const future = new Map([
-      ["pragma.yaml", "apiVersion: pragma/v6\nkind: Bundle\nimports: []\nresources: []\n"],
+      ["pragma.yaml", "apiVersion: pragma/v999\nkind: Bundle\nimports: []\nresources: []\n"],
     ]);
     expect(() => migratePragmaDslProjectToCurrent({ projectId: "studio", files: future })).toThrow(
       expect.objectContaining<Partial<PragmaDslMigrationError>>({

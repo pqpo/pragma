@@ -47,6 +47,9 @@ export type RuntimeAdapterPlacementCapabilities = Pick<
 export type RuntimeTarget = "expert" | "code" | "flow" | "operator" | (string & {});
 
 export interface RuntimeAdapterDescriptor {
+  /** Native mode fixed when this adapter instance was constructed. */
+  readonly configuredPermissionModeId?: string | undefined;
+  readonly permissionModes?: import("@pragma/shared").RuntimePermissionCatalog | undefined;
   readonly id: string;
   readonly kind: RuntimeAdapterKind;
   readonly displayName: string;

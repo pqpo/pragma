@@ -49,7 +49,6 @@ describe("Mission neutral contract extraction", () => {
         title: historical.title,
         goal: historical.goal,
         initialMessageId: historical.initialMessageId,
-        toolPermissionMode: historical.toolPermissionMode,
         workspace: historical.workspace,
         project: historical.project,
         executor: historical.executor,
@@ -58,10 +57,10 @@ describe("Mission neutral contract extraction", () => {
         updatedAt: historical.updatedAt,
       });
       expect(
-        MissionSchema.parse({ ...base, schemaVersion: "pragma.mission/v11", contextMounts: [] }),
+        MissionSchema.parse({ ...base, schemaVersion: "pragma.mission/v12", contextMounts: [] }),
       ).toEqual({
         ...base,
-        schemaVersion: "pragma.mission/v11",
+        schemaVersion: "pragma.mission/v12",
         origin: { type: "user" },
         contextMounts: [],
       });

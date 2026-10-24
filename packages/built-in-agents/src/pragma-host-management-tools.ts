@@ -291,7 +291,6 @@ const SaveAutomationInput = z.object({
   expectedProjectRevision: z.number().int().nonnegative(),
   source: z.string().min(1).max(2_000_000),
   workspaceId: z.string().min(1),
-  toolPermissionMode: z.enum(["request-approval", "auto-approve", "full-access"]),
 });
 const DeleteAutomationInput = z.object({
   expectedProjectRevision: z.number().int().nonnegative(),

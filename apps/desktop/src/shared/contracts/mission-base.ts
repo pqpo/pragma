@@ -15,7 +15,6 @@ import {
 } from "@pragma/shared";
 
 import { ExpertRefSchema } from "./experts.ts";
-import { DesktopToolPermissionModeSchema } from "./settings.ts";
 
 export {
   MissionExecutorRefSchema,
@@ -90,7 +89,6 @@ export const MissionCreationDefaultsSchema = z.object({
   workspace: MissionWorkspaceSchema,
   recentWorkspaces: z.array(MissionWorkspaceSchema).max(10),
   executorRef: ExpertRefSchema,
-  toolPermissionMode: DesktopToolPermissionModeSchema,
 });
 
 export const HomeMissionExecutorCatalogSchema = z.object({

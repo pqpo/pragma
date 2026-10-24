@@ -188,15 +188,7 @@ export function createDesktopSystemExpertRegistry(options?: {
       const current = SystemExpertCustomizationConfigSchema.safeParse(raw);
       if (current.success) {
         if (options.configPath !== undefined) {
-          await Promise.all(
-            ([3, 4, 5, 6, 7, 8] as const).map(
-              async (sourceVersion) =>
-                await rm(
-                  `${options.configPath}.migration-v${sourceVersion}-to-v${SYSTEM_EXPERT_CONFIG_SCHEMA_VERSION}.json`,
-                  { force: true },
-                ),
-            ),
-          );
+          await clearCommittedMigrationJournals(options.configPath);
         }
         return new Map(
           current.data.customizations.map((customization) => [customization.ref, customization]),
@@ -236,7 +228,7 @@ export function createDesktopSystemExpertRegistry(options?: {
 
   const migrateConfig = async (
     source: unknown,
-    sourceVersion: 3 | 4 | 5 | 6 | 7 | 8,
+    sourceVersion: 3 | 4 | 5 | 6 | 7 | 8 | 9,
     migrated: ReadonlyMap<string, SystemExpertCustomization>,
   ): Promise<void> => {
     if (options?.configPath === undefined) return;
@@ -250,14 +242,7 @@ export function createDesktopSystemExpertRegistry(options?: {
     });
     await writeMigrationBackup(backupPath, source);
     await writeConfig(migrated);
-    await rm(journalPath, { force: true });
-    for (const targetVersion of [7, 8]) {
-      if (targetVersion > sourceVersion && targetVersion < SYSTEM_EXPERT_CONFIG_SCHEMA_VERSION) {
-        await rm(`${options.configPath}.migration-v${sourceVersion}-to-v${targetVersion}.json`, {
-          force: true,
-        });
-      }
-    }
+    await clearCommittedMigrationJournals(options.configPath);
   };
 
   const mutate = async (operation: () => Promise<void>): Promise<void> => {
@@ -506,4 +491,13 @@ function customizationResources(
           canonicalPragmaResourceRef(candidate) === canonicalPragmaResourceRef(resource),
       ) === index,
   );
+}
+
+async function clearCommittedMigrationJournals(configPath: string): Promise<void> {
+  for (const source of [3, 4, 5, 6, 7, 8, 9]) {
+    for (const target of [7, 8, 9, SYSTEM_EXPERT_CONFIG_SCHEMA_VERSION]) {
+      if (target > source)
+        await rm(`${configPath}.migration-v${source}-to-v${target}.json`, { force: true });
+    }
+  }
 }

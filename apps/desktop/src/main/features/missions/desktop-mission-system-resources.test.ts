@@ -111,7 +111,6 @@ it.each([
         project: { id: snapshot.projectId, revision: snapshot.revision },
         executor: missionExecutorSnapshot(resource),
         origin: { type: "system-memory", jobId: `${jobPrefix}:${"a".repeat(64)}` },
-        toolPermissionMode: "request-approval",
       });
     let mission = await createPlanningMission();
     const interactiveAdapterHost = createDesktopAdapterHost(

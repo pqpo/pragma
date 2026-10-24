@@ -32,12 +32,15 @@ export {
   type PragmaResourceIdentityMigrationIndex,
 } from "./resource-identity-index.ts";
 
-export const PRAGMA_DSL_MIGRATION_CHAIN_VERSION = "pragma.dsl-migrations/v3";
+export const PRAGMA_DSL_MIGRATION_CHAIN_VERSION = "pragma.dsl-migrations/v4";
+
+import { pragmaDslV5ToV6Step } from "./steps/v5-to-v6.ts";
 
 const migrationSteps = [
   pragmaDslV2ToV3Step,
   pragmaDslV3ToV4Step,
   pragmaDslV4ToV5Step,
+  pragmaDslV5ToV6Step,
 ] as const satisfies readonly PragmaDslMigrationStep[];
 const migrationStepsBySource = indexMigrationSteps(migrationSteps);
 const managedKinds = new Set([
@@ -258,3 +261,5 @@ function indexMigrationSteps(
   }
   return indexed;
 }
+
+export { migratePragmaV5AuthoringResourceToV6 } from "./authoring/v5-to-v6.ts";

@@ -166,7 +166,7 @@ describe("Local Host fenced Mission repository", () => {
     });
 
     await ownerScope.acquire(mission.id);
-    await fencedStore.updateOptions(mission.id, { toolPermissionMode: "full-access" });
+    await fencedStore.updateOptions(mission.id, {});
     const executionId = "22222222-2222-4222-8222-222222222222";
     await fencedStore.updateExecution(mission.id, {
       id: executionId,
@@ -214,7 +214,6 @@ describe("Local Host fenced Mission repository", () => {
     });
     await fencedStore.updateContextMounts(mission.id, []);
     await expect(rawStore.get(mission.id)).resolves.toMatchObject({
-      toolPermissionMode: "full-access",
       workspace: { path: join(root, "workspace"), basename: "workspace" },
       contextMounts: [],
     });
@@ -237,9 +236,9 @@ describe("Local Host fenced Mission repository", () => {
 
     const competingOwner = createMissionOwnerScope({ controller, leaseMs: 1_000 });
     await competingOwner.acquire(mission.id);
-    await expect(
-      fencedStore.updateOptions(mission.id, { toolPermissionMode: "request-approval" }),
-    ).rejects.toMatchObject({ code: "MISSION_LEASE_HELD" });
+    await expect(fencedStore.updateOptions(mission.id, {})).rejects.toMatchObject({
+      code: "MISSION_LEASE_HELD",
+    });
     await competingOwner.release(mission.id);
   });
 
@@ -269,7 +268,7 @@ describe("Local Host fenced Mission repository", () => {
       name: "mission.options.update",
       input: {
         id: mission.id,
-        input: { toolPermissionMode: "request-approval" },
+        input: {},
       },
     };
 
@@ -290,12 +289,11 @@ describe("Local Host fenced Mission repository", () => {
       cause: new Error("attachment publication interrupted"),
     });
     vi.spyOn(rawStore, "updateOptions").mockRejectedValueOnce(interrupted);
-    await expect(
-      fencedStore.updateOptions(mission.id, { toolPermissionMode: "request-approval" }),
-    ).rejects.toMatchObject({ name: "MissionSemanticWritePendingError", cause: interrupted });
-    await expect(
-      fencedStore.updateOptions(mission.id, { toolPermissionMode: "request-approval" }),
-    ).resolves.toMatchObject({ toolPermissionMode: "request-approval" });
+    await expect(fencedStore.updateOptions(mission.id, {})).rejects.toMatchObject({
+      name: "MissionSemanticWritePendingError",
+      cause: interrupted,
+    });
+    await expect(fencedStore.updateOptions(mission.id, {})).resolves.toMatchObject({});
     await expect(controller.readSnapshot({ missionId: mission.id })).resolves.toMatchObject({
       events: [expect.objectContaining({ type: "mission.options.updated" })],
     });
@@ -327,7 +325,7 @@ describe("Local Host fenced Mission repository", () => {
     const guard = await ownerScope.acquire(mission.id);
     const operation = {
       name: "mission.options.update",
-      input: { id: mission.id, input: { toolPermissionMode: "request-approval" } },
+      input: { id: mission.id, input: {} },
     };
     await expect(
       controller.coordinateSemanticWrite({
@@ -353,24 +351,17 @@ describe("Local Host fenced Mission repository", () => {
         guard: successorGuard,
         operation: {
           name: "mission.options.update",
-          input: { id: mission.id, input: { toolPermissionMode: "full-access" } },
+          input: { id: mission.id, input: {} },
         },
         eventType: "mission.options.updated",
         eventData: {},
-        apply: async () =>
-          await rawStore.updateOptions(mission.id, { toolPermissionMode: "full-access" }),
+        apply: async () => await rawStore.updateOptions(mission.id, {}),
       });
       return result;
     });
-    await expect(
-      fencedStore.updateOptions(mission.id, {
-        toolPermissionMode: "request-approval",
-      }),
-    ).resolves.toMatchObject({ toolPermissionMode: "request-approval" });
+    await expect(fencedStore.updateOptions(mission.id, {})).resolves.toMatchObject({});
     expect(mutations).toHaveBeenCalledTimes(2);
-    await expect(rawStore.get(mission.id)).resolves.toMatchObject({
-      toolPermissionMode: "full-access",
-    });
+    await expect(rawStore.get(mission.id)).resolves.toMatchObject({});
     const snapshot = await controller.readSnapshot({ missionId: mission.id });
     expect(
       snapshot.events.filter((event) => event.type === "mission.options.updated"),
@@ -403,14 +394,12 @@ describe("Local Host fenced Mission repository", () => {
 
     await ownerScope.runWithGuard(mission.id, guard, async () => {
       await ownerScope.forceRevoke(mission.id);
-      await expect(
-        fencedStore.updateOptions(mission.id, { toolPermissionMode: "full-access" }),
-      ).rejects.toMatchObject({ code: "MISSION_FENCING_REJECTED" });
+      await expect(fencedStore.updateOptions(mission.id, {})).rejects.toMatchObject({
+        code: "MISSION_FENCING_REJECTED",
+      });
     });
 
-    await expect(rawStore.get(mission.id)).resolves.toMatchObject({
-      toolPermissionMode: "request-approval",
-    });
+    await expect(rawStore.get(mission.id)).resolves.toMatchObject({});
   });
 });
 

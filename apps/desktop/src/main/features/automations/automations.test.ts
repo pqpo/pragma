@@ -98,7 +98,6 @@ describe("Automation Service", () => {
       automationRef: "automation:m9a8n9nxvvyb4j01",
       rotateGeneration: true,
       workspace: { path: "/tmp", basename: "tmp" },
-      toolPermissionMode: "request-approval",
       contextMounts: [{ kind: "context-store", storeId: contextStoreId }],
     });
 
@@ -135,7 +134,6 @@ describe("Automation Service", () => {
       automationRef: "automation:m9a8n9nxvvyb4j01",
       rotateGeneration: true,
       workspace: { path: "/tmp", basename: "tmp" },
-      toolPermissionMode: "request-approval",
       contextMounts: [{ kind: "context-store", storeId: contextStoreId }],
     });
 
@@ -240,7 +238,6 @@ describe("Automation Service", () => {
       automationRef: ref,
       rotateGeneration: true,
       workspace: { path: "/tmp", basename: "tmp" },
-      toolPermissionMode: "request-approval",
     });
     const backfillAutomationOrigin = vi.fn<MissionStore["backfillAutomationOrigin"]>(
       async () => ({}) as Awaited<ReturnType<MissionStore["backfillAutomationOrigin"]>>,
@@ -335,7 +332,6 @@ describe("Automation Service", () => {
       automationRef: ref,
       rotateGeneration: true,
       workspace: { path: "/tmp", basename: "tmp" },
-      toolPermissionMode: "request-approval",
     });
     let state: AutomationState = {
       schemaVersion: "pragma.automation-state/v1",

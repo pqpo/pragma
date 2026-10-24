@@ -189,7 +189,6 @@ export async function rendererScenarioRun(configuration) {
         },
         binding: {
           workspace: configuration.workspace,
-          toolPermissionMode: "request-approval",
           modelOverride,
         },
       });

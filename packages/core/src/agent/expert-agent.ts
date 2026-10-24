@@ -125,6 +125,7 @@ export interface IExpertAgent {
   readonly scope: string;
   /** Definition-level routing default. The resolved execution Runtime remains owned by RuntimeContextRecord. */
   readonly defaultRuntimeId?: string | undefined;
+  readonly permissionModeId?: string | undefined;
   readonly workspace: string;
   readonly mcp?: IExpertAgentMcpConfig | undefined;
   readonly skills?: IExpertAgentSkillsConfig | undefined;
@@ -170,6 +171,7 @@ export class Expert implements IExpertAgent {
   readonly tags: readonly string[];
   readonly scope: string;
   readonly defaultRuntimeId: string | undefined;
+  readonly permissionModeId: string | undefined;
   readonly mcp: IExpertAgentMcpConfig | undefined;
   readonly skills: IExpertAgentSkillsConfig | undefined;
   readonly models: IExpertAgentModelsConfig | undefined;
@@ -280,6 +282,7 @@ export class Expert implements IExpertAgent {
     this.tags = options.tags;
     this.scope = options.scope;
     this.defaultRuntimeId = options.defaultRuntimeId;
+    this.permissionModeId = options.permissionModeId;
     this.mcp = resolved.mcp;
     this.skills = resolved.skills;
     this.models = resolved.models;

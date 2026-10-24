@@ -209,7 +209,7 @@ describe("Mission query repository authority", () => {
     const path = join(repository.storagePath!(mission.id), "mission.yaml");
     await writeFile(
       path,
-      (await readFile(path, "utf8")).replace("pragma.mission/v11", "pragma.mission/v999"),
+      (await readFile(path, "utf8")).replace("pragma.mission/v12", "pragma.mission/v999"),
     );
     for (const view of ["summary", "events"] as const) {
       await expect(

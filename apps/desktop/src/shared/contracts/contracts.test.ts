@@ -54,18 +54,15 @@ describe("desktop settings contracts", () => {
     expect(UpdateDesktopSettingsSchema.parse({ defaultWorkspace: "/workspace/default" })).toEqual({
       defaultWorkspace: "/workspace/default",
     });
-    expect(UpdateDesktopSettingsSchema.parse({ toolPermissionMode: "full-access" })).toEqual({
-      toolPermissionMode: "full-access",
-    });
+    expect(UpdateDesktopSettingsSchema.safeParse({}).success).toBe(false);
     expect(UpdateDesktopSettingsSchema.parse({ agentContextWindow: 258_000 })).toEqual({
       agentContextWindow: 258_000,
     });
     expect(UpdateDesktopSettingsSchema.safeParse({}).success).toBe(false);
     expect(
       DesktopSettingsSnapshotSchema.parse({
-        schemaVersion: 2,
+        schemaVersion: 3,
         localePreference: "zh-Hant",
-        toolPermissionMode: "request-approval",
         agentContextWindow: 258_000,
         defaultWorkspace: "/workspace/default",
         usesBuiltInDefaultWorkspace: false,
@@ -227,8 +224,8 @@ describe("runtime settings contracts", () => {
         status: "ready",
       },
       interpreter: {
-        writeVersion: "pragma.dsl/v9",
-        directReadVersions: ["pragma.dsl/v9"],
+        writeVersion: "pragma.dsl/v10",
+        directReadVersions: ["pragma.dsl/v10"],
         upgradeFromVersions: [
           "pragma.dsl/v2",
           "pragma.dsl/v3",
@@ -280,8 +277,8 @@ describe("runtime settings contracts", () => {
       DesktopBridgeSnapshotSchema.safeParse({
         ...snapshot,
         interpreter: {
-          writeVersion: "pragma.dsl/v9",
-          directReadVersions: ["pragma.dsl/v9"],
+          writeVersion: "pragma.dsl/v10",
+          directReadVersions: ["pragma.dsl/v10"],
           upgradeFromVersions: [],
         },
       }).success,
@@ -352,14 +349,12 @@ describe("mission model override contracts", () => {
     expect(
       UpdateMissionOptionsSchema.parse({
         id,
-        toolPermissionMode: "auto-approve",
         modelOverride: { providerId: "provider", modelId: "model", thinkingLevel: "high" },
       }),
-    ).toMatchObject({ toolPermissionMode: "auto-approve" });
+    ).not.toHaveProperty("toolPermissionMode");
     expect(
       UpdateMissionOptionsSchema.parse({
         id,
-        toolPermissionMode: "request-approval",
         modelOverride: null,
       }).modelOverride,
     ).toBeNull();
@@ -406,7 +401,6 @@ describe("mission creation defaults contracts", () => {
         workspace: { path: "/workspace/default", basename: "default" },
         recentWorkspaces,
         executorRef: "expert:2qgbztga4kz2qz51",
-        toolPermissionMode: "request-approval",
       }).recentWorkspaces,
     ).toEqual(recentWorkspaces);
     expect(
@@ -414,7 +408,6 @@ describe("mission creation defaults contracts", () => {
         workspace: { path: "/workspace/default", basename: "default" },
         recentWorkspaces: [...recentWorkspaces, { path: "/workspace/eleven", basename: "eleven" }],
         executorRef: "expert:2qgbztga4kz2qz51",
-        toolPermissionMode: "request-approval",
       }).success,
     ).toBe(false);
   });
@@ -448,7 +441,6 @@ describe("Home executor preference contracts", () => {
           workspace: { path: "/work/default", basename: "default" },
           recentWorkspaces: [],
           executorRef: "expert:0000000000000001",
-          toolPermissionMode: "request-approval",
         },
       }).executors[0]?.tags,
     ).toEqual(["code"]);
@@ -1017,12 +1009,10 @@ describe("mission contracts", () => {
         },
       ]).success,
     ).toBe(true);
-    expect(
-      CreateMissionSchema.parse({ ...input, toolPermissionMode: "full-access" }).toolPermissionMode,
-    ).toBe("full-access");
+    expect(CreateMissionSchema.parse({ ...input })).not.toHaveProperty("toolPermissionMode");
     expect(
       CreateMissionSchema.safeParse({ ...input, toolPermissionMode: "unrestricted" }).success,
-    ).toBe(false);
+    ).toBe(true);
     expect(
       CreateMissionSchema.safeParse({
         ...input,
@@ -1049,7 +1039,7 @@ describe("mission contracts", () => {
   it("pins a team executor to a project revision", () => {
     expect(
       MissionSchema.parse({
-        schemaVersion: "pragma.mission/v11",
+        schemaVersion: "pragma.mission/v12",
         id: "00000000-0000-4000-8000-000000000000",
         title: "Deliver the feature",
         goal: "Deliver the feature",
@@ -1065,13 +1055,13 @@ describe("mission contracts", () => {
         lifecycleStatus: "active",
         createdAt: "2026-07-11T00:00:00.000Z",
         updatedAt: "2026-07-11T00:00:00.000Z",
-      }).toolPermissionMode,
-    ).toBe("request-approval");
+      }),
+    ).not.toHaveProperty("toolPermissionMode");
   });
 
   it("persists the resolved Desktop environment fingerprint for execution audit", () => {
     const parsed = MissionSchema.parse({
-      schemaVersion: "pragma.mission/v11",
+      schemaVersion: "pragma.mission/v12",
       id: "00000000-0000-4000-8000-000000000000",
       title: "Continue the mission",
       goal: "Continue the mission",

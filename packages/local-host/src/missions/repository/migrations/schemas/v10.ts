@@ -1,7 +1,7 @@
 import { z } from "zod";
+import { MissionBaseSchema } from "./v11.ts";
 
 import {
-  MissionBaseSchema,
   MissionBranchSourceSchema,
   MissionContextMountV10Schema,
   MissionOriginSchema,

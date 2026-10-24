@@ -1,3 +1,4 @@
+import { permissionModes } from "./permission-modes.ts";
 import { readdir } from "node:fs/promises";
 import { join } from "node:path";
 
@@ -51,6 +52,8 @@ type QoderDriverSession = QoderNativeSession;
 export function createQoderCliRuntime(options: QoderCliRuntimeAdapterOptions = {}): RuntimeAdapter {
   const mcpToolRegistries = options.mcpToolRegistryPool ?? createMcpToolRegistryPool();
   const descriptor = {
+    permissionModes,
+    configuredPermissionModeId: options.permissionMode ?? "bypassPermissions",
     ...QODER_DESCRIPTOR,
     ...options.descriptor,
     kind: options.descriptor?.kind ?? QODER_DESCRIPTOR.kind,
@@ -79,7 +82,7 @@ export function createQoderCliRuntime(options: QoderCliRuntimeAdapterOptions = {
     id: "qodercli.permissions",
     readiness: runtimeFeature.degraded(QODER_EVIDENCE_PENDING),
     prepare() {
-      return { mode: options.permissionMode ?? "default" };
+      return { mode: options.permissionMode ?? "bypassPermissions" };
     },
   });
   const features = defineRuntimeFeatures({

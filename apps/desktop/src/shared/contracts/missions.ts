@@ -71,7 +71,6 @@ import { z } from "zod";
 
 import { MissionIdSchema, MissionModelOverrideSchema } from "./mission-base.ts";
 import { DesktopRuntimeIdSchema, DesktopRuntimeModelSchema } from "./runtime.ts";
-import { DesktopToolPermissionModeSchema } from "./settings.ts";
 
 export const MissionModelOptionsRequestSchema = z.object({
   executorRef: MissionExecutorRefSchema,
@@ -118,7 +117,6 @@ export const CreateMissionSchema = z.object({
       })
       .strict(),
   ]),
-  toolPermissionMode: DesktopToolPermissionModeSchema.optional(),
   modelOverride: MissionModelOverrideSchema.optional(),
 });
 

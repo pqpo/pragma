@@ -11,12 +11,11 @@ const executionId = "44444444-4444-4444-8444-444444444444";
 
 function mission() {
   return MissionSchema.parse({
-    schemaVersion: "pragma.mission/v11",
+    schemaVersion: "pragma.mission/v12",
     id: missionId,
     title: "Projection",
     goal: "Project a follow-up turn",
     initialMessageId: "55555555-5555-4555-8555-555555555555",
-    toolPermissionMode: "request-approval",
     workspace: { path: "/tmp/workspace", basename: "workspace" },
     project: { id: "studio", revision: 1 },
     executor: { kind: "expert", ref: "expert:v2vt1v01vzz6j24q", name: "Expert" },

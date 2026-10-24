@@ -176,23 +176,6 @@ export const settings = {
     languageDescription: "选择 Pragma 全局使用的语言。",
     followSystem: "跟随系统",
     resolvedAs: "当前使用{{language}}",
-    toolPermissions: "工具权限",
-    toolPermissionsDescription:
-      "作为新任务的默认值；读取操作永远无需审批，也可在首页为单次任务覆盖。",
-    toolPermissionModes: {
-      "request-approval": {
-        label: "请求批准",
-        description: "写入、命令、网络或其他修改操作执行前询问。",
-      },
-      "auto-approve": {
-        label: "替我审批",
-        description: "自动允许所选 Workspace 内的操作。",
-      },
-      "full-access": {
-        label: "完全访问",
-        description: "无需审批即可访问和修改此设备上的任意位置。",
-      },
-    },
     agentContextWindow: "Agent 上下文窗口",
     agentContextWindowDescription:
       "内置运行时的默认工作上下文预算。模型硬上限较低时，以模型上限为准。会话新建或恢复时生效。",

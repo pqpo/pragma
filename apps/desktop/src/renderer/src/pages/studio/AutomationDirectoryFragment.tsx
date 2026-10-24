@@ -11,7 +11,6 @@ import { useTranslation } from "react-i18next";
 import type {
   AutomationSummary,
   ContextStore,
-  DesktopToolPermissionMode,
   MissionCreationDefaults,
   MissionExecutorOption,
   PragmaProjectSnapshot,
@@ -21,7 +20,6 @@ import { ContextStorePickerDialog } from "../../components/ContextStorePickerDia
 import { MissionExecutorPicker } from "../../components/MissionExecutorPicker.tsx";
 import { SelectMenu } from "../../components/SelectMenu.tsx";
 import { Switch } from "../../components/Switch.tsx";
-import { ToolPermissionSelect } from "../../components/ToolPermissionSelect.tsx";
 import { WorkspacePicker, workspaceSelectionFromPath } from "../../components/WorkspacePicker.tsx";
 import { errorMessage } from "../../lib/errors.ts";
 import {
@@ -48,7 +46,6 @@ type EditorState = {
   readonly flowInput: Readonly<Record<string, unknown>>;
   readonly interaction: "reuse-session" | "new-mission";
   readonly workspace: string;
-  readonly toolPermissionMode: DesktopToolPermissionMode;
   readonly contextStoreIds: readonly string[];
   readonly triggerKind: "once" | "interval" | "calendar" | "cron";
   readonly onceAt: string;
@@ -83,7 +80,6 @@ export function createNewAutomationEditor(
     flowInput: {},
     interaction: "reuse-session",
     workspace: defaults?.workspace.path ?? "",
-    toolPermissionMode: defaults?.toolPermissionMode ?? "request-approval",
     contextStoreIds: [],
     triggerKind: "calendar",
     onceAt: timestamp,
@@ -202,7 +198,6 @@ export function AutomationDirectoryFragment(props: {
             : createSchemaInputValue(executor.inputSchema),
       interaction: automation.resource.spec.interaction.mode,
       workspace: automation.binding?.workspace.path ?? "",
-      toolPermissionMode: automation.binding?.toolPermissionMode ?? "request-approval",
       contextStoreIds:
         automation.binding?.contextMounts.flatMap((mount) =>
           mount.kind === "context-store" ? [mount.storeId] : [],
@@ -273,7 +268,6 @@ export function AutomationDirectoryFragment(props: {
         },
         binding: {
           workspace: editor.workspace,
-          toolPermissionMode: editor.toolPermissionMode,
           contextMounts: editor.contextStoreIds.map((storeId) => ({
             kind: "context-store" as const,
             storeId,
@@ -780,16 +774,6 @@ export function AutomationDirectoryFragment(props: {
                         {t("workspaceRequired")}
                       </p>
                     ) : null}
-                  </div>
-                  <div className="automation-select-field">
-                    <span>{t("toolPermissions")}</span>
-                    <ToolPermissionSelect
-                      className="form-select automation-permission-select"
-                      value={editor.toolPermissionMode}
-                      onChange={(toolPermissionMode) =>
-                        setEditor({ ...editor, toolPermissionMode })
-                      }
-                    />
                   </div>
                 </div>
                 <div className="automation-switch">

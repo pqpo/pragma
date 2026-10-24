@@ -2,7 +2,6 @@ import { useCallback, useEffect, useRef, useState } from "react";
 
 import type {
   DesktopRuntimeModel,
-  DesktopToolPermissionMode,
   MissionModelOverride,
   PragmaDesktopAPI,
 } from "../../../../shared/contracts/index.ts";
@@ -12,7 +11,6 @@ export function useMissionOptions(options: {
   readonly missionId: string;
   readonly executorRef: string;
   readonly isFlow: boolean;
-  readonly persistedToolPermissionMode: DesktopToolPermissionMode;
   readonly persistedModelOverride?: MissionModelOverride | undefined;
   readonly saving: boolean;
   readonly controlsDisabled: boolean;
@@ -21,7 +19,6 @@ export function useMissionOptions(options: {
   readonly finishSave: (token: string) => void;
   readonly persist?:
     | ((options: {
-        readonly toolPermissionMode: DesktopToolPermissionMode;
         readonly modelOverride?: MissionModelOverride | undefined;
       }) => void | Promise<void>)
     | undefined;
@@ -33,9 +30,6 @@ export function useMissionOptions(options: {
   const [modelsLoading, setModelsLoading] = useState(false);
   const [defaultModelSelection, setDefaultModelSelection] = useState<MissionModelOverride>();
   const [modelResetRequired, setModelResetRequired] = useState(false);
-  const [toolPermissionMode, setToolPermissionMode] = useState<DesktopToolPermissionMode>(
-    options.persistedToolPermissionMode,
-  );
   const [modelOverride, setModelOverride] = useState<MissionModelOverride | undefined>(
     options.persistedModelOverride,
   );
@@ -53,9 +47,8 @@ export function useMissionOptions(options: {
 
   useEffect(() => {
     if (options.saving) return;
-    setToolPermissionMode(options.persistedToolPermissionMode);
     setModelOverride(options.persistedModelOverride);
-  }, [options.persistedModelOverride, options.persistedToolPermissionMode, options.saving]);
+  }, [options.persistedModelOverride, options.saving]);
 
   useEffect(() => {
     setModels([]);
@@ -112,38 +105,25 @@ export function useMissionOptions(options: {
   }, [options.api, options.executorRef, options.isFlow, options.missionId]);
 
   const save = useCallback(
-    async (
-      nextToolPermissionMode: DesktopToolPermissionMode,
-      nextModelOverride: MissionModelOverride | undefined,
-    ): Promise<void> => {
+    async (nextModelOverride: MissionModelOverride | undefined): Promise<void> => {
       if (options.controlsDisabled) return;
       const operationToken = options.beginSave();
       if (operationToken === undefined) return;
-      const previousToolPermissionMode = toolPermissionMode;
       const previousModelOverride = modelOverride;
-      setToolPermissionMode(nextToolPermissionMode);
       setModelOverride(nextModelOverride);
       try {
         await callbacksRef.current.persist?.({
-          toolPermissionMode: nextToolPermissionMode,
           ...(nextModelOverride === undefined ? {} : { modelOverride: nextModelOverride }),
         });
         callbacksRef.current.onClearError();
       } catch (saveError) {
-        setToolPermissionMode(previousToolPermissionMode);
         setModelOverride(previousModelOverride);
         callbacksRef.current.onError(saveError);
       } finally {
         options.finishSave(operationToken);
       }
     },
-    [
-      modelOverride,
-      options.beginSave,
-      options.controlsDisabled,
-      options.finishSave,
-      toolPermissionMode,
-    ],
+    [modelOverride, options.beginSave, options.controlsDisabled, options.finishSave],
   );
 
   return {
@@ -152,7 +132,6 @@ export function useMissionOptions(options: {
     modelsLoading,
     defaultModelSelection,
     modelResetRequired,
-    toolPermissionMode,
     modelOverride,
     save,
   };

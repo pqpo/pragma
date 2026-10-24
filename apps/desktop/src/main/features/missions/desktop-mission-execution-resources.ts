@@ -51,7 +51,6 @@ import { join } from "node:path";
 import {
   ContextStoreIdSchema,
   isUserFacingMissionOrigin,
-  type DesktopToolPermissionMode,
   type Mission,
 } from "../../../shared/contracts/index.ts";
 import {
@@ -144,12 +143,8 @@ export interface DesktopMissionExecutionResourceOptions {
   readonly runtimes: RuntimeResolver;
   readonly usage?: DesktopUsageStore | undefined;
   readonly loggerProvider?: import("@pragma/core").PragmaLoggerProvider | undefined;
-  readonly runtimesForToolPermissionMode?:
-    ((mode: DesktopToolPermissionMode) => RuntimeResolver) | undefined;
   readonly automaticHumanInteractionHandler?:
     ExpertAgentAutomaticHumanInteractionHandler | undefined;
-  readonly automaticHumanInteractionHandlerForToolPermissionMode?:
-    ((mode: DesktopToolPermissionMode) => ExpertAgentAutomaticHumanInteractionHandler) | undefined;
   readonly systemExecutorSource?:
     | ((input: {
         readonly mission: Mission;
@@ -234,11 +229,6 @@ export function createDesktopMissionExecutionResources(
   const logger = createPragmaLogger(options.loggerProvider, {
     component: "desktop.mission-resources",
   });
-  const runtimeResolverForToolPermissionMode = (mode: DesktopToolPermissionMode) =>
-    options.runtimesForToolPermissionMode?.(mode) ?? options.runtimes;
-  const automaticHumanInteractionHandlerForToolPermissionMode = (mode: DesktopToolPermissionMode) =>
-    options.automaticHumanInteractionHandlerForToolPermissionMode?.(mode) ??
-    options.automaticHumanInteractionHandler;
 
   return {
     ...options,
@@ -251,14 +241,11 @@ export function createDesktopMissionExecutionResources(
         expertSessionStore,
       }) => {
         const systemMission = !isUserFacingMissionOrigin(mission.origin);
-        let toolPermissionMode = mission.toolPermissionMode;
+
         const runtimes: RuntimeResolver = {
-          getDefaultRuntimeId: async () =>
-            await runtimeResolverForToolPermissionMode(toolPermissionMode).getDefaultRuntimeId(),
-          bind: async (request) =>
-            await runtimeResolverForToolPermissionMode(toolPermissionMode).bind(request),
-          resolve: async (request) =>
-            await runtimeResolverForToolPermissionMode(toolPermissionMode).resolve(request),
+          getDefaultRuntimeId: async () => await options.runtimes.getDefaultRuntimeId(),
+          bind: async (request) => await options.runtimes.bind(request),
+          resolve: async (request) => await options.runtimes.resolve(request),
         };
         if (purpose === "stop")
           return {
@@ -269,9 +256,6 @@ export function createDesktopMissionExecutionResources(
               executionStore,
               expertSessionStore,
               loggerProvider: options.loggerProvider?.withScope({ missionId: mission.id }),
-            },
-            setToolPermissionMode: (mode) => {
-              toolPermissionMode = mode;
             },
           };
         const missionRoot =
@@ -598,9 +582,7 @@ export function createDesktopMissionExecutionResources(
               ) {
                 return { kind: "tool_approval", approved: false, updatedInput: request.input };
               }
-              return await automaticHumanInteractionHandlerForToolPermissionMode(
-                toolPermissionMode,
-              )?.(request);
+              return await options.automaticHumanInteractionHandler?.(request);
             },
             usageSink:
               options.usage === undefined
@@ -633,9 +615,6 @@ export function createDesktopMissionExecutionResources(
                       });
                     },
                   },
-          },
-          setToolPermissionMode: (mode: DesktopToolPermissionMode) => {
-            toolPermissionMode = mode;
           },
         };
         return context;
@@ -915,6 +894,11 @@ export function createDesktopMissionExecutionResources(
           pragmaHome: options.pragmaHome,
           loggerProvider: options.loggerProvider,
           revisionSource: {
+            getCurrentResources: async (projectId) => {
+              if (projectId !== options.project.projectId)
+                throw new Error(`Mission project is unavailable: ${projectId}`);
+              return (await options.project.get()).resources;
+            },
             getRevision: async (projectId, revision) => {
               if (projectId !== options.project.projectId)
                 throw new Error(`Mission project is unavailable: ${projectId}`);

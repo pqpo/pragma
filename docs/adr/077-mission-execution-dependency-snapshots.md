@@ -2,7 +2,7 @@
 
 ## Status
 
-Accepted, 2026-10-23. The requested scope is new Missions; historical Missions do not need snapshot reconstruction.
+Accepted, 2026-10-23. Superseded in part by [ADR 078](078-expert-native-harness-permissions.md): subsequent requests use current Expert execution profiles while other dependencies remain pinned. The requested scope is new Missions; historical Missions do not need snapshot reconstruction.
 
 ## Decision
 

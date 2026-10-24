@@ -330,13 +330,14 @@ describe("retained Node Mission compilation authority", () => {
     f.readRevision.mockClear();
     f.compileCalls.mockClear();
     await f.send();
-    expect(f.readRevision).toHaveBeenCalledExactlyOnceWith("studio", 1);
+    expect(f.readRevision).toHaveBeenCalledWith("studio", 1);
+    expect(f.readRevision).toHaveBeenCalledWith("studio");
     expect(f.compileCalls).toHaveBeenCalledOnce();
     expect(f.resolveExecutor).toHaveBeenCalledOnce();
     expect(f.resume).toHaveBeenCalledOnce();
     expect(f.prompt).toHaveBeenCalledOnce();
     await f.send();
-    expect(f.readRevision).toHaveBeenCalledTimes(2);
+    expect(f.readRevision).toHaveBeenCalledTimes(4);
     expect(f.compileCalls).toHaveBeenCalledOnce();
     expect(f.resolveExecutor).toHaveBeenCalledOnce();
     expect(f.resume).toHaveBeenCalledOnce();
@@ -359,7 +360,7 @@ describe("retained Node Mission compilation authority", () => {
     f.authority.mockClear();
     await f.send();
     await f.send();
-    expect(f.readRevision).toHaveBeenCalledTimes(2);
+    expect(f.readRevision).toHaveBeenCalledTimes(4);
     expect(f.authority).toHaveBeenCalledTimes(2);
     expect(f.compileCalls).toHaveBeenCalledTimes(1);
     expect(f.canUse).not.toHaveBeenCalled();

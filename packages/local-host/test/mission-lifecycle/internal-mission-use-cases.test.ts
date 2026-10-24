@@ -26,7 +26,6 @@ async function missionFixture() {
     project: { id: "project", revision: 1 },
     executor: { kind: "expert", ref: "expert:0000000000st0rev", name: "Store Revision Agent" },
     origin: { type: "system-store-revision", jobId: randomUUID(), storeId: randomUUID() },
-    toolPermissionMode: "request-approval",
   });
   await store.updateExecution(mission.id, {
     id: randomUUID(),
@@ -54,7 +53,7 @@ it.each(["succeeded", "failed", "cancelled"] as const)(
       pollIntervalMs: 1,
     });
     expect(result.execution?.status).toBe(status);
-    expect(result.toolPermissionMode).toBe("request-approval");
+    expect(result).not.toHaveProperty("toolPermissionMode");
     expect(result.origin).toEqual(mission.origin);
     expect(read).toHaveBeenCalledTimes(2);
   },

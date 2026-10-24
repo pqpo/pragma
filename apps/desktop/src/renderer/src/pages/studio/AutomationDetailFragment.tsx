@@ -5,7 +5,6 @@ import { useTranslation } from "react-i18next";
 
 import type {
   AutomationSummary,
-  DesktopToolPermissionMode,
   MissionExecutorOption,
 } from "../../../../shared/contracts/index.ts";
 import { errorMessage } from "../../lib/errors.ts";
@@ -229,7 +228,7 @@ export function AutomationDetailFragment(props: {
                   <code>{automation.binding?.workspace.path ?? t("notConfigured")}</code>
                 </DetailRow>
                 <DetailRow label={t("toolPermissions")}>
-                  {permissionLabel(automation.binding?.toolPermissionMode, t)}
+                  {t("expertPermissions", { defaultValue: "Expert configuration" })}
                 </DetailRow>
                 {automation.missionId ? (
                   <DetailRow label={t("continuityMission")}>
@@ -351,14 +350,4 @@ function triggerKindLabel(kind: string, t: (key: string) => string): string {
   if (kind === "interval") return t("scheduleInterval");
   if (kind === "calendar") return t("scheduleCalendar");
   return t("scheduleCron");
-}
-
-function permissionLabel(
-  permission: DesktopToolPermissionMode | undefined,
-  t: (key: string) => string,
-): string {
-  if (permission === "auto-approve") return t("autoApprove");
-  if (permission === "full-access") return t("fullAccess");
-  if (permission === "request-approval") return t("requestApproval");
-  return t("notConfigured");
 }

@@ -109,6 +109,9 @@ export async function getRuntimeAvailability(
           adapter: definition!.adapter,
           isDefault: adapter.descriptor.id === defaultRuntimeId,
           kind: adapter.descriptor.kind,
+          ...(adapter.descriptor.permissionModes === undefined
+            ? {}
+            : { permissionModes: adapter.descriptor.permissionModes }),
           displayName:
             adapter.descriptor.id === "pi"
               ? BUILT_IN_RUNTIME_DISPLAY_NAME
@@ -279,6 +282,9 @@ export async function getTargetRuntimeAvailability(
         isDefault: runtimeId === defaultRuntimeId,
         displayName: resolved.adapter.descriptor.displayName,
         kind: resolved.adapter.descriptor.kind,
+        ...(resolved.adapter.descriptor.permissionModes === undefined
+          ? {}
+          : { permissionModes: resolved.adapter.descriptor.permissionModes }),
         status: availability.usable ? "available" : "unavailable",
         ...(availability.reason === undefined ? {} : { reason: availability.reason }),
         ...modelCatalog,
