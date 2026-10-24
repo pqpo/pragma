@@ -1,5 +1,5 @@
 import {
-  PragmaResourceSchema,
+  PragmaForwardCompatibleResourceSchema,
   canonicalPragmaResourceRef,
   type PragmaResource,
 } from "../../ast/index.ts";
@@ -131,7 +131,7 @@ function migrateResource(historical: PragmaCompilerV9Resource): PragmaResource {
       if (policy !== undefined) delete policy["context"];
     }
   }
-  return PragmaResourceSchema.parse(migrated);
+  return PragmaForwardCompatibleResourceSchema.parse(migrated);
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

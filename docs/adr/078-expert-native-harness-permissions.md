@@ -46,6 +46,10 @@ system Runtime in the saved source. Returning to an
 earlier profile uses the same succession rules. Mode participates in adapter caches, compilation identity, Expert definition
 fingerprints and native Runtime Context identity. Different modes cannot share the
 same native Session identity. Delegated Experts bind their own modes independently.
+Readiness checks use the same live profiles as compilation, while explicit Flow bindings
+and Node's pinned system Runtime remain authoritative. A process-local profile fingerprint
+also detects model-only or thinking-only changes and requires a successor definition;
+it does not change persisted definition fingerprints or historical Session recovery.
 
 Native read-only describes native filesystem execution. It does not revoke managed
 MCP capabilities: explicit tool allowlists, business approvals, credentials and

@@ -1,3 +1,6 @@
+import { parsePragmaYaml } from "../src/compiler/project-yaml.ts";
+import { sha256, stableStringify } from "../src/compiler/compiler-hash.ts";
+import { PragmaCompilerV9ResourceSchema } from "../src/compiler-migrations/schemas/v9.ts";
 import { PRAGMA_DSL_WRITE_API_VERSION } from "../src/ast/index.ts";
 import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -1211,6 +1214,65 @@ describe("Pragma YAML DSL", () => {
       migratePragmaCompilerProjectToCurrent({ files, revisionCompilerVersion: "pragma.dsl/v9" }),
     ).toThrow("does not match its lock");
     expect(files.get(resource)).toContain("Tampered instructions");
+  });
+
+  it("preserves historical v9 extension fields while validating known fields", async () => {
+    const root = join(import.meta.dirname, "fixtures", "compiler-v9-expert-permissions");
+    const path = "experts/v2vt1v01vzz6j24q.pragma.yaml";
+    const resource = PragmaCompilerV9ResourceSchema.parse({
+      ...(parsePragmaYaml(await readFile(join(root, path), "utf8")) as object),
+      extension: { enabled: true },
+    });
+    if (resource.kind !== "Expert") throw new Error("Expected Expert fixture");
+    Object.assign(resource.metadata, { extension: { source: "older writer" } });
+    Object.assign(resource.spec, { extension: { values: [{ nested: "kept" }] } });
+    const historical = PragmaCompilerV9ResourceSchema.parse(resource);
+    const resources = [
+      {
+        ref: `expert:${historical.metadata.id}`,
+        contentHash: sha256(stableStringify(historical)),
+        source: path,
+      },
+    ];
+    const files = new Map([
+      ["pragma.yaml", await readFile(join(root, "pragma.yaml"), "utf8")],
+      [path, formatPragmaYaml(historical)],
+      [
+        "pragma.lock.yaml",
+        formatPragmaYaml({
+          apiVersion: "pragma/v5",
+          kind: "Lock",
+          compilerVersion: "pragma.dsl/v9",
+          resources,
+          artifacts: [],
+          projectFingerprint: sha256(
+            stableStringify({
+              resources: resources.map(({ ref, contentHash }) => ({ ref, contentHash })),
+              artifacts: [],
+            }),
+          ),
+        }),
+      ],
+    ]);
+    const original = new Map(files);
+    expect(
+      migratePragmaCompilerProjectToCurrent({ files, revisionCompilerVersion: "pragma.dsl/v9" })
+        .resources,
+    ).toMatchObject([
+      {
+        extension: { enabled: true },
+        metadata: { extension: { source: "older writer" } },
+        spec: { extension: { values: [{ nested: "kept" }] } },
+      },
+    ]);
+    expect(files).toEqual(original);
+    files.set(
+      path,
+      formatPragmaYaml({ ...historical, spec: { ...resource.spec, instructions: 42 } }),
+    );
+    expect(() =>
+      migratePragmaCompilerProjectToCurrent({ files, revisionCompilerVersion: "pragma.dsl/v9" }),
+    ).toThrow("cannot be upgraded");
   });
 
   it("upgrades a compiler v7 pragma/v4 fixture written by the historical compiler", async () => {

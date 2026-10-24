@@ -1,5 +1,15 @@
 # Experts and Expert Sessions
 
+Desktop 的专家设置在选择 Harness 后配置模型、思考等级和该 Harness 提供的原生权限模式。
+默认使用完全访问，不提供 Plan；Codex 可选择原生只读，Pi 当前只提供完全访问。
+
+升级后，旧全局、Mission 和 Automation 的统一权限选项退休，旧的“请求审批”设置不再约束新执行；
+需要审批或只读时，请到专家设置中选择 Harness 支持的对应模式。原生只读不撤销另行授权的
+受管 MCP 能力；工具白名单和业务审批继续独立生效。
+
+Mission 的指令、工具和知识依赖保持固定，后续消息与手动重试使用当前专家执行配置。
+委派成员仅修改模型或思考等级也会在下次消息时更新会话定义；运行中的执行保持原配置。
+
 ```ts
 const expert = await defineExpert({ ...options });
 const session = await app.experts.createSession(expert);

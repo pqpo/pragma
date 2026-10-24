@@ -5,6 +5,7 @@ import { mkdir } from "node:fs/promises";
 
 import {
   fingerprintExpertExecutionDefinition,
+  fingerprintExpertDelegationExecutionProfiles,
   withFileLock,
   type RuntimeModelSelection,
   type RuntimeResolver,
@@ -120,6 +121,8 @@ export interface LocalHostStableMissionCompilation {
   readonly plugins: readonly LocalHostResolvedPluginEnvironment[];
   readonly identity: string;
   readonly definitionFingerprint?: string | undefined;
+  /** Process-local guard; persisted definition fingerprints keep their historical shape. */
+  readonly executionProfilesFingerprint?: string | undefined;
 }
 
 export interface LocalHostMissionCompileService<
@@ -144,7 +147,13 @@ export interface LocalHostMissionCompileService<
     runtimes: RuntimeResolver,
     purpose?: "execute" | "stop",
   ): Promise<CompiledResource<InvocableResource>>;
-  runtimeIds(scope: LocalHostMissionCompileScope<Request>): Promise<readonly string[]>;
+  runtimeIds(
+    scope: LocalHostMissionCompileScope<Request>,
+    runtimes?: RuntimeResolver,
+  ): Promise<readonly string[]>;
+  executionProfilesFingerprintFor(
+    compiled: CompiledResource<InvocableResource>,
+  ): string | undefined;
   secretsFor(
     compiled: CompiledResource<InvocableResource>,
   ): readonly LocalHostResolvedSecretEnvironment[] | undefined;
@@ -162,6 +171,7 @@ export interface LocalHostMissionCompileService<
       readonly identity?: string | undefined;
       readonly hasOwner: boolean;
       readonly definitionFingerprint?: string | undefined;
+      readonly executionProfilesFingerprint?: string | undefined;
       readonly capabilities?: readonly LocalHostResolvedCapabilityEnvironment[] | undefined;
       readonly secrets?: readonly LocalHostResolvedSecretEnvironment[] | undefined;
       readonly plugins?: readonly LocalHostResolvedPluginEnvironment[] | undefined;
@@ -171,6 +181,7 @@ export interface LocalHostMissionCompileService<
     readonly definitionChanged: boolean;
     readonly refreshEnvironment?: boolean | undefined;
     readonly definitionFingerprint?: string | undefined;
+    readonly executionProfilesFingerprint?: string | undefined;
     readonly identityDurationMs: number;
     readonly compileDurationMs: number;
     readonly identity: string;
@@ -389,6 +400,7 @@ export function createLocalHostMissionCompileService<
     }
     return result;
   };
+  const executionProfilesFingerprints = new WeakMap<CompiledResource<InvocableResource>, string>();
   const profileOverlayCompilations = new WeakSet<CompiledResource<InvocableResource>>();
   const compilationResources = new WeakMap<
     CompiledResource<InvocableResource>,
@@ -919,6 +931,11 @@ export function createLocalHostMissionCompileService<
         plugins,
         pluginReaders,
       });
+      if (!("kind" in compiled.value && compiled.value.kind === "flow"))
+        executionProfilesFingerprints.set(
+          compiled,
+          fingerprintExpertDelegationExecutionProfiles(compiled.value),
+        );
       if (hasExecutionProfileOverlay) profileOverlayCompilations.add(compiled);
       return compiled;
     } catch (error) {
@@ -975,6 +992,7 @@ export function createLocalHostMissionCompileService<
           secrets: resourceCompilation.secrets,
           plugins: resourceCompilation.plugins,
           identity: afterIdentity,
+          executionProfilesFingerprint: executionProfilesFingerprints.get(compiled),
           ...("kind" in compiled.value && compiled.value.kind === "flow"
             ? {}
             : { definitionFingerprint: fingerprintExpertExecutionDefinition(compiled.value) }),
@@ -1085,6 +1103,7 @@ export function createLocalHostMissionCompileService<
   return {
     isExecutionPinned: async (scope) => (await readSnapshot(scope)) !== undefined,
     allowsExecutionProfileSuccessor: (compiled) => profileOverlayCompilations.has(compiled),
+    executionProfilesFingerprintFor: (compiled) => executionProfilesFingerprints.get(compiled),
     createRequestScope,
     capabilities,
     identity,
@@ -1092,17 +1111,48 @@ export function createLocalHostMissionCompileService<
     compileStable,
     secretsFor: (compiled) => compilationResources.get(compiled)?.secrets,
     pluginsFor: (compiled) => compilationResources.get(compiled)?.plugins,
-    async runtimeIds(scope) {
+    async runtimeIds(scope, runtimes) {
       const ids = new Set<string>();
       const snapshot = await readSnapshot(scope);
-      for (const source of Object.values(snapshot?.sources ?? {}))
-        if (source.rootExecutionOverride !== undefined)
-          ids.add(source.rootExecutionOverride.runtimeId);
-      await visitDependencies(scope, (resource) => {
-        if (resource?.kind !== "RuntimeProfile") return;
-        const config = resource.spec.config as { runtimeId?: string };
-        if (config.runtimeId !== undefined) ids.add(config.runtimeId);
+      const profiles = await executionProfiles(scope);
+      const resources = new Map<string, PragmaResource>();
+      await visitDependencies(scope, (resource, ref) => {
+        if (resource !== undefined) resources.set(ref, resource);
       });
+      const profileRefs = new Set<string>();
+      for (const [ref, resource] of resources) {
+        if (resource.kind === "Expert") {
+          // Match compileExpert: live profiles replace the pinned RuntimeProfile.
+          const profile = profiles[resource.metadata.id];
+          const pinnedOverride = snapshot?.sources[ref]?.rootExecutionOverride;
+          if (
+            pinnedOverride !== undefined &&
+            options.systemExecutors?.tracksDefaultRuntime === false
+          )
+            ids.add(pinnedOverride.runtimeId);
+          else if (profile !== undefined) {
+            if (profile !== null) ids.add(profile.runtimeId);
+            else if (runtimes !== undefined) ids.add(await runtimes.getDefaultRuntimeId());
+          } else if (resource.spec.runtime !== undefined)
+            profileRefs.add(resource.spec.runtime.ref);
+          else if (runtimes !== undefined) ids.add(await runtimes.getDefaultRuntimeId());
+        } else {
+          // Explicit Flow/team Runtime bindings remain authoritative independently of Expert defaults.
+          for (const dependency of referencedPragmaResourceRefs([resource]))
+            if (dependency.startsWith("runtime-profile:")) profileRefs.add(dependency);
+        }
+      }
+      for (const ref of profileRefs) {
+        const resource = resources.get(ref);
+        if (resource?.kind === "RuntimeProfile") {
+          const config = resource.spec.config as { runtimeId?: unknown };
+          if (typeof config.runtimeId === "string") ids.add(config.runtimeId);
+        }
+      }
+      // Some host-owned sources have no declarative Expert resource.
+      for (const [ref, source] of Object.entries(snapshot?.sources ?? {}))
+        if (!resources.has(ref) && source.rootExecutionOverride !== undefined)
+          ids.add(source.rootExecutionOverride.runtimeId);
       return [...ids];
     },
     async prepare(scope, runtimes, owner) {
@@ -1164,6 +1214,7 @@ export function createLocalHostMissionCompileService<
           identity: desiredIdentity,
           capabilities: active,
           definitionFingerprint: owner!.definitionFingerprint,
+          executionProfilesFingerprint: owner!.executionProfilesFingerprint,
           secrets: owner!.secrets!,
           plugins: owner!.plugins!,
           ensureCompiled,
@@ -1171,11 +1222,16 @@ export function createLocalHostMissionCompileService<
       const compileStartedAt = performance.now();
       const result = await ensureCompiled();
       const compileDurationMs = performance.now() - compileStartedAt;
+      const executionProfilesChanged =
+        owner?.hasOwner === true &&
+        owner.executionProfilesFingerprint !== undefined &&
+        owner.executionProfilesFingerprint !== result.executionProfilesFingerprint;
       const definitionChanged =
         owner?.hasOwner === true &&
-        ((owner.secrets === undefined
-          ? result.secrets.length > 0
-          : JSON.stringify(owner.secrets) !== JSON.stringify(result.secrets)) ||
+        (executionProfilesChanged ||
+          (owner.secrets === undefined
+            ? result.secrets.length > 0
+            : JSON.stringify(owner.secrets) !== JSON.stringify(result.secrets)) ||
           (owner.plugins === undefined
             ? result.plugins.length > 0
             : JSON.stringify(owner.plugins) !== JSON.stringify(result.plugins)) ||
@@ -1188,6 +1244,7 @@ export function createLocalHostMissionCompileService<
       // Session after releasing its old handle. It must not create a new conversation.
       const refreshEnvironment =
         definitionChanged &&
+        !executionProfilesChanged &&
         (await readSnapshot(scope)) !== undefined &&
         owner?.definitionFingerprint !== undefined &&
         owner.definitionFingerprint === result.definitionFingerprint;

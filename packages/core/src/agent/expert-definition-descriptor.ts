@@ -14,6 +14,33 @@ export function fingerprintExpertExecutionDefinition(definition: ExpertDefinitio
     .digest("hex");
 }
 
+/** Live delegated profiles are compared separately so historical Session fingerprints stay stable. */
+export function fingerprintExpertDelegationExecutionProfiles(definition: ExpertDefinition): string {
+  const profiles = new Map<string, unknown>();
+  const rootId = isExpertTeam(definition) ? definition.coordinator.id : definition.id;
+  const visited = new Set<string>();
+  const visit = (expert: Expert, delegated: boolean): void => {
+    // Root model selection is supplied per prompt, including queued prompts.
+    if (delegated && expert.id !== rootId)
+      profiles.set(expert.id, {
+        runtimeId: expert.defaultRuntimeId,
+        permissionModeId: expert.permissionModeId,
+        models: expert.models,
+      });
+    if (visited.has(expert.id)) return;
+    visited.add(expert.id);
+    for (const tool of expert.tools ?? [])
+      for (const member of readAgentDelegationDefinition(tool)?.experts ?? []) visit(member, true);
+  };
+  if (isExpertTeam(definition)) {
+    visit(definition.coordinator, false);
+    for (const member of definition.members) visit(member, true);
+  } else visit(definition, false);
+  return createHash("sha256")
+    .update(JSON.stringify([...profiles].sort(([left], [right]) => left.localeCompare(right))))
+    .digest("hex");
+}
+
 function describeDefinition(definition: ExpertDefinition, ancestors: Set<string>): unknown {
   if (isExpertTeam(definition)) {
     return {

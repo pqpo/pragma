@@ -391,6 +391,61 @@ describe("default Node compilation reaches persisted Execution", { timeout: wait
       await executions.close();
     }
   });
+  it("preflights the live Harness when the pinned Harness is unavailable", async () => {
+    const f = await fixture();
+    const paths = new PragmaPaths({ pragmaHome: f.home });
+    const { createPragmaProjectStore } =
+      await import("../src/deployment/projects/pragma-project-store.ts");
+    const project = createPragmaProjectStore({
+      projectsPath: paths.projectsRoot(),
+      objectsPath: paths.contentObjectsRoot(),
+      projectViewsPath: paths.projectViewsCacheRoot(),
+    });
+    const snapshot = await project.get();
+    const resources = structuredClone(snapshot.resources);
+    for (const resource of resources)
+      if (resource.kind === "RuntimeProfile")
+        resource.spec.config = { runtimeId: "pi", providerId: "test", model: "test-model" };
+    await project.publish({ expectedRevision: snapshot.revision, resources });
+    f.canUse.mockReturnValue({ usable: false, reason: "Codex was uninstalled" });
+    const nextStart = vi.fn(() => ({ outputText: "Pi", runtimeSessionId: "pi-native" }));
+    const pi = defineRuntimeTestDriver({
+      descriptor: { id: "pi", kind: "test", displayName: "Pi" },
+      createSession: () => ({}),
+      startTurn: nextStart,
+      mapEvent: () => ({ events: [] }),
+    });
+    const nextCanUse = vi.spyOn(pi, "canUse");
+    const app = createLocalHostNodeApplication({
+      pragmaHome: f.home,
+      runtimes: createStaticRuntimeResolver({
+        defaultRuntimeId: "codex",
+        runtimes: [f.driver, pi],
+      }),
+      client: { surface: "cli", version: "test", instanceId: randomUUID() },
+    });
+    const request = {
+      command: "expert.run" as const,
+      executor: { kind: "expert" as const, id: f.expertId },
+      project: { projectId: "studio", revision: 1 },
+      workspace: f.workspace,
+      prompt: "Use the current Harness",
+      detach: false,
+    };
+    for (const expected of ["succeeded", "failed", "succeeded"]) {
+      if (expected === "failed")
+        nextStart.mockImplementationOnce(() => {
+          throw new Error("Retryable Pi failure");
+        });
+      const run = await app.run!.start({ ...request, requestId: randomUUID() });
+      expect((await run.outcome).status).toBe(expected);
+      await app.missionControl!.stopOwner(run.missionId);
+    }
+    expect(nextCanUse).toHaveBeenCalled();
+    expect(nextStart).toHaveBeenCalledTimes(3);
+    expect(f.startTurn).not.toHaveBeenCalled();
+  });
+
   it.each([false, true])("executes stable Host IDs and manual retry (%s)", async (withAlias) => {
     const f = await fixture();
     const paths = new PragmaPaths({ pragmaHome: f.home });

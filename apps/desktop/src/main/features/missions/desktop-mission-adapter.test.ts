@@ -7314,7 +7314,9 @@ describe("Desktop Mission resource adapter contracts", { timeout: 30_000 }, () =
           id: mission.id,
           modelOverride: updated.modelOverride!,
         }),
-      ).rejects.toThrow("mission permissions");
+      ).resolves.toMatchObject({ modelOverride: updated.modelOverride });
+      expect(startTurn).toHaveBeenCalledOnce();
+      expect(closeSession).not.toHaveBeenCalled();
       await runner.sendMessage({
         id: mission.id,
         content: "Queued after switch",
@@ -10848,4 +10850,106 @@ it("keeps a running mode frozen and adopts the expert's current mode after cold 
     instructions: observations[2]!.instructions,
   });
   expect(observations[4]!.contextId).not.toBe(observations[3]!.contextId);
+}, 20_000);
+
+it("updates only a delegated member's model and thinking level in a warm Mission", async () => {
+  const root = await mkdtemp(join(tmpdir(), "pragma-warm-delegated-model-"));
+  temporaryPaths.push(root);
+  const project = createPragmaProjectStore({ projectsPath: join(root, "projects") });
+  const writer = expertFixtureWithReviewerTool();
+  const reviewer = reviewerFixture();
+  const memberProfile = {
+    ...runtimeFixture(),
+    metadata: { ...runtimeFixture().metadata, id: "0123456789abcdef" },
+    spec: {
+      ...runtimeFixture().spec,
+      config: { runtimeId: "fake", providerId: "test", model: "member-one", thinkingLevel: "low" },
+    },
+  };
+  reviewer.spec.runtime = { ref: "runtime-profile:0123456789abcdef" };
+  let snapshot = await project.publish({
+    expectedRevision: 0,
+    resources: [runtimeFixture(), memberProfile, writer, reviewer],
+  });
+  const missions = createMissionStore({ missionsPath: join(root, "missions") });
+  const mission = await missions.create({
+    workspace: { path: root, basename: "workspace" },
+    goal: "Delegate review",
+    project: { id: snapshot.projectId, revision: snapshot.revision },
+    executor: missionExecutorSnapshot(writer),
+  });
+  const models: unknown[] = [];
+  const runtime = defineRuntimeTestDriver<never, { context: RuntimeNativeSessionContext }>({
+    descriptor: { id: "fake", kind: "test", displayName: "Fake" },
+    createSession: (context) => ({ context }),
+    readSession: (session) => ({ runtimeSessionId: session.context.systemSessionId }),
+    async startTurn(session, turn) {
+      if (session.context.agent.id === reviewer.metadata.id) {
+        models.push(session.context.agent.models?.default);
+        return { outputText: "reviewed", runtimeSessionId: session.context.systemSessionId };
+      }
+      expect(session.context.agent.instructions).toBe(writer.spec.instructions);
+      const call = session.context.agent.tools?.find((tool) => tool.name === "call_reviewer");
+      if (call === undefined) throw new Error("Missing reviewer tool");
+      const response = await call.call({ prompt: "Review" }, turn.signal, {
+        execution: session.context.request.executionContext,
+      });
+      expect(response.isError).not.toBe(true);
+      return { outputText: "done", runtimeSessionId: session.context.systemSessionId };
+    },
+    mapEvent: () => ({ events: [] }),
+    closeSession: () => undefined,
+  });
+  const runner = createDesktopMissionTestApplication({
+    missions,
+    project,
+    capabilityStore: {} as CapabilityStore,
+    capabilityCredentials: {} as CapabilityCredentialStore,
+    capabilitiesPath: join(root, "capabilities"),
+    pragmaHome: join(root, "state"),
+    runtimes: createStaticRuntimeResolver({ runtimes: [runtime], defaultRuntimeId: "fake" }),
+  });
+  try {
+    await runner.startRun(mission.id);
+    await vi.waitFor(async () =>
+      expect((await missions.get(mission.id)).execution?.status).toBe("succeeded"),
+    );
+    let sessionId = (await missions.get(mission.id)).execution?.sessionId;
+    expect(models).toEqual([
+      { model: { providerId: "test", modelId: "member-one" }, thinkingLevel: "low" },
+    ]);
+    for (const [index, config] of [
+      { model: "member-two", thinkingLevel: "low" },
+      { model: "member-two", thinkingLevel: "high" },
+    ].entries()) {
+      memberProfile.spec.config = { runtimeId: "fake", providerId: "test", ...config };
+      snapshot = await project.publish({
+        expectedRevision: snapshot.revision,
+        resources: [
+          runtimeFixture(),
+          memberProfile,
+          { ...writer, spec: { ...writer.spec, instructions: "New instructions stay unpinned" } },
+          reviewer,
+        ],
+      });
+      await runner.sendMessage({
+        id: mission.id,
+        content: "Review again",
+        requestId: randomUUID(),
+      });
+      await vi.waitFor(async () => {
+        expect((await missions.get(mission.id)).execution?.status).toBe("succeeded");
+        expect(models).toHaveLength(index + 2);
+      });
+      expect(models.at(-1)).toEqual({
+        model: { providerId: "test", modelId: config.model },
+        thinkingLevel: config.thinkingLevel,
+      });
+      expect((await missions.get(mission.id)).execution?.sessionId).not.toBe(sessionId);
+      sessionId = (await missions.get(mission.id)).execution?.sessionId;
+      expect((await missions.get(mission.id)).project.revision).toBe(1);
+    }
+  } finally {
+    await runner.stopLocalController(mission.id, "shutdown");
+  }
 }, 20_000);

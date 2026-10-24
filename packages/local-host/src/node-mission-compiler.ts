@@ -179,7 +179,7 @@ export function createLocalHostNodeMissionCompiler<
   const readiness = createLocalHostRuntimeReadiness({ runtimes: options.runtimes });
   const assertReady = async (scope: Parameters<typeof service.compile>[0]): Promise<void> =>
     await withLocalHostCompilationErrors(async () => {
-      const targets = await service.runtimeIds(scope);
+      const targets = await service.runtimeIds(scope, options.runtimes);
       const results = await readiness.get(
         targets.length === 0 ? [await options.runtimes.getDefaultRuntimeId()] : targets,
       );

@@ -1140,6 +1140,65 @@ it("compiles current expert permissions independently from pinned resources and 
       coordinator: { permissionModeId: "read-only" },
       members: [{ permissionModeId: "full-access" }],
     });
+    const teamRequest = {
+      ...request,
+      id: "warm-team-model",
+      executor: { kind: "team", ref: canonicalPragmaResourceRef(team), name: team.metadata.name },
+    };
+    const warm = await compiler.compileStable(compiler.createRequestScope(teamRequest), runtimes);
+    const owner = {
+      hasOwner: true,
+      identity: warm.identity,
+      definitionFingerprint: warm.definitionFingerprint,
+      executionProfilesFingerprint: warm.executionProfilesFingerprint,
+      capabilities: warm.capabilities,
+      secrets: warm.secrets,
+      plugins: warm.plugins,
+    };
+    for (const config of [
+      { runtimeId: "codex", providerId: "test", model: "member-model", thinkingLevel: "low" },
+      { runtimeId: "codex", providerId: "test", model: "member-model", thinkingLevel: "high" },
+    ]) {
+      memberProfile.spec.config = config;
+      const prepared = await compiler.prepare(
+        compiler.createRequestScope(teamRequest),
+        runtimes,
+        owner,
+      );
+      expect(prepared.cacheHit).toBe(false);
+      expect(prepared.definitionChanged).toBe(true);
+      expect(prepared.refreshEnvironment).toBe(false);
+      expect(prepared.definitionFingerprint).toBe(owner.definitionFingerprint);
+      Object.assign(owner, {
+        identity: prepared.identity,
+        executionProfilesFingerprint: prepared.executionProfilesFingerprint,
+      });
+      expect(prepared.compiled?.value).toMatchObject({
+        members: [
+          {
+            models: {
+              default: { model: { modelId: "member-model" }, thinkingLevel: config.thinkingLevel },
+            },
+          },
+        ],
+      });
+    }
+    const pi = defineRuntimeTestDriver({
+      descriptor: { id: "pi", kind: "test", displayName: "Pi" },
+      createSession: () => ({}),
+      startTurn: () => ({ outputText: "done" }),
+      mapEvent: () => ({ events: [] }),
+    });
+    changed.spec.config = { runtimeId: "pi" };
+    const switchedRuntimes = createStaticRuntimeResolver({
+      defaultRuntimeId: "codex",
+      runtimes: [adapter, pi],
+    });
+    const switchedScope = compiler.createRequestScope(request);
+    expect(
+      (await compiler.compileStable(switchedScope, switchedRuntimes)).compiled.rootRuntimeId,
+    ).toBe("pi");
+    expect(await compiler.runtimeIds(switchedScope, switchedRuntimes)).toEqual(["pi"]);
     changed.spec.config = { runtimeId: "codex" };
     const cleared = await compiler.compileStable(compiler.createRequestScope(request), runtimes);
     expect(cleared.compiled.value).toMatchObject({ permissionModeId: "full-access" });

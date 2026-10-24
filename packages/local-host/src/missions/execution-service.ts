@@ -1199,6 +1199,10 @@ export function createLocalHostMissionExecutionService(
   ): void => {
     if ("kind" in compiled.value && compiled.value.kind === "flow") return;
     sessionService.setCompilationIdentity(missionId, identity);
+    sessionService.setExecutionProfilesFingerprint(
+      missionId,
+      compileService.executionProfilesFingerprintFor(compiled),
+    );
     sessionService.setCompilationSecrets(missionId, compileService.secretsFor(compiled));
     sessionService.setCompilationPlugins(missionId, compileService.pluginsFor(compiled));
     sessionService.setDefinitionFingerprint(
@@ -2584,6 +2588,7 @@ export function createLocalHostMissionExecutionService(
       secrets: sessionService.compilationSecrets(mission.id),
       plugins: sessionService.compilationPlugins(mission.id),
       definitionFingerprint: sessionService.definitionFingerprint(mission.id),
+      executionProfilesFingerprint: sessionService.executionProfilesFingerprint(mission.id),
       capabilities: mission.execution?.resolvedCapabilities,
     });
     if (preparation.refreshEnvironment === true && session !== undefined) {
