@@ -1631,8 +1631,13 @@ class ExpertSessionImpl implements ExpertSession {
       // cancelling durable Executions belonging to a successor owner.
       await this.assertCloseOwnership();
       ownershipConfirmed = true;
+      // A strict steer can already be failed while its delivery remains
+      // uncertain. Explicit closure must cancel it so recovery cannot replay it.
       const pending = (await this.getPromptQueue()).filter(
-        (prompt) => prompt.status === "queued" || prompt.status === "running",
+        (prompt) =>
+          prompt.status === "queued" ||
+          prompt.status === "running" ||
+          hasUnresolvedSteerDelivery([prompt]),
       );
       stopAttempted = true;
       await this.stopNativeWork(reason);
@@ -1653,7 +1658,9 @@ class ExpertSessionImpl implements ExpertSession {
           updatedAt: new Date().toISOString(),
         },
         prompts: prompts.map((prompt) =>
-          prompt.status === "queued" || prompt.status === "running"
+          prompt.status === "queued" ||
+          prompt.status === "running" ||
+          hasUnresolvedSteerDelivery([prompt])
             ? { ...prompt, status: "cancelled" as const, updatedAt: new Date().toISOString() }
             : prompt,
         ),

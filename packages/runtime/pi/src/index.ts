@@ -9,6 +9,7 @@ export { probePiModelProvider } from "./probe.ts";
 export { listPiCompatibilityProfiles, type PiCompatibilityProfileDescriptor } from "./profiles.ts";
 export type {
   CloudPiRuntimeAdapterOptions,
+  PiRuntimePermissionMode,
   PiModelProviderConfig,
   PiProviderModelConfig,
 } from "./types.ts";

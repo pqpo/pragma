@@ -96,6 +96,7 @@ export function createProductionLocalHost(): CliLocalHost {
       case "pragma.runtime.pi":
         return createPiRuntime({
           ...common,
+          permissionMode: mode as "full-access",
           modelProviders: configuration.modelProviders,
           agentContextWindow,
         });
@@ -183,6 +184,7 @@ export function createProductionLocalHost(): CliLocalHost {
           permissionMode: mode,
         }),
         createPiRuntime({
+          permissionMode: mode,
           env: legacyEnvironment("pragma.runtime.pi"),
           tokenCounter,
           agentContextWindow,

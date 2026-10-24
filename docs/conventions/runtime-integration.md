@@ -15,6 +15,12 @@
 - Host 可以调用 Core；Core 不得反向依赖 Desktop、CLI 或未来 Host 应用层。
 - 本地 Claude Code、Codex、Qoder CLI、Antigravity CLI、自研执行环境属于 Runtime Adapter 的实现目标，由 Desktop App 承载本地连接、授权和执行桥接；Host 调用 Core，Core 不依赖 Host。
 
+## 基础能力
+
+所有 Runtime 必须支持受管 MCP、Skill 按需加载和原生命令执行。权限模式不得通过整体隐藏 bash
+或漏装 Skill 来实现。显式资源拒绝、受管 MCP 白名单与 Session 身份校验继续生效。
+MCP 的“已连接”不等于工具对模型可用，验收必须实际调用工具；Skill 必须实际发现、加载并读取支持文件。
+
 ## Harness 原生权限
 
 - Expert 设置选择 Harness、模型与该 Harness 自己提供的权限模式，默认完全访问，不提供 Plan。
@@ -22,6 +28,11 @@
 - 模式必须参与 Adapter cache、编译身份和 Runtime Context 身份；不同模式不得复用同一原生 Session。
 - 只读必须由 Harness 原生边界实施；受管 MCP 工具仍遵守各自 allowlist 与业务审批。Pi 不额外模拟只读或审批。
 - 首期目录与迁移边界见 [ADR 078](../adr/078-expert-native-harness-permissions.md)。
+
+Codex 在首次创建和恢复时都必须重新提交当前 `sandbox` 与 `approvalPolicy`。
+回归覆盖各 Harness 支持模式的首次执行、恢复、切换，以及审批拒绝无副作用和批准重试。
+Pi 的旧显式策略仅保留用于兼容历史 Adapter binding；新建产品配置只公开原生完全访问。
+
 
 ## 接入验收
 
