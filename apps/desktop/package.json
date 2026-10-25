@@ -105,7 +105,7 @@
     "esbuild": "^0.28.2",
     "postcss": "^8.5.30",
     "typescript": "latest",
-    "vite": "^8.1.6",
+    "vite": "^7.3.7",
     "vitest": "latest"
   }
 }
